@@ -9,6 +9,10 @@ found in the LICENSE file.
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto">
 
+    <org.chromium.chrome.browser.sync.settings.CentralAccountCardPreference
+        android:key="central_account_card"
+        app:isPreferenceVisible="true"/>
+
     <org.chromium.chrome.browser.sync.settings.IdentityErrorCardPreference
         android:key="identity_error_card"
         app:isPreferenceVisible="false"/>
@@ -77,5 +81,8 @@ found in the LICENSE file.
     <org.chromium.components.browser_ui.settings.ChromeBasePreference
         android:key="manage_accounts_on_this_device"
         android:title="@string/manage_accounts_on_this_device"/>
+
+    <org.chromium.chrome.browser.ui.signin.SignoutButtonPreference
+        android:key="sign_out_button"/>
 
 </PreferenceScreen>

@@ -15,6 +15,7 @@ struct InlineItemResultRubyColumn
   void Trace(Visitor* visitor) const {
     visitor->Trace(base_line);
     visitor->Trace(annotation_line_list);
+    visitor->Trace(ruby_break_token);
   }
 
   // A LineInfo for the base level.
@@ -26,6 +27,15 @@ struct InlineItemResultRubyColumn
   // A list of ruby-position values.  The size of this list must be same as
   // annotation_line_list.
   Vector<RubyPosition, 1> position_list;
+
+  // This is true if a ruby column is split into multiple segments by line
+  // breaking, and this InlineItemResult represents the second or later
+  // segment.
+  bool is_continuation = false;
+
+  // A break token at the end of this ruby column.
+  // It is stored here because of ease of rewind.
+  Member<RubyBreakTokenData> ruby_break_token;
 };
 
 }  // namespace blink

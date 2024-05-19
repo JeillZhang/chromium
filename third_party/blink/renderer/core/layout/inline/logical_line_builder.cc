@@ -26,10 +26,12 @@ namespace blink {
 
 LogicalLineBuilder::LogicalLineBuilder(InlineNode node,
                                        const ConstraintSpace& constraint_space,
+                                       const InlineBreakToken* break_token,
                                        InlineLayoutStateStack* state_stack,
                                        InlineChildLayoutContext* context)
     : node_(node),
       constraint_space_(constraint_space),
+      break_token_(break_token),
       box_states_(state_stack),
       context_(context),
       baseline_type_(node.Style().GetFontBaseline()),
@@ -424,8 +426,20 @@ InlineBoxState* LogicalLineBuilder::PlaceRubyColumn(
     LogicalLineItems& line_box,
     InlineBoxState* box) {
   InlineItemResultRubyColumn& ruby_column = *item_result.ruby_column;
+  bool on_start_edge = false;
+  bool on_end_edge = false;
+  if (RuntimeEnabledFeatures::RubyLineEdgeAlignmentEnabled() &&
+      !node_.IsBidiEnabled()) {
+    on_start_edge =
+        ruby_column.base_line.StartOffset() == line_info.StartOffset() ||
+        item_result.StartOffset() == line_info.StartOffset();
+    wtf_size_t end_text_offset = ruby_column.base_line.EndTextOffset();
+    wtf_size_t inflow_end = line_info.InflowEndOffsetWithoutForcedBreak();
+    on_end_edge = end_text_offset == inflow_end;
+  }
   std::pair<LayoutUnit, LayoutUnit> base_insets =
-      ApplyRubyAlign(item_result.inline_size, ruby_column.base_line);
+      ApplyRubyAlign(item_result.inline_size, on_start_edge, on_end_edge,
+                     ruby_column.base_line);
 
   // Set up LogicalRubyColumns. This should be done before consuming the base
   // InlineItemResults because it might contain ruby columns, and annotation
@@ -477,11 +491,20 @@ void LogicalLineBuilder::PlaceRubyAnnotation(
     LineInfo& annotation_line,
     LogicalRubyColumn& logical_column) {
   std::pair<LayoutUnit, LayoutUnit> insets =
-      ApplyRubyAlign(item_result.inline_size, annotation_line);
+      ApplyRubyAlign(item_result.inline_size, /* on_start_edge */ false,
+                     /* on_end_edge */ false, annotation_line);
 
   auto* line_items = MakeGarbageCollected<LogicalLineItems>();
-  LogicalLineBuilder annotation_builder(node_, constraint_space_,
+  LogicalLineBuilder annotation_builder(node_, constraint_space_, nullptr,
                                         &logical_column.state_stack, context_);
+  if (item_result.ruby_column->is_continuation &&
+      !annotation_line.Results().empty()) {
+    CHECK(break_token_->RubyData());
+    annotation_builder.RebuildBoxStates(
+        annotation_line,
+        break_token_->RubyData()->annotation_data[index].start_item_index,
+        annotation_line.Results()[0].item_index);
+  }
   annotation_builder.CreateLine(&annotation_line, line_items,
                                 /* main_line_helper */ nullptr);
   ApplyLeftAndRightExpansion(insets.first, insets.second, line_items->begin(),

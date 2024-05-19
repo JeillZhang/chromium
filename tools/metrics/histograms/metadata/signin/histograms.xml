@@ -1601,6 +1601,22 @@ OAuth Multilogin call. -->
   </summary>
 </histogram>
 
+<histogram name="Signin.Settings.ChromeSigninSettingModification"
+    enum="ChromeSigninSettingModification" expires_after="2024-07-30">
+  <owner>rsult@google.com</owner>
+  <owner>chrome-signin-team@google.com</owner>
+  <summary>
+    This histogram records each modification of the setting value of &quot;Sign
+    in to Chrome when you sign in to other Google services&quot; done by the
+    user through the Settings page.
+
+    If the setting was shown and not modified, a value for no modification is
+    recorded when the user closes or navigates away from Chrome settings.
+
+    If the setting is not shown, no values are recorded at all.
+  </summary>
+</histogram>
+
 <histogram
     name="Signin.ShowSigninCoordinatorWhenAlreadyPresent.{View}AccessPoint"
     enum="SigninAccessPoint" expires_after="2024-12-01">
@@ -1849,6 +1865,10 @@ kept as long as profile signout is possible -->
     (equal or not-equal weighted).
 
     Recorded when the user clicks on the button.
+
+    Note: the metric doesn't record when the user dismissed the screen in
+    alternative way (eg. with Esc key or by swiping the application on mobile
+    device).
   </summary>
 </histogram>
 
@@ -1859,6 +1879,19 @@ kept as long as profile signout is possible -->
   <summary>
     Records the appearance of the button set on sync or history sync opt in
     screens. Recorded when the buttons are displayed to the user.
+
+    Note: On some platforms (eg. Android) that allow selecting account for the
+    consent, this is recorded each time that the account is changed and the
+    buttons have to be redrawn. If you want to see what kind of buttons were
+    ultimately presented to the user before they selected one of the sync
+    consent screen options, sum up Signin.SyncButtons.Clicked entries from the
+    same appearance category, for example use the following formula:
+
+    &quot;Signin.SyncButtons.Clicked::0 + Signin.SyncButtons.Clicked::1 +
+    Signin.SyncButtons.Clicked::2&quot;
+
+    to see the count of equally weighted buttons that resulted in some user
+    decision.
   </summary>
 </histogram>
 

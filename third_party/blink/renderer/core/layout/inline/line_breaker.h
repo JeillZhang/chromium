@@ -31,6 +31,7 @@ class LineInfo;
 class ResolvedTextLayoutAttributesIterator;
 class ShapingLineBreaker;
 struct AnnotationBreakTokenData;
+struct RubyBreakTokenData;
 
 // The line breaker needs to know which mode its in to properly handle floats.
 enum class LineBreakerMode { kContent, kMinContent, kMaxContent };
@@ -53,7 +54,7 @@ class CORE_EXPORT LineBreaker {
               ExclusionSpace*);
   ~LineBreaker();
 
-  const InlineItemsData& ItemsData() const { return items_data_; }
+  const InlineItemsData& ItemsData() const { return *items_data_; }
 
   // True if the last line has `box-decoration-break: clone`, which affected the
   // size.
@@ -123,13 +124,14 @@ class CORE_EXPORT LineBreaker {
   // This LineBreaker handles only [start, end_item_index) of `Items()`.
   void SetInputRange(InlineItemTextIndex start,
                      wtf_size_t end_item_index,
-                     WhitespaceState initial_whitespace_state);
+                     WhitespaceState initial_whitespace_state,
+                     const LineBreaker* parent);
 
  private:
   Document& GetDocument() const { return node_.GetDocument(); }
 
   const String& Text() const { return text_content_; }
-  const HeapVector<InlineItem>& Items() const { return items_data_.items; }
+  const HeapVector<InlineItem>& Items() const { return items_data_->items; }
 
   String TextContentForLineBreak() const;
 
@@ -221,7 +223,13 @@ class CORE_EXPORT LineBreaker {
   void ComputeMinMaxContentSizeForBlockChild(const InlineItem&,
                                              InlineItemResult*);
   // Returns false if we can't handle the current InlineItem as a ruby.
-  bool HandleRuby(LineInfo* line_info);
+  // NOINLINE prevents a compiler for Android 64bit from inlining
+  // HandleRuby() twice.
+  NOINLINE bool HandleRuby(const RubyBreakTokenData* ruby_token,
+                           LineInfo* line_info);
+  bool IsMonolithicRuby(
+      const LineInfo& base_line,
+      const HeapVector<LineInfo, 1>& annotation_line_list) const;
   // `mode`: Must be kMaxContent or kContent.
   // `limit`: Must be non-negative or kIndefiniteSize, which means no auto-wrap.
   LineInfo CreateSubLineInfo(InlineItemTextIndex start,
@@ -235,8 +243,10 @@ class CORE_EXPORT LineBreaker {
       const HeapVector<LineInfo, 1>& annotation_line_list,
       const Vector<AnnotationBreakTokenData, 1>& annotation_data_list,
       LayoutUnit ruby_size,
+      bool is_continuation,
       LineInfo& line_info);
-  bool CanBreakAfterRubyColumn(const InlineItemResult& column_result) const;
+  bool CanBreakAfterRubyColumn(const InlineItemResult& column_result,
+                               wtf_size_t column_end_item_index) const;
 
   bool CanBreakAfterAtomicInline(const InlineItem& item) const;
   bool CanBreakAfter(const InlineItem& item) const;
@@ -392,7 +402,7 @@ class CORE_EXPORT LineBreaker {
   bool has_considered_creating_break_token_ = false;
 #endif
 
-  const InlineItemsData& items_data_;
+  const InlineItemsData* items_data_;
 
   // `end_item_index_` is usually `Items().size()`.
   // SetInputRange() updates it.
@@ -406,6 +416,9 @@ class CORE_EXPORT LineBreaker {
   const ConstraintSpace& constraint_space_;
   ExclusionSpace* exclusion_space_;
   const InlineBreakToken* break_token_;
+  // This is set by the constructor, or set after filling a LineInfo.
+  // BreakLine consumes it.
+  const RubyBreakTokenData* ruby_break_token_ = nullptr;
   const ColumnSpannerPath* column_spanner_path_;
   const ComputedStyle* current_style_ = nullptr;
 
@@ -465,6 +478,9 @@ class CORE_EXPORT LineBreaker {
 
   // This has a valid object if is_svg_text_.
   std::unique_ptr<ResolvedTextLayoutAttributesIterator> svg_resolved_iterator_;
+
+  // This member is available after calling SetInputRange().
+  const LineBreaker* parent_breaker_ = nullptr;
 };
 
 }  // namespace blink

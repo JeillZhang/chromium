@@ -728,14 +728,29 @@ ScopedJavaLocalRef<jobjectArray> PersonalDataManagerAndroid::GetProfileLabels(
 ScopedJavaLocalRef<jobject>
 PersonalDataManagerAndroid::CreateJavaIbanFromNative(JNIEnv* env,
                                                      const Iban& iban) {
-  // TODO(b/324635902): Add support for server IBAN.
-  return Java_Iban_create(
-      env, ConvertUTF8ToJavaString(env, iban.guid()),
-      ConvertUTF16ToJavaString(env,
-                               iban.GetIdentifierStringForAutofillDisplay()),
-      ConvertUTF16ToJavaString(env, iban.nickname()),
-      static_cast<jint>(iban.record_type()),
-      ConvertUTF16ToJavaString(env, iban.GetRawInfo(IBAN_VALUE)));
+  switch (iban.record_type()) {
+    case Iban::kLocalIban:
+      return Java_Iban_createLocal(
+          env, ConvertUTF8ToJavaString(env, iban.guid()),
+          ConvertUTF16ToJavaString(
+              env, iban.GetIdentifierStringForAutofillDisplay()),
+          ConvertUTF16ToJavaString(env, iban.nickname()),
+          ConvertUTF16ToJavaString(env, iban.GetRawInfo(IBAN_VALUE)));
+    case Iban::kServerIban:
+      return Java_Iban_createServer(
+          env, iban.instrument_id(),
+          ConvertUTF16ToJavaString(
+              env, iban.GetIdentifierStringForAutofillDisplay()),
+          ConvertUTF16ToJavaString(env, iban.nickname()),
+          ConvertUTF16ToJavaString(env, iban.GetRawInfo(IBAN_VALUE)));
+    case Iban::kUnknown:
+      return Java_Iban_createEphemeral(
+          env,
+          ConvertUTF16ToJavaString(
+              env, iban.GetIdentifierStringForAutofillDisplay()),
+          ConvertUTF16ToJavaString(env, iban.nickname()),
+          ConvertUTF16ToJavaString(env, iban.GetRawInfo(IBAN_VALUE)));
+  }
 }
 
 void PersonalDataManagerAndroid::PopulateNativeIbanFromJava(

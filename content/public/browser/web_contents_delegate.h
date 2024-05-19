@@ -406,7 +406,7 @@ class CONTENT_EXPORT WebContentsDelegate {
   virtual JavaScriptDialogManager* GetJavaScriptDialogManager(
       WebContents* source);
 
-#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_APPLE)
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
   // Called when color chooser should open. Returns the opened color chooser.
   // Returns nullptr if we failed to open the color chooser. The color chooser
   // is supported/required for Android or iOS.
@@ -731,6 +731,16 @@ class CONTENT_EXPORT WebContentsDelegate {
   // Returns whether to override user agent for prerendering navigation.
   virtual NavigationController::UserAgentOverrideOption
   ShouldOverrideUserAgentForPrerender2();
+
+  // Returns true if the embedder allows initiator and transition type mismatch
+  // of prerender activation that activation navigation has no initiator
+  // (embedder-initiated).
+  //
+  // This mitigation is mainly for Android WebView (speculationrules +
+  // `WebView.loadUrl`), as WebView is intended to host embedder-trusted
+  // contents.
+  virtual bool ShouldAllowPartialParamMismatchOfPrerender2(
+      NavigationHandle& navigation_handle);
 
   // If |old_contents| is being inspected by a DevTools window, it updates the
   // window to inspect |new_contents| instead and calls |callback| after it

@@ -219,6 +219,7 @@ chromium-metrics-reviews@google.com.
     <variant name="PaymentsOfferNotification"/>
     <variant name="PriceInsights"/>
     <variant name="PriceTracking"/>
+    <variant name="ProductSpecifications"/>
     <variant name="PWAInstall"/>
     <variant name="QRCodeGenerator"/>
     <variant name="ReadAnything"/>
@@ -1058,7 +1059,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="PageLoad.Clients.LinkPreview.Usage" enum="LinkPreviewUsage"
-    expires_after="2024-07-15">
+    expires_after="2024-11-10">
   <owner>toyoshim@chromium.org</owner>
   <owner>src/chrome/browser/preloading/preview/OWNERS</owner>
   <summary>

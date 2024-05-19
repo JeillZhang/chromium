@@ -190,8 +190,8 @@ void CampaignsMatcher::SetIsUserOwner(bool is_user_owner) {
   is_user_owner_ = is_user_owner;
 }
 
-void CampaignsMatcher::SetTrigger(TriggeringType trigger) {
-  trigger_ = trigger;
+void CampaignsMatcher::SetTrigger(const Trigger&& trigger) {
+  trigger_ = std::move(trigger);
 }
 
 void CampaignsMatcher::SetPrefs(PrefService* prefs) {
@@ -328,7 +328,6 @@ bool CampaignsMatcher::MaybeMatchDemoModeTargeting(
 
 bool CampaignsMatcher::MatchMilestone(const DeviceTargeting& targeting) const {
   const auto milestone = GetMilestone();
-
   auto min_milestone = targeting.GetMinMilestone();
   if (min_milestone && milestone < min_milestone) {
     return false;
@@ -359,6 +358,11 @@ bool CampaignsMatcher::MatchDeviceTargeting(
   const auto* targeting_locales = targeting.GetLocales();
   if (targeting_locales &&
       !Contains(*targeting_locales, client_->GetApplicationLocale())) {
+    return false;
+  }
+
+  const auto* user_locales = targeting.GetUserLocales();
+  if (user_locales && !Contains(*user_locales, client_->GetUserLocale())) {
     return false;
   }
 
@@ -413,15 +417,45 @@ bool CampaignsMatcher::MatchDeviceAge(
                          /*target=*/base::Time::Now());
 }
 
-bool CampaignsMatcher::MatchTriggeringType(
-    const std::vector<TriggeringType>& trigger_targetings) const {
+bool CampaignsMatcher::MatchTriggerTargeting(
+    const std::vector<std::unique_ptr<TriggerTargeting>>& trigger_targetings)
+    const {
   if (trigger_targetings.empty()) {
     // Campaigns matched if `trigger_targetings` is empty.
     return true;
   }
 
   for (const auto& trigger : trigger_targetings) {
-    if (trigger == trigger_) {
+    auto trigger_type = trigger->GetTriggerType();
+    if (!trigger_type) {
+      // Ignore if trigger type is missing from the targeting.
+      // TODO: b/341374525 - Record the error when the trigger type is missing.
+      continue;
+    }
+
+    // TODO: b/330931877 - Add bounds check for casting to enum from value in
+    // campaign.
+    if (trigger_.type != static_cast<TriggerType>(trigger_type.value())) {
+      continue;
+    }
+
+    // Only `kEvent` trigger needs to check event name, so other trigger type
+    // is matched at this point.
+    if (trigger_.type != TriggerType::kEvent) {
+      return true;
+    }
+
+    const base::Value::List* trigger_events = trigger->GetTriggerEvents();
+    if (!trigger_events) {
+      // If the trigger type is `kEvent`, but the `trigger_events` is not valid,
+      // does not match.
+      // TODO: b/341164013 - Add new specific error type for this case.
+      RecordCampaignsManagerError(CampaignsManagerError::kInvalidTrigger);
+      LOG(ERROR) << "Invalid trigger events, requires a list of strings.";
+      continue;
+    }
+
+    if (Contains(*trigger_events, trigger_.event)) {
       return true;
     }
   }
@@ -558,6 +592,11 @@ bool CampaignsMatcher::MatchMinorUser(
                             ->GetAccountId()
                             .GetGaiaId();
   auto* identity_manager = client_->GetIdentityManager();
+  if (!identity_manager) {
+    // Identity manager is not available (e.g:guest mode). In that case,
+    // a campaign with minor user targeting shouldn't be triggered.
+    return false;
+  }
   const AccountInfo account_info =
       identity_manager->FindExtendedAccountInfoByGaiaId(gaia_id);
   // TODO: b/333896450 - find a better signal for minor mode.
@@ -595,7 +634,7 @@ bool CampaignsMatcher::MatchRuntimeTargeting(const RuntimeTargeting& targeting,
     return true;
   }
 
-  return MatchTriggeringType(targeting.GetTriggers()) &&
+  return MatchTriggerTargeting(targeting.GetTriggers()) &&
          MatchSchedulings(targeting.GetSchedulings()) &&
          MatchOpenedApp(targeting.GetAppsOpened()) &&
          MatchActiveUrlRegexes(targeting.GetActiveUrlRegexes()) &&

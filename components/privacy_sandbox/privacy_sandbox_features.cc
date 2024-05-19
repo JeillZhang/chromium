@@ -125,6 +125,14 @@ BASE_FEATURE(kPrivacySandboxProactiveTopicsBlocking,
              "PrivacySandboxProactiveTopicsBlocking",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
+const char kPrivacySandboxProactiveTopicsBlockingIncludeModeBName[] =
+    "include-mode-b";
+
+const base::FeatureParam<bool>
+    kPrivacySandboxProactiveTopicsBlockingIncludeModeB{
+        &kPrivacySandboxProactiveTopicsBlocking,
+        kPrivacySandboxProactiveTopicsBlockingIncludeModeBName, false};
+
 BASE_FEATURE(kTrackingProtectionSettingsPageRollbackNotice,
              "TrackingProtectionSettingsPageRollbackNotice",
              base::FEATURE_DISABLED_BY_DEFAULT);
@@ -176,6 +184,10 @@ BASE_FEATURE(kPrivacySandboxRelatedWebsiteSetsUi,
              "PrivacySandboxRelatedWebsiteSetsUi",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
+BASE_FEATURE(kTrackingProtectionContentSetting,
+             "TrackingProtectionContentSetting",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+
 #if BUILDFLAG(IS_ANDROID)
 BASE_FEATURE(kTrackingProtectionNoticeRequestTracking,
              "TrackingProtectionNoticeRequestTracking",
@@ -217,5 +229,9 @@ const char kPrivacySandboxActivityTypeStorageWithinXDaysName[] =
 const base::FeatureParam<int> kPrivacySandboxActivityTypeStorageWithinXDays{
     &kPrivacySandboxActivityTypeStorage,
     kPrivacySandboxActivityTypeStorageWithinXDaysName, 60};
+
+BASE_FEATURE(kPrivacySandboxAdsDialogDisabledOnAll3PCBlock,
+             "PrivacySandboxAdsDialogDisabledOnAll3PCBlock",
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 }  // namespace privacy_sandbox

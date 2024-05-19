@@ -19,6 +19,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "ui/base/metadata/metadata_header_macros.h"
+#include "ui/gfx/geometry/size.h"
 #include "ui/views/view.h"
 #include "ui/views/widget/widget_delegate.h"
 
@@ -29,6 +30,7 @@ class NonClientFrameView;
 
 namespace ash {
 
+enum class PickerLayoutType;
 class PickerContentsView;
 class PickerSearchFieldView;
 class PickerPageView;
@@ -47,11 +49,6 @@ class ASH_EXPORT PickerView : public views::WidgetDelegateView,
   METADATA_HEADER(PickerView, views::WidgetDelegateView)
 
  public:
-  enum class PickerLayoutType {
-    kResultsBelowSearchField,
-    kResultsAboveSearchField,
-  };
-
   // `delegate` must remain valid for the lifetime of this class.
   explicit PickerView(PickerViewDelegate* delegate,
                       PickerLayoutType layout_type,
@@ -69,8 +66,9 @@ class ASH_EXPORT PickerView : public views::WidgetDelegateView,
 
   // PickerZeroStateViewDelegate:
   void SelectZeroStateCategory(PickerCategory category) override;
-  void SelectSuggestedZeroStateResult(
-      const PickerSearchResult& result) override;
+  void SelectZeroStateResult(const PickerSearchResult& result) override;
+  void GetZeroStateRecentResults(PickerCategory category,
+                                 SearchResultsCallback callback) override;
   void GetSuggestedZeroStateEditorResults(
       SuggestedEditorResultsCallback callback) override;
   void NotifyPseudoFocusChanged(views::View* view) override;

@@ -57,7 +57,7 @@ class CORE_EXPORT InlineLayoutAlgorithm final
   const LayoutResult* Layout();
 
   MinMaxSizesResult ComputeMinMaxSizes(const MinMaxSizesFloatInput&) {
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
     return MinMaxSizesResult();
   }
 
@@ -88,6 +88,8 @@ class CORE_EXPORT InlineLayoutAlgorithm final
                             LogicalLineItems* line_box);
 
   LayoutUnit ApplyTextAlign(LineInfo*);
+
+  void ApplyTextBoxTrim(LineInfo&);
 
   // Add any trailing clearance requested by a BR 'clear' attribute on the line.
   // Return true if this was successful (this also includes cases where there is

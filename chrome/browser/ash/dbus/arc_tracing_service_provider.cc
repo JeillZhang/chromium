@@ -9,8 +9,8 @@
 #include "base/functional/bind.h"
 #include "base/strings/string_util.h"
 #include "base/task/thread_pool.h"
-#include "chrome/browser/browser_process.h"
 #include "chrome/browser/ash/arc/tracing/overview_tracing_handler.h"
+#include "chrome/browser/browser_process.h"
 #include "dbus/bus.h"
 #include "dbus/message.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
@@ -18,6 +18,7 @@
 namespace ash {
 namespace {
 constexpr int kMaxStatusMessagesCount = 20;
+constexpr char kTraceStartedMsg[] = "Trace started";
 }  // namespace
 
 ArcTracingServiceProvider::ArcTracingServiceProvider() = default;
@@ -66,46 +67,52 @@ void ArcTracingServiceProvider::OnTraceEnd(
   }
   // Do this in a separate task because the handler may still have code to run
   // after we return.
-  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
-      FROM_HERE,
-      base::BindOnce([](std::unique_ptr<arc::OverviewTracingHandler> handler) {},
-                     std::move(handler_)));
+  base::SingleThreadTaskRunner::GetCurrentDefault()->DeleteSoon(
+      FROM_HERE, std::move(handler_));
+}
+
+std::unique_ptr<arc::OverviewTracingHandler>
+ArcTracingServiceProvider::NewHandler() {
+  return std::make_unique<arc::OverviewTracingHandler>(
+      arc::OverviewTracingHandler::ArcWindowFocusChangeCb());
 }
 
 void ArcTracingServiceProvider::StartTrace(
     dbus::MethodCall* method_call,
     dbus::ExportedObject::ResponseSender response_sender) {
-  auto response = dbus::Response::FromMethodCall(method_call);
-  dbus::MessageWriter writer(response.get());
-
-  std::string result = StartTraceImpl(method_call);
-  writer.AppendString(result);
-  AddStatusMessage(result);
-  std::move(response_sender).Run(std::move(response));
-}
-
-std::string ArcTracingServiceProvider::StartTraceImpl(
-    dbus::MethodCall* method_call) {
   if (handler_) {
-    return "Trace already in progress";
+    std::move(response_sender)
+        .Run(dbus::ErrorResponse::FromMethodCall(method_call, DBUS_ERROR_FAILED,
+                                                 "Trace already in progress"));
+    return;
   }
 
   dbus::MessageReader reader(method_call);
 
   double max_trace_seconds;
   if (!reader.PopDouble(&max_trace_seconds)) {
-    return "Expect max trace time as type double in seconds";
+    std::move(response_sender)
+        .Run(dbus::ErrorResponse::FromMethodCall(
+            method_call, DBUS_ERROR_INVALID_ARGS,
+            "Expect max trace time as type double in seconds"));
+    return;
   }
-  auto handler = std::make_unique<arc::OverviewTracingHandler>(
-      arc::OverviewTracingHandler::ArcWindowFocusChangeCb());
+  auto handler = NewHandler();
 
   auto max_trace_time = base::Seconds(max_trace_seconds);
   if (max_trace_time < base::Seconds(1)) {
-    return "Max trace seconds out of range; must be >= 1";
+    std::move(response_sender)
+        .Run(dbus::ErrorResponse::FromMethodCall(
+            method_call, DBUS_ERROR_INVALID_ARGS,
+            "Max trace seconds out of range; must be >= 1"));
+    return;
   }
 
   if (!handler->arc_window_is_active()) {
-    return "ARC window isn't active";
+    std::move(response_sender)
+        .Run(dbus::ErrorResponse::FromMethodCall(method_call, DBUS_ERROR_FAILED,
+                                                 "ARC window isn't active"));
+    return;
   }
 
   handler_ = std::move(handler);
@@ -114,9 +121,13 @@ std::string ArcTracingServiceProvider::StartTraceImpl(
   handler_->set_start_build_model_cb(
       base::BindRepeating(&ArcTracingServiceProvider::AddStatusMessage,
                           weak_ptr_factory_.GetWeakPtr(), "Building model..."));
-  handler_->StartTracing(base::FilePath("/tmp"), max_trace_time);
+  handler_->StartTracing(trace_outdir_, max_trace_time);
 
-  return "Trace started";
+  auto response = dbus::Response::FromMethodCall(method_call);
+  dbus::MessageWriter writer(response.get());
+  writer.AppendString(kTraceStartedMsg);
+  AddStatusMessage(kTraceStartedMsg);
+  std::move(response_sender).Run(std::move(response));
 }
 
 void ArcTracingServiceProvider::GetStatus(

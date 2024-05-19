@@ -75,11 +75,12 @@ const char kChromeUIDevToolsURL[] =
 const char kChromeUIDeviceLogHost[] = "device-log";
 const char kChromeUIDeviceLogUrl[] = "chrome://device-log";
 const char kChromeUIDevUiLoaderURL[] = "chrome://dev-ui-loader/";
-const char kChromeUIDiceWebSigninInterceptHost[] = "signin-dice-web-intercept";
+const char kChromeUIDiceWebSigninInterceptHost[] =
+    "signin-dice-web-intercept.top-chrome";
 const char kChromeUIDiceWebSigninInterceptURL[] =
-    "chrome://signin-dice-web-intercept/";
+    "chrome://signin-dice-web-intercept.top-chrome/";
 const char kChromeUIDiceWebSigninInterceptChromeSigninURL[] =
-    "chrome://signin-dice-web-intercept/chrome-signin";
+    "chrome://signin-dice-web-intercept.top-chrome/chrome-signin";
 const char kChromeUIDiceWebSigninInterceptChromeSigninSubPage[] =
     "chrome-signin";
 const char kChromeUIDownloadInternalsHost[] = "download-internals";
@@ -770,7 +771,9 @@ const char* const kChromeHostURLs[] = {
     kChromeUINewTabPageThirdPartyHost,
     kChromeUISettingsHost,
     kChromeUISystemInfoHost,
+#if !BUILDFLAG(IS_CHROMEOS)
     kChromeUIWhatsNewHost,
+#endif
 #endif
 #if BUILDFLAG(IS_ANDROID)
     kChromeUIOfflineInternalsHost,

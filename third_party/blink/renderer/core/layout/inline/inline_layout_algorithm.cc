@@ -296,7 +296,8 @@ void InlineLayoutAlgorithm::PrepareBoxStates(
 
   // If not, rebuild the box states for the break token.
   box_states_ = context_->ResetBoxStates();
-  LogicalLineBuilder(Node(), GetConstraintSpace(), box_states_, context_)
+  LogicalLineBuilder(Node(), GetConstraintSpace(), nullptr, box_states_,
+                     context_)
       .RebuildBoxStates(line_info, 0u, break_token->StartItemIndex());
 }
 
@@ -328,7 +329,7 @@ void InlineLayoutAlgorithm::CheckBoxStates(const LineInfo& line_info) const {
     return;
   }
   InlineLayoutStateStack rebuilt;
-  LogicalLineBuilder(Node(), GetConstraintSpace(), &rebuilt, context_)
+  LogicalLineBuilder(Node(), GetConstraintSpace(), nullptr, &rebuilt, context_)
       .RebuildBoxStates(line_info, 0u, GetBreakToken()->StartItemIndex());
   LogicalLineItems& line_box = context_->AcquireTempLogicalLineItems();
   rebuilt.OnBeginPlaceItems(Node(), line_info.LineStyle(), baseline_type_,
@@ -365,8 +366,8 @@ void InlineLayoutAlgorithm::CreateLine(const LineLayoutOpportunity& opportunity,
   // Clear the current line without releasing the buffer.
   line_container->Shrink();
 
-  LogicalLineBuilder line_builder(Node(), GetConstraintSpace(), box_states_,
-                                  context_);
+  LogicalLineBuilder line_builder(Node(), GetConstraintSpace(), GetBreakToken(),
+                                  box_states_, context_);
   line_builder.CreateLine(line_info, line_box, this);
 
   const LayoutUnit hang_width = line_info->HangWidth();
@@ -546,28 +547,7 @@ void InlineLayoutAlgorithm::CreateLine(const LineLayoutOpportunity& opportunity,
   const ConstraintSpace& space = GetConstraintSpace();
   if (UNLIKELY(space.ShouldTextBoxTrimStart() ||
                space.ShouldTextBoxTrimEnd())) {
-    // TODO(crbug.com/40254880): Just flags, trimming data isn't implemented.
-    if (space.ShouldTextBoxTrimStart() && line_info->IsFirstFormattedLine()) {
-      // Apply `text-box-trim: start` if this is the first formatted line.
-      // TODO(crbug.com/40254880): The edge should be determined by
-      // `text-box-edge` property.
-      FontHeight intrinsic_metrics =
-          Node().Style().GetFontHeight(baseline_type_);
-      LayoutUnit offset_for_trimming_box =
-          intrinsic_metrics.ascent - line_box_metrics.ascent;
-      container_builder_.SetIntrinsicMetrics(intrinsic_metrics);
-      container_builder_.SetLineBoxBfcBlockOffset(
-          container_builder_.LineBoxBfcBlockOffset()
-              ? offset_for_trimming_box +
-                    container_builder_.LineBoxBfcBlockOffset().value()
-              : offset_for_trimming_box);
-      container_builder_.SetIsTextBoxTrimApplied();
-    }
-    if (space.ShouldTextBoxTrimEnd() && !line_info->GetBreakToken()) {
-      // Apply `text-box-trim: end` if this is the last line.
-      container_builder_.SetIsTextBoxTrimApplied();
-    }
-    // TODO(crbug.com/40254880): Block-in-inline case probably needs a logic.
+    ApplyTextBoxTrim(*line_info);
   }
 
   // |container_builder_| is already set up by |PlaceBlockInInline|.
@@ -603,6 +583,62 @@ void InlineLayoutAlgorithm::CreateLine(const LineLayoutOpportunity& opportunity,
   }
 
   container_builder_.SetInlineSize(inline_size);
+}
+
+void InlineLayoutAlgorithm::ApplyTextBoxTrim(LineInfo& line_info) {
+  const ConstraintSpace& space = GetConstraintSpace();
+  const bool should_apply_start =
+      space.ShouldTextBoxTrimStart() && line_info.IsFirstFormattedLine();
+  const bool should_apply_end =
+      space.ShouldTextBoxTrimEnd() && !line_info.GetBreakToken();
+  if (!should_apply_start && !should_apply_end) {
+    return;
+  }
+
+  const ComputedStyle& line_style = line_info.LineStyle();
+  const bool is_flipped_line = line_style.IsFlippedLinesWritingMode();
+  bool should_apply_over = should_apply_start;
+  bool should_apply_under = should_apply_end;
+  if (UNLIKELY(is_flipped_line)) {
+    should_apply_over = should_apply_end;
+    should_apply_under = should_apply_start;
+  }
+
+  const FontHeight line_box_metrics = container_builder_.Metrics();
+  FontHeight intrinsic_metrics = line_box_metrics;
+  InlineBoxState::AdjustEdges(line_style, line_style.GetFont(), baseline_type_,
+                              should_apply_over, should_apply_under,
+                              intrinsic_metrics);
+
+  container_builder_.SetIntrinsicMetrics(intrinsic_metrics);
+  container_builder_.SetIsTextBoxTrimApplied();
+
+  if (should_apply_start) {
+    // Apply `text-box-trim: start` if this is the first formatted line.
+    const LayoutUnit offset_for_trimming_box =
+        UNLIKELY(is_flipped_line)
+            ? intrinsic_metrics.descent - line_box_metrics.descent
+            : intrinsic_metrics.ascent - line_box_metrics.ascent;
+    container_builder_.SetLineBoxBfcBlockOffset(
+        container_builder_.LineBoxBfcBlockOffset()
+            ? offset_for_trimming_box +
+                  container_builder_.LineBoxBfcBlockOffset().value()
+            : offset_for_trimming_box);
+
+    // Cancel adjusting the block start for the initial letters and Ruby
+    // annotation. The use of the `text-box-trim` accepts the risk of collisions
+    // for the finer control of the alignment of the body text in the block
+    // direction.
+    line_info.SetAnnotationBlockStartAdjustment(LayoutUnit());
+    line_info.SetInitialLetterBlockStartAdjustment(LayoutUnit());
+  }
+
+  if (should_apply_end) {
+    // Apply `text-box-trim: end` if this is the last line.
+    // TODO(crbug.com/40254880): Not supported yet.
+  }
+
+  // TODO(crbug.com/40254880): Block-in-inline case probably needs a logic.
 }
 
 void InlineLayoutAlgorithm::PlaceBlockInInline(const InlineItem& item,

@@ -4,8 +4,10 @@
 
 #include "components/optimization_guide/core/model_execution/model_execution_util.h"
 
+#include "base/files/file_util.h"
 #include "components/optimization_guide/core/model_quality/feature_type_map.h"
 #include "components/optimization_guide/core/model_util.h"
+#include "components/optimization_guide/core/optimization_guide_constants.h"
 #include "components/prefs/pref_service.h"
 #include "services/on_device_model/public/mojom/on_device_model.mojom.h"
 #include "services/on_device_model/public/mojom/on_device_model_service.mojom.h"
@@ -33,9 +35,10 @@ void SetExecutionRequest(
       SetExecutionRequestTemplate<ComposeFeatureTypeMap>(log_ai_request,
                                                          request_metadata);
       return;
+    case ModelBasedCapabilityKey::kPromptApi:
     case ModelBasedCapabilityKey::kTextSafety:
     case ModelBasedCapabilityKey::kTest:
-      // Do not log request for test and text safety.
+      // Do not log requests for these features.
       return;
   }
 }
@@ -58,9 +61,10 @@ void SetExecutionResponse(ModelBasedCapabilityKey feature,
       SetExecutionResponseTemplate<ComposeFeatureTypeMap>(log_ai_request,
                                                           response_metadata);
       return;
+    case ModelBasedCapabilityKey::kPromptApi:
     case ModelBasedCapabilityKey::kTextSafety:
     case ModelBasedCapabilityKey::kTest:
-      // Do not log response for test and text safety.
+      // Do not log responses for these features.
       return;
   }
 }
@@ -112,14 +116,6 @@ GetOnDeviceModelAdaptationOverride(proto::ModelExecutionFeature feature) {
           << adaptation_asset.weights;
       return std::nullopt;
     }
-    if (override_parts.size() == 3) {
-      adaptation_asset.model = *StringToFilePath(override_parts[2]);
-      if (!adaptation_asset.model.IsAbsolute()) {
-        DLOG(ERROR) << "Provided model adaptations file path must be absolute "
-                    << adaptation_asset.model;
-        return std::nullopt;
-      }
-    }
     return adaptation_asset;
   }
   return std::nullopt;
@@ -135,6 +131,21 @@ OnDeviceModelLoadResult ConvertToOnDeviceModelLoadResult(
     case on_device_model::mojom::LoadModelResult::kFailedToLoadLibrary:
       return OnDeviceModelLoadResult::kFailedToLoadLibrary;
   }
+}
+
+std::unique_ptr<proto::OnDeviceModelExecutionConfig>
+ReadOnDeviceModelExecutionConfig(const base::FilePath& config_path) {
+  // Unpack and verify model config file.
+  std::string binary_config_pb;
+  if (!base::ReadFileToString(config_path, &binary_config_pb)) {
+    return nullptr;
+  }
+
+  auto config = std::make_unique<proto::OnDeviceModelExecutionConfig>();
+  if (!config->ParseFromString(binary_config_pb)) {
+    return nullptr;
+  }
+  return config;
 }
 
 }  // namespace optimization_guide

@@ -123,6 +123,7 @@ android_library("java") {
     ":settings_interface_java",
     "$google_play_services_package:google_play_services_base_java",
     "$google_play_services_package:google_play_services_basement_java",
+    "account_storage_notice:java",
     "//base:base_java",
     "//build/android:build_java",
     "//chrome/browser/device_reauth/android:java",
@@ -212,6 +213,14 @@ generate_jni("jni_headers") {
     "java/src/org/chromium/chrome/browser/password_manager/PasswordStoreBridge.java",
     "java/src/org/chromium/chrome/browser/password_manager/PasswordStoreCredential.java",
     "java/src/org/chromium/chrome/browser/password_manager/PasswordSyncControllerDelegateBridgeImpl.java",
+  ]
+}
+
+java_group("javatests") {
+  testonly = true
+  deps = [
+    "account_storage_notice:javatests",
+    "pwd_migration:javatests",
   ]
 }
 
@@ -538,6 +547,7 @@ source_set("unit_tests") {
     ":backend_public",
     ":unified_password_manager_proto",
     ":utils",
+    "account_storage_notice:unit_tests",
     "//base/test:test_support",
     "//chrome/app:generated_resources",
     "//chrome/browser",

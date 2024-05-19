@@ -44,14 +44,17 @@ String BuildJustificationText(const String& text_content,
         line_text_builder.Append(kTextCombineItemMarker);
         continue;
       }
-      if (item_result.item->Type() == InlineItem::kOpenRubyColumn &&
-          item_result.ruby_column) {
-        line_text_builder.Append(StringView(text_content,
-                                            item_result.item->StartOffset(),
-                                            item_result.item->Length()));
+      if (item_result.IsRubyColumn()) {
+        // No need to add k*IsolateCharacter for kOpenRubyColumn if
+        // is_continuation is true. It is not followed by `base_line` results.
+        if (!item_result.ruby_column->is_continuation) {
+          line_text_builder.Append(StringView(text_content,
+                                              item_result.item->StartOffset(),
+                                              item_result.item->Length()));
+        }
         // Add the ruby-base results only if the ruby-base is wider than its
-        // ruby-text. Shorter ruby-bases don't participate in the justification
-        // for the whole line.
+        // ruby-text. Shorter ruby-bases produces OBJECT REPLACEMENT CHARACTER,
+        // and it is treated as a single Latin character.
         if (item_result.inline_size ==
             item_result.ruby_column->base_line.Width()) {
           const LineInfo& base_line = item_result.ruby_column->base_line;
@@ -62,6 +65,8 @@ String BuildJustificationText(const String& text_content,
                 base_line.EndOffsetForJustify(),
                 base_line.MayHaveTextCombineOrRubyItem()));
           }
+        } else {
+          line_text_builder.Append(kObjectReplacementCharacter);
         }
         continue;
       }
@@ -151,8 +156,7 @@ void JustifyResults(const String& text_content,
         // |spacing_before| is non-zero only before CJK characters.
         DCHECK_EQ(spacing_before, 0.0f);
       }
-    } else if (item_result.item->Type() == InlineItem::kOpenRubyColumn &&
-               item_result.ruby_column) {
+    } else if (item_result.IsRubyColumn()) {
       LineInfo& base_line = item_result.ruby_column->base_line;
       if (item_result.inline_size == base_line.Width()) {
         JustifyResults(text_content, line_text, line_text_start_offset, spacing,
@@ -161,6 +165,20 @@ void JustifyResults(const String& text_content,
                            base_line.ComputeWidth());
         item_result.inline_size =
             std::max(item_result.inline_size, base_line.Width());
+      } else {
+        [[maybe_unused]] float spacing_before = 0;
+        unsigned offset = item_result.StartOffset() - line_text_start_offset;
+        if (!item_result.ruby_column->is_continuation) {
+          // Skip k*IsolateCharacter.
+          offset += item_result.item->Length();
+        }
+        [[maybe_unused]] const float spacing_after =
+            spacing.ComputeSpacing(offset, spacing_before);
+        // ShapeResultSpacing doesn't ask for adding space to OBJECT
+        // REPLACEMENT CHARACTER, and asks for adding space to the next item
+        // instead.
+        DCHECK_EQ(spacing_before, 0.0f);
+        DCHECK_EQ(spacing_after, 0.0f);
       }
       if (i + 1 < results.size()) {
         // Adjust line_text_start_offset because line_text is intermittent due
@@ -171,9 +189,10 @@ void JustifyResults(const String& text_content,
           line_text_start_offset +=
               next_start_offset - base_line.EndTextOffset();
         } else {
-          // BuildJustificationText() didn't produce any text for this ruby
-          // column.
-          line_text_start_offset += next_start_offset - base_line.StartOffset();
+          // BuildJustificationText() produced only OBJECT REPLACEMENT
+          // CHARACTER.
+          line_text_start_offset +=
+              next_start_offset - base_line.StartOffset() - 1;
         }
       }
     }

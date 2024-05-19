@@ -200,6 +200,10 @@ extern bool GetShouldIssueProcessPrewarmingForLens();
 COMPONENT_EXPORT(LENS_FEATURES)
 extern bool IsLensOverlayEnabled();
 
+// Returns the finch configured help center URL for lens permission modal.
+COMPONENT_EXPORT(LENS_FEATURES)
+extern std::string GetLensOverlayHelpCenterURL();
+
 // Returns the minimum amount of physical memory required to enable the Lens
 // overlay feature.
 COMPONENT_EXPORT(LENS_FEATURES)
@@ -268,9 +272,18 @@ extern int GetLensOverlayHorizontalTextMargin();
 COMPONENT_EXPORT(LENS_FEATURES)
 extern bool IsLensOverlaySearchBubbleEnabled();
 
+// Returns whether to use segmentation mask polygons for object highlighting on
+// the Lens overlay.
+COMPONENT_EXPORT(LENS_FEATURES)
+extern bool IsLensOverlayPreciseHighlightEnabled();
+
 // Returns whether to render the Lens overlay shimmer.
 COMPONENT_EXPORT(LENS_FEATURES)
 extern bool IsLensOverlayShimmerEnabled();
+
+// Returns whether to render the sparkling effect on the Lens overlay shimmer.
+COMPONENT_EXPORT(LENS_FEATURES)
+extern bool IsLensOverlayShimmerSparklesEnabled();
 
 // Returns whether to allow dragging the Lens overlay selection box.
 COMPONENT_EXPORT(LENS_FEATURES)
@@ -297,6 +310,21 @@ extern int GetLensOverlayTapRegionHeight();
 // rather than drags.
 COMPONENT_EXPORT(LENS_FEATURES)
 extern int GetLensOverlayTapRegionWidth();
+
+// Returns whether to enable the image context menu extrypoint for Lens
+// Overlay.
+COMPONENT_EXPORT(LENS_FEATURES)
+extern bool UseLensOverlayForImageSearch();
+
+// Returns whether to enable the find-in-page entry point.
+COMPONENT_EXPORT(LENS_FEATURES)
+extern bool IsFindInPageEntryPointEnabled();
+
+// Returns whether or not to read the browser dark mode setting
+// for Lens Overlay. If false, it will fall back to light mode.
+COMPONENT_EXPORT(LENS_FEATURES)
+extern bool UseBrowserDarkModeSettingForLensOverlay();
+
 }  // namespace lens::features
 
 #endif  // COMPONENTS_LENS_LENS_FEATURES_H_

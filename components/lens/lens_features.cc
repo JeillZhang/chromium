@@ -48,6 +48,9 @@ BASE_FEATURE(kEnableContextMenuInLensSidePanel,
 BASE_FEATURE(kLensOverlay, "LensOverlay", base::FEATURE_DISABLED_BY_DEFAULT);
 const base::FeatureParam<int> kLensOverlayMinRamMb{&kLensOverlay, "min_ram_mb",
                                                    /*default=value=*/-1};
+const base::FeatureParam<std::string> kHelpCenterUrl{
+    &kLensOverlay, "help-center-url",
+    "https://support.google.com/chrome?p=search_from_page"};
 const base::FeatureParam<std::string> kResultsSearchUrl{
     &kLensOverlay, "results-search-url", "https://www.google.com/search"};
 const base::FeatureParam<int> kLensOverlayScreenshotRenderQuality{
@@ -68,8 +71,12 @@ const base::FeatureParam<int> kLensOverlayHorizontalTextMargin{
     &kLensOverlay, "text-horizontal-margin", 4};
 const base::FeatureParam<bool> kLensOverlaySearchBubble{&kLensOverlay,
                                                         "search-bubble", false};
+const base::FeatureParam<bool> kLensOverlayPreciseHighlight{
+    &kLensOverlay, "enable-precise-highlight", true};
 const base::FeatureParam<bool> kLensOverlayEnableShimmer{
     &kLensOverlay, "enable-shimmer", true};
+const base::FeatureParam<bool> kLensOverlayEnableShimmerSparkles{
+    &kLensOverlay, "enable-shimmer-sparkles", false};
 const base::FeatureParam<bool> kLensOverlaySelectionDraggingEnabled{
     &kLensOverlay, "enable-selection-dragging", false};
 const base::FeatureParam<std::string> kResultsSearchLoadingUrl{
@@ -80,6 +87,15 @@ const base::FeatureParam<std::string> kResultsSearchLoadingUrl{
 
 const base::FeatureParam<bool> kLensOverlayGoogleDseRequired{
     &kLensOverlay, "google-dse-required", true};
+
+const base::FeatureParam<bool> kUseLensOverlayForImageSearch{
+    &kLensOverlay, "use-for-image-search", true};
+
+const base::FeatureParam<bool> kIsFindInPageEntryPointEnabled{
+    &kLensOverlay, "find-in-page-entry-point", false};
+
+const base::FeatureParam<bool> kUseBrowserDarkModeSettingForLensOverlay{
+    &kLensOverlay, "use-browser-dark-mode-setting", true};
 
 constexpr base::FeatureParam<std::string> kLensOverlayEndpointUrl{
     &kLensOverlay, "endpoint-url",
@@ -231,6 +247,10 @@ bool IsLensOverlayEnabled() {
   return base::FeatureList::IsEnabled(kLensOverlay);
 }
 
+std::string GetLensOverlayHelpCenterURL() {
+  return kHelpCenterUrl.Get();
+}
+
 int GetLensOverlayMinRamMb() {
   return kLensOverlayMinRamMb.Get();
 }
@@ -291,8 +311,16 @@ bool IsLensOverlaySearchBubbleEnabled() {
   return kLensOverlaySearchBubble.Get();
 }
 
+bool IsLensOverlayPreciseHighlightEnabled() {
+  return kLensOverlayPreciseHighlight.Get();
+}
+
 bool IsLensOverlayShimmerEnabled() {
   return kLensOverlayEnableShimmer.Get();
+}
+
+bool IsLensOverlayShimmerSparklesEnabled() {
+  return kLensOverlayEnableShimmerSparkles.Get();
 }
 
 bool IsLensOverlaySelectionDraggingEnabled() {
@@ -313,6 +341,18 @@ int GetLensOverlayTapRegionHeight() {
 
 int GetLensOverlayTapRegionWidth() {
   return kLensOverlayTapRegionWidth.Get();
+}
+
+bool UseLensOverlayForImageSearch() {
+  return kUseLensOverlayForImageSearch.Get();
+}
+
+bool IsFindInPageEntryPointEnabled() {
+  return kIsFindInPageEntryPointEnabled.Get();
+}
+
+bool UseBrowserDarkModeSettingForLensOverlay() {
+  return kUseBrowserDarkModeSettingForLensOverlay.Get();
 }
 
 }  // namespace lens::features

@@ -1188,7 +1188,7 @@ const char* Resource::ResourceTypeToString(
     case ResourceType::kDictionary:
       return "Dictionary";
   }
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return InitiatorTypeNameToString(fetch_initiator_name);
 }
 
@@ -1214,7 +1214,7 @@ bool Resource::IsLoadEventBlockingResourceType() const {
     case ResourceType::kDictionary:
       return false;
   }
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return false;
 }
 
@@ -1237,8 +1237,8 @@ void Resource::UpdateMemoryCacheLastAccessedTime() {
   memory_cache_last_accessed_ = base::TimeTicks::Now();
 }
 
-scoped_refptr<BackgroundResponseProcessor>
-Resource::MaybeCreateBackgroundResponseProcessor() {
+std::unique_ptr<BackgroundResponseProcessorFactory>
+Resource::MaybeCreateBackgroundResponseProcessorFactory() {
   return nullptr;
 }
 

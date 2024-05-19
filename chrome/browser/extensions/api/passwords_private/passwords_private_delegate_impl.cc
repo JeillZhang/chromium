@@ -123,7 +123,7 @@ extensions::api::passwords_private::ExportProgressStatus ConvertStatus(
           kFailedWriteFailed;
   }
 
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return extensions::api::passwords_private::ExportProgressStatus::kNone;
 }
 
@@ -174,7 +174,7 @@ ConvertPlaintextReason(
     case extensions::api::passwords_private::PlaintextReason::kEdit:
       return password_manager::metrics_util::ACCESS_PASSWORD_EDITED;
     case extensions::api::passwords_private::PlaintextReason::kNone:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return password_manager::metrics_util::ACCESS_PASSWORD_VIEWED;
   }
 }
@@ -194,7 +194,7 @@ ConvertToPasswordFormStores(
     default:
       break;
   }
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return {};
 }
 
@@ -1272,6 +1272,10 @@ PasswordsPrivateDelegateImpl::CreatePasswordUiEntryFromCredentialUiEntry(
   entry.username = base::UTF16ToUTF8(credential.username);
   if (entry.is_passkey) {
     entry.display_name = base::UTF16ToUTF8(credential.user_display_name);
+  }
+  if (credential.creation_time.has_value()) {
+    entry.creation_time =
+        credential.creation_time->InMillisecondsSinceUnixEpoch();
   }
   entry.stored_in = extensions::StoreSetFromCredential(credential);
   if (!credential.federation_origin.opaque()) {

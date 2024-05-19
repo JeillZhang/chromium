@@ -13,6 +13,7 @@
 #include "base/files/file_path.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/stack_allocated.h"
+#include "base/numerics/checked_math.h"
 #include "base/types/expected.h"
 #include "services/webnn/public/mojom/webnn_error.mojom-forward.h"
 #include "services/webnn/public/mojom/webnn_graph.mojom.h"
@@ -165,19 +166,22 @@ class GraphBuilder {
                        std::string_view op_name,
                        uint64_t input_operand_id,
                        uint64_t output_operand_id,
-                       CoreML::Specification::MILSpec::Block& block);
+                       CoreML::Specification::MILSpec::Block& block,
+                       std::string_view operand_op_name);
   [[nodiscard]] base::expected<void, mojom::ErrorPtr> AddUnaryOperation(
       SupportedDataType supported_data_type,
       std::string_view op_name,
       uint64_t input_operand_id,
       uint64_t output_operand_id,
-      CoreML::Specification::MILSpec::Block& block);
+      CoreML::Specification::MILSpec::Block& block,
+      std::string_view operand_op_name);
   template <typename T>
   [[nodiscard]] base::expected<void, mojom::ErrorPtr> AddUnaryOperation(
       SupportedDataType supported_data_type,
       std::string_view op_name,
       const T& operation,
-      CoreML::Specification::MILSpec::Block& block);
+      CoreML::Specification::MILSpec::Block& block,
+      std::string_view operand_op_name);
   [[nodiscard]] base::expected<void, mojom::ErrorPtr>
   AddUnaryFloatsOperationWithEpsilon(
       std::string_view op_name,
@@ -185,14 +189,16 @@ class GraphBuilder {
       CoreML::Specification::MILSpec::DataType input_mil_data_type,
       uint64_t output_operand_id,
       float epsilon,
-      CoreML::Specification::MILSpec::Block& block);
+      CoreML::Specification::MILSpec::Block& block,
+      std::string_view operand_op_name);
   template <typename T>
   [[nodiscard]] base::expected<void, mojom::ErrorPtr>
   AddUnaryFloatsOperationWithEpsilon(
       std::string_view op_name,
       const T& operation,
       float epsilon,
-      CoreML::Specification::MILSpec::Block& block);
+      CoreML::Specification::MILSpec::Block& block,
+      std::string_view operand_op_name);
 
   // Serialization functions for members of the mojom::Operation union. Keep
   // these functions in the same order as in webnn_graph.mojom.
@@ -299,6 +305,9 @@ class GraphBuilder {
   [[nodiscard]] base::expected<void, mojom::ErrorPtr> AddOperationForSlice(
       const mojom::Slice& operation,
       CoreML::Specification::MILSpec::Block& block);
+  [[nodiscard]] base::expected<void, mojom::ErrorPtr> AddOperationForSoftmax(
+      const mojom::Softmax& operation,
+      CoreML::Specification::MILSpec::Block& block);
   [[nodiscard]] base::expected<void, mojom::ErrorPtr> AddOperationForTranspose(
       const mojom::Transpose& operation,
       CoreML::Specification::MILSpec::Block& block);
@@ -362,7 +371,8 @@ class GraphBuilder {
   SetupMlPackageDirStructure();
 
   std::string GetCoreMLNameFromOperand(uint64_t operand_id);
-  [[nodiscard]] uint64_t GenerateInternalOperandInfo(
+  [[nodiscard]] base::expected<uint64_t, mojom::ErrorPtr>
+  GenerateInternalOperandInfo(
       CoreML::Specification::MILSpec::DataType mil_data_type,
       base::span<const uint32_t> dimensions);
 
@@ -373,7 +383,7 @@ class GraphBuilder {
 
   // Used to generate unique names for internal operands generated for WebNN
   // operations that need to be decomposed into multiple CoreML operations.
-  uint64_t internal_operand_id_;
+  base::CheckedNumeric<uint64_t> internal_operand_id_;
 
   CoreML::Specification::Model ml_model_;
   raw_ptr<CoreML::Specification::MILSpec::Program> program_;

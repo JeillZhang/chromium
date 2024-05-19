@@ -165,6 +165,10 @@ void StartupUtils::RegisterOobeProfilePrefs(PrefRegistrySimple* registry) {
                                   false);
   }
 
+  if (features::IsOobePersonalizedOnboardingEnabled()) {
+    registry->RegisterListPref(prefs::kOobeCategoriesSelected);
+  }
+
   if (features::IsOobeDisplaySizeEnabled()) {
     registry->RegisterDoublePref(prefs::kOobeDisplaySizeFactorDeferred, 1.0);
   }
@@ -317,7 +321,7 @@ void StartupUtils::SetInitialLocale(const std::string& locale) {
   if (l10n_util::IsValidLocaleSyntax(locale))
     SaveStringPreferenceForced(::prefs::kInitialLocale, locale);
   else
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
 }
 
 // static

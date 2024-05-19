@@ -235,7 +235,7 @@ void CreditCardAccessManager::LogMetricsAndFillFormForServerUnmaskFlows(
     case UnmaskAuthFlowType::kCvc:
     case UnmaskAuthFlowType::kCvcFallbackFromFido:
     case UnmaskAuthFlowType::kNone:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       break;
   }
   std::move(on_credit_card_fetched_callback_)
@@ -541,7 +541,7 @@ void CreditCardAccessManager::Authenticate(
       autofill_metrics::LogCardUnmaskTypeDecision(
           autofill_metrics::CardUnmaskTypeDecisionMetric::kFidoOnly);
 #if BUILDFLAG(IS_IOS)
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
 #else
       // If |is_authentication_in_progress_| is false, it means the process has
       // been cancelled via the verification pending dialog. Do not run
@@ -634,7 +634,8 @@ void CreditCardAccessManager::Authenticate(
               card_.get(), *selected_challenge_option_,
               weak_ptr_factory_.GetWeakPtr(),
               virtual_card_unmask_response_details_.context_token,
-              payments::GetBillingCustomerId(personal_data_manager_));
+              payments::GetBillingCustomerId(
+                  &personal_data_manager_->payments_data_manager()));
       break;
     }
     case UnmaskAuthFlowType::kThreeDomainSecure:
@@ -659,7 +660,7 @@ void CreditCardAccessManager::Authenticate(
     }
     case UnmaskAuthFlowType::kNone:
       // Run into other unexpected types.
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       Reset();
       break;
   }
@@ -905,7 +906,7 @@ void CreditCardAccessManager::OnOtpAuthenticationComplete(
         break;
       case OtpAuthenticationResponse::Result::kSuccess:
       case OtpAuthenticationResponse::Result::kUnknown:
-        NOTREACHED();
+        NOTREACHED_IN_MIGRATION();
         return;
     }
 
@@ -1154,10 +1155,15 @@ void CreditCardAccessManager::FetchMaskedServerCard() {
         AutofillProgressDialogType::kServerCardUnmaskProgressDialog,
         /*cancel_callback=*/base::BindOnce(
             &CreditCardRiskBasedAuthenticator::OnUnmaskCancelled,
-            client_->GetRiskBasedAuthenticator()->AsWeakPtr()));
+            client_->GetPaymentsAutofillClient()
+                ->GetRiskBasedAuthenticator()
+                ->AsWeakPtr()));
 
-    client_->GetRiskBasedAuthenticator()->Authenticate(
-        *card_, weak_ptr_factory_.GetWeakPtr());
+    // TODO(crbug.com/1375748): Reduce the number of calls to
+    // `client_->GetPaymentsAutofillClient()`.
+    client_->GetPaymentsAutofillClient()
+        ->GetRiskBasedAuthenticator()
+        ->Authenticate(*card_, weak_ptr_factory_.GetWeakPtr());
     // Risk-based authentication is handled in CreditCardRiskBasedAuthenticator.
     // Further delegation will be handled in
     // CreditCardAccessManager::OnRiskBasedAuthenticationResponseReceived.
@@ -1213,8 +1219,9 @@ void CreditCardAccessManager::FetchVirtualCard() {
       AutofillProgressDialogType::kVirtualCardUnmaskProgressDialog,
       base::BindOnce(&CreditCardAccessManager::OnVirtualCardUnmaskCancelled,
                      weak_ptr_factory_.GetWeakPtr()));
-  client_->GetRiskBasedAuthenticator()->Authenticate(
-      *card_, weak_ptr_factory_.GetWeakPtr());
+  client_->GetPaymentsAutofillClient()
+      ->GetRiskBasedAuthenticator()
+      ->Authenticate(*card_, weak_ptr_factory_.GetWeakPtr());
 }
 
 void CreditCardAccessManager::FetchLocalOrFullServerCard() {
@@ -1330,7 +1337,7 @@ void CreditCardAccessManager::OnRiskBasedAuthenticationResponseReceived(
       break;
     case CreditCardRiskBasedAuthenticator::RiskBasedAuthenticationResponse::
         Result::kUnknown:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       Reset();
       break;
   }
@@ -1509,7 +1516,7 @@ void CreditCardAccessManager::OnUserAcceptedAuthenticationSelectionDialog(
   // here as a safety.
   if (!selected_challenge_option_ ||
       virtual_card_unmask_response_details_.context_token.empty()) {
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
     std::move(on_credit_card_fetched_callback_)
         .Run(CreditCardFetchResult::kTransientError, nullptr);
     client_->GetPaymentsAutofillClient()->ShowAutofillErrorDialog(
@@ -1536,7 +1543,7 @@ void CreditCardAccessManager::OnUserAcceptedAuthenticationSelectionDialog(
           UnmaskAuthFlowType::kThreeDomainSecureConsentAlreadyGiven;
       break;
     case CardUnmaskChallengeOptionType::kUnknownType:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       break;
   }
   Authenticate(selected_authentication_type);
@@ -1570,7 +1577,7 @@ void CreditCardAccessManager::OnVirtualCardUnmaskCancelled() {
     case UnmaskAuthFlowType::kFido:
     case UnmaskAuthFlowType::kCvcThenFido:
     case UnmaskAuthFlowType::kCvcFallbackFromFido:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       ABSL_FALLTHROUGH_INTENDED;
     case UnmaskAuthFlowType::kThreeDomainSecure:
       // TODO(crbug.com/40240970): Add a flow type for the kThreeDomainSecure

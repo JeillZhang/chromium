@@ -91,10 +91,6 @@ MerchantPromoCodeManager* AutofillClient::GetMerchantPromoCodeManager() {
   return nullptr;
 }
 
-CreditCardRiskBasedAuthenticator* AutofillClient::GetRiskBasedAuthenticator() {
-  return nullptr;
-}
-
 payments::PaymentsAutofillClient* AutofillClient::GetPaymentsAutofillClient() {
   return nullptr;
 }
@@ -255,6 +251,13 @@ void AutofillClient::set_test_addresses(
 
 base::span<const AutofillProfile> AutofillClient::GetTestAddresses() const {
   return {};
+}
+
+AutofillClient::PasswordFormType AutofillClient::ClassifyAsPasswordForm(
+    AutofillManager& manager,
+    FormGlobalId form_id,
+    FieldGlobalId field_id) const {
+  return PasswordFormType::kNoPasswordForm;
 }
 
 }  // namespace autofill

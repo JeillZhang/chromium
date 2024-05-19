@@ -48,7 +48,7 @@ class ContentCache {
   // if the bytes don't exist.
   virtual void ReadBytes(
       const OpenedCloudFile& file,
-      net::IOBuffer* buffer,
+      scoped_refptr<net::IOBuffer> buffer,
       int64_t offset,
       int length,
       ProvidedFileSystemInterface::ReadChunkReceivedCallback callback) = 0;
@@ -61,14 +61,14 @@ class ContentCache {
   //   - No other writer must be writing to the file at the moment
   // If any conditions are not satisfied, return false.
   virtual void WriteBytes(const OpenedCloudFile& file,
-                          net::IOBuffer* buffer,
+                          scoped_refptr<net::IOBuffer> buffer,
                           int64_t offset,
                           int length,
                           FileErrorCallback callback) = 0;
 
   // Reads and writes are performed in "chunks". An attempt is made to re-use
   // open file descriptors to avoid opening/closing them on every chunk request.
-  // This requires any N requests of `StartReadBytes` or `StartWriteBytes` to be
+  // This requires any N requests of `ReadBytes` or `WriteBytes` to be
   // followed by a `CloseFile` to ensure any open file descriptors are properly
   // cleaned up.
   virtual void CloseFile(const OpenedCloudFile& file) = 0;
@@ -81,6 +81,10 @@ class ContentCache {
   // Returns the file paths of the cached files on disk, in their most recently
   // used order.
   virtual std::vector<base::FilePath> GetCachedFilePaths() = 0;
+
+  // Called with the changes in the file system. This potentially indicates
+  // cached files are deleted or changes.
+  virtual void Notify(ProvidedFileSystemObserver::Changes& changes) = 0;
 
   // Evict the item with path `file_path` from the cache, if it exists. The item
   // is inaccessible from this point onwards despite it remaining on disk and
@@ -96,6 +100,19 @@ class ContentCache {
   // removal is already in progress, the callback will be queued to be called
   // with the current stats of the in progress removal.
   virtual void RemoveItems(RemovedItemStatsCallback callback) = 0;
+
+  // A struct of size information pertaining to this cache instance.
+  struct SizeInfo {
+    int64_t max_bytes_on_disk = 0;
+    int64_t total_bytes_on_disk = 0;
+  };
+
+  // Helper methods to get and set size information.
+  virtual const SizeInfo GetSize() const = 0;
+  virtual void SetMaxBytesOnDisk(int64_t max_bytes_on_disk) = 0;
+
+  // Returns a `base::WeakPtr`.
+  virtual base::WeakPtr<ContentCache> GetWeakPtr() = 0;
 };
 
 }  // namespace ash::file_system_provider

@@ -115,9 +115,6 @@ BLINK_COMMON_EXPORT BASE_DECLARE_FEATURE(kAudioWorkletThreadRealtimePeriodMac);
 BLINK_COMMON_EXPORT BASE_DECLARE_FEATURE(kAudioWorkletThreadPool);
 
 BLINK_COMMON_EXPORT BASE_DECLARE_FEATURE(
-    kAutofillDontSetAutofillStateAfterJavaScriptChanges);
-
-BLINK_COMMON_EXPORT BASE_DECLARE_FEATURE(
     kAutofillIncludeFormElementsInShadowDom);
 
 BLINK_COMMON_EXPORT BASE_DECLARE_FEATURE(
@@ -171,7 +168,7 @@ BLINK_COMMON_EXPORT BASE_DECLARE_FEATURE(kBackForwardCacheWithKeepaliveRequest);
 
 BLINK_COMMON_EXPORT BASE_DECLARE_FEATURE(kBackgroundResourceFetch);
 BLINK_COMMON_EXPORT extern const base::FeatureParam<bool>
-    kBackgroundResponseProcessor;
+    kBackgroundScriptResponseProcessor;
 
 BLINK_COMMON_EXPORT BASE_DECLARE_FEATURE(kBakedGamutMapping);
 
@@ -386,6 +383,9 @@ extern const base::FeatureParam<base::TimeDelta> kHttpRttThreshold;
 BLINK_COMMON_EXPORT
 extern const base::FeatureParam<double> kCostReductionOfMultiplexedRequests;
 
+// Enables the use of CrabbyAvif for decoding AVIF images.
+BLINK_COMMON_EXPORT BASE_DECLARE_FEATURE(kCrabbyAvif);
+
 // Enables input IPC to directly target the renderer's compositor thread without
 // hopping through the IO thread first.
 BLINK_COMMON_EXPORT BASE_DECLARE_FEATURE(kDirectCompositorThreadIpc);
@@ -487,11 +487,6 @@ BLINK_COMMON_EXPORT BASE_DECLARE_FEATURE(
 BLINK_COMMON_EXPORT BASE_DECLARE_FEATURE(kFilteringScrollPrediction);
 BLINK_COMMON_EXPORT extern const base::FeatureParam<std::string>
     kFilteringScrollPredictionFilterParam;
-
-// (b/283408783): When enabled, first gesture scrolls on web pages that have
-// touch handlers registered will go through the normal queueing process if
-// while gesture scrolls that hit a touch handlers will be queued instantly.
-BLINK_COMMON_EXPORT BASE_DECLARE_FEATURE(kFixGestureScrollQueuingBug);
 
 // FLEDGE ad serving runtime flag/JS API.
 BLINK_COMMON_EXPORT BASE_DECLARE_FEATURE(kFledge);
@@ -860,6 +855,10 @@ BLINK_COMMON_EXPORT extern const base::FeatureParam<bool>
 BLINK_COMMON_EXPORT extern const base::FeatureParam<double>
     kLCPPFontURLPredictorThresholdInMbps;
 
+// A list of hosts to be excluded from the LCPPFontURLPredictor feature.
+BLINK_COMMON_EXPORT extern const base::FeatureParam<std::string>
+    kLCPPFontURLPredictorExcludedHosts;
+
 BLINK_COMMON_EXPORT BASE_DECLARE_FEATURE(kLCPPLazyLoadImagePreload);
 
 // The type of preloading for LCP images which are loaded lazily.
@@ -1125,6 +1124,13 @@ BLINK_COMMON_EXPORT BASE_DECLARE_FEATURE(
 BLINK_COMMON_EXPORT BASE_DECLARE_FEATURE(
     kPostMessageThirdPartyToThirdPartyDifferentBucketSameOriginBlockedIfStorageIsPartitioned);
 
+// If enabled, instantiate Pages and Frames beforehand to speed up SVGImage.
+BLINK_COMMON_EXPORT BASE_DECLARE_FEATURE(kPreInitializePageAndFrameForSVGImage);
+
+// The max count of Pages and Frames that will be prepared.
+BLINK_COMMON_EXPORT extern const base::FeatureParam<int>
+    kMaxCountOfPreInitializePageAndFrameForSVGImage;
+
 // If enabled, inline scripts will be stream compiled using a background HTML
 // scanner.
 BLINK_COMMON_EXPORT BASE_DECLARE_FEATURE(kPrecompileInlineScripts);
@@ -1184,6 +1190,11 @@ BLINK_COMMON_EXPORT extern const char
 // status a feature parameter.
 BLINK_COMMON_EXPORT BASE_DECLARE_FEATURE(
     kPrerender2EarlyDocumentLifecycleUpdate);
+
+// Prerender2 support for No-Vary-Search header. Enables prerender matching
+// at navigation time using non-exact URL matching based on the prerender
+// No-Vary-Search header.
+BLINK_COMMON_EXPORT BASE_DECLARE_FEATURE(kPrerender2NoVarySearch);
 
 // Enables to run prerendering for new tabs (e.g., target="_blank").
 // See https://crbug.com/1350676.
@@ -1262,11 +1273,6 @@ BLINK_COMMON_EXPORT BASE_DECLARE_FEATURE(kConsumeCompileHints);
 // Cache information about which functions are compiled and use it for eager-
 // compiling those functions when the same script is loaded again.
 BLINK_COMMON_EXPORT BASE_DECLARE_FEATURE(kLocalCompileHints);
-
-// When enabled, gesture scroll updates that hit a JS touch handlers
-// will be queued normally on CC, enabling coalescing and consistent
-// input handling.
-BLINK_COMMON_EXPORT BASE_DECLARE_FEATURE(kQueueBlockingGestureScrolls);
 
 // Whether Sec-CH-UA headers on subresource fetches that contain an empty
 // string should be quoted (`""`) as they are for navigation fetches. See
@@ -1525,8 +1531,6 @@ BLINK_COMMON_EXPORT BASE_DECLARE_FEATURE(kStylusRichGestures);
 // Apply touch adjustment for stylus pointer events. This feature allows
 // enabling functions like writing into a nearby input element.
 BLINK_COMMON_EXPORT BASE_DECLARE_FEATURE(kStylusPointerAdjustment);
-
-BLINK_COMMON_EXPORT BASE_DECLARE_FEATURE(kSystemColorChooser);
 
 // If enabled, regex match on script source to detect third party technologies.
 BLINK_COMMON_EXPORT BASE_DECLARE_FEATURE(kThirdPartyScriptDetection);

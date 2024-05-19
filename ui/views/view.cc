@@ -2741,10 +2741,8 @@ void View::OnBlur() {}
 void View::Focus() {
   OnFocus();
 
-#if !BUILDFLAG(IS_CHROMEOS_LACROS)
   // TODO(crbug.com/40285437) - Get this working on Lacros as well.
   UpdateTooltipForFocus();
-#endif
 
   // TODO(pbos): Investigate if parts of this can run unconditionally.
   if (!suppress_default_focus_handling_) {
@@ -3801,7 +3799,8 @@ void View::AdvanceFocusIfNecessary() {
   // unfocusable. If the view is still focusable or is not focused, we can
   // return early avoiding further unnecessary checks. Focusability check is
   // performed first as it tends to be faster.
-  if (GetViewAccessibility().IsAccessibilityFocusable() || !HasFocus()) {
+  if (GetViewAccessibility().ViewAccessibility::IsAccessibilityFocusable() ||
+      !HasFocus()) {
     return;
   }
 

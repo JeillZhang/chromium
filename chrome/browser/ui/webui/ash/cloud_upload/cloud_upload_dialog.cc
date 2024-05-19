@@ -354,7 +354,7 @@ void OnWaitingForAndroidUnsupportedPathFallbackChoiceReceived(
     std::unique_ptr<ash::cloud_upload::CloudOpenMetrics> cloud_open_metrics,
     std::optional<const std::string> choice) {
   if (!IsOpenInOfficeTask(task)) {
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
     return;
   }
 
@@ -470,13 +470,12 @@ bool CloudOpenTask::MaybeRunFixupFlow() {
     // TODO(cassycc): Use page specifically for fix up.
     return InitAndShowSetupOrMoveDialog(SetupOrMoveDialogPage::kOneDriveSetup);
   }
-  OpenOrMoveFiles();
-  return true;
+  return OpenOrMoveFiles();
 }
 
 // Opens office files if they are in the correct cloud already. Otherwise moves
 // the files before opening.
-void CloudOpenTask::OpenOrMoveFiles() {
+bool CloudOpenTask::OpenOrMoveFiles() {
   // Record the source volume type of the opened file.
   OfficeFilesSourceVolume source_volume;
   if (UrlIsOnODFS(file_urls_.front())) {
@@ -502,16 +501,22 @@ void CloudOpenTask::OpenOrMoveFiles() {
     cloud_open_metrics_->LogTransferRequired(
         OfficeFilesTransferRequired::kNotRequired);
     OpenAlreadyHostedDriveUrls();
-  } else if (cloud_provider_ == CloudProvider::kOneDrive &&
-             source_volume == OfficeFilesSourceVolume::kMicrosoftOneDrive) {
+    return true;
+  }
+
+  if (cloud_provider_ == CloudProvider::kOneDrive &&
+      source_volume == OfficeFilesSourceVolume::kMicrosoftOneDrive) {
     // The files are on OneDrive already, selected from ODFS.
     transfer_required_ = OfficeFilesTransferRequired::kNotRequired;
     cloud_open_metrics_->LogTransferRequired(
         OfficeFilesTransferRequired::kNotRequired);
     OpenODFSUrls(OfficeTaskResult::kOpened);
-  } else if (cloud_provider_ == CloudProvider::kOneDrive &&
-             source_volume ==
-                 OfficeFilesSourceVolume::kAndroidOneDriveDocumentsProvider) {
+    return true;
+  }
+
+  if (cloud_provider_ == CloudProvider::kOneDrive &&
+      source_volume ==
+          OfficeFilesSourceVolume::kAndroidOneDriveDocumentsProvider) {
     // The files are on OneDrive already, selected from Android OneDrive.
     transfer_required_ = OfficeFilesTransferRequired::kNotRequired;
     cloud_open_metrics_->LogTransferRequired(
@@ -522,7 +527,9 @@ void CloudOpenTask::OpenOrMoveFiles() {
         GetODFS(profile_),
         base::BindOnce(&CloudOpenTask::CheckEmailAndOpenAndroidOneDriveURLs,
                        this));
-  } else {
+    return true;
+  }
+
     // The files need to be moved.
     auto operation =
         GetUploadType(profile_, file_urls_.front()) == UploadType::kCopy
@@ -530,8 +537,7 @@ void CloudOpenTask::OpenOrMoveFiles() {
             : OfficeFilesTransferRequired::kMove;
     transfer_required_ = operation;
     cloud_open_metrics_->LogTransferRequired(operation);
-    ConfirmMoveOrStartUpload();
-  }
+    return ConfirmMoveOrStartUpload();
 }
 
 void CloudOpenTask::OpenAlreadyHostedDriveUrls() {
@@ -656,21 +662,21 @@ bool CloudOpenTask::ShouldShowConfirmationDialog() {
     return force_show_confirmation_dialog ||
            !fm_tasks::GetAlwaysMoveOfficeFilesToOneDrive(profile_);
   }
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return true;
 }
 
-void CloudOpenTask::ConfirmMoveOrStartUpload() {
+bool CloudOpenTask::ConfirmMoveOrStartUpload() {
   bool show_confirmation_dialog = ShouldShowConfirmationDialog();
   if (show_confirmation_dialog) {
     SetupOrMoveDialogPage dialog_page =
         cloud_provider_ == CloudProvider::kGoogleDrive
             ? SetupOrMoveDialogPage::kMoveConfirmationGoogleDrive
             : SetupOrMoveDialogPage::kMoveConfirmationOneDrive;
-    InitAndShowSetupOrMoveDialog(dialog_page);
-  } else {
-    StartUpload();
+    return InitAndShowSetupOrMoveDialog(dialog_page);
   }
+  StartUpload();
+  return true;
 }
 
 bool ShouldFixUpOffice(Profile* profile, const CloudProvider cloud_provider) {
@@ -1489,7 +1495,7 @@ void CloudUploadDialog::GetDialogSize(gfx::Size* size) const {
     size->set_width(kDialogWidthForConnectToOneDrive);
     size->set_height(kDialogHeightForConnectToOneDrive);
   } else {
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
   }
 }
 

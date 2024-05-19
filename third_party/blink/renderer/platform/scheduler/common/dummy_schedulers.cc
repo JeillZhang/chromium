@@ -55,7 +55,6 @@ class DummyWidgetScheduler final : public WidgetScheduler {
       const WebInputEventAttribution& web_input_event_attribution) override {}
   void DidHandleInputEventOnMainThread(const WebInputEvent& web_input_event,
                                        WebInputEventResult result) override {}
-  void DidAnimateForInputOnCompositorThread() override {}
   void DidRunBeginMainFrame() override {}
   void SetHidden(bool hidden) override {}
 };
@@ -296,11 +295,6 @@ class DummyWebMainThreadScheduler : public WebThreadScheduler,
     return base::SingleThreadTaskRunner::GetCurrentDefault();
   }
 
-  scoped_refptr<base::SingleThreadTaskRunner> CompositorTaskRunner() override {
-    DCHECK(WTF::IsMainThread());
-    return base::SingleThreadTaskRunner::GetCurrentDefault();
-  }
-
   scoped_refptr<base::SingleThreadTaskRunner> V8TaskRunner() override {
     DCHECK(WTF::IsMainThread());
     return base::SingleThreadTaskRunner::GetCurrentDefault();
@@ -337,6 +331,10 @@ class DummyWebMainThreadScheduler : public WebThreadScheduler,
   std::unique_ptr<RendererPauseHandle> PauseScheduler() override {
     return nullptr;
   }
+
+  void ExecuteAfterCurrentTaskForTesting(
+      base::OnceClosure on_completion_task,
+      ExecuteAfterCurrentTaskRestricted) override {}
 
   v8::Isolate* Isolate() override {
     return isolate_;

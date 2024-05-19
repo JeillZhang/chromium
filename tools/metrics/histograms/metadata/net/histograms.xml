@@ -874,6 +874,17 @@ chromium-metrics-reviews@google.com.
   </summary>
 </histogram>
 
+<histogram name="Net.DNS.DnsConfig.DnsClientCapability"
+    enum="DNS.DnsClientCapability" expires_after="2024-08-13">
+  <owner>horo@chromium.org</owner>
+  <owner>src/net/OWNERS</owner>
+  <summary>
+    Whether DNS clients can and are allowed to perform secure and insecure DNS
+    transactions. Logged when HostResolverManager receives a host resolution
+    request using HostResolverSource::ANY.
+  </summary>
+</histogram>
+
 <histogram name="Net.DNS.DnsConfig.Nsswitch.Compatible" enum="BooleanValid"
     expires_after="2024-09-22">
   <owner>horo@chromium.org</owner>
@@ -3711,7 +3722,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Net.QuicSession.PacketLossRate" units="1/10th Percent"
-    expires_after="2024-09-06">
+    expires_after="2024-11-10">
   <owner>dschinazi@chromium.org</owner>
   <owner>src/net/quic/OWNERS</owner>
   <summary>
@@ -3760,7 +3771,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Net.QuicSession.PathValidationSuccess" enum="BooleanSuccess"
-    expires_after="2024-08-25">
+    expires_after="2024-11-10">
   <owner>renjietang@chromium.org</owner>
   <owner>src/net/quic/OWNERS</owner>
   <summary>
@@ -5072,7 +5083,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Net.SpdySession.AlpsDecoderStatus.Bypassed"
-    enum="AlpsDecoderError" expires_after="2024-09-11">
+    enum="AlpsDecoderError" expires_after="2024-11-10">
   <owner>arichiv@chromium.org</owner>
   <owner>src/net/OWNERS</owner>
   <summary>

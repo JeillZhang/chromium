@@ -95,6 +95,7 @@ const base::Feature* const kFeaturesExposedToJava[] = {
     &autofill::features::kAutofillEnableCvcStorageAndFilling,
     &autofill::features::kAutofillEnableSaveCardLoadingAndConfirmation,
     &autofill::features::kAutofillEnableSyncingOfPixBankAccounts,
+    &autofill::features::kAutofillEnableVcnEnrollLoadingAndConfirmation,
     &autofill::features::kAutofillUpdateChromeSettingsLinkToGPayWeb,
     &blink::features::kBackForwardTransitions,
     &blink::features::kForceWebContentsDarkMode,
@@ -126,6 +127,7 @@ const base::Feature* const kFeaturesExposedToJava[] = {
     &features::kPrefetchBrowserInitiatedTriggers,
     &features::kPushMessagingDisallowSenderIDs,
     &features::kPwaUpdateDialogForIcon,
+    &features::kSafetyHub,
     &features::kQuietNotificationPrompts,
     &features::kWebNfc,
     &feature_engagement::kIPHTabSwitcherButtonFeature,
@@ -189,8 +191,10 @@ const base::Feature* const kFeaturesExposedToJava[] = {
     &kCCTIntentFeatureOverrides,
     &kCCTMinimized,
     &kCCTMinimizedEnabledByDefault,
+    &kCCTNavigationalPrefetch,
     &kCCTNestedSecurityIcon,
     &kCCTPageInsightsHub,
+    &kCCTPageInsightsHubPeek,
     &kCCTPageInsightsHubBetterScroll,
     &kCCTGoogleBottomBar,
     &kCCTPrewarmTab,
@@ -210,9 +214,11 @@ const base::Feature* const kFeaturesExposedToJava[] = {
     &kContextualSearchDisableOnlineDetection,
     &kContextualSearchSuppressShortView,
     &kDelayTempStripRemoval,
+    &kDeviceAuthenticatorAndroidx,
     &kDragDropIntoOmnibox,
     &kDragDropTabTearing,
     &kDrawEdgeToEdge,
+    &kDrawKeyNativeEdgeToEdge,
     &kDrawNativeEdgeToEdge,
     &kDrawWebEdgeToEdge,
     &kDynamicTopChrome,
@@ -229,6 +235,7 @@ const base::Feature* const kFeaturesExposedToJava[] = {
     &kLensOnQuickActionSearchWidget,
     &kLogoPolish,
     &kMagicStackAndroid,
+    &kMayLaunchUrlUsesSeparateStoragePartition,
     &kMultiInstanceApplicationStatusCleanup,
     &kNavBarColorMatchesTabBackground,
     &kNewTabSearchEngineUrlAndroid,
@@ -286,11 +293,11 @@ const base::Feature* const kFeaturesExposedToJava[] = {
     &kTestDefaultDisabled,
     &kTestDefaultEnabled,
     &kTotallyEdgeToEdge,
-    &kSafetyHub,
     &kStartSurfaceAndroid,
     &kStartSurfaceReturnTime,
     &kAccountReauthenticationRecentTimeWindow,
     &kSurfacePolish,
+    &kSurfacePolishForToolbarKillSwitch,
     &kUmaBackgroundSessions,
     &kUseLibunwindstackNativeUnwinderAndroid,
     &kVerticalAutomotiveBackButtonToolbar,
@@ -298,7 +305,6 @@ const base::Feature* const kFeaturesExposedToJava[] = {
     &kWebOtpCrossDeviceSimpleString,
     &kWebApkAllowIconUpdate,
     &features::kCookieDeprecationFacilitatedTesting,
-    &features::kDnsOverHttps,
     &notifications::features::kUseChimeAndroidSdk,
     &paint_preview::kPaintPreviewDemo,
     &language::kCctAutoTranslate,
@@ -308,7 +314,6 @@ const base::Feature* const kFeaturesExposedToJava[] = {
     &optimization_guide::features::kPushNotifications,
     &page_info::kPageInfoAboutThisSiteMoreLangs,
     &password_manager::features::kBiometricTouchToFill,
-    &password_manager::features::kPasswordGenerationBottomSheet,
     &password_manager::features::kSharedPasswordNotificationUI,
     &password_manager::features::
         kUnifiedPasswordManagerLocalPasswordsAndroidNoMigration,
@@ -316,9 +321,11 @@ const base::Feature* const kFeaturesExposedToJava[] = {
         kUnifiedPasswordManagerLocalPasswordsMigrationWarning,
     &permissions::features::kPermissionsPromptSurvey,
     &permissions::features::kPermissionDedicatedCpssSettingAndroid,
+    &plus_addresses::features::kPlusAddressesEnabled,
+    &privacy_sandbox::kFingerprintingProtectionSetting,
+    &privacy_sandbox::kIpProtectionV1,
     &privacy_sandbox::kIpProtectionUx,
     &privacy_sandbox::kPrivacySandboxAdsNoticeCCT,
-    &plus_addresses::features::kPlusAddressesEnabled,
     &privacy_sandbox::kPrivacySandboxFirstPartySetsUI,
     &privacy_sandbox::kPrivacySandboxRelatedWebsiteSetsUi,
     &privacy_sandbox::kPrivacySandboxSettings4,
@@ -337,7 +344,6 @@ const base::Feature* const kFeaturesExposedToJava[] = {
     &safe_browsing::kSafeBrowsingNewGmsApiForBrowseUrlDatabaseCheck,
     &safe_browsing::kSafeBrowsingNewGmsApiForSubresourceFilterCheck,
     &segmentation_platform::features::kContextualPageActions,
-    &segmentation_platform::features::kContextualPageActionPriceTracking,
     &segmentation_platform::features::kContextualPageActionReaderMode,
     &segmentation_platform::features::kContextualPageActionShareModel,
     &segmentation_platform::features::
@@ -351,6 +357,7 @@ const base::Feature* const kFeaturesExposedToJava[] = {
     &switches::kPersistentSearchEngineChoiceImport,
     &switches::kSearchEnginePromoDialogRewrite,
     &switches::kSeedAccountsRevamp,
+    &syncer::kEnablePasswordsAccountStorageForNonSyncingUsers,
     &syncer::kReplaceSyncPromosWithSignInPromos,
     &syncer::kSyncAndroidLimitNTPPromoImpressions,
     &syncer::kSyncEnableContactInfoDataTypeInTransportMode,
@@ -528,13 +535,21 @@ BASE_FEATURE(kCCTMinimizedEnabledByDefault,
              "CCTMinimizedEnabledByDefault",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
+BASE_FEATURE(kCCTNavigationalPrefetch,
+             "CCTNavigationalPrefetch",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
 BASE_FEATURE(kCCTNestedSecurityIcon,
              "CCTNestedSecurityIcon",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
 BASE_FEATURE(kCCTPageInsightsHub,
              "CCTPageInsightsHub",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             base::FEATURE_ENABLED_BY_DEFAULT);
+
+BASE_FEATURE(kCCTPageInsightsHubPeek,
+             "CCTPageInsightsHubPeek",
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 BASE_FEATURE(kCCTPageInsightsHubBetterScroll,
              "CCTPageInsightsHubBetterScroll",
@@ -616,6 +631,12 @@ BASE_FEATURE(kDelayTempStripRemoval,
              "DelayTempStripRemoval",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
+// The feature is a no-op, it replaces android.hardware.biometrics library on
+// Android with androidx.biometric.
+BASE_FEATURE(kDeviceAuthenticatorAndroidx,
+             "DeviceAuthenticatorAndroidx",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
 BASE_FEATURE(kDownloadAutoResumptionThrottling,
              "DownloadAutoResumptionThrottling",
              base::FEATURE_ENABLED_BY_DEFAULT);
@@ -630,6 +651,10 @@ BASE_FEATURE(kDragDropTabTearing,
 
 BASE_FEATURE(kDrawEdgeToEdge,
              "DrawEdgeToEdge",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+BASE_FEATURE(kDrawKeyNativeEdgeToEdge,
+             "DrawKeyNativeEdgeToEdge",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
 BASE_FEATURE(kDrawNativeEdgeToEdge,
@@ -681,6 +706,13 @@ BASE_FEATURE(kLogoPolish, "LogoPolish", base::FEATURE_DISABLED_BY_DEFAULT);
 
 BASE_FEATURE(kMagicStackAndroid,
              "MagicStackAndroid",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+// Enables an experimental feature which forces mayLaunchUrl to use a different
+// storage partition. This may reduce performance. This should not be enabled by
+// default.
+BASE_FEATURE(kMayLaunchUrlUsesSeparateStoragePartition,
+             "MayLaunchUrlUsesSeparateStoragePartition",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
 BASE_FEATURE(kMultiInstanceApplicationStatusCleanup,
@@ -909,8 +941,6 @@ BASE_FEATURE(kTestDefaultEnabled,
              "TestDefaultEnabled",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
-BASE_FEATURE(kSafetyHub, "SafetyHub", base::FEATURE_DISABLED_BY_DEFAULT);
-
 // This feature updates the triggering logic for the default search engine
 // choice promo. See crbug.com/1471643 for more details.
 BASE_FEATURE(kSearchEnginesPromoV3,
@@ -940,6 +970,10 @@ BASE_FEATURE(kAccountReauthenticationRecentTimeWindow,
              base::FEATURE_ENABLED_BY_DEFAULT);
 
 BASE_FEATURE(kSurfacePolish, "SurfacePolish", base::FEATURE_ENABLED_BY_DEFAULT);
+
+BASE_FEATURE(kSurfacePolishForToolbarKillSwitch,
+             "SurfacePolishForToolbarKillSwitch",
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 BASE_FEATURE(kTabResumptionModuleAndroid,
              "TabResumptionModuleAndroid",

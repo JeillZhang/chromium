@@ -28,7 +28,9 @@
 #include "chrome/browser/ui/layout_constants.h"
 #include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/browser/ui/views/desktop_capture/desktop_media_source_view.h"
+#include "chrome/browser/ui/views/desktop_capture/screen_capture_permission_checker.h"
 #include "chrome/browser/ui/views/desktop_capture/share_this_tab_dialog_views.h"
+#include "chrome/browser/ui/views/extensions/security_dialog_tracker.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/grit/branded_strings.h"
 #include "chrome/grit/generated_resources.h"
@@ -59,7 +61,6 @@
 #include "ui/views/controls/tabbed_pane/tabbed_pane.h"
 #include "ui/views/layout/box_layout.h"
 #include "ui/views/style/typography.h"
-#include "ui/views/view_class_properties.h"
 #include "ui/views/widget/widget.h"
 
 #if defined(USE_AURA)
@@ -297,9 +298,6 @@ BASE_FEATURE(kShareThisTabDialog,
              "ShareThisTabDialog",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
-DEFINE_CLASS_ELEMENT_IDENTIFIER_VALUE(DesktopMediaPickerDialogView,
-                                      kDesktopMediaPickerDialogViewIdentifier);
-
 bool DesktopMediaPickerDialogView::AudioSupported(DesktopMediaList::Type type) {
   switch (type) {
     case DesktopMediaList::Type::kScreen:
@@ -361,8 +359,11 @@ DesktopMediaPickerDialogView::DesktopMediaPickerDialogView(
   DCHECK(!params.force_audio_checkboxes_to_default_checked ||
          !params.exclude_system_audio);
   RecordAction(base::UserMetricsAction("GetDisplayMedia.ShowDialog"));
-  SetProperty(views::kElementIdentifierKey,
-              kDesktopMediaPickerDialogViewIdentifier);
+
+  screen_capture_permission_checker_ =
+      ScreenCapturePermissionChecker::MaybeCreate(
+          base::BindRepeating(&DesktopMediaPickerDialogView::OnPermissionUpdate,
+                              weak_factory_.GetWeakPtr()));
   SetModalType(params.modality);
   SetButtonLabel(ui::DIALOG_BUTTON_OK,
                  l10n_util::GetStringUTF16(IDS_DESKTOP_MEDIA_PICKER_SHARE));
@@ -610,6 +611,8 @@ DesktopMediaPickerDialogView::DesktopMediaPickerDialogView(
     widget->Show();
   }
 
+  extensions::SecurityDialogTracker::GetInstance()->AddSecurityDialog(widget);
+
 #if BUILDFLAG(IS_MAC)
   // On Mac, even modals are shown using separate native windows.
   bool is_separate_native_window = true;
@@ -637,8 +640,9 @@ DesktopMediaPickerDialogView::DesktopMediaPickerDialogView(
 #endif
   }
 
-  for (const auto& category : categories_)
+  for (auto& category : categories_) {
     category.controller->StartUpdating(dialog_window_id);
+  }
 
   GetSelectedController()->FocusView();
 }
@@ -778,7 +782,7 @@ std::unique_ptr<views::View> DesktopMediaPickerDialogView::SetupPane(
                                              category.audio_offered)
           : nullptr;
   auto pane = std::make_unique<DesktopMediaPaneView>(
-      std::move(content_view), std::move(share_audio_view));
+      category.type, std::move(content_view), std::move(share_audio_view));
   if (audio_requested_ && audio_offered) {
     pane->SetAudioSharingApprovedByUser(audio_checked);
   }
@@ -1053,6 +1057,21 @@ void DesktopMediaPickerDialogView::OnCanReselectChanged(
     return;
 
   reselect_button_->SetEnabled(controller->can_reselect());
+}
+
+void DesktopMediaPickerDialogView::OnPermissionUpdate(bool has_permission) {
+  CHECK(screen_capture_permission_checker_);
+
+  if (has_permission) {
+    // Avoid needless polling.
+    // (A user who revokes permission while the media-picker is visible,
+    // likely knows what they are doing, and can recover by themselves.)
+    screen_capture_permission_checker_->Stop();
+  }
+
+  for (auto& category : categories_) {
+    category.pane->OnScreenCapturePermissionUpdate(has_permission);
+  }
 }
 
 BEGIN_METADATA(DesktopMediaPickerDialogView)

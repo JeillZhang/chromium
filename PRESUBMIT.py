@@ -80,7 +80,11 @@ _NON_BASE_DEPENDENT_PATHS = (
 # (best effort).
 _TEST_CODE_EXCLUDED_PATHS = (
     r'.*/(fake_|test_|mock_).+%s' % _IMPLEMENTATION_EXTENSIONS,
-    r'.+_test_(base|support|util)%s' % _IMPLEMENTATION_EXTENSIONS,
+    # Test support files, like:
+    # foo_test_support.cc
+    # bar_test_util_linux.cc (suffix)
+    # baz_test_base.cc
+    r'.+_test_(base|support|util)(_[a-z]+)?%s' % _IMPLEMENTATION_EXTENSIONS,
     # Test suite files, like:
     # foo_browsertest.cc
     # bar_unittest_mac.cc (suffix)
@@ -1858,7 +1862,7 @@ _BANNED_CPP_FUNCTIONS : Sequence[BanRule] = (
       explanation = (
         'Do not directly use ContentSettingsType::TRACKING_PROTECTION to check '
         'for tracking protection exceptions. Instead rely on the '
-        'privacy_sandbox::TrackingProtectionSettings API.'
+        'privacy_sandbox::TrackingProtectionSettings API.',
       ),
       treat_as_error = False,
       excluded_paths = (
@@ -3544,8 +3548,9 @@ def CheckForAnonymousVariables(input_api, output_api):
 
 def CheckUniquePtrOnUpload(input_api, output_api):
     # Returns whether |template_str| is of the form <T, U...> for some types T
-    # and U. Assumes that |template_str| is already in the form <...>.
-    def HasMoreThanOneArg(template_str):
+    # and U, or is invalid due to mismatched angle bracket pairs. Assumes that
+    # |template_str| is already in the form <...>.
+    def HasMoreThanOneArgOrInvalid(template_str):
         # Level of <...> nesting.
         nesting = 0
         for c in template_str:
@@ -3555,6 +3560,9 @@ def CheckUniquePtrOnUpload(input_api, output_api):
                 nesting -= 1
             elif c == ',' and nesting == 1:
                 return True
+        if nesting != 0:
+          # Invalid.
+          return True
         return False
 
     file_inclusion_pattern = [r'.+%s' % _IMPLEMENTATION_EXTENSIONS]
@@ -3611,7 +3619,7 @@ def CheckUniquePtrOnUpload(input_api, output_api):
             # bar = std::unique_ptr<T, U>(foo);
             local_path = f.LocalPath()
             return_construct_result = return_construct_pattern.search(line)
-            if return_construct_result and not HasMoreThanOneArg(
+            if return_construct_result and not HasMoreThanOneArgOrInvalid(
                     return_construct_result.group('template_arg')):
                 problems_constructor.append(
                     '%s:%d\n    %s' % (local_path, line_number, line.strip()))

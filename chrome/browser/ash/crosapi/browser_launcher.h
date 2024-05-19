@@ -19,7 +19,6 @@
 #include "base/time/time.h"
 #include "base/types/expected.h"
 #include "chrome/browser/ash/crosapi/crosapi_id.h"
-#include "chrome/common/channel_info.h"
 #include "chromeos/ash/components/standalone_browser/lacros_selection.h"
 #include "components/nacl/common/buildflags.h"
 #include "components/policy/core/common/values_util.h"
@@ -69,9 +68,6 @@ class BrowserLauncher {
 
     // Sets true if Lacros uses resource file sharing.
     bool enable_resource_file_sharing = false;
-
-    // Sets true if Lacros forks Zygotes at login screen.
-    bool enable_fork_zygotes_at_login_screen = false;
 
     // Any additional args to start lacros with.
     std::vector<std::string> lacros_additional_args;

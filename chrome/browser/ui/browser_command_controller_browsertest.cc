@@ -54,6 +54,10 @@
 #include "ui/aura/window.h"
 #endif
 
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_WIN)
+#include "chrome/common/chrome_features.h"
+#endif  // BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_WIN)
+
 namespace chrome {
 
 class BrowserCommandControllerBrowserTest : public InProcessBrowserTest {
@@ -79,9 +83,7 @@ class BrowserCommandControllerBrowserTest : public InProcessBrowserTest {
 class BrowserCommandControllerBrowserTestRefreshOnly
     : public BrowserCommandControllerBrowserTest {
  public:
-  BrowserCommandControllerBrowserTestRefreshOnly() {
-    scoped_feature_list_.InitWithFeatures({features::kChromeRefresh2023}, {});
-  }
+  BrowserCommandControllerBrowserTestRefreshOnly() = default;
   BrowserCommandControllerBrowserTestRefreshOnly(
       const BrowserCommandControllerBrowserTestRefreshOnly&) = delete;
   BrowserCommandControllerBrowserTestRefreshOnly& operator=(
@@ -113,9 +115,6 @@ class BrowserCommandControllerBrowserTestRefreshOnly
     net::NetworkChangeNotifier::CreateMockIfNeeded();
     browser()->command_controller()->TabStateChanged();
   }
-
- private:
-  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 // Verify that showing a constrained window disables find.
@@ -434,5 +433,29 @@ IN_PROC_BROWSER_TEST_F(BrowserCommandControllerBrowserTestRefreshOnly,
   LoadAndWaitForLanguage("/french_page.html");
   EXPECT_TRUE(chrome::ExecuteCommand(browser(), IDC_SHOW_TRANSLATE));
 }
+
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_WIN)
+class CreateShortcutBrowserCommandControllerNavTest
+    : public BrowserCommandControllerBrowserTest {
+ public:
+  CreateShortcutBrowserCommandControllerNavTest() = default;
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_{
+      features::kShortcutsNotApps};
+};
+
+IN_PROC_BROWSER_TEST_F(CreateShortcutBrowserCommandControllerNavTest,
+                       ErrorUrlDisabled) {
+  ASSERT_TRUE(embedded_test_server()->Start());
+  // This returns a 404 server error, and cannot be unit-tested, since a valid
+  // request is not obtained for the navigation entry being committed in
+  // unit-tests.
+  GURL error_url(embedded_test_server()->GetURL("example.com", "/abcdef/"));
+  EXPECT_TRUE(ui_test_utils::NavigateToURL(browser(), error_url));
+  EXPECT_FALSE(chrome::IsCommandEnabled(browser(), IDC_CREATE_SHORTCUT));
+}
+
+#endif  // BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_WIN)
 
 }  // namespace chrome

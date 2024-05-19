@@ -22,7 +22,6 @@
 #include "base/test/scoped_command_line.h"
 #include "base/test/task_environment.h"
 #include "base/test/test_future.h"
-#include "chrome/browser/ash/app_mode/arc/arc_kiosk_app_manager.h"
 #include "chrome/browser/ash/app_mode/fake_kiosk_app_launcher.h"
 #include "chrome/browser/ash/app_mode/kiosk_app_launch_error.h"
 #include "chrome/browser/ash/app_mode/kiosk_app_launcher.h"
@@ -30,6 +29,7 @@
 #include "chrome/browser/ash/app_mode/kiosk_chrome_app_manager.h"
 #include "chrome/browser/ash/app_mode/kiosk_controller.h"
 #include "chrome/browser/ash/app_mode/kiosk_controller_impl.h"
+#include "chrome/browser/ash/app_mode/kiosk_profile_load_failed_observer.h"
 #include "chrome/browser/ash/app_mode/web_app/web_kiosk_app_manager.h"
 #include "chrome/browser/ash/crosapi/crosapi_ash.h"
 #include "chrome/browser/ash/crosapi/crosapi_manager.h"
@@ -161,7 +161,7 @@ class FakeAcceleratorController
 using NetworkUIState = NetworkUiController::NetworkUIState;
 
 class MockKioskProfileLoadFailedObserver
-    : public KioskLaunchController::KioskProfileLoadFailedObserver {
+    : public KioskProfileLoadFailedObserver {
  public:
   MockKioskProfileLoadFailedObserver() = default;
 

@@ -1646,7 +1646,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="PasswordManager.ImportResultsStatus2"
-    enum="PasswordManagerImportResultsStatus" expires_after="2024-09-01">
+    enum="PasswordManagerImportResultsStatus" expires_after="2024-11-10">
   <owner>eliaskh@chromium.org</owner>
   <owner>natiahlyi@google.com</owner>
   <summary>
@@ -2209,7 +2209,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="PasswordManager.PasswordMigrationWarning.EmptySheetTrigger2"
-    enum="PasswordMigrationWarningTriggers" expires_after="2024-09-01">
+    enum="PasswordMigrationWarningTriggers" expires_after="2024-11-10">
   <owner>izuzic@google.com</owner>
   <owner>ioanap@chromium.org</owner>
   <summary>
@@ -3222,7 +3222,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="PasswordManager.RequirementsSpecFetcher.Result"
-    enum="PasswordRequirementsFetcherResult" expires_after="2024-08-15">
+    enum="PasswordRequirementsFetcherResult" expires_after="2024-11-10">
   <owner>kazinova@google.com</owner>
   <owner>battre@chromium.org</owner>
   <summary>
@@ -3535,6 +3535,16 @@ chromium-metrics-reviews@google.com.
   <summary>
     The type of event that the Password Manager used for detecting a password
     form submission. Recorded for each successful password form submission.
+  </summary>
+</histogram>
+
+<histogram name="PasswordManager.SuggestionPopupTriggerSource"
+    enum="AutofillSuggestionTriggerSource" expires_after="2024-11-15">
+  <owner>kazinova@google.com</owner>
+  <owner>vasilii@chromium.org</owner>
+  <summary>
+    Records the reason that triggered password suggestions popup, excluding
+    manual fallback suggestions. Recorded at the time the popup is shown.
   </summary>
 </histogram>
 

@@ -484,15 +484,7 @@ crbug.com/40935289 [ fuchsia web-engine-shell ] Pixel_Video_MP4_Rounded_Corner [
 crbug.com/40935289 [ fuchsia no-clang-coverage web-engine-shell ] Pixel_Video_VP9 [ Failure ]
 
 # Failures on Windows with SkiaGraphite
-crbug.com/329235191 [ amd-0x7340 graphite-enabled release-x64 win10 ] Pixel_VideoStreamFrom2DCanvas [ Failure ]
-crbug.com/329235191 [ graphite-enabled qualcomm-0x41333430 win11 ] Pixel_VideoStreamFrom2DCanvas [ Failure ]
-crbug.com/329235191 [ graphite-enabled qualcomm-0x41333430 win11 ] Pixel_VideoStreamFromWebGLCanvas [ Failure ]
-crbug.com/329235191 [ graphite-enabled qualcomm-0x41333430 win11 ] Pixel_VideoStreamFromWebGLCanvas_OneCopy [ Failure ]
 crbug.com/329235191 [ graphite-enabled nvidia-0x2184 win10 ] Pixel_WebGL_PremultipliedAlpha_False [ Failure ]
-crbug.com/329235191 [ graphite-enabled qualcomm-0x41333430 target-cpu-64 win11 ] Pixel_WebGL_PremultipliedAlpha_False [ Failure ]
-
-# Failures on Mac Asan with Graphite
-crbug.com/338071687 [ mac angle-metal asan graphite-enabled intel-0x3e9b passthrough ] Pixel_Canvas2DBlitText [ Failure ]
 
 # Tab change tests failing to find foreground tabs
 crbug.com/338574386 [ mac angle-metal apple-angle-metal-renderer:-apple-m1 passthrough ] Pixel_Canvas2DTabSwitch [ Failure ]

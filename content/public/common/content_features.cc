@@ -89,18 +89,6 @@ BASE_FEATURE(kBackForwardCacheMemoryControls,
 #endif
 );
 
-// When enabled, attempts to navigate an iframe by an initiator that isn't
-// same-origin to the iframe's parent are blocked. Exceptions are: (i) same-
-// document navigations when the frame is already about:srcdoc, and (ii) when
-// an about:srcdoc frame reloads itself.
-// This feature is enabled by default, and is intended to be used as a
-// kill-switch if the new behaviour causes problems.
-// TODO(https://crbug.com/328279696): remove this when the blocking feature is
-// fully launched.
-BASE_FEATURE(kBlockCrossOriginInitiatedAboutSrcdocNavigations,
-             "BlockCrossOriginInitiatedAboutSrcdocNavigations",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
 // When this feature is enabled, private network requests initiated from
 // non-secure contexts in the `public` address space  are blocked.
 //
@@ -1067,6 +1055,11 @@ BASE_FEATURE(kWebAssemblyLazyCompilation,
              "WebAssemblyLazyCompilation",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
+// Enable WebAssembly Memory64.
+BASE_FEATURE(kWebAssemblyMemory64,
+             "WebAssemblyMemory64",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
 // Enable WebAssembly tiering (Liftoff -> TurboFan).
 BASE_FEATURE(kWebAssemblyTiering,
              "WebAssemblyTiering",
@@ -1221,7 +1214,7 @@ BASE_FEATURE(kWebViewSuppressTapDuringFling,
 // NV12 is present (as determined by the relevant command-line flags).
 BASE_FEATURE(kGateNV12GMBVideoFramesOnHWSupport,
              "GateNV12GMBVideoFramesOnHWSupport",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             base::FEATURE_ENABLED_BY_DEFAULT);
 #endif
 
 #if BUILDFLAG(IS_MAC)

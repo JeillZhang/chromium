@@ -558,7 +558,7 @@ KURL ManifestParser::ParseURL(const JSONObject* object,
       return resolved;
   }
 
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return KURL();
 }
 
@@ -689,6 +689,9 @@ KURL ManifestParser::ParseScope(const JSONObject* object,
         "of scope URL.");
     return KURL(default_value.BaseAsString());
   }
+
+  scope.RemoveFragmentIdentifier();
+  scope.SetQuery(String());
 
   DCHECK(scope.IsValid());
   DCHECK(SecurityOrigin::AreSameOrigin(scope, document_url_));
@@ -2322,7 +2325,8 @@ std::optional<RGBA32> ManifestParser::ParseDarkColorOverride(
       continue;
     }
 
-    auto tokens = CSSTokenizer(media_query.value()).TokenizeToEOF();
+    CSSTokenizer tokenizer(media_query.value());
+    auto tokens = tokenizer.TokenizeToEOF();
     CSSParserTokenRange range(tokens);
     while (!range.AtEnd()) {
       if (range.Peek().GetType() == kIdentToken &&

@@ -1786,8 +1786,9 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="SafeBrowsing.LocalBinaryUploadRequest.DlpResult"
-    enum="BooleanSuccess" expires_after="2023-10-20">
-  <owner>rogerta@chromium.org</owner>
+    enum="BooleanSuccess" expires_after="2024-11-20">
+  <owner>domfc@chromium.org</owner>
+  <owner>nancylanxiao@google.com</owner>
   <owner>chrome-counter-abuse-alerts@google.com</owner>
   <summary>
     This records whether local DLP scanning succeeded or not. It is logged once
@@ -1797,8 +1798,9 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="SafeBrowsing.LocalBinaryUploadRequest.Duration" units="ms"
-    expires_after="2023-10-20">
-  <owner>rogerta@chromium.org</owner>
+    expires_after="2024-11-20">
+  <owner>domfc@chromium.org</owner>
+  <owner>nancylanxiao@google.com</owner>
   <owner>chrome-counter-abuse-alerts@google.com</owner>
   <summary>
     This records the duration of each binary upload request. It is logged once
@@ -1808,8 +1810,9 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="SafeBrowsing.LocalBinaryUploadRequest.Result"
-    enum="BooleanSuccess" expires_after="2023-10-20">
-  <owner>rogerta@chromium.org</owner>
+    enum="BooleanSuccess" expires_after="2024-11-20">
+  <owner>domfc@chromium.org</owner>
+  <owner>nancylanxiao@google.com</owner>
   <owner>chrome-counter-abuse-alerts@google.com</owner>
   <summary>
     This records whether DLP scanning succeeded or not. It is logged once for
@@ -2611,7 +2614,7 @@ chromium-metrics-reviews@google.com.
 
 <histogram name="SafeBrowsing.TailoredSecurity.ShouldRetryOutcome"
     enum="SafeBrowsingTailoredSecurityShouldRetryOutcome"
-    expires_after="2024-09-06">
+    expires_after="2024-11-10">
   <owner>jacastro@chromium.org</owner>
   <owner>chrome-counter-abuse-alerts@google.com</owner>
   <summary>
@@ -2779,16 +2782,6 @@ chromium-metrics-reviews@google.com.
   </summary>
 </histogram>
 
-<histogram name="SafeBrowsing.V4Database.DirectoryCreationResult"
-    enum="PlatformFileError" expires_after="2024-09-01">
-  <owner>drubery@chromium.org</owner>
-  <owner>chrome-counter-abuse-alerts@google.com</owner>
-  <summary>
-    Records the result of trying to create the &quot;Safe Browsing&quot;
-    directory for storing the V4 database. Logged once on startup.
-  </summary>
-</histogram>
-
 <histogram name="SafeBrowsing.V4Database.Size" units="KB"
     expires_after="2024-11-03">
   <owner>vakh@chromium.org</owner>
@@ -2839,6 +2832,16 @@ chromium-metrics-reviews@google.com.
     logged after every call for an update to the database, except for the first
     one. Warning: this histogram was expired from 2024-03-04 to 2024-04-17; data
     may be missing.
+  </summary>
+</histogram>
+
+<histogram name="SafeBrowsing.V4DatabaseInitializationTime" units="ms"
+    expires_after="2024-08-14">
+  <owner>drubery@chromium.org</owner>
+  <owner>chrome-counter-abuse-alerts@google.com</owner>
+  <summary>
+    How long it took to create the V4 database. Logged on each startup, when the
+    database is created.
   </summary>
 </histogram>
 
@@ -2950,7 +2953,7 @@ Safe Browsing lookup mechanism is working as expected -->
 
 <histogram
     name="SafeBrowsing.V4LocalDatabaseManager.TimeSinceLastUpdateResponse"
-    units="ms" expires_after="2024-09-10">
+    units="ms" expires_after="2024-11-10">
   <owner>ajuma@chromium.org</owner>
   <owner>chrome-counter-abuse-alerts@google.com</owner>
   <summary>
@@ -3147,6 +3150,17 @@ and applied correctly. -->
   </summary>
 </histogram>
 
+<histogram name="SafeBrowsing.V4Store.ReadyOnStartup" enum="BooleanReady"
+    expires_after="2024-08-14">
+  <owner>drubery@chromium.org</owner>
+  <owner>chrome-counter-abuse-alerts@google.com</owner>
+  <summary>
+    Logs whether an individual store has valid data immediately after being
+    constructed. This is logged once for each V4 store on each startup. Failures
+    here can indicate an inability to read data from disk.
+  </summary>
+</histogram>
+
 <histogram name="SafeBrowsing.V4StoreRead.Result"
     enum="SafeBrowsingV4StoreReadResult" expires_after="2024-11-03">
   <owner>xinghuilu@chromium.org</owner>
@@ -3273,8 +3287,9 @@ failing to fetch the updates which puts users' security at risk. -->
 
 <histogram
     name="SafeBrowsing.{CloudOrLocal}DeepScan.{Connector}.BytesPerSeconds"
-    units="bytes" expires_after="2023-10-20">
-  <owner>rogerta@chromium.org</owner>
+    units="bytes" expires_after="2024-11-03">
+  <owner>domfc@chromium.org</owner>
+  <owner>nancylanxiao@google.com</owner>
   <owner>webprotect-team@google.com</owner>
   <summary>
     This records the bytes/sec from the size of a {CloudOrLocal} {Connector}
@@ -3290,7 +3305,7 @@ failing to fetch the updates which puts users' security at risk. -->
     units="ms" expires_after="2024-11-03">
   <owner>domfc@chromium.org</owner>
   <owner>drubery@chromium.org</owner>
-  <owner>rogerta@chromium.org</owner>
+  <owner>nancylanxiao@google.com</owner>
   <owner>sseckler@chromium.org</owner>
   <owner>webprotect-team@google.com</owner>
   <summary>

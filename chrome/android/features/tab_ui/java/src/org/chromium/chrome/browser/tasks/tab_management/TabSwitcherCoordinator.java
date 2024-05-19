@@ -48,10 +48,7 @@ import org.chromium.chrome.browser.tabmodel.TabCreatorManager;
 import org.chromium.chrome.browser.tabmodel.TabList;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.tabmodel.TabModelUtils;
-import org.chromium.chrome.browser.tasks.pseudotab.PseudoTab;
-import org.chromium.chrome.browser.tasks.tab_groups.TabGroupModelFilter;
 import org.chromium.chrome.browser.tasks.tab_management.TabListCoordinator.TabListMode;
-import org.chromium.chrome.browser.tasks.tab_management.suggestions.TabSuggestionsOrchestrator;
 import org.chromium.chrome.browser.ui.messages.snackbar.SnackbarManager;
 import org.chromium.chrome.tab_ui.R;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController;
@@ -96,7 +93,6 @@ public class TabSwitcherCoordinator
     private final ModalDialogManager mModalDialogManager;
     private final TabSwitcherMessageManager mMessageManager;
     private final TabListEditorManager mTabListEditorManager;
-    private TabSuggestionsOrchestrator mTabSuggestionsOrchestrator;
     private ViewGroup mContainer;
     private TabCreatorManager mTabCreatorManager;
     private boolean mIsInitialized;
@@ -201,22 +197,6 @@ public class TabSwitcherCoordinator
                             tabContentManager,
                             currentTabModelFilterSupplier);
 
-            PseudoTab.TitleProvider titleProvider =
-                    (context, pseudoTab) -> {
-                        TabGroupModelFilter filter =
-                                (TabGroupModelFilter)
-                                        tabModelSelector
-                                                .getTabModelFilterProvider()
-                                                .getCurrentTabModelFilterSupplier()
-                                                .get();
-                        Tab tab = TabModelUtils.getTabById(filter.getTabModel(), pseudoTab.getId());
-                        assert tab != null;
-                        if (!filter.isTabInTabGroup(tab)) return tab.getTitle();
-
-                        return TabGroupTitleEditor.getDefaultTitle(
-                                context, filter.getRelatedTabCountForRootId(tab.getRootId()));
-                    };
-
             long startTimeMs = SystemClock.uptimeMillis();
 
             int emptyImageResId =
@@ -239,7 +219,6 @@ public class TabSwitcherCoordinator
                             currentTabModelFilterSupplier,
                             () -> tabModelSelector.getModel(false),
                             mMultiThumbnailCardProvider,
-                            titleProvider,
                             true,
                             mMediator,
                             null,
@@ -298,6 +277,7 @@ public class TabSwitcherCoordinator
                             snackbarManager,
                             modalDialogManager,
                             mTabListCoordinator,
+                            /* visibilitySupplier= */ () -> true,
                             tabListEditorControllerSupplier,
                             mMediator,
                             mode);
@@ -534,11 +514,11 @@ public class TabSwitcherCoordinator
     // ResetHandler implementation.
     @Override
     public boolean resetWithTabList(@Nullable TabList tabList, boolean quickMode) {
-        return resetWithTabs(PseudoTab.getListOfPseudoTab(tabList), quickMode);
+        return resetWithTabs(TabModelUtils.convertTabListToListOfTabs(tabList), quickMode);
     }
 
     @Override
-    public boolean resetWithTabs(@Nullable List<PseudoTab> tabs, boolean quickMode) {
+    public boolean resetWithTabs(@Nullable List<Tab> tabs, boolean quickMode) {
         mMessageManager.beforeReset();
         boolean showQuickly = mTabListCoordinator.resetWithListOfTabs(tabs, quickMode);
         mMessageManager.afterReset(tabs == null ? 0 : tabs.size());

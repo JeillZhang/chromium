@@ -102,7 +102,7 @@ class SignaledValue {
 
   ~SignaledValue() {
     if (IsValid() && !event->IsSignaled()) {
-      NOTREACHED() << "never signaled";
+      NOTREACHED_IN_MIGRATION() << "never signaled";
       event->Signal();
     }
   }
@@ -544,7 +544,8 @@ webrtc::VideoCodecType ProfileToWebRtcVideoCodecType(
       return webrtc::kVideoCodecH265;
 #endif
     default:
-      NOTREACHED() << "Invalid profile " << GetProfileName(profile);
+      NOTREACHED_IN_MIGRATION()
+          << "Invalid profile " << GetProfileName(profile);
       return webrtc::kVideoCodecGeneric;
   }
 }
@@ -1787,12 +1788,12 @@ void RTCVideoEncoder::Impl::EncodeOneFrame(FrameChunk frame_chunk) {
               i420_buffer->DataU(), i420_buffer->StrideU(),
               i420_buffer->DataV(), i420_buffer->StrideV(),
               i420_buffer->width(), i420_buffer->height(),
-              frame->GetWritableVisibleData(media::VideoFrame::kYPlane),
-              frame->stride(media::VideoFrame::kYPlane),
-              frame->GetWritableVisibleData(media::VideoFrame::kUPlane),
-              frame->stride(media::VideoFrame::kUPlane),
-              frame->GetWritableVisibleData(media::VideoFrame::kVPlane),
-              frame->stride(media::VideoFrame::kVPlane),
+              frame->GetWritableVisibleData(media::VideoFrame::Plane::kY),
+              frame->stride(media::VideoFrame::Plane::kY),
+              frame->GetWritableVisibleData(media::VideoFrame::Plane::kU),
+              frame->stride(media::VideoFrame::Plane::kU),
+              frame->GetWritableVisibleData(media::VideoFrame::Plane::kV),
+              frame->stride(media::VideoFrame::Plane::kV),
               frame->visible_rect().width(), frame->visible_rect().height(),
               libyuv::kFilterBox)) {
         NotifyErrorStatus({media::EncoderStatus::Codes::kFormatConversionError,
@@ -2501,7 +2502,8 @@ void RTCVideoEncoder::PreInitializeEncoder(
         encoder_info_.fps_allocation[i] = {255 / 4, 255 / 2, 255};
         break;
       default:
-        NOTREACHED() << "Unexpected temporal layers: " << num_temporal_layers;
+        NOTREACHED_IN_MIGRATION()
+            << "Unexpected temporal layers: " << num_temporal_layers;
     }
   }
   auto preferred_pixel_format = pixel_format == media::PIXEL_FORMAT_I420

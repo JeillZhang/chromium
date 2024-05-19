@@ -81,6 +81,7 @@
 #if BUILDFLAG(ENABLE_WIDEVINE)
 #include "base/path_service.h"
 #include "chrome/common/chrome_paths.h"
+#include "chrome/common/media/cdm_registration.h"
 #endif
 
 namespace crosapi {
@@ -284,9 +285,6 @@ void DoLacrosBackgroundWorkPreLaunch(
     clear_shared_resource_file = true;
   }
 
-  params.enable_fork_zygotes_at_login_screen = base::FeatureList::IsEnabled(
-      browser_util::kLacrosForkZygotesAtLoginScreen);
-
   // Clear shared resource file cache if it's initial lacros launch after ash
   // reboot. If not, rename shared resource file cache to temporal name on
   // Lacros launch.
@@ -440,18 +438,22 @@ void SetUpForNacl(base::CommandLine& command_line) {
 
 #if BUILDFLAG(ENABLE_WIDEVINE)
 void SetUpForWidevine(base::CommandLine& command_line) {
-  // These directories are needed to load the Widevine CDM before zygote fork.
-  base::FilePath bundled_dir;
-  if (base::PathService::Get(chrome::DIR_BUNDLED_WIDEVINE_CDM, &bundled_dir)) {
-    command_line.AppendSwitchASCII(switches::kCrosWidevineBundledDir,
-                                   bundled_dir.AsUTF8Unsafe());
-  }
+  if (base::FeatureList::IsEnabled(media::kLacrosUseAshWidevine)) {
+    // These directories are needed to load the Widevine CDM before zygote fork.
+    base::FilePath bundled_dir;
+    if (base::PathService::Get(chrome::DIR_BUNDLED_WIDEVINE_CDM,
+                               &bundled_dir)) {
+      command_line.AppendSwitchASCII(switches::kCrosWidevineBundledDir,
+                                     bundled_dir.AsUTF8Unsafe());
+    }
 
-  base::FilePath component_updated_dir;
-  if (base::PathService::Get(chrome::DIR_COMPONENT_UPDATED_WIDEVINE_CDM,
-                             &component_updated_dir)) {
-    command_line.AppendSwitchASCII(switches::kCrosWidevineComponentUpdatedDir,
-                                   component_updated_dir.AsUTF8Unsafe());
+    base::FilePath component_updated_hint_file;
+    if (base::PathService::Get(chrome::FILE_COMPONENT_WIDEVINE_CDM_HINT,
+                               &component_updated_hint_file)) {
+      command_line.AppendSwitchASCII(
+          switches::kCrosWidevineComponentUpdatedHintFile,
+          component_updated_hint_file.AsUTF8Unsafe());
+    }
   }
 }
 #endif  // BUILDFLAG(ENABLE_WIDEVINE)
@@ -600,11 +602,6 @@ void SetUpFeatures(const LaunchParamsFromBackground& params,
     // ash behavior(clear or move cached shared resource file at lacros launch).
     parameters.command_line.AppendSwitch(switches::kEnableResourcesFileSharing);
   }
-
-  if (params.enable_fork_zygotes_at_login_screen) {
-    parameters.command_line.AppendSwitch(
-        switches::kEnableLacrosForkZygotesAtLoginScreen);
-  }
 }
 
 }  // namespace
@@ -657,9 +654,6 @@ std::vector<base::FilePath> BrowserLauncher::GetPreloadFiles(
   // These files are the Lacros equivalent of Ash's files preloaded at boot by
   // ureadahead.
   static constexpr const char* kPreloadFiles[] = {
-#if BUILDFLAG(ENABLE_WIDEVINE)
-      "WidevineCdm/manifest.json",
-#endif
       "chrome",
       "chrome_100_percent.pak",
       "chrome_200_percent.pak",
@@ -683,21 +677,13 @@ std::vector<base::FilePath> BrowserLauncher::GetPreloadFiles(
   paths.push_back(
       lacros_dir.Append(base::StringPrintf("locales/%s.pak", locale.c_str())));
 
-  // Preload Widevine for the right architecture.
+  // Preload Widevine CDM. Not needed for hardware secure CDMs as they are done
+  // by the device firmware.
 #if BUILDFLAG(ENABLE_WIDEVINE)
-#if defined(ARCH_CPU_ARM_FAMILY)
-#if defined(ARCH_CPU_ARM64)
-  base::FilePath libwidevine_path = lacros_dir.Append(
-      "WidevineCdm/_platform_specific/cros_arm64/libwidevinecdm.so");
-#else
-  base::FilePath libwidevine_path = lacros_dir.Append(
-      "WidevineCdm/_platform_specific/cros_arm/libwidevinecdm.so");
-#endif  // defined(ARCH_CPU_ARM64)
-#else
-  base::FilePath libwidevine_path = lacros_dir.Append(
-      "WidevineCdm/_platform_specific/cros_x64/libwidevinecdm.so");
-#endif  // defined(ARCH_CPU_ARM_FAMILY)
-  paths.push_back(libwidevine_path);
+  // Locate the Widevine CDM used by Ash. Lacros is switching to use it.
+  for (const auto& cdm : GetSoftwareSecureWidevine()) {
+    paths.push_back(cdm.path);
+  }
 #endif  // BUILDFLAG(ENABLE_WIDEVINE)
 
   return paths;

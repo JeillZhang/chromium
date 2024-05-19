@@ -260,7 +260,6 @@ constexpr const char* const kCopiedOnSigninAccessibilityPrefs[]{
     prefs::kAccessibilityMonoAudioEnabled,
     prefs::kAccessibilityReducedAnimationsEnabled,
     prefs::kAccessibilityMouseKeysEnabled,
-    prefs::kAccessibilityMouseKeysDisableInTextFields,
     prefs::kAccessibilityMouseKeysAcceleration,
     prefs::kAccessibilityMouseKeysMaxSpeed,
     prefs::kAccessibilityMouseKeysDominantHand,
@@ -547,7 +546,7 @@ std::string PrefKeyForSwitchAccessCommand(SwitchAccessCommand command) {
     case SwitchAccessCommand::kPrevious:
       return prefs::kAccessibilitySwitchAccessPreviousDeviceKeyCodes;
     case SwitchAccessCommand::kNone:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return "";
   }
 }
@@ -561,7 +560,7 @@ std::string UmaNameForSwitchAccessCommand(SwitchAccessCommand command) {
     case SwitchAccessCommand::kPrevious:
       return "Accessibility.CrosSwitchAccess.PreviousKeyCode";
     case SwitchAccessCommand::kNone:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return "";
   }
 }
@@ -1016,8 +1015,8 @@ void AccessibilityController::Feature::ObserveConflictingFeature() {
     default:
       // No other features are used as conflicting features at the moment,
       // but this could be populated if needed in the future.
-      NOTREACHED() << "No pref name for conflicting feature "
-                   << static_cast<int>(conflicting_feature_);
+      NOTREACHED_IN_MIGRATION() << "No pref name for conflicting feature "
+                                << static_cast<int>(conflicting_feature_);
   }
   pref_change_registrar_ = std::make_unique<PrefChangeRegistrar>();
   pref_change_registrar_->Init(owner_->active_user_prefs_);
@@ -1260,8 +1259,6 @@ void AccessibilityController::RegisterProfilePrefs(
                                kDefaultAccessibilityChromeVoxVoiceName);
 
   // TODO(b/259372916): Enable sync for Mouse Keys settings before launch.
-  registry->RegisterBooleanPref(
-      prefs::kAccessibilityMouseKeysDisableInTextFields, true);
   registry->RegisterDoublePref(prefs::kAccessibilityMouseKeysAcceleration,
                                MouseKeysController::kDefaultAcceleration);
   registry->RegisterDoublePref(prefs::kAccessibilityMouseKeysMaxSpeed,
@@ -2315,11 +2312,6 @@ void AccessibilityController::ObservePrefs(PrefService* prefs) {
           base::Unretained(this)));
   if (::features::IsAccessibilityMouseKeysEnabled()) {
     pref_change_registrar_->Add(
-        prefs::kAccessibilityMouseKeysDisableInTextFields,
-        base::BindRepeating(&AccessibilityController::
-                                UpdateMouseKeysDisableInTextFieldsFromPref,
-                            base::Unretained(this)));
-    pref_change_registrar_->Add(
         prefs::kAccessibilityMouseKeysAcceleration,
         base::BindRepeating(
             &AccessibilityController::UpdateMouseKeysAccelerationFromPref,
@@ -2428,7 +2420,6 @@ void AccessibilityController::ObservePrefs(PrefService* prefs) {
   UpdateAutoclickMovementThresholdFromPref();
   UpdateAutoclickMenuPositionFromPref();
   if (::features::IsAccessibilityMouseKeysEnabled()) {
-    UpdateMouseKeysDisableInTextFieldsFromPref();
     UpdateMouseKeysAccelerationFromPref();
     UpdateMouseKeysMaxSpeedFromPref();
     UpdateMouseKeysDominantHandFromPref();
@@ -2511,13 +2502,6 @@ void AccessibilityController::UpdateAutoclickMovementThresholdFromPref() {
 void AccessibilityController::UpdateAutoclickMenuPositionFromPref() {
   Shell::Get()->autoclick_controller()->SetMenuPosition(
       GetAutoclickMenuPosition());
-}
-
-void AccessibilityController::UpdateMouseKeysDisableInTextFieldsFromPref() {
-  DCHECK(active_user_prefs_);
-  bool value = active_user_prefs_->GetBoolean(
-      prefs::kAccessibilityMouseKeysDisableInTextFields);
-  Shell::Get()->mouse_keys_controller()->set_disable_in_text_fields(value);
 }
 
 void AccessibilityController::UpdateMouseKeysAccelerationFromPref() {
@@ -2781,7 +2765,7 @@ void AccessibilityController::UpdateSwitchAccessKeyCodesFromPref(
   for (const auto v : key_codes_pref) {
     int key_code;
     if (!base::StringToInt(v.first, &key_code)) {
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return;
     }
 
@@ -3234,7 +3218,7 @@ void AccessibilityController::UpdateFeatureFromPref(FeatureType feature) {
       break;
     case FeatureType::kFeatureCount:
     case FeatureType::kNoConflictingFeature:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
   }
   NotifyAccessibilityStatusChanged();
 }

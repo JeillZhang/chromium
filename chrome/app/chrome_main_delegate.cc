@@ -327,7 +327,7 @@ void AdjustLinuxOOMScore(const std::string& process_type) {
     // we want to assign a score that is somewhat representative for debugging.
     score = content::kLowestRendererOomScore;
   } else {
-    NOTREACHED() << "Unknown process type";
+    NOTREACHED_IN_MIGRATION() << "Unknown process type";
   }
   // In the case of a 0 score, still try to adjust it. Most likely the score is
   // 0 already, but it may not be if this process inherited a higher score from
@@ -932,11 +932,8 @@ std::optional<int> ChromeMainDelegate::PostEarlyInitialization(
 #endif
 
 #if BUILDFLAG(IS_CHROMEOS_LACROS)
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kEnableLacrosForkZygotesAtLoginScreen)) {
-    // If prelaunched at login screen, block waiting for the user to login.
-    MaybeBlockAtLoginScreen(/*after_zygotes_fork=*/true);
-  }
+  // If prelaunched at login screen, block waiting for the user to login.
+  MaybeBlockAtLoginScreen(/*after_zygotes_fork=*/true);
 #endif
 
 #if BUILDFLAG(IS_CHROMEOS_LACROS)
@@ -1507,14 +1504,6 @@ void ChromeMainDelegate::PreSandboxStartup() {
 
   crash_reporter::InitializeCrashKeys();
 
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-  if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kEnableLacrosForkZygotesAtLoginScreen)) {
-    // If prelaunched at login screen, block waiting for the user to login.
-    MaybeBlockAtLoginScreen(/*after_zygotes_fork=*/false);
-  }
-#endif
-
 #if BUILDFLAG(IS_POSIX)
   ChromeCrashReporterClient::Create();
 #endif
@@ -1808,7 +1797,7 @@ void ChromeMainDelegate::SandboxInitialized(const std::string& process_type) {
           /*persistent_histograms_enabled=*/true,
           /*storage=*/kPersistentHistogramStorageMappedFile);
     } else {
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
     }
   }
 
@@ -1823,7 +1812,8 @@ absl::variant<int, content::MainFunctionParams> ChromeMainDelegate::RunProcess(
     const std::string& process_type,
     content::MainFunctionParams main_function_params) {
 #if BUILDFLAG(IS_ANDROID)
-  NOTREACHED();  // Android provides a subclass and shares no code here.
+  NOTREACHED_IN_MIGRATION();  // Android provides a subclass and shares no code
+                              // here.
 #else
   static const MainFunction kMainFunctions[] = {
 #if BUILDFLAG(IS_MAC)

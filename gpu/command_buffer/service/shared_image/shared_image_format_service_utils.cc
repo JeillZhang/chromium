@@ -474,14 +474,22 @@ wgpu::TextureFormat ToDawnFormat(viz::SharedImageFormat format) {
   } else if (format == viz::LegacyMultiPlaneFormat::kNV12 ||
              format == viz::MultiPlaneFormat::kNV12) {
     return wgpu::TextureFormat::R8BG8Biplanar420Unorm;
-  } else if (format == viz::LegacyMultiPlaneFormat::kP010 ||
-             format == viz::MultiPlaneFormat::kP010) {
-    return wgpu::TextureFormat::R10X6BG10X6Biplanar420Unorm;
+  } else if (format == viz::MultiPlaneFormat::kNV16) {
+    return wgpu::TextureFormat::R8BG8Biplanar422Unorm;
+  } else if (format == viz::MultiPlaneFormat::kNV24) {
+    return wgpu::TextureFormat::R8BG8Biplanar444Unorm;
   } else if (format == viz::LegacyMultiPlaneFormat::kNV12A ||
              format == viz::MultiPlaneFormat::kNV12A) {
     return wgpu::TextureFormat::R8BG8A8Triplanar420Unorm;
+  } else if (format == viz::LegacyMultiPlaneFormat::kP010 ||
+             format == viz::MultiPlaneFormat::kP010) {
+    return wgpu::TextureFormat::R10X6BG10X6Biplanar420Unorm;
+  } else if (format == viz::MultiPlaneFormat::kP210) {
+    return wgpu::TextureFormat::R10X6BG10X6Biplanar422Unorm;
+  } else if (format == viz::MultiPlaneFormat::kP410) {
+    return wgpu::TextureFormat::R10X6BG10X6Biplanar444Unorm;
   }
-  NOTREACHED() << "Unsupported format: " << format.ToString();
+  NOTREACHED_IN_MIGRATION() << "Unsupported format: " << format.ToString();
   return wgpu::TextureFormat::Undefined;
 }
 
@@ -489,12 +497,6 @@ wgpu::TextureFormat ToDawnTextureViewFormat(viz::SharedImageFormat format,
                                             int plane_index) {
   // The multi plane formats create a separate image per plane and return the
   // single planar equivalents.
-  // TODO(crbug.com/40269645): The above reasoning does not hold unilaterally
-  // on Android, and this function will need more information to determine the
-  // correct operation to take on that platform.
-#if BUILDFLAG(IS_ANDROID)
-  CHECK(format.is_single_plane() && !format.IsLegacyMultiplanar());
-#endif
   if (format.is_multi_plane()) {
     int num_channels = format.NumChannelsInPlane(plane_index);
     switch (format.channel_format()) {

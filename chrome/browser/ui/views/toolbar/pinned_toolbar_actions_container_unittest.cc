@@ -7,12 +7,12 @@
 #include <vector>
 
 #include "base/functional/bind.h"
+#include "chrome/browser/ui/browser_actions.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
 #include "chrome/browser/ui/toolbar/pinned_toolbar/pinned_toolbar_actions_model.h"
 #include "chrome/browser/ui/toolbar/pinned_toolbar/pinned_toolbar_actions_model_factory.h"
 #include "chrome/browser/ui/toolbar/toolbar_pref_names.h"
 #include "chrome/browser/ui/ui_features.h"
-#include "chrome/browser/ui/views/frame/browser_actions.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/frame/test_with_browser_view.h"
 #include "chrome/browser/ui/views/toolbar/pinned_action_toolbar_button.h"
@@ -36,8 +36,7 @@
 class PinnedToolbarActionsContainerTest : public TestWithBrowserView {
  public:
   void SetUp() override {
-    scoped_feature_list_.InitWithFeatures(
-        {features::kSidePanelPinning, features::kChromeRefresh2023}, {});
+    scoped_feature_list_.InitWithFeatures({features::kSidePanelPinning}, {});
     TestWithBrowserView::SetUp();
     AddTab(browser_view()->browser(), GURL("http://foo1.com"));
     browser_view()->browser()->tab_strip_model()->ActivateTabAt(0);
@@ -196,8 +195,7 @@ TEST_F(PinnedToolbarActionsContainerTest, ContainerMargins) {
 
 TEST_F(PinnedToolbarActionsContainerTest, PinningAndUnpinning) {
   actions::ActionItem* browser_action_item =
-      BrowserActions::FromBrowser(browser_view()->browser())
-          ->root_action_item();
+      browser_view()->browser()->browser_actions()->root_action_item();
 
   // clang-format on
   browser_action_item->AddChild(CreateActionItem(actions::kActionCut));
@@ -233,8 +231,7 @@ TEST_F(PinnedToolbarActionsContainerTest, PinningAndUnpinning) {
 TEST_F(PinnedToolbarActionsContainerTest,
        UnpinnedToolbarButtonsPoppedOutWhileActive) {
   actions::ActionItem* browser_action_item =
-      BrowserActions::FromBrowser(browser_view()->browser())
-          ->root_action_item();
+      browser_view()->browser()->browser_actions()->root_action_item();
 
   browser_action_item->AddChild(CreateActionItem(actions::kActionCut));
 
@@ -263,8 +260,7 @@ TEST_F(PinnedToolbarActionsContainerTest,
 TEST_F(PinnedToolbarActionsContainerTest,
        StateChangesBetweenPinnedandUnpinnedWhileActive) {
   actions::ActionItem* browser_action_item =
-      BrowserActions::FromBrowser(browser_view()->browser())
-          ->root_action_item();
+      browser_view()->browser()->browser_actions()->root_action_item();
 
   browser_action_item->AddChild(CreateActionItem(actions::kActionCut));
 
@@ -294,8 +290,7 @@ TEST_F(PinnedToolbarActionsContainerTest,
 
 TEST_F(PinnedToolbarActionsContainerTest, PoppedOutButtonsAreAfterPinned) {
   actions::ActionItem* browser_action_item =
-      BrowserActions::FromBrowser(browser_view()->browser())
-          ->root_action_item();
+      browser_view()->browser()->browser_actions()->root_action_item();
 
   browser_action_item->AddChild(CreateActionItem(actions::kActionCut));
   browser_action_item->AddChild(CreateActionItem(actions::kActionCopy));
@@ -324,8 +319,7 @@ TEST_F(PinnedToolbarActionsContainerTest, PoppedOutButtonsAreAfterPinned) {
 
 TEST_F(PinnedToolbarActionsContainerTest, DividerVisibleWhileButtonPoppedOut) {
   actions::ActionItem* browser_action_item =
-      BrowserActions::FromBrowser(browser_view()->browser())
-          ->root_action_item();
+      browser_view()->browser()->browser_actions()->root_action_item();
 
   browser_action_item->AddChild(CreateActionItem(actions::kActionCut));
 
@@ -363,8 +357,7 @@ TEST_F(PinnedToolbarActionsContainerTest, DividerVisibleWhileButtonPoppedOut) {
 
 TEST_F(PinnedToolbarActionsContainerTest, MovingActionsUpdateOrderUsingDrag) {
   actions::ActionItem* browser_action_item =
-      BrowserActions::FromBrowser(browser_view()->browser())
-          ->root_action_item();
+      browser_view()->browser()->browser_actions()->root_action_item();
 
   browser_action_item->AddChild(CreateActionItem(actions::kActionCut));
   browser_action_item->AddChild(CreateActionItem(actions::kActionCopy));
@@ -405,8 +398,7 @@ TEST_F(PinnedToolbarActionsContainerTest, MovingActionsUpdateOrderUsingDrag) {
 
 TEST_F(PinnedToolbarActionsContainerTest, ContextMenuTest) {
   actions::ActionItem* browser_action_item =
-      BrowserActions::FromBrowser(browser_view()->browser())
-          ->root_action_item();
+      browser_view()->browser()->browser_actions()->root_action_item();
 
   // clang-format on
   browser_action_item->AddChild(CreateActionItem(actions::kActionCut));
@@ -440,8 +432,7 @@ TEST_F(PinnedToolbarActionsContainerTest, ContextMenuTest) {
 
 TEST_F(PinnedToolbarActionsContainerTest, UpdatesFromSyncUpdateContainer) {
   actions::ActionItem* browser_action_item =
-      BrowserActions::FromBrowser(browser_view()->browser())
-          ->root_action_item();
+      browser_view()->browser()->browser_actions()->root_action_item();
 
   browser_action_item->AddChild(CreateActionItem(actions::kActionCut));
   browser_action_item->AddChild(CreateActionItem(actions::kActionCopy));
@@ -487,8 +478,7 @@ TEST_F(PinnedToolbarActionsContainerTest, UpdatesFromSyncUpdateContainer) {
 TEST_F(PinnedToolbarActionsContainerTest,
        MovingActionsUpdateOrderUsingKeyboard) {
   actions::ActionItem* browser_action_item =
-      BrowserActions::FromBrowser(browser_view()->browser())
-          ->root_action_item();
+      browser_view()->browser()->browser_actions()->root_action_item();
   auto cut_action =
       actions::ActionItem::Builder()
           .SetText(u"Test Action")
@@ -582,8 +572,7 @@ TEST_F(PinnedToolbarActionsContainerTest,
 TEST_F(PinnedToolbarActionsContainerTest,
        ActionRemainsInToolbarWhenSetToBeEphemerallyVisible) {
   actions::ActionItem* browser_action_item =
-      BrowserActions::FromBrowser(browser_view()->browser())
-          ->root_action_item();
+      browser_view()->browser()->browser_actions()->root_action_item();
   browser_action_item->AddChild(CreateActionItem(actions::kActionCut));
 
   // Verify there are no buttons.

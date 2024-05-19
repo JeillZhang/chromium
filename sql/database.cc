@@ -565,7 +565,7 @@ base::FilePath Database::DbPath() const {
 #elif BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
   return base::FilePath(db_path);
 #else
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return base::FilePath();
 #endif
 }
@@ -617,7 +617,7 @@ std::string Database::CollectErrorInfo(int sqlite_error_code,
     diagnostics->last_errno = last_errno;
   }
 #else
-  NOTREACHED();  // Add appropriate log info.
+  NOTREACHED_IN_MIGRATION();  // Add appropriate log info.
 #endif
 
   if (stmt) {
@@ -921,8 +921,7 @@ size_t Database::ComputeMmapSizeForOpen() {
 }
 
 int Database::SqlitePrepareFlags() const {
-  return options_.enable_virtual_tables_discouraged ? 0
-                                                    : SQLITE_PREPARE_NO_VTAB;
+  return enable_virtual_tables_ ? 0 : SQLITE_PREPARE_NO_VTAB;
 }
 
 sqlite3_file* Database::GetSqliteVfsFile() {
@@ -1009,8 +1008,6 @@ bool Database::Raze() {
       .page_size = options_.page_size,
       .cache_size = 0,
       .enable_views_discouraged = options_.enable_views_discouraged,
-      .enable_virtual_tables_discouraged =
-          options_.enable_virtual_tables_discouraged,
   });
   if (!null_db.OpenInMemory()) {
     DLOG(FATAL) << "Unable to open in-memory database.";

@@ -1163,7 +1163,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Navigation.MainFrameScheme2" enum="NavigationScheme"
-    expires_after="2024-06-15">
+    expires_after="2024-12-15">
   <owner>estark@chromium.org</owner>
   <owner>elawrence@chromium.org</owner>
   <owner>trusty-transport@chromium.org</owner>
@@ -1216,7 +1216,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Navigation.MainFrameSchemeOTR2" enum="NavigationScheme"
-    expires_after="2024-06-15">
+    expires_after="2024-12-15">
   <owner>elawrence@chromium.org</owner>
   <owner>estark@chromium.org</owner>
   <summary>
@@ -1985,6 +1985,24 @@ chromium-metrics-reviews@google.com.
     speculation rules.
   </summary>
   <token key="PreloadingTriggerType" variants="PreloadingTriggerType"/>
+</histogram>
+
+<histogram
+    name="Prerender.Experimental.NewTabPage.TouchDuration.{ConversionResultType}"
+    units="ms" expires_after="2024-09-24">
+  <owner>robertlin@chromium.org</owner>
+  <owner>chrome-prerendering@google.com</owner>
+  <summary>
+    The metrics for preload NewTabPage to understand the distribution of touch
+    duration. It records touch duration time of a NewTabPage tile. And this
+    records both cases, the first being NotTaken if a navigation never happens,
+    the other being Taken when a NewTabPage is actually navigated per touch
+    event completion.
+  </summary>
+  <token key="ConversionResultType">
+    <variant name="NotTaken"/>
+    <variant name="Taken"/>
+  </token>
 </histogram>
 
 <histogram name="Prerender.Experimental.PredictionStatus.DefaultSearchEngine"

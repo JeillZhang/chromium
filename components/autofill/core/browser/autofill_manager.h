@@ -52,7 +52,7 @@ class TouchToFillDelegateAndroidImpl;
 // implementation in browser side to interact with AutofillDriver.
 //
 // AutofillManager has two implementations:
-// - AndroidAutofillManager for WebView and WebLayer,
+// - AndroidAutofillManager for WebView,
 // - BrowserAutofillManager for Chrome.
 //
 // It is owned by the AutofillDriver.
@@ -226,6 +226,7 @@ class AutofillManager
   virtual void OnAskForValuesToFill(
       const FormData& form,
       const FormFieldData& field,
+      const gfx::Rect& caret_bounds,
       AutofillSuggestionTriggerSource trigger_source);
   void OnHidePopup();
   virtual void OnDidFillAutofillFormData(const FormData& form,
@@ -338,6 +339,7 @@ class AutofillManager
   virtual void OnAskForValuesToFillImpl(
       const FormData& form,
       const FormFieldData& field,
+      const gfx::Rect& caret_bounds,
       AutofillSuggestionTriggerSource trigger_source) = 0;
   virtual void OnDidFillAutofillFormDataImpl(
       const FormData& form,

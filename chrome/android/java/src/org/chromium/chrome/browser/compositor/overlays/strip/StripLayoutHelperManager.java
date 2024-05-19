@@ -65,6 +65,7 @@ import org.chromium.chrome.browser.tabmodel.TabModelSelectorObserver;
 import org.chromium.chrome.browser.tabmodel.TabModelSelectorTabModelObserver;
 import org.chromium.chrome.browser.tabmodel.TabModelSelectorTabObserver;
 import org.chromium.chrome.browser.tasks.tab_groups.TabGroupModelFilter;
+import org.chromium.chrome.browser.tasks.tab_management.ActionConfirmationManager;
 import org.chromium.chrome.browser.tasks.tab_management.TabUiFeatureUtilities;
 import org.chromium.chrome.browser.tasks.tab_management.TabUiThemeUtil;
 import org.chromium.chrome.browser.toolbar.ToolbarFeatures;
@@ -198,8 +199,7 @@ public class StripLayoutHelperManager
     // Desktop windowing mode constants.
     /**
      * Whether the current activity is the top resumed activity. This is only relevant for use in
-     * the desktop windowing mode, and will typically always be true unless the current activity is
-     * in an unfocused desktop window.
+     * the desktop windowing mode, to determine the tab strip background color.
      */
     private boolean mIsTopResumedActivity;
 
@@ -385,7 +385,8 @@ public class StripLayoutHelperManager
             // TODO(crbug.com/40939440): Avoid passing the ToolbarManager instance. Potentially
             // implement an interface to manage strip transition states.
             @NonNull ToolbarManager toolbarManager,
-            @Nullable DesktopWindowStateProvider desktopWindowStateProvider) {
+            @Nullable DesktopWindowStateProvider desktopWindowStateProvider,
+            ActionConfirmationManager actionConfirmationManager) {
         Resources res = context.getResources();
         mUpdateHost = updateHost;
         mLayerTitleCacheSupplier = layerTitleCacheSupplier;
@@ -511,7 +512,8 @@ public class StripLayoutHelperManager
                         mModelSelectorButton,
                         mTabDragSource,
                         toolbarContainerView,
-                        windowAndroid);
+                        windowAndroid,
+                        actionConfirmationManager);
         mIncognitoHelper =
                 new StripLayoutHelper(
                         context,
@@ -522,7 +524,8 @@ public class StripLayoutHelperManager
                         mModelSelectorButton,
                         mTabDragSource,
                         toolbarContainerView,
-                        windowAndroid);
+                        windowAndroid,
+                        actionConfirmationManager);
 
         tabHoverCardViewStub.setOnInflateListener(
                 (viewStub, view) -> {
@@ -836,8 +839,7 @@ public class StripLayoutHelperManager
     @Override
     public void onTopResumedActivityChanged(boolean isTopResumedActivity) {
         // TODO (crbug/328055199): Check if losing focus to a non-Chrome task.
-        if (!mIsLayoutOptimizationsEnabled
-                || !AppHeaderUtils.isAppInDesktopWindow(mDesktopWindowStateProvider)) return;
+        if (!mIsLayoutOptimizationsEnabled) return;
         mIsTopResumedActivity = isTopResumedActivity;
         mUpdateHost.requestUpdate();
     }
@@ -1261,8 +1263,10 @@ public class StripLayoutHelperManager
     }
 
     public @ColorInt int getBackgroundColor() {
-        return TabUiThemeUtil.getTabStripBackgroundColorForActivityState(
-                mContext, mIsIncognito, mIsTopResumedActivity);
+        return AppHeaderUtils.isAppInDesktopWindow(mDesktopWindowStateProvider)
+                ? TabUiThemeUtil.getTabStripBackgroundColorForActivityState(
+                        mContext, mIsIncognito, mIsTopResumedActivity)
+                : TabUiThemeUtil.getTabStripBackgroundColor(mContext, mIsIncognito);
     }
 
     /**

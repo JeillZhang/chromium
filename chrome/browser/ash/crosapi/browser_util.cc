@@ -62,10 +62,6 @@ BASE_FEATURE(kLacrosLaunchAtLoginScreen,
              "LacrosLaunchAtLoginScreen",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
-BASE_FEATURE(kLacrosForkZygotesAtLoginScreen,
-             "LacrosForkZygotesAtLoginScreen",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
 namespace {
 
 // At session start the value for LacrosAvailability logic is applied and the
@@ -676,7 +672,7 @@ std::string_view GetLacrosDataBackwardMigrationModeName(
       return entry.first;
   }
 
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return std::string_view();
 }
 

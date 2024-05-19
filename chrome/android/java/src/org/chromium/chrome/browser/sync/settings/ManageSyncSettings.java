@@ -54,6 +54,7 @@ import org.chromium.chrome.browser.sync.ui.PassphraseTypeDialogFragment;
 import org.chromium.chrome.browser.ui.messages.snackbar.SnackbarManager;
 import org.chromium.chrome.browser.ui.signin.SignOutCoordinator;
 import org.chromium.chrome.browser.ui.signin.SigninUtils;
+import org.chromium.chrome.browser.ui.signin.SignoutButtonPreference;
 import org.chromium.components.browser_ui.settings.ChromeBaseCheckBoxPreference;
 import org.chromium.components.browser_ui.settings.ChromeSwitchPreference;
 import org.chromium.components.browser_ui.settings.FragmentSettingsLauncher;
@@ -61,8 +62,11 @@ import org.chromium.components.browser_ui.settings.SettingsLauncher;
 import org.chromium.components.browser_ui.settings.SettingsUtils;
 import org.chromium.components.search_engines.TemplateUrlService;
 import org.chromium.components.signin.AccountManagerFacadeProvider;
+import org.chromium.components.signin.Tribool;
+import org.chromium.components.signin.base.AccountInfo;
 import org.chromium.components.signin.base.CoreAccountInfo;
 import org.chromium.components.signin.identitymanager.ConsentLevel;
+import org.chromium.components.signin.identitymanager.IdentityManager;
 import org.chromium.components.signin.metrics.SignoutReason;
 import org.chromium.components.sync.SyncService;
 import org.chromium.components.sync.UserSelectableType;
@@ -93,6 +97,9 @@ public class ManageSyncSettings extends ChromeBaseSettingsFragment
     @VisibleForTesting public static final String FRAGMENT_ENTER_PASSPHRASE = "enter_password";
     @VisibleForTesting public static final String FRAGMENT_CUSTOM_PASSPHRASE = "custom_password";
     @VisibleForTesting public static final String FRAGMENT_PASSPHRASE_TYPE = "password_type";
+
+    @VisibleForTesting
+    private static final String PREF_CENTRAL_ACCOUNT_CARD_PREFERENCE = "central_account_card";
 
     @VisibleForTesting
     public static final String PREF_SYNC_ERROR_CARD_PREFERENCE = "sync_error_card";
@@ -139,6 +146,8 @@ public class ManageSyncSettings extends ChromeBaseSettingsFragment
 
     @VisibleForTesting
     public static final String PREF_URL_KEYED_ANONYMIZED_DATA = "url_keyed_anonymized_data";
+
+    @VisibleForTesting public static final String PREF_SIGN_OUT = "sign_out_button";
 
     private static final int REQUEST_CODE_TRUSTED_VAULT_KEY_RETRIEVAL = 1;
     private static final int REQUEST_CODE_TRUSTED_VAULT_RECOVERABILITY_DEGRADED = 2;
@@ -193,8 +202,19 @@ public class ManageSyncSettings extends ChromeBaseSettingsFragment
         setHasOptionsMenu(true);
 
         if (shouldReplaceSyncSettingsWithAccountSettings()) {
+            getActivity().setTitle(R.string.account_section_header);
+
             SettingsUtils.addPreferencesFromResource(
                     this, R.xml.unified_account_settings_preferences);
+
+            CentralAccountCardPreference centralAccountCardPreference =
+                    (CentralAccountCardPreference)
+                            findPreference(PREF_CENTRAL_ACCOUNT_CARD_PREFERENCE);
+            centralAccountCardPreference.initialize(
+                    IdentityServicesProvider.get()
+                            .getIdentityManager(getProfile())
+                            .getPrimaryAccountInfo(ConsentLevel.SIGNIN),
+                    ProfileDataCache.createWithDefaultImageSizeAndNoBadge(getContext()));
 
             IdentityErrorCardPreference identityErrorCardPreference =
                     (IdentityErrorCardPreference)
@@ -237,6 +257,14 @@ public class ManageSyncSettings extends ChromeBaseSettingsFragment
             manageAccountsOnThisDevice.setOnPreferenceClickListener(
                     SyncSettingsUtils.toOnClickListener(
                             this, () -> SigninUtils.openSettingsForAllAccounts(getActivity())));
+
+            SignoutButtonPreference signOutPreference =
+                    (SignoutButtonPreference) findPreference(PREF_SIGN_OUT);
+            if (isSupervisedUser()) {
+                signOutPreference.setVisible(false);
+            } else {
+                signOutPreference.initialize(getProfile());
+            }
         } else {
             getActivity().setTitle(R.string.sync_category_title);
 
@@ -960,5 +988,29 @@ public class ManageSyncSettings extends ChromeBaseSettingsFragment
         TemplateUrlService templateUrlService =
                 TemplateUrlServiceFactory.getForProfile(getProfile());
         return templateUrlService.isEeaChoiceCountry();
+    }
+
+    private boolean isSupervisedUser() {
+        if (ChromeFeatureList.isEnabled(
+                ChromeFeatureList.MIGRATE_ACCOUNT_MANAGEMENT_SETTINGS_TO_CAPABILITIES)) {
+            IdentityManager identityManager =
+                    IdentityServicesProvider.get().getIdentityManager(getProfile());
+
+            // SEED_ACCOUNTS_REVAMP is needed for using capabilities, otherwise
+            // findExtendedAccountInfoByEmailAddress is not guaranteed to have the needed account
+            assert ChromeFeatureList.isEnabled(ChromeFeatureList.SEED_ACCOUNTS_REVAMP);
+
+            CoreAccountInfo corePrimaryAccountInfo =
+                    identityManager.getPrimaryAccountInfo(ConsentLevel.SIGNIN);
+            if (corePrimaryAccountInfo != null) {
+                AccountInfo extendedAccountInfo =
+                        identityManager.findExtendedAccountInfoByEmailAddress(
+                                corePrimaryAccountInfo.getEmail());
+                return extendedAccountInfo.getAccountCapabilities().isSubjectToParentalControls()
+                        == Tribool.TRUE;
+            }
+            return false;
+        }
+        return getProfile().isChild();
     }
 }

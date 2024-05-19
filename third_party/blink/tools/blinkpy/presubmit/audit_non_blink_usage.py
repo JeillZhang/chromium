@@ -1095,6 +1095,17 @@ _CONFIG = [
     },
     {
         'paths': [
+            'third_party/blink/public',
+        ],
+        'allowed': [
+            'gfx::Point',
+            'gfx::PointF',
+            'gfx::Rect',
+            'gfx::RectF',
+        ],
+    },
+    {
+        'paths': [
             'third_party/blink/public/web/web_frame_widget.h',
         ],
         'allowed': [
@@ -1692,6 +1703,13 @@ _CONFIG = [
             'third_party/blink/renderer/core/paint/theme_painter_default.cc',
         ],
         'allowed': ['ui::NativeTheme.*', 'ui::color_utils.*'],
+    },
+    {
+        'paths': [
+            'third_party/blink/renderer/core/layout/layout_theme.cc',
+            'third_party/blink/renderer/core/layout/layout_theme.h',
+        ],
+        'allowed': ['ui::ColorProvider'],
     },
     {
         'paths': [

@@ -10,6 +10,7 @@ import static org.mockito.Mockito.doAnswer;
 
 import static org.chromium.chrome.browser.desktop_windowing.AppHeaderCoordinator.INSTANCE_STATE_KEY_IS_APP_IN_UNFOCUSED_DW;
 
+import android.content.Intent;
 import android.content.res.Resources;
 import android.graphics.Rect;
 import android.os.Build;
@@ -17,8 +18,10 @@ import android.widget.FrameLayout.LayoutParams;
 import android.widget.ImageButton;
 
 import androidx.annotation.RequiresApi;
+import androidx.core.graphics.Insets;
 import androidx.core.view.WindowInsetsCompat;
 import androidx.test.filters.MediumTest;
+import androidx.test.runner.lifecycle.Stage;
 
 import org.hamcrest.Matchers;
 import org.junit.Before;
@@ -29,6 +32,7 @@ import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
 
+import org.chromium.base.ContextUtils;
 import org.chromium.base.test.util.ApplicationTestUtils;
 import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.CommandLineFlags;
@@ -43,12 +47,14 @@ import org.chromium.chrome.browser.compositor.overlays.strip.StripLayoutHelperMa
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.hub.HubLayout;
+import org.chromium.chrome.browser.multiwindow.MultiWindowUtils;
 import org.chromium.chrome.browser.tasks.tab_management.TabSwitcherLayout;
 import org.chromium.chrome.browser.tasks.tab_management.TabUiTestHelper;
 import org.chromium.chrome.browser.theme.ThemeUtils;
 import org.chromium.chrome.browser.toolbar.ToolbarFeatures;
 import org.chromium.chrome.browser.toolbar.top.ToolbarTablet;
 import org.chromium.chrome.browser.ui.desktop_windowing.AppHeaderState;
+import org.chromium.chrome.browser.ui.desktop_windowing.AppHeaderUtils;
 import org.chromium.chrome.browser.ui.theme.BrandedColorScheme;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
@@ -68,14 +74,19 @@ public class AppHeaderCoordinatorBrowserTest {
     private static final int APP_HEADER_LEFT_PADDING = 10;
     private static final int APP_HEADER_RIGHT_PADDING = 20;
 
+    private static final WindowInsetsCompat BOTTOM_NAV_BAR_INSETS =
+            new WindowInsetsCompat.Builder()
+                    .setInsets(
+                            WindowInsetsCompat.Type.navigationBars(),
+                            Insets.of(0, 0, 0, /* bottom= */ 100))
+                    .build();
+
     @Rule
     public ChromeTabbedActivityTestRule mActivityTestRule = new ChromeTabbedActivityTestRule();
 
     @Rule public MockitoRule mockitoRule = MockitoJUnit.rule();
 
     private @Mock InsetsRectProvider mInsetsRectProvider;
-    private @Mock InsetObserver mInsetObserver;
-    private @Mock WindowInsetsCompat mWindowInsets;
 
     private Rect mWidestUnoccludedRect = new Rect();
     private Rect mWindowRect = new Rect();
@@ -84,7 +95,7 @@ public class AppHeaderCoordinatorBrowserTest {
     @Before
     public void setup() {
         ToolbarFeatures.setIsTabStripLayoutOptimizationEnabledForTesting(true);
-        InsetObserver.setInitialRawWindowInsetsForTesting(mWindowInsets);
+        InsetObserver.setInitialRawWindowInsetsForTesting(BOTTOM_NAV_BAR_INSETS);
         AppHeaderCoordinator.setInsetsRectProviderForTesting(mInsetsRectProvider);
 
         doAnswer(args -> mWidestUnoccludedRect).when(mInsetsRectProvider).getWidestUnoccludedRect();
@@ -97,7 +108,7 @@ public class AppHeaderCoordinatorBrowserTest {
         Resources res = mActivityTestRule.getActivity().getResources();
         int tabStripHeight = res.getDimensionPixelSize(R.dimen.tab_strip_height);
         int reservedStripTopPadding =
-                res.getDimensionPixelOffset(R.dimen.tab_strip_reserved_top_padding);
+                res.getDimensionPixelSize(R.dimen.tab_strip_reserved_top_padding);
         mTestAppHeaderHeight = tabStripHeight + reservedStripTopPadding;
     }
 
@@ -105,7 +116,7 @@ public class AppHeaderCoordinatorBrowserTest {
     @MediumTest
     public void testTabStripHeightChangeForTabStripLayoutOptimization() {
         ChromeTabbedActivity activity = mActivityTestRule.getActivity();
-        triggerDesktopWindowingModeChange(true);
+        triggerDesktopWindowingModeChange(activity, true);
 
         CriteriaHelper.pollUiThread(
                 () -> {
@@ -143,7 +154,7 @@ public class AppHeaderCoordinatorBrowserTest {
         ChromeTabbedActivity activity = mActivityTestRule.getActivity();
 
         // Enter desktop windowing mode.
-        triggerDesktopWindowingModeChange(true);
+        triggerDesktopWindowingModeChange(activity, true);
         // Enter the tab switcher.
         TabUiTestHelper.enterTabSwitcher(activity);
 
@@ -166,7 +177,7 @@ public class AppHeaderCoordinatorBrowserTest {
                 0f);
 
         // Exit desktop windowing mode.
-        triggerDesktopWindowingModeChange(false);
+        triggerDesktopWindowingModeChange(activity, false);
         assertEquals(
                 "Tab switcher container view y-offset should be zero.",
                 0,
@@ -200,7 +211,7 @@ public class AppHeaderCoordinatorBrowserTest {
                 0.0);
 
         // Enter desktop windowing mode while the tab switcher is visible.
-        triggerDesktopWindowingModeChange(true);
+        triggerDesktopWindowingModeChange(activity, true);
 
         assertTrue(
                 "Tab switcher container view y-offset should be non-zero.",
@@ -212,7 +223,7 @@ public class AppHeaderCoordinatorBrowserTest {
                 0f);
 
         // Exit desktop windowing mode.
-        triggerDesktopWindowingModeChange(false);
+        triggerDesktopWindowingModeChange(activity, false);
         assertEquals(
                 "Tab switcher container view y-offset should be zero.",
                 0,
@@ -229,7 +240,7 @@ public class AppHeaderCoordinatorBrowserTest {
         ChromeTabbedActivity activity = mActivityTestRule.getActivity();
 
         // Enter desktop windowing mode.
-        triggerDesktopWindowingModeChange(true);
+        triggerDesktopWindowingModeChange(activity, true);
         // Enter the tab switcher.
         TabUiTestHelper.enterTabSwitcher(activity);
 
@@ -253,7 +264,7 @@ public class AppHeaderCoordinatorBrowserTest {
                 });
 
         // Exit desktop windowing mode.
-        triggerDesktopWindowingModeChange(false);
+        triggerDesktopWindowingModeChange(activity, false);
         CriteriaHelper.pollUiThread(
                 () -> {
                     Criteria.checkThat(
@@ -286,7 +297,7 @@ public class AppHeaderCoordinatorBrowserTest {
         assertEquals("Tab switcher container view top margin should be zero.", 0, params.topMargin);
 
         // Enter desktop windowing mode while the tab switcher is visible.
-        triggerDesktopWindowingModeChange(true);
+        triggerDesktopWindowingModeChange(activity, true);
 
         CriteriaHelper.pollUiThread(
                 () -> {
@@ -303,7 +314,7 @@ public class AppHeaderCoordinatorBrowserTest {
                 });
 
         // Exit desktop windowing mode.
-        triggerDesktopWindowingModeChange(false);
+        triggerDesktopWindowingModeChange(activity, false);
         CriteriaHelper.pollUiThread(
                 () -> {
                     Criteria.checkThat(
@@ -316,28 +327,61 @@ public class AppHeaderCoordinatorBrowserTest {
 
     @Test
     @MediumTest
-    public void testRecreateActivityInUnfocusedWindow() {
-        ChromeTabbedActivity activity = mActivityTestRule.getActivity();
+    public void testRecreateActivitiesInDesktopWindow() {
+        // Assume that the current activity enters desktop windowing mode.
+        ChromeTabbedActivity firstActivity = mActivityTestRule.getActivity();
+        triggerDesktopWindowingModeChange(firstActivity, true);
 
-        // Assume that the current activity lost focus in desktop windowing mode.
-        triggerDesktopWindowingModeChange(true);
-        TestThreadUtils.runOnUiThreadBlocking(() -> activity.onTopResumedActivityChanged(false));
+        // Create a new (desktop) window, that should gain focus and cause the first activity to
+        // lose focus.
+        Intent intent =
+                MultiWindowUtils.createNewWindowIntent(
+                        firstActivity.getApplicationContext(),
+                        MultiWindowUtils.INVALID_INSTANCE_ID,
+                        true,
+                        false,
+                        true);
+        ChromeTabbedActivity secondActivity =
+                ApplicationTestUtils.waitForActivityWithClass(
+                        ChromeTabbedActivity.class,
+                        Stage.RESUMED,
+                        () -> ContextUtils.getApplicationContext().startActivity(intent));
+        triggerDesktopWindowingModeChange(secondActivity, true);
 
-        // Trigger activity recreation.
-        ChromeTabbedActivity recreatedActivity = ApplicationTestUtils.recreateActivity(activity);
+        // Trigger activity recreation in desktop windowing mode (an app theme change for eg. would
+        // trigger this).
+        mActivityTestRule.recreateActivity();
+        firstActivity = mActivityTestRule.getActivity();
+        secondActivity = ApplicationTestUtils.recreateActivity(secondActivity);
 
+        // Activity recreation will send an #onTopResumedActivityChanged(false) signal as the
+        // activity is stopping, so both activities will be considered unfocused.
         assertTrue(
                 "Saved instance state bundle should hold correct desktop window focus state.",
-                recreatedActivity
+                firstActivity
+                        .getSavedInstanceState()
+                        .getBoolean(INSTANCE_STATE_KEY_IS_APP_IN_UNFOCUSED_DW));
+        assertTrue(
+                "Saved instance state bundle should hold correct desktop window focus state.",
+                secondActivity
                         .getSavedInstanceState()
                         .getBoolean(INSTANCE_STATE_KEY_IS_APP_IN_UNFOCUSED_DW));
 
-        // This verification relies on the assumption that the saved instance state value is
-        // injected into and used by the ThemeColorProvider at startup before the call to
-        // Activity#onTopResumedActivityChanged(true) in the instrumentation, that would update the
-        // value of DesktopWindowStateProvider#mIsInUnfocusedDesktopWindow. This can be removed if
-        // it causes test breakage since we have unit test coverage for the implementation.
-        verifyToolbarIconTints(recreatedActivity, false, true);
+        // As |secondActivity| regains focus after recreation, it will receive an
+        // #onTopResumedActivityChanged(true) signal, that should re-apply the correct top Chrome
+        // colors. |firstActivity| should start with the unfocused window colors, based on the saved
+        // instance state value.
+        verifyToolbarIconTints(
+                firstActivity, /* isActivityFocused= */ false, /* isInDesktopWindow= */ true);
+        verifyToolbarIconTints(
+                secondActivity, /* isActivityFocused= */ true, /* isInDesktopWindow= */ true);
+
+        // TODO(aishwaryarj): Verify tab strip background color too. This is currently failing on
+        // the CQ bot.
+
+        // Exit desktop windowing mode and finish the second activity.
+        AppHeaderUtils.setAppInDesktopWindowForTesting(false);
+        secondActivity.finish();
     }
 
     private void doTestOnTopResumedActivityChanged(
@@ -354,7 +398,7 @@ public class AppHeaderCoordinatorBrowserTest {
                 });
 
         // Assume that the current activity lost focus in desktop windowing mode.
-        triggerDesktopWindowingModeChange(true);
+        triggerDesktopWindowingModeChange(activity, true);
         TestThreadUtils.runOnUiThreadBlocking(
                 () -> activity.onTopResumedActivityChanged(isActivityFocused));
 
@@ -362,14 +406,16 @@ public class AppHeaderCoordinatorBrowserTest {
         verifyToolbarIconTints(activity, isActivityFocused, isInDesktopWindow);
     }
 
-    public void verifyToolbarIconTints(
+    private void verifyToolbarIconTints(
             ChromeTabbedActivity activity, boolean isActivityFocused, boolean isInDesktopWindow) {
         var omniboxIconTint =
-                ThemeUtils.getThemedToolbarIconTint(activity, BrandedColorScheme.APP_DEFAULT);
+                ThemeUtils.getThemedToolbarIconTint(activity, BrandedColorScheme.APP_DEFAULT)
+                        .getDefaultColor();
         var nonOmniboxIconTint =
                 isInDesktopWindow
                         ? ThemeUtils.getThemedToolbarIconTintForActivityState(
-                                activity, BrandedColorScheme.APP_DEFAULT, isActivityFocused)
+                                        activity, BrandedColorScheme.APP_DEFAULT, isActivityFocused)
+                                .getDefaultColor()
                         : omniboxIconTint;
 
         CriteriaHelper.pollUiThread(
@@ -379,31 +425,37 @@ public class AppHeaderCoordinatorBrowserTest {
                                     activity.getToolbarManager().getToolbarLayoutForTesting();
                     Criteria.checkThat(
                             "Home button tint is incorrect",
-                            toolbarTablet.getHomeButton().getImageTintList(),
+                            toolbarTablet.getHomeButton().getImageTintList().getDefaultColor(),
                             Matchers.is(nonOmniboxIconTint));
                     Criteria.checkThat(
                             "Tab switcher icon tint is incorrect.",
-                            toolbarTablet.getTabSwitcherButton().getImageTintList(),
+                            toolbarTablet
+                                    .getTabSwitcherButton()
+                                    .getImageTintList()
+                                    .getDefaultColor(),
                             Matchers.is(nonOmniboxIconTint));
                     Criteria.checkThat(
                             "App menu button tint is incorrect.",
                             ((ImageButton) activity.getToolbarManager().getMenuButtonView())
-                                    .getImageTintList(),
+                                    .getImageTintList()
+                                    .getDefaultColor(),
                             Matchers.is(nonOmniboxIconTint));
                     Criteria.checkThat(
                             "Bookmark button tint is incorrect.",
-                            toolbarTablet.getBookmarkButtonForTesting().getImageTintList(),
+                            toolbarTablet
+                                    .getBookmarkButtonForTesting()
+                                    .getImageTintList()
+                                    .getDefaultColor(),
                             Matchers.is(omniboxIconTint));
                 });
     }
 
-    private void triggerDesktopWindowingModeChange(boolean isInDesktopWindow) {
+    private void triggerDesktopWindowingModeChange(
+            ChromeTabbedActivity activity, boolean isInDesktopWindow) {
         TestThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     var appHeaderStateProvider =
-                            mActivityTestRule
-                                    .getActivity()
-                                    .getRootUiCoordinatorForTesting()
+                            activity.getRootUiCoordinatorForTesting()
                                     .getDesktopWindowStateProvider();
                     setupAppHeaderRects(isInDesktopWindow);
                     var appHeaderState =
@@ -411,6 +463,7 @@ public class AppHeaderCoordinatorBrowserTest {
                                     mWindowRect, mWidestUnoccludedRect, isInDesktopWindow);
                     ((AppHeaderCoordinator) appHeaderStateProvider)
                             .setStateForTesting(isInDesktopWindow, appHeaderState);
+                    AppHeaderUtils.setAppInDesktopWindowForTesting(isInDesktopWindow);
                 });
     }
 

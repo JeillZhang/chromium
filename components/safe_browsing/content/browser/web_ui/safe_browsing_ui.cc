@@ -819,6 +819,18 @@ base::Value::Dict SerializeImageFeatureEmbedding(
   return dict;
 }
 
+std::string SerializeReportType(ClientPhishingRequest::ReportType report_type) {
+  switch (report_type) {
+    case ClientPhishingRequest::UNKNOWN:
+      return "UNKNOWN";
+    case ClientPhishingRequest::FULL_REPORT:
+      return "FULL_REPORT";
+    case ClientPhishingRequest::SAMPLE_REPORT:
+      return "SAMPLE_REPORT";
+  }
+  return "UNKNOWN_ENUM_SPECIFIED";
+}
+
 base::Value::Dict SerializeChromeUserPopulation(
     const ChromeUserPopulation& population) {
   base::Value::Dict population_dict;
@@ -1087,36 +1099,6 @@ std::string SerializeClientDownloadRequest(const ClientDownloadRequest& cdr) {
   if (!cdr.access_token().empty())
     dict.Set("access_token", cdr.access_token());
 
-  if (cdr.has_document_summary()) {
-    base::Value::Dict dict_document_summary;
-    auto document_summary = cdr.document_summary();
-    if (document_summary.has_metadata()) {
-      base::Value::Dict dict_document_metadata;
-      dict_document_metadata.Set("contains_macros",
-                                 document_summary.metadata().contains_macros());
-      dict_document_summary.Set("metadata", std::move(dict_document_metadata));
-    }
-
-    if (document_summary.has_processing_info()) {
-      base::Value::Dict dict_document_processing_info;
-      auto processing_info = document_summary.processing_info();
-      if (processing_info.has_maldoca_error_type()) {
-        dict_document_processing_info.Set("maldoca_error_type",
-                                          processing_info.maldoca_error_type());
-      }
-      if (!processing_info.maldoca_error_message().empty()) {
-        dict_document_processing_info.Set(
-            "maldoca_error_message", processing_info.maldoca_error_message());
-      }
-      dict_document_processing_info.Set(
-          "processing_successful", processing_info.processing_successful());
-      dict_document_summary.Set("processing_info",
-                                std::move(dict_document_processing_info));
-    }
-
-    dict.Set("document_summary", std::move(dict_document_summary));
-  }
-
   if (cdr.has_archive_summary()) {
     base::Value::Dict dict_archive_summary;
     auto archive_summary = cdr.archive_summary();
@@ -1268,6 +1250,9 @@ std::string SerializeClientPhishingRequest(
     dict.Set(
         "client_side_detection_type",
         SerializeClientSideDetectionType(cpr.client_side_detection_type()));
+  }
+  if (cpr.has_report_type()) {
+    dict.Set("report_type", SerializeReportType(cpr.report_type()));
   }
 
   if (cpr.has_image_feature_embedding()) {
@@ -1458,7 +1443,7 @@ base::Value::Dict SerializeSafeBrowsingClientProperties(
       break;
     case ClientSafeBrowsingReportRequest::PVER3_NATIVE:
     case ClientSafeBrowsingReportRequest::FLYWHEEL:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       url_api_type = "";
       break;
   }
@@ -1681,7 +1666,7 @@ std::string SerializeCSBRR(const ClientSafeBrowsingReportRequest& report) {
       case ClientSafeBrowsingReportRequest::URL_CLIENT_SIDE_MALWARE:
       case ClientSafeBrowsingReportRequest::HASH_PREFIX_REAL_TIME_EXPERIMENT:
         // Deprecated!
-        NOTREACHED();
+        NOTREACHED_IN_MIGRATION();
         report_type = "";
         break;
     }
@@ -2299,7 +2284,7 @@ base::Value::Dict SerializeCsdDebuggingMetadata(
     switch (debugging_metadata.preclassification_check_result()) {
       case safe_browsing::PreClassificationCheckResult::
           OBSOLETE_NO_CLASSIFY_PROXY_FETCH:
-        NOTREACHED();
+        NOTREACHED_IN_MIGRATION();
         preclassification_check_result =
             "NOT_REACHED_OBSOLETE_NO_CLASSIFY_PROXY_FETCH";
         break;
@@ -2338,7 +2323,7 @@ base::Value::Dict SerializeCsdDebuggingMetadata(
         break;
       case safe_browsing::PreClassificationCheckResult::
           DEPRECATED_NO_CLASSIFY_NOT_HTTP_URL:
-        NOTREACHED();
+        NOTREACHED_IN_MIGRATION();
         preclassification_check_result =
             "NOT_REACHED_DEPRECATED_NO_CLASSIFY_NOT_HTTP_URL";
         break;
@@ -2367,12 +2352,12 @@ base::Value::Dict SerializeCsdDebuggingMetadata(
         break;
       case safe_browsing::PreClassificationCheckResult::
           OBSOLETE_NO_CLASSIFY_NOT_ALLOWED_BY_POLICY:
-        NOTREACHED();
+        NOTREACHED_IN_MIGRATION();
         preclassification_check_result =
             "NOT_REACHED_OBSOLETE_NO_CLASSIFY_NOT_ALLOWED_BY_POLICY";
         break;
       case safe_browsing::NO_CLASSIFY_MAX:
-        NOTREACHED();
+        NOTREACHED_IN_MIGRATION();
         preclassification_check_result = "NOT_REACHED_NO_CLASSIFY_MAX";
         break;
     }

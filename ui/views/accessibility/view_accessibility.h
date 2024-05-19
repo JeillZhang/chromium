@@ -21,6 +21,7 @@
 #include "ui/views/accessibility/ax_virtual_view.h"
 #include "ui/views/accessibility/view_accessibility_utils.h"
 #include "ui/views/views_export.h"
+#include "ui/views/widget/widget_observer.h"
 
 namespace ui {
 
@@ -32,7 +33,6 @@ namespace views {
 
 class AtomicViewAXTreeManager;
 class View;
-class ViewsAXTreeManager;
 class Widget;
 
 // An object that manages the accessibility interface for a View.
@@ -44,7 +44,7 @@ class Widget;
 //
 // In most cases, subclasses of |ViewAccessibility| own the |AXPlatformNode|
 // that implements the native accessibility APIs on a specific platform.
-class VIEWS_EXPORT ViewAccessibility {
+class VIEWS_EXPORT ViewAccessibility : public WidgetObserver {
  public:
   using AccessibilityEventsCallback =
       base::RepeatingCallback<void(const ui::AXPlatformNodeDelegate*,
@@ -55,7 +55,7 @@ class VIEWS_EXPORT ViewAccessibility {
 
   ViewAccessibility(const ViewAccessibility&) = delete;
   ViewAccessibility& operator=(const ViewAccessibility&) = delete;
-  virtual ~ViewAccessibility();
+  ~ViewAccessibility() override;
 
   // Modifies |node_data| to reflect the current accessible state of the
   // associated View, taking any custom overrides into account
@@ -344,7 +344,6 @@ class VIEWS_EXPORT ViewAccessibility {
 
   View* view() const { return view_; }
   AXVirtualView* FocusedVirtualChild() const { return focused_virtual_child_; }
-  ViewsAXTreeManager* AXTreeManager() const;
 
   virtual AtomicViewAXTreeManager* GetAtomicViewAXTreeManagerForTesting() const;
 
@@ -402,6 +401,11 @@ class VIEWS_EXPORT ViewAccessibility {
   const AccessibilityEventsCallback& accessibility_events_callback() const;
   void set_accessibility_events_callback(AccessibilityEventsCallback callback);
 
+  // Widget Observer
+  // Views may misbehave if their widget is closed; set "null-like" attributes
+  // rather than possibly crashing.
+  void OnWidgetClosing(Widget* widget) override;
+
  protected:
   explicit ViewAccessibility(View* view);
 
@@ -424,6 +428,10 @@ class VIEWS_EXPORT ViewAccessibility {
   // is 'kNone'.
   void UpdateIgnoredState();
 
+  void OnWidgetClosingRecursive();
+
+  void SetDataForClosedWidget(ui::AXNodeData* data) const;
+
   // Weak. Owns this.
   const raw_ptr<View> view_;
 
@@ -436,7 +444,7 @@ class VIEWS_EXPORT ViewAccessibility {
   // See also OverrideFocus() and GetFocusedDescendant().
   raw_ptr<AXVirtualView> focused_virtual_child_;
 
-  const ui::AXUniqueId unique_id_;
+  const ui::AXUniqueId unique_id_{ui::AXUniqueId::Create()};
 
   // Contains data that is populated by the setters in this class.
   // This member is tied to the ViewsAX project. Which is introducing a new
@@ -486,13 +494,11 @@ class VIEWS_EXPORT ViewAccessibility {
   // the owning View.
   bool pause_accessibility_events_ = false;
 
-#if defined(USE_AURA) && !BUILDFLAG(IS_CHROMEOS_ASH)
-  // Each instance of ViewAccessibility that's associated with a root View
-  // owns an ViewsAXTreeManager. For other Views, this should be nullptr.
-  std::unique_ptr<views::ViewsAXTreeManager> ax_tree_manager_;
-#endif
-
   bool ignore_missing_widget_for_testing_ = false;
+
+  bool is_widget_closed_ = false;
+
+  base::ScopedObservation<Widget, WidgetObserver> observation_{this};
 };
 
 class IgnoreMissingWidgetForTestingScopedSetter {

@@ -247,8 +247,8 @@ const char kAllowRAInDevMode[] = "allow-ra-in-dev-mode";
 // the directories used for the Widevine CDM (the bundled CDM and the Component
 // Updated CDM).
 const char kCrosWidevineBundledDir[] = "cros-bundled-widevine";
-const char kCrosWidevineComponentUpdatedDir[] =
-    "cros-component-updated-widevine";
+const char kCrosWidevineComponentUpdatedHintFile[] =
+    "cros-component-updated-widevine-hint-file";
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
 namespace autoplay {
@@ -925,6 +925,13 @@ const base::FeatureParam<std::string> kMediaFoundationClearKeyCdmPathForTesting{
 BASE_FEATURE(kOnDeviceWebSpeech,
              "OnDeviceWebSpeech",
              base::FEATURE_DISABLED_BY_DEFAULT);
+
+#if BUILDFLAG(IS_CHROMEOS)
+// Enables Lacros Chrome to use the Ash Chrome Widevine CDM.
+BASE_FEATURE(kLacrosUseAshWidevine,
+             "LacrosUseAshWidevine",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+#endif
 
 // Enables the Live Caption feature on supported devices.
 BASE_FEATURE(kLiveCaption, "LiveCaption", base::FEATURE_ENABLED_BY_DEFAULT);

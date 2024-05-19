@@ -6,6 +6,8 @@
 
 #include "base/containers/contains.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/no_destructor.h"
+#include "base/strings/string_split.h"
 #include "chrome/browser/predictors/resource_prefetch_predictor_tables.h"
 #include "net/base/network_change_notifier.h"
 #include "net/base/url_util.h"
@@ -599,17 +601,20 @@ std::string GetLCPPDatabaseKey(const GURL& url) {
   return url.host() + first_level_path;
 }
 
-LcppStat& GetLcppStatToUpdate(const LoadingPredictorConfig& config,
-                              const GURL& url,
-                              LcppData& data) {
-  if (!IsLcppMultipleKeyKeyStatEnabled()) {
-    return *data.mutable_lcpp_stat();
-  }
+// Returns LcppStat from `data` for LcppMultipleKeyKeyStat.
+// This function can modify `data` to emplace new LcppStat. `data_updated` is
+// true on the case and the caller should update the stored data.
+// This can return nullptr based on the FrequencyStatData of `data`.
+LcppStat* TryToGetLcppStatForKeyStat(const LoadingPredictorConfig& config,
+                                     const GURL& url,
+                                     LcppData& data,
+                                     bool& data_updated) {
+  CHECK(IsLcppMultipleKeyKeyStatEnabled());
 
   const std::string first_level_path = GetFirstLevelPath(url);
   if (first_level_path.empty() ||
       !IsKeyLengthValidForMultipleKey(url.host(), first_level_path)) {
-    return *data.mutable_lcpp_stat();
+    return data.mutable_lcpp_stat();
   }
 
   LcppKeyStat& key_stat = *data.mutable_lcpp_key_stat();
@@ -620,11 +625,29 @@ LcppStat& GetLcppStatToUpdate(const LoadingPredictorConfig& config,
       config.lcpp_multiple_key_histogram_sliding_window_size,
       config.lcpp_multiple_key_max_histogram_buckets, first_level_path,
       *key_stat.mutable_key_frequency_stat(), dropped_entry);
+  // Since UpdateLcppStringFrequencyStatData modifies a part of `data`,
+  // caller should update the stored data if the function is called.
+  data_updated = true;
   if (dropped_entry) {
-    CHECK_NE(*dropped_entry, first_level_path);
-    lcpp_stat_map.erase(*dropped_entry);
+    if (*dropped_entry == first_level_path) {
+      // This means `key_stat` is already full of well-used other
+      // first-level-path entries.
+      // However since the frequency map is updated, we need to update
+      // root `data` too via `data_updated` flag.
+      return nullptr;
+    } else {
+      lcpp_stat_map.erase(*dropped_entry);
+    }
   }
-  return lcpp_stat_map[first_level_path];
+  return &lcpp_stat_map[first_level_path];
+}
+
+bool IsLCPPFontPrefetchExcludedHost(const GURL& url) {
+  static const base::NoDestructor<base::flat_set<std::string>> excluded_hosts(
+      base::SplitString(
+          blink::features::kLCPPFontURLPredictorExcludedHosts.Get(), ",",
+          base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY));
+  return base::Contains(*excluded_hosts, url.host());
 }
 
 }  // namespace
@@ -833,6 +856,7 @@ void UpdateLcppStringFrequencyStatData(
     const std::string& new_entry,
     LcppStringFrequencyStatData& lcpp_stat_data,
     std::optional<std::string>& dropped_entry) {
+  dropped_entry = std::nullopt;
   std::unique_ptr<LcppFrequencyStatDataUpdater> updater =
       LcppFrequencyStatDataUpdater::FromLcppStringFrequencyStatData(
           sliding_window_size, max_histogram_buckets, lcpp_stat_data);
@@ -945,15 +969,26 @@ bool LcppDataMap::LearnLcpp(const GURL& url, const LcppDataInputs& inputs) {
     lcpp_data.mutable_lcpp_key_stat()->Clear();
   }
 
-  LcppStat& lcpp_stat = GetLcppStatToUpdate(config_, url, lcpp_data);
-  if (!IsValidLcppStat(lcpp_stat)) {
-    lcpp_stat.Clear();
-    base::UmaHistogramBoolean("LoadingPredictor.LcppStatCorruptedAtLearnTime",
-                              true);
+  bool data_updated = false;
+  LcppStat* lcpp_stat =
+      IsLcppMultipleKeyKeyStatEnabled()
+          ? TryToGetLcppStatForKeyStat(config_, url, lcpp_data, data_updated)
+          : lcpp_data.mutable_lcpp_stat();
+  if (lcpp_stat) {
+    if (!IsValidLcppStat(*lcpp_stat)) {
+      lcpp_stat->Clear();
+      base::UmaHistogramBoolean("LoadingPredictor.LcppStatCorruptedAtLearnTime",
+                                true);
+    }
+    data_updated |=
+        UpdateLcppStatWithLcppDataInputs(config_, inputs, *lcpp_stat);
+    if (IsLCPPFontPrefetchExcludedHost(url) &&
+        lcpp_stat->has_fetched_font_url_stat()) {
+      lcpp_stat->clear_fetched_font_url_stat();
+      data_updated = true;
+    }
+    DCHECK(IsValidLcppStat(*lcpp_stat));
   }
-  const bool data_updated =
-      UpdateLcppStatWithLcppDataInputs(config_, inputs, lcpp_stat);
-  DCHECK(IsValidLcppStat(lcpp_stat));
   if (data_updated) {
     data_map_.UpdateData(key, lcpp_data);
   }

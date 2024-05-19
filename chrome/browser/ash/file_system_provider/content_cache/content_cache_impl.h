@@ -13,7 +13,7 @@
 #include "chrome/browser/ash/file_system_provider/content_cache/content_cache.h"
 #include "chrome/browser/ash/file_system_provider/content_cache/content_lru_cache.h"
 #include "chrome/browser/ash/file_system_provider/content_cache/context_database.h"
-#include "chrome/browser/ash/file_system_provider/content_cache/local_file.h"
+#include "chrome/browser/ash/file_system_provider/content_cache/local_fd.h"
 #include "chrome/browser/ash/file_system_provider/opened_cloud_file.h"
 #include "chrome/browser/ash/file_system_provider/provided_file_system_interface.h"
 
@@ -41,13 +41,13 @@ class ContentCacheImpl : public ContentCache {
 
   void ReadBytes(
       const OpenedCloudFile& file,
-      net::IOBuffer* buffer,
+      scoped_refptr<net::IOBuffer> buffer,
       int64_t offset,
       int length,
       ProvidedFileSystemInterface::ReadChunkReceivedCallback callback) override;
 
   void WriteBytes(const OpenedCloudFile& file,
-                  net::IOBuffer* buffer,
+                  scoped_refptr<net::IOBuffer> buffer,
                   int64_t offset,
                   int length,
                   FileErrorCallback callback) override;
@@ -58,12 +58,19 @@ class ContentCacheImpl : public ContentCache {
 
   std::vector<base::FilePath> GetCachedFilePaths() override;
 
+  void Notify(ProvidedFileSystemObserver::Changes& changes) override;
+
   void Evict(const base::FilePath& file_path) override;
 
   void SetOnItemEvictedCallback(
       OnItemEvictedCallback on_item_evicted_callback) override;
 
   void RemoveItems(RemovedItemStatsCallback callback) override;
+
+  const SizeInfo GetSize() const override;
+  void SetMaxBytesOnDisk(int64_t max_bytes_on_disk) override;
+
+  base::WeakPtr<ContentCache> GetWeakPtr() override;
 
  private:
   void OnBytesRead(
@@ -77,9 +84,15 @@ class ContentCacheImpl : public ContentCache {
                          scoped_refptr<net::IOBuffer> buffer,
                          int64_t offset,
                          int length,
-                         FileErrorCallback on_bytes_written_callback,
+                         FileErrorCallback callback,
                          std::unique_ptr<int64_t> inserted_id,
                          bool item_add_success);
+
+  void WriteBytesToDisk(const OpenedCloudFile& file,
+                        scoped_refptr<net::IOBuffer> buffer,
+                        int64_t offset,
+                        int length,
+                        FileErrorCallback callback);
 
   void OnBytesWritten(const base::FilePath& file_path,
                       int64_t offset,
@@ -106,7 +119,7 @@ class ContentCacheImpl : public ContentCache {
   void OnStaleItemsPruned(base::OnceClosure callback,
                           std::vector<bool> prune_success);
 
-  void EvictContext(const base::FilePath& path, CacheFileContext& ctx);
+  void EvictItems(std::vector<const base::FilePath>& file_paths);
 
   // The cache has maximum bounds on the number of items available. In the event
   // this boundary is exceeded, excess items should be evicted. There may
@@ -114,7 +127,7 @@ class ContentCacheImpl : public ContentCache {
   // remaining items to evict will be the least-recently used items.
   // TODO(b/330602540): Update the logic to also evict items when the maximum
   // size threshold has been reached.
-  void EvictItems();
+  void EvictExcessItems();
 
   // Removes the evicted items individually from on disk then bulk removes these
   // items from the database. The `item_ids` contains a list of IDs to be
@@ -134,19 +147,10 @@ class ContentCacheImpl : public ContentCache {
   // Generates the absolute path on disk from the supplied `item_id`.
   const base::FilePath GetPathOnDiskFromId(int64_t item_id);
 
-  // A `LocalFile` represents a wrapper around an open FD. We either create a
-  // new `LocalFile` or get the existing one to avoid opening up a new FD for
-  // every chunked read request.
-  LocalFile& GetOrCreateLocalFile(int request_id, const base::FilePath& path);
-
   SEQUENCE_CHECKER(sequence_checker_);
 
   const base::FilePath root_dir_;
   ContentLRUCache lru_cache_ GUARDED_BY_CONTEXT(sequence_checker_);
-
-  // A map of `LocalFile`s that are keyed by the incoming request ID. This is
-  // analogous to a 1:1 mapping of request ID <-> file handle.
-  std::map<int, LocalFile> local_files_ GUARDED_BY_CONTEXT(sequence_checker_);
 
   scoped_refptr<base::SequencedTaskRunner> io_task_runner_;
   BoundContextDatabase context_db_;
@@ -156,6 +160,8 @@ class ContentCacheImpl : public ContentCache {
   size_t evicted_cache_items_ GUARDED_BY_CONTEXT(sequence_checker_) = 0;
   OnItemEvictedCallback on_item_evicted_callback_;
   base::OnceCallbackList<void(RemovedItemStats)> on_removed_callbacks_;
+
+  SizeInfo size_;
 
   base::WeakPtrFactory<ContentCacheImpl> weak_ptr_factory_{this};
 };

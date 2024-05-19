@@ -20,7 +20,7 @@
 #include "ui/display/display.h"
 #include "ui/display/screen.h"
 #include "ui/views/accessibility/atomic_view_ax_tree_manager.h"
-#include "ui/views/accessibility/views_ax_tree_manager.h"
+#include "ui/views/accessibility/ax_event_manager.h"
 #include "ui/views/accessibility/widget_ax_tree_id_map.h"
 #include "ui/views/view.h"
 #include "ui/views/widget/root_view.h"
@@ -52,6 +52,10 @@ bool IsValidRoleForViews(ax::mojom::Role role) {
 
 }  // namespace
 
+#define RETURN_IF_UNAVAILABLE() \
+  if (is_widget_closed_)        \
+    return;
+
 #if !BUILDFLAG_INTERNAL_HAS_NATIVE_ACCESSIBILITY()
 // static
 std::unique_ptr<ViewAccessibility> ViewAccessibility::Create(View* view) {
@@ -61,20 +65,7 @@ std::unique_ptr<ViewAccessibility> ViewAccessibility::Create(View* view) {
 #endif
 
 ViewAccessibility::ViewAccessibility(View* view)
-    : view_(view), focused_virtual_child_(nullptr) {
-#if defined(USE_AURA) && !BUILDFLAG(IS_CHROMEOS_ASH)
-  if (features::IsAccessibilityTreeForViewsEnabled()) {
-    Widget* widget = view_->GetWidget();
-    if (widget && widget->is_top_level() &&
-        !WidgetAXTreeIDMap::GetInstance().HasWidget(widget)) {
-      View* root_view = static_cast<View*>(widget->GetRootView());
-      if (root_view && root_view == view) {
-        ax_tree_manager_ = std::make_unique<views::ViewsAXTreeManager>(widget);
-      }
-    }
-  }
-#endif
-}
+    : view_(view), focused_virtual_child_(nullptr) {}
 
 ViewAccessibility::~ViewAccessibility() = default;
 
@@ -153,33 +144,13 @@ void ViewAccessibility::GetAccessibleNodeData(ui::AXNodeData* data) const {
   data->AddStringAttribute(ax::mojom::StringAttribute::kClassName,
                            view_->GetClassName());
 
-  // Views may misbehave if their widget is closed; return an unknown role
-  // rather than possibly crashing.
-  const views::Widget* widget = view_->GetWidget();
-  if (!ignore_missing_widget_for_testing_ &&
-      (!widget || !widget->widget_delegate() || widget->IsClosed())) {
-    data->role = ax::mojom::Role::kUnknown;
-    data->SetRestriction(ax::mojom::Restriction::kDisabled);
-
-    // TODO(accessibility): Returning early means that any custom data which
-    // had been set via the Override functions is not included. Preserving
-    // and exposing these properties might be worth doing, even in the case
-    // of object destruction.
-
-    // Ordinarily, a view cannot be focusable if its widget has already closed.
-    // So, it would have been appropriate to set the focusable state to false in
-    // this particular case. However, the `FocusManager` may sometimes try to
-    // retrieve the focusable state of this view via
-    // `View::IsAccessibilityFocusable()`, even after this view's widget has
-    // been closed. Returning the wrong result might cause a crash, because the
-    // focus manager might be expecting the result to be the same regardless of
-    // the state of the view's widget.
-    if (ViewAccessibility::IsAccessibilityFocusable()) {
-      data->AddState(ax::mojom::State::kFocusable);
-      // Set this node as intentionally nameless to avoid DCHECKs for a missing
-      // name of a focusable.
-      data->SetNameExplicitlyEmpty();
-    }
+  if (is_widget_closed_) {
+    // TODO(javiercon): Eventually, we should remove this call and just return.
+    // Must keep here for now in case someone queries this function right after
+    // the widget is closed.
+    // We need to return before the merge, otherwise the call
+    // to View::GetAccessibleNodeData might crash.
+    SetDataForClosedWidget(data);
     return;
   }
 
@@ -204,6 +175,7 @@ void ViewAccessibility::GetAccessibleNodeData(ui::AXNodeData* data) const {
   if (child_tree_id_) {
     data->AddChildTreeId(child_tree_id_.value());
 
+    const views::Widget* widget = view_->GetWidget();
     if (widget && widget->GetNativeView() && display::Screen::GetScreen()) {
       const float scale_factor =
           display::Screen::GetScreen()
@@ -408,6 +380,7 @@ void ViewAccessibility::SetHasPopup(const ax::mojom::HasPopup has_popup) {
 }
 
 void ViewAccessibility::SetRole(const ax::mojom::Role role) {
+  RETURN_IF_UNAVAILABLE();
   DCHECK(IsValidRoleForViews(role)) << "Invalid role for Views.";
   if (role == GetCachedRole()) {
     return;
@@ -420,6 +393,7 @@ void ViewAccessibility::SetRole(const ax::mojom::Role role) {
 
 void ViewAccessibility::SetRole(const ax::mojom::Role role,
                                 const std::u16string& role_description) {
+  RETURN_IF_UNAVAILABLE();
   if (role_description == data_.GetString16Attribute(
                               ax::mojom::StringAttribute::kRoleDescription)) {
     // No changes to the role description, update the role and return early.
@@ -439,6 +413,7 @@ void ViewAccessibility::SetRole(const ax::mojom::Role role,
 
 void ViewAccessibility::SetName(const std::string& name,
                                 ax::mojom::NameFrom name_from) {
+  RETURN_IF_UNAVAILABLE();
   DCHECK_NE(name_from, ax::mojom::NameFrom::kNone);
   // Ensure we have a current `name_from` value. For instance, the name might
   // still be an empty string, but a view is now indicating that this is by
@@ -562,6 +537,7 @@ void ViewAccessibility::ClearActiveDescendant() {
 }
 
 void ViewAccessibility::SetIsEnabled(bool is_enabled) {
+  RETURN_IF_UNAVAILABLE();
   if (is_enabled == GetIsEnabled()) {
     return;
   }
@@ -792,30 +768,6 @@ const ui::AXUniqueId& ViewAccessibility::GetUniqueId() const {
   return unique_id_;
 }
 
-ViewsAXTreeManager* ViewAccessibility::AXTreeManager() const {
-  ViewsAXTreeManager* manager = nullptr;
-#if defined(USE_AURA) && !BUILDFLAG(IS_CHROMEOS_ASH)
-  Widget* widget = view_->GetWidget();
-
-  // Don't return managers for closing Widgets.
-  if (!widget || !widget->widget_delegate() || widget->IsClosed())
-    return nullptr;
-
-  manager = ax_tree_manager_.get();
-
-  // ViewsAXTreeManagers are only created for top-level windows (Widgets). For
-  // non top-level Views, look up the Widget's tree ID to retrieve the manager.
-  if (!manager) {
-    ui::AXTreeID tree_id =
-        WidgetAXTreeIDMap::GetInstance().GetWidgetTreeID(widget);
-    DCHECK_NE(tree_id, ui::AXTreeIDUnknown());
-    manager = static_cast<views::ViewsAXTreeManager*>(
-        ui::AXTreeManager::FromID(tree_id));
-  }
-#endif
-  return manager;
-}
-
 AtomicViewAXTreeManager*
 ViewAccessibility::GetAtomicViewAXTreeManagerForTesting() const {
   return nullptr;
@@ -841,6 +793,13 @@ ViewAccessibility::accessibility_events_callback() const {
 void ViewAccessibility::set_accessibility_events_callback(
     ViewAccessibility::AccessibilityEventsCallback callback) {
   accessibility_events_callback_ = std::move(callback);
+}
+
+void ViewAccessibility::OnWidgetClosing(Widget* widget) {
+  // The RootView's ViewAccessibility should be the only registered
+  // WidgetObserver.
+  DCHECK_EQ(view_, widget->GetRootView());
+  OnWidgetClosingRecursive();
 }
 
 void ViewAccessibility::PruneSubtree() {
@@ -880,6 +839,38 @@ void ViewAccessibility::UpdateIgnoredState() {
       should_be_ignored_ || pruned_ || data_.role == ax::mojom::Role::kNone;
   SetState(ax::mojom::State::kIgnored, is_ignored);
   UpdateFocusableState();
+}
+
+void ViewAccessibility::OnWidgetClosingRecursive() {
+  ui::AXNodeData data;
+  SetDataForClosedWidget(&data);
+  data_ = data;
+
+  is_widget_closed_ = true;
+
+  internal::ScopedChildrenLock lock(view_);
+  for (auto& child : view_->children()) {
+    child->GetViewAccessibility().OnWidgetClosingRecursive();
+  }
+}
+
+void ViewAccessibility::SetDataForClosedWidget(ui::AXNodeData* data) const {
+  data->role = ax::mojom::Role::kUnknown;
+  data->SetRestriction(ax::mojom::Restriction::kDisabled);
+  // Ordinarily, a view cannot be focusable if its widget has already closed.
+  // So, it would have been appropriate to set the focusable state to false in
+  // this particular case. However, the `FocusManager` may sometimes try to
+  // retrieve the focusable state of this view via
+  // `View::IsAccessibilityFocusable()`, even after this view's widget has
+  // been closed. Returning the wrong result might cause a crash, because the
+  // focus manager might be expecting the result to be the same regardless of
+  // the state of the view's widget.
+  if (ViewAccessibility::IsAccessibilityFocusable()) {
+    data->AddState(ax::mojom::State::kFocusable);
+    // Set this node as intentionally nameless to avoid DCHECKs for a missing
+    // name of a focusable.
+    data->SetNameExplicitlyEmpty();
+  }
 }
 
 }  // namespace views

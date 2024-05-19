@@ -5,25 +5,35 @@
 package org.chromium.chrome.browser.ui.signin.account_picker;
 
 import android.app.Activity;
+import android.content.Context;
+import android.content.res.ColorStateList;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.View.OnClickListener;
+import android.view.ViewGroup.MarginLayoutParams;
 import android.view.accessibility.AccessibilityEvent;
+import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.ViewFlipper;
 
 import androidx.annotation.IdRes;
 import androidx.annotation.Nullable;
 import androidx.annotation.StringRes;
+import androidx.appcompat.content.res.AppCompatResources;
+import androidx.core.widget.ImageViewCompat;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
+import com.google.android.material.color.MaterialColors;
+
 import org.chromium.base.supplier.ObservableSupplierImpl;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.signin.services.DisplayableProfileData;
 import org.chromium.chrome.browser.ui.signin.R;
 import org.chromium.chrome.browser.ui.signin.SigninUtils;
 import org.chromium.chrome.browser.ui.signin.account_picker.AccountPickerBottomSheetProperties.ViewState;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetContent;
+import org.chromium.ui.base.ViewUtils;
 import org.chromium.ui.widget.ButtonCompat;
 import org.chromium.ui.widget.TextViewWithLeading;
 
@@ -84,9 +94,14 @@ class AccountPickerBottomSheetView implements BottomSheetContent {
     AccountPickerBottomSheetView(Activity activity, BackPressListener backPressListener) {
         mActivity = activity;
         mBackPressListener = backPressListener;
-        mContentView =
-                LayoutInflater.from(mActivity)
-                        .inflate(R.layout.account_picker_bottom_sheet_view, null);
+
+        int contentLayoutId =
+                ChromeFeatureList.isEnabled(
+                                ChromeFeatureList.REPLACE_SYNC_PROMOS_WITH_SIGN_IN_PROMOS)
+                        ? R.layout.account_picker_bottom_sheet_view
+                        : R.layout.account_picker_bottom_sheet_view_old;
+
+        mContentView = LayoutInflater.from(mActivity).inflate(contentLayoutId, null);
 
         mViewFlipper = mContentView.findViewById(R.id.account_picker_state_view_flipper);
         checkViewFlipperChildrenAndViewStateMatch(mViewFlipper);
@@ -122,6 +137,13 @@ class AccountPickerBottomSheetView implements BottomSheetContent {
                 .getChildAt(ViewState.CONFIRM_MANAGEMENT)
                 .findViewById(R.id.confirm_management_cancel_button)
                 .setOnClickListener((View v) -> handleBackPress());
+
+        if (ChromeFeatureList.isEnabled(
+                ChromeFeatureList.REPLACE_SYNC_PROMOS_WITH_SIGN_IN_PROMOS)) {
+            getAccountListView().addItemDecoration(new AccountPickerItemDecoration());
+            // TODO(b/40944124): Duplicate the xml instead of updating the UI programmatically.
+            revampSelectedAccountView();
+        }
     }
 
     /** The account list view is visible when the account list is expanded. */
@@ -161,14 +183,13 @@ class AccountPickerBottomSheetView implements BottomSheetContent {
     /**
      * Updates the views related to the selected account.
      *
-     * This method only updates the UI elements like text related to the selected account, it
+     * <p>This method only updates the UI elements like text related to the selected account, it
      * does not change the visibility.
      */
     void updateSelectedAccount(DisplayableProfileData accountProfileData) {
         View view = mViewFlipper.getChildAt(ViewState.COLLAPSED_ACCOUNT_LIST);
         ExistingAccountRowViewBinder.bindAccountView(
                 accountProfileData, mSelectedAccountView, /* isCurrentlySelected= */ true);
-
         ButtonCompat continueButton = view.findViewById(R.id.account_picker_continue_as_button);
         continueButton.setText(
                 SigninUtils.getContinueAsButtonText(view.getContext(), accountProfileData));
@@ -316,5 +337,32 @@ class AccountPickerBottomSheetView implements BottomSheetContent {
         if (viewFlipper.getChildAt(viewState).getId() != expectedChildId) {
             throw new IllegalArgumentException("Match failed with ViewState:" + viewState);
         }
+    }
+
+    // TODO(b/40944124): Move the layout configurations to the xml file after UNO is launched.
+    private void revampSelectedAccountView() {
+        Context context = mSelectedAccountView.getContext();
+        mSelectedAccountView.setBackground(
+                AppCompatResources.getDrawable(
+                        context, R.drawable.account_row_background_rounded_all));
+        int padding = ViewUtils.dpToPx(context, 16);
+        mSelectedAccountView.setPadding(padding, padding, padding, padding);
+        int horizontalMargin = ViewUtils.dpToPx(context, 24);
+        int bottomMargin = ViewUtils.dpToPx(context, 16);
+        MarginLayoutParams params = (MarginLayoutParams) mSelectedAccountView.getLayoutParams();
+        params.setMargins(
+                /* left= */ horizontalMargin,
+                /* top= */ 0,
+                /* right= */ horizontalMargin,
+                /* bottom= */ bottomMargin);
+
+        ImageView expandIcon =
+                mSelectedAccountView.findViewById(R.id.account_picker_selected_account_expand_icon);
+        expandIcon.setImageResource(R.drawable.ic_expand_more_black_24dp);
+        ColorStateList colorStateList =
+                ColorStateList.valueOf(
+                        MaterialColors.getColor(
+                                mSelectedAccountView, R.attr.colorOnSurfaceVariant));
+        ImageViewCompat.setImageTintList(expandIcon, colorStateList);
     }
 }

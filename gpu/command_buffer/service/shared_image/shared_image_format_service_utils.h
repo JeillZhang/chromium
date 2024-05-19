@@ -137,6 +137,8 @@ GPU_GLES2_EXPORT wgpu::TextureFormat ToDawnFormat(
 // Returns wgpu::TextureFormat format for given `format` and `plane_index`. Note
 // that this returns a single plane Dawn format i.e the TextureView format and
 // not a multi-planar format.
+// NOTE: This should not be used on Android when using YCbCr sampling, as in
+// that case wgpu::TextureFormat::EXTERNAL must be used.
 GPU_GLES2_EXPORT wgpu::TextureFormat ToDawnTextureViewFormat(
     viz::SharedImageFormat format,
     int plane_index);
@@ -164,6 +166,11 @@ wgpu::TextureAspect ToDawnTextureAspect(bool is_yuv_plane, int plane_index);
 // Returns MtlPixelFormat format for given `format`.
 GPU_GLES2_EXPORT unsigned int ToMTLPixelFormat(viz::SharedImageFormat format,
                                                int plane_index = 0);
+// Return the expected four character code pixel format for an IOSurface with
+// the specified format.
+GPU_GLES2_EXPORT uint32_t
+SharedImageFormatToIOSurfacePixelFormat(viz::SharedImageFormat format,
+                                        bool override_rgba_to_bgra);
 #endif
 
 // Returns the graphite::TextureInfo for a given `format` and `plane_index`.

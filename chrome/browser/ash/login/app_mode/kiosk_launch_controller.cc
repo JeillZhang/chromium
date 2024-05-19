@@ -35,13 +35,13 @@
 #include "base/task/sequenced_task_runner.h"
 #include "base/time/time.h"
 #include "chrome/browser/ash/app_mode/app_launch_utils.h"
-#include "chrome/browser/ash/app_mode/arc/arc_kiosk_app_service.h"
 #include "chrome/browser/ash/app_mode/kiosk_app.h"
 #include "chrome/browser/ash/app_mode/kiosk_app_launch_error.h"
 #include "chrome/browser/ash/app_mode/kiosk_app_launcher.h"
 #include "chrome/browser/ash/app_mode/kiosk_app_types.h"
 #include "chrome/browser/ash/app_mode/kiosk_chrome_app_manager.h"
 #include "chrome/browser/ash/app_mode/kiosk_controller.h"
+#include "chrome/browser/ash/app_mode/kiosk_profile_load_failed_observer.h"
 #include "chrome/browser/ash/app_mode/kiosk_profile_loader.h"
 #include "chrome/browser/ash/app_mode/lacros_launcher.h"
 #include "chrome/browser/ash/app_mode/startup_app_launcher.h"
@@ -116,9 +116,6 @@ void RecordKioskLaunchUMA(bool is_auto_launch) {
 
 void RecordKioskLaunchDuration(KioskAppType type, base::TimeDelta duration) {
   switch (type) {
-    case KioskAppType::kArcApp:
-      base::UmaHistogramLongTimes("Kiosk.LaunchDuration.Arc", duration);
-      break;
     case KioskAppType::kChromeApp:
       base::UmaHistogramLongTimes("Kiosk.LaunchDuration.ChromeApp", duration);
       break;
@@ -127,50 +124,12 @@ void RecordKioskLaunchDuration(KioskAppType type, base::TimeDelta duration) {
       break;
   }
 }
-// This is a not-owning wrapper around ArcKioskAppService which allows to be
-// plugged into a unique_ptr safely.
-// TODO(apotapchuk): Remove this when ARC kiosk is fully deprecated.
-class ArcKioskAppServiceWrapper : public KioskAppLauncher {
- public:
-  ArcKioskAppServiceWrapper(ArcKioskAppService* service,
-                            KioskAppLauncher::NetworkDelegate* delegate)
-      : service_(service) {
-    service_->SetNetworkDelegate(delegate);
-  }
-
-  ~ArcKioskAppServiceWrapper() override {
-    service_->SetNetworkDelegate(nullptr);
-  }
-
-  // `KioskAppLauncher`:
-  void AddObserver(KioskAppLauncher::Observer* observer) override {
-    service_->AddObserver(observer);
-  }
-  void RemoveObserver(KioskAppLauncher::Observer* observer) override {
-    service_->RemoveObserver(observer);
-  }
-  void Initialize() override { service_->Initialize(); }
-  void ContinueWithNetworkReady() override {
-    service_->ContinueWithNetworkReady();
-  }
-  void LaunchApp() override { service_->LaunchApp(); }
-
- private:
-  // `service_` is externally owned and it's the caller's responsibility to
-  // ensure that it outlives this wrapper.
-  const raw_ptr<ArcKioskAppService> service_;
-};
 
 std::unique_ptr<KioskAppLauncher> BuildKioskAppLauncher(
     Profile* profile,
     const KioskAppId& kiosk_app_id,
     KioskAppLauncher::NetworkDelegate* network_delegate) {
   switch (kiosk_app_id.type) {
-    case KioskAppType::kArcApp:
-      // ArcKioskAppService lifetime is bound to the profile, therefore
-      // wrap it into a separate object.
-      return std::make_unique<ArcKioskAppServiceWrapper>(
-          ArcKioskAppService::Get(profile), network_delegate);
     case KioskAppType::kChromeApp:
       return std::make_unique<StartupAppLauncher>(
           profile, kiosk_app_id.app_id.value(), /*should_skip_install=*/false,
@@ -297,7 +256,6 @@ std::string ToString(KioskAppLaunchError::Error error) {
     CASE(kPolicyLoadFailed);
     CASE(kUnableToDownload);
     CASE(kUnableToLaunch);
-    CASE(kArcAuthFailed);
     CASE(kExtensionsLoadTimeout);
     CASE(kExtensionsPolicyInvalid);
     CASE(kUserNotAllowlisted);
@@ -792,21 +750,7 @@ void KioskLaunchController::HandleProfileLoadError(
 
 void KioskLaunchController::HandleOldEncryption(
     std::unique_ptr<UserContext> user_context) {
-  if (kiosk_app_id_.type != KioskAppType::kArcApp) {
-    NOTREACHED();
-    return;
-  }
-  if (!host_) {
-    CHECK_IS_TEST();
-    return;
-  }
-  host_->StartWizard(EncryptionMigrationScreenView::kScreenId);
-  EncryptionMigrationScreen* migration_screen =
-      static_cast<EncryptionMigrationScreen*>(
-          host_->GetWizardController()->current_screen());
-  DCHECK(migration_screen);
-  migration_screen->SetUserContext(std::move(user_context));
-  migration_screen->SetupInitialView();
+  NOTREACHED_NORETURN();
 }
 
 void KioskLaunchController::OnNetworkConfigRequested() {

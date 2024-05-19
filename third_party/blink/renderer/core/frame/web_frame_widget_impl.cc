@@ -1150,7 +1150,7 @@ WebInputEventResult WebFrameWidgetImpl::HandleGestureEvent(
           frame->GetEventHandler().HandleGestureEvent(targeted_event);
       break;
     default:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
   }
   DidHandleGestureEvent(event);
   return event_result;
@@ -2058,7 +2058,7 @@ void WebFrameWidgetImpl::PointerLockMouseEvent(
       // because pointer lost messaging happens on separate mojo channel.
       return;
     default:
-      NOTREACHED() << input_event.GetType();
+      NOTREACHED_IN_MIGRATION() << input_event.GetType();
   }
 
   if (GetPage()) {
@@ -2976,7 +2976,7 @@ WebInputEventResult WebFrameWidgetImpl::HandleCapturedMouseEvent(
       event_type = event_type_names::kMouseup;
       break;
     default:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
   }
 
   WebMouseEvent transformed_event =
@@ -4453,6 +4453,11 @@ void WebFrameWidgetImpl::ForEachRemoteFrameControlledByWidget(
     base::FunctionRef<void(RemoteFrame*)> callback) {
   ForEachRemoteFrameChildrenControlledByWidget(local_root_->GetFrame(),
                                                callback);
+}
+
+void WebFrameWidgetImpl::CalculateSelectionBounds(gfx::Rect& anchor_root_frame,
+                                                  gfx::Rect& focus_root_frame) {
+  CalculateSelectionBounds(anchor_root_frame, focus_root_frame, nullptr);
 }
 
 void WebFrameWidgetImpl::CalculateSelectionBounds(
