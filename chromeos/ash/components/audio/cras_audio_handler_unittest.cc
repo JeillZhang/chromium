@@ -262,6 +262,10 @@ class TestObserver : public CrasAudioHandler::AudioObserver {
 
   int survey_triggerd_count() const { return survey_triggerd_count_; }
 
+  int input_muted_by_security_curtain_changed_count() const {
+    return input_muted_by_security_curtain_changed_count_;
+  }
+
   const CrasAudioHandler::AudioSurvey& survey_triggerd_recv() const {
     return survey_triggerd_recv_;
   }
@@ -345,6 +349,10 @@ class TestObserver : public CrasAudioHandler::AudioObserver {
     number_of_arc_stream_changed_latest_value_ = num;
   }
 
+  void OnInputMutedBySecurityCurtainChanged(bool muted) override {
+    ++input_muted_by_security_curtain_changed_count_;
+  }
+
  private:
   int active_output_node_changed_count_ = 0;
   int active_input_node_changed_count_ = 0;
@@ -364,6 +372,7 @@ class TestObserver : public CrasAudioHandler::AudioObserver {
   int number_of_arc_stream_changed_latest_value_ = 0;
   int number_of_arc_stream_changed_count_ = 0;
   int survey_triggerd_count_ = 0;
+  int input_muted_by_security_curtain_changed_count_ = 0;
   CrasAudioHandler::AudioSurvey survey_triggerd_recv_;
 };
 
@@ -770,14 +779,27 @@ class CrasAudioHandlerTest : public testing::TestWithParam<int> {
   }
 
   // Retrieves input_device_pref_set_map_ or output_device_pref_set_map_.
-  std::map<std::string, std::string>& GetDevicePrefSetMap(bool is_input) {
-    return is_input ? cras_audio_handler_->input_device_pref_set_map_
-                    : cras_audio_handler_->output_device_pref_set_map_;
+  const std::map<std::string, std::string>& GetDevicePrefSetMap() {
+    return audio_pref_handler_->GetDevicePreferenceSetMap();
   }
 
   // Mock time fast forward.
   void FastForwardBy(base::TimeDelta delta) {
     task_environment_.FastForwardBy(delta);
+  }
+
+  // Helper function to call GetDeviceFromStableDeviceId.
+  std::optional<AudioDevice> GetDeviceFromStableDeviceId(
+      bool is_input,
+      uint64_t stable_device_id) {
+    const AudioDevice* device =
+        cras_audio_handler_->GetDeviceFromStableDeviceId(is_input,
+                                                         stable_device_id);
+    if (device) {
+      return *device;
+    } else {
+      return std::nullopt;
+    }
   }
 
  protected:
@@ -1521,9 +1543,9 @@ TEST_P(CrasAudioHandlerTest,
 
   // Plug in another usb headphone.
   AudioNodeList audio_nodes;
-  AudioNode inernal_speaker = GenerateAudioNode(kInternalSpeaker);
-  inernal_speaker.active = true;
-  audio_nodes.push_back(inernal_speaker);
+  AudioNode internal_speaker = GenerateAudioNode(kInternalSpeaker);
+  internal_speaker.active = true;
+  audio_nodes.push_back(internal_speaker);
   AudioNode usb_headphone_1 = GenerateAudioNode(kUSBHeadphone1);
   usb_headphone_1.plugged_time = 80000000;
   audio_nodes.push_back(usb_headphone_1);
@@ -1551,7 +1573,7 @@ TEST_P(CrasAudioHandlerTest,
 
   // Unplug the 2nd usb headphone.
   audio_nodes.clear();
-  audio_nodes.push_back(inernal_speaker);
+  audio_nodes.push_back(internal_speaker);
   audio_nodes.push_back(usb_headphone_1);
   ChangeAudioNodes(audio_nodes);
 
@@ -5957,6 +5979,23 @@ TEST_P(CrasAudioHandlerTest,
   EXPECT_TRUE(cras_audio_handler_->IsInputMuted());
 }
 
+TEST_P(CrasAudioHandlerTest, IsInputMutedBySecurityCurtainChangeObserver) {
+  AudioNodeList audio_nodes = GenerateAudioNodeList({kInternalMic, kMicJack});
+  SetUpCrasAudioHandler(audio_nodes);
+
+  EXPECT_EQ(0, test_observer_->input_muted_by_security_curtain_changed_count());
+
+  cras_audio_handler_->SetInputMuteLockedBySecurityCurtain(true);
+  EXPECT_EQ(1, test_observer_->input_muted_by_security_curtain_changed_count());
+
+  // Security curtain is already on. Trying to turn it on again should be no-op.
+  cras_audio_handler_->SetInputMuteLockedBySecurityCurtain(true);
+  EXPECT_EQ(1, test_observer_->input_muted_by_security_curtain_changed_count());
+
+  cras_audio_handler_->SetInputMuteLockedBySecurityCurtain(false);
+  EXPECT_EQ(2, test_observer_->input_muted_by_security_curtain_changed_count());
+}
+
 TEST_P(CrasAudioHandlerTest, IsNoiseCancellationSupportedForDeviceNoNC) {
   AudioNodeList audio_nodes = GenerateAudioNodeList({});
   // Set up initial audio devices, only with internal mic.
@@ -7376,17 +7415,13 @@ TEST_P(CrasAudioHandlerTest,
 // and no crashes.
 TEST_P(CrasAudioHandlerTest, SyncDevicePrefSetMap) {
   SetUpCrasAudioHandler({});
-  std::map<std::string, std::string>& input_device_pref_set_map =
-      GetDevicePrefSetMap(/*is_input=*/true);
-  std::map<std::string, std::string>& output_device_pref_set_map =
-      GetDevicePrefSetMap(/*is_input=*/false);
-  EXPECT_TRUE(input_device_pref_set_map.empty());
-  EXPECT_TRUE(output_device_pref_set_map.empty());
+  const std::map<std::string, std::string>& device_pref_set_map =
+      GetDevicePrefSetMap();
+  EXPECT_TRUE(device_pref_set_map.empty());
 
   SyncDevicePrefSetMap(/*is_input=*/true);
   SyncDevicePrefSetMap(/*is_input=*/false);
-  EXPECT_TRUE(input_device_pref_set_map.empty());
-  EXPECT_TRUE(output_device_pref_set_map.empty());
+  EXPECT_TRUE(device_pref_set_map.empty());
 }
 
 // Tests that showing notification is debounced for audio output device.
@@ -7409,9 +7444,9 @@ TEST_P(CrasAudioHandlerTest,
 
   // Plug in a usb headphone without fast forward time.
   AudioNodeList audio_nodes;
-  AudioNode inernal_speaker = GenerateAudioNode(kInternalSpeaker);
-  inernal_speaker.active = true;
-  audio_nodes.push_back(inernal_speaker);
+  AudioNode internal_speaker = GenerateAudioNode(kInternalSpeaker);
+  internal_speaker.active = true;
+  audio_nodes.push_back(internal_speaker);
   AudioNode usb_headphone_1 = GenerateAudioNode(kUSBHeadphone1);
   audio_nodes.push_back(usb_headphone_1);
   ChangeAudioNodes(audio_nodes);
@@ -7507,6 +7542,117 @@ TEST_P(CrasAudioHandlerTest,
   EXPECT_EQ(
       l10n_util::GetStringUTF16(IDS_ASH_AUDIO_SELECTION_MULTIPLE_DEVICES_TITLE),
       title.value());
+}
+
+// Tests that in a rare case where both input and output have the same stable
+// id, manually switch output device should keep the input device unchanged.
+TEST_P(CrasAudioHandlerTest,
+       SwitchOutputShouldKeepInputUnchanged_AudioSelectionImprovementFlagOn) {
+  scoped_feature_list_.InitAndEnableFeature(
+      ash::features::kAudioSelectionImprovement);
+
+  // Initialize with internal devices.
+  SetupAudioNodesAndExpectActiveNodes(
+      /*initial_nodes=*/{kInternalMic, kInternalSpeaker},
+      /*expected_active_input_node=*/kInternalMic,
+      /*expected_active_output_node=*/kInternalSpeaker,
+      /*expected_has_alternative_input=*/false,
+      /*expected_has_alternative_output=*/false);
+
+  // Plug USB input and output devices with the same stable id.
+  AudioNodeList audio_nodes;
+  AudioNode inernal_mic = GenerateAudioNode(kInternalMic);
+  inernal_mic.active = true;
+  audio_nodes.push_back(inernal_mic);
+  AudioNode internal_speaker = GenerateAudioNode(kInternalSpeaker);
+  internal_speaker.active = true;
+  audio_nodes.push_back(internal_speaker);
+
+  uint64_t id = 100;
+  uint64_t stable_device_id_v1 = 12345;
+  uint64_t stable_device_id_v2 = 6789;
+  AudioNode usb_input = AudioNode(
+      /*is_input=*/true, id, /*has_v2_stable_device_id=*/true,
+      stable_device_id_v1, stable_device_id_v2,
+      /*device_name=*/"usb_input",
+      /*type=*/"USB", /*name=*/"usb_input", false /* is_active*/,
+      /*plugged_time=*/100, kInputMaxSupportedChannels, kInputAudioEffect,
+      /*number_of_volume_steps=*/0);
+  audio_nodes.push_back(usb_input);
+  AudioNode usb_output = AudioNode(
+      /*is_input=*/false, id, /*has_v2_stable_device_id=*/true,
+      stable_device_id_v1, stable_device_id_v2,
+      /*device_name=*/"usb_output",
+      /*type=*/"USB", /*name=*/"usb_output", false /* is_active*/,
+      /*plugged_time=*/100, kOutputMaxSupportedChannels, kOutputAudioEffect,
+      /*number_of_volume_steps=*/0);
+  audio_nodes.push_back(usb_output);
+  ChangeAudioNodes(audio_nodes);
+
+  // Verify internal device is still active.
+  ExpectActiveDevice(/*is_input=*/true,
+                     /*expected_active_device=*/kInternalMic,
+                     /*has_alternative_device=*/true);
+  ExpectActiveDevice(/*is_input=*/false,
+                     /*expected_active_device=*/kInternalSpeaker,
+                     /*has_alternative_device=*/true);
+
+  // Switch to usb_output.
+  AudioDevice usb_output_device(usb_output);
+  cras_audio_handler_->SwitchToDevice(usb_output_device, true,
+                                      DeviceActivateType::kActivateByUser);
+  ChangeAudioNodes(audio_nodes);
+
+  // Verify output is switched to usb_output, input statys the same.
+  ExpectActiveDevice(/*is_input=*/true,
+                     /*expected_active_device=*/kInternalMic,
+                     /*has_alternative_device=*/true);
+  EXPECT_EQ(usb_output_device.id,
+            cras_audio_handler_->GetPrimaryActiveOutputNode());
+}
+
+// Tests that GetDeviceFromStableDeviceId can get the correct device when an
+// input and an output device have the same stable id.
+TEST_P(CrasAudioHandlerTest,
+       GetDeviceFromStableDeviceId_AudioSelectionImprovementFlagOn) {
+  scoped_feature_list_.InitAndEnableFeature(
+      ash::features::kAudioSelectionImprovement);
+
+  // Plug USB input and output devices with the same stable id.
+  AudioNodeList audio_nodes;
+  uint64_t stable_device_id = 12345;
+  std::string input_device_name = "usb_input";
+  std::string output_device_name = "usb_output";
+  AudioNode usb_input = AudioNode(
+      /*is_input=*/true, /*id=*/800, /*has_v2_stable_device_id=*/true,
+      stable_device_id, stable_device_id,
+      /*device_name=*/input_device_name,
+      /*type=*/"USB", /*name=*/input_device_name, /*active=*/false,
+      /*plugged_time=*/100, kInputMaxSupportedChannels, kInputAudioEffect,
+      /*number_of_volume_steps=*/0);
+
+  AudioNode usb_output = AudioNode(
+      /*is_input=*/false, /*id=*/900, /*has_v2_stable_device_id=*/true,
+      stable_device_id, stable_device_id,
+      /*device_name=*/output_device_name,
+      /*type=*/"USB", /*name=*/output_device_name, /*active=*/false,
+      /*plugged_time=*/100, kOutputMaxSupportedChannels, kOutputAudioEffect,
+      /*number_of_volume_steps=*/0);
+  audio_nodes.push_back(usb_input);
+  audio_nodes.push_back(usb_output);
+  SetUpCrasAudioHandler(audio_nodes);
+
+  std::optional<AudioDevice> device1 =
+      GetDeviceFromStableDeviceId(/*is_input=*/false, stable_device_id);
+  EXPECT_TRUE(device1.has_value());
+  EXPECT_FALSE(device1->is_input);
+  EXPECT_EQ(device1->device_name, output_device_name);
+
+  std::optional<AudioDevice> device2 =
+      GetDeviceFromStableDeviceId(/*is_input=*/true, stable_device_id);
+  EXPECT_TRUE(device2.has_value());
+  EXPECT_TRUE(device2->is_input);
+  EXPECT_EQ(device2->device_name, input_device_name);
 }
 
 }  // namespace ash

@@ -29,7 +29,7 @@
 #include "partition_alloc/partition_stats.h"
 #include "partition_alloc/partition_tls.h"
 
-#if defined(ARCH_CPU_X86_64) && PA_BUILDFLAG(HAS_64_BIT_POINTERS)
+#if PA_BUILDFLAG(PA_ARCH_CPU_X86_64) && PA_BUILDFLAG(HAS_64_BIT_POINTERS)
 #include <algorithm>
 #endif
 
@@ -298,12 +298,11 @@ class PA_COMPONENT_EXPORT(PARTITION_ALLOC) ThreadCache {
   // The slot comes from the bucket at index |bucket_index| from the partition
   // this cache is for.
   //
-  // Returns true if the slot was put in the cache, and false otherwise. This
-  // can happen either because the cache is full or the allocation was too
-  // large.
-  PA_ALWAYS_INLINE bool MaybePutInCache(uintptr_t slot_start,
-                                        size_t bucket_index,
-                                        size_t* slot_size);
+  // Returns the slot size if the insertion succeeds, `nullopt` otherwise.
+  // Insertion can fail either because the cache is full or the
+  // allocation was too large.
+  PA_ALWAYS_INLINE std::optional<size_t> MaybePutInCache(uintptr_t slot_start,
+                                                         size_t bucket_index);
 
   // Tries to allocate a memory slot from the cache.
   // Returns 0 on failure.
@@ -475,15 +474,15 @@ class PA_COMPONENT_EXPORT(PARTITION_ALLOC) ThreadCache {
   friend class tools::ThreadCacheInspector;
 };
 
-PA_ALWAYS_INLINE bool ThreadCache::MaybePutInCache(uintptr_t slot_start,
-                                                   size_t bucket_index,
-                                                   size_t* slot_size) {
+PA_ALWAYS_INLINE std::optional<size_t> ThreadCache::MaybePutInCache(
+    uintptr_t slot_start,
+    size_t bucket_index) {
   PA_REENTRANCY_GUARD(is_in_thread_cache_);
   PA_INCREMENT_COUNTER(stats_.cache_fill_count);
 
   if (PA_UNLIKELY(bucket_index > largest_active_bucket_index_)) {
     PA_INCREMENT_COUNTER(stats_.cache_fill_misses);
-    return false;
+    return std::nullopt;
   }
 
   auto& bucket = buckets_[bucket_index];
@@ -508,8 +507,7 @@ PA_ALWAYS_INLINE bool ThreadCache::MaybePutInCache(uintptr_t slot_start,
     PurgeInternal();
   }
 
-  *slot_size = bucket.slot_size;
-  return true;
+  return bucket.slot_size;
 }
 
 PA_ALWAYS_INLINE uintptr_t ThreadCache::GetFromCache(size_t bucket_index,
@@ -547,7 +545,7 @@ PA_ALWAYS_INLINE uintptr_t ThreadCache::GetFromCache(size_t bucket_index,
   PA_DCHECK(bucket.count != 0);
   internal::PartitionFreelistEntry* entry = bucket.freelist_head;
   // TODO(lizeb): Consider removing once crbug.com/1382658 is fixed.
-#if BUILDFLAG(IS_CHROMEOS) && defined(ARCH_CPU_X86_64) && \
+#if PA_BUILDFLAG(IS_CHROMEOS) && PA_BUILDFLAG(PA_ARCH_CPU_X86_64) && \
     PA_BUILDFLAG(HAS_64_BIT_POINTERS)
   // x86_64 architecture now supports 57 bits of address space, as of Ice Lake
   // for Intel. However Chrome OS systems do not ship with kernel support for
@@ -556,7 +554,7 @@ PA_ALWAYS_INLINE uintptr_t ThreadCache::GetFromCache(size_t bucket_index,
   // by the kernel).
   constexpr uintptr_t kCanonicalPointerMask = (1ULL << 48) - 1;
   PA_CHECK(!(reinterpret_cast<uintptr_t>(entry) & ~kCanonicalPointerMask));
-#endif  // BUILDFLAG(IS_CHROMEOS) && defined(ARCH_CPU_X86_64) &&
+#endif  // PA_BUILDFLAG(IS_CHROMEOS) && PA_BUILDFLAG(PA_ARCH_CPU_X86_64) &&
         // PA_BUILDFLAG(HAS_64_BIT_POINTERS)
 
   // Passes the bucket size to |GetNext()|, so that in case of freelist
@@ -587,8 +585,8 @@ PA_ALWAYS_INLINE uintptr_t ThreadCache::GetFromCache(size_t bucket_index,
 
 PA_ALWAYS_INLINE void ThreadCache::PutInBucket(Bucket& bucket,
                                                uintptr_t slot_start) {
-#if PA_CONFIG(HAS_FREELIST_SHADOW_ENTRY) && defined(ARCH_CPU_X86_64) && \
-    PA_BUILDFLAG(HAS_64_BIT_POINTERS)
+#if PA_CONFIG(HAS_FREELIST_SHADOW_ENTRY) && \
+    PA_BUILDFLAG(PA_ARCH_CPU_X86_64) && PA_BUILDFLAG(HAS_64_BIT_POINTERS)
   // We see freelist corruption crashes happening in the wild.  These are likely
   // due to out-of-bounds accesses in the previous slot, or to a Use-After-Free
   // somewhere in the code.
@@ -618,7 +616,7 @@ PA_ALWAYS_INLINE void ThreadCache::PutInBucket(Bucket& bucket,
   static const uint32_t poison_16_bytes[4] = {0xbadbad00, 0xbadbad00,
                                               0xbadbad00, 0xbadbad00};
 
-#if !(BUILDFLAG(IS_WIN) && defined(COMPONENT_BUILD))
+#if !(PA_BUILDFLAG(IS_WIN) && defined(COMPONENT_BUILD))
   void* slot_start_tagged = std::assume_aligned<internal::kAlignment>(
       internal::SlotStartAddr2Ptr(slot_start));
 #else
@@ -634,8 +632,8 @@ PA_ALWAYS_INLINE void ThreadCache::PutInBucket(Bucket& bucket,
     memcpy(address_aligned, poison_16_bytes, sizeof(poison_16_bytes));
     address_aligned += 4;
   }
-#endif  // PA_CONFIG(HAS_FREELIST_SHADOW_ENTRY) && defined(ARCH_CPU_X86_64) &&
-        // PA_BUILDFLAG(HAS_64_BIT_POINTERS)
+#endif  // PA_CONFIG(HAS_FREELIST_SHADOW_ENTRY) &&
+        // PA_BUILDFLAG(PA_ARCH_CPU_X86_64) && PA_BUILDFLAG(HAS_64_BIT_POINTERS)
 
   auto* entry =
       get_freelist_dispatcher_from_root()->EmplaceAndInitForThreadCache(

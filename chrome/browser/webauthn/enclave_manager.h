@@ -19,6 +19,7 @@
 #include "base/observer_list.h"
 #include "base/sequence_checker.h"
 #include "chrome/browser/webauthn/enclave_manager_interface.h"
+#include "chrome/common/chrome_version.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "components/trusted_vault/trusted_vault_connection.h"
 #include "device/fido/enclave/types.h"
@@ -79,6 +80,11 @@ class TrustedVaultAccessTokenFetcherFrontend;
 // enclave, which is the ultimate point of this class.
 class EnclaveManager : public EnclaveManagerInterface {
  public:
+#if BUILDFLAG(IS_MAC)
+  static constexpr char kEnclaveKeysKeychainAccessGroup[] =
+      MAC_TEAM_IDENTIFIER_STRING "." MAC_BUNDLE_IDENTIFIER_STRING
+                                 ".webauthn-uvk";
+#endif  // BUILDFLAG(IS_MAC)
   struct StoreKeysArgs;
   class Observer : public base::CheckedObserver {
    public:
@@ -271,11 +277,16 @@ class EnclaveManager : public EnclaveManagerInterface {
   // Clears the registration as if we were starting from scratch.
   void ClearRegistrationForTesting();
 
+  // Toggle invariant checks.
+  static void EnableInvariantChecksForTesting(bool enable);
+
   // Create a wrapped PIN, suitable for putting into a simulated security domain
   // member.
   static std::string MakeWrappedPINForTesting(
       base::span<const uint8_t> security_domain_secret,
       std::string_view pin);
+
+  base::WeakPtr<EnclaveManager> GetWeakPtr();
 
  private:
   class StateMachine;

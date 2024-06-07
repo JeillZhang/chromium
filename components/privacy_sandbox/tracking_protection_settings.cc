@@ -83,8 +83,6 @@ TrackingProtectionSettings::TrackingProtectionSettings(
     onboarding_observation_.Observe(onboarding_service_);
   }
 
-  // TODO(https://b/316171695): Remove.
-  pref_service_->ClearPref(prefs::kIpProtectionEnabled);
   // It's possible enterprise status changed while profile was shut down.
   OnEnterpriseControlForPrefsChanged();
 }
@@ -170,11 +168,11 @@ void TrackingProtectionSettings::RemoveTrackingProtectionException(
       ContentSettingsType::TRACKING_PROTECTION, CONTENT_SETTING_DEFAULT);
 }
 
-bool TrackingProtectionSettings::HasTrackingProtectionException(
-    const GURL& first_party_url) const {
+ContentSetting TrackingProtectionSettings::GetTrackingProtectionSetting(
+    const GURL& first_party_url,
+    content_settings::SettingInfo* info) const {
   return host_content_settings_map_->GetContentSetting(
-             GURL(), first_party_url,
-             ContentSettingsType::TRACKING_PROTECTION) == CONTENT_SETTING_ALLOW;
+      GURL(), first_party_url, ContentSettingsType::TRACKING_PROTECTION, info);
 }
 
 void TrackingProtectionSettings::OnEnterpriseControlForPrefsChanged() {
@@ -195,7 +193,6 @@ void TrackingProtectionSettings::OnTrackingProtectionOnboardingUpdated(
     case TrackingProtectionOnboarding::OnboardingStatus::kIneligible:
     case TrackingProtectionOnboarding::OnboardingStatus::kEligible:
     case TrackingProtectionOnboarding::OnboardingStatus::kOffboarded:
-    case TrackingProtectionOnboarding::OnboardingStatus::kOnboardingRequested:
       pref_service_->SetBoolean(prefs::kTrackingProtection3pcdEnabled, false);
       return;
     case TrackingProtectionOnboarding::OnboardingStatus::kOnboarded:

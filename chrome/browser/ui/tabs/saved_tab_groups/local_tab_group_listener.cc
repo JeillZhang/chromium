@@ -6,6 +6,7 @@
 
 #include <unordered_map>
 
+#include "base/feature_list.h"
 #include "base/token.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_utils.h"
@@ -13,6 +14,7 @@
 #include "chrome/browser/ui/tabs/tab_group.h"
 #include "chrome/browser/ui/tabs/tab_group_model.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "components/saved_tab_groups/features.h"
 #include "components/saved_tab_groups/saved_tab_group_model.h"
 #include "content/public/browser/web_contents.h"
 
@@ -146,6 +148,13 @@ void LocalTabGroupListener::MoveWebContentsFromLocal(
     return;
   }
 
+  // It is possible that the listener does not track the webcontents. The tab
+  // should get added correctly in `model_` only after being tracked by the
+  // listener. See (b/343519257)
+  if (!web_contents_to_tab_id_map_.contains(web_contents)) {
+    return;
+  }
+
   // Ex:        0 1   2 3 4
   //  TabStrip: A B [ C D E ]
   //  TabGroup:       0 1 2
@@ -209,7 +218,9 @@ void LocalTabGroupListener::GroupRemovedFromSync() {
     contentses.push_back(contents);
   }
   for (content::WebContents* const contents : contentses) {
-    RemoveWebContentsFromSync(contents, /*should_close_tab=*/false);
+    RemoveWebContentsFromSync(contents,
+                              /*should_close_tab=*/base::FeatureList::IsEnabled(
+                                  tab_groups::kTabGroupsSaveV2));
   }
 
   ResumeTracking();

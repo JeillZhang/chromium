@@ -15,7 +15,7 @@
 #include "ash/wm/desks/desk_name_view.h"
 #include "ash/wm/desks/desk_preview_view.h"
 #include "ash/wm/desks/desks_test_util.h"
-#include "ash/wm/desks/legacy_desk_bar_view.h"
+#include "ash/wm/desks/overview_desk_bar_view.h"
 #include "ash/wm/desks/templates/saved_desk_util.h"
 #include "ash/wm/overview/overview_controller.h"
 #include "ash/wm/overview/overview_focusable_view.h"
@@ -112,7 +112,8 @@ TEST_P(OverviewFocusCyclerOldTest, BasicTabKeyNavigationTablet) {
 
 // Tests that pressing Ctrl+W while a window is selected in overview closes it.
 TEST_P(OverviewFocusCyclerOldTest, CloseWindowWithKey) {
-  std::unique_ptr<views::Widget> widget(CreateTestWidget());
+  std::unique_ptr<views::Widget> widget(
+      CreateTestWidget(views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET));
   ToggleOverview();
 
   SendKeyUntilOverviewItemIsFocused(ui::VKEY_RIGHT, GetEventGenerator());
@@ -168,10 +169,14 @@ TEST_P(OverviewFocusCyclerOldTest, BasicArrowKeyNavigation) {
 
 // Tests that when an item is removed while focused, the focus ring disappears,
 // and when we tab again we pick up where we left off.
+// TODO(http://b/325335020): Port this test to `OverviewFocusCyclerTest`.
 TEST_P(OverviewFocusCyclerOldTest, ItemClosed) {
-  auto widget1 = CreateTestWidget();
-  auto widget2 = CreateTestWidget();
-  auto widget3 = CreateTestWidget();
+  auto widget1 =
+      CreateTestWidget(views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
+  auto widget2 =
+      CreateTestWidget(views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
+  auto widget3 =
+      CreateTestWidget(views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
   ToggleOverview();
 
   auto* event_generator = GetEventGenerator();
@@ -193,6 +198,7 @@ TEST_P(OverviewFocusCyclerOldTest, ItemClosed) {
 }
 
 // Tests basic selection across multiple monitors.
+// TODO(http://b/325335020): Port this test to `OverviewFocusCyclerTest`.
 TEST_P(OverviewFocusCyclerOldTest, BasicMultiMonitorArrowKeyNavigation) {
   UpdateDisplay("500x400,500x400");
   const gfx::Rect bounds1(100, 100);
@@ -221,6 +227,7 @@ TEST_P(OverviewFocusCyclerOldTest, BasicMultiMonitorArrowKeyNavigation) {
 
 // Tests first monitor when display order doesn't match left to right screen
 // positions.
+// TODO(http://b/325335020): Port this test to `OverviewFocusCyclerTest`.
 TEST_P(OverviewFocusCyclerOldTest, MultiMonitorReversedOrder) {
   UpdateDisplay("500x400,500x400");
   Shell::Get()->display_manager()->SetLayoutForCurrentDisplays(
@@ -252,6 +259,7 @@ TEST_P(OverviewFocusCyclerOldTest, MultiMonitorReversedOrder) {
 }
 
 // Tests three monitors where the grid becomes empty on one of the monitors.
+// TODO(http://b/325335020): Port this test to `OverviewFocusCyclerTest`.
 TEST_P(OverviewFocusCyclerOldTest, ThreeMonitors) {
   UpdateDisplay("500x400,500x400,500x400");
   aura::Window::Windows root_windows = Shell::GetAllRootWindows();
@@ -318,6 +326,7 @@ TEST_P(OverviewFocusCyclerOldTest, FocusOverviewWindowWithReturnKey) {
 
 // Tests that the location of the overview focus ring is as expected while
 // dragging an overview item.
+// TODO(http://b/325335020): Port this test to `OverviewFocusCyclerTest`.
 TEST_P(OverviewFocusCyclerOldTest, FocusLocationWhileDragging) {
   std::unique_ptr<aura::Window> window1(CreateTestWindow(gfx::Rect(200, 200)));
   std::unique_ptr<aura::Window> window2(CreateTestWindow(gfx::Rect(200, 200)));
@@ -388,16 +397,16 @@ class DesksOverviewFocusCyclerOldTest : public OverviewFocusCyclerOldTest {
     return GetFocusCycler()->focused_view();
   }
 
-  const LegacyDeskBarView* GetDesksBarViewForRoot(aura::Window* root_window) {
+  const OverviewDeskBarView* GetDesksBarViewForRoot(aura::Window* root_window) {
     OverviewGrid* grid =
         GetOverviewSession()->GetGridWithRootWindow(root_window);
-    const LegacyDeskBarView* bar_view = grid->desks_bar_view();
+    const OverviewDeskBarView* bar_view = grid->desks_bar_view();
     DCHECK(bar_view->IsZeroState() ^ grid->IsDesksBarViewActive());
     return bar_view;
   }
 
  protected:
-  static void CheckDeskBarViewSize(const LegacyDeskBarView* view,
+  static void CheckDeskBarViewSize(const OverviewDeskBarView* view,
                                    const std::string& scope) {
     SCOPED_TRACE(scope);
     EXPECT_EQ(view->bounds().height(),
@@ -557,6 +566,7 @@ TEST_P(DesksOverviewFocusCyclerOldTest, TabbingReverse) {
 
 // Tests that we can tab and chromevox interchangeably through the desk mini
 // views and new desk button in the correct order.
+// TODO(http://b/325335020): Port this test to `DesksOverviewFocusCyclerTest`.
 TEST_P(DesksOverviewFocusCyclerOldTest, TabbingChromevox) {
   Shell::Get()->accessibility_controller()->spoken_feedback().SetEnabled(true);
   ToggleOverview();
@@ -594,6 +604,7 @@ TEST_P(DesksOverviewFocusCyclerOldTest, TabbingChromevox) {
 }
 
 // Tests that tabbing with desk items and multiple displays works as expected.
+// TODO(http://b/325335020): Port this test to `DesksOverviewFocusCyclerTest`.
 TEST_P(DesksOverviewFocusCyclerOldTest, TabbingMultiDisplay) {
   UpdateDisplay("600x400,600x400,600x400");
   std::vector<raw_ptr<aura::Window, VectorExperimental>> roots =

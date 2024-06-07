@@ -5,9 +5,6 @@
 /**
  * @fileoverview Class to manage the ChromeVox menus.
  */
-import {AsyncUtil} from '/common/async_util.js';
-import {EventGenerator} from '/common/event_generator.js';
-import {KeyCode} from '/common/key_code.js';
 import {StringUtil} from '/common/string_util.js';
 import {TestImportManager} from '/common/testing/test_import_manager.js';
 
@@ -168,20 +165,6 @@ export class MenuManager {
     this.nodeMenuDictionary_[itemData.menuId].addItemFromData(itemData);
   }
 
-  async addOSKeyboardShortcutsMenuItem(menu: PanelMenu): Promise<void> {
-    let localizedSlash =
-        await AsyncUtil.getLocalizedDomKeyStringForKeyCode(KeyCode.OEM_2);
-    if (!localizedSlash) {
-      localizedSlash = '/';
-    }
-    menu.addMenuItem(
-        Msgs.getMsg('open_keyboard_shortcuts_menu'),
-        `Ctrl+Alt+${localizedSlash}`, '', '', async () => {
-          EventGenerator.sendKeyPress(
-              KeyCode.OEM_2 /* forward slash */, {'ctrl': true, 'alt': true});
-        });
-  }
-
   /**
    * Create a new search menu with the given name and add it to the menu bar.
    * @param menuMsg The msg id of the new menu to add.
@@ -271,6 +254,16 @@ export class MenuManager {
     }
 
     this.activateMenu(this.menus_[activeIndex], true /* activateFirstItem */);
+  }
+
+  /**
+   * Advance the index of the current active menu item by |delta|.
+   * @param delta The number to add to the active menu item index.
+   */
+  advanceItemBy(delta: number): void {
+    if (this.activeMenu_) {
+      this.activeMenu_.advanceItemBy(delta);
+    }
   }
 
   /**
@@ -396,6 +389,90 @@ export class MenuManager {
     };
   }
 
+  /** @return True if the event was handled. */
+  onKeyDown(event: KeyboardEvent): boolean {
+    if (!this.activeMenu) {
+      return false;
+    }
+
+    if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) {
+      return false;
+    }
+
+    // We need special logic for navigating the search bar.
+    // If left/right arrow are pressed, we should adjust the search bar's
+    // cursor. We only want to advance the active menu if we are at the
+    // beginning/end of the search bar's contents.
+    if (this.searchMenu_ && event.target === this.searchMenu_.searchBar) {
+      const input = event.target as HTMLInputElement;
+      switch (event.key) {
+        case 'ArrowLeft':
+        case 'ArrowRight':
+          if (input.value) {
+            // TODO(b/314203187): Not null asserted, check that this is correct.
+            const cursorIndex =
+                input.selectionStart! + (event.key === 'ArrowRight' ? 1 : -1);
+            const queryLength = input.value.length;
+            if (cursorIndex >= 0 && cursorIndex <= queryLength) {
+              return false;
+            }
+          }
+          break;
+        case ' ':
+          return false;
+      }
+    }
+
+    switch (event.key) {
+      case 'ArrowLeft':
+        this.advanceActiveMenuBy(-1);
+        break;
+      case 'ArrowRight':
+        this.advanceActiveMenuBy(1);
+        break;
+      case 'ArrowUp':
+        this.advanceItemBy(-1);
+        break;
+      case 'ArrowDown':
+        this.advanceItemBy(1);
+        break;
+      case 'Escape':
+        // TODO(b/314203187): Not null asserted, check that this is correct.
+        PanelInterface.instance!.closeMenusAndRestoreFocus();
+        break;
+      case 'PageUp':
+        this.advanceItemBy(10);
+        break;
+      case 'PageDown':
+        this.advanceItemBy(-10);
+        break;
+      case 'Home':
+        this.scrollToTop();
+        break;
+      case 'End':
+        this.scrollToBottom();
+        break;
+      case 'Enter':
+      case ' ':
+        if (!this.getCallbackForCurrentItem()) {
+          // If there's no callback for the current menu item, then we shouldn't
+          // perform any special logic. Return false here and let the key event
+          // propagate so that it can potentially be handled elsewhere.
+          return false;
+        }
+
+        // TODO(b/314203187): Not null asserted, check that this is correct.
+        PanelInterface.instance!.setPendingCallback(
+            this.getCallbackForCurrentItem());
+        PanelInterface.instance!.closeMenusAndRestoreFocus();
+        break;
+      default:
+        // Don't mark this event as handled.
+        return false;
+    }
+    return true;
+  }
+
   /**
    * Called when the user releases the mouse button. If it's anywhere other
    * than on the menus button, close the menus and return focus to the page,
@@ -480,10 +557,6 @@ export class MenuManager {
         touchScreen ? this.addMenu('panel_menu_touchgestures') : null;
     const chromevoxMenu = this.addMenu('panel_menu_chromevox');
     const actionsMenu = this.addMenu('panel_menu_actions');
-
-    // Add a menu item that opens the full list of ChromeBook keyboard
-    // shortcuts. We want this to be at the top of the ChromeVox menu.
-    await this.addOSKeyboardShortcutsMenuItem(chromevoxMenu);
 
     // Create a mapping between categories from CommandStore, and our
     // top-level menus. Some categories aren't mapped to any menu.
@@ -576,6 +649,16 @@ export class MenuManager {
               'panel_menu_item_none'), '', '', '', () => Promise.resolve());
     }
     this.searchMenu_.activateItem(0);
+  }
+
+  /** Sets the index of the current active menu to be the last index. */
+  scrollToBottom(): void {
+    this.activeMenu_!.scrollToBottom();
+  }
+
+  /** Sets the index of the current active menu to be 0. */
+  scrollToTop(): void {
+    this.activeMenu_!.scrollToTop();
   }
 
   // The following getters and setters are temporary during the migration from

@@ -93,7 +93,12 @@ import java.io.IOException;
 @Restriction({UiRestriction.RESTRICTION_TYPE_PHONE, RESTRICTION_TYPE_NON_LOW_END_DEVICE})
 // TODO(crbug.com/40238208): The message cards aren't shown the first time when entering GTS
 // with Start surface enabled.
-@DisableFeatures({ChromeFeatureList.ARCHIVE_TAB_SERVICE, ChromeFeatureList.START_SURFACE_ANDROID})
+// Remove the ANDROID_HUB_FLOATING_ACTION_BUTTON restriction and regenerate goldens when launching.
+@DisableFeatures({
+    ChromeFeatureList.ARCHIVE_TAB_SERVICE,
+    ChromeFeatureList.START_SURFACE_ANDROID,
+    ChromeFeatureList.ANDROID_HUB_FLOATING_ACTION_BUTTON
+})
 @DoNotBatch(reason = "Batching can cause message state to leak between tests.")
 public class TabGridIphTest {
     private ModalDialogManager mModalDialogManager;
@@ -141,7 +146,6 @@ public class TabGridIphTest {
 
     @Test
     @MediumTest
-    @DisabledTest(message = "Reviving b/341267765")
     public void testShowAndHideIphDialog() {
         final ChromeTabbedActivity cta = mActivityTestRule.getActivity();
 
@@ -189,7 +193,6 @@ public class TabGridIphTest {
 
     @Test
     @MediumTest
-    @DisabledTest(message = "Reviving b/341267765")
     public void testIphItemShowingInIncognito() {
         final ChromeTabbedActivity cta = mActivityTestRule.getActivity();
 
@@ -202,7 +205,6 @@ public class TabGridIphTest {
 
     @Test
     @MediumTest
-    @DisabledTest(message = "Reviving b/341267765")
     public void testDismissIphItem() throws Exception {
         ChromeTabbedActivity cta = mActivityTestRule.getActivity();
 
@@ -234,7 +236,6 @@ public class TabGridIphTest {
     @Test
     @MediumTest
     @Feature({"RenderTest"})
-    @DisabledTest(message = "Reviving b/341267765")
     public void testRenderIph_Portrait() throws IOException {
         ChromeTabbedActivity cta = mActivityTestRule.getActivity();
 
@@ -250,7 +251,6 @@ public class TabGridIphTest {
     @Test
     @MediumTest
     @Feature({"RenderTest"})
-    @DisabledTest(message = "Reviving b/341267765")
     public void testRenderIph_Landscape() throws IOException {
         ChromeTabbedActivity cta = mActivityTestRule.getActivity();
 
@@ -273,7 +273,6 @@ public class TabGridIphTest {
     @Test
     @MediumTest
     @Feature({"RenderTest"})
-    @DisabledTest(message = "Reviving b/341267765")
     public void testRenderIphDialog_Portrait() throws IOException {
         ChromeTabbedActivity cta = mActivityTestRule.getActivity();
 
@@ -303,7 +302,6 @@ public class TabGridIphTest {
     @Test
     @MediumTest
     @Feature({"RenderTest"})
-    @DisabledTest(message = "Reviving b/341267765")
     public void testRenderIphDialog_Landscape() throws IOException {
         ChromeTabbedActivity cta = mActivityTestRule.getActivity();
 
@@ -338,7 +336,6 @@ public class TabGridIphTest {
 
     @Test
     @MediumTest
-    @DisabledTest(message = "Reviving b/341267765")
     public void testIphItemChangeWithLastTab() {
         ChromeTabbedActivity cta = mActivityTestRule.getActivity();
 
@@ -375,7 +372,7 @@ public class TabGridIphTest {
 
     @Test
     @MediumTest
-    @DisabledTest(message = "Reviving b/341267765")
+    @DisabledTest(message = "Consistent failures despite revival effort in b/341267765")
     public void testSwipeToDismiss_IPH() {
         ChromeTabbedActivity cta = mActivityTestRule.getActivity();
         enterTabSwitcher(cta);
@@ -399,7 +396,7 @@ public class TabGridIphTest {
 
     @Test
     @MediumTest
-    @DisabledTest(message = "Reviving b/341267765")
+    @DisabledTest(message = "Still flaky on arm builds despite revival effort in b/341267765")
     public void testNotShowIPHInMultiWindowMode() {
         ChromeTabbedActivity cta = mActivityTestRule.getActivity();
         enterTabSwitcher(cta);

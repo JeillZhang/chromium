@@ -21,6 +21,7 @@
 #include "base/uuid.h"
 #include "components/optimization_guide/core/model_execution/feature_keys.h"
 #include "components/optimization_guide/core/model_execution/model_execution_features.h"
+#include "components/optimization_guide/core/model_execution/model_execution_prefs.h"
 #include "components/optimization_guide/core/model_execution/on_device_model_access_controller.h"
 #include "components/optimization_guide/core/model_execution/on_device_model_adaptation_loader.h"
 #include "components/optimization_guide/core/model_execution/on_device_model_metadata.h"
@@ -32,7 +33,6 @@
 #include "components/optimization_guide/core/optimization_guide_features.h"
 #include "components/optimization_guide/core/optimization_guide_logger.h"
 #include "components/optimization_guide/core/optimization_guide_model_executor.h"
-#include "components/optimization_guide/core/optimization_guide_prefs.h"
 #include "components/optimization_guide/core/optimization_guide_util.h"
 #include "components/optimization_guide/core/test_model_info_builder.h"
 #include "components/optimization_guide/proto/features/compose.pb.h"
@@ -98,16 +98,16 @@ class OnDeviceModelServiceControllerTest : public testing::Test {
            {"on_device_model_topk", "1"},
            {"on_device_model_temperature", "0"}}},
          {features::kTextSafetyClassifier, {}}},
-        {});
-    prefs::RegisterLocalStatePrefs(pref_service_.registry());
+        {features::internal::kModelAdaptationCompose});
+    model_execution::prefs::RegisterLocalStatePrefs(pref_service_.registry());
 
     // Fake the requirements to install the model.
     pref_service_.SetInteger(
-        prefs::localstate::kOnDevicePerformanceClass,
+        model_execution::prefs::localstate::kOnDevicePerformanceClass,
         base::to_underlying(OnDeviceModelPerformanceClass::kLow));
-    pref_service_.SetTime(
-        prefs::localstate::kLastTimeOnDeviceEligibleFeatureWasUsed,
-        base::Time::Now());
+    pref_service_.SetTime(model_execution::prefs::localstate::
+                              kLastTimeOnDeviceEligibleFeatureWasUsed,
+                          base::Time::Now());
   }
 
   void TearDown() override {
@@ -2136,8 +2136,9 @@ TEST_F(OnDeviceModelServiceControllerTest,
   // Change the pref to a different value and recreate the service.
   access_controller_ = nullptr;
   test_controller_.reset();
-  pref_service_.SetString(prefs::localstate::kOnDeviceModelChromeVersion,
-                          "BOGUS VERSION");
+  pref_service_.SetString(
+      model_execution::prefs::localstate::kOnDeviceModelChromeVersion,
+      "BOGUS VERSION");
   RecreateServiceController();
   // Wait until configuration is read.
   task_environment_.RunUntilIdle();
@@ -2178,15 +2179,13 @@ TEST_F(OnDeviceModelServiceControllerTest, AddContextDisconnectExecute) {
   EXPECT_THAT(streamed_responses_, ElementsAreArray(expected_responses));
   EXPECT_EQ(log_entry_received_->log_ai_data_request()
                 ->compose()
-                .request_data()
+                .request()
                 .page_metadata()
                 .page_url(),
             "baz");
-  EXPECT_EQ(log_entry_received_->log_ai_data_request()
-                ->compose()
-                .response_data()
-                .output(),
-            "Context: ctx:foo off:0 max:10\nInput: execute:foobaz\n");
+  EXPECT_EQ(
+      log_entry_received_->log_ai_data_request()->compose().response().output(),
+      "Context: ctx:foo off:0 max:10\nInput: execute:foobaz\n");
 }
 
 TEST_F(OnDeviceModelServiceControllerTest, AddContextExecuteDisconnect) {
@@ -2234,15 +2233,13 @@ TEST_F(OnDeviceModelServiceControllerTest, ExecuteDisconnectedSession) {
   EXPECT_THAT(streamed_responses_, ElementsAreArray(expected_responses1));
   EXPECT_EQ(log_entry_received_->log_ai_data_request()
                 ->compose()
-                .request_data()
+                .request()
                 .page_metadata()
                 .page_url(),
             "2");
-  EXPECT_EQ(log_entry_received_->log_ai_data_request()
-                ->compose()
-                .response_data()
-                .output(),
-            "Context: ctx:bar off:0 max:10\nInput: execute:bar2\n");
+  EXPECT_EQ(
+      log_entry_received_->log_ai_data_request()->compose().response().output(),
+      "Context: ctx:bar off:0 max:10\nInput: execute:bar2\n");
   response_received_.reset();
   streamed_responses_.clear();
   log_entry_received_.reset();
@@ -2258,15 +2255,13 @@ TEST_F(OnDeviceModelServiceControllerTest, ExecuteDisconnectedSession) {
   EXPECT_THAT(streamed_responses_, ElementsAreArray(expected_responses2));
   EXPECT_EQ(log_entry_received_->log_ai_data_request()
                 ->compose()
-                .request_data()
+                .request()
                 .page_metadata()
                 .page_url(),
             "1");
-  EXPECT_EQ(log_entry_received_->log_ai_data_request()
-                ->compose()
-                .response_data()
-                .output(),
-            "Context: ctx:foo off:0 max:10\nInput: execute:foo1\n");
+  EXPECT_EQ(
+      log_entry_received_->log_ai_data_request()->compose().response().output(),
+      "Context: ctx:foo off:0 max:10\nInput: execute:foo1\n");
 }
 
 TEST_F(OnDeviceModelServiceControllerTest, CallsRemoteExecute) {
@@ -2376,12 +2371,11 @@ TEST_F(OnDeviceModelServiceControllerTest, FallbackToServerAfterDelay) {
   EXPECT_EQ("2z", compose_request.page_metadata().page_url());
   ASSERT_TRUE(log_ai_data_request_passed_to_remote_);
   EXPECT_EQ(log_ai_data_request_passed_to_remote_->compose()
-                .request_data()
+                .request()
                 .page_metadata()
                 .page_url(),
             "2z");
-  EXPECT_FALSE(
-      log_ai_data_request_passed_to_remote_->compose().has_response_data());
+  EXPECT_FALSE(log_ai_data_request_passed_to_remote_->compose().has_response());
   EXPECT_FALSE(provided_by_on_device_.has_value());
 }
 
@@ -2399,16 +2393,15 @@ TEST_F(OnDeviceModelServiceControllerTest,
   task_environment_.RunUntilIdle();
   histogram_tester.ExpectUniqueSample(
       "OptimizationGuide.ModelExecution.OnDeviceExecuteModelResult.Compose",
-      ExecuteModelResult::kDisconnectAndFallbackToServer, 1);
+      ExecuteModelResult::kDisconnectAndMaybeFallback, 1);
   EXPECT_TRUE(remote_execute_called_);
   ASSERT_TRUE(log_ai_data_request_passed_to_remote_);
   EXPECT_EQ(log_ai_data_request_passed_to_remote_->compose()
-                .request_data()
+                .request()
                 .page_metadata()
                 .page_url(),
             "foo");
-  EXPECT_FALSE(
-      log_ai_data_request_passed_to_remote_->compose().has_response_data());
+  EXPECT_FALSE(log_ai_data_request_passed_to_remote_->compose().has_response());
 }
 
 TEST_F(OnDeviceModelServiceControllerTest,
@@ -2697,9 +2690,6 @@ TEST_F(OnDeviceModelServiceControllerTest, DetectsRepeatsAndCancelsResponse) {
                   .response()
                   .on_device_model_service_response()
                   .has_repeats());
-  histogram_tester.ExpectUniqueSample(
-      "OptimizationGuide.ModelExecution.OnDeviceResponseHasRepeats.Compose",
-      true, 1);
   histogram_tester.ExpectUniqueSample(
       "OptimizationGuide.ModelExecution.OnDeviceExecuteModelResult.Compose",
       ExecuteModelResult::kResponseHadRepeats, 1);

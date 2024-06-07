@@ -985,6 +985,8 @@ class DisplaySmoothnessTracker {
     tracker_->Stop();
   }
 
+  void CancelReport() { tracker_->CancelReport(); }
+
   ReportCallback TakeCallback() { return std::move(callback_); }
   std::vector<int> TakeThroughput() { return std::move(throughput_); }
 
@@ -1472,11 +1474,11 @@ ExtensionFunction::ResponseAction AutotestPrivateLoginStatusFunction::Run() {
 
       std::string user_image;
       switch (user->image_index()) {
-        case user_manager::User::USER_IMAGE_EXTERNAL:
+        case user_manager::UserImage::Type::kExternal:
           user_image = "file";
           break;
 
-        case user_manager::User::USER_IMAGE_PROFILE:
+        case user_manager::UserImage::Type::kProfile:
           user_image = "profile";
           break;
 
@@ -5933,6 +5935,7 @@ void AutotestPrivateStopSmoothnessTrackingFunction::OnTimeOut(
   if (it == trackers->end()) {
     return;
   }
+  it->second->CancelReport();
   trackers->erase(it);
 
   Respond(Error("Smoothness is not available"));

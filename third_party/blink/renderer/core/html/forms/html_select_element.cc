@@ -1430,6 +1430,12 @@ PopupMenu* HTMLSelectElement::PopupForTesting() const {
 
 void HTMLSelectElement::DidRecalcStyle(const StyleRecalcChange change) {
   HTMLFormControlElementWithState::DidRecalcStyle(change);
+  if (auto* style = GetComputedStyle()) {
+    if (style->EffectiveAppearance() == ControlPart::kNoControlPart) {
+      UseCounter::Count(GetDocument(),
+                        WebFeature::kSelectElementAppearanceNone);
+    }
+  }
   select_type_->DidRecalcStyle(change);
 }
 
@@ -1519,6 +1525,10 @@ void HTMLSelectElement::showPicker(ExceptionState& exception_state) {
         DOMExceptionCode::kNotSupportedError,
         "showPicker() requires the select is rendered.");
     return;
+  }
+
+  if (RuntimeEnabledFeatures::ShowPickerConsumeUserActivationEnabled()) {
+    LocalFrame::ConsumeTransientUserActivation(frame);
   }
 
   select_type_->ShowPicker();

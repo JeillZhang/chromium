@@ -236,7 +236,6 @@
 <translation id="2189104374785738357">‏עריכת פרטי ה-APN</translation>
 <translation id="2195732836444333448">יש עומס גדול מהרגיל. אפשר לנסות שוב בעוד כמה דקות.</translation>
 <translation id="2201758491318984023">אופניים</translation>
-<translation id="2203222757805818543">התזמון הנוכחי מוגדר לשעות <ph name="SUNRISE" /> עד <ph name="SUNSET" />. כדי שהתזמון של המצב הכהה יתעדכן אוטומטית, צריך <ph name="BEGIN_LINK" />להפעיל את הגישה למיקום<ph name="END_LINK" /></translation>
 <translation id="2203272733515928691">מעיין חם</translation>
 <translation id="2203642483788377106">צוק</translation>
 <translation id="2208388655216963643">אימפרסיוניסטי</translation>
@@ -364,6 +363,7 @@
 <translation id="3054177598518735801">mA<ph name="CURRENT_VALUE" /></translation>
 <translation id="3056720590588772262">‏נקודת קצה (endpoint)</translation>
 <translation id="3060579846059757016">נקודות עיקריות</translation>
+<translation id="3061850252076394168">הפעלת התכונה 'הקראה'</translation>
 <translation id="3069085583900247081">הבדיקה נכשלה</translation>
 <translation id="3078740164268491126">טבלה</translation>
 <translation id="3081652522083185657">בהיר</translation>
@@ -630,7 +630,6 @@
 <translation id="458794348635939462">לא ניתן היה להתאים את הנתונים של כל המארחים</translation>
 <translation id="4593212453765072419">‏יש צורך באימות שרת ה-proxy</translation>
 <translation id="4609350030397390689">הפחתת הבהירות של המקלדת</translation>
-<translation id="4617553623719764431">מזג האוויר לא מוצג כי המיקום שלך לא ידוע. כדי לראות את מזג האוויר המקומי, <ph name="BEGIN_LINK" />צריך להפעיל את הגישה למיקום<ph name="END_LINK" /></translation>
 <translation id="4627232916386272576">‏<ph name="DOCUMENT_TITLE" />, <ph name="PRINTER_NAME" />, <ph name="CREATION_TIME" />, <ph name="PRINTED_PAGE_NUMBER" /> מתוך <ph name="TOTAL_PAGE_NUMBER" />. ניתן להקיש על Enter כדי לבטל את משימת ההדפסה.</translation>
 <translation id="463791356324567266">הסריקה מתבטלת...</translation>
 <translation id="4646949265910132906">‏חיבור Wi-Fi מאובטח</translation>
@@ -704,6 +703,7 @@
 <translation id="4985509611418653372">הרצה</translation>
 <translation id="4987769320337599931">חומת אש</translation>
 <translation id="4988526792673242964">דפים</translation>
+<translation id="4989542687859782284">לא זמין</translation>
 <translation id="4999333166442584738">הסתרת הדוח</translation>
 <translation id="500920857929044050">הפסקת הבדיקה</translation>
 <translation id="5017508259293544172">LEAP</translation>
@@ -960,7 +960,6 @@
 <translation id="6412715219990689313">מקלדת מובנית</translation>
 <translation id="6417265370957905582">Google Assistant</translation>
 <translation id="6423239382391657905">OpenVPN</translation>
-<translation id="6438073885402882007">‏הפעולה הזו מאפשרת לשירותי מערכת שקיבלו הרשאה להשתמש במיקום שלך. שירות המיקום משתמש במקורות כמו Wi‑Fi, רשתות סלולריות וחיישנים כדי לעזור בהערכת המיקום של המכשיר שלך. <ph name="LINK_BEGIN" />מידע נוסף<ph name="LINK_END" /></translation>
 <translation id="6439505561246192797">חלש (<ph name="SIGNAL_STRENGTH" />)</translation>
 <translation id="6447630859861661624">מעבר אל הגדרות החשבון</translation>
 <translation id="6462978824459367242">‏הלחצן 'הוספת ה-APN' מופעל עכשיו</translation>

@@ -27,10 +27,12 @@
 #include "components/autofill/core/common/autofill_payments_features.h"
 #include "components/compose/core/browser/compose_features.h"
 #include "components/feature_engagement/public/feature_constants.h"
+#include "components/password_manager/core/common/password_manager_constants.h"
 #include "components/strings/grit/components_strings.h"
 #include "components/user_education/views/new_badge_label.h"
 #include "content/public/browser/web_contents.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/controls/button/image_button.h"
 #include "ui/views/controls/button/image_button_factory.h"
 #include "ui/views/controls/highlight_path_generator.h"
@@ -80,6 +82,7 @@ constexpr auto kMainTextStyleLight = views::style::TextStyle::STYLE_BODY_3;
 constexpr auto kMainTextStyleHighlighted =
     views::style::TextStyle::STYLE_BODY_3_BOLD;
 constexpr auto kMinorTextStyle = views::style::TextStyle::STYLE_BODY_4;
+constexpr auto kDisabledTextStyle = views::style::TextStyle::STYLE_DISABLED;
 
 // Returns a wrapper around `closure` that posts it to the default message
 // queue instead of executing it directly. This is to avoid that the callback's
@@ -104,6 +107,7 @@ void FormatLabel(views::Label& label,
       label.SetMaximumWidthSingleLine(maximum_width_single_line);
       break;
     case FillingProduct::kCreditCard:
+    case FillingProduct::kStandaloneCvc:
       if (text.should_truncate.value()) {
         // should_truncate should only be set to true iff the experiments are
         // enabled.
@@ -135,16 +139,21 @@ int GetMaxPopupAddressProfileWidth() {
 std::unique_ptr<views::Label> CreateMainTextLabel(
     const Suggestion& suggestion,
     views::style::TextStyle primary_text_style = kMainTextStyle) {
+  views::style::TextStyle main_text_label_style;
+  if (suggestion.apply_deactivated_style) {
+    main_text_label_style = kDisabledTextStyle;
+  } else {
+    main_text_label_style = suggestion.main_text.is_primary
+                                ? primary_text_style
+                                : kMainTextStyleLight;
+  }
+
   auto label = std::make_unique<views::Label>(
       suggestion.main_text.value, views::style::CONTEXT_DIALOG_BODY_TEXT,
-      suggestion.main_text.is_primary ? primary_text_style
-                                      : kMainTextStyleLight);
+      main_text_label_style);
 
   if (!suggestion.main_text.is_primary) {
     label->SetEnabledColorId(ui::kColorLabelForegroundSecondary);
-  }
-  if (suggestion.apply_deactivated_style) {
-    popup_cell_utils::ApplyDeactivatedStyle(*label);
   }
   return label;
 }
@@ -155,14 +164,11 @@ std::unique_ptr<views::Label> CreateMinorTextLabel(
   if (suggestion.minor_text.value.empty()) {
     return nullptr;
   }
-
   auto label = std::make_unique<views::Label>(
       suggestion.minor_text.value, views::style::CONTEXT_DIALOG_BODY_TEXT,
-      kMinorTextStyle);
+      suggestion.apply_deactivated_style ? kDisabledTextStyle
+                                         : kMinorTextStyle);
   label->SetEnabledColorId(ui::kColorLabelForegroundSecondary);
-  if (suggestion.apply_deactivated_style) {
-    popup_cell_utils::ApplyDeactivatedStyle(*label);
-  }
   return label;
 }
 
@@ -283,15 +289,11 @@ std::unique_ptr<PopupRowContentView> CreateFooterPopupRowContentView(
 
 std::unique_ptr<views::Label> CreatePasswordDescriptionLabel(
     const Suggestion& suggestion) {
-  if (suggestion.labels.empty()) {
+  if (suggestion.additional_label.empty()) {
     return nullptr;
   }
-
-  CHECK_EQ(suggestion.labels.size(), 1u);
-  CHECK_EQ(suggestion.labels[0].size(), 1u);
-
   auto label = std::make_unique<views::Label>(
-      suggestion.labels[0][0].value, views::style::CONTEXT_DIALOG_BODY_TEXT,
+      suggestion.additional_label, views::style::CONTEXT_DIALOG_BODY_TEXT,
       views::style::STYLE_SECONDARY);
   label->SetElideBehavior(gfx::ELIDE_HEAD);
   label->SetMaximumWidthSingleLine(kAutofillPopupUsernameMaxWidth);
@@ -301,13 +303,30 @@ std::unique_ptr<views::Label> CreatePasswordDescriptionLabel(
 std::vector<std::unique_ptr<views::View>> CreateAndTrackPasswordSubtextViews(
     const Suggestion& suggestion,
     PopupRowContentView& content_view) {
-  auto label = std::make_unique<views::Label>(
-      suggestion.additional_label, views::style::CONTEXT_DIALOG_BODY_TEXT,
+  CHECK_EQ(suggestion.labels.size(), 1u);
+  CHECK_EQ(suggestion.labels[0].size(), 1u);
+
+  const auto& label = suggestion.labels[0][0].value;
+  auto label_view = std::make_unique<views::Label>(
+      label, views::style::CONTEXT_DIALOG_BODY_TEXT,
       views::style::STYLE_SECONDARY);
-  label->SetElideBehavior(gfx::TRUNCATE);
-  label->SetMaximumWidthSingleLine(kAutofillPopupPasswordMaxWidth);
+  // Password labels are obfuscated using password replacement character. Manual
+  // fallback suggestions display credential username, which is not obfuscated
+  // and should not be truncated.
+  const bool is_password_label =
+      label.find_first_not_of(
+          password_manager::constants::kPasswordReplacementChar) ==
+      std::u16string::npos;
+  if (is_password_label) {
+    label_view->SetElideBehavior(gfx::TRUNCATE);
+    label_view->SetMaximumWidthSingleLine(kAutofillPopupPasswordMaxWidth);
+  } else {
+    label_view->SetElideBehavior(gfx::ELIDE_HEAD);
+    label_view->SetMaximumWidthSingleLine(kAutofillPopupUsernameMaxWidth);
+  }
+
   std::vector<std::unique_ptr<views::View>> result;
-  result.push_back(std::move(label));
+  result.push_back(std::move(label_view));
   return result;
 }
 
@@ -336,7 +355,7 @@ std::unique_ptr<PopupRowContentView> CreatePasswordPopupRowContentView(
 
 std::unique_ptr<PopupRowContentView> CreateComposePopupRowContentView(
     const Suggestion& suggestion,
-    bool show_new_badge) {
+    user_education::DisplayNewBadge show_new_badge) {
   auto view = std::make_unique<PopupRowContentView>();
   auto main_text_label = std::make_unique<user_education::NewBadgeLabel>(
       suggestion.main_text.value, views::style::CONTEXT_DIALOG_BODY_TEXT,
@@ -428,8 +447,8 @@ std::unique_ptr<PopupRowWithButtonView> CreateAutocompleteRowWithDeleteButton(
   button->SetPreferredSize(gfx::Size(radius * 2, radius * 2));
   button->SetTooltipText(l10n_util::GetStringUTF16(
       IDS_AUTOFILL_DELETE_AUTOCOMPLETE_SUGGESTION_TOOLTIP));
-  button->SetAccessibleRole(ax::mojom::Role::kMenuItem);
-  button->SetAccessibleName(l10n_util::GetStringFUTF16(
+  button->GetViewAccessibility().SetRole(ax::mojom::Role::kMenuItem);
+  button->GetViewAccessibility().SetName(l10n_util::GetStringFUTF16(
       IDS_AUTOFILL_DELETE_AUTOCOMPLETE_SUGGESTION_A11Y_HINT,
       popup_cell_utils::GetVoiceOverStringFromSuggestion(
           controller->GetSuggestionAt(line_number))));
@@ -483,7 +502,7 @@ std::unique_ptr<PopupRowView> CreatePopupRowView(
     case SuggestionType::kComposeProactiveNudge: {
       // Todo (http://b/340147177): Confirm that both Compose popups should use
       // the same feature for a new badge and update feature name.
-      const bool show_new_badge = UserEducationService::MaybeShowNewBadge(
+      const auto show_new_badge = UserEducationService::MaybeShowNewBadge(
           controller->GetWebContents()->GetBrowserContext(),
           compose::features::kEnableComposeSavedStateNudge);
       return std::make_unique<PopupRowView>(
@@ -496,8 +515,6 @@ std::unique_ptr<PopupRowView> CreatePopupRowView(
           CreatePopupRowContentView(suggestion, main_filling_product,
                                     std::move(filter_match)));
   }
-
-  NOTREACHED_NORETURN();
 }
 
 }  // namespace autofill

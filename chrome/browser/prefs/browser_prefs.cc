@@ -81,7 +81,7 @@
 #include "chrome/browser/ui/prefs/prefs_tab_helper.h"
 #include "chrome/browser/ui/search_engines/keyword_editor_controller.h"
 #include "chrome/browser/ui/send_tab_to_self/send_tab_to_self_bubble.h"
-#include "chrome/browser/ui/side_panel/side_panel_prefs.h"
+#include "chrome/browser/ui/views/side_panel/side_panel_prefs.h"
 #include "chrome/browser/ui/tabs/organization/prefs.h"
 #include "chrome/browser/ui/tabs/pinned_tab_codec.h"
 #include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_pref_names.h"
@@ -145,7 +145,6 @@
 #include "components/performance_manager/public/user_tuning/prefs.h"
 #include "components/permissions/permission_hats_trigger_helper.h"
 #include "components/permissions/pref_names.h"
-#include "components/plus_addresses/plus_address_prefs.h"
 #include "components/policy/core/browser/browser_policy_connector.h"
 #include "components/policy/core/browser/url_blocklist_manager.h"
 #include "components/policy/core/common/local_test_policy_provider.h"
@@ -300,7 +299,6 @@
 #include "chrome/browser/ui/webui/settings/settings_ui.h"
 #include "chrome/browser/ui/webui/side_panel/read_anything/read_anything_prefs.h"
 #include "chrome/browser/ui/webui/tab_search/tab_search_prefs.h"
-#include "chrome/browser/ui/webui/whats_new/whats_new_ui.h"
 #include "chrome/browser/upgrade_detector/upgrade_detector.h"
 #include "components/headless/policy/headless_mode_prefs.h"
 #include "components/live_caption/live_caption_controller.h"
@@ -471,11 +469,9 @@
 #endif
 
 #if BUILDFLAG(IS_WIN)
-#include "chrome/browser/enterprise/platform_auth/platform_auth_policy_observer.h"
 #include "chrome/browser/font_prewarmer_tab_helper.h"
 #include "chrome/browser/media/cdm_pref_service_helper.h"
 #include "chrome/browser/media/media_foundation_service_monitor.h"
-#include "chrome/browser/os_crypt/app_bound_encryption_metrics_win.h"
 #include "chrome/browser/os_crypt/app_bound_encryption_provider_win.h"
 #if BUILDFLAG(GOOGLE_CHROME_BRANDING)
 #include "chrome/browser/win/conflicts/incompatible_applications_updater.h"
@@ -485,6 +481,7 @@
 #endif  // BUILDFLAG(IS_WIN)
 
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
+#include "chrome/browser/enterprise/platform_auth/platform_auth_policy_observer.h"
 #include "components/os_crypt/sync/os_crypt.h"
 #endif
 
@@ -995,6 +992,9 @@ constexpr char kOsCryptAppBoundFixedDataPrefName[] =
 // Deprecated 03/2024
 constexpr char kOsCryptAppBoundFixedData2PrefName[] =
     "os_crypt.app_bound_fixed_data2";
+// Deprecated 06/2024
+constexpr char kOsCryptAppBoundFixedData3PrefName[] =
+    "os_crypt.app_bound_fixed_data3";
 #endif  // BUILDFLAG(IS_WIN)
 
 // Deprecated 02/2024.
@@ -1086,6 +1086,10 @@ inline constexpr char kAccessibilityMouseKeysShortcutToPauseEnabled[] =
 // text fields.
 inline constexpr char kAccessibilityMouseKeysDisableInTextFields[] =
     "settings.a11y.mouse_keys.disable_in_text_fields";
+// A boolean pref which determines whether screen magnifier should center
+// the text input focus.
+inline constexpr char kAccessibilityScreenMagnifierCenterFocus[] =
+    "settings.a11y.screen_magnifier_center_focus";
 #endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
 // Deprecated 05/2024.
@@ -1094,6 +1098,33 @@ constexpr char kBlockTruncatedCookies[] = "profile.cookie_block_truncated";
 // Deprecated 05/2024
 inline constexpr char kDefaultSearchProviderChoiceLocationPrefName[] =
     "default_search_provider_data.choice_location";
+
+// Deprecated 05/2024.
+inline constexpr char kSyncCachedTrustedVaultAutoUpgradeDebugInfo[] =
+    "sync.cached_trusted_vault_auto_upgrade_debug_info";
+
+// Deprecated 05/2024.
+inline constexpr char kAutologinEnabled[] = "autologin.enabled";
+inline constexpr char kReverseAutologinRejectedEmailList[] =
+    "reverse_autologin.rejected_email_list";
+
+// Deprecated 06/2024.
+inline constexpr char kTrackingProtectionOnboardingNoticeFirstRequested[] =
+    "tracking_protection.tracking_protection_onboarding_notice_first_requested";
+inline constexpr char kTrackingProtectionOnboardingNoticeLastRequested[] =
+    "tracking_protection.tracking_protection_onboarding_notice_last_requested";
+
+// Deprecated 06/2024.
+#if !BUILDFLAG(IS_ANDROID)
+inline constexpr char kAccessibilityReadAnythingOmniboxIconLabelShownCount[] =
+    "settings.a11y.read_anything.omnibox_icon_label_shown_count";
+#endif
+
+// Deprecated 06/2024.
+#if BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
+inline constexpr char kAccessibilityPdfOcrAlwaysActive[] =
+    "settings.a11y.pdf_ocr_always_active";
+#endif
 
 // Register local state used only for migration (clearing or moving to a new
 // key).
@@ -1207,6 +1238,9 @@ void RegisterLocalStatePrefsForMigration(PrefRegistrySimple* registry) {
                                std::string());
   // Deprecated 03/2024.
   registry->RegisterStringPref(kOsCryptAppBoundFixedData2PrefName,
+                               std::string());
+  // Deprecated 06/2024.
+  registry->RegisterStringPref(kOsCryptAppBoundFixedData3PrefName,
                                std::string());
 #endif
 
@@ -1567,6 +1601,7 @@ void RegisterProfilePrefsForMigration(
                                 true);
   registry->RegisterBooleanPref(kAccessibilityMouseKeysDisableInTextFields,
                                 true);
+  registry->RegisterBooleanPref(kAccessibilityScreenMagnifierCenterFocus, true);
 #endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
   // Deprecated 05/2024.
@@ -1576,6 +1611,30 @@ void RegisterProfilePrefsForMigration(
   registry->RegisterIntegerPref(
       kDefaultSearchProviderChoiceLocationPrefName,
       static_cast<int>(search_engines::ChoiceMadeLocation::kOther));
+
+  // Deprecated 05/2024.
+  registry->RegisterStringPref(kSyncCachedTrustedVaultAutoUpgradeDebugInfo, "");
+
+  // Deprecated 05/2024.
+  registry->RegisterBooleanPref(kAutologinEnabled, true);
+  registry->RegisterListPref(kReverseAutologinRejectedEmailList);
+
+  // Deprecated 06/2024.
+  registry->RegisterTimePref(kTrackingProtectionOnboardingNoticeFirstRequested,
+                             base::Time());
+  registry->RegisterTimePref(kTrackingProtectionOnboardingNoticeLastRequested,
+                             base::Time());
+
+// Deprecated 06/2024.
+#if !BUILDFLAG(IS_ANDROID)
+  registry->RegisterIntegerPref(
+      kAccessibilityReadAnythingOmniboxIconLabelShownCount, 0);
+#endif
+
+// Deprecated 06/2024.
+#if BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
+  registry->RegisterBooleanPref(kAccessibilityPdfOcrAlwaysActive, true);
+#endif
 }
 
 void ClearSyncRequestedPrefAndMaybeMigrate(PrefService* profile_prefs) {
@@ -1635,6 +1694,7 @@ void RegisterLocalState(PrefRegistrySimple* registry) {
   metrics::RegisterDemographicsLocalStatePrefs(registry);
   network_time::NetworkTimeTracker::RegisterPrefs(registry);
   optimization_guide::prefs::RegisterLocalStatePrefs(registry);
+  optimization_guide::model_execution::prefs::RegisterLocalStatePrefs(registry);
   password_manager::PasswordManager::RegisterLocalPrefs(registry);
   policy::BrowserPolicyConnector::RegisterPrefs(registry);
   policy::LocalTestPolicyProvider::RegisterLocalStatePrefs(registry);
@@ -1711,7 +1771,7 @@ void RegisterLocalState(PrefRegistrySimple* registry) {
   StartupBrowserCreator::RegisterLocalStatePrefs(registry);
   task_manager::TaskManagerInterface::RegisterPrefs(registry);
   UpgradeDetector::RegisterPrefs(registry);
-  WhatsNewUI::RegisterLocalStatePrefs(registry);
+  registry->RegisterIntegerPref(prefs::kLastWhatsNewVersion, 0);
 #endif  // BUILDFLAG(IS_ANDROID)
 
 #if BUILDFLAG(IS_CHROMEOS_LACROS) || BUILDFLAG(ENABLE_DICE_SUPPORT)
@@ -1828,12 +1888,12 @@ void RegisterLocalState(PrefRegistrySimple* registry) {
   registry->RegisterBooleanPref(prefs::kRendererAppContainerEnabled, true);
   registry->RegisterBooleanPref(prefs::kBlockBrowserLegacyExtensionPoints,
                                 true);
+  registry->RegisterIntegerPref(prefs::kDynamicCodeSettings, /*Default=*/0);
   registry->RegisterBooleanPref(prefs::kApplicationBoundEncryptionEnabled,
                                 true);
   registry->RegisterBooleanPref(
       policy::policy_prefs::kNativeWindowOcclusionEnabled, true);
   MediaFoundationServiceMonitor::RegisterPrefs(registry);
-  os_crypt::RegisterLocalStatePrefs(registry);
   os_crypt_async::AppBoundEncryptionProviderWin::RegisterLocalPrefs(registry);
 #if BUILDFLAG(GOOGLE_CHROME_BRANDING)
   IncompatibleApplicationsUpdater::RegisterLocalStatePrefs(registry);
@@ -1858,9 +1918,9 @@ void RegisterLocalState(PrefRegistrySimple* registry) {
   screen_ai::RegisterLocalStatePrefs(registry);
 #endif  // BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
 
-#if BUILDFLAG(IS_WIN)
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
   PlatformAuthPolicyObserver::RegisterPrefs(registry);
-#endif  // BUILDFLAG(IS_WIN)
+#endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
 
   // Platform-specific and compile-time conditional individual preferences.
   // If you have multiple preferences that should clearly be grouped together,
@@ -1942,7 +2002,6 @@ void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry,
   permissions::RegisterProfilePrefs(registry);
   PermissionBubbleMediaAccessHandler::RegisterProfilePrefs(registry);
   PlatformNotificationServiceImpl::RegisterProfilePrefs(registry);
-  plus_addresses::RegisterProfilePrefs(registry);
   policy::URLBlocklistManager::RegisterProfilePrefs(registry);
   PolicyUI::RegisterProfilePrefs(registry);
   PrefProxyConfigTrackerImpl::RegisterProfilePrefs(registry);
@@ -2126,6 +2185,9 @@ void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry,
   registry->RegisterBooleanPref(policy::policy_prefs::kFloatingWorkspaceEnabled,
                                 false);
   ::reporting::RegisterProfilePrefs(registry);
+  registry->RegisterBooleanPref(prefs::kFloatingSsoEnabled, false);
+  registry->RegisterListPref(prefs::kFloatingSsoDomainBlocklist);
+  registry->RegisterListPref(prefs::kFloatingSsoDomainBlocklistExceptions);
 #if BUILDFLAG(USE_CUPS)
   extensions::PrintingAPIHandler::RegisterProfilePrefs(registry);
 #endif  // BUILDFLAG(USE_CUPS)
@@ -2295,7 +2357,6 @@ void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry,
   registry->RegisterBooleanPref(
       prefs::kAccessibilityMainNodeAnnotationsEnabled, false,
       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
-  registry->RegisterBooleanPref(prefs::kAccessibilityPdfOcrAlwaysActive, true);
 #endif  // BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
@@ -2476,6 +2537,8 @@ void MigrateObsoleteLocalStatePrefs(PrefService* local_state) {
   local_state->ClearPref(kOsCryptAppBoundFixedDataPrefName);
   // Deprecated 03/2024.
   local_state->ClearPref(kOsCryptAppBoundFixedData2PrefName);
+  // Deprecated 06/2024.
+  local_state->ClearPref(kOsCryptAppBoundFixedData3PrefName);
 #endif
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
@@ -2934,6 +2997,7 @@ void MigrateObsoleteProfilePrefs(PrefService* profile_prefs,
   // Added 05/2024.
   profile_prefs->ClearPref(kAccessibilityMouseKeysShortcutToPauseEnabled);
   profile_prefs->ClearPref(kAccessibilityMouseKeysDisableInTextFields);
+  profile_prefs->ClearPref(kAccessibilityScreenMagnifierCenterFocus);
 #endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
   // Added 05/2024.
@@ -2941,6 +3005,28 @@ void MigrateObsoleteProfilePrefs(PrefService* profile_prefs,
 
   // Added 05/2024
   profile_prefs->ClearPref(kDefaultSearchProviderChoiceLocationPrefName);
+
+  // Added 05/2024.
+  profile_prefs->ClearPref(kSyncCachedTrustedVaultAutoUpgradeDebugInfo);
+
+  // Added 05/2024.
+  profile_prefs->ClearPref(kAutologinEnabled);
+  profile_prefs->ClearPref(kReverseAutologinRejectedEmailList);
+
+  // Added 06/2024.
+  profile_prefs->ClearPref(kTrackingProtectionOnboardingNoticeFirstRequested);
+  profile_prefs->ClearPref(kTrackingProtectionOnboardingNoticeLastRequested);
+
+  // Added 06/2024.
+#if !BUILDFLAG(IS_ANDROID)
+  profile_prefs->ClearPref(
+      kAccessibilityReadAnythingOmniboxIconLabelShownCount);
+#endif
+
+// Added 06/2024.
+#if BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
+  profile_prefs->ClearPref(kAccessibilityPdfOcrAlwaysActive);
+#endif
 
   // Please don't delete the following line. It is used by PRESUBMIT.py.
   // END_MIGRATE_OBSOLETE_PROFILE_PREFS

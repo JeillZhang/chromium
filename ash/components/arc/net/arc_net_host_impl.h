@@ -68,10 +68,11 @@ class ArcNetHostImpl : public KeyedService,
 
   // Overridden from mojom::NetHost.
 
-  // TODO(b/329552433): Delete get visible networks part in this method after
-  // pi-arc is removed.
-  // Deprecated for getting visible networks. ArcWifiHostImpl::GetScanResults()
-  // should be used.
+  // TODO(b/329552433): Deprecated for |type| equal to
+  // GetNetworksRequestType::CONFIGURED_ONLY and
+  // GetNetworksRequestType::VISIBLE_ONLY.
+  // Arc::ArcWifiHostImpl::GetConfiguredWifiServices() and
+  // ArcWifiHostImpl::GetScanResults() should be used.
   void GetNetworks(mojom::GetNetworksRequestType type,
                    GetNetworksCallback callback) override;
   // TODO(b/329552433): Delete this method after pi-arc is removed.
@@ -84,15 +85,25 @@ class ArcNetHostImpl : public KeyedService,
   // TODO(b/329552433): Delete this method after pi-arc is removed.
   // Deprecated. ArcWifiHostImpl::StartScan() should be used.
   void StartScan() override;
+  // TODO(b/329552433): Delete this method after pi-arc is removed.
+  // Deprecated. ArcWifiHostImpl::CreateNetwork() should be used.
   void CreateNetwork(mojom::WifiConfigurationPtr cfg,
                      CreateNetworkCallback callback) override;
+  // TODO(b/329552433): Delete this method after pi-arc is removed.
+  // Deprecated. ArcWifiHostImpl::ForgetNetwork() should be used.
   void ForgetNetwork(const std::string& guid,
                      ForgetNetworkCallback callback) override;
+  // TODO(b/329552433): Delete this method after pi-arc is removed.
+  // Deprecated. ArcWifiHostImpl::UpdateWifiNetwork() should be used.
   void UpdateWifiNetwork(const std::string& guid,
                          mojom::WifiConfigurationPtr cfg,
                          UpdateWifiNetworkCallback callback) override;
+  // TODO(b/329552433): Delete this method after pi-arc is removed.
+  // Deprecated. ArcWifiHostImpl::StartConnect() should be used.
   void StartConnect(const std::string& guid,
                     StartConnectCallback callback) override;
+  // TODO(b/329552433): Delete this method after pi-arc is removed.
+  // Deprecated. ArcWifiHostImpl::StartDisconnect() should be used.
   void StartDisconnect(const std::string& guid,
                        StartDisconnectCallback callback) override;
   void AndroidVpnConnected(mojom::AndroidVpnConfigurationPtr cfg) override;
@@ -148,6 +159,7 @@ class ArcNetHostImpl : public KeyedService,
   // class keeps a local cache of the path->guid mapping as a fallback.
   // This is sufficient to pass CTS but it might not handle multiple
   // successive Create operations (crbug.com/631646).
+  // TODO(b/329552433): Delete this method after pi-arc is removed.
   bool GetNetworkPathFromGuid(const std::string& guid, std::string* path);
 
   // Get active layer 3 network connections for ARC. This function will run
@@ -297,6 +309,11 @@ class ArcNetHostImpl : public KeyedService,
       nullptr;
 
   std::unique_ptr<CertManager> cert_manager_;
+
+  // Cached NetworkConfigurations that were last sent to ARC. This is an
+  // already-filtered list of networks, e.g. non-ARC networks aren't included
+  // since we don't send them to ARC.
+  std::vector<arc::mojom::NetworkConfigurationPtr> cached_arc_networks_;
 
   THREAD_CHECKER(thread_checker_);
   base::WeakPtrFactory<ArcNetHostImpl> weak_factory_{this};

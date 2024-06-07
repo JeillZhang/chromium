@@ -3,7 +3,7 @@
 # found in the LICENSE file.
 """Definitions of builders in the chromium.swangle builder group."""
 
-load("//lib/builders.star", "sheriff_rotations", "siso")
+load("//lib/builders.star", "gardener_rotations", "siso")
 load("//lib/builder_config.star", "builder_config")
 load("//lib/builder_health_indicators.star", "health_spec")
 load("//lib/ci.star", "ci")
@@ -14,9 +14,9 @@ ci.defaults.set(
     executable = "recipe:angle_chromium",
     builder_group = "chromium.swangle",
     pool = ci.gpu.POOL,
-    sheriff_rotations = sheriff_rotations.CHROMIUM_GPU,
     contact_team_email = "chrome-gpu-infra@google.com",
     execution_timeout = ci.DEFAULT_EXECUTION_TIMEOUT,
+    gardener_rotations = gardener_rotations.CHROMIUM_GPU,
     health_spec = health_spec.DEFAULT,
     service_account = ci.gpu.SERVICE_ACCOUNT,
     shadow_service_account = ci.gpu.SHADOW_SERVICE_ACCOUNT,
@@ -69,7 +69,7 @@ ci.gpu.linux_builder(
             "gpu_tests",
             "release_try_builder",
             "minimal_symbols",
-            "reclient",
+            "remoteexec",
         ],
     ),
     console_view_entry = consoles.console_view_entry(
@@ -107,7 +107,7 @@ ci.gpu.linux_builder(
             "gpu_tests",
             "release_try_builder",
             "minimal_symbols",
-            "reclient",
+            "remoteexec",
         ],
     ),
     # Uncomment this entry when this experimental tester is actually in use.
@@ -145,7 +145,7 @@ ci.gpu.linux_builder(
             "angle_deqp_tests",
             "shared",
             "release",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
             "dcheck_always_on",
         ],
@@ -181,7 +181,7 @@ ci.gpu.linux_builder(
             "angle_deqp_tests",
             "shared",
             "release",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
             "dcheck_always_on",
         ],
@@ -217,7 +217,7 @@ ci.gpu.linux_builder(
             "angle_deqp_tests",
             "shared",
             "release",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
             "dcheck_always_on",
         ],
@@ -259,7 +259,7 @@ ci.gpu.mac_builder(
             "gpu_tests",
             "release_try_builder",
             "minimal_symbols",
-            "reclient",
+            "remoteexec",
         ],
     ),
     console_view_entry = consoles.console_view_entry(
@@ -296,7 +296,7 @@ ci.gpu.windows_builder(
             "gpu_tests",
             "release_try_builder",
             "minimal_symbols",
-            "reclient",
+            "remoteexec",
             "x86",
             "resource_allowlisting",
         ],
@@ -334,7 +334,7 @@ ci.gpu.windows_builder(
             "angle_deqp_tests",
             "shared",
             "release",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
             "dcheck_always_on",
         ],
@@ -372,7 +372,7 @@ ci.gpu.windows_builder(
             "angle_deqp_tests",
             "shared",
             "release",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
             "dcheck_always_on",
             "x86",
@@ -409,7 +409,7 @@ ci.gpu.windows_builder(
             "angle_deqp_tests",
             "shared",
             "release",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
             "dcheck_always_on",
         ],
@@ -445,7 +445,7 @@ ci.gpu.windows_builder(
             "angle_deqp_tests",
             "shared",
             "release",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
             "dcheck_always_on",
             "x86",

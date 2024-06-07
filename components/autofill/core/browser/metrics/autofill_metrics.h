@@ -24,6 +24,7 @@
 #include "components/autofill/core/browser/data_model/autofill_profile.h"
 #include "components/autofill/core/browser/data_model/credit_card.h"
 #include "components/autofill/core/browser/field_types.h"
+#include "components/autofill/core/browser/filling_product.h"
 #include "components/autofill/core/browser/form_types.h"
 #include "components/autofill/core/browser/metrics/form_events/form_events.h"
 #include "components/autofill/core/browser/metrics/log_event.h"
@@ -46,7 +47,6 @@ class Autofill_CreditCardFill;
 namespace autofill {
 
 class AutofillField;
-class CreditCard;
 
 namespace autofill_metrics {
 class FormEventLoggerBase;
@@ -57,6 +57,8 @@ extern const int kMaxBucketsCount;
 
 class AutofillMetrics {
  public:
+  // These values are persisted to logs. Entries should not be renumbered and
+  // numeric values should never be reused.
   enum DeveloperEngagementMetric {
     // Parsed a form that is potentially autofillable and does not contain any
     // web developer-specified field type hint.
@@ -69,14 +71,16 @@ class AutofillMetrics {
     NUM_DEVELOPER_ENGAGEMENT_METRICS,
   };
 
+  // These values are persisted to logs. Entries should not be renumbered and
+  // numeric values should never be reused.
   enum InfoBarMetric {
     INFOBAR_SHOWN = 0,  // We showed an infobar, e.g. prompting to save credit
     // card info.
-    INFOBAR_ACCEPTED,  // The user explicitly accepted the infobar.
-    INFOBAR_DENIED,    // The user explicitly denied the infobar.
-    INFOBAR_IGNORED,   // The user completely ignored the infobar (logged on
+    INFOBAR_ACCEPTED = 1,  // The user explicitly accepted the infobar.
+    INFOBAR_DENIED = 2,    // The user explicitly denied the infobar.
+    INFOBAR_IGNORED = 3,   // The user completely ignored the infobar (logged on
     // tab close).
-    INFOBAR_NOT_SHOWN_INVALID_LEGAL_MESSAGE,  // We didn't show the infobar
+    INFOBAR_NOT_SHOWN_INVALID_LEGAL_MESSAGE = 4,  // We didn't show the infobar
     // because the provided legal
     // message was invalid.
     NUM_INFO_BAR_METRICS,
@@ -942,29 +946,6 @@ class AutofillMetrics {
   static void LogFormFillDuration(const std::string& metric,
                                   const base::TimeDelta& duration);
 
-  // This should be called each time a page containing forms is loaded.
-  static void LogIsAutofillEnabledAtPageLoad(bool enabled,
-                                             PaymentsSigninState sync_state);
-
-  // This should be called each time a page containing forms is loaded.
-  static void LogIsAutofillProfileEnabledAtPageLoad(
-      bool enabled,
-      PaymentsSigninState sync_state);
-
-  // This should be called each time a page containing forms is loaded.
-  static void LogIsAutofillCreditCardEnabledAtPageLoad(
-      bool enabled,
-      PaymentsSigninState sync_state);
-
-  // This should be called each time a new chrome profile is launched.
-  static void LogIsAutofillEnabledAtStartup(bool enabled);
-
-  // This should be called each time a new chrome profile is launched.
-  static void LogIsAutofillProfileEnabledAtStartup(bool enabled);
-
-  // This should be called each time a new chrome profile is launched.
-  static void LogIsAutofillCreditCardEnabledAtStartup(bool enabled);
-
   // Logs various metrics about the local and server cards associated with a
   // profile. This should be called each time a new chrome profile is launched.
   static void LogStoredCreditCardMetrics(
@@ -998,7 +979,8 @@ class AutofillMetrics {
   static void LogNumberOfAddressesSuppressedForDisuse(size_t num_profiles);
 
   // Log the reason for which the Autofill popup disappeared.
-  static void LogAutofillSuggestionHidingReason(SuggestionHidingReason reason);
+  static void LogAutofillSuggestionHidingReason(FillingProduct filling_product,
+                                                SuggestionHidingReason reason);
 
   // Log the number of days since an Autocomplete suggestion was last used.
   static void LogAutocompleteDaysSinceLastUse(size_t days);
@@ -1185,6 +1167,9 @@ class AutofillMetrics {
   static void LogDeleteAddressProfileFromKeyboardAccessory();
 
   static void LogAutocompleteEvent(AutocompleteEvent event);
+
+  static void LogAutofillPopupVisibleDuration(FillingProduct filling_product,
+                                              const base::TimeDelta& duration);
 };
 
 #if defined(UNIT_TEST)

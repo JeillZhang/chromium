@@ -16,11 +16,14 @@
 #include "components/performance_manager/public/mojom/coordination_unit.mojom.h"
 #include "components/performance_manager/public/mojom/lifecycle.mojom.h"
 #include "components/performance_manager/public/resource_attribution/page_context.h"
-#include "components/performance_manager/public/web_contents_proxy.h"
 #include "services/metrics/public/cpp/ukm_source_id.h"
 #include "third_party/blink/public/common/permissions/permission_utils.h"
 
 class GURL;
+
+namespace content {
+class WebContents;
+}
 
 namespace performance_manager {
 
@@ -39,7 +42,7 @@ enum class PageType {
 // A PageNode represents the root of a FrameTree, or equivalently a WebContents.
 // These may correspond to normal tabs, WebViews, Portals, Chrome Apps or
 // Extensions.
-class PageNode : public Node {
+class PageNode : public TypedNode<PageNode> {
  public:
   using FrameNodeVisitor = base::FunctionRef<bool(const FrameNode*)>;
   using LifecycleState = mojom::LifecycleState;
@@ -103,6 +106,8 @@ class PageNode : public Node {
   };
 
   static const char* ToString(PageNode::PageState page_state);
+
+  static constexpr NodeTypeEnum Type() { return NodeTypeEnum::kPage; }
 
   PageNode();
 
@@ -237,7 +242,7 @@ class PageNode : public Node {
   // Returns the web contents associated with this page node. It is valid to
   // call this function on any thread but the weak pointer must only be
   // dereferenced on the UI thread.
-  virtual const WebContentsProxy& GetContentsProxy() const = 0;
+  virtual base::WeakPtr<content::WebContents> GetWebContents() const = 0;
 
   // Returns the current page state. See "PageNodeObserver::OnPageStateChanged".
   virtual PageState GetPageState() const = 0;

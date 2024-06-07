@@ -37,6 +37,7 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/safe_browsing/download_protection/download_protection_util.h"
+#include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/file_system_access_dialogs.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/grit/generated_resources.h"
@@ -70,6 +71,8 @@
 #include "chrome/browser/web_applications/web_app_install_manager_observer.h"
 #include "chrome/browser/web_applications/web_app_provider.h"
 #include "chrome/browser/web_applications/web_app_registrar.h"
+#include "extensions/browser/extension_registry.h"
+#include "extensions/common/extension.h"
 #endif
 
 #if BUILDFLAG(FULL_SAFE_BROWSING)
@@ -351,12 +354,16 @@ bool ShouldBlockAccessToPath(const base::FilePath& path,
   base::FilePath check_path;
   if (base::FeatureList::IsEnabled(
           features::kFileSystemAccessSymbolicLinkCheck)) {
-    // `path` is expected to be absolute, but call `MakeAbsoluteFilePath()`
-    // in order to perform normalization, such as resolving any symbolic link.
-    check_path = base::MakeAbsoluteFilePath(path);
-    if (check_path.empty()) {
+    // `NormalizeFilePath()` is called to perform normalization. It
+    // will resolve any file path elements like symbolic links or junctions by
+    // returning the target file path.
+    //
+    //  `path` is expected to be absolute. On Windows, this call will fail if
+    //  the target file path is greater than MAX_PATH.
+    if (!base::NormalizeFilePath(path, &check_path)) {
       check_path = path;
     }
+    DCHECK(!check_path.empty());
   } else {
     check_path = path;
   }
@@ -2207,6 +2214,7 @@ void ChromeFileSystemAccessPermissionContext::OnWebAppInstalled(
   if (!registrar.IsActivelyInstalled(app_id)) {
     return;
   }
+
   // TODO(crbug.com/40283362): Ensure that `GetAppScope` retrieves the correct
   // GURL when Scope Extensions is launched, which allows web apps to have more
   // than one origin as a scope.
@@ -2237,6 +2245,13 @@ void ChromeFileSystemAccessPermissionContext::OnWebAppInstalled(
     return;
   }
   UpgradeToExtendedPermission(origin);
+}
+
+void ChromeFileSystemAccessPermissionContext::OnWebAppInstalledWithOsHooks(
+    const webapps::AppId& app_id) {
+  // TODO(crbug.com/340952100): Remove the method after the InstallState is
+  // saved in the database & available from OnWebAppInstalled.
+  OnWebAppInstalled(app_id);
 }
 
 void ChromeFileSystemAccessPermissionContext::OnWebAppWillBeUninstalled(
@@ -2531,12 +2546,24 @@ bool ChromeFileSystemAccessPermissionContext::
   if (GetPersistedGrantType(origin) != PersistedGrantType::kDormant) {
     return false;
   }
+  // The restore prompt is not displayed when there is a platform app installed,
+  // because there is no valid UI element to display the restore prompt from.
+  const extensions::ExtensionRegistry* registry =
+      extensions::ExtensionRegistry::Get(profile());
+  const extensions::Extension* app =
+      registry ? registry->enabled_extensions().GetExtensionOrAppByURL(
+                     origin.GetURL())
+               : nullptr;
+  if (app && app->extensions::Extension::is_platform_app()) {
+    return false;
+  }
 
   // While this method is called from `RequestPermission`, which implies that
   // a `PermissionGrantImpl` exists - we want to insert the origin into the
   // permissions map if it does not exist, in order to cover cases of shutdown
   // or page navigation.
   auto& origin_state = active_permissions_map_[origin];
+
   // If an origin's grants have been revoked from being backgrounded, or
   // the permission request is on a handle retrieved from IndexedDB, then
   // the restore prompt may be eligible if requesting a permission on a handle,

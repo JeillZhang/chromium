@@ -18,6 +18,7 @@
 #include "ash/webui/system_apps/public/system_web_app_type.h"
 #include "base/check_is_test.h"
 #include "base/command_line.h"
+#include "base/containers/extend.h"
 #include "base/functional/bind.h"
 #include "base/hash/hash.h"
 #include "base/hash/sha1.h"
@@ -26,6 +27,7 @@
 #include "base/rand_util.h"
 #include "base/ranges/algorithm.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/task/sequenced_task_runner.h"
 #include "chrome/browser/apps/app_service/app_service_proxy.h"
 #include "chrome/browser/apps/app_service/app_service_proxy_factory.h"
@@ -34,7 +36,6 @@
 #include "chrome/browser/ash/drive/drive_integration_service.h"
 #include "chrome/browser/ash/drive/file_system_util.h"
 #include "chrome/browser/ash/login/wizard_controller.h"
-#include "chrome/browser/ash/policy/core/device_local_account.h"
 #include "chrome/browser/ash/wallpaper/wallpaper_drivefs_delegate_impl.h"
 #include "chrome/browser/ash/wallpaper_handlers/wallpaper_fetcher_delegate.h"
 #include "chrome/browser/ash/wallpaper_handlers/wallpaper_handlers.h"
@@ -49,6 +50,7 @@
 #include "chromeos/ash/components/cryptohome/system_salt_getter.h"
 #include "chromeos/ash/components/settings/cros_settings_names.h"
 #include "components/account_id/account_id.h"
+#include "components/policy/core/common/device_local_account_type.h"
 #include "components/prefs/pref_service.h"
 #include "components/services/app_service/public/cpp/app_launch_util.h"
 #include "components/session_manager/core/session_manager.h"
@@ -99,7 +101,7 @@ user_manager::UserType GetUserType(const AccountId& id) {
 //    and we may lose user => wallpaper files mapping at that point.
 // So this function gives WallpaperManager independent hashing method to break
 // this dependency.
-std::string HashWallpaperFilesIdStr(const std::string& files_id_unhashed) {
+std::string HashWallpaperFilesIdStr(std::string_view files_id_unhashed) {
   ash::SystemSaltGetter* salt_getter = ash::SystemSaltGetter::Get();
   DCHECK(salt_getter);
 
@@ -108,15 +110,12 @@ std::string HashWallpaperFilesIdStr(const std::string& files_id_unhashed) {
   if (!salt)
     LOG(FATAL) << "WallpaperManager HashWallpaperFilesIdStr(): no salt!";
 
-  unsigned char binmd[base::kSHA1Length];
-  std::string lowercase(files_id_unhashed);
-  base::ranges::transform(lowercase, lowercase.begin(), ::tolower);
   std::vector<uint8_t> data = *salt;
-  base::ranges::copy(files_id_unhashed, std::back_inserter(data));
-  base::SHA1HashBytes(data.data(), data.size(), binmd);
-  std::string result = base::HexEncode(binmd);
-  base::ranges::transform(result, result.begin(), ::tolower);
-  return result;
+  // Note: The original code in https://codereview.chromium.org/1886653002/
+  // presumably meant to lowercase the input string before hashing, but it did
+  // not.
+  base::Extend(data, base::as_byte_span(files_id_unhashed));
+  return base::ToLowerASCII(base::HexEncode(base::SHA1Hash(data)));
 }
 
 // Returns true if wallpaper files id can be returned successfully.
@@ -145,9 +144,10 @@ void GetFilesIdSaltReady(
 // Returns true if |users| contains users other than device local accounts.
 bool HasNonDeviceLocalAccounts(const user_manager::UserList& users) {
   for (const user_manager::User* user : users) {
-    if (!policy::IsDeviceLocalAccountUser(user->GetAccountId().GetUserEmail(),
-                                          nullptr))
+    if (!policy::IsDeviceLocalAccountUser(
+            user->GetAccountId().GetUserEmail())) {
       return true;
+    }
   }
   return false;
 }

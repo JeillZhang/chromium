@@ -16,6 +16,7 @@
 #include "base/time/time.h"
 #include "components/history/core/browser/history_types.h"
 #include "components/history/core/browser/url_row.h"
+#include "components/segmentation_platform/public/trigger.h"
 #include "components/sync_device_info/device_info.h"
 #include "url/gurl.h"
 
@@ -89,7 +90,7 @@ struct URLVisitAggregate {
     ~TabData();
     // The last active tab associated with a given URL visit.
     Tab last_active_tab;
-    // Timestamp for when a tab associated wit the given URL visit was last
+    // Timestamp for when a tab associated with the given URL visit was last
     // activated.
     base::Time last_active;
     // Whether there is a tab for the given URL visit that is pinned.
@@ -98,7 +99,7 @@ struct URLVisitAggregate {
     bool in_group = false;
     // The number of opened tabs for the given URL visit aggregate in a time
     // period.
-    size_t tab_count = 0;
+    size_t tab_count = 1;
   };
 
   struct HistoryData {
@@ -126,14 +127,24 @@ struct URLVisitAggregate {
 
     // The number of history visits associated with the URL visit aggregate in a
     // time period.
-    size_t visit_count = 0;
+    size_t visit_count = 1;
   };
 
-  URLVisitAggregate();
+  explicit URLVisitAggregate(std::string key_arg);
   URLVisitAggregate(const URLVisitAggregate&) = delete;
   URLVisitAggregate(URLVisitAggregate&& other);
   URLVisitAggregate& operator=(URLVisitAggregate&& other);
   ~URLVisitAggregate();
+
+  // A unique identifier that maps to a collection of associated URL visits.
+  // Computed via a merging and deduplication strategy and used to record events
+  // associated with the URL visit aggregate.
+  std::string url_key;
+
+  // An ID used to collect metrics associated with the aggregate visit for model
+  // training purposes. See `VisitedURLRankingService::RecordAction` for more
+  // details.
+  segmentation_platform::TrainingRequestId request_id;
 
   // Returns a set of associated visit URLs present in the data provided by the
   // various fetchers that participated in constructing the aggregate object.
@@ -147,6 +158,13 @@ struct URLVisitAggregate {
 
   // Whether the visit is bookmarked or not.
   bool bookmarked = false;
+
+  // The number of times the visits associated with the aggregate where on the
+  // foreground.
+  size_t num_times_active = 0;
+
+  // A score associated with the aggregate, if any.
+  std::optional<float> score = std::nullopt;
 };
 
 // Helper to visit each variant of URLVisitVariant.

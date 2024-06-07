@@ -51,6 +51,7 @@ class CC_EXPORT SingleThreadProxy : public Proxy,
       LayerTreeFrameSink* layer_tree_frame_sink) override;
   void ReleaseLayerTreeFrameSink() override;
   void SetVisible(bool visible) override;
+  void SetShouldWarmUp() override;
   void SetNeedsAnimate() override;
   void SetNeedsUpdateLayers() override;
   void SetNeedsCommit() override;
@@ -99,6 +100,7 @@ class CC_EXPORT SingleThreadProxy : public Proxy,
       const viz::BeginFrameArgs& args) override;
   DrawResult ScheduledActionDrawIfPossible() override;
   DrawResult ScheduledActionDrawForced() override;
+  void ScheduledActionUpdateDisplayTree() override;
   void ScheduledActionCommit() override;
   void ScheduledActionPostCommit() override;
   void ScheduledActionActivateSyncTree() override;
@@ -110,6 +112,7 @@ class CC_EXPORT SingleThreadProxy : public Proxy,
   void ScheduledActionBeginMainFrameNotExpectedUntil(
       base::TimeTicks time) override;
   void FrameIntervalUpdated(base::TimeDelta interval) override;
+  void OnBeginImplFrameDeadline() override;
 
   // LayerTreeHostImplClient implementation
   void DidLoseLayerTreeFrameSinkOnImplThread() override;
@@ -121,6 +124,7 @@ class CC_EXPORT SingleThreadProxy : public Proxy,
   void NotifyReadyToDraw() override;
   void SetNeedsRedrawOnImplThread() override;
   void SetNeedsOneBeginImplFrameOnImplThread() override;
+  void SetNeedsUpdateDisplayTreeOnImplThread() override {}
   void SetNeedsPrepareTilesOnImplThread() override;
   void SetNeedsCommitOnImplThread() override;
   void SetVideoNeedsBeginFrames(bool needs_begin_frames) override;

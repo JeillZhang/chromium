@@ -4,10 +4,15 @@
 
 package org.chromium.chrome.browser.tab_resumption;
 
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.when;
 
 import android.content.Context;
 import android.graphics.Bitmap;
+import android.util.Size;
 
 import androidx.test.core.app.ApplicationProvider;
 import androidx.test.filters.SmallTest;
@@ -19,11 +24,14 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.Mockito;
+import org.mockito.invocation.InvocationOnMock;
 import org.robolectric.annotation.Config;
 
+import org.chromium.base.Callback;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.tab_resumption.UrlImageProvider.UrlImageSource;
+import org.chromium.chrome.browser.tab_ui.ThumbnailProvider;
 import org.chromium.components.browser_ui.widget.RoundedIconGenerator;
 import org.chromium.components.favicon.IconType;
 import org.chromium.components.favicon.LargeIconBridge;
@@ -224,21 +232,55 @@ public class TabResumptionModuleSuggestionsUnitTest extends TestSupport {
 
     @Test
     @SmallTest
+    public void testCompareSuggestionsWithTraingIds() {
+        SuggestionEntry entry =
+                new SuggestionEntry(SOURCE_NAME_0, URL_0, TITLE_0, TIMESTAMP_0, ID_0);
+        SuggestionEntry entryWithTrainingInfo =
+                new SuggestionEntry(SOURCE_NAME_0, URL_0, TITLE_0, TIMESTAMP_0, ID_0);
+        entryWithTrainingInfo.trainingInfo =
+                new TrainingInfo(
+                        /* nativeVisitedUrlRankingBackend= */ 0L,
+                        /* visitId= */ "www.google.com",
+                        /* requestId= */ 123L);
+
+        // The presence of `trainingInfo` does not affect comparison.
+        Assert.assertEquals(0, entry.compareTo(entryWithTrainingInfo));
+    }
+
+    @Test
+    @SmallTest
     public void testUrlImageProvider() {
         GURL urlWithFavicon = URL_0;
         GURL urlWithoutFavicon = URL_LO;
         Bitmap expectedRealIcon = makeBitmap(64, 64);
+        Bitmap expectedThumbnail = makeBitmap(32, 32);
         Bitmap expectedFallbackIcon = makeBitmap(64, 64);
         LargeIconBridge largeIconBridge = new FakeLargeIconBridge(urlWithFavicon, expectedRealIcon);
+        ThumbnailProvider thumbnailProvider = Mockito.mock(ThumbnailProvider.class);
+        doAnswer(
+                        (InvocationOnMock invocation) -> {
+                            ((Callback<Bitmap>) invocation.getArguments()[2])
+                                    .onResult(expectedThumbnail);
+                            return null;
+                        })
+                .when(thumbnailProvider)
+                .getTabThumbnailWithCallback(
+                        /* tabId= */ anyInt(),
+                        /* thumbnailSize= */ any(Size.class),
+                        /* finalCallback= */ any(Callback.class),
+                        /* forceUpdate= */ anyBoolean(),
+                        /* writeToCache= */ anyBoolean(),
+                        /* isSelected= */ anyBoolean());
         RoundedIconGenerator roundedIconGenerator = Mockito.mock(RoundedIconGenerator.class);
         when(roundedIconGenerator.generateIconForUrl(urlWithoutFavicon))
                 .thenReturn(expectedFallbackIcon);
 
         UrlImageSource urlImageSource = Mockito.mock(UrlImageSource.class);
         when(urlImageSource.createLargeIconBridge()).thenReturn(largeIconBridge);
+        when(urlImageSource.createThumbnailProvider()).thenReturn(thumbnailProvider);
         when(urlImageSource.createIconGenerator()).thenReturn(roundedIconGenerator);
         Context context = ApplicationProvider.getApplicationContext();
-        UrlImageProvider urlImageProvider = new UrlImageProvider(urlImageSource, context, null);
+        UrlImageProvider urlImageProvider = new UrlImageProvider(context, urlImageSource, null);
 
         urlImageProvider.fetchImageForUrl(
                 urlWithFavicon,
@@ -247,6 +289,17 @@ public class TabResumptionModuleSuggestionsUnitTest extends TestSupport {
                     ++mCallbackCounter;
                 });
 
+        Assert.assertEquals(1, mCallbackCounter);
+
+        urlImageProvider.getTabThumbnail(
+                /* tabId= */ 0,
+                /* thumbnailSize= */ new Size(32, 32),
+                /* tabThumbnailCallback= */ (Bitmap icon) -> {
+                    Assert.assertEquals(icon, expectedThumbnail);
+                    ++mCallbackCounter;
+                });
+        Assert.assertEquals(2, mCallbackCounter);
+
         urlImageProvider.fetchImageForUrl(
                 urlWithoutFavicon,
                 (Bitmap icon) -> {
@@ -254,6 +307,6 @@ public class TabResumptionModuleSuggestionsUnitTest extends TestSupport {
                     ++mCallbackCounter;
                 });
 
-        Assert.assertEquals(2, mCallbackCounter);
+        Assert.assertEquals(3, mCallbackCounter);
     }
 }

@@ -236,7 +236,6 @@
 <translation id="2189104374785738357">APN-ի տվյալների փոփոխում</translation>
 <translation id="2195732836444333448">Սերվերում չկան բավականաչափ ռեսուրսներ։ Վերադարձեք քիչ անց։</translation>
 <translation id="2201758491318984023">հեծանիվ</translation>
-<translation id="2203222757805818543">Ընթացիկ ժամանակացույցը՝ <ph name="SUNRISE" /> – <ph name="SUNSET" />։ Մուգ թեմայի ժամանակացույցն ավտոմատ թարմացնելու համար <ph name="BEGIN_LINK" />միացրեք տեղորոշման թույլտվությունը<ph name="END_LINK" /></translation>
 <translation id="2203272733515928691">հանքային տաք աղբյուր</translation>
 <translation id="2203642483788377106">քարափ</translation>
 <translation id="2208388655216963643">իմպրեսիոնիստական</translation>
@@ -364,6 +363,7 @@
 <translation id="3054177598518735801"><ph name="CURRENT_VALUE" /> մԱ</translation>
 <translation id="3056720590588772262">Վերջնակետ</translation>
 <translation id="3060579846059757016">Հիմնական կետեր</translation>
+<translation id="3061850252076394168">միացնել «Ընտրեք և լսեք» գործառույթը</translation>
 <translation id="3069085583900247081">Փորձարկումը ձախողվեց</translation>
 <translation id="3078740164268491126">աղյուսակ</translation>
 <translation id="3081652522083185657">բաց</translation>
@@ -630,7 +630,6 @@
 <translation id="458794348635939462">Չհաջողվեց կապ հաստատել բոլոր խնամորդների հետ</translation>
 <translation id="4593212453765072419">Պահանջվում է պրոքսի սերվերի նույնականացում</translation>
 <translation id="4609350030397390689">Ստեղնաշարի պայծառության նվազեցում</translation>
-<translation id="4617553623719764431">Եղանակը չի ցուցադրվում, քանի որ ձեր գտնվելու վայրն անհայտ է։ Տեղական եղանակի ցուցադրման համար <ph name="BEGIN_LINK" />միացրեք տեղորոշման թույլտվությունը<ph name="END_LINK" /></translation>
 <translation id="4627232916386272576"><ph name="DOCUMENT_TITLE" />, <ph name="PRINTER_NAME" />, <ph name="CREATION_TIME" />, <ph name="PRINTED_PAGE_NUMBER" />/<ph name="TOTAL_PAGE_NUMBER" />։ Հպեք Enter՝ տպումը չեղարկելու համար։</translation>
 <translation id="463791356324567266">Սկանավորումը չեղարկվում է...</translation>
 <translation id="4646949265910132906">Ապահով Wi-Fi կապ</translation>
@@ -704,6 +703,7 @@
 <translation id="4985509611418653372">Գործարկել</translation>
 <translation id="4987769320337599931">Հրապատ</translation>
 <translation id="4988526792673242964">Էջեր</translation>
+<translation id="4989542687859782284">Անհասանելի է</translation>
 <translation id="4999333166442584738">Թաքցնել հաշվետվությունը</translation>
 <translation id="500920857929044050">Դադարեցնել փորձարկումը</translation>
 <translation id="5017508259293544172">LEAP</translation>
@@ -718,7 +718,7 @@
 <translation id="5088172560898466307">Սերվերի խնամորդի անուն</translation>
 <translation id="5089810972385038852">Նահանգ</translation>
 <translation id="5090362543162270857">IPsec (IKEv2)</translation>
-<translation id="5095761549884461003">Թարմացումը շարունակելու համար ձեր <ph name="DEVICE_NAME" /> սարքից անջատեք USB մալուխը և նորից միացրեք</translation>
+<translation id="5095761549884461003">Թարմացումը շարունակելու համար ձեր <ph name="DEVICE_NAME" /> սարքից անջատեք USB մալուխը և նորից միացրեք այն</translation>
 <translation id="5099354524039520280">վերև</translation>
 <translation id="5107243100836678918">Առանց «<ph name="META_KEY" />» ստեղնի դյուրանցումը կարող է հակասել որոշ հավելվածների դյուրանցումներին։ Կրկին սեղմեք այս դյուրանցումը՝ դրա օգտագործումը շարունակելու համար, կամ սեղմեք նոր դյուրանցում՝ օգտագործելով «<ph name="KEY" />» ստեղնը։ <ph name="LINK_BEGIN" />Իմանալ ավելին<ph name="LINK_END" /></translation>
 <translation id="5108781503443873320">Հոմանիշներ՝</translation>
@@ -960,7 +960,6 @@
 <translation id="6412715219990689313">Ներկառուցված ստեղնաշար</translation>
 <translation id="6417265370957905582">Google Օգնական</translation>
 <translation id="6423239382391657905">OpenVPN</translation>
-<translation id="6438073885402882007">Սա թույլ է տալիս համակարգային ծառայություններին օգտագործել ձեր տեղադրության տվյալները։ Ձեր սարքի տեղադրությունը որոշելու համար տեղորոշման ծառայությունն օգտագործում է տարբեր աղբյուրներ, օրինակ՝ Wi‑Fi, բջջային ցանցեր և տվիչներ։ <ph name="LINK_BEGIN" />Իմանալ ավելին<ph name="LINK_END" /></translation>
 <translation id="6439505561246192797">Թույլ (<ph name="SIGNAL_STRENGTH" />)</translation>
 <translation id="6447630859861661624">Անցնել հաշվի կարգավորումներ</translation>
 <translation id="6462978824459367242">«Ավելացնել APN» կոճակը միացված է</translation>

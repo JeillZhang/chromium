@@ -23,7 +23,7 @@
 #include "ash/test/ash_test_base.h"
 #include "ash/test/ash_test_helper.h"
 #include "ash/test/test_window_builder.h"
-#include "ash/wm/desks/legacy_desk_bar_view.h"
+#include "ash/wm/desks/overview_desk_bar_view.h"
 #include "ash/wm/overview/overview_controller.h"
 #include "ash/wm/overview/overview_grid.h"
 #include "ash/wm/overview/overview_item.h"
@@ -156,8 +156,9 @@ class DockedMagnifierTest : public NoSessionAshTestBase {
       const gfx::Rect& bounds) {
     auto* widget_delegate_view = new views::WidgetDelegateView();
     widget_delegate_view->SetModalType(ui::MODAL_TYPE_SYSTEM);
-    return CreateTestWidget(widget_delegate_view,
-                            kShellWindowId_LockSystemModalContainer, bounds);
+    return CreateTestWidget(
+        views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET,
+        widget_delegate_view, kShellWindowId_LockSystemModalContainer, bounds);
   }
 
   // Test that display work area and a modal window is adjusted correctly

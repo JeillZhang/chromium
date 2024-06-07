@@ -159,6 +159,11 @@ BASE_FEATURE(kIPHSideSearchPageActionLabelFeature,
 BASE_FEATURE(kIPHSignoutWebInterceptFeature,
              "IPH_SignoutWebIntercept",
              base::FEATURE_ENABLED_BY_DEFAULT);
+
+BASE_FEATURE(kIPHTabGroupsSaveV2IntroFeature,
+             "IPH_TabGroupsSaveV2Intro",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+
 BASE_FEATURE(kIPHTabOrganizationSuccessFeature,
              "IPH_TabOrganizationSuccess",
              base::FEATURE_DISABLED_BY_DEFAULT);
@@ -480,7 +485,7 @@ BASE_FEATURE(kIPHBadgedTranslateManualTriggerFeature,
              base::FEATURE_DISABLED_BY_DEFAULT);
 BASE_FEATURE(kIPHDiscoverFeedHeaderFeature,
              "IPH_DiscoverFeedHeaderMenu",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             base::FEATURE_ENABLED_BY_DEFAULT);
 BASE_FEATURE(kIPHDefaultSiteViewFeature,
              "IPH_DefaultSiteView",
              base::FEATURE_ENABLED_BY_DEFAULT);
@@ -549,7 +554,7 @@ BASE_FEATURE(kIPHiOSReplaceSyncPromosWithSignInPromos,
              base::FEATURE_DISABLED_BY_DEFAULT);
 BASE_FEATURE(kIPHiOSTabGridSwipeRightForIncognito,
              "IPH_iOSTabGridSwipeRightForIncognito",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             base::FEATURE_ENABLED_BY_DEFAULT);
 BASE_FEATURE(kIPHiOSDockingPromoFeature,
              "IPH_iOSDockingPromo",
              base::FEATURE_DISABLED_BY_DEFAULT);
@@ -752,6 +757,12 @@ BASE_FEATURE(kIPHDesktopPWAsLinkCapturingLaunch,
 #if !BUILDFLAG(IS_ANDROID) && BUILDFLAG(GOOGLE_CHROME_BRANDING)
 BASE_FEATURE(kIPHiOSPasswordPromoDesktopFeature,
              "IPH_iOSPasswordPromoDesktop",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+BASE_FEATURE(kIPHiOSAddressPromoDesktopFeature,
+             "IPH_iOSAddressPromoDesktop",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+BASE_FEATURE(kIPHiOSPaymentPromoDesktopFeature,
+             "IPH_iOSPaymentPromoDesktop",
              base::FEATURE_ENABLED_BY_DEFAULT);
 #endif  // !BUILDFLAG(IS_ANDROID) &&
         // BUILDFLAG(GOOGLE_CHROME_BRANDING)

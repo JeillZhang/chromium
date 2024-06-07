@@ -203,6 +203,14 @@ bool IsGestureScrollOrPinch(WebInputEvent::Type type) {
   }
 }
 
+bool DoNotEnqueueLateScrollEvents(
+    cc::InputHandlerClient::ScrollEventDispatchMode mode) {
+  return mode == cc::InputHandlerClient::ScrollEventDispatchMode::
+                     kDispatchScrollEventsImmediately ||
+         mode == cc::InputHandlerClient::ScrollEventDispatchMode::
+                     kUseScrollPredictorForDeadline;
+}
+
 }  // namespace
 
 InputHandlerProxy::InputHandlerProxy(cc::InputHandler& input_handler,
@@ -323,8 +331,10 @@ void InputHandlerProxy::HandleInputEventWithLatencyInfo(
     // While scrolling, if there were no enqueued events during
     // DeliverInputForBeginFrame we want to dispatch those immediately. We will
     // return to `enqueue_scroll_events_` once frame production has begun.
-    if (gesture_event.IsScrollEvent() && do_not_enqueue_late_scroll_events_ &&
+    if (gesture_event.IsScrollEvent() &&
+        DoNotEnqueueLateScrollEvents(scroll_event_dispatch_mode_) &&
         !enqueue_scroll_events_) {
+      enqueue_scroll_events_ = true;
       // TODO(jonross): this will update to a prediction that is -5ms before
       // `current_begin_frame_args_.frame_time`. We should consider not
       // dispatching if `event_with_callback` is too old, and if we expect a
@@ -401,6 +411,7 @@ void InputHandlerProxy::ContinueScrollBeginAfterMainThreadHitTest(
   // because of the first ScrollBegin so clear this so we don't spurriously
   // call ScrollEnd. It will be set again in HandleGestureScrollBegin.
   currently_active_gesture_device_ = std::nullopt;
+  current_active_gesture_scroll_modifiers_ = std::nullopt;
 
   auto* gesture_event =
       static_cast<blink::WebGestureEvent*>(event->EventPointer());
@@ -473,13 +484,16 @@ void InputHandlerProxy::DispatchSingleInputEvent(
         // gesture was handled but the scroll was not consumed.
         currently_active_gesture_device_ =
             static_cast<const WebGestureEvent&>(event).SourceDevice();
+        current_active_gesture_scroll_modifiers_ = event.GetModifiers();
       }
       break;
 
     case WebGestureEvent::Type::kGestureScrollEnd:
     case WebGestureEvent::Type::kGesturePinchEnd:
-      if (!handling_gesture_on_impl_thread_)
+      if (!handling_gesture_on_impl_thread_) {
         currently_active_gesture_device_ = std::nullopt;
+        current_active_gesture_scroll_modifiers_ = std::nullopt;
+      }
       break;
     case WebInputEvent::Type::kTouchStart:
       if (static_cast<const WebTouchEvent&>(event).IsTouchSequenceStart()) {
@@ -528,6 +542,25 @@ void InputHandlerProxy::DispatchQueuedInputEvents(bool frame_aligned) {
   while (HasQueuedEventsReadyForDispatch(frame_aligned)) {
     DispatchSingleInputEvent(compositor_event_queue_->Pop());
   }
+}
+
+void InputHandlerProxy::GenerateAndDispatchSytheticScrollPrediction(
+    const viz::BeginFrameArgs& args) {
+  // It is possible that a user can move their finger very slowly, or hold it in
+  // place. When this occurs we can stop receiving input events, or they can be
+  // so far apart that we cannot reliably create predictions. When that occurs
+  // we do not create any synthetic events.
+  if (!currently_active_gesture_device_.has_value() || !scroll_predictor_ ||
+      !scroll_predictor_->HasPrediction() ||
+      scroll_begin_main_thread_hit_test_reasons_) {
+    return;
+  }
+  std::unique_ptr<EventWithCallback> event_with_callback =
+      scroll_predictor_->GenerateSyntheticScrollUpdate(
+          args.frame_time, args.interval,
+          currently_active_gesture_device_.value(),
+          current_active_gesture_scroll_modifiers_.value_or(0));
+  DispatchSingleInputEvent(std::move(event_with_callback));
 }
 
 void InputHandlerProxy::UpdateElasticOverscroll() {
@@ -1145,6 +1178,7 @@ void InputHandlerProxy::InputHandlerScrollEnd() {
 
   DCHECK(!gesture_pinch_in_progress_);
   currently_active_gesture_device_ = std::nullopt;
+  current_active_gesture_scroll_modifiers_ = std::nullopt;
 }
 
 InputHandlerProxy::EventDisposition InputHandlerProxy::HitTestTouchEvent(
@@ -1446,6 +1480,18 @@ void InputHandlerProxy::DeliverInputForBeginFrame(
     const viz::BeginFrameArgs& args) {
   current_begin_frame_args_ = args;
   enqueue_scroll_events_ = !compositor_event_queue_->empty();
+  // While
+  // `cc::InputHandlerClient::ScrollEventDispatchMode::kUseScrollPredictorForEmptyQueue`
+  // is enabled we will attempt to generate synthetic scroll events for
+  // BeginFrames.
+  if (scroll_event_dispatch_mode_ ==
+          cc::InputHandlerClient::ScrollEventDispatchMode::
+              kUseScrollPredictorForEmptyQueue &&
+      !enqueue_scroll_events_) {
+    GenerateAndDispatchSytheticScrollPrediction(args);
+    enqueue_scroll_events_ = true;
+  }
+
   if (!scroll_predictor_)
     DispatchQueuedInputEvents(true /* frame_aligned */);
 
@@ -1469,6 +1515,16 @@ void InputHandlerProxy::DeliverInputForHighLatencyMode() {
     DispatchQueuedInputEvents(false /* frame_aligned */);
 }
 
+void InputHandlerProxy::DeliverInputForDeadline() {
+  if (scroll_event_dispatch_mode_ !=
+          cc::InputHandlerClient::ScrollEventDispatchMode::
+              kUseScrollPredictorForDeadline ||
+      enqueue_scroll_events_) {
+    return;
+  }
+  GenerateAndDispatchSytheticScrollPrediction(current_begin_frame_args_);
+}
+
 void InputHandlerProxy::DidFinishImplFrame() {
   // While ReconcileElasticOverscrollAndRootScroll is called for the start of
   // draw. It is possible that there was no non-scrolling updates, which can
@@ -1481,8 +1537,9 @@ bool InputHandlerProxy::HasQueuedInput() const {
   return HasQueuedEventsReadyForDispatch(/*frame_aligned=*/true);
 }
 
-void InputHandlerProxy::SetWaitForLateScrollEvents(bool enabled) {
-  do_not_enqueue_late_scroll_events_ = enabled;
+void InputHandlerProxy::SetScrollEventDispatchMode(
+    ScrollEventDispatchMode mode) {
+  scroll_event_dispatch_mode_ = mode;
 }
 
 void InputHandlerProxy::SetSynchronousInputHandler(

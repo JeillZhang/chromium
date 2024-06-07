@@ -255,6 +255,7 @@ public class ReadAloudControllerUnitTest {
         mClock = new FakeClock();
         ReadAloudController.setClockForTesting(mClock);
 
+        doReturn(false).when(mWebContents).isDestroyed();
         mTab = mTabModelSelector.getCurrentTab();
         mTab.setGurlOverrideForTesting(sTestGURL);
         mTab.setWebContentsOverrideForTesting(mWebContents);
@@ -498,7 +499,7 @@ public class ReadAloudControllerUnitTest {
 
     @Test
     public void testClosingTab() {
-        // Close a  tab before any playback starts - tests null checks
+        // Close a tab before any playback starts - tests null checks
         mController.getTabModelTabObserverforTests().willCloseTab(mTab);
 
         verify(mPlayerCoordinator, never()).dismissPlayers();
@@ -1417,28 +1418,6 @@ public class ReadAloudControllerUnitTest {
     }
 
     @Test
-    public void testPreviewVoice_metric() {
-        final String histogramName = ReadAloudMetrics.VOICE_PREVIEWED;
-
-        var histogram = HistogramWatcher.newSingleRecordWatcher(histogramName + "abc", true);
-
-        // Play tab.
-        requestAndStartPlayback();
-
-        reset(mPlaybackHooks);
-        // Preview a voice.
-        var voice = new PlaybackVoice("en", "abc", "");
-        doReturn(List.of(voice)).when(mPlaybackHooks).getVoicesFor(anyString());
-        doReturn(List.of(voice)).when(mPlaybackHooks).getPlaybackVoiceList(any());
-        mController.previewVoice(voice);
-        verify(mPlaybackHooks).createPlayback(any(), mPlaybackCallbackCaptor.capture());
-        Playback previewPlayback = Mockito.mock(Playback.class);
-        onPlaybackSuccess(previewPlayback);
-
-        histogram.assertExpected();
-    }
-
-    @Test
     public void testRestorePlaybackState_whileLoading() {
         // Request playback but don't succeed yet.
         mController.playTab(mTab, ReadAloudController.Entrypoint.MAGIC_TOOLBAR);
@@ -1573,10 +1552,94 @@ public class ReadAloudControllerUnitTest {
     public void testTranslationListenersUnregistered_nullWebContents() {
         assertEquals(1, mFakeTranslateBridge.getObserverCount());
 
-        // If tab has null web contents, we should not try to remove translation observers.
+        // If tab has null web contents, we should still remove the observer from whatever
+        // WebContents it was added to.
         doReturn(null).when(mTab).getWebContents();
         mController.getTabModelTabObserverforTests().onDestroyed(mTab);
-        assertEquals(1, mFakeTranslateBridge.getObserverCount());
+        assertEquals(0, mFakeTranslateBridge.getObserverCount());
+    }
+
+    @Test
+    public void testTranslationListener_tabWebContentsChanged() {
+        // An observer is added during ReadAloudController creation through onTabSelected().
+        assertEquals(1, mFakeTranslateBridge.getObserverCount(mWebContents));
+
+        // Simulate WebContents changing.
+        WebContents otherWebContents = Mockito.mock(WebContents.class);
+        mTab.setWebContentsOverrideForTesting(otherWebContents);
+        mController.getTabModelTabObserverforTests().onContentChanged(mTab);
+
+        // Observer should have been removed from old WebContents and added to the new one.
+        assertEquals(0, mFakeTranslateBridge.getObserverCount(mWebContents));
+        assertEquals(1, mFakeTranslateBridge.getObserverCount(otherWebContents));
+    }
+
+    @Test
+    public void testTranslationListener_unsupportedURLTabSelected() {
+        // An observer is added during ReadAloudController creation through onTabSelected().
+        assertEquals(1, mFakeTranslateBridge.getObserverCount(mWebContents));
+
+        // Select a different tab with an invalid URL.
+        WebContents otherWebContents = Mockito.mock(WebContents.class);
+        MockTab tab = mTabModelSelector.addMockTab();
+        tab.setWebContentsOverrideForTesting(otherWebContents);
+        tab.setUrl(new GURL(""));
+        mController.getTabModelTabObserverforTests().onTabSelected(tab);
+
+        // The observer should have been removed from the original WebContents. No need to observe
+        // translation on the new tab since it's not readable: the observer will be added on
+        // onContentChanged() if the user navigates to a readable page.
+        assertEquals(0, mFakeTranslateBridge.getObserverCount(mWebContents));
+        assertEquals(0, mFakeTranslateBridge.getObserverCount(otherWebContents));
+    }
+
+    @Test
+    public void testTranslationListener_playingTabWebContentsChanged() {
+        // An observer is added during ReadAloudController creation through onTabSelected().
+        assertEquals(1, mFakeTranslateBridge.getObserverCount(mWebContents));
+
+        // Play tab.
+        requestAndStartPlayback();
+        assertEquals(2, mFakeTranslateBridge.getObserverCount(mWebContents));
+
+        // Switching WebContents of playing tab should remove the "playing tab" translation observer
+        // and the "current tab" translation observer since mTab was also the currently selected
+        // tab.
+        WebContents otherWebContents = Mockito.mock(WebContents.class);
+        mTab.setWebContentsOverrideForTesting(otherWebContents);
+        mController.getTabModelTabObserverforTests().onContentChanged(mTab);
+        assertEquals(0, mFakeTranslateBridge.getObserverCount(mWebContents));
+    }
+
+    @Test
+    public void testTranslationListener_onTabSelected() {
+        // An observer is added during ReadAloudController creation through onTabSelected().
+        assertEquals(1, mFakeTranslateBridge.getObserverCount(mWebContents));
+
+        // Select a different tab with a valid URL.
+        WebContents otherWebContents = Mockito.mock(WebContents.class);
+        MockTab tab = mTabModelSelector.addMockTab();
+        tab.setWebContentsOverrideForTesting(otherWebContents);
+        tab.setUrl(new GURL("https://some.cool.website/"));
+        mController.getTabModelTabObserverforTests().onTabSelected(tab);
+
+        // The observer should have been removed from the original WebContents and the new tab's
+        // WebContents should be observed.
+        assertEquals(0, mFakeTranslateBridge.getObserverCount(mWebContents));
+        assertEquals(1, mFakeTranslateBridge.getObserverCount(otherWebContents));
+    }
+
+    @Test
+    public void testTranslationListenersRemovedWhenControllerDestroyed() {
+        // An observer is added during ReadAloudController creation through onTabSelected().
+        assertEquals(1, mFakeTranslateBridge.getObserverCount(mWebContents));
+
+        // Play tab.
+        requestAndStartPlayback();
+        assertEquals(2, mFakeTranslateBridge.getObserverCount(mWebContents));
+
+        mController.destroy();
+        assertEquals(0, mFakeTranslateBridge.getObserverCount(mWebContents));
     }
 
     @Test
@@ -2501,6 +2564,24 @@ public class ReadAloudControllerUnitTest {
         }
         assertTrue(failed);
         histogram.assertExpected();
+    }
+
+    @Test
+    public void testNoReadabilityUpdateAfterDestroy() {
+        Runnable readabilityObserver = Mockito.mock(Runnable.class);
+        mController.addReadabilityUpdateListener(readabilityObserver);
+
+        // Check readability
+        mController.maybeCheckReadability(sTestGURL);
+        verify(mHooksImpl, times(1))
+                .isPageReadable(eq(sTestGURL.getSpec()), mCallbackCaptor.capture());
+        assertFalse(mController.isReadable(mTab));
+
+        // Simulate response coming back after ReadAloudController being destroyed.
+        mController.destroy();
+        mCallbackCaptor.getValue().onSuccess(sTestGURL.getSpec(), true, false);
+
+        verify(readabilityObserver, never()).run();
     }
 
     private void requestAndStartPlayback() {

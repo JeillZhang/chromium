@@ -69,6 +69,7 @@ BASE_DECLARE_FEATURE(kIPHSidePanelLensOverlayPinnableFollowupFeature);
 BASE_DECLARE_FEATURE(kIPHSideSearchAutoTriggeringFeature);
 BASE_DECLARE_FEATURE(kIPHSideSearchPageActionLabelFeature);
 BASE_DECLARE_FEATURE(kIPHSignoutWebInterceptFeature);
+BASE_DECLARE_FEATURE(kIPHTabGroupsSaveV2IntroFeature);
 BASE_DECLARE_FEATURE(kIPHTabOrganizationSuccessFeature);
 BASE_DECLARE_FEATURE(kIPHTabSearchFeature);
 BASE_DECLARE_FEATURE(kIPHTrackingProtectionOffboardingFeature);
@@ -308,6 +309,8 @@ BASE_DECLARE_FEATURE(kIPHDesktopPWAsLinkCapturingLaunch);
 
 #if !BUILDFLAG(IS_ANDROID) && BUILDFLAG(GOOGLE_CHROME_BRANDING)
 BASE_DECLARE_FEATURE(kIPHiOSPasswordPromoDesktopFeature);
+BASE_DECLARE_FEATURE(kIPHiOSAddressPromoDesktopFeature);
+BASE_DECLARE_FEATURE(kIPHiOSPaymentPromoDesktopFeature);
 #endif  // !BUILDFLAG(IS_ANDROID) && BUILDFLAG(GOOGLE_CHROME_BRANDING)
 
 }  // namespace feature_engagement

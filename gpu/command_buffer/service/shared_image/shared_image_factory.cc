@@ -5,6 +5,7 @@
 #include "gpu/command_buffer/service/shared_image/shared_image_factory.h"
 
 #include <inttypes.h>
+
 #include <memory>
 
 #include "base/containers/contains.h"
@@ -21,6 +22,7 @@
 #include "gpu/command_buffer/service/service_utils.h"
 #include "gpu/command_buffer/service/shared_context_state.h"
 #include "gpu/command_buffer/service/shared_image/compound_image_backing.h"
+#include "gpu/command_buffer/service/shared_image/egl_image_backing_factory.h"
 #include "gpu/command_buffer/service/shared_image/gl_texture_image_backing_factory.h"
 #include "gpu/command_buffer/service/shared_image/raw_draw_image_backing_factory.h"
 #include "gpu/command_buffer/service/shared_image/shared_image_backing.h"
@@ -35,6 +37,7 @@
 #include "ui/base/ui_base_features.h"
 #include "ui/gfx/buffer_format_util.h"
 #include "ui/gfx/gpu_memory_buffer.h"
+#include "ui/gl/gl_display.h"
 #include "ui/gl/gl_implementation.h"
 #include "ui/gl/gl_switches.h"
 #include "ui/gl/gl_utils.h"
@@ -78,14 +81,18 @@
 #include "gpu/command_buffer/service/shared_image/ahardwarebuffer_image_backing_factory.h"
 #endif  // BUILDFLAG(IS_ANDROID)
 
-#if defined(USE_EGL)
-#include "gpu/command_buffer/service/shared_image/egl_image_backing_factory.h"
-#include "ui/gl/gl_display.h"
-#endif  // defined(USE_EGL)
-
 namespace gpu {
 
 namespace {
+
+#if BUILDFLAG(IS_ANDROID)
+// Feature enabling ExternalVkImageBacking use on Android. Serves as reverse
+// killswitch while we roll out disabling of this backing on Android.
+// TODO(crbug.com/342096125): Remove post-safe rollout.
+BASE_FEATURE(kUseExternalVkImageBackingOnAndroid,
+             "UseExternalVkImageBackingOnAndroid",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+#endif
 
 #if BUILDFLAG(IS_CHROMEOS)
 // Feature enabling ExternalVkImageBacking use on ChromeOS. Serves as reverse
@@ -203,6 +210,13 @@ operator()(const std::unique_ptr<SharedImageRepresentationFactoryRef>& lhs,
   return lhs->mailbox() == rhs;
 }
 
+bool SharedImageFactory::SharedImageRepresentationFactoryRefKeyEqual::
+operator()(
+    const gpu::Mailbox& lhs,
+    const std::unique_ptr<SharedImageRepresentationFactoryRef>& rhs) const {
+  return lhs == rhs->mailbox();
+}
+
 SharedImageFactory::SharedImageFactory(
     const GpuPreferences& gpu_preferences,
     const GpuDriverBugWorkarounds& workarounds,
@@ -263,7 +277,7 @@ SharedImageFactory::SharedImageFactory(
     // could be nullptr.
     bool use_passthrough = gpu_preferences.use_passthrough_cmd_decoder &&
                            gles2::PassthroughCommandDecoderSupported();
-    feature_info = new gles2::FeatureInfo(workarounds, gpu_feature_info);
+    feature_info = new gles2::FeatureInfo(workarounds_, gpu_feature_info);
     feature_info->Initialize(ContextType::CONTEXT_TYPE_OPENGLES2,
                              use_passthrough, gles2::DisallowedFeatures());
   }
@@ -288,7 +302,7 @@ SharedImageFactory::SharedImageFactory(
     bool supports_cpu_upload = !BUILDFLAG(IS_WIN);
     auto gl_texture_backing_factory =
         std::make_unique<GLTextureImageBackingFactory>(
-            gpu_preferences, workarounds, feature_info.get(),
+            gpu_preferences_, workarounds_, feature_info.get(),
             context_state_->progress_reporter(), supports_cpu_upload);
     factories_.push_back(std::move(gl_texture_backing_factory));
   }
@@ -302,14 +316,14 @@ SharedImageFactory::SharedImageFactory(
     auto d3d_factory = std::make_unique<D3DImageBackingFactory>(
         context_state_->GetD3D11Device(),
         shared_image_manager_->dxgi_shared_handle_manager(),
-        context_state_->GetGLFormatCaps());
+        context_state_->GetGLFormatCaps(), workarounds_);
     d3d_backing_factory_ = d3d_factory.get();
     factories_.push_back(std::move(d3d_factory));
   }
   {
     auto gl_texture_backing_factory =
         std::make_unique<GLTextureImageBackingFactory>(
-            gpu_preferences, workarounds, feature_info.get(),
+            gpu_preferences_, workarounds_, feature_info.get(),
             context_state_->progress_reporter(),
             /*supports_cpu_upload=*/true);
     factories_.push_back(std::move(gl_texture_backing_factory));
@@ -335,7 +349,6 @@ SharedImageFactory::SharedImageFactory(
 #endif  // BUILDFLAG(IS_WIN)
 #endif  // BUILDFLAG(ENABLE_VULKAN)
 
-#if defined(USE_EGL)
   // Create EGLImageBackingFactory if egl images are supported. Note that the
   // factory creation is kept here to preserve the current preference of factory
   // to be used.
@@ -348,7 +361,6 @@ SharedImageFactory::SharedImageFactory(
         gpu_preferences_, workarounds_, feature_info.get());
     factories_.push_back(std::move(egl_backing_factory));
   }
-#endif  // defined(USE_EGL)
 
 #if BUILDFLAG(IS_ANDROID)
   bool is_ahb_supported = true;
@@ -366,7 +378,8 @@ SharedImageFactory::SharedImageFactory(
     factories_.push_back(std::move(ahb_factory));
   }
   if (gr_context_type_ == GrContextType::kVulkan &&
-      !base::FeatureList::IsEnabled(features::kVulkanFromANGLE)) {
+      !base::FeatureList::IsEnabled(features::kVulkanFromANGLE) &&
+      base::FeatureList::IsEnabled(kUseExternalVkImageBackingOnAndroid)) {
     auto external_vk_image_factory =
         std::make_unique<ExternalVkImageBackingFactory>(context_state_);
     factories_.push_back(std::move(external_vk_image_factory));
@@ -1131,9 +1144,10 @@ std::unique_ptr<VulkanImageRepresentation>
 SharedImageRepresentationFactory::ProduceVulkan(
     const gpu::Mailbox& mailbox,
     gpu::VulkanDeviceQueue* vulkan_device_queue,
-    gpu::VulkanImplementation& vulkan_impl) {
+    gpu::VulkanImplementation& vulkan_impl,
+    bool needs_detiling) {
   return manager_->ProduceVulkan(mailbox, tracker_.get(), vulkan_device_queue,
-                                 vulkan_impl);
+                                 vulkan_impl, needs_detiling);
 }
 #endif
 

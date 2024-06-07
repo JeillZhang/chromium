@@ -7,6 +7,7 @@
 #include <dawn/native/VulkanBackend.h>
 
 #include "base/logging.h"
+#include "gpu/config/gpu_finch_features.h"
 
 namespace gpu {
 
@@ -32,7 +33,8 @@ DawnAHardwareBufferImageRepresentation::
 }
 
 wgpu::Texture DawnAHardwareBufferImageRepresentation::BeginAccess(
-    wgpu::TextureUsage usage) {
+    wgpu::TextureUsage usage,
+    wgpu::TextureUsage internal_usage) {
   wgpu::TextureDescriptor texture_descriptor;
   texture_descriptor.format = format_;
   texture_descriptor.usage = static_cast<wgpu::TextureUsage>(usage);
@@ -50,15 +52,21 @@ wgpu::Texture DawnAHardwareBufferImageRepresentation::BeginAccess(
   // errors in BeginAccess/EndAccess flow.
   if (texture_) {
     LOG(ERROR) << "Attempting to begin access before ending previous access.";
-    return device_.CreateErrorTexture(&texture_descriptor);
+    return nullptr;
   }
 
-  // We need to have internal usages of CopySrc for copies,
-  // RenderAttachment for clears, and TextureBinding for copyTextureForBrowser.
   wgpu::DawnTextureInternalUsageDescriptor internalDesc;
-  internalDesc.internalUsage = wgpu::TextureUsage::CopySrc |
-                               wgpu::TextureUsage::RenderAttachment |
-                               wgpu::TextureUsage::TextureBinding;
+  if (base::FeatureList::IsEnabled(
+          features::kDawnSIRepsUseClientProvidedInternalUsages)) {
+    internalDesc.internalUsage = internal_usage;
+  } else {
+    // We need to have internal usages of CopySrc for copies,
+    // RenderAttachment for clears, and TextureBinding for
+    // copyTextureForBrowser.
+    internalDesc.internalUsage = wgpu::TextureUsage::CopySrc |
+                                 wgpu::TextureUsage::RenderAttachment |
+                                 wgpu::TextureUsage::TextureBinding;
+  }
 
   texture_descriptor.nextInChain = &internalDesc;
 
@@ -115,9 +123,10 @@ wgpu::Texture DawnAHardwareBufferImageRepresentation::BeginAccess(
     // End the access on the backing and restore its fence, as Dawn did not
     // consume it.
     android_backing()->EndWrite(std::move(sync_fd));
-    auto texture = std::move(texture_);
+
+    // Set `texture_` to nullptr to signal failure to BeginScopedAccess(), which
+    // will itself then return nullptr to signal failure to the client.
     texture_ = nullptr;
-    return texture;
   }
 
   return texture_;

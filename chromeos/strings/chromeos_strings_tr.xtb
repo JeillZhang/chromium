@@ -236,7 +236,6 @@
 <translation id="2189104374785738357">APN ayrıntılarını düzenleyin</translation>
 <translation id="2195732836444333448">Şu anda kapasite dolu. Daha sonra tekrar gelin.</translation>
 <translation id="2201758491318984023">bisiklet</translation>
-<translation id="2203222757805818543">Mevcut program <ph name="SUNRISE" /> - <ph name="SUNSET" /> olarak ayarlandı. Koyu mod programını otomatik olarak güncellemek için <ph name="BEGIN_LINK" />konum erişimini açın<ph name="END_LINK" /></translation>
 <translation id="2203272733515928691">kaplıca</translation>
 <translation id="2203642483788377106">uçurum</translation>
 <translation id="2208388655216963643">empresyonist</translation>
@@ -313,6 +312,7 @@
 <translation id="2618015542787108131">kum tepeciği</translation>
 <translation id="2619761439309613843">Günlük Yenileme</translation>
 <translation id="2620436844016719705">Sistem</translation>
+<translation id="2637303424821734920">KAPALI - Yerel hava durumunu görüntülemek için <ph name="BEGIN_LINK" />sistem konum erişimini açın<ph name="END_LINK" /></translation>
 <translation id="2638662041295312666">Oturum açma resmi</translation>
 <translation id="2640549051766135490"><ph name="TITLE" /> <ph name="DESC" /> albümü seçildi</translation>
 <translation id="2645380101799517405">Denetimler</translation>
@@ -364,6 +364,7 @@
 <translation id="3054177598518735801"><ph name="CURRENT_VALUE" /> mA</translation>
 <translation id="3056720590588772262">Uç nokta</translation>
 <translation id="3060579846059757016">Ana hatlar</translation>
+<translation id="3061850252076394168">Seç ve Dinle'yi etkinleştir</translation>
 <translation id="3069085583900247081">Test başarısız oldu</translation>
 <translation id="3078740164268491126">tablo</translation>
 <translation id="3081652522083185657">açık</translation>
@@ -630,7 +631,6 @@
 <translation id="458794348635939462">Tüm ana makineler çözümlenemedi</translation>
 <translation id="4593212453765072419">Proxy kimlik doğrulaması gerekli</translation>
 <translation id="4609350030397390689">Klavye parlaklığını azalt</translation>
-<translation id="4617553623719764431">Hava Durumu, konumunuzu bilmediği için görüntülenmiyor. Yerel hava durumunu görüntülemek için <ph name="BEGIN_LINK" />Konum erişimini açın<ph name="END_LINK" />.</translation>
 <translation id="4627232916386272576"><ph name="DOCUMENT_TITLE" />, <ph name="PRINTER_NAME" />, <ph name="CREATION_TIME" />, <ph name="PRINTED_PAGE_NUMBER" />/<ph name="TOTAL_PAGE_NUMBER" /> Yazdırma işini iptal etmek için enter tuşuna basın.</translation>
 <translation id="463791356324567266">Tarama iptal ediliyor...</translation>
 <translation id="4646949265910132906">Güvenli Kablosuz Bağlantı</translation>
@@ -704,6 +704,7 @@
 <translation id="4985509611418653372">Çalıştır</translation>
 <translation id="4987769320337599931">Güvenlik duvarı</translation>
 <translation id="4988526792673242964">Sayfalar</translation>
+<translation id="4989542687859782284">Kullanılamıyor</translation>
 <translation id="4999333166442584738">Raporu gizle</translation>
 <translation id="500920857929044050">Testi durdur</translation>
 <translation id="5017508259293544172">LEAP</translation>
@@ -960,7 +961,6 @@
 <translation id="6412715219990689313">Yerleşik klavye</translation>
 <translation id="6417265370957905582">Google Asistan</translation>
 <translation id="6423239382391657905">OpenVPN</translation>
-<translation id="6438073885402882007">Bu işlemden sonra, ilgili izni olan sisteme ait hizmetler konumunuzu kullanabilir. Konum hizmeti, cihazınızın konumunun tahmin edilmesine yardımcı olması için kablosuz ağ, mobil ağ ve sensörler gibi kaynakları kullanabilir. <ph name="LINK_BEGIN" />Daha fazla bilgi<ph name="LINK_END" /></translation>
 <translation id="6439505561246192797">Zayıf (<ph name="SIGNAL_STRENGTH" />)</translation>
 <translation id="6447630859861661624">Hesap ayarlarına git</translation>
 <translation id="6462978824459367242">APN ekle düğmesi etkin</translation>

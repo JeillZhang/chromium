@@ -169,6 +169,7 @@ class AwBrowserContext;
 class AwFormDatabaseService;
 class CookieManager;
 class JsSandboxIsolate;
+class OverlayProcessorWebView;
 class ScopedAllowInitGLBindings;
 class VizCompositorThreadRunnerWebView;
 }  // namespace android_webview
@@ -317,6 +318,7 @@ class BleV2GattClient;
 class BleV2Medium;
 class ScheduledExecutor;
 class SubmittableExecutor;
+class WifiDirectSocket;
 }  // namespace nearby::chrome
 namespace media {
 class AudioInputDevice;
@@ -433,6 +435,9 @@ class SystemctlLauncherScopedAllowBaseSyncPrimitives;
 namespace viz {
 class HostGpuMemoryBufferManager;
 class ClientGpuMemoryBufferManager;
+class DisplayCompositorMemoryAndTaskController;
+class SkiaOutputSurfaceImpl;
+class SharedImageInterfaceProvider;
 }  // namespace viz
 namespace vr {
 class VrShell;
@@ -786,6 +791,7 @@ class BASE_EXPORT [[maybe_unused, nodiscard]] ScopedAllowBaseSyncPrimitives {
   friend class nearby::chrome::SubmittableExecutor;
   friend class nearby::chrome::BleV2GattClient;
   friend class nearby::chrome::BleV2Medium;
+  friend class nearby::chrome::WifiDirectSocket;
   friend class media::AudioOutputDevice;
   friend class media::BlockingUrlProtocol;
   template <class WorkerInterface,
@@ -810,7 +816,13 @@ class BASE_EXPORT [[maybe_unused, nodiscard]] ScopedAllowBaseSyncPrimitives {
   // Usage that should be fixed:
   // Sorted by class name (with namespace).
   friend class ::NativeBackendKWallet;  // http://crbug.com/125331
+  friend class android_webview::
+      OverlayProcessorWebView;                     // http://crbug.com/341151462
   friend class blink::VideoFrameResourceProvider;  // http://crbug.com/878070
+  friend class viz::
+      DisplayCompositorMemoryAndTaskController;  // http://crbug.com/341151462
+  friend class viz::SkiaOutputSurfaceImpl;       // http://crbug.com/341151462
+  friend class viz::SharedImageInterfaceProvider;  // http://crbug.com/341151462
 
   ScopedAllowBaseSyncPrimitives() DEFAULT_IF_DCHECK_IS_OFF;
   ~ScopedAllowBaseSyncPrimitives() DEFAULT_IF_DCHECK_IS_OFF;

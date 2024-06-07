@@ -314,7 +314,7 @@ of interesting buckets, such as "internal + external".
 
 <histogram
     name="Extensions.CommandLineWith{DeveloperModeState}{ExtensionState}"
-    units="count" expires_after="2024-09-01">
+    units="count" expires_after="2024-11-17">
   <owner>richche@google.com</owner>
   <owner>chrome-counter-abuse-alerts@google.com</owner>
   <summary>
@@ -360,7 +360,7 @@ of interesting buckets, such as "internal + external".
 </histogram>
 
 <histogram name="Extensions.ContentScripts.ScriptsWithoutPrefixRetrieved"
-    enum="Boolean" expires_after="2024-07-02">
+    enum="Boolean" expires_after="2025-07-02">
   <owner>kelvinjiang@chromium.org</owner>
   <owner>extensions-core@chromium.org</owner>
   <summary>
@@ -403,7 +403,7 @@ of interesting buckets, such as "internal + external".
 
 <histogram
     name="Extensions.ContentSettings.PrimaryPatternUniqueSecondaryPatternWildcard"
-    enum="ContentType" expires_after="2024-09-15">
+    enum="ContentType" expires_after="2024-11-17">
   <owner>erikchen@chromium.org</owner>
   <owner>extensions-core@chromium.org</owner>
   <summary>
@@ -431,7 +431,7 @@ of interesting buckets, such as "internal + external".
 
 <histogram
     name="Extensions.ContentSettings.PrimaryPatternWildcardSecondaryPatternWildcard"
-    enum="ContentType" expires_after="2024-09-15">
+    enum="ContentType" expires_after="2024-11-17">
   <owner>erikchen@chromium.org</owner>
   <owner>extensions-core@chromium.org</owner>
   <summary>
@@ -873,7 +873,7 @@ of interesting buckets, such as "internal + external".
 
 <histogram
     name="Extensions.DeclarativeNetRequest.EvaluateHeadersReceivedTime.SingleExtension2"
-    units="microseconds" expires_after="2024-06-30">
+    units="microseconds" expires_after="2025-06-30">
   <owner>kelvinjiang@chromium.org</owner>
   <owner>src/extensions/OWNERS</owner>
   <summary>
@@ -921,7 +921,7 @@ of interesting buckets, such as "internal + external".
 </histogram>
 
 <histogram name="Extensions.DeclarativeNetRequest.LoadRulesetResult"
-    enum="LoadRulesetResult" expires_after="2024-06-30">
+    enum="LoadRulesetResult" expires_after="2025-06-30">
   <owner>kelvinjiang@chromium.org</owner>
   <owner>src/extensions/OWNERS</owner>
   <summary>
@@ -1140,9 +1140,10 @@ of interesting buckets, such as "internal + external".
 </histogram>
 
 <histogram name="Extensions.DeclarativeNetRequest.UpdateDynamicRulesStatus"
-    enum="UpdateDynamicRulesStatus" expires_after="2024-06-26">
+    enum="UpdateDynamicRulesStatus" expires_after="2025-06-26">
   <owner>rdevlin.cronin@chromium.org</owner>
-  <owner>src/extensions/OWNERS</owner>
+  <owner>kelvinjiang@chromium.org</owner>
+  <owner>extensions-core@chromium.org</owner>
   <summary>
     Indicates the result of an extension function call to add or remove dynamic
     rules. Logged every time an extension calls the addDynamicRules or
@@ -2559,6 +2560,20 @@ of interesting buckets, such as "internal + external".
   </summary>
 </histogram>
 
+<histogram name="Extensions.Functions.ExtractJSCallStackElapsedTime"
+    units="microseconds" expires_after="2024-11-28">
+  <owner>anunoy@chromium.org</owner>
+  <owner>chrome-counter-abuse-alerts@google.com</owner>
+  <summary>
+    The amount of time it takes to extract the JS call stack when an extension
+    API method is invoked. The elapsed time is recorded on the renderer side
+    before the API request is sent to the browser. Recorded regardless of the
+    API method's execution result. Only supported for a subset of extension API
+    methods, for example, some chrome.tabs and chrome.cookies methods. This
+    histogram is recorded only for clients with high-resolution clocks.
+  </summary>
+</histogram>
+
 <histogram
     name="Extensions.Functions.FailedTime{ExtensionFunctionExecutionTime}"
     enum="ExtensionFunctions" expires_after="never">
@@ -2645,7 +2660,7 @@ of interesting buckets, such as "internal + external".
 </histogram>
 
 <histogram name="Extensions.Functions.SucceededTotalExecutionTime" units="ms"
-    expires_after="2024-09-15">
+    expires_after="2024-11-17">
   <owner>rdevlin.cronin@chromium.org</owner>
   <owner>extensions-core@chromium.org</owner>
   <summary>
@@ -2658,7 +2673,7 @@ of interesting buckets, such as "internal + external".
 </histogram>
 
 <histogram name="Extensions.Functions.SynchronousExecutionTime" units="ms"
-    expires_after="2024-09-22">
+    expires_after="2024-11-24">
   <owner>rdevlin.cronin@chromium.org</owner>
   <owner>extensions-core@chromium.org</owner>
   <summary>
@@ -3133,7 +3148,7 @@ of interesting buckets, such as "internal + external".
 </histogram>
 
 <histogram name="Extensions.InstallFrictionDialogAction"
-    enum="ExtensionInstallFrictionDialogAction" expires_after="2024-09-15">
+    enum="ExtensionInstallFrictionDialogAction" expires_after="2024-11-17">
   <owner>jeffcyr@google.com</owner>
   <owner>chrome-counter-abuse-alerts@google.com</owner>
   <summary>
@@ -3680,7 +3695,7 @@ of interesting buckets, such as "internal + external".
 </histogram>
 
 <histogram name="Extensions.LoadTheme2" units="units"
-    expires_after="2024-09-15">
+    expires_after="2024-11-17">
   <owner>rdevlin.cronin@chromium.org</owner>
   <owner>extensions-core@chromium.org</owner>
   <summary>
@@ -3928,7 +3943,7 @@ of interesting buckets, such as "internal + external".
 </histogram>
 
 <histogram name="Extensions.Navigation.Scheme" enum="ExtensionNavigationScheme"
-    expires_after="2024-09-15">
+    expires_after="2024-11-17">
   <owner>jkokatsu@google.com</owner>
   <owner>extensions-core@chromium.org</owner>
   <summary>
@@ -4011,7 +4026,7 @@ of interesting buckets, such as "internal + external".
 
 <histogram
     name="Extensions.NonWebstoreLocationWith{DeveloperModeState}{ExtensionState}2"
-    enum="ExtensionLocation" expires_after="2024-09-01">
+    enum="ExtensionLocation" expires_after="2024-11-17">
   <owner>richche@google.com</owner>
   <owner>chrome-counter-abuse-alerts@google.com</owner>
   <summary>

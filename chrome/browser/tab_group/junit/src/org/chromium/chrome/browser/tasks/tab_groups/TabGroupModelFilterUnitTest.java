@@ -134,7 +134,6 @@ public class TabGroupModelFilterUnitTest {
     private static final String TAB_TITLE = "Tab";
 
     private static final String TAB_GROUP_COLORS_FILE_NAME = "tab_group_colors";
-    private static final int INVALID_COLOR_ID = -1;
     private static final int COLOR_ID = 0;
 
     private static final String TAB_GROUP_SYNC_IDS_FILE_NAME = "tab_group_sync_ids";
@@ -392,7 +391,8 @@ public class TabGroupModelFilterUnitTest {
                 .getSharedPreferences(TAB_GROUP_COLLAPSED_FILE_NAME, Context.MODE_PRIVATE);
         ContextUtils.initApplicationContextForTests(mContext);
         when(mSharedPreferencesTitle.getString(anyString(), any())).thenReturn(TAB_TITLE);
-        when(mSharedPreferencesColor.getInt(anyString(), anyInt())).thenReturn(INVALID_COLOR_ID);
+        when(mSharedPreferencesColor.getInt(anyString(), anyInt()))
+                .thenReturn(TabGroupColorUtils.INVALID_COLOR_ID);
         when(mSharedPreferencesCollapsed.getBoolean(anyString(), anyBoolean())).thenReturn(true);
         when(mSharedPreferencesTitle.edit()).thenReturn(mEditor);
         when(mSharedPreferencesColor.edit()).thenReturn(mEditor);
@@ -2257,6 +2257,21 @@ public class TabGroupModelFilterUnitTest {
     }
 
     @Test
+    public void testGetOrCreateTabGroupColor() {
+        assertEquals(
+                TabGroupColorId.GREY, mTabGroupModelFilter.getOrCreateTabGroupColor(TAB1_ROOT_ID));
+        verify(mTabGroupModelFilterObserver)
+                .didChangeTabGroupColor(TAB1_ROOT_ID, TabGroupColorId.GREY);
+
+        when(mSharedPreferencesColor.getInt(eq(String.valueOf(TAB2_ROOT_ID)), anyInt()))
+                .thenReturn(TabGroupColorId.BLUE);
+        assertEquals(
+                TabGroupColorId.BLUE, mTabGroupModelFilter.getOrCreateTabGroupColor(TAB2_ROOT_ID));
+        verify(mTabGroupModelFilterObserver, never())
+                .didChangeTabGroupColor(eq(TAB2_ROOT_ID), anyInt());
+    }
+
+    @Test
     public void testSetTabGroupColor() {
         mTabGroupModelFilter.setTabGroupColor(TAB2_ROOT_ID, TabGroupColorId.GREY);
         verify(mTabGroupModelFilterObserver)
@@ -2530,5 +2545,19 @@ public class TabGroupModelFilterUnitTest {
                 .committedTabGroupClosure(TAB5_TAB_GROUP_ID, /* wasHiding= */ false);
         assertFalse(mTabGroupModelFilter.isTabGroupHiding(TAB2_TAB_GROUP_ID));
         assertFalse(mTabGroupModelFilter.isTabGroupHiding(TAB5_TAB_GROUP_ID));
+    }
+
+    @Test
+    public void testWillMergingCreateNewGroup_NewGroup() {
+        // Mock a merge between mTab1 and mTab4, neither of which are in a group.
+        List<Tab> tabsToMerge = List.of(mTab1, mTab4);
+        assertTrue(mTabGroupModelFilter.willMergingCreateNewGroup(tabsToMerge));
+    }
+
+    @Test
+    public void testWillMergingCreateNewGroup_ExistingGroup() {
+        // Mock a merge between mTab1, mTab2 and mTab3, of which the latter 2 are in a group.
+        List<Tab> tabsToMerge = List.of(mTab1, mTab2, mTab3);
+        assertFalse(mTabGroupModelFilter.willMergingCreateNewGroup(tabsToMerge));
     }
 }

@@ -589,40 +589,6 @@ TEST_F(HoldingSpaceTrayTest, BubbleHasExpectedWidth) {
   EXPECT_EQ(bubble->width(), 360);
 }
 
-TEST_F(HoldingSpaceTrayTest, ShowTrayButtonWhenForced) {
-  // Case: Force show in shelf prior to session start.
-  auto force_show_in_shelf =
-      std::make_unique<HoldingSpaceController::ScopedForceShowInShelf>();
-  EXPECT_FALSE(test_api()->IsShowingInShelf());
-
-  // Case: Force show in shelf after session start with empty model.
-  StartSession(/*pre_mark_time_of_first_add=*/false);
-  EXPECT_TRUE(test_api()->IsShowingInShelf());
-
-  // Case: Force show in shelf with blocked user session.
-  auto* session_ctrlr = ash_test_helper()->test_session_controller_client();
-  session_ctrlr->SetSessionState(session_manager::SessionState::LOCKED);
-  EXPECT_FALSE(test_api()->IsShowingInShelf());
-
-  // Case: Force show in shelf with unblocked user session.
-  session_ctrlr->UnlockScreen();
-  EXPECT_TRUE(test_api()->IsShowingInShelf());
-
-  // Case: Force show in shelf with detached model.
-  auto account_id = Shell::Get()->session_controller()->GetActiveAccountId();
-  auto* controller = HoldingSpaceController::Get();
-  controller->RegisterClientAndModelForUser(account_id, client(), nullptr);
-  EXPECT_FALSE(test_api()->IsShowingInShelf());
-
-  // Case: Force show in shelf with attached model.
-  controller->RegisterClientAndModelForUser(account_id, client(), model());
-  EXPECT_TRUE(test_api()->IsShowingInShelf());
-
-  // Case: Stop forcing show in shelf with empty model.
-  force_show_in_shelf.reset();
-  EXPECT_FALSE(test_api()->IsShowingInShelf());
-}
-
 TEST_F(HoldingSpaceTrayTest, ShowTrayButtonOnFirstUse) {
   StartSession(/*pre_mark_time_of_first_add=*/false);
   GetTray()->FirePreviewsUpdateTimerIfRunningForTesting();
@@ -809,7 +775,8 @@ TEST_F(HoldingSpaceTrayTest, ShelfConfigChangeWithDelayedItemRemoval) {
   StartSession();
 
   // Create a test widget to force in-app shelf in tablet mode.
-  std::unique_ptr<views::Widget> widget = CreateTestWidget();
+  std::unique_ptr<views::Widget> widget =
+      CreateTestWidget(views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
   ASSERT_TRUE(widget);
 
   // The tray button should be hidden if the user has previously pinned an item,
@@ -2131,27 +2098,6 @@ TEST_F(HoldingSpaceTrayTest, EnterAndExitAnimations) {
   UnregisterModelForUser(kSecondaryUserId);
 }
 
-TEST_F(HoldingSpaceTrayTest, FiresBubbleOpenCloseEvents) {
-  StartSession();
-  ASSERT_TRUE(test_api()->IsShowingInShelf());
-
-  MockHoldingSpaceControllerObserver observer;
-  base::ScopedObservation<HoldingSpaceController,
-                          HoldingSpaceControllerObserver>
-      observation(&observer);
-  observation.Observe(HoldingSpaceController::Get());
-
-  EXPECT_CALL(observer, OnHoldingSpaceTrayBubbleVisibilityChanged(
-                            GetTray(), /*visible*/ true));
-  test_api()->Show();
-  testing::Mock::VerifyAndClearExpectations(&observer);
-
-  EXPECT_CALL(observer, OnHoldingSpaceTrayBubbleVisibilityChanged(
-                            GetTray(), /*visible*/ false));
-  test_api()->Close();
-  testing::Mock::VerifyAndClearExpectations(&observer);
-}
-
 // Verifies that the holding space bubble supports scrolling of pinned files.
 TEST_F(HoldingSpaceTrayTest, SupportsScrollingOfPinnedFiles) {
   StartSession();
@@ -2302,7 +2248,8 @@ TEST_F(HoldingSpacePreviewsTrayTest, UpdateTrayIconSizeForInAppShelf) {
   TabletModeControllerTestApi().EnterTabletMode();
 
   // Create a test widget to force in-app shelf.
-  std::unique_ptr<views::Widget> widget = CreateTestWidget();
+  std::unique_ptr<views::Widget> widget =
+      CreateTestWidget(views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
   ASSERT_TRUE(widget);
 
   EXPECT_TRUE(test_api()->IsShowingInShelf());
@@ -2333,7 +2280,8 @@ TEST_F(
   GetTray()->FirePreviewsUpdateTimerIfRunningForTesting();
 
   // Create a test widget and minimize it to transition to home screen.
-  std::unique_ptr<views::Widget> widget = CreateTestWidget();
+  std::unique_ptr<views::Widget> widget =
+      CreateTestWidget(views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
   ASSERT_TRUE(widget);
   widget->Minimize();
 

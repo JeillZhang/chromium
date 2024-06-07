@@ -16,6 +16,7 @@
 #include "base/notreached.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
+#include "base/uuid.h"
 #include "chrome/browser/bookmarks/url_and_id.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sync/model_type_store_service_factory.h"
@@ -35,6 +36,7 @@
 #include "components/saved_tab_groups/saved_tab_group_sync_bridge.h"
 #include "components/saved_tab_groups/saved_tab_group_tab.h"
 #include "components/saved_tab_groups/stats.h"
+#include "components/saved_tab_groups/types.h"
 #include "components/sync/base/model_type.h"
 #include "components/sync/base/report_unrecoverable_error.h"
 #include "components/sync/model/client_tag_based_model_type_processor.h"
@@ -63,7 +65,11 @@ CreateChangeProcessor() {
 SavedTabGroupKeyedService::SavedTabGroupKeyedService(Profile* profile)
     : profile_(profile),
       listener_(model(), profile),
-      bridge_(model(), GetStoreFactory(), CreateChangeProcessor()) {
+      bridge_(model(),
+              GetStoreFactory(),
+              CreateChangeProcessor(),
+              profile->GetPrefs(),
+              std::map<base::Uuid, LocalTabGroupID>()) {
   model()->AddObserver(this);
 
   metrics_timer_.Start(
@@ -222,9 +228,10 @@ base::Uuid SavedTabGroupKeyedService::SaveGroup(
   TabGroup* tab_group = tab_strip_model->group_model()->GetTabGroup(group_id);
   CHECK(tab_group);
 
-  SavedTabGroup saved_tab_group(tab_group->visual_data()->title(),
-                                tab_group->visual_data()->color(), {},
-                                std::nullopt, std::nullopt, tab_group->id());
+  SavedTabGroup saved_tab_group(
+      tab_group->visual_data()->title(), tab_group->visual_data()->color(), {},
+      std::nullopt, std::nullopt, tab_group->id(), bridge_.GetLocalCacheGuid(),
+      /*created_before_syncing_tab_groups=*/!bridge_.IsSyncing());
   if (is_pinned) {
     saved_tab_group.SetPinned(true);
   }

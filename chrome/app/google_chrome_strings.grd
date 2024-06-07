@@ -1043,7 +1043,7 @@ Permissions you've already given to websites and apps may apply to this account.
           Chrome needs to verify it’s you before some data can be saved in your Google Account and used on all your devices. If you sign out, this data will stay on this device.
         </message>
         <message name="IDS_CHROME_SIGNOUT_CONFIRMATION_PROMPT_UNSYNCED_BODY" desc="This is the subtitle of an error message dialog that appears when the user opens the Chrome Profile Menu and chooses 'Sign out of Chrome'. The error message appears when the user tries to sign out immediately after having saved saved some data (like a password or payment method) to Chrome and Chrome hasn't had time to save that data to the user's Google Account yet. This subtitle is after the 'Some data isn't saved yet' string. The tone should be cautionary, because we want to explain to the user that their data is not saved to their Google Account. This string asks the user to wait a few minutes before trying to sign out again.">
-          Some of your Chrome data hasn't been saved in your Google Account yet. Try waiting a few minutes before signing out.
+          Some of your Chrome data hasn't been saved in your Google Account yet. Try waiting a few minutes before signing out. If you sign out now, this data will be deleted.
         </message>
         <message name="IDS_CLOSE_WARNING_FOR_CLEAR_COOKIES_ON_EXIT_TEXT" desc="Body of a notice displayed when closing the last Chrome window, to inform the user about a change in the way the 'Clear cookie on exit' setting works.">
           You’ll be signed out of most sites when you close all Chrome windows, except your Google Account if you’re signed in to Chrome. To let sites remember you, <ph name="SETTINGS_LINK">$1<ex>go to settings</ex></ph>.
@@ -1642,8 +1642,17 @@ Permissions you've already given to websites and apps may apply to this account.
       <message name="IDS_DESKTOP_MEDIA_PICKER_SCREEN_PERMISSION_TEXT_MAC" desc="Instructive text for how to enable screen recording on Mac when trying to share a screen." >
         To share your screen, allow screen recording for Chrome in System Preferences
       </message>
+      <message name="IDS_DESKTOP_MEDIA_PICKER_SCREEN_PERMISSION_TEXT_PERIOD_MAC" desc="Instructive text for how to enable screen recording on Mac when trying to share a screen, ending with period to allow a supplementary text to follow." >
+        To share your screen, allow screen recording for Chrome in System Preferences.
+      </message>
       <message name="IDS_DESKTOP_MEDIA_PICKER_WINDOW_PERMISSION_TEXT_MAC" desc="Instructive text for how to enable screen recording on Mac when trying to share a window." >
         To share your window, allow screen recording for Chrome in System Preferences
+      </message>
+      <message name="IDS_DESKTOP_MEDIA_PICKER_WINDOW_PERMISSION_TEXT_PERIOD_MAC" desc="Instructive text for how to enable screen recording on Mac when trying to share a window, ending with period to allow a supplementary text to follow." >
+        To share your window, allow screen recording for Chrome in System Preferences.
+      </message>
+      <message name="IDS_DESKTOP_MEDIA_PICKER_PERMISSION_RESTART_TEXT_MAC" desc="Supplementary text about the need to restart Chrome, displayed below the message about enabling screen-recording permissions on Mac when those permissions are missing." >
+        You'll then need to restart Chrome.
       </message>
 
       <!-- Runtime permission strings -->
@@ -2264,6 +2273,14 @@ Permissions you've already given to websites and apps may apply to this account.
             Make Chrome faster
           </message>
         </if>
+      </if>
+
+      <!-- Performance Intervention Dialog strings -->
+      <!-- TODO(crbug.com/341709409): Finalize the intervention strings and mark them as translateable -->
+      <if expr="not is_android">
+        <message name="IDS_PERFORMANCE_INTERVENTION_DIALOG_BODY" desc="Body text for a dialog suggesting users to deactivate certain tabs to improve performance." translateable="false">
+          To improve your browsing experience, Chrome recommends deactivating these background tabs:
+        </message>
       </if>
 
       <!-- Delete Browsing Data -->

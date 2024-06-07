@@ -9,14 +9,19 @@
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
 #include "base/values.h"
-#include "chrome/browser/webid/jni_headers/DigitalIdentityProvider_jni.h"
 #include "content/public/browser/web_contents.h"
 #include "ui/android/window_android.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "chrome/browser/webid/jni_headers/DigitalIdentityProvider_jni.h"
 
 using base::android::AttachCurrentThread;
 using base::android::ConvertJavaStringToUTF8;
 using base::android::ConvertUTF8ToJavaString;
 using base::android::ScopedJavaLocalRef;
+
+using RequestStatusForMetrics =
+    content::DigitalIdentityProvider::RequestStatusForMetrics;
 
 DigitalIdentityProviderAndroid::DigitalIdentityProviderAndroid() {
   JNIEnv* env = AttachCurrentThread();
@@ -54,13 +59,17 @@ void DigitalIdentityProviderAndroid::Request(content::WebContents* web_contents,
 
 void DigitalIdentityProviderAndroid::OnReceive(JNIEnv* env,
                                                jstring j_digital_identity,
-                                               jint status_for_metrics) {
+                                               jint j_status_for_metrics) {
   if (callback_) {
     std::string digital_identity =
         ConvertJavaStringToUTF8(env, j_digital_identity);
+
+    auto status_for_metrics =
+        static_cast<RequestStatusForMetrics>(j_status_for_metrics);
     std::move(callback_).Run(
-        digital_identity,
-        static_cast<DigitalIdentityProvider::RequestStatusForMetrics>(
-            status_for_metrics));
+        (status_for_metrics == RequestStatusForMetrics::kSuccess)
+            ? base::expected<std::string, RequestStatusForMetrics>(
+                  digital_identity)
+            : base::unexpected(status_for_metrics));
   }
 }

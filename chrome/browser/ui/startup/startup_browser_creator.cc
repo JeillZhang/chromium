@@ -50,6 +50,7 @@
 #include "chrome/browser/lifetime/browser_shutdown.h"
 #include "chrome/browser/prefs/incognito_mode_prefs.h"
 #include "chrome/browser/prefs/session_startup_pref.h"
+#include "chrome/browser/profiles/nuke_profile_directory_utils.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_attributes_entry.h"
 #include "chrome/browser/profiles/profile_attributes_storage.h"
@@ -1234,7 +1235,7 @@ bool StartupBrowserCreator::ProcessCmdLineImpl(
     } else {
       // TODO(http://crbug.com/1293024): Refactor command line processing logic
       // to validate the flag sets and reliably determine the startup mode.
-      DUMP_WILL_BE_NOTREACHED_NORETURN()
+      DUMP_WILL_BE_NOTREACHED()
           << "Failed start for jumplist action: couldn't pick a profile";
     }
   }
@@ -1592,13 +1593,15 @@ StartupProfilePathInfo GetStartupProfilePath(
 
   if (!command_line_profile_directory.empty() &&
       command_line.HasSwitch(switches::kIgnoreProfileDirectoryIfNotExists)) {
+    base::FilePath profile_dir_path =
+        user_data_dir.Append(command_line_profile_directory);
     // This is a blocking call to the filesystem, but unfortunately it is
     // required for startup to continue, as the
     // `kIgnoreProfileDirectoryIfNotExists` switch needs to check the file
     // system state to know if the profile directory exists.
     base::ScopedAllowBlocking allow_blocking;
-    if (!base::DirectoryExists(
-            user_data_dir.Append(command_line_profile_directory))) {
+    if (IsProfileDirectoryMarkedForDeletion(profile_dir_path) ||
+        !base::DirectoryExists(profile_dir_path)) {
       command_line_profile_directory = base::FilePath();
     }
   }

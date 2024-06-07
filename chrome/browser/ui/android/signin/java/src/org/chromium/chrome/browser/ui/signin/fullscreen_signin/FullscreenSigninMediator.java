@@ -115,7 +115,6 @@ public class FullscreenSigninMediator
                         this::onDismissClicked,
                         ExternalAuthUtils.getInstance().canUseGooglePlayServices()
                                 && !disableSignInForAutomotiveDevice(),
-                        R.string.fre_welcome,
                         getFooterString(false));
 
         mDelegate
@@ -238,12 +237,6 @@ public class FullscreenSigninMediator
                         && !isSigninDisabledByPolicy
                         && !disableSignInForAutomotiveDevice();
         mModel.set(FullscreenSigninProperties.IS_SIGNIN_SUPPORTED, isSigninSupported);
-        if (ChromeFeatureList.isEnabled(
-                ChromeFeatureList.REPLACE_SYNC_PROMOS_WITH_SIGN_IN_PROMOS)) {
-            mModel.set(
-                    FullscreenSigninProperties.TITLE_STRING_ID,
-                    isSigninSupported ? R.string.signin_fre_title : R.string.fre_welcome);
-        }
         mModel.set(FullscreenSigninProperties.SHOW_INITIAL_LOAD_PROGRESS_SPINNER, false);
 
         mAllowMetricsAndCrashUploading = !isMetricsReportingDisabledByPolicy;
@@ -324,7 +317,8 @@ public class FullscreenSigninMediator
     void proceedWithSignIn() {
         // This is needed to get metrics/crash reports from the sign-in flow itself.
         mDelegate.acceptTermsOfService(mAllowMetricsAndCrashUploading);
-        if (mModel.get(FullscreenSigninProperties.IS_SELECTED_ACCOUNT_SUPERVISED)) {
+        if (!ChromeFeatureList.isEnabled(ChromeFeatureList.REPLACE_SYNC_PROMOS_WITH_SIGN_IN_PROMOS)
+                && mModel.get(FullscreenSigninProperties.IS_SELECTED_ACCOUNT_SUPERVISED)) {
             // Don't perform the sign-in here, as it will be handled by SigninChecker.
             mDelegate.advanceToNextPage();
             return;
@@ -333,8 +327,8 @@ public class FullscreenSigninMediator
                 TextUtils.equals(mDefaultAccountEmail, mSelectedAccountEmail)
                         ? MobileFreProgress.WELCOME_SIGNIN_WITH_DEFAULT_ACCOUNT
                         : MobileFreProgress.WELCOME_SIGNIN_WITH_NON_DEFAULT_ACCOUNT);
-        // If the user signs into an account on the FRE, goes to the sync consent page and presses
-        // back to come back to the FRE, then there will already be an account signed in.
+        // If the user signs into an account on the FRE, goes to the next page and presses
+        // back to come back to the welcome screen, then there will already be an account signed in.
         @Nullable
         CoreAccountInfo signedInAccount =
                 IdentityServicesProvider.get()
@@ -378,10 +372,14 @@ public class FullscreenSigninMediator
                         mSelectedAccountEmail);
         if (selectedAccount != null) {
             mModel.set(FullscreenSigninProperties.SHOW_SIGNIN_PROGRESS_SPINNER_WITH_TEXT, true);
+            final @SigninAccessPoint int accessPoint =
+                    mModel.get(FullscreenSigninProperties.IS_SELECTED_ACCOUNT_SUPERVISED)
+                            ? SigninAccessPoint.FORCED_SIGNIN
+                            : SigninAccessPoint.START_PAGE;
             SigninUtils.checkAccountManagementAndSignIn(
                     selectedAccount,
                     signinManager,
-                    SigninAccessPoint.START_PAGE,
+                    accessPoint,
                     signInCallback,
                     mContext,
                     mModalDialogManager);

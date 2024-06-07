@@ -512,7 +512,7 @@ suite('ComposeApp', () => {
     await testProxy.whenCalled('openComposeLearnMorePage');
   });
 
-  test('UnsupportedLanguageErrorClickable', async () => {
+  test('PermissionDeniedErrorClickable', async () => {
     const errorMessage = `some error ${'errorPermissionDenied'}`;
     loadTimeData.overrideValues({['errorPermissionDenied']: errorMessage});
 
@@ -809,7 +809,7 @@ suite('ComposeAppLegacyUi', () => {
   });
 
   test('UpdatesScrollableBodyAfterResize', async () => {
-    assertTrue(app.$.body.hasAttribute('scrollable'));
+    assertEquals(app.$.body, app.getContainer());
 
     mockInput('Some fake input.');
     app.$.submitButton.click();
@@ -949,13 +949,14 @@ suite('ComposeAppRefinedUi', () => {
   });
 
   test('UpdatesScrollableResultContainerAfterResize', async () => {
-    assertTrue(app.$.resultTextContainer.hasAttribute('scrollable'));
+    // Assert scrolling container is set correctly.
+    assertEquals(app.$.resultTextContainer, app.getContainer());
     mockInput('Some fake input.');
     app.$.submitButton.click();
 
-    // The results text should not yet be scrollable because the result has not
+    // The results text should not yet be visible because the result has not
     // been fetched yet.
-    assertFalse(app.$.resultTextContainer.classList.contains('can-scroll'));
+    assertFalse(isVisible(app.$.resultTextContainer));
 
     // Results text should be scrollable when a long response is received.
     await testProxy.whenCalled('compose');
@@ -976,6 +977,30 @@ suite('ComposeAppRefinedUi', () => {
     await testProxy.whenCalled('rewrite');
     await mockResponse('Refreshed output.');
     await whenCheck(
-        app.$.body, () => !app.$.body.classList.contains('can-scroll'));
+        app.$.resultTextContainer,
+        () => !app.$.resultTextContainer.classList.contains('can-scroll'));
+  });
+
+  test('ComposeWithModifierResult', async () => {
+    // Submit the input once so that modifier menu is visible.
+    mockInput('Input to refresh.');
+    app.$.submitButton.click();
+    await mockResponse();
+
+    testProxy.resetResolver('rewrite');
+
+    assertTrue(
+        isVisible(app.$.modifierMenu), 'Modifier menu should be visible.');
+    assertEquals(
+        5,
+        app.$.modifierMenu.querySelectorAll('option:not([disabled])').length);
+
+    app.$.modifierMenu.value = `${StyleModifier.kShorter}`;
+    app.$.modifierMenu.dispatchEvent(new CustomEvent('change'));
+
+    const args = await testProxy.whenCalled('rewrite');
+    await mockResponse();
+
+    assertEquals(StyleModifier.kShorter, args);
   });
 });

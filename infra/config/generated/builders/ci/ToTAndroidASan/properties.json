@@ -56,8 +56,7 @@
   },
   "$build/siso": {
     "configs": [
-      "builder",
-      "clang-tot"
+      "builder"
     ],
     "enable_cloud_profiler": true,
     "enable_cloud_trace": true,
@@ -72,6 +71,9 @@
     ]
   },
   "builder_group": "chromium.clang",
+  "gardener_rotations": [
+    "chromium.clang"
+  ],
   "perf_dashboard_machine_group": "ChromiumClang",
   "recipe": "chromium",
   "sheriff_rotations": [

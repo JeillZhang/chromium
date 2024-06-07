@@ -17,20 +17,25 @@
 namespace autofill {
 
 struct AutofillErrorDialogContext;
-class AutofillSaveCardBottomSheetBridge;
 enum class AutofillProgressDialogType;
+class AutofillSaveCardBottomSheetBridge;
+struct CardUnmaskChallengeOption;
 class CardUnmaskDelegate;
 struct CardUnmaskPromptOptions;
 class CreditCard;
 class CreditCardCvcAuthenticator;
 class CreditCardOtpAuthenticator;
-class Iban;
 class CreditCardRiskBasedAuthenticator;
+class Iban;
+class IbanAccessManager;
+class IbanManager;
 class MigratableCreditCard;
 class OtpUnmaskDelegate;
-struct CardUnmaskChallengeOption;
 enum class OtpUnmaskResult;
+struct VirtualCardEnrollmentFields;
 class VirtualCardEnrollmentManager;
+struct VirtualCardManualFallbackBubbleOptions;
+enum class WebauthnDialogCallbackType;
 
 namespace payments {
 
@@ -79,6 +84,11 @@ class PaymentsAutofillClient : public RiskDataLoader {
   // Callback to run after credit card upload confirmation prompt is closed.
   using OnConfirmationClosedCallback = base::OnceClosure;
 
+  // Callback to run if the OK button or the cancel button in a
+  // Webauthn dialog is clicked.
+  using WebauthnDialogCallback =
+      base::RepeatingCallback<void(WebauthnDialogCallbackType)>;
+
 #if BUILDFLAG(IS_ANDROID)
   // Gets the AutofillSaveCardBottomSheetBridge or creates one if it doesn't
   // exist.
@@ -111,6 +121,34 @@ class PaymentsAutofillClient : public RiskDataLoader {
       const std::u16string& tip_message,
       const std::vector<MigratableCreditCard>& migratable_credit_cards,
       MigrationDeleteCardCallback delete_local_card_callback);
+
+  // TODO(crbug.com/40639086): Find a way to merge these two functions.
+  // Shouldn't use WebauthnDialogState as that state is a purely UI state
+  // (should not be accessible for managers?), and some of the states
+  // `KInactive` may be confusing here. Do we want to add another Enum?
+
+  // Will show a dialog offering the option to use device's platform
+  // authenticator in the future instead of CVC to verify the card being
+  // unmasked. Runs `offer_dialog_callback` if the OK button or the cancel
+  // button in the dialog is clicked.
+  virtual void ShowWebauthnOfferDialog(
+      WebauthnDialogCallback offer_dialog_callback);
+
+  // Will show a dialog indicating the card verification is in progress. It is
+  // shown after verification starts only if the WebAuthn is enabled.
+  virtual void ShowWebauthnVerifyPendingDialog(
+      WebauthnDialogCallback verify_pending_dialog_callback);
+
+  // Will update the WebAuthn dialog content when there is an error fetching the
+  // challenge.
+  virtual void UpdateWebauthnOfferDialogWithError();
+
+  // Will close the current visible WebAuthn dialog. Returns true if dialog was
+  // visible and has been closed.
+  virtual bool CloseWebauthnDialog();
+
+  // Hides the virtual card enroll bubble and icon if it is visible.
+  virtual void HideVirtualCardEnrollBubbleAndIconIfVisible();
 #endif  // BUILDFLAG(IS_ANDROID)
 
   // Shows upload result to users. Called after credit card upload is finished.
@@ -128,10 +166,21 @@ class PaymentsAutofillClient : public RiskDataLoader {
   // Hides save card offer or confirmation prompt.
   virtual void HideSaveCardPrompt();
 
+  // Shows a dialog for the user to enroll in a virtual card.
+  virtual void ShowVirtualCardEnrollDialog(
+      const VirtualCardEnrollmentFields& virtual_card_enrollment_fields,
+      base::OnceClosure accept_virtual_card_callback,
+      base::OnceClosure decline_virtual_card_callback);
+
   // Called after virtual card enrollment is finished. Shows enrollment
   // result to users. `is_vcn_enrolled` indicates if the card was successfully
   // enrolled as a virtual card.
   virtual void VirtualCardEnrollCompleted(bool is_vcn_enrolled);
+
+  // Called when the virtual card has been fetched successfully. Uses the
+  // necessary information in `options` to show the manual fallback bubble.
+  virtual void OnVirtualCardDataAvailable(
+      const VirtualCardManualFallbackBubbleOptions& options);
 
   // Runs `callback` once the user makes a decision with respect to the
   // offer-to-save prompt. On desktop, shows the offer-to-save bubble if
@@ -221,6 +270,28 @@ class PaymentsAutofillClient : public RiskDataLoader {
   // Gets the RiskBasedAuthenticator owned by the client. This function will
   // return a nullptr on iOS WebView.
   virtual CreditCardRiskBasedAuthenticator* GetRiskBasedAuthenticator();
+
+  // Prompt the user to enable mandatory reauthentication for payment method
+  // autofill. When enabled, the user will be asked to authenticate using
+  // biometrics or device unlock before filling in payment method information.
+  virtual void ShowMandatoryReauthOptInPrompt(
+      base::OnceClosure accept_mandatory_reauth_callback,
+      base::OnceClosure cancel_mandatory_reauth_callback,
+      base::RepeatingClosure close_mandatory_reauth_callback);
+
+  // Gets the IbanManager instance associated with the client.
+  virtual IbanManager* GetIbanManager();
+
+  // Gets the IbanAccessManager instance associated with the client.
+  virtual IbanAccessManager* GetIbanAccessManager();
+
+  // Should only be called when we are sure re-showing the bubble will display a
+  // confirmation bubble. If the most recent bubble was an opt-in bubble and it
+  // was accepted, this will display the re-auth opt-in confirmation bubble.
+  virtual void ShowMandatoryReauthOptInConfirmation();
+
+  // Dismiss any visible offer notification on the current tab.
+  virtual void DismissOfferNotification();
 };
 
 }  // namespace payments

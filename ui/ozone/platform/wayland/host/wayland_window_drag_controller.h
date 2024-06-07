@@ -86,8 +86,6 @@ class WaylandWindowDragController : public WaylandDataDevice::DragDelegate,
   // drag controller.
   bool IsDragInProgress() const;
 
-  void OnToplevelWindowCreated(WaylandToplevelWindow* window);
-
   // Tells if "extended drag" extension is available.
   bool IsExtendedDragAvailable() const;
 
@@ -115,6 +113,8 @@ class WaylandWindowDragController : public WaylandDataDevice::DragDelegate,
   std::optional<mojom::DragEventSource> drag_source() { return drag_source_; }
 
   const gfx::Vector2d& drag_offset_for_testing() const { return drag_offset_; }
+
+  bool has_received_enter_for_testing() const { return has_received_enter_; }
 
  private:
   class ExtendedDragSource;

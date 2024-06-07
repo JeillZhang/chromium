@@ -198,6 +198,8 @@ class AwContents : public FindHelper::Listener,
 
   void FlushBackForwardCache(JNIEnv* env);
 
+  void CancelAllPrerendering(JNIEnv* env);
+
   bool GetViewTreeForceDarkState() { return view_tree_force_dark_state_; }
 
   // PermissionRequestHandlerClient implementation.
@@ -307,6 +309,7 @@ class AwContents : public FindHelper::Listener,
       content::NavigationHandle* navigation_handle) override;
   void ReadyToCommitNavigation(
       content::NavigationHandle* navigation_handle) override;
+  void RenderViewReady() override;
 
   // AwSafeBrowsingUIManager::UIManagerClient implementation
   bool CanShowInterstitial() override;

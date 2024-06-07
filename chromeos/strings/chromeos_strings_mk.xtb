@@ -236,7 +236,6 @@
 <translation id="2189104374785738357">Изменете ги деталите за APN</translation>
 <translation id="2195732836444333448">Нема ништо ново во моментов. Вратете се пак наскоро.</translation>
 <translation id="2201758491318984023">велосипед</translation>
-<translation id="2203222757805818543">Тековниот распоред е поставен на <ph name="SUNRISE" /> – <ph name="SUNSET" />. За автоматско ажурирање на распоредот на „Темен режим“, <ph name="BEGIN_LINK" />вклучете пристап до локацијата<ph name="END_LINK" /></translation>
 <translation id="2203272733515928691">термален извор</translation>
 <translation id="2203642483788377106">гребен</translation>
 <translation id="2208388655216963643">импресионист</translation>
@@ -364,6 +363,7 @@
 <translation id="3054177598518735801"><ph name="CURRENT_VALUE" /> mA</translation>
 <translation id="3056720590588772262">Крајна точка</translation>
 <translation id="3060579846059757016">Кратки прегледи</translation>
+<translation id="3061850252076394168">овозможете „Изберете за говор“</translation>
 <translation id="3069085583900247081">Тестот не успеа</translation>
 <translation id="3078740164268491126">табела</translation>
 <translation id="3081652522083185657">светла</translation>
@@ -630,7 +630,6 @@
 <translation id="458794348635939462">Неуспешно отворање на сите хостови</translation>
 <translation id="4593212453765072419">Потребна е проверка на прокси</translation>
 <translation id="4609350030397390689">Осветленоста на тастатурата се намали</translation>
-<translation id="4617553623719764431">Временската прогноза не се прикажува бидејќи услугата не ја знае вашата локација. За да се прикажува локалната временска прогноза, <ph name="BEGIN_LINK" />вклучете пристап до локацијата<ph name="END_LINK" /></translation>
 <translation id="4627232916386272576"><ph name="DOCUMENT_TITLE" />, <ph name="PRINTER_NAME" />, <ph name="CREATION_TIME" />, <ph name="PRINTED_PAGE_NUMBER" /> од <ph name="TOTAL_PAGE_NUMBER" />. Притиснете Enter за да го откажете налогот за печатење.</translation>
 <translation id="463791356324567266">Се откажува скенирањето…</translation>
 <translation id="4646949265910132906">Безбедна Wi-Fi врска</translation>
@@ -704,6 +703,7 @@
 <translation id="4985509611418653372">Изврши</translation>
 <translation id="4987769320337599931">Заштитен ѕид</translation>
 <translation id="4988526792673242964">Страници</translation>
+<translation id="4989542687859782284">Недостапни</translation>
 <translation id="4999333166442584738">Скриј го извештајот</translation>
 <translation id="500920857929044050">Запри го тестот</translation>
 <translation id="5017508259293544172">LEAP</translation>
@@ -960,7 +960,6 @@
 <translation id="6412715219990689313">Вградена тастатура</translation>
 <translation id="6417265370957905582">Помошник на Google</translation>
 <translation id="6423239382391657905">OpenVPN</translation>
-<translation id="6438073885402882007">Ова дозволува системските услуги со дозволата да ја користат вашата локација. Услугата „Локација“ може да користи извори како Wi‑Fi, мобилни мрежи и сензори за да помогне да се процени локацијата на уредот. <ph name="LINK_BEGIN" />Дознајте повеќе<ph name="LINK_END" /></translation>
 <translation id="6439505561246192797">Слаб (<ph name="SIGNAL_STRENGTH" />)</translation>
 <translation id="6447630859861661624">Одете во поставките за сметката</translation>
 <translation id="6462978824459367242">Копчето „Додај“ во APN сега е овозможено</translation>

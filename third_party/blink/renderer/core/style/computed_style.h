@@ -106,7 +106,6 @@ class StyleContentAlignmentData;
 class StyleDifference;
 class StyleImage;
 class StyleInheritedVariables;
-class StyleInitialData;
 class StyleRay;
 class StyleResolver;
 class StyleResolverState;
@@ -609,7 +608,7 @@ class ComputedStyle final : public ComputedStyleBase {
   // `display: -webkit-box`). To get the raw value of the properties, use
   // `StandardLineClamp()` or `WebkitLineClamp()`.
   int LineClamp() const {
-    if (StandardLineClamp() != 0) {
+    if (HasAutoStandardLineClamp() || StandardLineClamp() != 0) {
       DCHECK(RuntimeEnabledFeatures::CSSLineClampEnabled());
       return StandardLineClamp();
     }
@@ -619,7 +618,9 @@ class ComputedStyle final : public ComputedStyleBase {
     return 0;
   }
   // Returns whether `line-clamp` or `-webkit-line-clamp` are set and apply.
-  bool HasLineClamp() const { return LineClamp() != 0; }
+  bool HasLineClamp() const {
+    return HasAutoStandardLineClamp() || LineClamp() != 0;
+  }
 
   // Outline properties.
 
@@ -1582,7 +1583,8 @@ class ComputedStyle final : public ComputedStyleBase {
     // If an inline box (inline flow) is inlinified, it recursively inlinifies
     // all of its in-flow children
     return IsInInlinifyingDisplay() &&
-           (display == EDisplay::kContents || display == EDisplay::kInline);
+           (display == EDisplay::kContents || display == EDisplay::kInline ||
+            display == EDisplay::kInlineListItem);
   }
 
   // Return true if an element with this computed style requires LayoutNG
@@ -1851,8 +1853,7 @@ class ComputedStyle final : public ComputedStyleBase {
   bool IsFixedTableLayout() const {
     // https://www.w3.org/TR/css-tables-3/#table-layout-property
     return TableLayout() == ETableLayout::kFixed &&
-           (LogicalWidth().IsSpecified() || LogicalWidth().IsMinContent() ||
-            LogicalWidth().IsFitContent());
+           (!LogicalWidth().HasAuto() && !LogicalWidth().HasMaxContent());
   }
 
   LogicalSize TableBorderSpacing() const {
@@ -2251,6 +2252,12 @@ class ComputedStyle final : public ComputedStyleBase {
     if (pseudo == kPseudoIdBackdrop && Overlay() == EOverlay::kNone) {
       return false;
     }
+    if (pseudo == kPseudoIdScrollMarkerGroupBefore) {
+      return ScrollMarkers() == EScrollMarkers::kBefore && IsScrollContainer();
+    }
+    if (pseudo == kPseudoIdScrollMarkerGroupAfter) {
+      return ScrollMarkers() == EScrollMarkers::kAfter && IsScrollContainer();
+    }
     if (!HasPseudoElementStyle(pseudo)) {
       return false;
     }
@@ -2261,6 +2268,22 @@ class ComputedStyle final : public ComputedStyleBase {
     // ::after, but the rest of the pseudo-elements should only be used for
     // elements with an actual layout object.
     return pseudo == kPseudoIdBefore || pseudo == kPseudoIdAfter;
+  }
+
+  bool HasScrollMarkersBefore() const {
+    return ScrollMarkers() == EScrollMarkers::kBefore;
+  }
+
+  bool HasScrollMarkersAfter() const {
+    return ScrollMarkers() == EScrollMarkers::kAfter;
+  }
+
+  bool ScrollMarkersNone() const {
+    return ScrollMarkers() == EScrollMarkers::kNone;
+  }
+
+  bool ScrollMarkersEqual(const ComputedStyle& other) const {
+    return ScrollMarkers() == other.ScrollMarkers();
   }
 
   // Returns true if the element is rendered in the top layer. That is the case
@@ -2902,6 +2925,17 @@ class ComputedStyleBuilder final : public ComputedStyleBuilderBase {
     SetFontDescription(description);
   }
 
+  // line-clamp
+  void SetHasAutoStandardLineClamp() {
+    SetHasAutoStandardLineClampInternal(true);
+    SetStandardLineClampInternal(0);
+  }
+
+  void SetStandardLineClamp(int v) {
+    SetHasAutoStandardLineClampInternal(false);
+    SetStandardLineClampInternal(v);
+  }
+
   // line-height
   bool HasInitialLineHeight() const {
     return LineHeightInternal() ==
@@ -3207,10 +3241,10 @@ class ComputedStyleBuilder final : public ComputedStyleBuilderBase {
 
   // Variables
   const StyleInheritedVariables* InheritedVariables() const {
-    return InheritedVariablesInternal().get();
+    return InheritedVariablesInternal().Get();
   }
   const StyleNonInheritedVariables* NonInheritedVariables() const {
-    return NonInheritedVariablesInternal().get();
+    return NonInheritedVariablesInternal().Get();
   }
   CSSVariableData* GetVariableData(const AtomicString&,
                                    bool is_inherited_property) const;
@@ -3219,12 +3253,12 @@ class ComputedStyleBuilder final : public ComputedStyleBuilderBase {
   void CopyInheritedVariablesFrom(const ComputedStyle*);
   void CopyNonInheritedVariablesFrom(const ComputedStyle*);
   CORE_EXPORT void SetVariableData(const AtomicString& name,
-                                   scoped_refptr<CSSVariableData> value,
+                                   CSSVariableData* value,
                                    bool is_inherited_property) {
     if (is_inherited_property) {
-      MutableInheritedVariables().SetData(name, std::move(value));
+      MutableInheritedVariables().SetData(name, value);
     } else {
-      MutableNonInheritedVariables().SetData(name, std::move(value));
+      MutableNonInheritedVariables().SetData(name, value);
     }
   }
   CORE_EXPORT void SetVariableValue(const AtomicString& name,
@@ -3235,9 +3269,6 @@ class ComputedStyleBuilder final : public ComputedStyleBuilderBase {
     } else {
       MutableNonInheritedVariables().SetValue(name, value);
     }
-  }
-  CORE_EXPORT void SetInitialData(scoped_refptr<StyleInitialData> data) {
-    MutableInitialDataInternal() = std::move(data);
   }
 
   EWhiteSpace WhiteSpace() const {
@@ -3273,6 +3304,9 @@ class ComputedStyleBuilder final : public ComputedStyleBuilderBase {
     SetContainIntrinsicHeight(height);
   }
 
+ private:
+  mutable bool has_own_inherited_variables_ = false;
+  mutable bool has_own_non_inherited_variables_ = false;
 };
 
 }  // namespace blink

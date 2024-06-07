@@ -62,6 +62,7 @@
 #include "third_party/blink/public/platform/web_url_request.h"
 #include "third_party/blink/renderer/platform/bindings/script_forbidden_scope.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
+#include "third_party/blink/renderer/platform/heap/persistent.h"
 #include "third_party/blink/renderer/platform/instrumentation/histogram.h"
 #include "third_party/blink/renderer/platform/instrumentation/instance_counters.h"
 #include "third_party/blink/renderer/platform/instrumentation/tracing/trace_event.h"
@@ -92,7 +93,6 @@
 #include "third_party/blink/renderer/platform/mojo/mojo_binding_context.h"
 #include "third_party/blink/renderer/platform/network/encoded_form_data.h"
 #include "third_party/blink/renderer/platform/network/network_utils.h"
-#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/scheduler/public/agent_group_scheduler.h"
 #include "third_party/blink/renderer/platform/scheduler/public/thread_scheduler.h"
 #include "third_party/blink/renderer/platform/weborigin/known_ports.h"
@@ -850,7 +850,7 @@ ResourceFetcher::DeferPolicy ResourceFetcher::GetDeferPolicy(
   }
 
   // Check if the resource is marked as a potentially unused preload request.
-  if (IsPotentiallyUnusedPreload(params)) {
+  if (IsPotentiallyUnusedPreload(type, params)) {
     return DeferPolicy::kDeferAndSchedule;
   }
 
@@ -1381,6 +1381,10 @@ Resource* ResourceFetcher::RequestResource(FetchParameters& params,
   if (resource_request.Priority() > resource->GetResourceRequest().Priority()) {
     resource->DidChangePriority(resource_request.Priority(), 0);
   }
+
+  // The resource width can change after the request was initially created.
+  resource->UpdateResourceWidth(
+      resource_request.HttpHeaderField(AtomicString("sec-ch-width")));
 
   // If only the fragment identifiers differ, it is the same resource.
   DCHECK(EqualIgnoringFragmentIdentifier(resource->Url(), params.Url()));
@@ -2518,15 +2522,19 @@ void ResourceFetcher::ScheduleLoadingPotentiallyUnusedPreload(
       features::kLcppDeferUnusedPreloadTiming.Get();
   switch (load_timing) {
     case features::LcppDeferUnusedPreloadTiming::kPostTask:
-      freezable_task_runner_->PostTask(
-          FROM_HERE,
-          WTF::BindOnce(&ResourceFetcher::StartLoadAndFinishIfFailed,
-                        WrapWeakPersistent(this), WrapWeakPersistent(resource),
-                        /*is_potentially_unused_preload=*/true));
+      ScheduleStartLoadAndFinishIfFailed(
+          resource, /*is_potentially_unused_preload=*/true);
       break;
     case features::LcppDeferUnusedPreloadTiming::kLcpTimingPredictor:
       context_->AddLcpPredictedCallback(
           WTF::BindOnce(&ResourceFetcher::StartLoadAndFinishIfFailed,
+                        WrapWeakPersistent(this), WrapWeakPersistent(resource),
+                        /*is_potentially_unused_preload=*/true));
+      break;
+    case features::LcppDeferUnusedPreloadTiming::
+        kLcpTimingPredictorWithPostTask:
+      context_->AddLcpPredictedCallback(
+          WTF::BindOnce(&ResourceFetcher::ScheduleStartLoadAndFinishIfFailed,
                         WrapWeakPersistent(this), WrapWeakPersistent(resource),
                         /*is_potentially_unused_preload=*/true));
       break;
@@ -2553,6 +2561,16 @@ void ResourceFetcher::StartLoadAndFinishIfFailed(
     resource->FinishAsError(ResourceError::CancelledError(resource->Url()),
                             freezable_task_runner_.get());
   }
+}
+
+void ResourceFetcher::ScheduleStartLoadAndFinishIfFailed(
+    Resource* resource,
+    bool is_potentially_unused_preload) {
+  freezable_task_runner_->PostTask(
+      FROM_HERE,
+      WTF::BindOnce(&ResourceFetcher::StartLoadAndFinishIfFailed,
+                    WrapWeakPersistent(this), WrapWeakPersistent(resource),
+                    is_potentially_unused_preload));
 }
 
 void ResourceFetcher::RemoveResourceLoader(ResourceLoader* loader) {
@@ -3005,6 +3023,7 @@ void ResourceFetcher::MarkEarlyHintConsumedIfNeeded(
 }
 
 bool ResourceFetcher::IsPotentiallyUnusedPreload(
+    ResourceType type,
     const FetchParameters& params) const {
   static const bool kDeferUnusedPreload =
       base::FeatureList::IsEnabled(features::kLCPPDeferUnusedPreload);
@@ -3039,6 +3058,36 @@ bool ResourceFetcher::IsPotentiallyUnusedPreload(
   }
   if (!reason_matched) {
     return false;
+  }
+
+  static const LcppDeferUnusedPreloadExcludedResourceType
+      kExcludedResourceType =
+          features::kLcppDeferUnusedPreloadExcludedResourceType.Get();
+  LcppDeferUnusedPreloadExcludedResourceType excluded_resource_type;
+  if (defer_unused_preload_enabled_for_testing_) {
+    excluded_resource_type =
+        defer_unused_preload_excluded_resource_type_for_testing_;
+  } else {
+    excluded_resource_type = kExcludedResourceType;
+  }
+  switch (excluded_resource_type) {
+    case LcppDeferUnusedPreloadExcludedResourceType::kNone:
+      break;
+    case LcppDeferUnusedPreloadExcludedResourceType::kStyleSheet:
+      if (type == ResourceType::kCSSStyleSheet) {
+        return false;
+      }
+      break;
+    case LcppDeferUnusedPreloadExcludedResourceType::kScript:
+      if (type == ResourceType::kScript) {
+        return false;
+      }
+      break;
+    case LcppDeferUnusedPreloadExcludedResourceType::kMock:
+      if (type == ResourceType::kMock) {
+        return false;
+      }
+      break;
   }
 
   return base::Contains(context_->GetPotentiallyUnusedPreloads(), params.Url());

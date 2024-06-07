@@ -8,6 +8,7 @@
 #include "ash/shell.h"
 #include "ash/style/checkbox.h"
 #include "ash/style/switch.h"
+#include "ash/style/typography.h"
 #include "ash/wm/overview/birch/birch_bar_context_menu_model.h"
 #include "ash/wm/overview/birch/birch_bar_controller.h"
 #include "base/notreached.h"
@@ -15,6 +16,7 @@
 #include "components/prefs/pref_service.h"
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
+#include "ui/chromeos/styles/cros_tokens_color_mappings.h"
 #include "ui/views/controls/menu/menu_controller.h"
 #include "ui/views/controls/menu/menu_item_view.h"
 #include "ui/views/controls/menu/submenu_view.h"
@@ -55,6 +57,10 @@ BirchSuggestionType CommandIdToSuggestionType(int command_id) {
       return BirchSuggestionType::kDrive;
     case base::to_underlying(CommandId::kOtherDeviceSuggestions):
       return BirchSuggestionType::kTab;
+    case base::to_underlying(CommandId::kLastActiveSuggestions):
+      return BirchSuggestionType::kLastActive;
+    case base::to_underlying(CommandId::kMostVisitedSuggestions):
+      return BirchSuggestionType::kMostVisited;
     default:
       break;
   }
@@ -95,6 +101,7 @@ views::MenuItemView* BirchBarMenuModelAdapter::AppendMenuItem(
   switch (command_id) {
     case base::to_underlying(CommandId::kShowSuggestions): {
       views::MenuItemView* item_view = menu->AppendMenuItem(command_id, label);
+      item_view->SetHighlightWhenSelectedWithChildViews(true);
       auto* switch_button =
           item_view->AddChildView(CreateShowSuggestionSwitch());
       switch_button->SetAccessibleName(label);
@@ -103,7 +110,9 @@ views::MenuItemView* BirchBarMenuModelAdapter::AppendMenuItem(
     case base::to_underlying(CommandId::kWeatherSuggestions):
     case base::to_underlying(CommandId::kCalendarSuggestions):
     case base::to_underlying(CommandId::kDriveSuggestions):
-    case base::to_underlying(CommandId::kOtherDeviceSuggestions): {
+    case base::to_underlying(CommandId::kOtherDeviceSuggestions):
+    case base::to_underlying(CommandId::kLastActiveSuggestions):
+    case base::to_underlying(CommandId::kMostVisitedSuggestions): {
       views::MenuItemView* item_view = menu->AppendMenuItem(command_id);
       // Note that we cannot directly added a checkbox, since `MenuItemView`
       // will align the newly added children to the right side of its label. We
@@ -118,6 +127,7 @@ views::MenuItemView* BirchBarMenuModelAdapter::AppendMenuItem(
       // Creates a checkbox. The argument `button_width` is the minimum width of
       // the checkbox button. Since we are not going to limit the minimum size,
       // so it is set to 0.
+      item_view->SetHighlightWhenSelectedWithChildViews(true);
       auto* checkbox = item_view->AddChildView(std::make_unique<Checkbox>(
           /*button_width=*/0,
           base::BindRepeating(
@@ -144,6 +154,8 @@ views::MenuItemView* BirchBarMenuModelAdapter::AppendMenuItem(
           CommandIdToSuggestionType(command_id)));
       checkbox->set_delegate(this);
       checkbox->SetAccessibleName(label);
+      checkbox->SetLabelStyle(TypographyToken::kCrosButton2);
+      checkbox->SetLabelColorId(cros_tokens::kCrosSysOnSurface);
       return item_view;
     }
     default:

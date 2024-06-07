@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "net/cert/x509_certificate.h"
 
 #include <limits.h>
@@ -725,6 +730,10 @@ X509Certificate::X509Certificate(
       intermediate_ca_certs_(std::move(intermediates)) {}
 
 X509Certificate::~X509Certificate() = default;
+
+base::span<const uint8_t> X509Certificate::cert_span() const {
+  return x509_util::CryptoBufferAsSpan(cert_buffer_.get());
+}
 
 X509Certificate::ParsedFields::ParsedFields() = default;
 X509Certificate::ParsedFields::ParsedFields(const ParsedFields&) = default;

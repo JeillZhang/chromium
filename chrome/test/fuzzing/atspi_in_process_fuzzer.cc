@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <algorithm>
 #include <cstdlib>
 #include <string_view>
 
@@ -64,14 +65,12 @@ class AtspiInProcessFuzzer
       ScopedAtspiAccessible& node);
   static std::string GetNodeName(ScopedAtspiAccessible& node);
   static bool InvokeAction(ScopedAtspiAccessible& node, size_t action_id);
-
-  // A record of all the paths to controls which currently, or in the past,
-  // have belonged to valid controls. A mutator points the attention of the
-  // fuzzer towards these instead of wasting time.
-  static std::set<std::vector<uint32_t>> known_control_paths;
+  static bool ReplaceText(ScopedAtspiAccessible& node,
+                          const std::string& newtext);
+  static bool SetSelection(ScopedAtspiAccessible& node,
+                           const std::vector<uint32_t>& new_selection);
+  static bool CheckOk(gboolean ok, GError** error);
 };
-
-std::set<std::vector<uint32_t>> AtspiInProcessFuzzer::known_control_paths;
 
 REGISTER_TEXT_PROTO_IN_PROCESS_FUZZER(AtspiInProcessFuzzer)
 
@@ -85,10 +84,6 @@ AtspiInProcessFuzzer::AtspiInProcessFuzzer() {
 void AtspiInProcessFuzzer::SetUpOnMainThread() {
   InProcessProtoFuzzer<
       test::fuzzing::atspi_fuzzing::FuzzCase>::SetUpOnMainThread();
-  // Populate the dataset used by our custom mutator to focus on valid nodes.
-  std::vector<uint32_t> root_node;
-  known_control_paths.insert(root_node);
-
   LoadAPage();
   // LoadAPage will wait until the load event has completed, but we also
   // want to wait until the browser has had time to draw its complete UI
@@ -113,6 +108,18 @@ void AtspiInProcessFuzzer::LoadAPage() {
 
 int AtspiInProcessFuzzer::Fuzz(
     const test::fuzzing::atspi_fuzzing::FuzzCase& fuzz_case) {
+  for (const test::fuzzing::atspi_fuzzing::Action& action :
+       fuzz_case.action()) {
+    if (action.path_to_control_size() < 2) {
+      // The first couple of levels deep in the accessibility tree are things
+      // like the application itself, which are not really interactive.
+      // The libfuzzer mutator seems to bias to producing small test cases
+      // which want to explore just those nodes. Shortcut things a bit by
+      // skipping those without pointlessly poking at the controls.
+      return -1;
+    }
+  }
+
   for (const test::fuzzing::atspi_fuzzing::Action& action :
        fuzz_case.action()) {
     // We make no attempt to reset the UI of the browser to any 'starting
@@ -153,36 +160,41 @@ int AtspiInProcessFuzzer::Fuzz(
       children = GetChildren(current_control);
     }
 
-    // Let's keep a record of all the node's children to
-    // help us explore them later with our custom mutator
-    for (uint32_t i = 0; i < children.size(); i++) {
-      std::vector<uint32_t> path = current_control_path;
-      path.push_back(i);
-      known_control_paths.insert(path);
-    }
-
-    if (action.path_to_control_size() < 2) {
-      // The first couple of levels deep in the accessibility tree are things
-      // like the application itself, which are not really interactive.
-      // The libfuzzer mutator seems to bias to producing small test cases
-      // which want to explore just those nodes. Shortcut things a bit by
-      // skipping those without pointlessly poking at the controls.
-      // NB we do this after potentially populating known_control_paths
-      return 0;
-    }
-
     std::string control_name = GetNodeName(current_control);
     if (kBlockedControls.contains(control_name)) {
       return -1;  // don't explore this case further
     }
 
-    if (!InvokeAction(current_control, action.action_id())) {
-      return 0;  // didn't work this time, but could conceivably work in future,
-                 // so don't reject it from the corpus
+    switch (action.action_choice_case()) {
+      case test::fuzzing::atspi_fuzzing::Action::kTakeAction:
+        if (!InvokeAction(current_control, action.take_action().action_id())) {
+          return 0;  // didn't work this time, but could conceivably work in
+                     // future, so don't reject it from the corpus
+        }
+        break;
+      case test::fuzzing::atspi_fuzzing::Action::kReplaceText:
+        if (!ReplaceText(current_control, action.replace_text().new_text())) {
+          return 0;  // didn't work this time, but could conceivably work in
+                     // future, so don't reject it from the corpus
+        }
+        break;
+      case test::fuzzing::atspi_fuzzing::Action::kSetSelection: {
+        std::vector<uint32_t> new_selection(
+            action.set_selection().selected_child().begin(),
+            action.set_selection().selected_child().end());
+        if (!SetSelection(current_control, new_selection)) {
+          return 0;  // didn't work this time, but could conceivably work in
+                     // future, so don't reject it from the corpus
+        }
+      } break;
+      case test::fuzzing::atspi_fuzzing::Action::ACTION_CHOICE_NOT_SET:
+        break;
     }
-    // In the future, we might want to do RunUntilIdle selectively based on fuzz
-    // test case input
-    base::RunLoop().RunUntilIdle();
+
+    if (action.wait_afterwards()) {
+      // Sometimes we might not want to; e.g. to find race conditions
+      base::RunLoop().RunUntilIdle();
+    }
   }
 
   return 0;
@@ -207,7 +219,7 @@ std::vector<ScopedAtspiAccessible> AtspiInProcessFuzzer::GetChildren(
   // atspi_accessible_get_child_count and atspi_accessible_get_child_at_index
   // to work. Discovered empirically.
   GHashTable* attributes = atspi_accessible_get_attributes(node, &error);
-  if (!error) {
+  if (!error && attributes) {
     GHashTableIter i;
     void* key = nullptr;
     void* value = nullptr;
@@ -245,6 +257,14 @@ std::vector<ScopedAtspiAccessible> AtspiInProcessFuzzer::GetChildren(
   return children;
 }
 
+bool AtspiInProcessFuzzer::CheckOk(gboolean ok, GError** error) {
+  if (*error) {
+    g_clear_error(error);
+    return false;
+  }
+  return ok;
+}
+
 std::string AtspiInProcessFuzzer::GetNodeName(ScopedAtspiAccessible& node) {
   std::string retval;
   GError* error = nullptr;
@@ -270,49 +290,47 @@ bool AtspiInProcessFuzzer::InvokeAction(ScopedAtspiAccessible& node,
     g_clear_error(&error);
     return false;
   }
-  atspi_action_do_action(action, action_id % num_actions, &error);
-  if (error) {
-    g_clear_error(&error);
+  gboolean ok = atspi_action_do_action(action, action_id % num_actions, &error);
+  return CheckOk(ok, &error);
+}
+
+bool AtspiInProcessFuzzer::ReplaceText(ScopedAtspiAccessible& node,
+                                       const std::string& newtext) {
+  AtspiEditableText* editable = atspi_accessible_get_editable_text_iface(node);
+  if (!editable) {
     return false;
+  }
+  GError* error = nullptr;
+  gboolean ok =
+      atspi_editable_text_set_text_contents(editable, newtext.data(), &error);
+  return CheckOk(ok, &error);
+}
+
+bool AtspiInProcessFuzzer::SetSelection(
+    ScopedAtspiAccessible& node,
+    const std::vector<uint32_t>& new_selection) {
+  AtspiSelection* selection = atspi_accessible_get_selection_iface(node);
+  if (!selection) {
+    return false;
+  }
+  GError* error = nullptr;
+  int child_count = atspi_accessible_get_child_count(node, &error);
+  if (!CheckOk(error != nullptr, &error)) {
+    return false;
+  }
+  std::set<uint32_t> children_to_select;
+  for (uint32_t id : new_selection) {
+    children_to_select.insert(id % child_count);
+  }
+  gboolean ok = atspi_selection_clear_selection(selection, &error);
+  if (!CheckOk(ok, &error)) {
+    return false;
+  }
+  for (auto idx : children_to_select) {
+    ok = atspi_selection_select_child(selection, idx, &error);
+    if (!CheckOk(ok, &error)) {
+      return false;
+    }
   }
   return true;
 }
-
-// There's quite a large space of possible controls to explore, arranged as a
-// hierarchic tree. When randomly mutated, the fuzzer biases towards:
-// * short paths to controls, fiddling mostly with top-level controls
-// * nodes which probably don't exist at all
-// Added to which, the ordinals generated are large (space of a uint32_t)
-// and we have to clamp them using %, which is ugly.
-// To improve matters, we have a custom mutator which tries to give us a
-// valid path to a control each time.
-// Each time our main fuzzing loop finds a control with
-// children, it records the path to that child. We then use this custom mutator
-// to nudge the test cases towards children which actually exist.
-void AtspiInProcessFuzzer::MutateControlPath(
-    test::fuzzing::atspi_fuzzing::Action* message,
-    unsigned int seed) {
-  std::vector<uint32_t> chosen_path(message->path_to_control().begin(),
-                                    message->path_to_control().end());
-  if (known_control_paths.contains(chosen_path)) {
-    // This is a valid control path selected for exploration by the fuzzing
-    // engine. Allow it to do so.
-    return;
-  }
-  // This is not a valid control path - let's pick one which is, or at least,
-  // has been in the past.
-  message->clear_path_to_control();
-  // Get the nth from known_control_paths
-  uint32_t n = seed % known_control_paths.size();
-  auto it = known_control_paths.begin();
-  std::advance(it, n);
-  for (uint32_t path_element : *it) {
-    message->add_path_to_control(path_element);
-  }
-}
-
-// Register an extra mutator for the control path to try to find more
-// deeply nested controls
-static protobuf_mutator::libfuzzer::PostProcessorRegistration<
-    test::fuzzing::atspi_fuzzing::Action>
-    reg = {AtspiInProcessFuzzer::MutateControlPath};

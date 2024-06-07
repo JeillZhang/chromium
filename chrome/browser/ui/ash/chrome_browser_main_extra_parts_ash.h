@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "base/functional/callback.h"
+#include "chrome/browser/ash/magic_boost/magic_boost_state_ash.h"
 #include "chrome/browser/chrome_browser_main_extra_parts.h"
 #include "chrome/browser/ui/ash/in_session_auth_token_provider_impl.h"
 #include "chrome/common/buildflags.h"
@@ -16,6 +17,7 @@
 
 namespace ash {
 class ArcWindowWatcher;
+class MagicBoostStateAsh;
 class NetworkPortalNotificationController;
 class NewWindowDelegateProvider;
 class OobeDialogUtil;
@@ -61,6 +63,7 @@ class NetworkConnectDelegate;
 class PickerClientImpl;
 class ProjectorAppClientImpl;
 class ProjectorClientImpl;
+class AnnotatorClientImpl;
 class ScreenOrientationDelegateChromeos;
 class SessionControllerClientImpl;
 class SystemTrayClientImpl;
@@ -107,6 +110,8 @@ class ChromeBrowserMainExtraPartsAsh : public ChromeBrowserMainExtraParts {
 
   bool did_post_browser_start() const { return did_post_browser_start_; }
 
+  void ResetNewWindowDelegateProviderForTest();
+
  private:
   class UserProfileLoadedObserver;
 
@@ -141,6 +146,7 @@ class ChromeBrowserMainExtraPartsAsh : public ChromeBrowserMainExtraParts {
   std::unique_ptr<WallpaperControllerClientImpl> wallpaper_controller_client_;
   std::unique_ptr<ProjectorClientImpl> projector_client_;
   std::unique_ptr<ProjectorAppClientImpl> projector_app_client_;
+  std::unique_ptr<AnnotatorClientImpl> annotator_client_;
   std::unique_ptr<game_mode::GameModeController> game_mode_controller_;
   std::unique_ptr<ash::NetworkPortalNotificationController>
       network_portal_notification_controller_;
@@ -148,6 +154,7 @@ class ChromeBrowserMainExtraPartsAsh : public ChromeBrowserMainExtraParts {
       video_conference_tray_controller_;
   std::unique_ptr<enterprise_connectors::AshAttestationCleanupManager>
       attestation_cleanup_manager_;
+  std::unique_ptr<ash::MagicBoostStateAsh> magic_boost_state_ash_;
   std::unique_ptr<chromeos::MahiManager> mahi_manager_;
   std::unique_ptr<chromeos::MahiMediaAppEventsProxy>
       mahi_media_app_events_proxy_;

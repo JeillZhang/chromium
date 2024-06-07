@@ -115,11 +115,10 @@ void MetricsCollector::OnMainFrameDocumentChanged(const PageNode* page_node) {
     return;
   }
 
-  for (const auto* page_node_it : graph_->GetAllPageNodes()) {
-    if (page_node_it != page_node) {
-      if (page_node_it->GetBrowserContextID() ==
-              page_node->GetBrowserContextID() &&
-          url::IsSameOriginWith(page_node_it->GetMainFrameUrl(),
+  for (const PageNode* page : graph_->GetAllPageNodes()) {
+    if (page != page_node) {
+      if (page->GetBrowserContextID() == page_node->GetBrowserContextID() &&
+          url::IsSameOriginWith(page->GetMainFrameUrl(),
                                 page_node->GetMainFrameUrl())) {
         found_same_origin_page = true;
         break;

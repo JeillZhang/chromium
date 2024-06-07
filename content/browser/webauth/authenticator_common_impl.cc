@@ -210,15 +210,8 @@ bool AddTransportsFromCertificate(
 base::TimeDelta AdjustTimeout(std::optional<base::TimeDelta> timeout,
                               RenderFrameHost* render_frame_host) {
   // Time to wait for an authenticator to successfully complete an operation.
-  base::TimeDelta adjusted_timeout_lower;
-  base::TimeDelta adjusted_timeout_upper;
-  if (base::FeatureList::IsEnabled(device::kWebAuthnAccessibleTimeouts)) {
-    adjusted_timeout_lower = base::Minutes(3);
-    adjusted_timeout_upper = base::Hours(20);
-  } else {
-    adjusted_timeout_lower = base::Seconds(10);
-    adjusted_timeout_upper = base::Minutes(10);
-  }
+  base::TimeDelta adjusted_timeout_lower = base::Minutes(3);
+  base::TimeDelta adjusted_timeout_upper = base::Hours(20);
   if (!timeout) {
     return adjusted_timeout_upper;
   }
@@ -520,6 +513,26 @@ void SetHints(AuthenticatorRequestClientDelegate* request_delegate,
     AuthenticatorRequestClientDelegate::Hints delegate_hints;
     delegate_hints.transport = transport;
     request_delegate->SetHints(delegate_hints);
+  }
+}
+
+bool IsPlatformAuthenticatorForInvalidStateError(
+    const device::FidoAuthenticator* authenticator) {
+  switch (authenticator->GetType()) {
+    case device::AuthenticatorType::kTouchID:
+    case device::AuthenticatorType::kChromeOS:
+    case device::AuthenticatorType::kICloudKeychain:
+    case device::AuthenticatorType::kEnclave:
+    case device::AuthenticatorType::kChromeOSPasskeys:
+      return true;
+    // kWinNative can be a platform authenticator but, in the context where this
+    // function is used, Windows returns a specific error when InvalidStateError
+    // should be returned. Thus, if it didn't return that, then we shouldn't
+    // consider it a platform authenticator.
+    case device::AuthenticatorType::kWinNative:
+    case device::AuthenticatorType::kOther:
+    case device::AuthenticatorType::kPhone:
+      return false;
   }
 }
 
@@ -1532,18 +1545,15 @@ void AuthenticatorCommonImpl::OnRegisterResponse(
     case device::MakeCredentialStatus::kWinInvalidStateError:
       // Duplicate registration: the new credential would be created on an
       // authenticator that already contains one of the credentials in
-      // |exclude_credentials|. If the request specified that only a platform
-      // authenticator was acceptable then we don't show an error message
-      // because there's no other authenticator that could be used for this
-      // request. Instead the RP learns of the result via the distinctive
-      // InvalidStateError result. This tells them that the platform
-      // authenticator is already registered with one of the credential IDs that
-      // they already know about.
+      // |exclude_credentials|. If the target was a platform authenticator then
+      // the RP learns of the result via the distinctive InvalidStateError
+      // result. This tells them that the platform authenticator is already
+      // registered with one of the credential IDs that they already know about.
       //
       // Windows already behaves like this and so its representation of
       // InvalidStateError is handled this way too.
-      if (req_state_->make_credential_options->authenticator_attachment ==
-              device::AuthenticatorAttachment::kPlatform ||
+      if ((authenticator &&
+           IsPlatformAuthenticatorForInvalidStateError(authenticator)) ||
           status_code == device::MakeCredentialStatus::kWinInvalidStateError) {
         CompleteMakeCredentialRequest(
             blink::mojom::AuthenticatorStatus::CREDENTIAL_EXCLUDED, nullptr,

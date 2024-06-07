@@ -85,6 +85,14 @@ BASE_FEATURE(kDelegatedCompositingLimitToUi,
              base::FEATURE_ENABLED_BY_DEFAULT);
 #endif
 
+// If enabled, the overlay processor will force the use of dcomp surfaces as the
+// render pass backing while delegated ink is being employed. This will avoid
+// the need for finding what surface to synchronize ink updates with by making
+// all surfaces synchronize with dcomp commit
+BASE_FEATURE(kUseDCompSurfacesForDelegatedInk,
+             "UseDCompSurfacesForDelegatedInk",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
 BASE_FEATURE(kRenderPassDrawnRect,
              "RenderPassDrawnRect",
 #if BUILDFLAG(IS_CHROMEOS_LACROS)
@@ -197,7 +205,7 @@ BASE_FEATURE(kDynamicSchedulerForClients,
 //   feature parameters.
 BASE_FEATURE(kCALayerNewLimit,
              "CALayerNewLimit",
-             base::FEATURE_ENABLED_BY_DEFAULT);
+             base::FEATURE_DISABLED_BY_DEFAULT);
 // Set FeatureParam default to -1. CALayerOverlayProcessor choose the default in
 // ca_layer_overlay.cc When it's < 0.
 const base::FeatureParam<int> kCALayerNewLimitDefault{&kCALayerNewLimit,
@@ -262,11 +270,7 @@ BASE_FEATURE(kBufferQueueImageSetPurgeable,
 // SkiaOutputDeviceBufferQueue itself.
 BASE_FEATURE(kRendererAllocatesImages,
              "RendererAllocatesImages",
-#if BUILDFLAG(IS_MAC)
              base::FEATURE_ENABLED_BY_DEFAULT
-#else
-             base::FEATURE_DISABLED_BY_DEFAULT
-#endif
 );
 #endif
 
@@ -389,6 +393,12 @@ BASE_FEATURE(kSnapshotEvictedRootSurface,
              base::FEATURE_ENABLED_BY_DEFAULT
 #endif
 );
+
+// If enabled, info for quads from the last render pass will be reported as
+// UMAs.
+BASE_FEATURE(kShouldLogFrameQuadInfo,
+             "ShouldLogFrameQuadInfo",
+             base::FEATURE_DISABLED_BY_DEFAULT);
 
 // The scale to use for root surface snapshots on eviction. See
 // `kSnapshotEvictedRootSurface`.
@@ -559,6 +569,10 @@ std::optional<double> SnapshotEvictedRootSurfaceScale() {
     return std::nullopt;
   }
   return kSnapshotEvictedRootSurfaceScale.Get();
+}
+
+bool ShouldLogFrameQuadInfo() {
+  return base::FeatureList::IsEnabled(features::kShouldLogFrameQuadInfo);
 }
 
 #if BUILDFLAG(IS_MAC)

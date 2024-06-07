@@ -16,8 +16,8 @@
 #include "ash/style/typography.h"
 #include "ash/wm/desks/desks_util.h"
 #include "ash/wm/window_properties.h"
+#include "ash/wm/window_restore/informed_restore_contents_data.h"
 #include "ash/wm/window_restore/pine_constants.h"
-#include "ash/wm/window_restore/pine_contents_data.h"
 #include "ash/wm/window_restore/pine_context_menu_model.h"
 #include "ash/wm/window_restore/pine_controller.h"
 #include "ash/wm/window_restore/pine_items_container_view.h"
@@ -86,10 +86,10 @@ PineContentsView::PineContentsView() : creation_time_(base::TimeTicks::Now()) {
   SetInsideBorderInsets(kContentsInsets);
 
   // Update the value of `showing_list_view_` and record it.
-  const PineContentsData* pine_contents_data =
-      Shell::Get()->pine_controller()->pine_contents_data();
-  CHECK(pine_contents_data);
-  showing_list_view_ = pine_contents_data->image.isNull();
+  const InformedRestoreContentsData* contents_data =
+      Shell::Get()->pine_controller()->contents_data();
+  CHECK(contents_data);
+  showing_list_view_ = contents_data->image.isNull();
   RecordDialogScreenshotVisibility(!showing_list_view_);
 
   CreateChildViews();
@@ -120,7 +120,9 @@ std::unique_ptr<views::Widget> PineContentsView::Create(
   aura::Window* root = Shell::GetRootWindowForDisplayId(
       display::Screen::GetScreen()->GetDisplayMatching(contents_bounds).id());
 
-  views::Widget::InitParams params;
+  views::Widget::InitParams params(
+      views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET,
+      views::Widget::InitParams::TYPE_WINDOW_FRAMELESS);
   params.activatable = features::IsOverviewNewFocusEnabled()
                            ? views::Widget::InitParams::Activatable::kYes
                            : views::Widget::InitParams::Activatable::kNo;
@@ -128,9 +130,7 @@ std::unique_ptr<views::Widget> PineContentsView::Create(
   params.init_properties_container.SetProperty(kHideInDeskMiniViewKey, true);
   params.init_properties_container.SetProperty(kOverviewUiKey, true);
   params.name = "PineWidget";
-  params.ownership = views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
   params.parent = desks_util::GetActiveDeskContainerForRoot(root);
-  params.type = views::Widget::InitParams::TYPE_WINDOW_FRAMELESS;
 
   auto widget = std::make_unique<views::Widget>(std::move(params));
   widget->SetContentsView(std::move(contents_view));
@@ -159,9 +159,9 @@ void PineContentsView::UpdateOrientation() {
 }
 
 void PineContentsView::OnRestoreButtonPressed() {
-  if (PineContentsData* pine_contents_data =
-          Shell::Get()->pine_controller()->pine_contents_data()) {
-    if (pine_contents_data->restore_callback) {
+  if (InformedRestoreContentsData* contents_data =
+          Shell::Get()->pine_controller()->contents_data()) {
+    if (contents_data->restore_callback) {
       RecordTimeToAction(base::TimeTicks::Now() - creation_time_,
                          showing_list_view_);
 
@@ -171,15 +171,15 @@ void PineContentsView::OnRestoreButtonPressed() {
       close_metric_recorded_ = true;
 
       // Destroys `this`.
-      std::move(pine_contents_data->restore_callback).Run();
+      std::move(contents_data->restore_callback).Run();
     }
   }
 }
 
 void PineContentsView::OnCancelButtonPressed() {
-  if (PineContentsData* pine_contents_data =
-          Shell::Get()->pine_controller()->pine_contents_data()) {
-    if (pine_contents_data->cancel_callback) {
+  if (InformedRestoreContentsData* contents_data =
+          Shell::Get()->pine_controller()->contents_data()) {
+    if (contents_data->cancel_callback) {
       RecordTimeToAction(base::TimeTicks::Now() - creation_time_,
                          showing_list_view_);
       RecordPineDialogClosing(
@@ -188,7 +188,7 @@ void PineContentsView::OnCancelButtonPressed() {
       close_metric_recorded_ = true;
 
       // Destroys `this`.
-      std::move(pine_contents_data->cancel_callback).Run();
+      std::move(contents_data->cancel_callback).Run();
     }
   }
 }
@@ -274,13 +274,13 @@ void PineContentsView::CreateChildViews() {
   SetOrientation(landscape_mode ? views::BoxLayout::Orientation::kHorizontal
                                 : views::BoxLayout::Orientation::kVertical);
 
-  const PineContentsData* pine_contents_data =
-      Shell::Get()->pine_controller()->pine_contents_data();
-  CHECK(pine_contents_data);
-  const int title_message_id = pine_contents_data->last_session_crashed
+  const InformedRestoreContentsData* contents_data =
+      Shell::Get()->pine_controller()->contents_data();
+  CHECK(contents_data);
+  const int title_message_id = contents_data->last_session_crashed
                                    ? IDS_ASH_PINE_DIALOG_CRASH_TITLE
                                    : IDS_ASH_PINE_DIALOG_TITLE;
-  const int description_message_id = pine_contents_data->last_session_crashed
+  const int description_message_id = contents_data->last_session_crashed
                                          ? IDS_ASH_PINE_DIALOG_CRASH_DESCRIPTION
                                          : IDS_ASH_PINE_DIALOG_DESCRIPTION;
 
@@ -320,9 +320,8 @@ void PineContentsView::CreateChildViews() {
   gfx::Size screenshot_size;
   views::BoxLayoutView* preview_container_view;
   if (showing_list_view_) {
-    preview_container_view =
-        AddChildView(std::make_unique<PineItemsContainerView>(
-            pine_contents_data->apps_infos));
+    preview_container_view = AddChildView(
+        std::make_unique<PineItemsContainerView>(contents_data->apps_infos));
     preview_container_view->SetID(pine::kPreviewContainerViewID);
     preview_container_view->SetPreferredSize(
         gfx::Size(pine::kPreviewContainerWidth, kItemsViewContainerHeight));
@@ -330,8 +329,8 @@ void PineContentsView::CreateChildViews() {
     // TODO(http://b/338666906): Fix the screenshot view when in portrait mode,
     // and after transitioning to landscape mode.
 
-    const gfx::ImageSkia& pine_image = pine_contents_data->image;
-    screenshot_size = pine_image.size();
+    const gfx::ImageSkia& image = contents_data->image;
+    screenshot_size = image.size();
     screenshot_size.set_height(
         std::max(kScreenshotMinHeight, screenshot_size.height()));
 
@@ -359,7 +358,7 @@ void PineContentsView::CreateChildViews() {
                         views::Builder<views::ImageView>()
                             .CopyAddressTo(&image_view_)
                             .SetPaintToLayer()
-                            .SetImage(pine_image)
+                            .SetImage(image)
                             .SetImageSize(screenshot_size)))
             .Build());
 
@@ -367,8 +366,7 @@ void PineContentsView::CreateChildViews() {
     icon_row_container->layer()->SetRoundedCornerRadius(
         gfx::RoundedCornersF(pine::kPreviewContainerRadius));
     screenshot_icon_row_view_ = icon_row_container->AddChildView(
-        std::make_unique<PineScreenshotIconRowView>(
-            pine_contents_data->apps_infos));
+        std::make_unique<PineScreenshotIconRowView>(contents_data->apps_infos));
     icon_row_container->SetFlexForView(icon_row_spacer, 1);
   }
 
@@ -405,12 +403,15 @@ void PineContentsView::CreateChildViews() {
   // `kPreviewContainerWidth` while its height is calculated based on the
   // display's aspect ratio.
   const int screenshot_height = screenshot_size.height();
-  const int pine_contents_height =
+  const int primary_container_height =
       showing_list_view_
           ? kItemsViewContainerHeight
           : std::max(kScreenshotContainerMinHeight, screenshot_height);
-  primary_container_view->SetPreferredSize(
-      gfx::Size(kActionsContainerWidth, pine_contents_height));
+
+  primary_container_view->SetPreferredSize(gfx::Size(
+      kActionsContainerWidth,
+      landscape_mode ? primary_container_height
+                     : primary_container_view->GetPreferredSize().height()));
 
   // Set the screenshot preview container vertical margin based on the height of
   // the screenshot.

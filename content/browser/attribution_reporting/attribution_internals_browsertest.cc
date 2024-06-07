@@ -15,6 +15,8 @@
 #include "base/test/gmock_callback_support.h"
 #include "base/time/time.h"
 #include "base/uuid.h"
+#include "base/values.h"
+#include "components/attribution_reporting/aggregatable_debug_reporting_config.h"
 #include "components/attribution_reporting/aggregation_keys.h"
 #include "components/attribution_reporting/filters.h"
 #include "components/attribution_reporting/os_registration.h"
@@ -22,6 +24,7 @@
 #include "components/attribution_reporting/source_type.mojom.h"
 #include "components/attribution_reporting/suitable_origin.h"
 #include "components/attribution_reporting/trigger_registration.h"
+#include "content/browser/attribution_reporting/aggregatable_debug_report.h"
 #include "content/browser/attribution_reporting/attribution_debug_report.h"
 #include "content/browser/attribution_reporting/attribution_input_event.h"
 #include "content/browser/attribution_reporting/attribution_internals_ui.h"
@@ -33,6 +36,7 @@
 #include "content/browser/attribution_reporting/attribution_trigger.h"
 #include "content/browser/attribution_reporting/create_report_result.h"
 #include "content/browser/attribution_reporting/os_registration.h"
+#include "content/browser/attribution_reporting/process_aggregatable_debug_report_result.mojom.h"
 #include "content/browser/attribution_reporting/send_result.h"
 #include "content/browser/attribution_reporting/storable_source.h"
 #include "content/browser/attribution_reporting/store_source_result.h"
@@ -324,12 +328,22 @@ IN_PROC_BROWSER_TEST_F(AttributionInternalsWebUiBrowserTest,
               .SetMaxEventLevelReports(3)
               .SetPriority(std::numeric_limits<int64_t>::max())
               .SetDedupKeys({13, 17})
-              .SetAggregatableBudgetConsumed(1300)
+              .SetRemainingAggregatableAttributionBudget(1300)
+              .SetRemainingAggregatableDebugBudget(100)
               .SetFilterData(*attribution_reporting::FilterData::Create(
                   {{"a", {"b", "c"}}}))
               .SetAggregationKeys(
                   *attribution_reporting::AggregationKeys::FromKeys({{"a", 1}}))
               .SetAggregatableDedupKeys({14, 18})
+              .SetAggregatableDebugReportingConfig(
+                  *attribution_reporting::
+                      SourceAggregatableDebugReportingConfig::Create(
+                          /*budget=*/10,
+                          attribution_reporting::
+                              AggregatableDebugReportingConfig(
+                                  /*key_piece=*/15, /*debug_data=*/{},
+                                  /*aggregation_coordinator_origin=*/
+                                  std::nullopt)))
               .BuildStored(),
           SourceBuilder(now + base::Hours(1))
               .SetSourceId(StoredSource::Id(2))
@@ -454,7 +468,9 @@ IN_PROC_BROWSER_TEST_F(AttributionInternalsWebUiBrowserTest,
         tds[19]?.innerText === '{\n "a": "0x1"\n}' &&
         // Aggregatable Dedup Keys
         tds[20]?.children[0]?.children[0]?.innerText === '14' &&
-        tds[20]?.children[0]?.children[1]?.innerText === '18'
+        tds[20]?.children[0]?.children[1]?.innerText === '18' &&
+        tds[21]?.innerText === '100 / 65536' &&
+        tds[22]?.innerText === '0xf'
       ) {
         if (obs) {
           obs.disconnect();
@@ -1390,8 +1406,7 @@ IN_PROC_BROWSER_TEST_F(AttributionInternalsWebUiBrowserTest,
   EXPECT_EQ(kSentTitle, sent_title_watcher.WaitAndGetTitle());
 }
 
-IN_PROC_BROWSER_TEST_F(AttributionInternalsWebUiBrowserTest,
-                       VerboseDebugReport) {
+IN_PROC_BROWSER_TEST_F(AttributionInternalsWebUiBrowserTest, DebugReports) {
   NavigateAndWaitForObserver();
 
   std::optional<AttributionDebugReport> report = AttributionDebugReport::Create(
@@ -1400,7 +1415,7 @@ IN_PROC_BROWSER_TEST_F(AttributionInternalsWebUiBrowserTest,
                             .SetDebugReporting(true)
                             .SetDebugCookieSet(true)
                             .Build(),
-                        /*is_noised=*/false,
+                        /*is_noised=*/false, /*source_time=*/base::Time::Now(),
                         StoreSourceResult::InternalError()));
   ASSERT_TRUE(report);
 
@@ -1411,13 +1426,16 @@ IN_PROC_BROWSER_TEST_F(AttributionInternalsWebUiBrowserTest,
     const url0 = 'https://report.test/.well-known/attribution-reporting/debug/verbose';
     const url1 = 'https://report.test/.well-known/attribution-reporting/debug/report-event-attribution';
     const url2 = 'https://report.test/.well-known/attribution-reporting/debug/report-aggregate-attribution';
+    const url3 = 'https://report.test/.well-known/attribution-reporting/debug/report-aggregate-debug';
 
     const setTitleIfDone = (_, obs) => {
-      if (table.rows.length === 3 &&
+      if (table.rows.length === 4 &&
           table.rows[0].cells[1]?.innerText === url0 &&
           table.rows[0].cells[2]?.innerText === 'HTTP 200' &&
           table.rows[1].cells[1]?.innerText === url1 &&
-          table.rows[2].cells[1]?.innerText === url2
+          table.rows[2].cells[1]?.innerText === url2 &&
+          table.rows[3].cells[1]?.innerText === url3 &&
+          table.rows[3].cells[2]?.innerText === 'Success, HTTP 200'
       ) {
         if (obs) {
           obs.disconnect();
@@ -1456,6 +1474,22 @@ IN_PROC_BROWSER_TEST_F(AttributionInternalsWebUiBrowserTest,
       /*is_debug_report=*/true,
       SendResult(SendResult::Status::kTransientFailure,
                  net::ERR_INTERNET_DISCONNECTED));
+
+  manager()->NotifyAggregatableDebugReportSent(
+      AggregatableDebugReport::CreateForTesting(
+          /*contributions=*/{},
+          /*context_site=*/net::SchemefulSite::Deserialize("https://c.test"),
+          /*reporting_origin=*/
+          *SuitableOrigin::Deserialize("https://report.test"),
+          /*effective_destination=*/
+          net::SchemefulSite::Deserialize("https://d.test"),
+          /*aggregation_coordinator_origin=*/std::nullopt,
+          /*scheduled_report_time=*/now + base::Hours(3)),
+      /*report_body=*/base::Value::Dict(),
+      attribution_reporting::mojom::ProcessAggregatableDebugReportResult::
+          kSuccess,
+      SendAggregatableDebugReportResult(
+          SendAggregatableDebugReportResult::Sent(200)));
 
   ASSERT_EQ(kCompleteTitle, title_watcher.WaitAndGetTitle());
 

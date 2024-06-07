@@ -18,7 +18,7 @@
 #include "chrome/browser/ui/commerce/commerce_page_action_controller.h"
 #include "chrome/browser/ui/commerce/price_tracking_page_action_controller.h"
 #include "chrome/browser/ui/commerce/product_specifications_page_action_controller.h"
-#include "chrome/browser/ui/side_panel/side_panel_ui.h"
+#include "chrome/browser/ui/views/side_panel/side_panel_ui.h"
 #include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/browser/ui/views/commerce/price_insights_icon_view.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
@@ -446,6 +446,10 @@ bool CommerceUiTabHelper::IsPriceTracking() {
       price_tracking_controller_->IsPriceTrackingCurrentProduct());
 }
 
+bool CommerceUiTabHelper::IsInRecommendedSet() {
+  return product_specifications_controller_->IsInRecommendedSet();
+}
+
 void CommerceUiTabHelper::UpdatePriceTrackingIconView() {
   UpdatePageActionIconView(web_contents(), PageActionIconType::kPriceTracking);
 }
@@ -463,9 +467,6 @@ void CommerceUiTabHelper::MakeShoppingInsightsSidePanelAvailable() {
 
   auto entry = std::make_unique<SidePanelEntry>(
       SidePanelEntry::Id::kShoppingInsights,
-      l10n_util::GetStringUTF16(IDS_SHOPPING_INSIGHTS_SIDE_PANEL_TITLE),
-      ui::ImageModel::FromVectorIcon(vector_icons::kShoppingBagIcon,
-                                     ui::kColorIcon, /*icon_size=*/16),
       base::BindRepeating(
           &CommerceUiTabHelper::CreateShoppingInsightsWebView,
           base::Unretained(this)));
@@ -638,6 +639,10 @@ bool CommerceUiTabHelper::ShouldExpandPageActionIcon(
 
 void CommerceUiTabHelper::OnPriceTrackingIconClicked() {
   price_tracking_controller_->OnIconClicked();
+}
+
+void CommerceUiTabHelper::OnProductSpecificationsIconClicked() {
+  product_specifications_controller_->OnIconClicked();
 }
 
 void CommerceUiTabHelper::RecordIconMetrics(PageActionIconType page_action,

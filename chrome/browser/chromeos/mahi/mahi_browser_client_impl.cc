@@ -12,6 +12,7 @@
 #include "base/unguessable_token.h"
 #include "build/chromeos_buildflags.h"
 #include "chrome/browser/chromeos/mahi/mahi_browser_util.h"
+#include "chromeos/components/mahi/public/cpp/mahi_media_app_content_manager.h"
 #include "chromeos/components/mahi/public/cpp/mahi_util.h"
 #include "chromeos/crosapi/mojom/mahi.mojom.h"
 #include "ui/gfx/image/image_skia.h"
@@ -114,6 +115,15 @@ void MahiBrowserClientImpl::OnFocusedPageChanged(
 #if BUILDFLAG(IS_CHROMEOS_LACROS)
   remote_->OnFocusedPageChanged(std::move(page_info), std::move(callback));
 #else   // BUILDFLAG(IS_CHROMEOS_ASH)
+  // Do not notify browser delegate if the top level native window is observed
+  // by media app content provider (i.e. the web_content is from a media app
+  // window), to avoid overriding media app focus status.
+  CHECK(chromeos::MahiMediaAppContentManager::Get());
+  if (chromeos::MahiMediaAppContentManager::Get()->ObservingWindow(
+          web_content_state.top_level_native_window)) {
+    return;
+  }
+
   mahi_browser_delegate().OnFocusedPageChanged(std::move(page_info),
                                                std::move(callback));
 #endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
@@ -122,14 +132,16 @@ void MahiBrowserClientImpl::OnFocusedPageChanged(
 void MahiBrowserClientImpl::OnContextMenuClicked(
     int64_t display_id,
     chromeos::mahi::ButtonType button_type,
-    const std::u16string& question) {
+    const std::u16string& question,
+    const gfx::Rect& mahi_menu_bounds) {
   // Generates the context menu request.
   crosapi::mojom::MahiContextMenuRequestPtr context_menu_request =
       crosapi::mojom::MahiContextMenuRequest::New(
           /*display_id=*/display_id,
           /*action_type=*/
           chromeos::mahi::MatchButtonTypeToActionType(button_type),
-          /*question=*/std::nullopt);
+          /*question=*/std::nullopt,
+          /*mahi_menu_bounds=*/mahi_menu_bounds);
   if (button_type == chromeos::mahi::ButtonType::kQA) {
     context_menu_request->question = question;
   }

@@ -6,7 +6,9 @@
 
 #include "base/strings/strcat.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/themes/theme_service_factory.h"
 #include "chrome/browser/ui/lens/lens_overlay_controller.h"
+#include "chrome/browser/ui/lens/lens_overlay_theme_utils.h"
 #include "chrome/browser/ui/webui/searchbox/realbox_handler.h"
 #include "chrome/browser/ui/webui/webui_util.h"
 #include "chrome/common/pref_names.h"
@@ -43,10 +45,15 @@ LensUntrustedUI::LensUntrustedUI(content::WebUI* web_ui)
                                   IDS_LENS_OVERLAY_COPY_TOAST_MESSAGE);
   html_source->AddLocalizedString("dismiss",
                                   IDS_LENS_OVERLAY_TOAST_DISMISS_MESSAGE);
-  html_source->AddLocalizedString("info", IDS_LENS_OVERLAY_INFO_BUTTON_LABEL);
+  html_source->AddLocalizedString("learnMore", IDS_LENS_OVERLAY_LEARN_MORE);
+  html_source->AddLocalizedString("initialToastLabel",
+                                  IDS_LENS_OVERLAY_INITIAL_TOAST_LABEL);
   html_source->AddLocalizedString("initialToastMessage",
                                   IDS_LENS_OVERLAY_INITIAL_TOAST_MESSAGE);
-  html_source->AddLocalizedString("sendFeedback", IDS_LENS_SEND_FEEDBACK_LABEL);
+  html_source->AddLocalizedString("moreOptions",
+                                  IDS_LENS_OVERLAY_MORE_OPTIONS_BUTTON_LABEL);
+  html_source->AddLocalizedString("myActivity", IDS_LENS_OVERLAY_MY_ACTIVITY);
+  html_source->AddLocalizedString("sendFeedback", IDS_LENS_SEND_FEEDBACK);
   html_source->AddLocalizedString("cursorTooltipDragMessage",
                                   IDS_LENS_OVERLAY_CURSOR_TOOLTIP_DRAG_MESSAGE);
   html_source->AddLocalizedString(
@@ -59,11 +66,39 @@ LensUntrustedUI::LensUntrustedUI(content::WebUI* web_ui)
       "cursorTooltipLivePageMessage",
       IDS_LENS_OVERLAY_CURSOR_TOOLTIP_LIVE_PAGE_MESSAGE);
   html_source->AddLocalizedString("translate", IDS_LENS_OVERLAY_TRANSLATE);
+  html_source->AddLocalizedString("selectText", IDS_LENS_OVERLAY_SELECT_TEXT);
+
+  // Add default theme colors.
+  const auto& palette = lens::kPaletteColors.at(lens::PaletteId::kFallback);
+  html_source->AddInteger("colorFallbackPrimary",
+                          palette.at(lens::ColorId::kPrimary));
+  html_source->AddInteger("colorFallbackShaderLayer1",
+                          palette.at(lens::ColorId::kShaderLayer1));
+  html_source->AddInteger("colorFallbackShaderLayer2",
+                          palette.at(lens::ColorId::kShaderLayer2));
+  html_source->AddInteger("colorFallbackShaderLayer3",
+                          palette.at(lens::ColorId::kShaderLayer3));
+  html_source->AddInteger("colorFallbackShaderLayer4",
+                          palette.at(lens::ColorId::kShaderLayer4));
+  html_source->AddInteger("colorFallbackShaderLayer5",
+                          palette.at(lens::ColorId::kShaderLayer5));
+  html_source->AddInteger("colorFallbackScrim",
+                          palette.at(lens::ColorId::kScrim));
+  html_source->AddInteger(
+      "colorFallbackSurfaceContainerHighestLight",
+      palette.at(lens::ColorId::kSurfaceContainerHighestLight));
+  html_source->AddInteger(
+      "colorFallbackSurfaceContainerHighestDark",
+      palette.at(lens::ColorId::kSurfaceContainerHighestDark));
+  html_source->AddInteger("colorFallbackSelectionElement",
+                          palette.at(lens::ColorId::kSelectionElement));
 
   // Add finch flags
   html_source->AddString(
       "resultsLoadingUrl",
-      lens::features::GetLensOverlayResultsSearchLoadingURL());
+      lens::features::GetLensOverlayResultsSearchLoadingURL(
+          lens::LensOverlayShouldUseDarkMode(
+              ThemeServiceFactory::GetForProfile(Profile::FromWebUI(web_ui)))));
   html_source->AddBoolean("enableDebuggingMode",
                           lens::features::IsLensOverlayDebuggingEnabled());
   html_source->AddBoolean(
@@ -85,6 +120,15 @@ LensUntrustedUI::LensUntrustedUI(content::WebUI* web_ui)
                           lens::features::GetLensOverlayTapRegionHeight());
   html_source->AddInteger("tapRegionWidth",
                           lens::features::GetLensOverlayTapRegionWidth());
+  html_source->AddBoolean(
+      "darkMode",
+      lens::LensOverlayShouldUseDarkMode(
+          ThemeServiceFactory::GetForProfile(Profile::FromWebUI(web_ui))));
+  html_source->AddDouble(
+      "selectTextTriggerThreshold",
+      lens::features::GetLensOverlaySelectTextOverRegionTriggerThreshold());
+  html_source->AddBoolean("useShimmerCanvas",
+                          lens::features::GetLensOverlayUseShimmerCanvas());
 
   // Allow FrameSrc from all Google subdomains as redirects can occur.
   GURL results_side_panel_url =

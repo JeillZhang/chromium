@@ -106,6 +106,8 @@ try_.builder(
 
 try_.builder(
     name = "android-13-x64-rel",
+    branch_selector = branches.selector.ANDROID_BRANCHES,
+    description_html = "Run Chromium tests on Android 13 emulator.",
     mirrors = [
         "ci/android-13-x64-rel",
     ],
@@ -115,6 +117,7 @@ try_.builder(
             "release_try_builder",
         ],
     ),
+    contact_team_email = "clank-engprod@google.com",
     siso_remote_jobs = siso.remote_jobs.LOW_JOBS_FOR_CQ,
 )
 
@@ -275,7 +278,7 @@ try_.builder(
             "android_builder",
             "arm64",
             "chrome_with_codecs",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
             "official_optimize",
             "stable_channel",
@@ -334,7 +337,7 @@ try_.builder(
             "android_builder_without_codecs",
             "cronet_android",
             "debug_static_builder",
-            "reclient",
+            "remoteexec",
             "arm_no_neon",
             "release_java",
         ],
@@ -668,7 +671,7 @@ try_.builder(
         configs = [
             "android_builder",
             "debug_builder",
-            "reclient",
+            "remoteexec",
         ],
     ),
     execution_timeout = 6 * time.hour,
@@ -681,7 +684,7 @@ try_.builder(
         configs = [
             "android_builder_without_codecs",
             "release_try_builder",
-            "reclient",
+            "remoteexec",
             "strip_debug_info",
         ],
     ),
@@ -710,7 +713,7 @@ try_.builder(
         configs = [
             "android_builder",
             "debug_try_builder",
-            "reclient",
+            "remoteexec",
             "arm64",
         ],
     ),
@@ -941,12 +944,12 @@ try_.orchestrator_builder(
     branch_selector = branches.selector.ANDROID_BRANCHES,
     description_html = "Run Chromium tests on Android emulators.",
     mirrors = [
-        "ci/android-12-x64-rel",
+        "ci/android-13-x64-rel",
         "ci/android-webview-13-x64-hostside-rel",
     ],
     gn_args = gn_args.config(
         configs = [
-            "ci/android-12-x64-rel",
+            "ci/android-13-x64-rel",
             "release_try_builder",
             "use_clang_coverage",
             "use_java_coverage",
@@ -1032,7 +1035,7 @@ try_.builder(
         configs = [
             "android_builder",
             "debug_try_builder",
-            "reclient",
+            "remoteexec",
             "compile_only",
             "arm64",
             "android_fastbuild",
@@ -1049,7 +1052,7 @@ try_.builder(
         configs = [
             "android_builder",
             "debug_try_builder",
-            "reclient",
+            "remoteexec",
             "compile_only",
             "arm64",
             "android_fastbuild",
@@ -1084,7 +1087,7 @@ try_.builder(
         configs = [
             "android_builder",
             "release_try_builder",
-            "reclient",
+            "remoteexec",
             "strip_debug_info",
             "x64",
         ],
@@ -1126,7 +1129,7 @@ try_.builder(
         configs = [
             "android_builder",
             "debug_try_builder",
-            "reclient",
+            "remoteexec",
             "compile_only",
             "arm64",
         ],
@@ -1160,7 +1163,7 @@ try_.builder(
         configs = [
             "android_builder",
             "debug_try_builder",
-            "reclient",
+            "remoteexec",
             "compile_only",
             "x64",
         ],
@@ -1209,7 +1212,7 @@ try_.builder(
         configs = [
             "android_builder",
             "debug_try_builder",
-            "reclient",
+            "remoteexec",
             "compile_only",
             "x86",
         ],
@@ -1245,7 +1248,7 @@ try_.builder(
             "android_builder_without_codecs",
             "cronet_android",
             "release_try_builder",
-            "reclient",
+            "remoteexec",
             "arm_no_neon",
         ],
     ),
@@ -1286,7 +1289,7 @@ try_.gpu.optional_tests_builder(
             "gpu_tests",
             "android_builder",
             "release_builder",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
             "dcheck_always_on",
             "static_angle",

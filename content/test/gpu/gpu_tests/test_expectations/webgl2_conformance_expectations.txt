@@ -601,6 +601,8 @@ crbug.com/1465035 [ mac passthrough angle-metal apple ] deqp/functional/gles3/tr
 
 crbug.com/327026292 [ angle-metal apple passthrough sonoma graphite-enabled ] conformance2/glsl3/float-parsing.html [ Failure ]
 
+crbug.com/343889872 [ mac apple-angle-metal-renderer:-apple-m2 ] conformance/ogles/GL/swizzlers/swizzlers_017_to_024.html [ RetryOnFailure ]
+
 ## Metal Graphite ##
 
 
@@ -860,7 +862,7 @@ crbug.com/1241179 [ chromeos chromeos-board-amd64-generic passthrough ] conforma
 crbug.com/1399117 [ chromeos chromeos-board-amd64-generic passthrough ] WebglExtension_WEBGL_provoking_vertex [ Skip ]
 
 # Must investigate ChromeOS failures with passthrough command decoder.
-crbug.com/angleproject/5038 [ chromeos passthrough ] conformance/extensions/ext-color-buffer-half-float.html [ Failure ]
+crbug.com/angleproject/5038 [ chromeos display-server-x lacros-chrome passthrough ] conformance/extensions/ext-color-buffer-half-float.html [ Failure ]
 
 
 # ANGLE disallows WEBGL_clip_cull_distance if the underlying GL extension doesn't support requirements for number of distances.
@@ -895,7 +897,6 @@ crbug.com/1499536 [ chromeos cros-chrome chromeos-board-jacuzzi ] deqp/functiona
 crbug.com/1499536 [ chromeos cros-chrome chromeos-board-jacuzzi ] deqp/functional/gles3/uniformbuffers/random.html [ Failure ]
 crbug.com/1499536 [ chromeos cros-chrome chromeos-board-jacuzzi ] deqp/functional/gles3/uniformbuffers/single_basic_array.html [ Failure ]
 crbug.com/1499536 [ chromeos cros-chrome chromeos-board-jacuzzi ] deqp/functional/gles3/uniformbuffers/single_basic_type.html [ Failure ]
-crbug.com/1500045 [ chromeos cros-chrome chromeos-board-jacuzzi ] conformance2/rendering/blitframebuffer-r11f-g11f-b10f.html [ Failure ]
 # Broadly flaky unsymbolized crashes on Jacuzzi
 crbug.com/1518007 [ chromeos cros-chrome chromeos-board-jacuzzi ] conformance/* [ RetryOnFailure ]
 crbug.com/1518007 [ chromeos cros-chrome chromeos-board-jacuzzi ] conformance2/* [ RetryOnFailure ]
@@ -1007,7 +1008,6 @@ crbug.com/332743717 [ chromeos chromeos-board-octopus ] conformance2/canvas/draw
 crbug.com/332743717 [ chromeos chromeos-board-volteer ] conformance2/canvas/drawingbuffer-storage-test.html [ Failure ]
 crbug.com/332743717 [ android android-pixel-2 ] conformance2/canvas/drawingbuffer-storage-test.html [ Failure ]
 crbug.com/332743717 [ win intel-0x4680 ] conformance2/query/occlusion-query-scissor.html [ Failure ]
-crbug.com/332743717 [ win qualcomm-0x41333430 ] conformance2/textures/image_bitmap_from_video/tex-2d-rgb8ui-rgb_integer-unsigned_byte.html [ Failure ]
 crbug.com/335203259 [ android android-pixel-2 ] conformance2/wasm/bufferdata-16gb-wasm-memory.html [ Failure ]
 crbug.com/335203259 [ android android-pixel-2 ] conformance2/wasm/bufferdata-4gb-wasm-memory.html [ Failure ]
 crbug.com/335203259 [ android android-pixel-2 ] conformance2/wasm/buffersubdata-16gb-wasm-memory.html [ Failure ]

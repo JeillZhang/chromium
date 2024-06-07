@@ -1,7 +1,6 @@
 <?xml version="1.0" ?>
 <!DOCTYPE translationbundle>
 <translationbundle lang="zh-HK">
-<translation id="1001716830750249114">去 Chromium 版本設定頁面</translation>
 <translation id="1026101648481255140">繼續安裝</translation>
 <translation id="1029669172902658969">重新啟動以更新 &amp;Chromium 作業系統</translation>
 <translation id="1040916596585577953">Chromium 建議你審核此擴充程式</translation>
@@ -71,6 +70,8 @@
 <translation id="2174917724755363426">安裝尚未完成。確定要取消嗎？</translation>
 <translation id="2185166961232948079">Chromium - 網絡登入 - <ph name="PAGE_TITLE" /></translation>
 <translation id="2190166659037789668">更新檢查錯誤：<ph name="UPDATE_CHECK_ERROR" />。</translation>
+<translation id="2210682093923538346">危險網站。Chromium 已移除通知權限。</translation>
+<translation id="2240214816234246077">由於最近沒有瀏覽記錄，Chromium 已移除<ph name="PERMISSION_1" />和<ph name="PERMISSION_2" />權限</translation>
 <translation id="2241627712206172106">如果您與親朋好友共用電腦，每個人均可享有獨立的瀏覽空間，依照自己的偏好設定 Chromium。</translation>
 <translation id="2313870531055795960">使用儲存在 Chromium 中的不安全網站清單來檢查網址。如果有網站試圖盜取您的密碼，或當您下載有害檔案時，Chromium 亦可能將網址 (包括部分網頁內容) 傳送至「安全瀏覽」功能。</translation>
 <translation id="2329088755516916767">開啟後，Chromium 會預先載入網頁，加快瀏覽和搜尋速度。</translation>
@@ -185,6 +186,7 @@
 <translation id="4055805654398742145">密碼管理工具(&amp;A)</translation>
 <translation id="4095980151185649725">{COUNT,plural, =1{根據機構規定，Chromium 會在閒置 1 分鐘後自動關閉。屆時系統將刪除瀏覽資料，當中可能包括記錄、自動填入資料和下載檔案。}other{根據機構規定，Chromium 會在閒置 # 分鐘後自動關閉。屆時系統將刪除瀏覽資料，當中可能包括記錄、自動填入資料和下載檔案。}}</translation>
 <translation id="4118474109249235144">Chromium 無痕模式</translation>
+<translation id="4122186850977583290">前往「關於 Chromium」頁面</translation>
 <translation id="4148957013307229264">安裝中…</translation>
 <translation id="4149336151887611710">機構可查看和管理工作設定檔中的瀏覽資料 (例如書籤、記錄和密碼)，但無法查看個人 Chromium 設定檔中的瀏覽資料。</translation>
 <translation id="419998258129752635"><ph name="PAGE_TITLE" /> - 網絡登入 - Chromium</translation>
@@ -217,11 +219,13 @@
 <translation id="4594305310729380060">儲存至此裝置的「密碼管理工具」中</translation>
 <translation id="459535195905078186">Chromium 應用程式</translation>
 <translation id="4613863813562375431">Chromium 作業系統版本</translation>
+<translation id="4617285639650863674">如要分享螢幕內容，請前往「系統偏好設定」允許 Chromium 螢幕錄影</translation>
 <translation id="4621240073146040695">即將更新至最新版本！重新啟動 Chromium 即可完成更新程序。</translation>
 <translation id="4665829708273112819">警告：Chromium 無法阻止擴充程式記錄您的瀏覽活動。如要在無痕模式中停用這個擴充程式，請取消選取這個選項。</translation>
 <translation id="4673151026126227699">如果您同時分享 Chromium 使用情況報告，這些報告將會包含您瀏覽的網址</translation>
 <translation id="4677944499843243528">另一部電腦 (<ph name="HOST_NAME" />) 的 Chromium 處理程序 (<ph name="PROCESS_ID" />) 正在使用這個設定檔。Chromium 已鎖定這個設定檔，確保其不致受損。如果您確定其他處理程序目前未使用此設定檔，請解除鎖定，然後重新啟動 Chromium。</translation>
 <translation id="4680828127924988555">取消安裝</translation>
+<translation id="469259825538636168">部分 Chromium 資料尚未儲存至 Google 帳戶。請等待幾分鐘後再嘗試登出。如果你現在登出，系統將刪除此資料。</translation>
 <translation id="4708774505295300557">先前已有其他人在這部電腦上以 <ph name="ACCOUNT_EMAIL_LAST" /> 的身分登入 Chromium。請建立新的 Chromium 使用者以個別保存您的資料。</translation>
 <translation id="4724676981607797757">由於發生不支援通訊協定的錯誤，因此無法安裝。</translation>
 <translation id="4746050847053251315">仍要退出 Chromium 嗎？</translation>
@@ -269,6 +273,7 @@
 <translation id="5690427481109656848">Google LLC</translation>
 <translation id="5698481217667032250">以此語言顯示 Chromium</translation>
 <translation id="569897634095159764">無法連線至互聯網。Proxy 伺服器需要驗證。</translation>
+<translation id="5761096224651992291">由於最近沒有瀏覽記錄，Chromium 已移除<ph name="PERMISSION_1" />、<ph name="PERMISSION_2" />和<ph name="PERMISSION_3" />權限</translation>
 <translation id="5800158606660203929">自訂及控制 Chromium。將 Chromium 設定為預設瀏覽器。</translation>
 <translation id="5809516625706423866">無法連線至互聯網。發生 HTTP 401 未授權錯誤，請檢查 Proxy 設定。</translation>
 <translation id="5862307444128926510">歡迎使用 Chromium</translation>
@@ -354,6 +359,7 @@
 <translation id="6729124504294600478">如要取得個人化和其他功能，請將 Chromium 加入「網絡和應用程式活動記錄」以及連結的 Google 服務</translation>
 <translation id="6734291798041940871">已為您電腦上的所有使用者安裝 Chromium。</translation>
 <translation id="673636774878526923">如要透過所有裝置存取 Chromium 資料，請登入並開啟同步處理功能。</translation>
+<translation id="674245979920622322">由於最近沒有瀏覽記錄，Chromium 已移除<ph name="PERMISSION_1" />、<ph name="PERMISSION_2" />和另外 <ph name="COUNT" /> 項權限</translation>
 <translation id="67706546131546258">此檔案可能不安全，因此 Chromium 建議掃瞄檔案。</translation>
 <translation id="6779406956731413166">Chromium 作業系統得以面世，有賴其他<ph name="BEGIN_LINK_CROS_OSS" />開放原始碼軟件<ph name="END_LINK_CROS_OSS" />。</translation>
 <translation id="6847869444787758381">Chromium 會通知您密碼是否曾被盜用</translation>
@@ -403,8 +409,10 @@ Chromium 無法復原您的設定。</translation>
 <translation id="7483335560992089831">無法安裝這個版本的 Chromium，因為目前正在執行相同版本。請關閉 Chromium，然後再試一次。</translation>
 <translation id="751935028865900641">網站可能會正常運作。關閉所有 Chromium 視窗後，系統會將你登出所有網站，但如果你已登入 Chromium，Google 帳戶就會維持登入狀態。</translation>
 <translation id="753534427205733210">{0,plural, =1{Chromium 將於 1 分鐘後重新啟動}other{Chromium 將於 # 分鐘後重新啟動}}</translation>
+<translation id="7553334751796114046">如要分享視窗，請前往「系統偏好設定」允許 Chromium 螢幕錄影</translation>
 <translation id="7582945390259497898">Chromium 可以推測您的興趣。您日後瀏覽的網站可向 Chromium 要求查看您的興趣，以便向您顯示個人化廣告。</translation>
 <translation id="7583399374488819119"><ph name="COMPANY_NAME" /> 安裝程式</translation>
+<translation id="7585391435984513350">由於最近沒有瀏覽記錄，Chromium 已移除<ph name="PERMISSION" />權限</translation>
 <translation id="761356813943268536">Chromium 正在使用您的相機和麥克風。</translation>
 <translation id="7617377681829253106">Chromium 現在更進一步</translation>
 <translation id="7649070708921625228">說明</translation>
@@ -452,7 +460,6 @@ Chromium 無法復原您的設定。</translation>
 <translation id="8417404458978023919">{0,plural, =1{請在 1 天內重新啟動 Chromium}other{請在 # 天內重新啟動 Chromium}}</translation>
 <translation id="8453117565092476964">安裝程式封存檔案已損毀或無效，請重新下載 Chromium。</translation>
 <translation id="8458614432758743027">Chromium 只支援 Windows 10 或以上版本的作業系統。</translation>
-<translation id="8461326814397467035">部分 Chromium 資料尚未儲存至 Google 帳戶。請等待幾分鐘後再嘗試登出。</translation>
 <translation id="8463672209299734063">可選用：將診斷和使用情況資料自動傳送給 Google，協助改善 Chromium 作業系統的功能和效能。</translation>
 <translation id="8493179195440786826">Chromium 版本過舊</translation>
 <translation id="8522801943730206384">儲存密碼時，Chromium 可檢查你的密碼</translation>

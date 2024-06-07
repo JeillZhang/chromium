@@ -257,6 +257,9 @@ NET_EXPORT BASE_DECLARE_FEATURE(kCookieDomainRejectNonASCII);
 NET_EXPORT BASE_DECLARE_FEATURE(kThirdPartyStoragePartitioning);
 NET_EXPORT BASE_DECLARE_FEATURE(kSupportPartitionedBlobUrl);
 
+// Controls consideration of top-level 3PCD origin trial settings.
+NET_EXPORT BASE_DECLARE_FEATURE(kTopLevelTpcdOriginTrial);
+
 // Feature to enable consideration of 3PC deprecation trial settings.
 NET_EXPORT BASE_DECLARE_FEATURE(kTpcdTrialSettings);
 
@@ -411,6 +414,11 @@ NET_EXPORT extern const base::FeatureParam<std::string> kIpPrivacyAlwaysProxy;
 // defaults to true and is intended for development of the QUIC functionality.
 NET_EXPORT extern const base::FeatureParam<bool> kIpPrivacyFallbackToDirect;
 
+// Identifier for an experiment arm, to be sent to IP Protection proxies in the
+// `Ip-Protection-Debug-Experiment-Arm` header. The default value, 0, is not
+// sent.
+NET_EXPORT extern const base::FeatureParam<int> kIpPrivacyDebugExperimentArm;
+
 // Whether QuicParams::migrate_sessions_on_network_change_v2 defaults to true or
 // false. This is needed as a workaround to set this value to true on Android
 // but not on WebView (until crbug.com/1430082 has been fixed).
@@ -498,6 +506,23 @@ NET_EXPORT BASE_DECLARE_FEATURE(kDeviceBoundSessions);
 // Enables storing connection subtype in NetworkChangeNotifierDelegateAndroid to
 // save the cost of the JNI call for future access.
 NET_EXPORT BASE_DECLARE_FEATURE(kStoreConnectionSubtype);
+
+// When enabled, all proxies in a proxy chain are partitioned by the NAK for the
+// endpoint of the connection. When disabled, proxies carrying tunnels to other
+// proxies (i.e., all proxies but the last one in the ProxyChain) are not
+// partitioned, allowing greater connection re-use.
+NET_EXPORT BASE_DECLARE_FEATURE(kPartitionProxyChains);
+
+// Enables the `Activate-Storage-Access: retry` semantics.
+NET_EXPORT BASE_DECLARE_FEATURE(kStorageAccessHeaderRetry);
+// Enables the `Activate-Storage-Access: load` semantics.
+NET_EXPORT BASE_DECLARE_FEATURE(kStorageAccessHeaderLoad);
+
+// Enables more checks when creating a SpdySession for proxy. These checks are
+// already applied to non-proxy SpdySession creations.
+// TODO(crbug.com/343519247): Remove this once we are sure that these checks are
+// not causing any problems.
+NET_EXPORT BASE_DECLARE_FEATURE(kSpdySessionForProxyAdditionalChecks);
 
 }  // namespace net::features
 

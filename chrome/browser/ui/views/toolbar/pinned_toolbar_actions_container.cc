@@ -19,8 +19,8 @@
 #include "chrome/browser/ui/browser_actions.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
 #include "chrome/browser/ui/layout_constants.h"
-#include "chrome/browser/ui/side_panel/companion/companion_utils.h"
-#include "chrome/browser/ui/side_panel/side_panel_enums.h"
+#include "chrome/browser/ui/views/side_panel/companion/companion_utils.h"
+#include "chrome/browser/ui/views/side_panel/side_panel_enums.h"
 #include "chrome/browser/ui/toolbar/toolbar_pref_names.h"
 #include "chrome/browser/ui/views/extensions/browser_action_drag_data.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
@@ -646,10 +646,15 @@ bool PinnedToolbarActionsContainer::IsActionPinned(
   return button != nullptr;
 }
 
-bool PinnedToolbarActionsContainer::IsActionPoppedOutForTesting(
+bool PinnedToolbarActionsContainer::IsActionPoppedOut(
     const actions::ActionId& id) {
   PinnedActionToolbarButton* button = GetPoppedOutButtonFor(id);
   return button != nullptr;
+}
+
+bool PinnedToolbarActionsContainer::IsActionPinnedOrPoppedOut(
+    const actions::ActionId& id) {
+  return IsActionPinned(id) || IsActionPoppedOut(id);
 }
 
 void PinnedToolbarActionsContainer::ReorderViews() {

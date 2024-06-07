@@ -15,6 +15,7 @@
 #include "chromeos/ash/components/policy/weekly_time/weekly_time.h"
 #include "chromeos/ash/components/policy/weekly_time/weekly_time_interval.h"
 #include "chromeos/ash/components/settings/cros_settings_names.h"
+#include "components/policy/core/common/device_local_account_type.h"
 #include "components/policy/core/common/policy_bundle.h"
 #include "components/policy/policy_constants.h"
 #include "components/policy/proto/chrome_device_policy.pb.h"
@@ -610,7 +611,7 @@ TEST_F(DevicePolicyDecoderTest,
       device_policy.mutable_device_local_accounts()->add_account();
   account->set_account_id(kDeviceLocalAccountKioskAccountId);
   account->set_type(
-      em::DeviceLocalAccountInfoProto::ACCOUNT_TYPE_KIOSK_ANDROID_APP);
+      em::DeviceLocalAccountInfoProto::ACCOUNT_TYPE_WEB_KIOSK_APP);
 
   DecodeDevicePolicyTestHelper(
       device_policy, key::kDeviceLocalAccounts,
@@ -619,7 +620,7 @@ TEST_F(DevicePolicyDecoderTest,
               .Set(ash::kAccountsPrefDeviceLocalAccountsKeyId,
                    kDeviceLocalAccountKioskAccountId)
               .Set(ash::kAccountsPrefDeviceLocalAccountsKeyType,
-                   static_cast<int>(DeviceLocalAccount::TYPE_ARC_KIOSK_APP))
+                   static_cast<int>(DeviceLocalAccountType::kWebKioskApp))
               .Set(ash::kAccountsPrefDeviceLocalAccountsKeyEphemeralMode,
                    static_cast<int>(
                        DeviceLocalAccount::EphemeralMode::kUnset)))));
@@ -645,7 +646,7 @@ TEST_F(DevicePolicyDecoderTest,
               .Set(ash::kAccountsPrefDeviceLocalAccountsKeyId,
                    kDeviceLocalAccountKioskAccountId)
               .Set(ash::kAccountsPrefDeviceLocalAccountsKeyType,
-                   static_cast<int>(DeviceLocalAccount::TYPE_KIOSK_APP))
+                   static_cast<int>(DeviceLocalAccountType::kKioskApp))
               .Set(ash::kAccountsPrefDeviceLocalAccountsKeyEphemeralMode,
                    static_cast<int>(
                        DeviceLocalAccount::EphemeralMode::kDisable)))));
@@ -842,6 +843,21 @@ TEST_F(DevicePolicyDecoderTest, DeviceExtensionsSystemLogEnabled) {
   DecodeDevicePolicyTestHelper(device_policy,
                                key::kDeviceExtensionsSystemLogEnabled,
                                std::move(deviceextensionssystemlogenabled));
+}
+
+TEST_F(DevicePolicyDecoderTest, DeviceAllowEnterpriseRemoteAccessConnections) {
+  em::ChromeDeviceSettingsProto device_policy;
+
+  DecodeUnsetDevicePolicyTestHelper(
+      device_policy, key::kDeviceAllowEnterpriseRemoteAccessConnections);
+
+  base::Value value(true);
+  device_policy.mutable_deviceallowenterpriseremoteaccessconnections()
+      ->set_value(value.GetBool());
+
+  DecodeDevicePolicyTestHelper(
+      device_policy, key::kDeviceAllowEnterpriseRemoteAccessConnections,
+      std::move(value));
 }
 
 }  // namespace policy

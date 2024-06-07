@@ -55,8 +55,12 @@ component("impl") {
     "engines/cryptohome_pin_engine.h",
     "engines/cryptohome_smart_card_engine.cc",
     "engines/cryptohome_smart_card_engine.h",
+    "engines/prefs_pin_engine.cc",
+    "engines/prefs_pin_engine.h",
     "login_screen_auth_policy_connector.cc",
     "login_screen_auth_policy_connector.h",
+    "prefs.cc",
+    "prefs.h",
   ]
 }
 
@@ -64,10 +68,13 @@ source_set("unit_tests") {
   testonly = true
   deps = [
     ":impl",
+    "//ash/constants",
     "//base",
     "//base/test:test_support",
     "//chromeos/ash/components/dbus/userdataauth",
     "//chromeos/ash/components/dbus/userdataauth:test_support",
+    "//chromeos/ash/components/dbus/userdataauth:userdataauth_proto",
+    "//chromeos/ash/components/install_attributes:test_support",
     "//chromeos/ash/components/login/auth/public:authpublic",
     "//chromeos/ash/components/osauth/test_support",
     "//components/prefs:test_support",
@@ -83,5 +90,6 @@ source_set("unit_tests") {
     "auth_hub_vector_lifecycle_unittest.cc",
     "auth_session_storage_impl_unittest.cc",
     "cryptohome_core_impl_unittest.cc",
+    "engines/prefs_pin_engine_unittest.cc",
   ]
 }

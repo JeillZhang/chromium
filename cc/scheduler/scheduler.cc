@@ -111,6 +111,12 @@ void Scheduler::SetVisible(bool visible) {
   ProcessScheduledActions();
 }
 
+void Scheduler::SetShouldWarmUp() {
+  CHECK(base::FeatureList::IsEnabled(features::kWarmUpCompositor));
+  state_machine_.SetShouldWarmUp();
+  ProcessScheduledActions();
+}
+
 void Scheduler::SetCanDraw(bool can_draw) {
   state_machine_.SetCanDraw(can_draw);
   ProcessScheduledActions();
@@ -168,6 +174,11 @@ void Scheduler::SetNeedsOneBeginImplFrame() {
 
 void Scheduler::SetNeedsRedraw() {
   state_machine_.SetNeedsRedraw();
+  ProcessScheduledActions();
+}
+
+void Scheduler::SetNeedsUpdateDisplayTree() {
+  state_machine_.SetNeedsUpdateDisplayTree();
   ProcessScheduledActions();
 }
 
@@ -309,8 +320,9 @@ void Scheduler::StartOrStopBeginFrames() {
   }
 
   bool needs_begin_frames = state_machine_.ShouldSubscribeToBeginFrames();
-  if (needs_begin_frames == observing_begin_frame_source_)
+  if (needs_begin_frames == observing_begin_frame_source_) {
     return;
+  }
 
   if (needs_begin_frames) {
     observing_begin_frame_source_ = true;
@@ -806,6 +818,7 @@ void Scheduler::OnBeginImplFrameDeadline() {
     }
 
     state_machine_.OnBeginImplFrameDeadline();
+    client_->OnBeginImplFrameDeadline();
   }
   ProcessScheduledActions();
 
@@ -851,6 +864,15 @@ void Scheduler::DrawForced() {
   DrawResult result = client_->ScheduledActionDrawForced();
   state_machine_.DidDraw(result);
   compositor_timing_history_->DidDraw();
+}
+
+void Scheduler::UpdateDisplayTree() {
+  DCHECK(!inside_scheduled_action_);
+  base::AutoReset<bool> mark_inside(&inside_scheduled_action_, true);
+
+  // TODO(rockot): Update CompositorTimingHistory.
+  state_machine_.WillUpdateDisplayTree();
+  client_->ScheduledActionUpdateDisplayTree();
 }
 
 void Scheduler::SetDeferBeginMainFrame(bool defer_begin_main_frame) {
@@ -961,6 +983,9 @@ void Scheduler::ProcessScheduledActions() {
         // No action is actually performed, but this allows the state machine to
         // drain the pipeline without actually drawing.
         state_machine_.AbortDraw();
+        break;
+      case SchedulerStateMachine::Action::UPDATE_DISPLAY_TREE:
+        UpdateDisplayTree();
         break;
       case SchedulerStateMachine::Action::BEGIN_LAYER_TREE_FRAME_SINK_CREATION:
         state_machine_.WillBeginLayerTreeFrameSinkCreation();

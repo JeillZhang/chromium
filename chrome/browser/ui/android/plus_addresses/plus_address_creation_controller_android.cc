@@ -9,7 +9,7 @@
 #include "base/notimplemented.h"
 #include "chrome/browser/plus_addresses/plus_address_service_factory.h"
 #include "chrome/browser/ui/android/plus_addresses/plus_address_creation_view_android.h"
-#include "components/plus_addresses/plus_address_metrics.h"
+#include "components/plus_addresses/metrics/plus_address_metrics.h"
 #include "components/plus_addresses/plus_address_service.h"
 #include "components/plus_addresses/plus_address_types.h"
 
@@ -50,8 +50,7 @@ void PlusAddressCreationControllerAndroid::OfferCreation(
 
   callback_ = std::move(callback);
   relevant_origin_ = main_frame_origin;
-  PlusAddressMetrics::RecordModalEvent(
-      PlusAddressMetrics::PlusAddressModalEvent::kModalShown);
+  metrics::RecordModalEvent(metrics::PlusAddressModalEvent::kModalShown);
   modal_shown_time_ = clock_->Now();
   if (!suppress_ui_for_testing_) {
     view_ = std::make_unique<PlusAddressCreationViewAndroid>(GetWeakPtr(),
@@ -66,13 +65,22 @@ void PlusAddressCreationControllerAndroid::OfferCreation(
 }
 
 void PlusAddressCreationControllerAndroid::OnRefreshClicked() {
-  NOTIMPLEMENTED();
+  PlusAddressService* plus_address_service =
+      PlusAddressServiceFactory::GetForBrowserContext(
+          GetWebContents().GetBrowserContext());
+  if (!plus_address_service) {
+    return;
+  }
+  plus_address_service->RefreshPlusAddress(
+      relevant_origin_,
+      base::BindOnce(
+          &PlusAddressCreationControllerAndroid::OnPlusAddressReserved,
+          GetWeakPtr()));
 }
 
 void PlusAddressCreationControllerAndroid::OnConfirmed() {
   CHECK(plus_profile_.has_value());
-  PlusAddressMetrics::RecordModalEvent(
-      PlusAddressMetrics::PlusAddressModalEvent::kModalConfirmed);
+  metrics::RecordModalEvent(metrics::PlusAddressModalEvent::kModalConfirmed);
   if (plus_profile_->is_confirmed) {
     OnPlusAddressConfirmed(plus_profile_.value());
     return;
@@ -94,14 +102,13 @@ void PlusAddressCreationControllerAndroid::OnConfirmed() {
 void PlusAddressCreationControllerAndroid::OnCanceled() {
   // TODO(b/320541525) ModalEvent is in sync with actual user action. May
   // re-evaluate the use of this metric when modal becomes more complex.
-  PlusAddressMetrics::RecordModalEvent(
-      PlusAddressMetrics::PlusAddressModalEvent::kModalCanceled);
+  metrics::RecordModalEvent(metrics::PlusAddressModalEvent::kModalCanceled);
   if (modal_error_status_.has_value()) {
     RecordModalShownDuration(modal_error_status_.value());
     modal_error_status_.reset();
   } else {
     RecordModalShownDuration(
-        PlusAddressMetrics::PlusAddressModalCompletionStatus::kModalCanceled);
+        metrics::PlusAddressModalCompletionStatus::kModalCanceled);
   }
 }
 
@@ -129,9 +136,10 @@ void PlusAddressCreationControllerAndroid::OnPlusAddressReserved(
   }
   if (maybe_plus_profile.has_value()) {
     plus_profile_ = maybe_plus_profile.value();
+    ++reserve_response_count_;
   } else {
-    modal_error_status_ = PlusAddressMetrics::PlusAddressModalCompletionStatus::
-        kReservePlusAddressError;
+    modal_error_status_ =
+        metrics::PlusAddressModalCompletionStatus::kReservePlusAddressError;
   }
 }
 
@@ -145,19 +153,21 @@ void PlusAddressCreationControllerAndroid::OnPlusAddressConfirmed(
   if (maybe_plus_profile.has_value()) {
     std::move(callback_).Run(maybe_plus_profile->plus_address);
     RecordModalShownDuration(
-        PlusAddressMetrics::PlusAddressModalCompletionStatus::kModalConfirmed);
+        metrics::PlusAddressModalCompletionStatus::kModalConfirmed);
   } else {
-    modal_error_status_ = PlusAddressMetrics::PlusAddressModalCompletionStatus::
-        kConfirmPlusAddressError;
+    modal_error_status_ =
+        metrics::PlusAddressModalCompletionStatus::kConfirmPlusAddressError;
   }
 }
 
 void PlusAddressCreationControllerAndroid::RecordModalShownDuration(
-    const PlusAddressMetrics::PlusAddressModalCompletionStatus status) {
+    metrics::PlusAddressModalCompletionStatus status) {
   if (modal_shown_time_.has_value()) {
-    PlusAddressMetrics::RecordModalShownOutcome(
-        status, clock_->Now() - modal_shown_time_.value(), /*refresh_count=*/0);
+    metrics::RecordModalShownOutcome(status,
+                                     clock_->Now() - modal_shown_time_.value(),
+                                     std::max(reserve_response_count_ - 1, 0));
     modal_shown_time_.reset();
+    reserve_response_count_ = 0;
   }
 }
 

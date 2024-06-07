@@ -9,6 +9,7 @@ import {ShortcutInputKeyElement} from './shortcut_input_key.js';
 
 export interface ShortcutLabelProperties extends StandardAcceleratorProperties {
   shortcutLabelText: TrustedHTML;
+  hasLauncherKey: boolean;
 }
 
 /**
@@ -26,6 +27,7 @@ export enum Modifier {
   CONTROL = 1 << 2,
   ALT = 1 << 3,
   COMMAND = 1 << 4,
+  FN_KEY = 1 << 5,
 }
 
 export const Modifiers: Modifier[] = [
@@ -33,6 +35,7 @@ export const Modifiers: Modifier[] = [
   Modifier.CONTROL,
   Modifier.ALT,
   Modifier.COMMAND,
+  Modifier.FN_KEY,
 ];
 
 export enum AllowedModifierKeyCodes {
@@ -41,6 +44,7 @@ export enum AllowedModifierKeyCodes {
   ALT = 18,
   META_LEFT = 91,
   META_RIGHT = 92,
+  FN_KEY = 255,
 }
 
 export const ModifierKeyCodes: AllowedModifierKeyCodes[] = [
@@ -49,10 +53,11 @@ export const ModifierKeyCodes: AllowedModifierKeyCodes[] = [
   AllowedModifierKeyCodes.CTRL,
   AllowedModifierKeyCodes.META_LEFT,
   AllowedModifierKeyCodes.META_RIGHT,
+  AllowedModifierKeyCodes.FN_KEY,
 ];
 
 export const getSortedModifiers = (modifierStrings: string[]): string[] => {
-  const sortOrder = ['meta', 'ctrl', 'alt', 'shift'];
+  const sortOrder = ['meta', 'ctrl', 'alt', 'shift', 'fn'];
   if (modifierStrings.length <= 1) {
     return modifierStrings;
   }
@@ -115,7 +120,6 @@ export const modifierBitMaskToString = new Map<number, string>([
   [Modifier.COMMAND, 'command'],
 ]);
 
-// TODO(yyhyyh@): Add HasLauncherKey as follow up.
 export function createInputKeyParts(
     shortcutLabelProperties: ShortcutLabelProperties,
     useNarrowLayout: boolean = false): ShortcutInputKeyElement[] {
@@ -126,7 +130,10 @@ export function createInputKeyParts(
       const key: ShortcutInputKeyElement =
           document.createElement('shortcut-input-key');
       key.keyState = KeyInputState.MODIFIER_SELECTED;
-      key.key = modifierName;
+      // Current use cases outside keyboard page or shortcut page only consider
+      // 'meta' instead of 'command'.
+      key.key = modifierName === 'command' ? 'meta' : modifierName;
+      key.hasLauncherButton = shortcutLabelProperties.hasLauncherKey;
       key.narrow = useNarrowLayout;
       inputKeys.push(key);
       pressedModifiers.push(modifierName);

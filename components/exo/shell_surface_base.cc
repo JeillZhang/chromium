@@ -79,12 +79,6 @@
 namespace exo {
 namespace {
 
-bool IsRadiiUniform(const gfx::RoundedCornersF& radii) {
-  return radii.upper_left() == radii.upper_right() &&
-         radii.lower_left() == radii.lower_right() &&
-         radii.upper_left() == radii.lower_left();
-}
-
 // The accelerator keys used to close ShellSurfaces.
 const struct {
   ui::KeyboardCode keycode;
@@ -182,7 +176,6 @@ class CustomFrameView : public ash::NonClientFrameViewAsh {
           window_radii.value_or(shadow_radii.value_or(gfx::RoundedCornersF()));
 
       // TODO(crbug.com/40256581): Support variable window radii.
-      DCHECK(IsRadiiUniform(radii));
       corner_radius = radii.upper_left();
     }
 
@@ -1071,9 +1064,10 @@ void ShellSurfaceBase::AddOverlay(OverlayParams&& overlay_params) {
   overlay_overlaps_frame_ = overlay_params.overlaps_frame;
   overlay_can_resize_ = std::move(overlay_params.can_resize);
 
-  views::Widget::InitParams params(views::Widget::InitParams::TYPE_CONTROL);
+  views::Widget::InitParams params(
+      views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET,
+      views::Widget::InitParams::TYPE_CONTROL);
   params.parent = widget_->GetNativeWindow();
-  params.ownership = views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
   if (overlay_params.translucent)
     params.opacity = views::Widget::InitParams::WindowOpacity::kTranslucent;
 
@@ -1740,13 +1734,13 @@ void ShellSurfaceBase::CreateShellSurfaceWidget(
   if (system_modal_)
     SetModalType(ui::MODAL_TYPE_SYSTEM);
 
-  views::Widget::InitParams params;
+  views::Widget::InitParams params(
+      views::Widget::InitParams::NATIVE_WIDGET_OWNS_WIDGET);
   params.type = (emulate_x11_override_redirect || is_menu_)
                     ? views::Widget::InitParams::TYPE_MENU
                     : (is_popup_ ? views::Widget::InitParams::TYPE_POPUP
                                  : views::Widget::InitParams::TYPE_WINDOW);
 
-  params.ownership = views::Widget::InitParams::NATIVE_WIDGET_OWNS_WIDGET;
   params.delegate = this;
   params.shadow_type = views::Widget::InitParams::ShadowType::kNone;
   params.opacity = views::Widget::InitParams::WindowOpacity::kTranslucent;
@@ -2160,11 +2154,9 @@ void ShellSurfaceBase::UpdateShadowRoundedCorners() {
     // TODO(crbug.com/40256581): Revisit once all the clients have migrated.
     shadow_radii = shadow_corners_radii_dp_.value_or(
         window_corners_radii_dp_.value_or(gfx::RoundedCornersF()));
-
-    // TODO(crbug.com/40256581): Support shadow with variable radius corners.
-    DCHECK(IsRadiiUniform(shadow_radii));
   }
 
+  // TODO(crbug.com/40256581): Support shadow with variable radius corners.
   shadow->SetRoundedCornerRadius(shadow_radii.upper_left());
 }
 

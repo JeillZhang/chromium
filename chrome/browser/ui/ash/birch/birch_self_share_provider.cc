@@ -6,12 +6,15 @@
 
 #include "ash/birch/birch_item.h"
 #include "ash/birch/birch_model.h"
+#include "ash/constants/ash_pref_names.h"
 #include "ash/shell.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/favicon/favicon_service_factory.h"
 #include "chrome/browser/favicon/favicon_utils.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sync/send_tab_to_self_sync_service_factory.h"
 #include "components/favicon_base/favicon_types.h"
+#include "components/prefs/pref_service.h"
 #include "components/send_tab_to_self/send_tab_to_self_entry.h"
 #include "components/send_tab_to_self/send_tab_to_self_model.h"
 
@@ -24,6 +27,16 @@ BirchSelfShareProvider::BirchSelfShareProvider(Profile* profile)
 BirchSelfShareProvider::~BirchSelfShareProvider() = default;
 
 void BirchSelfShareProvider::RequestBirchDataFetch() {
+  const auto* const pref_service = profile_->GetPrefs();
+  if (!pref_service ||
+      !base::Contains(pref_service->GetList(
+                          prefs::kContextualGoogleIntegrationsConfiguration),
+                      prefs::kChromeSyncIntegrationName)) {
+    // ChromeSync integration is disabled by policy.
+    Shell::Get()->birch_model()->SetSelfShareItems({});
+    return;
+  }
+
   bool refresh = false;
 
   send_tab_to_self::SendTabToSelfModel* model =
@@ -76,12 +89,13 @@ void BirchSelfShareProvider::RequestBirchDataFetch() {
         model->GetEntryByGUID(guid);
     if (entry && !entry->IsOpened()) {
       ++active_tasks_;
-      GURL empty_favicon_url;
       const std::string entry_guid = entry->GetGUID();
       items_.emplace_back(
           base::UTF8ToUTF16(entry_guid), base::UTF8ToUTF16(entry->GetTitle()),
           entry->GetURL(), entry->GetSharedTime(),
-          base::UTF8ToUTF16(entry->GetDeviceName()), empty_favicon_url);
+          base::UTF8ToUTF16(entry->GetDeviceName()), GURL(),
+          base::BindRepeating(&BirchSelfShareProvider::OnItemPressed,
+                              weak_factory_.GetWeakPtr(), entry_guid));
       favicon_service->GetFaviconImageForPageURL(
           entry->GetURL(),
           base::BindOnce(&BirchSelfShareProvider::OnFavIconDataAvailable,
@@ -104,17 +118,21 @@ void BirchSelfShareProvider::OnFavIconDataAvailable(
                            return item.guid() == u16_guid;
                          });
 
-  if (it != items_.end()) {
+  if (it != items_.end() && !image_result.image.IsEmpty()) {
     // TODO(b/333412417): Investigate why empty image result for tabs shared
     // from a macbook.
-    const GURL empty_icon_url = GURL();
-    it->set_favicon_url(image_result.image.IsEmpty() ? empty_icon_url
-                                                     : image_result.icon_url);
+    it->set_favicon_url(image_result.icon_url);
   }
 
   if (--(active_tasks_) == 0) {
     Shell::Get()->birch_model()->SetSelfShareItems(std::move(items_));
   }
+}
+
+void BirchSelfShareProvider::OnItemPressed(const std::string& guid) {
+  send_tab_to_self::SendTabToSelfModel* model =
+      sync_service_->GetSendTabToSelfModel();
+  model->MarkEntryOpened(guid);
 }
 
 }  // namespace ash

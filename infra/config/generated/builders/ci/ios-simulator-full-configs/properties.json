@@ -48,7 +48,8 @@
           "builder": "ios-simulator-full-configs",
           "group": "tryserver.chromium.mac"
         }
-      ]
+      ],
+      "retry_failed_shards": true
     }
   },
   "$build/reclient": {
@@ -74,10 +75,14 @@
     ]
   },
   "builder_group": "chromium.mac",
+  "gardener_rotations": [
+    "chromium",
+    "ios"
+  ],
   "recipe": "chromium",
   "sheriff_rotations": [
     "chromium",
     "ios"
   ],
-  "xcode_build_version": "15e204a"
+  "xcode_build_version": "15f31d"
 }

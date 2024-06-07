@@ -2968,6 +2968,7 @@ void RenderFrameImpl::CommitNavigationWithParams(
 
   navigation_params->load_with_storage_access =
       commit_params->load_with_storage_access;
+  navigation_params->visited_link_salt = commit_params->visited_link_salt;
 
   if (!container_info) {
     // An empty network provider will always be created since it is expected in
@@ -3432,7 +3433,7 @@ blink::WebPlugin* RenderFrameImpl::CreatePlugin(
 #endif  // BUILDFLAG(ENABLE_PPAPI)
 }
 
-blink::WebMediaPlayer* RenderFrameImpl::CreateMediaPlayer(
+std::unique_ptr<blink::WebMediaPlayer> RenderFrameImpl::CreateMediaPlayer(
     const blink::WebMediaPlayerSource& source,
     WebMediaPlayerClient* client,
     blink::MediaInspectorContext* inspector_context,
@@ -6576,14 +6577,8 @@ base::WeakPtr<media::DecoderFactory> RenderFrameImpl::GetMediaDecoderFactory() {
   return media_factory_.GetDecoderFactory();
 }
 
-gfx::RectF RenderFrameImpl::ElementBoundsInWindow(
-    const blink::WebElement& element) {
-  return gfx::RectF(GetLocalRootWebFrameWidget()->BlinkSpaceToEnclosedDIPs(
-      element.BoundsInWidget()));
-}
-
-void RenderFrameImpl::ConvertViewportToWindow(gfx::Rect* rect) {
-  *rect = GetLocalRootWebFrameWidget()->BlinkSpaceToEnclosedDIPs(*rect);
+gfx::Rect RenderFrameImpl::ConvertViewportToWindow(const gfx::Rect& rect) {
+  return GetLocalRootWebFrameWidget()->BlinkSpaceToEnclosedDIPs(rect);
 }
 
 float RenderFrameImpl::GetDeviceScaleFactor() {

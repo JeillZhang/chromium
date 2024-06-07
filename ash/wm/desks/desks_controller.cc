@@ -36,6 +36,7 @@
 #include "ash/wm/overview/overview_grid.h"
 #include "ash/wm/overview/overview_item.h"
 #include "ash/wm/overview/scoped_overview_hide_windows.h"
+#include "ash/wm/snap_group/snap_group_controller.h"
 #include "ash/wm/splitview/split_view_controller.h"
 #include "ash/wm/splitview/split_view_utils.h"
 #include "ash/wm/switchable_windows.h"
@@ -248,7 +249,8 @@ bool IsApplistActiveInTabletMode(const aura::Window* active_window) {
 void ShowDeskRemovalUndoToast(const std::string& toast_id,
                               base::RepeatingClosure dismiss_callback,
                               base::OnceClosure expired_callback,
-                              bool use_persistent_toast) {
+                              bool use_persistent_toast,
+                              bool activate) {
   // If ChromeVox is enabled, then we want the toast to be infinite duration.
   ToastData undo_toast_data(
       toast_id, ash::ToastCatalogName::kUndoCloseAll,
@@ -262,6 +264,7 @@ void ShowDeskRemovalUndoToast(const std::string& toast_id,
   undo_toast_data.show_on_all_root_windows = true;
   undo_toast_data.dismiss_callback = std::move(dismiss_callback);
   undo_toast_data.expired_callback = std::move(expired_callback);
+  undo_toast_data.activatable = activate;
   ToastManager::Get()->Show(std::move(undo_toast_data));
 }
 
@@ -991,6 +994,14 @@ void DesksController::AddVisibleOnAllDesksWindow(aura::Window* window) {
   if (!visible_on_all_desks_windows_.emplace(window).second)
     return;
 
+  if (SnapGroupController* snap_group_controller = SnapGroupController::Get()) {
+    if (SnapGroup* snap_group =
+            snap_group_controller->GetSnapGroupForGivenWindow(window)) {
+      snap_group_controller->RemoveSnapGroup(
+          snap_group, SnapGroupExitPoint::kVisibleOnAllDesks);
+    }
+  }
+
   // A window is made visible on all desks by always keeping it on the active
   // desk. If `window` isn't already on the active desk, then we need to move it
   // there. We will also skip the bounce animation.
@@ -1494,6 +1505,17 @@ void DesksController::MaybeDismissPersistentDeskRemovalToast() {
   }
 }
 
+bool DesksController::RequestFocusOnUndoDeskRemovalToast() {
+  if (!Shell::Get()->accessibility_controller()->spoken_feedback().enabled() ||
+      !temporary_removed_desk_ ||
+      !ToastManager::Get()->IsToastShown(temporary_removed_desk_->toast_id())) {
+    return false;
+  }
+
+  return ToastManager::Get()->RequestFocusOnActiveToastDismissButton(
+      temporary_removed_desk_->toast_id());
+}
+
 bool DesksController::MaybeToggleA11yHighlightOnUndoDeskRemovalToast() {
   if (!Shell::Get()->accessibility_controller()->spoken_feedback().enabled() ||
       !temporary_removed_desk_ ||
@@ -1678,9 +1700,9 @@ void DesksController::OnAnimationFinished(DeskAnimationBase* animation) {
   animation_.reset();
 
   // If we just switched desks due to removing the active desk, we immediately
-  // highlight the undo button.
+  // focus the undo button.
   if (Shell::Get()->accessibility_controller()->spoken_feedback().enabled()) {
-    MaybeToggleA11yHighlightOnUndoDeskRemovalToast();
+    RequestFocusOnUndoDeskRemovalToast();
   }
 }
 
@@ -2029,7 +2051,7 @@ void DesksController::RemoveDeskInternal(const Desk* desk,
         base::BindOnce(&DesksController::MaybeCommitPendingDeskRemoval,
                        base::Unretained(this),
                        temporary_removed_desk_->toast_id()),
-        temporary_removed_desk_->is_toast_persistent());
+        temporary_removed_desk_->is_toast_persistent(), !in_overview);
 
     // This method will be invoked on both undo and expired toast.
     base::UmaHistogramBoolean(kCloseAllTotalHistogramName, true);
@@ -2212,14 +2234,9 @@ void DesksController::MaybeCommitPendingDeskRemoval(
   }
 }
 
-bool DesksController::IsUndoToastShown() const {
+bool DesksController::IsUndoToastFocused() const {
   return temporary_removed_desk_ &&
-         ToastManager::Get()->IsToastShown(temporary_removed_desk_->toast_id());
-}
-
-bool DesksController::IsUndoToastHighlighted() const {
-  return temporary_removed_desk_ &&
-         ToastManager::Get()->IsToastDismissButtonHighlighted(
+         ToastManager::Get()->IsToastDismissButtonFocused(
              temporary_removed_desk_->toast_id());
 }
 

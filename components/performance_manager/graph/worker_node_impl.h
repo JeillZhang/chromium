@@ -32,7 +32,8 @@ class WorkerNodeImpl
       public TypedNodeBase<WorkerNodeImpl, WorkerNode, WorkerNodeObserver> {
  public:
   static const char kDefaultPriorityReason[];
-  static constexpr NodeTypeEnum Type() { return NodeTypeEnum::kWorker; }
+
+  using TypedNodeBase<WorkerNodeImpl, WorkerNode, WorkerNodeObserver>::FromNode;
 
   WorkerNodeImpl(const std::string& browser_context_id,
                  WorkerType worker_type,
@@ -107,11 +108,13 @@ class WorkerNodeImpl
   // impl use the private getters rather than the public interface.
   const ProcessNode* GetProcessNode() const override;
   const base::flat_set<const FrameNode*> GetClientFrames() const override;
-  bool VisitClientFrames(const FrameNodeVisitor&) const override;
+  bool VisitClientFrames(const FrameNodeVisitor& visitor) const override;
   const base::flat_set<const WorkerNode*> GetClientWorkers() const override;
-  bool VisitClientWorkers(const WorkerNodeVisitor&) const override;
+  bool VisitClientWorkers(const WorkerNodeVisitor& visitor) const override;
   const base::flat_set<const WorkerNode*> GetChildWorkers() const override;
-  bool VisitChildDedicatedWorkers(const WorkerNodeVisitor&) const override;
+  bool VisitChildWorkers(const WorkerNodeVisitor& visitor) const override;
+  bool VisitChildDedicatedWorkers(
+      const WorkerNodeVisitor& visitor) const override;
 
   // Invoked when |worker_node| becomes a child of this worker.
   void AddChildWorker(WorkerNodeImpl* worker_node);

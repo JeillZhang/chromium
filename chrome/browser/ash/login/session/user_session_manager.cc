@@ -143,6 +143,7 @@
 #include "chromeos/ash/components/network/portal_detector/network_portal_detector.h"
 #include "chromeos/ash/components/settings/cros_settings.h"
 #include "chromeos/ash/components/settings/cros_settings_names.h"
+#include "chromeos/ash/components/standalone_browser/migrator_util.h"
 #include "chromeos/ash/components/tpm/prepare_tpm.h"
 #include "chromeos/dbus/tpm_manager/tpm_manager.pb.h"
 #include "chromeos/dbus/tpm_manager/tpm_manager_client.h"
@@ -572,7 +573,7 @@ void MaybeSaveSessionStartedTimeBeforeRestart(Profile* profile) {
 
 // Returns a Base16 encoded SHA1 digest of `data`.
 std::string Sha1Digest(const std::string& data) {
-  return base::HexEncode(base::SHA1HashSpan(base::as_byte_span(data)));
+  return base::HexEncode(base::SHA1Hash(base::as_byte_span(data)));
 }
 
 }  // namespace
@@ -1754,9 +1755,6 @@ void UserSessionManager::FinalizePrepareProfile(Profile* profile) {
         service->SetAlwaysOnVpnManager(always_on_vpn_manager_->GetWeakPtr());
       }
 
-      secure_dns_manager_ =
-          std::make_unique<SecureDnsManager>(g_browser_process->local_state());
-
       xdr_manager_ =
           std::make_unique<XdrManager>(g_browser_process->policy_service());
     }
@@ -2325,14 +2323,16 @@ void UserSessionManager::DoBrowserLaunchInternal(Profile* profile,
       ProfileHelper::Get()->GetUserByProfile(profile);
   if (BrowserDataMigratorImpl::MaybeRestartToMigrate(
           user->GetAccountId(), user->username_hash(),
-          crosapi::browser_util::PolicyInitState::kAfterInit)) {
+          ash::standalone_browser::migrator_util::PolicyInitState::
+              kAfterInit)) {
     LOG(WARNING) << "Restarting chrome to run profile migration.";
     return;
   }
 
   if (BrowserDataBackMigrator::MaybeRestartToMigrateBack(
           user->GetAccountId(), user->username_hash(),
-          crosapi::browser_util::PolicyInitState::kAfterInit)) {
+          ash::standalone_browser::migrator_util::PolicyInitState::
+              kAfterInit)) {
     LOG(WARNING) << "Restarting chrome to run backward profile migration.";
     return;
   }
@@ -2363,13 +2363,6 @@ void UserSessionManager::DoBrowserLaunchInternal(Profile* profile,
       full_restore::FullRestoreService::GetForProfile(profile)
           ->LaunchBrowserWhenReady();
     }
-  }
-  if (ProfileHelper::IsPrimaryProfile(profile)) {
-    // chrome::SessionRestore is using synchronous mode on Chrome OS,
-    // which means that data is definitely loaded by this moment.
-    Shell::Get()
-        ->login_unlock_throughput_recorder()
-        ->BrowserSessionRestoreDataLoaded();
   }
 
   if (HatsNotificationController::ShouldShowSurveyToProfile(
@@ -2515,7 +2508,6 @@ void UserSessionManager::Shutdown() {
   help_app_notification_controller_.reset();
   password_service_voted_.reset();
   password_was_saved_ = false;
-  secure_dns_manager_.reset();
   xdr_manager_.reset();
 }
 

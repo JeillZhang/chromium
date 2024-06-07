@@ -264,7 +264,6 @@
 <translation id="2783001728278437613">{COUNT,plural, =1{+#}other{+#}}</translation>
 <translation id="2792200646155001340">လက်တစ်ချောင်းဖြင့် ညာမှဘယ်သို့ ပွတ်ဆွဲခြင်းဖြင့်လည်း ယခင်အကြောင်းအရာသို့ သွားနိုင်သည်။ ယခု စမ်းကြည့်လိုက်ပါ။</translation>
 <translation id="280499067616661124">ChromeVox က စာမျက်နှာတွင် ရှာသည်</translation>
-<translation id="2811019999044652585">ကိရိယာဘားတန်းနှင့် ညာဘက်အောက်ထောင့်ရှိစနစ်ဗန်းကဲ့သို့ မျက်နှာပြင်ပေါ်ရှိ အခြားအစိတ်ပိုင်းသို့သွားရန် Control+Forward ကို နှိပ်ပါ။ Chromebook ပေါ်တွင် Forward ခလုတ်သည် နံပါတ် ၂ ခလုတ်၏ အပေါ်ကပ်ရပ်တွင်ရှိသည်။</translation>
 <translation id="2811204574343810641">အတန်း</translation>
 <translation id="2816868829355607410">လေ့ကျင့်မှုနေရာ- တိုက်ရိုက်သွားကွန်မန်းများ</translation>
 <translation id="2841013758207633010">အချိန်</translation>
@@ -880,6 +879,7 @@
 <translation id="7091296112653361280">နာဗာဟို အဖြူ</translation>
 <translation id="7095834689119144465">စာသားပါ နံပါတ်ကို တည်းဖြတ်ရန်သာ</translation>
 <translation id="7096001299300236431">ယခင် မီဒီယာ</translation>
+<translation id="7096668131290451939">‘လေ့လာခြင်းမုဒ်’ မှထွက်ရန် Escape ခလုတ်ကို ထပ်နှိပ်ပါ</translation>
 <translation id="7116595520562830928">multln</translation>
 <translation id="712735679809149106">စာလုံး သံယောင်လိုက်ရန်</translation>
 <translation id="7137397390322864165">ဆယ်လမွန်</translation>

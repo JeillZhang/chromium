@@ -242,9 +242,7 @@ void FillConfigurationsFromState(const ash::NetworkState* network_state,
                    << network_state->path();
   }
   mojo->type = TranslateNetworkType(network_state->type());
-  mojo->is_metered =
-      shill_dict &&
-      shill_dict->FindBool(shill::kMeteredProperty).value_or(false);
+  mojo->is_metered = network_state->metered();
 
   // IP configuration data is added from the properties of the underlying shill
   // Device and shill Service attached to the Device. Device properties are
@@ -289,16 +287,8 @@ void FillConfigurationsFromState(const ash::NetworkState* network_state,
     mojo->wifi->frequency = network_state->frequency();
     mojo->wifi->signal_strength = network_state->signal_strength();
     mojo->wifi->rssi = network_state->rssi();
-    if (shill_dict) {
-      mojo->wifi->hidden_ssid =
-          shill_dict->FindBoolByDottedPath(shill::kWifiHiddenSsid)
-              .value_or(false);
-      const auto* fqdn =
-          shill_dict->FindStringByDottedPath(shill::kPasspointFQDNProperty);
-      if (fqdn && !fqdn->empty()) {
-        mojo->wifi->fqdn = *fqdn;
-      }
-    }
+    mojo->wifi->hidden_ssid = network_state->hidden_ssid();
+    mojo->wifi->fqdn = network_state->fqdn();
   }
 }
 
@@ -700,4 +690,77 @@ TranslateSocketConnectionEvent(const mojom::SocketConnectionEventPtr& mojom) {
 
   return msg;
 }
+
+bool AreConfigurationsEquivalent(
+    std::vector<arc::mojom::NetworkConfigurationPtr>& latest_networks,
+    std::vector<arc::mojom::NetworkConfigurationPtr>& cached_networks) {
+  if (cached_networks.size() != latest_networks.size()) {
+    return false;
+  }
+
+  const auto arc_iface_compare =
+      [](const arc::mojom::NetworkConfigurationPtr& a,
+         const arc::mojom::NetworkConfigurationPtr& b) -> bool {
+    return a->arc_network_interface > b->arc_network_interface;
+  };
+  std::sort(cached_networks.begin(), cached_networks.end(), arc_iface_compare);
+  std::sort(latest_networks.begin(), latest_networks.end(), arc_iface_compare);
+
+  for (size_t i = 0; i < latest_networks.size(); ++i) {
+    const arc::mojom::NetworkConfigurationPtr& latest = latest_networks.at(i);
+    const arc::mojom::NetworkConfigurationPtr& cached = cached_networks.at(i);
+
+    if (latest->arc_network_interface != cached->arc_network_interface ||
+        latest->guid != cached->guid ||
+        latest->connection_state != cached->connection_state ||
+        latest->is_default_network != cached->is_default_network ||
+        latest->type != cached->type ||
+        latest->is_metered != cached->is_metered ||
+        latest->network_interface != cached->network_interface ||
+        latest->host_mtu != cached->host_mtu ||
+        latest->host_dns_addresses != cached->host_dns_addresses ||
+        latest->dns_proxy_addresses != cached->dns_proxy_addresses ||
+        latest->host_search_domains != cached->host_search_domains ||
+        latest->host_ipv4_address != cached->host_ipv4_address ||
+        latest->host_ipv6_global_addresses !=
+            cached->host_ipv6_global_addresses) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+// Set up proxy configuration. If proxy auto discovery pac url is available,
+// we set up proxy auto discovery pac url, otherwise we set up
+// host, port and exclusion list.
+base::Value::Dict TranslateProxyConfiguration(
+    const arc::mojom::ArcProxyInfo& http_proxy) {
+  base::Value::Dict proxy_dict;
+  if (http_proxy.is_pac_url_proxy()) {
+    proxy_dict.Set(onc::proxy::kType, onc::proxy::kPAC);
+    proxy_dict.Set(onc::proxy::kPAC,
+                   http_proxy.get_pac_url_proxy()->pac_url.spec());
+  } else {
+    base::Value::Dict manual;
+    manual.Set(onc::proxy::kHost, http_proxy.get_manual_proxy()->host);
+    manual.Set(onc::proxy::kPort, http_proxy.get_manual_proxy()->port);
+    manual.Set(onc::proxy::kExcludeDomains,
+               TranslateStringListToValue(
+                   http_proxy.get_manual_proxy()->exclusion_list));
+    proxy_dict.Set(onc::proxy::kType, onc::proxy::kManual);
+    proxy_dict.Set(onc::proxy::kManual, std::move(manual));
+  }
+  return proxy_dict;
+}
+
+base::Value::List TranslateStringListToValue(
+    const std::vector<std::string>& string_list) {
+  base::Value::List result;
+  for (const auto& item : string_list) {
+    result.Append(item);
+  }
+  return result;
+}
+
 }  // namespace arc::net_utils

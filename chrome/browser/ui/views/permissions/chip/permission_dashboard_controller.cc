@@ -260,11 +260,11 @@ bool PermissionDashboardController::Update(
     indicator_chip->SetTooltipText(indicator_model->get_tooltip());
     indicator_chip->GetViewAccessibility().SetIsIgnored(false);
     // An alert role is required in order to fire the alert event.
-    indicator_chip->SetAccessibleRole(ax::mojom::Role::kAlert);
+    indicator_chip->GetViewAccessibility().SetRole(ax::mojom::Role::kAlert);
 
     auto name = l10n_util::GetStringUTF16(
         indicator_model->AccessibilityAnnouncementStringId());
-    indicator_chip->SetAccessibleName(name);
+    indicator_chip->GetViewAccessibility().SetName(name);
     const std::u16string& accessible_description =
         l10n_util::GetStringUTF16(IDS_A11Y_OMNIBOX_CHIP_HINT);
     indicator_chip->GetViewAccessibility().SetDescription(
@@ -323,6 +323,10 @@ bool PermissionDashboardController::SuppressVerboseIndicator() {
 }
 
 void PermissionDashboardController::StartCollapseTimer() {
+  if (do_no_collapse_for_testing_) {
+    return;
+  }
+
   collapse_timer_.Start(FROM_HERE, kCollapseDelay,
                         base::BindOnce(&PermissionDashboardController::Collapse,
                                        weak_factory_.GetWeakPtr(),

@@ -16,9 +16,9 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/trace_event/typed_macros.h"
 #include "chromeos/ash/components/mojo_service_manager/connection.h"
-#include "chromeos/utils/pdf_conversion.h"
 #include "components/onc/onc_constants.h"
 #include "content/public/browser/web_contents.h"
+#include "mojo/public/cpp/base/big_buffer.h"
 #include "net/base/url_util.h"
 #include "third_party/cros_system_api/mojo/service_constants.h"
 #include "ui/aura/window.h"
@@ -29,7 +29,6 @@ namespace ash {
 
 namespace {
 
-using camera_app::mojom::DocumentOutputFormat;
 using camera_app::mojom::ToteMetricFormat;
 using chromeos::machine_learning::mojom::Rotation;
 
@@ -43,6 +42,20 @@ camera_app::mojom::ScreenState ToMojoScreenState(ScreenBacklightState s) {
       return camera_app::mojom::ScreenState::kOffAuto;
     default:
       NOTREACHED_IN_MIGRATION();
+  }
+}
+
+camera_app::mojom::LidState ToMojoLidState(cros::mojom::LidState state) {
+  switch (state) {
+    case cros::mojom::LidState::kOpen:
+      return camera_app::mojom::LidState::kOpen;
+    case cros::mojom::LidState::kClosed:
+      return camera_app::mojom::LidState::kClosed;
+    case cros::mojom::LidState::kNotPresent:
+      return camera_app::mojom::LidState::kNotPresent;
+    default:
+      NOTREACHED_IN_MIGRATION()
+          << "Unexpected Lid type: " << static_cast<int>(state);
   }
 }
 
@@ -309,7 +322,6 @@ void CameraAppHelperImpl::OnScannedDocumentCorners(
 }
 
 void CameraAppHelperImpl::OnConvertedToDocument(
-    DocumentOutputFormat output_format,
     ConvertToDocumentCallback callback,
     bool success,
     const std::vector<uint8_t>& processed_jpeg_image) {
@@ -318,25 +330,7 @@ void CameraAppHelperImpl::OnConvertedToDocument(
     std::move(callback).Run({});
     return;
   }
-
-  switch (output_format) {
-    case DocumentOutputFormat::kJpeg:
-      std::move(callback).Run(processed_jpeg_image);
-      return;
-    case DocumentOutputFormat::kPdf: {
-      std::vector<uint8_t> pdf_data;
-      if (!chromeos::ConvertJpgImagesToPdf({processed_jpeg_image}, &pdf_data)) {
-        LOG(ERROR) << "Failed to convert jpeg image to PDF format";
-        std::move(callback).Run({});
-        return;
-      }
-      std::move(callback).Run(std::move(pdf_data));
-      return;
-    }
-    default:
-      NOTREACHED_IN_MIGRATION()
-          << "Unsupported output format: " << output_format;
-  }
+  std::move(callback).Run(processed_jpeg_image);
 }
 
 void CameraAppHelperImpl::OpenFileInGallery(const std::string& name) {
@@ -461,7 +455,6 @@ void CameraAppHelperImpl::ConvertToDocument(
     const std::vector<uint8_t>& jpeg_data,
     const std::vector<gfx::PointF>& corners,
     Rotation rotation,
-    DocumentOutputFormat output_format,
     ConvertToDocumentCallback callback) {
   DCHECK(document_scanner_service_);
   if (!IsValidCorners(corners)) {
@@ -485,25 +478,7 @@ void CameraAppHelperImpl::ConvertToDocument(
   document_scanner_service_->DoPostProcessing(
       std::move(memory.region), corners, rotation,
       base::BindOnce(&CameraAppHelperImpl::OnConvertedToDocument,
-                     base::Unretained(this), output_format,
-                     std::move(callback)));
-}
-
-void CameraAppHelperImpl::ConvertToPdf(
-    const std::vector<std::vector<uint8_t>>& jpegs_data,
-    ConvertToPdfCallback callback) {
-  std::vector<uint8_t> pdf_data;
-  if (!chromeos::ConvertJpgImagesToPdf(jpegs_data, &pdf_data)) {
-    LOG(ERROR) << "Failed to convert jpeg image to PDF format";
-    std::move(callback).Run({});
-    return;
-  }
-  if (!base::FeatureList::IsEnabled(ash::features::kCameraAppPdfOcr)) {
-    std::move(callback).Run(std::move(pdf_data));
-    return;
-  }
-  camera_app_ui_->delegate()->Searchify(std::move(pdf_data),
-                                        std::move(callback));
+                     base::Unretained(this), std::move(callback)));
 }
 
 void CameraAppHelperImpl::MaybeTriggerSurvey() {
@@ -606,10 +581,11 @@ void CameraAppHelperImpl::SetLidStateMonitor(
 }
 
 void CameraAppHelperImpl::OnLidStateChanged(cros::mojom::LidState state) {
+  auto lid_state = ToMojoLidState(state);
   if (!lid_callback_.is_null()) {
-    std::move(lid_callback_).Run(state);
+    std::move(lid_callback_).Run(lid_state);
   } else if (lid_state_monitor_.is_bound()) {
-    lid_state_monitor_->Update(state);
+    lid_state_monitor_->Update(lid_state);
   }
 }
 
@@ -642,9 +618,14 @@ void CameraAppHelperImpl::RenderPdfAsJpeg(const std::vector<uint8_t>& pdf_data,
   camera_app_ui_->delegate()->RenderPdfAsJpeg(pdf_data, std::move(callback));
 }
 
-void CameraAppHelperImpl::PerformOcr(const std::vector<uint8_t>& jpeg_data,
+void CameraAppHelperImpl::PerformOcr(mojo_base::BigBuffer jpeg_data,
                                      PerformOcrCallback callback) {
   camera_app_ui_->delegate()->PerformOcr(jpeg_data, std::move(callback));
+}
+
+void CameraAppHelperImpl::CreatePdfBuilder(
+    mojo::PendingReceiver<camera_app::mojom::PdfBuilder> receiver) {
+  return camera_app_ui_->delegate()->CreatePdfBuilder(std::move(receiver));
 }
 
 }  // namespace ash

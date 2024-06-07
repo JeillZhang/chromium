@@ -763,7 +763,8 @@ class LayerTreeHostScrollTestCaseWithChild : public LayerTreeHostScrollTest {
 };
 
 // TODO(crbug.com/41490731): Test is flaky on asan on multiple platforms.
-#if defined(ADDRESS_SANITIZER)
+// TODO(crbug.com/345499781): Test is flaky on Linux.
+#if defined(ADDRESS_SANITIZER) || defined(IS_LINUX)
 #define MAYBE_DeviceScaleFactor1_ScrollChild \
   DISABLED_DeviceScaleFactor1_ScrollChild
 #else
@@ -777,7 +778,8 @@ TEST_F(LayerTreeHostScrollTestCaseWithChild,
 }
 
 // TODO(crbug.com/41490731): Test is flaky on (at least) Mac and Linux asan.
-#if defined(ADDRESS_SANITIZER)
+// TODO(crbug.com/345499781): Test is flaky on Linux.
+#if defined(ADDRESS_SANITIZER) || defined(IS_LINUX)
 #define MAYBE_DeviceScaleFactor15_ScrollChild \
   DISABLED_DeviceScaleFactor15_ScrollChild
 #else
@@ -791,7 +793,8 @@ TEST_F(LayerTreeHostScrollTestCaseWithChild,
 }
 
 // TODO(crbug.com/41494888): Test is flaky on asan on multiple platforms.
-#if defined(ADDRESS_SANITIZER)
+// TODO(crbug.com/345499781): Test is flaky on Linux.
+#if defined(ADDRESS_SANITIZER) || defined(IS_LINUX)
 #define MAYBE_DeviceScaleFactor2_ScrollChild \
   DISABLED_DeviceScaleFactor2_ScrollChild
 #else
@@ -822,8 +825,9 @@ TEST_F(LayerTreeHostScrollTestCaseWithChild,
 
 // TODO(crbug.com/41494893): Test is flaky on Win asan.
 // TODO(crbug.com/41490731): Test is flaky on Mac asan.
+// TODO(crbug.com/345499781): Test is flaky on Linux.
 // Test is flaky on asan on multiple platforms.
-#if defined(ADDRESS_SANITIZER)
+#if defined(ADDRESS_SANITIZER) || defined(IS_LINUX)
 #define MAYBE_DeviceScaleFactor15_ScrollRootScrollLayer \
   DISABLED_DeviceScaleFactor15_ScrollRootScrollLayer
 #else
@@ -837,9 +841,10 @@ TEST_F(LayerTreeHostScrollTestCaseWithChild,
   RunTest(CompositorMode::THREADED);
 }
 
-// Test is flaky on asan on multiple platforms.
-#if defined(ADDRESS_SANITIZER)
 // TODO(crbug.com/41494746): Fix the flakiness on Mac ASan and re-enable.
+// TODO(crbug.com/345499781): Test is flaky on Linux.
+// Test is flaky on asan on multiple platforms.
+#if defined(ADDRESS_SANITIZER) || defined(IS_LINUX)
 #define MAYBE_DeviceScaleFactor2_ScrollRootScrollLayer \
   DISABLED_DeviceScaleFactor2_ScrollRootScrollLayer
 #else
@@ -1369,8 +1374,10 @@ class LayerTreeHostScrollTestImplOnlyScrollSnap
 
 // TODO(crbug.com/40762489): Flaky on Fuchsia, ChromeOS, and Linux.
 // TODO(crbug.com/41495136): Flaky on Windows ASAN.
+// TODO(crbug.com/342502558): Flaky on Mac ASAN.
 #if !BUILDFLAG(IS_FUCHSIA) && !BUILDFLAG(IS_CHROMEOS) && \
-    !BUILDFLAG(IS_LINUX) && !(BUILDFLAG(IS_WIN) && defined(ADDRESS_SANITIZER))
+    !BUILDFLAG(IS_LINUX) &&                              \
+    !((BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)) && defined(ADDRESS_SANITIZER))
 MULTI_THREAD_TEST_F(LayerTreeHostScrollTestImplOnlyScrollSnap);
 #endif
 
@@ -2284,9 +2291,11 @@ class MockInputHandlerClient : public InputHandlerClient {
       float max_page_scale_factor) override {}
   void DeliverInputForBeginFrame(const viz::BeginFrameArgs& args) override {}
   void DeliverInputForHighLatencyMode() override {}
+  void DeliverInputForDeadline() override {}
   void DidFinishImplFrame() override {}
   bool HasQueuedInput() const override { return false; }
-  void SetWaitForLateScrollEvents(bool enabled) override {}
+  void SetScrollEventDispatchMode(
+      InputHandlerClient::ScrollEventDispatchMode mode) override {}
 };
 
 // This is a regression test, see crbug.com/639046.

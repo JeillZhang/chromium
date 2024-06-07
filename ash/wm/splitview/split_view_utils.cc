@@ -17,8 +17,10 @@
 #include "ash/shell.h"
 #include "ash/strings/grit/ash_strings.h"
 #include "ash/system/toast/toast_manager_impl.h"
+#include "ash/wm/desks/desks_util.h"
 #include "ash/wm/mru_window_tracker.h"
 #include "ash/wm/overview/overview_controller.h"
+#include "ash/wm/overview/overview_session.h"
 #include "ash/wm/overview/overview_utils.h"
 #include "ash/wm/screen_pinning_controller.h"
 #include "ash/wm/snap_group/snap_group.h"
@@ -26,6 +28,7 @@
 #include "ash/wm/splitview/layout_divider_controller.h"
 #include "ash/wm/splitview/split_view_constants.h"
 #include "ash/wm/splitview/split_view_controller.h"
+#include "ash/wm/splitview/split_view_overview_session.h"
 #include "ash/wm/splitview/split_view_types.h"
 #include "ash/wm/window_positioning_utils.h"
 #include "ash/wm/window_restore/window_restore_controller.h"
@@ -822,8 +825,9 @@ bool CanSnapActionSourceStartFasterSplitView(
     case WindowSnapActionSource::kDragWindowToEdgeToSnap:
     case WindowSnapActionSource::kSnapByWindowLayoutMenu:
     case WindowSnapActionSource::kLongPressCaptionButtonToSnap:
+    case WindowSnapActionSource::kDragOrSelectOverviewWindowToSnap:
     case WindowSnapActionSource::kTest:
-    case ash::WindowSnapActionSource::kLacrosSnapButtonOrWindowLayoutMenu:
+    case WindowSnapActionSource::kLacrosSnapButtonOrWindowLayoutMenu:
       // We only start partial overview for the above snap sources.
       return true;
     default:
@@ -846,11 +850,24 @@ bool ShouldExcludeForOcclusionCheck(const aura::Window* window,
          window_state->IsPip();
 }
 
+aura::Window::Windows GetActiveDeskAppWindowsInZOrder(aura::Window* root) {
+  aura::Window::Windows windows;
+  const auto children =
+      desks_util::GetActiveDeskContainerForRoot(root)->children();
+  // Iterate through the desk container's children in reversed order.
+  for (const auto& child : base::Reversed(children)) {
+    if (CanIncludeWindowInAppMruList(child)) {
+      windows.push_back(child.get());
+    }
+  }
+  return windows;
+}
+
 aura::Window* GetOppositeVisibleSnappedWindow(aura::Window* window) {
-  // `BuildAppWindowList()` will exclude transient windows like the window
-  // layout menu and other bubble widgets.
-  const auto windows =
-      Shell::Get()->mru_window_tracker()->BuildAppWindowList(kActiveDesk);
+  // `GetActiveDeskAppWindowsInZOrder()` will exclude transient windows like the
+  // window layout menu and other bubble widgets.
+  aura::Window::Windows windows =
+      GetActiveDeskAppWindowsInZOrder(window->GetRootWindow());
   const auto opposite_snap_type = GetOppositeSnapType(window);
 
   // Track the union bounds of the windows that are more recently used than the
@@ -865,6 +882,13 @@ aura::Window* GetOppositeVisibleSnappedWindow(aura::Window* window) {
         ShouldExcludeForOcclusionCheck(top_window, window->GetRootWindow());
 
     if (should_be_excluded_for_occlusion_check) {
+      continue;
+    }
+
+    if (IsInOverviewSession() &&
+        GetOverviewSession()->IsWindowInOverview(top_window)) {
+      // Skip any windows that are in overview, since they are visually not
+      // snapped to the user.
       continue;
     }
 
@@ -918,14 +942,30 @@ bool ShouldConsiderWindowForFasterSplitView(
 bool CanStartSplitViewOverviewSessionInClamshell(
     aura::Window* window,
     WindowSnapActionSource snap_action_source) {
+  // If kFasterSplitScreenSetup is disabled, only allow split view overview if
+  // the window is being dragged to snap while in overview. Note this is
+  // different from `IsFasterSplitScreenOrSnapGroupEnabledInClamshell()` which
+  // checks if kFasterSplitScreenSetup *or* kSnapGroup is enabled.
+  const bool is_overview_drag_to_snap =
+      snap_action_source ==
+      WindowSnapActionSource::kDragOrSelectOverviewWindowToSnap;
+  if (!Shell::Get()->IsInTabletMode() &&
+      !features::IsFasterSplitScreenSetupEnabled()) {
+    // TODO(b/344958499): Temporary fix. Investigate why `OnWindowSnapped()` is
+    // called multiple times.
+    return is_overview_drag_to_snap && !GetOppositeVisibleSnappedWindow(window);
+  }
+
   if (IsInOverviewSession() && WindowState::Get(window)->IsSnapped()) {
     return !RootWindowController::ForWindow(window)
                 ->split_view_overview_session();
   }
 
   // Skip starting `SplitViewOverviewSession` if a fully visible window snapped
-  // on the opposite side.
-  if (GetOppositeVisibleSnappedWindow(window)) {
+  // on the opposite side. Exception: If dragging in Overview, skip checking
+  // opposite-side snapped windows, as they're not visually snapped for the
+  // user in Overview.
+  if (!is_overview_drag_to_snap && GetOppositeVisibleSnappedWindow(window)) {
     return false;
   }
 
@@ -933,7 +973,7 @@ bool CanStartSplitViewOverviewSessionInClamshell(
 }
 
 bool IsSnapGroupEnabledInClamshellMode() {
-  return SnapGroupController::Get() &&
+  return features::IsSnapGroupEnabled() &&
          !display::Screen::GetScreen()->InTabletMode();
 }
 

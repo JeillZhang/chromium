@@ -153,7 +153,8 @@ bool GetSettingManagedByUser(const GURL& url,
     // somehow determine real CookieSettingOverrides rather than default to
     // none.
     setting = CookieSettingsFactory::GetForProfile(profile)->GetCookieSetting(
-        url, url, net::CookieSettingOverrides(), &info);
+        url, net::SiteForCookies::FromUrl(url), url,
+        net::CookieSettingOverrides(), &info);
   } else {
     setting = map->GetContentSetting(url, url, type, &info);
   }
@@ -1557,7 +1558,7 @@ void ContentSettingDownloadsBubbleModel::SetRadioGroup() {
       radio_group.default_item = 1;
       break;
     case DownloadRequestLimiter::DOWNLOAD_UI_DEFAULT:
-      DUMP_WILL_BE_NOTREACHED_NORETURN();
+      DUMP_WILL_BE_NOTREACHED();
       return;
   }
   set_radio_group(radio_group);

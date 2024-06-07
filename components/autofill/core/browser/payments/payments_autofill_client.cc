@@ -13,6 +13,7 @@
 #include "components/autofill/core/browser/payments/card_unmask_challenge_option.h"
 #include "components/autofill/core/browser/payments/card_unmask_delegate.h"
 #include "components/autofill/core/browser/payments/virtual_card_enrollment_manager.h"
+#include "components/autofill/core/browser/ui/payments/bubble_show_options.h"
 #include "components/autofill/core/browser/ui/payments/card_unmask_prompt_options.h"
 
 namespace autofill::payments {
@@ -39,6 +40,20 @@ void PaymentsAutofillClient::ShowLocalCardMigrationResults(
     const std::u16string& tip_message,
     const std::vector<MigratableCreditCard>& migratable_credit_cards,
     MigrationDeleteCardCallback delete_local_card_callback) {}
+
+void PaymentsAutofillClient::ShowWebauthnOfferDialog(
+    WebauthnDialogCallback offer_dialog_callback) {}
+
+void PaymentsAutofillClient::ShowWebauthnVerifyPendingDialog(
+    WebauthnDialogCallback verify_pending_dialog_callback) {}
+
+void PaymentsAutofillClient::UpdateWebauthnOfferDialogWithError() {}
+
+bool PaymentsAutofillClient::CloseWebauthnDialog() {
+  return false;
+}
+
+void PaymentsAutofillClient::HideVirtualCardEnrollBubbleAndIconIfVisible() {}
 #endif  // BUILDFLAG(IS_ANDROID)
 
 void PaymentsAutofillClient::CreditCardUploadCompleted(
@@ -48,7 +63,15 @@ void PaymentsAutofillClient::CreditCardUploadCompleted(
 
 void PaymentsAutofillClient::HideSaveCardPrompt() {}
 
+void PaymentsAutofillClient::ShowVirtualCardEnrollDialog(
+    const VirtualCardEnrollmentFields& virtual_card_enrollment_fields,
+    base::OnceClosure accept_virtual_card_callback,
+    base::OnceClosure decline_virtual_card_callback) {}
+
 void PaymentsAutofillClient::VirtualCardEnrollCompleted(bool is_vcn_enrolled) {}
+
+void PaymentsAutofillClient::OnVirtualCardDataAvailable(
+    const VirtualCardManualFallbackBubbleOptions& options) {}
 
 void PaymentsAutofillClient::ConfirmSaveIbanLocally(
     const Iban& iban,
@@ -118,5 +141,22 @@ CreditCardRiskBasedAuthenticator*
 PaymentsAutofillClient::GetRiskBasedAuthenticator() {
   return nullptr;
 }
+
+void PaymentsAutofillClient::ShowMandatoryReauthOptInPrompt(
+    base::OnceClosure accept_mandatory_reauth_callback,
+    base::OnceClosure cancel_mandatory_reauth_callback,
+    base::RepeatingClosure close_mandatory_reauth_callback) {}
+
+IbanManager* PaymentsAutofillClient::GetIbanManager() {
+  return nullptr;
+}
+
+IbanAccessManager* PaymentsAutofillClient::GetIbanAccessManager() {
+  return nullptr;
+}
+
+void PaymentsAutofillClient::ShowMandatoryReauthOptInConfirmation() {}
+
+void PaymentsAutofillClient::DismissOfferNotification() {}
 
 }  // namespace autofill::payments

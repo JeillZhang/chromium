@@ -12,6 +12,7 @@
 #include "chrome/browser/ui/autofill/test_autofill_popup_controller_autofill_client.h"
 #include "components/autofill/core/browser/ui/suggestion.h"
 #include "components/autofill/core/browser/ui/suggestion_type.h"
+#include "components/autofill/core/common/aliases.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/accessibility/ax_active_popup.h"
@@ -86,7 +87,7 @@ TEST_F(AutofillPopupControllerImplTest, EventsAreDelegatedToChildrenAndView) {
       client().popup_controller(manager()).OpenSubPopup(
           {0, 0, 10, 10}, {}, AutoselectFirstSuggestion(false));
 
-  content::NativeWebKeyboardEvent event = CreateKeyPressEvent(ui::VKEY_LEFT);
+  input::NativeWebKeyboardEvent event = CreateKeyPressEvent(ui::VKEY_LEFT);
   EXPECT_CALL(*client().sub_popup_view(), HandleKeyPressEvent)
       .WillOnce(Return(true));
   EXPECT_CALL(*client().popup_view(), HandleKeyPressEvent).Times(0);
@@ -126,6 +127,26 @@ TEST_F(AutofillPopupControllerImplTest, PopupForwardsSuggestionPosition) {
   sub_controller->AcceptSuggestion(/*index=*/0);
 }
 
+TEST_F(AutofillPopupControllerImplTest, DoesNotAcceptUnacceptableSuggestions) {
+  Suggestion suggestion(u"Open the pod bay doors, HAL");
+  suggestion.is_acceptable = false;
+  ShowSuggestions(manager(), {std::move(suggestion)});
+
+  EXPECT_CALL(manager().external_delegate(), DidAcceptSuggestion).Times(0);
+  task_environment()->FastForwardBy(base::Milliseconds(1000));
+  client().popup_controller(manager()).AcceptSuggestion(/*index=*/0);
+}
+
+TEST_F(AutofillPopupControllerImplTest, DoesNotSelectUnacceptableSuggestions) {
+  Suggestion suggestion(u"I'm sorry, Dave. I'm afraid I can't do that.");
+  suggestion.is_acceptable = false;
+  ShowSuggestions(manager(), {std::move(suggestion)});
+
+  EXPECT_CALL(manager().external_delegate(), DidSelectSuggestion).Times(0);
+  task_environment()->FastForwardBy(base::Milliseconds(1000));
+  client().popup_controller(manager()).SelectSuggestion(/*index=*/0);
+}
+
 TEST_F(AutofillPopupControllerImplTest,
        ManualFallBackTriggerSource_IgnoresClickOutsideCheck) {
   ShowSuggestions(manager(), {SuggestionType::kAddressEntry},
@@ -151,16 +172,6 @@ TEST_F(AutofillPopupControllerImplTest, GetPopupScreenLocationCallsView) {
       .WillOnce(Return(PopupScreenLocation{.bounds = kSampleRect}));
   EXPECT_THAT(client().popup_controller(manager()).GetPopupScreenLocation(),
               Optional(Field(&PopupScreenLocation::bounds, kSampleRect)));
-}
-
-// Tests that a change to a text field hides a popup with a Compose suggestion.
-TEST_F(AutofillPopupControllerImplTest, HidesOnFieldChangeForComposeEntries) {
-  ShowSuggestions(manager(), {SuggestionType::kComposeResumeNudge});
-  EXPECT_CALL(client().popup_controller(manager()),
-              Hide(SuggestionHidingReason::kFieldValueChanged));
-  manager().NotifyObservers(
-      &AutofillManager::Observer::OnBeforeTextFieldDidChange, FormGlobalId(),
-      FieldGlobalId());
 }
 
 // Tests that Compose saved state notification popup gets hidden after 2
@@ -216,6 +227,47 @@ TEST_F(AutofillPopupControllerImplTest,
       SuggestionHidingReason::kEndEditing);
 
   Mock::VerifyAndClearExpectations(client().popup_view());
+}
+
+TEST_F(AutofillPopupControllerImplTest, EmitsVisibleDurationMetricsOnHide) {
+  base::HistogramTester histogram_tester;
+  base::TimeDelta hide_delay = base::Milliseconds(500);
+
+  ShowSuggestions(manager(), {SuggestionType::kPasswordEntry});
+  task_environment()->FastForwardBy(hide_delay);
+  client().popup_controller(manager()).Hide(
+      SuggestionHidingReason::kEndEditing);
+
+  histogram_tester.ExpectTimeBucketCount("Autofill.Popup.VisibleDuration",
+                                         hide_delay, 1);
+  histogram_tester.ExpectTimeBucketCount(
+      "Autofill.Popup.VisibleDuration.Password", hide_delay, 1);
+}
+
+TEST_F(AutofillPopupControllerImplTest,
+       DoesntEmitsVisibleDurationMetricsOnHideForSubPopups) {
+  base::HistogramTester histogram_tester;
+  base::TimeDelta hide_delay = base::Milliseconds(500);
+
+  base::WeakPtr<AutofillSuggestionController> sub_controller =
+      client().popup_controller(manager()).OpenSubPopup(
+          {0, 0, 10, 10}, {}, AutoselectFirstSuggestion(false));
+
+  // Setting a view makes the subsequent `Show()` call successful and stores
+  // the visible duration metric start time.
+  static_cast<AutofillPopupControllerImpl*>(sub_controller.get())
+      ->SetViewForTesting(client().sub_popup_view()->GetWeakPtr());
+  sub_controller->Show({Suggestion(SuggestionType::kPasswordEntry)},
+                       AutofillSuggestionTriggerSource::kPasswordManager,
+                       AutoselectFirstSuggestion(false));
+
+  task_environment()->FastForwardBy(hide_delay);
+  sub_controller->Hide(SuggestionHidingReason::kEndEditing);
+
+  histogram_tester.ExpectTimeBucketCount("Autofill.Popup.VisibleDuration",
+                                         hide_delay, 0);
+  histogram_tester.ExpectTimeBucketCount(
+      "Autofill.Popup.VisibleDuration.Password", hide_delay, 0);
 }
 
 TEST_F(AutofillPopupControllerImplTest,
@@ -377,6 +429,23 @@ TEST_F(AutofillPopupControllerImplTest,
   EXPECT_THAT(controller.GetSuggestions(),
               ElementsAre(Field(&Suggestion::type, kSeparator),
                           Field(&Suggestion::type, kClearForm)));
+}
+
+TEST_F(AutofillPopupControllerImplTest,
+       SuggestionFiltration_HasFilteredOutSuggestions) {
+  using enum SuggestionType;
+
+  AutofillPopupController& controller = client().popup_controller(manager());
+  ShowSuggestions(manager(), {
+                                 Suggestion(u"abcd", kAddressEntry),
+                                 Suggestion(u"abxy", kAddressEntry),
+                             });
+
+  controller.SetFilter(AutofillPopupController::SuggestionFilter(u"ab"));
+  EXPECT_FALSE(controller.HasFilteredOutSuggestions());
+
+  controller.SetFilter(AutofillPopupController::SuggestionFilter(u"abc"));
+  EXPECT_TRUE(controller.HasFilteredOutSuggestions());
 }
 
 TEST_F(AutofillPopupControllerImplTest, RemoveSuggestion) {

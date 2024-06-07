@@ -34,6 +34,7 @@
 #include "components/autofill/core/browser/metrics/autofill_metrics.h"
 #include "components/autofill/core/browser/metrics/payments/credit_card_save_metrics.h"
 #include "components/autofill/core/browser/payments/client_behavior_constants.h"
+#include "components/autofill/core/browser/payments/iban_save_manager.h"
 #include "components/autofill/core/browser/payments/payments_customer_data.h"
 #include "components/autofill/core/browser/payments/payments_util.h"
 #include "components/autofill/core/browser/payments/test_credit_card_save_manager.h"
@@ -60,6 +61,7 @@
 #include "components/autofill/core/common/autofill_payments_features.h"
 #include "components/autofill/core/common/autofill_prefs.h"
 #include "components/autofill/core/common/autofill_test_utils.h"
+#include "components/autofill/core/common/credit_card_network_identifiers.h"
 #include "components/autofill/core/common/form_data.h"
 #include "components/autofill/core/common/form_field_data.h"
 #include "components/prefs/pref_service.h"
@@ -220,14 +222,14 @@ class CreditCardSaveManagerTest : public testing::Test {
         std::make_unique<MockVirtualCardEnrollmentManager>(
             autofill_client_.GetPersonalDataManager(),
             &payments_network_interface(), &autofill_client_));
-    credit_card_save_manager_ = new TestCreditCardSaveManager(
-        autofill_driver_.get(), &autofill_client_, &personal_data());
+    auto credit_card_save_manager =
+        std::make_unique<TestCreditCardSaveManager>(&autofill_client_);
+    credit_card_save_manager_ = credit_card_save_manager.get();
     credit_card_save_manager_->SetCreditCardUploadEnabled(true);
     autofill_client_.set_test_form_data_importer(
         std::make_unique<TestFormDataImporter>(
-            &autofill_client_,
-            std::unique_ptr<CreditCardSaveManager>(credit_card_save_manager_),
-            /*iban_save_manager=*/nullptr, &personal_data(), "en-US"));
+            &autofill_client_, std::move(credit_card_save_manager),
+            /*iban_save_manager=*/nullptr, "en-US"));
     autofill_client_.GetStrikeDatabase();
     browser_autofill_manager_ =
         std::make_unique<TestBrowserAutofillManager>(autofill_driver_.get());
@@ -277,7 +279,7 @@ class CreditCardSaveManagerTest : public testing::Test {
   [[nodiscard]] FormData CreateTestCreditCardFormData(
       CreditCardFormOptions options = {}) {
     FormData form;
-    form.name = u"MyForm";
+    form.set_name(u"MyForm");
     std::u16string scheme = options.is_https ? u"https://" : u"http://";
     std::u16string host =
         options.is_google_host ? u"pay.google.com" : u"myform.com";
@@ -285,10 +287,10 @@ class CreditCardSaveManagerTest : public testing::Test {
         options.is_google_host ? u"pay.google.com" : u"myform.root.com";
     std::u16string form_path = u"/form.html";
     std::u16string submit_path = u"/submit.html";
-    form.url = GURL(scheme + host + form_path);
-    form.action = GURL(scheme + host + submit_path);
-    form.main_frame_origin =
-        url::Origin::Create(GURL(scheme + root_host + form_path));
+    form.set_url(GURL(scheme + host + form_path));
+    form.set_action(GURL(scheme + host + submit_path));
+    form.set_main_frame_origin(
+        url::Origin::Create(GURL(scheme + root_host + form_path)));
 
     if (options.split_names) {
       form.fields.push_back(
@@ -441,7 +443,7 @@ class CreditCardSaveManagerTest : public testing::Test {
   MockAutofillClient autofill_client_;
   // TODO(crbug.com/40818490): Refactor to use the real CreditCardSaveManager.
   // Ends up getting owned (and destroyed) by TestFormDataImporter:
-  raw_ptr<TestCreditCardSaveManager> credit_card_save_manager_;
+  raw_ptr<TestCreditCardSaveManager> credit_card_save_manager_ = nullptr;
 
  private:
   int ToHistogramSample(autofill_metrics::CardUploadDecision metric) {
@@ -1050,7 +1052,7 @@ TEST_F(
     CreditCardSaveManagerTest,
     AttemptToOfferCvcUploadSave_UserAccept_ShouldAddServerCvcWithOldEmptyCvc) {
   CreditCard credit_card = test::GetMaskedServerCard();
-  personal_data().AddServerCreditCard(credit_card);
+  personal_data().test_payments_data_manager().AddServerCreditCard(credit_card);
   const std::u16string kCvc = u"555";
   credit_card.set_cvc(kCvc);
   credit_card_save_manager_->AttemptToOfferCvcUploadSave(credit_card);
@@ -1068,7 +1070,7 @@ TEST_F(
     CreditCardSaveManagerTest,
     AttemptToOfferCvcUploadSave_UserAccept_ShouldUpdateServerCvcWithDifferentCvc) {
   CreditCard credit_card = test::WithCvc(test::GetMaskedServerCard(), u"123");
-  personal_data().AddServerCreditCard(credit_card);
+  personal_data().test_payments_data_manager().AddServerCreditCard(credit_card);
   const std::u16string kNewCvc = u"555";
   credit_card.set_cvc(kNewCvc);
   credit_card_save_manager_->AttemptToOfferCvcUploadSave(credit_card);
@@ -1166,7 +1168,7 @@ INSTANTIATE_TEST_SUITE_P(
 
 TEST_F(CreditCardSaveManagerTest, UploadCreditCard_NotSavedLocally) {
   personal_data().test_payments_data_manager().ClearCreditCards();
-  personal_data().ClearProfiles();
+  personal_data().test_address_data_manager().ClearProfiles();
 
   credit_card_save_manager_->SetCreditCardUploadEnabled(true);
 
@@ -1330,11 +1332,11 @@ TEST_F(CreditCardSaveManagerTest, UploadCreditCard_MultipleCvcFields) {
 
   // Set up our credit card form data.
   FormData credit_card_form;
-  credit_card_form.name = u"MyForm";
-  credit_card_form.url = GURL("https://myform.com/form.html");
-  credit_card_form.action = GURL("https://myform.com/submit.html");
-  credit_card_form.main_frame_origin =
-      url::Origin::Create(GURL("http://myform_root.com/form.html"));
+  credit_card_form.set_name(u"MyForm");
+  credit_card_form.set_url(GURL("https://myform.com/form.html"));
+  credit_card_form.set_action(GURL("https://myform.com/submit.html"));
+  credit_card_form.set_main_frame_origin(
+      url::Origin::Create(GURL("http://myform_root.com/form.html")));
   credit_card_form.fields = {
       CreateTestFormField("Card Name", "cardname", "",
                           FormControlType::kInputText),
@@ -1386,11 +1388,11 @@ TEST_F(CreditCardSaveManagerTest, UploadCreditCard_NoCvcFieldOnForm) {
 
   // Set up our credit card form data.  Note that CVC field is missing.
   FormData credit_card_form;
-  credit_card_form.name = u"MyForm";
-  credit_card_form.url = GURL("https://myform.com/form.html");
-  credit_card_form.action = GURL("https://myform.com/submit.html");
-  credit_card_form.main_frame_origin =
-      url::Origin::Create(GURL("http://myform_root.com/form.html"));
+  credit_card_form.set_name(u"MyForm");
+  credit_card_form.set_url(GURL("https://myform.com/form.html"));
+  credit_card_form.set_action(GURL("https://myform.com/submit.html"));
+  credit_card_form.set_main_frame_origin(
+      url::Origin::Create(GURL("http://myform_root.com/form.html")));
   credit_card_form.fields = {
       CreateTestFormField("Card Name", "cardname", "",
                           FormControlType::kInputText),
@@ -1441,11 +1443,11 @@ TEST_F(CreditCardSaveManagerTest,
 
   // Set up our credit card form data. Note that CVC field is missing.
   FormData credit_card_form;
-  credit_card_form.name = u"MyForm";
-  credit_card_form.url = GURL("https://myform.com/form.html");
-  credit_card_form.action = GURL("https://myform.com/submit.html");
-  credit_card_form.main_frame_origin =
-      url::Origin::Create(GURL("http://myform_root.com/form.html"));
+  credit_card_form.set_name(u"MyForm");
+  credit_card_form.set_url(GURL("https://myform.com/form.html"));
+  credit_card_form.set_action(GURL("https://myform.com/submit.html"));
+  credit_card_form.set_main_frame_origin(
+      url::Origin::Create(GURL("http://myform_root.com/form.html")));
   credit_card_form.fields = {
       CreateTestFormField("Card Name", "cardname", "",
                           FormControlType::kInputText),
@@ -1499,11 +1501,11 @@ TEST_F(CreditCardSaveManagerTest,
 
   // Set up our credit card form data. Note that CVC field is missing.
   FormData credit_card_form;
-  credit_card_form.name = u"MyForm";
-  credit_card_form.url = GURL("https://myform.com/form.html");
-  credit_card_form.action = GURL("https://myform.com/submit.html");
-  credit_card_form.main_frame_origin =
-      url::Origin::Create(GURL("http://myform_root.com/form.html"));
+  credit_card_form.set_name(u"MyForm");
+  credit_card_form.set_url(GURL("https://myform.com/form.html"));
+  credit_card_form.set_action(GURL("https://myform.com/submit.html"));
+  credit_card_form.set_main_frame_origin(
+      url::Origin::Create(GURL("http://myform_root.com/form.html")));
   credit_card_form.fields = {
       CreateTestFormField("Card Name", "cardname", "",
                           FormControlType::kInputText),
@@ -1559,11 +1561,11 @@ TEST_F(CreditCardSaveManagerTest,
 
   // Set up our credit card form data. Note that CVC field is missing.
   FormData credit_card_form;
-  credit_card_form.name = u"MyForm";
-  credit_card_form.url = GURL("https://myform.com/form.html");
-  credit_card_form.action = GURL("https://myform.com/submit.html");
-  credit_card_form.main_frame_origin =
-      url::Origin::Create(GURL("http://myform_root.com/form.html"));
+  credit_card_form.set_name(u"MyForm");
+  credit_card_form.set_url(GURL("https://myform.com/form.html"));
+  credit_card_form.set_action(GURL("https://myform.com/submit.html"));
+  credit_card_form.set_main_frame_origin(
+      url::Origin::Create(GURL("http://myform_root.com/form.html")));
   credit_card_form.fields = {
       CreateTestFormField("Card Name", "cardname", "",
                           FormControlType::kInputText),
@@ -2750,7 +2752,7 @@ TEST_F(
   // Run through the form submit in exactly the same way (but now Chrome knows
   // that the user is a Google Payments customer).
   personal_data().test_payments_data_manager().ClearCreditCards();
-  personal_data().ClearProfiles();
+  personal_data().test_address_data_manager().ClearProfiles();
   FormSubmitted(credit_card_form);
 
   // Verify the |credit_card_save_manager_| is NOT requesting cardholder name.
@@ -3222,7 +3224,7 @@ TEST_F(CreditCardSaveManagerTest, DuplicateMaskedCreditCard_NoUpload) {
                           test::NextMonth().c_str(), test::NextYear().c_str(),
                           "1");
   credit_card.SetNetworkForMaskedCard(kVisaCard);
-  personal_data().AddServerCreditCard(credit_card);
+  personal_data().test_payments_data_manager().AddServerCreditCard(credit_card);
 
   // Set up our credit card form data.
   FormData credit_card_form = CreateTestCreditCardFormData();
@@ -5111,7 +5113,7 @@ TEST_F(CreditCardSaveManagerTest, ExistingServerCard_DifferentExpiration) {
   test::SetCreditCardInfo(&card, "John Dillinger", "1111" /* Visa */, "01",
                           "2999", "");
   card.SetNetworkForMaskedCard(kVisaCard);
-  personal_data().AddServerCreditCard(card);
+  personal_data().test_payments_data_manager().AddServerCreditCard(card);
 
   // Set up our credit card form data.
   FormData credit_card_form = CreateTestCreditCardFormData();
@@ -5207,7 +5209,7 @@ TEST_P(SaveCvcTest, ShouldNotOfferCvcSaveWithEmptyCvc) {
 // card that matches the card in the form.
 TEST_P(SaveCvcTest, ShouldNotOfferCvcSaveWithoutExistingCard) {
   personal_data().payments_data_manager().ClearAllServerDataForTesting();
-  personal_data().ClearAllLocalData();
+  personal_data().test_payments_data_manager().ClearAllLocalData();
   CreditCard local_card = test::WithCvc(test::GetCreditCard());
   CreditCard server_card = test::WithCvc(test::GetMaskedServerCard());
 
@@ -5226,7 +5228,7 @@ TEST_P(SaveCvcTest, ShouldNotOfferCvcSaveWithSameCvc) {
   CreditCard local_card = test::WithCvc(test::GetCreditCard(), u"123");
   personal_data().payments_data_manager().AddCreditCard(local_card);
   CreditCard server_card = test::WithCvc(test::GetMaskedServerCard(), u"123");
-  personal_data().AddServerCreditCard(server_card);
+  personal_data().test_payments_data_manager().AddServerCreditCard(server_card);
 
   // We should not offer CVC save with same CVC.
   EXPECT_FALSE(credit_card_save_manager_->ShouldOfferCvcSave(
@@ -5260,7 +5262,7 @@ TEST_P(SaveCvcTest, ShouldOfferCvcUploadSave) {
   prefs::SetPaymentCvcStorage(autofill_client_.GetPrefs(),
                               IsSaveCvcPrefEnabled());
   CreditCard card = test::WithCvc(test::GetMaskedServerCard(), u"123");
-  personal_data().AddServerCreditCard(card);
+  personal_data().test_payments_data_manager().AddServerCreditCard(card);
   card.set_cvc(u"234");
   if (IsSaveCvcFeatureEnabled() && IsSaveCvcPrefEnabled() &&
       IsCreditCardUpstreamEnabled()) {
@@ -5380,7 +5382,7 @@ TEST_P(ProceedWithSavingIfApplicableTest, ProceedWithSavingIfApplicable_Cvc) {
                 !IsCreditCardUpstreamEnabled());
 
   CreditCard server_card = test::WithCvc(test::GetMaskedServerCard(), u"123");
-  personal_data().AddServerCreditCard(server_card);
+  personal_data().test_payments_data_manager().AddServerCreditCard(server_card);
   server_card.set_cvc(u"234");
   credit_card_save_manager_->ProceedWithSavingIfApplicable(
       form_structure, server_card,
@@ -5401,7 +5403,7 @@ TEST_P(ProceedWithSavingIfApplicableTest,
   CreditCard local_card = test::WithCvc(test::GetCreditCard(), u"123");
   personal_data().payments_data_manager().AddCreditCard(local_card);
   CreditCard server_card = test::WithCvc(test::GetMaskedServerCard(), u"123");
-  personal_data().AddServerCreditCard(server_card);
+  personal_data().test_payments_data_manager().AddServerCreditCard(server_card);
   local_card.set_cvc(u"234");
 
   // Save local card CVC to local even if duplicate local and server card
@@ -5425,7 +5427,7 @@ TEST_P(ProceedWithSavingIfApplicableTest,
   CreditCard local_card = test::WithCvc(test::GetCreditCard(), u"123");
   personal_data().payments_data_manager().AddCreditCard(local_card);
   CreditCard server_card = test::WithCvc(test::GetMaskedServerCard(), u"123");
-  personal_data().AddServerCreditCard(server_card);
+  personal_data().test_payments_data_manager().AddServerCreditCard(server_card);
   server_card.set_cvc(u"234");
 
   // Save server card CVC to server even if duplicate local and server card

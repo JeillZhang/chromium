@@ -59,7 +59,6 @@
 #include "third_party/blink/renderer/core/style/computed_style.h"
 #include "third_party/blink/renderer/core/style/style_difference.h"
 #include "third_party/blink/renderer/core/view_transition/view_transition_utils.h"
-#include "third_party/blink/renderer/platform/geometry/layout_rect.h"
 #include "third_party/blink/renderer/platform/graphics/compositing_reasons.h"
 #include "third_party/blink/renderer/platform/graphics/image_orientation.h"
 #include "third_party/blink/renderer/platform/graphics/paint/display_item_client.h"
@@ -1786,15 +1785,6 @@ class CORE_EXPORT LayoutObject : public GarbageCollected<LayoutObject>,
   // instead of flex box. crbug.com/226252.
   bool BehavesLikeBlockContainer() const {
     NOT_DESTROYED();
-    // <rt> supports :first-letter for backward compatibility.
-    // <rt> had display:block, and :first-letter worked accidentally.
-    // Test: fast/ruby/ruby-first-letter.html.
-    // TODO(crbug.com/1501719): Remove rt:first-letter support.
-    if (!RuntimeEnabledFeatures::RtNoFirstLetterFirstLineEnabled() &&
-        IsRubyText() && GetNode() &&
-        GetNode()->HasTagName(html_names::kRtTag)) {
-      return true;
-    }
     return (IsLayoutBlockFlow() && StyleRef().IsDisplayBlockContainer()) ||
            IsButton();
   }

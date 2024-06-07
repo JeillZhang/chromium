@@ -27,6 +27,7 @@
 #include "services/network/public/mojom/url_response_head.mojom.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/abseil-cpp/absl/types/variant.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/mojom/navigation/renderer_eviction_reason.mojom-blink.h"
 #include "third_party/blink/public/platform/resource_load_info_notifier_wrapper.h"
@@ -39,6 +40,8 @@
 #include "third_party/blink/renderer/platform/loader/fetch/background_code_cache_host.h"
 #include "third_party/blink/renderer/platform/loader/fetch/url_loader/background_response_processor.h"
 #include "third_party/blink/renderer/platform/loader/fetch/url_loader/url_loader_client.h"
+#include "third_party/blink/renderer/platform/loader/testing/fake_background_resource_fetch_assets.h"
+#include "third_party/blink/renderer/platform/loader/testing/fake_url_loader_factory_for_background_thread.h"
 #include "third_party/blink/renderer/platform/scheduler/public/post_cross_thread_task.h"
 #include "third_party/blink/renderer/platform/scheduler/test/fake_task_runner.h"
 #include "third_party/blink/renderer/platform/testing/testing_platform_support.h"
@@ -71,9 +74,9 @@ struct CrossThreadCopier<std::optional<mojo_base::BigBuffer>> {
 };
 
 template <>
-struct CrossThreadCopier<Deque<Vector<char>>> {
+struct CrossThreadCopier<SegmentedBuffer> {
   STATIC_ONLY(CrossThreadCopier);
-  using Type = Deque<Vector<char>>;
+  using Type = SegmentedBuffer;
   static Type Copy(Type&& value) { return std::move(value); }
 };
 
@@ -86,10 +89,6 @@ constexpr char kTestURL[] = "http://example.com/";
 constexpr char kRedirectedURL[] = "http://example.com/redirected";
 constexpr int kMaxBufferedBytesPerProcess = 1000;
 constexpr std::string kTestBodyString = "test data.";
-
-using LoadStartCallback = base::OnceCallback<void(
-    mojo::PendingReceiver<network::mojom::URLLoader>,
-    mojo::PendingRemote<network::mojom::URLLoaderClient>)>;
 
 using MaybeStartFunction =
     CrossThreadOnceFunction<bool(network::mojom::URLResponseHeadPtr&,
@@ -234,10 +233,10 @@ mojo::ScopedDataPipeConsumerHandle CreateTestBody() {
   return CreateDataPipeConsumerHandleFilledWithString(kTestBodyString);
 }
 
-Deque<Vector<char>> CreateTestBodyRawData() {
-  Deque<Vector<char>> result;
-  result.emplace_back(
-      base::make_span(kTestBodyString.begin(), kTestBodyString.size()));
+SegmentedBuffer CreateTestBodyRawData() {
+  SegmentedBuffer result;
+  result.Append(Vector<char>(
+      base::make_span(kTestBodyString.begin(), kTestBodyString.size())));
   return result;
 }
 
@@ -297,113 +296,6 @@ class FakeBackForwardCacheLoaderHelper final
   bool process_wide_count_updated_ = false;
 };
 
-class FakeURLLoaderFactory : public network::SharedURLLoaderFactory {
- public:
-  // This SharedURLLoaderFactory is cloned and passed to the background thread
-  // via PendingFactory. `load_start_callback` will be called in the background
-  // thread.
-  explicit FakeURLLoaderFactory(LoadStartCallback load_start_callback)
-      : load_start_callback_(std::move(load_start_callback)) {}
-  FakeURLLoaderFactory(const FakeURLLoaderFactory&) = delete;
-  FakeURLLoaderFactory& operator=(const FakeURLLoaderFactory&) = delete;
-  ~FakeURLLoaderFactory() override = default;
-
-  // network::SharedURLLoaderFactory:
-  void CreateLoaderAndStart(
-      mojo::PendingReceiver<network::mojom::URLLoader> loader,
-      int32_t request_id,
-      uint32_t options,
-      const network::ResourceRequest& request,
-      mojo::PendingRemote<network::mojom::URLLoaderClient> client,
-      const net::MutableNetworkTrafficAnnotationTag& traffic_annotation)
-      override {
-    CHECK(load_start_callback_);
-    std::move(load_start_callback_).Run(std::move(loader), std::move(client));
-  }
-  void Clone(mojo::PendingReceiver<network::mojom::URLLoaderFactory> receiver)
-      override {
-    // Pass |this| as the receiver context to make sure this object stays alive
-    // while it still has receivers.
-    receivers_.Add(this, std::move(receiver), this);
-  }
-  std::unique_ptr<network::PendingSharedURLLoaderFactory> Clone() override {
-    CHECK(load_start_callback_);
-    return std::make_unique<PendingFactory>(std::move(load_start_callback_));
-  }
-
- private:
-  class PendingFactory : public network::PendingSharedURLLoaderFactory {
-   public:
-    explicit PendingFactory(LoadStartCallback load_start_callback)
-        : load_start_callback_(std::move(load_start_callback)) {}
-    PendingFactory(const PendingFactory&) = delete;
-    PendingFactory& operator=(const PendingFactory&) = delete;
-    ~PendingFactory() override = default;
-
-   protected:
-    scoped_refptr<network::SharedURLLoaderFactory> CreateFactory() override {
-      CHECK(load_start_callback_);
-      return base::MakeRefCounted<FakeURLLoaderFactory>(
-          std::move(load_start_callback_));
-    }
-
-   private:
-    LoadStartCallback load_start_callback_;
-  };
-
-  mojo::ReceiverSet<network::mojom::URLLoaderFactory,
-                    scoped_refptr<FakeURLLoaderFactory>>
-      receivers_;
-  LoadStartCallback load_start_callback_;
-};
-
-class FakeBackgroundResourceFetchAssets
-    : public WebBackgroundResourceFetchAssets {
- public:
-  explicit FakeBackgroundResourceFetchAssets(
-      scoped_refptr<base::SequencedTaskRunner> background_task_runner,
-      LoadStartCallback load_start_callback)
-      : background_task_runner_(std::move(background_task_runner)),
-        pending_loader_factory_(base::MakeRefCounted<FakeURLLoaderFactory>(
-                                    std::move(load_start_callback))
-                                    ->Clone()) {}
-  FakeBackgroundResourceFetchAssets(const FakeBackgroundResourceFetchAssets&) =
-      delete;
-  FakeBackgroundResourceFetchAssets& operator=(
-      const FakeBackgroundResourceFetchAssets&) = delete;
-  ~FakeBackgroundResourceFetchAssets() override {
-    if (url_loader_factory_) {
-      // `url_loader_factory_` must be released in the background thread.
-      background_task_runner_->ReleaseSoon(FROM_HERE,
-                                           std::move(url_loader_factory_));
-    }
-  }
-
-  const scoped_refptr<base::SequencedTaskRunner>& GetTaskRunner() override {
-    return background_task_runner_;
-  }
-
-  scoped_refptr<network::SharedURLLoaderFactory> GetLoaderFactory() override {
-    if (!url_loader_factory_) {
-      url_loader_factory_ = network::SharedURLLoaderFactory::Create(
-          std::move(pending_loader_factory_));
-    }
-    return url_loader_factory_;
-  }
-
-  URLLoaderThrottleProvider* GetThrottleProvider() override { return nullptr; }
-  const blink::LocalFrameToken& GetLocalFrameToken() override {
-    return local_frame_token_;
-  }
-
- private:
-  scoped_refptr<base::SequencedTaskRunner> background_task_runner_;
-  std::unique_ptr<network::PendingSharedURLLoaderFactory>
-      pending_loader_factory_;
-  scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory_;
-  const blink::LocalFrameToken local_frame_token_;
-};
-
 class FakeURLLoaderClient : public URLLoaderClient {
  public:
   explicit FakeURLLoaderClient(
@@ -445,20 +337,20 @@ class FakeURLLoaderClient : public URLLoaderClient {
   }
   void DidReceiveResponse(
       const WebURLResponse& response,
-      mojo::ScopedDataPipeConsumerHandle response_body,
+      absl::variant<mojo::ScopedDataPipeConsumerHandle, SegmentedBuffer> body,
       std::optional<mojo_base::BigBuffer> cached_metadata) override {
     DCHECK(unfreezable_task_runner_->BelongsToCurrentThread());
     DCHECK(!response_);
-    DCHECK(!response_body_);
-    CHECK(response_body_raw_data_.empty());
+    DCHECK(!response_body_handle_);
+    CHECK(response_body_buffer_.empty());
     response_ = response;
     cached_metadata_ = std::move(cached_metadata);
-    response_body_ = std::move(response_body);
-  }
-  void DidReceiveData(const char* data, size_t dataLength) override {
-    DCHECK(response_);
-    DCHECK(!response_body_);
-    response_body_raw_data_.emplace_back(base::make_span(data, dataLength));
+    if (absl::holds_alternative<mojo::ScopedDataPipeConsumerHandle>(body)) {
+      response_body_handle_ =
+          std::move(absl::get<mojo::ScopedDataPipeConsumerHandle>(body));
+    } else {
+      response_body_buffer_ = std::move(absl::get<SegmentedBuffer>(body));
+    }
   }
   void DidReceiveTransferSizeUpdate(int transfer_size_diff) override {
     DCHECK(unfreezable_task_runner_->BelongsToCurrentThread());
@@ -485,11 +377,11 @@ class FakeURLLoaderClient : public URLLoaderClient {
   const std::optional<mojo_base::BigBuffer>& cached_metadata() const {
     return cached_metadata_;
   }
-  const mojo::ScopedDataPipeConsumerHandle& response_body() const {
-    return response_body_;
+  const mojo::ScopedDataPipeConsumerHandle& response_body_handle() const {
+    return response_body_handle_;
   }
-  const Deque<Vector<char>>& response_body_raw_data() const {
-    return response_body_raw_data_;
+  const SegmentedBuffer& response_body_buffer() const {
+    return response_body_buffer_;
   }
   const std::vector<int>& transfer_size_diffs() const {
     return transfer_size_diffs_;
@@ -504,8 +396,8 @@ class FakeURLLoaderClient : public URLLoaderClient {
 
   std::optional<WebURLResponse> response_;
   std::optional<mojo_base::BigBuffer> cached_metadata_;
-  mojo::ScopedDataPipeConsumerHandle response_body_;
-  Deque<Vector<char>> response_body_raw_data_;
+  mojo::ScopedDataPipeConsumerHandle response_body_handle_;
+  SegmentedBuffer response_body_buffer_;
   std::vector<int> transfer_size_diffs_;
   bool did_finish_ = false;
   std::optional<WebURLError> error_;
@@ -666,11 +558,11 @@ TEST_F(BackgroundResourceFecherTest, SimpleRequest) {
 
   EXPECT_FALSE(client.response());
   EXPECT_FALSE(client.cached_metadata());
-  EXPECT_FALSE(client.response_body());
+  EXPECT_FALSE(client.response_body_handle());
   unfreezable_task_runner_->RunUntilIdle();
   EXPECT_TRUE(client.response());
   EXPECT_TRUE(client.cached_metadata());
-  EXPECT_TRUE(client.response_body());
+  EXPECT_TRUE(client.response_body_handle());
 
   loader_client_remote->OnTransferSizeUpdated(10);
   // Call RunUntilIdle() to receive Mojo IPC.
@@ -967,7 +859,7 @@ TEST_F(BackgroundResourceFecherTest, FreezeThenUnfreeze) {
   unfreezable_task_runner_->RunUntilIdle();
   EXPECT_FALSE(client.response());
   EXPECT_FALSE(client.cached_metadata());
-  EXPECT_FALSE(client.response_body());
+  EXPECT_FALSE(client.response_body_handle());
   EXPECT_FALSE(client.did_finish());
 
   background_url_loader->Freeze(LoaderFreezeMode::kNone);
@@ -975,7 +867,7 @@ TEST_F(BackgroundResourceFecherTest, FreezeThenUnfreeze) {
   unfreezable_task_runner_->RunUntilIdle();
   EXPECT_TRUE(client.response());
   EXPECT_TRUE(client.cached_metadata());
-  EXPECT_TRUE(client.response_body());
+  EXPECT_TRUE(client.response_body_handle());
   EXPECT_TRUE(client.did_finish());
 }
 
@@ -1000,7 +892,7 @@ TEST_F(BackgroundResourceFecherTest, FreezeCancelThenUnfreeze) {
   unfreezable_task_runner_->RunUntilIdle();
   EXPECT_FALSE(client.response());
   EXPECT_FALSE(client.cached_metadata());
-  EXPECT_FALSE(client.response_body());
+  EXPECT_FALSE(client.response_body_handle());
   EXPECT_FALSE(client.did_finish());
 
   background_url_loader->Freeze(LoaderFreezeMode::kNone);
@@ -1011,7 +903,7 @@ TEST_F(BackgroundResourceFecherTest, FreezeCancelThenUnfreeze) {
   unfreezable_task_runner_->RunUntilIdle();
   EXPECT_FALSE(client.response());
   EXPECT_FALSE(client.cached_metadata());
-  EXPECT_FALSE(client.response_body());
+  EXPECT_FALSE(client.response_body_handle());
   EXPECT_FALSE(client.did_finish());
 }
 
@@ -1056,7 +948,7 @@ TEST_F(BackgroundResourceFecherTest, BufferIncomingFreezeAndResume) {
   task_environment_.RunUntilIdle();
   unfreezable_task_runner_->RunUntilIdle();
   EXPECT_TRUE(client.response());
-  EXPECT_TRUE(client.response_body());
+  EXPECT_TRUE(client.response_body_handle());
   EXPECT_THAT(client.transfer_size_diffs(), testing::ElementsAreArray({10}));
   EXPECT_TRUE(client.did_finish());
   EXPECT_FALSE(client.error());
@@ -1141,7 +1033,7 @@ TEST_F(BackgroundResourceFecherTest,
   task_environment_.RunUntilIdle();
   unfreezable_task_runner_->RunUntilIdle();
   EXPECT_TRUE(client.response());
-  EXPECT_TRUE(client.response_body());
+  EXPECT_TRUE(client.response_body_handle());
   EXPECT_THAT(client.transfer_size_diffs(), testing::ElementsAreArray({10}));
   EXPECT_TRUE(client.did_finish());
   EXPECT_FALSE(client.error());
@@ -1194,7 +1086,7 @@ TEST_F(BackgroundResourceFecherTest,
   task_environment_.RunUntilIdle();
   EXPECT_FALSE(client.response());
   EXPECT_FALSE(client.cached_metadata());
-  EXPECT_FALSE(client.response_body());
+  EXPECT_FALSE(client.response_body_handle());
 
   // Wait until MaybeStartProcessingResponse() is called.
   test_util->WaitUntilMaybeStartProcessingResponse();
@@ -1202,7 +1094,7 @@ TEST_F(BackgroundResourceFecherTest,
   unfreezable_task_runner_->RunUntilIdle();
   EXPECT_TRUE(client.response());
   EXPECT_TRUE(client.cached_metadata());
-  EXPECT_TRUE(client.response_body());
+  EXPECT_TRUE(client.response_body_handle());
 
   loader_client_remote->OnTransferSizeUpdated(10);
   // Call RunUntilIdle() to receive Mojo IPC.
@@ -1240,7 +1132,7 @@ TEST_F(BackgroundResourceFecherTest,
   task_environment_.RunUntilIdle();
   EXPECT_FALSE(client.response());
   EXPECT_FALSE(client.cached_metadata());
-  EXPECT_FALSE(client.response_body());
+  EXPECT_FALSE(client.response_body_handle());
 
   // Wait until MaybeStartProcessingResponse() is called.
   test_util->WaitUntilMaybeStartProcessingResponse();
@@ -1254,7 +1146,7 @@ TEST_F(BackgroundResourceFecherTest,
   unfreezable_task_runner_->RunUntilIdle();
   EXPECT_FALSE(client.response());
   EXPECT_FALSE(client.cached_metadata());
-  EXPECT_FALSE(client.response_body());
+  EXPECT_FALSE(client.response_body_handle());
 
   // Call Client::DidFinishBackgroundResponseProcessor() on the background
   // thread.
@@ -1273,7 +1165,7 @@ TEST_F(BackgroundResourceFecherTest,
   unfreezable_task_runner_->RunUntilIdle();
   EXPECT_TRUE(client.response());
   EXPECT_TRUE(client.cached_metadata());
-  EXPECT_TRUE(client.response_body());
+  EXPECT_TRUE(client.response_body_handle());
 
   loader_client_remote->OnTransferSizeUpdated(10);
   // Call RunUntilIdle() to receive Mojo IPC.
@@ -1311,7 +1203,7 @@ TEST_F(BackgroundResourceFecherTest,
   task_environment_.RunUntilIdle();
   EXPECT_FALSE(client.response());
   EXPECT_FALSE(client.cached_metadata());
-  EXPECT_FALSE(client.response_body());
+  EXPECT_FALSE(client.response_body_handle());
 
   // Wait until MaybeStartProcessingResponse() is called.
   test_util->WaitUntilMaybeStartProcessingResponse();
@@ -1325,7 +1217,7 @@ TEST_F(BackgroundResourceFecherTest,
   unfreezable_task_runner_->RunUntilIdle();
   EXPECT_FALSE(client.response());
   EXPECT_FALSE(client.cached_metadata());
-  EXPECT_FALSE(client.response_body());
+  EXPECT_FALSE(client.response_body_handle());
 
   // Call Client::DidFinishBackgroundResponseProcessor() on the background
   // thread.
@@ -1343,9 +1235,8 @@ TEST_F(BackgroundResourceFecherTest,
   unfreezable_task_runner_->RunUntilIdle();
   EXPECT_TRUE(client.response());
   EXPECT_TRUE(client.cached_metadata());
-  EXPECT_FALSE(client.response_body());
-  ASSERT_EQ(client.response_body_raw_data().size(), 1u);
-  EXPECT_THAT(client.response_body_raw_data().front(),
+  EXPECT_FALSE(client.response_body_handle());
+  EXPECT_THAT(client.response_body_buffer().CopyAs<Vector<char>>(),
               testing::ElementsAreArray(base::make_span(
                   kTestBodyString.begin(), kTestBodyString.size())));
 
@@ -1385,7 +1276,7 @@ TEST_F(BackgroundResourceFecherTest,
   task_environment_.RunUntilIdle();
   EXPECT_FALSE(client.response());
   EXPECT_FALSE(client.cached_metadata());
-  EXPECT_FALSE(client.response_body());
+  EXPECT_FALSE(client.response_body_handle());
 
   // Wait until MaybeStartProcessingResponse() is called.
   test_util->WaitUntilMaybeStartProcessingResponse();
@@ -1404,7 +1295,7 @@ TEST_F(BackgroundResourceFecherTest,
   unfreezable_task_runner_->RunUntilIdle();
   EXPECT_FALSE(client.response());
   EXPECT_FALSE(client.cached_metadata());
-  EXPECT_FALSE(client.response_body());
+  EXPECT_FALSE(client.response_body_handle());
 
   // Call Client::DidFinishBackgroundResponseProcessor() on the background
   // thread.
@@ -1422,9 +1313,8 @@ TEST_F(BackgroundResourceFecherTest,
   unfreezable_task_runner_->RunUntilIdle();
   EXPECT_TRUE(client.response());
   EXPECT_TRUE(client.cached_metadata());
-  EXPECT_FALSE(client.response_body());
-  ASSERT_EQ(client.response_body_raw_data().size(), 1u);
-  EXPECT_THAT(client.response_body_raw_data().front(),
+  EXPECT_FALSE(client.response_body_handle());
+  EXPECT_THAT(client.response_body_buffer().CopyAs<Vector<char>>(),
               testing::ElementsAreArray(base::make_span(
                   kTestBodyString.begin(), kTestBodyString.size())));
   EXPECT_THAT(client.transfer_size_diffs(), testing::ElementsAreArray({10}));
@@ -1457,7 +1347,7 @@ TEST_F(BackgroundResourceFecherTest,
   task_environment_.RunUntilIdle();
   EXPECT_FALSE(client.response());
   EXPECT_FALSE(client.cached_metadata());
-  EXPECT_FALSE(client.response_body());
+  EXPECT_FALSE(client.response_body_handle());
 
   // Wait until MaybeStartProcessingResponse() is called.
   test_util->WaitUntilMaybeStartProcessingResponse();
@@ -1478,7 +1368,7 @@ TEST_F(BackgroundResourceFecherTest,
   unfreezable_task_runner_->RunUntilIdle();
   EXPECT_FALSE(client.response());
   EXPECT_FALSE(client.cached_metadata());
-  EXPECT_FALSE(client.response_body());
+  EXPECT_FALSE(client.response_body_handle());
   EXPECT_FALSE(client.did_finish());
 
   // Call Client::DidFinishBackgroundResponseProcessor() on the background
@@ -1498,9 +1388,8 @@ TEST_F(BackgroundResourceFecherTest,
   unfreezable_task_runner_->RunUntilIdle();
   EXPECT_TRUE(client.response());
   EXPECT_TRUE(client.cached_metadata());
-  EXPECT_FALSE(client.response_body());
-  ASSERT_EQ(client.response_body_raw_data().size(), 1u);
-  EXPECT_THAT(client.response_body_raw_data().front(),
+  EXPECT_FALSE(client.response_body_handle());
+  EXPECT_THAT(client.response_body_buffer().CopyAs<Vector<char>>(),
               testing::ElementsAreArray(base::make_span(
                   kTestBodyString.begin(), kTestBodyString.size())));
   EXPECT_THAT(client.transfer_size_diffs(), testing::ElementsAreArray({10}));
@@ -1577,9 +1466,8 @@ TEST_F(BackgroundResourceFecherTest,
 
   unfreezable_task_runner_->RunUntilIdle();
   EXPECT_TRUE(client.response());
-  EXPECT_FALSE(client.response_body());
-  ASSERT_EQ(client.response_body_raw_data().size(), 1u);
-  EXPECT_THAT(client.response_body_raw_data().front(),
+  EXPECT_FALSE(client.response_body_handle());
+  EXPECT_THAT(client.response_body_buffer().CopyAs<Vector<char>>(),
               testing::ElementsAreArray(base::make_span(
                   kTestBodyString.begin(), kTestBodyString.size())));
   EXPECT_THAT(client.transfer_size_diffs(), testing::ElementsAreArray({10}));
@@ -1652,9 +1540,8 @@ TEST_F(BackgroundResourceFecherTest,
 
   unfreezable_task_runner_->RunUntilIdle();
   EXPECT_TRUE(client.response());
-  EXPECT_FALSE(client.response_body());
-  ASSERT_EQ(client.response_body_raw_data().size(), 1u);
-  EXPECT_THAT(client.response_body_raw_data().front(),
+  EXPECT_FALSE(client.response_body_handle());
+  EXPECT_THAT(client.response_body_buffer().CopyAs<Vector<char>>(),
               testing::ElementsAreArray(base::make_span(
                   kTestBodyString.begin(), kTestBodyString.size())));
   EXPECT_THAT(client.transfer_size_diffs(), testing::ElementsAreArray({10}));
@@ -1694,8 +1581,8 @@ TEST_F(BackgroundResourceFecherTest,
 
   background_url_loader->Freeze(LoaderFreezeMode::kBufferIncoming);
 
-  Deque<Vector<char>> body_raw_data;
-  body_raw_data.emplace_back(Vector<char>(kBodySize, '*'));
+  SegmentedBuffer body_raw_data;
+  body_raw_data.Append(Vector<char>(kBodySize, '*'));
 
   // Call Client::DidFinishBackgroundResponseProcessor() on the background
   // thread.

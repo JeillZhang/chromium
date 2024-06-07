@@ -19,6 +19,7 @@
 #include "base/third_party/icu/icu_utf.h"
 #include "chrome/browser/compose/compose_enabling.h"
 #include "chrome/browser/compose/compose_text_usage_logger.h"
+#include "chrome/browser/compose/proactive_nudge_tracker.h"
 #include "chrome/browser/optimization_guide/optimization_guide_keyed_service.h"
 #include "chrome/browser/optimization_guide/optimization_guide_keyed_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
@@ -37,11 +38,15 @@
 #include "components/autofill/content/browser/content_autofill_client.h"
 #include "components/autofill/content/browser/content_autofill_driver.h"
 #include "components/autofill/content/browser/content_autofill_driver_factory.h"
+#include "components/autofill/core/browser/autofill_client.h"
+#include "components/autofill/core/browser/filling_product.h"
+#include "components/autofill/core/browser/ui/suggestion.h"
 #include "components/autofill/core/common/aliases.h"
 #include "components/autofill/core/common/form_field_data.h"
 #include "components/compose/core/browser/compose_features.h"
 #include "components/compose/core/browser/compose_manager_impl.h"
 #include "components/compose/core/browser/compose_metrics.h"
+#include "components/compose/core/browser/config.h"
 #include "components/optimization_guide/proto/features/compose.pb.h"
 #include "components/strings/grit/components_strings.h"
 #include "components/unified_consent/pref_names.h"
@@ -72,7 +77,72 @@ std::u16string RemoveLastCharIfInvalid(std::u16string str) {
   return str;
 }
 
+bool ComposeNudgeShowStatusDisabledByConfig(compose::ComposeShowStatus status) {
+  switch (status) {
+    case compose::ComposeShowStatus::
+        kProactiveNudgeDisabledGloballyByUserPreference:
+    case compose::ComposeShowStatus::
+        kProactiveNudgeDisabledForSiteByUserPreference:
+    case compose::ComposeShowStatus::kProactiveNudgeFeatureDisabled:
+    case compose::ComposeShowStatus::kRandomlyBlocked:
+    case compose::ComposeShowStatus::kProactiveNudgeDisabledByMSBB:
+      return true;
+    default:
+      return false;
+  }
+}
+
 }  // namespace
+
+// ChromeComposeClient::FieldChangeObserver
+ChromeComposeClient::FieldChangeObserver::FieldChangeObserver(
+    content::WebContents* web_contents)
+    : web_contents_(web_contents) {
+  autofill_managers_observation_.Observe(
+      web_contents, autofill::ScopedAutofillManagersObservation::
+                        InitializationPolicy::kObservePreexistingManagers);
+}
+
+ChromeComposeClient::FieldChangeObserver::~FieldChangeObserver() = default;
+
+void ChromeComposeClient::FieldChangeObserver::OnSuggestionsShown(
+    autofill::AutofillManager& manager) {
+  text_field_change_event_count_ = 0;
+}
+
+void ChromeComposeClient::FieldChangeObserver::OnAfterTextFieldDidChange(
+    autofill::AutofillManager& manager,
+    autofill::FormGlobalId form,
+    autofill::FieldGlobalId field,
+    const std::u16string& text_value) {
+  ++text_field_change_event_count_;
+  if (text_field_change_event_count_ >=
+      compose::GetComposeConfig().nudge_field_change_event_max) {
+    HideComposeNudges();
+    text_field_change_event_count_ = 0;
+  }
+}
+
+void ChromeComposeClient::FieldChangeObserver::HideComposeNudges() {
+  if (autofill::AutofillClient* autofill_client =
+          autofill::ContentAutofillClient::FromWebContents(web_contents_)) {
+    // Only hide open suggestions if they are of compose type.
+    base::span<const autofill::Suggestion> suggestions =
+        autofill_client->GetAutofillSuggestions();
+    if ((suggestions.size() == 1 &&
+         autofill::GetFillingProductFromSuggestionType(suggestions[0].type) ==
+             autofill::FillingProduct::kCompose) ||
+        skip_suggestion_type_for_test_) {
+      autofill_client->HideAutofillSuggestions(
+          autofill::SuggestionHidingReason::kFieldValueChanged);
+    }
+  }
+}
+
+void ChromeComposeClient::FieldChangeObserver::SetSkipSuggestionTypeForTest(
+    bool skip_suggestion_type) {
+  skip_suggestion_type_for_test_ = skip_suggestion_type;
+}
 
 ChromeComposeClient::ChromeComposeClient(content::WebContents* web_contents)
     : content::WebContentsObserver(web_contents),
@@ -82,7 +152,8 @@ ChromeComposeClient::ChromeComposeClient(content::WebContents* web_contents)
           Profile::FromBrowserContext(GetWebContents().GetBrowserContext())),
       nudge_tracker_(segmentation_platform::SegmentationPlatformServiceFactory::
                          GetForProfile(profile_),
-                     this) {
+                     this),
+      field_change_observer_(web_contents) {
   auto ukm_source_id =
       GetWebContents().GetPrimaryMainFrame()->GetPageUkmSourceId();
   page_ukm_tracker_ = std::make_unique<compose::PageUkmTracker>(ukm_source_id);
@@ -112,7 +183,12 @@ ChromeComposeClient::ChromeComposeClient(content::WebContents* web_contents)
   nudge_tracker_.StartObserving(web_contents);
 }
 
-ChromeComposeClient::~ChromeComposeClient() = default;
+ChromeComposeClient::~ChromeComposeClient() {
+  // Sessions may call back during destruction through ComposeSession::Observer.
+  // Let's ensure that happens before destroying anything else.
+  sessions_.clear();
+  debug_session_.reset();
+}
 
 void ChromeComposeClient::BindComposeDialog(
     mojo::PendingReceiver<compose::mojom::ComposeClientUntrustedPageHandler>
@@ -129,8 +205,8 @@ void ChromeComposeClient::BindComposeDialog(
       url::Origin::Create(GURL(chrome::kChromeUIUntrustedComposeUrl))) {
     debug_session_ = std::make_unique<ComposeSession>(
         &GetWebContents(), GetModelExecutor(), GetModelQualityLogsUploader(),
-        GetSessionId(), GetInnerTextProvider(), autofill::FieldRendererId(-1),
-        this);
+        GetSessionId(), GetInnerTextProvider(),
+        autofill::FieldGlobalId{{}, autofill::FieldRendererId(-1)}, this);
     debug_session_->set_collect_inner_text(false);
     debug_session_->set_fre_complete(
         pref_service_->GetBoolean(prefs::kPrefHasCompletedComposeFRE));
@@ -328,8 +404,8 @@ void ChromeComposeClient::CreateOrUpdateSession(
     // Now create and set up a new session.
     auto new_session = std::make_unique<ComposeSession>(
         &GetWebContents(), GetModelExecutor(), GetModelQualityLogsUploader(),
-        GetSessionId(), GetInnerTextProvider(),
-        trigger_field.global_id().renderer_id, this, std::move(callback));
+        GetSessionId(), GetInnerTextProvider(), trigger_field.global_id(), this,
+        std::move(callback));
     current_session = new_session.get();
     sessions_.insert_or_assign(active_compose_ids_.value().first,
                                std::move(new_session));
@@ -489,11 +565,12 @@ ComposeEnabling& ChromeComposeClient::GetComposeEnabling() {
   return *compose_enabling_;
 }
 
-compose::PageUkmTracker* ChromeComposeClient::getPageUkmTracker() {
+compose::PageUkmTracker* ChromeComposeClient::GetPageUkmTracker() {
   return page_ukm_tracker_.get();
 }
 
 bool ChromeComposeClient::ShouldTriggerPopup(
+    const autofill::FormData& form_data,
     const autofill::FormFieldData& form_field_data,
     autofill::AutofillSuggestionTriggerSource trigger_source) {
   // Saved state notification needs the active field set earlier here at nudge
@@ -503,48 +580,44 @@ bool ChromeComposeClient::ShouldTriggerPopup(
       std::pair<autofill::FieldGlobalId, autofill::FormGlobalId>>(
       form_field_data.global_id(), form_field_data.renderer_form_id());
 
-  translate::TranslateManager* translate_manager =
-      ChromeTranslateClient::GetManagerFromWebContents(&GetWebContents());
-  content::RenderFrameHost* top_level_frame =
-      GetWebContents().GetPrimaryMainFrame();
-
-  GURL url = GetWebContents().GetPrimaryMainFrame()->GetLastCommittedURL();
-
   bool ongoing_session = HasSession(form_field_data.global_id());
 
-  auto should_show_nudge = compose_enabling_->ShouldTriggerPopup(
-      form_field_data.autocomplete_attribute(),
-      form_field_data.allows_writing_suggestions(), profile_, pref_service_,
-      translate_manager, ongoing_session,
-      top_level_frame->GetLastCommittedOrigin(), form_field_data.origin(), url,
-      trigger_source, GetMSBBStateFromPrefs());
-
-  // Record ukm only if the proactive nudge would show or is disabled by the
-  // flag. TODO(b/337125331): update metrics to reflect that the nudge may not
-  // be shown immediately.
-  if (!ongoing_session &&
-      (should_show_nudge.has_value() ||
-       should_show_nudge.error() ==
-           compose::ComposeNudgeDenyReason::kProactiveNudgeDisabled)) {
-    page_ukm_tracker_->ComposeProactiveNudgeShouldShow();
+  if (ongoing_session) {
+    return compose_enabling_->ShouldTriggerSavedStatePopup(trigger_source);
   }
 
-  if (!should_show_nudge.has_value()) {
+  auto proactive_nudge_status = compose_enabling_->ShouldTriggerNoStatePopup(
+      form_field_data.autocomplete_attribute(),
+      form_field_data.allows_writing_suggestions(), profile_, pref_service_,
+      ChromeTranslateClient::GetManagerFromWebContents(&GetWebContents()),
+      GetWebContents().GetPrimaryMainFrame()->GetLastCommittedOrigin(),
+      form_field_data.origin(),
+      GetWebContents().GetPrimaryMainFrame()->GetLastCommittedURL(),
+      GetMSBBStateFromPrefs());
+
+  if (!proactive_nudge_status.has_value()) {
+    compose::LogComposeProactiveNudgeShowStatus(proactive_nudge_status.error());
+    // Record that the nudge could have shown if it was disabled by
+    // configuration or flags.
+    if (ComposeNudgeShowStatusDisabledByConfig(
+            proactive_nudge_status.error())) {
+      page_ukm_tracker_->ComposeProactiveNudgeShouldShow();
+    }
     return false;
   }
 
-  if (ongoing_session) {
-    return true;
-  }
-
-  bool nudge_can_show =
-      nudge_tracker_.ProactiveNudgeRequestedForFormField(form_field_data);
-  if (nudge_can_show) {
-    compose::LogComposeProactiveNudgeCtr(
-        compose::ComposeProactiveNudgeCtrEvent::kNudgeDisplayed);
-    page_ukm_tracker_->ProactiveNudgeShown();
-  }
-  return nudge_can_show;
+  // Time since page load, or time since page has changed if it's not loaded
+  // yet.
+  compose::ProactiveNudgeTracker::Signals nudge_signals;
+  nudge_signals.page_origin =
+      web_contents()->GetPrimaryMainFrame()->GetLastCommittedOrigin();
+  nudge_signals.page_url = web_contents()->GetURL();
+  nudge_signals.form = form_data;
+  nudge_signals.field = form_field_data;
+  nudge_signals.page_change_time = page_change_time_;
+  // PractiveNudgeRequestForFormField logs metrics for showing the nudge.
+  return nudge_tracker_.ProactiveNudgeRequestedForFormField(
+      std::move(nudge_signals));
 }
 
 void ChromeComposeClient::DisableProactiveNudge() {
@@ -584,11 +657,10 @@ bool ChromeComposeClient::ShouldTriggerContextMenu(
 }
 
 void ChromeComposeClient::OnSessionComplete(
-    autofill::FieldRendererId field_renderer_id,
+    autofill::FieldGlobalId field_global_id,
     compose::ComposeSessionCloseReason close_reason,
     const compose::ComposeSessionEvents& events) {
-  nudge_tracker_.ComposeSessionCompleted(field_renderer_id, close_reason,
-                                         events);
+  nudge_tracker_.ComposeSessionCompleted(field_global_id, close_reason, events);
 }
 
 void ChromeComposeClient::OnAfterFocusOnFormField(
@@ -677,6 +749,8 @@ void ChromeComposeClient::PrimaryPageChanged(content::Page& page) {
 
   compose::ComposeTextUsageLogger::GetOrCreateForCurrentDocument(
       &page.GetMainDocument());
+
+  page_change_time_ = base::TimeTicks::Now();
 }
 
 void ChromeComposeClient::OnWebContentsFocused(

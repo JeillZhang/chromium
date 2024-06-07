@@ -8,7 +8,6 @@
 #include "ash/api/tasks/fake_tasks_client.h"
 #include "ash/api/tasks/tasks_types.h"
 #include "ash/constants/ash_features.h"
-#include "ash/constants/ash_switches.h"
 #include "ash/glanceables/classroom/fake_glanceables_classroom_client.h"
 #include "ash/glanceables/classroom/glanceables_classroom_item_view.h"
 #include "ash/glanceables/classroom/glanceables_classroom_student_view.h"
@@ -26,7 +25,6 @@
 #include "ash/system/unified/date_tray.h"
 #include "ash/system/unified/glanceable_tray_bubble.h"
 #include "ash/test/ash_test_util.h"
-#include "base/command_line.h"
 #include "base/test/gtest_tags.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/types/cxx23_to_underlying.h"
@@ -164,7 +162,7 @@ class GlanceablesBrowserTest : public InProcessBrowserTest {
 
   views::ScrollView* GetTasksScrollView() const {
     return views::AsViewClass<views::ScrollView>(GetTasksView()->GetViewByID(
-        base::to_underlying(GlanceablesViewId::kTasksBubbleListScrollView)));
+        base::to_underlying(GlanceablesViewId::kContentsScrollView)));
   }
 
   views::View* GetTasksItemContainerView() const {
@@ -257,8 +255,6 @@ class GlanceablesMvpBrowserTest : public GlanceablesBrowserTest {
     features_.InitWithFeatures(
         /*enabled_features=*/{features::kGlanceablesV2},
         /*disabled_features=*/{features::kGlanceablesTimeManagementTasksView});
-    base::CommandLine::ForCurrentProcess()->AppendSwitch(
-        switches::kGlanceablesIgnoreEnableMergeRequestBuildFlag);
   }
 
   void SetUpOnMainThread() override {
@@ -913,93 +909,6 @@ IN_PROC_BROWSER_TEST_F(GlanceablesTasksBrowserTest, SwitchTaskListsWithError) {
   ASSERT_TRUE(error_view);
   EXPECT_EQ(error_view->GetMessageForTest(), u"Couldn't load items.");
   EXPECT_EQ(error_view->GetButtonForTest()->GetText(), u"Dismiss");
-}
-
-// -----------------------------------------------------------------------------
-
-// TODO(b/338917100): Consider converting these browsertests to unittests.
-class GlanceablesTasksAndClassroomTest : public GlanceablesBrowserTest {
- public:
-  GlanceablesTasksAndClassroomTest() {
-    features_.InitWithFeatures(
-        /*enabled_features=*/
-        {features::kGlanceablesTimeManagementTasksView,
-         features::kGlanceablesTimeManagementClassroomStudentView},
-        /*disabled_features=*/{});
-  }
-
-  void SetUpOnMainThread() override {
-    GlanceablesBrowserTest::SetUpOnMainThread();
-    ASSERT_TRUE(glanceables_controller()->GetTasksClient());
-    ASSERT_TRUE(glanceables_controller()->GetClassroomClient());
-  }
-
- private:
-  base::test::ScopedFeatureList features_;
-};
-
-IN_PROC_BROWSER_TEST_F(GlanceablesTasksAndClassroomTest, Basics) {
-  ToggleDateTray();
-
-  EXPECT_TRUE(GetGlanceableTrayBubble());
-  auto* const tasks_view = GetTasksView();
-  EXPECT_TRUE(tasks_view);
-  auto* const classroom_view = GetStudentView();
-  EXPECT_TRUE(classroom_view);
-
-  // Check that both views have their own backgrounds.
-  EXPECT_TRUE(tasks_view->GetBackground());
-  EXPECT_TRUE(classroom_view->GetBackground());
-
-  // Check that both views contain their expand buttons.
-  EXPECT_TRUE(GetTasksExpandButtonView());
-  EXPECT_TRUE(GetStudentExpandButtonView());
-}
-
-IN_PROC_BROWSER_TEST_F(GlanceablesTasksAndClassroomTest,
-                       TimeManagementExpandStates) {
-  ToggleDateTray();
-
-  EXPECT_TRUE(GetGlanceableTrayBubble());
-  auto* const tasks_view =
-      views::AsViewClass<GlanceablesTasksView>(GetTasksView());
-  auto* const classroom_view =
-      views::AsViewClass<GlanceablesClassroomStudentView>(GetStudentView());
-
-  // Initially both views are expanded.
-  // TODO(b/338917100): Consider having a half folded state.
-  EXPECT_TRUE(tasks_view->is_expanded());
-  EXPECT_TRUE(classroom_view->is_expanded());
-
-  // Expanding/Collapsing `tasks_view` will collapse/expand `classroom_view`.
-  auto* const tasks_expand_button = GetTasksExpandButtonView();
-  ASSERT_TRUE(tasks_expand_button);
-  GetEventGenerator()->MoveMouseTo(
-      tasks_expand_button->GetBoundsInScreen().CenterPoint());
-  GetEventGenerator()->ClickLeftButton();
-  EXPECT_FALSE(tasks_view->is_expanded());
-  EXPECT_TRUE(classroom_view->is_expanded());
-
-  GetEventGenerator()->MoveMouseTo(
-      tasks_expand_button->GetBoundsInScreen().CenterPoint());
-  GetEventGenerator()->ClickLeftButton();
-  EXPECT_TRUE(tasks_view->is_expanded());
-  EXPECT_FALSE(classroom_view->is_expanded());
-
-  // Same for `classroom_view`.
-  auto* const classroom_expand_button = GetStudentExpandButtonView();
-  ASSERT_TRUE(classroom_expand_button);
-  GetEventGenerator()->MoveMouseTo(
-      classroom_expand_button->GetBoundsInScreen().CenterPoint());
-  GetEventGenerator()->ClickLeftButton();
-  EXPECT_FALSE(tasks_view->is_expanded());
-  EXPECT_TRUE(classroom_view->is_expanded());
-
-  GetEventGenerator()->MoveMouseTo(
-      classroom_expand_button->GetBoundsInScreen().CenterPoint());
-  GetEventGenerator()->ClickLeftButton();
-  EXPECT_TRUE(tasks_view->is_expanded());
-  EXPECT_FALSE(classroom_view->is_expanded());
 }
 
 }  // namespace ash

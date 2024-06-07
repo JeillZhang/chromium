@@ -380,8 +380,7 @@ public class OmniboxResourceProvider {
      * the given context.
      */
     public static @ColorInt int getStandardSuggestionBackgroundColor(Context context) {
-        return ChromeColors.getSurfaceColor(
-                context, R.dimen.omnibox_suggestion_bg_elevation_modern);
+        return ChromeColors.getSurfaceColor(context, R.dimen.omnibox_suggestion_bg_elevation);
     }
 
     /**
@@ -555,5 +554,14 @@ public class OmniboxResourceProvider {
         newConfig.smallestScreenWidthDp = existingConfig.screenWidthDp;
 
         return context.createConfigurationContext(newConfig);
+    }
+
+    /**
+     * @param context The context to retrieve the resources from.
+     * @return the color for the additional text.
+     */
+    @ColorInt
+    public static int getAdditionalTextColor(Context context) {
+        return SemanticColorUtils.getDefaultTextColorSecondary(context);
     }
 }

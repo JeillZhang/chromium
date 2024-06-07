@@ -215,11 +215,8 @@ FieldFillingSkipReason FormFiller::GetFieldFillingSkipReason(
     return FieldFillingSkipReason::kExpiredCards;
   }
 
-  if (base::FeatureList::IsEnabled(
-          features::kAutofillGranularFillingAvailable)) {
-    if (!field_types_to_fill.contains(field_type)) {
-      return FieldFillingSkipReason::kFieldDoesNotMatchTargetFieldsSet;
-    }
+  if (!field_types_to_fill.contains(field_type)) {
+    return FieldFillingSkipReason::kFieldDoesNotMatchTargetFieldsSet;
   }
 
   // A field with a specific type is only allowed to be filled a limited
@@ -416,7 +413,8 @@ FillingProduct FormFiller::UndoAutofill(
   // filling, it is okay to bypass the filling security checks and hence passing
   // dummy values for `triggered_origin` and `field_type_map`.
   manager_->driver().ApplyFormAction(mojom::FormActionType::kUndo,
-                                     action_persistence, form, url::Origin(),
+                                     action_persistence, form.fields,
+                                     url::Origin(),
                                      /*field_type_map=*/{});
 
   FillingProduct filling_product = operation.get_filling_product();
@@ -703,15 +701,11 @@ void FormFiller::FillOrPreviewForm(
           .was_autofilled_before_security_policy =
               ToOptionalBoolean(is_autofilled_after),
           .had_value_after_filling = ToOptionalBoolean(has_value_after),
-          .filling_method =
-              skip_reasons[autofill_field->global_id()] ==
-                      FieldFillingSkipReason::kNotSkipped
-                  ? base::FeatureList::IsEnabled(
-                        features::kAutofillGranularFillingAvailable)
-                        ? GetFillingMethodFromTargetedFields(
-                              trigger_details.field_types_to_fill)
-                        : FillingMethod::kFullForm
-                  : FillingMethod::kNone,
+          .filling_method = skip_reasons[autofill_field->global_id()] ==
+                                    FieldFillingSkipReason::kNotSkipped
+                                ? GetFillingMethodFromTargetedFields(
+                                      trigger_details.field_types_to_fill)
+                                : FillingMethod::kNone,
       });
     }
     LOG_AF(buffer)
@@ -736,7 +730,7 @@ void FormFiller::FillOrPreviewForm(
                 });
   base::flat_set<FieldGlobalId> safe_fields =
       manager_->driver().ApplyFormAction(mojom::FormActionType::kFill,
-                                         action_persistence, result_form,
+                                         action_persistence, result_form.fields,
                                          trigger_field.origin(), field_types);
 
   // This will hold the fields (and autofill_fields) in the intersection of

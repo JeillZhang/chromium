@@ -12,8 +12,13 @@ import static androidx.test.espresso.matcher.RootMatchers.isDialog;
 import static androidx.test.espresso.matcher.ViewMatchers.isDisplayed;
 import static androidx.test.espresso.matcher.ViewMatchers.withText;
 
-import android.os.Build;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.when;
 
+import android.os.Build;
+import android.os.Bundle;
+
+import androidx.annotation.Nullable;
 import androidx.test.filters.LargeTest;
 
 import org.junit.After;
@@ -23,6 +28,9 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.RuleChain;
 import org.junit.runner.RunWith;
+import org.mockito.Mock;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.CriteriaHelper;
@@ -30,9 +38,13 @@ import org.chromium.base.test.util.DoNotBatch;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.Features.DisableFeatures;
 import org.chromium.base.test.util.Features.EnableFeatures;
+import org.chromium.base.test.util.JniMocker;
 import org.chromium.base.test.util.MinAndroidSdkLevel;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
+import org.chromium.chrome.browser.password_manager.PasswordManagerUtilBridge;
+import org.chromium.chrome.browser.password_manager.PasswordManagerUtilBridgeJni;
+import org.chromium.chrome.browser.password_manager.account_storage_toggle.AccountStorageToggleFragmentArgs;
 import org.chromium.chrome.browser.preferences.Pref;
 import org.chromium.chrome.browser.price_tracking.PriceTrackingFeatures;
 import org.chromium.chrome.browser.price_tracking.PriceTrackingUtilities;
@@ -49,9 +61,9 @@ import org.chromium.chrome.test.util.browser.signin.SigninTestRule;
 import org.chromium.components.browser_ui.settings.ChromeSwitchPreference;
 import org.chromium.components.prefs.PrefService;
 import org.chromium.components.signin.base.AccountInfo;
-import org.chromium.components.signin.base.CoreAccountId;
 import org.chromium.components.signin.base.CoreAccountInfo;
 import org.chromium.components.signin.identitymanager.ConsentLevel;
+import org.chromium.components.signin.test.util.AccountCapabilitiesBuilder;
 import org.chromium.components.signin.test.util.FakeAccountManagerFacade;
 import org.chromium.components.sync.UserSelectableType;
 import org.chromium.components.user_prefs.UserPrefs;
@@ -64,6 +76,10 @@ import org.chromium.content_public.browser.test.util.TestThreadUtils;
 public class GoogleServicesSettingsTest {
     private static final String CHILD_ACCOUNT_NAME =
             AccountManagerTestRule.generateChildEmail("account@gmail.com");
+
+    @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
+
+    @Rule public final JniMocker mJniMocker = new JniMocker();
 
     @Rule public final SigninTestRule mSigninTestRule = new SigninTestRule();
 
@@ -79,8 +95,11 @@ public class GoogleServicesSettingsTest {
     public final RuleChain mRuleChain =
             RuleChain.outerRule(mActivityTestRule).around(mSettingsActivityTestRule);
 
+    @Mock private PasswordManagerUtilBridge.Natives mMockPasswordManagerUtilBridgeJni;
+
     @Before
     public void setUp() {
+        mJniMocker.mock(PasswordManagerUtilBridgeJni.TEST_HOOKS, mMockPasswordManagerUtilBridgeJni);
         mActivityTestRule.startMainActivityOnBlankPage();
         TestThreadUtils.runOnUiThreadBlocking(
                 () ->
@@ -338,7 +357,36 @@ public class GoogleServicesSettingsTest {
 
     @Test
     @LargeTest
+    @EnableFeatures({
+        ChromeFeatureList.ENABLE_PASSWORDS_ACCOUNT_STORAGE_FOR_NON_SYNCING_USERS,
+        ChromeFeatureList.REPLACE_SYNC_PROMOS_WITH_SIGN_IN_PROMOS
+    })
+    public void hidePasswordsAccountStorageToggleIfSignedInAndSyncToSigninEnabled() {
+        mSigninTestRule.addTestAccountThenSignin();
+
+        startGoogleServicesSettings();
+
+        onView(withText(R.string.passwords_account_storage_toggle_title)).check(doesNotExist());
+    }
+
+    @Test
+    @LargeTest
     @EnableFeatures({ChromeFeatureList.ENABLE_PASSWORDS_ACCOUNT_STORAGE_FOR_NON_SYNCING_USERS})
+    @DisableFeatures({ChromeFeatureList.REPLACE_SYNC_PROMOS_WITH_SIGN_IN_PROMOS})
+    public void hidePasswordsAccountStorageToggleIfGmsCoreOutdated() {
+        when(mMockPasswordManagerUtilBridgeJni.isGmsCoreUpdateRequired(any(), any()))
+                .thenReturn(true);
+        mSigninTestRule.addTestAccountThenSignin();
+
+        startGoogleServicesSettings();
+
+        onView(withText(R.string.passwords_account_storage_toggle_title)).check(doesNotExist());
+    }
+
+    @Test
+    @LargeTest
+    @EnableFeatures({ChromeFeatureList.ENABLE_PASSWORDS_ACCOUNT_STORAGE_FOR_NON_SYNCING_USERS})
+    @DisableFeatures({ChromeFeatureList.REPLACE_SYNC_PROMOS_WITH_SIGN_IN_PROMOS})
     public void showPasswordsAccountStorageToggleIfSignedInAndFlagEnabled() {
         CoreAccountInfo account = mSigninTestRule.addTestAccountThenSignin();
 
@@ -360,6 +408,7 @@ public class GoogleServicesSettingsTest {
                         settings.findPreference(
                                 GoogleServicesSettings.PREF_PASSWORDS_ACCOUNT_STORAGE);
         Assert.assertTrue(toggle.isChecked());
+        Assert.assertNull(toggle.getBackgroundColor());
         Assert.assertTrue(isPasswordSyncEnabled());
 
         onView(withText(R.string.passwords_account_storage_toggle_title)).perform(click());
@@ -380,23 +429,49 @@ public class GoogleServicesSettingsTest {
     @Test
     @LargeTest
     @EnableFeatures({ChromeFeatureList.ENABLE_PASSWORDS_ACCOUNT_STORAGE_FOR_NON_SYNCING_USERS})
+    @DisableFeatures({ChromeFeatureList.REPLACE_SYNC_PROMOS_WITH_SIGN_IN_PROMOS})
     public void showPasswordsAccountStorageToggleForNonDisplayableEmail() {
-        String email = "auto-generated-email@gmail.com";
-        String gaiaId = FakeAccountManagerFacade.toGaiaId(email);
+        // TODO(b/343378391) Update accountInfo to use
+        // AccountManagerTestRule.TEST_ACCOUNT_NON_DISPLAYABLE_EMAIL.
         mSigninTestRule.addAccountThenSignin(
-                new AccountInfo(
-                        new CoreAccountId(gaiaId),
-                        email,
-                        gaiaId,
-                        "John Doe",
-                        "John",
-                        /* avatar= */ null,
-                        SigninTestRule.NON_DISPLAYABLE_EMAIL_ACCOUNT_CAPABILITIES));
+                new AccountInfo.Builder(
+                                "auto-generated-email@gmail.com",
+                                FakeAccountManagerFacade.toGaiaId("auto-generated-email@gmail.com"))
+                        .fullName("John Doe")
+                        .givenName("John")
+                        .accountCapabilities(
+                                new AccountCapabilitiesBuilder()
+                                        .setIsSubjectToParentalControls(true)
+                                        .setCanHaveEmailAddressDisplayed(false)
+                                        .build())
+                        .build());
 
         startGoogleServicesSettings();
 
         onView(withText(R.string.passwords_account_storage_toggle_summary_no_email))
                 .check(matches(isDisplayed()));
+    }
+
+    @Test
+    @LargeTest
+    @EnableFeatures({ChromeFeatureList.ENABLE_PASSWORDS_ACCOUNT_STORAGE_FOR_NON_SYNCING_USERS})
+    @DisableFeatures({ChromeFeatureList.REPLACE_SYNC_PROMOS_WITH_SIGN_IN_PROMOS})
+    public void showPasswordsAccountStorageToggleWithHighlight() {
+        mSigninTestRule.addTestAccountThenSignin();
+
+        Bundle args = new Bundle();
+        args.putBoolean(AccountStorageToggleFragmentArgs.HIGHLIGHT, true);
+        mSettingsActivityTestRule.startSettingsActivity(args);
+
+        ChromeSwitchPreference toggle =
+                (ChromeSwitchPreference)
+                        mSettingsActivityTestRule
+                                .getFragment()
+                                .findPreference(
+                                        GoogleServicesSettings.PREF_PASSWORDS_ACCOUNT_STORAGE);
+        @Nullable Integer backgroundColor = toggle.getBackgroundColor();
+        Assert.assertNotNull(backgroundColor);
+        Assert.assertTrue(backgroundColor.equals(R.color.iph_highlight_blue));
     }
 
     private boolean isPasswordSyncEnabled() {

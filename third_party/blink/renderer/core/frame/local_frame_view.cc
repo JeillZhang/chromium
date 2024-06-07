@@ -60,6 +60,7 @@
 #include "third_party/blink/renderer/bindings/core/v8/v8_scroll_into_view_options.h"
 #include "third_party/blink/renderer/core/accessibility/ax_object_cache.h"
 #include "third_party/blink/renderer/core/animation/document_animations.h"
+#include "third_party/blink/renderer/core/animation/document_timeline.h"
 #include "third_party/blink/renderer/core/css/font_face_set_document.h"
 #include "third_party/blink/renderer/core/css/post_style_update_scope.h"
 #include "third_party/blink/renderer/core/css/properties/longhands.h"
@@ -165,7 +166,6 @@
 #include "third_party/blink/renderer/platform/bindings/script_forbidden_scope.h"
 #include "third_party/blink/renderer/platform/fonts/font_cache.h"
 #include "third_party/blink/renderer/platform/fonts/font_performance.h"
-#include "third_party/blink/renderer/platform/geometry/layout_rect.h"
 #include "third_party/blink/renderer/platform/graphics/compositing/paint_artifact_compositor.h"
 #include "third_party/blink/renderer/platform/graphics/dark_mode_settings_builder.h"
 #include "third_party/blink/renderer/platform/graphics/graphics_context.h"
@@ -943,7 +943,7 @@ gfx::SizeF LocalFrameView::ViewportSizeForMediaQueries() const {
   if (!frame_->GetDocument()) {
     return gfx::SizeF(layout_size_);
   }
-  if (frame_->ShouldUsePrintingLayout()) {
+  if (frame_->ShouldUsePaginatedLayout()) {
     if (const LayoutView* layout_view = GetLayoutView()) {
       return layout_view->DefaultPageAreaSize();
     }
@@ -1014,11 +1014,9 @@ void LocalFrameView::RunIntersectionObserverSteps() {
   SCOPED_UMA_AND_UKM_TIMER(GetUkmAggregator(),
                            LocalFrameUkmAggregator::kIntersectionObservation);
 
-  // Populating monotonic_time may be expensive, and may be unnecessary, so
-  // allow it to be populated on demand.
-  std::optional<base::TimeTicks> monotonic_time;
+  ComputeIntersectionsContext context;
   bool needs_occlusion_tracking =
-      UpdateViewportIntersectionsForSubtree(0, monotonic_time);
+      UpdateViewportIntersectionsForSubtree(0, context);
   if (FrameOwner* owner = frame_->Owner())
     owner->SetNeedsOcclusionTracking(needs_occlusion_tracking);
 #if DCHECK_IS_ON()
@@ -1034,11 +1032,11 @@ void LocalFrameView::ForceUpdateViewportIntersections() {
   DisallowThrottlingScope disallow_throttling(*this);
   UpdateLifecycleToPrePaintClean(
       DocumentUpdateReason::kIntersectionObservation);
-  std::optional<base::TimeTicks> monotonic_time;
+  ComputeIntersectionsContext context;
   UpdateViewportIntersectionsForSubtree(
       IntersectionObservation::kImplicitRootObserversNeedUpdate |
           IntersectionObservation::kIgnoreDelay,
-      monotonic_time);
+      context);
 }
 
 LayoutSVGRoot* LocalFrameView::EmbeddedReplacedContent() const {
@@ -1364,8 +1362,8 @@ bool LocalFrameView::RunPostLayoutIntersectionObserverSteps() {
   DCHECK(frame_->IsLocalRoot());
   DCHECK(Lifecycle().GetState() >= DocumentLifecycle::kPrePaintClean);
 
-  std::optional<base::TimeTicks> monotonic_time;
-  ComputePostLayoutIntersections(0, monotonic_time);
+  ComputeIntersectionsContext context;
+  ComputePostLayoutIntersections(0, context);
 
   bool needs_more_lifecycle_steps = false;
   ForAllNonThrottledLocalFrameViews(
@@ -1388,7 +1386,7 @@ bool LocalFrameView::RunPostLayoutIntersectionObserverSteps() {
 
 void LocalFrameView::ComputePostLayoutIntersections(
     unsigned parent_flags,
-    std::optional<base::TimeTicks>& monotonic_time) {
+    ComputeIntersectionsContext& context) {
   if (ShouldThrottleRendering())
     return;
 
@@ -1398,8 +1396,8 @@ void LocalFrameView::ComputePostLayoutIntersections(
   if (auto* controller =
           GetFrame().GetDocument()->GetIntersectionObserverController()) {
     controller->ComputeIntersections(
-        flags, GetUkmAggregator(), monotonic_time,
-        accumulated_scroll_delta_since_last_intersection_update_);
+        flags, *this, accumulated_scroll_delta_since_last_intersection_update_,
+        context);
     accumulated_scroll_delta_since_last_intersection_update_ = gfx::Vector2dF();
   }
 
@@ -1409,7 +1407,7 @@ void LocalFrameView::ComputePostLayoutIntersections(
     if (!child_local_frame)
       continue;
     if (LocalFrameView* child_view = child_local_frame->View())
-      child_view->ComputePostLayoutIntersections(flags, monotonic_time);
+      child_view->ComputePostLayoutIntersections(flags, context);
   }
 }
 
@@ -2090,7 +2088,7 @@ bool LocalFrameView::UpdateLifecyclePhases(
   // Prevent reentrance.
   // TODO(vmpstr): Should we just have a DCHECK instead here?
   if (UNLIKELY(IsUpdatingLifecycle())) {
-    DUMP_WILL_BE_NOTREACHED_NORETURN()
+    DUMP_WILL_BE_NOTREACHED()
         << "LocalFrameView::updateLifecyclePhasesInternal() reentrance";
     return false;
   }
@@ -2459,14 +2457,14 @@ bool LocalFrameView::ShouldDeferLayoutSnap() const {
   return false;
 }
 
-void LocalFrameView::EnqueueSnapChangingFromImplIfNecessary() {
+void LocalFrameView::EnqueueScrollSnapChangingFromImplIfNecessary() {
   ForAllNonThrottledLocalFrameViews([](LocalFrameView& frame_view) {
     const auto* scrollable_areas = frame_view.UserScrollableAreas();
     if (!scrollable_areas) {
       return;
     }
     for (const auto& area : *scrollable_areas) {
-      area->EnqueueSnapChangingEventFromImplIfNeeded();
+      area->EnqueueScrollSnapChangingEventFromImplIfNeeded();
     }
   });
 }
@@ -2500,8 +2498,8 @@ bool LocalFrameView::RunStyleAndLayoutLifecyclePhases(
 
   ExecutePendingSnapUpdates();
 
-  // Fire snapchanging events based on the new layout if necessary.
-  EnqueueSnapChangingFromImplIfNecessary();
+  // Fire scrollsnapchanging events based on the new layout if necessary.
+  EnqueueScrollSnapChangingFromImplIfNecessary();
 
   EnqueueScrollEvents();
 
@@ -2670,6 +2668,10 @@ void LocalFrameView::RunPaintLifecyclePhase(PaintBenchmarkMode benchmark_mode) {
         frame_view.GetPage()->GetLinkHighlight().UpdateAfterPaint(
             paint_artifact_compositor_.Get());
         Document& document = frame_view.GetLayoutView()->GetDocument();
+        // Attach the compositor timeline during the commit as it blocks on
+        // the previous commit completion.
+        document.AttachCompositorTimeline(
+            document.Timeline().CompositorTimeline());
         {
           // Updating animations can notify ready promises which could mutate
           // the DOM. We should delay these until we have finished the lifecycle
@@ -3233,7 +3235,7 @@ void LocalFrameView::ForceLayoutForPagination(float maximum_shrink_factor) {
   // [2] https://www.w3.org/TR/css-page-3/#using-named-pages
   PhysicalSize initial_containing_block_size =
       CalculateInitialContainingBlockSizeForPagination(document);
-  layout_view->SetInitialContainingBlockSizeForPagination(
+  layout_view->SetInitialContainingBlockSizeForPrinting(
       initial_containing_block_size);
 
   LayoutForPrinting();
@@ -3245,7 +3247,7 @@ void LocalFrameView::ForceLayoutForPagination(float maximum_shrink_factor) {
     // laying out first), and the size of the first page is different from what
     // we got above, the initial containing block used was wrong (which affects
     // e.g. elements with viewport units). Set a new size and lay out again.
-    layout_view->SetInitialContainingBlockSizeForPagination(
+    layout_view->SetInitialContainingBlockSizeForPrinting(
         new_initial_containing_block_size);
 
     LayoutForPrinting();
@@ -3267,7 +3269,7 @@ void LocalFrameView::ForceLayoutForPagination(float maximum_shrink_factor) {
                                           overall_scale_factor);
     PhysicalSize new_size =
         CalculateInitialContainingBlockSizeForPagination(document);
-    layout_view->SetInitialContainingBlockSizeForPagination(new_size);
+    layout_view->SetInitialContainingBlockSizeForPrinting(new_size);
     LayoutForPrinting();
   }
 
@@ -4003,6 +4005,15 @@ PaintRecord LocalFrameView::GetPaintRecord(const gfx::Rect* cull_rect) const {
       PropertyTreeState::Root(), cull_rect);
 }
 
+const PaintArtifact* LocalFrameView::GetPaintArtifact() const {
+  CHECK_EQ(DocumentLifecycle::kPaintClean, Lifecycle().GetState());
+  return &GetFrame()
+              .LocalFrameRoot()
+              .View()
+              ->EnsurePaintController()
+              .GetPaintArtifact();
+}
+
 gfx::Rect LocalFrameView::ConvertToRootFrame(
     const gfx::Rect& local_rect) const {
   if (LocalFrameView* parent = ParentFrameView()) {
@@ -4167,7 +4178,7 @@ void LocalFrameView::CollectDraggableRegions(
 
 bool LocalFrameView::UpdateViewportIntersectionsForSubtree(
     unsigned parent_flags,
-    std::optional<base::TimeTicks>& monotonic_time) {
+    ComputeIntersectionsContext& context) {
   // This will be recomputed, but default to the previous computed value if
   // there's an early return.
   bool needs_occlusion_tracking = false;
@@ -4191,8 +4202,8 @@ bool LocalFrameView::UpdateViewportIntersectionsForSubtree(
     // Notify javascript IntersectionObservers
     if (controller) {
       needs_occlusion_tracking = controller->ComputeIntersections(
-          flags, GetUkmAggregator(), monotonic_time,
-          accumulated_scroll_delta_since_last_intersection_update_);
+          flags, *this,
+          accumulated_scroll_delta_since_last_intersection_update_, context);
       accumulated_scroll_delta_since_last_intersection_update_ =
           gfx::Vector2dF();
     }
@@ -4209,8 +4220,7 @@ bool LocalFrameView::UpdateViewportIntersectionsForSubtree(
   for (Frame* child = frame_->Tree().FirstChild(); child;
        child = child->Tree().NextSibling()) {
     needs_occlusion_tracking |=
-        child->View()->UpdateViewportIntersectionsForSubtree(flags,
-                                                             monotonic_time);
+        child->View()->UpdateViewportIntersectionsForSubtree(flags, context);
   }
 
   if (DocumentFencedFrames* fenced_frames =
@@ -4219,8 +4229,8 @@ bool LocalFrameView::UpdateViewportIntersectionsForSubtree(
          fenced_frames->GetFencedFrames()) {
       if (Frame* frame = fenced_frame->ContentFrame()) {
         needs_occlusion_tracking |=
-            frame->View()->UpdateViewportIntersectionsForSubtree(
-                flags, monotonic_time);
+            frame->View()->UpdateViewportIntersectionsForSubtree(flags,
+                                                                 context);
       }
     }
   }

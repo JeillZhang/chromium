@@ -79,8 +79,6 @@ CONTENT_EXPORT BASE_DECLARE_FEATURE(kDIPSPreservePSData);
 CONTENT_EXPORT BASE_DECLARE_FEATURE(
     kDisconnectExtensionMessagePortWhenPageEntersBFCache);
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kDrawCutoutEdgeToEdge);
-CONTENT_EXPORT BASE_DECLARE_FEATURE(
-    kEarlyDocumentSwapForBackForwardTransitions);
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kEarlyEstablishGpuChannel);
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kEnableCanvas2DLayers);
 CONTENT_EXPORT BASE_DECLARE_FEATURE(
@@ -199,6 +197,15 @@ CONTENT_EXPORT extern const base::FeatureParam<int>
     kSiteIsolationForCrossOriginOpenerPolicyMaxSitesParam;
 CONTENT_EXPORT extern const base::FeatureParam<base::TimeDelta>
     kSiteIsolationForCrossOriginOpenerPolicyExpirationTimeoutParam;
+#if BUILDFLAG(IS_WIN)
+CONTENT_EXPORT BASE_DECLARE_FEATURE(kSkiaFontService);
+enum class SkiaFontServiceTypefaceType {
+  kDwrite,
+  kFreetype,
+};
+extern const base::FeatureParam<SkiaFontServiceTypefaceType>
+    kSkiaFontServiceTypefaceType;
+#endif  // BUILDFLAG(IS_WIN)
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kDisableProcessReuse);
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kServiceWorkerStaticRouter);
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kUserMediaCaptureOnFocus);
@@ -220,7 +227,7 @@ CONTENT_EXPORT BASE_DECLARE_FEATURE(kUnrestrictedSharedArrayBuffer);
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kUserActivationSameOriginVisibility);
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kVerifyDidCommitParams);
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kV8VmFuture);
-CONTENT_EXPORT BASE_DECLARE_FEATURE(kWebAppSystemMediaControlsWin);
+CONTENT_EXPORT BASE_DECLARE_FEATURE(kWebAppSystemMediaControls);
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kWebAssemblyBaseline);
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kEnableExperimentalWebAssemblyJSPI);
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kWebAssemblyLazyCompilation);
@@ -250,7 +257,6 @@ CONTENT_EXPORT BASE_DECLARE_FEATURE(
     kGinJavaBridgeMojoSkipClearObjectsOnMainDocumentReady);
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kReduceGpuPriorityOnBackground);
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kMouseAndTrackpadDropdownMenu);
-CONTENT_EXPORT BASE_DECLARE_FEATURE(kRequestDesktopSiteWindowSetting);
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kSelectionMenuItemModification);
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kSmartZoom);
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kUserMediaScreenCapturing);

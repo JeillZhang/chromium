@@ -123,7 +123,6 @@ import org.chromium.base.test.util.RequiresRestart;
 import org.chromium.base.test.util.Restriction;
 import org.chromium.chrome.browser.ChromeTabbedActivity;
 import org.chromium.chrome.browser.app.bookmarks.BookmarkEditActivity;
-import org.chromium.chrome.browser.app.bookmarks.BookmarkFolderPickerActivity;
 import org.chromium.chrome.browser.browser_controls.BrowserControlsStateProvider;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
@@ -472,7 +471,6 @@ public class TabGridDialogTest {
 
         // Create a tab group.
         mergeAllNormalTabsToAGroup(cta);
-        verifyGroupCreationDialogOpenedAndDismiss();
         verifyTabSwitcherCardCount(cta, 1);
 
         // Open dialog and verify dialog is showing correct content.
@@ -624,7 +622,6 @@ public class TabGridDialogTest {
 
         // Create a tab group.
         mergeAllNormalTabsToAGroup(cta);
-        verifyGroupCreationDialogOpenedAndDismiss();
         verifyTabSwitcherCardCount(cta, 1);
 
         // Expect the color icon to be clicked.
@@ -687,7 +684,6 @@ public class TabGridDialogTest {
 
         // Create a tab group.
         mergeAllNormalTabsToAGroup(cta);
-        verifyGroupCreationDialogOpenedAndDismiss();
         verifyTabSwitcherCardCount(cta, 1);
 
         // Expect the edit color menu item to be clicked.
@@ -769,7 +765,6 @@ public class TabGridDialogTest {
 
         // Create a tab group.
         mergeAllNormalTabsToAGroup(cta);
-        verifyGroupCreationDialogOpenedAndDismiss();
         verifyTabSwitcherCardCount(cta, 1);
 
         // Open dialog and open selection editor and confirm the share action isn't visible.
@@ -956,7 +951,7 @@ public class TabGridDialogTest {
                                 isDisplayed()))
                 .perform(click());
 
-        BookmarkFolderPickerActivity activity = BookmarkTestUtil.waitForFolderPickerActivity();
+        BookmarkEditActivity activity = BookmarkTestUtil.waitForEditActivity();
         activity.finish();
 
         mSelectionEditorRobot.resultRobot.verifyTabListEditorIsVisible();
@@ -1158,6 +1153,7 @@ public class TabGridDialogTest {
 
     @Test
     @MediumTest
+    @RequiresRestart("crbug.com/344674734")
     public void testDialogSelectionEditor_UngroupAll() {
         final ChromeTabbedActivity cta = sActivityTestRule.getActivity();
         createTabs(cta, false, 4);
@@ -1338,7 +1334,6 @@ public class TabGridDialogTest {
 
         // Create a tab group.
         mergeAllNormalTabsToAGroup(cta);
-        verifyGroupCreationDialogOpenedAndDismiss();
         verifyTabSwitcherCardCount(cta, 1);
         openDialogFromTabSwitcherAndVerify(
                 cta,
@@ -1518,7 +1513,6 @@ public class TabGridDialogTest {
 
         // Create a tab group.
         mergeAllNormalTabsToAGroup(cta);
-        verifyGroupCreationDialogOpenedAndDismiss();
         verifyTabSwitcherCardCount(cta, 1);
         openDialogFromTabSwitcherAndVerify(cta, 3, null);
 
@@ -1546,7 +1540,6 @@ public class TabGridDialogTest {
         // Rotate to landscape mode and create a tab group.
         ActivityTestUtils.rotateActivityToOrientation(cta, Configuration.ORIENTATION_LANDSCAPE);
         mergeAllNormalTabsToAGroup(cta);
-        verifyGroupCreationDialogOpenedAndDismiss();
         verifyTabSwitcherCardCount(cta, 1);
         openDialogFromTabSwitcherAndVerify(cta, 3, null);
 
@@ -1572,7 +1565,6 @@ public class TabGridDialogTest {
 
         // Create a tab group.
         mergeAllNormalTabsToAGroup(cta);
-        verifyGroupCreationDialogOpenedAndDismiss();
         verifyTabSwitcherCardCount(cta, 1);
         openDialogFromTabSwitcherAndVerify(cta, 5, null);
 
@@ -1620,7 +1612,6 @@ public class TabGridDialogTest {
 
         // Create a tab group.
         mergeAllNormalTabsToAGroup(cta);
-        verifyGroupCreationDialogOpenedAndDismiss();
         verifyTabSwitcherCardCount(cta, 1);
 
         // Open dialog and click the color icon to show the color picker.
@@ -1981,6 +1972,10 @@ public class TabGridDialogTest {
     @Test
     @MediumTest
     @EnableFeatures({ChromeFeatureList.DATA_SHARING_ANDROID})
+    @DisabledTest(
+            message =
+                    "Failing due to side-effects from testDataSharingIncognitoMode,"
+                            + " crbug.com/342638430")
     public void testDataSharing() {
         final ChromeTabbedActivity cta = sActivityTestRule.getActivity();
         // Create a tab group.
@@ -2075,7 +2070,7 @@ public class TabGridDialogTest {
                 .check((v, e) -> assertEquals(0f, v.getAlpha(), 0.0));
         onView(
                         allOf(
-                                withParent(withId(R.id.dialog_parent_view)),
+                                isDescendantOfA(withId(R.id.dialog_parent_view)),
                                 withId(R.id.dialog_animation_card_view)))
                 .check((v, e) -> assertEquals(0f, v.getAlpha(), 0.0));
 
@@ -2142,7 +2137,8 @@ public class TabGridDialogTest {
         // Verify if the keyboard shows or not.
         CriteriaHelper.pollUiThread(
                 () ->
-                        KeyboardVisibilityDelegate.getInstance()
+                        cta.getWindowAndroid()
+                                .getKeyboardDelegate()
                                 .isKeyboardShowing(cta, cta.getCompositorViewHolderForTesting()));
     }
 
@@ -2222,24 +2218,6 @@ public class TabGridDialogTest {
                 .verifyAdapterHasItemCount(count);
     }
 
-    private void verifyGroupCreationDialogOpenedAndDismiss() {
-        // Verify that the modal dialog is now showing.
-        CriteriaHelper.pollUiThread(
-                () -> {
-                    Criteria.checkThat(mModalDialogManager.isShowing(), Matchers.is(true));
-                });
-        // Verify the visual data dialog exists.
-        onViewWaiting(withId(R.id.visual_data_dialog_layout), /* checkRootDialog= */ true)
-                .check(matches(isDisplayed()));
-        // Dismiss the tab group creation dialog.
-        dismissAllModalDialogs();
-        // Verify that the modal dialog is now hidden.
-        CriteriaHelper.pollUiThread(
-                () -> {
-                    Criteria.checkThat(mModalDialogManager.isShowing(), Matchers.is(false));
-                });
-    }
-
     private void dismissAllModalDialogs() {
         TestThreadUtils.runOnUiThreadBlocking(
                 () -> {
@@ -2303,7 +2281,7 @@ public class TabGridDialogTest {
                 .perform(replaceText(title))
                 .perform(pressImeActionButton());
         // Wait until the keyboard is hidden to make sure the edit has taken effect.
-        KeyboardVisibilityDelegate delegate = KeyboardVisibilityDelegate.getInstance();
+        KeyboardVisibilityDelegate delegate = cta.getWindowAndroid().getKeyboardDelegate();
         CriteriaHelper.pollUiThread(
                 () -> !delegate.isKeyboardShowing(cta, cta.getCompositorViewHolderForTesting()));
     }
@@ -2467,7 +2445,8 @@ public class TabGridDialogTest {
                 () -> {
                     View titleTextView =
                             cta.findViewById(R.id.tab_group_toolbar).findViewById(R.id.title);
-                    KeyboardVisibilityDelegate delegate = KeyboardVisibilityDelegate.getInstance();
+                    KeyboardVisibilityDelegate delegate =
+                            cta.getWindowAndroid().getKeyboardDelegate();
                     boolean keyboardVisible =
                             delegate.isKeyboardShowing(
                                     cta, cta.getCompositorViewHolderForTesting());

@@ -13,6 +13,7 @@
 #include "ui/compositor/layer.h"
 #include "ui/gfx/geometry/linear_gradient.h"
 #include "ui/gfx/geometry/size.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/border.h"
 #include "ui/views/controls/button/image_button.h"
 #include "ui/views/controls/button/label_button.h"
@@ -53,10 +54,11 @@ void SetupChip(views::LabelButton* chip, bool first) {
   chip->SetMinSize(gfx::Size(0, kChipHeight));
   chip->SetMaxSize(gfx::Size(kChipMaxWidth, kChipHeight));
   views::FocusRing::Get(chip)->SetColorId(cros_tokens::kCrosSysFocusRing);
-  views::InstallRoundRectHighlightPathGenerator(chip, gfx::Insets(1),
+  // Remove the padding between the focus ring and the `chip`.
+  views::InstallRoundRectHighlightPathGenerator(chip, gfx::Insets(4),
                                                 kChipCornerRadius);
   chip->SetNotifyEnterExitOnChild(true);
-  chip->SetAccessibleName(chip->GetText());
+  chip->GetViewAccessibility().SetName(chip->GetText());
   chip->SetTooltipText(chip->GetText());
 }
 
@@ -161,6 +163,10 @@ void FocusModeChipCarousel::SetTasks(const std::vector<FocusModeTask>& tasks) {
   // Populate a maximum of `kMaxTasks` tasks.
   const size_t num_tasks = std::min(tasks.size(), kMaxTasks);
   for (size_t i = 0; i < num_tasks; i++) {
+    // Skip empty task.
+    if (tasks[i].title.empty()) {
+      continue;
+    }
     views::LabelButton* chip =
         scroll_contents_->AddChildView(std::make_unique<views::LabelButton>(
             base::BindRepeating(on_chip_pressed_, tasks[i]),

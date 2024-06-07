@@ -236,7 +236,6 @@
 <translation id="2189104374785738357">修改 APN 详细信息</translation>
 <translation id="2195732836444333448">目前已达到资源上限。请稍后再试。</translation>
 <translation id="2201758491318984023">自行车</translation>
-<translation id="2203222757805818543">当前时间表设置为<ph name="SUNRISE" /> - <ph name="SUNSET" />。如要自动更新深色模式时间表，请<ph name="BEGIN_LINK" />开启位置信息访问权限<ph name="END_LINK" /></translation>
 <translation id="2203272733515928691">温泉</translation>
 <translation id="2203642483788377106">悬崖</translation>
 <translation id="2208388655216963643">印象派</translation>
@@ -364,6 +363,7 @@
 <translation id="3054177598518735801"><ph name="CURRENT_VALUE" />mA</translation>
 <translation id="3056720590588772262">端点</translation>
 <translation id="3060579846059757016">概要</translation>
+<translation id="3061850252076394168">启用“随选朗读”</translation>
 <translation id="3069085583900247081">测试失败</translation>
 <translation id="3078740164268491126">表格</translation>
 <translation id="3081652522083185657">浅色</translation>
@@ -630,7 +630,6 @@
 <translation id="458794348635939462">未能解析所有主机</translation>
 <translation id="4593212453765072419">需要验证代理身份</translation>
 <translation id="4609350030397390689">调低键盘亮度</translation>
-<translation id="4617553623719764431">由于不知道您的位置，因此未显示天气。如要显示本地天气，请<ph name="BEGIN_LINK" />开启位置信息使用权<ph name="END_LINK" /></translation>
 <translation id="4627232916386272576"><ph name="DOCUMENT_TITLE" />，<ph name="PRINTER_NAME" />，<ph name="CREATION_TIME" />，已打印 <ph name="PRINTED_PAGE_NUMBER" /> 页，共 <ph name="TOTAL_PAGE_NUMBER" /> 页。按 Enter 键即可取消这项打印任务。</translation>
 <translation id="463791356324567266">正在取消扫描…</translation>
 <translation id="4646949265910132906">安全的 Wi-Fi 连接</translation>
@@ -704,6 +703,7 @@
 <translation id="4985509611418653372">运行</translation>
 <translation id="4987769320337599931">防火墙</translation>
 <translation id="4988526792673242964">页面</translation>
+<translation id="4989542687859782284">不受支持的实验</translation>
 <translation id="4999333166442584738">隐藏报告</translation>
 <translation id="500920857929044050">停止测试</translation>
 <translation id="5017508259293544172">LEAP</translation>
@@ -960,7 +960,6 @@
 <translation id="6412715219990689313">内置键盘</translation>
 <translation id="6417265370957905582">Google 助理</translation>
 <translation id="6423239382391657905">OpenVPN</translation>
-<translation id="6438073885402882007">这将允许具有相应权限的系统服务使用您的位置信息。位置信息服务可能会根据 Wi-Fi、移动网络和传感器等来源提供的信息推测设备所在的位置。<ph name="LINK_BEGIN" />了解详情<ph name="LINK_END" /></translation>
 <translation id="6439505561246192797">很弱 (<ph name="SIGNAL_STRENGTH" />)</translation>
 <translation id="6447630859861661624">打开账号设置</translation>
 <translation id="6462978824459367242">APN“添加”按钮现已启用</translation>

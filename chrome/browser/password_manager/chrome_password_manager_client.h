@@ -79,7 +79,7 @@ struct PasswordGenerationUIData;
 namespace content {
 class RenderFrameHost;
 class WebContents;
-}
+}  // namespace content
 
 namespace device_reauth {
 class DeviceAuthenticator;
@@ -90,7 +90,7 @@ class FieldInfoManager;
 class WebAuthnCredentialsDelegate;
 class CredManController;
 class KeyboardReplacingSurfaceVisibilityController;
-}
+}  // namespace password_manager
 
 namespace webauthn {
 #if BUILDFLAG(IS_ANDROID)
@@ -146,10 +146,11 @@ class ChromePasswordManagerClient
       password_manager::ErrorMessageFlowType flow_type,
       password_manager::PasswordStoreBackendErrorType error_type) override;
 
-  bool ShowKeyboardReplacingSurface(
+  void ShowKeyboardReplacingSurface(
       password_manager::PasswordManagerDriver* driver,
       const password_manager::PasswordFillingParams& password_filling_params,
-      bool is_webauthn_form) override;
+      bool is_webauthn_form,
+      base::OnceCallback<void(bool)> shown_cb) override;
 #endif
 
   bool CanUseBiometricAuthForFilling(
@@ -188,8 +189,7 @@ class ChromePasswordManagerClient
   void PasswordWasAutofilled(
       base::span<const password_manager::PasswordForm> best_matches,
       const url::Origin& origin,
-      const std::vector<raw_ptr<const password_manager::PasswordForm,
-                                VectorExperimental>>* federated_matches,
+      base::span<const password_manager::PasswordForm> federated_matches,
       bool was_autofilled_on_pageload) override;
   void AutofillHttpAuth(
       const password_manager::PasswordForm& preferred_match,
@@ -235,9 +235,10 @@ class ChromePasswordManagerClient
   autofill::LogManager* GetLogManager() override;
   void AnnotateNavigationEntry(bool has_password_field) override;
   autofill::LanguageCode GetPageLanguage() const override;
-
   safe_browsing::PasswordProtectionService* GetPasswordProtectionService()
       const override;
+  void TriggerUserPerceptionOfPasswordManagerSurvey(
+      const std::string& filling_assistance) override;
 
 #if defined(ON_FOCUS_PING_ENABLED)
   void CheckSafeBrowsingReputation(const GURL& form_action,
@@ -368,6 +369,11 @@ class ChromePasswordManagerClient
   TouchToFillController* GetOrCreateTouchToFillController();
 
   void MaybeShowAccountStorageNotice(base::OnceClosure callback);
+
+  void ShowKeyboardReplacingSurfaceOnAccountStorageNoticeDone(
+      base::WeakPtr<password_manager::ContentPasswordManagerDriver> weak_driver,
+      const password_manager::PasswordFillingParams& password_filling_params,
+      base::OnceCallback<void(bool)> shown_cb);
 #endif
 
   // content::WebContentsObserver overrides.

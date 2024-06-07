@@ -88,9 +88,10 @@ class OfferNotificationIconViewBrowserTest
       return false;
     }
 
-    EXPECT_EQ(offer_notification_icon_view->GetAccessibleName(),
-              l10n_util::GetStringUTF16(
-                  IDS_AUTOFILL_OFFERS_REMINDER_ICON_TOOLTIP_TEXT));
+    EXPECT_EQ(
+        offer_notification_icon_view->GetViewAccessibility().GetCachedName(),
+        l10n_util::GetStringUTF16(
+            IDS_AUTOFILL_OFFERS_REMINDER_ICON_TOOLTIP_TEXT));
 
     std::string test_name =
         testing::UnitTest::GetInstance()->current_test_info()->name();
@@ -151,16 +152,10 @@ class OfferNotificationIconViewBrowserTest
   base::test::ScopedFeatureList feature_list_;
 };
 
-INSTANTIATE_TEST_SUITE_P(
-    All,
-    OfferNotificationIconViewBrowserTest,
-    testing::Values(
-        UiTestData{"Default"},
-        UiTestData{
-            "Chrome_refresh_style",
-            std::make_optional<std::vector<base::test::FeatureRefAndParams>>(
-                {{::features::kChromeRefresh2023, {}}})}),
-    GetTestName);
+INSTANTIATE_TEST_SUITE_P(All,
+                         OfferNotificationIconViewBrowserTest,
+                         testing::Values(UiTestData{"Default"}),
+                         GetTestName);
 
 IN_PROC_BROWSER_TEST_P(OfferNotificationIconViewBrowserTest,
                        InvokeUi_show_offer_notification_icon_only) {

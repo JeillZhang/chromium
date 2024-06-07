@@ -18,7 +18,7 @@ import {MultiStepBehavior, MultiStepBehaviorInterface} from '../../components/be
 import {OobeDialogHostBehavior, OobeDialogHostBehaviorInterface} from '../../components/behaviors/oobe_dialog_host_behavior.js';
 import {OobeUiState} from '../../components/display_manager_types.js';
 import {OobeI18nMixin, OobeI18nMixinInterface} from '../../components/mixins/oobe_i18n_mixin.js';
-import {CategoriesAppsMap, OobePersonalizedAppsList} from '../../components/oobe_personalized_apps_list.js';
+import {CategoryAppsItems, OobePersonalizedAppsList} from '../../components/oobe_personalized_apps_list.js';
 
 import {getTemplate} from './personalized_recommend_apps.html.js';
 
@@ -34,6 +34,7 @@ enum UserAction {
   SKIP = 'skip',
   NEXT = 'next',
   BACK = 'back',
+  LOADED = 'loaded',
 }
 
 export const PersonalizedRecommedAppsElementBase =
@@ -77,7 +78,8 @@ export class PersonalizedRecommedAppsElement extends
 
   override get EXTERNAL_API(): string[] {
     return [
-      'setCategoriesAppsMapData',
+      'setAppsAndUseCasesData',
+      'setOverviewStep',
     ];
   }
 
@@ -98,23 +100,37 @@ export class PersonalizedRecommedAppsElement extends
     return OobeUiState.ONBOARDING;
   }
 
-  setCategoriesAppsMapData(categoriesData: CategoriesAppsMap): void {
+  override onBeforeShow(): void {
+    this.setUIStep(PersonalizedAppsStep.LOADING);
+  }
+
+  onBeforeHide(): void {
+    this.shadowRoot!
+        .querySelector<OobePersonalizedAppsList>(
+            '#categoriesAppsList')!.reset();
+  }
+
+  setAppsAndUseCasesData(categoriesData: CategoryAppsItems): void {
     assert(categoriesData !== null);
     this.shadowRoot!
         .querySelector<OobePersonalizedAppsList>('#categoriesAppsList')!.init(
             categoriesData);
   }
 
-  /**
-   * Handles event when contents in the webview is generated.
-   */
-  private onFullyLoaded(): void {
+  setOverviewStep(): void {
     this.setUIStep(PersonalizedAppsStep.OVERVIEW);
     const categoriesAppsList =
         this.shadowRoot?.querySelector<HTMLElement>('#categoriesAppsList');
     if (categoriesAppsList instanceof HTMLElement) {
       categoriesAppsList.focus();
     }
+  }
+
+  /**
+   * Handles event when contents in the webview is generated.
+   */
+  private onFullyLoaded(): void {
+    this.userActed(UserAction.LOADED);
   }
 
   override ready(): void {

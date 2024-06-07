@@ -249,14 +249,21 @@ const char kChromeUIUntrustedImageEditorURL[] =
     "chrome-untrusted://image-editor/";
 const char kChromeUIUntrustedPrintURL[] = "chrome-untrusted://print/";
 const char kChromeUIUntrustedThemeURL[] = "chrome-untrusted://theme/";
+const char kChromeUIUntrustedDataSharingHost[] = "data-sharing";
+const char kChromeUIUntrustedDataSharingURL[] =
+    "chrome-untrusted://data-sharing/";
 const char kChromeUIUsbInternalsHost[] = "usb-internals";
 const char kChromeUIUserActionsHost[] = "user-actions";
 const char kChromeUIVersionHost[] = "version";
 const char kChromeUIVersionURL[] = "chrome://version/";
 const char kChromeUIWelcomeHost[] = "welcome";
 const char kChromeUIWelcomeURL[] = "chrome://welcome/";
+
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
 const char kChromeUIWhatsNewHost[] = "whats-new";
 const char kChromeUIWhatsNewURL[] = "chrome://whats-new/";
+#endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
+
 const char kChromeUIWebuiGalleryHost[] = "webui-gallery";
 
 #if BUILDFLAG(IS_WIN)
@@ -305,10 +312,6 @@ const char kChromeUIUntrustedReadAnythingSidePanelURL[] =
 const char kChromeUIReadLaterHost[] = "read-later.top-chrome";
 const char kChromeUIReadLaterURL[] = "chrome://read-later.top-chrome/";
 const char kChromeUIUntrustedFeedURL[] = "chrome-untrusted://feed/";
-const char kChromeUIUserNotesSidePanelHost[] =
-    "user-notes-side-panel.top-chrome";
-const char kChromeUIUserNotesSidePanelURL[] =
-    "chrome://user-notes-side-panel.top-chrome/";
 const char kChromeUIOmniboxPopupHost[] = "omnibox-popup.top-chrome";
 const char kChromeUIOmniboxPopupURL[] = "chrome://omnibox-popup.top-chrome/";
 const char kChromeUISuggestInternalsHost[] = "suggest-internals";
@@ -412,6 +415,7 @@ const char kChromeUIPrintManagementUrl[] = "chrome://print-management";
 const char kChromeUIPowerHost[] = "power";
 const char kChromeUIPowerUrl[] = "chrome://power";
 const char kChromeUIRemoteManagementCurtainHost[] = "security-curtain";
+const char kChromeUISanitizeAppURL[] = "chrome://sanitize";
 const char kChromeUIScanningAppURL[] = "chrome://scanning";
 const char kChromeUISetTimeHost[] = "set-time";
 const char kChromeUISetTimeURL[] = "chrome://set-time/";

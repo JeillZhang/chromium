@@ -633,6 +633,9 @@ BOOL CanGestureInProductHelpViewFitInGuide(GestureInProductHelpView* view,
       currentWebState->GetNavigationManager();
   BOOL back = navigationManager->CanGoBack();
   BOOL forward = navigationManager->CanGoForward();
+  if (!back && !forward) {
+    return;
+  }
   int textId = IDS_IOS_BACK_FORWARD_SWIPE_IPH_BACK_ONLY;
   if (forward) {
     textId = back ? IDS_IOS_BACK_FORWARD_SWIPE_IPH
@@ -714,6 +717,7 @@ BOOL CanGestureInProductHelpViewFitInGuide(GestureInProductHelpView* view,
       topConstraintForBottomEdgeSwipe;
   toolbarSwipeGestureIPH.topConstraintForTopEdgeSwipe =
       topConstraintForTopEdgeSwipe;
+  toolbarSwipeGestureIPH.delegate = self;
   [self.rootViewController.view addSubview:toolbarSwipeGestureIPH];
   AddSameConstraints(toolbarSwipeGestureIPH, guide);
 
@@ -733,18 +737,29 @@ BOOL CanGestureInProductHelpViewFitInGuide(GestureInProductHelpView* view,
             didDismissWithReason:(IPHDismissalReasonType)reason {
   const feature_engagement::Tracker::SnoozeAction snoozeAction =
       feature_engagement::Tracker::SnoozeAction::DISMISSED;
+  std::string dismissButtonTappedEvent;
   if (view == self.pullToRefreshGestureIPH) {
+    dismissButtonTappedEvent =
+        feature_engagement::events::kIOSPullToRefreshIPHDismissButtonTapped;
     [self featureDismissed:feature_engagement::kIPHiOSPullToRefreshFeature
                 withSnooze:snoozeAction];
   } else if (view == self.swipeBackForwardGestureIPH) {
+    dismissButtonTappedEvent =
+        feature_engagement::events::kIOSSwipeBackForwardIPHDismissButtonTapped;
     [self featureDismissed:feature_engagement::kIPHiOSSwipeBackForwardFeature
                 withSnooze:snoozeAction];
   } else if (view == self.toolbarSwipeGestureIPH) {
+    dismissButtonTappedEvent = feature_engagement::events::
+        kIOSSwipeToolbarToChangeTabIPHDismissButtonTapped;
     [self featureDismissed:feature_engagement::
                                kIPHiOSSwipeToolbarToChangeTabFeature
                 withSnooze:snoozeAction];
   } else {
     NOTREACHED_IN_MIGRATION();
+  }
+  if (reason == IPHDismissalReasonType::kTappedClose &&
+      self.engagementTracker && !dismissButtonTappedEvent.empty()) {
+    self.engagementTracker->NotifyEvent(dismissButtonTappedEvent);
   }
 }
 

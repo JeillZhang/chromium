@@ -645,16 +645,6 @@
       ],
     },
   },
-  'ios_runtime_cache_17_4': {
-    'swarming': {
-      'named_caches': [
-        {
-          'name': 'runtime_ios_17_4',
-          'path': 'Runtime-ios-17.4',
-        },
-      ],
-    },
-  },
   'ios_runtime_cache_17_5': {
     'swarming': {
       'named_caches': [
@@ -847,22 +837,6 @@
       },
     },
   },
-  'mac_13_or_14_arm64': {
-    'swarming': {
-      'dimensions': {
-        'cpu': 'arm64',
-        'os': 'Mac-13|Mac-14',
-      },
-    },
-  },
-  'mac_13_or_14_x64': {
-    'swarming': {
-      'dimensions': {
-        'cpu': 'x86-64',
-        'os': 'Mac-13|Mac-14',
-      },
-    },
-  },
   'mac_13_x64': {
     'swarming': {
       'dimensions': {
@@ -957,7 +931,7 @@
     'swarming': {
       'dimensions': {
         'cpu': 'arm64',
-        'os': 'Mac-13',
+        'os': 'Mac-14',
       },
     },
   },
@@ -965,7 +939,7 @@
     'swarming': {
       'dimensions': {
         'cpu': 'x86-64',
-        'os': 'Mac-13',
+        'os': 'Mac-14',
       },
     },
   },
@@ -1467,12 +1441,12 @@
   'xcode_15_beta': {
     'args': [
       '--xcode-build-version',
-      '15f31c',
+      '15f31d',
     ],
     'swarming': {
       'named_caches': [
         {
-          'name': 'xcode_ios_15f31c',
+          'name': 'xcode_ios_15f31d',
           'path': 'Xcode.app',
         },
       ],
@@ -1481,12 +1455,12 @@
   'xcode_15_main': {
     'args': [
       '--xcode-build-version',
-      '15c500b',
+      '15f31d',
     ],
     'swarming': {
       'named_caches': [
         {
-          'name': 'xcode_ios_15c500b',
+          'name': 'xcode_ios_15f31d',
           'path': 'Xcode.app',
         },
       ],

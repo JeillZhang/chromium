@@ -195,6 +195,7 @@
           <ph name="LIST_ITEM" />ձեր ընկերությանը կամ ուսումնական հաստատությանը,
           <ph name="LIST_ITEM" />ինտերնետային ծառայությունների մատուցողին։
         <ph name="END_LIST" /></translation>
+<translation id="1335042910556016570">Հետևել էջին</translation>
 <translation id="1337692097987160377">Կիսվել</translation>
 <translation id="1339601241726513588">Տիրույթի գրանցում`</translation>
 <translation id="1340482604681802745">Ստացման հասցեն</translation>
@@ -248,7 +249,6 @@
 <translation id="1432187715652018471">Էջը ծառայության մշակիչ է ուզում տեղադրել։</translation>
 <translation id="1432581352905426595">Կառավարել որոնման համակարգերը</translation>
 <translation id="1433225466058025572">Փորձեք նորից տեղափոխել ֆայլերը</translation>
-<translation id="1434317006812369578">Chrome-ում կան անվտանգության ներկառուցված գործառույթներ, որոնք պաշտպանում են ձեզ դիտարկման ընթացքում։ Դրանցից է, օրինակ, Google Ապահով դիտարկումը։ Այն <ph name="BEGIN_LINK" />վերջերս վնասագիր է հայտնաբերել <ph name="SITE" /> կայքում<ph name="END_LINK" />, որը զետեղված է այն կայքում, որը փորձում եք այցելել։</translation>
 <translation id="1435940442311036198">Օգտագործել մուտքի բանալի մեկ այլ սարքում</translation>
 <translation id="1436185428532214179">Կարող է հայցել ձեր սարքի ֆայլերն ու պանակները փոփոխելու թույլտվություն</translation>
 <translation id="1441816242347931036">Բացեք շարունակելու համար</translation>
@@ -299,7 +299,6 @@
 <translation id="1532118530259321453">Հաղորդագրություն այս էջից</translation>
 <translation id="1533966801397200693">Ձեր մտած պրոֆիլը կառավարվող պրոֆիլ է։ Ձեր ադմինիստրատորը կարող է հեռակա կարգով փոխել պրոֆիլի կարգավորումները, վերլուծել դիտարկիչի մասին տեղեկությունները հաշվետվությունների միջոցով և կատարել այլ անհրաժեշտ առաջադրանքներ։ <ph name="BEGIN_LINK" />Իմանալ ավելին<ph name="END_LINK" /></translation>
 <translation id="1536390784834419204">Թարգմանել էջը</translation>
-<translation id="1537807545287921620">Այս PDF ֆայլը հնարավոր չէ բացել։ Բացեք տեղային ընտրացանկը և միացրեք «Արտահանել տեքստը PDF ֆայլից» պարամետրը։</translation>
 <translation id="1539840569003678498">Հաշվետվությունն ուղարկվել է՝</translation>
 <translation id="1542105669288201090">Բիզնես կրթություն</translation>
 <translation id="1545757265410828525">Գների փոփոխությունների պատմություն</translation>
@@ -364,6 +363,7 @@
 <translation id="1641976391427233992">Հետաձգել արտածումը մինչև՝</translation>
 <translation id="1643651787397909318">Անցեք «Chrome-ի անվտանգության ստուգում» կոճակին և սեղմեք այն, որպեսզի անցնեք Chrome-ի անվտանգության ստուգման էջ կարգավորումներում</translation>
 <translation id="1644574205037202324">Պատմություն</translation>
+<translation id="1645004815457365098">Անհայտ աղբյուր</translation>
 <translation id="1645368109819982629">Չաջակցվող հաղորդակարգ</translation>
 <translation id="1650602712345345441">Կառավարել Chrome-ի կարգավորումները</translation>
 <translation id="1652415888492971589">JIS B8</translation>
@@ -458,6 +458,7 @@
 <translation id="1812527064848182527">հորիզոնական</translation>
 <translation id="1812975699435941848">Կրթություն առողջապահության ոլորտում և բուժպատրաստություն</translation>
 <translation id="1816436748874040213">Կարող է խնդրել ոլորումով փոխել մասշտաբը</translation>
+<translation id="1817364650920811003">Դերը՝ Chrome-ի խորհուրդ։ Հատուկ գործառույթների կոճակ՝ «<ph name="CHROME_TIP" />»</translation>
 <translation id="1818522458013171885">Արգելաբացել</translation>
 <translation id="1818585559878922121">Վավերագրական ֆիլմեր</translation>
 <translation id="182139138257690338">ավտոմատ ներբեռնումներ</translation>
@@ -579,7 +580,6 @@
 <translation id="2056658168519009885">Կայքերը կարող են տեղեկություններ հայցել Chrome-ից՝ ձեզ ցուցադրվող գովազդն անհատականացնելու համար։</translation>
 <translation id="2059166748188874810">Մունիցիպալիտետ</translation>
 <translation id="2059202684901022309">22 x 34 դյույմ</translation>
-<translation id="206275378685759380">Սպասեք նախքան գնելը</translation>
 <translation id="2064568741209980952">Վարկեր և փոխառություններ</translation>
 <translation id="2064691555167957331">{COUNT,plural, =1{1 առաջարկ}one{# առաջարկ}other{# առաջարկ}}</translation>
 <translation id="2066915425250589881">ջնջման հայտ ուղարկել</translation>
@@ -966,7 +966,6 @@
 <translation id="2799758406651937857">Տղամարդկանց հագուստ</translation>
 <translation id="2807052079800581569">Պատկերի դիրքը Y առանցքով</translation>
 <translation id="2808278141522721006">Windows Hello-ն միացնելու կամ անջատելու համար անցեք <ph name="SETTINGS" /></translation>
-<translation id="2814184336982254349">Այս PDF ֆայլը հնարավոր չէ բացել։ Սեղմեք «Որոնում + m» ստեղների համադրությունը՝ տեղային ընտրացանկը բացելու և «Արտահանել տեքստը PDF ֆայլից» պարամետրը միացնելու համար։</translation>
 <translation id="2818338148457093657">Գեղեցկություն և սպա ծառայություններ</translation>
 <translation id="2820957248982571256">Որոնում…</translation>
 <translation id="2824775600643448204">Հասցեագոտի և որոնման գոտի</translation>
@@ -1341,6 +1340,7 @@
 <translation id="353816159217417898">Էկրան (էջակալված)</translation>
 <translation id="3542628208405253498">Քարտի պատկեր</translation>
 <translation id="3542768452570884558">Բացել հղումը նոր պատուհանում</translation>
+<translation id="3547442767634383572">Աշխատանքային պրոֆիլի մասին ընդհանուր տեղեկություններ</translation>
 <translation id="3547746132308051926">20 x 24 դյույմ</translation>
 <translation id="3552155506104542239">Նախազգուշացում. այս կանոնը հակասում է <ph name="POLICY_NAME" /> կանոնին և կիրառելի չէ Android-ի համար հավելվածների համար։ Այլ դեպքերում այս կանոնը պատշաճ կերպով աշխատում է։</translation>
 <translation id="3552297013052089404">Sans-serif տառատեսակ</translation>
@@ -1402,6 +1402,7 @@
 <translation id="3642638418806704195">Ծրագիրը՝</translation>
 <translation id="3646643500201740985">Գովազդի արդյունավետության գնահատում</translation>
 <translation id="3647286794400715637">URL-ների տողի յուրաքանչյուր գրառում պետք է պարունակի 1-ից 2 URL։</translation>
+<translation id="3647400963805615193">«Փակել Chrome-ի խորհուրդը» կոճակ․ սեղմեք Enter՝ փակելու համար, <ph name="REMOVE_BUTTON_FOCUSED_FRIENDLY_MATCH_TEXT" /></translation>
 <translation id="3650584904733503804">Վավերացումը հաջողվեց</translation>
 <translation id="3650594806107685466">Ձեր քարտն ապահով պահելու գամար մուտքագրեք <ph name="SIDE_OF_CARD" /> գտնվող CVC կոդը</translation>
 <translation id="3650917416636556301">Արշավներ և վրանային ճամբարներ</translation>
@@ -1474,7 +1475,6 @@
 <translation id="3767485424735936570">Ադմինիստրատորը խորհուրդ չի տալիս պատճենել և տեղադրել այս բովանդակությունը <ph name="VM_NAME" /> վիրտուալ մեքենայում։</translation>
 <translation id="3772211998634047851">Թուղթ (բոնդ)</translation>
 <translation id="377451872037045164"><ph name="CREATE_GOOGLE_KEEP_NOTE_FOCUSED_FRIENDLY_MATCH_TEXT" />։ Google Keep-ում արագ նշում ստեղծելու համար սեղմեք Tab, ապա՝ Enter։</translation>
-<translation id="378026377453746707">Chrome-ում կան անվտանգության ներկառուցված գործառույթներ, որոնք պաշտպանում են ձեզ դիտարկման ընթացքում։ Դրանցից է, օրինակ, Google Ապահով դիտարկումը։ Այն վերջերս <ph name="BEGIN_LINK" />վնասաբեր ծրագիր է հայտնաբերել <ph name="SITE" /> կայքում<ph name="END_LINK" />, որը զետեղված է այն կայքում, որը փորձում եք այցելել։</translation>
 <translation id="3780694243617746492">Արտածման արկղ</translation>
 <translation id="3781428340399460090">Վառ վարդագույն</translation>
 <translation id="3783418713923659662">Mastercard</translation>
@@ -1560,7 +1560,6 @@
 <translation id="3950820424414687140">Մուտք գործել</translation>
 <translation id="3953505489397572035">Սա միջին գին է</translation>
 <translation id="3958057596965527988">4 x 4 դյույմ</translation>
-<translation id="3959121317419633580">Chrome-ում կան անվտանգության ներկառուցված գործառույթներ, որոնք պաշտպանում են ձեզ դիտարկման ընթացքում։ Դրանցից է, օրինակ, Google Ապահով դիտարկումը։ Այն վերջերս <ph name="BEGIN_LINK" />ֆիշինգ է հայտնաբերել <ph name="SITE" /> կայքում<ph name="END_LINK" />, որը զետեղված է այն կայքում, որը փորձում եք այցելել։<ph name="NEW_LINE" />Հիշեք, որ հաքերները կարող են կոտրել անգամ անվտանգ կայքերը։ Եթե կարծում եք, որ սխալ է տեղի ունեցել, և այս կայքը վտանգ չի ներկայացնում, <ph name="BEGIN_ERROR_LINK" />հայտնեք մեզ այդ մասին<ph name="END_ERROR_LINK" />։</translation>
 <translation id="3961148744525529027">Վճարման մշակման թերթը կիսով չափ բացված է</translation>
 <translation id="3962859241508114581">Նախորդ կատարումը</translation>
 <translation id="3963721102035795474">Ընթերցողի ռեժիմ</translation>
@@ -2208,6 +2207,7 @@
 <translation id="5230733896359313003">Առաքման հասցե</translation>
 <translation id="5230815978613972521">B8</translation>
 <translation id="523149107733989821">A4 Extra</translation>
+<translation id="5233071178832586743">Ձեր ադմինիստրատորին հասանելի են կառավարվող պրոֆիլը, դիտարկիչը և սարքի որոշ տեղեկություններ։ Նա կարող է տեսնել, օրինակ, հետևյալ տեղեկությունները՝</translation>
 <translation id="5234764350956374838">Փակել</translation>
 <translation id="5238301240406177137">Պահել հաշվում</translation>
 <translation id="5239119062986868403">Միջին գին</translation>
@@ -2221,6 +2221,7 @@
 <translation id="52517543715119994">Տեղեկանալ Chrome-ի գործառույթների մասին</translation>
 <translation id="5251803541071282808">Ամպ</translation>
 <translation id="5254043433801397071">Օպտիմալացնել տպվելիք բովանդակությունը</translation>
+<translation id="5255583962255635076">Դիտարկիչի վերաբերյալ գործող կանոններ ձեր աշխատանքային պրոֆիլում</translation>
 <translation id="5255690596502591079">Լուսանկարել</translation>
 <translation id="5255833070095767006">350 x 460 մմ</translation>
 <translation id="5257739419779698609">{0,plural, =1{Ադմինիստրատորը խորհուրդ չի տալիս այս ֆայլը պատճենել այստեղ՝ <ph name="DESTINATION_NAME" />}one{Ադմինիստրատորը խորհուրդ չի տալիս այս ֆայլը պատճենել այստեղ՝ <ph name="DESTINATION_NAME" />}other{Ադմինիստրատորը խորհուրդ չի տալիս այս ֆայլերը պատճենել այստեղ՝ <ph name="DESTINATION_NAME" />}}</translation>
@@ -2305,6 +2306,7 @@
 <translation id="541416427766103491">Շեղջիչ 4</translation>
 <translation id="5414446060143308245">Նախքան փոխանցելը ստուգեք ֆայլերը</translation>
 <translation id="5414511064953050917">Տեղափոխել</translation>
+<translation id="5419311651396341287">Ձեր ադմինիստրատորին կարող են հասանելի լինել հետևյալ տեղեկությունները՝</translation>
 <translation id="5421408724705443535">Ռոք երաժշտություն</translation>
 <translation id="5423269318075950257">Հետևեք գներին</translation>
 <translation id="5425082381151187189">Տան կահավորում և ներքին հարդարանք</translation>
@@ -2619,6 +2621,7 @@
 <translation id="6035491133925068289">Թեթև աթլետիկա</translation>
 <translation id="6039846035001940113">Եթե խնդիրը չվերանա, կապվեք կայքի սեփականատիրոջ հետ։</translation>
 <translation id="6040143037577758943">Փակել</translation>
+<translation id="6040539895181423374">Գների վիճակագրությունը</translation>
 <translation id="604124094241169006">Ավտոմատ</translation>
 <translation id="6041777658117377052">Խցիկի ջերմաստիճանը</translation>
 <translation id="6042308850641462728">Ավելին</translation>
@@ -2994,7 +2997,6 @@
 <translation id="6753269504797312559">Կանոնի արժեքը</translation>
 <translation id="6753434778807740853">Ջնջել <ph name="ENTRY_VOICEOVER" /> գրառումը</translation>
 <translation id="6754547388777247439">Խնայողական հաշիվներ</translation>
-<translation id="6755241357817244406">chrome://flags</translation>
 <translation id="6757797048963528358">Ձեր սարքը մտել է քնի ռեժիմ:</translation>
 <translation id="6760548828952594090">Քարտը չհաջողվեց պահել ձեր Google հաշվում։ Փոխարենը այն պահվել է Chrome-ում՝ այս սարքում։</translation>
 <translation id="6766558780547452153">Խոհարարություն և բաղադրատոմսեր</translation>
@@ -3224,7 +3226,6 @@
 <translation id="719464814642662924">Visa</translation>
 <translation id="7195852673246414183">Այս կարգավորումը միացնելուց հետո վերադարձեք ընթացիկ ներդիր, որպեսզի սկսեք գրել</translation>
 <translation id="7199278868241956094">Oficio</translation>
-<translation id="7201591969684833065">Ձեր ադմինիստրատորը կարող է տեսնել՝</translation>
 <translation id="7202217080450895452"><ph name="LAUNCH_INCOGNITO_FOCUSED_FRIENDLY_MATCH_TEXT" />։ Նոր ինկոգնիտո ներդիր բացելու համար սեղմեք Tab, ապա՝ Enter։</translation>
 <translation id="7203375778433816396">Դարձնել Chrome-ը համակարգի կանխադրված դիտարկիչ</translation>
 <translation id="7210863904660874423"><ph name="HOST_NAME" />-ը չի հետևում անվտանգության չափորոշիչներին:</translation>
@@ -3343,6 +3344,7 @@
 <translation id="7421067045979951561">հաղորդակարգերի մշակիչներ</translation>
 <translation id="7422347648202898039">Պիտակներ (արժեթղթերի)</translation>
 <translation id="7423283032694727565">«Կառավարել քուքիները» կոճակ․ ակտիվացրեք՝ քուքիների պարամետրերը Chrome-ի կարգավորումներում կառավարելու համար</translation>
+<translation id="742435751935045381">Տեղադրված հավելվածներ և ընդլայնումներ ձեր աշխատանքային պրոֆիլում</translation>
 <translation id="7424421098814895617">Ընտրվել է հասցեի ջնջման տարբերակը</translation>
 <translation id="7425037327577270384">Օգնիր ինձ գրել</translation>
 <translation id="7425878584435172632">Կերպարվեստ և դիզայն</translation>
@@ -3376,6 +3378,7 @@
 <translation id="7481312909269577407">Forward</translation>
 <translation id="7481603210197454575">Envelope Italian</translation>
 <translation id="7483482939016730822">Դպրոցական պարագաներ և դասարանային կահավորանք</translation>
+<translation id="7483863401933039889"><ph name="CHROME_TIP" />, սեղմեք Tab, այնուհետև՝ Enter, որպեսզի փակեք Chrome-ի խորհուրդը։</translation>
 <translation id="7485085230273446323">Բիզնես և արդյունաբերություն</translation>
 <translation id="7485870689360869515">Տվյալներ չեն գտնվել:</translation>
 <translation id="7489392576326061356">Շամպուններ և կոնդիցիոներներ</translation>
@@ -3425,7 +3428,7 @@
 <translation id="7564667064360547717">Վերնաշապիկներ և տոպեր</translation>
 <translation id="7567204685887185387">Այս սերվերը չի կարող ապացուցել, որ <ph name="DOMAIN" /> է: Դրա անվտանգության վկայականը, հավանաբար, թողարկվել է խարդախաբար: Պատճառը կարող է լինել սխալ կազմաձևումը կամ կապակցման խափանումը հարձակվողի կողմից:</translation>
 <translation id="7568616151991626879">Google Chrome-ը փորձում է լրացնել ձեր գաղտնաբառը <ph name="APP_NAME" /> հավելվածում։</translation>
-<translation id="7569072768465750771">{COUNT,plural, =0{Ոչ մի}=1{1 ներդիր այս սարքում}one{# ներդիր այս սարքում}other{# ներդիր այս սարքում}}</translation>
+<translation id="7569072768465750771">{COUNT,plural, =0{Ներդիրներ չկան}=1{1 ներդիր այս սարքում}one{# ներդիր այս սարքում}other{# ներդիր այս սարքում}}</translation>
 <translation id="7569490014721427265">Գոլֆ</translation>
 <translation id="7569952961197462199">Հեռացնե՞լ վարկային քարտը Chrome-ից:</translation>
 <translation id="7569983096843329377">Սև</translation>
@@ -3889,6 +3892,7 @@
 Լրացուցիչ տեղեկություններ՝
 <ph name="DEBUG_INFO" /></translation>
 <translation id="8416874502399604126">Տրվել է խոսափողն օգտագործելու մեկանգամյա թույլտվություն</translation>
+<translation id="8421158157346464398">Աշխատանքային պրոֆիլի մասին տեղեկություններ (օր․՝ ձեր աշխատանքային պրոֆիլի օգտանունը)</translation>
 <translation id="8422228580902424274">Կայքում, որը փորձում եք այցելել, հաքերները կարող են խաբեությամբ ստիպել ձեզ վնասաբեր ծրագրեր տեղադրել կամ բացահայտել ձեր տեղեկությունները, այդ թվում՝ գաղտնաբառը, հեռախոսահամարը կամ վարկային քարտի համարը։</translation>
 <translation id="8424582179843326029"><ph name="FIRST_LABEL" /> <ph name="SECOND_LABEL" /> <ph name="THIRD_LABEL" /></translation>
 <translation id="8425213833346101688">Փոխել</translation>
@@ -4253,9 +4257,9 @@
 <translation id="9155646082713385498">Ամսագրեր</translation>
 <translation id="9157595877708044936">Տեղակայում…</translation>
 <translation id="9161794544616754735">{0,plural, =1{<ph name="FILE_NAME" /> ֆայլը պարունակում է զգայուն բովանդակություն}one{<ph name="FILE_COUNT" /> ֆայլ պարունակում է զգայուն բովանդակություն}other{<ph name="FILE_COUNT" /> ֆայլ պարունակում է զգայուն բովանդակություն}}</translation>
-<translation id="9164742147345933553">os://flags</translation>
 <translation id="9165305804774426672">Ձեր այցելած կայքերը կարող են որոշել ձեր նախասիրությունները՝ հիմնվելով կայքում ձեր գործողությունների վրա։ Օրինակ, եթե դուք այցելում եք կայք, որում վաճառվում են երկար տարածությունների վազքի մարզակոշիկներ, այդ կայքը կարող է որոշել, որ դուք հետաքրքրված եք մարաթոններով։</translation>
 <translation id="9166851138617700776">Իմանալ ավելին կայքերի կողմից առաջարկվող գովազդների և գովազդի արդյունավետության գնահատման մասին</translation>
+<translation id="9167054383925257837">Դիտարկիչի և սարքի օպերացիոն համակարգի մասին տեղեկություններ (օրինակ՝ դիտարկիչի և օպերացիոն համակարգի տարբերակները)</translation>
 <translation id="9167594211215946097">Ստանալ ձեր տպիչների ուղիղ հասանելիություն</translation>
 <translation id="9168814207360376865">Թույլ տալ կայքերին ստուգել՝ արդյոք պահված վճարման եղանակներ ունեք</translation>
 <translation id="9169664750068251925">Միշտ արգելափակել այս կայքում</translation>

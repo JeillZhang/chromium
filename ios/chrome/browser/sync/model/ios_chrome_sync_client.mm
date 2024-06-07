@@ -25,13 +25,16 @@
 #import "components/password_manager/core/browser/password_store/password_store_interface.h"
 #import "components/password_manager/core/browser/sharing/password_receiver_service.h"
 #import "components/password_manager/core/browser/sharing/password_sender_service.h"
+#import "components/plus_addresses/settings/plus_address_setting_service.h"
 #import "components/plus_addresses/webdata/plus_address_webdata_service.h"
 #import "components/reading_list/core/dual_reading_list_model.h"
 #import "components/reading_list/core/reading_list_model.h"
+#import "components/saved_tab_groups/tab_group_sync_service.h"
 #import "components/supervised_user/core/browser/supervised_user_settings_service.h"
 #import "components/sync/base/features.h"
 #import "components/sync/base/report_unrecoverable_error.h"
 #import "components/sync/base/sync_util.h"
+#import "components/sync/model/forwarding_model_type_controller_delegate.h"
 #import "components/sync/service/sync_api_component_factory.h"
 #import "components/sync/service/sync_service.h"
 #import "components/sync/service/trusted_vault_synthetic_field_trial.h"
@@ -51,10 +54,13 @@
 #import "ios/chrome/browser/passwords/model/ios_chrome_password_receiver_service_factory.h"
 #import "ios/chrome/browser/passwords/model/ios_chrome_password_sender_service_factory.h"
 #import "ios/chrome/browser/passwords/model/ios_chrome_profile_password_store_factory.h"
+#import "ios/chrome/browser/plus_addresses/model/plus_address_setting_service_factory.h"
 #import "ios/chrome/browser/power_bookmarks/model/power_bookmark_service_factory.h"
 #import "ios/chrome/browser/reading_list/model/reading_list_model_factory.h"
+#import "ios/chrome/browser/saved_tab_groups/model/tab_group_sync_service_factory.h"
 #import "ios/chrome/browser/shared/model/browser_state/chrome_browser_state.h"
 #import "ios/chrome/browser/shared/model/prefs/pref_names.h"
+#import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/signin/model/chrome_account_manager_service_factory.h"
 #import "ios/chrome/browser/signin/model/identity_manager_factory.h"
 #import "ios/chrome/browser/supervised_user/model/supervised_user_settings_service_factory.h"
@@ -121,6 +127,7 @@ IOSChromeSyncClient::IOSChromeSyncClient(ChromeBrowserState* browser_state)
           account_bookmark_sync_service,
           PowerBookmarkServiceFactory::GetForBrowserState(browser_state_),
           supervised_user_settings_service,
+          PlusAddressSettingServiceFactory::GetForBrowserState(browser_state_),
           ios::WebDataServiceFactory::GetPlusAddressWebDataForBrowserState(
               browser_state_, ServiceAccessType::IMPLICIT_ACCESS),
           /*TODO(crbug.com/330201909) implement for iOS
@@ -223,9 +230,23 @@ IOSChromeSyncClient::GetPasswordSenderService() {
 syncer::ModelTypeController::TypeVector
 IOSChromeSyncClient::CreateModelTypeControllers(
     syncer::SyncService* sync_service) {
-  // The iOS port does not have any platform-specific datatypes.
-  return component_factory_->CreateCommonModelTypeControllers(
-      /*disabled_types=*/{}, sync_service);
+  syncer::ModelTypeController::TypeVector controllers =
+      component_factory_->CreateCommonModelTypeControllers(
+          /*disabled_types=*/{}, sync_service);
+
+  if (IsTabGroupSyncEnabled()) {
+    // TODO(crbug.com/344893270): Move this controller to
+    // CreateCommonModelTypeControllers().
+    controllers.push_back(std::make_unique<syncer::ModelTypeController>(
+        syncer::SAVED_TAB_GROUP, /*delegate_for_full_sync_mode=*/
+        std::make_unique<syncer::ForwardingModelTypeControllerDelegate>(
+            GetControllerDelegateForModelType(syncer::SAVED_TAB_GROUP).get()),
+        /*delegate_for_transport_mode=*/
+        std::make_unique<syncer::ForwardingModelTypeControllerDelegate>(
+            GetControllerDelegateForModelType(syncer::SAVED_TAB_GROUP).get())));
+  }
+
+  return controllers;
 }
 
 syncer::SyncInvalidationsService*
@@ -256,6 +277,14 @@ IOSChromeSyncClient::GetControllerDelegateForModelType(syncer::ModelType type) {
     case syncer::WEBAUTHN_CREDENTIAL:
       return IOSPasskeyModelFactory::GetForBrowserState(browser_state_)
           ->GetModelTypeControllerDelegate();
+    case syncer::SAVED_TAB_GROUP: {
+      if (IsTabGroupSyncEnabled()) {
+        return tab_groups::TabGroupSyncServiceFactory::GetForBrowserState(
+                   browser_state_)
+            ->GetSavedTabGroupControllerDelegate();
+      }
+      NOTREACHED_NORETURN();
+    }
 
     // We don't exercise this function for certain datatypes, because their
     // controllers get the delegate elsewhere.

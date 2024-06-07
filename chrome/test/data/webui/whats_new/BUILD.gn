@@ -9,12 +9,15 @@ assert(!is_android)
 build_webui_tests("build") {
   files = [
     "whats_new_app_test.ts",
-    "test_with_command_3.ts",
+    "test_whats_new_browser_proxy.ts",
+    "test_with_legacy_command_3.ts",
+    "test_with_command_4.ts",
   ]
 
   static_files = [
     "test.html",
-    "test_with_command_3.html",
+    "test_with_legacy_command_3.html",
+    "test_with_command_4.html",
   ]
 
   ts_path_mappings =
@@ -24,5 +27,6 @@ build_webui_tests("build") {
   ts_deps = [
     "//chrome/browser/resources/whats_new:build_ts",
     "//ui/webui/resources/js:build_ts",
+    "//ui/webui/resources/mojo:build_ts",
   ]
 }

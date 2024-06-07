@@ -29,7 +29,6 @@
 #include "third_party/blink/renderer/platform/graphics/bitmap_image.h"
 #include "third_party/blink/renderer/platform/graphics/unaccelerated_static_bitmap_image.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
-#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/testing/paint_test_configurations.h"
 #include "third_party/blink/renderer/platform/testing/task_environment.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
@@ -245,7 +244,7 @@ class ImagePaintTimingDetectorTest : public testing::Test,
 
   void SetTransparentPlaceholderImageAndPaint(const char* id) {
     Element* element = GetDocument().getElementById(AtomicString(id));
-    scoped_refptr<BitmapImage> transparent_image =
+    scoped_refptr<Image> transparent_image =
         BitmapImage::MaybeCreateTransparentPlaceholderImage(
             url_test_helpers::ToKURL(TRANSPARENT_PLACEHOLDER_IMAGE));
     DCHECK(transparent_image);
@@ -306,9 +305,8 @@ class ImagePaintTimingDetectorTest : public testing::Test,
     // a small amount of memory for the image (0.1bpp should exceed the LCP
     // entropy threshold).
     int bytes = (width * height / 80) + 1;
-    Vector<char> img_data(bytes);
     scoped_refptr<SharedBuffer> shared_buffer =
-        SharedBuffer::AdoptVector(img_data);
+        SharedBuffer::Create(Vector<char>(bytes));
     original_image_data->SetData(shared_buffer, /*all_data_received=*/true);
     ImageResourceContent* original_image_content =
         ImageResourceContent::CreateLoaded(original_image_data.get());

@@ -32,7 +32,6 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 
 import org.chromium.base.library_loader.LibraryLoader;
-import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Criteria;
@@ -63,7 +62,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /** Tests for CustomTabsConnection. */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@Batch(Batch.PER_CLASS)
+// TODO(crbug.com/344898996): Failing when batched, batch this again.
 public class CustomTabsConnectionTest {
     private CustomTabsConnection mCustomTabsConnection;
     private static final String URL = "http://www.google.com";
@@ -85,6 +84,7 @@ public class CustomTabsConnectionTest {
         CustomTabsTestUtils.cleanupSessions(mCustomTabsConnection);
         TestThreadUtils.runOnUiThreadBlocking(
                 () -> WarmupManager.getInstance().destroySpareWebContents());
+        TestThreadUtils.runOnUiThreadBlocking(() -> WarmupManager.getInstance().destroySpareTab());
     }
 
     /**
@@ -128,18 +128,7 @@ public class CustomTabsConnectionTest {
     @Restriction(RESTRICTION_TYPE_NON_LOW_END_DEVICE)
     public void testCreateSpareRenderer() throws Exception {
         CustomTabsTestUtils.warmUpAndWait();
-        // On UI thread because:
-        // 1. takeSpareWebContents needs to be called from the UI thread.
-        // 2. warmup() is non-blocking and posts tasks to the UI thread, it ensures proper ordering.
-        TestThreadUtils.runOnUiThreadBlocking(
-                () -> {
-                    WarmupManager warmupManager = WarmupManager.getInstance();
-                    Assert.assertTrue(warmupManager.hasSpareWebContents());
-                    WebContents webContents = warmupManager.takeSpareWebContents(false, false);
-                    Assert.assertNotNull(webContents);
-                    Assert.assertFalse(warmupManager.hasSpareWebContents());
-                    webContents.destroy();
-                });
+        TestThreadUtils.runOnUiThreadBlocking(this::assertSpareWebContentsNotNullAndDestroy);
     }
 
     @Test
@@ -471,7 +460,9 @@ public class CustomTabsConnectionTest {
                 () ->
                         Criteria.checkThat(
                                 hiddenTab.getWebContents().getTitle(),
-                                Matchers.is("Activity test page")));
+                                Matchers.is("Activity test page")),
+                20000,
+                50);
         TestThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     JsHelper.evaluateJavaScriptForTests(
@@ -502,7 +493,9 @@ public class CustomTabsConnectionTest {
                 () ->
                         Criteria.checkThat(
                                 hiddenTab2.getWebContents().getTitle(),
-                                Matchers.is("Activity test page")));
+                                Matchers.is("Activity test page")),
+                20000,
+                50);
         TestThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     JsHelper.evaluateJavaScriptForTests(
@@ -561,9 +554,17 @@ public class CustomTabsConnectionTest {
     }
 
     private void assertSpareWebContentsNotNullAndDestroy() {
-        WebContents webContents = WarmupManager.getInstance().takeSpareWebContents(false, false);
-        Assert.assertNotNull(webContents);
-        webContents.destroy();
+        if (ChromeFeatureList.isEnabled(ChromeFeatureList.CCT_PREWARM_TAB)) {
+            Assert.assertTrue(
+                    WarmupManager.getInstance()
+                            .hasSpareTab(ProfileManager.getLastUsedRegularProfile()));
+            WarmupManager.getInstance().destroySpareTab();
+        } else {
+            WebContents webContents =
+                    WarmupManager.getInstance().takeSpareWebContents(false, false);
+            Assert.assertNotNull(webContents);
+            webContents.destroy();
+        }
     }
 
     /**
@@ -774,11 +775,29 @@ public class CustomTabsConnectionTest {
         Assert.assertTrue(mCustomTabsConnection.newSession(token));
         mCustomTabsConnection.setShouldSpeculateLoadOnCellularForSession(token, true);
         CustomTabsTestUtils.warmUpAndWait();
-        TestThreadUtils.runOnUiThreadBlocking(
-                () -> Assert.assertTrue(WarmupManager.getInstance().hasSpareWebContents()));
+        if (ChromeFeatureList.isEnabled(ChromeFeatureList.CCT_PREWARM_TAB)) {
+            TestThreadUtils.runOnUiThreadBlocking(
+                    () ->
+                            Assert.assertTrue(
+                                    WarmupManager.getInstance()
+                                            .hasSpareTab(
+                                                    ProfileManager.getLastUsedRegularProfile())));
+        } else {
+            TestThreadUtils.runOnUiThreadBlocking(
+                    () -> Assert.assertTrue(WarmupManager.getInstance().hasSpareWebContents()));
+        }
         Assert.assertTrue(mCustomTabsConnection.mayLaunchUrl(token, Uri.parse(URL), null, null));
-        TestThreadUtils.runOnUiThreadBlocking(
-                () -> Assert.assertFalse(WarmupManager.getInstance().hasSpareWebContents()));
+        if (ChromeFeatureList.isEnabled(ChromeFeatureList.CCT_PREWARM_TAB)) {
+            TestThreadUtils.runOnUiThreadBlocking(
+                    () ->
+                            Assert.assertFalse(
+                                    WarmupManager.getInstance()
+                                            .hasSpareTab(
+                                                    ProfileManager.getLastUsedRegularProfile())));
+        } else {
+            TestThreadUtils.runOnUiThreadBlocking(
+                    () -> Assert.assertFalse(WarmupManager.getInstance().hasSpareWebContents()));
+        }
     }
 
     @Test
@@ -808,7 +827,7 @@ public class CustomTabsConnectionTest {
 
         // Both sessions should be notified.
         Assert.assertTrue(mCustomTabsConnection.warmup(0));
-        warmupWaiter.waitForCallback(0, 2);
+        warmupWaiter.waitForCallback(0, 2, 20, TimeUnit.SECONDS);
 
         // Notifications should be sent even if warmup() has already been called.
         Assert.assertTrue(mCustomTabsConnection.warmup(0));

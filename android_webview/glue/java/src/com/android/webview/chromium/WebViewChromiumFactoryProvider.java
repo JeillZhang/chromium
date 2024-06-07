@@ -38,6 +38,7 @@ import org.chromium.android_webview.AwContentsStatics;
 import org.chromium.android_webview.AwSettings;
 import org.chromium.android_webview.BrowserSafeModeActionList;
 import org.chromium.android_webview.ProductConfig;
+import org.chromium.android_webview.R;
 import org.chromium.android_webview.WebViewChromiumRunQueue;
 import org.chromium.android_webview.common.AwSwitches;
 import org.chromium.android_webview.common.CommandLineUtil;
@@ -57,6 +58,7 @@ import org.chromium.base.StrictModeContext;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.metrics.ScopedSysTraceEvent;
+import org.chromium.base.version_info.Channel;
 import org.chromium.base.version_info.VersionConstants;
 import org.chromium.build.BuildConfig;
 import org.chromium.build.NativeLibraries;
@@ -276,7 +278,7 @@ public class WebViewChromiumFactoryProvider implements WebViewFactoryProvider {
         mWebViewDelegate.addWebViewAssetPath(ctx);
     }
 
-    @SuppressWarnings("NoContextGetApplicationContext")
+    @SuppressWarnings({"NoContextGetApplicationContext", "DiscouragedApi"})
     private void initialize(WebViewDelegate webViewDelegate) {
         mInitInfo.mStartTime = SystemClock.uptimeMillis();
         try (ScopedSysTraceEvent e1 =
@@ -318,13 +320,31 @@ public class WebViewChromiumFactoryProvider implements WebViewFactoryProvider {
             boolean useWebViewContext =
                     CommandLine.getInstance()
                             .hasSwitch(AwSwitches.WEBVIEW_USE_SEPARATE_RESOURCE_CONTEXT);
+            if (VersionConstants.CHANNEL == Channel.CANARY
+                    && Build.VERSION.SDK_INT <= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                useWebViewContext = true;
+            }
             if (useWebViewContext) {
                 try {
                     Context override =
                             ctx.createPackageContext(
                                     packageInfo.packageName,
                                     Context.CONTEXT_INCLUDE_CODE | Context.CONTEXT_IGNORE_SECURITY);
-                    ClassLoaderContextWrapperFactory.setWebViewResourceOverrideContext(override);
+                    // Don't enable for standalone WebView. Check package id of the theme resource
+                    // to determine.
+                    // TODO(crbug.com/343756896): Make this work for standalone too.
+                    if ((override.getResources()
+                                            .getIdentifier(
+                                                    "WebViewBaseTheme",
+                                                    "style",
+                                                    packageInfo.packageName)
+                                    & 0xff000000)
+                            == 0x7f000000) {
+                        ClassLoaderContextWrapperFactory.setWebViewResourceOverrideContext(
+                                override, R.style.WebViewBaseTheme);
+                    } else {
+                        Log.w(TAG, "Attempted to use WebView's context in standalone WebView.");
+                    }
                 } catch (PackageManager.NameNotFoundException e) {
                     Log.e(TAG, "Could not get resource override context.");
                 }

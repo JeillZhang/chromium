@@ -47,9 +47,9 @@ void FadeInWidgetToOverview(views::Widget* widget,
                             bool observe);
 
 // Makes `widget` not be able to process events. This should only be used if
-// `widget`'s lifetime extends beyond an overview session's lifetime for
-// animation purposes, as `widget` will no longer be interactable.
-void PrepareWidgetForOverviewShutdown(views::Widget* widget);
+// `widget` is shutting down with animation, as `widget` will no longer be
+// interactable during the process.
+void PrepareWidgetForShutdownAnimation(views::Widget* widget);
 
 // Fades `widget` to opacity zero with animation settings depending on
 // `animation_type`. Used by several classes which need to be destroyed on
@@ -65,6 +65,8 @@ void ImmediatelyCloseWidgetOnExit(std::unique_ptr<views::Widget> widget);
 // bounds are a union of all regular (normal and transient) windows in the
 // window's transient hierarchy.
 ASH_EXPORT gfx::RectF GetUnionScreenBoundsForWindow(aura::Window* window);
+
+OverviewItemFillMode GetOverviewItemFillMode(const gfx::Size& size);
 
 // Maximize the window if it is snapped without animation.
 void MaximizeIfSnapped(aura::Window* window);

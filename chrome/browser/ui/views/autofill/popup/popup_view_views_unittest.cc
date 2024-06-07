@@ -36,9 +36,9 @@
 #include "components/autofill/core/browser/ui/suggestion_type.h"
 #include "components/autofill/core/common/aliases.h"
 #include "components/feature_engagement/public/feature_constants.h"
+#include "components/input/native_web_keyboard_event.h"
 #include "components/strings/grit/components_strings.h"
 #include "content/public/browser/web_contents.h"
-#include "content/public/common/input/native_web_keyboard_event.h"
 #include "content/public/test/test_renderer_host.h"
 #include "content/public/test/web_contents_tester.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -169,14 +169,17 @@ class PopupViewViewsTest : public ChromeViewsTestBase {
 
   void CreateAndShowView(
       std::optional<views::Widget::InitParams> widget_params = std::nullopt,
-      PopupViewSearchBarConfig search_bar_config = {}) {
+      std::optional<AutofillPopupView::SearchBarConfig> search_bar_config =
+          std::nullopt) {
     view_ = nullptr;
     generator_.reset();
 
     widget_ = CreateTestWidget(
-        widget_params ? std::move(*widget_params)
-                      : CreateParamsForTestWidget(
-                            views::Widget::InitParams::Type::TYPE_POPUP));
+        widget_params
+            ? std::move(*widget_params)
+            : CreateParamsForTestWidget(
+                  views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET,
+                  views::Widget::InitParams::Type::TYPE_POPUP));
     generator_ = std::make_unique<ui::test::EventGenerator>(
         GetRootWindow(widget_.get()));
     view_ = new PopupViewViews(controller().GetWeakPtr(),
@@ -187,7 +190,8 @@ class PopupViewViewsTest : public ChromeViewsTestBase {
   void CreateAndShowView(
       const std::vector<SuggestionType>& ids,
       std::optional<views::Widget::InitParams> widget_params = std::nullopt,
-      PopupViewSearchBarConfig search_bar_config = {}) {
+      std::optional<AutofillPopupView::SearchBarConfig> search_bar_config =
+          std::nullopt) {
     controller().set_suggestions(ids);
     CreateAndShowView(std::move(widget_params), std::move(search_bar_config));
   }
@@ -243,7 +247,7 @@ class PopupViewViewsTest : public ChromeViewsTestBase {
       modifiers |= blink::WebInputEvent::Modifiers::kAltKey;
     }
 
-    content::NativeWebKeyboardEvent event(
+    input::NativeWebKeyboardEvent event(
         blink::WebKeyboardEvent::Type::kRawKeyDown, modifiers,
         ui::EventTimeForNow());
     event.windows_key_code = windows_key_code;
@@ -1021,9 +1025,9 @@ TEST_F(PopupViewViewsTest, VoiceOverTest) {
   const std::u16string voice_over_value = u"Password for user@gmail.com";
   // Create a realistic suggestion for a password.
   Suggestion suggestion(u"user@gmail.com");
-  suggestion.labels = {{Suggestion::Text(u"example.com")}};
   suggestion.voice_over = voice_over_value;
-  suggestion.additional_label = u"\u2022\u2022\u2022\u2022";
+  suggestion.labels = {{Suggestion::Text(u"\u2022\u2022\u2022\u2022")}};
+  suggestion.additional_label = u"example.com";
   suggestion.type = SuggestionType::kPasswordEntry;
 
   // Create autofill menu.
@@ -1052,9 +1056,7 @@ TEST_F(PopupViewViewsTest, ExpandableSuggestionA11yMessageTest) {
 
   // Verify that the accessibility layer gets the right string to read out.
   ui::AXNodeData node_data;
-  GetPopupRowViewAt(0)
-      .GetViewAccessibility()
-      .GetAccessibleNodeData(&node_data);
+  GetPopupRowViewAt(0).GetViewAccessibility().GetAccessibleNodeData(&node_data);
   EXPECT_EQ(node_data.GetString16Attribute(ax::mojom::StringAttribute::kName),
             base::JoinString(
                 {address_line,
@@ -1124,7 +1126,9 @@ TEST_F(PopupViewViewsTest, ChildWidgetRetriggersMouseMovesToParent) {
 TEST_F(PopupViewViewsTest, SubViewIsClosedWithParent) {
   controller().set_suggestions({SuggestionType::kAddressEntry});
   PopupViewViews view(controller().GetWeakPtr());
-  views::Widget* widget = CreateTestWidget().release();
+  views::Widget* widget =
+      CreateTestWidget(views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET)
+          .release();
   ShowView(&view, *widget);
 
   auto [sub_controller, sub_view] = OpenSubView(view);
@@ -1196,7 +1200,8 @@ TEST_F(PopupViewViewsDeathTest, OpenSubPopupWithNoChildrenCheckCrash) {
       Suggestion(u"Suggestion #1"),
       Suggestion(u"Suggestion #2"),
   });
-  std::unique_ptr<views::Widget> widget = CreateTestWidget();
+  std::unique_ptr<views::Widget> widget =
+      CreateTestWidget(views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
   std::unique_ptr<PopupViewViews> view =
       std::make_unique<PopupViewViews>(controller.GetWeakPtr());
   raw_ptr<PopupViewViews> view_ptr = widget->SetContentsView(std::move(view));
@@ -1687,7 +1692,9 @@ TEST_F(PopupViewViewsTest, SearchBar_InputGetsFocusOnShow) {
       CreateParamsForTestWidget(views::Widget::InitParams::Type::TYPE_POPUP);
   widget_params.activatable = views::Widget::InitParams::Activatable::kYes;
   CreateAndShowView({SuggestionType::kAddressEntry}, std::move(widget_params),
-                    /*search_bar_config=*/{.enabled = true});
+                    AutofillPopupView::SearchBarConfig{
+                        .placeholder = u"Placeholder",
+                        .no_results_message = u"No suggestions found"});
 
   views::View* focused_field = widget().GetFocusManager()->GetFocusedView();
   ASSERT_NE(focused_field, nullptr);
@@ -1700,7 +1707,9 @@ TEST_F(PopupViewViewsTest, SearchBar_HidesPopupOnFocusLost) {
       CreateParamsForTestWidget(views::Widget::InitParams::Type::TYPE_POPUP);
   widget_params.activatable = views::Widget::InitParams::Activatable::kYes;
   CreateAndShowView({SuggestionType::kAddressEntry}, std::move(widget_params),
-                    /*search_bar_config=*/{.enabled = true});
+                    AutofillPopupView::SearchBarConfig{
+                        .placeholder = u"Placeholder",
+                        .no_results_message = u"No suggestions found"});
 
   views::View* focused_field = widget().GetFocusManager()->GetFocusedView();
   ASSERT_NE(focused_field, nullptr);
@@ -1715,7 +1724,9 @@ TEST_F(PopupViewViewsTest, SearchBar_HidesPopupOnFocusLost) {
 TEST_F(PopupViewViewsTest, SearchBar_QueryIsSetAsFilterToController) {
   CreateAndShowView({SuggestionType::kAddressEntry},
                     CreateParamsForTestWidget(),
-                    /*search_bar_config=*/{.enabled = true});
+                    AutofillPopupView::SearchBarConfig{
+                        .placeholder = u"Placeholder",
+                        .no_results_message = u"No suggestions found"});
 
   MockFunction<void()> check;
   {
@@ -1742,11 +1753,13 @@ TEST_F(PopupViewViewsTest, SearchBar_QueryIsSetAsFilterToController) {
 TEST_F(PopupViewViewsTest, SearchBar_PressedKeysPassedToController) {
   CreateAndShowView({SuggestionType::kAddressEntry},
                     CreateParamsForTestWidget(),
-                    /*search_bar_config=*/{.enabled = true});
+                    AutofillPopupView::SearchBarConfig{
+                        .placeholder = u"Placeholder",
+                        .no_results_message = u"No suggestions found"});
 
-  EXPECT_CALL(controller(), HandleKeyPressEvent(
-                                Field(&content::NativeWebKeyboardEvent::dom_key,
-                                      ui::DomKey::Key::ARROW_DOWN)));
+  EXPECT_CALL(controller(),
+              HandleKeyPressEvent(Field(&input::NativeWebKeyboardEvent::dom_key,
+                                        ui::DomKey::Key::ARROW_DOWN)));
 
   generator().PressAndReleaseKey(ui::VKEY_DOWN);
 }

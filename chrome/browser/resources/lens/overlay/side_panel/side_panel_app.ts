@@ -52,6 +52,11 @@ export class LensSidePanelAppElement extends PolymerElement {
         value: false,
         reflectToAttribute: true,
       },
+      /* Used to decide whether to show back arrow onFocusOut in searchbox. */
+      wasBackArrowAvailable: {
+        type: Boolean,
+        value: false,
+      },
       isLoadingResults: {
         type: Boolean,
         value: true,
@@ -61,6 +66,11 @@ export class LensSidePanelAppElement extends PolymerElement {
         type: String,
         value: loadTimeData.getString('resultsLoadingUrl'),
         readOnly: true,
+      },
+      darkMode: {
+        type: Boolean,
+        value: () => loadTimeData.getBoolean('darkMode'),
+        reflectToAttribute: true,
       },
     };
   }
@@ -77,13 +87,24 @@ export class LensSidePanelAppElement extends PolymerElement {
 
   private browserProxy: SidePanelBrowserProxy =
       SidePanelBrowserProxyImpl.getInstance();
+  private darkMode: boolean;
   private listenerIds: number[];
   private pageHandler: LensSidePanelPageHandlerInterface;
+  private wasBackArrowAvailable: boolean;
 
   constructor() {
     super();
     this.pageHandler = SidePanelBrowserProxyImpl.getInstance().handler;
     ColorChangeUpdater.forDocument().start();
+  }
+
+  override ready() {
+    super.ready();
+
+    this.shadowRoot!.querySelector<HTMLElement>('cr-realbox')
+        ?.addEventListener('focusin', () => this.onSearchboxFocusIn_());
+    this.shadowRoot!.querySelector<HTMLElement>('cr-realbox')
+        ?.addEventListener('focusout', () => this.onSearchboxFocusOut_());
   }
 
   override connectedCallback() {
@@ -132,10 +153,24 @@ export class LensSidePanelAppElement extends PolymerElement {
     // to force a reload. We cannot get the currently displayed URL from the
     // frame because of cross-origin restrictions.
     this.$.results.src = url.href;
+    // Remove focus from the input when results are loaded. Does not have
+    // any effect if input is not focused.
+    this.shadowRoot!.querySelector<HTMLElement>('cr-realbox')
+        ?.shadowRoot!.querySelector<HTMLElement>('input')
+        ?.blur();
   }
 
   private setBackArrowVisible(visible: boolean) {
     this.isBackArrowVisible = visible;
+    this.wasBackArrowAvailable = visible;
+  }
+
+  private onSearchboxFocusIn_() {
+    this.isBackArrowVisible = false;
+  }
+
+  private onSearchboxFocusOut_() {
+    this.isBackArrowVisible = this.wasBackArrowAvailable;
   }
 }
 

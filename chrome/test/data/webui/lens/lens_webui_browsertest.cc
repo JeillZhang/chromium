@@ -8,7 +8,7 @@
 #include "chrome/browser/ui/lens/lens_overlay_controller.h"
 #include "chrome/browser/ui/lens/lens_overlay_invocation_source.h"
 #include "chrome/browser/ui/lens/lens_overlay_permission_utils.h"
-#include "chrome/browser/ui/tabs/tab_features.h"
+#include "chrome/browser/ui/tabs/public/tab_features.h"
 #include "chrome/common/webui_url_constants.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
@@ -123,16 +123,17 @@ IN_PROC_BROWSER_TEST_F(LensOverlayTest, OverlayEscapeKey) {
   RunOverlayTest("lens/overlay/overlay_escape_key_test.js", "mocha.run()");
 }
 
-IN_PROC_BROWSER_TEST_F(LensOverlayTest, OverlayFeedbackButton) {
-  RunOverlayTest("lens/overlay/overlay_feedback_button_test.js", "mocha.run()");
-}
-
-IN_PROC_BROWSER_TEST_F(LensOverlayTest, OverlayInfoButton) {
-  RunOverlayTest("lens/overlay/overlay_info_button_test.js", "mocha.run()");
+IN_PROC_BROWSER_TEST_F(LensOverlayTest, OverlayMoreOptionsButton) {
+  RunOverlayTest("lens/overlay/overlay_more_options_button_test.js",
+                 "mocha.run()");
 }
 
 IN_PROC_BROWSER_TEST_F(LensOverlayTest, OverlayScreenshot) {
   RunOverlayTest("lens/overlay/overlay_screenshot_test.js", "mocha.run()");
+}
+
+IN_PROC_BROWSER_TEST_F(LensOverlayTest, OverlayTheme) {
+  RunOverlayTest("lens/overlay/overlay_theme_test.js", "mocha.run()");
 }
 
 IN_PROC_BROWSER_TEST_F(LensOverlayTest, ManualRegionSelection) {
@@ -153,6 +154,14 @@ IN_PROC_BROWSER_TEST_F(LensOverlayTest, SelectionOverlay) {
 
 IN_PROC_BROWSER_TEST_F(LensOverlayTest, PostSelectionRenderer) {
   RunOverlayTest("lens/overlay/post_selection_renderer_test.js", "mocha.run()");
+}
+
+IN_PROC_BROWSER_TEST_F(LensOverlayTest, FindWordsInRegion) {
+  RunOverlayTest("lens/overlay/find_words_in_region_test.js", "mocha.run()");
+}
+
+IN_PROC_BROWSER_TEST_F(LensOverlayTest, CubicBezier) {
+  RunOverlayTest("lens/overlay/cubic_bezier_test.js", "mocha.run()");
 }
 
 using LensSidePanelTest = LensOverlayTest;

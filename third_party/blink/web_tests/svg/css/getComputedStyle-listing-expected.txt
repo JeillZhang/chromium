@@ -43,6 +43,7 @@ align-items: normal
 align-self: auto
 alignment-baseline: auto
 anchor-name: none
+anchor-scope: none
 animation-composition: replace
 animation-delay: 0s
 animation-direction: normal
@@ -302,6 +303,7 @@ resize: none
 right: auto
 rotate: none
 row-gap: normal
+ruby-align: space-around
 ruby-position: over
 rx: auto
 ry: auto

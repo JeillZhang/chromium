@@ -70,21 +70,21 @@ constexpr int kMigratedPart1ButNot2 = 1;
 constexpr int kMigratedPart2AndFullyDone = 2;
 
 // Encodes a protobuf instance of type
-// sync_pb::NigoriSpecifics::AutoUpgradeDebugInfo in a way that can be safely
+// sync_pb::TrustedVaultAutoUpgradeExperimentGroup in a way that can be safely
 // stored in prefs, i.e. using base64 encoding.
-std::string EncodeTrustedVaultAutoUpgradeDebugInfoToString(
-    const sync_pb::NigoriSpecifics::AutoUpgradeDebugInfo& debug_info) {
-  return base::Base64Encode(debug_info.SerializeAsString());
+std::string EncodeTrustedVaultAutoUpgradeExperimentGroupToString(
+    const sync_pb::TrustedVaultAutoUpgradeExperimentGroup& group) {
+  return base::Base64Encode(group.SerializeAsString());
 }
 
-// Does the opposite of EncodeTrustedVaultAutoUpgradeDebugInfoToString(), i.e.
-// transforms from a string representation to a protobuf instance.
-sync_pb::NigoriSpecifics::AutoUpgradeDebugInfo
-DecodeTrustedVaultAutoUpgradeDebugInfoFromString(
-    const std::string& encoded_debug_info) {
-  sync_pb::NigoriSpecifics::AutoUpgradeDebugInfo proto;
+// Does the opposite of EncodeTrustedVaultAutoUpgradeExperimentGroupToString(),
+// i.e. transforms from a string representation to a protobuf instance.
+sync_pb::TrustedVaultAutoUpgradeExperimentGroup
+DecodeTrustedVaultAutoUpgradeExperimentGroupFromString(
+    const std::string& encoded_group) {
+  sync_pb::TrustedVaultAutoUpgradeExperimentGroup proto;
   std::string serialized_proto;
-  if (!base::Base64Decode(encoded_debug_info, &serialized_proto)) {
+  if (!base::Base64Decode(encoded_group, &serialized_proto)) {
     return proto;
   }
   proto.ParseFromString(serialized_proto);
@@ -201,10 +201,10 @@ void SyncPrefs::RegisterProfilePrefs(PrefRegistrySimple* registry) {
   registry->RegisterIntegerPref(
       prefs::internal::kSyncCachedPassphraseType,
       sync_pb::NigoriSpecifics_PassphraseType_UNKNOWN);
-  // The user's AutoUpgradeDebugInfo, determined the first time the engine is
-  // successfully initialized.
+  // The user's TrustedVaultAutoUpgradeExperimentGroup, determined the first
+  // time the engine is successfully initialized.
   registry->RegisterStringPref(
-      prefs::internal::kSyncCachedTrustedVaultAutoUpgradeDebugInfo, "");
+      prefs::internal::kSyncCachedTrustedVaultAutoUpgradeExperimentGroup, "");
   // The encryption bootstrap token represents a user-entered passphrase.
   registry->RegisterStringPref(prefs::internal::kSyncEncryptionBootstrapToken,
                                std::string());
@@ -293,8 +293,10 @@ UserSelectableTypeSet SyncPrefs::GetSelectedTypesForAccount(
         type_enabled = pref_value->GetBool();
       } else if (type == UserSelectableType::kHistory ||
                  type == UserSelectableType::kTabs ||
+                 type == UserSelectableType::kSavedTabGroups ||
                  type == UserSelectableType::kSharedTabGroupData) {
-        // History, Tabs, and Shared Tab Group Data are disabled by default.
+        // History, Tabs, Saved Tab Groups and and Shared Tab Group Data are
+        // disabled by default.
         type_enabled = false;
       } else if (type == UserSelectableType::kPasswords ||
                  type == UserSelectableType::kAutofill) {
@@ -315,8 +317,12 @@ UserSelectableTypeSet SyncPrefs::GetSelectedTypesForAccount(
                  type == UserSelectableType::kReadingList) {
         type_enabled = true;
 #if !BUILDFLAG(IS_IOS)
+        // Consider kBookmarks and kReadingList off by default until
+        // `kReplaceSyncPromosWithSignInPromos` is enabled. For existing clients
+        // at the time the feature transitions from disabled to enabled, the
+        // state at the time is captured as explicit value in
+        // `MaybeMigratePrefsForSyncToSigninPart1()`.
         if (!base::FeatureList::IsEnabled(kReplaceSyncPromosWithSignInPromos)) {
-          // Consider kBookmarks and kReadingList off by default.
           type_enabled = false;
         }
 #endif
@@ -591,30 +597,29 @@ void SyncPrefs::ClearCachedPassphraseType() {
   pref_service_->ClearPref(prefs::internal::kSyncCachedPassphraseType);
 }
 
-std::optional<sync_pb::NigoriSpecifics::AutoUpgradeDebugInfo>
-SyncPrefs::GetCachedTrustedVaultAutoUpgradeDebugInfo() const {
+std::optional<sync_pb::TrustedVaultAutoUpgradeExperimentGroup>
+SyncPrefs::GetCachedTrustedVaultAutoUpgradeExperimentGroup() const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  const std::string& encoded_debug_info = pref_service_->GetString(
-      prefs::internal::kSyncCachedTrustedVaultAutoUpgradeDebugInfo);
-  if (encoded_debug_info.empty()) {
+  const std::string& encoded_group = pref_service_->GetString(
+      prefs::internal::kSyncCachedTrustedVaultAutoUpgradeExperimentGroup);
+  if (encoded_group.empty()) {
     return std::nullopt;
   }
-  return DecodeTrustedVaultAutoUpgradeDebugInfoFromString(encoded_debug_info);
+  return DecodeTrustedVaultAutoUpgradeExperimentGroupFromString(encoded_group);
 }
 
-void SyncPrefs::SetCachedTrustedVaultAutoUpgradeDebugInfo(
-    const sync_pb::NigoriSpecifics::AutoUpgradeDebugInfo&
-        auto_upgrade_debug_info) {
+void SyncPrefs::SetCachedTrustedVaultAutoUpgradeExperimentGroup(
+    const sync_pb::TrustedVaultAutoUpgradeExperimentGroup& group) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   pref_service_->SetString(
-      prefs::internal::kSyncCachedTrustedVaultAutoUpgradeDebugInfo,
-      EncodeTrustedVaultAutoUpgradeDebugInfoToString(auto_upgrade_debug_info));
+      prefs::internal::kSyncCachedTrustedVaultAutoUpgradeExperimentGroup,
+      EncodeTrustedVaultAutoUpgradeExperimentGroupToString(group));
 }
 
-void SyncPrefs::ClearCachedTrustedVaultAutoUpgradeDebugInfo() {
+void SyncPrefs::ClearCachedTrustedVaultAutoUpgradeExperimentGroup() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   pref_service_->ClearPref(
-      prefs::internal::kSyncCachedTrustedVaultAutoUpgradeDebugInfo);
+      prefs::internal::kSyncCachedTrustedVaultAutoUpgradeExperimentGroup);
 }
 
 void SyncPrefs::ClearAllEncryptionBootstrapTokens() {
@@ -693,8 +698,8 @@ const char* SyncPrefs::GetPrefNameForType(UserSelectableType type) {
       return prefs::internal::kSyncSharedTabGroupData;
     case UserSelectableType::kPayments:
       return prefs::internal::kSyncPayments;
-    case UserSelectableType::kCompare:
-      return prefs::internal::kSyncCompare;
+    case UserSelectableType::kProductComparison:
+      return prefs::internal::kSyncProductComparison;
     case UserSelectableType::kCookies:
       return prefs::internal::kSyncCookies;
   }
@@ -757,18 +762,19 @@ bool SyncPrefs::IsTypeSupportedInTransportMode(UserSelectableType type) {
     case UserSelectableType::kHistory:
     case UserSelectableType::kTabs:
       return base::FeatureList::IsEnabled(kReplaceSyncPromosWithSignInPromos);
-    case UserSelectableType::kCompare:
+    case UserSelectableType::kProductComparison:
       return base::FeatureList::IsEnabled(kReplaceSyncPromosWithSignInPromos);
     case syncer::UserSelectableType::kSharedTabGroupData:
       return base::FeatureList::IsEnabled(
           kSyncSharedTabGroupDataInTransportMode);
+    case UserSelectableType::kSavedTabGroups:
+      return base::FeatureList::IsEnabled(kReplaceSyncPromosWithSignInPromos);
     case UserSelectableType::kApps:
 #if BUILDFLAG(IS_ANDROID)
       return base::FeatureList::IsEnabled(kWebApkBackupAndRestoreBackend);
 #endif
     case UserSelectableType::kExtensions:
     case UserSelectableType::kThemes:
-    case UserSelectableType::kSavedTabGroups:
     case UserSelectableType::kCookies:
       // These types are not supported in transport mode yet.
       return false;
@@ -914,8 +920,6 @@ bool SyncPrefs::MaybeMigratePrefsForSyncToSigninPart1(
     case SyncAccountState::kSignedInNotSyncing: {
       pref_service_->SetInteger(kSyncToSigninMigrationState,
                                 kMigratedPart1ButNot2);
-      // For pre-existing signed-in users, some state needs to be migrated from
-      // the global to the account-scoped settings.
       CHECK(gaia_id_hash.IsValid());
       ScopedDictPrefUpdate update_selected_types_dict(
           pref_service_, prefs::internal::kSelectedTypesPerAccount);
@@ -927,16 +931,36 @@ bool SyncPrefs::MaybeMigratePrefsForSyncToSigninPart1(
       account_settings->Set(
           GetPrefNameForType(UserSelectableType::kPreferences), false);
 
-#if BUILDFLAG(IS_IOS)
       // Bookmarks and reading list remain enabled only if the user previously
       // explicitly opted in.
+#if BUILDFLAG(IS_IOS)
+      // On iOS, the opt-in state is controlled by a dedicated pref.
       const bool was_opted_in = pref_service_->GetBoolean(
           prefs::internal::kBookmarksAndReadingListAccountStorageOptIn);
       account_settings->Set(GetPrefNameForType(UserSelectableType::kBookmarks),
                             was_opted_in);
       account_settings->Set(
           GetPrefNameForType(UserSelectableType::kReadingList), was_opted_in);
+#else   // BUILDFLAG(IS_IOS)
+      // Outside iOS, the type's opt-in state is represented in the regular
+      // account-keyed prefs. However, the default value for new sign-ins
+      // changes with `kReplaceSyncPromosWithSignInPromos`, so it is important
+      // to grab a snapshot now during migration.
+      for (UserSelectableType type :
+           {UserSelectableType::kBookmarks, UserSelectableType::kReadingList}) {
+        const char* pref_name = GetPrefNameForType(type);
+        DCHECK(pref_name);
+
+        const base::Value* value = account_settings->Find(pref_name);
+        const bool is_type_on = value && value->is_bool() && value->GetBool();
+
+        // Setting the value explicitly is important to convert absence to
+        // false, so it doesn't use the default, which is enabled after
+        // `kReplaceSyncPromosWithSignInPromos`.
+        account_settings->Set(pref_name, is_type_on);
+      }
 #endif  // BUILDFLAG(IS_IOS)
+
       return true;
     }
   }

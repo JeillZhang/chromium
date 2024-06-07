@@ -110,7 +110,7 @@
 #include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/browser_ui_prefs.h"
 #include "chrome/browser/ui/browser_window.h"
-#include "chrome/browser/ui/browser_window_features.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/chrome_pages.h"
 #include "chrome/browser/ui/chrome_select_file_policy.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_manager.h"
@@ -139,6 +139,7 @@
 #include "chrome/browser/ui/tabs/tab_group_deletion_dialog_controller.h"
 #include "chrome/browser/ui/tabs/tab_group_model.h"
 #include "chrome/browser/ui/tabs/tab_menu_model.h"
+#include "chrome/browser/ui/tabs/tab_model.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/tabs/tab_utils.h"
 #include "chrome/browser/ui/ui_features.h"
@@ -293,7 +294,6 @@
 #endif
 
 using base::UserMetricsAction;
-using content::NativeWebKeyboardEvent;
 using content::NavigationController;
 using content::NavigationEntry;
 using content::OpenURLParams;
@@ -303,6 +303,7 @@ using content::SiteInstance;
 using content::WebContents;
 using custom_handlers::ProtocolHandler;
 using extensions::Extension;
+using input::NativeWebKeyboardEvent;
 using ui::WebDialogDelegate;
 using web_modal::WebContentsModalDialogManager;
 
@@ -1069,6 +1070,14 @@ const SessionID& Browser::GetSessionID() {
   return session_id_;
 }
 
+tabs::TabInterface* Browser::GetActiveTabInterface() {
+  return tab_strip_model_->GetActiveTab();
+}
+
+BrowserWindowFeatures& Browser::GetFeatures() {
+  return *features_.get();
+}
+
 void Browser::OnWindowClosing() {
   if (const auto closing_status = HandleBeforeClose();
       closing_status != BrowserClosingStatus::kPermitted) {
@@ -1611,7 +1620,7 @@ void Browser::ExitPictureInPicture() {
   PictureInPictureWindowManager::GetInstance()->ExitPictureInPicture();
 }
 
-bool Browser::IsBackForwardCacheSupported() {
+bool Browser::IsBackForwardCacheSupported(content::WebContents& web_contents) {
   return true;
 }
 

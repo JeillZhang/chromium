@@ -16,6 +16,7 @@
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/base/resource/resource_bundle.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/view_class_properties.h"
 
 ManagePasswordsIconViews::ManagePasswordsIconViews(
@@ -37,13 +38,14 @@ ManagePasswordsIconViews::ManagePasswordsIconViews(
 ManagePasswordsIconViews::~ManagePasswordsIconViews() = default;
 
 void ManagePasswordsIconViews::SetState(password_manager::ui::State state) {
-  if (state_ == state)
+  if (state_ == state) {
     return;
+  }
   // If there is an opened bubble for the current icon it should go away.
   PasswordBubbleViewBase::CloseCurrentBubble();
   state_ = state;
   UpdateUiForState();
-  SetAccessibleName(GetTextForTooltipAndAccessibleName());
+  GetViewAccessibility().SetName(GetTextForTooltipAndAccessibleName());
 }
 
 void ManagePasswordsIconViews::UpdateUiForState() {
@@ -65,8 +67,9 @@ views::BubbleDialogDelegate* ManagePasswordsIconViews::GetBubble() const {
 }
 
 void ManagePasswordsIconViews::UpdateImpl() {
-  if (!GetWebContents())
+  if (!GetWebContents()) {
     return;
+  }
 
   ManagePasswordsUIController::FromWebContents(GetWebContents())
       ->UpdateIconAndBubbleState(this);
@@ -121,8 +124,9 @@ std::u16string ManagePasswordsIconViews::GetTextForTooltipAndAccessibleName()
 
 void ManagePasswordsIconViews::AboutToRequestFocusFromTabTraversal(
     bool reverse) {
-  if (IsBubbleShowing())
+  if (IsBubbleShowing()) {
     PasswordBubbleViewBase::ActivateBubble();
+  }
 }
 
 BEGIN_METADATA(ManagePasswordsIconViews)

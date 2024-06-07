@@ -49,10 +49,6 @@ public class AutocompleteResult {
         int GET_MATCHING_TAB = 7;
     }
 
-    /** An empty, initialized AutocompleteResult object. */
-    public static final @NonNull AutocompleteResult EMPTY_RESULT =
-            new AutocompleteResult(0, Collections.emptyList(), null);
-
     /** A special value indicating that action has no particular index associated. */
     public static final int NO_SUGGESTION_INDEX = -1;
 
@@ -222,6 +218,6 @@ public class AutocompleteResult {
     @NativeMethods
     interface Natives {
         boolean verifyCoherency(
-                long nativeAutocompleteResult, long[] matches, long suggestionIndex, int origin);
+                long nativeAutocompleteResult, long[] matches, int suggestionIndex, int origin);
     }
 }

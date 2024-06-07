@@ -204,9 +204,10 @@ void ShowReauthForPrimaryAccountWithAuthError(
       IdentityManagerFactory::GetForProfile(profile);
   CoreAccountInfo primary_account_info =
       identity_manager->GetPrimaryAccountInfo(signin::ConsentLevel::kSignin);
-  DCHECK(!primary_account_info.IsEmpty());
-  DCHECK(identity_manager->HasAccountWithRefreshTokenInPersistentErrorState(
-      primary_account_info.account_id));
+  if (!identity_manager->HasAccountWithRefreshTokenInPersistentErrorState(
+          primary_account_info.account_id)) {
+    return;
+  }
   ShowReauthForAccount(profile, primary_account_info.email, access_point);
 #endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 }
@@ -436,7 +437,7 @@ void EnableSyncFromMultiAccountPromo(Profile* profile,
       profile, access_point, existing_account_promo_action, account.account_id,
       signin_aborted_mode);
 #else
-  DUMP_WILL_BE_NOTREACHED_NORETURN();
+  DUMP_WILL_BE_NOTREACHED();
 #endif  // BUILDFLAG(ENABLE_DICE_SUPPORT) || BUILDFLAG(IS_CHROMEOS_LACROS)
 }
 

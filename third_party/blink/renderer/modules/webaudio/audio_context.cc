@@ -29,18 +29,21 @@
 #include "third_party/blink/renderer/modules/peerconnection/peer_connection_dependency_factory.h"
 #include "third_party/blink/renderer/modules/permissions/permission_utils.h"
 #include "third_party/blink/renderer/modules/webaudio/audio_listener.h"
+#include "third_party/blink/renderer/modules/webaudio/audio_playout_stats.h"
 #include "third_party/blink/renderer/modules/webaudio/audio_sink_info.h"
 #include "third_party/blink/renderer/modules/webaudio/media_element_audio_source_node.h"
 #include "third_party/blink/renderer/modules/webaudio/media_stream_audio_destination_node.h"
 #include "third_party/blink/renderer/modules/webaudio/media_stream_audio_source_node.h"
 #include "third_party/blink/renderer/modules/webaudio/realtime_audio_destination_node.h"
 #include "third_party/blink/renderer/modules/webrtc/webrtc_audio_device_impl.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/audio/audio_utilities.h"
 #include "third_party/blink/renderer/platform/audio/vector_math.h"
 #include "third_party/blink/renderer/platform/bindings/exception_messages.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/scheduler/public/post_cross_thread_task.h"
 #include "third_party/blink/renderer/platform/wtf/cross_thread_functional.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
@@ -358,6 +361,7 @@ AudioContext::~AudioContext() {
 
 void AudioContext::Trace(Visitor* visitor) const {
   visitor->Trace(close_resolver_);
+  visitor->Trace(audio_playout_stats_);
   visitor->Trace(audio_context_manager_);
   visitor->Trace(permission_service_);
   visitor->Trace(permission_receiver_);
@@ -595,6 +599,17 @@ double AudioContext::outputLatency() const {
   return std::round(output_position_.hardware_output_latency / factor) * factor;
 }
 
+AudioPlayoutStats* AudioContext::playoutStats() {
+  DCHECK(IsMainThread());
+  if (!RuntimeEnabledFeatures::AudioContextPlayoutStatsEnabled()) {
+    return nullptr;
+  }
+  if (!audio_playout_stats_) {
+    audio_playout_stats_ = MakeGarbageCollected<AudioPlayoutStats>(this);
+  }
+  return audio_playout_stats_.Get();
+}
+
 ScriptPromise<IDLUndefined> AudioContext::setSinkId(
     ScriptState* script_state,
     const V8UnionAudioSinkOptionsOrString* v8_sink_id,
@@ -829,6 +844,9 @@ bool AudioContext::HandlePreRenderTasks(
     const media::AudioGlitchInfo& glitch_info) {
   DCHECK(IsAudioThread());
 
+  pending_audio_frame_stats_.Update(frames_to_process, sampleRate(),
+                                    playout_delay, glitch_info);
+
   // At the beginning of every render quantum, try to update the internal
   // rendering graph state (from main thread changes).  It's OK if the tryLock()
   // fails, we'll just take slightly longer to pick up the changes.
@@ -847,6 +865,8 @@ bool AudioContext::HandlePreRenderTasks(
     // Update output timestamp and metric.
     output_position_ = *output_position;
     callback_metric_ = *metric;
+
+    audio_frame_stats_.Absorb(pending_audio_frame_stats_);
 
     unlock();
   }
@@ -1009,8 +1029,7 @@ void AudioContext::DidInitialPermissionCheck(
       GetExecutionContext()->GetTaskRunner(TaskType::kPermission));
   permission_service_->AddPermissionObserver(
       CreatePermissionDescriptor(mojom::blink::PermissionName::AUDIO_CAPTURE),
-      microphone_permission_status_,
-      /*should_include_device_status=*/false, std::move(observer));
+      microphone_permission_status_, std::move(observer));
 }
 
 double AudioContext::GetOutputLatencyQuantizingFactor() const {
@@ -1177,17 +1196,21 @@ bool AudioContext::IsValidSinkDescriptor(
 }
 
 void AudioContext::OnRenderError() {
-  if (base::FeatureList::IsEnabled(features::kWebAudioHandleOnRenderError)) {
-    DCHECK(IsMainThread());
+  if (!RuntimeEnabledFeatures::AudioContextOnErrorEnabled()) {
+    return;
+  }
 
-    CHECK(GetExecutionContext());
-    LocalDOMWindow* window = To<LocalDOMWindow>(GetExecutionContext());
-    if (window && window->GetFrame()) {
-      window->AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
-          mojom::blink::ConsoleMessageSource::kOther,
-          mojom::blink::ConsoleMessageLevel::kError,
-          "The AudioContext encountered a render error."));
-    }
+  DCHECK(IsMainThread());
+
+  CHECK(GetExecutionContext());
+  render_error_occoured_ = true;
+  LocalDOMWindow* window = To<LocalDOMWindow>(GetExecutionContext());
+  if (window && window->GetFrame()) {
+    window->AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
+        mojom::blink::ConsoleMessageSource::kOther,
+        mojom::blink::ConsoleMessageLevel::kError,
+        "The AudioContext encountered an error from the audio device or the "
+        "WebAudio renderer."));
   }
 }
 
@@ -1203,6 +1226,17 @@ void AudioContext::ResumeOnPrerenderActivation() {
     case kClosed:
       break;
   }
+}
+
+void AudioContext::TransferAudioFrameStatsTo(
+    AudioContext::AudioFrameStats& receiver) {
+  DeferredTaskHandler::GraphAutoLocker locker(this);
+  receiver.Absorb(audio_frame_stats_);
+}
+
+void AudioContext::invoke_onrendererror_from_platform_for_testing() {
+  GetRealtimeAudioDestinationNode()->GetOwnHandler()
+      .invoke_onrendererror_from_platform_for_testing();
 }
 
 }  // namespace blink

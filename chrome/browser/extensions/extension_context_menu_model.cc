@@ -29,9 +29,9 @@
 #include "chrome/browser/ui/chrome_pages.h"
 #include "chrome/browser/ui/extensions/extension_side_panel_utils.h"
 #include "chrome/browser/ui/extensions/extensions_container.h"
-#include "chrome/browser/ui/side_panel/side_panel_entry_id.h"
-#include "chrome/browser/ui/side_panel/side_panel_entry_key.h"
-#include "chrome/browser/ui/side_panel/side_panel_ui.h"
+#include "chrome/browser/ui/views/side_panel/side_panel_entry_id.h"
+#include "chrome/browser/ui/views/side_panel/side_panel_entry_key.h"
+#include "chrome/browser/ui/views/side_panel/side_panel_ui.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/toolbar/toolbar_actions_model.h"
 #include "chrome/browser/ui/ui_features.h"
@@ -155,7 +155,7 @@ ExtensionContextMenuModel::ContextMenuAction CommandIdToContextMenuAction(
     case ExtensionContextMenuModel::PAGE_ACCESS_SUBMENU:
     case ExtensionContextMenuModel::PAGE_ACCESS_ALL_EXTENSIONS_GRANTED:
     case ExtensionContextMenuModel::PAGE_ACCESS_ALL_EXTENSIONS_BLOCKED:
-      DUMP_WILL_BE_NOTREACHED_NORETURN();
+      DUMP_WILL_BE_NOTREACHED();
       break;
     case ExtensionContextMenuModel::VIEW_WEB_PERMISSIONS:
       return ContextMenuAction::kViewWebPermissions;
@@ -788,8 +788,7 @@ void ExtensionContextMenuModel::InitMenu(const Extension* extension,
 
 void ExtensionContextMenuModel::AddSidePanelEntryIfPresent(
     const Extension& extension) {
-  if (!features::IsSidePanelPinningEnabled() ||
-      !extension.permissions_data()->HasAPIPermission(
+  if (!extension.permissions_data()->HasAPIPermission(
           mojom::APIPermissionID::kSidePanel)) {
     return;
   }

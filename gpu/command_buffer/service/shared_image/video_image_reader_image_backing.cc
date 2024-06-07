@@ -356,11 +356,7 @@ class VideoImageReaderImageBacking::SkiaGraphiteDawnImageRepresentation
 
     // Set the Dawn texture and SharedTextureMemory parameters.
 
-    // TODO(crbug.com/41488897): Need to set the external format.
-    wgpu::TextureFormat webgpu_format = ToDawnFormat(format());
-    if (webgpu_format == wgpu::TextureFormat::Undefined) {
-      LOG(ERROR) << "Unable to find a suitable WebGPU format.";
-    }
+    wgpu::TextureFormat webgpu_format = wgpu::TextureFormat::External;
     auto device = context_state_->dawn_context_provider()->GetDevice();
 
     wgpu::TextureDescriptor texture_descriptor;
@@ -421,6 +417,7 @@ class VideoImageReaderImageBacking::SkiaGraphiteDawnImageRepresentation
     wgpu::SharedTextureMemoryAHardwareBufferDescriptor
         stm_ahardwarebuffer_desc = {};
     stm_ahardwarebuffer_desc.handle = scoped_hardware_buffer_->buffer();
+    stm_ahardwarebuffer_desc.useExternalFormat = true;
     desc.nextInChain = &stm_ahardwarebuffer_desc;
     shared_texture_memory_ = device.ImportSharedTextureMemory(&desc);
 
@@ -430,11 +427,12 @@ class VideoImageReaderImageBacking::SkiaGraphiteDawnImageRepresentation
       LOG(ERROR) << "Failed to begin access for texture";
     }
 
-    // Obtain the YCbCr info from the SharedTextureMemory.
-    wgpu::SharedTextureMemoryProperties properties;
-    wgpu::SharedTextureMemoryAHardwareBufferProperties ahb_properties = {};
-    properties.nextInChain = &ahb_properties;
-    shared_texture_memory_.GetProperties(&properties);
+    // Obtain the YCbCr info from the device.
+    wgpu::AHardwareBufferProperties ahb_properties;
+    if (!device.GetAHardwareBufferProperties(scoped_hardware_buffer_->buffer(),
+                                             &ahb_properties)) {
+      LOG(ERROR) << "Failed to get the ycbcr info";
+    }
 
     // Wrap the Dawn texture in a Skia texture, passing the YCbCr info.
     skgpu::graphite::DawnTextureInfo dawn_texture_info(

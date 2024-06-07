@@ -427,7 +427,7 @@ WebAppManagement::Type WebApp::GetHighestPrioritySource() const {
     }
   }
 
-  NOTREACHED_IN_MIGRATION();
+  DUMP_WILL_BE_NOTREACHED();
   return WebAppManagement::kMaxValue;
 }
 
@@ -862,7 +862,8 @@ WebApp::ExternalManagementConfig::~ExternalManagementConfig() = default;
 
 WebApp::ExternalManagementConfig::ExternalManagementConfig(
     const ExternalManagementConfig& external_management_config) = default;
-
+WebApp::ExternalManagementConfig& WebApp::ExternalManagementConfig::operator=(
+    const ExternalManagementConfig& external_management_config) = default;
 WebApp::ExternalManagementConfig& WebApp::ExternalManagementConfig::operator=(
     ExternalManagementConfig&& external_management_config) = default;
 

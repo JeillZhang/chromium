@@ -83,7 +83,7 @@ coverage_builder(
             "gpu_tests",
             "android_builder",
             "release_builder",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
             "arm64",
             "resource_allowlisting",
@@ -136,7 +136,7 @@ coverage_builder(
         configs = [
             "android_builder",
             "release_builder",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
             "x86",
             "strip_debug_info",
@@ -189,7 +189,7 @@ coverage_builder(
             "gpu_tests",
             "android_builder",
             "release_builder",
-            "reclient",
+            "remoteexec",
             "arm64",
             "resource_allowlisting",
             "static_angle",
@@ -243,7 +243,7 @@ coverage_builder(
             "android_builder_without_codecs",
             "cronet_android",
             "debug_static_builder",
-            "reclient",
+            "remoteexec",
             "x64",
             "use_clang_coverage",
         ],
@@ -289,7 +289,7 @@ coverage_builder(
             "fuchsia_code_coverage",
             "no_symbols",
             "release_builder",
-            "reclient",
+            "remoteexec",
             "use_clang_coverage",
         ],
     ),
@@ -333,7 +333,7 @@ coverage_builder(
         configs = [
             "use_clang_coverage",
             "debug_static_builder",
-            "reclient",
+            "remoteexec",
             "x64",
             "ios",
             "xctest",
@@ -380,7 +380,7 @@ coverage_builder(
         configs = [
             "chromeos_with_codecs",
             "release_builder",
-            "reclient",
+            "remoteexec",
             "use_clang_coverage",
         ],
     ),
@@ -418,7 +418,7 @@ coverage_builder(
     gn_args = gn_args.config(
         configs = [
             "release_builder",
-            "reclient",
+            "remoteexec",
             "clang",
             "no_symbols",
             "use_javascript_coverage",
@@ -461,7 +461,7 @@ coverage_builder(
         configs = [
             "chromeos_with_codecs",
             "release_builder",
-            "reclient",
+            "remoteexec",
             "use_javascript_coverage",
             "optimize_webui_off",
         ],
@@ -482,6 +482,22 @@ coverage_builder(
 coverage_builder(
     name = "linux-fuzz-coverage",
     executable = "recipe:chromium/fuzz",
+    builder_spec = builder_config.builder_spec(
+        gclient_config = builder_config.gclient_config(
+            config = "chromium",
+            apply_configs = ["use_clang_coverage"],
+        ),
+        chromium_config = builder_config.chromium_config(
+            config = "chromium_clang",
+            apply_configs = [
+                "clobber",
+                "mb",
+            ],
+            build_config = builder_config.build_config.RELEASE,
+            target_bits = 64,
+            target_platform = builder_config.target_platform.LINUX,
+        ),
+    ),
     gn_args = gn_args.config(
         configs = [
             "use_clang_coverage",
@@ -489,7 +505,7 @@ coverage_builder(
             "mojo_fuzzer",
             "libfuzzer",
             "dcheck_off",
-            "reclient",
+            "remoteexec",
             "chromeos_codecs",
             "pdf_xfa",
             "release",
@@ -503,6 +519,9 @@ coverage_builder(
             short_name = "lnx-fuzz",
         ),
     ],
+    properties = {
+        "collect_fuzz_coverage": True,
+    },
 )
 
 coverage_builder(
@@ -529,7 +548,7 @@ coverage_builder(
     gn_args = gn_args.config(
         configs = [
             "release_builder",
-            "reclient",
+            "remoteexec",
             "clang",
             "use_clang_coverage",
             "no_symbols",
@@ -571,7 +590,7 @@ coverage_builder(
         configs = [
             "lacros_on_linux",
             "release_builder",
-            "reclient",
+            "remoteexec",
             "also_build_ash_chrome",
             "clang",
             "use_clang_coverage",
@@ -612,7 +631,7 @@ coverage_builder(
     gn_args = gn_args.config(
         configs = [
             "release_builder",
-            "reclient",
+            "remoteexec",
             "clang",
             "use_clang_coverage",
             "no_symbols",
@@ -655,7 +674,7 @@ coverage_builder(
     gn_args = gn_args.config(
         configs = [
             "release_builder",
-            "reclient",
+            "remoteexec",
             "clang",
             "use_clang_coverage",
             "no_symbols",

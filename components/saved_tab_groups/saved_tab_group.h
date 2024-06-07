@@ -13,7 +13,6 @@
 #include "base/uuid.h"
 #include "components/saved_tab_groups/saved_tab_group_tab.h"
 #include "components/saved_tab_groups/types.h"
-#include "components/sync/protocol/saved_tab_group_specifics.pb.h"
 #include "components/tab_groups/tab_group_color.h"
 #include "components/tab_groups/tab_group_id.h"
 #include "ui/gfx/image/image.h"
@@ -33,11 +32,16 @@ class SavedTabGroup {
                 std::optional<size_t> position,
                 std::optional<base::Uuid> saved_guid = std::nullopt,
                 std::optional<LocalTabGroupID> local_group_id = std::nullopt,
+                std::optional<std::string> originator_cache_guid = std::nullopt,
+                bool created_before_syncing_tab_groups = false,
                 std::optional<base::Time> creation_time_windows_epoch_micros =
                     std::nullopt,
                 std::optional<base::Time> update_time_windows_epoch_micros =
                     std::nullopt);
   SavedTabGroup(const SavedTabGroup& other);
+  SavedTabGroup& operator=(const SavedTabGroup& other);
+  SavedTabGroup(SavedTabGroup&& other);
+  SavedTabGroup& operator=(SavedTabGroup&& other);
   ~SavedTabGroup();
 
   // Metadata accessors.
@@ -51,6 +55,15 @@ class SavedTabGroup {
   const base::Time& update_time_windows_epoch_micros() const {
     return update_time_windows_epoch_micros_;
   }
+
+  const std::optional<std::string>& originator_cache_guid() const {
+    return originator_cache_guid_;
+  }
+
+  bool created_before_syncing_tab_groups() const {
+    return created_before_syncing_tab_groups_;
+  }
+
   const std::u16string& title() const { return title_; }
   const tab_groups::TabGroupColorId& color() const { return color_; }
   const std::vector<SavedTabGroupTab>& saved_tabs() const {
@@ -84,6 +97,10 @@ class SavedTabGroup {
   SavedTabGroup& SetTitle(std::u16string title);
   SavedTabGroup& SetColor(tab_groups::TabGroupColorId color);
   SavedTabGroup& SetLocalGroupId(std::optional<LocalTabGroupID> tab_group_id);
+  SavedTabGroup& SetOriginatorCacheGuid(
+      std::optional<std::string> new_cache_guid);
+  SavedTabGroup& SetCreatedBeforeSyncingTabGroups(
+      bool created_before_syncing_tab_groups);
   SavedTabGroup& SetUpdateTimeWindowsEpochMicros(
       base::Time update_time_windows_epoch_micros);
   SavedTabGroup& SetPosition(size_t position);
@@ -123,36 +140,20 @@ class SavedTabGroup {
   SavedTabGroup& MoveTabFromSync(const base::Uuid& saved_tab_guid,
                                  size_t new_index);
 
-  // Merges this groups data with a specific from sync and returns the newly
-  // merged specific. Side effect: Updates the values of this group.
-  std::unique_ptr<sync_pb::SavedTabGroupSpecifics> MergeGroup(
-      const sync_pb::SavedTabGroupSpecifics& sync_specific);
+  // Merges this groups data with the `remote_group` params. Side effect:
+  // updates the values of this group.
+  void MergeRemoteGroupMetadata(
+      const std::u16string& title,
+      TabGroupColorId color,
+      std::optional<size_t> position,
+      std::optional<std::string> originator_cache_guid,
+      base::Time update_time);
 
-  // We should merge a group if one of the following is true:
-  // 1. The data from `sync_specific` has the most recent (larger) update time.
-  // 2. The `sync_specific` has the oldest (smallest) creation time.
-  bool ShouldMergeGroup(
-      const sync_pb::SavedTabGroupSpecifics& sync_specific) const;
-
-  // Converts a `SavedTabGroupSpecifics` retrieved from sync into a
-  // `SavedTabGroupTab`.
-  static SavedTabGroup FromSpecifics(
-      const sync_pb::SavedTabGroupSpecifics& specific);
-
-  // Converts a `SavedTabGroupTab` into a `SavedTabGroupSpecifics` for sync.
-  std::unique_ptr<sync_pb::SavedTabGroupSpecifics> ToSpecifics() const;
+  // Returns whether the remote group has more recent updates.
+  bool RemoteGroupHasMoreRecentUpdates(base::Time remote_update_time) const;
 
   // Returns true iff syncable data fields in `this` and `other` are equivalent.
   bool IsSyncEquivalent(const SavedTabGroup& other) const;
-
-  // Converts tab group color ids into the sync data type for saved tab group
-  // colors.
-  static ::sync_pb::SavedTabGroup_SavedTabGroupColor TabGroupColorToSyncColor(
-      const tab_groups::TabGroupColorId color);
-
-  // Converts sync group colors into tab group colors ids.
-  static tab_groups::TabGroupColorId SyncColorToTabGroupColor(
-      const sync_pb::SavedTabGroup::SavedTabGroupColor color);
 
  private:
   // Moves the tab denoted by `saved_tab_guid` to the position `new_index`.
@@ -193,6 +194,15 @@ class SavedTabGroup {
   // A value of nullopt means that the group was not assigned a position and
   // will be assigned one when it is added into the SavedTabGroupModel.
   std::optional<size_t> position_;
+
+  // A guid which refers to the group which created the tab group. If metadata
+  // is not being tracked when the saved tab group is being created, this value
+  // will be null. The value could also be null if the group was created before
+  // M127.
+  std::optional<std::string> originator_cache_guid_;
+
+  // Whether the tab group was created when sync was disabled.
+  bool created_before_syncing_tab_groups_;
 
   // Timestamp for when the tab was created using windows epoch microseconds.
   base::Time creation_time_windows_epoch_micros_;

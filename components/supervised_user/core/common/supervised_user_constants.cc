@@ -110,6 +110,12 @@ const char kFamilyLinkUserLogSegmentHistogramName[] =
 const char kFamilyLinkUserLogSegmentWebFilterHistogramName[] =
     "FamilyUser.WebFilterType.PerRecord";
 
+extern const char kSitesMayRequestCameraMicLocationHistogramName[] =
+    "SupervisedUsers.SitesMayRequestCameraMicLocation.PerRecord";
+
+const char kSkipParentApprovalToInstallExtensionsHistogramName[] =
+    "SupervisedUsers.SkipParentApprovalToInstallExtensions.PerRecord";
+
 const char kSupervisedUserURLFilteringResultHistogramName[] =
     "ManagedUsers.FilteringResult";
 

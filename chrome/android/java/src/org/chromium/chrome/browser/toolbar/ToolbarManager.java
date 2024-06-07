@@ -57,7 +57,6 @@ import org.chromium.chrome.browser.compositor.bottombar.OverlayPanelManager.Over
 import org.chromium.chrome.browser.compositor.bottombar.ephemeraltab.EphemeralTabCoordinator;
 import org.chromium.chrome.browser.compositor.layouts.LayoutManagerImpl;
 import org.chromium.chrome.browser.compositor.overlays.strip.StripLayoutHelperManager;
-import org.chromium.chrome.browser.crash.ChromePureJavaExceptionReporter;
 import org.chromium.chrome.browser.customtabs.features.toolbar.CustomTabToolbar;
 import org.chromium.chrome.browser.dom_distiller.DomDistillerTabUtils;
 import org.chromium.chrome.browser.download.DownloadUtils;
@@ -136,7 +135,6 @@ import org.chromium.chrome.browser.toolbar.menu_button.MenuButtonCoordinator;
 import org.chromium.chrome.browser.toolbar.menu_button.MenuButtonState;
 import org.chromium.chrome.browser.toolbar.top.ActionModeController;
 import org.chromium.chrome.browser.toolbar.top.ActionModeController.ActionBarDelegate;
-import org.chromium.chrome.browser.toolbar.top.TabStripHeightSupplier;
 import org.chromium.chrome.browser.toolbar.top.TabStripTransitionCoordinator;
 import org.chromium.chrome.browser.toolbar.top.TabStripTransitionCoordinator.TabStripHeightObserver;
 import org.chromium.chrome.browser.toolbar.top.ToggleTabStackButton;
@@ -323,7 +321,7 @@ public class ToolbarManager
     private OverlayPanelManagerObserver mOverlayPanelManagerObserver;
     private ObservableSupplierImpl<Boolean> mOverlayPanelVisibilitySupplier =
             new ObservableSupplierImpl<>();
-    private TabStripHeightSupplier mTabStripHeightSupplier;
+    private ObservableSupplierImpl<Integer> mTabStripHeightSupplier;
     private TabStripHeightObserver mTabStripHeightObserver;
     private @Nullable DesktopWindowStateProvider mDesktopWindowStateProvider;
 
@@ -813,7 +811,7 @@ public class ToolbarManager
                         initializeWithIncognitoColors,
                         startSurfaceLogoClickedCallback,
                         mConstraintsProxy);
-        mTabStripHeightSupplier = new TabStripHeightSupplier(mToolbar.getTabStripHeight());
+        mTabStripHeightSupplier = new ObservableSupplierImpl<>(mToolbar.getTabStripHeight());
         mActionModeController =
                 new ActionModeController(
                         mActivity,
@@ -895,7 +893,6 @@ public class ToolbarManager
                             merchantTrustSignalsCoordinatorSupplier,
                             omniboxActionDelegate,
                             mControlsVisibilityDelegate,
-                            ChromePureJavaExceptionReporter::reportJavaException,
                             BackPressManager.isEnabled() ? backPressManager : null,
                             scrollListener,
                             tabModelSelectorSupplier,
@@ -1432,7 +1429,10 @@ public class ToolbarManager
                                                 ? LayoutType.NONE
                                                 : mLayoutStateProvider.getActiveLayoutType()),
                         mCompositorViewHolder::getResourceManager,
-                        IncognitoUtils::isIncognitoModeEnabled,
+                        () -> {
+                            return IncognitoUtils.isIncognitoModeEnabled(
+                                    mTabModelSelector.getCurrentModel().getProfile());
+                        },
                         isTabToGtsAnimationEnabled,
                         isStartSurfaceEnabled,
                         HistoryManagerUtils::showHistoryManager,
@@ -1764,10 +1764,7 @@ public class ToolbarManager
                 mActivityTabProvider,
                 mBrowserControlsSizer,
                 mTopUiThemeColorProvider);
-        if (ToolbarFeatures.isDynamicTopChromeEnabled()) {
-            // Only update the tab strip value when DTC is enabled.
-            mTabStripHeightSupplier.set(mToolbar.getTabStripHeight());
-        }
+        mTabStripHeightSupplier.set(mToolbar.getTabStripHeight());
 
         mAttachStateChangeListener =
                 new OnAttachStateChangeListener() {
@@ -1792,24 +1789,20 @@ public class ToolbarManager
             mControlContainer.setToolbarContainerDragListener(
                     stripLayoutHelperManager.getDragListener());
 
-            if (ToolbarFeatures.isDynamicTopChromeEnabled()) {
-                mToolbar.addTabStripHeightObserver(stripLayoutHelperManager);
-                stripLayoutHelperManager.setIsTabStripHidden(mToolbar.getTabStripHeight() == 0);
-            }
+            mToolbar.addTabStripHeightObserver(stripLayoutHelperManager);
+            stripLayoutHelperManager.setIsTabStripHidden(mToolbar.getTabStripHeight() == 0);
         }
 
-        if (ToolbarFeatures.isDynamicTopChromeEnabled()) {
-            mTabStripHeightObserver =
-                    new TabStripHeightObserver() {
-                        @Override
-                        public void onTransitionRequested(int newHeight) {
-                            // TODO(crbug.com/41481630): Supplier can have an inconsistent value
-                            //  with mToolbar.getTabStripHeight().
-                            mTabStripHeightSupplier.set(newHeight);
-                        }
-                    };
-            mToolbar.addTabStripHeightObserver(mTabStripHeightObserver);
-        }
+        mTabStripHeightObserver =
+                new TabStripHeightObserver() {
+                    @Override
+                    public void onTransitionRequested(int newHeight) {
+                        // TODO(crbug.com/41481630): Supplier can have an inconsistent value
+                        //  with mToolbar.getTabStripHeight().
+                        mTabStripHeightSupplier.set(newHeight);
+                    }
+                };
+        mToolbar.addTabStripHeightObserver(mTabStripHeightObserver);
 
         mUpdateMenuItemHelper = UpdateMenuItemHelper.getInstance(profile);
         if (mMenuStateObserver != null) {
@@ -2398,6 +2391,11 @@ public class ToolbarManager
      * inheriting classes the chance to update the button visuals as well.
      */
     private void updateButtonStatus() {
+        if (mIsDestroyed) {
+            assert false;
+            return;
+        }
+
         Tab currentTab = mLocationBarModel.getTab();
         boolean tabCrashed = currentTab != null && SadTab.isShowing(currentTab);
 

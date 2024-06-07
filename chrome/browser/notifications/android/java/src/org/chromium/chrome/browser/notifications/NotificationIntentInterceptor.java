@@ -76,6 +76,13 @@ public class NotificationIntentInterceptor {
         }
     }
 
+    public static final class ServiceImpl extends NotificationIntentInterceptorService.Impl {
+        @Override
+        protected void onHandleIntent(Intent intent) {
+            processIntent(ContextUtils.getApplicationContext(), intent);
+        }
+    }
+
     private static void processIntent(Context context, Intent intent) {
         @IntentType int intentType = intent.getIntExtra(EXTRA_INTENT_TYPE, IntentType.UNKNOWN);
         @NotificationUmaTracker.SystemNotificationType
@@ -148,6 +155,7 @@ public class NotificationIntentInterceptor {
 
         // The delete intent needs to be handled by broadcast receiver from Q due to background
         // activity start restriction.
+        boolean shouldUseService = actionType == NotificationUmaTracker.ActionType.PRE_UNSUBSCRIBE;
         boolean shouldUseBroadcast =
                 intentType == NotificationIntentInterceptor.IntentType.DELETE_INTENT
                         || actionType == NotificationUmaTracker.ActionType.UNDO_UNSUBSCRIBE
@@ -156,10 +164,14 @@ public class NotificationIntentInterceptor {
                         || actionType
                                 == NotificationUmaTracker.ActionType.COMMIT_UNSUBSCRIBE_EXPLICIT;
         Context applicationContext = ContextUtils.getApplicationContext();
-        Intent intent =
-                shouldUseBroadcast
-                        ? new Intent(applicationContext, Receiver.class)
-                        : new Intent(applicationContext, TrampolineActivity.class);
+        Intent intent = null;
+        if (shouldUseService) {
+            intent = new Intent(applicationContext, NotificationIntentInterceptorService.class);
+        } else if (shouldUseBroadcast) {
+            intent = new Intent(applicationContext, Receiver.class);
+        } else {
+            intent = new Intent(applicationContext, TrampolineActivity.class);
+        }
 
         intent.setAction(INTENT_ACTION);
         intent.putExtra(EXTRA_PENDING_INTENT, pendingIntent);
@@ -184,6 +196,10 @@ public class NotificationIntentInterceptor {
         int originalRequestCode =
                 pendingIntentProvider != null ? pendingIntentProvider.getRequestCode() : 0;
         int requestCode = computeHashCode(metadata, intentType, actionType, originalRequestCode);
+
+        if (shouldUseService) {
+            return PendingIntent.getService(applicationContext, requestCode, intent, flags);
+        }
 
         return shouldUseBroadcast
                 ? PendingIntent.getBroadcast(applicationContext, requestCode, intent, flags)

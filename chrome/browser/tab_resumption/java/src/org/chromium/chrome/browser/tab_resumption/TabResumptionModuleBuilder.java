@@ -23,7 +23,6 @@ import org.chromium.chrome.browser.recent_tabs.ForeignSessionHelper;
 import org.chromium.chrome.browser.tab_resumption.TabResumptionDataProvider.TabResumptionDataProviderFactory;
 import org.chromium.chrome.browser.tab_resumption.TabResumptionModuleMetricsUtils.ModuleNotShownReason;
 import org.chromium.chrome.browser.tab_ui.TabContentManager;
-import org.chromium.chrome.browser.tab_ui.ThumbnailProvider;
 import org.chromium.components.browser_ui.util.GlobalDiscardableReferencePool;
 import org.chromium.components.image_fetcher.ImageFetcher;
 import org.chromium.components.image_fetcher.ImageFetcherConfig;
@@ -75,17 +74,15 @@ public class TabResumptionModuleBuilder implements ModuleProviderBuilder, Module
 
         maybeInitImageServiceBridge(profile);
 
-        UrlImageProvider urlImageProvider =
-                new UrlImageProvider(profile, mContext, mImageServiceBridge);
-
         assert mTabContentManagerSupplier.hasValue();
+        UrlImageSourceImpl urlImageSource =
+                new UrlImageSourceImpl(mContext, profile, mTabContentManagerSupplier.get());
+        UrlImageProvider urlImageProvider =
+                new UrlImageProvider(mContext, urlImageSource, mImageServiceBridge);
+
         TabResumptionModuleCoordinator coordinator =
                 new TabResumptionModuleCoordinator(
-                        mContext,
-                        moduleDelegate,
-                        dataProviderFactory,
-                        urlImageProvider,
-                        getThumbnailProvider(mTabContentManagerSupplier.get()));
+                        mContext, moduleDelegate, dataProviderFactory, urlImageProvider);
         onModuleBuiltCallback.onResult(coordinator);
         return true;
     }
@@ -150,15 +147,18 @@ public class TabResumptionModuleBuilder implements ModuleProviderBuilder, Module
         if (mSuggestionEntrySourceRefCount == 0) {
             assert mSuggestionEntrySource == null;
             Profile profile = getRegularProfile();
-            boolean isV2Enabled = TabResumptionModuleUtils.TAB_RESUMPTION_V2.getValue();
             SuggestionBackend suggestionBackend =
-                    isV2Enabled
+                    TabResumptionModuleEnablement.SyncDerived.isV2Enabled()
                             ? new VisitedUrlRankingBackend(profile)
                             : new ForeignSessionSuggestionBackend(
                                     new ForeignSessionHelper(profile),
                                     (url) -> TabResumptionModuleUtils.shouldExcludeUrl(url));
             mSuggestionEntrySource =
-                    SyncDerivedSuggestionEntrySource.createFromProfile(profile, suggestionBackend);
+                    SyncDerivedSuggestionEntrySource.createFromProfile(
+                            profile,
+                            suggestionBackend,
+                            /* servesLocalTabs= */ TabResumptionModuleEnablement.SyncDerived
+                                    .isV2EnabledWithLocalTabs());
         }
         ++mSuggestionEntrySourceRefCount;
     }
@@ -187,14 +187,10 @@ public class TabResumptionModuleBuilder implements ModuleProviderBuilder, Module
                     new SyncDerivedTabResumptionDataProvider(
                             mSuggestionEntrySource, this::removeRefToSuggestionEntrySource);
         }
-        return new MixedTabResumptionDataProvider(localTabProvider, foreignSessionProvider);
-    }
-
-    static ThumbnailProvider getThumbnailProvider(TabContentManager tabContentManager) {
-        return (tabId, thumbnailSize, callback, forceUpdate, writeBack, isSelected) -> {
-            tabContentManager.getTabThumbnailWithCallback(
-                    tabId, thumbnailSize, callback, forceUpdate, writeBack);
-        };
+        return new MixedTabResumptionDataProvider(
+                localTabProvider,
+                foreignSessionProvider,
+                TabResumptionModuleUtils.TAB_RESUMPTION_DISABLE_BLEND.getValue());
     }
 
     private void maybeInitImageServiceBridge(Profile profile) {

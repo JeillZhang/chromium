@@ -49,11 +49,7 @@ class VIZ_SERVICE_EXPORT SkiaOutputDeviceBufferQueue : public SkiaOutputDevice {
   void Present(const std::optional<gfx::Rect>& update_rect,
                BufferPresentedCallback feedback,
                OutputSurfaceFrame frame) override;
-  bool Reshape(const SkImageInfo& image_info,
-               const gfx::ColorSpace& color_space,
-               int sample_count,
-               float device_scale_factor,
-               gfx::OverlayTransform transform) override;
+  bool Reshape(const ReshapeParams& params) override;
   void SetViewportSize(const gfx::Size& viewport_size) override;
   SkSurface* BeginPaint(
       std::vector<GrBackendSemaphore>* end_semaphores) override;
@@ -154,6 +150,7 @@ class VIZ_SERVICE_EXPORT SkiaOutputDeviceBufferQueue : public SkiaOutputDevice {
     using is_transparent = void;
     bool operator()(const OverlayData& lhs, const OverlayData& rhs) const;
     bool operator()(const OverlayData& lhs, const gpu::Mailbox& rhs) const;
+    bool operator()(const gpu::Mailbox& lhs, const OverlayData& rhs) const;
   };
 
   // A set for all overlays. The set uses overlay_data.mailbox() as the unique

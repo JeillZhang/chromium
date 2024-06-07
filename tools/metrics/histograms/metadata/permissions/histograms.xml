@@ -1135,6 +1135,21 @@ chromium-metrics-reviews@google.com.
   </token>
 </histogram>
 
+<histogram name="Permissions.Query.QueryResponseTime" units="ms"
+    expires_after="2025-05-31">
+  <owner>pbirk@chromium.org</owner>
+  <owner>src/android_webview/OWNERS</owner>
+  <summary>
+    Measure the response time of permissions.query as seen by Blink. This
+    histogram is introduced to get a baseline for the performance in Clank and
+    will be used to measure a future implementation of the API in WebView to
+    compare the performance.
+
+    The histogram is emitted when Blink receives a callback from the browser
+    process for the HasService call made as part of permissions.query.
+  </summary>
+</histogram>
+
 <histogram name="Permissions.QuietChip.TimeToInteraction" units="ms"
     expires_after="2025-02-04">
   <owner>elklm@chromium.org</owner>
@@ -1217,7 +1232,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram base="true" name="Permissions.Revocation.ElapsedTimeSinceGrant"
-    units="seconds" expires_after="2024-09-15">
+    units="seconds" expires_after="2024-11-17">
   <owner>engedy@chromium.org</owner>
   <owner>src/components/permissions/PERMISSIONS_OWNERS</owner>
   <summary>
@@ -1227,7 +1242,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Permissions.Revocation.Notifications.DidRecordUkm"
-    enum="Boolean" expires_after="2024-09-15">
+    enum="Boolean" expires_after="2024-11-17">
   <owner>engedy@chromium.org</owner>
   <owner>willxu@google.com</owner>
   <owner>src/components/permissions/PERMISSIONS_OWNERS</owner>
@@ -1393,7 +1408,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="WebsiteSettings.AllSitesAction2"
-    enum="WebSiteSettingsAllSitesAction2" expires_after="2024-09-15">
+    enum="WebSiteSettingsAllSitesAction2" expires_after="2024-11-17">
   <owner>sauski@google.com</owner>
   <owner>alimariam@google.com</owner>
   <summary>

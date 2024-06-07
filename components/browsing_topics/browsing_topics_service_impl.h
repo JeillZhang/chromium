@@ -59,6 +59,8 @@ class BrowsingTopicsServiceImpl
   std::vector<privacy_sandbox::CanonicalTopic> GetTopTopicsForDisplay()
       const override;
 
+  void ValidateCalculationSchedule() override;
+
   Annotator* GetAnnotator() override;
 
   void ClearTopic(
@@ -128,7 +130,8 @@ class BrowsingTopicsServiceImpl
 
   void ScheduleBrowsingTopicsCalculation(bool is_manually_triggered,
                                          int previous_timeout_count,
-                                         base::TimeDelta delay);
+                                         base::TimeDelta delay,
+                                         bool persist_calculation_time);
 
   // Initialize `topics_calculator_` to start calculating this epoch's top
   // topics and context observed topics. `is_manually_triggered`  is true if
@@ -206,6 +209,8 @@ class BrowsingTopicsServiceImpl
   TopicAccessedCallback topic_accessed_callback_;
 
   base::Time session_start_time_;
+
+  bool recorded_calculation_did_not_occur_metrics_ = false;
 
   base::ScopedObservation<privacy_sandbox::PrivacySandboxSettings,
                           privacy_sandbox::PrivacySandboxSettings::Observer>

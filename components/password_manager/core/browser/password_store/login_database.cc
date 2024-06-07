@@ -215,6 +215,21 @@ enum class LoginDatabaseEncryptionStatus {
   kMaxValue = kEncryptionUnavailable,
 };
 
+// Represents whether undecryptable passwords should be deleted from the login
+// database or the reason if they shouldn't be deleted.
+// Entries should not be renumbered and numeric values should never be
+// reused. Always keep this enum in sync with the corresponding
+// LoginDatabaseShouldDeleteUndecryptablePasswords in enums.xml.
+enum class ShouldDeleteUndecryptablePasswordsResult {
+  kShouldDelete = 0,
+  kUserDataDirEnvVarIsPresent = 1,
+  kUserDataDirSwitchIsPresent = 2,
+  kUserPasswordStoreSwitchIsPresent = 3,
+  kUserEncryptionSelectionSwitchrIsPresent = 4,
+  kEncryptionNotAvailiable = 5,
+  kMaxValue = kEncryptionNotAvailiable,
+};
+
 // Struct to hold table builder for different tables in the LoginDatabase.
 struct SQLTableBuilders {
   raw_ptr<SQLTableBuilder> logins;
@@ -999,6 +1014,13 @@ LoginDatabase::EncryptionResult DecryptPasswordFromStatement(
   return encryption_result;
 }
 
+void RecordShouldDeleteUndecryptablePasswordsMetric(
+    ShouldDeleteUndecryptablePasswordsResult should_delete_status) {
+  base::UmaHistogramEnumeration(
+      "PasswordManager.LoginDatabase.ShouldDeleteUndecryptablePasswords",
+      should_delete_status);
+}
+
 bool ShouldDeleteUndecryptablePasswords() {
 #if BUILDFLAG(IS_LINUX)
   std::string user_data_dir_string;
@@ -1006,24 +1028,43 @@ bool ShouldDeleteUndecryptablePasswords() {
   // On Linux user data directory ca be specified using an env variable. If it
   // exists, passwords shouldn't be deleted.
   if (environment->GetVar("CHROME_USER_DATA_DIR", &user_data_dir_string)) {
+    RecordShouldDeleteUndecryptablePasswordsMetric(
+        ShouldDeleteUndecryptablePasswordsResult::kUserDataDirEnvVarIsPresent);
     return false;
   }
 #endif  // BUILDFLAG(IS_LINUX)
 
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
-  bool has_pwm_related_switches_enabled =
-      command_line->HasSwitch(password_manager::kUserDataDir);
+  if (command_line->HasSwitch(password_manager::kUserDataDir)) {
+    RecordShouldDeleteUndecryptablePasswordsMetric(
+        ShouldDeleteUndecryptablePasswordsResult::kUserDataDirSwitchIsPresent);
+    return false;
+  }
 
 #if BUILDFLAG(IS_LINUX)
-  has_pwm_related_switches_enabled =
-      has_pwm_related_switches_enabled ||
-      command_line->HasSwitch(password_manager::kPasswordStore) ||
-      command_line->HasSwitch(password_manager::kEnableEncryptionSelection);
+  if (command_line->HasSwitch(password_manager::kPasswordStore)) {
+    RecordShouldDeleteUndecryptablePasswordsMetric(
+        ShouldDeleteUndecryptablePasswordsResult::
+            kUserPasswordStoreSwitchIsPresent);
+    return false;
+  }
+  if (command_line->HasSwitch(password_manager::kEnableEncryptionSelection)) {
+    RecordShouldDeleteUndecryptablePasswordsMetric(
+        ShouldDeleteUndecryptablePasswordsResult::
+            kUserEncryptionSelectionSwitchrIsPresent);
+    return false;
+  }
 #endif  // BUILDFLAG(IS_LINUX)
 
-  return !has_pwm_related_switches_enabled &&
-         OSCrypt::IsEncryptionAvailable() &&
-         base::FeatureList::IsEnabled(features::kClearUndecryptablePasswords);
+  if (!OSCrypt::IsEncryptionAvailable()) {
+    RecordShouldDeleteUndecryptablePasswordsMetric(
+        ShouldDeleteUndecryptablePasswordsResult::kEncryptionNotAvailiable);
+    return false;
+  }
+
+  RecordShouldDeleteUndecryptablePasswordsMetric(
+      ShouldDeleteUndecryptablePasswordsResult::kShouldDelete);
+  return base::FeatureList::IsEnabled(features::kClearUndecryptablePasswords);
 }
 
 }  // namespace
@@ -1933,17 +1974,17 @@ DatabaseCleanupResult LoginDatabase::DeleteUndecryptableLogins() {
 
 bool LoginDatabase::BeginTransaction() {
   TRACE_EVENT0("passwords", "LoginDatabase::BeginTransaction");
-  return db_.BeginTransaction();
+  return db_.BeginTransactionDeprecated();
 }
 
 void LoginDatabase::RollbackTransaction() {
   TRACE_EVENT0("passwords", "LoginDatabase::RollbackTransaction");
-  db_.RollbackTransaction();
+  db_.RollbackTransactionDeprecated();
 }
 
 bool LoginDatabase::CommitTransaction() {
   TRACE_EVENT0("passwords", "LoginDatabase::CommitTransaction");
-  return db_.CommitTransaction();
+  return db_.CommitTransactionDeprecated();
 }
 
 void LoginDatabase::SetIsEmptyCb(IsEmptyCallback is_empty_cb) {
@@ -2277,6 +2318,17 @@ FormRetrievalResult LoginDatabase::StatementToForms(
   DCHECK(forms);
   forms->clear();
   bool failed = false;
+
+  // Since this member is only used to trigger sync, it should maintain the most
+  // relevant value for the PasswordSyncBridge. Which means if there were no
+  // reads assume that the read was successful and there were no deletions.
+  // Deletion will update this member's value to true, only starting sync can
+  // set it back to false. This way PasswordSyncBridge will always know whether
+  // the sync should happen or no, no matter how many calls happen before that.
+  if (!were_undecryptable_logins_deleted_.has_value()) {
+    were_undecryptable_logins_deleted_ = false;
+  }
+
   while (statement->Step()) {
     std::u16string plaintext_password;
     EncryptionResult result =
@@ -2307,9 +2359,11 @@ FormRetrievalResult LoginDatabase::StatementToForms(
   if (failed) {
     if (ShouldDeleteUndecryptablePasswords()) {
       DatabaseCleanupResult result = DeleteUndecryptableLogins();
-      return result == DatabaseCleanupResult::kSuccess
-                 ? FormRetrievalResult::kSuccess
-                 : FormRetrievalResult::kEncryptionServiceFailure;
+      if (result == DatabaseCleanupResult::kSuccess) {
+        were_undecryptable_logins_deleted_ = true;
+        return FormRetrievalResult::kSuccess;
+      }
+      return FormRetrievalResult::kEncryptionServiceFailure;
     }
     if (ShouldReturnPartialPasswords()) {
       return FormRetrievalResult::kEncryptionServiceFailureWithPartialData;

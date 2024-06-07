@@ -258,6 +258,18 @@ bool CanHandleDisableCapsLock(const ui::Accelerator& previous_accelerator,
   return Shell::Get()->ime_controller()->IsCapsLockEnabled();
 }
 
+bool CanHandleLockButton(const ui::Accelerator& accelerator) {
+  // Disable the lock button action if the key code is VKEY_F13, and the
+  // modifier split keyboard was enabled.
+  if (accelerator.key_code() == ui::VKEY_F13 &&
+      Shell::Get()->keyboard_capability()->HasFunctionKey(
+          accelerator.source_device_id())) {
+    CHECK(features::IsModifierSplitEnabled());
+    return false;
+  }
+  return true;
+}
+
 bool CanHandleToggleCapsLock(
     const ui::Accelerator& accelerator,
     const ui::Accelerator& previous_accelerator,
@@ -863,6 +875,11 @@ bool AcceleratorControllerImpl::CanPerformAction(
     case AcceleratorAction::kSwitchToPreviousUser:
     case AcceleratorAction::kSwitchToNextUser:
       return accelerators::CanCycleUser();
+    case AcceleratorAction::kTilingWindowResizeLeft:
+    case AcceleratorAction::kTilingWindowResizeRight:
+    case AcceleratorAction::kTilingWindowResizeUp:
+    case AcceleratorAction::kTilingWindowResizeDown:
+      return accelerators::CanTilingWindowResize();
     case AcceleratorAction::kToggleAppList:
       return CanHandleToggleAppList(
           accelerator, previous_accelerator,
@@ -877,6 +894,8 @@ bool AcceleratorControllerImpl::CanPerformAction(
           *capslock_state_machine_, notification_controller_.get());
     case AcceleratorAction::kToggleClipboardHistory:
       return true;
+    case AcceleratorAction::kEnableSelectToSpeak:
+      return ::features::IsAccessibilitySelectToSpeakShortcutEnabled();
     case AcceleratorAction::kEnableOrToggleDictation:
       return accelerators::CanEnableOrToggleDictation();
     case AcceleratorAction::kToggleDockedMagnifier:
@@ -893,8 +912,8 @@ bool AcceleratorControllerImpl::CanPerformAction(
       return true;
     case AcceleratorAction::kToggleOverview:
       return accelerators::CanToggleOverview();
-    case AcceleratorAction::kToggleSnapGroupWindowsGroupAndUngroup:
-      return accelerators::CanGroupOrUngroupWindows();
+    case AcceleratorAction::kCreateSnapGroup:
+      return accelerators::CanCreateSnapGroup();
     case AcceleratorAction::kToggleSnapGroupWindowsMinimizeAndRestore:
       return accelerators::CanMinimizeSnapGroupWindows();
     case AcceleratorAction::kToggleMultitaskMenu:
@@ -924,6 +943,9 @@ bool AcceleratorControllerImpl::CanPerformAction(
       return accelerators::CanToggleResizeLockMenu();
     case AcceleratorAction::kDebugToggleVideoConferenceCameraTrayIcon:
       return true;
+    case AcceleratorAction::kLockPressed:
+    case AcceleratorAction::kLockReleased:
+      return CanHandleLockButton(accelerator);
 
     // The following are always enabled.
     case AcceleratorAction::kBrightnessDown:
@@ -944,8 +966,6 @@ bool AcceleratorControllerImpl::CanPerformAction(
     case AcceleratorAction::kLaunchApp6:
     case AcceleratorAction::kLaunchApp7:
     case AcceleratorAction::kLaunchLastApp:
-    case AcceleratorAction::kLockPressed:
-    case AcceleratorAction::kLockReleased:
     case AcceleratorAction::kMediaFastForward:
     case AcceleratorAction::kMediaNextTrack:
     case AcceleratorAction::kMediaPause:
@@ -1418,6 +1438,12 @@ void AcceleratorControllerImpl::PerformAction(
       // UMA metrics are recorded in the function.
       accelerators::MaybeTakeWindowScreenshot();
       break;
+    case AcceleratorAction::kTilingWindowResizeLeft:
+    case AcceleratorAction::kTilingWindowResizeRight:
+    case AcceleratorAction::kTilingWindowResizeUp:
+    case AcceleratorAction::kTilingWindowResizeDown:
+      accelerators::PerformTilingWindowResize(action);
+      break;
     case AcceleratorAction::kToggleAppList: {
       RecordToggleAppList(accelerator);
       accelerators::ToggleAppList(AppListShowSource::kSearchKey,
@@ -1433,6 +1459,9 @@ void AcceleratorControllerImpl::PerformAction(
       break;
     case AcceleratorAction::kToggleClipboardHistory:
       accelerators::ToggleClipboardHistory(/*is_plain_text_paste=*/false);
+      break;
+    case AcceleratorAction::kEnableSelectToSpeak:
+      accelerators::EnableSelectToSpeak();
       break;
     case AcceleratorAction::kEnableOrToggleDictation:
       // UMA metrics are recorded later in the call stack.
@@ -1481,8 +1510,8 @@ void AcceleratorControllerImpl::PerformAction(
       base::RecordAction(base::UserMetricsAction("Accel_Overview_F5"));
       accelerators::ToggleOverview();
       break;
-    case AcceleratorAction::kToggleSnapGroupWindowsGroupAndUngroup:
-      accelerators::GroupOrUngroupWindowsInSnapGroup();
+    case AcceleratorAction::kCreateSnapGroup:
+      accelerators::CreateSnapGroup();
       break;
     case AcceleratorAction::kToggleSnapGroupWindowsMinimizeAndRestore:
       base::RecordAction(base::UserMetricsAction(

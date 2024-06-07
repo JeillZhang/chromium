@@ -541,6 +541,8 @@ class CORE_EXPORT HTMLMediaElement
   void OnFirstFrame(base::TimeTicks frame_time,
                     size_t bytes_to_first_frame) override {}
 
+  int GetElementId() override { return GetDomNodeId(); }
+
   void SetCcLayer(cc::Layer*) final;
   WebMediaPlayer::TrackId AddAudioTrack(const WebString&,
                                         WebMediaPlayerClient::AudioTrackKind,
@@ -554,7 +556,7 @@ class CORE_EXPORT HTMLMediaElement
                                         const WebString&,
                                         bool) final;
   void RemoveVideoTrack(WebMediaPlayer::TrackId) final;
-  void MediaSourceOpened(WebMediaSource*) final;
+  void MediaSourceOpened(std::unique_ptr<WebMediaSource>) final;
   void RemotePlaybackCompatibilityChanged(const WebURL&,
                                           bool is_compatible) final;
   bool HasSelectedVideoTrack() final;
@@ -621,8 +623,7 @@ class CORE_EXPORT HTMLMediaElement
   void FinishSeek();
   void AddPlayedRange(double start, double end);
 
-  // FIXME: Rename to scheduleNamedEvent for clarity.
-  void ScheduleEvent(const AtomicString& event_name);
+  void ScheduleNamedEvent(const AtomicString& event_name);
 
   // loading
   void InvokeLoadAlgorithm();

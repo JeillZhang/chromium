@@ -37,6 +37,7 @@
 #include "third_party/icu/source/common/unicode/locid.h"
 #include "third_party/icu/source/common/unicode/unistr.h"
 #include "third_party/icu/source/i18n/unicode/timezone.h"
+#include "third_party/lens_server_proto/lens_overlay_client_platform.pb.h"
 #include "third_party/lens_server_proto/lens_overlay_filters.pb.h"
 #include "third_party/lens_server_proto/lens_overlay_platform.pb.h"
 #include "third_party/lens_server_proto/lens_overlay_polygon.pb.h"
@@ -91,9 +92,14 @@ constexpr net::NetworkTrafficAnnotationTag kTrafficAnnotationTag =
         policy {
           cookies_allowed: YES
           cookies_store: "user"
-          setting: "This feature is opt-in by flag only for now, so there "
-            "is no setting to disable the feature."
-          policy_exception_justification: "Policy not yet implemented."
+          setting: "This feature is only shown in menus by default and does "
+            "nothing without explicit user action, so there is no setting to "
+            "disable the feature."
+          chrome_policy {
+            LensOverlaySettings {
+              LensOverlaySettings: 1
+            }
+          }
         }
       )");
 
@@ -170,11 +176,13 @@ LensOverlayQueryController::~LensOverlayQueryController() = default;
 void LensOverlayQueryController::StartQueryFlow(
     const SkBitmap& screenshot,
     std::optional<GURL> page_url,
-    std::optional<std::string> page_title) {
+    std::optional<std::string> page_title,
+    float ui_scale_factor) {
   DCHECK_EQ(query_controller_state_, QueryControllerState::kOff);
   original_screenshot_ = screenshot;
   page_url_ = page_url;
   page_title_ = page_title;
+  ui_scale_factor_ = ui_scale_factor;
 
   PrepareAndFetchFullImageRequest();
 }
@@ -184,7 +192,8 @@ void LensOverlayQueryController::PrepareAndFetchFullImageRequest() {
          QueryControllerState::kAwaitingFullImageResponse);
   query_controller_state_ = QueryControllerState::kAwaitingFullImageResponse;
   base::ThreadPool::PostTask(
-      base::BindOnce(&DownscaleAndEncodeBitmap, original_screenshot_)
+      base::BindOnce(&DownscaleAndEncodeBitmap, original_screenshot_,
+                     ui_scale_factor_)
           .Then(base::BindPostTask(
               base::SequencedTaskRunner::GetCurrentDefault(),
               base::BindOnce(&LensOverlayQueryController::FetchFullImageRequest,
@@ -199,6 +208,8 @@ LensOverlayQueryController::CreateClientContext() {
   context.set_platform(lens::WEB);
   context.mutable_rendering_context()->set_rendering_environment(
       lens::RENDERING_ENV_LENS_OVERLAY);
+  context.mutable_client_filters()->add_filter()->set_filter_type(
+      lens::AUTO_FILTER);
   context.mutable_locale_context()->set_language(
       g_browser_process->GetApplicationLocale());
   context.mutable_locale_context()->set_region(
@@ -229,6 +240,8 @@ LensOverlayQueryController::AddVisualSearchInteractionLogData(
       ->mutable_user_selection_data()
       ->set_selection_type(selection_type);
   interaction_data.mutable_log_data()->set_is_parent_query(!parent_query_sent_);
+  interaction_data.mutable_log_data()->set_client_platform(
+      lens::CLIENT_PLATFORM_LENS_OVERLAY);
   parent_query_sent_ = true;
 
   std::string serialized_proto;
@@ -342,20 +355,11 @@ void LensOverlayQueryController::EndQuery() {
 
 void LensOverlayQueryController::SendRegionSearch(
     lens::mojom::CenterRotatedBoxPtr region,
-    std::map<std::string, std::string> additional_search_query_params) {
+    std::map<std::string, std::string> additional_search_query_params,
+    std::optional<SkBitmap> region_bytes) {
   SendInteraction(/*region=*/std::move(region), /*query_text=*/std::nullopt,
                   /*object_id=*/std::nullopt, lens::REGION_SEARCH,
-                  additional_search_query_params);
-}
-
-void LensOverlayQueryController::SendObjectSelection(
-    const std::string& object_id,
-    std::map<std::string, std::string> additional_search_query_params) {
-  // Object selection should send a REGION_SEARCH interaction type.
-  SendInteraction(/*region=*/lens::mojom::CenterRotatedBoxPtr(),
-                  /*query_text=*/std::nullopt,
-                  /*object_id=*/std::make_optional<std::string>(object_id),
-                  lens::REGION_SEARCH, additional_search_query_params);
+                  additional_search_query_params, region_bytes);
 }
 
 void LensOverlayQueryController::SendMultimodalRequest(
@@ -369,11 +373,13 @@ void LensOverlayQueryController::SendMultimodalRequest(
   SendInteraction(/*region=*/std::move(region),
                   /*query_text=*/std::make_optional<std::string>(query_text),
                   /*object_id=*/std::nullopt, multimodal_selection_type,
-                  additional_search_query_params);
+                  additional_search_query_params,
+                  /*region_bytes*/ std::nullopt);
 }
 
 void LensOverlayQueryController::SendTextOnlyQuery(
     const std::string& query_text,
+    TextOnlyQueryType text_only_query_type,
     std::map<std::string, std::string> additional_search_query_params) {
   // Increment the request counter to cancel previously issued fetches.
   request_counter_++;
@@ -383,11 +389,20 @@ void LensOverlayQueryController::SendTextOnlyQuery(
   additional_search_query_params =
       AddStartTimeQueryParam(additional_search_query_params);
 
+  // The visual search interaction log data should be added as late as possible,
+  // so that is_parent_query can be accurately set if the user issues multiple
+  // interactions in quick succession.
+  if (lens::features::SendVisualSearchInteractionParamForLensTextQueries() &&
+      text_only_query_type == TextOnlyQueryType::kLensTextSelection) {
+    additional_search_query_params = AddVisualSearchInteractionLogData(
+        additional_search_query_params, lens::SELECT_TEXT_HIGHLIGHT);
+  }
+
   lens::proto::LensOverlayUrlResponse lens_overlay_url_response;
   lens_overlay_url_response.set_url(
-      lens::BuildTextOnlySearchURL(query_text, page_url_, page_title_,
-                                   additional_search_query_params,
-                                   invocation_source_, use_dark_mode_)
+      lens::BuildTextOnlySearchURL(
+          query_text, page_url_, page_title_, additional_search_query_params,
+          invocation_source_, text_only_query_type, use_dark_mode_)
           .spec());
   base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE, base::BindOnce(url_callback_, lens_overlay_url_response));
@@ -398,7 +413,8 @@ void LensOverlayQueryController::SendInteraction(
     std::optional<std::string> query_text,
     std::optional<std::string> object_id,
     lens::LensOverlaySelectionType selection_type,
-    std::map<std::string, std::string> additional_search_query_params) {
+    std::map<std::string, std::string> additional_search_query_params,
+    std::optional<SkBitmap> region_bytes) {
   request_counter_++;
   int request_index = request_counter_;
 
@@ -410,7 +426,7 @@ void LensOverlayQueryController::SendInteraction(
   // Trigger asynchronous image cropping, then attempt to send the request.
   base::ThreadPool::PostTask(
       base::BindOnce(&DownscaleAndEncodeBitmapRegionIfNeeded,
-                     original_screenshot_, region.Clone())
+                     original_screenshot_, region.Clone(), region_bytes)
           .Then(base::BindPostTask(
               base::SequencedTaskRunner::GetCurrentDefault(),
               base::BindOnce(
@@ -479,7 +495,7 @@ LensOverlayQueryController::CreateInteractionRequest(
         ->mutable_image_crop()
         ->CopyFrom(*image_crop);
     interaction_request_metadata.set_type(
-        lens::LensOverlayInteractionRequestMetadata::REGION);
+        lens::LensOverlayInteractionRequestMetadata::REGION_SEARCH);
     interaction_request_metadata.mutable_selection_metadata()
         ->mutable_region()
         ->mutable_region()

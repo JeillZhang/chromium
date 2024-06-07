@@ -15,6 +15,8 @@
 #include "components/sync/model/model_type_store.h"
 #include "components/sync/model/model_type_sync_bridge.h"
 
+class PrefService;
+
 namespace syncer {
 class MetadataChangeList;
 class ModelTypeChangeProcessor;
@@ -29,7 +31,8 @@ class SharedTabGroupDataSyncBridge : public syncer::ModelTypeSyncBridge {
   SharedTabGroupDataSyncBridge(
       SavedTabGroupModel* model,
       syncer::OnceModelTypeStoreFactory create_store_callback,
-      std::unique_ptr<syncer::ModelTypeChangeProcessor> change_processor);
+      std::unique_ptr<syncer::ModelTypeChangeProcessor> change_processor,
+      PrefService* pref_service);
 
   SharedTabGroupDataSyncBridge(const SharedTabGroupDataSyncBridge&) = delete;
   SharedTabGroupDataSyncBridge& operator=(const SharedTabGroupDataSyncBridge&) =
@@ -45,7 +48,8 @@ class SharedTabGroupDataSyncBridge : public syncer::ModelTypeSyncBridge {
   std::optional<syncer::ModelError> ApplyIncrementalSyncChanges(
       std::unique_ptr<syncer::MetadataChangeList> metadata_change_list,
       syncer::EntityChangeList entity_changes) override;
-  void GetData(StorageKeyList storage_keys, DataCallback callback) override;
+  void GetDataForCommit(StorageKeyList storage_keys,
+                        DataCallback callback) override;
   void GetAllDataForDebugging(DataCallback callback) override;
   std::string GetClientTag(const syncer::EntityData& entity_data) override;
   std::string GetStorageKey(const syncer::EntityData& entity_data) override;
@@ -63,17 +67,11 @@ class SharedTabGroupDataSyncBridge : public syncer::ModelTypeSyncBridge {
   void OnStoreCreated(const std::optional<syncer::ModelError>& error,
                       std::unique_ptr<syncer::ModelTypeStore> store);
 
-  // Loads all sync_pb::SharedTabGroupDataSpecifics stored in `entries`
-  // passing the specifics into OnReadAllMetadata.
-  void OnDatabaseLoad(
-      const std::optional<syncer::ModelError>& error,
-      std::unique_ptr<syncer::ModelTypeStore::RecordList> entries);
-
   // Calls ModelReadyToSync if there are no errors to report and loads the
   // stored entries into `model_`.
-  void OnReadAllMetadata(
-      std::unique_ptr<syncer::ModelTypeStore::RecordList> entries,
+  void OnReadAllDataAndMetadata(
       const std::optional<syncer::ModelError>& error,
+      std::unique_ptr<syncer::ModelTypeStore::RecordList> entries,
       std::unique_ptr<syncer::MetadataBatch> metadata_batch);
 
   SEQUENCE_CHECKER(sequence_checker_);

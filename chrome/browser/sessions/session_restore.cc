@@ -53,6 +53,7 @@
 #include "chrome/browser/sessions/session_service_log.h"
 #include "chrome/browser/sessions/session_service_lookup.h"
 #include "chrome/browser/sessions/session_service_utils.h"
+#include "chrome/browser/sessions/sessions_features.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_list.h"
@@ -97,6 +98,10 @@
 #include "chrome/browser/web_applications/web_app_registrar.h"
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
+#include "chrome/browser/ui/webui/whats_new/whats_new_fetcher.h"
+#endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
+
 #if BUILDFLAG(IS_CHROMEOS_ASH)
 #include "ash/metrics/login_unlock_throughput_recorder.h"
 #include "ash/shell.h"
@@ -126,27 +131,28 @@ bool HasSingleNewTabPage(Browser* browser) {
 std::set<SessionRestoreImpl*>* active_session_restorers = nullptr;
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
-void StartRecordingRestoredWindowsMetrics(
+void NotifyAshOfSessionRestoreData(
     const Profile* profile,
     const std::vector<std::unique_ptr<sessions::SessionWindow>>& windows) {
-  // Ash is not always initialized in unit tests.
-  if (!ash::Shell::HasInstance())
-    return;
-
   if (!ash::ProfileHelper::IsPrimaryProfile(profile)) {
     return;
   }
 
-  ash::LoginUnlockThroughputRecorder* throughput_recorder =
-      ash::Shell::Get()->login_unlock_throughput_recorder();
+  // Ash is not always initialized in unit tests.
+  if (!ash::Shell::HasInstance()) {
+    return;
+  }
 
+  std::vector<ash::LoginUnlockThroughputRecorder::RestoreWindowID> ids;
   for (const auto& w : windows) {
     if (w->type == sessions::SessionWindow::TYPE_NORMAL) {
-      throughput_recorder->AddScheduledRestoreWindow(
-          w->window_id.id(), w->app_name,
-          ash::LoginUnlockThroughputRecorder::kBrowser);
+      ids.emplace_back(w->window_id.id(), w->app_name);
     }
   }
+
+  ash::Shell::Get()
+      ->login_unlock_throughput_recorder()
+      ->BrowserSessionRestoreDataLoaded(std::move(ids));
 }
 
 void ReportRestoredWindowCreated(aura::Window* window) {
@@ -171,7 +177,6 @@ void ReportRestoredWindowCreated(aura::Window* window) {
                                                      compositor);
   }
 }
-
 #endif
 
 }  // namespace
@@ -411,7 +416,7 @@ class SessionRestoreImpl : public BrowserListObserver {
     if (!created_tabbed_browser && always_create_tabbed_browser_) {
       browser = Browser::Create(Browser::CreateParams(profile_, false));
       if (startup_tabs_.empty() ||
-          (startup_tabs_.size() == 1 &&
+          (startup_tabs_.size() == 1 && whats_new::IsEnabled() &&
            startup_tabs_[0].url == whats_new::GetWebUIStartupURL())) {
         // No tab browsers were created and no URLs were supplied on the command
         // line, or only the What's New page is specified at startup and may or
@@ -481,11 +486,6 @@ class SessionRestoreImpl : public BrowserListObserver {
     if (!read_error_)
       read_error_ = read_error;
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-    if (!read_error_)
-      StartRecordingRestoredWindowsMetrics(profile_, windows);
-#endif
-
     // Copy windows into windows_ so that we can combine both app and browser
     // windows together before doing a one-pass restore.
     base::ranges::move(windows, std::back_inserter(windows_));
@@ -527,6 +527,10 @@ class SessionRestoreImpl : public BrowserListObserver {
     // start restoring windows.
     if (!got_all_sessions)
       return;
+
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+    NotifyAshOfSessionRestoreData(profile_, windows_);
+#endif
 
     SortWindowsByWindowId();
 
@@ -789,6 +793,16 @@ class SessionRestoreImpl : public BrowserListObserver {
     profile_->GetDefaultStoragePartition()
         ->GetDOMStorageContext()
         ->StartScavengingUnusedSessionStorage();
+
+    // Cookies needed for session restore have been loaded and their last
+    // accessed time has been updated. Now it's safe for the CookieManager to
+    // delete stale session cookies not used in the past 7 days.
+    // See crbug.com/40285083 for more info.
+    if (base::FeatureList::IsEnabled(kDeleteStaleSessionCookiesOnStartup)) {
+      profile_->GetDefaultStoragePartition()
+          ->DeleteStaleSessionOnlyCookiesAfterDelay();
+    }
+
     return last_normal_browser ? last_normal_browser : last_app_browser;
   }
 
@@ -1019,10 +1033,12 @@ class SessionRestoreImpl : public BrowserListObserver {
     bool is_first_tab = true;
     for (const auto& startup_tab : startup_tabs) {
       const GURL& url = startup_tab.url;
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
       if (url == whats_new::GetWebUIStartupURL()) {
         whats_new::StartWhatsNewFetch(browser);
         continue;
       }
+#endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
       int add_types = AddTabTypes::ADD_FORCE_INDEX;
       if (is_first_tab)
         add_types |= AddTabTypes::ADD_ACTIVE;

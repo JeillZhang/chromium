@@ -236,7 +236,6 @@
 <translation id="2189104374785738357">編輯 APN 詳情</translation>
 <translation id="2195732836444333448">目前已達資源上限，請稍後再回來。</translation>
 <translation id="2201758491318984023">單車</translation>
-<translation id="2203222757805818543">目前的時間表已設定為<ph name="SUNRISE" />至<ph name="SUNSET" />。如要自動更新深色模式時間表，請<ph name="BEGIN_LINK" />開啟位置存取權<ph name="END_LINK" /></translation>
 <translation id="2203272733515928691">溫泉</translation>
 <translation id="2203642483788377106">懸崖</translation>
 <translation id="2208388655216963643">印象派</translation>
@@ -313,6 +312,7 @@
 <translation id="2618015542787108131">沙丘</translation>
 <translation id="2619761439309613843">每日重新整理</translation>
 <translation id="2620436844016719705">系統</translation>
+<translation id="2637303424821734920">關閉 - 如要顯示當地天氣資訊，請<ph name="BEGIN_LINK" />開啟系統位置存取權<ph name="END_LINK" /></translation>
 <translation id="2638662041295312666">登入圖片</translation>
 <translation id="2640549051766135490">揀咗相簿 <ph name="TITLE" /> <ph name="DESC" /></translation>
 <translation id="2645380101799517405">控制項</translation>
@@ -364,6 +364,7 @@
 <translation id="3054177598518735801"><ph name="CURRENT_VALUE" />mA</translation>
 <translation id="3056720590588772262">端點</translation>
 <translation id="3060579846059757016">概要</translation>
+<translation id="3061850252076394168">啟用揀選朗讀內容</translation>
 <translation id="3069085583900247081">未通過測試</translation>
 <translation id="3078740164268491126">表格</translation>
 <translation id="3081652522083185657">明亮</translation>
@@ -630,7 +631,6 @@
 <translation id="458794348635939462">無法解析所有主機</translation>
 <translation id="4593212453765072419">需要 Proxy 驗證</translation>
 <translation id="4609350030397390689">鍵盤校暗亮度</translation>
-<translation id="4617553623719764431">系統不知道你的所在位置，因此無法顯示天氣資料。如要顯示本地天氣，請<ph name="BEGIN_LINK" />開啟「位置」存取權<ph name="END_LINK" /></translation>
 <translation id="4627232916386272576"><ph name="DOCUMENT_TITLE" />、<ph name="PRINTER_NAME" />、<ph name="CREATION_TIME" />，印咗 <ph name="PRINTED_PAGE_NUMBER" /> 頁，總共有 <ph name="TOTAL_PAGE_NUMBER" /> 頁。㩒一下 Enter 鍵就可以取消列印工作。</translation>
 <translation id="463791356324567266">正在取消掃瞄…</translation>
 <translation id="4646949265910132906">安全 Wi-Fi 連線</translation>
@@ -704,6 +704,7 @@
 <translation id="4985509611418653372">執行</translation>
 <translation id="4987769320337599931">防火牆</translation>
 <translation id="4988526792673242964">網頁</translation>
+<translation id="4989542687859782284">不受支援的實驗</translation>
 <translation id="4999333166442584738">隱藏報告</translation>
 <translation id="500920857929044050">停止測試</translation>
 <translation id="5017508259293544172">LEAP</translation>
@@ -960,7 +961,6 @@
 <translation id="6412715219990689313">內置鍵盤</translation>
 <translation id="6417265370957905582">Google 助理</translation>
 <translation id="6423239382391657905">OpenVPN</translation>
-<translation id="6438073885402882007">這麼做將允許系統服務使用你的位置。定位服務可能會使用 Wi-Fi、流動網絡和感應器等來源去偵測裝置的所在位置。<ph name="LINK_BEGIN" />瞭解詳情<ph name="LINK_END" /></translation>
 <translation id="6439505561246192797">弱 (<ph name="SIGNAL_STRENGTH" />)</translation>
 <translation id="6447630859861661624">去帳戶設定</translation>
 <translation id="6462978824459367242">宜家啟用咗「加入 APN」掣</translation>

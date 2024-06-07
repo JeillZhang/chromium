@@ -84,6 +84,7 @@
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/display/screen.h"
 #include "ui/display/tablet_state.h"
+#include "ui/events/ash/keyboard_capability.h"
 #include "ui/gfx/animation/animation.h"
 #include "ui/message_center/message_center.h"
 #include "ui/message_center/public/cpp/notifier_id.h"
@@ -262,6 +263,7 @@ constexpr const char* const kCopiedOnSigninAccessibilityPrefs[]{
     prefs::kAccessibilityMouseKeysEnabled,
     prefs::kAccessibilityMouseKeysAcceleration,
     prefs::kAccessibilityMouseKeysMaxSpeed,
+    prefs::kAccessibilityMouseKeysUsePrimaryKeys,
     prefs::kAccessibilityMouseKeysDominantHand,
     prefs::kAccessibilityScreenMagnifierEnabled,
     prefs::kAccessibilityScreenMagnifierFocusFollowingEnabled,
@@ -286,6 +288,7 @@ constexpr const char* const kCopiedOnSigninAccessibilityPrefs[]{
     prefs::kDictationDlcOnlySodaDownloadedNotificationHasBeenShown,
     prefs::kDictationNoDlcsDownloadedNotificationHasBeenShown,
     prefs::kDisplayRotationAcceleratorDialogHasBeenAccepted2,
+    prefs::kSelectToSpeakAcceleratorDialogHasBeenAccepted,
 };
 
 // List of switch access accessibility prefs that are to be copied (if changed
@@ -434,7 +437,7 @@ void ShowAccessibilityNotification(
       message_center::SystemNotificationWarningLevel::NORMAL;
 
   if (type == A11yNotificationType::kBrailleDisplayConnected) {
-    text = l10n_util::GetStringUTF16(
+    title = l10n_util::GetStringUTF16(
         IDS_ASH_STATUS_TRAY_BRAILLE_DISPLAY_CONNECTED);
     catalog_name = NotificationCatalogName::kBrailleDisplayConnected;
   } else if (type == A11yNotificationType::kDictationAllDlcsDownloaded) {
@@ -1173,6 +1176,8 @@ void AccessibilityController::RegisterProfilePrefs(
   registry->RegisterBooleanPref(
       prefs::kDictationAcceleratorDialogHasBeenAccepted, false);
   registry->RegisterBooleanPref(
+      prefs::kSelectToSpeakAcceleratorDialogHasBeenAccepted, false);
+  registry->RegisterBooleanPref(
       prefs::kDictationDlcSuccessNotificationHasBeenShown, false);
   registry->RegisterBooleanPref(
       prefs::kDictationDlcOnlyPumpkinDownloadedNotificationHasBeenShown, false);
@@ -1263,6 +1268,8 @@ void AccessibilityController::RegisterProfilePrefs(
                                MouseKeysController::kDefaultAcceleration);
   registry->RegisterDoublePref(prefs::kAccessibilityMouseKeysMaxSpeed,
                                MouseKeysController::kDefaultMaxSpeed);
+  registry->RegisterBooleanPref(prefs::kAccessibilityMouseKeysUsePrimaryKeys,
+                                true);
   registry->RegisterIntegerPref(
       prefs::kAccessibilityMouseKeysDominantHand,
       static_cast<int>(MouseKeysDominantHand::kRightHandDominant));
@@ -1309,9 +1316,6 @@ void AccessibilityController::RegisterProfilePrefs(
   registry->RegisterIntegerPref(
       prefs::kAccessibilityScreenMagnifierMouseFollowingMode,
       static_cast<int>(MagnifierMouseFollowingMode::kEdge),
-      user_prefs::PrefRegistrySyncable::SYNCABLE_OS_PREF);
-  registry->RegisterBooleanPref(
-      prefs::kAccessibilityScreenMagnifierCenterFocus, true,
       user_prefs::PrefRegistrySyncable::SYNCABLE_OS_PREF);
   registry->RegisterBooleanPref(
       prefs::kAccessibilityScreenMagnifierFocusFollowingEnabled, true,
@@ -1419,6 +1423,15 @@ void AccessibilityController::RegisterProfilePrefs(
         user_prefs::PrefRegistrySyncable::SYNCABLE_OS_PREF);
     registry->RegisterDictionaryPref(
         prefs::kAccessibilityFaceGazeGesturesToConfidence,
+        user_prefs::PrefRegistrySyncable::SYNCABLE_OS_PREF);
+    registry->RegisterBooleanPref(
+        prefs::kAccessibilityFaceGazeCursorControlEnabled, true,
+        user_prefs::PrefRegistrySyncable::SYNCABLE_OS_PREF);
+    registry->RegisterBooleanPref(
+        prefs::kAccessibilityFaceGazeActionsEnabled, true,
+        user_prefs::PrefRegistrySyncable::SYNCABLE_OS_PREF);
+    registry->RegisterBooleanPref(
+        prefs::kAccessibilityFaceGazeAdjustSpeedSeparately, false,
         user_prefs::PrefRegistrySyncable::SYNCABLE_OS_PREF);
   }
 
@@ -1916,6 +1929,22 @@ bool AccessibilityController::IsEnterpriseIconVisibleForStickyKeys() {
   return sticky_keys().IsEnterpriseIconVisible();
 }
 
+bool AccessibilityController::IsReducedAnimationsSettingVisibleInTray() {
+  if (!::features::IsAccessibilityReducedAnimationsInKioskEnabled()) {
+    return false;
+  }
+
+  // Only visible in kiosk mode.
+  if (!Shell::Get()->session_controller()->IsRunningInAppMode()) {
+    return false;
+  }
+  return reduced_animations().IsVisibleInTray();
+}
+
+bool AccessibilityController::IsEnterpriseIconVisibleForReducedAnimations() {
+  return reduced_animations().IsEnterpriseIconVisible();
+}
+
 bool AccessibilityController::IsVirtualKeyboardSettingVisibleInTray() {
   return virtual_keyboard().IsVisibleInTray();
 }
@@ -2017,6 +2046,32 @@ void AccessibilityController::ToggleDictationFromSource(
   ToggleDictation();
 }
 
+void AccessibilityController::EnableSelectToSpeakWithDialog() {
+  if (!::features::IsAccessibilitySelectToSpeakShortcutEnabled() ||
+      select_to_speak().enabled()) {
+    return;
+  }
+
+  if (active_user_prefs_
+          ->FindPreference(prefs::kAccessibilitySelectToSpeakEnabled)
+          ->IsManaged() &&
+      !active_user_prefs_->GetBoolean(
+          prefs::kAccessibilitySelectToSpeakEnabled)) {
+    // Don't show the dialog if Select to speak has been disabled by a policy.
+    return;
+  }
+
+  if (active_user_prefs_->GetBoolean(
+          prefs::kSelectToSpeakAcceleratorDialogHasBeenAccepted)) {
+    // Enable Select to Speak if the confirmation dialog has been previously
+    // accepted.
+    OnSelectToSpeakKeyboardDialogAccepted();
+  } else {
+    // Show the confirmation dialog if it hasn't been accepted yet.
+    ShowSelectToSpeakKeyboardDialog();
+  }
+}
+
 void AccessibilityController::EnableOrToggleDictationFromSource(
     DictationToggleSource source) {
   if (dictation().enabled()) {
@@ -2087,6 +2142,46 @@ void AccessibilityController::OnDictationKeyboardDialogAccepted() {
 
 void AccessibilityController::OnDictationKeyboardDialogDismissed() {
   dictation_keyboard_dialog_showing_for_testing_ = false;
+}
+
+void AccessibilityController::ShowSelectToSpeakKeyboardDialog() {
+  if (!client_ || !::features::IsAccessibilitySelectToSpeakShortcutEnabled()) {
+    return;
+  }
+
+  std::u16string title =
+      l10n_util::GetStringUTF16(IDS_ASH_SELECT_TO_SPEAK_KEYBOARD_DIALOG_TITLE);
+
+  std::u16string modifier_key;
+  if (Shell::Get()->keyboard_capability()->HasLauncherButtonOnAnyKeyboard()) {
+    modifier_key = l10n_util::GetStringUTF16(IDS_KSV_MODIFIER_LAUNCHER);
+  } else {
+    modifier_key = l10n_util::GetStringUTF16(IDS_KSV_MODIFIER_SEARCH);
+  }
+  std::u16string description = l10n_util::GetStringFUTF16(
+      IDS_ASH_SELECT_TO_SPEAK_KEYBOARD_DIALOG_DESCRIPTION, modifier_key);
+  ShowConfirmationDialog(
+      title, description, l10n_util::GetStringUTF16(IDS_APP_CANCEL),
+      base::BindOnce(
+          &AccessibilityController::OnSelectToSpeakKeyboardDialogAccepted,
+          GetWeakPtr()),
+      base::BindOnce(
+          &AccessibilityController::OnSelectToSpeakKeyboardDialogDismissed,
+          GetWeakPtr()),
+      base::BindOnce(
+          &AccessibilityController::OnSelectToSpeakKeyboardDialogDismissed,
+          GetWeakPtr()));
+}
+
+void AccessibilityController::OnSelectToSpeakKeyboardDialogAccepted() {
+  active_user_prefs_->SetBoolean(
+      prefs::kSelectToSpeakAcceleratorDialogHasBeenAccepted, true);
+  confirmation_dialog_.reset();
+  select_to_speak().SetEnabled(true);
+}
+
+void AccessibilityController::OnSelectToSpeakKeyboardDialogDismissed() {
+  confirmation_dialog_.reset();
 }
 
 void AccessibilityController::ShowDictationLanguageUpgradedNudge(
@@ -2322,6 +2417,11 @@ void AccessibilityController::ObservePrefs(PrefService* prefs) {
             &AccessibilityController::UpdateMouseKeysMaxSpeedFromPref,
             base::Unretained(this)));
     pref_change_registrar_->Add(
+        prefs::kAccessibilityMouseKeysUsePrimaryKeys,
+        base::BindRepeating(
+            &AccessibilityController::UpdateMouseKeysUsePrimaryKeysFromPref,
+            base::Unretained(this)));
+    pref_change_registrar_->Add(
         prefs::kAccessibilityMouseKeysDominantHand,
         base::BindRepeating(
             &AccessibilityController::UpdateMouseKeysDominantHandFromPref,
@@ -2422,6 +2522,7 @@ void AccessibilityController::ObservePrefs(PrefService* prefs) {
   if (::features::IsAccessibilityMouseKeysEnabled()) {
     UpdateMouseKeysAccelerationFromPref();
     UpdateMouseKeysMaxSpeedFromPref();
+    UpdateMouseKeysUsePrimaryKeysFromPref();
     UpdateMouseKeysDominantHandFromPref();
   }
   UpdateFloatingMenuPositionFromPref();
@@ -2516,6 +2617,13 @@ void AccessibilityController::UpdateMouseKeysMaxSpeedFromPref() {
   double max_speed =
       active_user_prefs_->GetDouble(prefs::kAccessibilityMouseKeysMaxSpeed);
   Shell::Get()->mouse_keys_controller()->SetMaxSpeed(max_speed);
+}
+
+void AccessibilityController::UpdateMouseKeysUsePrimaryKeysFromPref() {
+  DCHECK(active_user_prefs_);
+  bool value = active_user_prefs_->GetBoolean(
+      prefs::kAccessibilityMouseKeysUsePrimaryKeys);
+  Shell::Get()->mouse_keys_controller()->set_use_primary_keys(value);
 }
 
 void AccessibilityController::UpdateMouseKeysDominantHandFromPref() {

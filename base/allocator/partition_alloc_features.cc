@@ -108,7 +108,11 @@ MIRACLE_PARAMETER_FOR_INT(
 
 BASE_FEATURE(kPartitionAllocLargeEmptySlotSpanRing,
              "PartitionAllocLargeEmptySlotSpanRing",
+#if BUILDFLAG(IS_MAC)
+             FEATURE_ENABLED_BY_DEFAULT);
+#else
              FEATURE_DISABLED_BY_DEFAULT);
+#endif
 
 BASE_FEATURE(kPartitionAllocSchedulerLoopQuarantine,
              "PartitionAllocSchedulerLoopQuarantine",
@@ -441,6 +445,9 @@ BASE_FEATURE(kPartitionAllocMakeFreeNoOpOnShutdown,
 
 constexpr FeatureParam<WhenFreeBecomesNoOp>::Option
     kPartitionAllocMakeFreeNoOpOnShutdownOptions[] = {
+        {WhenFreeBecomesNoOp::kBeforePreShutdown, "before-preshutdown"},
+        {WhenFreeBecomesNoOp::kBeforeHaltingStartupTracingController,
+         "before-halting-startup-tracing-controller"},
         {
             WhenFreeBecomesNoOp::kBeforeShutDownThreads,
             "before-shutdown-threads",
@@ -483,6 +490,14 @@ void MakeFreeNoOp(WhenFreeBecomesNoOp callsite) {
 
 BASE_FEATURE(kPartitionAllocAdjustSizeWhenInForeground,
              "PartitionAllocAdjustSizeWhenInForeground",
+#if BUILDFLAG(IS_MAC)
+             FEATURE_ENABLED_BY_DEFAULT);
+#else
+             FEATURE_DISABLED_BY_DEFAULT);
+#endif
+
+BASE_FEATURE(kPartitionAllocUseSmallSingleSlotSpans,
+             "PartitionAllocUseSmallSingleSlotSpans",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
 }  // namespace features

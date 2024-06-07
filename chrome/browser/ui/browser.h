@@ -776,10 +776,9 @@ class Browser : public TabStripModelObserver,
   void SetFocusToLocationBar() override;
   content::KeyboardEventProcessingResult PreHandleKeyboardEvent(
       content::WebContents* source,
-      const content::NativeWebKeyboardEvent& event) override;
-  bool HandleKeyboardEvent(
-      content::WebContents* source,
-      const content::NativeWebKeyboardEvent& event) override;
+      const input::NativeWebKeyboardEvent& event) override;
+  bool HandleKeyboardEvent(content::WebContents* source,
+                           const input::NativeWebKeyboardEvent& event) override;
   bool PreHandleGestureEvent(content::WebContents* source,
                              const blink::WebGestureEvent& event) override;
   bool CanDragEnter(content::WebContents* source,
@@ -802,7 +801,7 @@ class Browser : public TabStripModelObserver,
   content::PictureInPictureResult EnterPictureInPicture(
       content::WebContents* web_contents) override;
   void ExitPictureInPicture() override;
-  bool IsBackForwardCacheSupported() override;
+  bool IsBackForwardCacheSupported(content::WebContents& web_contents) override;
   content::PreloadingEligibility IsPrerender2Supported(
       content::WebContents& web_contents) override;
   void UpdateInspectedWebContentsIfNecessary(
@@ -870,6 +869,8 @@ class Browser : public TabStripModelObserver,
   views::WebView* GetWebView() override;
   void OpenURL(const GURL& gurl, WindowOpenDisposition disposition) override;
   const SessionID& GetSessionID() override;
+  tabs::TabInterface* GetActiveTabInterface() override;
+  BrowserWindowFeatures& GetFeatures() override;
 
  private:
   friend class BrowserTest;

@@ -123,7 +123,7 @@ class IOSurfaceImageBackingFactoryTest : public SharedImageTestBase {
 // representation.
 TEST_F(IOSurfaceImageBackingFactoryTest, GL_SkiaGL) {
   // Create a backing using mailbox.
-  auto mailbox = Mailbox::GenerateForSharedImage();
+  auto mailbox = Mailbox::Generate();
   auto format = viz::SinglePlaneFormat::kRGBA_8888;
   gfx::Size size(1, 1);
   auto color_space = gfx::ColorSpace::CreateSRGB();
@@ -249,7 +249,7 @@ class IOSurfaceImageBackingFactoryDawnTest
       const gfx::Size& size,
       uint32_t usage) {
     // Create a backing using mailbox.
-    auto mailbox = Mailbox::GenerateForSharedImage();
+    auto mailbox = Mailbox::Generate();
     auto format = viz::SinglePlaneFormat::kRGBA_8888;
     auto color_space = gfx::ColorSpace::CreateSRGB();
     GrSurfaceOrigin surface_origin = kTopLeft_GrSurfaceOrigin;
@@ -371,6 +371,37 @@ TEST_P(IOSurfaceImageBackingFactoryDawnTest,
   wgpu::Texture texture_1(scoped_access_1->texture());
 
   EXPECT_NE(texture_0.Get(), texture_1.Get());
+}
+
+// Test to verify handling of failure to begin access.
+TEST_P(IOSurfaceImageBackingFactoryDawnTest, Dawn_FailureToBeginAccess) {
+  wgpu::Device device = CreateDevice();
+
+  gfx::Size size(1, 1);
+  uint32_t usage = SHARED_IMAGE_USAGE_WEBGPU_WRITE |
+                   SHARED_IMAGE_USAGE_DISPLAY_READ | SHARED_IMAGE_USAGE_SCANOUT;
+  auto factory_ref = CreateSharedImage(size, usage);
+
+  auto rep = shared_image_representation_factory_.ProduceDawn(
+      factory_ref->mailbox(), device, backend_type(), {}, context_state_);
+
+  device.Destroy();
+
+  auto scoped_access = rep->BeginScopedAccess(
+      wgpu::TextureUsage::CopySrc,
+      SharedImageRepresentation::AllowUnclearedAccess::kYes);
+
+  if (backend_type() == wgpu::BackendType::Metal) {
+    // The BeginAccess() call should have returned an empty texture, in which
+    // case SharedImageRepresentation will return null for the scoped access.
+    EXPECT_FALSE(scoped_access);
+  } else {
+    // The BeginAccess() call should have created an error texture.
+    EXPECT_TRUE(scoped_access);
+    EXPECT_TRUE(scoped_access->texture());
+    EXPECT_TRUE(
+        dawn::native::CheckIsErrorForTesting(scoped_access->texture().Get()));
+  }
 }
 
 // Test to check interaction between Dawn and skia GL representations.
@@ -614,7 +645,7 @@ TEST_P(IOSurfaceImageBackingFactoryDawnTest, Dawn_SamplingVideoTexture) {
   }
 
   // Create a backing using mailbox.
-  auto mailbox = Mailbox::GenerateForSharedImage();
+  auto mailbox = Mailbox::Generate();
   const auto format = viz::MultiPlaneFormat::kNV12;
   const auto color_space = gfx::ColorSpace::CreateSRGB();
   GrSurfaceOrigin surface_origin = kTopLeft_GrSurfaceOrigin;
@@ -670,7 +701,7 @@ TEST_P(IOSurfaceImageBackingFactoryDawnTest, Dawn_SamplingVideoTexture) {
 // Test that Skia trying to access uninitialized SharedImage will fail
 TEST_F(IOSurfaceImageBackingFactoryTest, SkiaAccessFirstFails) {
   // Create a mailbox.
-  auto mailbox = Mailbox::GenerateForSharedImage();
+  auto mailbox = Mailbox::Generate();
   const auto format = viz::SinglePlaneFormat::kRGBA_8888;
   const gfx::Size size(1, 1);
   const auto color_space = gfx::ColorSpace::CreateSRGB();
@@ -815,7 +846,7 @@ TEST_P(IOSurfaceImageBackingFactoryScanoutTest, Basic) {
   if (should_succeed) {
     EXPECT_CALL(progress_reporter_, ReportProgress).Times(AtLeast(1));
   }
-  auto mailbox = Mailbox::GenerateForSharedImage();
+  auto mailbox = Mailbox::Generate();
   auto format = get_format();
   gfx::Size size(256, 256);
   auto color_space = gfx::ColorSpace::CreateSRGB();
@@ -970,7 +1001,7 @@ TEST_P(IOSurfaceImageBackingFactoryScanoutTest, InitialData) {
     EXPECT_CALL(progress_reporter_, ReportProgress).Times(AtLeast(1));
   }
 
-  auto mailbox = Mailbox::GenerateForSharedImage();
+  auto mailbox = Mailbox::Generate();
   gfx::Size size(256, 256);
   auto color_space = gfx::ColorSpace::CreateSRGB();
   GrSurfaceOrigin surface_origin = kTopLeft_GrSurfaceOrigin;
@@ -1049,7 +1080,7 @@ TEST_P(IOSurfaceImageBackingFactoryScanoutTest, InitialDataImage) {
   if (should_succeed) {
     EXPECT_CALL(progress_reporter_, ReportProgress).Times(AtLeast(1));
   }
-  auto mailbox = Mailbox::GenerateForSharedImage();
+  auto mailbox = Mailbox::Generate();
   auto format = get_format();
   gfx::Size size(256, 256);
   auto color_space = gfx::ColorSpace::CreateSRGB();
@@ -1112,7 +1143,7 @@ TEST_P(IOSurfaceImageBackingFactoryScanoutTest, InitialDataImage) {
 }
 
 TEST_P(IOSurfaceImageBackingFactoryScanoutTest, InitialDataWrongSize) {
-  auto mailbox = Mailbox::GenerateForSharedImage();
+  auto mailbox = Mailbox::Generate();
   auto format = get_format();
   gfx::Size size(256, 256);
   auto color_space = gfx::ColorSpace::CreateSRGB();
@@ -1133,7 +1164,7 @@ TEST_P(IOSurfaceImageBackingFactoryScanoutTest, InitialDataWrongSize) {
 
 TEST_P(IOSurfaceImageBackingFactoryScanoutTest,
        InvalidFormatForCreationWithSurfaceHandle) {
-  auto mailbox = Mailbox::GenerateForSharedImage();
+  auto mailbox = Mailbox::Generate();
   auto format = viz::LegacyMultiPlaneFormat::kNV12;
   gfx::Size size(256, 256);
   auto color_space = gfx::ColorSpace::CreateSRGB();
@@ -1151,7 +1182,7 @@ TEST_P(IOSurfaceImageBackingFactoryScanoutTest,
 // empty pixel data but should fail with non-empty pixel data.
 TEST_P(IOSurfaceImageBackingFactoryScanoutTest,
        InvalidFormatForCreationWithPixelData) {
-  auto mailbox = Mailbox::GenerateForSharedImage();
+  auto mailbox = Mailbox::Generate();
   auto format = viz::MultiPlaneFormat::kNV12;
   gfx::Size size(256, 256);
   auto color_space = gfx::ColorSpace::CreateSRGB();
@@ -1166,7 +1197,7 @@ TEST_P(IOSurfaceImageBackingFactoryScanoutTest,
 }
 
 TEST_P(IOSurfaceImageBackingFactoryScanoutTest, InvalidSize) {
-  auto mailbox = Mailbox::GenerateForSharedImage();
+  auto mailbox = Mailbox::Generate();
   auto format = get_format();
   gfx::Size size(0, 0);
   auto color_space = gfx::ColorSpace::CreateSRGB();
@@ -1191,7 +1222,7 @@ TEST_P(IOSurfaceImageBackingFactoryScanoutTest, EstimatedSize) {
   if (should_succeed) {
     EXPECT_CALL(progress_reporter_, ReportProgress).Times(AtLeast(1));
   }
-  auto mailbox = Mailbox::GenerateForSharedImage();
+  auto mailbox = Mailbox::Generate();
   auto format = get_format();
   gfx::Size size(256, 256);
   auto color_space = gfx::ColorSpace::CreateSRGB();
@@ -1294,7 +1325,7 @@ class IOSurfaceImageBackingFactoryGMBTest
       uint32_t usage,
       gfx::ColorSpace color_space) {
     const bool should_succeed = can_create_gmb_shared_image(get_format());
-    auto mailbox = Mailbox::GenerateForSharedImage();
+    auto mailbox = Mailbox::Generate();
     GrSurfaceOrigin surface_origin = kTopLeft_GrSurfaceOrigin;
     SkAlphaType alpha_type = kPremul_SkAlphaType;
     bool override_rgba_to_bgra = get_gr_context_type() == GrContextType::kGL;

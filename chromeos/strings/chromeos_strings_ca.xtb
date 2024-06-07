@@ -236,7 +236,6 @@
 <translation id="2189104374785738357">Edita els detalls de l'APN</translation>
 <translation id="2195732836444333448">Estic al límit de la meva capacitat. Torna aviat.</translation>
 <translation id="2201758491318984023">bicicleta</translation>
-<translation id="2203222757805818543">La programació actual està establerta en <ph name="SUNRISE" /> - <ph name="SUNSET" />. Per actualitzar automàticament la programació del mode fosc, <ph name="BEGIN_LINK" />activa l'accés a la ubicació<ph name="END_LINK" />.</translation>
 <translation id="2203272733515928691">aigües termals</translation>
 <translation id="2203642483788377106">un penya-segat</translation>
 <translation id="2208388655216963643">impressionista</translation>
@@ -364,6 +363,7 @@
 <translation id="3054177598518735801"><ph name="CURRENT_VALUE" /> mA</translation>
 <translation id="3056720590588772262">Punt final</translation>
 <translation id="3060579846059757016">Esquemes</translation>
+<translation id="3061850252076394168">activa la funció Escolta la selecció</translation>
 <translation id="3069085583900247081">La prova no s'ha superat</translation>
 <translation id="3078740164268491126">taula</translation>
 <translation id="3081652522083185657">lluminosa</translation>
@@ -630,7 +630,6 @@
 <translation id="458794348635939462">No s'han pogut resoldre tots els amfitrions</translation>
 <translation id="4593212453765072419">Cal l'autenticació del servidor intermediari</translation>
 <translation id="4609350030397390689">Disminueix la brillantor del teclat</translation>
-<translation id="4617553623719764431">El temps no es mostra perquè no se sap la teva ubicació. Per mostrar el temps local, <ph name="BEGIN_LINK" />activa l'accés a la ubicació<ph name="END_LINK" />.</translation>
 <translation id="4627232916386272576"><ph name="DOCUMENT_TITLE" />, <ph name="PRINTER_NAME" />, <ph name="CREATION_TIME" />, <ph name="PRINTED_PAGE_NUMBER" /> de <ph name="TOTAL_PAGE_NUMBER" />. Prem Retorn per cancel·lar la tasca d'impressió.</translation>
 <translation id="463791356324567266">S'està cancel·lant l'escaneig...</translation>
 <translation id="4646949265910132906">Connexió Wi‑Fi segura</translation>
@@ -704,6 +703,7 @@
 <translation id="4985509611418653372">Executa</translation>
 <translation id="4987769320337599931">Tallafoc</translation>
 <translation id="4988526792673242964">Pàgines</translation>
+<translation id="4989542687859782284">No disponibles</translation>
 <translation id="4999333166442584738">Amaga l'informe</translation>
 <translation id="500920857929044050">Atura la prova</translation>
 <translation id="5017508259293544172">LEAP</translation>
@@ -960,7 +960,6 @@
 <translation id="6412715219990689313">Teclat integrat</translation>
 <translation id="6417265370957905582">Assistent de Google</translation>
 <translation id="6423239382391657905">OpenVPN</translation>
-<translation id="6438073885402882007">Això permet que els serveis del sistema tinguin permís per utilitzar la teva ubicació. La ubicació pot utilitzar fonts com ara la Wi‑Fi, les xarxes mòbils i els sensors per calcular la ubicació del dispositiu. <ph name="LINK_BEGIN" />Més informació<ph name="LINK_END" /></translation>
 <translation id="6439505561246192797">Feble (<ph name="SIGNAL_STRENGTH" />)</translation>
 <translation id="6447630859861661624">Ves a la configuració del compte</translation>
 <translation id="6462978824459367242">El botó Afegeix de l'APN ara està activat</translation>
@@ -1041,7 +1040,7 @@
 <translation id="6889786074662672253">Mentre es reinicia, no desconnectis el dispositiu extern ni apaguis l'ordinador. Pots minimitzar aquesta finestra. Aquest procés pot tardar uns quants minuts i és possible que, durant aquest temps, el dispositiu extern no funcioni.</translation>
 <translation id="6900701049656042631">Aquest àlbum no té cap foto. Per afegir-ne, ves a <ph name="LINK" />.</translation>
 <translation id="6902359863093437070">Crea un fons amb IA</translation>
-<translation id="6905163627763043954">Prova-la</translation>
+<translation id="6905163627763043954">Prova-ho</translation>
 <translation id="6905724422583748843">Torna a <ph name="PAGE_NAME" /></translation>
 <translation id="6910312834584889076">La tapa de l'escàner està oberta. Tanca-la i torna-ho a provar.</translation>
 <translation id="6911383237894364323">No es pot connectar als servidors multimèdia</translation>

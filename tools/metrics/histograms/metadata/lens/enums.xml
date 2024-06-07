@@ -42,6 +42,8 @@ chromium-metrics-reviews@google.com.
   <int value="9" label="Escape key press"/>
   <int value="10" label="Unexpected side panel open"/>
   <int value="11" label="Browser went into fullscreen"/>
+  <int value="12" label="Tab dragged into new window"/>
+  <int value="13" label="Tab closed"/>
 </enum>
 
 <!-- LINT.ThenChange(//chrome/browser/ui/lens/lens_overlay_dismissal_source.h:LensOverlayDismissalSource) -->
@@ -60,6 +62,23 @@ chromium-metrics-reviews@google.com.
 
 <!-- LINT.ThenChange(//chrome/browser/ui/lens/lens_overlay_invocation_source.h:LensOverlayInvocationSource) -->
 
+<!-- LINT.IfChange(LensOverlayUserAction) -->
+
+<enum name="LensOverlayUserAction">
+  <summary>The user interaction with the Lens Overlay</summary>
+  <int value="0" label="Region selection"/>
+  <int value="1" label="Region selection change"/>
+  <int value="2" label="Text selection"/>
+  <int value="3" label="Object click"/>
+  <int value="4" label="Translate text action"/>
+  <int value="5" label="Copy text action"/>
+  <int value="6" label="My Activity action"/>
+  <int value="7" label="Learn more action"/>
+  <int value="8" label="Send feedback action"/>
+</enum>
+
+<!-- LINT.ThenChange(//chrome/browser/resources/lens/overlay/metrics_utils.ts:UserAction) -->
+
 <!-- LINT.IfChange(LensPermissionBubbleUserAction) -->
 
 <enum name="LensPermissionBubbleUserAction">
@@ -71,13 +90,6 @@ chromium-metrics-reviews@google.com.
 </enum>
 
 <!-- LINT.ThenChange(//chrome/browser/ui/lens/lens_permission_bubble_controller.h:UserAction) -->
-
-<!-- TODO(crbug.com/336793181): `git cl format` deletes the ThenChange above
-     unless this enum is here. Fix the issue and delete this fake enum.  -->
-
-<enum name="ZZZZZZZ">
-  <int value="0" label="Z"/>
-</enum>
 
 </enums>
 

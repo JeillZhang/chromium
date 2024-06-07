@@ -53,8 +53,10 @@
 #import "ios/chrome/browser/ui/omnibox/popup/popup_debug_info_consumer.h"
 #import "ios/chrome/browser/ui/omnibox/popup/popup_swift.h"
 #import "ios/chrome/browser/ui/omnibox/popup/remote_suggestions_service_observer_bridge.h"
+#import "ios/chrome/browser/ui/omnibox/popup/row/actions/suggest_action.h"
 #import "ios/chrome/browser/ui/toolbar/public/toolbar_omnibox_consumer.h"
 #import "ios/chrome/common/ui/favicon/favicon_attributes.h"
+#import "net/base/apple/url_conversions.h"
 #import "third_party/omnibox_proto/groups.pb.h"
 #import "ui/base/l10n/l10n_util.h"
 
@@ -300,10 +302,19 @@ const NSUInteger kMaxSuggestTileTypePosition = 15;
 
     _delegate->OnMatchSelected(match, row, WindowOpenDisposition::CURRENT_TAB);
   } else {
-    DUMP_WILL_BE_NOTREACHED_NORETURN()
+    DUMP_WILL_BE_NOTREACHED()
         << "Suggestion type " << NSStringFromClass(suggestion.class)
         << " not handled for selection.";
   }
+}
+
+- (void)autocompleteResultConsumer:(id<AutocompleteResultConsumer>)sender
+         didSelectSuggestionAction:(SuggestAction*)action {
+  DCHECK(self.applicationCommandsHandler);
+  OpenNewTabCommand* command =
+      [OpenNewTabCommand commandWithURLFromChrome:action.actionURI
+                                      inIncognito:NO];
+  [self.applicationCommandsHandler openURLInNewTab:command];
 }
 
 - (void)autocompleteResultConsumer:(id<AutocompleteResultConsumer>)sender
@@ -344,7 +355,7 @@ const NSUInteger kMaxSuggestTileTypePosition = 15;
         autocompleteMatchFormatter.autocompleteMatch;
     _delegate->OnMatchSelectedForDeletion(match);
   } else {
-    DUMP_WILL_BE_NOTREACHED_NORETURN()
+    DUMP_WILL_BE_NOTREACHED()
         << "Suggestion type " << NSStringFromClass(suggestion.class)
         << " not handled for deletion.";
   }
@@ -477,6 +488,30 @@ const NSUInteger kMaxSuggestTileTypePosition = 15;
     formatter.suggestionSectionId =
         [NSNumber numberWithInt:static_cast<int>(sectionId)];
   }
+
+  NSMutableArray* actions = [[NSMutableArray alloc] init];
+
+  for (auto& action : match.actions) {
+    SuggestAction* suggestAction =
+        [SuggestAction actionWithOmniboxAction:action.get()];
+
+    if (!suggestAction) {
+      continue;
+    }
+
+    if (suggestAction.type != omnibox::ActionInfo_ActionType_CALL) {
+      [actions addObject:suggestAction];
+      continue;
+    }
+
+    BOOL hasDialApp = [[UIApplication sharedApplication]
+        canOpenURL:net::NSURLWithGURL(suggestAction.actionURI)];
+    if (hasDialApp) {
+      [actions addObject:suggestAction];
+    }
+  }
+
+  formatter.actionsInSuggest = actions;
 
   return formatter;
 }

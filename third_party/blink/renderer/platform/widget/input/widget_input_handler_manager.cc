@@ -27,7 +27,6 @@
 #include "third_party/blink/public/common/input/web_input_event_attribution.h"
 #include "third_party/blink/public/common/input/web_keyboard_event.h"
 #include "third_party/blink/public/platform/platform.h"
-#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/scheduler/public/agent_group_scheduler.h"
 #include "third_party/blink/renderer/platform/scheduler/public/compositor_thread_scheduler.h"
 #include "third_party/blink/renderer/platform/scheduler/public/widget_scheduler.h"
@@ -235,11 +234,6 @@ WidgetInputHandlerManager::WidgetInputHandlerManager(
       frame_widget_input_handler_(std::move(frame_widget_input_handler)),
       widget_scheduler_(std::move(widget_scheduler)),
       widget_is_embedded_(widget_ && widget_->is_embedded()),
-      input_event_queue_(base::MakeRefCounted<MainThreadEventQueue>(
-          this,
-          widget_scheduler_->InputTaskRunner(),
-          widget_scheduler_,
-          /*allow_raf_aligned_input=*/!never_composited)),
       main_thread_task_runner_(widget_scheduler_->InputTaskRunner()),
       compositor_thread_default_task_runner_(
           compositor_thread_scheduler
@@ -249,6 +243,12 @@ WidgetInputHandlerManager::WidgetInputHandlerManager(
           compositor_thread_scheduler
               ? compositor_thread_scheduler->InputTaskRunner()
               : nullptr),
+      input_event_queue_(base::MakeRefCounted<MainThreadEventQueue>(
+          this,
+          InputThreadTaskRunner(),
+          widget_scheduler_->InputTaskRunner(),
+          widget_scheduler_,
+          /*allow_raf_aligned_input=*/!never_composited)),
       allow_scroll_resampling_(allow_scroll_resampling) {
 #if BUILDFLAG(IS_ANDROID)
   if (compositor_thread_default_task_runner_) {
@@ -464,18 +464,17 @@ void WidgetInputHandlerManager::RecordEventMetricsForPaintTiming(
     std::optional<base::TimeTicks> first_paint_time) {
   CHECK(main_thread_task_runner_->BelongsToCurrentThread());
 
-  bool first_paint_max_delay_reached = !first_paint_time.has_value();
-
-  if (!first_paint_max_delay_reached) {
-    if (first_paint_max_delay_timer_ &&
-        first_paint_max_delay_timer_->IsRunning()) {
-      // Prevent the timer from recording the histograms again.
-      first_paint_max_delay_timer_->Stop();
-    } else {
-      // The histograms are already recorded by the timer.
-      return;
-    }
+  if (recorded_event_metric_for_paint_timing_) {
+    return;
   }
+  recorded_event_metric_for_paint_timing_ = true;
+
+  if (first_paint_max_delay_timer_ &&
+      first_paint_max_delay_timer_->IsRunning()) {
+    first_paint_max_delay_timer_->Stop();
+  }
+
+  bool first_paint_max_delay_reached = !first_paint_time.has_value();
 
   // Initialize to 0 timestamp and log 0 if there was no suppressed event or
   // the most recent suppressed event was before the first_paint_time
@@ -496,13 +495,28 @@ void WidgetInputHandlerManager::RecordEventMetricsForPaintTiming(
     suppressed_events_count = uma_data_.suppressed_events_count;
   }
 
-  UMA_HISTOGRAM_TIMES("PageLoad.Internal.SuppressedEventsTimingBeforePaint2",
+  UMA_HISTOGRAM_TIMES("PageLoad.Internal.SuppressedEventsTimingBeforePaint3",
                       diff);
   UMA_HISTOGRAM_COUNTS(
-      "PageLoad.Internal.SuppressedInteractionsCountBeforePaint2",
+      "PageLoad.Internal.SuppressedInteractionsCountBeforePaint3",
       suppressed_interactions_count);
-  UMA_HISTOGRAM_COUNTS("PageLoad.Internal.SuppressedEventsCountBeforePaint2",
+  UMA_HISTOGRAM_COUNTS("PageLoad.Internal.SuppressedEventsCountBeforePaint3",
                        suppressed_events_count);
+  UMA_HISTOGRAM_BOOLEAN(
+      "PageLoad.Internal.SuppressedEventsBeforeMissingFirstPaint",
+      first_paint_max_delay_reached);
+}
+
+void WidgetInputHandlerManager::StartFirstPaintMaxDelayTimer() {
+  if (first_paint_max_delay_timer_ || recorded_event_metric_for_paint_timing_) {
+    return;
+  }
+  first_paint_max_delay_timer_ = std::make_unique<base::OneShotTimer>();
+  first_paint_max_delay_timer_->Start(
+      FROM_HERE, kFirstPaintMaxAcceptableDelay,
+      base::BindOnce(
+          &WidgetInputHandlerManager::RecordEventMetricsForPaintTiming, this,
+          std::nullopt));
 }
 
 void WidgetInputHandlerManager::DispatchScrollGestureToCompositor(
@@ -559,6 +573,15 @@ void WidgetInputHandlerManager::DispatchEvent(
         uma_data_.suppressed_interactions_count += 1;
       }
     }
+  }
+
+  if (!widget_is_embedded_ &&
+      (suppressing_input_events_state_ &
+       static_cast<uint16_t>(SuppressingInputEventsBits::kHasNotPainted))) {
+    main_thread_task_runner_->PostTask(
+        FROM_HERE,
+        base::BindOnce(&WidgetInputHandlerManager::StartFirstPaintMaxDelayTimer,
+                       this));
   }
 
   // Drop input if we are deferring a rendering pipeline phase, unless it's a
@@ -777,22 +800,8 @@ void WidgetInputHandlerManager::InitializeInputEventSuppressionStates() {
   suppressing_input_events_state_ =
       static_cast<uint16_t>(SuppressingInputEventsBits::kHasNotPainted);
 
-  // The following code assumes that for a single page load, the two calls to
-  // this method (from WIHM ctor and from WFWI::DidNavigate) are made within
-  // a time gap of kFirstPaintMaxAcceptableDelay.  If this is not true (very
-  // unlikely), the UMA will be double-counted!
-  if (!first_paint_max_delay_timer_) {
-    first_paint_max_delay_timer_ = std::make_unique<base::OneShotTimer>();
-  } else {
-    first_paint_max_delay_timer_->Stop();
-  }
-  if (!widget_is_embedded_) {
-    first_paint_max_delay_timer_->Start(
-        FROM_HERE, kFirstPaintMaxAcceptableDelay,
-        base::BindOnce(
-            &WidgetInputHandlerManager::RecordEventMetricsForPaintTiming, this,
-            std::nullopt));
-  }
+  first_paint_max_delay_timer_.reset();
+  recorded_event_metric_for_paint_timing_ = false;
 
   base::AutoLock lock(uma_data_lock_);
   uma_data_.have_emitted_uma = false;
@@ -1150,6 +1159,7 @@ WidgetInputHandlerManager::GetSynchronousCompositorRegistry() {
 
 void WidgetInputHandlerManager::ClearClient() {
   first_paint_max_delay_timer_.reset();
+  recorded_event_metric_for_paint_timing_ = false;
   input_event_queue_->ClearClient();
 }
 

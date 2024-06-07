@@ -4,10 +4,12 @@
 
 #include "chrome/browser/password_manager/android/password_manager_error_message_helper_bridge_impl.h"
 
-#include "chrome/android/chrome_jni_headers/PasswordManagerErrorMessageHelperBridge_jni.h"
 #include "chrome/browser/profiles/profile.h"
 #include "ui/android/view_android.h"
 #include "ui/android/window_android.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "chrome/android/chrome_jni_headers/PasswordManagerErrorMessageHelperBridge_jni.h"
 
 PasswordManagerErrorMessageHelperBridge::
     ~PasswordManagerErrorMessageHelperBridge() = default;
@@ -16,8 +18,9 @@ void PasswordManagerErrorMessageHelperBridgeImpl::
     StartUpdateAccountCredentialsFlow(content::WebContents* web_contents) {
   ui::WindowAndroid* window_android =
       web_contents->GetNativeView()->GetWindowAndroid();
-  if (window_android == nullptr)
+  if (window_android == nullptr) {
     return;
+  }
   Profile* profile =
       Profile::FromBrowserContext(web_contents->GetBrowserContext());
 

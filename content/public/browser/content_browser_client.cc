@@ -9,20 +9,18 @@
 #include <utility>
 
 #include "base/check.h"
-#include "base/command_line.h"
 #include "base/feature_list.h"
 #include "base/files/file_path.h"
 #include "base/functional/callback_helpers.h"
 #include "base/no_destructor.h"
 #include "base/notreached.h"
-#include "base/strings/utf_string_conversions.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/thread_pool/thread_pool_instance.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "build/buildflag.h"
 #include "build/chromeos_buildflags.h"
-#include "content/browser/model_execution/mock_model_manager.h"
+#include "content/browser/ai/mock_ai_manager_impl.h"
 #include "content/public/browser/anchor_element_preconnect_delegate.h"
 #include "content/public/browser/authenticator_request_client_delegate.h"
 #include "content/public/browser/browser_context.h"
@@ -634,6 +632,7 @@ bool ContentBrowserClient::IsCookieDeprecationLabelAllowedForContext(
 
 bool ContentBrowserClient::IsFullCookieAccessAllowed(
     content::BrowserContext* browser_context,
+    content::WebContents* web_contents,
     const GURL& url,
     const blink::StorageKey& storage_key) {
   return true;
@@ -954,11 +953,6 @@ std::wstring ContentBrowserClient::GetAppContainerSidForSandboxType(
       L"924012148-129201922");
 }
 
-std::string ContentBrowserClient::GetAppContainerId() {
-  return base::WideToUTF8(
-      base::CommandLine::ForCurrentProcess()->GetProgram().value());
-}
-
 bool ContentBrowserClient::IsRendererAppContainerDisabled() {
   return false;
 }
@@ -977,6 +971,10 @@ bool ContentBrowserClient::IsRendererCodeIntegrityEnabled() {
 bool ContentBrowserClient::ShouldEnableAudioProcessHighPriority() {
   // TODO(crbug.com/40242320): Delete this method when the
   // kAudioProcessHighPriorityEnabled enterprise policy is deprecated.
+  return false;
+}
+
+bool ContentBrowserClient::ShouldUseSkiaFontManager(const GURL& site_url) {
   return false;
 }
 
@@ -1206,11 +1204,6 @@ bool ContentBrowserClient::ShowPaymentHandlerWindow(
     base::OnceCallback<void(bool, int, int)> callback) {
   DCHECK(browser_context);
   return false;
-}
-
-bool ContentBrowserClient::CreateThreadPool(std::string_view name) {
-  base::ThreadPoolInstance::Create(name);
-  return true;
 }
 
 bool ContentBrowserClient::IsSecurityLevelAcceptableForWebAuthn(
@@ -1528,13 +1521,15 @@ ContentBrowserClient::CreateIdentityRequestDialogController(
   return std::make_unique<IdentityRequestDialogController>();
 }
 
-void ContentBrowserClient::ShowDigitalIdentityInterstitialIfNeeded(
+ContentBrowserClient::DigitalIdentityInterstitialAbortCallback
+ContentBrowserClient::ShowDigitalIdentityInterstitialIfNeeded(
     WebContents& web_contents,
     const url::Origin& origin,
     bool is_only_requesting_age,
     DigitalIdentityInterstitialCallback callback) {
   std::move(callback).Run(
       DigitalIdentityProvider::RequestStatusForMetrics::kErrorOther);
+  return base::OnceClosure();
 }
 
 std::unique_ptr<DigitalIdentityProvider>
@@ -1741,10 +1736,10 @@ bool ContentBrowserClient::ShouldSuppressAXLoadComplete(RenderFrameHost* rfh) {
   return false;
 }
 
-void ContentBrowserClient::BindModelManager(
+void ContentBrowserClient::BindAIManager(
     RenderFrameHost* rfh,
-    mojo::PendingReceiver<blink::mojom::ModelManager> receiver) {
-  MockModelManager::Create(rfh, std::move(receiver));
+    mojo::PendingReceiver<blink::mojom::AIManager> receiver) {
+  MockAIManagerImpl::Create(rfh, std::move(receiver));
 }
 
 #if !BUILDFLAG(IS_ANDROID)

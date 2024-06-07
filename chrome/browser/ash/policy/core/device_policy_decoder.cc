@@ -20,7 +20,6 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/syslog_logging.h"
 #include "base/types/expected_macros.h"
-#include "chrome/browser/ash/policy/core/device_local_account.h"
 #include "chrome/browser/ash/policy/handlers/device_dlc_predownload_list_policy_handler.h"
 #include "chrome/browser/ash/policy/off_hours/off_hours_proto_parser.h"
 #include "chrome/browser/ash/tpm_firmware_update.h"
@@ -30,6 +29,7 @@
 #include "chromeos/ash/components/settings/cros_settings_names.h"
 #include "components/policy/core/browser/policy_error_map.h"
 #include "components/policy/core/common/chrome_schema.h"
+#include "components/policy/core/common/device_local_account_type.h"
 #include "components/policy/core/common/external_data_fetcher.h"
 #include "components/policy/core/common/external_data_manager.h"
 #include "components/policy/core/common/policy_map.h"
@@ -687,7 +687,7 @@ base::Value::Dict DecodeDeviceLocalAccountInfoProto(
           .Set(ash::kAccountsPrefDeviceLocalAccountsKeyId,
                entry.deprecated_public_session_id())
           .Set(ash::kAccountsPrefDeviceLocalAccountsKeyType,
-               static_cast<int>(DeviceLocalAccount::TYPE_PUBLIC_SESSION));
+               static_cast<int>(DeviceLocalAccountType::kPublicSession));
     } else {
       return base::Value::Dict();
     }
@@ -707,22 +707,6 @@ base::Value::Dict DecodeDeviceLocalAccountInfoProto(
   if (entry.kiosk_app().has_update_url()) {
     entry_dict.Set(ash::kAccountsPrefDeviceLocalAccountsKeyKioskAppUpdateURL,
                    entry.kiosk_app().update_url());
-  }
-  if (entry.android_kiosk_app().has_package_name()) {
-    entry_dict.Set(ash::kAccountsPrefDeviceLocalAccountsKeyArcKioskPackage,
-                   entry.android_kiosk_app().package_name());
-  }
-  if (entry.android_kiosk_app().has_class_name()) {
-    entry_dict.Set(ash::kAccountsPrefDeviceLocalAccountsKeyArcKioskClass,
-                   entry.android_kiosk_app().class_name());
-  }
-  if (entry.android_kiosk_app().has_action()) {
-    entry_dict.Set(ash::kAccountsPrefDeviceLocalAccountsKeyArcKioskAction,
-                   entry.android_kiosk_app().action());
-  }
-  if (entry.android_kiosk_app().has_display_name()) {
-    entry_dict.Set(ash::kAccountsPrefDeviceLocalAccountsKeyArcKioskDisplayName,
-                   entry.android_kiosk_app().display_name());
   }
   if (entry.web_kiosk_app().has_url()) {
     entry_dict.Set(ash::kAccountsPrefDeviceLocalAccountsKeyWebKioskUrl,
@@ -2268,6 +2252,17 @@ void DecodeGenericPolicies(const em::ChromeDeviceSettingsProto& policy,
         policy.deviceextensionssystemlogenabled());
     if (container.has_value()) {
       policies->Set(key::kDeviceExtensionsSystemLogEnabled,
+                    POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
+                    POLICY_SOURCE_CLOUD, base::Value(container.value()),
+                    nullptr);
+    }
+  }
+
+  if (policy.has_deviceallowenterpriseremoteaccessconnections()) {
+    const em::BooleanPolicyProto& container(
+        policy.deviceallowenterpriseremoteaccessconnections());
+    if (container.has_value()) {
+      policies->Set(key::kDeviceAllowEnterpriseRemoteAccessConnections,
                     POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
                     POLICY_SOURCE_CLOUD, base::Value(container.value()),
                     nullptr);

@@ -250,6 +250,11 @@ bool StructTraits<media::mojom::VideoFrameDataView,
   if (!input.ReadTimestamp(&timestamp))
     return false;
 
+  media::VideoFrameMetadata metadata;
+  if (!input.ReadMetadata(&metadata)) {
+    return false;
+  }
+
   scoped_refptr<media::VideoFrame> frame;
   if (data.is_shared_memory_data()) {
     media::mojom::SharedMemoryVideoFrameDataDataView shared_memory_data;
@@ -333,11 +338,15 @@ bool StructTraits<media::mojom::VideoFrameDataView,
       return false;
 
     // Shared memory GMBs do not support VEA/CAMERA usage.
-    const gfx::BufferUsage buffer_usage =
-        (gpu_memory_buffer_handle.type ==
-         gfx::GpuMemoryBufferType::SHARED_MEMORY_BUFFER)
-            ? gfx::BufferUsage::SCANOUT_CPU_READ_WRITE
-            : gfx::BufferUsage::VEA_READ_CAMERA_AND_CPU_READ_WRITE;
+    gfx::BufferUsage buffer_usage;
+    if (metadata.protected_video) {
+      buffer_usage = gfx::BufferUsage::PROTECTED_SCANOUT_VDA_WRITE;
+    } else if (gpu_memory_buffer_handle.type ==
+               gfx::GpuMemoryBufferType::SHARED_MEMORY_BUFFER) {
+      buffer_usage = gfx::BufferUsage::SCANOUT_CPU_READ_WRITE;
+    } else {
+      buffer_usage = gfx::BufferUsage::VEA_READ_CAMERA_AND_CPU_READ_WRITE;
+    }
 
     gpu::GpuMemoryBufferSupport support;
     std::unique_ptr<gfx::GpuMemoryBuffer> gpu_memory_buffer =
@@ -394,11 +403,15 @@ bool StructTraits<media::mojom::VideoFrameDataView,
     }
 
     // Shared memory GMBs do not support VEA/CAMERA usage.
-    const gfx::BufferUsage buffer_usage =
-        (gpu_memory_buffer_handle.type ==
-         gfx::GpuMemoryBufferType::SHARED_MEMORY_BUFFER)
-            ? gfx::BufferUsage::SCANOUT_CPU_READ_WRITE
-            : gfx::BufferUsage::VEA_READ_CAMERA_AND_CPU_READ_WRITE;
+    gfx::BufferUsage buffer_usage;
+    if (metadata.protected_video) {
+      buffer_usage = gfx::BufferUsage::PROTECTED_SCANOUT_VDA_WRITE;
+    } else if (gpu_memory_buffer_handle.type ==
+               gfx::GpuMemoryBufferType::SHARED_MEMORY_BUFFER) {
+      buffer_usage = gfx::BufferUsage::SCANOUT_CPU_READ_WRITE;
+    } else {
+      buffer_usage = gfx::BufferUsage::VEA_READ_CAMERA_AND_CPU_READ_WRITE;
+    }
 
     gpu::GpuMemoryBufferSupport support;
     std::unique_ptr<gfx::GpuMemoryBuffer> gpu_memory_buffer =
@@ -409,9 +422,17 @@ bool StructTraits<media::mojom::VideoFrameDataView,
       return false;
     }
 
-    frame = media::VideoFrame::WrapExternalGpuMemoryBuffer(
-        visible_rect, natural_size, std::move(gpu_memory_buffer), shared_images,
-        sync_token, texture_target, base::NullCallback(), timestamp);
+    if (exported_shared_images.size() == 1) {
+      frame = media::VideoFrame::WrapExternalGpuMemoryBuffer(
+          visible_rect, natural_size, std::move(gpu_memory_buffer),
+          shared_images[0], sync_token, texture_target, base::NullCallback(),
+          timestamp);
+    } else {
+      frame = media::VideoFrame::WrapExternalGpuMemoryBuffer(
+          visible_rect, natural_size, std::move(gpu_memory_buffer),
+          shared_images, sync_token, texture_target, base::NullCallback(),
+          timestamp);
+    }
   } else if (data.is_mailbox_data()) {
     media::mojom::MailboxVideoFrameDataDataView mailbox_data;
     data.GetMailboxDataDataView(&mailbox_data);
@@ -466,10 +487,18 @@ bool StructTraits<media::mojom::VideoFrameDataView,
       return false;
     }
 
-    frame = media::VideoFrame::WrapSharedImages(
-        format, shared_image_array, sync_token, texture_target,
-        media::VideoFrame::ReleaseMailboxCB(), coded_size, visible_rect,
-        natural_size, timestamp);
+    if (exported_shared_images.size() == 1) {
+      frame = media::VideoFrame::WrapSharedImage(
+          format, shared_image_array[0], sync_token, texture_target,
+          media::VideoFrame::ReleaseMailboxCB(), coded_size, visible_rect,
+          natural_size, timestamp);
+    } else {
+      frame = media::VideoFrame::WrapSharedImages(
+          format, shared_image_array, sync_token, texture_target,
+          media::VideoFrame::ReleaseMailboxCB(), coded_size, visible_rect,
+          natural_size, timestamp);
+    }
+
     frame->set_ycbcr_info(ycbcr_info);
   } else {
     // TODO(sandersd): Switch on the union tag to avoid this ugliness?
@@ -479,10 +508,6 @@ bool StructTraits<media::mojom::VideoFrameDataView,
   if (!frame) {
     return false;
   }
-
-  media::VideoFrameMetadata metadata;
-  if (!input.ReadMetadata(&metadata))
-    return false;
 
   frame->set_metadata(metadata);
 

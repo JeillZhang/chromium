@@ -15,8 +15,6 @@
 
 namespace {
 
-constexpr gfx::Size kPreferredSize{370, 0};
-
 constexpr int kBackgroundBorderThickness = 1;
 constexpr int kBackgroundCornerRadius = 8;
 constexpr int kStopCastingButtonCornerRadius = 10;
@@ -30,10 +28,10 @@ constexpr gfx::Insets kBackgroundInsets = gfx::Insets::VH(14, 16);
 }  // namespace
 
 CastDeviceFooterView::CastDeviceFooterView(
+    std::optional<std::string> device_name,
     base::RepeatingClosure stop_casting_callback,
     media_message_center::MediaColorTheme media_color_theme)
     : stop_casting_callback_(std::move(stop_casting_callback)) {
-  SetPreferredSize(kPreferredSize);
   SetBorder(views::CreateThemedRoundedRectBorder(
       kBackgroundBorderThickness, kBackgroundCornerRadius,
       media_color_theme.device_selector_border_color_id));
@@ -52,8 +50,12 @@ CastDeviceFooterView::CastDeviceFooterView(
           kDeviceIconSize)));
 
   // Add the device name.
-  // TODO(yrw): Add in the correct device name.
-  device_name_ = AddChildView(std::make_unique<views::Label>(u"Test Device"));
+  device_name_ =
+      AddChildView(std::make_unique<views::Label>(l10n_util::GetStringUTF16(
+          IDS_GLOBAL_MEDIA_CONTROLS_UNKNOWN_DEVICE_TEXT)));
+  if (device_name.has_value()) {
+    device_name_->SetText(base::UTF8ToUTF16(device_name.value()));
+  }
   device_name_->SetTextStyle(views::style::STYLE_BODY_2);
   device_name_->SetEnabledColorId(
       media_color_theme.device_selector_foreground_color_id);
@@ -90,7 +92,11 @@ CastDeviceFooterView::CastDeviceFooterView(
 
 CastDeviceFooterView::~CastDeviceFooterView() = default;
 
-views::LabelButton* CastDeviceFooterView::GetStopCastingButtonForTesting() {
+views::Label* CastDeviceFooterView::GetDeviceNameForTesting() {
+  return device_name_;
+}
+
+views::Button* CastDeviceFooterView::GetStopCastingButtonForTesting() {
   return stop_casting_button_;
 }
 

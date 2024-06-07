@@ -321,9 +321,10 @@ base::FilePath SessionControllerImpl::GetProfilePath(
   return client_ ? client_->GetProfilePath(account_id) : base::FilePath();
 }
 
-bool SessionControllerImpl::IsEligibleForSeaPen(
+std::tuple<bool, bool> SessionControllerImpl::IsEligibleForSeaPen(
     const AccountId& account_id) const {
-  return client_ ? client_->IsEligibleForSeaPen(account_id) : false;
+  return client_ ? client_->IsEligibleForSeaPen(account_id)
+                 : std::make_tuple(false, false);
 }
 
 PrefService* SessionControllerImpl::GetPrimaryUserPrefService() const {
@@ -652,8 +653,6 @@ LoginStatus SessionControllerImpl::CalculateLoginStatusForActiveSession()
       return LoginStatus::KIOSK_APP;
     case user_manager::UserType::kChild:
       return LoginStatus::CHILD;
-    case user_manager::UserType::kArcKioskApp:
-      return LoginStatus::KIOSK_APP;
     case user_manager::UserType::kWebKioskApp:
       return LoginStatus::KIOSK_APP;
   }

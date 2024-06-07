@@ -81,6 +81,7 @@
 #include "third_party/blink/renderer/core/dom/document_parser.h"
 #include "third_party/blink/renderer/core/dom/events/event.h"
 #include "third_party/blink/renderer/core/dom/scriptable_document_parser.h"
+#include "third_party/blink/renderer/core/dom/visited_link_state.h"
 #include "third_party/blink/renderer/core/dom/weak_identifier_map.h"
 #include "third_party/blink/renderer/core/execution_context/agent.h"
 #include "third_party/blink/renderer/core/execution_context/security_context_init.h"
@@ -257,6 +258,7 @@ struct SameSizeAsDocumentLoader
   bool grant_load_local_resources;
   std::optional<blink::mojom::FetchCacheMode> force_fetch_cache_mode;
   FramePolicy frame_policy;
+  std::optional<uint64_t> visited_link_salt;
   Member<LocalFrame> frame;
   Member<HistoryItem> history_item;
   Member<DocumentParser> parser;
@@ -494,6 +496,7 @@ DocumentLoader::DocumentLoader(
       grant_load_local_resources_(params_->grant_load_local_resources),
       force_fetch_cache_mode_(params_->force_fetch_cache_mode),
       frame_policy_(params_->frame_policy.value_or(FramePolicy())),
+      visited_link_salt_(params_->visited_link_salt),
       frame_(frame),
       // For back/forward navigations, the browser passed a history item to use
       // at commit time in |params_|. Set it as the current history item of this
@@ -537,7 +540,7 @@ DocumentLoader::DocumentLoader(
                                      WillLoadUrlAsEmpty(url_)),
       is_static_data_(params_->is_static_data),
       ukm_source_id_(params_->document_ukm_source_id),
-      clock_(params_->tick_clock ? params_->tick_clock
+      clock_(params_->tick_clock ? params_->tick_clock.get()
                                  : base::DefaultTickClock::GetInstance()),
       initiator_origin_trial_features_(
           CopyInitiatorOriginTrials(params_->initiator_origin_trial_features)),
@@ -717,6 +720,7 @@ DocumentLoader::CreateWebNavigationParamsToCloneDocument() {
   params->load_with_storage_access = load_with_storage_access_;
   params->modified_runtime_features = modified_runtime_features_;
   params->cookie_deprecation_label = cookie_deprecation_label_;
+  params->visited_link_salt = visited_link_salt_;
   params->content_settings = content_settings_->Clone();
   return params;
 }
@@ -854,26 +858,38 @@ void DocumentLoader::InjectAutoSpeculationRules(
 
   const auto& config = AutoSpeculationRulesConfig::GetInstance();
 
+  const Vector<std::pair<String, BrowserInjectedSpeculationRuleOptOut>>
+      from_url_speculation_rules = config.ForUrl(Url());
+  for (const auto& speculation_rules : from_url_speculation_rules) {
+    InjectSpeculationRulesFromString(speculation_rules.first,
+                                     speculation_rules.second);
+  }
+
   for (const auto& detected_version : result.detected_versions) {
     if (String speculation_rules =
             config.ForFramework(detected_version.first)) {
-      auto* source = SpeculationRuleSet::Source::FromBrowserInjected(
-          speculation_rules, this->Url());
-      auto* rule_set = SpeculationRuleSet::Parse(source, frame_->DomWindow());
-      CHECK(rule_set);
-
-      // The JSON string in speculation_rules comes from a potentially-fallible
-      // remote config, so this should not be a CHECK failure.
-      if (rule_set->HasError()) {
-        LOG(ERROR) << "Failed to parse speculation rules for "
-                   << detected_version.first << ": " << speculation_rules;
-        continue;
-      }
-
-      DocumentSpeculationRules::From(*frame_->GetDocument())
-          .AddRuleSet(rule_set);
+      InjectSpeculationRulesFromString(
+          speculation_rules, BrowserInjectedSpeculationRuleOptOut::kRespect);
     }
   }
+}
+
+void DocumentLoader::InjectSpeculationRulesFromString(
+    const String& string,
+    BrowserInjectedSpeculationRuleOptOut opt_out) {
+  auto* source =
+      SpeculationRuleSet::Source::FromBrowserInjected(string, Url(), opt_out);
+  auto* rule_set = SpeculationRuleSet::Parse(source, frame_->DomWindow());
+  CHECK(rule_set);
+
+  // The JSON string in speculation_rules comes from a potentially-fallible
+  // remote config, so this should not be a CHECK failure.
+  if (rule_set->HasError()) {
+    LOG(ERROR) << "Failed to parse auto speculation rules " << string;
+    return;
+  }
+
+  DocumentSpeculationRules::From(*frame_->GetDocument()).AddRuleSet(rule_set);
 }
 
 // static
@@ -1032,20 +1048,15 @@ void DocumentLoader::UpdateForSameDocumentNavigation(
 
   std::optional<SoftNavigationHeuristics::EventScope>
       soft_navigation_event_scope;
-  SoftNavigationHeuristics* heuristics = nullptr;
-  if (frame_->IsMainFrame() &&
-      base::FeatureList::IsEnabled(features::kSoftNavigationDetection)) {
+  SoftNavigationHeuristics* heuristics =
+      SoftNavigationHeuristics::From(*frame_->DomWindow());
+  if (heuristics && is_browser_initiated) {
     if (auto* script_state = ToScriptStateForMainWorld(frame_->DomWindow())) {
-      CHECK(frame_->DomWindow());
-      heuristics = SoftNavigationHeuristics::From(*frame_->DomWindow());
-      if (is_browser_initiated && heuristics) {
-        // For browser-initiated navigations, we never started the soft
-        // navigation (as this is the first we hear of it in the renderer). We
-        // need to do that now.
-        soft_navigation_event_scope = heuristics->CreateEventScope(
-            SoftNavigationHeuristics::EventScope::Type::kNavigate,
-            /*is_new_interaction=*/true, script_state);
-      }
+      // For browser-initiated navigations, we never started the soft
+      // navigation (as this is the first we hear of it in the renderer). We
+      // need to do that now.
+      soft_navigation_event_scope =
+          heuristics->CreateNavigationEventScope(script_state);
     }
   }
 
@@ -1447,7 +1458,7 @@ void DocumentLoader::ReplaceWithEmptyDocument() {
   url_ = blocked_url;
   params_->url = blocked_url;
   WebNavigationParams::FillStaticResponse(params_.get(), "text/html", "UTF-8",
-                                          "");
+                                          base::span_from_cstring(""));
 }
 
 DocumentPolicy::ParsedDocumentPolicy DocumentLoader::CreateDocumentPolicy() {
@@ -2272,28 +2283,6 @@ scoped_refptr<SecurityOrigin> DocumentLoader::CalculateOrigin(
     debug_info_builder.Append(", url=");
     debug_info_builder.Append(owner_document->Url().BaseAsString());
     debug_info_builder.Append(")");
-  } else if (url_.IsAboutSrcdocURL()) {
-    // If there's no owner_document and this is a sandboxed srcdoc load, then
-    // get the origin from the remote parent. In general, a srcdoc navigation
-    // with no owner_document can only currently happen  if the iframe is
-    // sandboxed and isolated sandboxed frames is enabled, in which case, copy
-    // the origin from the remote parent here (though this origin will only be
-    // used to derive the actual opaque origin later),
-    // TODO(https://crbug.com/328279696): this block can be removed once the
-    // about:srcdoc navigation blocking finishes rolling out, as then the
-    // initiator can never be cross-origin to the parent.
-    bool is_sandboxed = (policy_container_->GetPolicies().sandbox_flags &
-                         network::mojom::blink::WebSandboxFlags::kOrigin) !=
-                        network::mojom::blink::WebSandboxFlags::kNone;
-    CHECK(is_sandboxed);
-    debug_info_builder.Append("about_srcdoc_with_remote_parent[origin=");
-    origin = frame_->Tree()
-                 .Parent()
-                 ->GetSecurityContext()
-                 ->GetSecurityOrigin()
-                 ->IsolatedCopy();
-    debug_info_builder.Append(origin->ToString());
-    debug_info_builder.Append("]");
   } else {
     debug_info_builder.Append("use_url_with_precursor");
     // Otherwise, create an origin that propagates precursor information
@@ -2861,6 +2850,16 @@ void DocumentLoader::CommitNavigation() {
     KURL main_resource_url = main_resource ? main_resource->Url() : KURL();
     if (!main_resource_url.IsEmpty())
       document->SetBaseURLOverride(main_resource_url);
+  }
+
+  // For any navigations which have a per-origin salt, we need to notify the
+  // resulting `document`. The `visited_link_salt_` allows the `document` to
+  // hash and identify which links should be styled as :visited. Without the
+  // salt, the hashtable is unreadable to the Document.
+  if (visited_link_salt_.has_value() &&
+      base::FeatureList::IsEnabled(
+          blink::features::kPartitionVisitedLinkDatabase)) {
+    document->GetVisitedLinkState().UpdateSalt(visited_link_salt_.value());
   }
 
   // The navigation API is not initialized on the initial about:blank document

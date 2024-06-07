@@ -374,6 +374,9 @@ FederatedAuthRequestResultToProtocol(
     case FederatedAuthRequestResult::kErrorReplacedByButtonMode: {
       return FederatedAuthRequestIssueReasonEnum::ReplacedByButtonMode;
     }
+    case FederatedAuthRequestResult::kErrorRelyingPartyOriginIsOpaque: {
+      return FederatedAuthRequestIssueReasonEnum::RelyingPartyOriginIsOpaque;
+    }
     case FederatedAuthRequestResult::kSuccess: {
       NOTREACHED_NORETURN();
     }
@@ -537,33 +540,6 @@ std::unique_ptr<protocol::Audits::InspectorIssue> BuildBounceTrackingIssue(
               protocol::Audits::InspectorIssueCodeEnum::BounceTrackingIssue)
           .SetDetails(std::move(protocol_issue_details))
           .Build();
-
-  return issue;
-}
-
-std::unique_ptr<protocol::Audits::InspectorIssue>
-BuildCookieDeprecationMetadataIssue(
-    const blink::mojom::CookieDeprecationMetadataIssueDetailsPtr&
-        issue_details) {
-  auto metadata_issue_details =
-      protocol::Audits::CookieDeprecationMetadataIssueDetails::Create()
-          .SetAllowedSites(std::make_unique<protocol::Array<protocol::String>>(
-              issue_details->allowed_sites))
-          .SetOptOutPercentage(issue_details->opt_out_percentage)
-          .SetIsOptOutTopLevel(issue_details->is_opt_out_top_level)
-          .Build();
-
-  auto protocol_issue_details =
-      protocol::Audits::InspectorIssueDetails::Create()
-          .SetCookieDeprecationMetadataIssueDetails(
-              std::move(metadata_issue_details))
-          .Build();
-
-  auto issue = protocol::Audits::InspectorIssue::Create()
-                   .SetCode(protocol::Audits::InspectorIssueCodeEnum::
-                                CookieDeprecationMetadataIssue)
-                   .SetDetails(std::move(protocol_issue_details))
-                   .Build();
 
   return issue;
 }
@@ -774,6 +750,9 @@ namespace {
 
 protocol::String BuildBlockedByResponseReason(
     network::mojom::BlockedByResponseReason reason) {
+  // TODO(crbug.com/336752983):
+  // Add specific error messages when a subresource load was blocked due to
+  // Document-Isolation-Policy (Dip).
   switch (reason) {
     case network::mojom::BlockedByResponseReason::
         kCoepFrameResourceNeedsCoepHeader:
@@ -787,6 +766,10 @@ protocol::String BuildBlockedByResponseReason(
       return protocol::Audits::BlockedByResponseReasonEnum::CorpNotSameOrigin;
     case network::mojom::BlockedByResponseReason::
         kCorpNotSameOriginAfterDefaultedToSameOriginByCoep:
+    case network::mojom::BlockedByResponseReason::
+        kCorpNotSameOriginAfterDefaultedToSameOriginByDip:
+    case network::mojom::BlockedByResponseReason::
+        kCorpNotSameOriginAfterDefaultedToSameOriginByCoepAndDip:
       return protocol::Audits::BlockedByResponseReasonEnum::
           CorpNotSameOriginAfterDefaultedToSameOriginByCoep;
     case network::mojom::BlockedByResponseReason::kCorpNotSameSite:
@@ -1813,6 +1796,34 @@ protocol::String BuildCookieOperation(blink::mojom::CookieOperation operation) {
     case blink::mojom::CookieOperation::kSetCookie:
       return protocol::Audits::CookieOperationEnum::SetCookie;
   }
+}
+
+std::unique_ptr<protocol::Audits::InspectorIssue>
+BuildCookieDeprecationMetadataIssue(
+    const blink::mojom::CookieDeprecationMetadataIssueDetailsPtr&
+        issue_details) {
+  auto metadata_issue_details =
+      protocol::Audits::CookieDeprecationMetadataIssueDetails::Create()
+          .SetAllowedSites(std::make_unique<protocol::Array<protocol::String>>(
+              issue_details->allowed_sites))
+          .SetOptOutPercentage(issue_details->opt_out_percentage)
+          .SetIsOptOutTopLevel(issue_details->is_opt_out_top_level)
+          .SetOperation(BuildCookieOperation(issue_details->operation))
+          .Build();
+
+  auto protocol_issue_details =
+      protocol::Audits::InspectorIssueDetails::Create()
+          .SetCookieDeprecationMetadataIssueDetails(
+              std::move(metadata_issue_details))
+          .Build();
+
+  auto issue = protocol::Audits::InspectorIssue::Create()
+                   .SetCode(protocol::Audits::InspectorIssueCodeEnum::
+                                CookieDeprecationMetadataIssue)
+                   .SetDetails(std::move(protocol_issue_details))
+                   .Build();
+
+  return issue;
 }
 
 }  // namespace

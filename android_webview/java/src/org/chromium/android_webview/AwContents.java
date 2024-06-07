@@ -36,6 +36,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewStructure;
 import android.view.Window;
+import android.view.WindowManager;
 import android.view.accessibility.AccessibilityNodeProvider;
 import android.view.animation.AnimationUtils;
 import android.view.autofill.AutofillValue;
@@ -59,7 +60,6 @@ import org.chromium.android_webview.autofill.AndroidAutofillSafeModeAction;
 import org.chromium.android_webview.common.AwFeatures;
 import org.chromium.android_webview.common.AwSwitches;
 import org.chromium.android_webview.common.Lifetime;
-import org.chromium.android_webview.common.PlatformServiceBridge;
 import org.chromium.android_webview.gfx.AwDrawFnImpl;
 import org.chromium.android_webview.gfx.AwFunctor;
 import org.chromium.android_webview.gfx.AwGLFunctor;
@@ -251,6 +251,19 @@ public class AwContents implements SmartClipProvider {
         int INTENT_SCHEME = 12;
         int FILE_ANDROID_ASSET_SCHEME = 13; // Covers android_asset and android_res URLs
         int COUNT = 14;
+    }
+
+    // Used to record Android.WebView.UsedInPopupWindow.
+    @IntDef({
+        UsedInPopupWindow.NOT_IN_POPUP_WINDOW,
+        UsedInPopupWindow.IN_POPUP_WINDOW,
+        UsedInPopupWindow.UNKNOWN,
+    })
+    public @interface UsedInPopupWindow {
+        int NOT_IN_POPUP_WINDOW = 0;
+        int IN_POPUP_WINDOW = 1;
+        int UNKNOWN = 2;
+        int COUNT = 3;
     }
 
     /**
@@ -698,6 +711,11 @@ public class AwContents implements SmartClipProvider {
         @Override
         public boolean shouldBlockNetworkLoads() {
             return mSettings.getBlockNetworkLoads();
+        }
+
+        @Override
+        public boolean shouldAcceptCookies() {
+            return mBrowserContext.getCookieManager().acceptCookie();
         }
 
         @Override
@@ -1410,12 +1428,6 @@ public class AwContents implements SmartClipProvider {
             setNewAwContents(
                     AwContentsJni.get().init(mBrowserContext.getNativeBrowserContextPointer()));
 
-            if (AwFeatureMap.isEnabled(AwFeatures.WEBVIEW_INJECT_PLATFORM_JS_APIS)) {
-                PlatformServiceBridge.getInstance()
-                        .injectPlatformJsInterfaces(
-                                mContext, new PlatformServiceBridgeAwContentsWrapper(this));
-            }
-
             onContainerViewChanged();
         }
         long delta = SystemClock.uptimeMillis() - startTime;
@@ -2107,6 +2119,11 @@ public class AwContents implements SmartClipProvider {
     public void flushBackForwardCache() {
         if (isDestroyed(NO_WARN)) return;
         AwContentsJni.get().flushBackForwardCache(mNativeAwContents);
+    }
+
+    public void cancelAllPrerendering() {
+        if (isDestroyed(NO_WARN)) return;
+        AwContentsJni.get().cancelAllPrerendering(mNativeAwContents);
     }
 
     /** Destroys this object and deletes its native counterpart. */
@@ -3565,6 +3582,23 @@ public class AwContents implements SmartClipProvider {
                 mAwFrameMetricsListener = AwFrameMetricsListener.onAttachedToWindow(window, this);
             }
         }
+
+        ViewGroup.LayoutParams viewGroupParams = mContainerView.getRootView().getLayoutParams();
+        if (viewGroupParams instanceof WindowManager.LayoutParams params) {
+            if (params.type == WindowManager.LayoutParams.TYPE_APPLICATION_PANEL
+                    || params.type == WindowManager.LayoutParams.TYPE_APPLICATION_ATTACHED_DIALOG) {
+                recordUsedInPopupWindow(UsedInPopupWindow.IN_POPUP_WINDOW);
+            } else {
+                recordUsedInPopupWindow(UsedInPopupWindow.NOT_IN_POPUP_WINDOW);
+            }
+        } else {
+            recordUsedInPopupWindow(UsedInPopupWindow.UNKNOWN);
+        }
+    }
+
+    private static void recordUsedInPopupWindow(@UsedInPopupWindow int value) {
+        RecordHistogram.recordEnumeratedHistogram(
+                "Android.WebView.UsedInPopupWindow", value, UsedInPopupWindow.COUNT);
     }
 
     private void detachWindowCoverageTracker() {
@@ -5091,5 +5125,7 @@ public class AwContents implements SmartClipProvider {
         void onConfigurationChanged(long nativeAwContents);
 
         void flushBackForwardCache(long nativeAwContents);
+
+        void cancelAllPrerendering(long nativeAwContents);
     }
 }

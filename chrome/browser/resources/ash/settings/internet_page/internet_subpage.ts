@@ -98,7 +98,7 @@ export class SettingsInternetSubpageElement extends
        */
       vpnProviders: Array,
 
-      isAddingBuiltInVpnProhibited: {
+      isBuiltInVpnManagementBlocked: {
         type: Boolean,
         value: false,
       },
@@ -151,6 +151,12 @@ export class SettingsInternetSubpageElement extends
       isShowingVpn_: {
         type: Boolean,
         computed: 'computeIsShowingVpn_(deviceState)',
+        reflectToAttribute: true,
+      },
+
+      isShowingTether_: {
+        type: Boolean,
+        computed: 'computeIsShowingTether_(deviceState)',
         reflectToAttribute: true,
       },
 
@@ -246,7 +252,7 @@ export class SettingsInternetSubpageElement extends
   defaultNetwork: OncMojo.NetworkStateProperties|null|undefined;
   deviceState: OncMojo.DeviceStateProperties|undefined;
   globalPolicy: GlobalPolicy|undefined;
-  isAddingBuiltInVpnProhibited: boolean;
+  isBuiltInVpnManagementBlocked: boolean;
   isCellularSetupActive: boolean;
   isConnectedToNonCellularNetwork: boolean;
   showSpinner: boolean;
@@ -258,6 +264,7 @@ export class SettingsInternetSubpageElement extends
   private hasCompletedScanSinceLastEnabled_: boolean;
   private isInstantHotspotRebrandEnabled_: boolean;
   private isManaged_: boolean;
+  private isShowingTether_: boolean;
   private isShowingVpn_: boolean;
   private networkConfig_: CrosNetworkConfigInterface;
   private networkStateList_: OncMojo.NetworkStateProperties[];
@@ -955,6 +962,13 @@ export class SettingsInternetSubpageElement extends
     }
     return this.matchesType_(
         OncMojo.getNetworkTypeString(NetworkType.kVPN), this.deviceState);
+  }
+
+  private computeIsShowingTether_(): boolean {
+    return !!this.deviceState &&
+        this.matchesType_(
+            OncMojo.getNetworkTypeString(NetworkType.kTether),
+            this.deviceState);
   }
 
   /**

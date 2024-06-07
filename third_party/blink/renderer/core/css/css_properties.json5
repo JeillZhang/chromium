@@ -1095,6 +1095,7 @@
     },
     {
       name: "transition-behavior",
+      keywords: ["normal", "allow-discrete"],
       property_methods: ["ParseSingleValue", "CSSValueFromComputedStyleInternal", "InitialValue"],
       typedom_types: ["Keyword"],
       separator: ",",
@@ -1720,6 +1721,7 @@
       style_builder_custom_functions: ["initial", "inherit", "value"],
       priority: 1,
       valid_for_formatted_text: true,
+      valid_for_page_context: true,
       // Incremental code does not call DidChangeWritingMode(), which influences
       // the font.
       supports_incremental_style: false,
@@ -1835,6 +1837,22 @@
       keywords: ["none"],
       typedom_types: ["Keyword"],
       runtime_flag: "CSSAnchorPositioning",
+      valid_for_permission_element: true,
+      invalidate: ["layout"],
+    },
+    {
+      name: "anchor-scope",
+      property_methods: ["ParseSingleValue", "CSSValueFromComputedStyleInternal" ],
+      include_paths: ["third_party/blink/renderer/core/style/scoped_css_name.h"],
+      type_name: "ScopedCSSNameList",
+      wrapper_pointer_name: "Member",
+      default_value: "nullptr",
+      field_group: "*",
+      field_template: "external",
+      converter: "ConvertAnchorScope",
+      keywords: ["none", "all"],
+      typedom_types: ["Keyword"],
+      runtime_flag: "CSSAnchorScope",
       valid_for_permission_element: true,
       invalidate: ["layout"],
     },
@@ -2932,6 +2950,7 @@
       style_builder_custom_functions: ["initial", "inherit", "value"],
       typedom_types: ["Keyword"],
       valid_for_highlight_legacy: true,
+      valid_for_permission_element: true,
     },
     {
       name: "cx",
@@ -3547,6 +3566,7 @@
       valid_for_marker: true,
       valid_for_permission_element: true,
       valid_for_page_context: true,
+      affected_by_zoom: true,
     },
     {
       name: "lighting-color",
@@ -5454,6 +5474,7 @@
       default_value: "TextBoxEdge()",
       type_name: "TextBoxEdge",
       converter: "ConvertTextBoxEdge",
+      invalidate: ["layout"],
       runtime_flag: "CSSTextBoxTrim",
     },
     {
@@ -5464,6 +5485,7 @@
       default_value: "none",
       keywords: ["none", "start", "end", "both"],
       typedom_types: ["Keyword"],
+      invalidate: ["layout"],
       runtime_flag: "CSSTextBoxTrim",
     },
     {
@@ -5644,12 +5666,21 @@
       field_group: "*",
       field_template: "external",
       include_paths: ["third_party/blink/renderer/core/style/text_size_adjust.h"],
+      style_builder_custom_functions: ["initial", "inherit", "value"],
       default_value: "TextSizeAdjust::AdjustAuto()",
       getter: "GetTextSizeAdjust",
+      // When `TextSizeAdjustImprovements` is enabled, this affects font-size
+      // during style building and needs to apply before it.
+      priority: 2,
       type_name: "TextSizeAdjust",
       converter: "ConvertTextSizeAdjust",
       keywords: ["none", "auto"],
       typedom_types: ["Keyword", "Percentage"],
+      // When `TextSizeAdjustImprovements` is enabled, this affects font-size
+      // during style building. Changes to anything related to fonts require
+      // that we call style.UpdateFont(), which the incremental path does not
+      // do.
+      supports_incremental_style: false,
       invalidate: ["layout", "paint"],
     },
     {
@@ -6331,8 +6362,12 @@
       field_template: "primitive",
       default_value: "0",
       converter: "ConvertIntegerOrNone<0>",
-      keywords: ["none"],
+      computed_style_custom_functions: ["setter"],
+      style_builder_custom_functions: ["initial"],
+      style_builder_template: "auto",
+      keywords: ["none", "auto"],
       type_name: "int",
+      invalidate: ["layout", "paint"],
       name_for_methods: "StandardLineClamp",
       runtime_flag: "CSSLineClamp",
     },
@@ -6539,6 +6574,18 @@
       invalidate: ["reshape"],
     },
     {
+      name: "ruby-align",
+      property_methods: ["CSSValueFromComputedStyleInternal"],
+      inherited: true,
+      field_group: "*",
+      field_template: "keyword",
+      keywords: ["space-around", "start", "center", "space-between"],
+      default_value: "space-around",
+      valid_for_permission_element: true,
+      invalidate: ["layout", "paint"],
+      runtime_flag: "CssRubyAlign",
+    },
+    {
       name: "-webkit-ruby-position",
       property_methods: ["CSSValueFromComputedStyleInternal"],
       inherited: true,
@@ -6550,7 +6597,7 @@
     },
     {
       name: "ruby-position",
-      property_methods: ["CSSValueFromComputedStyleInternal"],
+      property_methods: ["ParseSingleValue", "CSSValueFromComputedStyleInternal"],
       inherited: true,
       field_group: "*",
       field_template: "keyword",

@@ -13,8 +13,8 @@
 #include "chrome/browser/history_clusters/history_clusters_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/side_panel/companion/companion_utils.h"
-#include "chrome/browser/ui/side_panel/side_panel_ui.h"
+#include "chrome/browser/ui/views/side_panel/companion/companion_utils.h"
+#include "chrome/browser/ui/views/side_panel/side_panel_ui.h"
 #include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/views/side_panel/bookmarks/bookmarks_side_panel_coordinator.h"
 #include "chrome/browser/ui/views/side_panel/history_clusters/history_clusters_side_panel_coordinator.h"
@@ -25,7 +25,6 @@
 #include "chrome/browser/ui/views/side_panel/side_panel_content_proxy.h"
 #include "chrome/browser/ui/views/side_panel/side_panel_coordinator.h"
 #include "chrome/browser/ui/views/side_panel/side_panel_registry.h"
-#include "chrome/browser/ui/views/side_panel/user_note/user_note_ui_coordinator.h"
 #include "components/history_clusters/core/features.h"
 #include "components/history_clusters/core/history_clusters_service.h"
 #include "components/performance_manager/public/features.h"
@@ -88,12 +87,6 @@ void SidePanelUtil::PopulateGlobalEntries(Browser* browser,
           browser->profile(),
           /*include_runtime_checks=*/false)) {
     SearchCompanionSidePanelCoordinator::GetOrCreateForBrowser(browser);
-  }
-
-  // Add user notes.
-  if (user_notes::IsUserNotesEnabled()) {
-    UserNoteUICoordinator::GetOrCreateForBrowser(browser)
-        ->CreateAndRegisterEntry(global_registry);
   }
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)

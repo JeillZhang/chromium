@@ -21,7 +21,7 @@ import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 import {IronA11yKeysElement} from 'chrome://resources/polymer/v3_0/iron-a11y-keys/iron-a11y-keys.js';
 import {IronSelectorElement} from 'chrome://resources/polymer/v3_0/iron-selector/iron-selector.js';
 
-import {isCrosPrivacyHubLocationEnabled, isPersonalizationJellyEnabled} from '../load_time_booleans.js';
+import {isCrosPrivacyHubLocationEnabled} from '../load_time_booleans.js';
 import {WithPersonalizationStore} from '../personalization_store.js';
 import {isSelectionEvent} from '../utils.js';
 
@@ -53,50 +53,31 @@ export class PersonalizationThemeElement extends WithPersonalizationStore {
         type: Boolean,
         value: null,
       },
+
       colorModeAutoScheduleEnabled_: {
         type: Boolean,
         value: null,
       },
+
       geolocationPermissionEnabled_: {
         type: Boolean,
         value: null,
       },
+
       sunriseTime_: {
         type: String,
         value: null,
       },
+
       sunsetTime_: {
         type: String,
         value: null,
-      },
-      isPersonalizationJellyEnabled_: {
-        type: Boolean,
-        value() {
-          return isPersonalizationJellyEnabled();
-        },
       },
 
       /** The button currently highlighted by keyboard navigation. */
       selectedButton_: {
         type: Object,
         notify: true,
-      },
-
-      shouldShowGeolocationWarningText_: {
-        type: Boolean,
-        computed: 'computeShouldShowGeolocationWarningText_(' +
-            'colorModeAutoScheduleEnabled_, ' +
-            'geolocationPermissionEnabled_, ' +
-            'sunriseTime_, sunsetTime_),',
-        value: false,
-      },
-
-      geolocationWarningText_: {
-        type: String,
-        computed: 'computeGeolocationWarningText_(' +
-            'colorModeAutoScheduleEnabled_, ' +
-            'sunriseTime_, sunsetTime_),',
-        value: '',
       },
 
       shouldShowGeolocationDialog_: {
@@ -109,7 +90,6 @@ export class PersonalizationThemeElement extends WithPersonalizationStore {
   private darkModeEnabled_: boolean|null;
   private colorModeAutoScheduleEnabled_: boolean|null;
   private geolocationPermissionEnabled_: boolean|null;
-  private geolocationWarningText_: string;
   private sunriseTime_: string|null;
   private sunsetTime_: string|null;
   private selectedButton_: CrButtonElement;
@@ -214,39 +194,24 @@ export class PersonalizationThemeElement extends WithPersonalizationStore {
     }
     setColorModeAutoSchedule(
         /*enabled=*/ true, getThemeProvider(), this.getStore());
-  }
 
-
-  private computeShouldShowGeolocationWarningText_(): boolean {
-    return (
-        isCrosPrivacyHubLocationEnabled() && this.sunriseTime_ !== null &&
-        this.sunsetTime_ !== null &&
-        this.colorModeAutoScheduleEnabled_ === true &&
-        this.geolocationPermissionEnabled_ === false);
-  }
-
-  private computeGeolocationWarningText_(): string {
-    // Not using i18n, as it removes the anchor tags from the link.
-    return loadTimeData.getStringF(
-        'geolocationWarningTextForWallpaper', this.sunriseTime_!,
-        this.sunsetTime_!);
-  }
-
-  private openGeolocationDialog_(e: CustomEvent<{event: Event}>): void {
-    // A place holder href with the value "#" is used to have a compliant link.
-    // This prevents the browser from navigating the window to "#".
-    e.detail.event.preventDefault();
-    e.stopPropagation();
-
-    // Geolocation Dialog only exists in the Privacy Hub context.
-    if (!isCrosPrivacyHubLocationEnabled()) {
-      console.error(
-          'Geolocation Dialog triggered when the Privacy Hub flag is disabled');
-      return;
+    // If needed, pop up a dialog asking users to enable system location
+    // permission.
+    if (isCrosPrivacyHubLocationEnabled() &&
+        this.geolocationPermissionEnabled_ === false) {
+      this.shouldShowGeolocationDialog_ = true;
     }
+  }
 
-    // Show the dialog to let users enable system location inline.
-    this.shouldShowGeolocationDialog_ = true;
+  private computeShouldShowTooltipIcon_(): boolean {
+    return isCrosPrivacyHubLocationEnabled() &&
+        this.colorModeAutoScheduleEnabled_ === true &&
+        this.geolocationPermissionEnabled_ === false;
+  }
+
+  private computeAutoModeGeolocationDialogText_(): string {
+    return loadTimeData.getStringF(
+        'autoModeGeolocationDialogText', this.sunriseTime_!, this.sunsetTime_!);
   }
 
   private onGeolocationDialogClose_(): void {

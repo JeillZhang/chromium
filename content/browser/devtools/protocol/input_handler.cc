@@ -25,12 +25,12 @@
 #include "content/browser/devtools/protocol/native_input_event_builder.h"
 #include "content/browser/devtools/protocol/protocol.h"
 #include "content/browser/renderer_host/data_transfer_util.h"
-#include "content/browser/renderer_host/input/touch_emulator.h"
+#include "content/browser/renderer_host/input/touch_emulator_impl.h"
 #include "content/browser/renderer_host/render_frame_host_impl.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
-#include "content/browser/renderer_host/render_widget_host_input_event_router.h"
 #include "content/browser/renderer_host/render_widget_host_view_base.h"
 #include "content/browser/web_contents/web_contents_impl.h"
+#include "content/common/input/render_widget_host_input_event_router.h"
 #include "content/common/input/synthetic_pinch_gesture.h"
 #include "content/common/input/synthetic_pinch_gesture_params.h"
 #include "content/common/input/synthetic_pointer_action.h"
@@ -692,7 +692,7 @@ class InputHandler::InputInjector
     }
   }
 
-  void InjectKeyboardEvent(const NativeWebKeyboardEvent& keyboard_event,
+  void InjectKeyboardEvent(const input::NativeWebKeyboardEvent& keyboard_event,
                            Maybe<Array<std::string>> commands,
                            std::unique_ptr<DispatchKeyEventCallback> callback) {
     if (!widget_host_) {
@@ -732,15 +732,16 @@ class InputHandler::InputInjector
     }
 
     widget_host_->Focus();
-    widget_host_->GetTouchEmulator()->Enable(
-        TouchEmulator::Mode::kInjectingTouchEvents,
-        ui::GestureProviderConfigType::CURRENT_PLATFORM);
+    widget_host_->GetTouchEmulator(/*create_if_necessary=*/true)
+        ->Enable(TouchEmulator::Mode::kInjectingTouchEvents,
+                 ui::GestureProviderConfigType::CURRENT_PLATFORM);
     base::OnceClosure closure = base::BindOnce(
         &DispatchTouchEventCallback::sendSuccess, std::move(callback));
     for (size_t i = 0; i < events.size(); i++) {
-      widget_host_->GetTouchEmulator()->InjectTouchEvent(
-          events[i], widget_host_->GetView(),
-          i == events.size() - 1 ? std::move(closure) : base::OnceClosure());
+      widget_host_->GetTouchEmulator(/*create_if_necessary=*/true)
+          ->InjectTouchEvent(events[i], widget_host_->GetView(),
+                             i == events.size() - 1 ? std::move(closure)
+                                                    : base::OnceClosure());
     }
     MaybeSelfDestruct();
   }
@@ -1133,7 +1134,7 @@ void InputHandler::DispatchKeyEvent(
     return;
   }
 
-  NativeWebKeyboardEvent event(
+  input::NativeWebKeyboardEvent event(
       web_event_type,
       GetEventModifiers(modifiers.value_or(blink::WebInputEvent::kNoModifiers),
                         auto_repeat.value_or(false), is_keypad.value_or(false),

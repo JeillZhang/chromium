@@ -21,14 +21,14 @@ import {AppSetupPinKeyboardElement} from './app_setup_pin_keyboard.js';
 
 const AppSetupPinDialogElementBase = I18nMixin(PolymerElement);
 
-interface AppSetupPinDialogElement {
+export interface AppSetupPinDialogElement {
   $: {
     dialog: CrDialogElement,
     setupPinKeyboard: AppSetupPinKeyboardElement,
   };
 }
 
-class AppSetupPinDialogElement extends AppSetupPinDialogElementBase {
+export class AppSetupPinDialogElement extends AppSetupPinDialogElementBase {
   static get is() {
     return 'app-setup-pin-dialog' as const;
   }
@@ -42,11 +42,26 @@ class AppSetupPinDialogElement extends AppSetupPinDialogElementBase {
       /**
        * Whether the user is at the PIN confirmation step.
        */
-      isConfirmStep_: {type: Boolean, value: false},
+      isConfirmStep_: {
+        type: Boolean,
+        value: false,
+      },
+
+      /**
+       * Whether the submit button should be clickable.
+       */
+      enableSubmit_: Boolean,
     };
   }
 
+  private enableSubmit_: boolean;
   private isConfirmStep_: boolean;
+
+  override ready(): void {
+    super.ready();
+
+    this.addEventListener('set-app-pin-done', this.onSetPinDone_);
+  }
 
   override connectedCallback(): void {
     super.connectedCallback();
@@ -63,26 +78,20 @@ class AppSetupPinDialogElement extends AppSetupPinDialogElementBase {
     this.$.setupPinKeyboard.resetState();
   }
 
-  private onCancelClick_(e: Event): void {
-    // Stop propagation to keep the subpage from opening.
-    e.stopPropagation();
-    this.$.setupPinKeyboard.resetState();
+  private onCancelClick_(): void {
     this.close();
   }
 
-  private onPinSubmit_(e: Event): void {
-    // TODO(b/332936223): This method currently naively switches from the
-    // initial screen to the submit screen. It will be updated when the
-    // actual PIN setup flow is implemented.
+  private onPinSubmit_(): void {
+    this.$.setupPinKeyboard.doSubmit();
+  }
 
-    // Stop propagation to keep the subpage from opening.
-    e.stopPropagation();
-    if (!this.isConfirmStep_) {
-      this.$.setupPinKeyboard.doSubmit();
-      this.isConfirmStep_ = true;
-    } else {
-      this.close();
-    }
+  /**
+   * Called when the setup PIN keyboard successfully saves the PIN.
+   */
+  private onSetPinDone_(): void {
+    this.close();
+    this.dispatchEvent(new Event('success', {composed: true}));
   }
 
   private getTitle_(isConfirmStep: boolean): string {

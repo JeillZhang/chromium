@@ -6,6 +6,7 @@
 #define COMPONENTS_VISITEDLINK_BROWSER_PARTITIONED_VISITEDLINK_WRITER_H_
 
 #include <map>
+#include <set>
 
 #include "base/memory/read_only_shared_memory_region.h"
 #include "components/visitedlink/common/visitedlink_common.h"
@@ -128,6 +129,11 @@ class PartitionedVisitedLinkWriter : public VisitedLinkCommon {
   // Returns the listener.
   PartitionedVisitedLinkWriter::Listener* GetListener() const {
     return listener_.get();
+  }
+
+  // Returns the hashtable stored in memory.
+  const base::MappedReadOnlyRegion& GetMappedTableMemoryForTesting() {
+    return mapped_table_memory_;
   }
 #endif
 

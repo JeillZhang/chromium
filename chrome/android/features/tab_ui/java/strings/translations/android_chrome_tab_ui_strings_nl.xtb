@@ -8,6 +8,7 @@
 <translation id="1173894706177603556">Naam wijzigen</translation>
 <translation id="1197088940767939838">Oranje</translation>
 <translation id="125153950246128346">Tik om nog een tabblad te bekijken</translation>
+<translation id="1273910660700874265">Opties voor tabbladgroep <ph name="TITLE_OF_GROUP" /></translation>
 <translation id="1322824555808364080">Mensen uitnodigen</translation>
 <translation id="1419023007528516122">Hiermee wordt de groep definitief van je apparaat verwijderd</translation>
 <translation id="149054111719651807">{NUM_MINS,plural, =1{<ph name="NUM_MINS_ONE" /> minuut geleden gemaakt}other{<ph name="NUM_MINS_MANY" /> minuten geleden gemaakt}}</translation>
@@ -39,6 +40,7 @@
 <translation id="2928243913527329289">Google | Over deze winkel</translation>
 <translation id="2977480621796371840">Uit groep verwijderen</translation>
 <translation id="3008554597174452548">Product niet meer volgen</translation>
+<translation id="3026391124054406831">Maak groepen om je tabbladen te ordenen.</translation>
 <translation id="3052964831964880138">Prijsdaling van <ph name="PRICE_DROP" /> voor <ph name="PRODUCT_NAME" /></translation>
 <translation id="3078350928901129212">Kleuricoon <ph name="COLOR_NAME" /> voor tabbladgroep</translation>
 <translation id="3194464645767632461">beoordeling</translation>
@@ -52,13 +54,13 @@
 <translation id="3882834874697329510">Wil je een melding krijgen als er een lagere prijs is op een geopend tabblad, zet dan meldingen aan in Instellingen.</translation>
 <translation id="3940195383040445971">Prijzen volgen op tabbladen</translation>
 <translation id="3954615705217314756">{TABS_COUNT,plural, =1{Tabblad groeperen}other{Tabbladen groeperen}}</translation>
+<translation id="3969565576924904454"><ph name="TITLE_OF_GROUP" /> openen</translation>
 <translation id="3996880007329611795">Meldingen krijgen</translation>
 <translation id="4009732926939031387">{NUM_DAYS,plural, =1{<ph name="NUM_DAYS_ONE" /> dag geleden gemaakt}other{<ph name="NUM_DAYS_MANY" /> dagen geleden gemaakt}}</translation>
 <translation id="4133493477912226187"><ph name="NUMBER_OF_TABS" /> tabbladen lijken gerelateerd. Wil je deze groeperen?</translation>
 <translation id="4139634748112164403">De tabbladen blijven open op dit apparaat, maar de groep wordt definitief verwijderd</translation>
 <translation id="4156086991340739772">{NUMBER_OF_TABS,plural, =1{Groep <ph name="TITLE_OF_GROUP" /> met <ph name="TABS_COUNT_ONE" /> tabblad sluiten, kleur <ph name="COLOR_NAME" />.}other{Groep <ph name="TITLE_OF_GROUP" /> met <ph name="TABS_COUNT_MANY" /> tabbladen sluiten, kleur <ph name="COLOR_NAME" />.}}</translation>
 <translation id="4159784952369912983">Paars</translation>
-<translation id="4212246570487010370">Verder browsen</translation>
 <translation id="4220650239473304853">{NUMBER_OF_TABS,plural, =1{Tabbladgroep <ph name="TITLE_OF_GROUP" /> met <ph name="TABS_COUNT_ONE" /> tabblad uitvouwen.}other{Tabbladgroep <ph name="TITLE_OF_GROUP" /> met <ph name="TABS_COUNT_MANY" /> tabbladen uitvouwen.}}</translation>
 <translation id="427987768447457592">Nieuwe tabbladgroep</translation>
 <translation id="4460014764210899310">Groeperen ongedaan maken</translation>
@@ -98,13 +100,11 @@
 <translation id="6333260925957816943">Informatie over deze winkel</translation>
 <translation id="6381032505162537930">Hier vind je je tabbladgroepen</translation>
 <translation id="639823877092900621">{TABS_COUNT,plural, =1{Groepering van <ph name="TABS_COUNT_ONE" /> geselecteerd tabblad opheffen}other{Groepering van <ph name="TABS_COUNT_MANY" /> geselecteerde tabbladen opheffen}}</translation>
-<translation id="6421412308143682486">{INCOGNITO_TABS_COUNT,plural, =1{Je vindt je gesloten tabbladen bij Recente tabbladen in het hoofdmenu van Chrome. Je incognitotabblad is niet beschikbaar.}other{Je vindt je gesloten tabbladen bij Recente tabbladen in het hoofdmenu van Chrome. Je # incognitotabbladen zijn niet beschikbaar.}}</translation>
 <translation id="6422650314852876533">{TABS_COUNT,plural, =1{<ph name="TABS_COUNT_ONE" /> tabblad}other{<ph name="TABS_COUNT_MANY" /> tabbladen}}</translation>
 <translation id="6549021453810473782">Winkelinformatie bekijken</translation>
 <translation id="6557858706263317126">+<ph name="HIDDEN_TABS_COUNT" /></translation>
 <translation id="6562820390860419811">Tabblad naar links verplaatsen</translation>
 <translation id="6615455863669487791">Tonen</translation>
-<translation id="661742612106409204">Je vindt je gesloten tabbladen bij Recente tabbladen in het hoofdmenu van Chrome.</translation>
 <translation id="6744956528665271406">Groepskleur bewerken</translation>
 <translation id="6840760312327750441">Groepeer tabbladen door ze vast te houden en naar andere tabbladen te slepen.</translation>
 <translation id="6856809498882026482">Optie om meerdere tabbladen te selecteren verbergen</translation>

@@ -1578,7 +1578,7 @@ and mapped to the variant by `StatisticNameToMachineStatisticVariant()` -->
 </histogram>
 
 <histogram name="ChromeOS.Healthd.DiagnosticResult.{Routine}"
-    enum="CrosHealthdDiagnosticResult" expires_after="2024-09-15">
+    enum="CrosHealthdDiagnosticResult" expires_after="2024-11-17">
   <owner>weiluanwang@google.com</owner>
   <owner>dennyh@google.com</owner>
   <owner>cros-tdm-tpe-eng@google.com</owner>
@@ -1638,7 +1638,7 @@ and mapped to the variant by `StatisticNameToMachineStatisticVariant()` -->
 </histogram>
 
 <histogram name="ChromeOS.Healthd.EventSubscription"
-    enum="CrosHealthdEventCategory" expires_after="2024-06-30">
+    enum="CrosHealthdEventCategory" expires_after="2024-12-31">
   <owner>weiluanwang@google.com</owner>
   <owner>dennyh@google.com</owner>
   <owner>cros-tdm-tpe-eng@google.com</owner>
@@ -1649,7 +1649,7 @@ and mapped to the variant by `StatisticNameToMachineStatisticVariant()` -->
 </histogram>
 
 <histogram name="ChromeOS.Healthd.TelemetryResult.{Category}"
-    enum="CrosHealthdTelemetryResult" expires_after="2024-09-15">
+    enum="CrosHealthdTelemetryResult" expires_after="2024-11-17">
   <owner>weiluanwang@google.com</owner>
   <owner>dennyh@google.com</owner>
   <owner>cros-tdm-tpe-eng@google.com</owner>
@@ -1872,6 +1872,26 @@ and mapped to the variant by `StatisticNameToMachineStatisticVariant()` -->
   <summary>
     Records the specific keys present on a user's internal keyboard, if their
     device's keyboard has a custom top-row layout.
+  </summary>
+</histogram>
+
+<histogram name="ChromeOS.Inputs.InternalKeyboard.NumberOfTopRowKeys"
+    units="keys" expires_after="2024-10-28">
+  <owner>dpad@google.com</owner>
+  <owner>wangdanny@google.com</owner>
+  <owner>cros-peripherals@google.com</owner>
+  <summary>
+    Records the number of top-row keys on a user's internal keyboard.
+  </summary>
+</histogram>
+
+<histogram name="ChromeOS.Inputs.InternalKeyboard.TopRowKeysPresent"
+    enum="KeyboardTopRowActionKeys" expires_after="2024-10-28">
+  <owner>dpad@google.com</owner>
+  <owner>wangdanny@google.com</owner>
+  <owner>cros-peripherals@google.com</owner>
+  <summary>
+    Records the specific keys present on a user's internal keyboard.
   </summary>
 </histogram>
 
@@ -2634,7 +2654,7 @@ and mapped to the variant by `StatisticNameToMachineStatisticVariant()` -->
 </histogram>
 
 <histogram name="ChromeOS.RgbKeyboard.RgbKeyboardCapabilityType"
-    enum="RgbKeyboardCapabilityType" expires_after="2024-09-15">
+    enum="RgbKeyboardCapabilityType" expires_after="2024-11-17">
   <owner>michaelcheco@google.com</owner>
   <owner>dpad@google.com</owner>
   <owner>jimmyxgong@chromium.org</owner>
@@ -3258,7 +3278,7 @@ and mapped to the variant by `StatisticNameToMachineStatisticVariant()` -->
 
 <histogram
     name="ChromeOS.Settings.Device.Touchpad.{TouchpadType}.SimulateRightClick.Changed"
-    enum="SimulateRightClickModifier" expires_after="2024-09-15">
+    enum="SimulateRightClickModifier" expires_after="2024-11-17">
   <owner>michaelcheco@google.com</owner>
   <owner>cros-peripherals@google.com</owner>
   <summary>
@@ -3273,7 +3293,7 @@ and mapped to the variant by `StatisticNameToMachineStatisticVariant()` -->
 
 <histogram
     name="ChromeOS.Settings.Device.Touchpad.{TouchpadType}.SimulateRightClick.Initial"
-    enum="SimulateRightClickModifier" expires_after="2024-09-15">
+    enum="SimulateRightClickModifier" expires_after="2024-11-17">
   <owner>michaelcheco@google.com</owner>
   <owner>cros-peripherals@google.com</owner>
   <summary>
@@ -3706,6 +3726,22 @@ and mapped to the variant by `StatisticNameToMachineStatisticVariant()` -->
 </histogram>
 
 <histogram
+    name="ChromeOS.Settings.Device.{Peripheral}.External.NumConnectedLast28Days"
+    units="devices" expires_after="2025-03-22">
+  <owner>dpad@google.com</owner>
+  <owner>cros-peripherals@google.com</owner>
+  <summary>
+    Records the number of {Peripheral} devices seen in the last 28 days.
+    Recorded everytime a user connects an external {Peripheral}.
+  </summary>
+  <token key="Peripheral">
+    <variant name="Keyboard"/>
+    <variant name="Mouse"/>
+    <variant name="Touchpad"/>
+  </token>
+</histogram>
+
+<histogram
     name="ChromeOS.Settings.Device.{Peripheral}.{PeripheralSetting}.Changed"
     enum="Boolean" expires_after="2025-03-22">
   <owner>dpad@google.com</owner>
@@ -4113,7 +4149,7 @@ and mapped to the variant by `StatisticNameToMachineStatisticVariant()` -->
 </histogram>
 
 <histogram name="ChromeOS.UrlXattrsCount" units="units"
-    expires_after="2024-09-15">
+    expires_after="2024-11-17">
   <owner>jorgelo@chromium.org</owner>
   <owner>tnagel@chromium.org</owner>
   <summary>
@@ -4320,7 +4356,7 @@ and mapped to the variant by `StatisticNameToMachineStatisticVariant()` -->
 </histogram>
 
 <histogram name="ChromeOS.Zram.{HugePageActivityMetric}" units="pages"
-    expires_after="2024-09-22">
+    expires_after="2024-11-24">
   <owner>ctshao@google.com</owner>
   <owner>raging@google.com</owner>
   <owner>bgeffon@chromium.org</owner>
@@ -4338,7 +4374,7 @@ and mapped to the variant by `StatisticNameToMachineStatisticVariant()` -->
 </histogram>
 
 <histogram name="ChromeOS.Zram.{PctMetric}" units="%"
-    expires_after="2024-09-15">
+    expires_after="2024-11-17">
   <owner>ctshao@google.com</owner>
   <owner>bgeffon@chromium.org</owner>
   <owner>chromeos-memory@google.com</owner>

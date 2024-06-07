@@ -60,7 +60,6 @@ class OverviewDropTarget : public OverviewItemBase {
   void PrepareForOverview() override;
   void SetShouldUseSpawnAnimation(bool value) override;
   void OnStartingAnimationComplete() override;
-  void CloseWindows() override;
   void Restack() override;
   void StartDrag() override;
   void OnOverviewItemDragStarted() override;
@@ -73,8 +72,8 @@ class OverviewDropTarget : public OverviewItemBase {
   void Shutdown() override;
   void AnimateAndCloseItem(bool up) override;
   void StopWidgetAnimation() override;
-  OverviewGridWindowFillMode GetWindowDimensionsType() const override;
-  void UpdateWindowDimensionsType() override;
+  OverviewItemFillMode GetOverviewItemFillMode() const override;
+  void UpdateOverviewItemFillMode() override;
   gfx::Point GetMagnifierFocusPointInScreen() const override;
   const gfx::RoundedCornersF GetRoundedCorners() const override;
 

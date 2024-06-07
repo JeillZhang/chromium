@@ -6,7 +6,7 @@
 load("//lib/branches.star", "branches")
 load("//lib/builder_config.star", "builder_config")
 load("//lib/builder_health_indicators.star", "health_spec")
-load("//lib/builders.star", "sheriff_rotations", "siso")
+load("//lib/builders.star", "gardener_rotations", "siso")
 load("//lib/ci.star", "ci")
 load("//lib/consoles.star", "consoles")
 load("//lib/gn_args.star", "gn_args")
@@ -15,9 +15,9 @@ ci.defaults.set(
     executable = ci.DEFAULT_EXECUTABLE,
     builder_group = "chromium.dawn",
     pool = ci.gpu.POOL,
-    sheriff_rotations = sheriff_rotations.DAWN,
     contact_team_email = "chrome-gpu-infra@google.com",
     execution_timeout = ci.DEFAULT_EXECUTION_TIMEOUT,
+    gardener_rotations = gardener_rotations.DAWN,
     health_spec = health_spec.DEFAULT,
     service_account = ci.gpu.SERVICE_ACCOUNT,
     shadow_service_account = ci.gpu.SHADOW_SERVICE_ACCOUNT,
@@ -74,7 +74,8 @@ ci.gpu.linux_builder(
             "dawn_enable_opengles",
             "release_try_builder",
             "minimal_symbols",
-            "reclient",
+            "remoteexec",
+            "gpu_tests",
         ],
     ),
     console_view_entry = consoles.console_view_entry(
@@ -109,7 +110,8 @@ ci.gpu.linux_builder(
             "dawn_enable_opengles",
             "release_try_builder",
             "minimal_symbols",
-            "reclient",
+            "remoteexec",
+            "gpu_tests",
         ],
     ),
     console_view_entry = consoles.console_view_entry(
@@ -143,7 +145,8 @@ ci.gpu.linux_builder(
             "android_builder",
             "release_try_builder",
             "minimal_symbols",
-            "reclient",
+            "remoteexec",
+            "gpu_tests",
         ],
     ),
     console_view_entry = consoles.console_view_entry(
@@ -178,7 +181,8 @@ ci.gpu.linux_builder(
             "arm64",
             "release_try_builder",
             "minimal_symbols",
-            "reclient",
+            "remoteexec",
+            "gpu_tests",
         ],
     ),
     console_view_entry = consoles.console_view_entry(
@@ -352,7 +356,8 @@ ci.gpu.linux_builder(
             "tsan",
             "release_try_builder",
             "minimal_symbols",
-            "reclient",
+            "remoteexec",
+            "gpu_tests",
         ],
     ),
     console_view_entry = consoles.console_view_entry(
@@ -390,7 +395,8 @@ ci.gpu.linux_builder(
             "android_builder",
             "release_try_builder",
             "minimal_symbols",
-            "reclient",
+            "remoteexec",
+            "gpu_tests",
         ],
     ),
     console_view_entry = consoles.console_view_entry(
@@ -426,7 +432,8 @@ ci.gpu.linux_builder(
             "arm64",
             "release_try_builder",
             "minimal_symbols",
-            "reclient",
+            "remoteexec",
+            "gpu_tests",
         ],
     ),
     console_view_entry = consoles.console_view_entry(
@@ -618,7 +625,7 @@ ci.gpu.linux_builder(
             "ozone_headless",
             "release_builder",
             "try_builder",
-            "reclient",
+            "remoteexec",
             "dcheck_off",
             "no_symbols",
             "is_skylab",
@@ -628,6 +635,7 @@ ci.gpu.linux_builder(
         category = "ChromeOS|Intel",
         short_name = "vlt",
     ),
+    execution_timeout = 6 * time.hour,
     siso_remote_jobs = siso.remote_jobs.HIGH_JOBS_FOR_CI,
 )
 
@@ -766,8 +774,9 @@ ci.gpu.mac_builder(
             "dawn_enable_opengles",
             "release_try_builder",
             "minimal_symbols",
-            "reclient",
+            "remoteexec",
             "arm64",
+            "gpu_tests",
         ],
     ),
     console_view_entry = consoles.console_view_entry(
@@ -801,8 +810,9 @@ ci.gpu.mac_builder(
             "dawn_enable_opengles",
             "release_try_builder",
             "minimal_symbols",
-            "reclient",
+            "remoteexec",
             "arm64",
+            "gpu_tests",
         ],
     ),
     console_view_entry = consoles.console_view_entry(
@@ -931,8 +941,9 @@ ci.gpu.mac_builder(
             "dawn_enable_opengles",
             "release_try_builder",
             "minimal_symbols",
-            "reclient",
+            "remoteexec",
             "x64",
+            "gpu_tests",
         ],
     ),
     console_view_entry = consoles.console_view_entry(
@@ -966,8 +977,9 @@ ci.gpu.mac_builder(
             "dawn_enable_opengles",
             "release_try_builder",
             "minimal_symbols",
-            "reclient",
+            "remoteexec",
             "x64",
+            "gpu_tests",
         ],
     ),
     console_view_entry = consoles.console_view_entry(
@@ -1178,7 +1190,8 @@ ci.gpu.windows_builder(
             "asan",
             "release_try_builder",
             "minimal_symbols",
-            "reclient",
+            "remoteexec",
+            "gpu_tests",
         ],
     ),
     console_view_entry = consoles.console_view_entry(
@@ -1279,7 +1292,8 @@ ci.gpu.windows_builder(
             "dawn_enable_opengles",
             "release_try_builder",
             "minimal_symbols",
-            "reclient",
+            "remoteexec",
+            "gpu_tests",
         ],
     ),
     console_view_entry = consoles.console_view_entry(
@@ -1314,7 +1328,8 @@ ci.gpu.windows_builder(
             "dawn_enable_opengles",
             "release_try_builder",
             "minimal_symbols",
-            "reclient",
+            "remoteexec",
+            "gpu_tests",
         ],
     ),
     console_view_entry = consoles.console_view_entry(
@@ -1354,7 +1369,7 @@ ci.gpu.windows_builder(
             "dawn_enable_opengles",
             "release_try_builder",
             "minimal_symbols",
-            "reclient",
+            "remoteexec",
             "gpu_tests",
         ],
     ),
@@ -1390,7 +1405,7 @@ ci.gpu.windows_builder(
             "dawn_enable_opengles",
             "release_try_builder",
             "minimal_symbols",
-            "reclient",
+            "remoteexec",
             "gpu_tests",
         ],
     ),
@@ -1621,8 +1636,9 @@ ci.gpu.windows_builder(
             "dawn_enable_opengles",
             "release_try_builder",
             "minimal_symbols",
-            "reclient",
+            "remoteexec",
             "x86",
+            "gpu_tests",
         ],
     ),
     console_view_entry = consoles.console_view_entry(
@@ -1656,8 +1672,9 @@ ci.gpu.windows_builder(
             "dawn_enable_opengles",
             "release_try_builder",
             "minimal_symbols",
-            "reclient",
+            "remoteexec",
             "x86",
+            "gpu_tests",
         ],
     ),
     console_view_entry = consoles.console_view_entry(

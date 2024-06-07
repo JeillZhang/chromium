@@ -278,16 +278,46 @@ suite('SettingsSectionTest', function() {
     assertFalse(!!settings.shadowRoot!.querySelector('#addShortcutBanner'));
   });
 
-  test('import hidden when policy disabled', async function() {
+  test(
+      'import visible when policy disabled and controlled by extension',
+      async function() {
+        const settings = document.createElement('settings-section');
+        settings.prefs = makePasswordManagerPrefs();
+        settings.prefs.credentials_enable_service.value = false;
+        settings.prefs.credentials_enable_service.enforcement =
+            chrome.settingsPrivate.Enforcement.ENFORCED;
+        settings.prefs.credentials_enable_service.controlledBy =
+            chrome.settingsPrivate.ControlledBy.EXTENSION;
+        document.body.appendChild(settings);
+        await flushTasks();
+
+        assertTrue(!!settings.shadowRoot!.querySelector('passwords-importer'));
+      });
+
+  test(
+      'import hidden when policy disabled and not controlled by extension',
+      async function() {
+        const settings = document.createElement('settings-section');
+        settings.prefs = makePasswordManagerPrefs();
+        settings.prefs.credentials_enable_service.value = false;
+        settings.prefs.credentials_enable_service.enforcement =
+            chrome.settingsPrivate.Enforcement.ENFORCED;
+        settings.prefs.credentials_enable_service.controlledBy =
+            chrome.settingsPrivate.ControlledBy.DEVICE_POLICY;
+        document.body.appendChild(settings);
+        await flushTasks();
+
+        assertFalse(!!settings.shadowRoot!.querySelector('passwords-importer'));
+      });
+
+  test('import visible when policy enabled', async function() {
     const settings = document.createElement('settings-section');
     settings.prefs = makePasswordManagerPrefs();
-    settings.prefs.credentials_enable_service.value = false;
-    settings.prefs.credentials_enable_service.enforcement =
-        chrome.settingsPrivate.Enforcement.ENFORCED;
+    settings.prefs.credentials_enable_service.value = true;
     document.body.appendChild(settings);
     await flushTasks();
 
-    assertFalse(!!settings.shadowRoot!.querySelector('passwords-importer'));
+    assertTrue(!!settings.shadowRoot!.querySelector('passwords-importer'));
   });
 
   test('Password exporter element', async function() {
@@ -438,23 +468,6 @@ suite('SettingsSectionTest', function() {
     await passkeysProxy.whenCalled('passkeysManagePasskeys');
   });
   // </if>
-
-  test('iCloudKeychainToggleNotShown', async function() {
-    // The control for iCloud Keychain should appear only on macOS.
-    const settings = document.createElement('settings-section');
-    document.body.appendChild(settings);
-    flush();
-    const element = settings.shadowRoot!.querySelector<HTMLElement>(
-        '#createPasskeysInICloudKeychainRow');
-
-    // <if expr="not is_macosx">
-    assertFalse(!!element);
-    // </if>
-
-    // <if expr="is_macosx">
-    assertTrue(!!element);
-    // </if>
-  });
 
   test('blockedSites section hidden when no blocked sites', async function() {
     passwordManager.data.blockedSites = [];

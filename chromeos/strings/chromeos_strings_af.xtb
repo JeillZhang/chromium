@@ -236,7 +236,6 @@
 <translation id="2189104374785738357">Wysig APN-besonderhede</translation>
 <translation id="2195732836444333448">Ons het nie op die oomblik kapasiteit nie. Kom gou terug.</translation>
 <translation id="2201758491318984023">fiets</translation>
-<translation id="2203222757805818543">Huidige skedule is ingestel op <ph name="SUNRISE" /> – <ph name="SUNSET" />. <ph name="BEGIN_LINK" />Skakel liggingtoegang aan<ph name="END_LINK" /> om die donkermodusskedule outomaties op te dateer</translation>
 <translation id="2203272733515928691">warmbron</translation>
 <translation id="2203642483788377106">krans</translation>
 <translation id="2208388655216963643">impressionisties</translation>
@@ -364,6 +363,7 @@
 <translation id="3054177598518735801"><ph name="CURRENT_VALUE" /> mA</translation>
 <translation id="3056720590588772262">Eindpunt</translation>
 <translation id="3060579846059757016">Buitelyne</translation>
+<translation id="3061850252076394168">aktiveer hardoplees</translation>
 <translation id="3069085583900247081">Toets het misluk</translation>
 <translation id="3078740164268491126">tabel</translation>
 <translation id="3081652522083185657">lig</translation>
@@ -630,7 +630,6 @@
 <translation id="458794348635939462">Kon nie alle gashere bepaal nie</translation>
 <translation id="4593212453765072419">Instaanstawing word vereis</translation>
 <translation id="4609350030397390689">Verlaag sleutelbordhelderheid</translation>
-<translation id="4617553623719764431">Weer word nie gewys nie omdat dit nie jou ligging ken nie. <ph name="BEGIN_LINK" />Skakel Liggingtoegang aan<ph name="END_LINK" /> om plaaslike weer te wys</translation>
 <translation id="4627232916386272576"><ph name="DOCUMENT_TITLE" />, <ph name="PRINTER_NAME" />, <ph name="CREATION_TIME" />, <ph name="PRINTED_PAGE_NUMBER" /> van <ph name="TOTAL_PAGE_NUMBER" />. Druk om die druktaak te kanselleer.</translation>
 <translation id="463791356324567266">Kanselleer tans skandering …</translation>
 <translation id="4646949265910132906">Veilige wi-fi-verbinding</translation>
@@ -704,6 +703,7 @@
 <translation id="4985509611418653372">Laat loop</translation>
 <translation id="4987769320337599931">Brandmuur</translation>
 <translation id="4988526792673242964">Bladsye</translation>
+<translation id="4989542687859782284">Onbeskikbaar</translation>
 <translation id="4999333166442584738">Versteek verslag</translation>
 <translation id="500920857929044050">Stop toets</translation>
 <translation id="5017508259293544172">LEAP</translation>
@@ -960,7 +960,6 @@
 <translation id="6412715219990689313">Ingeboude sleutelbord</translation>
 <translation id="6417265370957905582">Google Assistent</translation>
 <translation id="6423239382391657905">OpenVPN</translation>
-<translation id="6438073885402882007">Dit laat stelseldienste met die toestemming toe om jou ligging te gebruik. Ligging kan bronne soos wi-fi, selnetwerke en sensors gebruik om te help om jou toestel se ligging te skat. <ph name="LINK_BEGIN" />Meer inligting<ph name="LINK_END" /></translation>
 <translation id="6439505561246192797">Swak (<ph name="SIGNAL_STRENGTH" />)</translation>
 <translation id="6447630859861661624">Gaan na rekeninginstellings</translation>
 <translation id="6462978824459367242">Voeg APN By-knoppie is nou geaktiveer</translation>

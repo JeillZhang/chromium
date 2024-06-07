@@ -18,7 +18,6 @@
 #include "base/ranges/algorithm.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
@@ -1106,11 +1105,10 @@ void ChromePasswordProtectionService::OpenPasswordCheck(
     JNIEnv* env = base::android::AttachCurrentThread();
     const syncer::SyncService* sync_service =
         SyncServiceFactory::GetForProfile(profile_);
-    std::string account = password_manager::sync_util::
-        GetAccountEmailIfSyncFeatureEnabledIncludingPasswords(sync_service);
     bool is_syncing_passwords =
-        password_manager::sync_util::IsSyncFeatureEnabledIncludingPasswords(
-            sync_service);
+        password_manager::sync_util::HasChosenToSyncPasswords(sync_service);
+    std::string account =
+        is_syncing_passwords ? sync_service->GetAccountInfo().email : "";
 
     CredentialFoundInStore credentials_store =
         CheckCredentialsStore(saved_passwords_matching_reused_credentials());
@@ -1877,7 +1875,12 @@ void ChromePasswordProtectionService::RemovePhishedSavedPasswordCredential(
 LoginReputationClientRequest::ReferringAppInfo
 ChromePasswordProtectionService::GetReferringAppInfo(
     content::WebContents* web_contents) {
-  return safe_browsing::GetReferringAppInfo(web_contents);
+  ReferringAppInfo info_struct =
+      safe_browsing::GetReferringAppInfo(web_contents);
+  LoginReputationClientRequest::ReferringAppInfo info_proto;
+  info_proto.set_referring_app_source(info_struct.referring_app_source);
+  info_proto.set_referring_app_name(info_struct.referring_app_name);
+  return info_proto;
 }
 #endif
 

@@ -125,6 +125,14 @@ void SingleThreadProxy::SetVisible(bool visible) {
     scheduler_on_impl_thread_->SetVisible(host_impl_->visible());
 }
 
+void SingleThreadProxy::SetShouldWarmUp() {
+  DCHECK(task_runner_provider_->IsMainThread());
+  DebugScopedSetImplThread impl(task_runner_provider_);
+  if (scheduler_on_impl_thread_) {
+    scheduler_on_impl_thread_->SetShouldWarmUp();
+  }
+}
+
 void SingleThreadProxy::RequestNewLayerTreeFrameSink() {
   DCHECK(task_runner_provider_->IsMainThread());
   layer_tree_frame_sink_creation_callback_.Cancel();
@@ -1016,6 +1024,10 @@ void SingleThreadProxy::FrameIntervalUpdated(base::TimeDelta interval) {
   single_thread_client_->FrameIntervalUpdated(interval);
 }
 
+void SingleThreadProxy::OnBeginImplFrameDeadline() {
+  host_impl_->OnBeginImplFrameDeadline();
+}
+
 void SingleThreadProxy::SendBeginMainFrameNotExpectedSoon() {
   // DebugScopedSetImplThread here is just a formality; all SchedulerClient
   // methods should have it.
@@ -1186,6 +1198,10 @@ DrawResult SingleThreadProxy::ScheduledActionDrawIfPossible() {
 DrawResult SingleThreadProxy::ScheduledActionDrawForced() {
   NOTREACHED_IN_MIGRATION();
   return DrawResult::kInvalidResult;
+}
+
+void SingleThreadProxy::ScheduledActionUpdateDisplayTree() {
+  NOTREACHED_NORETURN();
 }
 
 void SingleThreadProxy::ScheduledActionCommit() {

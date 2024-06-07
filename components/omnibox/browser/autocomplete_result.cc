@@ -318,12 +318,10 @@ void AutocompleteResult::Sort(
         GetMatchComparisonFields(default_match_to_preserve.value());
     const auto preserved_default_match =
         base::ranges::find_if(matches_, [&](const AutocompleteMatch& match) {
-          // Find a match that is a duplicate AND has the same fill_into_edit.
-          // Don't preserve suggestions that are not default-able; e.g.,
-          // typing 'xy' shouldn't preserve default 'xz.com/xy'.
+          // Find a duplicate match. Don't preserve suggestions that are not
+          // default-able; e.g., typing 'xy' shouldn't preserve default
+          // 'xz.com/xy'.
           return default_match_fields == GetMatchComparisonFields(match) &&
-                 default_match_to_preserve->fill_into_edit ==
-                     match.fill_into_edit &&
                  match.allowed_to_be_default_match;
         });
     if (preserved_default_match != matches_.end())
@@ -418,9 +416,14 @@ void AutocompleteResult::SortAndCull(
       } else if (omnibox::IsNTPPage(page_classification)) {
         // IPH is shown for NTP ZPS in the Omnibox only.  If it is shown, reduce
         // the limit of the normal NTP ZPS Section to make room for the IPH.
+        auto has_iph_match = [](auto matches) {
+          return base::ranges::any_of(
+              matches, [](auto match) { return match.IsIPHSuggestion(); });
+        };
         bool add_iph_section =
             OmniboxFieldTrial::IsStarterPackIPHEnabled() &&
-            page_classification != OmniboxEventProto::NTP_REALBOX;
+            page_classification != OmniboxEventProto::NTP_REALBOX &&
+            has_iph_match(matches_);
         sections.push_back(std::make_unique<DesktopNTPZpsSection>(
             suggestion_groups_map_, add_iph_section ? 7u : 8u));
         if (add_iph_section) {

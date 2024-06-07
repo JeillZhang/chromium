@@ -25,6 +25,7 @@
 #include "base/check_op.h"
 #include "base/metrics/user_metrics.h"
 #include "base/time/time.h"
+#include "chromeos/ui/base/window_state_type.h"
 #include "ui/base/hit_test.h"
 #include "ui/display/display_observer.h"
 #include "ui/display/screen.h"
@@ -38,6 +39,38 @@ namespace ash {
 namespace {
 
 using chromeos::WindowStateType;
+
+// Maps `SnapGroupExitPoint` related to window state change with the given
+// `window_state` type.
+SnapGroupExitPoint GetWindowStateChangeExitPoint(WindowState* window_state) {
+  WindowStateType state_type = window_state->GetStateType();
+  switch (state_type) {
+    case WindowStateType::kDefault:
+      return SnapGroupExitPoint::kWindowStateChangedDefault;
+    case WindowStateType::kNormal:
+      return SnapGroupExitPoint::kWindowStateChangedNormal;
+    case WindowStateType::kMinimized:
+      return SnapGroupExitPoint::kWindowStateChangedMinimized;
+    case WindowStateType::kMaximized:
+      return SnapGroupExitPoint::kWindowStateChangedMaximized;
+    case WindowStateType::kInactive:
+      return SnapGroupExitPoint::kWindowStateChangedInactive;
+    case WindowStateType::kFullscreen:
+      return SnapGroupExitPoint::kWindowStateChangedFullscreen;
+    case WindowStateType::kPrimarySnapped:
+      return SnapGroupExitPoint::kWindowStateChangedPrimarySnapped;
+    case WindowStateType::kSecondarySnapped:
+      return SnapGroupExitPoint::kWindowStateChangedSecondarySnapped;
+    case WindowStateType::kPinned:
+      return SnapGroupExitPoint::kWindowStateChangedPinned;
+    case WindowStateType::kTrustedPinned:
+      return SnapGroupExitPoint::kWindowStateChangedTrustedPinned;
+    case WindowStateType::kPip:
+      return SnapGroupExitPoint::kWindowStateChangedPip;
+    case WindowStateType::kFloated:
+      return SnapGroupExitPoint::kWindowStateChangedFloated;
+  }
+}
 
 }  // namespace
 
@@ -87,9 +120,16 @@ void SnapGroup::Shutdown() {
   Shell::Get()->activation_client()->RemoveObserver(this);
   display::Screen::GetScreen()->RemoveObserver(this);
 
-  // Restore the snapped window bounds that were adjusted to make room for
-  // divider when snap group was created.
-  UpdateGroupWindowsBounds(/*account_for_divider_width=*/false);
+  // Restore snapped window bounds if they were shrunk to accommodate a divider,
+  // but only if the union bounds of the snapped windows and divider area fills
+  // the work area. This prevents restoration when significant size changes are
+  // due to other reasons for example snapped window is re-snapped with a
+  // different snap ratio.
+  if (IsWorkAreaFullyFilledBySnappedWindows()) {
+    // Restore the snapped window bounds that were adjusted to make room for
+    // divider when snap group was created.
+    UpdateGroupWindowsBounds(/*account_for_divider_width=*/false);
+  }
 
   // Shelf defaults to rounded corners. We square them when a Snap Group is
   // created and fully visible. Maybe restore rounded corners on Snap Group
@@ -147,7 +187,7 @@ void SnapGroup::HideDivider() {
   snap_group_divider_.SetVisible(false);
 }
 
-bool SnapGroup::IsSnapGroupLayoutHorizontal() {
+bool SnapGroup::IsSnapGroupLayoutHorizontal() const {
   return IsLayoutHorizontal(GetRootWindow());
 }
 
@@ -166,8 +206,8 @@ void SnapGroup::OnLocatedEvent(ui::LocatedEvent* event) {
   // When the window is dragged via the caption bar to unsnap, we early break
   // the group to avoid re-stacking the divider on top of the dragged window.
   if (window1_->Contains(target) || window2_->Contains(target)) {
-    SnapGroupController::Get()->RemoveSnapGroup(this);
-    RecordSnapGroupExitPoint(SnapGroupExitPoint::kDragWindowOut);
+    SnapGroupController::Get()->RemoveSnapGroup(
+        this, SnapGroupExitPoint::kDragWindowOut);
   }
 }
 
@@ -185,10 +225,10 @@ void SnapGroup::MinimizeWindows() {
 
 void SnapGroup::OnWindowDestroying(aura::Window* window) {
   DCHECK(window == window1_ || window == window2_);
-  RecordSnapGroupExitPoint(SnapGroupExitPoint::kWindowDestruction);
   // `this` will be shut down and removed from the controller immediately, and
   // then destroyed asynchronously soon.
-  SnapGroupController::Get()->RemoveSnapGroup(this);
+  SnapGroupController::Get()->RemoveSnapGroup(
+      this, SnapGroupExitPoint::kWindowDestruction);
 }
 
 void SnapGroup::OnWindowParentChanged(aura::Window* window,
@@ -227,8 +267,11 @@ void SnapGroup::OnWindowParentChanged(aura::Window* window,
 
   // The `window` may be temporarily moved under
   // `kShellWindowId_UnparentedContainer`, skip the stacking order fixing in
-  // this case.
-  if (did_parent_change && desks_util::IsDeskContainer(parent)) {
+  // this case. While "visible on all workspaces" windows should never belong to
+  // Snap Groups, this check is still necessary as the group removal can be
+  // asynchronous.
+  if (did_parent_change && desks_util::IsDeskContainer(parent) &&
+      !desks_util::IsWindowVisibleOnAllWorkspaces(to_be_moved_window)) {
     window_util::FixWindowStackingAccordingToGlobalMru(to_be_moved_window);
   }
 
@@ -239,19 +282,52 @@ void SnapGroup::OnWindowParentChanged(aura::Window* window,
   RefreshSnapGroup();
 }
 
+void SnapGroup::OnWindowBoundsChanged(aura::Window* window,
+                                      const gfx::Rect& old_bounds,
+                                      const gfx::Rect& new_bounds,
+                                      ui::PropertyChangeReason reason) {
+  if (is_shutting_down_ || adjusting_snapped_window_bounds_) {
+    return;
+  }
+
+  // Check if a pending check is already in progress. If not:
+  if (!pending_check_) {
+    // Mark a check as pending to prevent duplicate checks.
+    pending_check_ = true;
+
+    // Schedule an asynchronous task to determine if the snap group should be
+    // removed by checking if the union bounds of snapped windows still fill the
+    // work area. If not, the snap group may be removed.
+    // Post task is chosen for the following considerations:
+    // - `OnWindowBoundsChanged()` can be called in response to user
+    // interactions like resizing windows. Blocking this event handler with a
+    // lengthy calculation would make the window resizing feel slow and
+    // unresponsive.
+    // - Updating the bounds of the snapped windows in this group is not done
+    // atomically, but each window gets its bounds set at a time. The
+    // asynchronous task allows us to check after both windows' bounds have been
+    // updated.
+    // - Snap Group may be removed after checking, it's safer to do it on
+    // another thread.
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+        FROM_HERE, base::BindOnce(&SnapGroup::RemoveSnapGroupIfNotFillWorkArea,
+                                  weak_ptr_factory_.GetWeakPtr()));
+  }
+}
+
 void SnapGroup::OnPreWindowStateTypeChange(WindowState* window_state,
                                            chromeos::WindowStateType old_type) {
   CHECK(old_type == WindowStateType::kPrimarySnapped ||
         old_type == WindowStateType::kSecondarySnapped);
   if (window_state->GetStateType() != old_type) {
-    RecordSnapGroupExitPoint(SnapGroupExitPoint::kWindowStateChange);
     // `this` will be shut down and removed from the controller immediately, and
     // then destroyed asynchronously soon.
-    SnapGroupController::Get()->RemoveSnapGroup(this);
+    SnapGroupController::Get()->RemoveSnapGroup(
+        this, GetWindowStateChangeExitPoint(window_state));
   }
 }
 
-aura::Window* SnapGroup::GetRootWindow() {
+aura::Window* SnapGroup::GetRootWindow() const {
   // This can be called during dragging window out of a snap group to another
   // display.
   // TODO(b/331993231): Update the root window in `OnWindowParentChanged()`.
@@ -391,6 +467,8 @@ void SnapGroup::UpdateGroupWindowsBounds(bool account_for_divider_width) {
 void SnapGroup::UpdateSnappedWindowBounds(aura::Window* window,
                                           bool account_for_divider_width,
                                           std::optional<float> snap_ratio) {
+  base::AutoReset<bool> auto_reset(&adjusting_snapped_window_bounds_, true);
+
   gfx::Rect requested_bounds = GetSnappedWindowBoundsInScreen(
       GetPositionOfSnappedWindow(window), window,
       snap_ratio.value_or(window_util::GetSnapRatioForWindow(window)),
@@ -427,7 +505,8 @@ void SnapGroup::RefreshSnapGroup() {
   if (!CanWindowsFitInWorkArea(window1_, window2_)) {
     // `this` will be shut down and removed from the controller immediately, and
     // then destroyed asynchronously soon.
-    SnapGroupController::Get()->RemoveSnapGroup(this);
+    SnapGroupController::Get()->RemoveSnapGroup(
+        this, SnapGroupExitPoint::kCanNotFitInWorkArea);
     return;
   }
 
@@ -436,6 +515,39 @@ void SnapGroup::RefreshSnapGroup() {
   ApplyPrimarySnapRatio(WindowState::Get(GetPhysicallyLeftOrTopWindow())
                             ->snap_ratio()
                             .value_or(chromeos::kDefaultSnapRatio));
+}
+
+bool SnapGroup::IsWorkAreaFullyFilledBySnappedWindows() const {
+  const gfx::Rect window1_target_bounds = window1_->GetTargetBounds();
+  const gfx::Rect window2_target_bounds = window2_->GetTargetBounds();
+  const gfx::Rect work_area_bounds = display::Screen::GetScreen()
+                                         ->GetDisplayNearestWindow(window1_)
+                                         .work_area();
+  if (IsSnapGroupLayoutHorizontal()) {
+    return work_area_bounds.height() == window1_target_bounds.height() &&
+           work_area_bounds.height() == window2_target_bounds.height() &&
+           window1_target_bounds.width() + window2_target_bounds.width() +
+                   kSplitviewDividerShortSideLength ==
+               work_area_bounds.width();
+  }
+
+  return work_area_bounds.width() == window1_target_bounds.width() &&
+         work_area_bounds.width() == window2_target_bounds.width() &&
+         window1_target_bounds.height() + window2_target_bounds.height() +
+                 kSplitviewDividerShortSideLength ==
+             work_area_bounds.height();
+}
+
+void SnapGroup::RemoveSnapGroupIfNotFillWorkArea() {
+  if (is_shutting_down_) {
+    return;
+  }
+
+  pending_check_ = false;
+  if (!IsWorkAreaFullyFilledBySnappedWindows()) {
+    SnapGroupController::Get()->RemoveSnapGroup(
+        this, SnapGroupExitPoint::kWindowBoundsChange);
+  }
 }
 
 void SnapGroup::OnOverviewModeStarting() {

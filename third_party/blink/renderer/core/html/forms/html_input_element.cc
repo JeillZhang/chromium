@@ -951,10 +951,8 @@ void HTMLInputElement::ParseAttribute(
     input_type_view_->ReadonlyAttributeChanged();
   } else if (name == html_names::kListAttr) {
     has_non_empty_list_ = !value.empty();
-    if (has_non_empty_list_) {
-      ResetListAttributeTargetObserver();
-      ListAttributeTargetChanged();
-    }
+    ResetListAttributeTargetObserver();
+    ListAttributeTargetChanged();
     PseudoStateChanged(CSSSelector::kPseudoHasDatalist);
     UseCounter::Count(GetDocument(), WebFeature::kListAttribute);
   } else if (name == html_names::kWebkitdirectoryAttr) {
@@ -2409,6 +2407,9 @@ void HTMLInputElement::showPicker(ExceptionState& exception_state) {
         DOMExceptionCode::kNotAllowedError,
         "HTMLInputElement::showPicker() requires a user gesture.");
     return;
+  }
+  if (RuntimeEnabledFeatures::ShowPickerConsumeUserActivationEnabled()) {
+    LocalFrame::ConsumeTransientUserActivation(frame);
   }
 
   input_type_view_->OpenPopupView();

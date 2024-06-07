@@ -505,10 +505,6 @@ void SkiaOutputDeviceBufferQueue::Present(
     DCHECK(submitted_image_);
   }
 
-#if BUILDFLAG(IS_APPLE)
-  presenter_->SetCALayerErrorCode(frame.ca_layer_error_code);
-#endif
-
   // Cancelable callback uses weak ptr to drop this task upon destruction.
   // Thus it is safe to use |base::Unretained(this)|.
   // Bind submitted_image_->GetWeakPtr(), since the |submitted_image_| could
@@ -689,14 +685,9 @@ gfx::Size SkiaOutputDeviceBufferQueue::GetSwapBuffersSize() {
   }
 }
 
-bool SkiaOutputDeviceBufferQueue::Reshape(const SkImageInfo& image_info,
-                                          const gfx::ColorSpace& color_space,
-                                          int sample_count,
-                                          float device_scale_factor,
-                                          gfx::OverlayTransform transform) {
+bool SkiaOutputDeviceBufferQueue::Reshape(const ReshapeParams& params) {
   DCHECK(pending_overlay_mailboxes_.empty());
-  if (!presenter_->Reshape(image_info, color_space, sample_count,
-                           device_scale_factor, transform)) {
+  if (!presenter_->Reshape(params)) {
     LOG(ERROR) << "Failed to resize.";
     CheckForLoopFailuresBufferQueue();
     // To prevent tail call, so we can see the stack.
@@ -704,13 +695,14 @@ bool SkiaOutputDeviceBufferQueue::Reshape(const SkImageInfo& image_info,
     return false;
   }
 
-  overlay_transform_ = transform;
-  gfx::Size size = gfx::SkISizeToSize(image_info.dimensions());
-  if (color_space_ == color_space && image_size_ == size)
+  overlay_transform_ = params.transform;
+  gfx::Size size = params.GfxSize();
+  if (color_space_ == params.color_space && image_size_ == size) {
     return true;
-  color_space_ = color_space;
+  }
+  color_space_ = params.color_space;
   image_size_ = size;
-  sample_count_ = sample_count;
+  sample_count_ = params.sample_count;
 
   bool success = RecreateImages();
   if (!success) {
@@ -803,6 +795,12 @@ bool SkiaOutputDeviceBufferQueue::OverlayDataKeyEqual::operator()(
     const OverlayData& lhs,
     const gpu::Mailbox& rhs) const {
   return lhs.mailbox() == rhs;
+}
+
+bool SkiaOutputDeviceBufferQueue::OverlayDataKeyEqual::operator()(
+    const gpu::Mailbox& lhs,
+    const OverlayData& rhs) const {
+  return lhs == rhs.mailbox();
 }
 
 void SkiaOutputDeviceBufferQueue::SetVSyncDisplayID(int64_t display_id) {

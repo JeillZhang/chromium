@@ -120,7 +120,7 @@ FakeChromeUserManager::AddUserWithAffiliationAndTypeAndProfile(
       std::make_unique<user_manager::UserImage>(
           *ui::ResourceBundle::GetSharedInstance().GetImageSkiaNamed(
               IDR_LOGIN_DEFAULT_USER)),
-      user_manager::User::USER_IMAGE_PROFILE, false);
+      user_manager::UserImage::Type::kProfile, false);
   user_storage_.emplace_back(user);
   users_.push_back(user);
 
@@ -136,17 +136,6 @@ FakeChromeUserManager::AddUserWithAffiliationAndTypeAndProfile(
 user_manager::User* FakeChromeUserManager::AddKioskAppUser(
     const AccountId& account_id) {
   user_manager::User* user = user_manager::User::CreateKioskAppUser(account_id);
-  user->set_username_hash(
-      user_manager::FakeUserManager::GetFakeUsernameHash(account_id));
-  user_storage_.emplace_back(user);
-  users_.push_back(user);
-  return user;
-}
-
-user_manager::User* FakeChromeUserManager::AddArcKioskAppUser(
-    const AccountId& account_id) {
-  user_manager::User* user =
-      user_manager::User::CreateArcKioskAppUser(account_id);
   user->set_username_hash(
       user_manager::FakeUserManager::GetFakeUsernameHash(account_id));
   user_storage_.emplace_back(user);
@@ -185,7 +174,7 @@ user_manager::User* FakeChromeUserManager::AddPublicAccountUser(
       std::make_unique<user_manager::UserImage>(
           *ui::ResourceBundle::GetSharedInstance().GetImageSkiaNamed(
               IDR_LOGIN_DEFAULT_USER)),
-      user_manager::User::USER_IMAGE_PROFILE, false);
+      user_manager::UserImage::Type::kProfile, false);
   user_storage_.emplace_back(user);
   users_.push_back(user);
   return user;
@@ -275,10 +264,6 @@ bool FakeChromeUserManager::IsDeprecatedSupervisedAccountId(
     const AccountId& account_id) const {
   return gaia::ExtractDomainName(account_id.GetUserEmail()) ==
          user_manager::kSupervisedUserDomain;
-}
-
-bool FakeChromeUserManager::IsValidDefaultUserImageId(int image_index) const {
-  return default_user_image::IsValidIndex(image_index);
 }
 
 const user_manager::UserList& FakeChromeUserManager::GetUsers() const {
@@ -487,13 +472,6 @@ bool FakeChromeUserManager::IsLoggedInAsKioskApp() const {
              : false;
 }
 
-bool FakeChromeUserManager::IsLoggedInAsArcKioskApp() const {
-  const user_manager::User* active_user = GetActiveUser();
-  return active_user
-             ? active_user->GetType() == user_manager::UserType::kArcKioskApp
-             : false;
-}
-
 bool FakeChromeUserManager::IsLoggedInAsWebKioskApp() const {
   const user_manager::User* active_user = GetActiveUser();
   return active_user
@@ -576,11 +554,6 @@ void FakeChromeUserManager::SetUserAffiliationForTesting(
   }
   user->SetAffiliated(is_affiliated);
   NotifyUserAffiliationUpdated(*user);
-}
-
-bool FakeChromeUserManager::IsEphemeralAccountIdByPolicy(
-    const AccountId& account_id) const {
-  return fake_ephemeral_mode_config_.IsAccountIdIncluded(account_id);
 }
 
 user_manager::User* FakeChromeUserManager::GetActiveUserInternal() const {

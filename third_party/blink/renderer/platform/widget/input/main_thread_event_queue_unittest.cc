@@ -13,6 +13,7 @@
 #include "base/auto_reset.h"
 #include "base/containers/adapters.h"
 #include "base/functional/bind.h"
+#include "base/memory/raw_ref.h"
 #include "base/strings/string_util.h"
 #include "base/test/test_simple_task_runner.h"
 #include "base/time/time.h"
@@ -201,7 +202,7 @@ class HandledEventCallbackTracker {
     callbacks_received_[index] = ReceivedCallback(
         handling_event_ ? CallbackReceivedState::kCalledWhileHandlingEvent
                         : CallbackReceivedState::kCalledAfterHandleEvent,
-        latency.coalesced(), handled_tasks_.size());
+        latency.coalesced(), handled_tasks_->size());
   }
 
   const Vector<ReceivedCallback>& GetReceivedCallbacks() const {
@@ -212,7 +213,7 @@ class HandledEventCallbackTracker {
 
  private:
   Vector<ReceivedCallback> callbacks_received_;
-  const Vector<std::unique_ptr<HandledTask>>& handled_tasks_;
+  const raw_ref<const Vector<std::unique_ptr<HandledTask>>> handled_tasks_;
   base::WeakPtr<HandledEventCallbackTracker> weak_this_;
   base::WeakPtrFactory<HandledEventCallbackTracker> weak_ptr_factory_{this};
 };
@@ -247,8 +248,8 @@ class MainThreadEventQueueTest : public testing::Test,
   }
 
   void SetUp() override {
-    queue_ = new MainThreadEventQueue(this, main_task_runner_,
-                                      widget_scheduler_, true);
+    queue_ = new MainThreadEventQueue(
+        this, main_task_runner_, main_task_runner_, widget_scheduler_, true);
     queue_->ClearRafFallbackTimerForTesting();
   }
 
@@ -283,7 +284,8 @@ class MainThreadEventQueueTest : public testing::Test,
   }
 
   bool last_touch_start_forced_nonblocking_due_to_fling() {
-    return queue_->last_touch_start_forced_nonblocking_due_to_fling_;
+    return queue_->compositor_thread_only_
+        .last_touch_start_forced_nonblocking_due_to_fling;
   }
 
   void RunPendingTasksWithSimulatedRaf() {
@@ -1480,6 +1482,9 @@ TEST_P(MainThreadEventQueueTest,
   touch_moves[0].touch_start_or_first_touch_move = true;
 
   struct WillHandleInputEventCallback {
+    STACK_ALLOCATED();
+
+   public:
     void Run(const WebCoalescedInputEvent& event) {
       test.set_main_thread_ack_state(
           blink::mojom::InputEventResultState::kNotConsumed);
@@ -1808,7 +1813,7 @@ TEST_P(MainThreadEventQueueTest, UnbufferedDispatchTouchEvent) {
 }
 
 TEST_P(MainThreadEventQueueTest, PointerEventsCoalescing) {
-  queue_->HasPointerRawUpdateEventHandlers(true);
+  queue_->SetHasPointerRawUpdateEventHandlers(true);
   WebMouseEvent mouse_move = SyntheticWebMouseEventBuilder::Build(
       WebInputEvent::Type::kMouseMove, 10, 10, 0);
   SyntheticWebTouchEvent touch_move;
@@ -1853,14 +1858,14 @@ TEST_P(MainThreadEventQueueTest, PointerRawUpdateEvents) {
   EXPECT_EQ(0u, event_queue().size());
   EXPECT_FALSE(needs_main_frame_);
 
-  queue_->HasPointerRawUpdateEventHandlers(true);
+  queue_->SetHasPointerRawUpdateEventHandlers(true);
   HandleEvent(mouse_move, blink::mojom::InputEventResultState::kSetNonBlocking);
   EXPECT_EQ(2u, event_queue().size());
   RunPendingTasksWithSimulatedRaf();
   EXPECT_EQ(0u, event_queue().size());
   EXPECT_FALSE(needs_main_frame_);
 
-  queue_->HasPointerRawUpdateEventHandlers(false);
+  queue_->SetHasPointerRawUpdateEventHandlers(false);
   SyntheticWebTouchEvent touch_move;
   touch_move.PressPoint(10, 10);
   touch_move.MovePoint(0, 50, 50);
@@ -1870,7 +1875,7 @@ TEST_P(MainThreadEventQueueTest, PointerRawUpdateEvents) {
   EXPECT_EQ(0u, event_queue().size());
   EXPECT_FALSE(needs_main_frame_);
 
-  queue_->HasPointerRawUpdateEventHandlers(true);
+  queue_->SetHasPointerRawUpdateEventHandlers(true);
   HandleEvent(touch_move, blink::mojom::InputEventResultState::kSetNonBlocking);
   EXPECT_EQ(2u, event_queue().size());
   RunPendingTasksWithSimulatedRaf();
@@ -1931,7 +1936,7 @@ TEST_P(MainThreadEventQueueTest, PointerEventsWithRelativeMotionCoalescing) {
               DidHandleInputEventOnMainThread(testing::_, testing::_))
       .Times(0);
 
-  queue_->HasPointerRawUpdateEventHandlers(true);
+  queue_->SetHasPointerRawUpdateEventHandlers(true);
 
   // Inject two mouse move events. For each event injected, there will be two
   // events in the queue. One for kPointerRawUpdate and another kMouseMove

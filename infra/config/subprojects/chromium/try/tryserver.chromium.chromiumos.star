@@ -119,7 +119,7 @@ try_.orchestrator_builder(
     tryjob = try_.job(
         equivalent_builder = "try/chromeos-amd64-generic-rel-gtest-and-tast",
         equivalent_builder_percentage = 100,
-        equivalent_builder_whitelist = "chromeos-pa-with-chromium-accounts",
+        equivalent_builder_whitelist = "google/chromeos-pa@google.com",
     ),
 )
 
@@ -236,6 +236,24 @@ try_.builder(
     gn_args = "ci/chromeos-arm64-generic-rel",
 )
 
+try_.builder(
+    name = "chromeos-libfuzzer-asan-rel",
+    # TODO(crbug.com/41492669): Can delete this description when it's
+    # automatically generated.
+    description_html = "Trybot of {}.".format(linkify_builder("ci", "Libfuzzer Upload Chrome OS ASan")),
+    executable = "recipe:chromium/fuzz",
+    mirrors = ["ci/Libfuzzer Upload Chrome OS ASan"],
+    gn_args = gn_args.config(
+        configs = [
+            "ci/Libfuzzer Upload Chrome OS ASan",
+            "dcheck_always_on",
+            "no_symbols",
+            "skip_generate_fuzzer_owners",
+        ],
+    ),
+    contact_team_email = "chrome-deet-core@google.com",
+)
+
 try_.orchestrator_builder(
     name = "lacros-amd64-generic-rel-gtest",
     branch_selector = branches.selector.CROS_BRANCHES,
@@ -258,11 +276,10 @@ try_.orchestrator_builder(
     compilator = "lacros-amd64-generic-rel-gtest-compilator",
     contact_team_email = "chrome-desktop-engprod@google.com",
     main_list_view = "try",
-    # TODO(crbug.com/40278121) Enable on CQ.
     tryjob = try_.job(
         equivalent_builder = "try/lacros-amd64-generic-rel-gtest-and-tast",
         equivalent_builder_percentage = 100,
-        equivalent_builder_whitelist = "chromeos-pa-with-chromium-accounts",
+        equivalent_builder_whitelist = "google/chromeos-pa@google.com",
     ),
 )
 

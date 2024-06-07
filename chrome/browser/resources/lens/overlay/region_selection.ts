@@ -3,16 +3,17 @@
 // found in the LICENSE file.
 
 import {loadTimeData} from '//resources/js/load_time_data.js';
-import type {Point} from '//resources/mojo/ui/gfx/geometry/mojom/geometry.mojom-webui.js';
 import {PolymerElement} from '//resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {BrowserProxyImpl} from './browser_proxy.js';
+import {getFallbackTheme, getShaderLayerColorHexes} from './color_utils.js';
 import {CenterRotatedBox_CoordinateType} from './geometry.mojom-webui.js';
 import type {CenterRotatedBox} from './geometry.mojom-webui.js';
-import {focusShimmerOnRegion, ShimmerControlRequester, unfocusShimmer} from './overlay_shimmer.js';
+import type {OverlayTheme} from './lens.mojom-webui.js';
+import {recordLensOverlayInteraction, UserAction} from './metrics_utils.js';
 import type {PostSelectionBoundingBox} from './post_selection_renderer.js';
 import {getTemplate} from './region_selection.html.js';
-import {type GestureEvent, GestureState} from './selection_utils.js';
+import {focusShimmerOnRegion, type GestureEvent, GestureState, getRelativeCoordinate, ShimmerControlRequester, unfocusShimmer} from './selection_utils.js';
 
 export interface RegionSelectionElement {
   $: {
@@ -41,6 +42,14 @@ export class RegionSelectionElement extends PolymerElement {
       canvasPhysicalHeight: Number,
       canvasPhysicalWidth: Number,
       screenshotDataUri: String,
+      shaderLayerColorHexes: {
+        type: Array,
+        computed: 'computeShaderLayerColorHexes_(theme)',
+      },
+      theme: {
+        type: Object,
+        value: getFallbackTheme,
+      },
     };
   }
 
@@ -51,6 +60,11 @@ export class RegionSelectionElement extends PolymerElement {
   private context: CanvasRenderingContext2D;
   // The data URI of the current overlay screenshot.
   private screenshotDataUri: string;
+  // The overlay theme.
+  private theme: OverlayTheme;
+  // Shader hex colors.
+  private shaderLayerColorHexes: string[];
+
   // The tap region dimensions are the height and width that the region should
   // have when the user taps instead of drag.
   private readonly tapRegionHeight: number =
@@ -62,6 +76,10 @@ export class RegionSelectionElement extends PolymerElement {
     super.ready();
 
     this.context = this.$.regionSelectionCanvas.getContext('2d')!;
+  }
+
+  private computeShaderLayerColorHexes_() {
+    return getShaderLayerColorHexes(this.theme);
   }
 
   // Handles a drag gesture by drawing a bounded box on the canvas.
@@ -85,6 +103,15 @@ export class RegionSelectionElement extends PolymerElement {
       detail: this.getPostSelectionRegion(event),
     }));
 
+    // Check for selectable text
+    this.dispatchEvent(new CustomEvent('detect-text-in-region', {
+      bubbles: true,
+      composed: true,
+      detail: this.getNormalizedCenterRotatedBoxFromGesture(event),
+    }));
+
+    recordLensOverlayInteraction(UserAction.REGION_SELECTION);
+
     this.clearCanvas();
     return true;
   }
@@ -107,24 +134,14 @@ export class RegionSelectionElement extends PolymerElement {
     this.context.clearRect(0, 0, this.canvasWidth, this.canvasHeight);
   }
 
-  // Converts the clientX and clientY to be relative to the Region Selection
-  // Canvas bounds instead of the viewport. If the event is out of the region
-  // selection canvas bounds, returns the closest point on the overlay.
-  private getRelativeCoordinate(coord: Point): Point {
-    const boundingRect = this.getBoundingClientRect();
-
-    return {
-      x: Math.max(0, Math.min(coord.x, boundingRect.right) - boundingRect.left),
-      y: Math.max(0, Math.min(coord.y, boundingRect.bottom) - boundingRect.top),
-    };
-  }
-
   private renderBoundingBox(event: GestureEvent, idealCornerRadius = 24) {
+    const parentRect = this.getBoundingClientRect();
+
     // Get the drag event coordinates relative to the canvas
     const relativeDragStart =
-        this.getRelativeCoordinate({x: event.startX, y: event.startY});
+        getRelativeCoordinate({x: event.startX, y: event.startY}, parentRect);
     const relativeDragEnd =
-        this.getRelativeCoordinate({x: event.clientX, y: event.clientY});
+        getRelativeCoordinate({x: event.clientX, y: event.clientY}, parentRect);
 
     // Get the dimensions of the box from the gesture event points.
     const width = Math.abs(relativeDragEnd.x - relativeDragStart.x);
@@ -147,9 +164,9 @@ export class RegionSelectionElement extends PolymerElement {
         right,
         top,
     );
-    gradient.addColorStop(0, '#eef0f9');
-    gradient.addColorStop(0.5, '#a6c8ff');
-    gradient.addColorStop(1, '#5b5e66');
+    gradient.addColorStop(0, this.shaderLayerColorHexes[0]);
+    gradient.addColorStop(0.5, this.shaderLayerColorHexes[1]);
+    gradient.addColorStop(1, this.shaderLayerColorHexes[2]);
     this.context.strokeStyle = gradient;
 
     // Draw the path for the region bounding box.
@@ -214,8 +231,8 @@ export class RegionSelectionElement extends PolymerElement {
 
     // Get the ideal left and top by making sure the region is always within
     // the bounds of the parent rect.
-    const idealCenterPoint =
-        this.getRelativeCoordinate({x: gesture.clientX, y: gesture.clientY});
+    const idealCenterPoint = getRelativeCoordinate(
+        {x: gesture.clientX, y: gesture.clientY}, this.getBoundingClientRect());
     let centerX = Math.max(idealCenterPoint.x, this.tapRegionWidth / 2);
     let centerY = Math.max(idealCenterPoint.y, this.tapRegionHeight / 2);
     centerX = Math.min(centerX, parentRect.width - this.tapRegionWidth / 2);
@@ -246,10 +263,10 @@ export class RegionSelectionElement extends PolymerElement {
     const parentRect = this.getBoundingClientRect();
 
     // Get coordinates relative to the region selection bounds
-    const relativeDragStart =
-        this.getRelativeCoordinate({x: gesture.startX, y: gesture.startY});
-    const relativeDragEnd =
-        this.getRelativeCoordinate({x: gesture.clientX, y: gesture.clientY});
+    const relativeDragStart = getRelativeCoordinate(
+        {x: gesture.startX, y: gesture.startY}, parentRect);
+    const relativeDragEnd = getRelativeCoordinate(
+        {x: gesture.clientX, y: gesture.clientY}, parentRect);
 
     const normalizedWidth =
         Math.abs(relativeDragEnd.x - relativeDragStart.x) / parentRect.width;
@@ -300,8 +317,8 @@ export class RegionSelectionElement extends PolymerElement {
 
     // Get the ideal left and top by making sure the region is always within
     // the bounds of the parent rect.
-    const idealCenterPoint =
-        this.getRelativeCoordinate({x: gesture.clientX, y: gesture.clientY});
+    const idealCenterPoint = getRelativeCoordinate(
+        {x: gesture.clientX, y: gesture.clientY}, parentRect);
     let top = Math.max(idealCenterPoint.y - this.tapRegionHeight / 2, 0);
     let left = Math.max(idealCenterPoint.x - this.tapRegionWidth / 2, 0);
     top = Math.min(top, parentRect.height - this.tapRegionHeight);
@@ -323,10 +340,10 @@ export class RegionSelectionElement extends PolymerElement {
     const parentRect = this.getBoundingClientRect();
 
     // Get coordinates relative to the region selection bounds
-    const relativeDragStart =
-        this.getRelativeCoordinate({x: gesture.startX, y: gesture.startY});
-    const relativeDragEnd =
-        this.getRelativeCoordinate({x: gesture.clientX, y: gesture.clientY});
+    const relativeDragStart = getRelativeCoordinate(
+        {x: gesture.startX, y: gesture.startY}, parentRect);
+    const relativeDragEnd = getRelativeCoordinate(
+        {x: gesture.clientX, y: gesture.clientY}, parentRect);
 
     const normalizedWidth =
         Math.abs(relativeDragEnd.x - relativeDragStart.x) / parentRect.width;

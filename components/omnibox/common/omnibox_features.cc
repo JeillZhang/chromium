@@ -389,11 +389,6 @@ BASE_FEATURE(kOmniboxSteadyStateTextColor,
              "OmniboxSteadyStateTextColor",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
-// Enable new Omnibox & Suggestions visual style.
-BASE_FEATURE(kOmniboxModernizeVisualUpdate,
-             "OmniboxModernizeVisualUpdate",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
 // Android only flag that controls whether the new security indicator should be
 // used, on non-Android platforms this is controlled through the
 // ChromeRefresh2023 flag.
@@ -447,6 +442,12 @@ BASE_FEATURE(kUrlScoringModel,
              "UrlScoringModel",
              enabled_by_default_desktop_only);
 
+// If enabled, skips ML scoring for those autocomplete matches which were
+// constructed by deduping an ML-eligible and ML-ineligible match.
+BASE_FEATURE(kEnableForceSkipMlScoring,
+             "EnableForceSkipMlScoring",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+
 // Actions in Suggest is a data-driven feature; it's considered enabled when the
 // data is available.
 // The feature flag below helps us tune feature behaviors.
@@ -494,6 +495,12 @@ BASE_FEATURE(kPolicyIndicationForManagedDefaultSearch,
 // the omnibox above starter pack suggestions.
 BASE_FEATURE(kShowFeaturedEnterpriseSiteSearch,
              "ShowFeaturedEnterpriseSiteSearch",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+// Enables an informational IPH message at the bottom of the Omnibox directing
+// users to featured Enterprise search engines created by policy.
+BASE_FEATURE(kShowFeaturedEnterpriseSiteSearchIPH,
+             "ShowFeaturedEnterpriseSiteSearchIPH",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
 // If enabled, site search engines defined by policy are saved into prefs and
@@ -545,13 +552,13 @@ static jlong JNI_OmniboxFeatureMap_GetNativeMap(JNIEnv* env) {
   static base::NoDestructor<base::android::FeatureMap> kFeatureMap(
       std::vector<const base::Feature*>{{
           &kOmniboxAnswerActions,
-          &kOmniboxModernizeVisualUpdate,
           &kQueryTilesInZPSOnNTP,
           &kAnimateSuggestionsListAppearance,
           &kGroupingFrameworkForNonZPS,
           &kOmniboxMatchToolbarAndStatusBarColor,
           &kOmniboxTouchDownTriggerForPrefetch,
           &kOmniboxAsyncViewInflation,
+          &kRichAutocompletion,
           &kUseFusedLocationProvider,
       }});
 

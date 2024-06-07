@@ -160,7 +160,7 @@ chromium-metrics-reviews@google.com.
   <int value="106" label="ToggleOverview"/>
   <int value="107" label="ToggleProjectorMarker"/>
   <int value="108" label="ToggleResizeLockMenu"/>
-  <int value="109" label="ToggleSnapGroupWindowsGroupAndUngroup"/>
+  <int value="109" label="CreateSnapGroup"/>
   <int value="110" label="ToggleSnapGroupWindowsMinimizeAndRestore"/>
   <int value="111" label="ToggleSpokenFeedback"/>
   <int value="112" label="ToggleStylusTools"/>
@@ -182,6 +182,11 @@ chromium-metrics-reviews@google.com.
   <int value="128" label="VolumeMuteToggle"/>
   <int value="129" label="TogglePicker"/>
   <int value="130" label="AccessibilityAction"/>
+  <int value="131" label="EnableSelectToSpeak"/>
+  <int value="132" label="TilingWindowResizeLeft"/>
+  <int value="133" label="TilingWindowResizeRight"/>
+  <int value="134" label="TilingWindowResizeUp"/>
+  <int value="135" label="TilingWindowResizeDown"/>
   <int value="9000" label="DebugClearUseKMeansPref"/>
   <int value="9001" label="DebugKeyboardBacklightToggle"/>
   <int value="9002" label="DebugMicrophoneMuteToggle"/>
@@ -876,17 +881,6 @@ chromium-metrics-reviews@google.com.
   <int value="2" label="Failure"/>
 </enum>
 
-<enum name="EnterprisePolicyDeviceIdValidity">
-  <summary>
-    Defined as PolicyDeviceIdValidity in
-    components/policy/core/common/cloud/enterprise_metrics.h.
-  </summary>
-  <int value="0" label="Valid"/>
-  <int value="1" label="Actual device ID is unknown"/>
-  <int value="2" label="Missing"/>
-  <int value="3" label="Invalid"/>
-</enum>
-
 <enum name="ExtendedFkeysModifier">
   <int value="0" label="Disabled"/>
   <int value="1" label="Alt"/>
@@ -1180,6 +1174,7 @@ chromium-metrics-reviews@google.com.
   <int value="4" label="Layout3"/>
   <int value="5" label="Layout4"/>
   <int value="6" label="LayoutCustom1"/>
+  <int value="7" label="LayoutCustom2"/>
 </enum>
 
 <enum name="KeyPermissionsManagerMigrationStatus">

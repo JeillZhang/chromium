@@ -258,6 +258,10 @@ MovableDisplaySnapshots DrmGpuDisplayManager::GetDisplays() {
                                  display_info->connector()->connector_id);
         });
 
+    // Consolidate all display infos that belong to the same tiled display into
+    // one.
+    ConsolidateTiledDisplayInfo(display_infos);
+
     for (auto& display_info : display_infos) {
       display_snapshots.emplace_back(CreateDisplaySnapshot(
           *drm, display_info.get(), static_cast<uint8_t>(device_index)));
@@ -559,18 +563,6 @@ void DrmGpuDisplayManager::SetGammaAdjustment(
   display->SetGammaAdjustment(adjustment);
 }
 
-void DrmGpuDisplayManager::SetColorMatrix(
-    int64_t display_id,
-    const std::vector<float>& color_matrix) {
-  DrmDisplay* display = FindDisplay(display_id);
-  if (!display) {
-    LOG(WARNING) << __func__ << ": there is no display with ID " << display_id;
-    return;
-  }
-
-  display->SetColorMatrix(color_matrix);
-}
-
 void DrmGpuDisplayManager::SetBackgroundColor(int64_t display_id,
                                               const uint64_t background_color) {
   DrmDisplay* display = FindDisplay(display_id);
@@ -580,18 +572,6 @@ void DrmGpuDisplayManager::SetBackgroundColor(int64_t display_id,
   }
 
   display->SetBackgroundColor(background_color);
-}
-
-void DrmGpuDisplayManager::SetGammaCorrection(
-    int64_t display_id,
-    const display::GammaCurve& degamma,
-    const display::GammaCurve& gamma) {
-  DrmDisplay* display = FindDisplay(display_id);
-  if (!display) {
-    LOG(WARNING) << __func__ << ": there is no display with ID " << display_id;
-    return;
-  }
-  display->SetGammaCorrection(degamma, gamma);
 }
 
 bool DrmGpuDisplayManager::SetPrivacyScreen(int64_t display_id, bool enabled) {

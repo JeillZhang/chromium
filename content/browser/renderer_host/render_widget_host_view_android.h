@@ -23,6 +23,7 @@
 #include "base/process/process.h"
 #include "base/scoped_observation.h"
 #include "base/time/time.h"
+#include "cc/input/browser_controls_offset_tags_info.h"
 #include "cc/mojom/render_frame_metadata.mojom-shared.h"
 #include "cc/trees/render_frame_metadata.h"
 #include "components/viz/common/quads/selection.h"
@@ -55,6 +56,10 @@ namespace cc::slim {
 class SurfaceLayer;
 }
 
+namespace input {
+struct NativeWebKeyboardEvent;
+}  // namespace input
+
 namespace ui {
 class MotionEventAndroid;
 class OverscrollRefreshHandler;
@@ -71,7 +76,6 @@ class SynchronousCompositorClient;
 class TextSuggestionHostAndroid;
 class TouchSelectionControllerClientManagerAndroid;
 class WebContentsAccessibilityAndroid;
-struct NativeWebKeyboardEvent;
 struct ContextMenuParams;
 
 // -----------------------------------------------------------------------------
@@ -178,7 +182,7 @@ class CONTENT_EXPORT RenderWidgetHostViewAndroid
   void TransformPointToRootSurface(gfx::PointF* point) override;
   gfx::Rect GetBoundsInRootWindow() override;
   void ProcessAckedTouchEvent(
-      const TouchEventWithLatencyInfo& touch,
+      const input::TouchEventWithLatencyInfo& touch,
       blink::mojom::InputEventResultState ack_result) override;
   blink::mojom::InputEventResultState FilterInputEvent(
       const blink::WebInputEvent& input_event) override;
@@ -286,7 +290,7 @@ class CONTENT_EXPORT RenderWidgetHostViewAndroid
   // Returns the temporary background color of the underlaying document, for
   // example, returns black during screen rotation.
   std::optional<SkColor> GetCachedBackgroundColor();
-  void SendKeyEvent(const NativeWebKeyboardEvent& event);
+  void SendKeyEvent(const input::NativeWebKeyboardEvent& event);
   void SendMouseEvent(const blink::WebMouseEvent& event,
                       const ui::LatencyInfo& info);
   void SendMouseWheelEvent(const blink::WebMouseWheelEvent& event);
@@ -429,6 +433,10 @@ class CONTENT_EXPORT RenderWidgetHostViewAndroid
   void SetNeedsBeginFrameForFlingProgress();
 
   const cc::slim::SurfaceLayer* GetSurfaceLayer() const;
+
+  void OnControlsConstraintsChanged(
+      const cc::BrowserControlsOffsetTagsInfo& old_tags_info,
+      const cc::BrowserControlsOffsetTagsInfo& tags_info);
 
  protected:
   ~RenderWidgetHostViewAndroid() override;

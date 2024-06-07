@@ -24,6 +24,7 @@ VIZ_COMMON_EXPORT BASE_DECLARE_FEATURE(kAndroidBrowserControlsInViz);
 #endif  // BUILDFLAG(IS_ANDROID)
 VIZ_COMMON_EXPORT BASE_DECLARE_FEATURE(kBackdropFilterMirrorEdgeMode);
 VIZ_COMMON_EXPORT BASE_DECLARE_FEATURE(kDelegatedCompositing);
+VIZ_COMMON_EXPORT BASE_DECLARE_FEATURE(kUseDCompSurfacesForDelegatedInk);
 #if BUILDFLAG(IS_WIN)
 VIZ_COMMON_EXPORT BASE_DECLARE_FEATURE(kDelegatedCompositingLimitToUi);
 #endif
@@ -143,6 +144,7 @@ VIZ_COMMON_EXPORT std::optional<double> SnapshotEvictedRootSurfaceScale();
 VIZ_COMMON_EXPORT bool IsCVDisplayLinkBeginFrameSourceEnabled();
 VIZ_COMMON_EXPORT bool IsVSyncAlignedPresentEnabled();
 VIZ_COMMON_EXPORT int NumPendingFrameSupported();
+VIZ_COMMON_EXPORT bool ShouldLogFrameQuadInfo();
 
 }  // namespace features
 

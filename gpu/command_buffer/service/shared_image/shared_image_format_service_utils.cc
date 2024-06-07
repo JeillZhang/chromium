@@ -13,8 +13,10 @@
 #include "base/logging.h"
 #include "base/notreached.h"
 #include "build/buildflag.h"
+#include "components/crash/core/common/crash_key.h"
 #include "components/viz/common/resources/shared_image_format_utils.h"
 #include "gpu/command_buffer/service/feature_info.h"
+#include "gpu/ipc/common/vulkan_ycbcr_info.h"
 #include "ui/gl/gl_version_info.h"
 
 namespace gpu {
@@ -489,6 +491,12 @@ wgpu::TextureFormat ToDawnFormat(viz::SharedImageFormat format) {
   } else if (format == viz::MultiPlaneFormat::kP410) {
     return wgpu::TextureFormat::R10X6BG10X6Biplanar444Unorm;
   }
+
+  // Unknown format: crash, surfacing the format.
+  static crash_reporter::CrashKeyString<256> crash_key(
+      "SIFServiceUtils ToDawnFormat error");
+  crash_reporter::ScopedCrashKeyString crash_key_scope(&crash_key,
+                                                       format.ToString());
   NOTREACHED_IN_MIGRATION() << "Unsupported format: " << format.ToString();
   return wgpu::TextureFormat::Undefined;
 }
@@ -624,6 +632,7 @@ skgpu::graphite::TextureInfo GraphiteBackendTextureInfo(
 skgpu::graphite::TextureInfo GraphitePromiseTextureInfo(
     GrContextType gr_context_type,
     viz::SharedImageFormat format,
+    std::optional<VulkanYCbCrInfo> ycbcr_info,
     int plane_index,
     bool mipmapped) {
   if (gr_context_type == GrContextType::kGraphiteMetal) {
@@ -635,8 +644,13 @@ skgpu::graphite::TextureInfo GraphitePromiseTextureInfo(
     CHECK_EQ(gr_context_type, GrContextType::kGraphiteDawn);
 #if BUILDFLAG(SKIA_USE_DAWN)
     skgpu::graphite::DawnTextureInfo dawn_texture_info;
-    wgpu::TextureFormat wgpu_view_format =
-        gpu::ToDawnTextureViewFormat(format, plane_index);
+
+    wgpu::TextureFormat wgpu_view_format;
+    if (ycbcr_info) {
+      wgpu_view_format = wgpu::TextureFormat::External;
+    } else {
+      wgpu_view_format = gpu::ToDawnTextureViewFormat(format, plane_index);
+    }
     if (wgpu_view_format == wgpu::TextureFormat::Undefined) {
       return dawn_texture_info;
     }
@@ -656,6 +670,30 @@ skgpu::graphite::TextureInfo GraphitePromiseTextureInfo(
     dawn_texture_info.fUsage = wgpu::TextureUsage::TextureBinding;
     dawn_texture_info.fMipmapped =
         mipmapped ? skgpu::Mipmapped::kYes : skgpu::Mipmapped::kNo;
+
+#if BUILDFLAG(ENABLE_VULKAN)
+    if (ycbcr_info) {
+      // Populate the YCbCr info of the DawnTextureInfo from the Chromium info.
+      wgpu::YCbCrVkDescriptor ycbcr_desc = {};
+      ycbcr_desc.vkFormat = ycbcr_info->image_format;
+      ycbcr_desc.vkYCbCrModel = ycbcr_info->suggested_ycbcr_model;
+      ycbcr_desc.vkYCbCrRange = ycbcr_info->suggested_ycbcr_range;
+      ycbcr_desc.vkXChromaOffset = ycbcr_info->suggested_xchroma_offset;
+      ycbcr_desc.vkYChromaOffset = ycbcr_info->suggested_ychroma_offset;
+      ycbcr_desc.vkChromaFilter =
+          ycbcr_info->format_features &
+                  VK_FORMAT_FEATURE_SAMPLED_IMAGE_YCBCR_CONVERSION_LINEAR_FILTER_BIT
+              ? wgpu::FilterMode::Linear
+              : wgpu::FilterMode::Nearest;
+      ycbcr_desc.externalFormat = ycbcr_info->external_format;
+
+      // NOTE: Chromium does not use this feature.
+      ycbcr_desc.forceExplicitReconstruction = false;
+
+      dawn_texture_info.fYcbcrVkDescriptor = ycbcr_desc;
+    }
+#endif
+
     return dawn_texture_info;
 #endif
   }

@@ -24,6 +24,7 @@ namespace autofill {
 
 class AutofillErrorDialogControllerImpl;
 class AutofillSaveCardBottomSheetBridge;
+class AutofillSaveIbanBottomSheetBridge;
 class CardUnmaskAuthenticationSelectionDialogControllerImpl;
 struct CardUnmaskChallengeOption;
 class CardUnmaskOtpInputDialogControllerImpl;
@@ -31,9 +32,16 @@ class CreditCardCvcAuthenticator;
 class CreditCardOtpAuthenticator;
 class ContentAutofillClient;
 class CreditCardRiskBasedAuthenticator;
+class IbanAccessManager;
+class IbanManager;
 class OtpUnmaskDelegate;
 enum class OtpUnmaskResult;
+struct VirtualCardEnrollmentFields;
 class VirtualCardEnrollmentManager;
+struct VirtualCardManualFallbackBubbleOptions;
+#if BUILDFLAG(IS_ANDROID)
+class AutofillSnackbarControllerImpl;
+#endif  // BUILDFLAG(IS_ANDROID)
 
 namespace payments {
 
@@ -60,6 +68,9 @@ class ChromePaymentsAutofillClient : public PaymentsAutofillClient,
 #if BUILDFLAG(IS_ANDROID)
   AutofillSaveCardBottomSheetBridge*
   GetOrCreateAutofillSaveCardBottomSheetBridge() override;
+  AutofillSaveIbanBottomSheetBridge*
+  GetOrCreateAutofillSaveIbanBottomSheetBridge();
+  AutofillSnackbarControllerImpl* GetAutofillSnackbarController();
 #else   // !BUILDFLAG(IS_ANDROID)
   void ShowLocalCardMigrationDialog(
       base::OnceClosure show_migration_dialog_closure) override;
@@ -73,12 +84,25 @@ class ChromePaymentsAutofillClient : public PaymentsAutofillClient,
       const std::u16string& tip_message,
       const std::vector<MigratableCreditCard>& migratable_credit_cards,
       MigrationDeleteCardCallback delete_local_card_callback) override;
+  void ShowWebauthnOfferDialog(
+      WebauthnDialogCallback offer_dialog_callback) override;
+  void ShowWebauthnVerifyPendingDialog(
+      WebauthnDialogCallback verify_pending_dialog_callback) override;
+  void UpdateWebauthnOfferDialogWithError() override;
+  bool CloseWebauthnDialog() override;
+  void HideVirtualCardEnrollBubbleAndIconIfVisible() override;
 #endif  // BUILDFLAG(IS_ANDROID)
   void CreditCardUploadCompleted(bool card_saved,
                                  std::optional<OnConfirmationClosedCallback>
                                      on_confirmation_closed_callback) override;
   void HideSaveCardPrompt() override;
+  void ShowVirtualCardEnrollDialog(
+      const VirtualCardEnrollmentFields& virtual_card_enrollment_fields,
+      base::OnceClosure accept_virtual_card_callback,
+      base::OnceClosure decline_virtual_card_callback) override;
   void VirtualCardEnrollCompleted(bool is_vcn_enrolled) override;
+  void OnVirtualCardDataAvailable(
+      const VirtualCardManualFallbackBubbleOptions& options) override;
   void ConfirmSaveIbanLocally(const Iban& iban,
                               bool should_show_prompt,
                               SaveIbanPromptCallback callback) override;
@@ -115,6 +139,14 @@ class ChromePaymentsAutofillClient : public PaymentsAutofillClient,
   CreditCardCvcAuthenticator& GetCvcAuthenticator() override;
   CreditCardOtpAuthenticator* GetOtpAuthenticator() override;
   CreditCardRiskBasedAuthenticator* GetRiskBasedAuthenticator() override;
+  void ShowMandatoryReauthOptInPrompt(
+      base::OnceClosure accept_mandatory_reauth_callback,
+      base::OnceClosure cancel_mandatory_reauth_callback,
+      base::RepeatingClosure close_mandatory_reauth_callback) override;
+  IbanManager* GetIbanManager() override;
+  IbanAccessManager* GetIbanAccessManager() override;
+  void ShowMandatoryReauthOptInConfirmation() override;
+  void DismissOfferNotification() override;
 
   AutofillProgressDialogControllerImpl*
   AutofillProgressDialogControllerForTesting() {
@@ -140,6 +172,12 @@ class ChromePaymentsAutofillClient : public PaymentsAutofillClient,
 #if BUILDFLAG(IS_ANDROID)
   std::unique_ptr<AutofillSaveCardBottomSheetBridge>
       autofill_save_card_bottom_sheet_bridge_;
+
+  std::unique_ptr<AutofillSaveIbanBottomSheetBridge>
+      autofill_save_iban_bottom_sheet_bridge_;
+
+  std::unique_ptr<AutofillSnackbarControllerImpl>
+      autofill_snackbar_controller_impl_;
 #endif
   const raw_ref<ContentAutofillClient> client_;
 
@@ -174,6 +212,8 @@ class ChromePaymentsAutofillClient : public PaymentsAutofillClient,
 
   std::unique_ptr<CardUnmaskAuthenticationSelectionDialogControllerImpl>
       card_unmask_authentication_selection_controller_;
+
+  std::unique_ptr<IbanAccessManager> iban_access_manager_;
 };
 
 }  // namespace payments

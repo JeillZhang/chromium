@@ -4,6 +4,7 @@
 
 package org.chromium.chrome.browser.facilitated_payments;
 
+import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.BankAccountProperties.BANK_ACCOUNT_DRAWABLE_ID;
 import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.BankAccountProperties.BANK_ACCOUNT_SUMMARY;
 import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.BankAccountProperties.BANK_NAME;
 import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.HeaderProperties.DESCRIPTION_ID;
@@ -17,6 +18,7 @@ import android.content.Context;
 
 import androidx.annotation.VisibleForTesting;
 
+import org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsComponent.Delegate;
 import org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.BankAccountProperties;
 import org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.HeaderProperties;
 import org.chromium.components.autofill.payments.AccountType;
@@ -32,15 +34,17 @@ import org.chromium.ui.modelutil.PropertyModel;
 class FacilitatedPaymentsPaymentMethodsMediator {
     private Context mContext;
     private PropertyModel mModel;
+    private Delegate mDelegate;
 
-    void initialize(Context context, PropertyModel model) {
+    void initialize(Context context, PropertyModel model, Delegate delegate) {
         mContext = context;
         mModel = model;
+        mDelegate = delegate;
     }
 
-    void showSheet(BankAccount[] bankAccounts) {
+    boolean showSheet(BankAccount[] bankAccounts) {
         if (bankAccounts == null || bankAccounts.length == 0) {
-            return;
+            return false;
         }
 
         ModelList sheetItems = mModel.get(SHEET_ITEMS);
@@ -53,6 +57,8 @@ class FacilitatedPaymentsPaymentMethodsMediator {
 
         sheetItems.add(0, buildHeader());
         mModel.set(VISIBLE, true);
+
+        return true;
     }
 
     private ListItem buildHeader() {
@@ -72,7 +78,8 @@ class FacilitatedPaymentsPaymentMethodsMediator {
                         .with(BANK_NAME, bankAccount.getBankName())
                         .with(
                                 BANK_ACCOUNT_SUMMARY,
-                                getBankAccountSummaryString(context, bankAccount));
+                                getBankAccountSummaryString(context, bankAccount))
+                        .with(BANK_ACCOUNT_DRAWABLE_ID, R.drawable.ic_account_balance);
         return bankAccountModelBuilder.build();
     }
 

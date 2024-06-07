@@ -214,16 +214,9 @@ struct GPMEnclaveController::DownloadedAccountState {
   std::vector<base::Time> lskf_expiries;
 };
 
-namespace {
-
-#if BUILDFLAG(IS_MAC)
-constexpr char kICloudKeychainRecoveryKeyAccessGroup[] =
-    MAC_TEAM_IDENTIFIER_STRING ".com.google.common.folsom";
-#endif  // BUILDFLAG(IS_MAC)
-
 // EnclaveUserVerificationMethod enumerates the possible ways that user
 // verification will be performed for an enclave transaction.
-enum class EnclaveUserVerificationMethod {
+enum class GPMEnclaveController::EnclaveUserVerificationMethod {
   // No user verification will be performed.
   kNone,
   // The user will enter a GPM PIN.
@@ -243,6 +236,16 @@ enum class EnclaveUserVerificationMethod {
   // The request cannot be satisfied.
   kUnsatisfiable,
 };
+
+using EnclaveUserVerificationMethod =
+    GPMEnclaveController::EnclaveUserVerificationMethod;
+
+namespace {
+
+#if BUILDFLAG(IS_MAC)
+constexpr char kICloudKeychainRecoveryKeyAccessGroup[] =
+    MAC_TEAM_IDENTIFIER_STRING ".com.google.common.folsom";
+#endif  // BUILDFLAG(IS_MAC)
 
 // Pick an enclave user verification method for a specific request.
 EnclaveUserVerificationMethod PickEnclaveUserVerificationMethod(
@@ -314,8 +317,10 @@ class AccountStateCache {
 
   void Put(base::Clock* clock,
            const GPMEnclaveController::DownloadedAccountState& state) {
-    cache_time_ = clock->Now();
-    value_ = state;
+    if (base::FeatureList::IsEnabled(device::kWebAuthnCacheSecurityDomain)) {
+      cache_time_ = clock->Now();
+      value_ = state;
+    }
   }
 
  private:
@@ -335,6 +340,13 @@ bool ExpiryTooSoon(base::Time expiry) {
   // Validities are generally six months, thus this implies that the device was
   // used in the previous six weeks.
   return expiry < now || (expiry - now) < base::Days(7 * 18);
+}
+
+void ResetDeclinedBootstrappingCount(AuthenticatorRequestDialogModel* model) {
+  Profile::FromBrowserContext(model->GetRenderFrameHost()->GetBrowserContext())
+      ->GetPrefs()
+      ->SetInteger(webauthn::pref_names::kEnclaveDeclinedGPMBootstrappingCount,
+                   0);
 }
 
 }  // namespace
@@ -502,7 +514,7 @@ void GPMEnclaveController::DownloadAccountState() {
 
   account_state_timeout_ = std::make_unique<base::OneShotTimer>();
   account_state_timeout_->Start(
-      FROM_HERE, base::Milliseconds(1000),
+      FROM_HERE, kDownloadAccountStateTimeout,
       base::BindOnce(&GPMEnclaveController::OnAccountStateTimeOut,
                      weak_ptr_factory_.GetWeakPtr()));
 
@@ -535,6 +547,7 @@ void GPMEnclaveController::OnAccountStateTimeOut() {
     SetAccountStateReady();
     SetActive(true);
   } else {
+    model_->OnLoadingEnclaveTimeout();
     account_state_ = AccountState::kNone;
     SetActive(false);
   }
@@ -664,6 +677,7 @@ void GPMEnclaveController::OnKeysStored() {
 }
 
 void GPMEnclaveController::OnDeviceAdded(bool success) {
+  ResetDeclinedBootstrappingCount(model_.get());
   if (!success) {
     model_->SetStep(Step::kGPMError);
     return;
@@ -763,9 +777,10 @@ void GPMEnclaveController::OnEnclaveAccountSetUpComplete() {
 }
 
 void GPMEnclaveController::SetAccountStateReady() {
-  switch (PickEnclaveUserVerificationMethod(
+  uv_method_ = PickEnclaveUserVerificationMethod(
       user_verification_requirement_, have_added_device_,
-      enclave_manager_->has_wrapped_pin(), enclave_manager_->uv_key_state())) {
+      enclave_manager_->has_wrapped_pin(), enclave_manager_->uv_key_state());
+  switch (*uv_method_) {
     case EnclaveUserVerificationMethod::kUVKeyWithSystemUI:
     case EnclaveUserVerificationMethod::kDeferredUVKeyWithSystemUI:
     case EnclaveUserVerificationMethod::kNone:
@@ -841,7 +856,10 @@ void GPMEnclaveController::OnGPMPasskeySelected(
 
   switch (account_state_) {
     case AccountState::kReady:
-      model_->SetStep(Step::kGPMConnecting);
+      if (model_->step() != Step::kConditionalMediation) {
+        // The autofill UI shows its own loading indicator.
+        model_->SetStep(Step::kGPMConnecting);
+      }
       StartTransaction();
       break;
 
@@ -863,7 +881,11 @@ void GPMEnclaveController::OnGPMPasskeySelected(
 
     case AccountState::kLoading:
     case AccountState::kChecking:
-      model_->SetStep(Step::kGPMConnecting);
+      if (model_->step() != Step::kConditionalMediation &&
+          model_->step() != Step::kNotStarted) {
+        // The autofill UI shows its own loading indicator.
+        model_->SetStep(Step::kGPMConnecting);
+      }
       waiting_for_account_state_ =
           base::BindOnce(&GPMEnclaveController::OnGPMPasskeySelected,
                          weak_ptr_factory_.GetWeakPtr(), *selected_cred_id_);
@@ -871,9 +893,12 @@ void GPMEnclaveController::OnGPMPasskeySelected(
 
     case AccountState::kNone:
       if (model_->priority_phone_name.has_value()) {
+        FIDO_LOG(EVENT) << "b/342399396: triggering priority phone because "
+                           "account state is kNone";
         model_->ContactPriorityPhone();
       } else {
-        NOTREACHED_NORETURN();
+        // This can happen if a passkey is selected after the enclave times out.
+        model_->SetStep(Step::kGPMError);
       }
       break;
 
@@ -884,6 +909,8 @@ void GPMEnclaveController::OnGPMPasskeySelected(
 
     case AccountState::kEmpty:
       if (model_->priority_phone_name.has_value()) {
+        FIDO_LOG(EVENT) << "b/342399396: triggering priority phone because "
+                           "account state is kEmpty";
         model_->ContactPriorityPhone();
       } else {
         // The security domain is empty but there were
@@ -919,16 +946,15 @@ void GPMEnclaveController::OnGpmPinChanged(bool success) {
 void GPMEnclaveController::OnTrustThisComputer() {
   CHECK(model_->step() == Step::kTrustThisComputerAssertion ||
         model_->step() == Step::kTrustThisComputerCreation);
+  // Clicking through the bootstrapping dialog resets the count even if it
+  // doesn't end up being successful.
+  ResetDeclinedBootstrappingCount(model_.get());
   if (model_->step() == Step::kTrustThisComputerCreation &&
       model_->is_off_the_record) {
     last_step_ = Step::kTrustThisComputerCreation;
     model_->SetStep(Step::kGPMConfirmOffTheRecordCreate);
     return;
   }
-  Profile::FromBrowserContext(model_->GetRenderFrameHost()->GetBrowserContext())
-      ->GetPrefs()
-      ->SetInteger(webauthn::pref_names::kEnclaveDeclinedGPMBootstrappingCount,
-                   0);
   model_->SetStep(Step::kRecoverSecurityDomain);
 }
 
@@ -1090,9 +1116,7 @@ void GPMEnclaveController::StartEnclaveTransaction(
   // is in memory.
   bool use_unwrapped_secret = false;
 
-  switch (PickEnclaveUserVerificationMethod(
-      user_verification_requirement_, have_added_device_,
-      enclave_manager_->has_wrapped_pin(), enclave_manager_->uv_key_state())) {
+  switch (*uv_method_) {
     case EnclaveUserVerificationMethod::kNone:
       request->signing_callback =
           enclave_manager_->HardwareKeySigningCallback();
@@ -1137,6 +1161,9 @@ void GPMEnclaveController::StartEnclaveTransaction(
       request->user_verified = true;
       request->uv_key_creation_callback =
           enclave_manager_->UserVerifyingKeyCreationCallback();
+      request->unregister_callback =
+          base::BindOnce(&EnclaveManager::Unenroll,
+                         enclave_manager_->GetWeakPtr(), base::DoNothing());
       break;
     case EnclaveUserVerificationMethod::kUnsatisfiable:
       NOTREACHED_NORETURN();

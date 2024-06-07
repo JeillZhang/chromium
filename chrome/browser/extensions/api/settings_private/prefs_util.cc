@@ -545,8 +545,6 @@ const PrefsUtil::TypedPrefMap& PrefsUtil::GetAllowlistedKeys() {
 #if BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
   (*s_allowlist)[::prefs::kAccessibilityMainNodeAnnotationsEnabled] =
       settings_api::PrefType::kBoolean;
-  (*s_allowlist)[::prefs::kAccessibilityPdfOcrAlwaysActive] =
-      settings_api::PrefType::kBoolean;
 #endif
 #if defined(USE_AURA)
   (*s_allowlist)[::prefs::kOverscrollHistoryNavigationEnabled] =
@@ -699,6 +697,8 @@ const PrefsUtil::TypedPrefMap& PrefsUtil::GetAllowlistedKeys() {
       settings_api::PrefType::kNumber;
   (*s_allowlist)[ash::prefs::kAccessibilityMouseKeysMaxSpeed] =
       settings_api::PrefType::kNumber;
+  (*s_allowlist)[ash::prefs::kAccessibilityMouseKeysUsePrimaryKeys] =
+      settings_api::PrefType::kBoolean;
   (*s_allowlist)[ash::prefs::kAccessibilityMouseKeysDominantHand] =
       settings_api::PrefType::kBoolean;
   (*s_allowlist)
@@ -743,6 +743,12 @@ const PrefsUtil::TypedPrefMap& PrefsUtil::GetAllowlistedKeys() {
       settings_api::PrefType::kDictionary;
   (*s_allowlist)[ash::prefs::kAccessibilityFaceGazeGesturesToConfidence] =
       settings_api::PrefType::kDictionary;
+  (*s_allowlist)[ash::prefs::kAccessibilityFaceGazeCursorControlEnabled] =
+      settings_api::PrefType::kBoolean;
+  (*s_allowlist)[ash::prefs::kAccessibilityFaceGazeAdjustSpeedSeparately] =
+      settings_api::PrefType::kBoolean;
+  (*s_allowlist)[ash::prefs::kAccessibilityFaceGazeActionsEnabled] =
+      settings_api::PrefType::kBoolean;
   (*s_allowlist)[ash::prefs::kAccessibilityCaretBlinkInterval] =
       settings_api::PrefType::kNumber;
 
@@ -790,6 +796,8 @@ const PrefsUtil::TypedPrefMap& PrefsUtil::GetAllowlistedKeys() {
       settings_api::PrefType::kBoolean;
 
   // App - On-Device Parental Controls
+  (*s_allowlist)[::ash::prefs::kOnDeviceAppControlsPin] =
+      settings_api::PrefType::kString;
   (*s_allowlist)[::ash::prefs::kOnDeviceAppControlsSetupCompleted] =
       settings_api::PrefType::kBoolean;
 

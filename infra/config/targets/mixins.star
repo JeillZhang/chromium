@@ -836,18 +836,6 @@ targets.mixin(
 )
 
 targets.mixin(
-    name = "ios_runtime_cache_17_4",
-    swarming = targets.swarming(
-        named_caches = [
-            swarming.cache(
-                name = "runtime_ios_17_4",
-                path = "Runtime-ios-17.4",
-            ),
-        ],
-    ),
-)
-
-targets.mixin(
     name = "ios_runtime_cache_17_5",
     swarming = targets.swarming(
         named_caches = [
@@ -1107,28 +1095,6 @@ targets.mixin(
     ),
 )
 
-# TODO(b/331775322) Remove when mac migration is done.
-targets.mixin(
-    name = "mac_13_or_14_arm64",
-    swarming = targets.swarming(
-        dimensions = {
-            "cpu": "arm64",
-            "os": "Mac-13|Mac-14",
-        },
-    ),
-)
-
-# TODO(b/331775322) Remove when mac migration is done.
-targets.mixin(
-    name = "mac_13_or_14_x64",
-    swarming = targets.swarming(
-        dimensions = {
-            "cpu": "x86-64",
-            "os": "Mac-13|Mac-14",
-        },
-    ),
-)
-
 targets.mixin(
     name = "mac_14_arm64",
     swarming = targets.swarming(
@@ -1232,7 +1198,7 @@ targets.mixin(
     swarming = targets.swarming(
         dimensions = {
             "cpu": "arm64",
-            "os": "Mac-13",
+            "os": "Mac-14",
         },
     ),
 )
@@ -1245,7 +1211,7 @@ targets.mixin(
     swarming = targets.swarming(
         dimensions = {
             "cpu": "x86-64",
-            "os": "Mac-13",
+            "os": "Mac-14",
         },
     ),
 )
@@ -1883,12 +1849,12 @@ targets.mixin(
     name = "xcode_15_beta",
     args = [
         "--xcode-build-version",
-        "15f31c",
+        "15f31d",
     ],
     swarming = targets.swarming(
         named_caches = [
             swarming.cache(
-                name = "xcode_ios_15f31c",
+                name = "xcode_ios_15f31d",
                 path = "Xcode.app",
             ),
         ],
@@ -1899,12 +1865,12 @@ targets.mixin(
     name = "xcode_15_main",
     args = [
         "--xcode-build-version",
-        "15c500b",
+        "15f31d",
     ],
     swarming = targets.swarming(
         named_caches = [
             swarming.cache(
-                name = "xcode_ios_15c500b",
+                name = "xcode_ios_15f31d",
                 path = "Xcode.app",
             ),
         ],

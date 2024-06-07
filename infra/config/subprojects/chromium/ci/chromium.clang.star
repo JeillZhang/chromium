@@ -7,7 +7,7 @@ load("//lib/args.star", "args")
 load("//lib/builder_config.star", "builder_config")
 load("//lib/builder_health_indicators.star", "health_spec")
 load("//lib/builder_url.star", "linkify_builder")
-load("//lib/builders.star", "builders", "cpu", "os", "sheriff_rotations", "siso")
+load("//lib/builders.star", "builders", "cpu", "gardener_rotations", "os", "siso")
 load("//lib/branches.star", "branches")
 load("//lib/ci.star", "ci")
 load("//lib/consoles.star", "consoles")
@@ -21,11 +21,11 @@ ci.defaults.set(
     builderless = True,
     cores = 32,
     os = os.LINUX_DEFAULT,
-    sheriff_rotations = sheriff_rotations.CHROMIUM_CLANG,
     # Because these run ToT Clang, reclient is not used.
     # Naturally the runtime will be ~4-8h on average, depending on config.
     # CFI builds will take even longer - around 11h.
     execution_timeout = 14 * time.hour,
+    gardener_rotations = gardener_rotations.CHROMIUM_CLANG,
     health_spec = health_spec.modified_default({
         "Unhealthy": health_spec.unhealthy_thresholds(
             fail_rate = struct(),
@@ -39,7 +39,6 @@ ci.defaults.set(
     },
     service_account = ci.DEFAULT_SERVICE_ACCOUNT,
     shadow_service_account = ci.DEFAULT_SHADOW_SERVICE_ACCOUNT,
-    siso_configs = ["builder", "clang-tot"],
     siso_enabled = True,
     siso_project = siso.project.DEFAULT_TRUSTED,
 )
@@ -141,7 +140,7 @@ ci.builder(
             "cfi_recover",
             "thin_lto",
             "release_builder",
-            "reclient",
+            "remoteexec",
         ],
     ),
     console_view_entry = consoles.console_view_entry(
@@ -150,7 +149,6 @@ ci.builder(
     ),
     contact_team_email = "lexan@google.com",
     notifies = ["CFI Linux"],
-    siso_configs = ["builder"],  # disable clang_tot config to use remote execution.
     siso_remote_jobs = siso.remote_jobs.DEFAULT,
 )
 
@@ -1214,12 +1212,12 @@ ci.builder(
         ],
     ),
     os = os.WINDOWS_DEFAULT,
-    sheriff_rotations = args.ignore_default(None),
     console_view_entry = consoles.console_view_entry(
         category = "ToT Windows",
         short_name = "pgo-arm",
     ),
     contact_team_email = "lexan@google.com",
+    gardener_rotations = args.ignore_default(None),
 )
 
 ci.builder(

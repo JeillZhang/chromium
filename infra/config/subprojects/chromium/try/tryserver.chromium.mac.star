@@ -74,6 +74,7 @@ try_.builder(
         "ci/mac-archive-rel",
     ],
     gn_args = "ci/mac-archive-rel",
+    cpu = cpu.ARM64,
     siso_remote_jobs = siso.remote_jobs.LOW_JOBS_FOR_CQ,
 )
 
@@ -146,7 +147,7 @@ try_.orchestrator_builder(
     branch_selector = branches.selector.MAC_BRANCHES,
     mirrors = [
         "ci/Mac Builder",
-        "ci/Mac13 Tests",
+        "ci/mac14-tests",
         "ci/GPU Mac Builder",
         "ci/Mac Release (Intel)",
         "ci/Mac Retina Release (AMD)",
@@ -155,7 +156,7 @@ try_.orchestrator_builder(
         configs = [
             "gpu_tests",
             "release_try_builder",
-            "reclient",
+            "remoteexec",
             "no_symbols",
             "use_clang_coverage",
             "partial_code_coverage_instrumentation",
@@ -199,7 +200,7 @@ try_.builder(
             "arm64",
             "gpu_tests",
             "release_try_builder",
-            "reclient",
+            "remoteexec",
             "no_symbols",
         ],
     ),
@@ -235,7 +236,7 @@ try_.builder(
             "arm64",
             "gpu_tests",
             "release_try_builder",
-            "reclient",
+            "remoteexec",
             "no_symbols",
         ],
     ),
@@ -257,7 +258,7 @@ try_.orchestrator_builder(
             "arm64",
             "gpu_tests",
             "release_try_builder",
-            "reclient",
+            "remoteexec",
             "no_symbols",
         ],
     ),
@@ -290,7 +291,7 @@ try_.orchestrator_builder(
             "arm64",
             "gpu_tests",
             "release_try_builder",
-            "reclient",
+            "remoteexec",
             "no_symbols",
         ],
     ),
@@ -329,7 +330,7 @@ try_.builder(
     gn_args = gn_args.config(
         configs = [
             "release_try_builder",
-            "reclient",
+            "remoteexec",
         ],
     ),
     siso_remote_jobs = siso.remote_jobs.LOW_JOBS_FOR_CQ,
@@ -345,7 +346,7 @@ try_.builder(
     gn_args = gn_args.config(
         configs = [
             "release_try_builder",
-            "reclient",
+            "remoteexec",
         ],
     ),
     builderless = False,
@@ -362,7 +363,7 @@ try_.builder(
         configs = [
             "ci/Mac Builder",
             "release_try_builder",
-            "reclient",
+            "remoteexec",
         ],
     ),
 )
@@ -377,7 +378,7 @@ try_.builder(
         configs = [
             "ci/Mac Builder",
             "release_try_builder",
-            "reclient",
+            "remoteexec",
         ],
     ),
     cpu = cpu.ARM64,
@@ -395,7 +396,7 @@ try_.builder(
         configs = [
             "ci/Mac Builder",
             "release_try_builder",
-            "reclient",
+            "remoteexec",
         ],
     ),
     cpu = cpu.ARM64,
@@ -413,7 +414,7 @@ try_.builder(
             "asan",
             "dcheck_always_on",
             "release_builder",
-            "reclient",
+            "remoteexec",
         ],
     ),
     siso_remote_jobs = siso.remote_jobs.HIGH_JOBS_FOR_CQ,
@@ -434,6 +435,8 @@ try_.builder(
             "ci/Mac Builder (dbg)",
         ],
     ),
+    cores = None,
+    cpu = cpu.ARM64,
     experiments = {
         # crbug/940930
         "chromium.enable_cleandead": 100,
@@ -456,7 +459,7 @@ try_.builder(
         configs = [
             "gpu_tests",
             "release_try_builder",
-            "reclient",
+            "remoteexec",
             "x64",
         ],
     ),
@@ -751,9 +754,6 @@ try_.gpu.optional_tests_builder(
     builder_spec = builder_config.builder_spec(
         gclient_config = builder_config.gclient_config(
             config = "chromium",
-            apply_configs = [
-                "angle_internal",
-            ],
         ),
         chromium_config = builder_config.chromium_config(
             config = "chromium",
@@ -771,7 +771,7 @@ try_.gpu.optional_tests_builder(
         configs = [
             "gpu_fyi_tests",
             "release_builder",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
             "dcheck_always_on",
             "x64",

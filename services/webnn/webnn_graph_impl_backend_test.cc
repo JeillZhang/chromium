@@ -24,6 +24,7 @@
 #include "services/webnn/webnn_context_impl.h"
 #include "services/webnn/webnn_context_provider_impl.h"
 #include "services/webnn/webnn_test_utils.h"
+#include "services/webnn/webnn_utils.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/fp16/src/include/fp16.h"
@@ -33,8 +34,8 @@
 #include "services/webnn/dml/adapter.h"
 #include "services/webnn/dml/command_queue.h"
 #include "services/webnn/dml/command_recorder.h"
-#include "services/webnn/dml/context_impl.h"
-#include "services/webnn/dml/graph_impl.h"
+#include "services/webnn/dml/context_impl_dml.h"
+#include "services/webnn/dml/graph_impl_dml.h"
 #include "services/webnn/dml/test_base.h"
 #include "services/webnn/dml/utils.h"
 #include "third_party/microsoft_dxheaders/include/directml.h"
@@ -86,9 +87,9 @@ void BuildAndCompute(
       create_context_future.GetCallback());
   mojom::CreateContextResultPtr create_context_result =
       create_context_future.Take();
-  if (create_context_result->is_context_remote()) {
+  if (create_context_result->is_success()) {
     webnn_context_remote.Bind(
-        std::move(create_context_result->get_context_remote()));
+        std::move(create_context_result->get_success()->context_remote));
   }
   EXPECT_FALSE(create_context_result->is_error())
       << create_context_result->get_error()->message;
@@ -239,7 +240,6 @@ class WebNNGraphImplBackendTest : public dml::TestBase {
 
  protected:
   base::test::ScopedFeatureList scoped_feature_list_;
-  base::test::TaskEnvironment task_environment_;
   scoped_refptr<dml::Adapter> adapter_;
 };
 
@@ -299,6 +299,7 @@ void WebNNGraphImplBackendTest::SetUp() {
        // DML_GEMM_OPERATOR_DESC support for 2~4 dimensions was introduced in
        // DML_FEATURE_LEVEL_4_0.
        {"BuildAndComputeSingleOperatorMatmul", DML_FEATURE_LEVEL_4_0},
+       {"FuseStandaloneOperationsIntoMatmul", DML_FEATURE_LEVEL_4_0},
        // DML_GEMM_OPERATOR_DESC support for 2 dimensions was introduced in
        // DML_FEATURE_LEVEL_4_0.
        {"BuildMultipleInputsAppendingConstants", DML_FEATURE_LEVEL_4_0},
@@ -371,7 +372,8 @@ void WebNNGraphImplBackendTest::SetUp() {
 }
 #endif  // BUILDFLAG(IS_MAC)
 
-#if BUILDFLAG(WEBNN_USE_TFLITE)
+// TODO(crbug.com/325612086): Parameterize these tests for different backends.
+#if BUILDFLAG(WEBNN_USE_TFLITE) && !BUILDFLAG(IS_WIN)
 class WebNNGraphImplBackendTest : public testing::Test {
  public:
   WebNNGraphImplBackendTest()
@@ -420,7 +422,7 @@ void WebNNGraphImplBackendTest::SetUp() {
     GTEST_SKIP() << "Skipping test because the operator is not yet supported.";
   }
 }
-#endif  // BUILDFLAG(WEBNN_USE_TFLITE)
+#endif  // BUILDFLAG(WEBNN_USE_TFLITE) && !BUILDFLAG(IS_WIN)
 
 template <typename T>
 struct ArgMinMaxTester {
@@ -2994,7 +2996,6 @@ TEST_F(WebNNGraphImplBackendTest,
                    .values = {log(0.f), log(3.f), log(10.f)}}}
         .Test(*this);
   }
-#if !BUILDFLAG(IS_MAC)
   {
     ElementWiseUnaryTester<float>{
         .input = {.type = mojom::Operand::DataType::kFloat32,
@@ -3006,7 +3007,6 @@ TEST_F(WebNNGraphImplBackendTest,
                    .values = {1, 0, -1.1, 2.2, 0, -2}}}
         .Test(*this);
   }
-#endif
   {
     ElementWiseUnaryTester<float>{
         .input = {.type = mojom::Operand::DataType::kFloat32,
@@ -6191,9 +6191,9 @@ TEST_F(WebNNGraphImplBackendTest, BuildOneGraphToComputeMultipleTimes) {
       create_context_future.GetCallback());
   mojom::CreateContextResultPtr create_context_result =
       create_context_future.Take();
-  if (create_context_result->is_context_remote()) {
+  if (create_context_result->is_success()) {
     webnn_context_remote.Bind(
-        std::move(create_context_result->get_context_remote()));
+        std::move(create_context_result->get_success()->context_remote));
   }
   EXPECT_TRUE(webnn_context_remote.is_bound());
 
@@ -7186,23 +7186,53 @@ struct MatmulTester {
         output.values);
   }
 
-  void TestFusingStandaloneActivation(const Activation& activation) {
+  void TestFusion(std::optional<std::vector<uint32_t>> permutation_a,
+                  std::optional<std::vector<uint32_t>> permutation_b,
+                  std::optional<const Activation> activation) {
     // Build the graph with mojo type.
     GraphInfoBuilder builder;
     uint64_t input_a_operand_id =
         builder.BuildInput("input_a", input_a.dimensions, input_a.type);
+    if (permutation_a) {
+      std::vector<uint32_t> transposed_input_a_shape =
+          PermuteArray(input_a.dimensions, permutation_a.value());
+      uint64_t transposed_input_a_id = builder.BuildIntermediateOperand(
+          transposed_input_a_shape, input_a.type);
+      builder.BuildTranspose(input_a_operand_id, transposed_input_a_id,
+                             permutation_a.value());
+      input_a_operand_id = transposed_input_a_id;
+    }
     uint64_t input_b_operand_id =
         builder.BuildInput("input_b", input_b.dimensions, input_b.type);
-    uint64_t intermediate_operand_id =
-        builder.BuildIntermediateOperand(output.dimensions, output.type);
+    if (permutation_b) {
+      std::vector<uint32_t> transposed_input_b_shape =
+          PermuteArray(input_b.dimensions, permutation_b.value());
+      uint64_t transposed_input_b_id = builder.BuildIntermediateOperand(
+          transposed_input_b_shape, input_b.type);
+      builder.BuildTranspose(input_b_operand_id, transposed_input_b_id,
+                             permutation_b.value());
+      input_b_operand_id = transposed_input_b_id;
+    }
+
+    uint64_t output_operand_id;
+    if (activation) {
+      output_operand_id =
+          builder.BuildIntermediateOperand(output.dimensions, output.type);
+    } else {
+      output_operand_id =
+          builder.BuildOutput("output", output.dimensions, output.type);
+    }
 
     builder.BuildMatmul(input_a_operand_id, input_b_operand_id,
-                        intermediate_operand_id);
+                        output_operand_id);
 
-    uint64_t output_operand_id =
-        builder.BuildOutput("output", output.dimensions, output.type);
-    BuildStandaloneActivation(builder, activation, intermediate_operand_id,
-                              output_operand_id);
+    if (activation) {
+      uint64_t intermediate_operand_id = output_operand_id;
+      output_operand_id =
+          builder.BuildOutput("output", output.dimensions, output.type);
+      BuildStandaloneActivation(builder, activation.value(),
+                                intermediate_operand_id, output_operand_id);
+    }
 
     base::flat_map<std::string, mojo_base::BigBuffer> named_inputs;
     named_inputs.insert({"input_a", VectorToBigBuffer(input_a.values)});
@@ -7212,27 +7242,122 @@ struct MatmulTester {
     BuildAndCompute(builder.CloneGraphInfo(), std::move(named_inputs),
                     named_outputs);
 
-    VerifyIsEqual(std::move(named_outputs["output"]), output);
+    VerifyFloatDataIsEqual(
+        GetFloatOutputData(std::move(named_outputs["output"]), output.type),
+        output.values);
   }
 };
 
-// Test building and computing a graph of fusing a standalone activation
-// into matmul automatically.
-TEST_F(WebNNGraphImplBackendTest, FuseStandaloneActivationIntoMatmul) {
+// Test building and computing a graph of fusing standalone operations
+// into matmul when possible.
+TEST_F(WebNNGraphImplBackendTest, FuseStandaloneOperationsIntoMatmul) {
+  // Test matmul with fusible transpose for input a.
+  {
+    MatmulTester<float>{
+        .input_a = {.type = mojom::Operand::DataType::kFloat32,
+                    .dimensions = {1, 2, 3},
+                    .values = {1, 2, 3, 4, 5, 6}},
+        .input_b = {.type = mojom::Operand::DataType::kFloat32,
+                    .dimensions = {1, 2, 3},
+                    .values = {1, 2, 3, 4, 5, 6}},
+        .output = {.type = mojom::Operand::DataType::kFloat32,
+                   .dimensions = {1, 3, 3},
+                   .values = {17, 22, 27, 22, 29, 36, 27, 36, 45}}}
+        .TestFusion(
+            /*transpose_a*/ std::vector<uint32_t>({0, 2, 1}),
+            /*transpose_b*/ std::nullopt,
+            /*activation*/ std::nullopt);
+  }
+
+  // Test matmul with fusible transpose for input b.
+  {
+    MatmulTester<float>{.input_a = {.type = mojom::Operand::DataType::kFloat32,
+                                    .dimensions = {1, 2, 3},
+                                    .values = {1, 2, 3, 4, 5, 6}},
+                        .input_b = {.type = mojom::Operand::DataType::kFloat32,
+                                    .dimensions = {1, 2, 3},
+                                    .values = {1, 2, 3, 4, 5, 6}},
+                        .output = {.type = mojom::Operand::DataType::kFloat32,
+                                   .dimensions = {1, 2, 2},
+                                   .values = {14, 32, 32, 77}}}
+        .TestFusion(
+            /*transpose_a*/ std::nullopt,
+            /*transpose_b*/ std::vector<uint32_t>({0, 2, 1}),
+            /*activation*/ std::nullopt);
+  }
+
+  // Test matmul with fusible transpose for both input a and b.
+  {
+    MatmulTester<float>{.input_a = {.type = mojom::Operand::DataType::kFloat32,
+                                    .dimensions = {1, 3, 2},
+                                    .values = {1, 2, 3, 4, 5, 6}},
+                        .input_b = {.type = mojom::Operand::DataType::kFloat32,
+                                    .dimensions = {1, 2, 3},
+                                    .values = {1, 2, 3, 4, 5, 6}},
+                        .output = {.type = mojom::Operand::DataType::kFloat32,
+                                   .dimensions = {1, 2, 2},
+                                   .values = {22, 49, 28, 64}}}
+        .TestFusion(
+            /*transpose_a*/ std::vector<uint32_t>({0, 2, 1}),
+            /*transpose_b*/ std::vector<uint32_t>({0, 2, 1}),
+            /*activation*/ std::nullopt);
+  }
+
+  // Test matmul with unfusible transpose for input a.
+  {
+    MatmulTester<float>{
+        .input_a = {.type = mojom::Operand::DataType::kFloat32,
+                    .dimensions = {2, 3, 1},
+                    .values = {1, 2, 3, 4, 5, 6}},
+        .input_b = {.type = mojom::Operand::DataType::kFloat32,
+                    .dimensions = {1, 2, 3},
+                    .values = {1, 2, 3, 4, 5, 6}},
+        .output = {.type = mojom::Operand::DataType::kFloat32,
+                   .dimensions = {1, 3, 3},
+                   .values = {17, 22, 27, 22, 29, 36, 27, 36, 45}}}
+        .TestFusion(
+            /*transpose_a*/ std::vector<uint32_t>({2, 1, 0}),
+            /*transpose_b*/ std::nullopt, /*activation*/ std::nullopt);
+  }
+
   // Test matmul with 2-D * 2-D inputs, activation = linear.
-  GemmTester<float>{.input_a = {.type = mojom::Operand::DataType::kFloat32,
-                                .dimensions = {2, 2},
-                                .values = {1, 2, 3, 4}},
-                    .input_b = {.type = mojom::Operand::DataType::kFloat32,
-                                .dimensions = {2, 2},
-                                .values = {1, 2, 3, 4}},
-                    .output = {.type = mojom::Operand::DataType::kFloat32,
-                               .dimensions = {2, 2},
-                               .values = {71, 101, 151, 221}}}
-      .TestFusingStandaloneActivation(
-          Activation{.kind = mojom::Activation::Tag::kLinear,
-                     .linear_alpha = 10,
-                     .linear_beta = 1});
+  {
+    MatmulTester<float>{.input_a = {.type = mojom::Operand::DataType::kFloat32,
+                                    .dimensions = {2, 2},
+                                    .values = {1, 2, 3, 4}},
+                        .input_b = {.type = mojom::Operand::DataType::kFloat32,
+                                    .dimensions = {2, 2},
+                                    .values = {1, 2, 3, 4}},
+                        .output = {.type = mojom::Operand::DataType::kFloat32,
+                                   .dimensions = {2, 2},
+                                   .values = {71, 101, 151, 221}}}
+        .TestFusion(
+            /*transpose_a*/ std::nullopt, /*transpose_b*/ std::nullopt,
+            /*activation*/
+            Activation{.kind = mojom::Activation::Tag::kLinear,
+                       .linear_alpha = 10,
+                       .linear_beta = 1});
+  }
+
+  // Test matmul that can fuse transpose a, b and linear.
+  {
+    MatmulTester<float>{.input_a = {.type = mojom::Operand::DataType::kFloat32,
+                                    .dimensions = {1, 3, 2},
+                                    .values = {1, 2, 3, 4, 5, 6}},
+                        .input_b = {.type = mojom::Operand::DataType::kFloat32,
+                                    .dimensions = {1, 2, 3},
+                                    .values = {1, 2, 3, 4, 5, 6}},
+                        .output = {.type = mojom::Operand::DataType::kFloat32,
+                                   .dimensions = {1, 2, 2},
+                                   .values = {221, 491, 281, 641}}}
+        .TestFusion(
+            /*transpose_a*/ std::vector<uint32_t>({0, 2, 1}),
+            /*transpose_b*/ std::vector<uint32_t>({0, 2, 1}),
+            /*activation*/
+            Activation{.kind = mojom::Activation::Tag::kLinear,
+                       .linear_alpha = 10,
+                       .linear_beta = 1});
+  }
 }
 
 // Test building and computing a graph with single operator matmul.

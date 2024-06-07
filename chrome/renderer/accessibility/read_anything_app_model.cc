@@ -11,6 +11,7 @@
 #include "base/check.h"
 #include "base/containers/contains.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/strings/stringprintf.h"
 #include "content/public/renderer/render_thread.h"
 #include "services/strings/grit/services_strings.h"
 #include "ui/accessibility/accessibility_features.h"
@@ -338,6 +339,9 @@ void ReadAnythingAppModel::ComputeDisplayNodeIdsForDistilledTree() {
     return;
   }
 
+  // Clear the map to store new expanded states.
+  aria_expanded_node_states_.clear();
+
   // Display nodes are the nodes which will be displayed by the rendering
   // algorithm of Read Anything app.ts. We wish to create a subtree which
   // stretches down from tree root to every content node and includes the
@@ -353,6 +357,21 @@ void ReadAnythingAppModel::ComputeDisplayNodeIdsForDistilledTree() {
     // GetDeepestLastUnignoredDescendant() that works on ignored nodes?
     if (!content_node || content_node->IsInvisibleOrIgnored()) {
       continue;
+    }
+
+    // Ignore aria-expanded for editables.
+    if (content_node->HasHtmlAttribute("aria-expanded") &&
+        !content_node->HasState(ax::mojom::State::kRichlyEditable)) {
+      // Capture the expanded state. ARIA expanded is not supported by all
+      // element types, but gmail for example uses it anyways. Check the
+      // attribute directly for that reason.
+      auto aria_expanded_state =
+          base::UTF16ToUTF8(content_node->GetHtmlAttribute("aria-expanded"));
+      aria_expanded_node_states_[content_node_id] = aria_expanded_state;
+      // Don't include collapsed aria-expanded items.
+      if (aria_expanded_state != "true") {
+        continue;
+      }
     }
 
     // Add all ancestor ids, including the content node itself, which is the
@@ -543,6 +562,7 @@ void ReadAnythingAppModel::AccessibilityEventReceived(
         std::make_unique<ui::AXSerializableTree>();
     AddTree(tree_id, std::move(new_tree));
   }
+
   // If a tree update on the active tree is received while distillation is in
   // progress, cache updates that are received but do not yet unserialize them.
   // Drawing must be done on the same tree that was sent to the distiller,
@@ -867,7 +887,9 @@ void ReadAnythingAppModel::ProcessNonGeneratedEvents(
       case ax::mojom::Event::kTooltipClosed:
       case ax::mojom::Event::kTooltipOpened:
       case ax::mojom::Event::kTreeChanged:
+        break;
       case ax::mojom::Event::kValueChanged:
+        reset_draw_timer_ = true;
         break;
       case ax::mojom::Event::kAriaAttributeChangedDeprecated:
       case ax::mojom::Event::kMenuListValueChangedDeprecated:
@@ -957,7 +979,16 @@ void ReadAnythingAppModel::ProcessGeneratedEvents(
       case ui::AXEventGenerator::Event::MENU_POPUP_START:
       case ui::AXEventGenerator::Event::MULTILINE_STATE_CHANGED:
       case ui::AXEventGenerator::Event::MULTISELECTABLE_STATE_CHANGED:
+        break;
       case ui::AXEventGenerator::Event::NAME_CHANGED:
+        // TODO(francisjp): Determine if this logic should be specific to gmail.
+        if (last_expanded_node_id_ == event.node_id) {
+          ResetSelection();
+          requires_post_process_selection_ = false;
+          reset_last_expanded_node_id();
+          redraw_required_ = true;
+        }
+        break;
       case ui::AXEventGenerator::Event::OBJECT_ATTRIBUTE_CHANGED:
       case ui::AXEventGenerator::Event::ORIENTATION_CHANGED:
       case ui::AXEventGenerator::Event::PARENT_CHANGED:
@@ -1059,7 +1090,7 @@ std::string ReadAnythingAppModel::GetHtmlTag(
     int32_t hierarchical_level =
         ax_node->GetIntAttribute(ax::mojom::IntAttribute::kHierarchicalLevel);
     if (hierarchical_level) {
-      return std::format("h{}", hierarchical_level);
+      return base::StringPrintf("h%" PRId32, hierarchical_level);
     }
   }
 
@@ -1159,7 +1190,7 @@ std::string ReadAnythingAppModel::GetHeadingHtmlTagForPDF(
   int32_t hierarchical_level =
       ax_node->GetIntAttribute(ax::mojom::IntAttribute::kHierarchicalLevel);
   if (hierarchical_level) {
-    return std::format("h{}", hierarchical_level);
+    return base::StringPrintf("h%" PRId32, hierarchical_level);
   }
   return html_tag;
 }
@@ -1241,6 +1272,7 @@ std::vector<ui::AXNodeID> ReadAnythingAppModel::GetCurrentText() {
   return processed_granularities_on_current_page_[processed_granularity_index_]
       .node_ids;
 }
+// TODO(b/40927698): Investigate splitting this method into helpers.
 // TODO(crbug.com/40927698): Update to use AXRange to better handle multiple
 // nodes. This may require updating GetText in ax_range.h to return AXNodeIds.
 // AXRangeType#ExpandToEnclosingTextBoundary may also be useful.
@@ -1303,8 +1335,11 @@ ReadAnythingAppModel::GetNextNodes() {
         return current_granularity;
       }
 
-      std::u16string base_text =
-          GetNodeFromCurrentPosition()->GetTextContentUTF16();
+      anchor_node = GetNodeFromCurrentPosition();
+
+      std::u16string base_text = anchor_node->GetTextContentUTF16();
+
+      bool is_superscript = IsSuperscript(anchor_node);
 
       // Look at the text of the items we've already added to the
       // current sentence (current_text) combined with the text of the next
@@ -1312,8 +1347,12 @@ ReadAnythingAppModel::GetNextNodes() {
       const std::u16string& combined_text =
           current_granularity.text + base_text;
       // Get the index of the next sentence if we're looking at the combined
-      // previous and current node text.
-      int combined_sentence_index = GetNextSentence(combined_text);
+      // previous and current node text. If we're currently in a superscript,
+      // no need to check for a combined sentence, as we want to add the
+      // entire superscript to the current text segment.
+      int combined_sentence_index = is_superscript
+                                        ? combined_text.length()
+                                        : GetNextSentence(combined_text);
 
       bool is_opening_punctuation = false;
       // The code that checks for accessible text boundaries sometimes
@@ -1330,11 +1369,14 @@ ReadAnythingAppModel::GetNextNodes() {
       // read out as part of the next segment. If the opening punctuation is
       // followed by text and closing punctuation, the punctuation will not be
       // read out directly- just the text content.
+      // This workaround is not needed for superscripts because with a
+      // superscript, the entire superscript is added to the utterance of the
+      // superscript's associated sentence.
       // TODO(crbug.com/40927698): See if it's possible to fix the code
       // in FindAccessibleTextBoundary instead so that this workaround isn't
       // needed.
-      if (combined_sentence_index ==
-          (int)current_granularity.text.length() + 1) {
+      if (!is_superscript && combined_sentence_index ==
+                                 (int)current_granularity.text.length() + 1) {
         char c = combined_text[combined_sentence_index - 1];
         is_opening_punctuation = IsOpeningPunctuation(c);
       }
@@ -1685,12 +1727,7 @@ int ReadAnythingAppModel::GetNextWordHighlightLength(int start_index) {
   return word_length;
 }
 
-void ReadAnythingAppModel::IncrementMetric(const std::string& metric_name) {
-  metric_to_count_map_[metric_name]++;
-}
-
-void ReadAnythingAppModel::LogSpeechEventCounts() {
-  for (const auto& [metric, count] : metric_to_count_map_) {
-    base::UmaHistogramCounts1000(metric, count);
-  }
+bool ReadAnythingAppModel::IsSuperscript(ui::AXNode* node) {
+  return node->data().GetTextPosition() ==
+         ax::mojom::TextPosition::kSuperscript;
 }

@@ -1219,7 +1219,7 @@ LayoutBox* LayoutObject::EnclosingBox() const {
     curr = curr->Parent();
   }
 
-  DUMP_WILL_BE_NOTREACHED_NORETURN();
+  DUMP_WILL_BE_NOTREACHED();
   return nullptr;
 }
 
@@ -2599,7 +2599,8 @@ void LayoutObject::SetPseudoElementStyle(const ComputedStyle* pseudo_style,
   DCHECK(pseudo_style->StyleType() == kPseudoIdBefore ||
          pseudo_style->StyleType() == kPseudoIdAfter ||
          pseudo_style->StyleType() == kPseudoIdMarker ||
-         pseudo_style->StyleType() == kPseudoIdFirstLetter);
+         pseudo_style->StyleType() == kPseudoIdFirstLetter ||
+         pseudo_style->StyleType() == kPseudoIdScrollMarkerGroup);
 
   // FIXME: We should consider just making all pseudo items use an inherited
   // style.

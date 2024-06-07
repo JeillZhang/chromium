@@ -32,7 +32,7 @@
 #include "chrome/browser/ui/views/location_bar/cookie_controls/cookie_controls_icon_view.h"
 #include "chrome/browser/ui/views/location_bar/find_bar_icon.h"
 #include "chrome/browser/ui/views/location_bar/intent_picker_view.h"
-#include "chrome/browser/ui/views/location_bar/read_anything_icon_view.h"
+#include "chrome/browser/ui/views/location_bar/lens_overlay_page_action_icon_view.h"
 #include "chrome/browser/ui/views/location_bar/star_view.h"
 #include "chrome/browser/ui/views/location_bar/zoom_bubble_view.h"
 #include "chrome/browser/ui/views/page_action/page_action_icon_container.h"
@@ -195,12 +195,6 @@ void PageActionIconController::Init(const PageActionIconParams& params,
                       params.command_updater, params.icon_label_bubble_delegate,
                       params.page_action_icon_delegate, params.browser));
         break;
-      case PageActionIconType::kReadAnything:
-        add_page_action_icon(type, std::make_unique<ReadAnythingIconView>(
-                                       params.command_updater, params.browser,
-                                       params.icon_label_bubble_delegate,
-                                       params.page_action_icon_delegate));
-        break;
       case PageActionIconType::kAutofillAddress:
         add_page_action_icon(
             type, std::make_unique<autofill::AddressBubblesIconView>(
@@ -241,10 +235,9 @@ void PageActionIconController::Init(const PageActionIconParams& params,
                 base::BindRepeating(SharingDialogView::GetAsBubble)));
         break;
       case PageActionIconType::kSideSearch:
-        DCHECK(params.command_updater);
         add_page_action_icon(
             type, std::make_unique<SideSearchIconView>(
-                      params.command_updater, params.icon_label_bubble_delegate,
+                      params.icon_label_bubble_delegate,
                       params.page_action_icon_delegate, params.browser));
         break;
       case PageActionIconType::kTranslate:
@@ -252,7 +245,7 @@ void PageActionIconController::Init(const PageActionIconParams& params,
         add_page_action_icon(
             type, std::make_unique<TranslateIconView>(
                       params.command_updater, params.icon_label_bubble_delegate,
-                      params.page_action_icon_delegate));
+                      params.page_action_icon_delegate, params.browser));
         break;
       case PageActionIconType::kVirtualCardEnroll:
         add_page_action_icon(
@@ -270,6 +263,12 @@ void PageActionIconController::Init(const PageActionIconParams& params,
         zoom_icon_ = add_page_action_icon(
             type, std::make_unique<ZoomView>(params.icon_label_bubble_delegate,
                                              params.page_action_icon_delegate));
+        break;
+      case PageActionIconType::kLensOverlay:
+        add_page_action_icon(
+            type, std::make_unique<LensOverlayPageActionIconView>(
+                      params.browser, params.icon_label_bubble_delegate,
+                      params.page_action_icon_delegate));
         break;
     }
   }

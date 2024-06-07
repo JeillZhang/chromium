@@ -15,7 +15,6 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import org.chromium.base.ContextUtils;
-import org.chromium.base.lifetime.Destroyable;
 import org.chromium.base.supplier.LazyOneshotSupplier;
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.supplier.OneshotSupplier;
@@ -245,16 +244,6 @@ public class TabManagementDelegateImpl implements TabManagementDelegate {
                 () -> hubManagerSupplier.get().getPaneManager(),
                 tabGroupUiActionHandlerSupplier,
                 modalDialogManagerSupplier);
-    }
-
-    @Override
-    public Destroyable createTabGroupCreationDialogManager(
-            @NonNull Activity activity,
-            @NonNull ModalDialogManager modalDialogManager,
-            @NonNull TabModelSelector tabModelSelector,
-            @NonNull Runnable onDialogAccepted) {
-        return new TabGroupCreationDialogManager(
-                activity, modalDialogManager, tabModelSelector, onDialogAccepted);
     }
 
     @Override

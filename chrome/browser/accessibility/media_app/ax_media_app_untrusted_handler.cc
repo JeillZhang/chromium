@@ -17,6 +17,7 @@
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/memory/ptr_util.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/notimplemented.h"
 #include "base/notreached.h"
 #include "base/numerics/checked_math.h"
@@ -28,9 +29,12 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/common/pref_names.h"
+#include "components/prefs/pref_service.h"
 #include "components/strings/grit/components_strings.h"
 #include "content/public/browser/web_contents.h"
 #include "mojo/public/cpp/bindings/message.h"
+#include "services/screen_ai/public/mojom/screen_ai_service.mojom.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/accessibility/ax_action_data.h"
 #include "ui/accessibility/ax_action_handler_registry.h"
@@ -40,6 +44,7 @@
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/accessibility/ax_tree.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/display/screen.h"
 #include "ui/gfx/geometry/point_f.h"
 #include "ui/gfx/geometry/rect_f.h"
 #include "ui/gfx/geometry/transform.h"
@@ -74,16 +79,33 @@ constexpr size_t kMaxPagesPerBatch = 20u;
 
 AXMediaAppUntrustedHandler::AXMediaAppUntrustedHandler(
     content::BrowserContext& context,
+    gfx::NativeWindow native_window,
     mojo::PendingRemote<media_app_ui::mojom::OcrUntrustedPage> page)
-    : browser_context_(context), media_app_page_(std::move(page)) {
+    : browser_context_(context),
+      native_window_(native_window),
+      media_app_page_(std::move(page)) {
   if (!base::FeatureList::IsEnabled(ash::features::kMediaAppPdfA11yOcr)) {
     return;
   }
+  auto* profile =
+      Profile::FromBrowserContext(base::to_address(browser_context_));
   ocr_ = screen_ai::OpticalCharacterRecognizer::CreateWithStatusCallback(
-      Profile::FromBrowserContext(base::to_address(browser_context_)),
+      profile, screen_ai::mojom::OcrClientType::kMediaApp,
       base::BindOnce(&AXMediaAppUntrustedHandler::OnOCRServiceInitialized,
                      weak_ptr_factory_.GetWeakPtr()));
+
+  // Observe the screenreader (ChromeVox) setting.
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+  if (auto* accessibility_manager = ash::AccessibilityManager::Get()) {
+    // Unretained is safe because `this` owns the subscription.
+    accessibility_status_subscription_ =
+        accessibility_manager->RegisterCallback(base::BindRepeating(
+            &AXMediaAppUntrustedHandler::OnAshAccessibilityModeChanged,
+            base::Unretained(this)));
+  }
+#else   // BUILDFLAG(IS_CHROMEOS_LACROS)
   ax_mode_observation_.Observe(&ui::AXPlatform::GetInstance());
+#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 }
 
 AXMediaAppUntrustedHandler::~AXMediaAppUntrustedHandler() {
@@ -91,10 +113,27 @@ AXMediaAppUntrustedHandler::~AXMediaAppUntrustedHandler() {
     ui::AXActionHandlerRegistry::GetInstance()->RemoveAXTreeID(
         page.second->GetTreeID());
   }
+
+  if (!start_reading_time_.is_null() && !latest_reading_time_.is_null() &&
+      start_reading_time_ < latest_reading_time_) {
+    // Record time difference between `start_reading_time_` and
+    // `latest_reading_time_`. This is considered as active time.
+    base::TimeDelta active_time = latest_reading_time_ - start_reading_time_;
+    base::UmaHistogramLongTimes100("Accessibility.PdfOcr.MediaApp.ActiveTime",
+                                   active_time);
+  }
+}
+
+void AXMediaAppUntrustedHandler::SetPdfOcrEnabledState() {
+  if (IsAccessibilityEnabled() == pdf_ocr_enabled_) {
+    return;
+  }
+  pdf_ocr_enabled_ = !pdf_ocr_enabled_;
+  media_app_page_->SetPdfOcrEnabled(pdf_ocr_enabled_);
 }
 
 bool AXMediaAppUntrustedHandler::IsOcrServiceEnabled() const {
-  return ocr_->is_ready();
+  return ocr_ ? ocr_->is_ready() : false;
 }
 
 void AXMediaAppUntrustedHandler::OnOCRServiceInitialized(bool successful) {
@@ -109,7 +148,7 @@ void AXMediaAppUntrustedHandler::OnOCRServiceInitialized(bool successful) {
     CHECK_IS_TEST();
     media_app_->OcrServiceEnabledChanged(true);
   } else {
-    // TODO(b/301007305): Implement `OcrServiceEnabledChanged` in the Media App.
+    SetPdfOcrEnabledState();
   }
 }
 
@@ -118,12 +157,43 @@ bool AXMediaAppUntrustedHandler::IsAccessibilityEnabled() const {
          accessibility_state_utils::IsScreenReaderEnabled();
 }
 
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+void AXMediaAppUntrustedHandler::OnAshAccessibilityModeChanged(
+    const ash::AccessibilityStatusEventDetails& details) {
+  if (details.notification_type ==
+          ash::AccessibilityNotificationType::kToggleSpokenFeedback ||
+      details.notification_type ==
+          ash::AccessibilityNotificationType::kToggleSelectToSpeak) {
+    SetPdfOcrEnabledState();
+  }
+  if (media_app_) [[unlikely]] {
+    // `media_app_` is only used for testing.
+    CHECK_IS_TEST();
+    media_app_->AccessibilityEnabledChanged(
+        accessibility_state_utils::IsScreenReaderEnabled());
+  }
+}
+#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+
+#if BUILDFLAG(IS_CHROMEOS_LACROS)
+void AXMediaAppUntrustedHandler::OnAXModeAdded(ui::AXMode mode) {
+  if (media_app_) [[unlikely]] {
+    // `media_app_` is only used for testing.
+    CHECK_IS_TEST();
+    media_app_->AccessibilityEnabledChanged(
+        accessibility_state_utils::IsScreenReaderEnabled());
+    return;
+  }
+  SetPdfOcrEnabledState();
+}
+#endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
+
 void AXMediaAppUntrustedHandler::PerformAction(
     const ui::AXActionData& action_data) {
   if (!document_.GetRoot()) {
     return;
   }
-  CHECK(document_.ax_tree());
+  DCHECK(document_.ax_tree());
   switch (action_data.action) {
     case ax::mojom::Action::kBlur:
     case ax::mojom::Action::kClearAccessibilityFocus:
@@ -196,16 +266,28 @@ void AXMediaAppUntrustedHandler::PerformAction(
     }
     case ax::mojom::Action::kScrollToMakeVisible: {
       if (!media_app_) {
-        CHECK_NE(action_data.target_tree_id, ui::AXTreeIDUnknown());
+        DCHECK_NE(action_data.target_tree_id, ui::AXTreeIDUnknown());
       } else {
         // `media_app_` is only used for testing.
         CHECK_IS_TEST();
       }
-      CHECK_NE(action_data.target_node_id, ui::kInvalidAXNodeID);
-      CHECK_EQ(pages_.size(), document_.GetRoot()->GetUnignoredChildCount() -
-                                  (has_landmark_node_ ? 1u : 0u) -
-                                  (has_postamble_page_ ? 1u : 0u));
-      for (int32_t page_index = 0; const auto& page : pages_) {
+
+      // Records the time that the user starts navigating content and the most
+      // recent time that the user navigates it as well.
+      if (start_reading_time_.is_null()) {
+        start_reading_time_ = base::TimeTicks::Now();
+        latest_reading_time_ = start_reading_time_;
+      } else {
+        // Keep tracking of most recent time that the user navigates content.
+        latest_reading_time_ = base::TimeTicks::Now();
+      }
+
+      DCHECK_NE(action_data.target_node_id, ui::kInvalidAXNodeID);
+      // Some pages might not be in the document yet, because of page batching.
+      DCHECK_GE(pages_.size(), document_.GetRoot()->GetUnignoredChildCount() -
+                                   (has_landmark_node_ ? 1u : 0u) -
+                                   (has_postamble_page_ ? 1u : 0u));
+      for (const auto& page : pages_) {
         const std::unique_ptr<ui::AXTreeManager>& page_manager = page.second;
         if (page_manager->GetTreeID() != action_data.target_tree_id) {
           continue;
@@ -215,15 +297,25 @@ void AXMediaAppUntrustedHandler::PerformAction(
         if (!target_node) {
           break;
         }
-        CHECK(page_manager->ax_tree());
+        DCHECK(page_manager->ax_tree());
+        auto child_iter = target_node->UnignoredChildrenBegin();
+        for (; child_iter != target_node->UnignoredChildrenEnd();
+             ++child_iter) {
+          const std::optional<ui::AXTreeID> child_tree_id =
+              target_node->data().GetChildTreeID();
+          if (child_tree_id && *child_tree_id == action_data.target_tree_id) {
+            break;
+          }
+        }
+        size_t page_index =
+            std::distance(target_node->UnignoredChildrenBegin(), child_iter);
         // Passing an empty `RectF` for the node bounds will initialize it
         // automatically to `target_node->data().relative_bounds.bounds`.
         gfx::RectF global_bounds =
             page_manager->ax_tree()->RelativeToTreeBounds(
                 target_node, /*node_bounds=*/gfx::RectF());
         global_bounds.Offset(document_.GetRoot()
-                                 ->GetUnignoredChildAtIndex(
-                                     page_index + (has_landmark_node_ ? 1 : 0))
+                                 ->GetUnignoredChildAtIndex(page_index)
                                  ->data()
                                  .relative_bounds.bounds.OffsetFromOrigin());
         if (global_bounds.x() < viewport_box_.x()) {
@@ -281,18 +373,6 @@ void AXMediaAppUntrustedHandler::PerformAction(
   }
 }
 
-void AXMediaAppUntrustedHandler::OnAXModeAdded(ui::AXMode mode) {
-  if (media_app_) [[unlikely]] {
-    // `media_app_` is only used for testing.
-    CHECK_IS_TEST();
-    media_app_->AccessibilityEnabledChanged(
-        accessibility_state_utils::IsScreenReaderEnabled());
-  } else {
-    // TODO(b/301007305): Implement `AccessibilityEnabledChanged` in the Media
-    // App.
-  }
-}
-
 void AXMediaAppUntrustedHandler::PageMetadataUpdated(
     const std::vector<ash::media_app_ui::mojom::PageMetadataPtr>
         page_metadata) {
@@ -313,6 +393,7 @@ void AXMediaAppUntrustedHandler::PageMetadataUpdated(
   const bool is_first_load = page_metadata_.empty();
 
   if (is_first_load) {
+    base::UmaHistogramBoolean("Accessibility.PdfOcr.MediaApp.PdfLoaded", true);
     for (size_t i = 0; i < num_pages; ++i) {
       if (page_metadata_.contains(page_metadata.at(i)->id)) {
         mojo::ReportBadMessage(
@@ -342,14 +423,13 @@ void AXMediaAppUntrustedHandler::PageMetadataUpdated(
     page_metadata_.at(page_id).page_num = i + 1;  // 1-indexed.
     page_metadata_.at(page_id).rect = page_metadata.at(i)->rect;
     // Page location can only be set after the corresponding `pages_`
-    // `AXTreeManager` entry has been created, so don't update it for first
-    // load.
-    if (!is_first_load) {
-      page_id_updated.insert(page_id);
+    // `AXTreeManager` entry has been created.
+    if (pages_.contains(page_id)) {
       UpdatePageLocation(page_id, page_metadata.at(i)->rect);
       SendAXTreeToAccessibilityService(*pages_.at(page_id),
                                        *page_serializers_.at(page_id));
     }
+    page_id_updated.insert(page_id);
   }
 
   // If this is the "first load", there could be no deleted pages.
@@ -398,7 +478,7 @@ content::WebContents* AXMediaAppUntrustedHandler::GetMediaAppWebContents()
   }
   content::WebContents* web_contents =
       browser->tab_strip_model()->GetActiveWebContents();
-  CHECK(web_contents);
+  DCHECK(web_contents);
   return web_contents;
 }
 
@@ -416,7 +496,7 @@ AXMediaAppUntrustedHandler::GetMediaAppRenderFrameHost() const {
 }
 
 size_t AXMediaAppUntrustedHandler::ComputePagesPerBatch() const {
-  CHECK_LE(min_pages_per_batch_, kMaxPagesPerBatch);
+  DCHECK_LE(min_pages_per_batch_, kMaxPagesPerBatch);
   size_t page_count = page_metadata_.size();
   return std::clamp<size_t>(page_count * 0.1, min_pages_per_batch_,
                             kMaxPagesPerBatch);
@@ -554,7 +634,7 @@ std::vector<ui::AXNodeData> AXMediaAppUntrustedHandler::CreatePostamblePage()
 void AXMediaAppUntrustedHandler::SendAXTreeToAccessibilityService(
     const ui::AXTreeManager& manager,
     TreeSerializer& serializer) {
-  CHECK(manager.GetRoot());
+  DCHECK(manager.GetRoot());
   ui::AXTreeUpdate update;
   serializer.MarkSubtreeDirty(manager.GetRoot()->id());
   if (!serializer.SerializeChanges(manager.GetRoot(), &update)) {
@@ -570,7 +650,7 @@ void AXMediaAppUntrustedHandler::SendAXTreeToAccessibilityService(
   }
 #if defined(USE_AURA)
   auto* event_router = extensions::AutomationEventRouter::GetInstance();
-  CHECK(event_router);
+  DCHECK(event_router);
   const gfx::Point& mouse_location =
       aura::Env::GetInstance()->last_mouse_location();
   event_router->DispatchAccessibilityEvents(manager.GetTreeID(), {update},
@@ -585,7 +665,7 @@ void AXMediaAppUntrustedHandler::ViewportUpdated(const gfx::RectF& viewport_box,
   if (!document_.GetRoot()) {
     return;
   }
-  CHECK(document_.ax_tree());
+  DCHECK(document_.ax_tree());
   ui::AXNodeData document_root_data = document_.GetRoot()->data();
   document_root_data.AddIntAttribute(
       ax::mojom::IntAttribute::kScrollXMax,
@@ -617,9 +697,13 @@ void AXMediaAppUntrustedHandler::UpdatePageLocation(
   if (HasRendererTerminatedDueToBadPageId("UpdatePageLocation", page_id)) {
     return;
   }
-  CHECK(pages_.contains(page_id));
+  if (!pages_.contains(page_id)) {
+    DCHECK(page_metadata_.contains(page_id));
+    page_metadata_[page_id].rect = page_location;
+    return;
+  }
   ui::AXTree* tree = pages_.at(page_id)->ax_tree();
-  CHECK(tree->root());
+  DCHECK(tree->root());
   ui::AXNodeData root_data = tree->root()->data();
   root_data.relative_bounds.bounds = page_location;
   ui::AXTreeUpdate location_update;
@@ -673,7 +757,7 @@ void AXMediaAppUntrustedHandler::UpdateDocumentTree() {
   std::vector<ui::AXNodeData> status_nodes;
   if (has_landmark_node_) {
     status_nodes = CreateStatusNodesWithLandmark();
-    CHECK_GE(status_nodes.size(), 1u);
+    DCHECK_GE(status_nodes.size(), 1u);
     child_ids.at(0) = status_nodes.at(0).id;
   }
   std::iota(std::begin(child_ids) + (has_landmark_node_ ? 1u : 0u),
@@ -681,7 +765,7 @@ void AXMediaAppUntrustedHandler::UpdateDocumentTree() {
   std::vector<ui::AXNodeData> postamble_page_nodes;
   if (has_postamble_page_) {
     postamble_page_nodes = CreatePostamblePage();
-    CHECK_GE(postamble_page_nodes.size(), 1u);
+    DCHECK_GE(postamble_page_nodes.size(), 1u);
     child_ids.push_back(postamble_page_nodes.at(0).id);
   }
   document_root_data.child_ids.swap(child_ids);
@@ -778,7 +862,7 @@ void AXMediaAppUntrustedHandler::StitchDocumentTree() {
   }
   ui::AXActionData action_data;
   action_data.action = ax::mojom::Action::kStitchChildTree;
-  CHECK(document_.ax_tree());
+  DCHECK(document_.ax_tree());
   action_data.target_tree_id = document_.GetParentTreeID();
   action_data.target_role = ax::mojom::Role::kGraphicsDocument;
   action_data.child_tree_id = document_.GetTreeID();
@@ -913,8 +997,8 @@ void AXMediaAppUntrustedHandler::OnPageOcred(
       return;
     }
   }
-  CHECK_NE(pages_.at(dirty_page_id)->GetTreeID().type(),
-           ax::mojom::AXTreeIDType::kUnknown);
+  DCHECK_NE(pages_.at(dirty_page_id)->GetTreeID().type(),
+            ax::mojom::AXTreeIDType::kUnknown);
 
   // Update the page location again - running the page through OCR overwrites
   // the previous `AXTree` it was given and thus the page location it was
@@ -950,9 +1034,13 @@ AXMediaAppUntrustedHandler::MakeTransformFromOffsetAndScale() const {
   // `viewport_box_.origin()` represents the offset from which the viewport
   // starts, based on the origin of PDF content; e.g. if it's (-100, -10), it
   // indicates that PDF content starts at (100, 10) from the viewport's origin.
+  const float device_pixel_ratio = display::Screen::GetScreen()
+                                       ->GetDisplayNearestView(native_window_)
+                                       .device_scale_factor();
+  transform->Scale(device_pixel_ratio);
+  transform->Scale(scale_factor_);
   transform->Translate(-viewport_box_.origin().x(),
                        -viewport_box_.origin().y());
-  transform->Scale(scale_factor_, scale_factor_);
   return transform;
 }
 

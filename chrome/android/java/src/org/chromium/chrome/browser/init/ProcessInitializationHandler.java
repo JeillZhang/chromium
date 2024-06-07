@@ -426,11 +426,6 @@ public class ProcessInitializationHandler {
         SearchWidgetProvider.initialize();
         QuickActionSearchWidgetProvider.initialize();
 
-        HistoryDeletionBridge.getInstance()
-                .addObserver(
-                        new ContentCaptureHistoryDeletionObserver(
-                                () -> PlatformContentCaptureController.getInstance()));
-
         PrivacyPreferencesManagerImpl.getInstance().onNativeInitialized();
         setProcessStateSummaryForAnrs(true);
 
@@ -530,6 +525,11 @@ public class ProcessInitializationHandler {
     @CallSuper
     protected void handleProfileDependentPostNativeInitialization(Profile profile) {
         FeedPositionUtils.cacheSegmentationResult(profile);
+
+        HistoryDeletionBridge.getForProfile(profile)
+                .addObserver(
+                        new ContentCaptureHistoryDeletionObserver(
+                                () -> PlatformContentCaptureController.getInstance()));
     }
 
     /**
@@ -665,10 +665,7 @@ public class ProcessInitializationHandler {
         // Record the saved restore state in a histogram
         tasks.add(ChromeBackupAgentImpl::recordRestoreHistogram);
 
-        tasks.add(
-                () -> {
-                    RevenueStats.getInstance().retrieveAndApplyTrackingIds();
-                });
+        tasks.add(RevenueStats::getInstance);
 
         tasks.add(
                 () -> {
@@ -686,7 +683,6 @@ public class ProcessInitializationHandler {
                         ::makeDeferredRecordings);
         tasks.add(WebApkUninstallTracker::runDeferredTasks);
 
-        tasks.add(IncognitoTabLauncher::updateComponentEnabledState);
         tasks.add(OfflineContentAvailabilityStatusProvider::getInstance);
         tasks.add(() -> EnterpriseInfo.getInstance().logDeviceEnterpriseInfo());
         tasks.add(TosDialogBehaviorSharedPrefInvalidator::refreshSharedPreferenceIfTosSkipped);
@@ -712,6 +708,11 @@ public class ProcessInitializationHandler {
      */
     @CallSuper
     protected void addPerProfileStartupDeferredTasks(Profile profile, List<Runnable> tasks) {
+        // TODO(crbug.com/40254448): Determine how IncognitoTabLauncher should support multiple
+        // concurrent profiles. Currently, the enabled state will change based on the Profile
+        // initialization order.
+        tasks.add(() -> IncognitoTabLauncher.updateComponentEnabledState(profile));
+
         tasks.add(() -> SigninCheckerProvider.get(profile).onMainActivityStart());
 
         tasks.add(

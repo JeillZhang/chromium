@@ -131,6 +131,22 @@ class ReadAnythingAppModel {
   void set_requires_post_process_selection(bool value) {
     requires_post_process_selection_ = value;
   }
+  bool reset_draw_timer() { return reset_draw_timer_; }
+  void set_reset_draw_timer(bool value) { reset_draw_timer_ = value; }
+
+  const ui::AXNodeID& last_expanded_node_id() { return last_expanded_node_id_; }
+
+  void set_last_expanded_node_id(const ui::AXNodeID& node_id) {
+    last_expanded_node_id_ = node_id;
+  }
+
+  void reset_last_expanded_node_id() {
+    set_last_expanded_node_id(ui::kInvalidAXNodeID);
+  }
+
+  bool redraw_required() { return redraw_required_; }
+  void reset_redraw_required() { redraw_required_ = false; }
+
   const ui::AXNodeID& image_to_update_node_id() {
     return image_to_update_node_id_;
   }
@@ -383,10 +399,9 @@ class ReadAnythingAppModel {
   // node isn't in the current segment.
   int GetCurrentTextEndIndex(const ui::AXNodeID& node_id);
 
-  void IncrementMetric(const std::string& metric_name);
+  void ResetReadAloudState();
 
-  // Log speech count events.
-  void LogSpeechEventCounts();
+  void IncrementMetric(const std::string& metric_name);
 
  private:
   void EraseTree(const ui::AXTreeID& tree_id);
@@ -423,8 +438,6 @@ class ReadAnythingAppModel {
   // Uses the current AXNodePosition to return the next node that should be
   // spoken by Read Aloud.
   ui::AXNode* GetNodeFromCurrentPosition() const;
-
-  void ResetReadAloudState();
 
   bool IsTextForReadAnything(const ui::AXNodeID& ax_node_id) const;
 
@@ -477,6 +490,9 @@ class ReadAnythingAppModel {
   int GetNextGranularity(const std::u16string& text,
                          ax::mojom::TextBoundary boundary);
 
+  // We want to group superscripts with the utterance preceding it.
+  bool IsSuperscript(ui::AXNode* node);
+
   // State.
   std::map<ui::AXTreeID, std::unique_ptr<ReadAnythingAppModel::AXTreeInfo>>
       tree_infos_;
@@ -527,6 +543,12 @@ class ReadAnythingAppModel {
 
   // The current base language code used for fonts or reading aloud.
   std::string base_language_code_ = "en";
+  // The current language code used for fonts or reading aloud.
+  std::string language_code_ = "en-US";
+  std::map<ui::AXNodeID, std::string> aria_expanded_node_states_;
+
+  bool redraw_required_ = false;
+  ui::AXNodeID last_expanded_node_id_ = ui::kInvalidAXNodeID;
 
   // The default language code, used as a fallback in case base_language_code_
   // is invalid. It's not guaranteed that default_language_code_ will always
@@ -558,6 +580,7 @@ class ReadAnythingAppModel {
   int32_t start_offset_ = -1;
   int32_t end_offset_ = -1;
   bool requires_distillation_ = false;
+  bool reset_draw_timer_ = false;
   bool requires_post_process_selection_ = false;
   ui::AXNodeID image_to_update_node_id_ = ui::kInvalidAXNodeID;
   bool selection_from_action_ = false;
@@ -586,15 +609,6 @@ class ReadAnythingAppModel {
   // Previously processed granularities on the current page.
   std::vector<ReadAnythingAppModel::ReadAloudCurrentGranularity>
       processed_granularities_on_current_page_;
-
-  // Metrics for logging. Any metric that we want to track 0-counts of should
-  // be initialized here.
-  std::map<std::string, int64_t> metric_to_count_map_ = {
-      {"Accessibility.ReadAnything.ReadAloudNextButtonSessionCount", 0},
-      {"Accessibility.ReadAnything.ReadAloudPauseSessionCount", 0},
-      {"Accessibility.ReadAnything.ReadAloudPlaySessionCount", 0},
-      {"Accessibility.ReadAnything.ReadAloudPreviousButtonSessionCount", 0},
-  };
 };
 
 #endif  // CHROME_RENDERER_ACCESSIBILITY_READ_ANYTHING_APP_MODEL_H_

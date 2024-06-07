@@ -38,6 +38,7 @@ ManagedUserProfileNoticeUI::ManagedUserProfileNoticeUI(content::WebUI* web_ui)
       chrome::kChromeUIManagedUserProfileNoticeHost);
 
   static constexpr webui::ResourcePath kResources[] = {
+      {"icons.html.js", IDR_SIGNIN_ICONS_HTML_JS},
       {"legacy_managed_user_profile_notice_app.js",
        IDR_SIGNIN_MANAGED_USER_PROFILE_NOTICE_LEGACY_MANAGED_USER_PROFILE_NOTICE_APP_JS},
       {"legacy_managed_user_profile_notice_app.html.js",
@@ -124,9 +125,9 @@ void ManagedUserProfileNoticeUI::Initialize(
     update_data.Set("showLinkDataCheckbox", show_link_data_option);
   } else if (type == ManagedUserProfileNoticeUI::ScreenType::kEnterpriseOIDC) {
     update_data.Set("isModalDialog", true);
-    update_data.Set("enterpriseProfileWelcomeTitle",
-                    l10n_util::GetStringUTF16(
-                        IDS_ENTERPRISE_WELCOME_PROFILE_REQUIRED_TITLE));
+    update_data.Set(
+        "enterpriseProfileWelcomeTitle",
+        l10n_util::GetStringUTF16(IDS_ENTERPRISE_WELCOME_PROFILE_SETUP_TITLE));
 
     update_data.Set("showLinkDataCheckbox", false);
 #if !BUILDFLAG(IS_CHROMEOS)

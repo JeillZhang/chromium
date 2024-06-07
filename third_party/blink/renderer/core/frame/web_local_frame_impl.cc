@@ -98,6 +98,7 @@
 #include "base/numerics/safe_conversions.h"
 #include "base/task/single_thread_task_runner.h"
 #include "build/build_config.h"
+#include "cc/base/features.h"
 #include "mojo/public/cpp/bindings/pending_associated_receiver.h"
 #include "mojo/public/cpp/bindings/pending_associated_remote.h"
 #include "services/metrics/public/cpp/ukm_source_id.h"
@@ -443,15 +444,13 @@ class ChromePrintContext : public PrintContext {
 
     const LayoutView* layout_view = frame_view->GetLayoutView();
 
-    auto property_tree_state =
-        layout_view->FirstFragment().LocalBorderBoxProperties();
-
     PaintRecordBuilder builder(context);
 
     frame_view->PrintPage(builder.Context(), page_number, CullRect(page_rect));
 
+    auto property_tree_state =
+        layout_view->FirstFragment().LocalBorderBoxProperties();
     OutputLinkedDestinations(builder.Context(), property_tree_state, page_rect);
-
     context.DrawRecord(builder.EndRecording(property_tree_state.Unalias()));
   }
 
@@ -533,7 +532,7 @@ class ChromePluginPrintContext final : public ChromePrintContext {
 class PaintPreviewContext : public PrintContext {
  public:
   explicit PaintPreviewContext(LocalFrame* frame) : PrintContext(frame) {
-    use_printing_layout_ = false;
+    use_paginated_layout_ = false;
   }
   PaintPreviewContext(const PaintPreviewContext&) = delete;
   PaintPreviewContext& operator=(const PaintPreviewContext&) = delete;
@@ -560,8 +559,6 @@ class PaintPreviewContext : public PrintContext {
 
     LocalFrameView* frame_view = GetFrame()->View();
     DCHECK(frame_view);
-    auto property_tree_state =
-        frame_view->GetLayoutView()->FirstFragment().ContentsProperties();
 
     // This calls BeginRecording on |builder| with dimensions specified by the
     // CullRect.
@@ -571,6 +568,8 @@ class PaintPreviewContext : public PrintContext {
 
     frame_view->PaintOutsideOfLifecycle(builder.Context(), flags,
                                         CullRect(bounds));
+    PropertyTreeStateOrAlias property_tree_state =
+        frame_view->GetLayoutView()->FirstFragment().ContentsProperties();
     if (include_linked_destinations) {
       OutputLinkedDestinations(builder.Context(), property_tree_state, bounds);
     }
@@ -835,10 +834,6 @@ bool WebLocalFrameImpl::DispatchedPagehideAndStillHidden() const {
     return false;
   // We might have dispatched pagehide without unloading the document.
   return ViewImpl()->GetPage()->DispatchedPagehideAndStillHidden();
-}
-
-bool WebLocalFrameImpl::UsePrintingLayout() const {
-  return print_context_ ? print_context_->use_printing_layout() : false;
 }
 
 void WebLocalFrameImpl::CopyToFindPboard() {
@@ -2516,6 +2511,25 @@ WebViewImpl* WebLocalFrameImpl::ViewImpl() const {
   return GetFrame()->GetPage()->GetChromeClient().GetWebView();
 }
 
+void WebLocalFrameImpl::DidCommitLoad() {
+  // If the page is under prerendering, the page requests compositor warm-up
+  // to minimize its activation time. Please see crbug.com/41496019 for more
+  // details.
+  if (frame_widget_ && GetFrame()->IsOutermostMainFrame() &&
+      GetFrame()->GetPage() && GetFrame()->GetPage()->IsPrerendering() &&
+      base::FeatureList::IsEnabled(::features::kWarmUpCompositor) &&
+      base::FeatureList::IsEnabled(
+          blink::features::kPrerender2WarmUpCompositor) &&
+      blink::features::kPrerender2WarmUpCompositorTriggerPoint.Get() ==
+          blink::features::Prerender2WarmUpCompositorTriggerPoint::
+              kDidCommitLoad) {
+    // TODO(crbug.com/41496019): Limit the use of this warm-up to prerender
+    // trigger types that are most affected by this.
+    // TODO(crbug.com/41496019): Seek the best point to start warm-up.
+    frame_widget_->WarmUpCompositor();
+  }
+}
+
 void WebLocalFrameImpl::DidFailLoad(const ResourceError& error,
                                     WebHistoryCommitType web_commit_type) {
   if (WebPluginContainerImpl* plugin = GetFrame()->GetWebPluginContainer())
@@ -2529,6 +2543,26 @@ void WebLocalFrameImpl::DidFailLoad(const ResourceError& error,
 void WebLocalFrameImpl::DidFinish() {
   if (!Client())
     return;
+
+  if (base::FeatureList::IsEnabled(::features::kWarmUpCompositor) &&
+      base::FeatureList::IsEnabled(
+          blink::features::kPrerender2WarmUpCompositor) &&
+      blink::features::kPrerender2WarmUpCompositorTriggerPoint.Get() ==
+          blink::features::Prerender2WarmUpCompositorTriggerPoint::
+              kDidFinishLoad) {
+    // If the page is under prerendering, the page requests warm-up compositor
+    // to minimize its activation time. Please see crbug.com/41496019 for more
+    // details.
+    bool is_prerendering =
+        GetFrame()->GetPage() && GetFrame()->GetPage()->IsPrerendering();
+    // TODO(crbug.com/41496019): Seek the best point (instead of
+    // `WebLocalFrameImpl::DidFinish`) to start warm-up.
+    // TODO(crbug.com/41496019): Limit the use of this warm-up to prerender
+    // trigger types that are most affected by this.
+    if (frame_widget_ && is_prerendering) {
+      frame_widget_->WarmUpCompositor();
+    }
+  }
 
   if (WebPluginContainerImpl* plugin = GetFrame()->GetWebPluginContainer())
     plugin->DidFinishLoading();

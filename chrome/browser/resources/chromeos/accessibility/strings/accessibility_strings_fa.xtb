@@ -264,7 +264,6 @@
 <translation id="2783001728278437613">{COUNT,plural, =1{#+}one{#+}other{#+}}</translation>
 <translation id="2792200646155001340">همچنین می‌توانید با یک انگشت از راست به چپ بکشید تا به مورد قبلی بروید. امتحان کنید.</translation>
 <translation id="280499067616661124">‏«پیدا کردن در صفحه» ChromeVox</translation>
-<translation id="2811019999044652585">‏برای رفتن به قسمت‌های دیگر صفحه، مثل نوارهای ابزار یا سینی سیستم، روی Control+Forward فشار دهید. در Chromebook، کلید Forward دقیقاً‌ در بالای کلید عدد ۲ قرار دارد.</translation>
 <translation id="2811204574343810641">ردیف</translation>
 <translation id="2816868829355607410">قسمت تمرین: فرمان‌های پرش</translation>
 <translation id="2841013758207633010">زمان</translation>
@@ -880,6 +879,7 @@
 <translation id="7091296112653361280">کرم سیر</translation>
 <translation id="7095834689119144465">فقط ویرایش عددی نوشتار</translation>
 <translation id="7096001299300236431">رسانه قبلی</translation>
+<translation id="7096668131290451939">برای خروج از «حالت یادگیری»، دوباره کلید گریز را فشار دهید</translation>
 <translation id="7116595520562830928">multln</translation>
 <translation id="712735679809149106">بازگویی کلمه</translation>
 <translation id="7137397390322864165">حنایی روشن</translation>

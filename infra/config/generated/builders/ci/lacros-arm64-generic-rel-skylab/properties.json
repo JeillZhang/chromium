@@ -56,7 +56,8 @@
           "builder": "lacros-arm64-generic-rel-skylab",
           "group": "tryserver.chromium.chromiumos"
         }
-      ]
+      ],
+      "retry_failed_shards": true
     }
   },
   "$build/reclient": {
@@ -82,6 +83,9 @@
     ]
   },
   "builder_group": "chromium.chromiumos",
+  "gardener_rotations": [
+    "chromiumos"
+  ],
   "recipe": "chromium",
   "sheriff_rotations": [
     "chromiumos"

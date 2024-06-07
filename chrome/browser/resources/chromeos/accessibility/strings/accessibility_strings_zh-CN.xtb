@@ -264,7 +264,6 @@
 <translation id="2783001728278437613">{COUNT,plural, =1{+#}other{+#}}</translation>
 <translation id="2792200646155001340">您还可用 1 根手指从右向左滑动屏幕以移至上一项。现在就试试吧。</translation>
 <translation id="280499067616661124">ChromeVox 在网页中查找</translation>
-<translation id="2811019999044652585">要跳转到屏幕上的其他部分（例如工具栏或系统任务栏），请按 Ctrl + 前进键。在 Chromebook 上，前进键位于数字键 2 的正上方。</translation>
 <translation id="2811204574343810641">行</translation>
 <translation id="2816868829355607410">练习区：跳转命令</translation>
 <translation id="2841013758207633010">时间</translation>
@@ -880,6 +879,7 @@
 <translation id="7091296112653361280">那瓦霍白色</translation>
 <translation id="7095834689119144465">仅修改数字文本</translation>
 <translation id="7096001299300236431">上一个媒体内容</translation>
+<translation id="7096668131290451939">再次按 Esc 键即可退出学习模式</translation>
 <translation id="7116595520562830928">multln</translation>
 <translation id="712735679809149106">字词回显</translation>
 <translation id="7137397390322864165">橙红</translation>

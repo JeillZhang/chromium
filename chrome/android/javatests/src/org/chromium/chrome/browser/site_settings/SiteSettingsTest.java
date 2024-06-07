@@ -71,7 +71,6 @@ import org.mockito.MockitoAnnotations;
 
 import org.chromium.base.ContextUtils;
 import org.chromium.base.metrics.RecordHistogram;
-import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.DisableIf;
@@ -138,7 +137,6 @@ import org.chromium.components.policy.test.annotations.Policies;
 import org.chromium.components.prefs.PrefService;
 import org.chromium.components.user_prefs.UserPrefs;
 import org.chromium.content_public.browser.BrowserContextHandle;
-import org.chromium.content_public.browser.ContentFeatureList;
 import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.content_public.common.ContentSwitches;
 import org.chromium.device.geolocation.LocationProviderOverrider;
@@ -162,7 +160,7 @@ import java.util.concurrent.TimeoutException;
     ContentSwitches.HOST_RESOLVER_RULES + "=MAP * 127.0.0.1",
     "ignore-certificate-errors"
 })
-@Batch(SiteSettingsTest.SITE_SETTINGS_BATCH_NAME)
+// TODO(crbug.com/344672098): Failing when batched, batch this again.
 public class SiteSettingsTest {
     public static final String SITE_SETTINGS_BATCH_NAME = "site_settings";
 
@@ -1763,26 +1761,7 @@ public class SiteSettingsTest {
     @Test
     @SmallTest
     @Feature({"Preferences"})
-    @DisableFeatures(ContentFeatureList.REQUEST_DESKTOP_SITE_WINDOW_SETTING)
-    public void testOnlyExpectedPreferencesRequestDesktopSiteDomainSettings() {
-        testExpectedPreferences(
-                SiteSettingsCategory.Type.REQUEST_DESKTOP_SITE,
-                BINARY_TOGGLE_WITH_EXCEPTION,
-                BINARY_TOGGLE_WITH_EXCEPTION);
-        Assert.assertTrue(
-                "SharedPreference USER_ENABLED_DESKTOP_SITE_GLOBAL_SETTING_PREFERENCE_KEY should be"
-                        + " updated.",
-                ContextUtils.getAppSharedPreferences()
-                        .contains(
-                                SingleCategorySettingsConstants
-                                        .USER_ENABLED_DESKTOP_SITE_GLOBAL_SETTING_PREFERENCE_KEY));
-    }
-
-    @Test
-    @SmallTest
-    @Feature({"Preferences"})
-    @EnableFeatures(ContentFeatureList.REQUEST_DESKTOP_SITE_WINDOW_SETTING)
-    public void testOnlyExpectedPreferencesRequestDesktopSiteWindowSettings() {
+    public void testOnlyExpectedPreferencesRequestDesktopSite() {
         String[] rdsEnabled = {"binary_toggle", "desktop_site_window", "add_exception"};
         testExpectedPreferences(
                 SiteSettingsCategory.Type.REQUEST_DESKTOP_SITE,
@@ -2249,8 +2228,7 @@ public class SiteSettingsTest {
     @Test
     @SmallTest
     @Feature({"Preferences"})
-    @EnableFeatures("RequestDesktopSiteWindowSetting")
-    public void testAllowRequestDesktopSiteDomainSetting() {
+    public void testAllowRequestDesktopSite() {
         new TwoStatePermissionTestCase(
                         "RequestDesktopSite",
                         SiteSettingsCategory.Type.REQUEST_DESKTOP_SITE,
@@ -2264,7 +2242,7 @@ public class SiteSettingsTest {
     @Test
     @SmallTest
     @Feature({"Preferences"})
-    public void testBlockRequestDesktopSiteDomainSetting() {
+    public void testBlockRequestDesktopSite() {
         new TwoStatePermissionTestCase(
                         "RequestDesktopSite",
                         SiteSettingsCategory.Type.REQUEST_DESKTOP_SITE,
@@ -2581,7 +2559,6 @@ public class SiteSettingsTest {
     @Test
     @SmallTest
     @Feature({"Preferences"})
-    @EnableFeatures(ContentFeatureList.REQUEST_DESKTOP_SITE_WINDOW_SETTING)
     public void testDesktopSiteWindowSettings() {
         final SettingsActivity settingsActivity =
                 SiteSettingsTestUtils.startSiteSettingsCategory(

@@ -4,8 +4,6 @@
 
 package org.chromium.components.omnibox;
 
-import android.content.Context;
-
 import org.chromium.base.BaseSwitches;
 import org.chromium.base.CommandLine;
 import org.chromium.base.ResettersForTesting;
@@ -41,9 +39,6 @@ public class OmniboxFeatures {
     public static final CachedFlag sOmniboxAnswerActions =
             newFlag(OmniboxFeatureList.OMNIBOX_ANSWER_ACTIONS, false);
 
-    public static final CachedFlag sOmniboxModernizeVisualUpdate =
-            newFlag(OmniboxFeatureList.OMNIBOX_MODERNIZE_VISUAL_UPDATE, true);
-
     public static final CachedFlag sAnimateSuggestionsListAppearance =
             newFlag(OmniboxFeatureList.ANIMATE_SUGGESTIONS_LIST_APPEARANCE, false);
 
@@ -55,6 +50,9 @@ public class OmniboxFeatures {
 
     public static final CachedFlag sQueryTilesInZPSOnNTP =
             newFlag(OmniboxFeatureList.QUERY_TILES_IN_ZPS_ON_NTP, false);
+
+    public static final CachedFlag sRichInlineAutocomplete =
+            newFlag(OmniboxFeatureList.RICH_AUTOCOMPLETION, false);
 
     /**
      * Whether GeolocationHeader should use {@link
@@ -84,6 +82,15 @@ public class OmniboxFeatures {
                     sTouchDownTriggerForPrefetch,
                     "max_prefetches_per_omnibox_session",
                     DEFAULT_MAX_PREFETCHES_PER_OMNIBOX_SESSION);
+
+    public static final BooleanCachedFieldTrialParameter sRichInlineShowFullUrl =
+            newBooleanParam(sRichInlineAutocomplete, "rich_autocomplete_full_url", false);
+
+    public static final IntCachedFieldTrialParameter sRichInlineMinimumInputChars =
+            newIntParam(
+                    sRichInlineAutocomplete,
+                    "rich_autocomplete_minimum_characters",
+                    Integer.MAX_VALUE);
 
     /**
      * Create an instance of a CachedFeatureFlag.
@@ -141,14 +148,6 @@ public class OmniboxFeatures {
     /** Retrieve list of FieldTrialParams that should be cached. */
     public static List<CachedFieldTrialParameter> getFieldTrialParamsToCache() {
         return sCachedParams;
-    }
-
-    /**
-     * @param context The activity context.
-     * @return Whether the new modernize visual UI update should be shown.
-     */
-    public static boolean shouldShowModernizeVisualUpdate(Context context) {
-        return sOmniboxModernizeVisualUpdate.isEnabled();
     }
 
     /** Returns whether the toolbar and status bar color should be matched. */
@@ -227,5 +226,17 @@ public class OmniboxFeatures {
     public static void setIsLowMemoryDeviceForTesting(boolean isLowMemDevice) {
         sIsLowMemoryDevice = isLowMemDevice;
         ResettersForTesting.register(() -> sIsLowMemoryDevice = null);
+    }
+
+    /**
+     * Returns whether the rich inline autocomplete URL should be shown.
+     *
+     * @param inputCount the count of characters user input.
+     * @return Whether the rich inline autocomplete URL should be shown.
+     */
+    public static boolean shouldShowRichInlineAutocompleteUrl(int inputCount) {
+        return sRichInlineAutocomplete.isEnabled()
+                && sRichInlineShowFullUrl.getValue()
+                && inputCount >= sRichInlineMinimumInputChars.getValue();
     }
 }

@@ -16,6 +16,7 @@
 #include "chrome/browser/enterprise/data_controls/reporting_service.h"
 #include "chrome/browser/enterprise/data_protection/paste_allowed_request.h"
 #include "components/enterprise/common/files_scan_data.h"
+#include "components/enterprise/connectors/connectors_prefs.h"
 #include "components/enterprise/content/clipboard_restriction_service.h"
 #include "components/enterprise/data_controls/prefs.h"
 #include "components/policy/core/common/policy_types.h"
@@ -187,6 +188,7 @@ bool SkipDataControlOrContentAnalysisChecks(
 
 void PasteIfAllowedByContentAnalysis(
     content::WebContents* web_contents,
+    const content::ClipboardEndpoint& source,
     const content::ClipboardEndpoint& destination,
     const content::ClipboardMetadata& metadata,
     content::ClipboardPasteData clipboard_paste_data,
@@ -216,6 +218,10 @@ void PasteIfAllowedByContentAnalysis(
 
   dialog_data.reason =
       enterprise_connectors::ContentAnalysisRequest::CLIPBOARD_PASTE;
+  dialog_data.clipboard_source =
+      data_controls::ReportingService::GetClipboardSourceString(
+          source, destination,
+          enterprise_connectors::kOnBulkDataEntryScopePref);
 
   if (is_files) {
     dialog_data.paths = std::move(clipboard_paste_data.file_paths);
@@ -250,6 +256,27 @@ void MaybeReportDataControlsPaste(const content::ClipboardEndpoint& source,
   }
 }
 
+void MaybeReportDataControlsCopy(const content::ClipboardEndpoint& source,
+                                 const content::ClipboardMetadata& metadata,
+                                 const data_controls::Verdict& verdict,
+                                 bool bypassed = false) {
+  auto* reporting_service =
+      data_controls::ReportingServiceFactory::GetForBrowserContext(
+          source.browser_context());
+
+  // `reporting_service` can be null for incognito browser contexts, so since
+  // there's no reporting in that case we just return early.
+  if (!reporting_service) {
+    return;
+  }
+
+  if (bypassed) {
+    reporting_service->ReportCopyWarningBypassed(source, metadata, verdict);
+  } else {
+    reporting_service->ReportCopy(source, metadata, verdict);
+  }
+}
+
 void OnDataControlsPasteWarning(
     const content::ClipboardEndpoint& source,
     const content::ClipboardEndpoint& destination,
@@ -268,9 +295,9 @@ void OnDataControlsPasteWarning(
                                  /*bypassed=*/true);
   }
 
-  PasteIfAllowedByContentAnalysis(destination.web_contents(), destination,
-                                  metadata, std::move(clipboard_paste_data),
-                                  std::move(callback));
+  PasteIfAllowedByContentAnalysis(
+      destination.web_contents(), source, destination, metadata,
+      std::move(clipboard_paste_data), std::move(callback));
 }
 
 void PasteIfAllowedByDataControls(
@@ -323,9 +350,9 @@ void PasteIfAllowedByDataControls(
     clipboard_paste_data = GetLastReplacedClipboardData().clipboard_paste_data;
   }
 
-  PasteIfAllowedByContentAnalysis(destination.web_contents(), destination,
-                                  metadata, std::move(clipboard_paste_data),
-                                  std::move(callback));
+  PasteIfAllowedByContentAnalysis(
+      destination.web_contents(), source, destination, metadata,
+      std::move(clipboard_paste_data), std::move(callback));
 }
 
 void OnDlpRulesCheckDone(
@@ -383,10 +410,11 @@ void OnDataControlsCopyWarning(
     const content::ClipboardEndpoint& source,
     const content::ClipboardMetadata& metadata,
     const content::ClipboardPasteData& data,
+    data_controls::Verdict verdict,
     content::ContentBrowserClient::IsClipboardCopyAllowedCallback callback,
     bool bypassed) {
   if (bypassed) {
-    // TODO(b/303640183): Add bypass reporting logic.
+    MaybeReportDataControlsCopy(source, metadata, verdict, /*bypassed=*/true);
     IsCopyToOSClipboardRestricted(source, metadata, data, std::move(callback));
     return;
   }
@@ -408,9 +436,8 @@ void IsCopyRestrictedByDialog(
           ->GetCopyRestrictedBySourceVerdict(
               *source.data_transfer_endpoint()->GetURL());
 
-  // TODO(b/302340176): Add support for verdicts other than "block".
-  // TODO(b/303640183): Add reporting logic.
   if (source_only_verdict.level() == data_controls::Rule::Level::kBlock) {
+    MaybeReportDataControlsCopy(source, metadata, source_only_verdict);
     data_controls::DataControlsDialog::Show(
         source.web_contents(),
         data_controls::DataControlsDialog::Type::kClipboardCopyBlock);
@@ -427,12 +454,19 @@ void IsCopyRestrictedByDialog(
 
   if (source_only_verdict.level() == data_controls::Rule::Level::kWarn ||
       os_clipboard_verdict.level() == data_controls::Rule::Level::kWarn) {
+    auto verdict = data_controls::Verdict::MergeCopyWarningVerdicts(
+        std::move(source_only_verdict), std::move(os_clipboard_verdict));
+    MaybeReportDataControlsCopy(source, metadata, verdict);
     data_controls::DataControlsDialog::Show(
         source.web_contents(),
         data_controls::DataControlsDialog::Type::kClipboardCopyWarn,
         base::BindOnce(&OnDataControlsCopyWarning, source, metadata, data,
-                       std::move(callback)));
+                       std::move(verdict), std::move(callback)));
     return;
+  }
+
+  if (source_only_verdict.level() == data_controls::Rule::Level::kReport) {
+    MaybeReportDataControlsCopy(source, metadata, source_only_verdict);
   }
 
   IsCopyToOSClipboardRestricted(source, metadata, data, std::move(callback));

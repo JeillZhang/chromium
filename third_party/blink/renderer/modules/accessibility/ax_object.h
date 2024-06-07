@@ -510,6 +510,15 @@ class MODULES_EXPORT AXObject : public GarbageCollected<AXObject> {
   bool IsIgnored();
 
   // Whether an ignored object should still be included in the serialized tree.
+  // Reasons for doing this:
+  // - An object is in a hidden subtree that will be recursive name computation,
+  // which traverses the AXObject hierarchy.
+  // - Internal bookkeeping reasons, e.g. keeping children that cannot be
+  // reached via NodeTraversal, as LayoutTreeBuilderTraversal is not always
+  // safe.
+  // - Line breaking objects and objects with an associated language, which
+  // although not exposed via a11y APIs, are useful in browser-side property
+  // computations for nodes that are exposed.
   bool IsIgnoredButIncludedInTree() const;
   bool IsIgnoredButIncludedInTree();
 
@@ -533,6 +542,7 @@ class MODULES_EXPORT AXObject : public GarbageCollected<AXObject> {
   bool ShouldIgnoreForHiddenOrInert(IgnoredReasons* = nullptr) const;
   bool IsInert() const { return cached_is_inert_; }
   bool IsInert();
+  bool IsAriaHiddenRoot() const;
   bool IsAriaHidden() const { return cached_is_aria_hidden_; }
   bool IsAriaHidden();
   const AXObject* AriaHiddenRoot() const;
@@ -1279,7 +1289,8 @@ class MODULES_EXPORT AXObject : public GarbageCollected<AXObject> {
   AXObject* ParentObjectUnignored() const;
 
   // Get or create the first ancestor that's not accessibility ignored and also
-  // not a generic container. Works for all nodes.
+  // does not have a role of kGenericContainer nor kNone. Works for all nodes.
+  // Used to check for required context for certain roles.
   AXObject* ParentObjectUnignoredNonGeneric() const;
 
   // Get or create the first ancestor that's included in the accessibility tree.
@@ -1541,6 +1552,7 @@ class MODULES_EXPORT AXObject : public GarbageCollected<AXObject> {
   void SerializeColorAttributes(ui::AXNodeData* node_data) const;
   void SerializeElementAttributes(ui::AXNodeData* node_data) const;
   void SerializeHTMLTagAndClass(ui::AXNodeData* node_data) const;
+  void SerializeHTMLId(ui::AXNodeData* node_data) const;
   void SerializeHTMLAttributes(ui::AXNodeData* node_data) const;
   void SerializeInlineTextBoxAttributes(ui::AXNodeData* node_data) const;
   void SerializeLangAttribute(ui::AXNodeData* node_data) const;
@@ -1599,7 +1611,7 @@ class MODULES_EXPORT AXObject : public GarbageCollected<AXObject> {
   bool cached_can_set_focus_attribute_ : 1 = false;
 
   Member<AXObject> cached_live_region_root_;
-  gfx::RectF cached_local_bounding_box_rect_for_accessibility_;
+  gfx::RectF cached_local_bounding_box_;
 
   Member<AXObjectCacheImpl> ax_object_cache_;
 

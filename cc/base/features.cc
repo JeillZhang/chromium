@@ -4,6 +4,8 @@
 
 #include "cc/base/features.h"
 
+#include <string>
+
 #include "base/feature_list.h"
 #include "build/build_config.h"
 #include "ui/base/ui_base_features.h"
@@ -75,10 +77,6 @@ BASE_FEATURE(kNonBlockingCommit,
 BASE_FEATURE(kNoPreserveLastMutation,
              "NoPreserveLastMutation",
              base::FEATURE_ENABLED_BY_DEFAULT);
-
-BASE_FEATURE(kSlidingWindowForDroppedFrameCounter,
-             "SlidingWindowForDroppedFrameCounter",
-             base::FEATURE_DISABLED_BY_DEFAULT);
 
 BASE_FEATURE(kNormalPriorityImageDecoding,
              "NormalPriorityImageDecoding",
@@ -210,5 +208,22 @@ BASE_FEATURE(kNonBatchedCopySharedImage,
 BASE_FEATURE(kDontAlwaysPushPictureLayerImpls,
              "DontAlwaysPushPictureLayerImpls",
              base::FEATURE_DISABLED_BY_DEFAULT);
+
+BASE_FEATURE(kWarmUpCompositor,
+             "WarmUpCompositor",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+const base::FeatureParam<std::string> kScrollEventDispatchMode(
+    &kWaitForLateScrollEvents,
+    "mode",
+    "EnqueueScrollEvents");
+constexpr const char kScrollEventDispatchModeDispatchScrollEventsImmediately[] =
+    "DispatchScrollEventsImmediately";
+constexpr const char kScrollEventDispatchModeUseScrollPredictorForEmptyQueue[] =
+    "UseScrollPredictorForEmptyQueue";
+constexpr const char kScrollEventDispatchModeUseScrollPredictorForDeadline[] =
+    "UseScrollPredictorForDeadline";
+
+BASE_FEATURE(kVizLayers, "VizLayers", base::FEATURE_DISABLED_BY_DEFAULT);
 
 }  // namespace features

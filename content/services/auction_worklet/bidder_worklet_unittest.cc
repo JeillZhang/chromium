@@ -29,6 +29,7 @@
 #include "content/common/features.h"
 #include "content/public/common/content_features.h"
 #include "content/services/auction_worklet/auction_v8_helper.h"
+#include "content/services/auction_worklet/public/cpp/real_time_reporting.h"
 #include "content/services/auction_worklet/public/mojom/auction_worklet_service.mojom.h"
 #include "content/services/auction_worklet/public/mojom/bidder_worklet.mojom-forward.h"
 #include "content/services/auction_worklet/public/mojom/private_aggregation_request.mojom.h"
@@ -666,10 +667,9 @@ class BidderWorkletTest : public testing::Test {
   // Creates a BidderWorkletNonSharedParams based on test fixture
   // configuration.
   mojom::BidderWorkletNonSharedParamsPtr CreateBidderWorkletNonSharedParams() {
-    std::vector<std::pair<auction_worklet::mojom::KAnonKeyPtr, bool>>
-        kanon_keys;
+    std::vector<auction_worklet::mojom::KAnonKeyPtr> kanon_keys;
     for (const auto& key : kanon_keys_) {
-      kanon_keys.emplace_back(key.first.Clone(), key.second);
+      kanon_keys.emplace_back(key.Clone());
     }
     return mojom::BidderWorkletNonSharedParams::New(
         interest_group_name_,
@@ -948,7 +948,7 @@ class BidderWorkletTest : public testing::Test {
   std::vector<blink::InterestGroup::Ad> interest_group_ads_;
   std::optional<std::vector<blink::InterestGroup::Ad>>
       interest_group_ad_components_;
-  base::flat_map<auction_worklet::mojom::KAnonKeyPtr, bool> kanon_keys_;
+  base::flat_set<auction_worklet::mojom::KAnonKeyPtr> kanon_keys_;
   auction_worklet::mojom::KAnonymityBidMode kanon_mode_ =
       auction_worklet::mojom::KAnonymityBidMode::kNone;
   bool bid_is_kanon_;
@@ -3049,8 +3049,7 @@ TEST_F(BidderWorkletMultiBidTest, TargetNumAdComponentsKAnon) {
   kanon_keys_.emplace(
       auction_worklet::mojom::KAnonKey::New(blink::HashedKAnonKeyForAdBid(
           url::Origin::Create(interest_group_bidding_url_),
-          interest_group_bidding_url_, "https://response.test/")),
-      true);
+          interest_group_bidding_url_, "https://response.test/")));
   RunGenerateBidWithReturnValueExpectingResult(
       kBid, non_k_anon_bid->Clone(),
       /*expected_data_version=*/std::nullopt,
@@ -3062,13 +3061,11 @@ TEST_F(BidderWorkletMultiBidTest, TargetNumAdComponentsKAnon) {
   // Authorizing ad components 2 and 4, they should be used for k-anon bid but
   // there should still be the non-k-anon bid.
   kanon_keys_.emplace(auction_worklet::mojom::KAnonKey::New(
-                          blink::HashedKAnonKeyForAdComponentBid(
-                              GURL("https://ad_component2.test/"))),
-                      true);
+      blink::HashedKAnonKeyForAdComponentBid(
+          GURL("https://ad_component2.test/"))));
   kanon_keys_.emplace(auction_worklet::mojom::KAnonKey::New(
-                          blink::HashedKAnonKeyForAdComponentBid(
-                              GURL("https://ad_component4.test/"))),
-                      true);
+      blink::HashedKAnonKeyForAdComponentBid(
+          GURL("https://ad_component4.test/"))));
 
   {
     std::vector<mojom::BidderWorkletBidPtr> expected;
@@ -3088,9 +3085,8 @@ TEST_F(BidderWorkletMultiBidTest, TargetNumAdComponentsKAnon) {
 
   // Authorizing 1 as well makes the bid suitable for both auctions.
   kanon_keys_.emplace(auction_worklet::mojom::KAnonKey::New(
-                          blink::HashedKAnonKeyForAdComponentBid(
-                              GURL("https://ad_component.test/"))),
-                      true);
+      blink::HashedKAnonKeyForAdComponentBid(
+          GURL("https://ad_component.test/"))));
   RunGenerateBidWithReturnValueExpectingResult(
       kBid, mojom::BidderWorkletBid::New(
                 auction_worklet::mojom::BidRole::kBothKAnonModes, "\"ad\"", 5,
@@ -3156,8 +3152,7 @@ TEST_F(BidderWorkletMultiBidTest, TargetAndMandatoryAdComponentsKAnon) {
   kanon_keys_.emplace(
       auction_worklet::mojom::KAnonKey::New(blink::HashedKAnonKeyForAdBid(
           url::Origin::Create(interest_group_bidding_url_),
-          interest_group_bidding_url_, "https://response.test/")),
-      true);
+          interest_group_bidding_url_, "https://response.test/")));
   RunGenerateBidWithReturnValueExpectingResult(
       kBid, non_k_anon_bid->Clone(),
       /*expected_data_version=*/std::nullopt,
@@ -3169,13 +3164,11 @@ TEST_F(BidderWorkletMultiBidTest, TargetAndMandatoryAdComponentsKAnon) {
   // Authorizing ad components 3 and 4 isn't enough since absence of 1 prevents
   // it from being accepted.
   kanon_keys_.emplace(auction_worklet::mojom::KAnonKey::New(
-                          blink::HashedKAnonKeyForAdComponentBid(
-                              GURL("https://ad_component3.test/"))),
-                      true);
+      blink::HashedKAnonKeyForAdComponentBid(
+          GURL("https://ad_component3.test/"))));
   kanon_keys_.emplace(auction_worklet::mojom::KAnonKey::New(
-                          blink::HashedKAnonKeyForAdComponentBid(
-                              GURL("https://ad_component4.test/"))),
-                      true);
+      blink::HashedKAnonKeyForAdComponentBid(
+          GURL("https://ad_component4.test/"))));
   RunGenerateBidWithReturnValueExpectingResult(
       kBid, non_k_anon_bid->Clone(),
       /*expected_data_version=*/std::nullopt,
@@ -3186,9 +3179,8 @@ TEST_F(BidderWorkletMultiBidTest, TargetAndMandatoryAdComponentsKAnon) {
 
   // Now authorize 1 as well. Should get 1 and 3 as k-anon bid.
   kanon_keys_.emplace(auction_worklet::mojom::KAnonKey::New(
-                          blink::HashedKAnonKeyForAdComponentBid(
-                              GURL("https://ad_component.test/"))),
-                      true);
+      blink::HashedKAnonKeyForAdComponentBid(
+          GURL("https://ad_component.test/"))));
   {
     std::vector<mojom::BidderWorkletBidPtr> expected;
     expected.push_back(mojom::BidderWorkletBid::New(
@@ -3207,9 +3199,8 @@ TEST_F(BidderWorkletMultiBidTest, TargetAndMandatoryAdComponentsKAnon) {
 
   // Authorizing 2 as well makes the bid suitable for both auctions.
   kanon_keys_.emplace(auction_worklet::mojom::KAnonKey::New(
-                          blink::HashedKAnonKeyForAdComponentBid(
-                              GURL("https://ad_component2.test/"))),
-                      true);
+      blink::HashedKAnonKeyForAdComponentBid(
+          GURL("https://ad_component2.test/"))));
   RunGenerateBidWithReturnValueExpectingResult(
       kBid, mojom::BidderWorkletBid::New(
                 auction_worklet::mojom::BidRole::kBothKAnonModes, "\"ad\"", 5,
@@ -10473,8 +10464,7 @@ TEST_F(BidderWorkletTest, KAnonSimulate) {
   kanon_keys_.emplace(
       auction_worklet::mojom::KAnonKey::New(blink::HashedKAnonKeyForAdBid(
           url::Origin::Create(interest_group_bidding_url_),
-          interest_group_bidding_url_, "https://response.test/")),
-      true);
+          interest_group_bidding_url_, "https://response.test/")));
   RunGenerateBidWithJavascriptExpectingResult(
       CreateGenerateBidScript(
           R"({ad: ["ad"], bid:1, render:"https://response.test/"})",
@@ -10531,8 +10521,7 @@ TEST_F(BidderWorkletTest, KAnonSimulate) {
   kanon_keys_.emplace(
       auction_worklet::mojom::KAnonKey::New(blink::HashedKAnonKeyForAdBid(
           url::Origin::Create(interest_group_bidding_url_),
-          interest_group_bidding_url_, "https://response2.test/")),
-      true);
+          interest_group_bidding_url_, "https://response2.test/")));
   RunGenerateBidWithJavascriptExpectingResult(
       CreateGenerateBidScript(
           R"({ad: ["ad"], bid:interestGroup.ads.length,
@@ -10588,8 +10577,7 @@ TEST_F(BidderWorkletTest, KAnonEnforce) {
   kanon_keys_.emplace(
       auction_worklet::mojom::KAnonKey::New(blink::HashedKAnonKeyForAdBid(
           url::Origin::Create(interest_group_bidding_url_),
-          interest_group_bidding_url_, "https://response.test/")),
-      true);
+          interest_group_bidding_url_, "https://response.test/")));
   RunGenerateBidWithJavascriptExpectingResult(
       CreateGenerateBidScript(
           R"({ad: ["ad"], bid:1, render:"https://response.test/"})",
@@ -10646,8 +10634,7 @@ TEST_F(BidderWorkletTest, KAnonEnforce) {
   kanon_keys_.emplace(
       auction_worklet::mojom::KAnonKey::New(blink::HashedKAnonKeyForAdBid(
           url::Origin::Create(interest_group_bidding_url_),
-          interest_group_bidding_url_, "https://response2.test/")),
-      true);
+          interest_group_bidding_url_, "https://response2.test/")));
   RunGenerateBidWithJavascriptExpectingResult(
       CreateGenerateBidScript(
           R"({ad: ["ad"], bid:interestGroup.ads.length,
@@ -10719,8 +10706,7 @@ TEST_F(BidderWorkletMultiBidTest, KAnonClassify) {
   kanon_keys_.emplace(
       auction_worklet::mojom::KAnonKey::New(blink::HashedKAnonKeyForAdBid(
           url::Origin::Create(interest_group_bidding_url_),
-          interest_group_bidding_url_, "https://response2.test/")),
-      true);
+          interest_group_bidding_url_, "https://response2.test/")));
   {
     std::vector<mojom::BidderWorkletBidPtr> expected;
     expected.push_back(bid1.Clone());
@@ -10755,8 +10741,7 @@ TEST_F(BidderWorkletMultiBidTest, KAnonRerun) {
   kanon_keys_.emplace(
       auction_worklet::mojom::KAnonKey::New(blink::HashedKAnonKeyForAdBid(
           url::Origin::Create(interest_group_bidding_url_),
-          interest_group_bidding_url_, "https://response4.test/")),
-      true);
+          interest_group_bidding_url_, "https://response4.test/")));
 
   const char kScript[] = R"(
     function generateBid(interestGroup, auctionSignals, perBuyerSignals,
@@ -10829,8 +10814,7 @@ TEST_F(BidderWorkletTest, KAnonRerun) {
   kanon_keys_.emplace(
       auction_worklet::mojom::KAnonKey::New(blink::HashedKAnonKeyForAdBid(
           url::Origin::Create(interest_group_bidding_url_),
-          interest_group_bidding_url_, "https://response.test/")),
-      true);
+          interest_group_bidding_url_, "https://response.test/")));
 
   for (auto execution_mode :
        {blink::mojom::InterestGroup::ExecutionMode::kCompatibilityMode,
@@ -10873,12 +10857,10 @@ TEST_F(BidderWorkletTest, IsKAnonURL) {
   const std::string kUrl4KAnonKey = blink::HashedKAnonKeyForAdBid(
       owner, interest_group_bidding_url_, kUrl4.spec());
 
-  params->kanon_keys.emplace(
-      auction_worklet::mojom::KAnonKey::New(kUrl1KAnonKey), true);
-  params->kanon_keys.emplace(
-      auction_worklet::mojom::KAnonKey::New(kUrl2KAnonKey), true);
-  params->kanon_keys.emplace(
-      auction_worklet::mojom::KAnonKey::New(kUrl3KAnonKey), false);
+  params->kanon_keys.emplace_back(
+      auction_worklet::mojom::KAnonKey::New(kUrl1KAnonKey));
+  params->kanon_keys.emplace_back(
+      auction_worklet::mojom::KAnonKey::New(kUrl2KAnonKey));
 
   EXPECT_TRUE(BidderWorklet::IsKAnon(params.get(), kUrl1KAnonKey));
   EXPECT_TRUE(BidderWorklet::IsKAnon(params.get(), kUrl2KAnonKey));
@@ -10894,16 +10876,11 @@ TEST_F(BidderWorkletTest, IsKAnonResult) {
   mojom::BidderWorkletNonSharedParamsPtr params =
       mojom::BidderWorkletNonSharedParams::New();
   url::Origin owner = url::Origin::Create(interest_group_bidding_url_);
-  params->kanon_keys.emplace(
+  params->kanon_keys.emplace_back(
       auction_worklet::mojom::KAnonKey::New(blink::HashedKAnonKeyForAdBid(
-          owner, interest_group_bidding_url_, kUrl1.spec())),
-      true);
-  params->kanon_keys.emplace(auction_worklet::mojom::KAnonKey::New(
-                                 blink::HashedKAnonKeyForAdComponentBid(kUrl2)),
-                             true);
-  params->kanon_keys.emplace(auction_worklet::mojom::KAnonKey::New(
-                                 blink::HashedKAnonKeyForAdComponentBid(kUrl3)),
-                             false);
+          owner, interest_group_bidding_url_, kUrl1.spec())));
+  params->kanon_keys.emplace_back(auction_worklet::mojom::KAnonKey::New(
+      blink::HashedKAnonKeyForAdComponentBid(kUrl2)));
 
   mojom::BidderWorkletBidPtr bid = mojom::BidderWorkletBid::New();
 
@@ -12113,7 +12090,7 @@ TEST_F(BidderWorkletRealTimeReportingEnabledTest, RealTimeReporting) {
   // takes 0ms to run some times, which is not higher than the smallest allowed
   // latency threshold (0ms), in which case the contribution will be dropped.
   constexpr char kExtraCode[] = R"(
-realTimeReporting.contributeToRealTimeHistogram(100, {priorityWeight: 0.5})
+realTimeReporting.contributeToHistogram({bucket: 100, priorityWeight: 0.5})
 )";
 
   RealTimeReportingContributions expected_real_time_contributions;
@@ -12144,7 +12121,7 @@ TEST_F(BidderWorkletRealTimeReportingEnabledTest, NoBid) {
       /*latency_threshold=*/std::nullopt);
 
   constexpr char kExtraCode[] = R"(
-realTimeReporting.contributeToRealTimeHistogram(100, {priorityWeight: 0.5});
+realTimeReporting.contributeToHistogram({bucket: 100, priorityWeight: 0.5});
 )";
 
   RealTimeReportingContributions expected_real_time_contributions;
@@ -12176,9 +12153,9 @@ TEST_F(BidderWorkletRealTimeReportingEnabledTest, ScriptTimeout) {
       expected_latency_histogram(
           /*bucket=*/200, /*priority_weight=*/2, /*latency_threshold=*/1);
   constexpr char kExtraCode[] = R"(
-realTimeReporting.contributeToRealTimeHistogram(100, {priorityWeight: 0.5});
-realTimeReporting.contributeOnWorkletLatency(
-    200, {priorityWeight: 2, latencyThreshold: 1});
+realTimeReporting.contributeToHistogram({bucket: 100, priorityWeight: 0.5});
+realTimeReporting.contributeToHistogram(
+    {bucket: 200, priorityWeight: 2, latencyThreshold: 1});
 while (1);
 )";
 
@@ -12201,7 +12178,7 @@ while (1);
       std::move(expected_real_time_contributions));
 }
 
-// contributeOnWorkletLatency's is dropped when the script's latency does not
+// contributeToHistogram's is dropped when the script's latency does not
 // exceed the threshold.
 TEST_F(BidderWorkletRealTimeReportingEnabledTest,
        NotExceedingLatencyThreshold) {
@@ -12209,13 +12186,13 @@ TEST_F(BidderWorkletRealTimeReportingEnabledTest,
       /*bucket=*/100, /*priority_weight=*/0.5,
       /*latency_threshold=*/std::nullopt);
   constexpr char kExtraCode[] = R"(
-realTimeReporting.contributeToRealTimeHistogram(100, {priorityWeight: 0.5});
-realTimeReporting.contributeOnWorkletLatency(
-    200, {priorityWeight: 2, latencyThreshold: 10000000})
+realTimeReporting.contributeToHistogram({bucket: 100, priorityWeight: 0.5});
+realTimeReporting.contributeToHistogram(
+    {bucket: 200, priorityWeight: 2, latencyThreshold: 10000000})
 )";
 
-  // Only contributeToRealTimeHistogram's contribution is kept.
-  // contributeOnWorkletLatency's is filtered out since the script's latency
+  // Only contributeToHistogram's contribution is kept.
+  // contributeToHistogram's is filtered out since the script's latency
   // didn't exceed the threshold.
   RealTimeReportingContributions expected_real_time_contributions;
   expected_real_time_contributions.push_back(expected_histogram.Clone());
@@ -12231,6 +12208,128 @@ realTimeReporting.contributeOnWorkletLatency(
           /*modeling_signals=*/std::nullopt, base::TimeDelta()),
       /*expected_data_version=*/std::nullopt,
       /*expected_errors=*/{}, std::nullopt, std::nullopt,
+      /*expected_set_priority=*/std::nullopt,
+      /*expected_update_priority_signals_overrides=*/{},
+      /*expected_pa_requests=*/{},
+      /*expected_non_kanon_pa_requests=*/{},
+      std::move(expected_real_time_contributions));
+}
+
+// A platform contribution is added when trusted bidding signals server returned
+// a non-2xx HTTP response code.
+TEST_F(BidderWorkletRealTimeReportingEnabledTest,
+       TrustedBiddingSignalNetworkError) {
+  const GURL kBaseSignalsUrl("https://signals.test/");
+  interest_group_bidding_url_ = kBaseSignalsUrl;
+  const GURL kFullSignalsUrl(
+      "https://signals.test/"
+      "?hostname=top.window.test&keys=key1,key2&interestGroupNames=Fred");
+
+  const char kJson[] = R"(
+    {
+      "keys": {
+        "key1": 1,
+        "key2": [2]
+      }
+    }
+  )";
+
+  // Request with valid TrustedBiddingSignals URL and non-empty keys. Request
+  // should be made. The request fails.
+  interest_group_trusted_bidding_signals_url_ = kBaseSignalsUrl;
+  interest_group_trusted_bidding_signals_keys_ =
+      std::vector<std::string>({"key1", "key2"});
+  url_loader_factory_.AddResponse(kFullSignalsUrl.spec(), kJson,
+                                  net::HTTP_NOT_FOUND);
+
+  auction_worklet::mojom::RealTimeReportingContribution expected_histogram(
+      /*bucket=*/100, /*priority_weight=*/0.5,
+      /*latency_threshold=*/std::nullopt);
+  mojom::RealTimeReportingContribution expected_trusted_signal_histogram(
+      /*bucket=*/1024 + auction_worklet::RealTimeReportingPlatformError::
+                            kTrustedBiddingSignalsFailure,
+      /*priority_weight=*/1,
+      /*latency_threshold=*/std::nullopt);
+
+  constexpr char kExtraCode[] = R"(
+realTimeReporting.contributeToHistogram({bucket: 100, priorityWeight: 0.5})
+)";
+
+  RealTimeReportingContributions expected_real_time_contributions;
+  expected_real_time_contributions.push_back(expected_histogram.Clone());
+  expected_real_time_contributions.push_back(
+      expected_trusted_signal_histogram.Clone());
+
+  RunGenerateBidWithJavascriptExpectingResult(
+      CreateGenerateBidScript(
+          /*raw_return_value=*/
+          R"({ad: trustedBiddingSignals, bid: 1, render:"https://response.test/"})",
+          kExtraCode),
+      mojom::BidderWorkletBid::New(
+          auction_worklet::mojom::BidRole::kUnenforcedKAnon, "null", 1,
+          /*bid_currency=*/std::nullopt, /*ad_cost=*/std::nullopt,
+          blink::AdDescriptor(GURL("https://response.test/")),
+          /*ad_component_descriptors=*/std::nullopt,
+          /*modeling_signals=*/std::nullopt, base::TimeDelta()),
+      /*expected_data_version=*/std::nullopt,
+      {"Failed to load https://signals.test/"
+       "?hostname=top.window.test&keys=key1,key2&interestGroupNames=Fred HTTP "
+       "status = 404 Not Found."},
+      std::nullopt, std::nullopt,
+      /*expected_set_priority=*/std::nullopt,
+      /*expected_update_priority_signals_overrides=*/{},
+      /*expected_pa_requests=*/{},
+      /*expected_non_kanon_pa_requests=*/{},
+      std::move(expected_real_time_contributions));
+}
+
+// A platform contribution is added when trusted scoring signals server returned
+// a non-2xx HTTP response code, even though generateBid() failed.
+TEST_F(BidderWorkletRealTimeReportingEnabledTest,
+       TrustedBiddingSignalNetworkErrorGenerateBidFailed) {
+  const GURL kBaseSignalsUrl("https://signals.test/");
+  interest_group_bidding_url_ = kBaseSignalsUrl;
+  const GURL kFullSignalsUrl(
+      "https://signals.test/"
+      "?hostname=top.window.test&keys=key1,key2&interestGroupNames=Fred");
+
+  const char kJson[] = R"(
+    {
+      "keys": {
+        "key1": 1,
+        "key2": [2]
+      }
+    }
+  )";
+
+  // Request with valid TrustedBiddingSignals URL and non-empty keys. Request
+  // should be made. The request fails.
+  interest_group_trusted_bidding_signals_url_ = kBaseSignalsUrl;
+  interest_group_trusted_bidding_signals_keys_ =
+      std::vector<std::string>({"key1", "key2"});
+  url_loader_factory_.AddResponse(kFullSignalsUrl.spec(), kJson,
+                                  net::HTTP_NOT_FOUND);
+
+  mojom::RealTimeReportingContribution expected_trusted_signal_histogram(
+      /*bucket=*/1024 + auction_worklet::RealTimeReportingPlatformError::
+                            kTrustedBiddingSignalsFailure,
+      /*priority_weight=*/1,
+      /*latency_threshold=*/std::nullopt);
+
+  RealTimeReportingContributions expected_real_time_contributions;
+  expected_real_time_contributions.push_back(
+      expected_trusted_signal_histogram.Clone());
+
+  RunGenerateBidWithJavascriptExpectingResult(
+      "shrimp",
+      /*expected_bids=*/mojom::BidderWorkletBidPtr(),
+      /*expected_data_version=*/std::nullopt,
+      {"https://signals.test/:1 Uncaught ReferenceError: "
+       "shrimp is not defined.",
+       "Failed to load https://signals.test/"
+       "?hostname=top.window.test&keys=key1,key2&interestGroupNames=Fred HTTP "
+       "status = 404 Not Found."},
+      std::nullopt, std::nullopt,
       /*expected_set_priority=*/std::nullopt,
       /*expected_update_priority_signals_overrides=*/{},
       /*expected_pa_requests=*/{},

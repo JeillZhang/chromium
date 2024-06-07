@@ -73,8 +73,7 @@ class IbanSaveManagerTest : public testing::Test {
     autofill_client_.set_test_strike_database(std::move(test_strike_database));
     personal_data().payments_data_manager().SetSyncingForTest(true);
     personal_data().SetPrefService(autofill_client_.GetPrefs());
-    iban_save_manager_ =
-        std::make_unique<IbanSaveManager>(&personal_data(), &autofill_client_);
+    iban_save_manager_ = std::make_unique<IbanSaveManager>(&autofill_client_);
   }
 
   using SaveIbanOfferUserDecision =
@@ -868,6 +867,58 @@ TEST_F(IbanSaveManagerTest, Metric_IgnoredOfferedIbanOrigin_LocalIban) {
       /*sample=*/
       autofill_metrics::UploadIbanOriginMetric::kLocalIban,
       /*expected_count=*/1);
+}
+
+TEST_F(IbanSaveManagerTest, Metric_CountryOfSaveOffered_LocalIban) {
+  base::test::ScopedFeatureList disable_server_iban;
+  disable_server_iban.InitAndDisableFeature(
+      features::kAutofillEnableServerIban);
+  base::HistogramTester histogram_tester;
+  Iban iban;
+  iban.set_value(u"FR7630006000011234567890189");
+  ASSERT_TRUE(GetIbanSaveManager().AttemptToOfferSave(iban));
+
+  histogram_tester.ExpectUniqueSample("Autofill.Iban.CountryOfSaveOfferedIban",
+                                      Iban::IbanSupportedCountry::kFR, 1);
+}
+
+TEST_F(IbanSaveManagerTest, Metric_CountryOfSaveOffered_ServerIban) {
+  base::HistogramTester histogram_tester;
+  Iban iban;
+  iban.set_value(u"FR7630006000011234567890189");
+  ASSERT_TRUE(GetIbanSaveManager().AttemptToOfferSave(iban));
+
+  histogram_tester.ExpectUniqueSample("Autofill.Iban.CountryOfSaveOfferedIban",
+                                      Iban::IbanSupportedCountry::kFR, 1);
+}
+
+TEST_F(IbanSaveManagerTest, Metric_CountryOfSaveAccepted_LocalIban) {
+  base::HistogramTester histogram_tester;
+  Iban iban;
+  iban.set_value(u"FR7630006000011234567890189");
+  EXPECT_TRUE(GetIbanSaveManager().AttemptToOfferLocalSaveForTesting(iban));
+
+  GetIbanSaveManager().OnUserDidDecideOnLocalSaveForTesting(
+      iban, SaveIbanOfferUserDecision::kAccepted, u"IBAN nickname");
+
+  histogram_tester.ExpectUniqueSample("Autofill.Iban.CountryOfSaveAcceptedIban",
+                                      Iban::IbanSupportedCountry::kFR, 1);
+}
+
+TEST_F(IbanSaveManagerTest, Metric_CountryOfSaveAccepted_ServerIban) {
+  base::HistogramTester histogram_tester;
+  SetUpGetIbanUploadDetailsResponse(/*is_successful=*/true);
+  SetUpUploadIbanResponse(/*is_successful=*/true);
+  Iban iban;
+  iban.set_value(u"FR7630006000011234567890189");
+
+  EXPECT_TRUE(GetIbanSaveManager().AttemptToOfferSave(iban));
+  GetIbanSaveManager().OnUserDidDecideOnUploadSaveForTesting(
+      iban, /*show_save_prompt=*/true, SaveIbanOfferUserDecision::kAccepted,
+      u"IBAN nickname");
+
+  histogram_tester.ExpectUniqueSample("Autofill.Iban.CountryOfSaveAcceptedIban",
+                                      Iban::IbanSupportedCountry::kFR, 1);
 }
 
 #endif  // !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)

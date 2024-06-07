@@ -236,7 +236,6 @@
 <translation id="2189104374785738357">APN-н дэлгэрэнгүйг засах</translation>
 <translation id="2195732836444333448">Ачаалалтай байна. Удахгүй эргэн ирээрэй.</translation>
 <translation id="2201758491318984023">унадаг дугуй</translation>
-<translation id="2203222757805818543">Одоогийн хуваарийг <ph name="SUNRISE" /> - <ph name="SUNSET" /> болгож тохируулсан. Бараан горимын хуваарийг автоматаар шинэчлэхийн тулд <ph name="BEGIN_LINK" />байршлын хандалтыг асаана уу<ph name="END_LINK" /></translation>
 <translation id="2203272733515928691">халуун рашаан</translation>
 <translation id="2203642483788377106">цохио</translation>
 <translation id="2208388655216963643">импрессионист</translation>
@@ -364,6 +363,7 @@
 <translation id="3054177598518735801"><ph name="CURRENT_VALUE" />мA</translation>
 <translation id="3056720590588772262">Төгсгөлийн цэг</translation>
 <translation id="3060579846059757016">Тойм</translation>
+<translation id="3061850252076394168">ярихаар сонгохыг идэвхжүүлэх</translation>
 <translation id="3069085583900247081">Туршилт амжилтгүй боллоо</translation>
 <translation id="3078740164268491126">Хүснэгт</translation>
 <translation id="3081652522083185657">цайвар</translation>
@@ -630,7 +630,6 @@
 <translation id="458794348635939462">Бүх хостыг шийдвэрлэж чадсангүй</translation>
 <translation id="4593212453765072419">Проксиг баталгаажуулах шаардлагатай</translation>
 <translation id="4609350030397390689">Гарны гэрэлтүүлгийг багасгах</translation>
-<translation id="4617553623719764431">Цаг агаар таны байршлыг мэдэхгүй байгаа тул үүнийг үзүүлээгүй. Орон нутгийн цаг агаарыг үзүүлэхийн тулд <ph name="BEGIN_LINK" />Байршлын хандалтыг асаана уу<ph name="END_LINK" /></translation>
 <translation id="4627232916386272576"><ph name="DOCUMENT_TITLE" />, <ph name="PRINTER_NAME" />, <ph name="CREATION_TIME" />, <ph name="TOTAL_PAGE_NUMBER" />-с <ph name="PRINTED_PAGE_NUMBER" />. Хэвлэх ажлыг цуцлахын тулд enter дээр дарна уу.</translation>
 <translation id="463791356324567266">Скан хийхийг цуцалж байна...</translation>
 <translation id="4646949265910132906">Аюулгүй Wi-Fi холболт</translation>
@@ -704,6 +703,7 @@
 <translation id="4985509611418653372">Ажиллуулах</translation>
 <translation id="4987769320337599931">Галт хана</translation>
 <translation id="4988526792673242964">Хуудас</translation>
+<translation id="4989542687859782284">Боломжгүй</translation>
 <translation id="4999333166442584738">Тайланг нуух</translation>
 <translation id="500920857929044050">Туршилтыг зогсоох</translation>
 <translation id="5017508259293544172">LEAP</translation>
@@ -718,7 +718,7 @@
 <translation id="5088172560898466307">Серверийн хостын нэр</translation>
 <translation id="5089810972385038852">Муж</translation>
 <translation id="5090362543162270857">IPsec (IKEv2)</translation>
-<translation id="5095761549884461003">Шинэчлэх явцыг үргэлжлүүлэхийн тулд <ph name="DEVICE_NAME" />-н USB кабелийг салгаад, дараа нь дахин оруулна уу</translation>
+<translation id="5095761549884461003">Шинэчлэх явцыг үргэлжлүүлэхийн тулд <ph name="DEVICE_NAME" />-н USB кабелийг салгаад, дахин залгана уу</translation>
 <translation id="5099354524039520280">дээшээ</translation>
 <translation id="5107243100836678918"><ph name="META_KEY" /> товчгүй товчлол нь зарим аппын товчлолтой зөрчилдөж магадгүй. Энэ товчлолыг үргэлжлүүлэн ашиглахын тулд үүнийг дахин дарах эсвэл <ph name="KEY" /> товчийг ашиглан шинэ товчлол дарна уу. <ph name="LINK_BEGIN" />Нэмэлт мэдээлэл авах<ph name="LINK_END" /></translation>
 <translation id="5108781503443873320">Төстэй:</translation>
@@ -960,7 +960,6 @@
 <translation id="6412715219990689313">Суурилуулсан гар</translation>
 <translation id="6417265370957905582">Google туслах</translation>
 <translation id="6423239382391657905">VPN-г нээх</translation>
-<translation id="6438073885402882007">Энэ нь зөвшөөрөлтэй системийн үйлчилгээнүүдэд таны байршлыг ашиглахыг зөвшөөрдөг. Байршил нь Wi-Fi, мобайл сүлжээ болон мэдрэгчид зэрэг эх сурвалжийг таны төхөөрөмжийн байршлыг тооцоолоход ашиглаж магадгүй. <ph name="LINK_BEGIN" />Нэмэлт мэдээлэл авах<ph name="LINK_END" /></translation>
 <translation id="6439505561246192797">Сул (<ph name="SIGNAL_STRENGTH" />)</translation>
 <translation id="6447630859861661624">Бүртгэлийн тохиргоо хэсэгт очих</translation>
 <translation id="6462978824459367242">APN нэмэх товчлуурыг одоо идэвхжүүлсэн</translation>

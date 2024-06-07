@@ -236,7 +236,6 @@
 <translation id="2189104374785738357">Izmenite detalje naziva pristupne tačke</translation>
 <translation id="2195732836444333448">Kapacitet je trenutno popunjen. Vratite se brzo.</translation>
 <translation id="2201758491318984023">Bicikl</translation>
-<translation id="2203222757805818543">Aktuelni raspored je podešen na <ph name="SUNRISE" />–<ph name="SUNSET" />. Da biste automatski ažurirali raspored tamnog režima, <ph name="BEGIN_LINK" />uključite pristup lokaciji<ph name="END_LINK" /></translation>
 <translation id="2203272733515928691">Termalni izvor</translation>
 <translation id="2203642483788377106">litica</translation>
 <translation id="2208388655216963643">impresionizam</translation>
@@ -313,6 +312,7 @@
 <translation id="2618015542787108131">peščana dina</translation>
 <translation id="2619761439309613843">Dnevno osvežavanje</translation>
 <translation id="2620436844016719705">Sistem</translation>
+<translation id="2637303424821734920">ISKLJUČENO – Da bi se prikazivalo lokalno vreme, <ph name="BEGIN_LINK" />uključite pristup lokaciji sistema<ph name="END_LINK" /></translation>
 <translation id="2638662041295312666">Slika za prijavljivanje</translation>
 <translation id="2640549051766135490">Izabran je album <ph name="TITLE" /> <ph name="DESC" /></translation>
 <translation id="2645380101799517405">Kontrole</translation>
@@ -361,9 +361,11 @@
 <translation id="3017079585324758401">Pozadina</translation>
 <translation id="3027578600144895987">Zatvorite kameru</translation>
 <translation id="3031560714565892478">Uređaj je video kamera.</translation>
+<translation id="3051968340259309715">Ovo omogućava sistemskim uslugama da koriste preciznost lokacije za utvrđivanje lokacije. Preciznost lokacije koristi informacije o bežičnim signalima kao što su pristupne tačke za WiFi, repetitori mobilnih mreža i GPS, zajedno sa podacima senzora uređaja, kao što su akcelerometar i žiroskop, za procenu lokacije uređaja. Možete da isključite lokaciju u odeljku Podešavanja &gt; Privatnost i bezbednost &gt; Kontrole privatnosti &gt; Pristup lokaciji. <ph name="LINK_BEGIN" />Saznajte više<ph name="LINK_END" /></translation>
 <translation id="3054177598518735801"><ph name="CURRENT_VALUE" /> mA</translation>
 <translation id="3056720590588772262">Krajnja tačka</translation>
 <translation id="3060579846059757016">Okviri</translation>
+<translation id="3061850252076394168">omogućite uslugu Izaberite za govor</translation>
 <translation id="3069085583900247081">Test nije uspeo</translation>
 <translation id="3078740164268491126">tabela</translation>
 <translation id="3081652522083185657">svetlo</translation>
@@ -630,7 +632,6 @@
 <translation id="458794348635939462">Razrešenje svih hostova nije uspelo</translation>
 <translation id="4593212453765072419">Potrebna je potvrda autentičnosti proksija</translation>
 <translation id="4609350030397390689">Smanjite osvetljenost tastature</translation>
-<translation id="4617553623719764431">Vreme nije prikazano jer ne zna vašu lokaciju. Da bi se prikazivalo lokalno vreme, <ph name="BEGIN_LINK" />uključite pristup lokaciji<ph name="END_LINK" /></translation>
 <translation id="4627232916386272576"><ph name="DOCUMENT_TITLE" />, <ph name="PRINTER_NAME" />, <ph name="CREATION_TIME" />, <ph name="PRINTED_PAGE_NUMBER" /> od <ph name="TOTAL_PAGE_NUMBER" />. Pritisnite taster Enter da biste otkazali zadatak štampanja.</translation>
 <translation id="463791356324567266">Otkazuje se skeniranje...</translation>
 <translation id="4646949265910132906">Bezbedna WiFi veza</translation>
@@ -704,6 +705,7 @@
 <translation id="4985509611418653372">Pokreni</translation>
 <translation id="4987769320337599931">Zaštitni zid</translation>
 <translation id="4988526792673242964">Stranice</translation>
+<translation id="4989542687859782284">Nedostupni</translation>
 <translation id="4999333166442584738">Sakrij izveštaj</translation>
 <translation id="500920857929044050">Zaustavi test</translation>
 <translation id="5017508259293544172">LEAP</translation>
@@ -960,7 +962,6 @@
 <translation id="6412715219990689313">Ugrađena tastatura</translation>
 <translation id="6417265370957905582">Google pomoćnik</translation>
 <translation id="6423239382391657905">Otvorena VPN</translation>
-<translation id="6438073885402882007">Ovo omogućava sistemskim uslugama sa dozvolom da koriste lokaciju. Lokacija može da koristi izvore kao što su WiFi, mobilne mreže i senzori da bi se lakše odredila lokacija uređaja. <ph name="LINK_BEGIN" />Saznajte više<ph name="LINK_END" /></translation>
 <translation id="6439505561246192797">Slab (<ph name="SIGNAL_STRENGTH" />)</translation>
 <translation id="6447630859861661624">Otvorite podešavanja naloga</translation>
 <translation id="6462978824459367242">Dugme Dodaj naziv pristupne tačke je sada omogućeno</translation>

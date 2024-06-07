@@ -54,6 +54,45 @@ class ChromeComposeClient
       public InnerTextProvider {
  public:
   using EntryPoint = autofill::AutofillComposeDelegate::UiEntryPoint;
+
+  class FieldChangeObserver : public autofill::AutofillManager::Observer {
+   public:
+    explicit FieldChangeObserver(content::WebContents* web_contents);
+    ~FieldChangeObserver() override;
+
+    // autofill::AutofillManager::Observer:
+    // Used to observe field text content changes so that the proactive nudge
+    // can be dismissed after a set number of change events.
+    // TODO(b/40286232): Throttling of this event may be added in the future, in
+    // which case this implementation would no longer adhere to a strict event
+    // count.
+    void OnAfterTextFieldDidChange(autofill::AutofillManager& manager,
+                                   autofill::FormGlobalId form,
+                                   autofill::FieldGlobalId field,
+                                   const std::u16string& text_value) override;
+    // Used to reset the field content changes count when a new suggestions UI
+    // is shown.
+    void OnSuggestionsShown(autofill::AutofillManager& manager) override;
+
+    // Asks Autofill to hide any open compose-related popups.
+    void HideComposeNudges();
+
+    void SetSkipSuggestionTypeForTest(bool skip_suggestion_type);
+
+    // TODO(b/343204155): SuggestionType check is skipped during testing as the
+    // TestAutofillClient API does not currently support use of the Suggestions
+    // field.
+    bool skip_suggestion_type_for_test_ = false;
+
+    raw_ptr<content::WebContents> web_contents_;
+    // Current count of change events fired on the current focused text field,
+    // as recorded by `OnAfterTextFieldDidChange`.
+    unsigned int text_field_change_event_count_ = 0;
+
+    autofill::ScopedAutofillManagersObservation autofill_managers_observation_{
+        this};
+  };
+
   ChromeComposeClient(const ChromeComposeClient&) = delete;
   ChromeComposeClient& operator=(const ChromeComposeClient&) = delete;
   ~ChromeComposeClient() override;
@@ -68,15 +107,16 @@ class ChromeComposeClient
       ComposeCallback callback) override;
   bool HasSession(const autofill::FieldGlobalId& trigger_field_id) override;
   bool ShouldTriggerPopup(
+      const autofill::FormData& form_data,
       const autofill::FormFieldData& trigger_field,
       autofill::AutofillSuggestionTriggerSource trigger_source) override;
-  compose::PageUkmTracker* getPageUkmTracker() override;
+  compose::PageUkmTracker* GetPageUkmTracker() override;
   void DisableProactiveNudge() override;
   void OpenProactiveNudgeSettings() override;
   void AddSiteToNeverPromptList(const url::Origin& origin) override;
 
   // ComposeSession::Observer:
-  void OnSessionComplete(autofill::FieldRendererId field_renderer_id,
+  void OnSessionComplete(autofill::FieldGlobalId field_global_id,
                          compose::ComposeSessionCloseReason close_reason,
                          const compose::ComposeSessionEvents& events) override;
 
@@ -186,6 +226,8 @@ class ChromeComposeClient
                            TestComposeQualityFeedbackPositive);
   FRIEND_TEST_ALL_PREFIXES(ChromeComposeClientTest,
                            TestComposeQualityFeedbackNegative);
+  FRIEND_TEST_ALL_PREFIXES(ChromeComposeClientTest,
+                           TextFieldChangeThresholdHidesProactiveNudge);
 
   raw_ptr<Profile> profile_;
   raw_ptr<PrefService> pref_service_;
@@ -279,6 +321,8 @@ class ChromeComposeClient
   // a given moment.
   compose::ProactiveNudgeTracker nudge_tracker_;
 
+  FieldChangeObserver field_change_observer_;
+
   // Observer for autofill field focus changes. This is used to prevent showing
   // the saved state notification on a previous focused field when an autofill
   // suggestion will be shown in a newly focused field.
@@ -286,6 +330,8 @@ class ChromeComposeClient
       this};
 
   BooleanPrefMember proactive_nudge_enabled_;
+
+  base::TimeTicks page_change_time_;
 
   base::WeakPtrFactory<ChromeComposeClient> weak_ptr_factory_{this};
 

@@ -4,6 +4,8 @@
 
 #include "ash/system/focus_mode/sounds/playlist_view.h"
 
+#include <string>
+
 #include "ash/style/typography.h"
 #include "ash/system/focus_mode/focus_mode_controller.h"
 #include "ash/system/focus_mode/focus_mode_util.h"
@@ -12,6 +14,7 @@
 #include "base/functional/bind.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/chromeos/styles/cros_tokens_color_mappings.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/controls/label.h"
 
 namespace ash {
@@ -19,7 +22,7 @@ namespace {
 
 constexpr int kSinglePlaylistViewWidth = 72;
 constexpr int kSinglePlaylistViewSpacingBetweenChild = 10;
-constexpr int kPlaylistTitleLineHeight = 10;
+constexpr int kPlaylistTitleLineHeight = 16;
 
 }  // namespace
 
@@ -32,19 +35,25 @@ PlaylistView::PlaylistView(focus_mode_util::SoundType type,
   SetMainAxisAlignment(views::BoxLayout::MainAxisAlignment::kCenter);
   SetBetweenChildSpacing(kSinglePlaylistViewSpacingBetweenChild);
 
+  // TODO(crbug.com/40232718): See View::SetLayoutManagerUseConstrainedSpace.
+  SetLayoutManagerUseConstrainedSpace(false);
+
   playlist_image_button_ =
       AddChildView(std::make_unique<PlaylistImageButton>());
-
   playlist_image_button_->SetCallback(base::BindRepeating(
       &PlaylistView::OnPlaylistViewToggled, base::Unretained(this)));
+  playlist_image_button_->GetViewAccessibility().SetName(
+      std::u16string(), ax::mojom::NameFrom::kAttributeExplicitlyEmpty);
 
   title_label_ = AddChildView(std::make_unique<views::Label>());
   title_label_->SetHorizontalAlignment(gfx::HorizontalAlignment::ALIGN_CENTER);
   title_label_->SetMaximumWidthSingleLine(kSinglePlaylistViewWidth);
   title_label_->SetFontList(TypographyProvider::Get()->ResolveTypographyToken(
-      TypographyToken::kCrosLabel1));
-  title_label_->SetEnabledColorId(cros_tokens::kCrosSysSecondary);
+      TypographyToken::kCrosAnnotation2));
+  title_label_->SetEnabledColorId(cros_tokens::kCrosSysOnSurface);
   title_label_->SetLineHeight(kPlaylistTitleLineHeight);
+  title_label_->GetViewAccessibility().SetName(
+      std::u16string(), ax::mojom::NameFrom::kAttributeExplicitlyEmpty);
 }
 
 PlaylistView::~PlaylistView() = default;
@@ -55,10 +64,14 @@ void PlaylistView::UpdateContents(
   playlist_data_.title = playlist.title;
   playlist_data_.thumbnail = playlist.thumbnail;
 
-  const auto text = base::UTF8ToUTF16(playlist_data_.title);
-  title_label_->SetText(text);
-  title_label_->SetTooltipText(text);
-  playlist_image_button_->SetTooltipText(text);
+  if (const auto text = base::UTF8ToUTF16(playlist_data_.title);
+      !text.empty()) {
+    title_label_->SetText(text);
+    title_label_->SetTooltipText(text);
+    title_label_->GetViewAccessibility().SetName(text);
+    playlist_image_button_->SetTooltipText(text);
+    playlist_image_button_->GetViewAccessibility().SetName(text);
+  }
   playlist_image_button_->UpdateContents(playlist_data_.thumbnail);
 }
 

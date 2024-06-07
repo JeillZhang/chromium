@@ -10,16 +10,20 @@
 
 #include "ash/constants/ash_features.h"
 #include "ash/webui/media_app_ui/media_app_ui_untrusted.mojom.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/test/scoped_feature_list.h"
+#include "chrome/browser/accessibility/accessibility_state_utils.h"
 #include "chrome/browser/accessibility/media_app/ax_media_app.h"
 #include "chrome/browser/accessibility/media_app/ax_media_app_handler_factory.h"
 #include "chrome/browser/accessibility/media_app/test/fake_ax_media_app.h"
 #include "chrome/browser/accessibility/media_app/test/test_ax_media_app_untrusted_handler.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_window.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test.h"
+#include "content/public/test/scoped_accessibility_mode_override.h"
 #include "content/public/test/test_web_ui.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
@@ -31,12 +35,14 @@
 #include "ui/accessibility/ax_tree_data.h"
 #include "ui/accessibility/ax_tree_id.h"
 #include "ui/accessibility/ax_tree_manager.h"
+#include "ui/display/display_switches.h"
 #include "ui/gfx/geometry/rect.h"
 
 #if BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
 #include <vector>
 
 #include "base/strings/escape.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "content/public/browser/web_contents.h"
@@ -68,6 +74,8 @@ namespace {
 constexpr float kTestPageGap = 2.0f;
 constexpr float kTestPageWidth = 3.0f;
 constexpr float kTestPageHeight = 8.0f;
+// The test device pixel ratio.
+constexpr float kTestDisplayPixelRatio = 1.5f;
 
 // Use letters to generate fake IDs for fake page metadata. If more than
 // 26 pages are needed, more characters can be added.
@@ -106,6 +114,13 @@ class AXMediaAppUntrustedHandlerTest : public InProcessBrowserTest {
       const AXMediaAppUntrustedHandlerTest&) = delete;
   ~AXMediaAppUntrustedHandlerTest() override = default;
 
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    InProcessBrowserTest::SetUpCommandLine(command_line);
+    command_line->AppendSwitchASCII(
+        switches::kForceDeviceScaleFactor,
+        base::NumberToString(kTestDisplayPixelRatio));
+  }
+
   void SetUpOnMainThread() override {
     InProcessBrowserTest::SetUpOnMainThread();
     ASSERT_NE(nullptr, AXMediaAppHandlerFactory::GetInstance());
@@ -114,7 +129,8 @@ class AXMediaAppUntrustedHandlerTest : public InProcessBrowserTest {
         pageReceiver = pageRemote.InitWithNewPipeAndPassReceiver();
 
     handler_ = std::make_unique<TestAXMediaAppUntrustedHandler>(
-        *browser()->profile(), std::move(pageRemote));
+        *browser()->profile(), browser()->window()->GetNativeWindow(),
+        std::move(pageRemote));
     ASSERT_NE(nullptr, handler_.get());
     // TODO(b/309860428): Delete MediaApp interface - after we implement all
     // Mojo APIs, it should not be needed any more.
@@ -127,7 +143,6 @@ class AXMediaAppUntrustedHandlerTest : public InProcessBrowserTest {
   }
 
   void TearDownOnMainThread() override {
-    ASSERT_NE(nullptr, handler_.get());
     handler_.reset();
     InProcessBrowserTest::TearDownOnMainThread();
   }
@@ -185,6 +200,31 @@ void AXMediaAppUntrustedHandlerTest::WaitForOcringPages(
 
 }  // namespace
 
+IN_PROC_BROWSER_TEST_F(AXMediaAppUntrustedHandlerTest, IsAccessibilityEnabled) {
+  EXPECT_FALSE(handler_->IsAccessibilityEnabled());
+  EXPECT_FALSE(fake_media_app_.IsAccessibilityEnabled());
+
+  accessibility_state_utils::OverrideIsScreenReaderEnabledForTesting(true);
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+  AccessibilityManager::Get()->EnableSpokenFeedback(true);
+#else
+  content::ScopedAccessibilityModeOverride scoped_mode(ui::kAXModeComplete);
+#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+
+  EXPECT_TRUE(handler_->IsAccessibilityEnabled());
+  EXPECT_TRUE(fake_media_app_.IsAccessibilityEnabled());
+
+  accessibility_state_utils::OverrideIsScreenReaderEnabledForTesting(false);
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+  AccessibilityManager::Get()->EnableSpokenFeedback(false);
+#else
+  content::ScopedAccessibilityModeOverride scoped_mode(ui::kNone);
+#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+
+  EXPECT_FALSE(handler_->IsAccessibilityEnabled());
+  EXPECT_FALSE(fake_media_app_.IsAccessibilityEnabled());
+}
+
 #if BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
 IN_PROC_BROWSER_TEST_F(AXMediaAppUntrustedHandlerTest, PageMetadataUpdated) {
   handler_->DisableStatusNodesForTesting();
@@ -234,6 +274,52 @@ IN_PROC_BROWSER_TEST_F(AXMediaAppUntrustedHandlerTest, PageMetadataUpdated) {
       "  id=5 region name=Page 4 name_from=attribute has_child_tree (0, "
       "0)-(10, 15) restriction=readonly is_page_breaking_object=true\n",
       handler_->GetDocumentTreeToStringForTesting());
+}
+
+IN_PROC_BROWSER_TEST_F(AXMediaAppUntrustedHandlerTest,
+                       CheckUMAMetricsForPageMetadataUpdated) {
+  base::HistogramTester histograms;
+  const size_t kTestNumPages = 3u;
+  std::vector<PageMetadataPtr> fake_metadata =
+      CreateFakePageMetadata(kTestNumPages);
+  handler_->PageMetadataUpdated(ClonePageMetadataPtrs(fake_metadata));
+
+  histograms.ExpectBucketCount("Accessibility.PdfOcr.MediaApp.PdfLoaded", true,
+                               /*expected_count=*/1);
+  histograms.ExpectTotalCount("Accessibility.PdfOcr.MediaApp.PdfLoaded",
+                              /*expected_count=*/1);
+  WaitForOcringPages(1u);
+  histograms.ExpectBucketCount("Accessibility.PdfOcr.MediaApp.PdfLoaded", true,
+                               /*expected_count=*/1);
+  histograms.ExpectTotalCount("Accessibility.PdfOcr.MediaApp.PdfLoaded",
+                              /*expected_count=*/1);
+  WaitForOcringPages(1u);
+  histograms.ExpectBucketCount("Accessibility.PdfOcr.MediaApp.PdfLoaded", true,
+                               /*expected_count=*/1);
+  histograms.ExpectTotalCount("Accessibility.PdfOcr.MediaApp.PdfLoaded",
+                              /*expected_count=*/1);
+  WaitForOcringPages(1u);
+  histograms.ExpectBucketCount("Accessibility.PdfOcr.MediaApp.PdfLoaded", true,
+                               /*expected_count=*/1);
+  histograms.ExpectTotalCount("Accessibility.PdfOcr.MediaApp.PdfLoaded",
+                              /*expected_count=*/1);
+  WaitForOcringPages(1u);
+  histograms.ExpectBucketCount("Accessibility.PdfOcr.MediaApp.PdfLoaded", true,
+                               /*expected_count=*/1);
+  histograms.ExpectTotalCount("Accessibility.PdfOcr.MediaApp.PdfLoaded",
+                              /*expected_count=*/1);
+
+  // 'Rotate' the third page.
+  fake_metadata[2]->rect.set_height(kTestPageWidth);
+  fake_metadata[2]->rect.set_width(kTestPageHeight);
+  handler_->PageMetadataUpdated(ClonePageMetadataPtrs(fake_metadata));
+  handler_->PageContentsUpdated("PageC");
+  WaitForOcringPages(1u);
+
+  histograms.ExpectBucketCount("Accessibility.PdfOcr.MediaApp.PdfLoaded", true,
+                               /*expected_count=*/1);
+  histograms.ExpectTotalCount("Accessibility.PdfOcr.MediaApp.PdfLoaded",
+                              /*expected_count=*/1);
 }
 
 IN_PROC_BROWSER_TEST_F(AXMediaAppUntrustedHandlerTest,
@@ -591,7 +677,7 @@ IN_PROC_BROWSER_TEST_F(AXMediaAppUntrustedHandlerTest,
 
   // 'Rotate' the third page, moving the other pages to fit it.
   fake_metadata[2]->rect = gfx::RectF(
-      /*x=*/-2.5,
+      /*x=*/fake_metadata[2]->rect.x(),
       /*y=*/fake_metadata[1]->rect.y() + kTestPageHeight + kTestPageGap,
       /*width=*/kTestPageHeight, /*height=*/kTestPageWidth);
   fake_metadata[3]->rect = gfx::RectF(
@@ -611,17 +697,78 @@ IN_PROC_BROWSER_TEST_F(AXMediaAppUntrustedHandlerTest,
   EXPECT_EQ(
       "AXTree has_parent_tree title=PDF document\n"
       "id=1 pdfRoot FOCUSABLE name=PDF document containing 4 pages "
-      "name_from=attribute clips_children child_ids=2,3,4,5 (-2.5, 0)-(8, 33) "
-      "text_align=left restriction=readonly scroll_x_min=-2 scroll_y_min=0 "
+      "name_from=attribute clips_children child_ids=2,3,4,5 (0, 0)-(8, 33) "
+      "text_align=left restriction=readonly scroll_x_min=0 scroll_y_min=0 "
       "scrollable=true is_line_breaking_object=true\n"
-      "  id=2 region name=Page 1 name_from=attribute has_child_tree (0, 0)-"
-      "(3, 8) restriction=readonly is_page_breaking_object=true\n"
-      "  id=3 region name=Page 2 name_from=attribute has_child_tree (0, 10)-"
-      "(3, 8) restriction=readonly is_page_breaking_object=true\n"
-      "  id=4 region name=Page 3 name_from=attribute has_child_tree (-2.5, 20)-"
-      "(8, 3) restriction=readonly is_page_breaking_object=true\n"
-      "  id=5 region name=Page 4 name_from=attribute has_child_tree (0, 25)-"
-      "(3, 8) restriction=readonly is_page_breaking_object=true\n",
+      "  id=2 region name=Page 1 name_from=attribute has_child_tree (0, 0)-(3, "
+      "8) restriction=readonly is_page_breaking_object=true\n"
+      "  id=3 region name=Page 2 name_from=attribute has_child_tree (0, "
+      "10)-(3, 8) restriction=readonly is_page_breaking_object=true\n"
+      "  id=4 region name=Page 3 name_from=attribute has_child_tree (0, "
+      "20)-(8, 3) restriction=readonly is_page_breaking_object=true\n"
+      "  id=5 region name=Page 4 name_from=attribute has_child_tree (0, "
+      "25)-(3, 8) restriction=readonly is_page_breaking_object=true\n",
+      handler_->GetDocumentTreeToStringForTesting());
+}
+
+IN_PROC_BROWSER_TEST_F(AXMediaAppUntrustedHandlerTest,
+                       PageMetadataUpdated_PageRotatedBeforeOcr) {
+  handler_->DisableStatusNodesForTesting();
+  handler_->DisablePostamblePageForTesting();
+  constexpr size_t kTestNumPages = 2u;
+  std::vector<PageMetadataPtr> fake_metadata =
+      CreateFakePageMetadata(kTestNumPages);
+  handler_->PageMetadataUpdated(ClonePageMetadataPtrs(fake_metadata));
+  WaitForOcringPages(1u);
+
+  // Only the first page must have gone through OCR.
+  const std::map<const std::string, std::unique_ptr<ui::AXTreeManager>>& pages =
+      handler_->GetPagesForTesting();
+  ASSERT_EQ(1u, pages.size());
+  EXPECT_TRUE(pages.contains("PageA"));
+
+  // 'Rotate' the first page, moving the second page as a result.
+  fake_metadata[0]->rect = gfx::RectF(
+      /*x=*/fake_metadata[0]->rect.x(),
+      /*y=*/fake_metadata[0]->rect.y(),
+      /*width=*/kTestPageHeight, /*height=*/kTestPageWidth);
+  fake_metadata[1]->rect = gfx::RectF(
+      /*x=*/fake_metadata[1]->rect.x(),
+      /*y=*/fake_metadata[0]->rect.y() + kTestPageWidth + kTestPageGap,
+      /*width=*/kTestPageWidth, /*height=*/kTestPageHeight);
+  handler_->PageMetadataUpdated(ClonePageMetadataPtrs(fake_metadata));
+  handler_->PageContentsUpdated("PageA");
+
+  ASSERT_EQ(1u, pages.size());
+  EXPECT_TRUE(pages.contains("PageA"));
+
+  // Rotate the second page as well.
+  fake_metadata[1]->rect = gfx::RectF(
+      /*x=*/fake_metadata[1]->rect.x(),
+      /*y=*/fake_metadata[1]->rect.y(),
+      /*width=*/kTestPageHeight, /*height=*/kTestPageWidth);
+  handler_->PageMetadataUpdated(ClonePageMetadataPtrs(fake_metadata));
+  handler_->PageContentsUpdated("PageB");
+
+  ASSERT_EQ(1u, pages.size());
+  EXPECT_TRUE(pages.contains("PageA"));
+
+  WaitForOcringPages(1u);
+
+  ASSERT_EQ(2u, pages.size());
+  EXPECT_TRUE(pages.contains("PageA"));
+  EXPECT_TRUE(pages.contains("PageB"));
+
+  EXPECT_EQ(
+      "AXTree has_parent_tree title=PDF document\n"
+      "id=1 pdfRoot FOCUSABLE name=PDF document containing 2 pages "
+      "name_from=attribute clips_children child_ids=2,3 (0, 0)-(8, 8) "
+      "text_align=left restriction=readonly scroll_x_min=0 scroll_y_min=0 "
+      "scrollable=true is_line_breaking_object=true\n"
+      "  id=2 region name=Page 1 name_from=attribute has_child_tree (0, 0)-(8, "
+      "3) restriction=readonly is_page_breaking_object=true\n"
+      "  id=3 region name=Page 2 name_from=attribute has_child_tree (0, 5)-(8, "
+      "3) restriction=readonly is_page_breaking_object=true\n",
       handler_->GetDocumentTreeToStringForTesting());
 }
 
@@ -1029,17 +1176,24 @@ IN_PROC_BROWSER_TEST_F(AXMediaAppUntrustedHandlerTest, ScrollToMakeVisible) {
   constexpr float kViewportWidth = 2.0f;
   constexpr float kViewportHeight = 4.0f;
   std::vector<PageMetadataPtr> fake_metadata;
-  PageMetadataPtr fake_page = ash::media_app_ui::mojom::PageMetadata::New();
-  fake_page->id = std::format("Page{}", kTestPageIds[0]);
-  fake_page->rect =
-      gfx::RectF(/*x=*/kPageX, /*y=*/kPageY, kTestPageWidth, kTestPageHeight);
-  fake_metadata.push_back(std::move(fake_page));
+  PageMetadataPtr fake_page1 = ash::media_app_ui::mojom::PageMetadata::New();
+  fake_page1->id = std::format("Page{}", kTestPageIds[0]);
+  fake_page1->rect = gfx::RectF(/*x=*/kPageX,
+                                /*y=*/kPageY, kTestPageWidth, kTestPageHeight);
+  fake_metadata.push_back(std::move(fake_page1));
+  PageMetadataPtr fake_page2 = ash::media_app_ui::mojom::PageMetadata::New();
+  fake_page2->id = std::format("Page{}", kTestPageIds[1]);
+  fake_page2->rect =
+      gfx::RectF(/*x=*/kPageX + 20.0f,
+                 /*y=*/kPageY + 20.0f, kTestPageWidth, kTestPageHeight);
+  fake_metadata.push_back(std::move(fake_page2));
   handler_->PageMetadataUpdated(ClonePageMetadataPtrs(fake_metadata));
-  WaitForOcringPages(1u);
+  WaitForOcringPages(2u);
 
   // All pages must have gone through OCR.
-  ASSERT_EQ(1u, fake_media_app_.PageIdsWithBitmap().size());
+  ASSERT_EQ(2u, fake_media_app_.PageIdsWithBitmap().size());
   EXPECT_EQ("PageA", fake_media_app_.PageIdsWithBitmap()[0]);
+  EXPECT_EQ("PageB", fake_media_app_.PageIdsWithBitmap()[1]);
 
   ui::AXActionData scroll_action_data;
   scroll_action_data.action = ax::mojom::Action::kScrollToMakeVisible;
@@ -1102,6 +1256,23 @@ IN_PROC_BROWSER_TEST_F(AXMediaAppUntrustedHandlerTest, ScrollToMakeVisible) {
   handler_->PerformAction(scroll_action_data);
   EXPECT_EQ(gfx::RectF(kPageX, kPageY, kViewportWidth, kViewportHeight),
             fake_media_app_.ViewportBox());
+
+  // View the second page.
+  scroll_action_data.target_tree_id =
+      handler_->GetPagesForTesting().at(fake_metadata[1]->id)->GetTreeID();
+  ASSERT_NE(nullptr,
+            handler_->GetPagesForTesting().at(fake_metadata[1]->id)->GetRoot());
+  scroll_action_data.target_node_id =
+      handler_->GetPagesForTesting().at(fake_metadata[1]->id)->GetRoot()->id();
+
+  handler_->ViewportUpdated(
+      gfx::RectF(/*x=*/0.0f, /*y=*/0.0f, kViewportWidth, kViewportHeight),
+      /*scale_factor=*/1.0f);
+  handler_->PerformAction(scroll_action_data);
+  EXPECT_EQ(gfx::RectF(/*x=*/kPageX + 20.0f + kTestPageWidth - kViewportWidth,
+                       /*y=*/kPageY + 20.0f + kTestPageHeight - kViewportHeight,
+                       kViewportWidth, kViewportHeight),
+            fake_media_app_.ViewportBox());
 }
 
 IN_PROC_BROWSER_TEST_F(AXMediaAppUntrustedHandlerTest,
@@ -1157,6 +1328,86 @@ IN_PROC_BROWSER_TEST_F(AXMediaAppUntrustedHandlerTest,
                  /*y=*/kTestPageHeight * 2 + kTestPageGap - kViewportHeight,
                  kViewportWidth, kViewportHeight),
       fake_media_app_.ViewportBox());
+}
+
+IN_PROC_BROWSER_TEST_F(AXMediaAppUntrustedHandlerTest,
+                       CheckActiveTimeWithMultipleScrollToMakeVisibleActions) {
+  base::HistogramTester histograms;
+  handler_->DisableStatusNodesForTesting();
+  handler_->DisablePostamblePageForTesting();
+  const size_t kTestNumPages = 2;
+  std::vector<PageMetadataPtr> fake_metadata =
+      CreateFakePageMetadata(kTestNumPages);
+  handler_->PageMetadataUpdated(ClonePageMetadataPtrs(fake_metadata));
+  WaitForOcringPages(kTestNumPages);
+
+  // No metric has been recorded at this moment.
+  histograms.ExpectTotalCount("Accessibility.PdfOcr.MediaApp.ActiveTime",
+                              /*expected_count=*/0);
+
+  ui::AXActionData first_scroll_action_data;
+  first_scroll_action_data.action = ax::mojom::Action::kScrollToMakeVisible;
+  first_scroll_action_data.target_tree_id =
+      handler_->GetPagesForTesting().at(fake_metadata[0]->id)->GetTreeID();
+  ASSERT_NE(nullptr,
+            handler_->GetPagesForTesting().at(fake_metadata[0]->id)->GetRoot());
+  first_scroll_action_data.target_node_id =
+      handler_->GetPagesForTesting().at(fake_metadata[0]->id)->GetRoot()->id();
+  // "Scroll to make visible" the target node.
+  handler_->PerformAction(first_scroll_action_data);
+
+  ui::AXActionData second_scroll_action_data;
+  second_scroll_action_data.action = ax::mojom::Action::kScrollToMakeVisible;
+  second_scroll_action_data.target_tree_id =
+      handler_->GetPagesForTesting().at(fake_metadata[1]->id)->GetTreeID();
+  ASSERT_NE(nullptr,
+            handler_->GetPagesForTesting().at(fake_metadata[1]->id)->GetRoot());
+  second_scroll_action_data.target_node_id =
+      handler_->GetPagesForTesting().at(fake_metadata[1]->id)->GetRoot()->id();
+  // "Scroll to make visible" the target node.
+  handler_->PerformAction(second_scroll_action_data);
+
+  // Destroying handler will trigger recording the metric.
+  handler_.reset();
+
+  // There must be one bucket being recorded at this moment.
+  histograms.ExpectTotalCount("Accessibility.PdfOcr.MediaApp.ActiveTime",
+                              /*expected_count=*/1);
+}
+
+IN_PROC_BROWSER_TEST_F(AXMediaAppUntrustedHandlerTest,
+                       CheckNoActiveTimeWithSingleScrollToMakeVisibleAction) {
+  base::HistogramTester histograms;
+  handler_->DisableStatusNodesForTesting();
+  handler_->DisablePostamblePageForTesting();
+  const size_t kTestNumPages = 1;
+  std::vector<PageMetadataPtr> fake_metadata =
+      CreateFakePageMetadata(kTestNumPages);
+  handler_->PageMetadataUpdated(ClonePageMetadataPtrs(fake_metadata));
+  WaitForOcringPages(kTestNumPages);
+
+  // No metric has been recorded at this moment.
+  histograms.ExpectTotalCount("Accessibility.PdfOcr.MediaApp.ActiveTime",
+                              /*expected_count=*/0);
+
+  ui::AXActionData scroll_action_data;
+  scroll_action_data.action = ax::mojom::Action::kScrollToMakeVisible;
+  scroll_action_data.target_tree_id =
+      handler_->GetPagesForTesting().at(fake_metadata[0]->id)->GetTreeID();
+  ASSERT_NE(nullptr,
+            handler_->GetPagesForTesting().at(fake_metadata[0]->id)->GetRoot());
+  scroll_action_data.target_node_id =
+      handler_->GetPagesForTesting().at(fake_metadata[0]->id)->GetRoot()->id();
+  // "Scroll to make visible" the target node, which should scroll forward.
+  handler_->PerformAction(scroll_action_data);
+
+  // Destroying handler will trigger recording the metric.
+  handler_.reset();
+
+  // Nothing has been recorded yet as the active time expects at least two
+  // ScrollToMakeVisible actions to happen for recording.
+  histograms.ExpectTotalCount("Accessibility.PdfOcr.MediaApp.ActiveTime",
+                              /*expected_count=*/0);
 }
 
 IN_PROC_BROWSER_TEST_F(AXMediaAppUntrustedHandlerTest, PageBatching) {
@@ -1374,7 +1625,7 @@ IN_PROC_BROWSER_TEST_F(AXMediaAppUntrustedHandlerTest,
   constexpr size_t kTestNumPages = 1u;
   constexpr float kViewportWidth = 100.0f;
   constexpr float kViewportHeight = 200.0f;
-  // Backlight sends the offset value in negative floating number.
+  // MediaApp sometimes also sends negative viewport origins.
   constexpr float kViewportXOffset = -10.0f;
   constexpr float kViewportYOffset = -5.0f;
   constexpr float kViewportScale = 1.2f;
@@ -1403,9 +1654,10 @@ IN_PROC_BROWSER_TEST_F(AXMediaAppUntrustedHandlerTest,
 
   EXPECT_EQ(kExpectRect, page_a_rect);
   EXPECT_EQ(
-      gfx::RectF(-kViewportXOffset, -kViewportYOffset,
-                 kTestPageWidth * kViewportScale,
-                 kTestPageHeight * kViewportScale),
+      gfx::RectF(-kViewportXOffset * kViewportScale * kTestDisplayPixelRatio,
+                 -kViewportYOffset * kViewportScale * kTestDisplayPixelRatio,
+                 kTestPageWidth * kViewportScale * kTestDisplayPixelRatio,
+                 kTestPageHeight * kViewportScale * kTestDisplayPixelRatio),
       document_root->data().relative_bounds.transform->MapRect(page_a_rect));
 }
 

@@ -8,11 +8,13 @@
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/ui/views/side_panel/side_panel_entry_observer.h"
 #include "content/public/browser/navigation_handle.h"
+#include "content/public/browser/page_navigator.h"
 #include "content/public/browser/web_contents_observer.h"
 
 class Browser;
 class GURL;
 class LensOverlayController;
+class LensOverlaySidePanelWebView;
 class SidePanelUI;
 
 namespace content {
@@ -21,12 +23,20 @@ class WebContents;
 
 namespace views {
 class View;
-class WebView;
 }  // namespace views
 
 namespace lens {
 
 // Handles the creation and registration of the lens overlay side panel entry.
+// There are two ways for this instance to be torn down.
+//   (1) Its owner, LensOverlayController can destroy it.
+//   (2) `side_panel_web_view_` can be destroyed by the side panel.
+// In the case of (2), this instance is no longer functional and needs to be
+// torn down. There are two constraints:
+//   (2a) The shutdown path of LensOverlayController must be asynchronous. This
+//   avoids re-entrancy into the code that is in turn calling (2).
+//   (2b) Clearing local state associated with `side_panel_web_view_` must be
+//   done synchronously.
 class LensOverlaySidePanelCoordinator : public SidePanelEntryObserver,
                                         public content::WebContentsObserver {
  public:
@@ -52,6 +62,9 @@ class LensOverlaySidePanelCoordinator : public SidePanelEntryObserver,
   // SidePanelEntryObserver:
   void OnEntryHidden(SidePanelEntry* entry) override;
 
+  // Called by the destructor of the side panel web view.
+  void WebViewClosing();
+
   content::WebContents* GetSidePanelWebContents();
 
   // Whether the lens overlay entry is currently the active entry in the side
@@ -72,11 +85,11 @@ class LensOverlaySidePanelCoordinator : public SidePanelEntryObserver,
       content::NavigationHandle* navigation_handle) override;
   void DOMContentLoaded(content::RenderFrameHost* render_frame_host) override;
 
+  // Opens the provided url params in the main browser as a new tab.
+  void OpenURLInBrowser(const content::OpenURLParams& params);
+
   // Registers the entry in the side panel if it doesn't already exist.
   void RegisterEntry();
-
-  // Deregisters the entry in the side panel if it exists.
-  void DeregisterEntry();
 
   // Called to get the URL for the "open in new tab" button.
   GURL GetOpenInNewTabUrl();
@@ -96,7 +109,8 @@ class LensOverlaySidePanelCoordinator : public SidePanelEntryObserver,
   const raw_ptr<SidePanelUI> side_panel_ui_;
 
   base::WeakPtr<content::WebContents> tab_web_contents_;
-  raw_ptr<views::WebView> side_panel_web_view_;
+  raw_ptr<LensOverlaySidePanelWebView> side_panel_web_view_;
+  base::WeakPtrFactory<LensOverlaySidePanelCoordinator> weak_ptr_factory_{this};
 };
 
 }  // namespace lens

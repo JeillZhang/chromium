@@ -53,10 +53,11 @@ class MockComposeClient : public compose::ComposeClient {
               (override));
   MOCK_METHOD(bool,
               ShouldTriggerPopup,
-              (const autofill::FormFieldData& trigger_field,
+              (const autofill::FormData& form,
+               const autofill::FormFieldData& trigger_field,
                autofill::AutofillSuggestionTriggerSource trigger_source),
               (override));
-  MOCK_METHOD(compose::PageUkmTracker*, getPageUkmTracker, (), (override));
+  MOCK_METHOD(compose::PageUkmTracker*, GetPageUkmTracker, (), (override));
   MOCK_METHOD(void, DisableProactiveNudge, (), (override));
   MOCK_METHOD(void, OpenProactiveNudgeSettings, (), (override));
   MOCK_METHOD(void,
@@ -97,7 +98,7 @@ class ComposeManagerImplTest : public testing::Test {
     compose::ResetConfigForTesting();
 
     // Allow the manager to obtain the PageUkmTracker instance.
-    ON_CALL(mock_compose_client(), getPageUkmTracker)
+    ON_CALL(mock_compose_client(), GetPageUkmTracker)
         .WillByDefault(testing::Return(page_ukm_tracker_.get()));
     // Record the FormFieldData sent to the client.
     ON_CALL(mock_compose_client(), ShowComposeDialog(_, _, _, _))
@@ -125,6 +126,7 @@ class ComposeManagerImplTest : public testing::Test {
     ON_CALL(mock_compose_client(), HasSession)
         .WillByDefault(testing::Return(has_session));
     return compose_manager_impl().GetSuggestion(
+        autofill::FormData(),
         autofill::test::CreateTestFormField(
             "label0", "name0", "value0", autofill::FormControlType::kTextArea),
         trigger_source);
@@ -145,7 +147,7 @@ class ComposeManagerImplTest : public testing::Test {
 
   autofill::FormData CreateTestFormDataWith3TextAreaFields() {
     autofill::FormData form;
-    form.url = GURL("https://www.foo.com");
+    form.set_url(GURL("https://www.foo.com"));
     form.fields = {
         autofill::test::CreateTestFormField(
             "label0", "name0", "value0", autofill::FormControlType::kTextArea),

@@ -154,7 +154,7 @@ _OS_SPECIFIC_FILTER['mac'] = [
     'ChromeDriverTest.testClickStaleElement',
         # Failing on macOS 14 due to https://crbug.com/40233722
     'ChromeDriverSecureContextTest.testAddVirtualAuthenticator',
-    'ChromeDriverSecureContextTest.testAddVirtualAuthenticatorDefaultBackupSettings',
+    'ChromeDriverSecureContextTest.testAddVirtualAuthDefaultBackupSettings',
     'ChromeDriverSecureContextTest.testAddVirtualAuthenticatorDefaultParams',
     'ChromeDriverSecureContextTest.testGetCredentials',
     'ChromeDriverSecureContextTest.testRemoveAllCredentials',
@@ -229,8 +229,6 @@ _BROWSER_AND_PLATFORM_SPECIFIC_FILTER['chrome-headless-shell']['mac'] = [
     'ChromeDriverSecureContextTest.testCreateVirtualSensorWithMinimumFrequency',
     'ChromeDriverSecureContextTest.testGetVirtualSensorInformation',
     'ChromeDriverSecureContextTest.testUpdateVirtualSensor',
-    # Flaky on Mac: https://crbug.com/1503101
-    'BidiTest.*',
 ]
 _BROWSER_AND_PLATFORM_SPECIFIC_FILTER['chrome-headless-shell']['win'] = [
     # https://bugs.chromium.org/p/chromium/issues/detail?id=1196363
@@ -485,8 +483,8 @@ def _InferBrowserPath(browser_name,
     path_list = _GetHeadlessShellPathList(driver_path, platform)
   for path in path_list:
     if path_exists(path):
-      return path
-  return None
+      return (path, path_list)
+  return (None, path_list)
 
 class RunnerSelfTest(unittest.TestCase):
   def testPathListsForKnownPlatforms(self):
@@ -522,14 +520,31 @@ class RunnerSelfTest(unittest.TestCase):
     is_not_headless_shell = lambda path: 'chrome-headless-shell' not in path
     driver_path = os.path.dirname(_CHROMEDRIVER_BINARY)
     for platform in ['linux', 'mac', 'win']:
-      self.assertGreater(len(_InferBrowserPath('chrome',
+      # Successful inference
+      self.assertIsNotNone(_InferBrowserPath('chrome',
                                 driver_path,
                                 platform,
-                                is_not_headless_shell)), 0)
-      self.assertGreater(len(_InferBrowserPath('chrome-headless-shell',
+                                             is_not_headless_shell)[0],
+                           'platform=%s' % platform)
+      self.assertIsNotNone(_InferBrowserPath('chrome-headless-shell',
                                                driver_path,
                                                platform,
-                                               is_headless_shell)), 0)
+                                             is_headless_shell)[0],
+                           'platform=%s' % platform)
+      # Failed inference
+      (path, path_list) = _InferBrowserPath('chrome',
+                                            driver_path,
+                                            platform,
+                                            lambda _: False)
+      self.assertIsNone(path, 'platform=%s' % platform)
+      self.assertGreater(len(path_list), 0, 'platform=%s' % platform)
+      (path, path_list) = _InferBrowserPath('chrome-headless-shell',
+                                            driver_path,
+                                            platform,
+                                            lambda _: False)
+      self.assertIsNone(path, 'platform=%s' % platform)
+      self.assertGreater(len(path_list), 0, 'platform=%s' % platform)
+
 
 
 class ChromeDriverBaseTest(unittest.TestCase):
@@ -897,6 +912,12 @@ class ChromeDriverTest(ChromeDriverBaseTestWithWebServer):
                                const obj = {};
                                obj['buzz'] = copyMe;
                                return obj;""")
+
+  def testFocusInFirstTab(self):
+    # According to the standard the WebDriver implementation should prefer a
+    # top-level browsing context (window / tab) that has system focus.
+    # S/A: https://w3c.github.io/webdriver/#dfn-new-sessions
+    self.assertTrue(self._driver.ExecuteScript("return document.hasFocus()"))
 
   def _newWindowDoesNotFocus(self, window_type='window'):
     current_handles = self._driver.GetWindowHandles()
@@ -4263,7 +4284,7 @@ class ChromeDriverSecureContextTest(ChromeDriverBaseTestWithWebServer):
     self.assertEqual('OK', result['status'])
     self.assertEqual(['usb'], result['credential']['transports'])
 
-  def testAddVirtualAuthenticatorDefaultBackupSettings(self):
+  def testAddVirtualAuthDefaultBackupSettings(self):
     registerCredentialScript = """
       let done = arguments[0];
       registerCredential().then(done);
@@ -5628,6 +5649,44 @@ class ChromeDriverSiteIsolation(ChromeDriverBaseTestWithWebServer):
       anchor.Click()
       paragraph = self._driver.FindElement('tag name', 'p')
       self.assertEqual('DONE!', paragraph.GetText())
+
+  def testTransientWindows(self):
+    """Test that appearance and disappearance of tabs / windows does not lead
+    to failure of commands that internally update the list of the top level
+    WebView's.
+    """
+    url_for_child_window = self.GetHttpUrlForFile('/child.html')
+    self._http_server.SetDataForPath('/child.html',
+      bytes('''
+            <script>
+              setTimeout(() => {
+                close();
+              }, 100);
+            </script>
+            <p>Child Window</p>
+            ''', 'utf-8'))
+    self._http_server.SetDataForPath(
+        '/main.html',
+        bytes('''
+          <script>
+            const tab_count = 10;
+            for (let k = 0; k < tab_count; ++k) {
+              setTimeout(() => {
+                window.open('%s', 'opened-tabs', 'noopener');
+             }, 300 + 50*k);
+            }
+          </script>
+          ''' % (url_for_child_window),
+         'utf-8'))
+
+    self._driver.Load(self.GetHttpUrlForFile('/main.html'))
+    self.WaitForCondition(
+        lambda: len(self._driver.GetWindowHandles()) > 1,
+        timeout=1)
+    self.assertTrue(self.WaitForCondition(
+        lambda: len(self._driver.GetWindowHandles()) <= 1,
+        timeout=10))
+
 
 
 class ChromeDriverPageLoadTimeoutTest(ChromeDriverBaseTestWithWebServer):
@@ -7051,7 +7110,7 @@ class PureBidiTest(ChromeDriverBaseTestWithWebServer):
   def testStaticCommandWithoutMethod(self):
     conn = self.createWebSocketConnection()
     with self.assertRaisesRegex(chromedriver.InvalidArgument,
-                                'no\\s+method'):
+                                'no\\s+\'method\''):
       conn.SendCommand({
         'params': {}
       })
@@ -7059,7 +7118,7 @@ class PureBidiTest(ChromeDriverBaseTestWithWebServer):
   def testStaticCommandWithoutParams(self):
     conn = self.createWebSocketConnection()
     with self.assertRaisesRegex(chromedriver.InvalidArgument,
-                                'no\\s+params'):
+                                'no\\s+\'params\''):
       conn.SendCommand({
           'method': 'session.status'
       })
@@ -7102,6 +7161,69 @@ class PureBidiTest(ChromeDriverBaseTestWithWebServer):
       # This situation can happen if "browsingContext.getTree" arrives before
       # the ExecuteBidiSessionEnd response is returned to the CMD thread.
       pass
+
+  def testBrowsingContextTreeIsNotEmpty(self):
+    # For the moment being the probability of failure on Mac with 20 iterations
+    # is greater than 50%.
+    for _ in range(0, 20):
+      with self.createWebSocketConnection() as conn:
+        create_session_cmd_id = conn.PostCommand(self.createSessionNewCommand())
+
+        cmd_id_list = []
+        create_session_response = None
+        initial_timeout = conn.GetTimeout()
+        conn.SetTimeout(0.1)
+
+        while create_session_response is None:
+          try:
+            # Sending the browsingContext.getTree without waiting for the
+            # response in the attempt to catch the BiDiMapper by surprise before
+            # it was notified about the new tab creation.
+            cmd_id = conn.PostCommand({
+              'method': 'browsingContext.getTree',
+              'params': {
+              }
+            })
+            cmd_id_list.append(cmd_id)
+            create_session_response = conn.WaitForResponse(
+                create_session_cmd_id)
+          except chromedriver.WebSocketTimeoutException:
+            pass
+
+        # Extra request after the session is certainly created.
+        cmd_id = conn.PostCommand({
+          'method': 'browsingContext.getTree',
+          'params': {
+          }
+        })
+        cmd_id_list.append(cmd_id)
+
+        conn.SetTimeout(initial_timeout)
+
+        response_list = []
+        for cmd_id in cmd_id_list:
+          response = None
+          try:
+            response = conn.WaitForResponse(cmd_id)
+            response_list.append(response);
+          except chromedriver.InvalidSessionId:
+            # Before the session is created the expected response is "invalid
+            # session". After that the correct response is a non empty list.
+            continue
+
+        conn.SendCommand({
+          'method': 'session.end',
+          'params': {
+          }
+        })
+
+        # The list must not be empty as at least the last must have hit the
+        # newly created session.
+        self.assertGreater(len(response_list), 0)
+
+        for response in response_list:
+          contexts = response['contexts']
+          self.assertEqual(1, len(contexts))
 
   def testMultipleConnectionsToSameSession(self):
     conn1 = self.createWebSocketConnection()
@@ -7156,7 +7278,7 @@ class PureBidiTest(ChromeDriverBaseTestWithWebServer):
   def testCloseWithUserPromptOpened(self):
     connection = self.createWebSocketConnection()
     connection.SetTimeout(60)  # 1 min as the test is likely to timeout
-    response = connection.SendCommand(self.createSessionNewCommand())
+    connection.SendCommand(self.createSessionNewCommand())
     context1 = connection.SendCommand({
         'method': 'browsingContext.create',
         'params': {
@@ -7202,6 +7324,31 @@ class PureBidiTest(ChromeDriverBaseTestWithWebServer):
           'params': {
           }
       })
+
+  def testFocusInFirstTab(self):
+    connection = self.createWebSocketConnection()
+    connection.SendCommand(self.createSessionNewCommand())
+    response = connection.SendCommand({
+      'method': 'browsingContext.getTree',
+      'params': {
+      }
+    })
+    context = response['contexts'][0]['context']
+    result = connection.SendCommand({
+      'method': 'script.evaluate',
+      'params': {
+          'expression': 'document.hasFocus()',
+          'target': {
+              'context': context
+          },
+          'awaitPromise': True,
+      }
+    })
+    # According to the standard the WebDriver implementation should prefer a
+    # top-level browsing context (window / tab) that has system focus.
+    # S/A: https://w3c.github.io/webdriver/#dfn-new-sessions
+    self.assertEqual('boolean', result['result']['type'])
+    self.assertTrue(result['result']['value'])
 
 
 class BidiTest(ChromeDriverBaseTestWithWebServer):
@@ -7773,6 +7920,12 @@ class BidiTest(ChromeDriverBaseTestWithWebServer):
     self.navigateTo(conn, self.GetHttpsUrlForFile('/%s.html' % page_name))
     title = driver.GetTitle()
     self.assertEqual(title, page_name)
+
+  def testFocusInFirstTab(self):
+    # According to the standard the WebDriver implementation should prefer a
+    # top-level browsing context (window / tab) that has system focus.
+    # S/A: https://w3c.github.io/webdriver/#dfn-new-sessions
+    self.assertTrue(self._driver.ExecuteScript("return document.hasFocus()"))
 
 
 class CustomBidiMapperTest(ChromeDriverBaseTest):
@@ -8461,12 +8614,19 @@ if __name__ == '__main__':
 
     if browser_name is None:
       browser_name = 'chrome'
-    _CHROME_BINARY = _InferBrowserPath(browser_name,
+    (_CHROME_BINARY, path_list) = _InferBrowserPath(browser_name,
                                        driver_path,
                                        util.GetPlatformName())
     if _CHROME_BINARY is None:
-      print(('Failed to find the browser "%s". ' % browser_name) +
-            'Delegating this task to ChromeDriver')
+      joined_path_list = '  * ' + '\n  * '.join(path_list)
+      if len(path_list) == 0:
+        joined_path_list = '    <empty list>'
+
+      print('''Failed to find the browser "%s".
+Attempted paths:
+%s
+Delegating this task to ChromeDriver'''
+            % (browser_name, joined_path_list))
 
   # If the browser lookup mechanism of the tests fails then this task is
   # delegated to ChromeDriver. The later needs to know which browser to search.

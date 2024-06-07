@@ -17,8 +17,9 @@
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "components/plus_addresses/fake_plus_address_service.h"
 #include "components/plus_addresses/features.h"
-#include "components/plus_addresses/plus_address_metrics.h"
+#include "components/plus_addresses/metrics/plus_address_metrics.h"
 #include "components/plus_addresses/plus_address_types.h"
+#include "components/signin/public/identity_manager/identity_test_environment.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/test/browser_task_environment.h"
 #include "content/public/test/web_contents_tester.h"
@@ -34,10 +35,18 @@ constexpr base::TimeDelta kDuration = base::Milliseconds(3600);
 constexpr base::Time kStartTime = base::Time::FromSecondsSinceUnixEpoch(1);
 
 std::string FormatModalDurationMetrics(
-    PlusAddressMetrics::PlusAddressModalCompletionStatus status) {
+    metrics::PlusAddressModalCompletionStatus status) {
   return base::ReplaceStringPlaceholders(
       "Autofill.PlusAddresses.Modal.$1.ShownDuration",
-      {PlusAddressMetrics::PlusAddressModalCompletionStatusToString(status)},
+      {metrics::PlusAddressModalCompletionStatusToString(status)},
+      /*offsets=*/nullptr);
+}
+
+std::string FormatRefreshHistogramNameFor(
+    metrics::PlusAddressModalCompletionStatus status) {
+  return base::ReplaceStringPlaceholders(
+      "Autofill.PlusAddresses.Modal.$1.Refreshes",
+      {metrics::PlusAddressModalCompletionStatusToString(status)},
       /*offsets=*/nullptr);
 }
 
@@ -67,8 +76,8 @@ class PlusAddressCreationControllerAndroidEnabledTest
   }
   std::unique_ptr<KeyedService> PlusAddressServiceTestFactory(
       content::BrowserContext* context) {
-    std::unique_ptr<FakePlusAddressService> unique_service =
-        std::make_unique<FakePlusAddressService>();
+    auto unique_service = std::make_unique<FakePlusAddressService>(
+        identity_test_env_.identity_manager());
     fake_plus_address_service_ = unique_service.get();
     return unique_service;
   }
@@ -79,6 +88,7 @@ class PlusAddressCreationControllerAndroidEnabledTest
   // `PlusAddressServiceFactory` doesn't bail early with a null return.
   profiles::testing::ScopedProfileSelectionsForFactoryTesting
       override_profile_selections_;
+  signin::IdentityTestEnvironment identity_test_env_;
   base::HistogramTester histogram_tester_;
   raw_ptr<FakePlusAddressService> fake_plus_address_service_;
   base::SimpleTestClock test_clock_;
@@ -105,15 +115,50 @@ TEST_F(PlusAddressCreationControllerAndroidEnabledTest, DirectCallback) {
   EXPECT_THAT(
       histogram_tester_.GetAllSamples(kPlusAddressModalEventHistogram),
       BucketsAre(
-          base::Bucket(PlusAddressMetrics::PlusAddressModalEvent::kModalShown,
-                       1),
-          base::Bucket(
-              PlusAddressMetrics::PlusAddressModalEvent::kModalConfirmed, 1)));
+          base::Bucket(metrics::PlusAddressModalEvent::kModalShown, 1),
+          base::Bucket(metrics::PlusAddressModalEvent::kModalConfirmed, 1)));
   histogram_tester_.ExpectUniqueTimeSample(
       FormatModalDurationMetrics(
-          PlusAddressMetrics::PlusAddressModalCompletionStatus::
-              kModalConfirmed),
+          metrics::PlusAddressModalCompletionStatus::kModalConfirmed),
       kDuration, 1);
+  histogram_tester_.ExpectUniqueSample(
+      FormatRefreshHistogramNameFor(
+          metrics::PlusAddressModalCompletionStatus::kModalConfirmed),
+      0, 1);
+}
+
+TEST_F(PlusAddressCreationControllerAndroidEnabledTest, RefreshPlusAddress) {
+  std::unique_ptr<content::WebContents> web_contents =
+      ChromeRenderViewHostTestHarness::CreateTestWebContents();
+
+  PlusAddressCreationControllerAndroid::CreateForWebContents(
+      web_contents.get());
+  PlusAddressCreationControllerAndroid* controller =
+      PlusAddressCreationControllerAndroid::FromWebContents(web_contents.get());
+  controller->set_suppress_ui_for_testing(true);
+  controller->SetClockForTesting(&test_clock_);
+  base::test::TestFuture<const std::string&> future;
+  test_clock_.SetNow(kStartTime);
+  controller->OfferCreation(
+      url::Origin::Create(GURL("https://mattwashere.example")),
+      future.GetCallback());
+  controller->OnRefreshClicked();
+  test_clock_.SetNow(kStartTime + kDuration);
+  controller->OnConfirmed();
+  EXPECT_TRUE(future.IsReady());
+  EXPECT_THAT(
+      histogram_tester_.GetAllSamples(kPlusAddressModalEventHistogram),
+      BucketsAre(
+          base::Bucket(metrics::PlusAddressModalEvent::kModalShown, 1),
+          base::Bucket(metrics::PlusAddressModalEvent::kModalConfirmed, 1)));
+  histogram_tester_.ExpectUniqueTimeSample(
+      FormatModalDurationMetrics(
+          metrics::PlusAddressModalCompletionStatus::kModalConfirmed),
+      kDuration, 1);
+  histogram_tester_.ExpectUniqueSample(
+      FormatRefreshHistogramNameFor(
+          metrics::PlusAddressModalCompletionStatus::kModalConfirmed),
+      1, 1);
 }
 
 TEST_F(PlusAddressCreationControllerAndroidEnabledTest, OnConfirmedError) {
@@ -148,17 +193,17 @@ TEST_F(PlusAddressCreationControllerAndroidEnabledTest, OnConfirmedError) {
   EXPECT_THAT(
       histogram_tester_.GetAllSamples(kPlusAddressModalEventHistogram),
       BucketsAre(
-          base::Bucket(PlusAddressMetrics::PlusAddressModalEvent::kModalShown,
-                       1),
-          base::Bucket(
-              PlusAddressMetrics::PlusAddressModalEvent::kModalConfirmed, 1),
-          base::Bucket(
-              PlusAddressMetrics::PlusAddressModalEvent::kModalCanceled, 1)));
+          base::Bucket(metrics::PlusAddressModalEvent::kModalShown, 1),
+          base::Bucket(metrics::PlusAddressModalEvent::kModalConfirmed, 1),
+          base::Bucket(metrics::PlusAddressModalEvent::kModalCanceled, 1)));
   histogram_tester_.ExpectUniqueTimeSample(
       FormatModalDurationMetrics(
-          PlusAddressMetrics::PlusAddressModalCompletionStatus::
-              kConfirmPlusAddressError),
+          metrics::PlusAddressModalCompletionStatus::kConfirmPlusAddressError),
       kDuration, 1);
+  histogram_tester_.ExpectUniqueSample(
+      FormatRefreshHistogramNameFor(
+          metrics::PlusAddressModalCompletionStatus::kConfirmPlusAddressError),
+      0, 1);
 }
 
 TEST_F(PlusAddressCreationControllerAndroidEnabledTest, OnReservedError) {
@@ -189,15 +234,16 @@ TEST_F(PlusAddressCreationControllerAndroidEnabledTest, OnReservedError) {
   EXPECT_THAT(
       histogram_tester_.GetAllSamples(kPlusAddressModalEventHistogram),
       BucketsAre(
-          base::Bucket(PlusAddressMetrics::PlusAddressModalEvent::kModalShown,
-                       1),
-          base::Bucket(
-              PlusAddressMetrics::PlusAddressModalEvent::kModalCanceled, 1)));
+          base::Bucket(metrics::PlusAddressModalEvent::kModalShown, 1),
+          base::Bucket(metrics::PlusAddressModalEvent::kModalCanceled, 1)));
   histogram_tester_.ExpectUniqueTimeSample(
       FormatModalDurationMetrics(
-          PlusAddressMetrics::PlusAddressModalCompletionStatus::
-              kReservePlusAddressError),
+          metrics::PlusAddressModalCompletionStatus::kReservePlusAddressError),
       kDuration, 1);
+  histogram_tester_.ExpectUniqueSample(
+      FormatRefreshHistogramNameFor(
+          metrics::PlusAddressModalCompletionStatus::kReservePlusAddressError),
+      0, 1);
 }
 
 TEST_F(PlusAddressCreationControllerAndroidEnabledTest,
@@ -243,14 +289,16 @@ TEST_F(PlusAddressCreationControllerAndroidEnabledTest, ModalCanceled) {
   EXPECT_THAT(
       histogram_tester_.GetAllSamples(kPlusAddressModalEventHistogram),
       BucketsAre(
-          base::Bucket(PlusAddressMetrics::PlusAddressModalEvent::kModalShown,
-                       1),
-          base::Bucket(
-              PlusAddressMetrics::PlusAddressModalEvent::kModalCanceled, 1)));
+          base::Bucket(metrics::PlusAddressModalEvent::kModalShown, 1),
+          base::Bucket(metrics::PlusAddressModalEvent::kModalCanceled, 1)));
   histogram_tester_.ExpectUniqueTimeSample(
       FormatModalDurationMetrics(
-          PlusAddressMetrics::PlusAddressModalCompletionStatus::kModalCanceled),
+          metrics::PlusAddressModalCompletionStatus::kModalCanceled),
       kDuration, 1);
+  histogram_tester_.ExpectUniqueSample(
+      FormatRefreshHistogramNameFor(
+          metrics::PlusAddressModalCompletionStatus::kModalCanceled),
+      0, 1);
 }
 
 TEST_F(PlusAddressCreationControllerAndroidEnabledTest,
@@ -288,15 +336,16 @@ TEST_F(PlusAddressCreationControllerAndroidEnabledTest,
   EXPECT_THAT(
       histogram_tester_.GetAllSamples(kPlusAddressModalEventHistogram),
       BucketsAre(
-          base::Bucket(PlusAddressMetrics::PlusAddressModalEvent::kModalShown,
-                       1),
-          base::Bucket(
-              PlusAddressMetrics::PlusAddressModalEvent::kModalConfirmed, 1)));
+          base::Bucket(metrics::PlusAddressModalEvent::kModalShown, 1),
+          base::Bucket(metrics::PlusAddressModalEvent::kModalConfirmed, 1)));
   histogram_tester_.ExpectUniqueTimeSample(
       FormatModalDurationMetrics(
-          PlusAddressMetrics::PlusAddressModalCompletionStatus::
-              kModalConfirmed),
+          metrics::PlusAddressModalCompletionStatus::kModalConfirmed),
       kDuration, 1);
+  histogram_tester_.ExpectUniqueSample(
+      FormatRefreshHistogramNameFor(
+          metrics::PlusAddressModalCompletionStatus::kModalConfirmed),
+      0, 1);
 }
 // With the feature disabled, the `KeyedService` is not present; ensure this is
 // handled. While this code path should not be called in that case, it is

@@ -254,8 +254,9 @@ BrowserAccessibility* BrowserAccessibility::PlatformDeepestFirstChild() const {
   if (IsLeaf())
     return nullptr;
   BrowserAccessibility* deepest_child = PlatformGetFirstChild();
-  while (!deepest_child->IsLeaf())
+  while (deepest_child && !deepest_child->IsLeaf()) {
     deepest_child = deepest_child->PlatformGetFirstChild();
+  }
   return deepest_child;
 }
 
@@ -265,8 +266,9 @@ BrowserAccessibility* BrowserAccessibility::PlatformDeepestLastChild() const {
   if (IsLeaf())
     return nullptr;
   BrowserAccessibility* deepest_child = PlatformGetLastChild();
-  while (!deepest_child->IsLeaf())
+  while (deepest_child && !deepest_child->IsLeaf()) {
     deepest_child = deepest_child->PlatformGetLastChild();
+  }
   return deepest_child;
 }
 
@@ -1277,7 +1279,6 @@ bool BrowserAccessibility::AccessibilityPerformAction(
     case ax::mojom::Action::kStitchChildTree:
       CHECK_NE(data.target_tree_id, ui::AXTreeIDUnknown());
       CHECK_EQ(data.target_tree_id, manager()->GetTreeID());
-      CHECK_NE(data.target_node_id, ui::kInvalidAXNodeID);
       CHECK_EQ(data.target_node_id, node()->id());
       CHECK_NE(data.child_tree_id, ui::AXTreeIDUnknown());
       CHECK_NE(data.child_tree_id, manager()->GetTreeID())
@@ -1419,6 +1420,7 @@ std::u16string BrowserAccessibility::GetLocalizedStringForRoleDescription()
     case ax::mojom::Role::kComboBoxMenuButton:
     case ax::mojom::Role::kDesktop:
     case ax::mojom::Role::kFigcaption:
+    case ax::mojom::Role::kGridCell:
     case ax::mojom::Role::kGroup:
     case ax::mojom::Role::kIframe:
     case ax::mojom::Role::kLegend:

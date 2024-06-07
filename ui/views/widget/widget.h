@@ -248,15 +248,9 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
                  // relationship to other windows.
     };
 
-    // Default initialization with |type| set to TYPE_WINDOW.
-    // TODO(crbug.com/339619005): Remove the default constructor once call sites
-    //                            have been migrated to always specifying the
-    //                            ownership mode.
-    InitParams();
-
-    // Initialization for other |type| types.
-    // TODO(crbug.com/339619005): Remove this constructor. See comment on the
-    //                            default constructor for more details.
+    // TODO(crbug.com/339619005): Remove this constructor once call sites
+    //                            have been migrated to always specifying
+    //                            the ownership mode as well as the type.
     explicit InitParams(Type type);
 
     // The preferred constructor. Must specify the ownership mode. The ownership
@@ -1231,6 +1225,10 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
   InitParams::Ownership ownership() const { return ownership_; }
 
   bool native_widget_active() const { return native_widget_active_; }
+
+  // Called to enable or disable screenshots of this widget.
+  void SetAllowScreenshots(bool allow);
+  bool AreScreenshotsAllowed();
 
  protected:
   // Creates the RootView to be used within this Widget. Subclasses may override

@@ -6,13 +6,19 @@
 
 #include <functional>
 #include <memory>
+#include <tuple>
 #include <type_traits>
 
 #include "base/check.h"
+#include "base/containers/contains.h"
 #include "base/functional/callback.h"
 #include "base/functional/callback_helpers.h"
+#include "base/logging.h"
+#include "base/no_destructor.h"
 #include "base/rand_util.h"
+#include "base/strings/string_util.h"
 #include "chrome/browser/about_flags.h"
+#include "chrome/browser/browser_process.h"
 #include "chrome/browser/compose/proto/compose_optimization_guide.pb.h"
 #include "chrome/browser/flag_descriptions.h"
 #include "chrome/browser/optimization_guide/optimization_guide_keyed_service.h"
@@ -26,6 +32,8 @@
 #include "components/flags_ui/feature_entry.h"
 #include "components/flags_ui/flags_storage.h"
 #include "components/prefs/pref_service.h"
+#include "components/variations/service/variations_service.h"
+#include "components/variations/service/variations_service_utils.h"
 #include "content/public/browser/context_menu_params.h"
 #include "content/public/browser/render_frame_host.h"
 #if BUILDFLAG(IS_CHROMEOS)
@@ -39,8 +47,36 @@ bool AutocompleteAllowed(std::string_view autocomplete_attribute) {
   return autocomplete_attribute != std::string("off");
 }
 
+std::unique_ptr<std::string>& GetCountryCodeOverride() {
+  static base::NoDestructor<std::unique_ptr<std::string>> country_code_override(
+      nullptr);
+  return *country_code_override;
+}
+
+std::string GetCountryCode() {
+  if (GetCountryCodeOverride()) {
+    return *GetCountryCodeOverride();
+  }
+  std::string country_code =
+      base::ToLowerASCII(variations::GetCurrentCountryCode(
+          g_browser_process->variations_service()));
+  DLOG_IF(WARNING, country_code.empty()) << "Couldn't get country info.";
+  return country_code;
+}
+
+std::tuple<std::string, bool> IsComposeEnabledForCountry(
+    compose::Config config) {
+  std::string country_code = GetCountryCode();
+  if (config.enabled_countries.size() == 1 &&
+      config.enabled_countries[0] == "*") {
+    return {country_code, true};
+  }
+  return {country_code, base::Contains(config.enabled_countries, country_code)};
+}
+
 }  // namespace
 
+// Static members' initializers.
 int ComposeEnabling::enabled_for_testing_{0};
 int ComposeEnabling::skip_user_check_for_testing_{0};
 
@@ -85,6 +121,15 @@ ComposeEnabling::ScopedSkipUserCheckForTesting() {
         DCHECK(skip_user_check_for_testing >= 0);
       },
       std::ref(skip_user_check_for_testing_)));
+}
+
+// Static.
+ComposeEnabling::ScopedOverride ComposeEnabling::OverrideCountryForTesting(
+    std::string country_code) {
+  CHECK(!GetCountryCodeOverride());
+  GetCountryCodeOverride() = std::make_unique<std::string>(country_code);
+  return std::make_unique<base::ScopedClosureRunner>(
+      base::BindOnce([]() { GetCountryCodeOverride().reset(); }));
 }
 
 compose::ComposeHintDecision ComposeEnabling::GetOptimizationGuidanceForUrl(
@@ -163,6 +208,20 @@ base::expected<void, compose::ComposeShowStatus> ComposeEnabling::CheckEnabling(
         compose::ComposeShowStatus::kComposeFeatureFlagDisabled);
   }
 
+  // Check if we're running in an enabled country. Note that an empty country
+  // code will cause Compose to be disabled.
+  std::string country_code;
+  bool is_enabled_for_country;
+  std::tie(country_code, is_enabled_for_country) =
+      IsComposeEnabledForCountry(compose::GetComposeConfig());
+  if (!is_enabled_for_country) {
+    DVLOG(2) << "not running in an enabled country: \"" << country_code << "\"";
+    return base::unexpected(
+        country_code.empty()
+            ? compose::ComposeShowStatus::kUndefinedCountry
+            : compose::ComposeShowStatus::kComposeNotEnabledInCountry);
+  }
+
   // Check signin status.
   CoreAccountInfo core_account_info =
       identity_manager->GetPrimaryAccountInfo(signin::ConsentLevel::kSignin);
@@ -192,55 +251,6 @@ base::expected<void, compose::ComposeShowStatus> ComposeEnabling::CheckEnabling(
 
   DVLOG(2) << "enabled";
   return base::ok();
-}
-
-base::expected<void, compose::ComposeNudgeDenyReason>
-ComposeEnabling::ShouldTriggerPopup(
-    std::string_view autocomplete_attribute,
-    bool allows_writing_suggestions,
-    Profile* profile,
-    PrefService* prefs,
-    translate::TranslateManager* translate_manager,
-    bool ongoing_session,
-    const url::Origin& top_level_frame_origin,
-    const url::Origin& element_frame_origin,
-    GURL url,
-    autofill::AutofillSuggestionTriggerSource trigger_source,
-    bool is_msbb_enabled) {
-  if (ongoing_session) {
-    return ShouldTriggerSavedStatePopup(trigger_source);
-  }
-
-  base::expected<void, compose::ComposeShowStatus> show_status =
-      ShouldTriggerNoStatePopup(autocomplete_attribute,
-                                allows_writing_suggestions, profile, prefs,
-                                translate_manager, top_level_frame_origin,
-                                element_frame_origin, url, is_msbb_enabled);
-  if (show_status.has_value()) {
-    compose::LogComposeProactiveNudgeShowStatus(
-        compose::ComposeShowStatus::kShouldShow);
-    return base::ok();
-  }
-
-  compose::LogComposeProactiveNudgeShowStatus(show_status.error());
-  switch (show_status.error()) {
-    case compose::ComposeShowStatus::
-        kProactiveNudgeDisabledGloballyByUserPreference:
-    case compose::ComposeShowStatus::
-        kProactiveNudgeDisabledForSiteByUserPreference:
-    case compose::ComposeShowStatus::kProactiveNudgeFeatureDisabled:
-    case compose::ComposeShowStatus::kRandomlyBlocked:
-    case compose::ComposeShowStatus::kProactiveNudgeDisabledByMSBB:
-      // The disabled deny reason means the nudge would show if preference or
-      // configuration changed.
-      return base::unexpected(
-          compose::ComposeNudgeDenyReason::kProactiveNudgeDisabled);
-    default:
-      // The blocked deny reason means the nudge would never display even if
-      // preferences or configuration changed.
-      return base::unexpected(
-          compose::ComposeNudgeDenyReason::kProactiveNudgeBlocked);
-  }
 }
 
 base::expected<void, compose::ComposeShowStatus>
@@ -324,26 +334,23 @@ ComposeEnabling::ShouldTriggerNoStatePopup(
   return base::ok();
 }
 
-base::expected<void, compose::ComposeNudgeDenyReason>
-ComposeEnabling::ShouldTriggerSavedStatePopup(
+bool ComposeEnabling::ShouldTriggerSavedStatePopup(
     autofill::AutofillSuggestionTriggerSource trigger_source) {
   // No need to preform field and page level checks since there is already saved
   // state. Only check config and features.
 
   if (!compose::GetComposeConfig().saved_state_nudge_enabled) {
-    return base::unexpected(
-        compose::ComposeNudgeDenyReason::kSavedStateNudgeDisabled);
+    return false;
   }
 
   if (trigger_source ==
           autofill::AutofillSuggestionTriggerSource::kComposeDialogLostFocus &&
       !base::FeatureList::IsEnabled(
           compose::features::kEnableComposeSavedStateNotification)) {
-    return base::unexpected(
-        compose::ComposeNudgeDenyReason::kSavedStateNotificationDisabled);
+    return false;
   }
 
-  return base::ok();
+  return true;
 }
 
 bool ComposeEnabling::ShouldTriggerContextMenu(

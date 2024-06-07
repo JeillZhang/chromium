@@ -25,6 +25,8 @@ const base::flat_map<ui::DomCode, MouseKeysController::MouseKey>
     kLeftHandedKeys({
         {ui::DomCode::US_W, MouseKeysController::kKeyClick},
         {ui::DomCode::US_V, MouseKeysController::kKeyDoubleClick},
+        {ui::DomCode::US_Z, MouseKeysController::kKeyDragStart},
+        {ui::DomCode::US_C, MouseKeysController::kKeyDragStop},
         {ui::DomCode::DIGIT1, MouseKeysController::kKeyUpLeft},
         {ui::DomCode::DIGIT2, MouseKeysController::kKeyUp},
         {ui::DomCode::DIGIT3, MouseKeysController::kKeyUpRight},
@@ -40,6 +42,8 @@ const base::flat_map<ui::DomCode, MouseKeysController::MouseKey>
     kRightHandedKeys({
         {ui::DomCode::US_I, MouseKeysController::kKeyClick},
         {ui::DomCode::SLASH, MouseKeysController::kKeyDoubleClick},
+        {ui::DomCode::US_M, MouseKeysController::kKeyDragStart},
+        {ui::DomCode::PERIOD, MouseKeysController::kKeyDragStop},
         {ui::DomCode::DIGIT7, MouseKeysController::kKeyUpLeft},
         {ui::DomCode::DIGIT8, MouseKeysController::kKeyUp},
         {ui::DomCode::DIGIT9, MouseKeysController::kKeyUpRight},
@@ -54,6 +58,8 @@ const base::flat_map<ui::DomCode, MouseKeysController::MouseKey>
 const base::flat_map<ui::DomCode, MouseKeysController::MouseKey> kNumPadKeys({
     {ui::DomCode::NUMPAD5, MouseKeysController::kKeyClick},
     {ui::DomCode::NUMPAD_ADD, MouseKeysController::kKeyDoubleClick},
+    {ui::DomCode::NUMPAD0, MouseKeysController::kKeyDragStart},
+    {ui::DomCode::NUMPAD_DECIMAL, MouseKeysController::kKeyDragStop},
     {ui::DomCode::NUMPAD7, MouseKeysController::kKeyUpLeft},
     {ui::DomCode::NUMPAD8, MouseKeysController::kKeyUp},
     {ui::DomCode::NUMPAD9, MouseKeysController::kKeyUpRight},
@@ -102,12 +108,9 @@ bool MouseKeysController::RewriteEvent(const ui::Event& event) {
       !(key_event->flags() & ui::EF_IS_REPEAT)) {
     paused_ = !paused_;
     if (paused_) {
-      // TODO(259372916): Move this to a helper function.
       // Reset everything when pausing.
-      speed_ = 0;
-      if (update_timer_.IsRunning()) {
-        update_timer_.Stop();
-      }
+      ResetMovement();
+      dragging_ = false;
     }
     return true;
   }
@@ -119,14 +122,17 @@ bool MouseKeysController::RewriteEvent(const ui::Event& event) {
   CenterMouseIfUninitialized();
 
   // Check primary keyboard keys.
-  auto mappings = left_handed_ ? kLeftHandedKeys : kRightHandedKeys;
-  for (auto mapping : mappings) {
-    if (CheckFlagsAndMaybeSendEvent(*key_event, mapping.first,
-                                    mapping.second)) {
-      return true;
+  if (use_primary_keys_) {
+    auto mappings = left_handed_ ? kLeftHandedKeys : kRightHandedKeys;
+    for (auto mapping : mappings) {
+      if (CheckFlagsAndMaybeSendEvent(*key_event, mapping.first,
+                                      mapping.second)) {
+        return true;
+      }
     }
   }
 
+  // Check num pad.
   for (auto mapping : kNumPadKeys) {
     if (CheckFlagsAndMaybeSendEvent(*key_event, mapping.first,
                                     mapping.second)) {
@@ -171,11 +177,10 @@ void MouseKeysController::SendMouseEventToLocation(ui::EventType type,
   ::wm::ConvertPointFromScreen(root_window, &location_in_pixels);
   aura::WindowTreeHost* host = root_window->GetHost();
   host->ConvertDIPToPixels(&location_in_pixels);
-  ui::MouseEvent press_event(type, location_in_pixels, location_in_pixels,
-                             ui::EventTimeForNow(), event_flags | button,
-                             button);
+  ui::MouseEvent event(type, location_in_pixels, location_in_pixels,
+                       ui::EventTimeForNow(), event_flags | button, button);
 
-  (void)host->GetEventSink()->OnEventFromSource(&press_event);
+  (void)host->GetEventSink()->OnEventFromSource(&event);
 }
 
 void MouseKeysController::MoveMouse(const gfx::Vector2d& move_delta_dip) {
@@ -197,6 +202,9 @@ void MouseKeysController::MoveMouse(const gfx::Vector2d& move_delta_dip) {
   }
 
   host->MoveCursorToLocationInDIP(location);
+  if (dragging_) {
+    SendMouseEventToLocation(ui::ET_MOUSE_DRAGGED, location);
+  }
   last_mouse_position_dips_ = location;
 }
 
@@ -233,6 +241,7 @@ bool MouseKeysController::CheckFlagsAndMaybeSendEvent(
 }
 
 void MouseKeysController::PressKey(MouseKey key) {
+  pressed_keys_[key] = true;
   switch (key) {
     case kKeyUpLeft:
     case kKeyUp:
@@ -242,11 +251,22 @@ void MouseKeysController::PressKey(MouseKey key) {
     case kKeyDownLeft:
     case kKeyDown:
     case kKeyDownRight:
-      pressed_keys_[key] = true;
       RefreshVelocity();
       break;
     case kKeyClick:
-      SendMouseEventToLocation(ui::ET_MOUSE_PRESSED, last_mouse_position_dips_);
+    case kKeyDragStart:
+      if (!dragging_) {
+        SendMouseEventToLocation(ui::ET_MOUSE_PRESSED,
+                                 last_mouse_position_dips_);
+        dragging_ = true;
+      }
+      break;
+    case kKeyDragStop:
+      if (dragging_) {
+        SendMouseEventToLocation(ui::ET_MOUSE_RELEASED,
+                                 last_mouse_position_dips_);
+        dragging_ = false;
+      }
       break;
     case kKeyDoubleClick:
       if (current_mouse_button_ == kLeft) {
@@ -281,11 +301,36 @@ void MouseKeysController::PressKey(MouseKey key) {
 }
 
 void MouseKeysController::ReleaseKey(MouseKey key) {
-  if (key == kKeyClick) {
-    SendMouseEventToLocation(ui::ET_MOUSE_RELEASED, last_mouse_position_dips_);
-  } else {
-    pressed_keys_[key] = false;
-    RefreshVelocity();
+  pressed_keys_[key] = false;
+  switch (key) {
+    case kKeyUpLeft:
+    case kKeyUp:
+    case kKeyUpRight:
+    case kKeyLeft:
+    case kKeyRight:
+    case kKeyDownLeft:
+    case kKeyDown:
+    case kKeyDownRight:
+      RefreshVelocity();
+      break;
+    case kKeyClick:
+      if (dragging_) {
+        SendMouseEventToLocation(ui::ET_MOUSE_RELEASED,
+                                 last_mouse_position_dips_);
+        dragging_ = false;
+      }
+      break;
+    case kKeyDragStart:
+    case kKeyDragStop:
+    case kKeyDoubleClick:
+    case kKeySelectLeftButton:
+    case kKeySelectRightButton:
+    case kKeySelectBothButtons:
+    case kKeySelectNextButton:
+      break;
+    case kKeyCount:
+      NOTREACHED_IN_MIGRATION();
+      break;
   }
 }
 
@@ -329,12 +374,8 @@ void MouseKeysController::RefreshVelocity() {
   move_direction_ = gfx::Vector2d(x_direction, y_direction);
 
   if (x_direction == 0 && y_direction == 0) {
-    // TODO(259372916): Move this to a helper function.
     // Reset everything if there is no movement.
-    speed_ = 0;
-    if (update_timer_.IsRunning()) {
-      update_timer_.Stop();
-    }
+    ResetMovement();
     return;
   }
 
@@ -359,6 +400,13 @@ void MouseKeysController::UpdateState() {
   double acceleration = acceleration_ * kBaseAccelerationDIPPerSecondSquared *
                         kUpdateFrequencyInSeconds;
   speed_ = std::clamp(speed_ + acceleration, 0.0, max_speed_);
+}
+
+void MouseKeysController::ResetMovement() {
+  speed_ = 0;
+  if (update_timer_.IsRunning()) {
+    update_timer_.Stop();
+  }
 }
 
 }  // namespace ash

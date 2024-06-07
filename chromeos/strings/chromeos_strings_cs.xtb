@@ -236,7 +236,6 @@
 <translation id="2189104374785738357">Úprava podrobností o APN</translation>
 <translation id="2195732836444333448">Momentálně je kapacita plně obsazena. Zkuste to později.</translation>
 <translation id="2201758491318984023">jízdní kolo</translation>
-<translation id="2203222757805818543">Aktuální plán je nastaven na <ph name="SUNRISE" /> – <ph name="SUNSET" />. Pokud plán tmavého režimu chcete automaticky aktualizovat, <ph name="BEGIN_LINK" />zapněte přístup k poloze<ph name="END_LINK" /></translation>
 <translation id="2203272733515928691">termální pramen</translation>
 <translation id="2203642483788377106">útes</translation>
 <translation id="2208388655216963643">impresionismus</translation>
@@ -364,6 +363,7 @@
 <translation id="3054177598518735801"><ph name="CURRENT_VALUE" /> mA</translation>
 <translation id="3056720590588772262">Koncový bod</translation>
 <translation id="3060579846059757016">Osnova</translation>
+<translation id="3061850252076394168">zapnout poslech vybraného textu</translation>
 <translation id="3069085583900247081">Test se nezdařil</translation>
 <translation id="3078740164268491126">tabulka</translation>
 <translation id="3081652522083185657">světlé</translation>
@@ -630,7 +630,6 @@
 <translation id="458794348635939462">Všechny hostitele se nepodařilo vyřešit</translation>
 <translation id="4593212453765072419">Vyžadováno ověření proxy serveru</translation>
 <translation id="4609350030397390689">Snížit jas</translation>
-<translation id="4617553623719764431">Počasí se nezobrazuje, protože nezná vaši polohu. Pokud chcete zobrazit místní počasí, <ph name="BEGIN_LINK" />zapněte přístup k poloze<ph name="END_LINK" /></translation>
 <translation id="4627232916386272576"><ph name="DOCUMENT_TITLE" />, <ph name="PRINTER_NAME" />, <ph name="CREATION_TIME" />, <ph name="PRINTED_PAGE_NUMBER" /> z <ph name="TOTAL_PAGE_NUMBER" />. Tiskovou úlohu zrušíte stisknutím klávesy Enter.</translation>
 <translation id="463791356324567266">Rušení skenování…</translation>
 <translation id="4646949265910132906">Zabezpečené připojení k Wi-Fi</translation>
@@ -704,6 +703,7 @@
 <translation id="4985509611418653372">Spustit</translation>
 <translation id="4987769320337599931">Firewall</translation>
 <translation id="4988526792673242964">Stránky</translation>
+<translation id="4989542687859782284">Nedostupné</translation>
 <translation id="4999333166442584738">Skrýt přehled</translation>
 <translation id="500920857929044050">Zastavit test</translation>
 <translation id="5017508259293544172">LEAP</translation>
@@ -960,7 +960,6 @@
 <translation id="6412715219990689313">Vestavěná klávesnice</translation>
 <translation id="6417265370957905582">Asistent Google</translation>
 <translation id="6423239382391657905">OpenVPN</translation>
-<translation id="6438073885402882007">Systémové služby s potřebným oprávněním budou moci používat vaši polohu. Poloha zařízení se určuje pomocí zdrojů, jako jsou sítě Wi-Fi, mobilní sítě a senzory. <ph name="LINK_BEGIN" />Další informace<ph name="LINK_END" /></translation>
 <translation id="6439505561246192797">Slabý (<ph name="SIGNAL_STRENGTH" />)</translation>
 <translation id="6447630859861661624">Přejít na nastavení účtu</translation>
 <translation id="6462978824459367242">Tlačítko k přidání APN je nyní aktivní</translation>

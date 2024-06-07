@@ -97,6 +97,17 @@ chromium-metrics-reviews@google.com.
   <int value="1" label="Other Default"/>
 </enum>
 
+<enum name="AndroidDialogType">
+  <int value="0" label="Date Dialog"/>
+  <int value="1" label="Time Dialog"/>
+  <int value="2" label="Datetime Dialog"/>
+  <int value="3" label="Month Dialog"/>
+  <int value="4" label="Week Dialog"/>
+  <int value="5" label="Color Picker Dialog"/>
+  <int value="6" label="Select Dialog"/>
+  <int value="7" label="JavaScript Dialog"/>
+</enum>
+
 <enum name="AndroidDownloadFilterType">
   <int value="0" label="All"/>
   <int value="1" label="Page"/>
@@ -536,7 +547,10 @@ chromium-metrics-reviews@google.com.
   <int value="101" label="WebViewCompat.isAudioMuted"/>
   <int value="102" label="WebSettingsCompat.setWebauthnSupport"/>
   <int value="103" label="WebSettingsCompat.getWebauthnSupport"/>
-  <int value="104" label="WebSettingsCompat.setPreloadingEnabled"/>
+  <int value="104" label="WebSettingsCompat.setSpeculativeLoadingStatus"/>
+  <int value="105" label="WebSettingsCompat.getSpeculativeLoadingStatus"/>
+  <int value="106" label="WebSettingsCompat.setBackForwardCacheEnabled"/>
+  <int value="107" label="WebSettingsCompat.getBackForwardCacheEnabled"/>
 </enum>
 
 <enum name="ArmCpuPart">
@@ -640,13 +654,6 @@ chromium-metrics-reviews@google.com.
   <int value="19" label="(04) PAGE_INSIGHTS_BOTTOM_SHEET"/>
   <int value="20" label="(15) BOTTOM_CONTROLS"/>
   <int value="21" label="(06) HUB"/>
-</enum>
-
-<enum name="ChildAppInfoError">
-  <int value="0" label="No error (app info matches)"/>
-  <int value="1" label="sourceDir mismatch"/>
-  <int value="2" label="sharedLibraryFiles mismatch"/>
-  <int value="3" label="RemoteException when calling getAppInfo()"/>
 </enum>
 
 <enum name="ChromeActivityType">
@@ -918,6 +925,13 @@ chromium-metrics-reviews@google.com.
   <int value="2" label="Got nothing"/>
   <int value="3" label="Got different aspect ratio JPEG thumbnail"/>
   <int value="4" label="Got JPEG thumbnail on refetch"/>
+</enum>
+
+<enum name="HubPaneId">
+  <int value="0" label="Regular tab switcher"/>
+  <int value="1" label="Incognito tab switcher"/>
+  <int value="2" label="Bookmarks"/>
+  <int value="3" label="Tab groups"/>
 </enum>
 
 <enum name="IncognitoReauthPromoActionType">
@@ -1225,6 +1239,12 @@ chromium-metrics-reviews@google.com.
   <int value="1" label="Promo was dismissed via scrim touch"/>
   <int value="2" label="Promo was dismissed via backpress"/>
   <int value="3" label="Promo was dismissed via swipe down"/>
+</enum>
+
+<enum name="RootViewFocusState">
+  <int value="0" label="Root View is NULL"/>
+  <int value="1" label="Root View was Focused"/>
+  <int value="2" label="Root View was Not Focused (calls Focus())"/>
 </enum>
 
 <enum name="SearchActivityIntentOrigin">
@@ -2079,6 +2099,12 @@ chromium-metrics-reviews@google.com.
   <int value="11" label="Content"/>
   <int value="12" label="Intent"/>
   <int value="13" label="android_asset or android_res"/>
+</enum>
+
+<enum name="WebViewUsedInPopupWindow">
+  <int value="0" label="Not in PopupWindow"/>
+  <int value="1" label="In PopupWindow"/>
+  <int value="2" label="Unknown (likely not attached to window)"/>
 </enum>
 
 <enum name="WebViewVisibility">

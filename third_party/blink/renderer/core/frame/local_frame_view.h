@@ -101,6 +101,7 @@ class LocalFrame;
 class MobileFriendlinessChecker;
 class Page;
 class PaginationState;
+class PaintArtifact;
 class PaintArtifactCompositor;
 class PaintController;
 class PaintLayer;
@@ -596,6 +597,10 @@ class CORE_EXPORT LocalFrameView final
   // the last paint in lifecycle update.
   cc::PaintRecord GetPaintRecord(const gfx::Rect* cull_rect = nullptr) const;
 
+  // Get the PaintArtifact that was cached during the last paint lifecycle
+  // update.
+  const PaintArtifact* GetPaintArtifact() const;
+
   void Show() override;
   void Hide() override;
 
@@ -988,7 +993,7 @@ class CORE_EXPORT LocalFrameView final
 
   bool UpdateViewportIntersectionsForSubtree(
       unsigned parent_flags,
-      std::optional<base::TimeTicks>& monotonic_time) override;
+      ComputeIntersectionsContext&) override;
   void DeliverSynchronousIntersectionObservations();
 
   bool RunScrollSnapshotClientSteps();
@@ -1010,9 +1015,8 @@ class CORE_EXPORT LocalFrameView final
   bool RunPostLayoutIntersectionObserverSteps();
   // This is a recursive helper for determining intersection observations which
   // need to happen in post-layout.
-  void ComputePostLayoutIntersections(
-      unsigned parent_flags,
-      std::optional<base::TimeTicks>& monotonic_time);
+  void ComputePostLayoutIntersections(unsigned parent_flags,
+                                      ComputeIntersectionsContext&);
 
   // Returns true if the root object was laid out. Returns false if the layout
   // was prevented (e.g. by ancestor display-lock) or not needed.
@@ -1045,7 +1049,7 @@ class CORE_EXPORT LocalFrameView final
 
   void UpdateCanCompositeBackgroundAttachmentFixed();
 
-  void EnqueueSnapChangingFromImplIfNecessary();
+  void EnqueueScrollSnapChangingFromImplIfNecessary();
 
   typedef HeapHashSet<Member<LayoutEmbeddedObject>> EmbeddedObjectSet;
   EmbeddedObjectSet part_update_set_;

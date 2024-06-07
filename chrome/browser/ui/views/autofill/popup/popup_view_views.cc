@@ -28,6 +28,7 @@
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/passwords/ui_utils.h"
 #include "chrome/browser/ui/views/autofill/popup/popup_base_view.h"
+#include "chrome/browser/ui/views/autofill/popup/popup_no_suggestions_view.h"
 #include "chrome/browser/ui/views/autofill/popup/popup_row_factory_utils.h"
 #include "chrome/browser/ui/views/autofill/popup/popup_row_view.h"
 #include "chrome/browser/ui/views/autofill/popup/popup_search_bar_view.h"
@@ -48,9 +49,9 @@
 #include "components/autofill/core/common/autofill_features.h"
 #include "components/autofill/core/common/autofill_payments_features.h"
 #include "components/feature_engagement/public/feature_constants.h"
+#include "components/input/native_web_keyboard_event.h"
 #include "components/strings/grit/components_strings.h"
 #include "components/user_education/common/feature_promo_controller.h"
-#include "content/public/common/input/native_web_keyboard_event.h"
 #include "third_party/abseil-cpp/absl/types/variant.h"
 #include "third_party/blink/public/common/input/web_input_event.h"
 #include "ui/accessibility/ax_node_data.h"
@@ -125,6 +126,14 @@ bool CanShowRootPopup(AutofillSuggestionController& controller) {
   return true;
 }
 
+// Returns true when the suggestion should open a sub popup menu automatically
+// when hovering the content area. This is used for manual fallback
+// suggestions.
+bool ContentCellShouldOpenSubPopupSuggestion(const Suggestion& suggestion) {
+  return !suggestion.is_acceptable && !suggestion.apply_deactivated_style &&
+         !suggestion.children.empty();
+}
+
 }  // namespace
 
 // Creates a new popup view instance. The Widget parent is taken either from
@@ -143,20 +152,21 @@ PopupViewViews::PopupViewViews(
                     /*show_arrow_pointer=*/false),
       controller_(controller),
       parent_(parent) {
-  InitViews({});
+  InitViews();
 }
 
 PopupViewViews::PopupViewViews(
     base::WeakPtr<AutofillPopupController> controller,
-    PopupViewSearchBarConfig search_bar_config)
+    std::optional<const AutofillPopupView::SearchBarConfig> search_bar_config)
     : PopupBaseView(controller,
                     views::Widget::GetTopLevelWidgetForNativeView(
                         controller->container_view()),
-                    search_bar_config.enabled
+                    search_bar_config
                         ? views::Widget::InitParams::Activatable::kYes
                         : views::Widget::InitParams::Activatable::kDefault),
-      controller_(controller) {
-  InitViews(search_bar_config);
+      controller_(controller),
+      search_bar_config_(std::move(search_bar_config)) {
+  InitViews();
 }
 
 PopupViewViews::~PopupViewViews() = default;
@@ -277,7 +287,7 @@ void PopupViewViews::SetSelectedCell(std::optional<CellIndex> cell_index,
 }
 
 bool PopupViewViews::HandleKeyPressEvent(
-    const content::NativeWebKeyboardEvent& event) {
+    const input::NativeWebKeyboardEvent& event) {
   // If a subpopup has not received focus yet but a horizontal key press event
   // happens, this means the user wants to navigate from a selected cell in
   // the parent to the currently open subpopup. In this case, we select
@@ -380,7 +390,7 @@ bool PopupViewViews::HandleKeyPressEvent(
 }
 
 bool PopupViewViews::HandleKeyPressEventForCompose(
-    const content::NativeWebKeyboardEvent& event) {
+    const input::NativeWebKeyboardEvent& event) {
   CHECK_EQ(controller_->GetMainFillingProduct(), FillingProduct::kCompose);
   const bool kHasShiftModifier =
       (event.GetModifiers() & blink::WebInputEvent::kShiftKey);
@@ -751,8 +761,7 @@ bool PopupViewViews::SearchBarHandleKeyPressed(const ui::KeyEvent& event) {
   // Handling events in the controller (the delegate's handler is prioritized by
   // the search bar) enables keyboard navigation when the search bar input
   // field is focused.
-  return controller_->HandleKeyPressEvent(
-      content::NativeWebKeyboardEvent(event));
+  return controller_->HandleKeyPressEvent(input::NativeWebKeyboardEvent(event));
 }
 
 void PopupViewViews::SetSelectedCell(
@@ -797,7 +806,7 @@ void PopupViewViews::SetSelectedCell(
     bool can_open_sub_popup =
         !suppress_popup &&
         (cell_index->second == PopupRowView::CellType::kControl ||
-         CanOpenSubPopupSuggestion(suggestion));
+         ContentCellShouldOpenSubPopupSuggestion(suggestion));
 
     CHECK(!can_open_sub_popup ||
           !controller_->GetSuggestionAt(cell_index->first).children.empty());
@@ -822,14 +831,14 @@ bool PopupViewViews::HasPopupRowViewAt(size_t index) const {
          absl::holds_alternative<PopupRowView*>(rows_[index]);
 }
 
-void PopupViewViews::InitViews(PopupViewSearchBarConfig search_bar_config) {
+void PopupViewViews::InitViews() {
   SetNotifyEnterExitOnChild(true);
   SetLayoutManager(std::make_unique<views::BoxLayout>(
       views::BoxLayout::Orientation::kVertical));
 
-  if (search_bar_config.enabled) {
+  if (search_bar_config_) {
     search_bar_ = AddChildView(std::make_unique<PopupSearchBarView>(
-        search_bar_config.placeholder, *this));
+        search_bar_config_->placeholder, *this));
     search_bar_->SetProperty(views::kMarginsKey,
                              gfx::Insets::VH(GetContentsVerticalPadding(), 0));
     AddChildView(std::make_unique<PopupSeparatorView>(/*vertical_padding=*/0));
@@ -862,8 +871,17 @@ void PopupViewViews::CreateSuggestionViews() {
 
   rows_.reserve(kSuggestions.size());
   size_t current_line_number = 0u;
-  // TODO(b/325246516): Add "No suggestions found" label if there is a filter
-  // and there are only footer suggestions in the list.
+
+  // No suggestions (or only footer ones, which are not filterable) with
+  // a non-empty filter query means that there are no results matching
+  // the query. Show a corresponding message.
+  if ((kSuggestions.empty() || IsFooterItem(kSuggestions, 0u)) && search_bar_ &&
+      controller_->HasFilteredOutSuggestions()) {
+    suggestions_container_->AddChildView(
+        std::make_unique<PopupNoSuggestionsView>(
+            search_bar_config_->no_results_message));
+  }
+
   // Add the body rows, if there are any.
   if (!kSuggestions.empty() && !IsFooterItem(kSuggestions, 0u)) {
     // Create a container to wrap the "regular" (non-footer) rows.
@@ -1067,12 +1085,18 @@ bool PopupViewViews::DoUpdateBoundsAndRedrawPopup() {
   gfx::Rect element_bounds =
       gfx::ToEnclosingRect(controller_->element_bounds());
 
-  // If the element exceeds the content area, ensure that the popup is still
-  // visually attached to the input element.
-  element_bounds.Intersect(content_area_bounds);
-  if (element_bounds.IsEmpty()) {
-    controller_->Hide(SuggestionHidingReason::kElementOutsideOfContentArea);
-    return false;
+  // An element that is contained by the `content_area_bounds` (even if empty,
+  // which means either the height or the width is 0) is never outside the
+  // content area. An empty element case can happen with caret bounds, which
+  // sometimes has 0 width.
+  if (!content_area_bounds.Contains(element_bounds)) {
+    // If the element exceeds the content area, ensure that the popup is still
+    // visually attached to the input element.
+    element_bounds.Intersect(content_area_bounds);
+    if (element_bounds.IsEmpty()) {
+      controller_->Hide(SuggestionHidingReason::kElementOutsideOfContentArea);
+      return false;
+    }
   }
 
   // Consider the element is |kElementBorderPadding| pixels larger at the top
@@ -1241,12 +1265,6 @@ void PopupViewViews::SetRowWithOpenSubPopup(
   }
 }
 
-bool PopupViewViews::CanOpenSubPopupSuggestion(const Suggestion& suggestion) {
-  // Checking both `is_acceptable` and `apply_deactivated_style` because the
-  // latter is used for disabling virtual cards which cannot open a sub popup.
-  return !suggestion.is_acceptable && !suggestion.apply_deactivated_style;
-}
-
 bool PopupViewViews::SelectParentPopupContentCell() {
   if (!row_with_open_sub_popup_) {
     return false;
@@ -1272,14 +1290,16 @@ END_METADATA
 
 // static
 base::WeakPtr<AutofillPopupView> AutofillPopupView::Create(
-    base::WeakPtr<AutofillSuggestionController> controller) {
+    base::WeakPtr<AutofillSuggestionController> controller,
+    std::optional<const AutofillPopupView::SearchBarConfig> search_bar_config) {
   if (!controller || !CanShowRootPopup(*controller)) {
     return nullptr;
   }
 
   // On Desktop, all controllers are `AutofillPopupController`s.
   return (new PopupViewViews(
-              static_cast<AutofillPopupController&>(*controller).GetWeakPtr()))
+              static_cast<AutofillPopupController&>(*controller).GetWeakPtr(),
+              std::move(search_bar_config)))
       ->GetWeakPtr();
 }
 

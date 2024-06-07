@@ -66,6 +66,7 @@ class CC_EXPORT ProxyImpl : public LayerTreeHostImplClient,
       std::vector<std::unique_ptr<SwapPromise>> swap_promises,
       bool scroll_and_viewport_changes_synced);
   void SetVisibleOnImpl(bool visible);
+  void SetShouldWarmUpOnImpl();
   void ReleaseLayerTreeFrameSinkOnImpl(CompletionEvent* completion);
   void FinishGLOnImpl(CompletionEvent* completion);
   void NotifyReadyToCommitOnImpl(CompletionEvent* completion_event,
@@ -108,6 +109,7 @@ class CC_EXPORT ProxyImpl : public LayerTreeHostImplClient,
   // LayerTreeHostImpl's SetNeedsRedraw() and SetNeedsOneBeginImplFrame().
   void SetNeedsRedrawOnImplThread() override;
   void SetNeedsOneBeginImplFrameOnImplThread() override;
+  void SetNeedsUpdateDisplayTreeOnImplThread() override;
   void SetNeedsPrepareTilesOnImplThread() override;
   void SetNeedsCommitOnImplThread() override;
   void SetVideoNeedsBeginFrames(bool needs_begin_frames) override;
@@ -156,6 +158,7 @@ class CC_EXPORT ProxyImpl : public LayerTreeHostImplClient,
       const viz::BeginFrameArgs& args) override;
   DrawResult ScheduledActionDrawIfPossible() override;
   DrawResult ScheduledActionDrawForced() override;
+  void ScheduledActionUpdateDisplayTree() override;
   void ScheduledActionCommit() override;
   void ScheduledActionPostCommit() override;
   void ScheduledActionActivateSyncTree() override;
@@ -167,6 +170,7 @@ class CC_EXPORT ProxyImpl : public LayerTreeHostImplClient,
   void ScheduledActionBeginMainFrameNotExpectedUntil(
       base::TimeTicks time) override;
   void FrameIntervalUpdated(base::TimeDelta interval) override {}
+  void OnBeginImplFrameDeadline() override;
 
   DrawResult DrawInternal(bool forced_draw);
 

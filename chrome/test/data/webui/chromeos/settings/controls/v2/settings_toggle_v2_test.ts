@@ -89,6 +89,8 @@ suite(SettingsToggleV2Element.is, () => {
 
         const event = await checkedChangeEventPromise;
         assertEquals(toggleElement.checked, event.detail);
+        // Event should not pass the shadow DOM boundary.
+        assertFalse(event.composed);
       });
 
   test('the internal cr-toggle control value changes on click', () => {
@@ -119,6 +121,16 @@ suite(SettingsToggleV2Element.is, () => {
     setup(async () => {
       await initWithPref();
     });
+
+    async function setEnforcedPref(): Promise<void> {
+      toggleElement.pref = {
+        ...fakeTogglePref,
+        enforcement: chrome.settingsPrivate.Enforcement.ENFORCED,
+        controlledBy: chrome.settingsPrivate.ControlledBy.DEVICE_POLICY,
+      };
+
+      await flushTasks();
+    }
 
     suite('Pref type validation', () => {
       [{
@@ -250,6 +262,35 @@ suite(SettingsToggleV2Element.is, () => {
           assertTrue(toggleElement.pref!.value);
           assertTrue(toggleElement.checked);
         });
+
+    test('toggle is disabled when policy is enforced by pref', async () => {
+      await setEnforcedPref();
+
+      assertTrue(toggleElement.isPrefEnforced);
+      assertTrue(toggleElement.disabled);
+    });
+
+    suite('policy indicator', () => {
+      test('is not visible if there is no enforced pref', () => {
+        const policyIndicator =
+            toggleElement.shadowRoot!.querySelector('cr-policy-pref-indicator');
+        assertFalse(isVisible(policyIndicator));
+      });
+
+      test('is visible when policy is enforced by pref', async () => {
+        await setEnforcedPref();
+
+        const policyIndicator =
+            toggleElement.shadowRoot!.querySelector('cr-policy-pref-indicator');
+        assertTrue(!!policyIndicator);
+        assertTrue(isVisible(policyIndicator));
+
+        // policy indicator is still visible even when the toggle is manually
+        // changed to enabled.
+        toggleElement.disabled = false;
+        assertTrue(!!policyIndicator);
+      });
+    });
 
     suite('with noSetPref', () => {
       setup(() => {

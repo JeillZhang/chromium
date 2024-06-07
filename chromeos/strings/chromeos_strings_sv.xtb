@@ -236,7 +236,6 @@
 <translation id="2189104374785738357">Redigera APN-information</translation>
 <translation id="2195732836444333448">Jag kan inte göra det just nu. Testa igen om ett tag.</translation>
 <translation id="2201758491318984023">cykel</translation>
-<translation id="2203222757805818543">Nuvarande schema är inställt på <ph name="SUNRISE" />–<ph name="SUNSET" />. <ph name="BEGIN_LINK" />Aktivera platsåtkomst<ph name="END_LINK" /> om du vill uppdatera schemat för mörkt läge automatiskt</translation>
 <translation id="2203272733515928691">varm källa</translation>
 <translation id="2203642483788377106">en klippa</translation>
 <translation id="2208388655216963643">impressionism</translation>
@@ -313,6 +312,7 @@
 <translation id="2618015542787108131">en sanddyn</translation>
 <translation id="2619761439309613843">Daglig uppdatering</translation>
 <translation id="2620436844016719705">System</translation>
+<translation id="2637303424821734920">AV – <ph name="BEGIN_LINK" />aktivera systemets platsåtkomst<ph name="END_LINK" /> om du vill visa lokalt väder</translation>
 <translation id="2638662041295312666">Inloggningsbild</translation>
 <translation id="2640549051766135490">Detta album har markerats: <ph name="TITLE" /> <ph name="DESC" /></translation>
 <translation id="2645380101799517405">Kontroller</translation>
@@ -364,6 +364,7 @@
 <translation id="3054177598518735801"><ph name="CURRENT_VALUE" /> mA</translation>
 <translation id="3056720590588772262">Slutpunkt</translation>
 <translation id="3060579846059757016">Översikter</translation>
+<translation id="3061850252076394168">aktivera Textuppläsning</translation>
 <translation id="3069085583900247081">Testet misslyckades</translation>
 <translation id="3078740164268491126">tabell</translation>
 <translation id="3081652522083185657">ljust</translation>
@@ -630,7 +631,6 @@
 <translation id="458794348635939462">DNS-matchningen av alla värdar misslyckades</translation>
 <translation id="4593212453765072419">Proxyautentisering krävs</translation>
 <translation id="4609350030397390689">Tangenten som minskar ljusstyrkan på tangentbordet</translation>
-<translation id="4617553623719764431">Vädret visas inte eftersom din plats inte är känd. <ph name="BEGIN_LINK" />Aktivera platsåtkomst<ph name="END_LINK" /> om du vill visa lokalt väder.</translation>
 <translation id="4627232916386272576"><ph name="DOCUMENT_TITLE" />, <ph name="PRINTER_NAME" />, <ph name="CREATION_TIME" />, <ph name="PRINTED_PAGE_NUMBER" /> av <ph name="TOTAL_PAGE_NUMBER" />. Tryck på retur för att avbryta utskriftsjobbet.</translation>
 <translation id="463791356324567266">Skanningen avbryts …</translation>
 <translation id="4646949265910132906">Säker wifi-anslutning</translation>
@@ -704,6 +704,7 @@
 <translation id="4985509611418653372">Kör</translation>
 <translation id="4987769320337599931">Brandvägg</translation>
 <translation id="4988526792673242964">Sidor</translation>
+<translation id="4989542687859782284">Inte tillgänglig</translation>
 <translation id="4999333166442584738">Dölj rapporten</translation>
 <translation id="500920857929044050">Avsluta testet</translation>
 <translation id="5017508259293544172">LEAP</translation>
@@ -960,7 +961,6 @@
 <translation id="6412715219990689313">Inbyggt tangentbord</translation>
 <translation id="6417265370957905582">Google Assistent</translation>
 <translation id="6423239382391657905">Öppen VPN</translation>
-<translation id="6438073885402882007">Då kan systemtjänster med behörighet använda din plats. Enhetens plats beräknas utifrån källor som wifi, mobilnätverk och sensorer. <ph name="LINK_BEGIN" />Läs mer<ph name="LINK_END" /></translation>
 <translation id="6439505561246192797">Svag (<ph name="SIGNAL_STRENGTH" />)</translation>
 <translation id="6447630859861661624">Öppna kontoinställningar</translation>
 <translation id="6462978824459367242">Knappen Lägg till APN har aktiverats</translation>

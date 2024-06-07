@@ -174,8 +174,7 @@ class DocumentTest : public PageTestBase {
   }
 
   void NavigateWithSandbox(const KURL& url) {
-    auto params = WebNavigationParams::CreateWithHTMLStringForTesting(
-        /*html=*/"", url);
+    auto params = WebNavigationParams::CreateWithEmptyHTMLForTesting(url);
     MockPolicyContainerHost mock_policy_container_host;
     params->policy_container = std::make_unique<blink::WebPolicyContainer>(
         blink::WebPolicyContainerPolicies(),
@@ -497,7 +496,8 @@ TEST_F(DocumentTest, PrintRelayout) {
   gfx::SizeF page_size(400, 400);
   float maximum_shrink_ratio = 1.6;
 
-  GetDocument().GetFrame()->StartPrinting(page_size, maximum_shrink_ratio);
+  GetDocument().GetFrame()->StartPrinting(WebPrintParams(page_size),
+                                          maximum_shrink_ratio);
   EXPECT_EQ(GetDocument().documentElement()->OffsetWidth(), 400);
   GetDocument().GetFrame()->EndPrinting();
   EXPECT_EQ(GetDocument().documentElement()->OffsetWidth(), 800);
@@ -1248,7 +1248,7 @@ TEST_F(DocumentTest, AtPageMarginWithDeviceScaleFactor) {
 
   constexpr gfx::SizeF initial_page_size(800, 600);
 
-  GetDocument().GetFrame()->StartPrinting(initial_page_size);
+  GetDocument().GetFrame()->StartPrinting(WebPrintParams(initial_page_size));
   GetDocument().View()->UpdateLifecyclePhasesForPrinting();
 
   WebPrintPageDescription description = GetDocument().GetPageDescription(0);

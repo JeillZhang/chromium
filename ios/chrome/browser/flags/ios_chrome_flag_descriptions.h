@@ -140,11 +140,6 @@ extern const char kAutofillPruneSuggestionsDescription[];
 extern const char kAutofillStickyInfobarName[];
 extern const char kAutofillStickyInfobarDescription[];
 
-// Title and description for the flag to update GPay-related links in chrome
-// settings to GPay web instead of the legacy Payments Center.
-extern const char kAutofillUpdateChromeSettingsLinkToGPayWebName[];
-extern const char kAutofillUpdateChromeSettingsLinkToGPayWebDescription[];
-
 // Title and description for the flag that controls whether Autofill's
 // logic is using numeric unique renderer IDs instead of string IDs for
 // form and field elements.
@@ -191,11 +186,21 @@ extern const char kSpotlightDonateNewIntentsDescription[];
 extern const char kBreakpadNoDelayInitialUploadName[];
 extern const char kBreakpadNoDelayInitialUploadDescription[];
 
+// Title and description for the flag that enables clearing data for managed
+// users on signout.
+extern const char kClearDeviceDataOnSignOutForManagedUsersName[];
+extern const char kClearDeviceDataOnSignOutForManagedUsersDescription[];
+
 // Title and description for the flag to enable the content notification
 // experiments. This is a kill switcher that guarded the
 // ContentPushNotifications feature.
 extern const char kContentNotificationExperimentName[];
 extern const char kContentNotificationExperimentDescription[];
+
+// Title and description for the flag to enable the content notification
+// provisional without conditions. This is used for testing the feature only.
+extern const char kContentNotificationProvisionalIgnoreConditionsName[];
+extern const char kContentNotificationProvisionalIgnoreConditionsDescription[];
 
 // Title and description for the flag to enable the content notifications
 // feature.
@@ -234,6 +239,11 @@ extern const char kMeasurementsDescription[];
 // Title and description for the flag to enable viewport intent detection.
 extern const char kEnableViewportIntentsName[];
 extern const char kEnableViewportIntentsDescription[];
+
+// Title and description for the flag to enable improve parcel tracking
+// detection.
+extern const char kEnableNewParcelTrackingNumberDetectionName[];
+extern const char kEnableNewParcelTrackingNumberDetectionDescription[];
 
 // Title and description for the flag to enable text classifier date detection
 // in experience kit.
@@ -573,14 +583,10 @@ extern const char kIPHiOSSwipeBackForwardFeatureDescription[];
 extern const char kIPHiOSSwipeToolbarToChangeTabFeatureName[];
 extern const char kIPHiOSSwipeToolbarToChangeTabFeatureDescription[];
 
-// Title and description for the flag to enable the swipe-to-incognito IPH on
-// the tab grid.
-extern const char kIPHiOSTabGridSwipeRightForIncognitoName[];
-extern const char kIPHiOSTabGridSwipeRightForIncognitoDescription[];
-
-// Title and description for the flag to enable Lens circle to search feature.
-extern const char kLensCircleToSearchEnabledName[];
-extern const char kLensCircleToSearchEnabledDescription[];
+// Title and description for the flag to enable the Lens web page early
+// transition.
+extern const char kLensWebPageEarlyTransitionEnabledName[];
+extern const char kLensWebPageEarlyTransitionEnabledDescription[];
 
 // Title and description for the flag to add Linked Services Setting to the Sync
 // Settings page.
@@ -716,6 +722,10 @@ extern const char kOmniboxPopupRowContentConfigurationDescription[];
 extern const char kOmniboxRichAutocompletionName[];
 extern const char kOmniboxRichAutocompletionDescription[];
 
+// Title and description for omnibox suggestion answer migration.
+extern const char kOmniboxSuggestionAnswerMigrationName[];
+extern const char kOmniboxSuggestionAnswerMigrationDescription[];
+
 // Title and description for improved RTL layout of suggestions.
 extern const char kOmniboxSuggestionsRTLImprovementsName[];
 extern const char kOmniboxSuggestionsRTLImprovementsDescription[];
@@ -785,6 +795,10 @@ extern const char
 extern const char kPageContentAnnotationsRemotePageMetadataName[];
 extern const char kPageContentAnnotationsRemotePageMetadataDescription[];
 
+// Title and description for the flag to enable salient images.
+extern const char kPageImageServiceSalientImageName[];
+extern const char kPageImageServiceSalientImageDescription[];
+
 // Title and description for the flag to enable page visibility.
 extern const char kPageVisibilityPageContentAnnotationsName[];
 extern const char kPageVisibilityPageContentAnnotationsDescription[];
@@ -798,6 +812,11 @@ extern const char kPasswordReuseDetectionDescription[];
 // members of the same family.
 extern const char kPasswordSharingName[];
 extern const char kPasswordSharingDescription[];
+
+// Title and description for the flag to enable the opening of PDF files in
+// Chrome.
+extern const char kDownloadedPDFOpeningName[];
+extern const char kDownloadedPDFOpeningDescription[];
 
 // Title and description for the flag to enable chrome://policy/test.
 extern const char kEnablePolicyTestPageName[];
@@ -863,6 +882,11 @@ extern const char kSegmentationPlatformIosModuleRankerDescription[];
 extern const char kSegmentationPlatformIosModuleRankerSplitBySurfaceName[];
 extern const char
     kSegmentationPlatformIosModuleRankerSplitBySurfaceDescription[];
+
+// Title and description for the flag to enable iOS push notifications option
+// for Send Tab To Self feature.
+extern const char kSendTabToSelfIOSPushNotificationsName[];
+extern const char kSendTabToSelfIOSPushNotificationsDescription[];
 
 // Title and description for the flag to send UMA data over any network.
 extern const char kSendUmaOverAnyNetwork[];
@@ -938,6 +962,10 @@ extern const char kIOSLargeFakeboxDescription[];
 extern const char kEnableLensInOmniboxCopiedImageName[];
 extern const char kEnableLensInOmniboxCopiedImageDescription[];
 
+// Title and description for the flag to enable Lens Overlay.
+extern const char kEnableLensOverlayName[];
+extern const char kEnableLensOverlayDescription[];
+
 // Title and description for the flag to enable session serialization
 // optimizations (go/bling-session-restoration).
 extern const char kEnableSessionSerializationOptimizationsName[];
@@ -947,10 +975,6 @@ extern const char kEnableSessionSerializationOptimizationsDescription[];
 // when the content fits the screen already).
 extern const char kTabGridAlwaysBounceName[];
 extern const char kTabGridAlwaysBounceDescription[];
-
-// Title and description for the tab grid new compositional layout.
-extern const char kTabGridCompositionalLayoutName[];
-extern const char kTabGridCompositionalLayoutDescription[];
 
 // Title and description for the tab grid refactoring flag.
 extern const char kTabGridRefactoringName[];
@@ -986,6 +1010,14 @@ extern const char kTabPickupThresholdDescription[];
 // Title and description for the flag to enable tab resumption.
 extern const char kTabResumptionName[];
 extern const char kTabResumptionDescription[];
+
+// Title and description for the flag to enable tab resumption enhancements.
+extern const char kTabResumption1_5Name[];
+extern const char kTabResumption1_5Description[];
+
+// Title and description for the flag to enable tab resumption 2.0.
+extern const char kTabResumption2Name[];
+extern const char kTabResumption2Description[];
 
 // Title and description for the flag to undo the migration of syncing users to
 // the signed-in non-syncing state.

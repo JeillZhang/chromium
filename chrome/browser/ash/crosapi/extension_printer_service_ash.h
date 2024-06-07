@@ -5,14 +5,13 @@
 #ifndef CHROME_BROWSER_ASH_CROSAPI_EXTENSION_PRINTER_SERVICE_ASH_H_
 #define CHROME_BROWSER_ASH_CROSAPI_EXTENSION_PRINTER_SERVICE_ASH_H_
 
-// Copyright 2024 The Chromium Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style license that can be
-// found in the LICENSE file.
+#include <map>
+#include <string>
 
-#include <vector>
-
+#include "base/memory/ref_counted_memory.h"
 #include "base/memory/weak_ptr.h"
 #include "base/unguessable_token.h"
+#include "base/values.h"
 #include "chromeos/crosapi/mojom/extension_printer.mojom.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
@@ -27,6 +26,9 @@ class ExtensionPrinterServiceAsh : public mojom::ExtensionPrinterService {
   using AddedPrintersCallback =
       base::RepeatingCallback<void(base::Value::List printers)>;
   using GetPrintersDoneCallback = base::OnceClosure;
+  using GetCapabilityCallback = base::OnceCallback<void(::base::Value::Dict)>;
+  using StartPrintCallback = base::OnceCallback<void(mojom::StartPrintStatus)>;
+  using GetPrinterInfoCallback = base::OnceCallback<void(::base::Value::Dict)>;
 
   ExtensionPrinterServiceAsh();
   ExtensionPrinterServiceAsh(const ExtensionPrinterServiceAsh&) = delete;
@@ -50,10 +52,24 @@ class ExtensionPrinterServiceAsh : public mojom::ExtensionPrinterService {
 
   void StartGetPrinters(AddedPrintersCallback added_printers_callback,
                         GetPrintersDoneCallback done_callback);
+  void Reset();
+  void StartGetCapability(const std::string& destination_id,
+                          GetCapabilityCallback callback);
+  void StartPrint(const std::u16string& job_title,
+                  base::Value::Dict settings,
+                  scoped_refptr<base::RefCountedMemory> print_data,
+                  StartPrintCallback callback);
+  void StartGrantPrinterAccess(const std::string& printer_id,
+                               GetPrinterInfoCallback callback);
+
+  // Returns true if a pending get printer request is found.
+  bool HasAnyPendingGetPrintersRequests() const;
+  // Returns true if a pending get printer request is found with |request_id|.
+  bool HasPendingGetPrintersRequestForTesting(
+      base::UnguessableToken& request_id) const;
+  bool HasProviderForTesting() const;
 
  private:
-  friend class ExtensionPrinterServiceAshBrowserTest;
-
   // Returns true iff there is any registered ExtensionPrinterServiceProvider.
   bool HasProvider() const;
   void ClearPendingRequests();

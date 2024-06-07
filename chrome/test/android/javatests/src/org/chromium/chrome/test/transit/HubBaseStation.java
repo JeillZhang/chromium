@@ -22,11 +22,13 @@ import androidx.annotation.StringRes;
 import androidx.test.espresso.Espresso;
 import androidx.test.espresso.NoMatchingViewException;
 
+import org.chromium.base.supplier.Supplier;
 import org.chromium.base.test.transit.ActivityElement;
 import org.chromium.base.test.transit.Condition;
 import org.chromium.base.test.transit.ConditionStatus;
 import org.chromium.base.test.transit.Elements;
 import org.chromium.base.test.transit.Station;
+import org.chromium.base.test.transit.Transition;
 import org.chromium.base.test.transit.TravelException;
 import org.chromium.base.test.transit.UiThreadCondition;
 import org.chromium.base.test.transit.ViewElement;
@@ -36,7 +38,7 @@ import org.chromium.chrome.browser.hub.PaneId;
 import org.chromium.chrome.browser.hub.R;
 import org.chromium.chrome.browser.layouts.LayoutManager;
 import org.chromium.chrome.browser.layouts.LayoutType;
-import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
+import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 
 /** The base station for Hub, with several panes and a toolbar. */
 public abstract class HubBaseStation extends Station {
@@ -63,17 +65,12 @@ public abstract class HubBaseStation extends Station {
                             withContentDescription(
                                     R.string.accessibility_tab_switcher_incognito_stack)));
 
-    protected final ChromeTabbedActivityTestRule mChromeTabbedActivityTestRule;
     protected ActivityElement<ChromeTabbedActivity> mActivityElement;
     protected TabModelSelectorCondition mTabModelSelectorCondition;
 
-    /**
-     * @param chromeTabbedActivityTestRule The {@link ChromeTabbedActivityTestRule} of the test.
-     */
-    public HubBaseStation(ChromeTabbedActivityTestRule chromeTabbedActivityTestRule) {
+    public HubBaseStation() {
         super();
         assert HubFieldTrial.isHubEnabled();
-        mChromeTabbedActivityTestRule = chromeTabbedActivityTestRule;
     }
 
     /** Returns the station's {@link PaneId}. */
@@ -102,22 +99,24 @@ public abstract class HubBaseStation extends Station {
         elements.declareEnterCondition(new HubLayoutNotInTransition());
     }
 
+    /** Returns the {@link Condition} that acts as {@link Supplier<TabModelSelector>}. */
+    public Supplier<TabModelSelector> getTabModelSelectorSupplier() {
+        return mTabModelSelectorCondition;
+    }
+
+    /** Returns the {@link ChromeTabbedActivity} for this station. */
+    public ChromeTabbedActivity getActivity() {
+        assertSuppliersCanBeUsed();
+        return mActivityElement.get();
+    }
+
     /**
      * Returns to the previous tab via the back button.
      *
      * @return the {@link PageStation} that Hub returned to.
      */
-    public PageStation leaveHubToPreviousTabViaBack() {
-        // TODO(crbug.com/40287437): This logic gets exponentially more complicated if there is
-        // additional back state e.g. in-pane navigations, between pane navigations, etc. Figure out
-        // a solution that better handles the complexity.
-        PageStation destination =
-                PageStation.newPageStationBuilder()
-                        .withActivityTestRule(mChromeTabbedActivityTestRule)
-                        .withIsOpeningTabs(0)
-                        .withIsSelectingTabs(1)
-                        .build();
-        return travelToSync(destination, () -> Espresso.pressBack());
+    public <T extends PageStation> T leaveHubToPreviousTabViaBack(T destination) {
+        return travelToSync(destination, Transition.retryOption(), () -> Espresso.pressBack());
     }
 
     /**
@@ -133,8 +132,7 @@ public abstract class HubBaseStation extends Station {
             return expectedDestination.cast(this);
         }
 
-        T destinationStation = expectedDestination.cast(
-            HubStationUtils.createHubStation(paneId, mChromeTabbedActivityTestRule));
+        T destinationStation = expectedDestination.cast(HubStationUtils.createHubStation(paneId));
 
         try {
             HUB_PANE_SWITCHER.onView().check(matches(isDisplayed()));

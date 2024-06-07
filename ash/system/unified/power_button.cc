@@ -136,7 +136,6 @@ bool ShouldShowEmailMenuItem() {
     case user_manager::UserType::kGuest:
     case user_manager::UserType::kPublicAccount:
     case user_manager::UserType::kKioskApp:
-    case user_manager::UserType::kArcKioskApp:
     case user_manager::UserType::kWebKioskApp:
       return false;
   }
@@ -360,7 +359,8 @@ PowerButtonContainer::PowerButtonContainer(PressedCallback callback)
   SetPaintToLayer();
   layer()->SetFillsBoundsOpaquely(false);
 
-  SetAccessibleName(l10n_util::GetStringUTF16(IDS_ASH_STATUS_TRAY_POWER_MENU));
+  GetViewAccessibility().SetName(
+      l10n_util::GetStringUTF16(IDS_ASH_STATUS_TRAY_POWER_MENU));
   SetTooltipText(l10n_util::GetStringUTF16(IDS_ASH_STATUS_TRAY_POWER_MENU));
 }
 

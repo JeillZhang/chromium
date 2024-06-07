@@ -236,7 +236,6 @@
 <translation id="2189104374785738357">Змінити відомості про APN</translation>
 <translation id="2195732836444333448">Бракує ресурсів. Спробуйте пізніше.</translation>
 <translation id="2201758491318984023">Велосипед</translation>
-<translation id="2203222757805818543">Поточний розклад: <ph name="SUNRISE" /> – <ph name="SUNSET" />. Щоб автоматично оновлювати розклад для темного режиму, <ph name="BEGIN_LINK" />увімкніть доступ до геоданих<ph name="END_LINK" />.</translation>
 <translation id="2203272733515928691">термальне джерело</translation>
 <translation id="2203642483788377106">скеля</translation>
 <translation id="2208388655216963643">імпресіонізм</translation>
@@ -364,6 +363,7 @@
 <translation id="3054177598518735801"><ph name="CURRENT_VALUE" /> мА</translation>
 <translation id="3056720590588772262">Кінцева точка</translation>
 <translation id="3060579846059757016">Тези</translation>
+<translation id="3061850252076394168">увімкнути функцію "Читання з екрана"</translation>
 <translation id="3069085583900247081">Перевірку не пройдено</translation>
 <translation id="3078740164268491126">таблиця</translation>
 <translation id="3081652522083185657">світлій</translation>
@@ -630,7 +630,6 @@
 <translation id="458794348635939462">Не вдалося розпізнати всі хости</translation>
 <translation id="4593212453765072419">Потрібна автентифікація проксі-сервера</translation>
 <translation id="4609350030397390689">Зменшити яскравість клавіатури</translation>
-<translation id="4617553623719764431">Погода не відображається, оскільки системі не вдалося визначити ваше місцезнаходження. Щоб переглянути інформацію про місцеву погоду, <ph name="BEGIN_LINK" />надайте доступ до геоданих<ph name="END_LINK" />.</translation>
 <translation id="4627232916386272576"><ph name="DOCUMENT_TITLE" />, <ph name="PRINTER_NAME" />, <ph name="CREATION_TIME" />, <ph name="PRINTED_PAGE_NUMBER" /> з <ph name="TOTAL_PAGE_NUMBER" />. Натисніть Enter, щоб скасувати завдання друку.</translation>
 <translation id="463791356324567266">Сканування скасовується…</translation>
 <translation id="4646949265910132906">Надійне з'єднання Wi-Fi</translation>
@@ -704,6 +703,7 @@
 <translation id="4985509611418653372">Виконати</translation>
 <translation id="4987769320337599931">Брандмауер</translation>
 <translation id="4988526792673242964">Сторінки</translation>
+<translation id="4989542687859782284">Недоступні</translation>
 <translation id="4999333166442584738">Сховати звіт</translation>
 <translation id="500920857929044050">Зупинити перевірку</translation>
 <translation id="5017508259293544172">LEAP</translation>
@@ -715,7 +715,7 @@
 <translation id="5051044138948155788">Це єдина сторінка. Ви перейдете на екран початку сканування.</translation>
 <translation id="5078983345702708852">Футуристичний</translation>
 <translation id="5087864757604726239">назад</translation>
-<translation id="5088172560898466307">Ім’я хосту сервера</translation>
+<translation id="5088172560898466307">Ім’я хоста сервера</translation>
 <translation id="5089810972385038852">Штат/провінція</translation>
 <translation id="5090362543162270857">IPsec (IKEv2)</translation>
 <translation id="5095761549884461003">Щоб продовжити оновлення, від’єднайте кабель USB від пристрою <ph name="DEVICE_NAME" /> і вставте його знову</translation>
@@ -960,7 +960,6 @@
 <translation id="6412715219990689313">Вбудована клавіатура</translation>
 <translation id="6417265370957905582">Google Асистент</translation>
 <translation id="6423239382391657905">OpenVPN</translation>
-<translation id="6438073885402882007">Завдяки цьому системні сервіси матимуть доступ до відомостей про ваше місцезнаходження. Для визначення геоданих вашого пристрою можуть слугувати дані Wi-Fi, мобільної мережі й датчиків. <ph name="LINK_BEGIN" />Докладніше<ph name="LINK_END" /></translation>
 <translation id="6439505561246192797">Слабкий сигнал (<ph name="SIGNAL_STRENGTH" />)</translation>
 <translation id="6447630859861661624">Перейти до налаштувань облікового запису</translation>
 <translation id="6462978824459367242">Кнопку "Додати APN" увімкнено</translation>

@@ -1072,7 +1072,6 @@ std::ostream& operator<<(std::ostream& out,
 
   PRINT_IF_NOT_DEFAULT(arc)
   PRINT_IF_NOT_DEFAULT(browser)
-  PRINT_IF_NOT_DEFAULT(files_experimental)
   PRINT_IF_NOT_DEFAULT(generic_documents_provider)
   PRINT_IF_NOT_DEFAULT(mount_volumes)
   PRINT_IF_NOT_DEFAULT(native_smb)
@@ -2366,12 +2365,6 @@ void FileManagerBrowserTestBase::SetUpCommandLine(
   // Make sure to run the ARC storage UI toast tests.
   enabled_features.push_back(arc::kUsbStorageUIFeature);
 
-  if (options.files_experimental) {
-    enabled_features.push_back(ash::features::kFilesAppExperimental);
-  } else {
-    disabled_features.push_back(ash::features::kFilesAppExperimental);
-  }
-
   if (options.enable_conflict_dialog) {
     enabled_features.push_back(ash::features::kFilesConflictDialog);
   } else {
@@ -2466,6 +2459,14 @@ void FileManagerBrowserTestBase::SetUpCommandLine(
     enabled_features.push_back(ash::features::kGoogleOneOfferFilesBanner);
   } else {
     disabled_features.push_back(ash::features::kGoogleOneOfferFilesBanner);
+  }
+
+  if (options.disable_google_one_offer_files_banner) {
+    enabled_features.push_back(
+        ash::features::kDisableGoogleOneOfferFilesBanner);
+  } else {
+    disabled_features.push_back(
+        ash::features::kDisableGoogleOneOfferFilesBanner);
   }
 
   if (options.enable_drive_bulk_pinning) {
@@ -2883,14 +2884,6 @@ void FileManagerBrowserTestBase::OnCommand(const std::string& name,
       return;
     }
     *output = "true";
-    return;
-  }
-
-  if (name == "isFilesAppExperimental") {
-    // Return whether the flag Files Experimental is enabled.
-    *output = base::FeatureList::IsEnabled(ash::features::kFilesAppExperimental)
-                  ? "true"
-                  : "false";
     return;
   }
 
@@ -3491,17 +3484,21 @@ void FileManagerBrowserTestBase::OnCommand(const std::string& name,
     return;
   }
 
-  if (name == "setupSkyVault") {
-    // Set the download / default Files App directory.
+  if (name == "setLocalFilesEnabled") {
+    std::optional<bool> enabled = value.FindBool("enabled");
+    ASSERT_TRUE(enabled.has_value());
+    g_browser_process->local_state()->SetBoolean(prefs::kLocalUserFilesAllowed,
+                                                 enabled.value());
+    return;
+  }
+
+  if (name == "setDefaultLocation") {
     const std::string* defaultLocation = value.FindString("defaultLocation");
     ASSERT_TRUE(defaultLocation &&
                 (*defaultLocation == download_dir_util::kLocationGoogleDrive ||
                  *defaultLocation == download_dir_util::kLocationOneDrive));
     profile()->GetPrefs()->SetString(prefs::kFilesAppDefaultLocation,
                                      *defaultLocation);
-    // Disable local files.
-    g_browser_process->local_state()->SetBoolean(prefs::kLocalUserFilesAllowed,
-                                                 false);
     return;
   }
 
@@ -3841,11 +3838,6 @@ void FileManagerBrowserTestBase::OnCommand(const std::string& name,
 
   if (name == "isMirrorSyncEnabled") {
     *output = options.enable_mirrorsync ? "true" : "false";
-    return;
-  }
-
-  if (name == "isFilesExperimentalEnabled") {
-    *output = options.files_experimental ? "true" : "false";
     return;
   }
 

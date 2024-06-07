@@ -24,6 +24,7 @@
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/chrome_pages.h"
 #include "chrome/browser/ui/passwords/ui_utils.h"
+#include "chrome/browser/user_education/user_education_service.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/autofill/content/browser/content_autofill_client.h"
 #include "components/autofill/content/browser/content_autofill_driver.h"
@@ -59,6 +60,8 @@
 #include "ui/base/models/menu_model.h"
 
 namespace autofill {
+
+using FillingProductSet = DenseSet<FillingProduct>;
 
 namespace {
 
@@ -150,6 +153,31 @@ bool IsLikelyDogfoodClient() {
     return false;
   }
   return variations_service->IsLikelyDogfoodClient();
+}
+
+// Returns true if the field is a username or password field.
+bool IsPasswordFormField(ContentPasswordManagerDriver* password_manager_driver,
+                         const content::ContextMenuParams& params) {
+  const autofill::FieldRendererId current_field_renderer_id(
+      params.field_renderer_id);
+  // `PasswordManager::GetParsedObservedForm` returns true iff the current field
+  // is part of a password form.
+  return password_manager_driver &&
+         password_manager_driver->GetPasswordManager()->GetParsedObservedForm(
+             password_manager_driver, current_field_renderer_id);
+}
+
+// Returns true if the user has autofillable passwords saved.
+bool UserHasPasswordsSaved(
+    ContentPasswordManagerDriver& password_manager_driver) {
+  password_manager::PasswordManagerClient* client =
+      password_manager_driver.GetPasswordManager()->GetClient();
+  return client->GetPrefs()->GetBoolean(
+             password_manager::prefs::
+                 kAutofillableCredentialsProfileStoreLoginDatabase) ||
+         client->GetPrefs()->GetBoolean(
+             password_manager::prefs::
+                 kAutofillableCredentialsAccountStoreLoginDatabase);
 }
 
 base::Value::Dict LoadTriggerFormAndFieldLogs(
@@ -348,7 +376,6 @@ void AutofillContextMenuManager::MaybeAddAutofillManualFallbackItems() {
       !add_payments_fallback && !add_passwords_fallback) {
     return;
   }
-  // TODO(b/337003955): Remove title.
   menu_model_->AddTitle(
       l10n_util::GetStringUTF16(IDS_CONTENT_CONTEXT_AUTOFILL_FALLBACK_TITLE));
 
@@ -364,7 +391,11 @@ void AutofillContextMenuManager::MaybeAddAutofillManualFallbackItems() {
         ui::ImageModel::FromVectorIcon(
             vector_icons::kLocationOnChromeRefreshIcon, ui::kColorIcon,
             kContextMenuIconSize));
-    menu_model_->SetIsNewFeatureAt(menu_model_->GetItemCount() - 1, true);
+    menu_model_->SetIsNewFeatureAt(
+        menu_model_->GetItemCount() - 1,
+        UserEducationService::MaybeShowNewBadge(
+            delegate_->GetBrowserContext(),
+            features::kAutofillForUnclassifiedFieldsAvailable));
   }
   if (add_payments_fallback) {
     menu_model_->AddItemWithStringIdAndIcon(
@@ -372,20 +403,33 @@ void AutofillContextMenuManager::MaybeAddAutofillManualFallbackItems() {
         IDS_CONTENT_CONTEXT_AUTOFILL_FALLBACK_PAYMENTS,
         ui::ImageModel::FromVectorIcon(kCreditCardChromeRefreshIcon,
                                        ui::kColorIcon, kContextMenuIconSize));
-    menu_model_->SetIsNewFeatureAt(menu_model_->GetItemCount() - 1, true);
+    menu_model_->SetIsNewFeatureAt(
+        menu_model_->GetItemCount() - 1,
+        UserEducationService::MaybeShowNewBadge(
+            delegate_->GetBrowserContext(),
+            features::kAutofillForUnclassifiedFieldsAvailable));
   }
   if (add_passwords_fallback) {
     AddPasswordsManualFallbackItems(*password_manager_driver);
   }
+
+  const bool select_passwords_option_shown =
+      add_passwords_fallback && UserHasPasswordsSaved(*password_manager_driver);
   // TODO(b/327566698): Log metrics for plus address fallbacks, too.
-  // TODO(b/321678141): Log metrics for passwords manual fallback, too.
-  LogManualFallbackContextMenuEntryShown(autofill_driver, add_address_fallback,
-                                         add_payments_fallback);
+  LogManualFallbackContextMenuEntryShown(
+      autofill_driver, password_manager_driver, add_address_fallback,
+      add_payments_fallback, select_passwords_option_shown);
   menu_model_->AddSeparator(ui::NORMAL_SEPARATOR);
 }
 
 bool AutofillContextMenuManager::ShouldAddPlusAddressManualFallbackItem(
     ContentAutofillDriver& autofill_driver) {
+  if (params_.form_control_type &&
+      params_.form_control_type.value() ==
+          blink::mojom::FormControlType::kInputPassword) {
+    return false;
+  }
+
   auto* web_contents = content::WebContents::FromRenderFrameHost(
       autofill_driver.render_frame_host());
   const plus_addresses::PlusAddressService* plus_address_service =
@@ -422,7 +466,7 @@ bool AutofillContextMenuManager::ShouldAddAddressManualFallbackItem(
     CHECK(personal_data_manager_);
     if (base::ranges::any_of(
             personal_data_manager_->address_data_manager().GetProfiles(),
-            [field](AutofillProfile* profile) {
+            [field](const AutofillProfile* profile) {
               return profile->HasInfo(field->Type().GetStorableType());
             })) {
       return true;
@@ -456,22 +500,12 @@ void AutofillContextMenuManager::AddPasswordsManualFallbackItems(
     ContentPasswordManagerDriver& password_manager_driver) {
   int regular_password_entry_command_id;
   int regular_password_entry_string_id;
-
-  password_manager::PasswordManagerClient* client =
-      password_manager_driver.GetPasswordManager()->GetClient();
   const bool user_is_syncing =
       password_manager_util::ManualPasswordGenerationEnabled(
           &password_manager_driver);
-  const bool user_has_passwords_saved =
-      client->GetPrefs()->GetBoolean(
-          password_manager::prefs::
-              kAutofillableCredentialsProfileStoreLoginDatabase) ||
-      client->GetPrefs()->GetBoolean(
-          password_manager::prefs::
-              kAutofillableCredentialsAccountStoreLoginDatabase);
 
   // TODO(b/321678141): Update strings once we have UX decision.
-  if (user_has_passwords_saved) {
+  if (UserHasPasswordsSaved(password_manager_driver)) {
     regular_password_entry_command_id =
         IDC_CONTENT_CONTEXT_AUTOFILL_FALLBACK_PASSWORDS_SELECT_PASSWORD;
     regular_password_entry_string_id =
@@ -512,9 +546,12 @@ void AutofillContextMenuManager::AddPasswordsManualFallbackItems(
 
 void AutofillContextMenuManager::LogManualFallbackContextMenuEntryShown(
     ContentAutofillDriver* autofill_driver,
+    ContentPasswordManagerDriver* password_manager_driver,
     bool address_option_shown,
-    bool payments_option_shown) {
-  if (!autofill_driver || (!address_option_shown && !payments_option_shown)) {
+    bool payments_option_shown,
+    bool select_passwords_option_shown) {
+  if (!autofill_driver || (!address_option_shown && !payments_option_shown &&
+                           !select_passwords_option_shown)) {
     return;
   }
   AutofillField* field = GetAutofillField(autofill_driver->GetAutofillManager(),
@@ -524,8 +561,13 @@ void AutofillContextMenuManager::LogManualFallbackContextMenuEntryShown(
       !IsAddressType(field ? field->Type().GetStorableType() : UNKNOWN_TYPE);
   const bool payments_option_shown_for_field_not_classified_as_payments =
       payments_option_shown &&
-      (!field ||
-       (field && field->Type().group() != FieldTypeGroup::kCreditCard));
+      (!field || field->Type().group() != FieldTypeGroup::kCreditCard);
+  CHECK(!select_passwords_option_shown || password_manager_driver)
+      << "No password entries should be shown if there is no driver.";
+  const bool
+      select_passwords_option_shown_for_form_not_classified_as_password_form =
+          select_passwords_option_shown &&
+          !IsPasswordFormField(password_manager_driver, params_);
 
   if (address_option_shown &&
       !address_option_shown_for_field_not_classified_as_address) {
@@ -542,7 +584,8 @@ void AutofillContextMenuManager::LogManualFallbackContextMenuEntryShown(
       .GetManualFallbackEventLogger()
       .ContextMenuEntryShown(
           address_option_shown_for_field_not_classified_as_address,
-          payments_option_shown_for_field_not_classified_as_payments);
+          payments_option_shown_for_field_not_classified_as_payments,
+          select_passwords_option_shown_for_form_not_classified_as_password_form);
 }
 
 void AutofillContextMenuManager::LogManualFallbackContextMenuEntryAccepted(
@@ -568,19 +611,35 @@ void AutofillContextMenuManager::LogManualFallbackContextMenuEntryAccepted(
         manager.GetManualFallbackEventLogger().ContextMenuEntryAccepted(
             filling_product);
       }
-    } break;
+      break;
+    }
     case FillingProduct::kCreditCard:
-      if (!(field && field->Type().group() == FieldTypeGroup::kCreditCard)) {
+    case FillingProduct::kStandaloneCvc:
+      if (!field ||
+          !FieldTypeGroupSet::is_one_of(
+              field->Type().group(), {FieldTypeGroup::kCreditCard,
+                                      FieldTypeGroup::kStandaloneCvcField})) {
         // Only log payments manual fallback when triggered from a field that is
         // not classified as payments.
         manager.GetManualFallbackEventLogger().ContextMenuEntryAccepted(
             filling_product);
       }
       break;
+    case FillingProduct::kPassword: {
+      content::RenderFrameHost* rfh = delegate_->GetRenderFrameHost();
+      ContentPasswordManagerDriver* password_manager_driver =
+          rfh ? ContentPasswordManagerDriver::GetForRenderFrameHost(rfh)
+              : nullptr;
+
+      // TODO(b/321678141): Handle the "else" case of this if.
+      if (!IsPasswordFormField(password_manager_driver, params_)) {
+        manager.GetManualFallbackEventLogger().ContextMenuEntryAccepted(
+            filling_product);
+      }
+      break;
+    }
     // TODO(b/327566698): Add metrics for plus addresses.
     case FillingProduct::kPlusAddresses:
-    // TODO(b/321678141): Add metrics for passwords.
-    case FillingProduct::kPassword:
       NOTIMPLEMENTED();
       break;
     case FillingProduct::kNone:
@@ -628,6 +687,9 @@ void AutofillContextMenuManager::ExecuteFallbackForPaymentsCommand(
       AutofillSuggestionTriggerSource::kManualFallbackPayments);
   LogManualFallbackContextMenuEntryAccepted(autofill_driver,
                                             FillingProduct::kCreditCard);
+  UserEducationService::MaybeNotifyPromoFeatureUsed(
+      delegate_->GetBrowserContext(),
+      features::kAutofillForUnclassifiedFieldsAvailable);
 }
 
 void AutofillContextMenuManager::ExecuteFallbackForPasswordsCommand(
@@ -723,6 +785,9 @@ void AutofillContextMenuManager::ExecuteFallbackForAddressesCommand(
   }
   LogManualFallbackContextMenuEntryAccepted(autofill_driver,
                                             FillingProduct::kAddress);
+  UserEducationService::MaybeNotifyPromoFeatureUsed(
+      delegate_->GetBrowserContext(),
+      features::kAutofillForUnclassifiedFieldsAvailable);
 }
 
 AutofillField* AutofillContextMenuManager::GetAutofillField(

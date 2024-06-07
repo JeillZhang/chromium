@@ -419,6 +419,7 @@ class CORE_EXPORT WebFrameWidgetImpl
       const cc::LayerTreeSettings* settings,
       WebFrameWidget& previous_widget) override;
   void SetCompositorVisible(bool visible) override;
+  void WarmUpCompositor() override;
   gfx::Size Size() override;
   void Resize(const gfx::Size& size_with_dsf) override;
   void SetCursor(const ui::Cursor& cursor) override;
@@ -501,7 +502,8 @@ class CORE_EXPORT WebFrameWidgetImpl
   // Called when the FrameView for this Widget's local root is created.
   void DidCreateLocalRootView();
 
-  void SetZoomLevel(double zoom_level);
+  double GetZoomLevel() override;
+  void SetZoomLevel(double zoom_level) override;
 
   // Called when the View has auto resized.
   virtual void DidAutoResize(const gfx::Size& size);
@@ -695,8 +697,10 @@ class CORE_EXPORT WebFrameWidgetImpl
   // Return if there is a pending scale animation.
   bool HasPendingPageScaleAnimation();
 
-  // Set the source URL for the compositor.
-  void SetSourceURLForCompositor(ukm::SourceId source_id, const KURL& url);
+  // Set the source URL and the `primary_main_frame_item_sequence_number`
+  // (if the compositor is rendering the primary main frame) for the compositor.
+  void UpdateNavigationStateForCompositor(ukm::SourceId source_id,
+                                          const KURL& url);
 
   // Ask compositor to create the shared memory for smoothness ukm region.
   base::ReadOnlySharedMemoryRegion CreateSharedMemoryForSmoothnessUkm();
@@ -920,7 +924,7 @@ class CORE_EXPORT WebFrameWidgetImpl
   void SendEndOfScrollEvents(bool affects_outer_viewport,
                              bool affects_inner_viewport,
                              cc::ElementId scroll_latched_element_id);
-  void SendSnapChangingEventIfNeeded(
+  void SendScrollSnapChangingEventIfNeeded(
       const cc::CompositorCommitData& commit_data);
   void RecordManipulationTypeCounts(cc::ManipulationInfo info);
 
@@ -1223,6 +1227,8 @@ class CORE_EXPORT WebFrameWidgetImpl
 
   base::WeakPtrFactory<mojom::blink::FrameWidgetInputHandler>
       input_handler_weak_ptr_factory_{this};
+
+  double zoom_level_ = 0;
 };
 
 }  // namespace blink

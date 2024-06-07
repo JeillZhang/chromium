@@ -6,7 +6,7 @@
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 import {flush} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 import type {SettingsCollapseRadioButtonElement, SettingsRadioGroupElement, SettingsCookiesPageElement} from 'chrome://settings/lazy_load.js';
-import {CookieControlsMode, ContentSetting, ContentSettingsTypes, SITE_EXCEPTION_WILDCARD, SiteSettingsPrefsBrowserProxyImpl} from 'chrome://settings/lazy_load.js';
+import {CookieControlsMode, ContentSettingsTypes, SITE_EXCEPTION_WILDCARD, SiteSettingsPrefsBrowserProxyImpl} from 'chrome://settings/lazy_load.js';
 import type {SettingsPrefsElement, SettingsToggleButtonElement} from 'chrome://settings/settings.js';
 import {CrSettingsPrefs, MetricsBrowserProxyImpl, PrivacyElementInteractions, resetRouterForTesting, Router, routes} from 'chrome://settings/settings.js';
 import {assertEquals, assertFalse, assertTrue} from 'chrome://webui-test/chai_assert.js';
@@ -84,10 +84,13 @@ suite('CookiesPageTest', function() {
     assertTrue(isChildVisible(page, '#generalControls'));
     assertTrue(isChildVisible(page, '#advancedHeader'));
     assertTrue(isChildVisible(page, '#exceptionHeader3pcd'));
-    assertTrue(isChildVisible(page, '#allowExceptionsList'));
+    assertTrue(isChildVisible(page, '#allow3pcExceptionsList'));
     // To be removed with old UI.
     assertFalse(isChildVisible(page, '#exceptionHeader'));
     assertFalse(isChildVisible(page, '#exceptionHeaderSubLabel'));
+    // Will only be shown in the TP rollout.
+    assertFalse(isChildVisible(page, '#exceptionHeaderTrackingProtection'));
+    assertFalse(isChildVisible(page, '#trackingProtectionExceptionsList'));
 
     // Settings
     assertTrue(isChildVisible(page, '#doNotTrack'));
@@ -313,27 +316,6 @@ suite('ExceptionsList', function() {
     assertFalse(isChildVisible(exceptionList, 'site-list-entry'));
   });
 
-  test('ExceptionListReadOnly', function() {
-    // Check that the exception list is read only when the preference reports as
-    // managed.
-    page.set('prefs.generated.cookie_default_content_setting', {
-      value: ContentSetting.ALLOW,
-      enforcement: chrome.settingsPrivate.Enforcement.ENFORCED,
-    });
-    const exceptionList1 = page.shadowRoot!.querySelector('site-list');
-    assertTrue(!!exceptionList1);
-    assertTrue(!!exceptionList1.readOnlyList);
-
-    // Return preference to unmanaged state and check that the exception list
-    // is no longer read only.
-    page.set('prefs.generated.cookie_default_content_setting', {
-      value: ContentSetting.ALLOW,
-    });
-    const exceptionList2 = page.shadowRoot!.querySelector('site-list');
-    assertTrue(!!exceptionList2);
-    assertFalse(!!exceptionList2.readOnlyList);
-  });
-
   test('ExceptionListHasCorrectCookieExceptionType', function() {
     const exceptionList = page.shadowRoot!.querySelector('site-list');
     assertTrue(!!exceptionList);
@@ -425,7 +407,7 @@ suite('TrackingProtectionSettings', function() {
     assertFalse(isChildVisible(page, '#exceptionHeader'));
     assertFalse(isChildVisible(page, '#exceptionHeaderSubLabel'));
     assertTrue(isChildVisible(page, '#exceptionHeader3pcd'));
-    assertTrue(isChildVisible(page, '#allowExceptionsList'));
+    assertTrue(isChildVisible(page, '#allow3pcExceptionsList'));
   });
 
   test('BlockAll3pcToggle', async function() {
@@ -549,32 +531,32 @@ suite('FingerprintingProtectionToggle', function() {
   });
 });
 
-suite('TrackingProtectionSettingsRollbackNotice', function() {
+suite('TrackingProtectionRolloutUx', function() {
   let page: SettingsCookiesPageElement;
   let settingsPrefs: SettingsPrefsElement;
 
   suiteSetup(function() {
     loadTimeData.overrideValues({
-      showTrackingProtectionSettingsRollbackNotice: true,
-      // This notice only shows outside of 3PCD.
-      is3pcdCookieSettingsRedesignEnabled: false,
+      enableTrackingProtectionRolloutUx: true,
     });
-    resetRouterForTesting();
-
     settingsPrefs = document.createElement('settings-prefs');
     return CrSettingsPrefs.initialized;
   });
 
   setup(function() {
     document.body.innerHTML = window.trustedTypes!.emptyHTML;
-
     page = document.createElement('settings-cookies-page');
     page.prefs = settingsPrefs.prefs!;
     document.body.appendChild(page);
     flush();
   });
 
-  test('RollbackNoticeDisplayed', function() {
-    assertTrue(isChildVisible(page, '#rollbackNotice'));
+  test('TrackingProtectionExceptionsListDisplayed', function() {
+    // Tracking Protection elements are shown
+    assertTrue(isChildVisible(page, '#exceptionHeaderTrackingProtection'));
+    assertTrue(isChildVisible(page, '#trackingProtectionExceptionsList'));
+    // 3PC elements are hidden
+    assertFalse(isChildVisible(page, '#exceptionHeader3pcd'));
+    assertFalse(isChildVisible(page, '#allow3pcExceptionsList'));
   });
 });

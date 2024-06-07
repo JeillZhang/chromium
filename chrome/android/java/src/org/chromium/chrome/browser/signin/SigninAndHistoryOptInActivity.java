@@ -9,7 +9,6 @@ import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
 import android.content.res.Configuration;
-import android.graphics.drawable.ColorDrawable;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -17,6 +16,7 @@ import androidx.annotation.Nullable;
 import org.chromium.base.Promise;
 import org.chromium.base.supplier.OneshotSupplier;
 import org.chromium.base.supplier.OneshotSupplierImpl;
+import org.chromium.chrome.R;
 import org.chromium.chrome.browser.back_press.SecondaryActivityBackPressUma;
 import org.chromium.chrome.browser.device_lock.DeviceLockActivityLauncherImpl;
 import org.chromium.chrome.browser.firstrun.FirstRunActivityBase;
@@ -93,6 +93,7 @@ public class SigninAndHistoryOptInActivity extends FirstRunActivityBase
 
         Intent intent = getIntent();
         if (intent.getBooleanExtra(ARGUMENT_IS_UPGRADE_PROMO, false)) {
+            setTheme(org.chromium.chrome.R.style.Theme_Chromium_DialogWhenLarge);
             mUpgradePromoCoordinator =
                     new UpgradePromoCoordinator(
                             this,
@@ -101,8 +102,6 @@ public class SigninAndHistoryOptInActivity extends FirstRunActivityBase
                             PrivacyPreferencesManagerImpl.getInstance(),
                             this);
 
-            // Reset the activity background to transparent for fullscreen upgrade promo view.
-            getWindow().setBackgroundDrawable(new ColorDrawable(0));
             setContentView(mUpgradePromoCoordinator.getViewSwitcher());
             onInitialLayoutInflationComplete();
             return;
@@ -116,7 +115,7 @@ public class SigninAndHistoryOptInActivity extends FirstRunActivityBase
         @NoAccountSigninMode
         int noAccountSigninMode =
                 intent.getIntExtra(
-                        ARGUMENT_NO_ACCOUNT_SIGNIN_MODE, NoAccountSigninMode.ADD_ACCOUNT);
+                        ARGUMENT_NO_ACCOUNT_SIGNIN_MODE, NoAccountSigninMode.BOTTOM_SHEET);
         @WithAccountSigninMode
         int withAccountSigninMode =
                 intent.getIntExtra(
@@ -194,7 +193,7 @@ public class SigninAndHistoryOptInActivity extends FirstRunActivityBase
         finish();
         // Override activity animation to avoid visual glitches due to the semi-transparent
         // background.
-        overridePendingTransition(0, android.R.anim.fade_out);
+        overridePendingTransition(0, R.anim.fast_fade_out);
     }
 
     @Override

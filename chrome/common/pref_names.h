@@ -893,6 +893,16 @@ inline constexpr char kHatsBorealisGamesSurveyCycleEndTs[] =
 inline constexpr char kHatsBorealisGamesLastInteractionTimestamp[] =
     "hats_borealis_games_last_interaction_timestamp";
 
+// An int64 pref. This is the timestamp, microseconds after epoch, that
+// indicates the end of the OS Launcher Apps satisfaction survey cycle.
+inline constexpr char kHatsLauncherAppsSurveyCycleEndTs[] =
+    "hats_launcher_apps_cycle_end_timestamp";
+
+// A boolean pref. Indicates if the device is selected for the OS Launcher
+// Apps satisfaction survey.
+inline constexpr char kHatsLauncherAppsSurveyIsSelected[] =
+    "hats_launcher_apps_is_selected";
+
 // A boolean pref. Indicates if we've already shown a notification to inform the
 // current user about the quick unlock feature.
 inline constexpr char kPinUnlockFeatureNotificationShown[] =
@@ -1248,6 +1258,23 @@ inline constexpr char kFilesAppDefaultLocation[] =
 #endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
 #if BUILDFLAG(IS_CHROMEOS)
+// List pref containing blocked domains of cookies that will not be moved when a
+// user switches between ChromeOS devices, when the Floating SSO Service is
+// enabled.
+inline constexpr char kFloatingSsoDomainBlocklist[] =
+    "floating_sso_domain_blocklist";
+
+// List pref containing blocklist excepted domains of cookies to be moved when a
+// user switches between ChromeOS devices, when the Floating SSO Service is
+// enabled.
+inline constexpr char kFloatingSsoDomainBlocklistExceptions[] =
+    "floating_sso_domain_blocklist_exceptions";
+
+// Boolean pref specifying if the the Floating SSO Service is enabled. The
+// service restores the user's web service authentication state by moving
+// cookies from the previous device onto another, on ChromeOS.
+inline constexpr char kFloatingSsoEnabled[] = "floating_sso_enabled";
+
 // This boolean controls whether the first window shown on first run should be
 // unconditionally maximized, overriding the heuristic that normally chooses the
 // window size.
@@ -1416,11 +1443,6 @@ inline constexpr char kAccessibilityFocusHighlightEnabled[] =
 inline constexpr char kOverscrollHistoryNavigationEnabled[] =
     "settings.a11y.overscroll_history_navigation";
 #endif
-
-// Whether the PDF OCR feature is set to be always active. The PDF OCR feature
-// is exposed to only screen reader users.
-inline constexpr char kAccessibilityPdfOcrAlwaysActive[] =
-    "settings.a11y.pdf_ocr_always_active";
 
 // Whether main node annotations are enabled.
 inline constexpr char kAccessibilityMainNodeAnnotationsEnabled[] =
@@ -2167,6 +2189,10 @@ inline constexpr char kOfficeFileMovedToGoogleDrive[] =
 // Pref that contains the value of the LocalUserFilesAllowed policy.
 inline constexpr char kLocalUserFilesAllowed[] =
     "filebrowser.local_user_files_allowed";
+
+// Pref that contains the value of the LocalUserFilesMigrationEnabled policy.
+inline constexpr char kLocalUserFilesMigrationEnabled[] =
+    "filebrowser.local_user_files_migration_enabled";
 
 // Whether the user can remove OneDrive.
 inline constexpr char kAllowUserToRemoveODFS[] = "allow_user_to_remove_odfs";
@@ -3521,6 +3547,10 @@ inline constexpr char kRendererAppContainerEnabled[] =
 // ProcessExtensionPointDisablePolicy enabled.
 inline constexpr char kBlockBrowserLegacyExtensionPoints[] =
     "block_browser_legacy_extension_points";
+
+// An integer enum that controls the policy-managed dynamic code settings. This
+// is linked via a PolicyToPreferenceMapEntry to the underlying policy.
+inline constexpr char kDynamicCodeSettings[] = "dynamic_code_settings";
 
 // A boolean that controls whether the Browser process has Application Bound
 // (App-Bound) Encryption enabled.

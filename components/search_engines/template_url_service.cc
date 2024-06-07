@@ -860,7 +860,6 @@ TemplateURLService::TemplateURLVector TemplateURLService::GetTemplateURLs() {
 std::unique_ptr<search_engines::ChoiceScreenData>
 TemplateURLService::GetChoiceScreenData() {
   OwnedTemplateURLVector owned_template_urls;
-  bool was_current_default_inserted = false;
 
   // We call `GetPrepopulatedEngines` instead of
   // `GetSearchProvidersUsingLoadedEngines` because the latter will return the
@@ -871,9 +870,7 @@ TemplateURLService::GetChoiceScreenData() {
   std::vector<std::unique_ptr<TemplateURLData>> engines =
       TemplateURLPrepopulateData::GetPrepopulatedEngines(
           prefs_, search_engine_choice_service_,
-          /*default_search_provider_index=*/nullptr,
-          /*include_current_default=*/true, /*template_url_service=*/this,
-          /*was_current_default_inserted=*/&was_current_default_inserted);
+          /*default_search_provider_index=*/nullptr);
   for (const auto& engine : engines) {
     owned_template_urls.push_back(std::make_unique<TemplateURL>(*engine));
   }
@@ -881,8 +878,20 @@ TemplateURLService::GetChoiceScreenData() {
   return std::make_unique<search_engines::ChoiceScreenData>(
       std::move(owned_template_urls),
       search_engine_choice_service_->GetCountryId(),
-      /*list_is_modified_by_current_default=*/was_current_default_inserted,
       search_terms_data());
+}
+
+TemplateURLService::TemplateURLVector
+TemplateURLService::GetFeaturedEnterpriseSearchEngines() const {
+  TemplateURLVector result;
+  for (const auto& turl : template_urls_) {
+    if (turl->created_by_policy() ==
+            TemplateURLData::CreatedByPolicy::kSiteSearch &&
+        turl->featured_by_policy()) {
+      result.push_back(turl.get());
+    }
+  }
+  return result;
 }
 
 #if BUILDFLAG(IS_ANDROID)

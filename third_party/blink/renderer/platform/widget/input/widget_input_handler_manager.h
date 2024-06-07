@@ -295,6 +295,10 @@ class PLATFORM_EXPORT WidgetInputHandlerManager final
   void RecordEventMetricsForPaintTiming(
       std::optional<base::TimeTicks> first_paint_time);
 
+  // Start `first_paint_max_delay_timer_` if not started already.  This runs on
+  // the main thread.
+  void StartFirstPaintMaxDelayTimer();
+
   // Helpers for FlushEventQueuesForTesting.
   void FlushCompositorQueueForTesting();
   void FlushMainThreadQueueForTesting(base::OnceClosure done);
@@ -318,12 +322,12 @@ class PLATFORM_EXPORT WidgetInputHandlerManager final
   mojo::SharedRemote<mojom::blink::WidgetInputHandlerHost> host_;
 
   // Any thread can access these variables.
-  scoped_refptr<MainThreadEventQueue> input_event_queue_;
   scoped_refptr<base::SingleThreadTaskRunner> main_thread_task_runner_;
   scoped_refptr<base::SingleThreadTaskRunner>
       compositor_thread_default_task_runner_;
   scoped_refptr<base::SingleThreadTaskRunner>
       compositor_thread_input_blocking_task_runner_;
+  scoped_refptr<MainThreadEventQueue> input_event_queue_;
 
   // The touch action that InputHandlerProxy has asked us to allow. This should
   // only be accessed on the compositor thread!
@@ -402,6 +406,10 @@ class PLATFORM_EXPORT WidgetInputHandlerManager final
   // acceptable maximum delay.  This timer is allocated and run on the main
   // thread.
   std::unique_ptr<base::OneShotTimer> first_paint_max_delay_timer_;
+
+  // Tracks whether `RecordEventMetricsForPaintTiming` has already recorded the
+  // UMA related to first paint.
+  bool recorded_event_metric_for_paint_timing_ = false;
 
   unsigned dropped_pointer_down_ = 0;
 

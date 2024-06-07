@@ -32,24 +32,23 @@
 #include "base/types/pass_key.h"
 #include "build/build_config.h"
 #include "cc/mojom/render_frame_metadata.mojom.h"
+#include "components/input/event_with_latency_info.h"
 #include "components/viz/common/surfaces/frame_sink_id.h"
 #include "content/browser/renderer_host/agent_scheduling_group_host.h"
 #include "content/browser/renderer_host/frame_token_message_queue.h"
-#include "content/browser/renderer_host/input/render_widget_host_latency_tracker.h"
-#include "content/browser/renderer_host/input/touch_emulator_client.h"
 #include "content/browser/renderer_host/render_frame_metadata_provider_impl.h"
 #include "content/browser/renderer_host/render_widget_host_delegate.h"
 #include "content/browser/renderer_host/render_widget_host_view_base.h"
 #include "content/browser/scheduler/browser_ui_thread_scheduler.h"
 #include "content/common/content_export.h"
 #include "content/common/frame.mojom-forward.h"
-#include "content/common/input/event_with_latency_info.h"
 #include "content/common/input/input_disposition_handler.h"
 #include "content/common/input/input_router_impl.h"
 #include "content/common/input/render_input_router.h"
 #include "content/common/input/render_input_router_delegate.h"
 #include "content/common/input/synthetic_gesture.h"
 #include "content/common/input/synthetic_gesture_controller.h"
+#include "content/common/input/touch_emulator_client.h"
 #include "content/public/browser/render_process_host_observer.h"
 #include "content/public/browser/render_process_host_priority_client.h"
 #include "content/public/browser/render_widget_host.h"
@@ -112,7 +111,7 @@ class RenderWidgetHostFactory;
 class SiteInstanceGroup;
 class SyntheticGestureController;
 class TimeoutMonitor;
-class TouchEmulator;
+class TouchEmulatorImpl;
 class VisibleTimeRequestTrigger;
 
 // This implements the RenderWidgetHost interface that is exposed to
@@ -249,7 +248,8 @@ class CONTENT_EXPORT RenderWidgetHostImpl
   void SetActive(bool active) override;
   void ForwardMouseEvent(const blink::WebMouseEvent& mouse_event) override;
   void ForwardWheelEvent(const blink::WebMouseWheelEvent& wheel_event) override;
-  void ForwardKeyboardEvent(const NativeWebKeyboardEvent& key_event) override;
+  void ForwardKeyboardEvent(
+      const input::NativeWebKeyboardEvent& key_event) override;
   void ForwardGestureEvent(
       const blink::WebGestureEvent& gesture_event) override;
   RenderProcessHost* GetProcess() override;
@@ -363,10 +363,17 @@ class CONTENT_EXPORT RenderWidgetHostImpl
   const cc::RenderFrameMetadata& GetLastRenderFrameMetadata() override;
   std::unique_ptr<RenderInputRouterIterator> GetEmbeddedRenderInputRouters()
       override;
+  RenderWidgetHostInputEventRouter* GetInputEventRouter() override;
   void ForwardDelegatedInkPoint(gfx::DelegatedInkPoint& delegated_ink_point,
                                 bool& ended_delegated_ink_trail) override;
   void ResetDelegatedInkPointPrediction(
       bool& ended_delegated_ink_trail) override;
+  ukm::SourceId GetCurrentPageUkmSourceId() override;
+  void NotifyObserversOfInputEvent(const blink::WebInputEvent& event) override;
+  void NotifyObserversOfInputEventAcks(
+      blink::mojom::InputEventResultSource ack_source,
+      blink::mojom::InputEventResultState ack_result,
+      const blink::WebInputEvent& event) override;
 
   // Update the stored set of visual properties for the renderer. If 'propagate'
   // is true, the new properties will be sent to the renderer process.
@@ -543,7 +550,7 @@ class CONTENT_EXPORT RenderWidgetHostImpl
   // event in |key_event| should be updated. |update_event| is only used on
   // aura.
   void ForwardKeyboardEventWithCommands(
-      const NativeWebKeyboardEvent& key_event,
+      const input::NativeWebKeyboardEvent& key_event,
       const ui::LatencyInfo& latency,
       std::vector<blink::mojom::EditCommandPtr> commands,
       bool* update_event = nullptr);
@@ -551,14 +558,11 @@ class CONTENT_EXPORT RenderWidgetHostImpl
   // Forwards the given message to the renderer. These are called by the view
   // when it has received a message.
   void ForwardKeyboardEventWithLatencyInfo(
-      const NativeWebKeyboardEvent& key_event,
+      const input::NativeWebKeyboardEvent& key_event,
       const ui::LatencyInfo& latency) override;
   void ForwardGestureEventWithLatencyInfo(
       const blink::WebGestureEvent& gesture_event,
       const ui::LatencyInfo& latency) override;
-  virtual void ForwardTouchEventWithLatencyInfo(
-      const blink::WebTouchEvent& touch_event,
-      const ui::LatencyInfo& latency);  // Virtual for testing.
   void ForwardMouseEventWithLatencyInfo(const blink::WebMouseEvent& mouse_event,
                                         const ui::LatencyInfo& latency);
   void ForwardWheelEventWithLatencyInfo(
@@ -576,8 +580,10 @@ class CONTENT_EXPORT RenderWidgetHostImpl
   // swapped, and presented).
   void WaitForInputProcessed(base::OnceClosure callback);
 
-  // Returns an emulator for this widget. See TouchEmulator for more details.
-  TouchEmulator* GetTouchEmulator();
+  // Returns an pointer to the existing touch emulator serving this host if
+  // |create_if_necessary| is false. If true, calling this function will force
+  // creation of a TouchEmulator.
+  TouchEmulatorImpl* GetTouchEmulator(bool create_if_necessary);
 
   // Queues a synthetic gesture for testing purposes.  Invokes the on_complete
   // callback when the gesture is finished running.
@@ -1005,19 +1011,20 @@ class CONTENT_EXPORT RenderWidgetHostImpl
   virtual void NotifyNewContentRenderingTimeoutForTesting() {}
 
   // InputDispositionHandler
-  void OnWheelEventAck(const MouseWheelEventWithLatencyInfo& event,
+  void OnWheelEventAck(const input::MouseWheelEventWithLatencyInfo& event,
                        blink::mojom::InputEventResultSource ack_source,
                        blink::mojom::InputEventResultState ack_result) override;
-  void OnTouchEventAck(const TouchEventWithLatencyInfo& event,
-                       blink::mojom::InputEventResultSource ack_source,
-                       blink::mojom::InputEventResultState ack_result) override;
+  void OnTouchEventAck(
+      const input::TouchEventWithLatencyInfo& event,
+      blink::mojom::InputEventResultSource ack_source,
+      blink::mojom::InputEventResultState ack_result) override {}
   void OnGestureEventAck(
-      const GestureEventWithLatencyInfo& event,
+      const input::GestureEventWithLatencyInfo& event,
       blink::mojom::InputEventResultSource ack_source,
       blink::mojom::InputEventResultState ack_result) override;
 
   // virtual for testing.
-  virtual void OnMouseEventAck(const MouseEventWithLatencyInfo& event,
+  virtual void OnMouseEventAck(const input::MouseEventWithLatencyInfo& event,
                                blink::mojom::InputEventResultSource ack_source,
                                blink::mojom::InputEventResultState ack_result);
   // ---------------------------------------------------------------------------
@@ -1083,9 +1090,10 @@ class CONTENT_EXPORT RenderWidgetHostImpl
 
   // InputRouter::SendKeyboardEvent() callbacks to this. This may be called
   // synchronously.
-  void OnKeyboardEventAck(const NativeWebKeyboardEventWithLatencyInfo& event,
-                          blink::mojom::InputEventResultSource ack_source,
-                          blink::mojom::InputEventResultState ack_result);
+  void OnKeyboardEventAck(
+      const input::NativeWebKeyboardEventWithLatencyInfo& event,
+      blink::mojom::InputEventResultSource ack_source,
+      blink::mojom::InputEventResultState ack_result);
 
   // Release the pointer lock
   void UnlockPointer();
@@ -1138,7 +1146,7 @@ class CONTENT_EXPORT RenderWidgetHostImpl
 
   // Give key press listeners a chance to handle this key press. This allow
   // widgets that don't have focus to still handle key presses.
-  bool KeyPressListenersHandleEvent(const NativeWebKeyboardEvent& event);
+  bool KeyPressListenersHandleEvent(const input::NativeWebKeyboardEvent& event);
 
   // InputRouterClient
   blink::mojom::InputEventResultState FilterInputEvent(
@@ -1153,12 +1161,6 @@ class CONTENT_EXPORT RenderWidgetHostImpl
   void DidStartScrollingViewport() override;
   void OnSetCompositorAllowedTouchAction(cc::TouchAction) override {}
   void OnInvalidInputEventSource() override;
-
-  // Dispatch input events with latency information
-  void DispatchInputEventWithLatencyInfo(
-      const blink::WebInputEvent& event,
-      ui::LatencyInfo* latency,
-      ui::EventLatencyMetadata* event_latency_metadata);
 
   void WindowSnapshotReachedScreen(int snapshot_id);
 
@@ -1216,11 +1218,6 @@ class CONTENT_EXPORT RenderWidgetHostImpl
 #if BUILDFLAG(IS_MAC)
   device::mojom::WakeLock* GetWakeLock();
 #endif
-
-  // Returns a pointer to the touch emulator serving this host, but only if it
-  // already exists; calling this function will not force creation of a
-  // TouchEmulator.
-  TouchEmulator* GetExistingTouchEmulator();
 
   void CreateSyntheticGestureControllerIfNecessary();
 
@@ -1447,17 +1444,19 @@ class CONTENT_EXPORT RenderWidgetHostImpl
   // awkward.
   std::unique_ptr<SyntheticGestureController> synthetic_gesture_controller_;
 
+  // These need to be destroyed after RenderInputRouter to avoid UAF bugs which
+  // can arise when handling acks.
+  base::OneShotTimer input_event_ack_timeout_;
+  std::optional<BrowserUIThreadScheduler::UserInputActiveHandle>
+      user_input_active_handle_;
+
   // Receives and handles input events.
   std::unique_ptr<RenderInputRouter> render_input_router_;
-
-  base::OneShotTimer input_event_ack_timeout_;
 
   base::CallbackListSubscription
       render_process_blocked_state_changed_subscription_;
 
   std::unique_ptr<TimeoutMonitor> new_content_rendering_timeout_;
-
-  RenderWidgetHostLatencyTracker latency_tracker_;
 
   int next_browser_snapshot_id_ = 1;
   using PendingSnapshotMap = std::map<int, GetSnapshotFromBrowserCallback>;
@@ -1556,9 +1555,6 @@ class CONTENT_EXPORT RenderWidgetHostImpl
   mojo::AssociatedRemote<blink::mojom::Widget> blink_widget_;
 
   mojo::Remote<blink::mojom::WidgetCompositor> widget_compositor_;
-
-  std::optional<BrowserUIThreadScheduler::UserInputActiveHandle>
-      user_input_active_handle_;
 
   // Same-process cross-RenderFrameHost navigations may reuse the compositor
   // from the previous RenderFrameHost. While the speculative RenderWidgetHost

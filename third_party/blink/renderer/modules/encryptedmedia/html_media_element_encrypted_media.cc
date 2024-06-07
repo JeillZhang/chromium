@@ -96,7 +96,7 @@ class SetContentDecryptionModuleResult final
   }
 
   void CompleteWithContentDecryptionModule(
-      WebContentDecryptionModule*) override {
+      std::unique_ptr<WebContentDecryptionModule>) override {
     NOTREACHED_IN_MIGRATION();
     std::move(failure_callback_)
         .Run(kWebContentDecryptionModuleExceptionInvalidStateError,
@@ -395,7 +395,7 @@ ScriptPromise<IDLUndefined> HTMLMediaElementEncryptedMedia::setMediaKeys(
   if (this_element.is_attaching_media_keys_) {
     exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
                                       "Another request is in progress.");
-    return ScriptPromise<IDLUndefined>();
+    return EmptyPromise();
   }
 
   // 2. If mediaKeys and the mediaKeys attribute are the same object,

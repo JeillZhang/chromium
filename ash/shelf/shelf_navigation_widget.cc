@@ -36,6 +36,7 @@
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/geometry/rounded_corners_f.h"
 #include "ui/gfx/geometry/transform_util.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/animation/bounds_animator.h"
 #include "ui/views/view.h"
 #include "ui/wm/core/coordinate_conversion.h"
@@ -319,7 +320,7 @@ ShelfNavigationWidget::Delegate::Delegate(Shelf* shelf, ShelfView* shelf_view)
         ax::mojom::Event::kChildrenChanged, true);
   }
 
-  SetAccessibleRole(ax::mojom::Role::kToolbar);
+  GetViewAccessibility().SetRole(ax::mojom::Role::kToolbar);
   RefreshAccessibilityWidgetNextPreviousFocus(shelf->shelf_widget());
 }
 
@@ -408,11 +409,11 @@ ShelfNavigationWidget::~ShelfNavigationWidget() {
 void ShelfNavigationWidget::Initialize(aura::Window* container) {
   DCHECK(container);
   views::Widget::InitParams params(
+      views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET,
       views::Widget::InitParams::TYPE_WINDOW_FRAMELESS);
   params.name = "ShelfNavigationWidget";
   params.delegate = delegate_.get();
   params.opacity = views::Widget::InitParams::WindowOpacity::kTranslucent;
-  params.ownership = views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
   params.parent = container;
   Init(std::move(params));
   set_focus_on_creation(false);

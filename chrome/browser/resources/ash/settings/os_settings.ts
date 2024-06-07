@@ -115,6 +115,7 @@ export {ApnSelectionDialog} from 'chrome://resources/ash/common/network/apn_sele
 export {ApnSelectionDialogListItem} from 'chrome://resources/ash/common/network/apn_selection_dialog_list_item.js';
 export {CrPolicyNetworkBehaviorMojo} from 'chrome://resources/ash/common/network/cr_policy_network_behavior_mojo.js';
 export {OpenWindowProxy, OpenWindowProxyImpl} from 'chrome://resources/js/open_window_proxy.js';
+export {getTrustedHTML} from 'chrome://resources/js/static_types.js';
 export {IronCollapseElement} from 'chrome://resources/polymer/v3_0/iron-collapse/iron-collapse.js';
 export {IronDropdownElement} from 'chrome://resources/polymer/v3_0/iron-dropdown/iron-dropdown.js';
 export {IronIconElement} from 'chrome://resources/polymer/v3_0/iron-icon/iron-icon.js';
@@ -141,12 +142,15 @@ export {SettingsToggleButtonElement} from './controls/settings_toggle_button.js'
 export {BaseRowMixin} from './controls/v2/base_row_mixin.js';
 export {PrefControlMixinInternal} from './controls/v2/pref_control_mixin_internal.js';
 export {SettingsDropdownV2Element} from './controls/v2/settings_dropdown_v2.js';
+export {SettingsRowElement} from './controls/v2/settings_row.js';
+export {SettingsSliderRowElement} from './controls/v2/settings_slider_row.js';
 export {SettingsSliderV2Element} from './controls/v2/settings_slider_v2.js';
 export {SettingsToggleV2Element} from './controls/v2/settings_toggle_v2.js';
+export {DateTimeBrowserProxy, DateTimePageCallbackRouter, DateTimePageHandlerRemote, DateTimePageRemote} from './date_time_page/date_time_browser_proxy.js';
 export {SettingsAudioElement} from './device_page/audio.js';
 export {setCrosAudioConfigForTesting} from './device_page/cros_audio_config.js';
 export {SettingsDevicePageElement} from './device_page/device_page.js';
-export {DevicePageBrowserProxy, DevicePageBrowserProxyImpl, IdleBehavior, LidClosedBehavior, NoteAppInfo, NoteAppLockScreenSupport, PowerSource, setDisplayApiForTesting, StorageSpaceState} from './device_page/device_page_browser_proxy.js';
+export {BatteryStatus, DevicePageBrowserProxy, DevicePageBrowserProxyImpl, IdleBehavior, LidClosedBehavior, NoteAppInfo, NoteAppLockScreenSupport, PowerSource, setDisplayApiForTesting, StorageSpaceState} from './device_page/device_page_browser_proxy.js';
 export {SettingsDisplayElement} from './device_page/display.js';
 export {DisplayLayoutElement} from './device_page/display_layout.js';
 export {getDisplaySettingsProvider, setDisplaySettingsProviderForTesting} from './device_page/display_settings_mojo_interface_provider.js';

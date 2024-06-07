@@ -12,6 +12,9 @@
 #include "base/logging.h"
 #include "base/memory/scoped_refptr.h"
 #include "build/build_config.h"
+#include "chrome/browser/net/profile_network_context_service.h"
+#include "chrome/browser/net/profile_network_context_service_factory.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/certificate_dialogs.h"
 #include "chrome/browser/ui/webui/certificate_viewer_webui.h"
 #include "chrome/common/net/x509_certificate_model.h"
@@ -41,9 +44,16 @@
 
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
 #include "chrome/browser/enterprise/client_certificates/certificate_provisioning_service_factory.h"
+#include "chrome/browser/ui/webui/settings/settings_utils.h"
 #include "components/enterprise/client_certificates/core/certificate_provisioning_service.h"
 #include "components/enterprise/client_certificates/core/client_certificates_service.h"
 #include "components/enterprise/client_certificates/core/features.h"
+#endif
+
+#if BUILDFLAG(IS_CHROMEOS)
+#include "chrome/browser/certificate_provider/certificate_provider.h"
+#include "chrome/browser/certificate_provider/certificate_provider_service.h"
+#include "chrome/browser/certificate_provider/certificate_provider_service_factory.h"
 #endif
 
 namespace {
@@ -90,7 +100,7 @@ void ViewCrsCertificateAsync(
   }
 }
 
-void ExportCertificatesAsync(
+void ExportCrsCertificatesAsync(
     base::WeakPtr<content::WebContents> web_contents,
     cert_verifier::mojom::ChromeRootStoreInfoPtr info) {
   // Containing web contents went away (e.g. user navigated away). Don't
@@ -116,23 +126,26 @@ class ChromeRootStoreCertSource
   void GetCertificateInfos(
       CertificateManagerPageHandler::GetCertificatesCallback callback)
       override {
-    cert_verifier::mojom::CertVerifierServiceFactory* factory =
-        content::GetCertVerifierServiceFactory();
-    DCHECK(factory);
-    factory->GetChromeRootStoreInfo(
+    content::GetCertVerifierServiceFactory()->GetChromeRootStoreInfo(
         base::BindOnce(&PopulateChromeRootStoreLogsAsync, std::move(callback)));
   }
 
   void ViewCertificate(
       const std::string& sha256_hex_hash,
       base::WeakPtr<content::WebContents> web_contents) override {
-    cert_verifier::mojom::CertVerifierServiceFactory* factory =
-        content::GetCertVerifierServiceFactory();
-    DCHECK(factory);
     // This should really use a cached set of info with other calls to
     // GetChromeRootStoreInfo.
-    factory->GetChromeRootStoreInfo(base::BindOnce(
-        &ViewCrsCertificateAsync, sha256_hex_hash, std::move(web_contents)));
+    content::GetCertVerifierServiceFactory()->GetChromeRootStoreInfo(
+        base::BindOnce(&ViewCrsCertificateAsync, sha256_hex_hash,
+                       std::move(web_contents)));
+  }
+
+  void ExportCertificates(
+      base::WeakPtr<content::WebContents> web_contents) override {
+    // This should really use a cached set of info with other calls to
+    // GetChromeRootStoreInfo.
+    content::GetCertVerifierServiceFactory()->GetChromeRootStoreInfo(
+        base::BindOnce(&ExportCrsCertificatesAsync, web_contents));
   }
 };
 
@@ -232,6 +245,33 @@ void PopulateCertInfosFromCertificateList(
   std::move(callback).Run(std::move(out_infos));
 }
 
+void ViewCertificateFromCertificateList(
+    const std::string& sha256_hex_hash,
+    const net::CertificateList& certs,
+    base::WeakPtr<content::WebContents> web_contents) {
+  if (!web_contents) {
+    return;
+  }
+
+  net::SHA256HashValue hash;
+  if (!base::HexStringToSpan(sha256_hex_hash, hash.data)) {
+    return;
+  }
+
+  for (const auto& cert : certs) {
+    if (net::X509Certificate::CalculateFingerprint256(cert->cert_buffer()) ==
+        hash) {
+      std::vector<bssl::UniquePtr<CRYPTO_BUFFER>> view_certs;
+      view_certs.push_back(bssl::UpRef(cert->cert_buffer()));
+      CertificateViewerDialog::ShowConstrained(
+          std::move(view_certs),
+          /*cert_nicknames=*/{}, web_contents.get(),
+          web_contents->GetTopLevelNativeWindow());
+      return;
+    }
+  }
+}
+
 class ClientCertSource : public CertificateManagerPageHandler::CertSource {
  public:
   explicit ClientCertSource(std::unique_ptr<ClientCertStoreLoader> loader)
@@ -259,27 +299,11 @@ class ClientCertSource : public CertificateManagerPageHandler::CertSource {
   void ViewCertificate(
       const std::string& sha256_hex_hash,
       base::WeakPtr<content::WebContents> web_contents) override {
-    if (!loader_ || !certs_ || !web_contents) {
+    if (!loader_ || !certs_) {
       return;
     }
-
-    net::SHA256HashValue hash;
-    if (!base::HexStringToSpan(sha256_hex_hash, hash.data)) {
-      return;
-    }
-
-    for (const auto& cert : *certs_) {
-      if (net::X509Certificate::CalculateFingerprint256(cert->cert_buffer()) ==
-          hash) {
-        std::vector<bssl::UniquePtr<CRYPTO_BUFFER>> view_certs;
-        view_certs.push_back(bssl::UpRef(cert->cert_buffer()));
-        CertificateViewerDialog::ShowConstrained(
-            std::move(view_certs),
-            /*cert_nicknames=*/{}, web_contents.get(),
-            web_contents->GetTopLevelNativeWindow());
-        return;
-      }
-    }
+    ViewCertificateFromCertificateList(sha256_hex_hash, *certs_,
+                                       std::move(web_contents));
   }
 
  private:
@@ -293,6 +317,59 @@ class ClientCertSource : public CertificateManagerPageHandler::CertSource {
   std::unique_ptr<ClientCertStoreLoader> loader_;
   std::optional<net::CertificateList> certs_;
 };
+
+#if BUILDFLAG(IS_CHROMEOS)
+class ExtensionsClientCertSource
+    : public CertificateManagerPageHandler::CertSource {
+ public:
+  explicit ExtensionsClientCertSource(
+      std::unique_ptr<chromeos::CertificateProvider> provider)
+      : provider_(std::move(provider)) {}
+  ~ExtensionsClientCertSource() override = default;
+
+  void GetCertificateInfos(
+      CertificateManagerPageHandler::GetCertificatesCallback callback)
+      override {
+    if (!provider_) {
+      std::move(callback).Run({});
+    }
+    if (certs_) {
+      PopulateCertInfosFromCertificateList(std::move(callback), *certs_);
+      return;
+    }
+
+    provider_->GetCertificates(
+        base::BindOnce(&ExtensionsClientCertSource::SaveCertsAndRespond,
+                       weak_ptr_factory_.GetWeakPtr(), std::move(callback)));
+  }
+
+  void ViewCertificate(
+      const std::string& sha256_hex_hash,
+      base::WeakPtr<content::WebContents> web_contents) override {
+    if (!provider_ || !certs_) {
+      return;
+    }
+    ViewCertificateFromCertificateList(sha256_hex_hash, *certs_,
+                                       std::move(web_contents));
+  }
+
+ private:
+  void SaveCertsAndRespond(
+      CertificateManagerPageHandler::GetCertificatesCallback callback,
+      net::ClientCertIdentityList cert_identities) {
+    certs_ = net::CertificateList();
+    certs_->reserve(cert_identities.size());
+    for (const auto& identity : cert_identities) {
+      certs_->push_back(identity->certificate());
+    }
+    PopulateCertInfosFromCertificateList(std::move(callback), *certs_);
+  }
+
+  std::unique_ptr<chromeos::CertificateProvider> provider_;
+  std::optional<net::CertificateList> certs_;
+  base::WeakPtrFactory<ExtensionsClientCertSource> weak_ptr_factory_{this};
+};
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 }  // namespace
 
@@ -324,17 +401,12 @@ void CertificateManagerPageHandler::ViewCertificate(
                                            web_contents_->GetWeakPtr());
 }
 
-CertificateManagerPageHandler::CertSource::~CertSource() = default;
-
-void CertificateManagerPageHandler::ExportChromeRootStore() {
-  cert_verifier::mojom::CertVerifierServiceFactory* factory =
-      content::GetCertVerifierServiceFactory();
-  DCHECK(factory);
-  // This should really use a cached set of info with other calls to
-  // GetChromeRootStoreInfo.
-  factory->GetChromeRootStoreInfo(
-      base::BindOnce(&ExportCertificatesAsync, web_contents_->GetWeakPtr()));
+void CertificateManagerPageHandler::ExportCertificates(
+    certificate_manager_v2::mojom::CertificateSource source_id) {
+  GetCertSource(source_id).ExportCertificates(web_contents_->GetWeakPtr());
 }
+
+CertificateManagerPageHandler::CertSource::~CertSource() = default;
 
 CertificateManagerPageHandler::CertSource&
 CertificateManagerPageHandler::GetCertSource(
@@ -343,9 +415,6 @@ CertificateManagerPageHandler::GetCertSource(
       cert_source_[static_cast<unsigned>(source)];
   if (!source_ptr) {
     switch (source) {
-      case certificate_manager_v2::mojom::CertificateSource::kInvalid:
-        CHECK(false);
-        break;
       case certificate_manager_v2::mojom::CertificateSource::kChromeRootStore:
         source_ptr = std::make_unique<ChromeRootStoreCertSource>();
         break;
@@ -361,7 +430,56 @@ CertificateManagerPageHandler::GetCertSource(
             CreateProvisionedClientCertLoader(profile_));
         break;
 #endif
+#if BUILDFLAG(IS_CHROMEOS)
+      case certificate_manager_v2::mojom::CertificateSource::
+          kExtensionsClientCert:
+        chromeos::CertificateProviderService* certificate_provider_service =
+            chromeos::CertificateProviderServiceFactory::GetForBrowserContext(
+                profile_);
+        source_ptr = std::make_unique<ExtensionsClientCertSource>(
+            certificate_provider_service->CreateCertificateProvider());
+        break;
+#endif
     }
   }
   return *source_ptr;
 }
+
+void CertificateManagerPageHandler::GetPolicyInformation(
+    GetPolicyInformationCallback callback) {
+  ProfileNetworkContextService* service =
+      ProfileNetworkContextServiceFactory::GetForContext(profile_.get());
+  ProfileNetworkContextService::CertificatePoliciesForView policies =
+      service->GetCertificatePolicyForView();
+
+  certificate_manager_v2::mojom::CertPolicyInfoPtr cert_policy_info =
+      certificate_manager_v2::mojom::CertPolicyInfo::New();
+#if !BUILDFLAG(IS_CHROMEOS)
+  cert_policy_info->include_system_trust_store =
+      policies.certificate_policies->include_system_trust_store;
+  cert_policy_info->is_include_system_trust_store_managed =
+      policies.is_include_system_trust_store_managed;
+#else
+  // TODO(crbug.com/40928765): figure out how this should be displayed for
+  // ChromeOS
+  cert_policy_info->include_system_trust_store = true;
+  cert_policy_info->is_include_system_trust_store_managed = false;
+#endif
+
+  cert_policy_info->num_policy_certs =
+      policies.full_distrusted_certs.size() +
+      policies.certificate_policies->trust_anchors.size() +
+      policies.certificate_policies->trust_anchors_with_enforced_constraints
+          .size() +
+      policies.certificate_policies->trust_anchors_with_additional_constraints
+          .size() +
+      policies.certificate_policies->all_certificates.size();
+
+  std::move(callback).Run(std::move(cert_policy_info));
+}
+
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
+void CertificateManagerPageHandler::ShowNativeManageCertificates() {
+  settings_utils::ShowManageSSLCertificates(web_contents_);
+}
+#endif

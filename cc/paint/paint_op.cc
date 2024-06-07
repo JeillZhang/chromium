@@ -1005,7 +1005,7 @@ SkottieTextPropertyValue DeserializeSkottieTextPropertyValue(
   size_t text_size = 0u;
   reader.ReadSize(&text_size);
   std::string text(text_size, char());
-  reader.ReadData(text_size, const_cast<char*>(text.c_str()));
+  reader.ReadData(base::as_writable_byte_span(text));
   SkRect box;
   reader.Read(&box);
   return SkottieTextPropertyValue(std::move(text), gfx::SkRectToRectF(box));
@@ -1053,8 +1053,12 @@ PaintOp* DrawSlugOp::Deserialize(PaintOpReader& reader, void* output) {
   reader.Read(&count);
   if (count > 0) {
     reader.Read(&op->slug);
-    op->extra_slugs.resize(
-        std::min<size_t>(op->extra_slugs.max_size(), count - 1));
+    const size_t remaining_slug_count =
+        std::min<size_t>(op->extra_slugs.max_size(), count - 1);
+    if (!reader.CanReadVector(remaining_slug_count, op->extra_slugs)) {
+      return op;
+    }
+    op->extra_slugs.resize(remaining_slug_count);
     for (auto& extra_slug : op->extra_slugs) {
       reader.Read(&extra_slug);
     }
@@ -1344,7 +1348,12 @@ void DrawImageRectOp::RasterWithFlags(const DrawImageRectOp* op,
     SkAutoCanvasRestore save_restore(canvas, true);
     canvas->concat(SkMatrix::RectToRect(op->src, op->dst));
     canvas->clipRect(op->src);
-    canvas->saveLayer(&op->src, &paint);
+    if (op->image.NeedsLayer()) {
+      // TODO(crbug.com/343439032): See if we can be less aggressive about use
+      // of a save layer operation for CSS paint worklets since expensive.
+      canvas->saveLayer(&op->src, &paint);
+    }
+
     // Compositor thread animations can cause PaintWorklet jobs to be dispatched
     // to the worklet thread even after main has torn down the worklet (e.g.
     // because a navigation is happening). In that case the PaintWorklet jobs

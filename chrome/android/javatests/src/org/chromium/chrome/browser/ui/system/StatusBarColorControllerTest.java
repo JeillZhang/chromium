@@ -41,13 +41,14 @@ import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.base.test.util.Restriction;
 import org.chromium.chrome.browser.ChromeTabbedActivity;
 import org.chromium.chrome.browser.app.ChromeActivity;
+import org.chromium.chrome.browser.compositor.layouts.LayoutManagerImpl;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
+import org.chromium.chrome.browser.layouts.LayoutTestUtils;
 import org.chromium.chrome.browser.layouts.LayoutType;
 import org.chromium.chrome.browser.tab.TabLaunchType;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.tasks.tab_management.TabUiThemeUtil;
-import org.chromium.chrome.browser.toolbar.ToolbarFeatures;
 import org.chromium.chrome.browser.toolbar.top.ToolbarLayout;
 import org.chromium.chrome.browser.toolbar.top.ToolbarPhone;
 import org.chromium.chrome.features.start_surface.StartSurfaceTestUtils;
@@ -283,13 +284,12 @@ public class StatusBarColorControllerTest {
                         .getActivity()
                         .getRootUiCoordinatorForTesting()
                         .getStatusBarColorController();
-        sActivityTestRule.loadUrlInNewTab("about:blank", /* incognito= */ false);
+        loadUrlInNewTabAndWaitForShowing("about:blank", /* incognito= */ false);
 
         mOmniboxUtils.requestFocus();
         final @ColorInt int focusedColor =
                 ChromeColors.getSurfaceColor(
                         activity, R.dimen.omnibox_suggestion_dropdown_bg_elevation);
-        waitForStatusBarColor(activity, focusedColor);
 
         statusBarColorController.onSuggestionDropdownScroll();
         final @ColorInt int scrolledColor =
@@ -301,7 +301,7 @@ public class StatusBarColorControllerTest {
 
         TabModelSelector tabModelSelector = activity.getTabModelSelectorSupplier().get();
         ThreadUtils.runOnUiThread(() -> tabModelSelector.selectModel(/* incognito= */ true));
-        sActivityTestRule.loadUrlInNewTab("about:blank", /* incognito= */ true);
+        loadUrlInNewTabAndWaitForShowing("about:blank", /* incognito= */ true);
 
         mOmniboxUtils.requestFocus();
         final @ColorInt int focusedIncognitoColor =
@@ -332,7 +332,7 @@ public class StatusBarColorControllerTest {
                 sActivityTestRule
                         .getTestServer()
                         .getURL("/chrome/test/data/android/theme_color_test.html");
-        sActivityTestRule.loadUrl(pageWithBrandColorUrl);
+        loadUrlAndWaitForShowing(pageWithBrandColorUrl);
         ThemeTestUtils.waitForThemeColor(activity, Color.RED);
         waitForStatusBarColor(activity, Color.RED);
 
@@ -526,7 +526,6 @@ public class StatusBarColorControllerTest {
                         + " tab strip is visible.",
                 TabUiThemeUtil.getTabStripBackgroundColor(activity, false),
                 activity.getWindow().getStatusBarColor());
-        ToolbarFeatures.USE_TOOLBAR_BG_COLOR_FOR_STRIP_TRANSITION_SCRIM.setForTesting(false);
     }
 
     /** Test status bar is always black in Automotive devices. */
@@ -591,5 +590,23 @@ public class StatusBarColorControllerTest {
 
         // Toolbar layout view should show.
         onViewWaiting(withId(R.id.toolbar));
+    }
+
+    private void loadUrlAndWaitForShowing(String url) {
+        sActivityTestRule.loadUrl(url);
+        waitForShowing();
+    }
+
+    private void loadUrlInNewTabAndWaitForShowing(String url, boolean incognito) {
+        sActivityTestRule.loadUrlInNewTab(url, incognito);
+        waitForShowing();
+    }
+
+    private void waitForShowing() {
+        // At least for now, StaticLayout requests focus when it's doneShowing(). When exactly this
+        // happens is quite racy and can cause flakes, as it removes focus from the omnibox. See
+        // crbug.com/342539152. Unclear if we even want this, see crbug.com/40249125.
+        LayoutManagerImpl lmi = sActivityTestRule.getActivity().getLayoutManagerSupplier().get();
+        LayoutTestUtils.waitForLayout(lmi, LayoutType.BROWSING);
     }
 }

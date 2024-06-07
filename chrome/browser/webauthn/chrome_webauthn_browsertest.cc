@@ -26,6 +26,7 @@
 #include "chrome/browser/ssl/cert_verifier_browser_test.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/webauthn/authenticator_request_dialog_model.h"
+#include "chrome/browser/webauthn/authenticator_transport.h"
 #include "chrome/browser/webauthn/chrome_authenticator_request_delegate.h"
 #include "chrome/browser/webauthn/passkey_model_factory.h"
 #include "chrome/browser/webauthn/test_util.h"
@@ -35,6 +36,7 @@
 #include "components/sync/base/features.h"
 #include "components/sync/protocol/webauthn_credential_specifics.pb.h"
 #include "components/webauthn/core/browser/test_passkey_model.h"
+#include "content/public/browser/authenticator_request_client_delegate.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/scoped_authenticator_environment_for_testing.h"
 #include "content/public/common/content_switches.h"
@@ -369,6 +371,8 @@ class WebAuthnGpmPasskeyTest : public WebAuthnBrowserTest {
       return transport_availability_info_;
     }
 
+    void WaitForUI() { run_loop_.Run(); }
+
     // ChromeAuthenticatorRequestDelegate::TestObserver:
     void Created(ChromeAuthenticatorRequestDelegate* delegate) override {}
 
@@ -389,8 +393,7 @@ class WebAuthnGpmPasskeyTest : public WebAuthnBrowserTest {
     }
 
     void UIShown(ChromeAuthenticatorRequestDelegate* delegate) override {
-      delegate->dialog_controller()->OnAccountPreselected(
-          device::fido_parsing_utils::Materialize(kCredentialID));
+      run_loop_.Quit();
     }
 
     void CableV2ExtensionSeen(
@@ -401,6 +404,7 @@ class WebAuthnGpmPasskeyTest : public WebAuthnBrowserTest {
         override {}
 
    private:
+    base::RunLoop run_loop_;
     std::optional<device::FidoRequestHandlerBase::TransportAvailabilityInfo>
         transport_availability_info_;
   };
@@ -412,6 +416,7 @@ class WebAuthnGpmPasskeyTest : public WebAuthnBrowserTest {
 
   void SetUpOnMainThread() override {
     WebAuthnBrowserTest::SetUpOnMainThread();
+    observer_ = std::make_unique<Observer>();
     ChromeAuthenticatorRequestDelegate::SetGlobalObserverForTesting(
         observer_.get());
   }
@@ -422,7 +427,7 @@ class WebAuthnGpmPasskeyTest : public WebAuthnBrowserTest {
   }
 
  protected:
-  std::unique_ptr<Observer> observer_ = std::make_unique<Observer>();
+  std::unique_ptr<Observer> observer_;
   base::test::ScopedFeatureList scoped_feature_list_;
 };
 
@@ -462,10 +467,11 @@ IN_PROC_BROWSER_TEST_F(WebAuthnGpmPasskeyTest, FilterGPMPasskeys) {
           std::move(virtual_device_factory));
 
   // Request an assertion with a credential ID matching only the first passkey.
-  EXPECT_EQ(
-      "webauthn: OK",
-      content::EvalJs(browser()->tab_strip_model()->GetActiveWebContents(),
-                      kGetAssertionCredID1234));
+  content::ExecuteScriptAsync(
+      browser()->tab_strip_model()->GetActiveWebContents(),
+      kGetAssertionCredID1234);
+
+  observer_->WaitForUI();
 
   // Only the first passkey should be in the recognized credentials list.
   device::DiscoverableCredentialMetadata expected(
@@ -476,6 +482,89 @@ IN_PROC_BROWSER_TEST_F(WebAuthnGpmPasskeyTest, FilterGPMPasskeys) {
           kDisplayName1));
   EXPECT_THAT(observer_->transport_availability_info()->recognized_credentials,
               testing::ElementsAre(expected));
+}
+
+class WebAuthnHintsTest : public WebAuthnBrowserTest {
+  class Observer : public ChromeAuthenticatorRequestDelegate::TestObserver {
+   public:
+    virtual ~Observer() = default;
+
+    void WaitForHints() { run_loop_.Run(); }
+
+    const content::AuthenticatorRequestClientDelegate::Hints& hints() const {
+      return hints_;
+    }
+
+    void HintsSet(const content::AuthenticatorRequestClientDelegate::Hints&
+                      hints) override {
+      hints_ = hints;
+      run_loop_.Quit();
+    }
+
+   private:
+    content::AuthenticatorRequestClientDelegate::Hints hints_;
+    base::RunLoop run_loop_;
+  };
+
+  void SetUpOnMainThread() override {
+    WebAuthnBrowserTest::SetUpOnMainThread();
+    observer_ = std::make_unique<Observer>();
+    ASSERT_TRUE(ui_test_utils::NavigateToURL(
+        browser(), https_server_.GetURL("www.example.com", "/title1.html")));
+
+    auto virtual_device_factory =
+        std::make_unique<device::test::VirtualFidoDeviceFactory>();
+    virtual_device_factory_ = virtual_device_factory.get();
+    auth_env_ =
+        std::make_unique<content::ScopedAuthenticatorEnvironmentForTesting>(
+            std::move(virtual_device_factory));
+
+    ChromeAuthenticatorRequestDelegate::SetGlobalObserverForTesting(
+        observer_.get());
+  }
+
+  void PostRunTestOnMainThread() override {
+    // To avoid dangling raw_ptr's these values need to be destroyed before
+    // this test class.
+    virtual_device_factory_ = nullptr;
+    auth_env_.reset();
+    ChromeAuthenticatorRequestDelegate::SetGlobalObserverForTesting(nullptr);
+    WebAuthnBrowserTest::PostRunTestOnMainThread();
+  }
+
+ protected:
+  std::unique_ptr<Observer> observer_;
+  raw_ptr<device::test::VirtualFidoDeviceFactory> virtual_device_factory_;
+  std::unique_ptr<content::ScopedAuthenticatorEnvironmentForTesting> auth_env_;
+};
+
+// The hints parameter here contains nonsense values (which should be ignored)
+// and lists `security-key` and `hybrid` (more than once). This is contradictory
+// but Chromium will prioritize in the order of the enum values, so
+// `security-key` will win out.
+static constexpr char kMakeCredentialWithHints[] = R"((() => {
+  return navigator.credentials.create({ publicKey: {
+    rp: { name: "" },
+    user: { id: new Uint8Array([0]), name: "foo", displayName: "" },
+    pubKeyCredParams: [{type: "public-key", alg: -7}],
+    challenge: new Uint8Array([0]),
+    timeout: 10000,
+    hints: ["nonsense", "hybrid", "security-key", "hybrid", "nonsense"],
+    userVerification: 'discouraged',
+  }}).then(c => 'webauthn: OK',
+           e => 'error ' + e);
+})())";
+
+IN_PROC_BROWSER_TEST_F(WebAuthnHintsTest, HintsArePassedThrough) {
+  content::WebContents* web_contents =
+      browser()->tab_strip_model()->GetActiveWebContents();
+  content::DOMMessageQueue message_queue(web_contents);
+  content::ExecuteScriptAsync(web_contents, kMakeCredentialWithHints);
+  observer_->WaitForHints();
+
+  ASSERT_TRUE(observer_->hints().transport.has_value());
+  EXPECT_EQ(observer_->hints().transport.value(),
+            AuthenticatorTransport::kUsbHumanInterfaceDevice);
 }
 
 class WebAuthnConditionalUITest : public WebAuthnBrowserTest {

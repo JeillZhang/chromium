@@ -85,6 +85,9 @@ class USER_MANAGER_EXPORT UserManagerBase : public UserManager {
 
     // Returns whether user session restore is in progress.
     virtual bool IsUserSessionRestoreInProgress() = 0;
+
+    // Verifies the Profile's state for the given `user` on login.
+    virtual void CheckProfileOnLogin(const User& user) = 0;
   };
 
   // Creates UserManagerBase with |task_runner| for UI thread, and given
@@ -169,7 +172,6 @@ class USER_MANAGER_EXPORT UserManagerBase : public UserManager {
   bool IsLoggedInAsManagedGuestSession() const override;
   bool IsLoggedInAsGuest() const override;
   bool IsLoggedInAsKioskApp() const override;
-  bool IsLoggedInAsArcKioskApp() const override;
   bool IsLoggedInAsWebKioskApp() const override;
   bool IsLoggedInAsAnyKioskApp() const override;
   bool IsLoggedInAsStub() const override;
@@ -199,8 +201,15 @@ class USER_MANAGER_EXPORT UserManagerBase : public UserManager {
   void NotifyUserRemoved(const AccountId& account_id,
                          UserRemovalReason reason) override;
   void NotifyUserNotAllowed(const std::string& user_email) final;
+  bool IsGuestSessionAllowed() const override;
+  bool IsGaiaUserAllowed(const User& user) const override;
+  bool IsUserAllowed(const User& user) const override;
   PrefService* GetLocalState() const final;
   bool IsFirstExecAfterBoot() const final;
+  bool IsDeprecatedSupervisedAccountId(
+      const AccountId& account_id) const override;
+  bool IsDeviceLocalAccountMarkedForRemoval(
+      const AccountId& account_id) const override;
   void SetUserAffiliated(const AccountId& account_id,
                          bool is_affiliated) override;
   bool HasBrowserRestarted() const final;
@@ -293,18 +302,10 @@ class USER_MANAGER_EXPORT UserManagerBase : public UserManager {
   // avatar, OAuth token status, display name, display email).
   virtual void RemoveNonCryptohomeData(const AccountId& account_id);
 
-  // Check for a particular user type.
-
-  // These methods are called when corresponding user type has signed in.
-
-  virtual bool IsEphemeralAccountIdByPolicy(
-      const AccountId& account_id) const = 0;
-
   // Getters/setters for private members.
 
   const EphemeralModeConfig& GetEphemeralModeConfig() const;
-  virtual void SetEphemeralModeConfig(
-      EphemeralModeConfig ephemeral_mode_config);
+  void SetEphemeralModeConfig(EphemeralModeConfig ephemeral_mode_config);
 
   virtual void ResetOwnerId();
   virtual void SetOwnerId(const AccountId& owner_account_id);

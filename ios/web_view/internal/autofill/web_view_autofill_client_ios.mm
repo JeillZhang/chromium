@@ -130,7 +130,7 @@ signin::IdentityManager* WebViewAutofillClientIOS::GetIdentityManager() {
 FormDataImporter* WebViewAutofillClientIOS::GetFormDataImporter() {
   if (!form_data_importer_) {
     form_data_importer_ = std::make_unique<FormDataImporter>(
-        this, personal_data_manager_,
+        this,
         /*history_service=*/nullptr,
         ios_web_view::ApplicationContext::GetInstance()
             ->GetApplicationLocale());
@@ -248,7 +248,8 @@ void WebViewAutofillClientIOS::ScanCreditCard(CreditCardScanCallback callback) {
 
 bool WebViewAutofillClientIOS::ShowTouchToFillCreditCard(
     base::WeakPtr<TouchToFillDelegate> delegate,
-    base::span<const autofill::CreditCard> cards_to_suggest) {
+    base::span<const autofill::CreditCard> cards_to_suggest,
+    const std::vector<bool>& card_acceptabilities) {
   NOTREACHED_IN_MIGRATION();
   return false;
 }

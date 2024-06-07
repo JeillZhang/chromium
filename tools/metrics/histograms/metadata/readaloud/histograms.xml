@@ -199,7 +199,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="ReadAloud.ReadAloudNetError.{Phase}" enum="NetErrorCodes"
-    expires_after="2024-09-15">
+    expires_after="2024-11-17">
   <owner>andreaxg@google.com</owner>
   <owner>basiaz@google.com</owner>
   <owner>iwells@chromium.org</owner>
@@ -296,31 +296,6 @@ chromium-metrics-reviews@google.com.
     matching substring in the ReadAloud distilled text to seek playback to the
     word. Records the time taken for both successful and failed attempts to
     match the substring.
-  </summary>
-</histogram>
-
-<histogram name="ReadAloud.VoiceChanged.{VoiceID}" enum="Boolean"
-    expires_after="2024-06-02">
-  <owner>andreaxg@google.com</owner>
-  <owner>basiaz@google.com</owner>
-  <owner>iwells@chromium.org</owner>
-  <summary>
-    Histogram for recording what voice a user changes to. Emitted when the
-    ReadAloud pref for voice is changed by the user. This only ever logs the
-    value &quot;true&quot; because we only care about the total count.
-  </summary>
-</histogram>
-
-<histogram name="ReadAloud.VoicePreviewed.{VoiceID}" enum="Boolean"
-    expires_after="2024-06-02">
-  <owner>andreaxg@google.com</owner>
-  <owner>basiaz@google.com</owner>
-  <owner>iwells@chromium.org</owner>
-  <summary>
-    Histogram for recording what voice a user previews. Emitted when a voice
-    preview playback is created successfully in ReadAloudController. This only
-    ever logs the value &quot;true&quot; because we only care about the total
-    count.
   </summary>
 </histogram>
 

@@ -272,6 +272,19 @@ bool IsValidRole(ax::mojom::blink::Role role) {
 }
 #endif
 
+HashSet<ax::mojom::blink::Role> GetExpectedParentRole(
+    ax::mojom::blink::Role role) {
+  switch (role) {
+      // TODO(crbug.com/341369908): Add other roles that have required parents.
+    case ax::mojom::blink::Role::kRow:
+      return {ax::mojom::blink::Role::kTable, ax::mojom::blink::Role::kGrid,
+              ax::mojom::blink::Role::kRowGroup,
+              ax::mojom::blink::Role::kTreeGrid};
+    default:
+      return {};
+  }
+}
+
 constexpr wtf_size_t kNumRoles =
     static_cast<wtf_size_t>(ax::mojom::blink::Role::kMaxValue) + 1;
 
@@ -372,7 +385,7 @@ const RoleEntry kAriaRoles[] = {
     // End ARIA Graphics module roles.
     // -------------------------------------------------
     {"grid", ax::mojom::blink::Role::kGrid},
-    {"gridcell", ax::mojom::blink::Role::kCell},
+    {"gridcell", ax::mojom::blink::Role::kGridCell},
     {"group", ax::mojom::blink::Role::kGroup},
     {"heading", ax::mojom::blink::Role::kHeading},
     {"img", ax::mojom::blink::Role::kImage},
@@ -594,8 +607,9 @@ const AXObject* FindAncestorWithAriaHidden(const AXObject* start) {
   for (const AXObject* object = start;
        object && !IsA<Document>(object->GetNode());
        object = object->ParentObject()) {
-    if (object->AOMPropertyOrARIAAttributeIsTrue(AOMBooleanProperty::kHidden))
+    if (object->IsAriaHiddenRoot()) {
       return object;
+    }
   }
 
   return nullptr;
@@ -1350,16 +1364,18 @@ void AXObject::Serialize(ui::AXNodeData* node_data,
     }
   }
 
-  if (accessibility_mode.has_mode(ui::AXMode::kHTML))
-    SerializeHTMLTagAndClass(node_data);  // Used for test readability.
-
-  if (accessibility_mode.has_mode(ui::AXMode::kScreenReader))
+  if (accessibility_mode.has_mode(ui::AXMode::kScreenReader)) {
     SerializeColorAttributes(node_data);  // Blends using all nodes' values.
+    SerializeHTMLTagAndClass(node_data);
+  }
 
   if (accessibility_mode.has_mode(ui::AXMode::kScreenReader) ||
       accessibility_mode.has_mode(ui::AXMode::kPDFPrinting)) {
     SerializeLangAttribute(node_data);  // Propagates using all nodes' values.
   }
+
+  // Needed on Android for testing frameworks.
+  SerializeHTMLId(node_data);
 
   // Always try to serialize child tree ids.
   SerializeChildTreeID(node_data);
@@ -1586,12 +1602,24 @@ void AXObject::SerializeHTMLTagAndClass(ui::AXNodeData* node_data) const {
   }
 }
 
+void AXObject::SerializeHTMLId(ui::AXNodeData* node_data) const {
+  Element* element = GetElement();
+  if (!element) {
+    return;
+  }
+
+  TruncateAndAddStringAttribute(node_data,
+                                ax::mojom::blink::StringAttribute::kHtmlId,
+                                element->GetIdAttribute());
+}
+
 void AXObject::SerializeHTMLAttributes(ui::AXNodeData* node_data) const {
   Element* element = GetElement();
   DCHECK(element);
   for (const Attribute& attr : element->Attributes()) {
     std::string name = attr.LocalName().LowerASCII().Utf8();
-    if (name == "class") {  // class already in kClassName
+    if (name == "id" || name == "class") {
+      // Attribute already in kHtmlId or kClassName.
       continue;
     }
     std::string value = attr.Value().Utf8();
@@ -1700,19 +1728,24 @@ void AXObject::SerializeLiveRegionAttributes(ui::AXNodeData* node_data) const {
 void AXObject::SerializeNameAndDescriptionAttributes(
     ui::AXMode accessibility_mode,
     ui::AXNodeData* node_data) const {
-  if (::features::IsAccessibilityPruneRedundantInlineTextEnabled()) {
-    if (node_data->role == ax::mojom::blink::Role::kInlineTextBox &&
-        IsOnlyChild()) {
-      // The text of an only-child inline text box can be inferred directly
-      // from the parent. No need to serialize redundant data.
-      node_data->SetNameFrom(ax::mojom::blink::NameFrom::kContents);
-      return;
-    }
-  }
-
   ax::mojom::blink::NameFrom name_from;
   AXObjectVector name_objects;
   String name = GetName(name_from, &name_objects);
+
+  if (::features::IsAccessibilityPruneRedundantInlineTextEnabled()) {
+    if (node_data->role == ax::mojom::blink::Role::kInlineTextBox &&
+        IsOnlyChild() && parent_ && parent_->GetLayoutObject()->IsText()) {
+      auto* layout_text = To<LayoutText>(parent_->GetLayoutObject());
+      String visible_text = layout_text->PlainText();
+      if (name == visible_text) {
+        // The text of an only-child inline text box can be inferred directly
+        // from the parent. No need to serialize redundant data.
+        node_data->SetNameFrom(ax::mojom::blink::NameFrom::kContents);
+        return;
+      }
+    }
+  }
+
   if (name_from == ax::mojom::blink::NameFrom::kAttributeExplicitlyEmpty) {
     node_data->AddStringAttribute(ax::mojom::blink::StringAttribute::kName,
                                   std::string());
@@ -2668,6 +2701,30 @@ ax::mojom::blink::Role AXObject::ComputeFinalRoleForSerialization() const {
                : ax::mojom::blink::Role::kSectionWithoutName;
   }
 
+  if (role_ == ax::mojom::blink::Role::kCell) {
+    AncestorsIterator ancestor = base::ranges::find_if(
+        UnignoredAncestorsBegin(), UnignoredAncestorsEnd(),
+        &AXObject::IsTableLikeRole);
+    if (ancestor.current_ &&
+        (ancestor.current_->RoleValue() == ax::mojom::blink::Role::kGrid ||
+         ancestor.current_->RoleValue() == ax::mojom::blink::Role::kTreeGrid)) {
+      return ax::mojom::blink::Role::kGridCell;
+    }
+  }
+
+  // CORE-AAM requires that, for elements with roles not contained in the
+  // required context, user agents must ignore the role token and return the
+  // computed role as if the ignored role token had not been included.
+  // See https://w3c.github.io/core-aam/#roleMappingComputedRole
+  HashSet<ax::mojom::blink::Role> expected_parent_role =
+      GetExpectedParentRole(role_);
+  if (!expected_parent_role.empty()) {
+    AXObject* ancestor = ParentObjectUnignoredNonGeneric();
+    if (!ancestor || !expected_parent_role.Contains(ancestor->RoleValue())) {
+      return NativeRoleIgnoringAria();
+    }
+  }
+
   // TODO(accessibility): Consider moving the image vs. image map role logic
   // here. Currently it is implemented in AXPlatformNode subclasses and thus
   // not available to the InspectorAccessibilityAgent.
@@ -2974,7 +3031,8 @@ bool AXObject::IsLineBreakingObject() const {
   // virtual accessibility nodes, for example.
   //
   // We assume that most images on the Web are inline.
-  return !IsImage() && ui::IsStructure(RoleValue());
+  return !IsImage() && ui::IsStructure(RoleValue()) &&
+         !IsA<SVGElement>(GetNode());
 }
 
 bool AXObject::IsLinked() const {
@@ -3273,7 +3331,7 @@ void AXObject::UpdateCachedAttributeValuesIfNeeded(
   }
 
   if (GetLayoutObject() && GetLayoutObject()->IsText()) {
-    cached_local_bounding_box_rect_for_accessibility_ =
+    cached_local_bounding_box_ =
         GetLayoutObject()->LocalBoundingBoxRectForAccessibility();
   }
 
@@ -3352,13 +3410,10 @@ bool AXObject::ShouldIgnoreForHiddenOrInert(
   }
 
   if (cached_is_aria_hidden_) {
-    // Keep keyboard focusable elements that are aria-hidden in tree, so that
-    // they can still fire events such as focus and value changes.
-    if (!IsKeyboardFocusable()) {
-      if (ignored_reasons)
-        ComputeIsAriaHidden(ignored_reasons);
-      return true;
+    if (ignored_reasons) {
+      ComputeIsAriaHidden(ignored_reasons);
     }
+    return true;
   }
 
   if (cached_is_inert_) {
@@ -3495,6 +3550,30 @@ bool AXObject::ComputeIsInert(IgnoredReasons* ignored_reasons) const {
   return ComputeIsInertViaStyle(GetComputedStyle(), ignored_reasons);
 }
 
+bool AXObject::IsAriaHiddenRoot() const {
+  if (AXObjectCache().HasBadAriaHidden(*this)) {
+    return false;
+  }
+
+  // aria-hidden:true works a bit like display:none.
+  // * aria-hidden=true affects entire subtree.
+  // * aria-hidden=false is a noop.
+  if (!AOMPropertyOrARIAAttributeIsTrue(AOMBooleanProperty::kHidden)) {
+    return false;
+  }
+
+  auto* node = GetNode();
+
+  // The aria-hidden attribute is not valid for the main html and body elements:
+  // See more at https://github.com/w3c/aria/pull/1880
+  if (IsA<HTMLBodyElement>(node) || node == GetDocument()->documentElement()) {
+    AXObjectCache().DiscardBadAriaHiddenBecauseOfElement(*this);
+    return false;
+  }
+
+  return true;
+}
+
 bool AXObject::IsAriaHidden() {
   CheckCanAccessCachedValues();
 
@@ -3512,10 +3591,8 @@ bool AXObject::ComputeIsAriaHidden(IgnoredReasons* ignored_reasons) const {
   if (IsA<Document>(GetNode())) {
     return false;
   }
-  // aria-hidden:true works a bit like display:none.
-  // * aria-hidden=true affects entire subtree.
-  // * aria-hidden=false is a noop.
-  if (AOMPropertyOrARIAAttributeIsTrue(AOMBooleanProperty::kHidden)) {
+
+  if (IsAriaHiddenRoot()) {
     if (ignored_reasons)
       ignored_reasons->push_back(IgnoredReason(kAXAriaHiddenElement));
     return true;
@@ -3894,15 +3971,17 @@ bool AXObject::ComputeIsIgnoredButIncludedInTree() {
     return true;
   }
 
-  // Include all parents of ::before/::after/::marker pseudo elements to help
-  // ClearChildren() find all children, and assist naming computation.
-  // It is unnecessary to include a rule for other types of pseudo elements:
-  // Specifically, ::first-letter/::backdrop are not visited by
+  // Include all parents of ::before/::after/::marker/::scroll-marker-group
+  // pseudo elements to help ClearChildren() find all children, and assist
+  // naming computation. It is unnecessary to include a rule for other types of
+  // pseudo elements: Specifically, ::first-letter/::backdrop are not visited by
   // LayoutTreeBuilderTraversal, and cannot be in the tree, therefore do not add
   // a special rule to include their parents.
   if (element && (element->GetPseudoElement(kPseudoIdBefore) ||
                   element->GetPseudoElement(kPseudoIdAfter) ||
-                  element->GetPseudoElement(kPseudoIdMarker))) {
+                  element->GetPseudoElement(kPseudoIdMarker) ||
+                  element->GetPseudoElement(kPseudoIdScrollMarkerGroupBefore) ||
+                  element->GetPseudoElement(kPseudoIdScrollMarkerGroupAfter))) {
     return true;
   }
 
@@ -3991,10 +4070,6 @@ bool AXObject::ComputeIsIgnoredButIncludedInTree() {
   if (element->HasTagName(html_names::kRtTag)) {
     return true;
   }
-
-  // Preserve SVG grouping elements.
-  if (IsA<SVGGElement>(element))
-    return true;
 
   // Keep table-related elements in the tree, because it's too easy for them
   // to in and out of being ignored based on their ancestry, as their role
@@ -4207,25 +4282,7 @@ bool AXObject::IsSubWidget() const {
     case ax::mojom::blink::Role::kRowHeader:
     case ax::mojom::blink::Role::kColumn:
     case ax::mojom::blink::Role::kRow: {
-      // If it has an explicit ARIA role, it's a subwidget.
-      //
-      // Reasoning:
-      // Static table cells are not selectable, but ARIA grid cells
-      // and rows definitely are according to the spec. To support
-      // ARIA 1.0, it's sufficient to just check if there's any
-      // ARIA role at all, because if so then it must be a grid-related
-      // role so it must be selectable.
-      //
-      // TODO(accessibility): an ARIA 1.1+ role of "cell", or a role of "row"
-      // inside an ARIA 1.1 role of "table", should not be selectable. We may
-      // need to create separate role enums for grid cells vs table cells
-      // to implement this.
-      if (RawAriaRole() != ax::mojom::blink::Role::kUnknown) {
-        return true;
-      }
-
-      // Otherwise it's only a subwidget if it's in a grid or treegrid,
-      // not in a table.
+      // It's only a subwidget if it's in a grid or treegrid, not in a table.
       AncestorsIterator ancestor = base::ranges::find_if(
           UnignoredAncestorsBegin(), UnignoredAncestorsEnd(),
           &AXObject::IsTableLikeRole);
@@ -4234,6 +4291,7 @@ bool AXObject::IsSubWidget() const {
               ancestor.current_->RoleValue() ==
                   ax::mojom::blink::Role::kTreeGrid);
     }
+    case ax::mojom::blink::Role::kGridCell:
     case ax::mojom::blink::Role::kListBoxOption:
     case ax::mojom::blink::Role::kMenuListOption:
     case ax::mojom::blink::Role::kTab:
@@ -4511,13 +4569,10 @@ bool AXObject::IsHiddenForTextAlternativeCalculation(
   // when computing name/description through an aria-labelledby/describedby
   // relation, if the target of the relation is hidden it will expose the entire
   // subtree, including aria-hidden=true nodes. The exception was accounted in
-  // the previous if block, so we are safe to hide any node with
+  // the previous if block, so we are safe to hide any node with a valid
   // aria-hidden=true at this point.
-  if (AOMPropertyOrARIAAttributeIsTrue(AOMBooleanProperty::kHidden)) {
-    // We only hide aria-hidden text if the node does not support focus as a
-    // bad authoring correction.
-    if (!CanSetFocusAttribute())
-      return true;
+  if (IsAriaHiddenRoot()) {
+    return true;
   }
 
   return IsHiddenViaStyle();
@@ -4641,12 +4696,8 @@ String AXObject::AriaTextAlternative(
         if (name_sources)
           name_sources->back().attribute_value = aria_labelledby;
 
-        // Operate on a copy of |visited| so that if |name_sources| is not
-        // null, the set of visited objects is preserved unmodified for future
-        // calculations.
-        AXObjectSet visited_copy = visited;
         text_alternative = TextFromElements(
-            true, visited_copy, elements_from_attribute, related_objects);
+            true, visited, elements_from_attribute, related_objects);
         if (!text_alternative.ContainsOnlyWhitespaceOrEmpty()) {
           if (name_sources) {
             NameSource& source = name_sources->back();
@@ -4980,7 +5031,7 @@ bool AXObject::SupportsARIAExpanded() const {
     case ax::mojom::blink::Role::kComboBoxSelect:
     case ax::mojom::blink::Role::kDisclosureTriangle:
     case ax::mojom::blink::Role::kDisclosureTriangleGrouped:
-    case ax::mojom::blink::Role::kListBox:
+    case ax::mojom::blink::Role::kGridCell:
     case ax::mojom::blink::Role::kLink:
     case ax::mojom::blink::Role::kPopUpButton:
     case ax::mojom::blink::Role::kMenuItem:
@@ -4993,12 +5044,6 @@ bool AXObject::SupportsARIAExpanded() const {
     case ax::mojom::blink::Role::kTextFieldWithComboBox:
     case ax::mojom::blink::Role::kToggleButton:
     case ax::mojom::blink::Role::kTreeItem:
-      return true;
-    case ax::mojom::blink::Role::kCell:
-      // TODO(Accessibility): aria-expanded is supported on grid cells but not
-      // on cells inside a static table. Consider creating separate internal
-      // roles so that we can easily distinguish these two types. See also
-      // IsSubWidget().
       return true;
     default:
       return false;
@@ -5593,7 +5638,7 @@ AXObject* AXObject::NextInPreOrderIncludingIgnored(
   if (!IsIncludedInTree()) {
     // TODO(crbug.com/1421052): Make sure this no longer fires then turn the
     // above into CHECK(IsIncludedInTree());
-    DUMP_WILL_BE_NOTREACHED_NORETURN()
+    DUMP_WILL_BE_NOTREACHED()
         << "We don't support iterating children of objects excluded "
            "from the accessibility tree: "
         << this;
@@ -5686,7 +5731,7 @@ AXObject* AXObject::UnignoredNextSibling() const {
   if (IsIgnored()) {
     // TODO(crbug.com/1407397): Make sure this no longer fires then turn this
     // block into CHECK(!IsIgnored());
-    DUMP_WILL_BE_NOTREACHED_NORETURN()
+    DUMP_WILL_BE_NOTREACHED()
         << "We don't support finding unignored siblings for ignored "
            "objects because it is not clear whether to search for the "
            "sibling in the unignored tree or in the whole tree: "
@@ -5817,8 +5862,11 @@ AXObject* AXObject::ParentObjectUnignored() const {
 
 AXObject* AXObject::ParentObjectUnignoredNonGeneric() const {
   AXObject* parent;
+  // Null check for parent is not needed here since the root is never ignored.
   for (parent = ParentObject();
-       parent && parent->IsIgnored() && parent->RoleValue() == ax::mojom::blink::Role::kGenericContainer;
+       parent->IsIgnored() ||
+       parent->RoleValue() == ax::mojom::blink::Role::kGenericContainer ||
+       parent->RoleValue() == ax::mojom::blink::Role::kNone;
        parent = parent->ParentObject()) {
   }
 
@@ -6750,7 +6798,7 @@ gfx::RectF AXObject::LocalBoundingBoxRectForAccessibility() {
   DCHECK(GetLayoutObject()->IsText());
   CHECK(!cached_values_need_update_ || !AXObjectCache().IsFrozen());
   UpdateCachedAttributeValuesIfNeeded();
-  return cached_local_bounding_box_rect_for_accessibility_;
+  return cached_local_bounding_box_;
 }
 
 PhysicalRect AXObject::GetBoundsInFrameCoordinates() const {
@@ -6853,9 +6901,6 @@ bool AXObject::PerformAction(const ui::AXActionData& action_data) {
       Scroll(action_data.action);
       return true;
     case ax::mojom::blink::Action::kStitchChildTree:
-      if (action_data.target_node_id == static_cast<int32_t>(AXID())) {
-        return false;
-      }
       if (action_data.child_tree_id == ui::AXTreeIDUnknown()) {
         return false;  // No child tree ID provided.;
       }
@@ -7353,6 +7398,7 @@ bool AXObject::SupportsNameFromContents(bool recursive) const {
     case ax::mojom::blink::Role::kDocGlossRef:
     case ax::mojom::blink::Role::kDisclosureTriangle:
     case ax::mojom::blink::Role::kDisclosureTriangleGrouped:
+    case ax::mojom::blink::Role::kGridCell:
     case ax::mojom::blink::Role::kHeading:
     case ax::mojom::blink::Role::kLayoutTableCell:
     case ax::mojom::blink::Role::kLineBreak:
@@ -7799,10 +7845,8 @@ void AXObject::PreSerializationConsistencyCheck() const{
     AXObject* included_parent = ParentObjectIncludedInTree();
     // TODO(accessibility): Return to CHECK once it has been resolved,
     // so that the message does not bloat stable releases.
-    DUMP_WILL_BE_NOTREACHED_NORETURN()
-        << "Do not serialize unincluded nodes: " << this
-        << "\nIncluded parent: "
-        << included_parent;
+    DUMP_WILL_BE_NOTREACHED() << "Do not serialize unincluded nodes: " << this
+                              << "\nIncluded parent: " << included_parent;
   }
 #if defined(AX_FAIL_FAST_BUILD)
   // A bit more expensive, so only check in builds used for testing.

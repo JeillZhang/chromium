@@ -19,7 +19,6 @@
 #include "ash/wm/overview/overview_types.h"
 #include "ash/wm/splitview/split_view_drag_indicators.h"
 #include "ash/wm/splitview/split_view_observer.h"
-#include "base/callback_list.h"
 #include "base/containers/flat_set.h"
 #include "base/memory/raw_ptr.h"
 
@@ -42,8 +41,8 @@ class PresentationTimeRecorder;
 
 namespace ash {
 
-class FasterSplitView;
-class LegacyDeskBarView;
+class FasterSplitViewOld;
+class OverviewDeskBarView;
 class OverviewDropTarget;
 class OverviewGridEventHandler;
 class OverviewItemBase;
@@ -323,13 +322,13 @@ class ASH_EXPORT OverviewGrid : public SplitViewObserver,
   // desks bar widget). |for_drop| should be set to true if this is called when
   // the item is being dropped when the drag is complete.
   // Returns true if |screen_location| does intersect with the
-  // LegacyDeskBarView.
+  // OverviewDeskBarView.
   bool IntersectsWithDesksBar(const gfx::Point& screen_location,
                               bool update_desks_bar_drag_details,
                               bool for_drop);
 
-  // Updates the drag details for LegacyDeskBarView to end the drag and move the
-  // window(s) represented by the `dragged_item` to another desk if it was
+  // Updates the drag details for OverviewDeskBarView to end the drag and move
+  // the window(s) represented by the `dragged_item` to another desk if it was
   // dropped on a mini_view of a desk that is different than that of the active
   // desk or if dropped on the new desk button. Returns true if the window(s)
   // were successfully moved to another desk.
@@ -419,7 +418,9 @@ class ASH_EXPORT OverviewGrid : public SplitViewObserver,
   SavedDeskSaveDeskButtonContainer* GetSaveDeskButtonContainer();
   const SavedDeskSaveDeskButtonContainer* GetSaveDeskButtonContainer() const;
 
-  FasterSplitView* GetFasterSplitView();
+  // TODO(http://b/325335020): Remove this and add tests using the new faster
+  // split view widget.
+  FasterSplitViewOld* GetFasterSplitViewOld();
 
   // Gets the cropping area of the wallpaper in screen coordinates.
   gfx::Rect GetWallpaperClipBounds() const;
@@ -428,8 +429,12 @@ class ASH_EXPORT OverviewGrid : public SplitViewObserver,
   // is true, if the user selects to show the birch bar from the context menu.
   void MaybeInitBirchBarWidget(bool by_user = false);
 
-  // Destroys birch bar widget. `by_user` is true, if the user selects to hide
-  // the birch bar from the context menu.
+  // Shuts down birch bar widget, when the user selects to hide the birch bar
+  // from the context menu.
+  void ShutdownBirchBarWidgetByUser();
+
+  // Destroys the birch bar widget, clears pointers and refresh grids. `by_user`
+  // is true when the birch bar is disabled by user.
   void DestroyBirchBarWidget(bool by_user = false);
 
   // SplitViewObserver:
@@ -491,9 +496,10 @@ class ASH_EXPORT OverviewGrid : public SplitViewObserver,
   RoundedLabelWidget* no_windows_widget() { return no_windows_widget_.get(); }
 
   const views::Widget* desks_widget() const { return desks_widget_.get(); }
+  views::Widget* desks_widget() { return desks_widget_.get(); }
 
-  const LegacyDeskBarView* desks_bar_view() const { return desks_bar_view_; }
-  LegacyDeskBarView* desks_bar_view() { return desks_bar_view_; }
+  const OverviewDeskBarView* desks_bar_view() const { return desks_bar_view_; }
+  OverviewDeskBarView* desks_bar_view() { return desks_bar_view_; }
 
   views::Widget* birch_bar_widget() { return birch_bar_widget_.get(); }
 
@@ -538,9 +544,9 @@ class ASH_EXPORT OverviewGrid : public SplitViewObserver,
     gfx::RectF dst;
   };
 
-  // Initializes the widget that contains the `LegacyDeskBarView` contents. Also
-  // will update the save desk buttons visibility after we initialize
-  // `LegacyDeskBarView`.
+  // Initializes the widget that contains the `OverviewDeskBarView` contents.
+  // Also will update the save desk buttons visibility after we initialize
+  // `OverviewDeskBarView`.
   void MaybeInitDesksWidget();
 
   // Gets the layout of the overview items. Layout is done in 2 stages
@@ -697,7 +703,7 @@ class ASH_EXPORT OverviewGrid : public SplitViewObserver,
   std::unique_ptr<views::Widget> desks_widget_;
 
   // The contents view of the above |desks_widget_| if created.
-  raw_ptr<LegacyDeskBarView, DanglingUntriaged> desks_bar_view_ = nullptr;
+  raw_ptr<OverviewDeskBarView, DanglingUntriaged> desks_bar_view_ = nullptr;
 
   // Widget that contains the BirchBarView contents when the Forest feature is
   // enabled.
@@ -722,9 +728,6 @@ class ASH_EXPORT OverviewGrid : public SplitViewObserver,
   // A widget that contains save desk buttons which save desk as template or for
   // later when pressed.
   std::unique_ptr<views::Widget> save_desk_button_container_widget_;
-
-  // The subscription of birch bar relayout callback.
-  base::CallbackListSubscription birch_bar_relayout_callback_subscription_;
 
   // True if the overview grid should animate when exiting overview mode. Note
   // even if it's true, it doesn't mean all window items in the grid should

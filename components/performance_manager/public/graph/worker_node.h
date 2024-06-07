@@ -53,7 +53,7 @@ using execution_context_priority::PriorityAndReason;
 // A client, from the point of view of the worker, is the frame or worker that
 // caused the worker to start running, either because it explicitly created it,
 // or a service worker is registered to handle their network requests.
-class WorkerNode : public Node {
+class WorkerNode : public TypedNode<WorkerNode> {
  public:
   using FrameNodeVisitor = base::FunctionRef<bool(const FrameNode*)>;
   using WorkerNodeVisitor = base::FunctionRef<bool(const WorkerNode*)>;
@@ -67,6 +67,8 @@ class WorkerNode : public Node {
 
   using Observer = WorkerNodeObserver;
   class ObserverDefaultImpl;
+
+  static constexpr NodeTypeEnum Type() { return NodeTypeEnum::kWorker; }
 
   WorkerNode();
 
@@ -133,15 +135,30 @@ class WorkerNode : public Node {
   //   a child worker of the parent.
   // - A service worker will become a child worker of every worker for which
   //   it handles network requests.
+  //
+  // Note that this incurs a full container copy of all child nodes. Please use
+  // VisitChildWorkers or VisitChildDedicatedWorkers when that makes sense.
   virtual const base::flat_set<const WorkerNode*> GetChildWorkers() const = 0;
+
+  // Visits the child workers of this worker. The iteration is halted if the
+  // visitor returns false. Returns true if every call to the visitor returned
+  // true, false otherwise.
+  //
+  // Note: Unlike frames, workers do not conform to a tree-like structure
+  // so care must be taken to ensure worker nodes are not visited multiple
+  // times in a complete graph traversal. For example, it's possible to
+  // have two dedicated workers A and B, where B is the child of A, and a
+  // service worker S, where S is the child of both A and B. Starting the
+  // graph traversal from A will cause S to be visited twice.
+  virtual bool VisitChildWorkers(const WorkerNodeVisitor& visitor) const = 0;
 
   // Visits the child dedicated workers of this frame. The iteration is halted
   // if the visitor returns false. Returns true if every call to the visitor
   // returned true, false otherwise.
   //
-  // The reason why we don't have a generic VisitChildWorkers method is that
-  // a service/shared worker may appear as a child of multiple other nodes
-  // and thus may be visited multiple times.
+  // The reason for this method is that a service/shared worker may appear as a
+  // child of multiple other nodes and thus may be visited multiple times, which
+  // is a situation that callers might want to avoid.
   virtual bool VisitChildDedicatedWorkers(
       const WorkerNodeVisitor& visitor) const = 0;
 

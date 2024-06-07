@@ -169,14 +169,18 @@ chromium-metrics-reviews@google.com.
   <int value="1" label="Is Shared"/>
 </enum>
 
-<enum name="BooleanShouldShow">
-  <int value="0" label="Should not show"/>
-  <int value="1" label="Should show"/>
-</enum>
-
 <enum name="BooleanWasDeferred">
   <int value="0" label="Was not deferred"/>
   <int value="1" label="Was deferred"/>
+</enum>
+
+<enum name="BoundSessionCredentialsCookieRotationGenerateAssertionResult">
+  <int value="0" label="Success"/>
+  <int value="1" label="Failed to load the key"/>
+  <int value="2" label="Failed to create an unsigned assertion token"/>
+  <int value="3" label="Failed to sign an assertion token"/>
+  <int value="4" label="Assertion token signature verification failed"/>
+  <int value="5" label="Failed to attach the signature to an assertion token"/>
 </enum>
 
 <enum name="BoundSessionCredentialsCookieRotationResult">
@@ -207,6 +211,16 @@ chromium-metrics-reviews@google.com.
   <int value="2" label="Modified to always sign in"/>
   <int value="3" label="Modified to never sign in"/>
 </enum>
+
+<!-- LINT.IfChange(ChromeSignoutConfirmationChoice) -->
+
+<enum name="ChromeSignoutConfirmationChoice">
+  <int value="0" label="Cancel Signout"/>
+  <int value="1" label="Signout"/>
+  <int value="2" label="Cancel Signout and Reauth"/>
+</enum>
+
+<!-- LINT.ThenChange(//chrome/browser/ui/signin/chrome_signout_confirmation_prompt.h:ChromeSignoutConfirmationChoice) -->
 
 <enum name="FRESigninEvents">
   <int value="0" label="Checking managed status"/>
@@ -573,17 +587,9 @@ chromium-metrics-reviews@google.com.
   <int value="3" label="Revoked on load due to cookie settings"/>
 </enum>
 
-<enum name="SigninReason">
-  <int value="0" label="Signin primary account"/>
-  <int value="1" label="Add secondary account"/>
-  <int value="2" label="Reauthentication"/>
-  <int value="3" label="Unlock profile (deprecated 03-2021)"/>
-  <int value="4" label="Typed URL with unknown reason"/>
-  <int value="5"
-      label="Signin primary account with force-sign-in policy enabled"/>
-  <int value="6"
-      label="Login and acquire a login scope token without actually signing
-             into any profiles on Chrome."/>
+<enum name="SigninPendingResolution">
+  <int value="0" label="Sign in (reauth)"/>
+  <int value="1" label="Sign out"/>
 </enum>
 
 <enum name="SigninReauthResult">
@@ -828,7 +834,7 @@ chromium-metrics-reviews@google.com.
   <int value="21" label="AccountReconcilor::RevokeTokensNotInCookies"/>
   <int value="22"
       label="DiceResponseHandler::Signin from sign in promo after password
-             save"/>
+             save (obsolete)"/>
 </enum>
 
 <enum name="SyncButtonClicked">

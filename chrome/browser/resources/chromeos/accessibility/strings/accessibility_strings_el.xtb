@@ -265,7 +265,6 @@
 <translation id="2783001728278437613">{COUNT,plural, =1{+#}other{+#}}</translation>
 <translation id="2792200646155001340">Μπορείτε να σύρετε με ένα δάχτυλο από τα δεξιά προς τα αριστερά για να μετακινηθείτε στο προηγούμενο στοιχείο. Δοκιμάστε το τώρα.</translation>
 <translation id="280499067616661124">Εύρεση στη σελίδα του ChromeVox</translation>
-<translation id="2811019999044652585">Για μετάβαση σε άλλα σημεία της οθόνης, όπως οι γραμμές εργαλείων ή η περιοχή ειδοποιήσεων, πατήστε Control+πλήκτρο εμπρός. Στο Chromebook, το πλήκτρο εμπρός βρίσκεται ακριβώς πάνω από το πλήκτρο με τον αριθμό 2.</translation>
 <translation id="2811204574343810641">Σειρά</translation>
 <translation id="2816868829355607410">Περιοχή εξάσκησης: εντολές μετάβασης</translation>
 <translation id="2841013758207633010">Ώρα</translation>
@@ -881,6 +880,7 @@
 <translation id="7091296112653361280">Λευκό Ναβάχο</translation>
 <translation id="7095834689119144465">Επεξεργασία κειμένου μόνο για αριθμούς</translation>
 <translation id="7096001299300236431">Προηγούμενο μέσο</translation>
+<translation id="7096668131290451939">Πατήστε ξανά escape για έξοδο από τη λειτουργία εκμάθησης</translation>
 <translation id="7116595520562830928">πολλές γραμμές</translation>
 <translation id="712735679809149106">εκφώνηση λέξεων</translation>
 <translation id="7137397390322864165">Σομόν</translation>

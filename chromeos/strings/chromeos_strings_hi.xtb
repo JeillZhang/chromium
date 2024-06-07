@@ -236,7 +236,6 @@
 <translation id="2189104374785738357">एपीएन की जानकारी में बदलाव करना</translation>
 <translation id="2195732836444333448">अब और अनुरोध नहीं किए जा सकते. कुछ समय बाद दोबारा कोशिश करें.</translation>
 <translation id="2201758491318984023">साइकल</translation>
-<translation id="2203222757805818543">मौजूदा शेड्यूल को <ph name="SUNRISE" /> से <ph name="SUNSET" /> तक सेट किया गया है. गहरे रंग वाले मोड का शेड्यूल अपने-आप अपडेट करने के लिए, <ph name="BEGIN_LINK" />जगह की जानकारी का ऐक्सेस चालू करें<ph name="END_LINK" /></translation>
 <translation id="2203272733515928691">हॉट स्प्रिंग</translation>
 <translation id="2203642483788377106">चट्टान</translation>
 <translation id="2208388655216963643">इंप्रेशनिस्ट</translation>
@@ -364,6 +363,7 @@
 <translation id="3054177598518735801"><ph name="CURRENT_VALUE" />mA</translation>
 <translation id="3056720590588772262">एंडपॉइंट</translation>
 <translation id="3060579846059757016">आउटलाइन</translation>
+<translation id="3061850252076394168">'चुनें और सुनें' सुविधा चालू करें</translation>
 <translation id="3069085583900247081">टेस्ट असफल रहा</translation>
 <translation id="3078740164268491126">टेबल</translation>
 <translation id="3081652522083185657">लाइट</translation>
@@ -630,7 +630,6 @@
 <translation id="458794348635939462">सभी होस्ट से जुड़ी समस्याओं को हल नहीं किया जा सका</translation>
 <translation id="4593212453765072419">प्रॉक्सी प्रमाणीकरण आवश्यक है</translation>
 <translation id="4609350030397390689">कीबोर्ड की रोशनी कम करने वाला बटन</translation>
-<translation id="4617553623719764431">मौसम की जानकारी नहीं दिखाई जा रही है, क्योंकि आपने अपनी जगह की जानकारी का ऐक्सेस नहीं दिया है. आस-पास के मौसम की जानकारी देखने के लिए, <ph name="BEGIN_LINK" />जगह की जानकारी का ऐक्सेस चालू करें<ph name="END_LINK" /></translation>
 <translation id="4627232916386272576"><ph name="DOCUMENT_TITLE" />, <ph name="PRINTER_NAME" />, <ph name="CREATION_TIME" />, <ph name="TOTAL_PAGE_NUMBER" /> में से <ph name="PRINTED_PAGE_NUMBER" />. प्रिंट का काम बंद करने के लिए enter का बटन दबाएं.</translation>
 <translation id="463791356324567266">स्कैनिंग रद्द की जा रही है...</translation>
 <translation id="4646949265910132906">सुरक्षित वाई-फ़ाई कनेक्शन</translation>
@@ -704,6 +703,7 @@
 <translation id="4985509611418653372">चलाएं</translation>
 <translation id="4987769320337599931">फ़ायरवॉल</translation>
 <translation id="4988526792673242964">पेज</translation>
+<translation id="4989542687859782284">अनुपलब्ध</translation>
 <translation id="4999333166442584738">रिपोर्ट छिपाएं</translation>
 <translation id="500920857929044050">टेस्ट बंद करें</translation>
 <translation id="5017508259293544172">LEAP</translation>
@@ -960,7 +960,6 @@
 <translation id="6412715219990689313">पहले से मौजूद कीबोर्ड</translation>
 <translation id="6417265370957905582">Google Assistant</translation>
 <translation id="6423239382391657905">OpenVPN</translation>
-<translation id="6438073885402882007">इससे सिस्टम की सेवाओं को आपकी जगह की जानकारी का ऐक्सेस मिलता है. जगह की जानकारी देने वाली सेवा, आपके डिवाइस की मौजूदा जगह का अनुमान लगाने के लिए वाई-फ़ाई, मोबाइल नेटवर्क, और सेंसर जैसे सोर्स का इस्तेमाल कर सकती है. <ph name="LINK_BEGIN" />ज़्यादा जानें<ph name="LINK_END" /></translation>
 <translation id="6439505561246192797">सिग्नल कमज़ोर है (<ph name="SIGNAL_STRENGTH" />)</translation>
 <translation id="6447630859861661624">खाता सेटिंग पर जाएं</translation>
 <translation id="6462978824459367242">'एपीएन जोड़ें' बटन अब चालू है</translation>

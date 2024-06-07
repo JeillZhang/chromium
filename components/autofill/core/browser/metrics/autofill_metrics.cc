@@ -24,6 +24,7 @@
 #include "components/autofill/core/browser/data_model/credit_card.h"
 #include "components/autofill/core/browser/field_type_utils.h"
 #include "components/autofill/core/browser/field_types.h"
+#include "components/autofill/core/browser/filling_product.h"
 #include "components/autofill/core/browser/form_structure.h"
 #include "components/autofill/core/browser/form_types.h"
 #include "components/autofill/core/browser/metrics/autofill_metrics_utils.h"
@@ -119,6 +120,7 @@ enum FieldTypeGroupForMetrics {
   GROUP_ADDRESS_HOME_STREET_LOCATION_AND_LANDMARK = 44,
   GROUP_ADDRESS_HOME_DEPENDENT_LOCALITY_AND_LANDMARK = 45,
   GROUP_ADDRESS_HOME_HOUSE_NUMBER_AND_APT = 46,
+  GROUP_STANDALONE_CREDIT_CARD_VERIFICATION = 47,
   // Note: if adding an enum value here, run
   // tools/metrics/histograms/update_autofill_enums.py
   NUM_FIELD_TYPE_GROUPS_FOR_METRICS
@@ -417,7 +419,6 @@ int GetFieldTypeGroupPredictionQualityMetric(
           group = GROUP_CREDIT_CARD_DATE;
           break;
         case CREDIT_CARD_VERIFICATION_CODE:
-        case CREDIT_CARD_STANDALONE_VERIFICATION_CODE:
           group = GROUP_CREDIT_CARD_VERIFICATION;
           break;
         default:
@@ -426,6 +427,10 @@ int GetFieldTypeGroupPredictionQualityMetric(
           group = GROUP_AMBIGUOUS;
           break;
       }
+      break;
+
+    case FieldTypeGroup::kStandaloneCvcField:
+      group = GROUP_STANDALONE_CREDIT_CARD_VERIFICATION;
       break;
 
     case FieldTypeGroup::kPasswordField:
@@ -1377,51 +1382,6 @@ void AutofillMetrics::LogFormFillDuration(const std::string& metric,
 }
 
 // static
-void AutofillMetrics::LogIsAutofillEnabledAtStartup(bool enabled) {
-  UMA_HISTOGRAM_BOOLEAN("Autofill.IsEnabled.Startup", enabled);
-}
-
-// static
-void AutofillMetrics::LogIsAutofillProfileEnabledAtStartup(bool enabled) {
-  UMA_HISTOGRAM_BOOLEAN("Autofill.Address.IsEnabled.Startup", enabled);
-}
-
-// static
-void AutofillMetrics::LogIsAutofillCreditCardEnabledAtStartup(bool enabled) {
-  UMA_HISTOGRAM_BOOLEAN("Autofill.CreditCard.IsEnabled.Startup", enabled);
-}
-
-// static
-void AutofillMetrics::LogIsAutofillEnabledAtPageLoad(
-    bool enabled,
-    PaymentsSigninState sync_state) {
-  std::string name("Autofill.IsEnabled.PageLoad");
-  UMA_HISTOGRAM_BOOLEAN(name, enabled);
-  base::UmaHistogramBoolean(name + GetMetricsSyncStateSuffix(sync_state),
-                            enabled);
-}
-
-// static
-void AutofillMetrics::LogIsAutofillProfileEnabledAtPageLoad(
-    bool enabled,
-    PaymentsSigninState sync_state) {
-  std::string name("Autofill.Address.IsEnabled.PageLoad");
-  UMA_HISTOGRAM_BOOLEAN(name, enabled);
-  base::UmaHistogramBoolean(name + GetMetricsSyncStateSuffix(sync_state),
-                            enabled);
-}
-
-// static
-void AutofillMetrics::LogIsAutofillCreditCardEnabledAtPageLoad(
-    bool enabled,
-    PaymentsSigninState sync_state) {
-  std::string name("Autofill.CreditCard.IsEnabled.PageLoad");
-  UMA_HISTOGRAM_BOOLEAN(name, enabled);
-  base::UmaHistogramBoolean(name + GetMetricsSyncStateSuffix(sync_state),
-                            enabled);
-}
-
-// static
 void AutofillMetrics::LogStoredCreditCardMetrics(
     const std::vector<std::unique_ptr<CreditCard>>& local_cards,
     const std::vector<std::unique_ptr<CreditCard>>& server_cards,
@@ -1593,8 +1553,14 @@ void AutofillMetrics::LogNumberOfAddressesSuppressedForDisuse(
 
 // static
 void AutofillMetrics::LogAutofillSuggestionHidingReason(
+    FillingProduct filling_product,
     SuggestionHidingReason reason) {
   base::UmaHistogramEnumeration("Autofill.PopupHidingReason", reason);
+  base::UmaHistogramEnumeration(base::StrCat({
+                                    "Autofill.PopupHidingReason.",
+                                    FillingProductToString(filling_product),
+                                }),
+                                reason);
 }
 
 void AutofillMetrics::LogSectioningMetrics(
@@ -1915,6 +1881,17 @@ void AutofillMetrics::LogAutocompleteEvent(AutocompleteEvent event) {
   DCHECK_LT(event, AutocompleteEvent::NUM_AUTOCOMPLETE_EVENTS);
   base::UmaHistogramEnumeration("Autocomplete.Events2", event,
                                 NUM_AUTOCOMPLETE_EVENTS);
+}
+
+// static
+void AutofillMetrics::LogAutofillPopupVisibleDuration(
+    FillingProduct filling_product,
+    const base::TimeDelta& duration) {
+  base::UmaHistogramTimes("Autofill.Popup.VisibleDuration", duration);
+  base::UmaHistogramTimes(
+      base::StrCat({"Autofill.Popup.VisibleDuration.",
+                    FillingProductToString(filling_product)}),
+      duration);
 }
 
 // static
@@ -2382,7 +2359,7 @@ void AutofillMetrics::FormInteractionsUkmLogger::
   SetStatusVector(AutofillStatus::kWasFocused,
                   OptionalBooleanToBool(was_focused));
   SetStatusVector(AutofillStatus::kIsInSubFrame,
-                  form.ToFormData().host_frame != field.host_frame());
+                  form.ToFormData().host_frame() != field.host_frame());
 
   if (filling_prevented_by_iframe_security_policy !=
       OptionalBoolean::kUndefined) {

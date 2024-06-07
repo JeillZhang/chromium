@@ -90,6 +90,7 @@ ReadAnythingUntrustedUI::ReadAnythingUntrustedUI(content::WebUI* web_ui)
       {"nextSentenceLabel", IDS_READING_MODE_NAVIGATE_NEXT_SENTENCE},
       {"moreOptionsLabel", IDS_READING_MODE_MORE_OPTIONS},
       {"voiceSpeedLabel", IDS_READING_MODE_VOICE_SPEED},
+      {"voiceSpeedWithRateLabel", IDS_READING_MODE_VOICE_SPEED_WITH_RATE},
       {"voiceSelectionLabel", IDS_READING_MODE_VOICE_SELECTION},
       {"increaseFontSizeLabel",
        IDS_READING_MODE_INCREASE_FONT_SIZE_BUTTON_LABEL},
@@ -129,6 +130,10 @@ ReadAnythingUntrustedUI::ReadAnythingUntrustedUI(content::WebUI* web_ui)
       {"readingModeVoiceDownloadedMessage",
        IDS_READING_MODE_VOICE_DOWNLOADED_MESSAGE},
       {"menu", IDS_MENU},
+      {"selected", IDS_READING_MODE_ITEM_SELECTED},
+      {"allocationError", IDS_READING_MODE_LANGUAGE_MENU_NO_SPACE},
+      {"allocationErrorHighQuality",
+       IDS_READING_MODE_LANGUAGE_MENU_NO_SPACE_BUT_VOICES_EXIST},
   };
   for (const auto& str : kLocalizedStrings) {
     webui::AddLocalizedString(source, str.name, str.id);
@@ -201,19 +206,11 @@ void ReadAnythingUntrustedUI::CreateUntrustedPageHandler(
   read_anything_untrusted_page_handler_ =
       std::make_unique<ReadAnythingUntrustedPageHandler>(
           std::move(page), std::move(receiver), web_ui());
-
-  if (!features::IsReadAnythingDelaySidePanelLoadEnabled()) {
-    if (embedder()) {
-      embedder()->ShowUI();
-    }
-  }
 }
 
 void ReadAnythingUntrustedUI::ShouldShowUI() {
   // Show the UI after the Side Panel content has loaded.
-  if (features::IsReadAnythingDelaySidePanelLoadEnabled()) {
-    if (embedder()) {
-      embedder()->ShowUI();
-    }
+  if (embedder()) {
+    embedder()->ShowUI();
   }
 }

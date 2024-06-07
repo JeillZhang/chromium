@@ -6,11 +6,14 @@
 
 #include "chrome/browser/ui/views/desktop_capture/desktop_media_permission_pane_view.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
-#include "ui/base/ui_base_features.h"
 #include "ui/compositor/layer.h"
 #include "ui/views/background.h"
 #include "ui/views/controls/scroll_view.h"
 #include "ui/views/controls/separator.h"
+
+#if BUILDFLAG(IS_MAC)
+#include "chrome/browser/ui/views/desktop_capture/desktop_media_permission_pane_view.h"
+#endif
 
 DesktopMediaPaneView::DesktopMediaPaneView(
     DesktopMediaList::Type type,
@@ -48,6 +51,7 @@ std::u16string DesktopMediaPaneView::GetAudioLabelText() const {
 
 void DesktopMediaPaneView::OnScreenCapturePermissionUpdate(
     bool has_permission) {
+#if BUILDFLAG(IS_MAC)
   if (!PermissionRequired()) {
     return;
   }
@@ -62,6 +66,7 @@ void DesktopMediaPaneView::OnScreenCapturePermissionUpdate(
     content_pane_view_->SetVisible(has_permission);
     permission_pane_view_->SetVisible(!has_permission);
   }
+#endif
 }
 
 bool DesktopMediaPaneView::IsPermissionPaneVisible() const {
@@ -70,6 +75,15 @@ bool DesktopMediaPaneView::IsPermissionPaneVisible() const {
 
 bool DesktopMediaPaneView::IsContentPaneVisible() const {
   return content_pane_view_->GetVisible();
+}
+
+bool DesktopMediaPaneView::WasPermissionButtonClicked() const {
+#if BUILDFLAG(IS_MAC)
+  return permission_pane_view_ &&
+         permission_pane_view_->WasPermissionButtonClicked();
+#else
+  return false;
+#endif
 }
 
 bool DesktopMediaPaneView::PermissionRequired() const {

@@ -35,7 +35,6 @@
 #include "base/path_service.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/strings/string_piece.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/system/sys_info.h"
@@ -46,6 +45,7 @@
 #include "base/threading/platform_thread.h"
 #include "base/time/default_tick_clock.h"
 #include "base/time/time.h"
+#include "base/trace_event/named_trigger.h"
 #include "base/trace_event/trace_event.h"
 #include "base/values.h"
 #include "build/branding_buildflags.h"
@@ -596,6 +596,7 @@ void StartWatchingForProcessShutdownHangs() {
   // This HangWatcher scope is covering the shutdown phase up to the end of the
   // process. Intentionally leak this instance so that it is not destroyed
   // before process termination.
+  base::HangWatcher::SetShuttingDown();
   auto* watcher = new base::WatchHangsInScope(base::Seconds(30));
   ANNOTATE_LEAKING_OBJECT_PTR(watcher);
   std::ignore = watcher;
@@ -1223,6 +1224,8 @@ void ChromeBrowserMainParts::PostCreateThreads() {
   tracing::MaybeSetupSystemTracingFromFieldTrial();
   tracing::SetupBackgroundTracingFromCommandLine();
   tracing::SetupPresetTracingFromFieldTrial();
+  base::trace_event::EmitNamedTrigger(
+      base::trace_event::kStartupTracingTriggerName);
 
   for (auto& chrome_extra_part : chrome_extra_parts_)
     chrome_extra_part->PostCreateThreads();

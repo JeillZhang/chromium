@@ -109,20 +109,10 @@ BASE_FEATURE(kChromeOsPasskeys,
              base::FEATURE_DISABLED_BY_DEFAULT);
 #endif
 
-// Enabled in M120. Remove in or after M123.
-BASE_FEATURE(kWebAuthnAccessibleTimeouts,
-             "WebAuthenticationAccessibleTimeouts",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
 // Not yet enabled by default.
 BASE_FEATURE(kWebAuthnRelatedOrigin,
              "WebAuthenticationRelatedOrigin",
              base::FEATURE_DISABLED_BY_DEFAULT);
-
-// Enabled in M122. Remove in or after M125.
-BASE_FEATURE(kWebAuthnChromeImplementedInvariant,
-             "WebAuthenticationChromeImplementedInvariant",
-             base::FEATURE_ENABLED_BY_DEFAULT);
 
 // Enabled in M122. Remove in or after M125.
 BASE_FEATURE(kAllowExtensionsToSetWebAuthnRpIds,
@@ -164,5 +154,10 @@ BASE_FEATURE(kWebAuthnCredProtectWin10BugWorkaround,
 BASE_FEATURE(kWebAuthnICloudRecoveryKey,
              "WebAuthenticationICloudRecoveryKey",
              base::FEATURE_ENABLED_BY_DEFAULT);
+
+// Not yet default enabled and not intended to be. Remove after M128 is Stable.
+BASE_FEATURE(kWebAuthnCacheSecurityDomain,
+             "WebAuthenticationCacheSecurityDomain",
+             base::FEATURE_DISABLED_BY_DEFAULT);
 
 }  // namespace device

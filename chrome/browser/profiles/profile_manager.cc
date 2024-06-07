@@ -131,6 +131,7 @@
 #include "components/optimization_guide/core/model_execution/model_execution_features.h"
 #else
 #include "chrome/browser/profiles/profile_manager_android.h"
+#include "chrome/browser/signin/signin_manager_android_factory.h"
 #endif
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
@@ -875,11 +876,7 @@ bool ProfileManager::IsAllowedProfilePath(const base::FilePath& path) const {
 }
 
 bool ProfileManager::CanCreateProfileAtPath(const base::FilePath& path) const {
-  bool is_allowed_path = IsAllowedProfilePath(path) ||
-                         base::CommandLine::ForCurrentProcess()->HasSwitch(
-                             switches::kAllowProfilesOutsideUserDir);
-
-  if (!is_allowed_path) {
+  if (!IsAllowedProfilePath(path)) {
     LOG(ERROR) << "Cannot create profile at path " << path.AsUTF8Unsafe();
     return false;
   }
@@ -1547,6 +1544,10 @@ void ProfileManager::DoFinalInitForServices(Profile* profile,
 
   IdentityManagerFactory::GetForProfile(profile)->OnNetworkInitialized();
   AccountReconcilorFactory::GetForProfile(profile);
+#if BUILDFLAG(IS_ANDROID)
+  // Should be after IdentityManager::OnNetworkInitialized.
+  SigninManagerAndroidFactory::GetForProfile(profile);
+#endif
 
 #if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
   BoundSessionCookieRefreshServiceFactory::GetForProfile(profile);

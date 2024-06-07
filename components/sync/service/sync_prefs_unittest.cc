@@ -120,57 +120,73 @@ TEST_F(SyncPrefsTest, CachedPassphraseType) {
   EXPECT_FALSE(sync_prefs_->GetCachedPassphraseType().has_value());
 }
 
-TEST_F(SyncPrefsTest, CachedTrustedVaultAutoUpgradeDebugInfo) {
-  const int kTestCohortId = 123;
+TEST_F(SyncPrefsTest, CachedTrustedVaultAutoUpgradeExperimentGroup) {
+  const int kTestCohort = 123;
+  const sync_pb::TrustedVaultAutoUpgradeExperimentGroup::Type kTestType =
+      sync_pb::TrustedVaultAutoUpgradeExperimentGroup::VALIDATION;
+  const int kTestTypeIndex = 5;
 
-  EXPECT_FALSE(
-      sync_prefs_->GetCachedTrustedVaultAutoUpgradeDebugInfo().has_value());
+  EXPECT_FALSE(sync_prefs_->GetCachedTrustedVaultAutoUpgradeExperimentGroup()
+                   .has_value());
 
-  sync_pb::NigoriSpecifics::AutoUpgradeDebugInfo proto;
-  proto.set_auto_upgrade_cohort_id(kTestCohortId);
-  sync_prefs_->SetCachedTrustedVaultAutoUpgradeDebugInfo(proto);
+  {
+    sync_pb::TrustedVaultAutoUpgradeExperimentGroup proto;
+    proto.set_cohort(kTestCohort);
+    proto.set_type(kTestType);
+    proto.set_type_index(kTestTypeIndex);
+    sync_prefs_->SetCachedTrustedVaultAutoUpgradeExperimentGroup(proto);
+  }
 
-  EXPECT_TRUE(
-      sync_prefs_->GetCachedTrustedVaultAutoUpgradeDebugInfo().has_value());
-  EXPECT_EQ(kTestCohortId,
-            sync_prefs_->GetCachedTrustedVaultAutoUpgradeDebugInfo()
-                .value_or(sync_pb::NigoriSpecifics::AutoUpgradeDebugInfo())
-                .auto_upgrade_cohort_id());
+  EXPECT_TRUE(sync_prefs_->GetCachedTrustedVaultAutoUpgradeExperimentGroup()
+                  .has_value());
 
-  sync_prefs_->ClearCachedTrustedVaultAutoUpgradeDebugInfo();
-  EXPECT_FALSE(
-      sync_prefs_->GetCachedTrustedVaultAutoUpgradeDebugInfo().has_value());
+  const sync_pb::TrustedVaultAutoUpgradeExperimentGroup group_from_prefs =
+      sync_prefs_->GetCachedTrustedVaultAutoUpgradeExperimentGroup().value_or(
+          sync_pb::TrustedVaultAutoUpgradeExperimentGroup());
+
+  EXPECT_EQ(kTestCohort, group_from_prefs.cohort());
+  EXPECT_EQ(kTestType, group_from_prefs.type());
+  EXPECT_EQ(kTestTypeIndex, group_from_prefs.type_index());
+
+  sync_prefs_->ClearCachedTrustedVaultAutoUpgradeExperimentGroup();
+  EXPECT_FALSE(sync_prefs_->GetCachedTrustedVaultAutoUpgradeExperimentGroup()
+                   .has_value());
 }
 
-TEST_F(SyncPrefsTest, CachedTrustedVaultAutoUpgradeDebugInfoCorrupt) {
+TEST_F(SyncPrefsTest, CachedTrustedVaultAutoUpgradeExperimentGroupCorrupt) {
   // Populate with a corrupt, non-base64 value.
   pref_service_.SetString(
-      prefs::internal::kSyncCachedTrustedVaultAutoUpgradeDebugInfo, "corrupt");
-  EXPECT_TRUE(
-      sync_prefs_->GetCachedTrustedVaultAutoUpgradeDebugInfo().has_value());
-  EXPECT_EQ(0, sync_prefs_->GetCachedTrustedVaultAutoUpgradeDebugInfo()
-                   .value_or(sync_pb::NigoriSpecifics::AutoUpgradeDebugInfo())
-                   .auto_upgrade_cohort_id());
-  EXPECT_EQ(sync_pb::NigoriSpecifics::AutoUpgradeDebugInfo::
-                AUTO_UPGRADE_EXPERIMENT_GROUP_UNSPECIFIED,
-            sync_prefs_->GetCachedTrustedVaultAutoUpgradeDebugInfo()
-                .value_or(sync_pb::NigoriSpecifics::AutoUpgradeDebugInfo())
-                .auto_upgrade_experiment_group());
+      prefs::internal::kSyncCachedTrustedVaultAutoUpgradeExperimentGroup,
+      "corrupt");
+  EXPECT_TRUE(sync_prefs_->GetCachedTrustedVaultAutoUpgradeExperimentGroup()
+                  .has_value());
+  EXPECT_EQ(0, sync_prefs_->GetCachedTrustedVaultAutoUpgradeExperimentGroup()
+                   .value_or(sync_pb::TrustedVaultAutoUpgradeExperimentGroup())
+                   .cohort());
+  EXPECT_EQ(sync_pb::TrustedVaultAutoUpgradeExperimentGroup::TYPE_UNSPECIFIED,
+            sync_prefs_->GetCachedTrustedVaultAutoUpgradeExperimentGroup()
+                .value_or(sync_pb::TrustedVaultAutoUpgradeExperimentGroup())
+                .type());
+  EXPECT_EQ(0, sync_prefs_->GetCachedTrustedVaultAutoUpgradeExperimentGroup()
+                   .value_or(sync_pb::TrustedVaultAutoUpgradeExperimentGroup())
+                   .type_index());
 
   // Populate with a corrupt, unparsable value after base64-decoding.
   pref_service_.SetString(
-      prefs::internal::kSyncCachedTrustedVaultAutoUpgradeDebugInfo,
+      prefs::internal::kSyncCachedTrustedVaultAutoUpgradeExperimentGroup,
       base::Base64Encode("corrupt"));
-  EXPECT_TRUE(
-      sync_prefs_->GetCachedTrustedVaultAutoUpgradeDebugInfo().has_value());
-  EXPECT_EQ(0, sync_prefs_->GetCachedTrustedVaultAutoUpgradeDebugInfo()
-                   .value_or(sync_pb::NigoriSpecifics::AutoUpgradeDebugInfo())
-                   .auto_upgrade_cohort_id());
-  EXPECT_EQ(sync_pb::NigoriSpecifics::AutoUpgradeDebugInfo::
-                AUTO_UPGRADE_EXPERIMENT_GROUP_UNSPECIFIED,
-            sync_prefs_->GetCachedTrustedVaultAutoUpgradeDebugInfo()
-                .value_or(sync_pb::NigoriSpecifics::AutoUpgradeDebugInfo())
-                .auto_upgrade_experiment_group());
+  EXPECT_TRUE(sync_prefs_->GetCachedTrustedVaultAutoUpgradeExperimentGroup()
+                  .has_value());
+  EXPECT_EQ(0, sync_prefs_->GetCachedTrustedVaultAutoUpgradeExperimentGroup()
+                   .value_or(sync_pb::TrustedVaultAutoUpgradeExperimentGroup())
+                   .cohort());
+  EXPECT_EQ(sync_pb::TrustedVaultAutoUpgradeExperimentGroup::TYPE_UNSPECIFIED,
+            sync_prefs_->GetCachedTrustedVaultAutoUpgradeExperimentGroup()
+                .value_or(sync_pb::TrustedVaultAutoUpgradeExperimentGroup())
+                .type());
+  EXPECT_EQ(0, sync_prefs_->GetCachedTrustedVaultAutoUpgradeExperimentGroup()
+                   .value_or(sync_pb::TrustedVaultAutoUpgradeExperimentGroup())
+                   .type_index());
 }
 
 class MockSyncPrefObserver : public SyncPrefObserver {
@@ -184,7 +200,7 @@ class MockSyncPrefObserver : public SyncPrefObserver {
 
 TEST_F(SyncPrefsTest, ObservedPrefs) {
   StrictMock<MockSyncPrefObserver> mock_sync_pref_observer;
-  InSequence dummy;
+  InSequence in_sequence;
   EXPECT_CALL(mock_sync_pref_observer, OnSyncManagedPrefChange(true));
   EXPECT_CALL(mock_sync_pref_observer, OnSyncManagedPrefChange(false));
 
@@ -203,7 +219,7 @@ TEST_F(SyncPrefsTest, ObservedPrefs) {
 #if !BUILDFLAG(IS_CHROMEOS_ASH)
 TEST_F(SyncPrefsTest, FirstSetupCompletePrefChange) {
   StrictMock<MockSyncPrefObserver> mock_sync_pref_observer;
-  InSequence dummy;
+  InSequence in_sequence;
 
   EXPECT_CALL(mock_sync_pref_observer, OnFirstSetupCompletePrefChange(true));
   EXPECT_CALL(mock_sync_pref_observer, OnFirstSetupCompletePrefChange(false));
@@ -488,7 +504,7 @@ TEST_F(SyncPrefsTest,
   // one of those and is enabled when kReplaceSyncPromosWithSignInPromos is
   // enabled.
   UserSelectableTypeSet expected_types{
-      UserSelectableType::kBookmarks,   UserSelectableType::kCompare,
+      UserSelectableType::kBookmarks,   UserSelectableType::kProductComparison,
       UserSelectableType::kReadingList, UserSelectableType::kPasswords,
       UserSelectableType::kAutofill,    UserSelectableType::kPayments,
       UserSelectableType::kPreferences};
@@ -1311,7 +1327,6 @@ TEST_F(SyncPrefsSyncToSigninMigrationTest, MigratesBookmarksOptedIn) {
   }
 }
 
-#if BUILDFLAG(IS_IOS)
 TEST_F(SyncPrefsSyncToSigninMigrationTest, MigratesBookmarksNotOptedIn) {
   {
     // The SyncToSignin feature starts disabled.
@@ -1319,11 +1334,21 @@ TEST_F(SyncPrefsSyncToSigninMigrationTest, MigratesBookmarksNotOptedIn) {
     disable_sync_to_signin.InitAndDisableFeature(
         kReplaceSyncPromosWithSignInPromos);
 
+    SyncPrefs prefs(&pref_service_);
+
+#if BUILDFLAG(IS_IOS)
     // The regular Bookmarks and ReadingList prefs are enabled (by default), but
     // the additional opt-in pref should not be enabled.
-    SyncPrefs prefs(&pref_service_);
     ASSERT_FALSE(pref_service_.GetBoolean(
         prefs::internal::kBookmarksAndReadingListAccountStorageOptIn));
+#else   // BUILDFLAG(IS_IOS)
+    // With the feature disabled, and outside iOS, Bookmarks and ReadingList are
+    // disabled by default.
+    ASSERT_FALSE(prefs.GetSelectedTypesForAccount(gaia_id_hash_)
+                     .Has(UserSelectableType::kBookmarks));
+    ASSERT_FALSE(prefs.GetSelectedTypesForAccount(gaia_id_hash_)
+                     .Has(UserSelectableType::kReadingList));
+#endif  // BUILDFLAG(IS_IOS)
   }
 
   {
@@ -1352,7 +1377,6 @@ TEST_F(SyncPrefsSyncToSigninMigrationTest, MigratesBookmarksNotOptedIn) {
                      .Has(UserSelectableType::kReadingList));
   }
 }
-#endif  // BUILDFLAG(IS_IOS)
 
 TEST_F(SyncPrefsSyncToSigninMigrationTest,
        TurnsAutofillOffForCustomPassphraseUser) {

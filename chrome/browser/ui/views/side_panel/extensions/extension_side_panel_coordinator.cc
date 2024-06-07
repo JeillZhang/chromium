@@ -85,9 +85,7 @@ ExtensionSidePanelCoordinator::ExtensionSidePanelCoordinator(
     scoped_service_observation_.Observe(service);
     LoadExtensionIcon();
     if (IsGlobalCoordinator()) {
-      if (features::IsSidePanelPinningEnabled()) {
-        UpdateActionItemIcon();
-      }
+      UpdateActionItemIcon();
       browser_->tab_strip_model()->AddObserver(this);
     }
 
@@ -278,8 +276,7 @@ void ExtensionSidePanelCoordinator::CreateAndRegisterEntry() {
   // is always deregistered when this class is destroyed, so CreateView can't be
   // called after the destruction of `this`.
   registry_->Register(std::make_unique<SidePanelEntry>(
-      GetEntryKey(), base::UTF8ToUTF16(extension_->short_name()),
-      ui::ImageModel::FromImage(extension_icon_->image()),
+      GetEntryKey(),
       base::BindRepeating(&ExtensionSidePanelCoordinator::CreateView,
                           base::Unretained(this))));
 }

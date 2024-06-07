@@ -236,7 +236,6 @@
 <translation id="2189104374785738357">የኤፒኤን ዝርዝሮችን ያርትዑ</translation>
 <translation id="2195732836444333448">ሙሉ አቅም ላይ ነው። በቅርቡ ተመልሰው ይምጡ።</translation>
 <translation id="2201758491318984023">ብስክሌት</translation>
-<translation id="2203222757805818543">የአሁኑ መርሐግብር ወደ <ph name="SUNRISE" /> - <ph name="SUNSET" /> ተቀናብሯል። የጨለማ ሁነታ መርሐግብርን በራስ-ሰር ለማዘመን <ph name="BEGIN_LINK" />የአካባቢ መዳረሻን ያብሩ<ph name="END_LINK" /></translation>
 <translation id="2203272733515928691">ሙቅ የምንጭ ውሃ</translation>
 <translation id="2203642483788377106">የገደል ጫፍ</translation>
 <translation id="2208388655216963643">ኢምፕሬሽኒስት</translation>
@@ -364,6 +363,7 @@
 <translation id="3054177598518735801"><ph name="CURRENT_VALUE" /> ሚአ</translation>
 <translation id="3056720590588772262">የማለቂያ ነጥብ</translation>
 <translation id="3060579846059757016">መግለጫዎች</translation>
+<translation id="3061850252076394168">ለመናገር ምረጥን ያንቁ</translation>
 <translation id="3069085583900247081">ሙከራ አልተሳካም</translation>
 <translation id="3078740164268491126">ሠንጠረዥ</translation>
 <translation id="3081652522083185657">መብራት</translation>
@@ -630,7 +630,6 @@
 <translation id="458794348635939462">ለሁሉም አስተናጋጆች መፍትሔ መስጠት አልተሳካም</translation>
 <translation id="4593212453765072419">የተኪ ማረጋገጥ ያስፈልጋል</translation>
 <translation id="4609350030397390689">የቁልፍ ሰሌዳ ብሩህነት መቀነሻ</translation>
-<translation id="4617553623719764431">አካባቢዎን ስለማያውቅ የአየር ሁኔታ አይታይም። የአካባቢውን የአየር ሁኔታ ለማሳየት <ph name="BEGIN_LINK" />የአካባቢ መዳረሻን ያብሩ<ph name="END_LINK" /></translation>
 <translation id="4627232916386272576"><ph name="DOCUMENT_TITLE" />፣ <ph name="PRINTER_NAME" />፣ <ph name="CREATION_TIME" />፣ <ph name="PRINTED_PAGE_NUMBER" /> ከ<ph name="TOTAL_PAGE_NUMBER" /> ዉስጥ የሕትመት ሥራን ለመሰረዝ እባክዎ ያስገቡ።</translation>
 <translation id="463791356324567266">መቃኘትን በመሰረዝ ላይ...</translation>
 <translation id="4646949265910132906">ደህንነቱ የተጠበቀ የWiFi ግንኙነት</translation>
@@ -704,6 +703,7 @@
 <translation id="4985509611418653372">አሂድ</translation>
 <translation id="4987769320337599931">ኬላ</translation>
 <translation id="4988526792673242964">ገፆች</translation>
+<translation id="4989542687859782284">አይገኝም</translation>
 <translation id="4999333166442584738">ሪፖርትን ደብቅ</translation>
 <translation id="500920857929044050">ሙከራን አቁም</translation>
 <translation id="5017508259293544172">LEAP</translation>
@@ -960,7 +960,6 @@
 <translation id="6412715219990689313">አብሮገነብ ቁልፍሰሌዳ</translation>
 <translation id="6417265370957905582">Google ረዳት</translation>
 <translation id="6423239382391657905">OpenVPN</translation>
-<translation id="6438073885402882007">ይህ ፈቃድ ያላቸው የሥርዓት አገልግሎቶች አካባቢዎን እንዲጠቀሙ ያስችላቸዋል። አካባቢ የመሣሪያዎን አካባቢ ለመገመት እንዲያግዝ እንደ Wi‑Fi፣ የተንቀሳቃሽ ስልክ አውታረ መረቦች እና ዳሳሾች ያሉ ምንጮችን ሊጠቀም ይችላል። <ph name="LINK_BEGIN" />የበለጠ ለመረዳት<ph name="LINK_END" /></translation>
 <translation id="6439505561246192797">ደካማ (<ph name="SIGNAL_STRENGTH" />)</translation>
 <translation id="6447630859861661624">ወደ የመለያ ቅንብሮች ሂድ</translation>
 <translation id="6462978824459367242">ኤፒኤን አክል አዝራር አሁን ነቅቷል</translation>

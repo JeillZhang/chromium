@@ -6,6 +6,7 @@
 
 #include <memory>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -19,6 +20,7 @@
 #include "base/system/sys_info.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/threading/sequence_local_storage_slot.h"
+#include "base/threading/thread_restrictions.h"
 #include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
@@ -57,7 +59,6 @@
 #include "third_party/skia/include/gpu/GrYUVABackendTextures.h"
 #include "third_party/skia/include/gpu/ganesh/SkImageGanesh.h"
 #include "third_party/skia/include/gpu/ganesh/gl/GrGLBackendSurface.h"
-#include "third_party/skia/include/gpu/ganesh/vk/GrVkBackendSurface.h"
 #include "third_party/skia/include/gpu/gl/GrGLTypes.h"
 #include "third_party/skia/include/gpu/graphite/Image.h"
 #include "third_party/skia/include/gpu/graphite/Recorder.h"
@@ -73,6 +74,8 @@
 #if BUILDFLAG(ENABLE_VULKAN)
 #include "components/viz/common/gpu/vulkan_context_provider.h"
 #include "gpu/vulkan/vulkan_device_queue.h"
+#include "third_party/skia/include/gpu/ganesh/vk/GrVkBackendSurface.h"
+#include "third_party/skia/include/gpu/vk/VulkanTypes.h"
 #endif  // BUILDFLAG(ENABLE_VULKAN)
 
 #if BUILDFLAG(IS_WIN)
@@ -418,14 +421,21 @@ void SkiaOutputSurfaceImpl::Reshape(const ReshapeParams& params) {
     sample_count_ = 1;
   }
 
-  SkImageInfo image_info = SkImageInfo::Make(
-      size_.width(), size_.height(), color_type_, alpha_type_, sk_color_space_);
+  const SkiaOutputDevice::ReshapeParams device_reshape_params = {
+      .image_info =
+          SkImageInfo::Make(size_.width(), size_.height(), color_type_,
+                            alpha_type_, sk_color_space_),
+      .color_space = params.color_space,
+      .sample_count = sample_count_,
+      .device_scale_factor = params.device_scale_factor,
+      .transform = GetDisplayTransform(),
+  };
   // impl_on_gpu_ is released on the GPU thread by a posted task from
   // SkiaOutputSurfaceImpl::dtor. So it is safe to use base::Unretained.
+
   auto task = base::BindOnce(&SkiaOutputSurfaceImplOnGpu::Reshape,
-                             base::Unretained(impl_on_gpu_.get()), image_info,
-                             params.color_space, sample_count_,
-                             params.device_scale_factor, GetDisplayTransform());
+                             base::Unretained(impl_on_gpu_.get()),
+                             device_reshape_params);
   EnqueueGpuTask(std::move(task), {}, /*make_current=*/true,
                  /*need_framebuffer=*/!dependency_->IsOffscreen());
   FlushGpuTasks(SyncMode::kNoWait);
@@ -560,10 +570,12 @@ sk_sp<SkImage> SkiaOutputSurfaceImpl::MakePromiseSkImageFromYUV(
       // texture info for fallback. Fallback textures are not considered YUV
       // planes since they are allocated separately and need write usage.
       context->SetImage(
-          nullptr, {gpu::GraphitePromiseTextureInfo(gr_context_type_, format)});
+          nullptr, {gpu::GraphitePromiseTextureInfo(
+                       gr_context_type_, format, /*ycbcr_info=*/std::nullopt)});
 
       texture_infos[i] =
           gpu::GraphitePromiseTextureInfo(gr_context_type_, format,
+                                          /*ycbcr_info=*/std::nullopt,
                                           /*plane_index=*/0);
       fulfills[i] = new FulfillForPlane(context);
     }
@@ -634,7 +646,8 @@ void SkiaOutputSurfaceImpl::MakePromiseSkImageSinglePlane(
 
   if (graphite_recorder_) {
     skgpu::graphite::TextureInfo texture_info = gpu::GraphitePromiseTextureInfo(
-        gr_context_type_, format, /*plane_index=*/0, mipmap);
+        gr_context_type_, format, image_context->ycbcr_info(),
+        /*plane_index=*/0, mipmap);
     SkColorInfo color_info(color_type, image_context->alpha_type(),
                            image_context->color_space());
     skgpu::Origin origin = image_context->origin() == kTopLeft_GrSurfaceOrigin
@@ -678,6 +691,15 @@ void SkiaOutputSurfaceImpl::MakePromiseSkImageMultiPlane(
   SkYUVAInfo yuva_info(gfx::SizeToSkISize(image_context->size()), plane_config,
                        subsampling, sk_yuv_color_space);
   if (graphite_recorder_) {
+    // This function is for per-plane sampling and is never used in conjunction
+    // with YCbCr sampling. In particular, on Android SharedImages used with
+    // YCbCr sampling always have RGBA format and on ChromeOS such SharedImages
+    // will have PrefersExternalSampler() set to true. Both of these cases are
+    // handled by MakePromiseSkImageSinglePlane().
+    // TODO(blundell): Hoist this CHECK up to apply universally for Ganesh as
+    // well as Graphite.
+    CHECK(!image_context->ycbcr_info());
+
     std::vector<skgpu::graphite::TextureInfo> texture_infos;
     void* fulfills[SkYUVAInfo::kMaxPlanes] = {};
     for (int plane_index = 0; plane_index < format.NumberOfPlanes();
@@ -685,7 +707,7 @@ void SkiaOutputSurfaceImpl::MakePromiseSkImageMultiPlane(
       CHECK_EQ(image_context->origin(), kTopLeft_GrSurfaceOrigin);
       fulfills[plane_index] = new FulfillForPlane(image_context, plane_index);
       texture_infos.emplace_back(gpu::GraphitePromiseTextureInfo(
-          gr_context_type_, format, plane_index));
+          gr_context_type_, format, /*ycbcr_info=*/std::nullopt, plane_index));
     }
 
     skgpu::graphite::YUVABackendTextureInfo yuva_backend_info(
@@ -1489,8 +1511,10 @@ void SkiaOutputSurfaceImpl::FlushGpuTasksWithImpl(
   gpu_task_sync_tokens_.clear();
   gpu_tasks_.clear();
 
-  if (event)
+  if (event) {
+    base::ScopedAllowBaseSyncPrimitives allow_wait;
     event->Wait();
+  }
 }
 
 GrBackendFormat SkiaOutputSurfaceImpl::GetGrBackendFormatForTexture(
@@ -1516,12 +1540,12 @@ GrBackendFormat SkiaOutputSurfaceImpl::GetGrBackendFormatForTexture(
                          ? gpu::ToVkFormatExternalSampler(si_format)
                          : gpu::ToVkFormatSinglePlanar(si_format);
     // Assume optimal tiling.
-    GrVkYcbcrConversionInfo gr_ycbcr_info =
-        CreateGrVkYcbcrConversionInfo(dependency_->GetVulkanContextProvider()
-                                          ->GetDeviceQueue()
-                                          ->GetVulkanPhysicalDevice(),
-                                      VK_IMAGE_TILING_OPTIMAL, vk_format,
-                                      si_format, yuv_color_space, ycbcr_info);
+    skgpu::VulkanYcbcrConversionInfo gr_ycbcr_info =
+        CreateVulkanYcbcrConversionInfo(dependency_->GetVulkanContextProvider()
+                                            ->GetDeviceQueue()
+                                            ->GetVulkanPhysicalDevice(),
+                                        VK_IMAGE_TILING_OPTIMAL, vk_format,
+                                        si_format, yuv_color_space, ycbcr_info);
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
     // Textures that were allocated _on linux_ with ycbcr info came from
     // VaapiVideoDecoder, which exports using DRM format modifiers.
@@ -1674,9 +1698,9 @@ gpu::Mailbox SkiaOutputSurfaceImpl::CreateSharedImage(
     const gfx::ColorSpace& color_space,
     RenderPassAlphaType alpha_type,
     uint32_t usage,
-    base::StringPiece debug_label,
+    std::string_view debug_label,
     gpu::SurfaceHandle surface_handle) {
-  gpu::Mailbox mailbox = gpu::Mailbox::GenerateForSharedImage();
+  gpu::Mailbox mailbox = gpu::Mailbox::Generate();
 
   auto task =
       base::BindOnce(&SkiaOutputSurfaceImplOnGpu::CreateSharedImage,
@@ -1692,7 +1716,7 @@ gpu::Mailbox SkiaOutputSurfaceImpl::CreateSharedImage(
 gpu::Mailbox SkiaOutputSurfaceImpl::CreateSolidColorSharedImage(
     const SkColor4f& color,
     const gfx::ColorSpace& color_space) {
-  gpu::Mailbox mailbox = gpu::Mailbox::GenerateForSharedImage();
+  gpu::Mailbox mailbox = gpu::Mailbox::Generate();
 
   auto task = base::BindOnce(
       &SkiaOutputSurfaceImplOnGpu::CreateSolidColorSharedImage,
@@ -1743,11 +1767,12 @@ void SkiaOutputSurfaceImpl::DetileOverlay(gpu::Mailbox input,
                                           gpu::Mailbox output,
                                           const gfx::RectF& display_rect,
                                           const gfx::RectF& crop_rect,
-                                          gfx::OverlayTransform transform) {
+                                          gfx::OverlayTransform transform,
+                                          bool is_10bit) {
   auto task = base::BindOnce(&SkiaOutputSurfaceImplOnGpu::DetileOverlay,
                              base::Unretained(impl_on_gpu_.get()), input,
                              input_visible_size, output, display_rect,
-                             crop_rect, transform);
+                             crop_rect, transform, is_10bit);
   EnqueueGpuTask(std::move(task), {input_sync_token}, /*make_current=*/false,
                  /*need_framebuffer=*/false);
 }

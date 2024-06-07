@@ -24,6 +24,7 @@
 #include "ash/wm/snap_group/snap_group.h"
 #include "ash/wm/snap_group/snap_group_controller.h"
 #include "ash/wm/splitview/split_view_utils.h"
+#include "ash/wm/window_properties.h"
 #include "ash/wm/window_util.h"
 #include "ash/wm/wm_constants.h"
 #include "base/memory/raw_ptr.h"
@@ -328,14 +329,15 @@ views::Widget::InitParams OverviewItemBase::CreateOverviewItemWidgetParams(
     aura::Window* parent_window,
     const std::string& widget_name,
     bool accept_event) const {
-  views::Widget::InitParams params;
-  params.type = views::Widget::InitParams::TYPE_POPUP;
-  params.ownership = views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
+  views::Widget::InitParams params(
+      views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET,
+      views::Widget::InitParams::TYPE_POPUP);
   params.opacity = views::Widget::InitParams::WindowOpacity::kTranslucent;
   params.name = widget_name;
   params.accept_events = accept_event;
   params.parent = parent_window;
   params.init_properties_container.SetProperty(kHideInDeskMiniViewKey, true);
+  params.init_properties_container.SetProperty(kOverviewUiKey, true);
   return params;
 }
 

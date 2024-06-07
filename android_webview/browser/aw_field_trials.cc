@@ -4,6 +4,7 @@
 
 #include "android_webview/browser/aw_field_trials.h"
 
+#include "android_webview/common/aw_switches.h"
 #include "base/base_paths_android.h"
 #include "base/feature_list.h"
 #include "base/memory/raw_ref.h"
@@ -192,12 +193,6 @@ void AwFieldTrials::RegisterFeatureOverrides(base::FeatureList* feature_list) {
   // FedCM is not yet supported on WebView.
   aw_feature_overrides.DisableFeature(::features::kFedCm);
 
-  // Disable enhanced track-pad features until WebView's experiment
-  // is fully rolled out to stable.
-  aw_feature_overrides.DisableFeature(ui::kConvertTrackpadEventsToMouse);
-  aw_feature_overrides.DisableFeature(
-      ::features::kMouseAndTrackpadDropdownMenu);
-
   // TODO(crbug.com/40272633): Web MIDI permission prompt for all usage.
   aw_feature_overrides.DisableFeature(blink::features::kBlockMidiByDefault);
 
@@ -205,4 +200,19 @@ void AwFieldTrials::RegisterFeatureOverrides(base::FeatureList* feature_list) {
   // AwContents to leak in apps that don't call destroy().
   aw_feature_overrides.DisableFeature(blink::features::kDevicePosture);
   aw_feature_overrides.DisableFeature(blink::features::kViewportSegments);
+
+  // New Safe Browsing API is still being rolled out on WebView.
+  aw_feature_overrides.DisableFeature(
+      safe_browsing::kSafeBrowsingNewGmsApiForBrowseUrlDatabaseCheck);
+
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kDebugBlindauth)) {
+    aw_feature_overrides.EnableFeature(net::features::kEnableIpProtectionProxy);
+    aw_feature_overrides.EnableFeature(network::features::kMaskedDomainList);
+  }
+
+  // Delete Incidental Party State (DIPS) feature is not yet supported on
+  // WebView.
+  // TODO(b/344852824): Enable the feature for WebView
+  aw_feature_overrides.DisableFeature(::features::kDIPS);
 }

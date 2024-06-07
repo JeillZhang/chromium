@@ -15,6 +15,7 @@
 
 namespace ash {
 
+enum class PickerActionType;
 class PickerAssetFetcher;
 class PickerSearchResult;
 class PickerSearchResultsSection;
@@ -74,9 +75,21 @@ class ASH_EXPORT PickerViewDelegate {
   virtual void GetSuggestedEditorResults(
       SuggestedEditorResultsCallback callback) = 0;
 
+  // Returns the current action for `result`.
+  virtual PickerActionType GetActionForResult(
+      const PickerSearchResult& result) = 0;
+
   virtual PickerAssetFetcher* GetAssetFetcher() = 0;
 
   virtual PickerSessionMetrics& GetSessionMetrics() = 0;
+
+  // Gets history of emoji picker for certain `category`.
+  virtual std::vector<std::string> GetRecentEmoji(
+      ui::EmojiPickerCategory category) = 0;
+
+  // Gets placeholder emojis to show when the user has not used any emojis
+  // recently.
+  virtual std::vector<std::string> GetPlaceholderEmojis() = 0;
 };
 
 }  // namespace ash

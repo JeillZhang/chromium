@@ -417,6 +417,14 @@ std::optional<AcceleratorConfigResult> ValidateAccelerator(
     return AcceleratorConfigResult::kShiftOnlyNotAllowed;
   }
 
+  // Case: Accelerator cannot have right alt key.
+  if (accelerator.key_code() == ui::VKEY_RIGHT_ALT) {
+    VLOG(1) << "Failed to validate accelerator: "
+            << accelerator.GetShortcutText() << " with error: "
+            << static_cast<int>(AcceleratorConfigResult::kBlockRightAlt);
+    return AcceleratorConfigResult::kBlockRightAlt;
+  }
+
   // No errors with the accelerator.
   return std::nullopt;
 }
@@ -432,7 +440,7 @@ std::string GetUuid(mojom::AcceleratorSource source,
 // or specific device property.
 bool ShouldExcludeItem(const AcceleratorLayoutDetails& details) {
   switch (details.action_id) {
-    case kToggleSnapGroupWindowsGroupAndUngroup:
+    case kCreateSnapGroup:
     case kToggleSnapGroupWindowsMinimizeAndRestore:
       return !features::IsSnapGroupEnabled();
     // Hide user switching shortcuts for lacros builds.
@@ -441,6 +449,11 @@ bool ShouldExcludeItem(const AcceleratorLayoutDetails& details) {
       return crosapi::lacros_startup_state::IsLacrosEnabled();
     case kPrivacyScreenToggle:
       return accelerators::CanTogglePrivacyScreen();
+    case kTilingWindowResizeLeft:
+    case kTilingWindowResizeRight:
+    case kTilingWindowResizeUp:
+    case kTilingWindowResizeDown:
+      return !features::IsTilingWindowResizeEnabled();
   }
 
   return false;

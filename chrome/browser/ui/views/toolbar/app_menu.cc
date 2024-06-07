@@ -39,6 +39,7 @@
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/global_error/global_error_service_factory.h"
+#include "chrome/browser/ui/hats/trust_safety_sentiment_service_factory.h"
 #include "chrome/browser/ui/layout_constants.h"
 #include "chrome/browser/ui/profiles/profile_view_utils.h"
 #include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_service_factory.h"
@@ -50,6 +51,7 @@
 #include "chrome/browser/ui/views/frame/app_menu_button.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/frame/toolbar_button_provider.h"
+#include "chrome/browser/upgrade_detector/upgrade_detector.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/grit/theme_resources.h"
 #include "components/bookmarks/browser/bookmark_model.h"
@@ -72,6 +74,7 @@
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/base/models/image_model.h"
+#include "ui/base/models/simple_menu_model.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/base/themed_vector_icon.h"
 #include "ui/base/ui_base_features.h"
@@ -358,6 +361,22 @@ class InMenuImageButton : public ImageButton {
 BEGIN_METADATA(InMenuImageButton)
 END_METADATA
 
+// Conditionally return the update app menu item substring text based on upgrade
+// detector state.
+std::u16string GetUpgradeDialogSubstringText() {
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING) && \
+    (BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX))
+  if (base::FeatureList::IsEnabled(features::kUpdateTextOptions) &&
+      !UpgradeDetector::GetInstance()->is_outdated_install() &&
+      !UpgradeDetector::GetInstance()->is_outdated_install_no_au()) {
+    {
+      return {l10n_util::GetStringUTF16(IDS_RELAUNCH_TO_UPDATE_ALT_MINOR_TEXT)};
+    }
+  }
+#endif
+  return std::u16string();
+}
+
 // Helper method that adds a bespoke chip to the profile related menu items.
 void AddSignedInChipToProfileMenuItem(
     Profile* profile,
@@ -481,7 +500,7 @@ class AppMenuView : public views::View {
       button->Init(type);
       menu_button = std::move(button);
     }
-    menu_button->SetAccessibleName(GetAccessibleNameForAppMenuItem(
+    menu_button->GetViewAccessibility().SetName(GetAccessibleNameForAppMenuItem(
         menu_model_, index, accessible_name_id, add_accelerator_text));
     menu_button->set_tag(index);
     menu_button->SetEnabled(menu_model_->IsEnabledAt(index));
@@ -536,7 +555,7 @@ class FullscreenButton : public ImageButton {
     const int accname_string_id =
         is_in_fullscreen ? IDS_ACCNAME_EXIT_FULLSCREEN : IDS_ACCNAME_FULLSCREEN;
     SetTooltipText(l10n_util::GetStringUTF16(accname_string_id));
-    SetAccessibleName(GetAccessibleNameForAppMenuItem(
+    GetViewAccessibility().SetName(GetAccessibleNameForAppMenuItem(
         menu_model, fullscreen_index, accname_string_id,
 #if BUILDFLAG(IS_CHROMEOS_ASH)
         // ChromeOS uses a dedicated "fullscreen" media key for fullscreen
@@ -1313,6 +1332,24 @@ bool AppMenu::ShouldCloseOnDragComplete() {
 }
 
 void AppMenu::OnMenuClosed(views::MenuItemView* menu) {
+  // If the menu contained a Safety Hub notification, mark as trigger for HaTS
+  // survey if the menu was open for at least 5 seconds.
+  static constexpr auto kSafetyHubCommandIds =
+      std::array{IDC_OPEN_SAFETY_HUB, IDC_SAFETY_HUB_MANAGE_EXTENSIONS,
+                 IDC_SAFETY_HUB_SHOW_PASSWORD_CHECKUP};
+  const bool has_safety_hub_notification = base::ranges::any_of(
+      kSafetyHubCommandIds,
+      [&](int id) { return command_id_to_entry_.contains(id); });
+  if (has_safety_hub_notification &&
+      menu_opened_timer_.Elapsed() >= base::Seconds(5)) {
+    if (TrustSafetySentimentService* sentiment_service =
+            TrustSafetySentimentServiceFactory::GetForProfile(
+                browser_->profile())) {
+      sentiment_service->TriggerSafetyHubSurvey(
+          TrustSafetySentimentService::FeatureArea::kSafetyHubNotification);
+    }
+  }
+
   auto* browser_view = BrowserView::GetBrowserViewForBrowser(browser_);
   browser_view->toolbar_button_provider()->GetAppMenuButton()->OnMenuClosed();
 
@@ -1382,11 +1419,11 @@ void AppMenu::PopulateMenu(MenuItemView* parent, MenuModel* model) {
 
     // Helper method that adds a background to a menu item.
     auto add_menu_row_background = [item](int vertical_margin,
-                                          ui::ColorId background_color) {
+                                          ui::ColorId background_color_id) {
       constexpr int kBackgroundCornerRadius = 12;
       item->set_vertical_margin(vertical_margin);
       item->SetMenuItemBackground(MenuItemView::MenuItemBackground(
-          background_color, kBackgroundCornerRadius));
+          background_color_id, kBackgroundCornerRadius));
       item->SetSelectedColorId(ui::kColorAppMenuRowBackgroundHovered);
     };
 
@@ -1411,10 +1448,23 @@ void AppMenu::PopulateMenu(MenuItemView* parent, MenuModel* model) {
         break;
       }
       case IDC_UPGRADE_DIALOG: {
-        add_menu_row_background(
-            views::LayoutProvider::Get()->GetDistanceMetric(
-                views::DISTANCE_CONTROL_VERTICAL_TEXT_PADDING),
-            ui::kColorAppMenuUpgradeRowBackground);
+        add_menu_row_background(12, ui::kColorAppMenuUpgradeRowBackground);
+        if (const auto upgrade_substring_text = GetUpgradeDialogSubstringText();
+            !upgrade_substring_text.empty()) {
+          item->AddChildView(
+              views::Builder<views::Label>()
+                  .SetText(upgrade_substring_text)
+                  .SetEnabledColorId(
+                      ui::kColorAppMenuUpgradeRowSubstringForeground)
+                  .SetEnabled(true)
+                  .SetBorder(views::CreateEmptyBorder(gfx::Insets::VH(
+                      0, views::LayoutProvider::Get()->GetDistanceMetric(
+                             views::DISTANCE_RELATED_LABEL_HORIZONTAL) -
+                             MenuItemView::kChildHorizontalPadding)))
+                  .Build());
+          item->SetHighlightWhenSelectedWithChildViews(true);
+          item->SetTriggerActionWithNonIconChildViews(true);
+        }
         break;
       }
       case IDC_SET_BROWSER_AS_DEFAULT: {
@@ -1555,4 +1605,8 @@ size_t AppMenu::ModelIndexFromCommandId(int command_id) const {
   auto ix = command_id_to_entry_.find(command_id);
   DCHECK(ix != command_id_to_entry_.end());
   return ix->second.second;
+}
+
+void AppMenu::SetTimerForTesting(base::ElapsedTimer timer) {
+  menu_opened_timer_ = std::move(timer);
 }

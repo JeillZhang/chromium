@@ -10,6 +10,7 @@
 
 #include "ash/ash_export.h"
 #include "ash/system/focus_mode/focus_mode_util.h"
+#include "ash/system/focus_mode/sounds/focus_mode_sounds_delegate.h"
 #include "base/functional/callback.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
@@ -21,7 +22,7 @@ class ImageSkia;
 
 namespace ash {
 
-class FocusModeSoundsDelegate;
+class FocusModeYouTubeMusicDelegate;
 
 // This class is used to download images and record the info of playlists after
 // getting the response data we need from Music API, which will be used to show
@@ -71,6 +72,10 @@ class ASH_EXPORT FocusModeSoundsController {
       delete;
   ~FocusModeSoundsController();
 
+  using GetNextTrackCallback =
+      base::OnceCallback<void(const FocusModeSoundsDelegate::Track&)>;
+  void GetNextTrack(GetNextTrackCallback callback);
+
   const std::vector<std::unique_ptr<Playlist>>& soundscape_playlists() const {
     return soundscape_playlists_;
   }
@@ -82,6 +87,8 @@ class ASH_EXPORT FocusModeSoundsController {
   const SelectedPlaylist& selected_playlist() const {
     return selected_playlist_;
   }
+
+  focus_mode_util::SoundType sound_type() const { return sound_type_; }
 
   void AddObserver(Observer* observer);
   void RemoveObserver(Observer* observer);
@@ -99,22 +106,32 @@ class ASH_EXPORT FocusModeSoundsController {
       const bool is_soundscape_type,
       UpdateSoundsViewCallback update_sounds_view_callback);
 
+  void UpdateFromUserPrefs();
+
+  // Sets the failure callback for all YouTube Music API requests. This callback
+  // is used to update the specific UIs that are dependent on the account
+  // premium status.
+  void SetYouTubeMusicFailureCallback(base::RepeatingClosure callback);
+
  private:
+  void SaveUserPref();
   void ResetSelectedPlaylist();
   void SelectPlaylist(const SelectedPlaylist& playlist_data);
 
   void OnAllThumbnailsDownloaded(
       bool is_soundscape_type,
       UpdateSoundsViewCallback update_sounds_view_callback,
-      std::vector<std::unique_ptr<Playlist>> playlists);
+      std::vector<std::unique_ptr<Playlist>> sorted_playlists);
 
   std::unique_ptr<FocusModeSoundsDelegate> soundscape_delegate_;
-  std::unique_ptr<FocusModeSoundsDelegate> youtube_music_delegate_;
+  std::unique_ptr<FocusModeYouTubeMusicDelegate> youtube_music_delegate_;
 
   std::vector<std::unique_ptr<Playlist>> soundscape_playlists_;
   std::vector<std::unique_ptr<Playlist>> youtube_music_playlists_;
 
   SelectedPlaylist selected_playlist_;
+  focus_mode_util::SoundType sound_type_ =
+      focus_mode_util::SoundType::kSoundscape;
 
   base::ObserverList<Observer> observers_;
 

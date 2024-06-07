@@ -3,7 +3,7 @@
 # found in the LICENSE file.
 """Definitions of builders in the chromium.angle builder group."""
 
-load("//lib/builders.star", "os", "sheriff_rotations", "siso")
+load("//lib/builders.star", "gardener_rotations", "os", "siso")
 load("//lib/builder_config.star", "builder_config")
 load("//lib/builder_health_indicators.star", "health_spec")
 load("//lib/ci.star", "ci")
@@ -15,8 +15,8 @@ ci.defaults.set(
     executable = "recipe:angle_chromium",
     builder_group = "chromium.angle",
     pool = ci.gpu.POOL,
-    sheriff_rotations = sheriff_rotations.ANGLE,
     execution_timeout = ci.DEFAULT_EXECUTION_TIMEOUT,
+    gardener_rotations = gardener_rotations.ANGLE,
     health_spec = health_spec.DEFAULT,
     properties = {
         "perf_dashboard_machine_group": "ChromiumANGLE",
@@ -71,7 +71,7 @@ ci.gpu.linux_builder(
             "android_builder_without_codecs",
             "release_try_builder",
             "minimal_symbols",
-            "reclient",
+            "remoteexec",
             "arm64",
             "static_angle",
             "android_fastbuild",
@@ -121,7 +121,6 @@ ci.gpu.linux_builder(
         gclient_config = builder_config.gclient_config(
             config = "chromium",
             apply_configs = [
-                "angle_internal",
                 "angle_top_of_tree",
                 "fuchsia",
             ],
@@ -142,7 +141,7 @@ ci.gpu.linux_builder(
             "angle_deqp_tests",
             "shared",
             "release",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
             "dcheck_always_on",
             "fuchsia",
@@ -179,7 +178,7 @@ ci.gpu.linux_builder(
         configs = [
             "gpu_tests",
             "release_builder",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
             "dcheck_always_on",
         ],
@@ -276,7 +275,7 @@ ci.gpu.mac_builder(
         configs = [
             "gpu_tests",
             "release_builder",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
             "dcheck_always_on",
             "x64",
@@ -357,7 +356,6 @@ ci.gpu.mac_builder(
         gclient_config = builder_config.gclient_config(
             config = "ios",
             apply_configs = [
-                "angle_internal",
                 "angle_top_of_tree",
             ],
         ),
@@ -377,7 +375,7 @@ ci.gpu.mac_builder(
         configs = [
             "angle_deqp_tests",
             "release_builder",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
             "dcheck_always_on",
             "ios_simulator",
@@ -404,7 +402,6 @@ ci.thin_tester(
         gclient_config = builder_config.gclient_config(
             config = "ios",
             apply_configs = [
-                "angle_internal",
                 "angle_top_of_tree",
             ],
         ),
@@ -452,7 +449,7 @@ ci.gpu.windows_builder(
         configs = [
             "gpu_tests",
             "release_builder",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
             "dcheck_always_on",
         ],
@@ -549,7 +546,7 @@ ci.gpu.windows_builder(
         configs = [
             "gpu_tests",
             "release_builder",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
             "dcheck_always_on",
             "x86",

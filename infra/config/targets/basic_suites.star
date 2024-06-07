@@ -15,7 +15,7 @@ load("//lib/targets.star", "targets")
 # consistent and move the information onto the binaries
 
 targets.legacy_basic_suite(
-    name = "android_12_fieldtrial_webview_tests",
+    name = "android_ci_only_fieldtrial_webview_tests",
     tests = {
         "webview_trichrome_64_cts_tests_no_field_trial": targets.legacy_test_config(
             args = [
@@ -1065,24 +1065,6 @@ targets.legacy_basic_suite(
     },
 )
 
-# Multiscreen tests for desktop platform (Windows).
-targets.legacy_basic_suite(
-    name = "chromium_gtests_for_windows_multiscreen",
-    tests = {
-        "multiscreen_interactive_ui_tests": targets.legacy_test_config(
-            args = [
-                "--windows-virtual-display-driver",
-                "--gtest_filter=*MultiScreen*:*VirtualDisplayUtilWin*",
-            ],
-            swarming = targets.swarming(
-                dimensions = {
-                    "pool": "chromium.tests.multiscreen",
-                },
-            ),
-        ),
-    },
-)
-
 targets.legacy_basic_suite(
     name = "chromium_ios_scripts",
     tests = {
@@ -1812,6 +1794,40 @@ targets.legacy_basic_suite(
 )
 
 targets.legacy_basic_suite(
+    name = "enterprise_companion_gtests_linux",
+    tests = {
+        "enterprise_companion_tests": targets.legacy_test_config(
+            mixins = [
+                "updater-default-pool",
+            ],
+        ),
+    },
+)
+
+targets.legacy_basic_suite(
+    name = "enterprise_companion_gtests_mac",
+    tests = {
+        "enterprise_companion_tests": targets.legacy_test_config(
+            mixins = [
+                "updater-mac-pool",
+            ],
+        ),
+    },
+)
+
+targets.legacy_basic_suite(
+    name = "enterprise_companion_gtests_win",
+    tests = {
+        "enterprise_companion_tests": targets.legacy_test_config(
+            mixins = [
+                "integrity_high",
+                "updater-default-pool",
+            ],
+        ),
+    },
+)
+
+targets.legacy_basic_suite(
     name = "fieldtrial_android_tests",
     tests = {
         "android_browsertests_no_fieldtrial": targets.legacy_test_config(
@@ -1897,7 +1913,6 @@ targets.legacy_basic_suite(
         "compositor_unittests": targets.legacy_test_config(),
         "content_browsertests": targets.legacy_test_config(
             args = [
-                "--gtest_filter=-All/DumpAccessibility*/fuchsia",
                 "--test-arg=--disable-gpu",
                 "--test-arg=--headless",
                 "--test-arg=--ozone-platform=headless",
@@ -3748,7 +3763,11 @@ targets.legacy_basic_suite(
 targets.legacy_basic_suite(
     name = "ios_eg2_tests",
     tests = {
-        "ios_chrome_bookmarks_eg2tests_module": targets.legacy_test_config(),
+        "ios_chrome_bookmarks_eg2tests_module": targets.legacy_test_config(
+            swarming = targets.swarming(
+                shards = 2,
+            ),
+        ),
         "ios_chrome_settings_eg2tests_module": targets.legacy_test_config(
             mixins = [
                 "ios_parallel_simulators",

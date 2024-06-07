@@ -15,6 +15,7 @@ static_library("android") {
   deps = [
     ":jni_headers",
     "//base:base",
+    "//chrome/browser/autofill",
     "//content/public/browser:browser",
     "//ui/android:android",
   ]
@@ -32,6 +33,7 @@ source_set("unit_tests") {
     "//chrome/test:test_support",
     "//content/public/browser:browser",
     "//testing/gtest",
+    "//ui/android:android",
   ]
 }
 

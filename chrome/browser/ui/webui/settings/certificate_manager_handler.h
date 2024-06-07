@@ -7,6 +7,7 @@
 #include <array>
 
 #include "base/memory/weak_ptr.h"
+#include "build/build_config.h"
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "ui/webui/resources/cr_components/certificate_manager/certificate_manager_v2.mojom.h"
@@ -28,6 +29,8 @@ class CertificateManagerPageHandler
     virtual void ViewCertificate(
         const std::string& sha256_hex_hash,
         base::WeakPtr<content::WebContents> web_contents) = 0;
+    virtual void ExportCertificates(
+        base::WeakPtr<content::WebContents> web_contents) {}
   };
 
   explicit CertificateManagerPageHandler(
@@ -51,7 +54,14 @@ class CertificateManagerPageHandler
   void ViewCertificate(
       certificate_manager_v2::mojom::CertificateSource source_id,
       const std::string& sha256hash_hex) override;
-  void ExportChromeRootStore() override;
+  void ExportCertificates(
+      certificate_manager_v2::mojom::CertificateSource source_id) override;
+
+  void GetPolicyInformation(GetPolicyInformationCallback callback) override;
+
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
+  void ShowNativeManageCertificates() override;
+#endif
 
  private:
   // Returns a reference to the CertSource object corresponding to `source`.

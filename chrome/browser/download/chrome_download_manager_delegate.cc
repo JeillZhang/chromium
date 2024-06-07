@@ -63,6 +63,7 @@
 #include "components/download/public/common/download_features.h"
 #include "components/download/public/common/download_interrupt_reasons.h"
 #include "components/download/public/common/download_item.h"
+#include "components/download/public/common/download_item_rename_handler.h"
 #include "components/download/public/common/download_stats.h"
 #include "components/offline_pages/buildflags/buildflags.h"
 #include "components/pdf/common/constants.h"
@@ -99,6 +100,7 @@
 #include "base/android/build_info.h"
 #include "base/android/content_uri_utils.h"
 #include "base/android/path_utils.h"
+#include "base/process/process_handle.h"
 #include "chrome/browser/android/tab_android.h"
 #include "chrome/browser/download/android/chrome_duplicate_download_infobar_delegate.h"
 #include "chrome/browser/download/android/download_controller.h"
@@ -634,9 +636,14 @@ bool ChromeDownloadManagerDelegate::DetermineDownloadTarget(
           profile_->GetPrefs()->GetString(prefs::kDefaultCharset),
           download->GetSuggestedFilename(), download->GetMimeType(),
           l10n_util::GetStringUTF8(IDS_DEFAULT_DOWNLOAD_FILENAME));
-      base::FilePath cache_dir;
-      base::android::GetCacheDirectory(&cache_dir);
-      download_path = cache_dir.Append(kPdfDirName).Append(generated_filename);
+      if (profile_->IsOffTheRecord()) {
+        download_path = download->GetDownloadFile()->FullPath();
+      } else {
+        base::FilePath cache_dir;
+        base::android::GetCacheDirectory(&cache_dir);
+        download_path =
+            cache_dir.Append(kPdfDirName).Append(generated_filename);
+      }
       action = DownloadPathReservationTracker::UNIQUIFY;
     } else {
       action = DownloadPathReservationTracker::OVERWRITE;
@@ -1896,6 +1903,13 @@ download::QuarantineConnectionCallback
 ChromeDownloadManagerDelegate::GetQuarantineConnectionCallback() {
   return base::BindRepeating(
       &ChromeDownloadManagerDelegate::ConnectToQuarantineService);
+}
+
+std::unique_ptr<download::DownloadItemRenameHandler>
+ChromeDownloadManagerDelegate::GetRenameHandlerForDownload(
+    download::DownloadItem* download_item) {
+  // TODO(b/341259898): Add implementation for SkyVault on CrOS.
+  return nullptr;
 }
 
 void ChromeDownloadManagerDelegate::CheckSavePackageAllowed(

@@ -12,13 +12,14 @@ import '//resources/cr_elements/cr_toggle/cr_toggle.js';
 import './icons.html.js';
 
 import type {CrDialogElement} from '//resources/cr_elements/cr_dialog/cr_dialog.js';
+import type {CrInputElement} from '//resources/cr_elements/cr_input/cr_input.js';
 import {I18nMixin} from '//resources/cr_elements/i18n_mixin.js';
 import {WebUiListenerMixin} from '//resources/cr_elements/web_ui_listener_mixin.js';
 import type {DomRepeatEvent} from '//resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 import {PolymerElement} from '//resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {getTemplate} from './language_menu.html.js';
-import {AVAILABLE_GOOGLE_TTS_LOCALES, convertLangOrLocaleForVoicePackManager, VoicePackStatus} from './voice_language_util.js';
+import {AVAILABLE_GOOGLE_TTS_LOCALES, convertLangOrLocaleForVoicePackManager, VoiceClientSideStatusCode} from './voice_language_util.js';
 
 export interface LanguageMenuElement {
   $: {
@@ -71,14 +72,27 @@ export class LanguageMenuElement extends LanguageMenuElementBase {
     };
   }
 
+  private availableVoices: SpeechSynthesisVoice[];
   private languageSearchValue_: string;
   private readonly voicePackInstallStatus:
-      {[language: string]: VoicePackStatus};
+      {[language: string]: VoiceClientSideStatusCode};
   private readonly enabledLanguagesInPref: string[];
   private readonly availableLanguages_: LanguageDropdownItem[];
   // Use this variable instead of AVAILABLE_GOOGLE_TTS_LOCALES
   // directly to better aid in testing.
   private baseLanguages = AVAILABLE_GOOGLE_TTS_LOCALES;
+
+  // A non-Google language is one that's not associated with a Google voice
+  // that can be downloaded from the language pack.
+  private nonGoogleLanguages: string[] = [];
+
+  constructor() {
+    super();
+    this.addEventListener('cr-dialog-open', () => {
+      this.$.languageMenu.querySelector<CrInputElement>('.search-field')
+          ?.focus();
+    });
+  }
 
   private closeLanguageMenu_() {
     this.$.languageMenu.close();
@@ -106,12 +120,15 @@ export class LanguageMenuElement extends LanguageMenuElementBase {
   private computeAvailableLanguages_(
       availableVoices: SpeechSynthesisVoice[],
       localeToDisplayName: {[lang: string]: string},
-      voicePackInstallStatus: {[language: string]: VoicePackStatus},
+      voicePackInstallStatus: {[language: string]: VoiceClientSideStatusCode},
       selectedLang: string|undefined,
       languageSearchValue: string|undefined): LanguageDropdownItem[] {
     if (!availableVoices) {
       return [];
     }
+
+    // Ensure this is cleared each time we recompute available languages.
+    this.nonGoogleLanguages = [];
 
     const selectedLangLowerCase = selectedLang?.toLowerCase();
     // Ensure we've added the available pack manager supported languages to
@@ -134,6 +151,10 @@ export class LanguageMenuElement extends LanguageMenuElementBase {
           lang.toLowerCase(),
           this.getDisplayName(localeToDisplayName, lang),
         ]);
+
+        if (chrome.readingMode.isLanguagePackDownloadingEnabled) {
+          this.nonGoogleLanguages.push(lang.toLowerCase());
+        }
       }
     });
 
@@ -175,13 +196,16 @@ export class LanguageMenuElement extends LanguageMenuElementBase {
             }));
   }
 
-  private computeAriaSetting(isError: boolean): string {
-    return isError ? `polite` : `off`;
-  }
-
   private isNotificationError(
       lang: string,
-      voicePackInstallStatus: {[language: string]: VoicePackStatus}): boolean {
+      voicePackInstallStatus: {[language: string]: VoiceClientSideStatusCode},
+      ): boolean {
+    // Don't show notification text for a non-Google TTS language, as we're
+    // not attempting a download.
+    if (this.nonGoogleLanguages.includes(lang)) {
+      return false;
+    }
+
     const voicePackLanguage = convertLangOrLocaleForVoicePackManager(lang);
 
     if (!voicePackLanguage) {
@@ -190,7 +214,7 @@ export class LanguageMenuElement extends LanguageMenuElementBase {
       return false;
     }
 
-    const notification: VoicePackStatus|undefined =
+    const notification: VoiceClientSideStatusCode|undefined =
         voicePackInstallStatus[voicePackLanguage];
 
     if (notification === undefined) {
@@ -200,12 +224,20 @@ export class LanguageMenuElement extends LanguageMenuElementBase {
     // TODO(b/40927698): In the future, some of our install error messages
     // might not be set to an "error" in the notification status span, so
     // be more specific.
-    return notification === VoicePackStatus.INSTALL_ERROR;
+    return notification === VoiceClientSideStatusCode.ERROR_INSTALLING ||
+        notification === VoiceClientSideStatusCode.INSTALL_ERROR_ALLOCATION;
   }
 
   private getNotificationText(
       lang: string,
-      voicePackInstallStatus: {[language: string]: VoicePackStatus}): string {
+      voicePackInstallStatus: {[language: string]: VoiceClientSideStatusCode}):
+      string {
+    // Don't show notification text for a non-Google TTS language, as we're
+    // not attempting a download.
+    if (this.nonGoogleLanguages.includes(lang)) {
+      return '';
+    }
+
     // Make sure to convert the lang string, otherwise there could be a
     // mismatch in a language and locale and what is stored in the installation
     // map.
@@ -215,7 +247,7 @@ export class LanguageMenuElement extends LanguageMenuElementBase {
     if (!voicePackLanguage) {
       return '';
     }
-    const notification: VoicePackStatus|undefined =
+    const notification: VoiceClientSideStatusCode|undefined =
         voicePackInstallStatus[voicePackLanguage];
 
     if (notification === undefined) {
@@ -224,10 +256,11 @@ export class LanguageMenuElement extends LanguageMenuElementBase {
 
     // TODO(b/300259625): Show more error messages.
     switch (notification) {
-      case VoicePackStatus.INSTALLING:
-      case VoicePackStatus.DOWNLOADED:
+      case VoiceClientSideStatusCode.SENT_INSTALL_REQUEST:
+      case VoiceClientSideStatusCode.SENT_INSTALL_REQUEST_ERROR_RETRY:
+      case VoiceClientSideStatusCode.INSTALLED_AND_UNAVAILABLE:
         return 'readingModeLanguageMenuDownloading';
-      case VoicePackStatus.INSTALL_ERROR:
+      case VoiceClientSideStatusCode.ERROR_INSTALLING:
         // There's not a specific error code from the language pack installer
         // for internet connectivity, but if there's an installation error
         // and we detect we're offline, we can assume that the install error
@@ -239,12 +272,21 @@ export class LanguageMenuElement extends LanguageMenuElementBase {
           return 'readingModeLanguageMenuNoInternet';
         }
         return '';
-      case VoicePackStatus.NONE:
-      case VoicePackStatus.EXISTS:
-      case VoicePackStatus.INSTALLED:
-      case VoicePackStatus.REMOVED_BY_USER:
-      default:
+      case VoiceClientSideStatusCode.INSTALL_ERROR_ALLOCATION:
+        // If we get an allocation error but voices exist for the given
+        // language, show an allocation error specific to downloading high
+        // quality voices.
+        if (this.availableVoices.some(
+                voice => voice.lang.toLowerCase() === lang)) {
+          return 'allocationErrorHighQuality';
+        }
+        return 'allocationError';
+      case VoiceClientSideStatusCode.AVAILABLE:
+      case VoiceClientSideStatusCode.NOT_INSTALLED:
         return '';
+      default:
+        // This ensures the switch statement is exhaustive
+        return notification satisfies never;
     }
   }
 

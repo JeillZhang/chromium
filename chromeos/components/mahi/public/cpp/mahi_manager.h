@@ -13,6 +13,7 @@
 #include "base/component_export.h"
 #include "base/functional/callback_forward.h"
 #include "base/memory/raw_ptr.h"
+#include "base/unguessable_token.h"
 #include "chromeos/crosapi/mojom/mahi.mojom.h"
 #include "ui/gfx/image/image_skia.h"
 
@@ -37,6 +38,8 @@ enum class COMPONENT_EXPORT(MAHI_PUBLIC_CPP) MahiResponseStatus {
   kResourceExhausted = 5,
   kContentExtractionError = 6,
   kCantFindOutputData = 7,
+  kRestrictedCountry = 8,
+  kUnsupportedLanguage = 9,
   kMax = kCantFindOutputData,
 };
 
@@ -101,9 +104,18 @@ class COMPONENT_EXPORT(MAHI_PUBLIC_CPP) MahiManager {
   // Check if the feature is enabled.
   virtual bool IsEnabled() = 0;
 
-  // Called when a Media app pdf window is focused, to notify Mahi about the
+  // Called when a Media app PDF window is focused, to notify Mahi about the
   // refresh avaiablity.
   virtual void SetMediaAppPDFFocused() = 0;
+
+  // Called when a Media app PDF window is closed. This allows Mahi to hide the
+  // refresh banner targeted to it.
+  virtual void MediaAppPDFClosed(
+      const base::UnguessableToken media_app_client_id) {}
+
+  // If current page info is associated to a Media app PDF window, returns its
+  // client id.
+  virtual std::optional<base::UnguessableToken> GetMediaAppPDFClientId() const;
 
  protected:
   MahiManager();

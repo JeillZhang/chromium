@@ -154,7 +154,6 @@ public class StripLayoutHelperManagerTest {
         when(mToolbarManager.getStatusBarColorController()).thenReturn(mStatusBarColorController);
 
         TabStripSceneLayer.setTestFlag(true);
-        ToolbarFeatures.USE_TOOLBAR_BG_COLOR_FOR_STRIP_TRANSITION_SCRIM.setForTesting(true);
 
         when(mDesktopWindowStateProvider.isInUnfocusedDesktopWindow()).thenReturn(false);
         initializeTest();
@@ -705,19 +704,6 @@ public class StripLayoutHelperManagerTest {
     }
 
     @Test
-    @DisableFeatures({
-        ChromeFeatureList.TAB_LINK_DRAG_DROP_ANDROID,
-        ChromeFeatureList.TAB_DRAG_DROP_ANDROID
-    })
-    public void testDragDropInstances_FlagsDisabled_ReturnsNull() {
-        enableMultiInstance();
-        initializeTest();
-        assertNull(
-                "Tab drag source should not be set.",
-                mStripLayoutHelperManager.getTabDragSourceForTesting());
-    }
-
-    @Test
     @Config(sdk = VERSION_CODES.S)
     public void testGetDragListener() {
         enableMultiInstance();
@@ -726,7 +712,6 @@ public class StripLayoutHelperManagerTest {
     }
 
     @Test
-    @EnableFeatures(ChromeFeatureList.DYNAMIC_TOP_CHROME)
     @DisableFeatures(ChromeFeatureList.TAB_STRIP_LAYOUT_OPTIMIZATION)
     public void testTabStripTransition_Hide() {
         mStripLayoutHelperManager.setTabStripTreeProviderForTesting(mTabStripTreeProvider);
@@ -809,17 +794,9 @@ public class StripLayoutHelperManagerTest {
     }
 
     @Test
-    @EnableFeatures(ChromeFeatureList.DYNAMIC_TOP_CHROME)
     @DisableFeatures(ChromeFeatureList.TAB_STRIP_LAYOUT_OPTIMIZATION)
     public void testTabStripTransition_Show_ScrimUsesToolbarBgColor() {
         doTestTabStripTransition_Show(mToolbarPrimaryColor);
-    }
-
-    @Test
-    @DisableFeatures(ChromeFeatureList.DYNAMIC_TOP_CHROME)
-    public void testTabStripTransition_Show_ScrimUsesStripBgColor() {
-        ToolbarFeatures.USE_TOOLBAR_BG_COLOR_FOR_STRIP_TRANSITION_SCRIM.setForTesting(false);
-        doTestTabStripTransition_Show(mStripLayoutHelperManager.getBackgroundColor());
     }
 
     @Test

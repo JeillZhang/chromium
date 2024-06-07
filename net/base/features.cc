@@ -242,6 +242,10 @@ BASE_FEATURE(kSupportPartitionedBlobUrl,
              "SupportPartitionedBlobUrl",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
+BASE_FEATURE(kTopLevelTpcdOriginTrial,
+             "TopLevelTpcdOriginTrial",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
 BASE_FEATURE(kTpcdTrialSettings,
              "TpcdSupportSettings",
              base::FEATURE_ENABLED_BY_DEFAULT);
@@ -256,7 +260,7 @@ BASE_FEATURE(kTpcdMetadataGrants,
 
 BASE_FEATURE(kTpcdMetadataStageControl,
              "TpcdMetadataStageControl",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 BASE_FEATURE(kAlpsParsing, "AlpsParsing", base::FEATURE_ENABLED_BY_DEFAULT);
 
@@ -421,6 +425,11 @@ const base::FeatureParam<bool> kIpPrivacyFallbackToDirect{
     /*name=*/"IpPrivacyFallbackToDirect",
     /*default_value=*/true};
 
+const base::FeatureParam<int> kIpPrivacyDebugExperimentArm{
+    &kEnableIpProtectionProxy,
+    /*name=*/"IpPrivacyDebugExperimentArm",
+    /*default_value=*/0};
+
 // Network-change migration requires NetworkHandle support, which are currently
 // only supported on Android (see
 // NetworkChangeNotifier::AreNetworkHandlesSupported).
@@ -526,6 +535,21 @@ BASE_FEATURE(kDeviceBoundSessions,
 
 BASE_FEATURE(kStoreConnectionSubtype,
              "StoreConnectionSubtype",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+
+BASE_FEATURE(kPartitionProxyChains,
+             "PartitionProxyChains",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+
+BASE_FEATURE(kStorageAccessHeaderRetry,
+             "StorageAccessHeaderRetry",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(kStorageAccessHeaderLoad,
+             "StorageAccessHeaderLoad",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+BASE_FEATURE(kSpdySessionForProxyAdditionalChecks,
+             "SpdySessionForProxyAdditionalChecks",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
 }  // namespace net::features

@@ -5,11 +5,11 @@
 #ifndef CHROME_BROWSER_UI_ANDROID_PLUS_ADDRESSES_PLUS_ADDRESS_CREATION_VIEW_ANDROID_H_
 #define CHROME_BROWSER_UI_ANDROID_PLUS_ADDRESSES_PLUS_ADDRESS_CREATION_VIEW_ANDROID_H_
 
+#include <jni.h>
+
 #include "chrome/browser/ui/plus_addresses/plus_address_creation_controller.h"
 #include "components/plus_addresses/plus_address_types.h"
 #include "content/public/browser/web_contents.h"
-
-#include <jni.h>
 
 namespace plus_addresses {
 
@@ -27,6 +27,8 @@ class PlusAddressCreationViewAndroid {
   ~PlusAddressCreationViewAndroid();
 
   void ShowInit(const std::string& primary_email_address);
+  void OnRefreshClicked(JNIEnv* env,
+                        const base::android::JavaParamRef<jobject>& obj);
   void OnConfirmRequested(JNIEnv* env,
                           const base::android::JavaParamRef<jobject>& obj);
   void OnCanceled(JNIEnv* env, const base::android::JavaParamRef<jobject>& obj);

@@ -14,6 +14,7 @@
 #include "ui/chromeos/styles/cros_tokens_color_mappings.h"
 #include "ui/compositor/layer.h"
 #include "ui/gfx/geometry/size.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/layout/box_layout_view.h"
 
 namespace ash {
@@ -60,7 +61,7 @@ FocusModeEndingMomentView::FocusModeEndingMomentView() {
   text_container->SetPreferredSize(kTextContainerSize);
   text_container->SetProperty(
       views::kFlexBehaviorKey,
-      views::FlexSpecification(views::MinimumFlexSizeRule::kScaleToZero,
+      views::FlexSpecification(views::MinimumFlexSizeRule::kPreferred,
                                views::MaximumFlexSizeRule::kPreferred,
                                /*adjust_height_for_width =*/false));
 
@@ -92,6 +93,9 @@ FocusModeEndingMomentView::FocusModeEndingMomentView() {
       views::BoxLayout::CrossAxisAlignment::kStretch);
   button_container->SetBetweenChildSpacing(kSpaceBetweenButtons);
 
+  // TODO(crbug.com/40232718): See View::SetLayoutManagerUseConstrainedSpace.
+  button_container->SetLayoutManagerUseConstrainedSpace(false);
+
   auto* focus_mode_controller = FocusModeController::Get();
   button_container->AddChildView(std::make_unique<PillButton>(
       base::BindRepeating(&FocusModeController::ResetFocusSession,
@@ -108,8 +112,9 @@ FocusModeEndingMomentView::FocusModeEndingMomentView() {
               IDS_ASH_STATUS_TRAY_FOCUS_MODE_EXTEND_TEN_MINUTES_BUTTON_LABEL),
           PillButton::Type::kSecondaryWithoutIcon,
           /*icon=*/nullptr));
-  extend_session_duration_button_->SetAccessibleName(l10n_util::GetStringUTF16(
-      IDS_ASH_STATUS_TRAY_FOCUS_MODE_INCREASE_TEN_MINUTES_BUTTON_ACCESSIBLE_NAME));
+  extend_session_duration_button_->GetViewAccessibility().SetName(
+      l10n_util::GetStringUTF16(
+          IDS_ASH_STATUS_TRAY_FOCUS_MODE_INCREASE_TEN_MINUTES_BUTTON_ACCESSIBLE_NAME));
 }
 
 void FocusModeEndingMomentView::SetExtendButtonEnabled(bool enabled) {

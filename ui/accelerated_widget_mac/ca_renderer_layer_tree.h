@@ -35,7 +35,6 @@ namespace ui {
 
 ACCELERATED_WIDGET_MAC_EXPORT BASE_DECLARE_FEATURE(
     kFullscreenLowPowerBackdropMac);
-ACCELERATED_WIDGET_MAC_EXPORT BASE_DECLARE_FEATURE(kCALayerTreeOptimization);
 
 struct CARendererLayerParams;
 
@@ -73,6 +72,10 @@ class ACCELERATED_WIDGET_MAC_EXPORT CARendererLayerTree {
     metal_device_ = metal_device;
   }
 
+  void SetDisplayHDRHeadroom(float display_hdr_headroom) {
+    display_hdr_headroom_ = display_hdr_headroom;
+  }
+
   // Create a CALayer tree for the scheduled layers, and set |superlayer| to
   // have only this tree as its sublayers. If |old_tree| is non-null, then try
   // to re-use the CALayers of |old_tree| as much as possible. |old_tree| will
@@ -101,7 +104,6 @@ class ACCELERATED_WIDGET_MAC_EXPORT CARendererLayerTree {
   using CALayerMap =
       std::unordered_map<IOSurfaceRef, base::WeakPtr<ContentLayer>>;
 
-  void MatchLayersToOldTreeDefault(CARendererLayerTree* old_tree);
   void MatchLayersToOldTree(CARendererLayerTree* old_tree);
 
   class RootLayer {
@@ -319,11 +321,8 @@ class ACCELERATED_WIDGET_MAC_EXPORT CARendererLayerTree {
   bool has_committed_ = false;
   const bool allow_av_sample_buffer_display_layer_ = true;
   const bool allow_solid_color_layers_ = true;
+  float display_hdr_headroom_ = 1.f;
   id<MTLDevice> __strong metal_device_ = nil;
-
-  // Enable CALayerTree optimization that will try to reuse the CALayer with a
-  // matched CALayer from the old CALayerTree in the previous frame.
-  const bool ca_layer_tree_optimization_;
 
   // Map of content IOSurface.
   CALayerMap ca_layer_map_;

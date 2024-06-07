@@ -6,7 +6,7 @@
 load("//lib/args.star", "args")
 load("//lib/builder_config.star", "builder_config")
 load("//lib/builder_health_indicators.star", "health_spec")
-load("//lib/builders.star", "builders", "os", "sheriff_rotations", "siso")
+load("//lib/builders.star", "builders", "gardener_rotations", "os", "siso")
 load("//lib/branches.star", "branches")
 load("//lib/ci.star", "ci")
 load("//lib/consoles.star", "consoles")
@@ -19,8 +19,8 @@ ci.defaults.set(
     pool = ci.DEFAULT_POOL,
     cores = 8,
     os = os.LINUX_DEFAULT,
-    sheriff_rotations = sheriff_rotations.ANDROID,
     execution_timeout = ci.DEFAULT_EXECUTION_TIMEOUT,
+    gardener_rotations = gardener_rotations.ANDROID,
     health_spec = health_spec.DEFAULT,
     service_account = ci.DEFAULT_SERVICE_ACCOUNT,
     shadow_service_account = ci.DEFAULT_SHADOW_SERVICE_ACCOUNT,
@@ -76,7 +76,7 @@ ci.builder(
             "clang",
             "asan",
             "debug_builder",
-            "reclient",
+            "remoteexec",
             # TODO(crbug.com/40282985): Remove no_symbols when unit_tests binary size
             # issue is resolved.
             "no_symbols",
@@ -85,10 +85,6 @@ ci.builder(
     ),
     builderless = False,
     cores = None,
-    # TODO(crbug.com/40282985): Restore tree-closing and sheriff rotation if/when
-    # bot is fixed.
-    # tree_closing = True,
-    sheriff_rotations = args.ignore_default(None),
     console_view_entry = consoles.console_view_entry(
         category = "builder|arm",
         short_name = "san",
@@ -98,6 +94,10 @@ ci.builder(
     # build.
     # TODO(crbug.com/40882299): Check why the compile takes longer time.
     execution_timeout = 8 * time.hour,
+    # TODO(crbug.com/40282985): Restore tree-closing and gardener rotation if/when
+    # bot is fixed.
+    # tree_closing = True,
+    gardener_rotations = args.ignore_default(None),
 )
 
 ci.thin_tester(
@@ -151,6 +151,8 @@ ci.thin_tester(
     ),
     cq_mirrors_console_view = "mirrors",
     contact_team_email = "woa-engprod@google.com",
+    # https://crbug.com/341875331: Expend to 4 hours due to test device shortage
+    execution_timeout = 4 * time.hour,
 )
 
 ci.thin_tester(
@@ -229,7 +231,7 @@ ci.builder(
         configs = [
             "android_builder_without_codecs",
             "debug_builder",
-            "reclient",
+            "remoteexec",
         ],
     ),
     targets = targets.bundle(
@@ -283,7 +285,7 @@ ci.builder(
         configs = [
             "android_builder",
             "debug_static_builder",
-            "reclient",
+            "remoteexec",
             "arm64",
             "webview_google",
         ],
@@ -341,7 +343,7 @@ ci.builder(
         configs = [
             "android_builder",
             "debug_static_builder",
-            "reclient",
+            "remoteexec",
             "arm64",
             "webview_google",
         ],
@@ -369,7 +371,7 @@ ci.builder(
         configs = [
             "android_builder",
             "debug_static_builder",
-            "reclient",
+            "remoteexec",
             "x64",
             "webview_trichrome",
             "webview_shell",
@@ -416,7 +418,7 @@ ci.builder(
         configs = [
             "android_builder",
             "debug_static_builder",
-            "reclient",
+            "remoteexec",
             "x64",
             "webview_trichrome",
             "webview_shell",
@@ -457,7 +459,7 @@ ci.builder(
         configs = [
             "android_builder",
             "debug_static_builder",
-            "reclient",
+            "remoteexec",
             "x86",
             "webview_shell",
         ],
@@ -497,7 +499,7 @@ ci.builder(
         configs = [
             "android_builder",
             "release_builder",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
             "x86",
             "strip_debug_info",
@@ -576,7 +578,7 @@ ci.builder(
             "cast_receiver",
             "clang",
             "debug_static_builder",
-            "reclient",
+            "remoteexec",
         ],
     ),
     tree_closing = True,
@@ -595,7 +597,7 @@ ci.builder(
         configs = [
             "android_builder_without_codecs",
             "release_builder",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
             "strip_debug_info",
         ],
@@ -618,7 +620,7 @@ ci.builder(
         configs = [
             "android_builder",
             "debug_builder",
-            "reclient",
+            "remoteexec",
         ],
     ),
     cores = 16,
@@ -683,12 +685,12 @@ ci.thin_tester(
     targets_settings = targets.settings(
         os_type = targets.os_type.ANDROID,
     ),
-    sheriff_rotations = args.ignore_default(None),
     console_view_entry = consoles.console_view_entry(
         category = "tester|phone",
         short_name = "O",
     ),
     cq_mirrors_console_view = "mirrors",
+    gardener_rotations = args.ignore_default(None),
 )
 
 ci.builder(
@@ -720,7 +722,7 @@ ci.builder(
         configs = [
             "android_builder",
             "release_builder",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
             "arm64",
             "strip_debug_info",
@@ -760,9 +762,6 @@ ci.builder(
         ),
         build_gs_bucket = "chromium-android-archive",
     ),
-    builder_config_settings = builder_config.ci_settings(
-        retry_failed_shards = True,
-    ),
     console_view_entry = consoles.console_view_entry(
         category = "tester|tablet",
         short_name = "12L",
@@ -798,20 +797,20 @@ ci.builder(
         configs = [
             "android_builder",
             "release_builder",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
             "arm64",
             "strip_debug_info",
             "webview_google",
         ],
     ),
-    sheriff_rotations = args.ignore_default(None),
     console_view_entry = consoles.console_view_entry(
         category = "builder_tester|arm64",
         short_name = "M proguard",
     ),
     contact_team_email = "clank-engprod@google.com",
     execution_timeout = 8 * time.hour,
+    gardener_rotations = args.ignore_default(None),
 )
 
 ci.builder(
@@ -836,7 +835,7 @@ ci.builder(
         configs = [
             "android_builder",
             "release_builder",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
             "x86",
             "strip_debug_info",
@@ -861,7 +860,7 @@ ci.builder(
             "android_builder",
             "arm64",
             "chrome_with_codecs",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
             "official_optimize",
             "stable_channel",
@@ -912,18 +911,18 @@ ci.builder(
             "android_builder_without_codecs",
             "cronet_android",
             "debug_static_builder",
-            "reclient",
+            "remoteexec",
             "arm_no_neon",
             "release_java",
         ],
     ),
-    sheriff_rotations = args.ignore_default(None),
     console_view_entry = consoles.console_view_entry(
         category = "cronet|arm",
         short_name = "dbg",
     ),
     cq_mirrors_console_view = "mirrors",
     contact_team_email = "cronet-team@google.com",
+    gardener_rotations = args.ignore_default(None),
     notifies = ["cronet"],
 )
 
@@ -958,19 +957,19 @@ ci.builder(
             "cronet_android",
             "official_optimize",
             "release_builder",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
             "arm_no_neon",
             "strip_debug_info",
         ],
     ),
-    sheriff_rotations = args.ignore_default(None),
     console_view_entry = consoles.console_view_entry(
         category = "cronet|arm",
         short_name = "rel",
     ),
     cq_mirrors_console_view = "mirrors",
     contact_team_email = "cronet-team@google.com",
+    gardener_rotations = args.ignore_default(None),
     notifies = ["cronet"],
 )
 
@@ -999,16 +998,16 @@ ci.builder(
             "android_builder_without_codecs",
             "cronet_android",
             "debug_static_builder",
-            "reclient",
+            "remoteexec",
             "arm64",
         ],
     ),
-    sheriff_rotations = args.ignore_default(None),
     console_view_entry = consoles.console_view_entry(
         category = "cronet|arm64",
         short_name = "dbg",
     ),
     contact_team_email = "cronet-team@google.com",
+    gardener_rotations = args.ignore_default(None),
     notifies = ["cronet"],
 )
 
@@ -1038,18 +1037,18 @@ ci.builder(
             "cronet_android",
             "official_optimize",
             "release_builder",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
             "arm64",
             "strip_debug_info",
         ],
     ),
-    sheriff_rotations = args.ignore_default(None),
     console_view_entry = consoles.console_view_entry(
         category = "cronet|arm64",
         short_name = "rel",
     ),
     contact_team_email = "cronet-team@google.com",
+    gardener_rotations = args.ignore_default(None),
     notifies = ["cronet"],
 )
 
@@ -1078,7 +1077,7 @@ ci.builder(
             "android_builder_without_codecs",
             "cronet_android",
             "release_builder",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
             "arm_no_neon",
             "clang",
@@ -1086,11 +1085,11 @@ ci.builder(
             "strip_debug_info",
         ],
     ),
-    sheriff_rotations = args.ignore_default(None),
     console_view_entry = consoles.console_view_entry(
         category = "cronet|asan",
     ),
     contact_team_email = "cronet-team@google.com",
+    gardener_rotations = args.ignore_default(None),
     notifies = ["cronet"],
 )
 
@@ -1120,21 +1119,21 @@ ci.builder(
             "android_builder_without_codecs",
             "cronet_android",
             "debug_static_builder",
-            "reclient",
+            "remoteexec",
             "arm64",
             "cronet_android_mainline_clang",
         ],
     ),
-    sheriff_rotations = args.ignore_default(None),
     console_view_entry = consoles.console_view_entry(
         category = "cronet|mainline_clang|arm64",
         short_name = "dbg",
     ),
     contact_team_email = "cronet-team@google.com",
+    gardener_rotations = args.ignore_default(None),
     notifies = ["cronet"],
 )
 
-# Compiles with Android Mainline Clang
+# Compiles with Android Mainline Clang (coverage-enabled)
 ci.builder(
     name = "android-cronet-mainline-clang-arm64-rel",
     builder_spec = builder_config.builder_spec(
@@ -1161,19 +1160,20 @@ ci.builder(
             "cronet_android",
             "official_optimize",
             "release_builder",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
             "arm64",
             "strip_debug_info",
             "cronet_android_mainline_clang",
+            "use_clang_coverage",
         ],
     ),
-    sheriff_rotations = args.ignore_default(None),
     console_view_entry = consoles.console_view_entry(
-        category = "cronet|mainline_clang|arm64",
+        category = "cronet|mainline_clang_coverage|arm64",
         short_name = "rel",
     ),
     contact_team_email = "cronet-team@google.com",
+    gardener_rotations = args.ignore_default(None),
     notifies = ["cronet"],
 )
 
@@ -1206,17 +1206,17 @@ ci.builder(
             "android_builder_without_codecs",
             "cronet_android",
             "debug_static_builder",
-            "reclient",
+            "remoteexec",
             "riscv64",
             "cronet_android_mainline_clang",
         ],
     ),
-    sheriff_rotations = args.ignore_default(None),
     console_view_entry = consoles.console_view_entry(
         category = "cronet|mainline_clang|riscv64",
         short_name = "dbg",
     ),
     contact_team_email = "cronet-team@google.com",
+    gardener_rotations = args.ignore_default(None),
     notifies = ["cronet"],
 )
 
@@ -1250,19 +1250,19 @@ ci.builder(
             "cronet_android",
             "official_optimize",
             "release_builder",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
             "riscv64",
             "strip_debug_info",
             "cronet_android_mainline_clang",
         ],
     ),
-    sheriff_rotations = args.ignore_default(None),
     console_view_entry = consoles.console_view_entry(
         category = "cronet|mainline_clang|riscv64",
         short_name = "rel",
     ),
     contact_team_email = "cronet-team@google.com",
+    gardener_rotations = args.ignore_default(None),
     notifies = ["cronet"],
 )
 
@@ -1297,21 +1297,21 @@ ci.builder(
             "android_builder_without_codecs",
             "cronet_android",
             "debug_static_builder",
-            "reclient",
+            "remoteexec",
             "x86",
             "cronet_android_mainline_clang",
         ],
     ),
-    sheriff_rotations = args.ignore_default(None),
     console_view_entry = consoles.console_view_entry(
         category = "cronet|mainline_clang|x86",
         short_name = "dbg",
     ),
     contact_team_email = "cronet-team@google.com",
+    gardener_rotations = args.ignore_default(None),
     notifies = ["cronet"],
 )
 
-# Compiles with Android Mainline Clang
+# Compiles with Android Mainline Clang (coverage-enabled)
 ci.builder(
     name = "android-cronet-mainline-clang-x86-rel",
     builder_spec = builder_config.builder_spec(
@@ -1338,19 +1338,20 @@ ci.builder(
             "cronet_android",
             "official_optimize",
             "release_builder",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
             "x86",
             "strip_debug_info",
             "cronet_android_mainline_clang",
+            "use_clang_coverage",
         ],
     ),
-    sheriff_rotations = args.ignore_default(None),
     console_view_entry = consoles.console_view_entry(
-        category = "cronet|mainline_clang|x86",
+        category = "cronet|mainline_clang_coverage|x86",
         short_name = "rel",
     ),
     contact_team_email = "cronet-team@google.com",
+    gardener_rotations = args.ignore_default(None),
     notifies = ["cronet"],
 )
 
@@ -1364,7 +1365,7 @@ ci.builder(
             "cronet_android",
             "official_optimize",
             "release_builder",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
             "arm64",
             "strip_debug_info",
@@ -1373,12 +1374,12 @@ ci.builder(
     cores = None,
     os = os.ANDROID,
     cpu = None,
-    sheriff_rotations = args.ignore_default(None),
     console_view_entry = consoles.console_view_entry(
         category = "cronet|test|perf",
         short_name = "m",
     ),
     contact_team_email = "cronet-team@google.com",
+    gardener_rotations = args.ignore_default(None),
     notifies = ["cronet"],
     siso_remote_jobs = siso.remote_jobs.DEFAULT,
 )
@@ -1408,16 +1409,16 @@ ci.builder(
             "android_builder_without_codecs",
             "cronet_android",
             "debug_static_builder",
-            "reclient",
+            "remoteexec",
             "riscv64",
         ],
     ),
-    sheriff_rotations = args.ignore_default(None),
     console_view_entry = consoles.console_view_entry(
         category = "cronet|riscv64",
         short_name = "dbg",
     ),
     contact_team_email = "cronet-sheriff@google.com",
+    gardener_rotations = args.ignore_default(None),
     notifies = ["cronet"],
 )
 
@@ -1447,18 +1448,18 @@ ci.builder(
             "cronet_android",
             "official_optimize",
             "release_builder",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
             "riscv64",
             "strip_debug_info",
         ],
     ),
-    sheriff_rotations = args.ignore_default(None),
     console_view_entry = consoles.console_view_entry(
         category = "cronet|riscv64",
         short_name = "rel",
     ),
     contact_team_email = "cronet-sheriff@google.com",
+    gardener_rotations = args.ignore_default(None),
     notifies = ["cronet"],
 )
 
@@ -1492,16 +1493,16 @@ ci.builder(
             "android_builder_without_codecs",
             "cronet_android",
             "debug_static_builder",
-            "reclient",
+            "remoteexec",
             "x86",
         ],
     ),
-    sheriff_rotations = args.ignore_default(None),
     console_view_entry = consoles.console_view_entry(
         category = "cronet|x86",
         short_name = "dbg",
     ),
     contact_team_email = "cronet-team@google.com",
+    gardener_rotations = args.ignore_default(None),
     notifies = ["cronet"],
 )
 
@@ -1535,16 +1536,16 @@ ci.builder(
             "android_builder_without_codecs",
             "cronet_android",
             "debug_static_builder",
-            "reclient",
+            "remoteexec",
             "x64",
         ],
     ),
-    sheriff_rotations = args.ignore_default(None),
     console_view_entry = consoles.console_view_entry(
         category = "cronet|x64",
         short_name = "dbg",
     ),
     contact_team_email = "cronet-team@google.com",
+    gardener_rotations = args.ignore_default(None),
     notifies = ["cronet"],
 )
 
@@ -1574,12 +1575,12 @@ ci.thin_tester(
         ),
         build_gs_bucket = "chromium-android-archive",
     ),
-    sheriff_rotations = args.ignore_default(None),
     console_view_entry = consoles.console_view_entry(
         category = "cronet|test",
         short_name = "12",
     ),
     contact_team_email = "cronet-team@google.com",
+    gardener_rotations = args.ignore_default(None),
     notifies = ["cronet"],
 )
 
@@ -1609,12 +1610,12 @@ ci.thin_tester(
         ),
         build_gs_bucket = "chromium-android-archive",
     ),
-    sheriff_rotations = args.ignore_default(None),
     console_view_entry = consoles.console_view_entry(
         category = "cronet|test",
         short_name = "13",
     ),
     contact_team_email = "cronet-team@google.com",
+    gardener_rotations = args.ignore_default(None),
     notifies = ["cronet"],
 )
 
@@ -1645,12 +1646,12 @@ ci.thin_tester(
         ),
         build_gs_bucket = "chromium-android-archive",
     ),
-    sheriff_rotations = args.ignore_default(None),
     console_view_entry = consoles.console_view_entry(
         category = "cronet|test",
         short_name = "14",
     ),
     contact_team_email = "cronet-team@google.com",
+    gardener_rotations = args.ignore_default(None),
     notifies = ["cronet"],
 )
 
@@ -1680,12 +1681,12 @@ ci.thin_tester(
         ),
         build_gs_bucket = "chromium-android-archive",
     ),
-    sheriff_rotations = args.ignore_default(None),
     console_view_entry = consoles.console_view_entry(
         category = "cronet|test",
         short_name = "l",
     ),
     contact_team_email = "cronet-team@google.com",
+    gardener_rotations = args.ignore_default(None),
     notifies = ["cronet"],
 )
 
@@ -1715,12 +1716,12 @@ ci.thin_tester(
         ),
         build_gs_bucket = "chromium-android-archive",
     ),
-    sheriff_rotations = args.ignore_default(None),
     console_view_entry = consoles.console_view_entry(
         category = "cronet|test",
         short_name = "m",
     ),
     contact_team_email = "cronet-team@google.com",
+    gardener_rotations = args.ignore_default(None),
     notifies = ["cronet"],
 )
 
@@ -1750,12 +1751,12 @@ ci.thin_tester(
         ),
         build_gs_bucket = "chromium-android-archive",
     ),
-    sheriff_rotations = args.ignore_default(None),
     console_view_entry = consoles.console_view_entry(
         category = "cronet|test",
         short_name = "n",
     ),
     contact_team_email = "cronet-team@google.com",
+    gardener_rotations = args.ignore_default(None),
     notifies = ["cronet"],
 )
 
@@ -1785,12 +1786,12 @@ ci.thin_tester(
         ),
         build_gs_bucket = "chromium-android-archive",
     ),
-    sheriff_rotations = args.ignore_default(None),
     console_view_entry = consoles.console_view_entry(
         category = "cronet|test",
         short_name = "o",
     ),
     contact_team_email = "cronet-team@google.com",
+    gardener_rotations = args.ignore_default(None),
     notifies = ["cronet"],
 )
 
@@ -1820,12 +1821,12 @@ ci.thin_tester(
         ),
         build_gs_bucket = "chromium-android-archive",
     ),
-    sheriff_rotations = args.ignore_default(None),
     console_view_entry = consoles.console_view_entry(
         category = "cronet|test",
         short_name = "p",
     ),
     contact_team_email = "cronet-team@google.com",
+    gardener_rotations = args.ignore_default(None),
     notifies = ["cronet"],
 )
 
@@ -1856,12 +1857,12 @@ ci.thin_tester(
         ),
         build_gs_bucket = "chromium-android-archive",
     ),
-    sheriff_rotations = args.ignore_default(None),
     console_view_entry = consoles.console_view_entry(
         category = "cronet|test",
         short_name = "10",
     ),
     contact_team_email = "cronet-team@google.com",
+    gardener_rotations = args.ignore_default(None),
     notifies = ["cronet"],
 )
 
@@ -1891,12 +1892,12 @@ ci.thin_tester(
         ),
         build_gs_bucket = "chromium-android-archive",
     ),
-    sheriff_rotations = args.ignore_default(None),
     console_view_entry = consoles.console_view_entry(
         category = "cronet|test",
         short_name = "11",
     ),
     contact_team_email = "cronet-team@google.com",
+    gardener_rotations = args.ignore_default(None),
     notifies = ["cronet"],
 )
 
@@ -1926,18 +1927,18 @@ ci.builder(
             "cronet_android",
             "official_optimize",
             "release_builder",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
             "x86",
             "strip_debug_info",
         ],
     ),
-    sheriff_rotations = args.ignore_default(None),
     console_view_entry = consoles.console_view_entry(
         category = "cronet|x86",
         short_name = "rel",
     ),
     contact_team_email = "cronet-team@google.com",
+    gardener_rotations = args.ignore_default(None),
     notifies = ["cronet"],
 )
 
@@ -1967,18 +1968,18 @@ ci.builder(
             "cronet_android",
             "official_optimize",
             "release_builder",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
             "x64",
             "strip_debug_info",
         ],
     ),
-    sheriff_rotations = args.ignore_default(None),
     console_view_entry = consoles.console_view_entry(
         category = "cronet|x64",
         short_name = "rel",
     ),
     contact_team_email = "cronet-team@google.com",
+    gardener_rotations = args.ignore_default(None),
     notifies = ["cronet"],
 )
 
@@ -2011,7 +2012,7 @@ ci.builder(
         configs = [
             "android_builder",
             "release_builder",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
             "x86",
             "strip_debug_info",
@@ -2103,7 +2104,7 @@ ci.builder(
         configs = [
             "android_builder",
             "release_builder",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
             "arm64",
             "strip_debug_info",
@@ -2147,7 +2148,7 @@ ci.builder(
         configs = [
             "android_builder",
             "release_builder",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
             "x86",
             "strip_debug_info",
@@ -2193,7 +2194,7 @@ ci.builder(
         configs = [
             "android_builder",
             "release_builder",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
             "x86",
             "strip_debug_info",
@@ -2202,15 +2203,15 @@ ci.builder(
             "webview_shell",
         ],
     ),
-    # TODO(crbug.com/40152686): Add it back to sheriff once the builder is more
-    # stable.
-    sheriff_rotations = args.ignore_default(None),
     tree_closing = True,
     console_view_entry = consoles.console_view_entry(
         category = "builder_tester|x86",
         short_name = "11",
     ),
     execution_timeout = 4 * time.hour,
+    # TODO(crbug.com/40152686): Add it back to gardening once the builder is
+    # stable.
+    gardener_rotations = args.ignore_default(None),
 )
 
 ci.builder(
@@ -2241,7 +2242,7 @@ ci.builder(
         configs = [
             "android_builder",
             "release_builder",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
             "x64",
             "strip_debug_info",
@@ -2253,7 +2254,7 @@ ci.builder(
     ),
     tree_closing = True,
     console_view_entry = consoles.console_view_entry(
-        category = "on_cq|x64",
+        category = "builder_tester|x64",
         short_name = "12",
     ),
     contact_team_email = "clank-engprod@google.com",
@@ -2262,8 +2263,8 @@ ci.builder(
 
 ci.builder(
     name = "android-13-x64-rel",
-    # TODO(crbug.com/40886566): Enable on branches once stable
-    #branch_selector = branches.selector.ANDROID_BRANCHES,
+    branch_selector = branches.selector.ANDROID_BRANCHES,
+    description_html = "Run chromium tests on Android 13 emulators.",
     builder_spec = builder_config.builder_spec(
         gclient_config = builder_config.gclient_config(
             config = "chromium",
@@ -2289,7 +2290,7 @@ ci.builder(
         configs = [
             "android_builder",
             "release_builder",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
             "x64",
             "strip_debug_info",
@@ -2301,10 +2302,10 @@ ci.builder(
     ),
     tree_closing = True,
     console_view_entry = consoles.console_view_entry(
-        category = "builder_tester|x64",
+        category = "on_cq|x64",
         short_name = "13",
     ),
-    execution_timeout = 4 * time.hour,
+    contact_team_email = "clank-engprod@google.com",
 )
 
 ci.builder(
@@ -2337,7 +2338,7 @@ ci.builder(
         configs = [
             "android_builder",
             "release_builder",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
             "x64",
             "strip_debug_info",
@@ -2347,8 +2348,6 @@ ci.builder(
             "webview_shell",
         ],
     ),
-    # TODO(crbug.com/40286106): Enable sheriff once tests are stable
-    sheriff_rotations = args.ignore_default(None),
     # TODO(crbug.com/40286106): Enable tree_closing once compile are stable
     #tree_closing = True,
     console_view_entry = consoles.console_view_entry(
@@ -2357,6 +2356,8 @@ ci.builder(
     ),
     contact_team_email = "clank-engprod@google.com",
     execution_timeout = 4 * time.hour,
+    # TODO(crbug.com/40286106): Enable gardening once tests are stable
+    gardener_rotations = args.ignore_default(None),
 )
 
 ci.builder(
@@ -2389,7 +2390,7 @@ ci.builder(
         configs = [
             "android_builder",
             "release_builder",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
             "x64",
             "strip_debug_info",
@@ -2399,8 +2400,6 @@ ci.builder(
             "webview_shell",
         ],
     ),
-    # TODO(crbug.com/40286106): Enable sheriff once tests are stable
-    sheriff_rotations = args.ignore_default(None),
     # TODO(crbug.com/40286106): Enable tree_closing once compile are stable
     #tree_closing = True,
     console_view_entry = consoles.console_view_entry(
@@ -2409,6 +2408,8 @@ ci.builder(
     ),
     contact_team_email = "clank-engprod@google.com",
     execution_timeout = 4 * time.hour,
+    # TODO(crbug.com/40286106): Enable gardening once tests are stable
+    gardener_rotations = args.ignore_default(None),
 )
 
 ci.builder(
@@ -2442,7 +2443,7 @@ ci.builder(
         configs = [
             "android_builder",
             "release_builder",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
             "x64",
             "strip_debug_info",

@@ -5,7 +5,6 @@
 #ifndef CHROME_BROWSER_UI_COLOR_CHROME_COLOR_ID_H_
 #define CHROME_BROWSER_UI_COLOR_CHROME_COLOR_ID_H_
 
-#include "chrome/browser/themes/theme_properties.h"
 #include "components/color/color_id.h"
 #include "ui/color/color_id.h"
 
@@ -246,6 +245,9 @@
   E_CPONLY(kColorNewTabPageModuleControlBorder) \
   E_CPONLY(kColorNewTabPageModuleContextMenuDivider) \
   E_CPONLY(kColorNewTabPageModuleBackground) \
+  E_CPONLY(kColorNewTabPageModuleCalendarEventCollapsedBackground) \
+  E_CPONLY(kColorNewTabPageModuleCalendarEventExpandedBackground) \
+  E_CPONLY(kColorNewTabPageModuleCalendarEventTimeStatusBackground) \
   E_CPONLY(kColorNewTabPageModuleIconBackground) \
   E_CPONLY(kColorNewTabPageModuleElementDivider) \
   E_CPONLY(kColorNewTabPageModuleIconContainerBackground) \
@@ -351,6 +353,8 @@
   E_CPONLY(kColorPageInfoChosenObjectDeleteButtonIconDisabled) \
   E_CPONLY(kColorPageInfoIconHover) \
   E_CPONLY(kColorPageInfoIconPressed) \
+  E_CPONLY(kColorPageInfoLensOverlayBackground) \
+  E_CPONLY(kColorPageInfoLensOverlayForeground) \
   E_CPONLY(kColorPageInfoPermissionBlockedOnSystemLevelDisabled) \
   E_CPONLY(kColorPageInfoPermissionForeground) \
   E_CPONLY(kColorPageInfoPermissionUsedIcon) \

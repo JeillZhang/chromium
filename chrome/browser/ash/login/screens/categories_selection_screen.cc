@@ -4,7 +4,11 @@
 
 #include "chrome/browser/ash/login/screens/categories_selection_screen.h"
 
+#include <memory>
+
+#include "ash/constants/ash_features.h"
 #include "ash/constants/ash_pref_names.h"
+#include "base/timer/timer.h"
 #include "chrome/browser/ash/login/login_pref_names.h"
 #include "chrome/browser/ash/login/wizard_controller.h"
 #include "chrome/browser/policy/profile_policy_connector.h"
@@ -19,6 +23,7 @@ namespace {
 
 constexpr const char kUserActionNext[] = "next";
 constexpr const char kUserActionSkip[] = "skip";
+constexpr const char kUserActionLoaded[] = "loaded";
 
 bool HasBeenSelected(std::string category_id) {
   PrefService* prefs = ProfileManager::GetActiveUserProfile()->GetPrefs();
@@ -44,6 +49,8 @@ std::string CategoriesSelectionScreen::GetResultString(Result result) {
       return "Skip";
     case Result::kError:
       return "Error";
+    case Result::kDataMalformed:
+      return "DataMalformed";
     case Result::kNotApplicable:
       return BaseScreen::kNotApplicable;
   }
@@ -62,6 +69,11 @@ CategoriesSelectionScreen::~CategoriesSelectionScreen() = default;
 
 bool CategoriesSelectionScreen::MaybeSkip(WizardContext& context) {
   if (context.skip_post_login_screens_for_tests) {
+    exit_callback_.Run(Result::kNotApplicable);
+    return true;
+  }
+
+  if (!features::IsOobePersonalizedOnboardingEnabled()) {
     exit_callback_.Run(Result::kNotApplicable);
     return true;
   }
@@ -101,7 +113,16 @@ void CategoriesSelectionScreen::OnResponseReceived(
     const std::vector<OOBEDeviceUseCase>& categories,
     AppsFetchingResult result) {
   if (result != AppsFetchingResult::kSuccess) {
+    LOG(ERROR)
+        << "Got an error when fetched cached data from the OOBE Apps Service";
     exit_callback_.Run(Result::kError);
+    return;
+  }
+
+  if (categories.empty()) {
+    LOG(ERROR) << "Empty set of use-cases received from the server";
+    exit_callback_.Run(Result::kDataMalformed);
+    return;
   }
 
   base::Value::List categories_list;
@@ -133,8 +154,21 @@ void CategoriesSelectionScreen::OnSelect(base::Value::List categories) {
   prefs->SetList(prefs::kOobeCategoriesSelected, std::move(categories));
 }
 
+void CategoriesSelectionScreen::ShowOverviewStep() {
+  if (view_) {
+    view_->SetOverviewStep();
+  }
+}
+
 void CategoriesSelectionScreen::OnUserAction(const base::Value::List& args) {
   const std::string& action_id = args[0].GetString();
+
+  if (action_id == kUserActionLoaded) {
+    delay_overview_timer_ = std::make_unique<base::OneShotTimer>();
+    delay_overview_timer_->Start(FROM_HERE, delay_overview_step_, this,
+                                 &CategoriesSelectionScreen::ShowOverviewStep);
+    return;
+  }
 
   if (action_id == kUserActionSkip) {
     PrefService* prefs = ProfileManager::GetActiveUserProfile()->GetPrefs();

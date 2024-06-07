@@ -236,7 +236,6 @@
 <translation id="2189104374785738357">Modifiko detajet e APN-së</translation>
 <translation id="2195732836444333448">Në maksimumin e kapacitetin për momentin. Kthehu përsëri së shpejti.</translation>
 <translation id="2201758491318984023">biçikletë</translation>
-<translation id="2203222757805818543">Orari aktual është caktuar si <ph name="SUNRISE" /> - <ph name="SUNSET" />. Për të përditësuar automatikisht orarin e modalitetit të errët, <ph name="BEGIN_LINK" />aktivizo qasjen te vendndodhja<ph name="END_LINK" /></translation>
 <translation id="2203272733515928691">ujëra termale</translation>
 <translation id="2203642483788377106">shkëmb</translation>
 <translation id="2208388655216963643">impresionist</translation>
@@ -364,6 +363,7 @@
 <translation id="3054177598518735801"><ph name="CURRENT_VALUE" /> mA</translation>
 <translation id="3056720590588772262">Pika përfundimtare</translation>
 <translation id="3060579846059757016">Përvijimet</translation>
+<translation id="3061850252076394168">aktivizo "Zgjidh që të thuhet"</translation>
 <translation id="3069085583900247081">Testi dështoi</translation>
 <translation id="3078740164268491126">tabela</translation>
 <translation id="3081652522083185657">e ndriçuar</translation>
@@ -630,7 +630,6 @@
 <translation id="458794348635939462">Zgjidhja e të gjithë pritësve dështoi</translation>
 <translation id="4593212453765072419">Kërkohet vërtetimi i serverit përfaqësues</translation>
 <translation id="4609350030397390689">Ulja e ndriçimit të tastierës</translation>
-<translation id="4617553623719764431">Moti nuk shfaqet pasi shërbimi nuk e di vendndodhjen tënde. Për të shfaqur motin lokal, <ph name="BEGIN_LINK" />aktivizo qasjen te vendndodhja<ph name="END_LINK" /></translation>
 <translation id="4627232916386272576"><ph name="DOCUMENT_TITLE" />, <ph name="PRINTER_NAME" />, <ph name="CREATION_TIME" />, <ph name="PRINTED_PAGE_NUMBER" /> nga <ph name="TOTAL_PAGE_NUMBER" />. Shtyp Enter për të anuluar printimin.</translation>
 <translation id="463791356324567266">Skanimi po anulohet...</translation>
 <translation id="4646949265910132906">Lidhja e sigurt WiFi</translation>
@@ -704,6 +703,7 @@
 <translation id="4985509611418653372">Ekzekuto</translation>
 <translation id="4987769320337599931">Mur mbrojtës</translation>
 <translation id="4988526792673242964">Faqet</translation>
+<translation id="4989542687859782284">Nuk ofrohen</translation>
 <translation id="4999333166442584738">Fshih raportin</translation>
 <translation id="500920857929044050">Ndalo testin</translation>
 <translation id="5017508259293544172">LEAP</translation>
@@ -960,7 +960,6 @@
 <translation id="6412715219990689313">Tastiera e integruar</translation>
 <translation id="6417265370957905582">Asistenti i Google</translation>
 <translation id="6423239382391657905">OpenVPN</translation>
-<translation id="6438073885402882007">Kjo i lejon shërbimet e sistemit që kanë leje që të përdorin vendndodhjen tënde. Vendndodhja mund të përdorë burime si Wi-Fi, rrjetet celulare dhe sensorët për të përllogaritur vendndodhjen e pajisjes sate. <ph name="LINK_BEGIN" />Mëso më shumë<ph name="LINK_END" /></translation>
 <translation id="6439505561246192797">I dobët (<ph name="SIGNAL_STRENGTH" />)</translation>
 <translation id="6447630859861661624">Shko te cilësimet e llogarisë</translation>
 <translation id="6462978824459367242">Butoni "Shto APN-në" është aktivizuar tani</translation>

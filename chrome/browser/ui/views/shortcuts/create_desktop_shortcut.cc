@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/ui/views/shortcuts/create_desktop_shortcut.h"
+
 #include <string>
 
 #include "base/check_is_test.h"
@@ -14,7 +16,7 @@
 #include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/views/controls/site_icon_text_and_origin_view.h"
-#include "chrome/browser/ui/views/shortcuts/create_desktop_shortcut.h"
+#include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/shortcuts/create_desktop_shortcut_delegate.h"
 #include "chrome/grit/branded_strings.h"
 #include "chrome/grit/generated_resources.h"
@@ -27,6 +29,7 @@
 #include "ui/base/models/dialog_model.h"
 #include "ui/gfx/image/image_skia.h"
 #include "ui/views/bubble/bubble_dialog_model_host.h"
+#include "ui/views/interaction/element_tracker_views.h"
 #include "url/gurl.h"
 
 namespace shortcuts {
@@ -104,7 +107,9 @@ void ShowCreateDesktopShortcutDialog(
               base::BindRepeating(
                   &CreateDesktopShortcutDelegate::OnTitleUpdated,
                   delegate_weak_ptr)),
-          views::BubbleDialogModelHost::FieldType::kControl));
+          views::BubbleDialogModelHost::FieldType::kControl),
+      shortcuts::CreateDesktopShortcutDelegate::
+          kCreateShortcutDialogTitleFieldId);
 
   auto dialog = views::BubbleDialogModelHost::CreateModal(
       std::move(dialog_model), ui::MODAL_TYPE_CHILD);

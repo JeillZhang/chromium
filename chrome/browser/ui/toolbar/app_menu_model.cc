@@ -56,7 +56,7 @@
 #include "chrome/browser/ui/profiles/profile_view_utils.h"
 #include "chrome/browser/ui/safety_hub/menu_notification_service_factory.h"
 #include "chrome/browser/ui/safety_hub/safety_hub_constants.h"
-#include "chrome/browser/ui/side_panel/companion/companion_utils.h"
+#include "chrome/browser/ui/views/side_panel/companion/companion_utils.h"
 #include "chrome/browser/ui/startup/default_browser_prompt/default_browser_prompt_manager.h"
 #include "chrome/browser/ui/tabs/organization/tab_organization_service_factory.h"
 #include "chrome/browser/ui/tabs/organization/tab_organization_utils.h"
@@ -150,6 +150,8 @@
 using base::UserMetricsAction;
 using content::WebContents;
 
+DEFINE_CLASS_ELEMENT_IDENTIFIER_VALUE(AppMenuModel, kProfileMenuItem);
+DEFINE_CLASS_ELEMENT_IDENTIFIER_VALUE(AppMenuModel, kProfileOpenGuestItem);
 DEFINE_CLASS_ELEMENT_IDENTIFIER_VALUE(AppMenuModel, kBookmarksMenuItem);
 DEFINE_CLASS_ELEMENT_IDENTIFIER_VALUE(AppMenuModel, kTabGroupsMenuItem);
 DEFINE_CLASS_ELEMENT_IDENTIFIER_VALUE(AppMenuModel, kDownloadsMenuItem);
@@ -166,6 +168,7 @@ DEFINE_CLASS_ELEMENT_IDENTIFIER_VALUE(AppMenuModel, kSaveAndShareMenuItem);
 DEFINE_CLASS_ELEMENT_IDENTIFIER_VALUE(AppMenuModel, kCastTitleItem);
 DEFINE_CLASS_ELEMENT_IDENTIFIER_VALUE(AppMenuModel, kPerformanceMenuItem);
 DEFINE_CLASS_ELEMENT_IDENTIFIER_VALUE(AppMenuModel, kInstallAppItem);
+DEFINE_CLASS_ELEMENT_IDENTIFIER_VALUE(AppMenuModel, kCreateShortcutItem);
 DEFINE_CLASS_ELEMENT_IDENTIFIER_VALUE(AppMenuModel,
                                       kSetBrowserAsDefaultMenuItem);
 DEFINE_CLASS_ELEMENT_IDENTIFIER_VALUE(ToolsMenuModel, kPerformanceMenuItem);
@@ -203,30 +206,20 @@ void AddSubMenuWithStringIdAndVectorIcon(ui::SimpleMenuModel* model,
                                      ui::SimpleMenuModel::kDefaultIconSize));
 }
 
-struct MenuItemStrings {
-  std::u16string title_text;
-  std::u16string minor_text;
-};
-
-// Conditionally return the update app menu item title and minor text based on
-// upgrade detector state.
-MenuItemStrings GetUpgradeDialogTitleAndMinorText() {
+// Conditionally return the update app menu item title based on upgrade detector
+// state.
+std::u16string GetUpgradeDialogTitleText() {
   if (UpgradeDetector::GetInstance()->is_outdated_install() ||
       UpgradeDetector::GetInstance()->is_outdated_install_no_au()) {
-    return {.title_text =
-                l10n_util::GetStringUTF16(IDS_UPGRADE_BUBBLE_MENU_ITEM)};
-  } else {
+    return l10n_util::GetStringUTF16(IDS_UPGRADE_BUBBLE_MENU_ITEM);
+  }
 #if BUILDFLAG(GOOGLE_CHROME_BRANDING) && \
     (BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX))
     if (base::FeatureList::IsEnabled(features::kUpdateTextOptions)) {
-      return {
-          .title_text = l10n_util::GetStringUTF16(IDS_RELAUNCH_TO_UPDATE_ALT),
-          .minor_text =
-              l10n_util::GetStringUTF16(IDS_RELAUNCH_TO_UPDATE_ALT_MINOR_TEXT)};
+      return l10n_util::GetStringUTF16(IDS_RELAUNCH_TO_UPDATE_ALT);
     }
 #endif
-    return {.title_text = l10n_util::GetStringUTF16(IDS_RELAUNCH_TO_UPDATE)};
-  }
+    return l10n_util::GetStringUTF16(IDS_RELAUNCH_TO_UPDATE);
 }
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
@@ -516,10 +509,13 @@ ProfileSubMenuModel::ProfileSubMenuModel(
       other_profiles_.insert({menu_id, profile_entry->GetPath()});
     }
 
-    if (profiles::IsGuestModeEnabled()) {
+    if (profiles::IsGuestModeEnabled(*profile)) {
       AddItemWithStringIdAndVectorIcon(
           this, IDC_OPEN_GUEST_PROFILE, IDS_OPEN_GUEST_PROFILE,
           vector_icons::kAccountCircleChromeRefreshIcon);
+      SetElementIdentifierAt(
+          GetIndexOfCommandId(IDC_OPEN_GUEST_PROFILE).value(),
+          AppMenuModel::kProfileOpenGuestItem);
     }
     AddSeparator(ui::NORMAL_SEPARATOR);
     if (profiles::IsProfileCreationAllowed()) {
@@ -709,6 +705,7 @@ SaveAndShareSubMenuModel::SaveAndShareSubMenuModel(
   AddItemWithStringIdAndVectorIcon(this, IDC_CREATE_SHORTCUT,
                                    IDS_ADD_TO_OS_LAUNCH_SURFACE,
                                    kDriveShortcutChromeRefreshIcon);
+  SetElementIdentifierAt(GetItemCount() - 1, AppMenuModel::kCreateShortcutItem);
   if (!sharing_hub::SharingIsDisabledByPolicy(browser->profile()) ||
       media_router::MediaRouterEnabled(browser->profile())) {
     AddSeparator(ui::NORMAL_SEPARATOR);
@@ -827,14 +824,12 @@ void ToolsMenuModel::Build(Browser* browser) {
   AddItemWithStringIdAndVectorIcon(this, IDC_NAME_WINDOW, IDS_NAME_WINDOW,
                                    kNameWindowIcon);
 
-  if (features::IsSidePanelPinningEnabled()) {
-    AddItemWithStringIdAndVectorIcon(this, IDC_SHOW_READING_MODE_SIDE_PANEL,
-                                     IDS_SHOW_READING_MODE_SIDE_PANEL,
-                                     kMenuBookChromeRefreshIcon);
-    SetElementIdentifierAt(
-        GetIndexOfCommandId(IDC_SHOW_READING_MODE_SIDE_PANEL).value(),
-        kReadingModeMenuItem);
-  }
+  AddItemWithStringIdAndVectorIcon(this, IDC_SHOW_READING_MODE_SIDE_PANEL,
+                                   IDS_SHOW_READING_MODE_SIDE_PANEL,
+                                   kMenuBookChromeRefreshIcon);
+  SetElementIdentifierAt(
+      GetIndexOfCommandId(IDC_SHOW_READING_MODE_SIDE_PANEL).value(),
+      kReadingModeMenuItem);
 
   AddSeparator(ui::NORMAL_SEPARATOR);
   if (!features::IsExtensionMenuInRootAppMenu()) {
@@ -1003,12 +998,6 @@ void AppMenuModel::LogMenuMetrics(int command_id) {
   switch (command_id) {
     case IDC_UPGRADE_DIALOG:
       LogMenuAction(MENU_ACTION_UPGRADE_DIALOG);
-      break;
-    case IDC_SHOW_PASSWORD_CHECKUP:
-      LogMenuAction(MENU_ACTION_SHOW_PASSWORD_CHECKUP);
-      break;
-    case IDC_OPEN_SAFETY_HUB:
-      LogMenuAction(MENU_ACTION_SHOW_SAFETY_HUB);
       break;
 #if BUILDFLAG(IS_CHROMEOS_ASH)
     case IDC_LACROS_DATA_MIGRATION:
@@ -1552,6 +1541,30 @@ void AppMenuModel::LogMenuMetrics(int command_id) {
       }
       LogMenuAction(MENU_ACTION_SET_BROWSER_AS_DEFAULT);
       break;
+    case IDC_SAFETY_HUB_SHOW_PASSWORD_CHECKUP:
+      if (!uma_action_recorded_) {
+        base::UmaHistogramMediumTimes(
+            "WrenchMenu.TimeToAction.SafetyHubNotificationPasswordCheck",
+            delta);
+      }
+      LogMenuAction(MENU_ACTION_SAFETY_HUB_SHOW_PASSWORD_CHECKUP);
+      break;
+    case IDC_OPEN_SAFETY_HUB:
+      if (!uma_action_recorded_) {
+        base::UmaHistogramMediumTimes(
+            "WrenchMenu.TimeToAction.SafetyHubNotificationOpenSafetyHub",
+            delta);
+      }
+      LogMenuAction(MENU_ACTION_SHOW_SAFETY_HUB);
+      break;
+    case IDC_SAFETY_HUB_MANAGE_EXTENSIONS:
+      if (!uma_action_recorded_) {
+        base::UmaHistogramMediumTimes(
+            "WrenchMenu.TimeToAction.SafetyHubNotificationManageExtensions",
+            delta);
+      }
+      LogMenuAction(MENU_ACTION_SAFETY_HUB_MANAGE_EXTENSIONS);
+      break;
     default: {
       if (IsOtherProfileCommand(command_id)) {
         if (!uma_action_recorded_) {
@@ -1634,24 +1647,18 @@ void AppMenuModel::Build() {
   // Build (and, by extension, Init) should only be called once.
   DCHECK_EQ(0u, GetItemCount());
 
-  auto from_vector_icon = [](const gfx::VectorIcon& vector_icon) {
-    return ui::ImageModel::FromVectorIcon(vector_icon, ui::kColorMenuIcon,
-                                          kDefaultIconSize);
-  };
-
   bool need_separator = false;
   if (app_menu_icon_controller_ &&
       app_menu_icon_controller_->GetTypeAndSeverity().type ==
           AppMenuIconController::IconType::UPGRADE_NOTIFICATION) {
-    const auto update_icon =
-        from_vector_icon(kBrowserToolsUpdateChromeRefreshIcon);
+    AddSeparator(ui::SPACING_SEPARATOR);
+    const auto update_icon = ui::ImageModel::FromVectorIcon(
+        kBrowserToolsUpdateChromeRefreshIcon,
+        ui::kColorMenuIconOnEmphasizedBackground, kDefaultIconSize);
     if (browser_defaults::kShowUpgradeMenuItem) {
-      const MenuItemStrings upgrade_strings =
-          GetUpgradeDialogTitleAndMinorText();
-      AddItemWithIcon(IDC_UPGRADE_DIALOG, upgrade_strings.title_text,
+      AddItemWithIcon(IDC_UPGRADE_DIALOG, GetUpgradeDialogTitleText(),
                       update_icon);
-      SetMinorText(GetIndexOfCommandId(IDC_UPGRADE_DIALOG).value(),
-                   upgrade_strings.minor_text);
+      AddSeparator(ui::SPACING_SEPARATOR);
     }
 #if BUILDFLAG(IS_CHROMEOS_ASH)
     AddItemWithIcon(IDC_LACROS_DATA_MIGRATION,
@@ -1697,6 +1704,9 @@ void AppMenuModel::Build() {
              profile_submenu_model->profile_name(), profile_submenu_model);
   SetIcon(GetIndexOfCommandId(IDC_PROFILE_MENU_IN_APP_MENU).value(),
           profile_submenu_model->avatar_image_model());
+  SetElementIdentifierAt(
+      GetIndexOfCommandId(IDC_PROFILE_MENU_IN_APP_MENU).value(),
+      kProfileMenuItem);
   AddSeparator(ui::SPACING_SEPARATOR);
 #endif
 
@@ -1874,10 +1884,11 @@ void AppMenuModel::Build() {
 #if !BUILDFLAG(IS_CHROMEOS_ASH)
   if (chrome::ShouldDisplayManagedUi(browser_->profile())) {
     AddSeparator(ui::NORMAL_SEPARATOR);
-    AddItemWithIcon(
-        IDC_SHOW_MANAGEMENT_PAGE,
-        chrome::GetManagedUiMenuItemLabel(browser_->profile()),
-        from_vector_icon(chrome::GetManagedUiIcon(browser_->profile())));
+    AddItemWithIcon(IDC_SHOW_MANAGEMENT_PAGE,
+                    chrome::GetManagedUiMenuItemLabel(browser_->profile()),
+                    ui::ImageModel::FromVectorIcon(
+                        chrome::GetManagedUiIcon(browser_->profile()),
+                        ui::kColorMenuIcon, kDefaultIconSize));
 
     SetAccessibleNameAt(
         GetIndexOfCommandId(IDC_SHOW_MANAGEMENT_PAGE).value(),

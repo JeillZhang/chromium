@@ -10,6 +10,7 @@
 
 #include "base/functional/callback.h"
 #include "base/memory/weak_ptr.h"
+#include "base/timer/timer.h"
 #include "chrome/browser/ash/login/oobe_apps_service/oobe_apps_discovery_service.h"
 #include "chrome/browser/ash/login/oobe_apps_service/oobe_apps_types.h"
 #include "chrome/browser/ash/login/screens/base_screen.h"
@@ -22,7 +23,14 @@ class PersonalizedRecommendAppsScreen : public BaseScreen {
  public:
   using TView = PersonalizedRecommendAppsScreenView;
 
-  enum class Result { kNext, kSkip, kBack, kNotApplicable };
+  enum class Result {
+    kNext,
+    kSkip,
+    kBack,
+    kDataMalformed,
+    kError,
+    kNotApplicable
+  };
 
   using ScreenExitCallback = base::RepeatingCallback<void(Result result)>;
 
@@ -50,7 +58,14 @@ class PersonalizedRecommendAppsScreen : public BaseScreen {
                           const std::vector<OOBEDeviceUseCase>& use_cases,
                           AppsFetchingResult result);
 
-  std::vector<OOBEAppDefinition> app_infos_;
+  void OnInstall(base::Value::List selected_apps_package_ids) const;
+
+  void ShowOverviewStep();
+  void SetAppsAndUseCasesData(base::Value::List apps_with_use_cases_list);
+
+  std::unique_ptr<base::OneShotTimer> delay_set_apps_timer_;
+
+  std::unique_ptr<base::OneShotTimer> delay_overview_timer_;
 
   base::WeakPtr<PersonalizedRecommendAppsScreenView> view_;
   ScreenExitCallback exit_callback_;

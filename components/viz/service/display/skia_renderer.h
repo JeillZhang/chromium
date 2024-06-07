@@ -99,15 +99,12 @@ class VIZ_SERVICE_EXPORT SkiaRenderer : public DirectRenderer {
       const gfx::Rect& drawn_rect) override;
 
   gfx::Rect GetRenderPassBackingDrawnRect(
-      const AggregatedRenderPassId& render_pass_id) override;
-  void BindFramebufferToOutputSurface() override;
-  void BindFramebufferToTexture(
-      const AggregatedRenderPassId render_pass_id) override;
+      const AggregatedRenderPassId& render_pass_id) const override;
   void SetScissorTestRect(const gfx::Rect& scissor_rect) override;
-  void BeginDrawingRenderPass(
-    const AggregatedRenderPass* render_pass,
-      bool needs_clear,
-      const gfx::Rect& render_pass_update_rect) override;
+  void BeginDrawingRenderPass(const AggregatedRenderPass* render_pass,
+                              bool needs_clear,
+                              const gfx::Rect& render_pass_update_rect,
+                              const gfx::Size& viewport_size) override;
   void DoDrawQuad(const DrawQuad* quad, const gfx::QuadF* draw_region) override;
   void FinishDrawingRenderPass() override;
   void BeginDrawingFrame() override;
@@ -574,7 +571,7 @@ class VIZ_SERVICE_EXPORT SkiaRenderer : public DirectRenderer {
   bool is_protected_pool_idle_ = true;
   std::unique_ptr<BufferQueue> protected_buffer_queue_ = nullptr;
 
-  gpu::Mailbox GetProtectedSharedImage();
+  gpu::Mailbox GetProtectedSharedImage(bool is_10bit);
   void MaybeFreeProtectedPool();
 #endif
 };

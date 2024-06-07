@@ -6,7 +6,10 @@
 
 #include "base/memory/raw_ptr.h"
 #include "base/test/task_environment.h"
+#include "components/pref_registry/pref_registry_syncable.h"
+#include "components/prefs/testing_pref_service.h"
 #include "components/saved_tab_groups/empty_tab_group_store_delegate.h"
+#include "components/saved_tab_groups/pref_names.h"
 #include "components/saved_tab_groups/saved_tab_group_model.h"
 #include "components/saved_tab_groups/saved_tab_group_test_utils.h"
 #include "components/saved_tab_groups/tab_group_store.h"
@@ -87,14 +90,18 @@ class TabGroupSyncServiceTest : public testing::Test {
     model_ = model.get();
     auto tab_group_store = std::make_unique<MockTabGroupStore>();
     tab_group_store_ = tab_group_store.get();
+    pref_service_.registry()->RegisterBooleanPref(
+        prefs::kSavedTabGroupSpecificsToDataMigration, false);
 
+    std::map<base::Uuid, LocalTabGroupID> migrated_android_local_ids;
     tab_group_sync_service_ = std::make_unique<TabGroupSyncServiceImpl>(
         std::move(model),
         std::make_unique<TabGroupSyncServiceImpl::SyncDataTypeConfiguration>(
             processor_.CreateForwardingProcessor(),
             syncer::ModelTypeStoreTestUtil::FactoryForForwardingStore(
                 store_.get())),
-        nullptr, std::move(tab_group_store));
+        nullptr, std::move(tab_group_store), &pref_service_,
+        migrated_android_local_ids);
     ON_CALL(processor_, IsTrackingMetadata())
         .WillByDefault(testing::Return(true));
     ON_CALL(processor_, GetControllerDelegate())
@@ -195,6 +202,7 @@ class TabGroupSyncServiceTest : public testing::Test {
 
  protected:
   base::test::TaskEnvironment task_environment_;
+  TestingPrefServiceSimple pref_service_;
   raw_ptr<SavedTabGroupModel> model_;
   testing::NiceMock<syncer::MockModelTypeChangeProcessor> processor_;
   std::unique_ptr<syncer::ModelTypeStore> store_;
@@ -277,7 +285,25 @@ TEST_F(TabGroupSyncServiceTest, AddGroup) {
   EXPECT_EQ(group->saved_guid(), group_4.saved_guid());
   EXPECT_EQ(group->title(), group_4.title());
   EXPECT_EQ(group->color(), group_4.color());
+  EXPECT_FALSE(group->created_before_syncing_tab_groups());
   test::CompareSavedTabGroupTabs(group->saved_tabs(), group_4.saved_tabs());
+}
+
+TEST_F(TabGroupSyncServiceTest, AddGroupWhenSignedOut) {
+  // Add a new group while signed out.
+  ON_CALL(processor_, IsTrackingMetadata())
+      .WillByDefault(testing::Return(false));
+
+  SavedTabGroup group_4(test::CreateTestSavedTabGroup());
+  LocalTabGroupID tab_group_id = test::GenerateRandomTabGroupID();
+  group_4.SetLocalGroupId(tab_group_id);
+
+  tab_group_sync_service_->AddGroup(group_4);
+
+  // Query the group via service and verify members.
+  auto group = tab_group_sync_service_->GetGroup(group_4.saved_guid());
+  EXPECT_EQ(group->saved_guid(), group_4.saved_guid());
+  EXPECT_TRUE(group->created_before_syncing_tab_groups());
 }
 
 TEST_F(TabGroupSyncServiceTest, RemoveGroupByLocalId) {
@@ -454,13 +480,13 @@ TEST_F(TabGroupSyncServiceTest, UpdateLocalTabId) {
 TEST_F(TabGroupSyncServiceTest, AddObserverBeforeInitialize) {
   SetupTabGroupStore(true);
   EXPECT_CALL(*observer_, OnInitialized()).Times(1);
-  model_->LoadStoredEntries(std::vector<sync_pb::SavedTabGroupSpecifics>());
+  model_->LoadStoredEntries(/*groups=*/{}, /*tabs=*/{});
 }
 
 TEST_F(TabGroupSyncServiceTest, AddObserverAfterInitialize) {
   SetupTabGroupStore(true);
   EXPECT_CALL(*observer_, OnInitialized()).Times(1);
-  model_->LoadStoredEntries(std::vector<sync_pb::SavedTabGroupSpecifics>());
+  model_->LoadStoredEntries(/*groups=*/{}, /*tabs=*/{});
 
   auto observer2 = std::make_unique<MockTabGroupSyncServiceObserver>();
   EXPECT_CALL(*observer2, OnInitialized()).Times(1);
@@ -470,13 +496,13 @@ TEST_F(TabGroupSyncServiceTest, AddObserverAfterInitialize) {
 TEST_F(TabGroupSyncServiceTest, InitIsNotCompleteUntilMappingsAreRead) {
   SetupTabGroupStore(false);
   EXPECT_CALL(*observer_, OnInitialized()).Times(0);
-  model_->LoadStoredEntries(std::vector<sync_pb::SavedTabGroupSpecifics>());
+  model_->LoadStoredEntries(/*groups=*/{}, /*tabs=*/{});
 }
 
 TEST_F(TabGroupSyncServiceTest, MappingsAreFixedOnStartup) {
   SetupTabGroupStore(true);
   EXPECT_CALL(*observer_, OnInitialized()).Times(1);
-  model_->LoadStoredEntries(std::vector<sync_pb::SavedTabGroupSpecifics>());
+  model_->LoadStoredEntries(/*groups=*/{}, /*tabs=*/{});
 
   // Group 2 is an open group that has mapping persisted.
   auto group2 = tab_group_sync_service_->GetGroup(group_2_.saved_guid());
@@ -490,7 +516,7 @@ TEST_F(TabGroupSyncServiceTest, MappingsAreFixedOnStartup) {
 TEST_F(TabGroupSyncServiceTest, MappingsAreNotFixedIfSetupNotComplete) {
   SetupTabGroupStore(false);
   EXPECT_CALL(*observer_, OnInitialized()).Times(0);
-  model_->LoadStoredEntries(std::vector<sync_pb::SavedTabGroupSpecifics>());
+  model_->LoadStoredEntries(/*groups=*/{}, /*tabs=*/{});
 
   auto group = tab_group_sync_service_->GetGroup(group_2_.saved_guid());
   EXPECT_FALSE(group->local_group_id());

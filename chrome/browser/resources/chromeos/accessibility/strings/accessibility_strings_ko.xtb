@@ -264,7 +264,6 @@
 <translation id="2783001728278437613">{COUNT,plural, =1{#개 이상}other{#개 이상}}</translation>
 <translation id="2792200646155001340">또한 한 손가락을 오른쪽에서 왼쪽으로 스와이프하여 이전 항목으로 이동할 수 있습니다. 지금 해 보세요.</translation>
 <translation id="280499067616661124">ChromeVox 페이지에서 찾기</translation>
-<translation id="2811019999044652585">툴바 또는 작업표시줄 등 화면의 다른 부분으로 바로 이동하려면 Control+Forward 키를 누릅니다. Chromebook에서 Forward 키는 숫자 2 키 바로 위에 있습니다.</translation>
 <translation id="2811204574343810641">행</translation>
 <translation id="2816868829355607410">연습 영역: 점프 명령어</translation>
 <translation id="2841013758207633010">시간</translation>
@@ -880,6 +879,7 @@
 <translation id="7091296112653361280">나바호 화이트</translation>
 <translation id="7095834689119144465">텍스트 숫자만 수정</translation>
 <translation id="7096001299300236431">이전 미디어</translation>
+<translation id="7096668131290451939">학습 모드를 종료하려면 Esc 키를 다시 누르세요.</translation>
 <translation id="7116595520562830928">multln</translation>
 <translation id="712735679809149106">단어 에코</translation>
 <translation id="7137397390322864165">살몬</translation>

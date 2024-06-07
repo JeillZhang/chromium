@@ -124,7 +124,8 @@ class ChromeAutofillClientIOS : public AutofillClient {
   void ScanCreditCard(CreditCardScanCallback callback) override;
   bool ShowTouchToFillCreditCard(
       base::WeakPtr<TouchToFillDelegate> delegate,
-      base::span<const CreditCard> cards_to_suggest) override;
+      base::span<const CreditCard> cards_to_suggest,
+      const std::vector<bool>& card_acceptabilities) override;
   void HideTouchToFillCreditCard() override;
   void ShowAutofillSuggestions(
       const PopupOpenArgs& open_args,
@@ -154,10 +155,6 @@ class ChromeAutofillClientIOS : public AutofillClient {
                                 PlusAddressCallback callback) override;
   std::unique_ptr<device_reauth::DeviceAuthenticator> GetDeviceAuthenticator()
       override;
-  void ShowVirtualCardEnrollDialog(
-      const VirtualCardEnrollmentFields& virtual_card_enrollment_fields,
-      base::OnceClosure accept_virtual_card_callback,
-      base::OnceClosure decline_virtual_card_callback) override;
   PasswordFormType ClassifyAsPasswordForm(
       AutofillManager& manager,
       FormGlobalId form_id,

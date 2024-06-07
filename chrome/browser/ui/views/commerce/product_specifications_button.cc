@@ -150,6 +150,10 @@ void ProductSpecificationsButton::AnimationProgressed(
 }
 
 void ProductSpecificationsButton::Show() {
+  // If the button is already showing, don't update locked expansion mode.
+  if (expansion_animation_.IsShowing()) {
+    return;
+  }
   if (locked_expansion_view_->IsMouseHovered()) {
     SetLockedExpansionMode(LockedExpansionMode::kWillShow);
   }
@@ -172,6 +176,10 @@ void ProductSpecificationsButton::ShowEntryPointWithTitle(
   SetText(l10n_util::GetStringFUTF16(IDS_PRODUCT_SPECIFICATIONS_ENTRY_POINT,
                                      base::UTF8ToUTF16(title)));
   Show();
+}
+
+void ProductSpecificationsButton::HideEntryPoint() {
+  Hide();
 }
 
 void ProductSpecificationsButton::SetOpacity(float factor) {

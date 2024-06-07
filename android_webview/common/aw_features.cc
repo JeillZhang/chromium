@@ -73,12 +73,6 @@ BASE_FEATURE(kWebViewDisplayCutout,
              "WebViewDisplayCutout",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
-// Enable the WebView Media Integrity API.
-// This feature requires `kWebViewInjectPlatformJsApis` to be enabled as well.
-BASE_FEATURE(kWebViewMediaIntegrityApi,
-             "WebViewMediaIntegrityApi",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-
 // Enable the WebView Media Integrity API as a Blink extension.
 // This feature requires `kWebViewMediaIntegrityApi` to be disabled.
 BASE_FEATURE(kWebViewMediaIntegrityApiBlinkExtension,
@@ -194,11 +188,6 @@ BASE_FEATURE(kWebViewImageDrag,
              "WebViewImageDrag",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
-// Enables injection of platform-specific JavaScript APIs.
-BASE_FEATURE(kWebViewInjectPlatformJsApis,
-             "WebViewInjectPlatformJsApis",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
 // If enabled zoom picker is invoked on every kGestureScrollUpdate consumed ack,
 // otherwise the zoom picker is persistently shown from scroll start to scroll
 // end plus the usual delay in hiding.
@@ -246,6 +235,11 @@ BASE_FEATURE(kWebViewPreloadClasses,
 BASE_FEATURE(kWebViewDoNotSendAccessibilityEventsOnGSU,
              "WebViewDoNotSendAccessibilityEventsOnGSU",
              base::FEATURE_ENABLED_BY_DEFAULT);
+
+// Creates a spare renderer on browser context creation.
+BASE_FEATURE(kCreateSpareRendererOnBrowserContextCreation,
+             "CreateSpareRendererOnBrowserContextCreation",
+             base::FEATURE_DISABLED_BY_DEFAULT);
 
 }  // namespace features
 }  // namespace android_webview

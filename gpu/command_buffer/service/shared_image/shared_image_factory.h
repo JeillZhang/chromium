@@ -194,6 +194,9 @@ class GPU_GLES2_EXPORT SharedImageFactory {
     bool operator()(
         const std::unique_ptr<SharedImageRepresentationFactoryRef>& lhs,
         const gpu::Mailbox& rhs) const;
+    bool operator()(
+        const gpu::Mailbox& lhs,
+        const std::unique_ptr<SharedImageRepresentationFactoryRef>& rhs) const;
   };
 
   // The set of SharedImages which have been created (and are being kept alive)
@@ -265,7 +268,8 @@ class GPU_GLES2_EXPORT SharedImageRepresentationFactory {
   std::unique_ptr<VulkanImageRepresentation> ProduceVulkan(
       const Mailbox& mailbox,
       gpu::VulkanDeviceQueue* vulkan_device_queue,
-      gpu::VulkanImplementation& vulkan_impl);
+      gpu::VulkanImplementation& vulkan_impl,
+      bool needs_detiling);
 #endif
 
  private:

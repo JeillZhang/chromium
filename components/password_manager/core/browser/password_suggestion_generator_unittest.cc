@@ -18,6 +18,7 @@
 #include "components/password_manager/core/browser/password_manager_test_utils.h"
 #include "components/password_manager/core/browser/stub_password_manager_client.h"
 #include "components/password_manager/core/browser/stub_password_manager_driver.h"
+#include "components/password_manager/core/common/password_manager_constants.h"
 #include "components/sync/base/features.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -46,7 +47,7 @@ using testing::ReturnRef;
 Matcher<Suggestion> EqualsDomainPasswordSuggestion(
     SuggestionType id,
     const std::u16string& main_text,
-    const std::u16string& additional_label,
+    const std::u16string& password_label,
     const std::u16string& realm_label,
     const gfx::Image& custom_icon,
     Suggestion::Icon trailing_icon = Suggestion::Icon::kNoIcon) {
@@ -54,12 +55,9 @@ Matcher<Suggestion> EqualsDomainPasswordSuggestion(
       realm_label.empty() ? u"" : base::StrCat({u", ", realm_label});
   return AllOf(
       EqualsSuggestion(id, main_text, Suggestion::Icon::kGlobe),
-      Field("additional_label", &Suggestion::additional_label,
-            additional_label),
-      Field(
-          "labels", &Suggestion::labels,
-          Conditional(realm_label.empty(), IsEmpty(),
-                      ElementsAre(ElementsAre(Suggestion::Text(realm_label))))),
+      Field("additional_label", &Suggestion::additional_label, realm_label),
+      Field("labels", &Suggestion::labels,
+            ElementsAre(ElementsAre(Suggestion::Text(password_label)))),
       Field("voice_over", &Suggestion::voice_over,
             Conditional(
                 realm_label.empty(),
@@ -91,14 +89,15 @@ Matcher<Suggestion> EqualsPasskeySuggestion(
 Matcher<Suggestion> EqualsManualFallbackSuggestion(
     SuggestionType id,
     const std::u16string& main_text,
-    const std::u16string& additional_label,
+    const std::u16string& username_label,
     Suggestion::Icon icon,
     bool is_acceptable,
     const Suggestion::Payload& payload) {
   return AllOf(
       EqualsSuggestion(id, main_text, icon),
-      Field("additional_label", &Suggestion::additional_label,
-            additional_label),
+      Field(
+          "labels", &Suggestion::labels,
+          ElementsAre(ElementsAre(autofill::Suggestion::Text(username_label)))),
       Field("is_acceptable", &Suggestion::is_acceptable, is_acceptable),
       Field("payload", &Suggestion::payload, payload));
 }
@@ -234,7 +233,7 @@ class PasswordSuggestionGeneratorTest : public testing::Test {
   }
 
   std::u16string password_label(size_t length) const {
-    return std::u16string(length, 0x2022);
+    return std::u16string(length, constants::kPasswordReplacementChar);
   }
 
   CredentialUIEntry android_credential_ui_entry() const {
@@ -347,8 +346,7 @@ TEST_F(PasswordSuggestionGeneratorTest,
                               SuggestionType::kAccountStoragePasswordEntry,
                               u"username", password_label(8u),
                               /*realm_label=*/u"", favicon(),
-                              Suggestion::Icon::kGoogle
-                              ),
+                              Suggestion::Icon::kGoogle),
                           EqualsSuggestion(SuggestionType::kSeparator),
                           EqualsManagePasswordsSuggestion()));
 }
@@ -417,20 +415,18 @@ TEST_F(PasswordSuggestionGeneratorTest,
   std::vector<Suggestion> suggestions = generator().GetSuggestionsForDomain(
       fill_data, favicon(), /*username_filter=*/u"", OffersGeneration(false),
       ShowPasswordSuggestions(true), ShowWebAuthnCredentials(false));
-  EXPECT_THAT(
-      suggestions,
-      ElementsAre(
-          EqualsDomainPasswordSuggestion(SuggestionType::kPasswordEntry,
-                                         u"username", password_label(8u),
-                                         /*realm_label=*/u"", favicon()),
-          EqualsDomainPasswordSuggestion(
-              SuggestionType::kAccountStoragePasswordEntry, u"additional_login",
-              password_label(19u),
-              /*realm_label=*/u"additional.login.com", favicon(),
-              Suggestion::Icon::kNoIcon
-              ),
-          EqualsSuggestion(SuggestionType::kSeparator),
-          EqualsManagePasswordsSuggestion()));
+  EXPECT_THAT(suggestions,
+              ElementsAre(EqualsDomainPasswordSuggestion(
+                              SuggestionType::kPasswordEntry, u"username",
+                              password_label(8u),
+                              /*realm_label=*/u"", favicon()),
+                          EqualsDomainPasswordSuggestion(
+                              SuggestionType::kAccountStoragePasswordEntry,
+                              u"additional_login", password_label(19u),
+                              /*realm_label=*/u"additional.login.com",
+                              favicon(), Suggestion::Icon::kNoIcon),
+                          EqualsSuggestion(SuggestionType::kSeparator),
+                          EqualsManagePasswordsSuggestion()));
 }
 
 // Verify that suggestions for additional logins are sorted by username.

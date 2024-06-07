@@ -42,8 +42,8 @@
 #include "chrome/browser/themes/theme_service_factory.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/color/chrome_color_id.h"
-#include "chrome/browser/ui/side_panel/customize_chrome/customize_chrome_tab_helper.h"
-#include "chrome/browser/ui/side_panel/customize_chrome/customize_chrome_utils.h"
+#include "chrome/browser/ui/views/side_panel/customize_chrome/customize_chrome_tab_helper.h"
+#include "chrome/browser/ui/views/side_panel/customize_chrome/customize_chrome_utils.h"
 #include "chrome/browser/ui/webui/browser_command/browser_command_handler.h"
 #include "chrome/browser/ui/webui/cr_components/most_visited/most_visited_handler.h"
 #include "chrome/browser/ui/webui/customize_themes/chrome_customize_themes_handler.h"
@@ -467,23 +467,25 @@ content::WebUIDataSource* CreateAndAddNewTabPageUiHtmlSource(Profile* profile) {
       {"modulesDriveInfo", IDS_NTP_MODULES_DRIVE_INFO},
       {"modulesDummyTitle", IDS_NTP_MODULES_DUMMY_TITLE},
       {"modulesFeedTitle", IDS_NTP_MODULES_FEED_TITLE},
-      {"modulesTodayCalendarHeader", IDS_NTP_MODULES_TODAY_CALENDAR_HEADER},
-      {"modulesTodayCalendarDisableButtonText",
-       IDS_NTP_MODULES_TODAY_CALENDAR_DISABLE_BUTTON_TEXT},
-      {"modulesTodayCalendarDismissButtonText",
-       IDS_NTP_MODULES_TODAY_CALENDAR_DISMISS_BUTTON_TEXT},
-      {"modulesTodayCalendarDismissToastMessage",
-       IDS_NTP_MODULES_TODAY_CALENDAR_DISMISS_TOAST_MESSAGE},
-      {"modulesTodayCalendarDisableToastMessage",
-       IDS_NTP_MODULES_TODAY_CALENDAR_DISABLE_TOAST_MESSAGE},
-      {"modulesTodayCalendarMoreActions",
-       IDS_NTP_MODULES_TODAY_CALENDAR_MORE_ACTIONS},
+      {"modulesGoogleCalendarDismissButtonText",
+       IDS_NTP_MODULES_GOOGLE_CALENDAR_DISMISS_BUTTON_TEXT},
+      {"modulesGoogleCalendarDismissToastMessage",
+       IDS_NTP_MODULES_GOOGLE_CALENDAR_DISMISS_TOAST_MESSAGE},
+      {"modulesGoogleCalendarDisableToastMessage",
+       IDS_NTP_MODULES_GOOGLE_CALENDAR_DISABLE_TOAST_MESSAGE},
+      {"modulesGoogleCalendarMoreActions",
+       IDS_NTP_MODULES_GOOGLE_CALENDAR_MORE_ACTIONS},
       {"modulesGoogleCalendarTitle", IDS_NTP_MODULES_GOOGLE_CALENDAR_TITLE},
       {"modulesGoogleCalendarDisableButtonText",
        IDS_NTP_MODULES_GOOGLE_CALENDAR_DISABLE_BUTTON_TEXT},
       {"modulesOutlookCalendarTitle", IDS_NTP_MODULES_OUTLOOK_CALENDAR_TITLE},
       {"modulesOutlookCalendarDisableButtonText",
        IDS_NTP_MODULES_OUTLOOK_CALENDAR_DISABLE_BUTTON_TEXT},
+      {"modulesCalendarJoinMeetingButtonText",
+       IDS_NTP_MODULES_CALENDAR_JOIN_MEETING_BUTTON_TEXT},
+      {"modulesCalendarInProgress", IDS_NTP_MODULES_CALENDAR_IN_PROGRESS},
+      {"modulesCalendarInXMin", IDS_NTP_MODULES_CALENDAR_IN_X_MIN},
+      {"modulesCalendarInXHr", IDS_NTP_MODULES_CALENDAR_IN_X_HR},
       {"modulesKaleidoscopeTitle", IDS_NTP_MODULES_KALEIDOSCOPE_TITLE},
       {"modulesPhotosInfo", IDS_NTP_MODULES_PHOTOS_INFO},
       {"modulesPhotosSentence", IDS_NTP_MODULES_PHOTOS_MEMORIES_TITLE},
@@ -1095,11 +1097,6 @@ void NewTabPageUI::OnCustomBackgroundImageUpdated() {
           : "");
   content::WebUIDataSource::Update(profile_, chrome::kChromeUINewTabPageHost,
                                    std::move(update));
-}
-
-void NewTabPageUI::OnNtpCustomBackgroundServiceShuttingDown() {
-  ntp_custom_background_service_observation_.Reset();
-  ntp_custom_background_service_ = nullptr;
 }
 
 void NewTabPageUI::DidStartNavigation(

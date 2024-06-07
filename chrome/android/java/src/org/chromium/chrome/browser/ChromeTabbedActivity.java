@@ -141,7 +141,6 @@ import org.chromium.chrome.browser.metrics.LaunchMetrics;
 import org.chromium.chrome.browser.metrics.MainIntentBehaviorMetrics;
 import org.chromium.chrome.browser.metrics.SimpleStartupForegroundSessionDetector;
 import org.chromium.chrome.browser.modaldialog.ChromeTabModalPresenter;
-import org.chromium.chrome.browser.multiwindow.MultiInstanceChromeTabbedActivity;
 import org.chromium.chrome.browser.multiwindow.MultiInstanceManager;
 import org.chromium.chrome.browser.multiwindow.MultiWindowUtils;
 import org.chromium.chrome.browser.multiwindow.MultiWindowUtils.InstanceAllocationType;
@@ -234,6 +233,7 @@ import org.chromium.chrome.features.start_surface.StartSurfaceDelegate;
 import org.chromium.chrome.features.start_surface.StartSurfaceState;
 import org.chromium.chrome.features.start_surface.StartSurfaceUserData;
 import org.chromium.components.browser_ui.settings.SettingsLauncher;
+import org.chromium.components.browser_ui.styles.SemanticColorUtils;
 import org.chromium.components.browser_ui.util.BrowserControlsVisibilityDelegate;
 import org.chromium.components.browser_ui.util.ComposedBrowserControlsVisibilityDelegate;
 import org.chromium.components.browser_ui.util.FirstDrawDetector;
@@ -305,7 +305,6 @@ public class ChromeTabbedActivity extends ChromeActivity<ChromeActivityComponent
     public static final Set<String> TABBED_MODE_COMPONENT_NAMES =
             Set.of(
                     ChromeTabbedActivity.class.getName(),
-                    MultiInstanceChromeTabbedActivity.class.getName(),
                     ChromeTabbedActivity2.class.getName(),
                     MAIN_LAUNCHER_ACTIVITY_NAME);
 
@@ -934,20 +933,23 @@ public class ChromeTabbedActivity extends ChromeActivity<ChromeActivityComponent
     private @Nullable ObservableSupplier<Integer> getHubOverviewColorSupplier() {
         if (!HubFieldTrial.isHubEnabled()) return null;
 
-        ObservableSupplierImpl<Integer> overviewIncognitoSupplier = new ObservableSupplierImpl<>();
+        // Prior to Hub creation we don't know what color to use. Default to the background color
+        // since this shouldn't be visible.
+        ObservableSupplierImpl<Integer> overviewColorSupplier =
+                new ObservableSupplierImpl<>(SemanticColorUtils.getDefaultBgColor(this));
         mHubManagerSupplier.onAvailable(
                 (hubManager) -> {
                     ObservableSupplier<Pane> paneSupplier =
                             hubManager.getPaneManager().getFocusedPaneSupplier();
                     Callback<Pane> paneObserver =
                             pane ->
-                                    overviewIncognitoSupplier.set(
+                                    overviewColorSupplier.set(
                                             hubManager.getHubController().getBackgroundColor(pane));
                     paneSupplier.addObserver(paneObserver);
                     mCleanUpHubOverviewColorObserver =
                             () -> paneSupplier.removeObserver(paneObserver);
                 });
-        return overviewIncognitoSupplier;
+        return overviewColorSupplier;
     }
 
     private Pane createTabSwitcherPane(boolean isIncognito) {
@@ -2018,7 +2020,8 @@ public class ChromeTabbedActivity extends ChromeActivity<ChromeActivityComponent
                     return;
                 }
 
-                if (!IncognitoUtils.isIncognitoModeEnabled()) {
+                if (!IncognitoUtils.isIncognitoModeEnabled(
+                        getProfileProviderSupplier().get().getOriginalProfile())) {
                     // The incognito launcher shortcut is manipulated in #onDeferredStartup(),
                     // so it's possible for a user to invoke the shortcut before it's disabled.
                     // Quick actions search widget is installed on the home screen and may
@@ -2202,9 +2205,7 @@ public class ChromeTabbedActivity extends ChromeActivity<ChromeActivityComponent
         supportRequestWindowFeature(Window.FEATURE_ACTION_MODE_OVERLAY);
         IncognitoTabHostRegistry.getInstance().register(mIncognitoTabHost);
         mStartupPaintPreviewHelperSupplier.attach(getWindowAndroid().getUnownedUserDataHost());
-        if (ChromeFeatureList.sNewTabSearchEngineUrlAndroid.isEnabled()) {
-            mDseNewTabUrlManager = new DseNewTabUrlManager(mTabModelProfileSupplier);
-        }
+        mDseNewTabUrlManager = new DseNewTabUrlManager(mTabModelProfileSupplier);
 
         initHub();
     }
@@ -2251,8 +2252,7 @@ public class ChromeTabbedActivity extends ChromeActivity<ChromeActivityComponent
                 /* statusBarColorProvider= */ this,
                 new ObservableSupplierImpl<>(),
                 getIntentRequestTracker(),
-                getControlContainerHeightResource(),
-                mInsetObserverViewSupplier,
+                getWindowAndroid().getInsetObserver(),
                 this::backShouldCloseTab,
                 getTabReparentingControllerSupplier(),
                 // TODO(sinansahin): This currently only checks for incognito extras in the intent.
@@ -2262,7 +2262,8 @@ public class ChromeTabbedActivity extends ChromeActivity<ChromeActivityComponent
                 getSavedInstanceState(),
                 mMultiInstanceManager,
                 getHubOverviewColorSupplier(),
-                getBaseChromeLayout());
+                getBaseChromeLayout(),
+                mManualFillingComponentSupplier);
     }
 
     @Override
@@ -2676,7 +2677,8 @@ public class ChromeTabbedActivity extends ChromeActivity<ChromeActivityComponent
             return;
         }
 
-        LauncherShortcutActivity.updateIncognitoShortcut(ChromeTabbedActivity.this);
+        LauncherShortcutActivity.updateIncognitoShortcut(
+                ChromeTabbedActivity.this, mTabModelProfileSupplier.get());
 
         ChromeSurveyController.initialize(
                 mTabModelSelector,
@@ -2892,9 +2894,10 @@ public class ChromeTabbedActivity extends ChromeActivity<ChromeActivityComponent
 
             mLocaleManager.showSearchEnginePromoIfNeeded(this, null);
         } else if (id == R.id.new_incognito_tab_menu_id) {
-            if (IncognitoUtils.isIncognitoModeEnabled()) {
-                if (!mTabModelSelector.isTabStateInitialized()) return false;
+            if (!mTabModelSelector.isTabStateInitialized()) return false;
 
+            Profile profile = mTabModelSelector.getCurrentModel().getProfile();
+            if (IncognitoUtils.isIncognitoModeEnabled(profile)) {
                 getTabModelSelector().getModel(false).commitAllTabClosures();
                 // This action must be recorded before opening the incognito tab since UMA actions
                 // are dropped when an incognito tab is open.
@@ -2903,9 +2906,7 @@ public class ChromeTabbedActivity extends ChromeActivity<ChromeActivityComponent
                 reportNewTabShortcutUsed(true);
                 if (fromMenu) RecordUserAction.record("MobileMenuNewIncognitoTab.AppMenu");
                 getTabCreator(true).launchNtp();
-                Tracker tracker =
-                        TrackerFactory.getTrackerForProfile(
-                                mTabModelSelector.getCurrentModel().getProfile());
+                Tracker tracker = TrackerFactory.getTrackerForProfile(profile);
                 tracker.notifyEvent(EventConstants.APP_MENU_NEW_INCOGNITO_TAB_CLICKED);
             }
         } else if (id == R.id.all_bookmarks_menu_id) {

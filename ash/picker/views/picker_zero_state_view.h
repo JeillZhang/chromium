@@ -12,6 +12,7 @@
 #include "ash/ash_export.h"
 #include "ash/picker/views/picker_category_type.h"
 #include "ash/picker/views/picker_page_view.h"
+#include "ash/picker/views/picker_preview_bubble_controller.h"
 #include "ash/public/cpp/picker/picker_category.h"
 #include "base/containers/span.h"
 #include "base/functional/callback_forward.h"
@@ -52,27 +53,33 @@ class ASH_EXPORT PickerZeroStateView : public PickerPageView {
   bool MovePseudoFocusDown() override;
   bool MovePseudoFocusLeft() override;
   bool MovePseudoFocusRight() override;
-  void AdvancePseudoFocus(PseudoFocusDirection direction) override;
+  bool AdvancePseudoFocus(PseudoFocusDirection direction) override;
+  bool GainPseudoFocus(PseudoFocusDirection direction) override;
+  void LosePseudoFocus() override;
 
   std::map<PickerCategoryType, raw_ptr<PickerSectionView>>
-  section_views_for_testing() const {
-    return section_views_;
+  category_section_views_for_testing() const {
+    return category_section_views_;
   }
 
-  PickerSectionView* RecentSectionForTesting() const {
-    return recent_section_view_;
+  PickerSectionView& PrimarySectionForTesting() const {
+    return *primary_section_view_;
   }
 
  private:
   void OnCategorySelected(PickerCategory category);
   void OnResultSelected(const PickerSearchResult& result);
 
-  // Gets or creates the section to contain `category`.
+  // Gets or creates the category type section to contain `category`.
   PickerSectionView* GetOrCreateSectionView(PickerCategory category);
 
   void SetPseudoFocusedView(views::View* view);
 
   void ScrollPseudoFocusedViewToVisible();
+
+  // Moves pseudo focus to the top item, or does nothing if this zero state view
+  // is not currently handling pseudo focus.
+  void MovePseudoFocusToTopIfNeeded();
 
   void OnFetchRecentResults(std::vector<PickerSearchResult> result);
 
@@ -80,18 +87,24 @@ class ASH_EXPORT PickerZeroStateView : public PickerPageView {
                                      std::vector<PickerSearchResult> result);
 
   raw_ptr<PickerZeroStateViewDelegate> delegate_;
+  PickerPreviewBubbleController preview_controller_;
 
   // The section list view, contains the section views.
   raw_ptr<PickerSectionListView> section_list_view_ = nullptr;
 
-  // Used to track the section view for each category type.
-  std::map<PickerCategoryType, raw_ptr<PickerSectionView>> section_views_;
+  // The primary section is a titleless section that is shown first.
+  // It contains items such as zero-state suggestions.
+  raw_ptr<PickerSectionView> primary_section_view_ = nullptr;
+
+  // Below the primary section, there is a set of sections for each category
+  // type.
+  std::map<PickerCategoryType, raw_ptr<PickerSectionView>>
+      category_section_views_;
 
   // The currently pseudo focused view, which responds to user actions that
   // trigger `DoPseudoFocusedAction`.
   raw_ptr<views::View> pseudo_focused_view_ = nullptr;
 
-  raw_ptr<PickerSectionView> recent_section_view_ = nullptr;
   std::unique_ptr<PickerClipboardProvider> clipboard_provider_;
 
   base::WeakPtrFactory<PickerZeroStateView> weak_ptr_factory_{this};

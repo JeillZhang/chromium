@@ -92,15 +92,12 @@ try_.builder(
     name = "win-libfuzzer-asan-rel",
     branch_selector = branches.selector.WINDOWS_BRANCHES,
     executable = "recipe:chromium/fuzz",
+    mirrors = ["ci/Libfuzzer Upload Windows ASan"],
     gn_args = gn_args.config(
         configs = [
-            "libfuzzer",
-            "asan",
-            "release_try_builder",
-            "reclient",
-            "chrome_with_codecs",
-            "pdf_xfa",
-            "mojo_fuzzer",
+            "ci/Libfuzzer Upload Windows ASan",
+            "dcheck_always_on",
+            "no_symbols",
             "skip_generate_fuzzer_owners",
         ],
     ),
@@ -266,21 +263,6 @@ try_.builder(
 )
 
 try_.builder(
-    name = "win10-multiscreen-fyi-rel",
-    description_html = (
-        "This builder is intended to run tests related to multiscreen " +
-        "functionality on Windows. For more info, see " +
-        "<a href=\"http://shortn/_4L6uYvA1xU\">http://shortn/_4L6uYvA1xU</a>."
-    ),
-    mirrors = [
-        "ci/win10-multiscreen-fyi-rel",
-    ],
-    gn_args = "ci/win10-multiscreen-fyi-rel",
-    os = os.WINDOWS_10,
-    contact_team_email = "web-windowing-team@google.com",
-)
-
-try_.builder(
     name = "win11-rel",
     description_html = "This builder run tests for Windows 11 release build.",
     mirrors = [
@@ -330,8 +312,10 @@ try_.orchestrator_builder(
     ),
     mirrors = [
         "ci/win-arm64-rel",
-        "ci/win11-arm64-rel-tests",
-    ],
+        # TODO (https://crbug.com/341773363): Until the testing pool is
+        # stabilized, the ci tester is disabled on the branches, so it can only
+        # be mirrored on trunk
+    ] + (["ci/win11-arm64-rel-tests"] if settings.is_main else []),
     gn_args = gn_args.config(
         configs = [
             "ci/win-arm64-rel",
@@ -350,6 +334,7 @@ try_.orchestrator_builder(
     # are addressed
     #use_orchestrator_pool = True,
     tryjob = try_.job(
+        experiment_percentage = 100,
         location_filters = [
             "sandbox/win/.+",
             "sandbox/policy/win/.+",
@@ -385,8 +370,6 @@ try_.builder(
         # TODO(crbug.com/40847153) Remove once cancelling doesn't wipe
         # out builder cache
         cancel_stale = False,
-        # TODO(crbug.com/328175907) Enable after resources verified.
-        experiment_percentage = 100,
     ),
 )
 
@@ -446,9 +429,6 @@ try_.gpu.optional_tests_builder(
     builder_spec = builder_config.builder_spec(
         gclient_config = builder_config.gclient_config(
             config = "chromium",
-            apply_configs = [
-                "angle_internal",
-            ],
         ),
         chromium_config = builder_config.chromium_config(
             config = "chromium",
@@ -468,7 +448,7 @@ try_.gpu.optional_tests_builder(
         configs = [
             "gpu_fyi_tests",
             "release_builder",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
             "dcheck_always_on",
         ],

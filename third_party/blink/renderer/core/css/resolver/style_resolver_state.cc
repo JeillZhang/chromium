@@ -274,6 +274,28 @@ void StyleResolverState::SetWritingMode(WritingMode new_writing_mode) {
   font_builder_.DidChangeWritingMode();
 }
 
+void StyleResolverState::SetTextSizeAdjust(
+    TextSizeAdjust new_text_size_adjust) {
+  if (StyleBuilder().GetTextSizeAdjust() == new_text_size_adjust) {
+    return;
+  }
+
+  if (!new_text_size_adjust.IsAuto()) {
+    GetDocument().CountUse(WebFeature::kTextSizeAdjustNotAuto);
+    if (new_text_size_adjust.Multiplier() != 1.f) {
+      GetDocument().CountUse(WebFeature::kTextSizeAdjustPercentNot100);
+    }
+  }
+
+  StyleBuilder().SetTextSizeAdjust(new_text_size_adjust);
+  // When `TextSizeAdjustImprovements` is enabled, text-size-adjust affects
+  // font-size during style building.
+  if (RuntimeEnabledFeatures::TextSizeAdjustImprovementsEnabled()) {
+    UpdateLengthConversionData();
+    font_builder_.DidChangeTextSizeAdjust();
+  }
+}
+
 void StyleResolverState::SetTextOrientation(ETextOrientation text_orientation) {
   if (StyleBuilder().GetTextOrientation() != text_orientation) {
     StyleBuilder().SetTextOrientation(text_orientation);

@@ -4,6 +4,15 @@
 
 #import "ios/chrome/browser/ui/lens/features.h"
 
-BASE_FEATURE(kLensCircleToSearchEnabled,
-             "LensCircleToSearchEnabled",
+#import "base/metrics/field_trial_params.h"
+
+BASE_FEATURE(kLensWebPageEarlyTransitionEnabled,
+             "LensWebPageEarlyTransitionEnabled",
              base::FEATURE_DISABLED_BY_DEFAULT);
+
+const char kLoadingProgressThreshold[] = "LoadingProgressThreshold";
+
+double LensWebPageEarlyTransitionLoadingProgressThreshold() {
+  return base::GetFieldTrialParamByFeatureAsDouble(
+      kLensWebPageEarlyTransitionEnabled, kLoadingProgressThreshold, 0.5);
+}

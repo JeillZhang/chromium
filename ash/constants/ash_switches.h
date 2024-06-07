@@ -92,10 +92,12 @@ COMPONENT_EXPORT(ASH_CONSTANTS) extern const char kAshUiMode[];
 COMPONENT_EXPORT(ASH_CONSTANTS) extern const char kAshUiModeClamshell[];
 COMPONENT_EXPORT(ASH_CONSTANTS) extern const char kAshUiModeTablet[];
 COMPONENT_EXPORT(ASH_CONSTANTS) extern const char kAuraLegacyPowerButton[];
+COMPONENT_EXPORT(ASH_CONSTANTS) extern const char kBirchIsMorning[];
 COMPONENT_EXPORT(ASH_CONSTANTS) extern const char kCampbellKey[];
 COMPONENT_EXPORT(ASH_CONSTANTS) extern const char kCellularFirst[];
 COMPONENT_EXPORT(ASH_CONSTANTS) extern const char kChildWallpaperLarge[];
 COMPONENT_EXPORT(ASH_CONSTANTS) extern const char kChildWallpaperSmall[];
+COMPONENT_EXPORT(ASH_CONSTANTS) extern const char kConchKey[];
 COMPONENT_EXPORT(ASH_CONSTANTS) extern const char kCrosRegion[];
 COMPONENT_EXPORT(ASH_CONSTANTS)
 extern const char kCryptohomeRecoveryServiceBaseUrl[];
@@ -224,10 +226,6 @@ COMPONENT_EXPORT(ASH_CONSTANTS) extern const char kForceShowReleaseTrack[];
 COMPONENT_EXPORT(ASH_CONSTANTS) extern const char kForceTabletPowerButton[];
 COMPONENT_EXPORT(ASH_CONSTANTS) extern const char kForestFeatureKey[];
 COMPONENT_EXPORT(ASH_CONSTANTS) extern const char kFormFactor[];
-COMPONENT_EXPORT(ASH_CONSTANTS)
-extern const char kGlanceablesIgnoreEnableMergeRequestBuildFlag[];
-COMPONENT_EXPORT(ASH_CONSTANTS) extern const char kGlanceablesKeyExpectedHash[];
-COMPONENT_EXPORT(ASH_CONSTANTS) extern const char kGlanceablesKeySwitch[];
 COMPONENT_EXPORT(ASH_CONSTANTS) extern const char kGrowthCampaigns[];
 COMPONENT_EXPORT(ASH_CONSTANTS) extern const char kGrowthCampaignsPath[];
 COMPONENT_EXPORT(ASH_CONSTANTS) extern const char kGuestSession[];
@@ -508,6 +506,9 @@ bool ShouldAllowDefaultShelfPinLayoutIgnoringSync();
 
 COMPONENT_EXPORT(ASH_CONSTANTS)
 bool IsCampbellSecretKeyMatched();
+
+COMPONENT_EXPORT(ASH_CONSTANTS)
+bool IsConchSecretKeyMatched();
 
 COMPONENT_EXPORT(ASH_CONSTANTS)
 bool IsForestSecretKeyMatched();

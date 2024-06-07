@@ -13,6 +13,7 @@
 #include "chrome/browser/apps/app_service/app_service_proxy.h"
 #include "chrome/browser/apps/app_service/app_service_proxy_factory.h"
 #include "chrome/browser/ash/app_list/arc/arc_app_utils.h"
+#include "chrome/browser/ash/mahi/media_app/mahi_media_app_handler_factory.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
@@ -98,6 +99,8 @@ void ChromeMediaAppGuestUIDelegate::PopulateLoadTimeData(
   source->AddBoolean("photosAvailableForVideo", photos_integration_supported);
   source->AddBoolean("pdfA11yOcr", base::FeatureList::IsEnabled(
                                        ash::features::kMediaAppPdfA11yOcr));
+  source->AddBoolean(
+      "pdfMahi", base::FeatureList::IsEnabled(ash::features::kMediaAppPdfMahi));
   source->AddBoolean("flagsMenu", channel != version_info::Channel::BETA &&
                                       channel != version_info::Channel::STABLE);
   source->AddBoolean("isDevChannel", channel == version_info::Channel::DEV);
@@ -106,12 +109,24 @@ void ChromeMediaAppGuestUIDelegate::PopulateLoadTimeData(
 std::unique_ptr<ash::media_app_ui::mojom::OcrUntrustedPageHandler>
 ChromeMediaAppGuestUIDelegate::CreateAndBindOcrHandler(
     content::BrowserContext& context,
+    gfx::NativeWindow native_window,
     mojo::PendingReceiver<ash::media_app_ui::mojom::OcrUntrustedPageHandler>
         receiver,
     mojo::PendingRemote<ash::media_app_ui::mojom::OcrUntrustedPage> page) {
   return ash::AXMediaAppHandlerFactory::GetInstance()
-      ->CreateAXMediaAppUntrustedHandler(context, std::move(receiver),
-                                         std::move(page));
+      ->CreateAXMediaAppUntrustedHandler(context, native_window,
+                                         std::move(receiver), std::move(page));
+}
+
+void ChromeMediaAppGuestUIDelegate::CreateAndBindMahiHandler(
+    mojo::PendingReceiver<ash::media_app_ui::mojom::MahiUntrustedPageHandler>
+        receiver,
+    mojo::PendingRemote<ash::media_app_ui::mojom::MahiUntrustedPage> page,
+    const std::string& file_name,
+    aura::Window* window) {
+  ash::MahiMediaAppHandlerFactory::GetInstance()
+      ->CreateMahiMediaAppUntrustedHandler(std::move(receiver), std::move(page),
+                                           file_name, window);
 }
 
 MediaAppGuestUIConfig::MediaAppGuestUIConfig()

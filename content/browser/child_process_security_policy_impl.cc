@@ -220,6 +220,12 @@ void LogCanAccessDataForOriginCrashKeys(
                                  process_rfh_count);
 }
 
+void LogCanCommitUrlFailureReason(const std::string& failure_reason) {
+  static auto* const failure_reason_key = base::debug::AllocateCrashKeyString(
+      "cpspi_can_commit_url_failure_reason", base::debug::CrashKeySize::Size64);
+  base::debug::SetCrashKeyString(failure_reason_key, failure_reason);
+}
+
 // Checks whether a lock mismatch should be ignored to allow most visited tiles
 // to commit in third-party NTP processes.
 //
@@ -1341,22 +1347,35 @@ bool ChildProcessSecurityPolicyImpl::CanRedirectToURL(const GURL& url) {
 
 bool ChildProcessSecurityPolicyImpl::CanCommitURL(int child_id,
                                                   const GURL& url) {
-  if (!url.is_valid())
+  if (!url.is_valid()) {
+    LogCanCommitUrlFailureReason("invalid_url");
     return false;  // Can't commit invalid URLs.
+  }
 
   const std::string& scheme = url.scheme();
 
   // Of all the pseudo schemes, only about:blank and about:srcdoc are allowed to
   // commit.
-  if (IsPseudoScheme(scheme))
-    return url.IsAboutBlank() || url.IsAboutSrcdoc();
+  if (IsPseudoScheme(scheme)) {
+    if (!url.IsAboutBlank() && !url.IsAboutSrcdoc()) {
+      LogCanCommitUrlFailureReason("pseudo_scheme_non_blank_or_srcdoc");
+      return false;
+    } else {
+      // TODO(crbug.com/324934416): Consider continuing with the checks below.
+      return true;
+    }
+  }
 
   // Blob and filesystem URLs require special treatment; validate the inner
   // origin they embed.
   if (url.SchemeIsBlob() || url.SchemeIsFileSystem()) {
-    if (IsMalformedBlobUrl(url))
+    if (IsMalformedBlobUrl(url)) {
+      LogCanCommitUrlFailureReason("malformed_blob_url");
       return false;
+    }
 
+    // No need to log a failure reason here, because it will be logged in the
+    // sole recursive call if that call returns false.
     url::Origin origin = url::Origin::Create(url);
     return origin.opaque() || CanCommitURL(child_id, GURL(origin.Serialize()));
   }
@@ -1370,9 +1389,18 @@ bool ChildProcessSecurityPolicyImpl::CanCommitURL(int child_id,
   // With site isolation, a URL from a site may only be committed in a process
   // dedicated to that site.  This check will ensure that |url| can't commit if
   // the process is locked to a different site.
-  if (!CanAccessMaybeOpaqueOrigin(child_id, url,
+  //
+  // We skip this check specifically for the error page URL,
+  // chrome-error://chromewebdata, because it can commit in any process (due to
+  // a lack of subframe error page isolation) and because it is difficult to
+  // compute its expected process lock. We still verify in the
+  // state->CanCommitURL call below that the process has actually been granted
+  // access to this URL, rather than just returning true for it.
+  if (url != GURL(kUnreachableWebDataURL) &&
+      !CanAccessMaybeOpaqueOrigin(child_id, url,
                                   false /* url_is_precursor_of_opaque_origin */,
                                   AccessType::kCanCommitNewOrigin)) {
+    LogCanCommitUrlFailureReason("cannot_access_origin");
     return false;
   }
 
@@ -1385,16 +1413,23 @@ bool ChildProcessSecurityPolicyImpl::CanCommitURL(int child_id,
     //
     // TODO(creis, nick): https://crbug.com/515309: The line below does not
     // enforce that http pages cannot commit in an extension process.
-    if (base::Contains(schemes_okay_to_commit_in_any_process_, scheme))
+    if (base::Contains(schemes_okay_to_commit_in_any_process_, scheme)) {
       return true;
+    }
 
     auto* state = GetSecurityState(child_id);
-    if (!state)
+    if (!state) {
+      LogCanCommitUrlFailureReason("no_security_state_found");
       return false;
+    }
 
     // Otherwise, we consult the child process's security state to see if it is
     // allowed to commit the URL.
-    return state->CanCommitURL(url);
+    bool can_commit = state->CanCommitURL(url);
+    if (!can_commit) {
+      LogCanCommitUrlFailureReason("cpsp_state_cannot_commit_url");
+    }
+    return can_commit;
   }
 }
 
@@ -2527,47 +2562,45 @@ bool ChildProcessSecurityPolicyImpl::GetMatchingProcessIsolatedOrigin(
   *result = url::Origin();
   base::AutoLock isolated_origins_lock(isolated_origins_lock_);
 
-  // If |isolation_context| does not specify a BrowsingInstance ID, then assume
-  // that we want to retrieve the latest applicable information; i.e., return
-  // the latest matching isolated origins that would apply to future
-  // BrowsingInstances.  Using NextBrowsingInstanceId() will match all
-  // available IsolatedOriginEntries.
+  // If |isolation_context| does not specify a BrowsingInstance ID (which should
+  // only happen in tests), then assume that we want to retrieve the latest
+  // applicable information; i.e., return the latest matching isolated origins
+  // that would apply to future BrowsingInstances.  Using
+  // NextBrowsingInstanceId() will match all available IsolatedOriginEntries.
   BrowsingInstanceId browsing_instance_id(
       isolation_context.browsing_instance_id());
-
   if (browsing_instance_id.is_null()) {
     browsing_instance_id = SiteInstanceImpl::NextBrowsingInstanceId();
-  } else {
-    // Check the opt-in isolation status of |origin| in |isolation_context|.
-    // Note that while IsolatedOrigins considers any sub-origin of an isolated
-    // origin as also being isolated, with opt-in we will always either return
-    // false, or true with result set to |origin|. We give priority to origins
-    // requesting opt-in isolation over command-line isolation, but don't check
-    // for opt-in if we didn't get a valid BrowsingInstance id.
-    // Note: This should only return a full origin if we are doing
-    // process-isolated Origin-keyed Agent Clusters, which will only be the case
-    // when site-isolation is enabled. Otherwise we put the origin into its
-    // corresponding site, even if Origin-keyed Agent Clusters will be enabled
-    // on the renderer side.
-    // TODO(wjmaclean,alexmos,acolwell): We should revisit this when we have
-    // SiteInstanceGroups, since at that point we can again return an origin
-    // here (and thus create a new SiteInstance) even when
-    // IsProcessIsolationForOriginAgentClusterEnabled() returns false; in that
-    // case a SiteInstanceGroup will allow a logical group of SiteInstances that
-    // live same-process.
-    if (SiteIsolationPolicy::IsProcessIsolationForOriginAgentClusterEnabled()) {
-      OriginAgentClusterIsolationState oac_isolation_state_request =
-          requests_origin_keyed_process
-              ? OriginAgentClusterIsolationState::CreateForOriginAgentCluster(
-                    true /* requires_origin_keyed_process */)
-              : OriginAgentClusterIsolationState::CreateNonIsolated();
-      OriginAgentClusterIsolationState oac_isolation_state_result =
-          DetermineOriginAgentClusterIsolation(isolation_context, origin,
-                                               oac_isolation_state_request);
-      if (oac_isolation_state_result.requires_origin_keyed_process()) {
-        *result = origin;
-        return true;
-      }
+  }
+
+  // Check the opt-in isolation status of |origin| in |isolation_context|.
+  // Note that while IsolatedOrigins considers any sub-origin of an isolated
+  // origin as also being isolated, with opt-in we will always either return
+  // false, or true with result set to |origin|. We give priority to origins
+  // requesting opt-in isolation over command-line isolation.
+  // Note: This should only return a full origin if we are doing
+  // process-isolated Origin-keyed Agent Clusters, which will only be the case
+  // when site-isolation is enabled. Otherwise we put the origin into its
+  // corresponding site, even if Origin-keyed Agent Clusters will be enabled
+  // on the renderer side.
+  // TODO(wjmaclean,alexmos,acolwell): We should revisit this when we have
+  // SiteInstanceGroups, since at that point we can again return an origin
+  // here (and thus create a new SiteInstance) even when
+  // IsProcessIsolationForOriginAgentClusterEnabled() returns false; in that
+  // case a SiteInstanceGroup will allow a logical group of SiteInstances that
+  // live same-process.
+  if (SiteIsolationPolicy::IsProcessIsolationForOriginAgentClusterEnabled()) {
+    OriginAgentClusterIsolationState oac_isolation_state_request =
+        requests_origin_keyed_process
+            ? OriginAgentClusterIsolationState::CreateForOriginAgentCluster(
+                  true /* requires_origin_keyed_process */)
+            : OriginAgentClusterIsolationState::CreateNonIsolated();
+    OriginAgentClusterIsolationState oac_isolation_state_result =
+        DetermineOriginAgentClusterIsolation(isolation_context, origin,
+                                             oac_isolation_state_request);
+    if (oac_isolation_state_result.requires_origin_keyed_process()) {
+      *result = origin;
+      return true;
     }
   }
 

@@ -236,7 +236,6 @@
 <translation id="2189104374785738357">Modifica dettagli APN</translation>
 <translation id="2195732836444333448">Al momento il server è occupato. Torna a breve.</translation>
 <translation id="2201758491318984023">bicicletta</translation>
-<translation id="2203222757805818543">La programmazione corrente è impostata su <ph name="SUNRISE" /> - <ph name="SUNSET" />. Per aggiornare automaticamente la programmazione della modalità Buio, <ph name="BEGIN_LINK" />attiva l'accesso alla posizione<ph name="END_LINK" /></translation>
 <translation id="2203272733515928691">sorgente termale</translation>
 <translation id="2203642483788377106">una scogliera</translation>
 <translation id="2208388655216963643">impressionista</translation>
@@ -364,6 +363,7 @@
 <translation id="3054177598518735801"><ph name="CURRENT_VALUE" /> mA</translation>
 <translation id="3056720590588772262">Endpoint</translation>
 <translation id="3060579846059757016">Prospetti</translation>
+<translation id="3061850252076394168">attiva Seleziona per ascoltare</translation>
 <translation id="3069085583900247081">Test non riuscito</translation>
 <translation id="3078740164268491126">tabella</translation>
 <translation id="3081652522083185657">chiaro</translation>
@@ -630,7 +630,6 @@
 <translation id="458794348635939462">impossibile risolvere tutti gli host</translation>
 <translation id="4593212453765072419">Autenticazione proxy richiesta</translation>
 <translation id="4609350030397390689">Riduci la luminosità della tastiera</translation>
-<translation id="4617553623719764431">Il meteo non viene visualizzato perché il servizio non conosce la tua posizione. Per visualizzare il meteo locale, <ph name="BEGIN_LINK" />attiva l'accesso alla posizione<ph name="END_LINK" /></translation>
 <translation id="4627232916386272576"><ph name="DOCUMENT_TITLE" />, <ph name="PRINTER_NAME" />, <ph name="CREATION_TIME" />, <ph name="PRINTED_PAGE_NUMBER" /> di <ph name="TOTAL_PAGE_NUMBER" />. Premi Invio per annullare il processo di stampa.</translation>
 <translation id="463791356324567266">Annullamento scansione in corso…</translation>
 <translation id="4646949265910132906">Connessione Wi-Fi protetta</translation>
@@ -704,6 +703,7 @@
 <translation id="4985509611418653372">Esegui</translation>
 <translation id="4987769320337599931">Firewall</translation>
 <translation id="4988526792673242964">Pagine</translation>
+<translation id="4989542687859782284">Non disponibili</translation>
 <translation id="4999333166442584738">Nascondi rapporto</translation>
 <translation id="500920857929044050">Interrompi test</translation>
 <translation id="5017508259293544172">LEAP</translation>
@@ -960,7 +960,6 @@
 <translation id="6412715219990689313">Tastiera integrata</translation>
 <translation id="6417265370957905582">Assistente Google</translation>
 <translation id="6423239382391657905">OpenVPN</translation>
-<translation id="6438073885402882007">Questa autorizzazione consente ai servizi di sistema che dispongono dell'autorizzazione di utilizzare la tua posizione. Il servizio di geolocalizzazione potrebbe usare fonti quali Wi-Fi, reti mobili e sensori per stabilire la posizione approssimativa del dispositivo. <ph name="LINK_BEGIN" />Scopri di più<ph name="LINK_END" /></translation>
 <translation id="6439505561246192797">Debole (<ph name="SIGNAL_STRENGTH" />)</translation>
 <translation id="6447630859861661624">Vai alle impostazioni dell'account</translation>
 <translation id="6462978824459367242">Il pulsante Aggiungi APN è ora attivo</translation>
@@ -1308,7 +1307,7 @@
 <translation id="8347126826554447157"><ph name="SHORCTCUT1" /> o <ph name="SHORCTCUT2" /></translation>
 <translation id="8347227221149377169">Processi di stampa</translation>
 <translation id="8349758651405877930">strumentazioni</translation>
-<translation id="8349826889576450703">Avvio applicazioni</translation>
+<translation id="8349826889576450703">Avvio app</translation>
 <translation id="8351482263741655895">Moltiplica il valore <ph name="CATEGORY_TEXT" /> per <ph name="CONVERSION_RATE" /></translation>
 <translation id="8351855506390808906">Mappatura tasti per il punto di contatto</translation>
 <translation id="8352772353338965963">Aggiungi un account per l'accesso simultaneo. Poiché gli account che hanno effettuato l'accesso sono tutti accessibili senza password, devi utilizzare questa funzione solo con gli account attendibili.</translation>

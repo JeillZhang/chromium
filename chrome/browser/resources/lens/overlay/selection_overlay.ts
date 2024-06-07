@@ -7,6 +7,7 @@ import './text_layer.js';
 import './region_selection.js';
 import './post_selection_renderer.js';
 import './overlay_shimmer.js';
+import './overlay_shimmer_canvas.js';
 import './strings.m.js';
 import '//resources/cr_elements/cr_button/cr_button.js';
 import '//resources/cr_elements/cr_toast/cr_toast.js';
@@ -19,14 +20,16 @@ import {loadTimeData} from '//resources/js/load_time_data.js';
 import {PolymerElement} from '//resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {BrowserProxyImpl} from './browser_proxy.js';
+import {getFallbackTheme} from './color_utils.js';
 import {type CursorTooltipData, CursorTooltipType} from './cursor_tooltip.js';
+import {recordLensOverlayInteraction, UserAction} from './metrics_utils.js';
 import type {ObjectLayerElement} from './object_layer.js';
-import {focusShimmerOnRegion, ShimmerControlRequester, unfocusShimmer} from './overlay_shimmer.js';
 import type {OverlayShimmerElement} from './overlay_shimmer.js';
+import type {OverlayShimmerCanvasElement} from './overlay_shimmer_canvas.js';
 import type {PostSelectionRendererElement} from './post_selection_renderer.js';
 import type {RegionSelectionElement} from './region_selection.js';
 import {getTemplate} from './selection_overlay.html.js';
-import {CursorType, DRAG_THRESHOLD, DragFeature, emptyGestureEvent, type GestureEvent, GestureState} from './selection_utils.js';
+import {CursorType, DRAG_THRESHOLD, DragFeature, emptyGestureEvent, focusShimmerOnRegion, type GestureEvent, GestureState, ShimmerControlRequester, unfocusShimmer} from './selection_utils.js';
 import type {TextLayerElement} from './text_layer.js';
 import {toPercent} from './values_converter.js';
 
@@ -35,11 +38,14 @@ const RESIZE_THRESHOLD = 8;
 // The size of our custom cursor.
 export const CURSOR_SIZE_PIXEL = 32;
 
+// The cursor image url css variable name.
+export const CURSOR_IMG_URL = '--cursor-img-url';
+
 export interface CursorData {
   cursor: CursorType;
 }
 
-export interface TextContextMenuData {
+export interface SelectedTextContextMenuData {
   // The text selection that the context menu commands will act on.
   text: string;
   // Dominant content language of the text. Language code is CLDR/BCP-47.
@@ -58,16 +64,33 @@ export interface TextContextMenuData {
   selectionEndIndex: number;
 }
 
+export interface DetectedTextContextMenuData {
+  // The left-most position of the detected text.
+  left: number;
+  // The right-most position of the detected text.
+  right: number;
+  // The highest position of the detected text.
+  top: number;
+  // The lowest position of the detected text.
+  bottom: number;
+  // The selection start index of the text.
+  selectionStartIndex: number;
+  // The end selection index of the text.
+  selectionEndIndex: number;
+}
+
 export interface SelectionOverlayElement {
   $: {
     backgroundImage: HTMLImageElement,
-    contextMenu: HTMLElement,
     copyToast: CrToastElement,
     cursor: HTMLElement,
+    detectedTextContextMenu: HTMLElement,
     objectSelectionLayer: ObjectLayerElement,
+    overlayShimmerCanvas: OverlayShimmerCanvasElement,
     overlayShimmer: OverlayShimmerElement,
     postSelectionRenderer: PostSelectionRendererElement,
     regionSelectionLayer: RegionSelectionElement,
+    selectedTextContextMenu: HTMLElement,
     selectionOverlay: HTMLElement,
     textSelectionLayer: TextLayerElement,
   };
@@ -97,7 +120,16 @@ export class SelectionOverlayElement extends SelectionOverlayElementBase {
         type: Boolean,
         reflectToAttribute: true,
       },
-      showTextContextMenu: {
+      isInitialSize: {
+        type: Boolean,
+        reflectToAttribute: true,
+      },
+      showSelectedTextContextMenu: {
+        type: Boolean,
+        value: false,
+        reflectToAttribute: true,
+      },
+      showDetectedTextContextMenu: {
         type: Boolean,
         value: false,
         reflectToAttribute: true,
@@ -105,40 +137,60 @@ export class SelectionOverlayElement extends SelectionOverlayElementBase {
       contextMenuX: Number,
       contextMenuY: Number,
       screenshotDataUri: String,
-      cursorImgUri: String,
       isPointerInside: Boolean,
       currentGesture: emptyGestureEvent(),
       disableShimmer: {
         type: Boolean,
-        reflectToAttribute: true,
+        readOnly: true,
+        value: !loadTimeData.getBoolean('enableShimmer'),
+      },
+      useShimmerCanvas: {
+        type: Boolean,
+        readOnly: true,
+        value: loadTimeData.getBoolean('useShimmerCanvas'),
       },
       isClosing: {
         type: Boolean,
         reflectToAttribute: true,
+      },
+      darkenExtraScrim: {
+        type: Boolean,
+        reflectToAttribute: true,
+      },
+      theme: {
+        type: Object,
+        value: getFallbackTheme,
       },
     };
   }
 
   // Whether the selection overlay is its initial size, or has changed size.
   private isResized: boolean = false;
-  private showTextContextMenu: boolean;
-  // Location at which to show the text context menu.
+  private isInitialSize: boolean = true;
+  private showSelectedTextContextMenu: boolean;
+  private showDetectedTextContextMenu: boolean;
+  // Location at which to show the context menus.
   private contextMenuX: number;
   private contextMenuY: number;
   private highlightedText: string = '';
   private contentLanguage: string = '';
   private textSelectionStartIndex: number = -1;
   private textSelectionEndIndex: number = -1;
+  private detectedTextStartIndex: number = -1;
+  private detectedTextEndIndex: number = -1;
   // The data URI of the current overlay screenshot.
   private screenshotDataUri: string;
-  private cursorImgUri: string = 'lens.svg';
   private isPointerInside = false;
+  private isPointerInsideContextMenu = false;
   // The current gesture event. The coordinate values are only accurate if a
   // gesture has started.
   private currentGesture: GestureEvent = emptyGestureEvent();
-  private disableShimmer: boolean = !loadTimeData.getBoolean('enableShimmer');
+  private disableShimmer: boolean;
+  private useShimmerCanvas: boolean;
   // Whether the overlay is being shut down.
   private isClosing: boolean = false;
+  // Whether the default background scrim is currently being darkened.
+  private darkenExtraScrim: boolean = false;
 
   private eventTracker_: EventTracker = new EventTracker();
   // Listener ids for events from the browser side.
@@ -184,9 +236,9 @@ export class SelectionOverlayElement extends SelectionOverlayElementBase {
           }
         });
     this.eventTracker_.add(
-        document, 'show-text-context-menu',
-        (e: CustomEvent<TextContextMenuData>) => {
-          this.showTextContextMenu = true;
+        document, 'show-selected-text-context-menu',
+        (e: CustomEvent<SelectedTextContextMenuData>) => {
+          this.showSelectedTextContextMenu = true;
           this.contextMenuX = e.detail.left;
           this.contextMenuY = e.detail.bottom;
           this.highlightedText = e.detail.text;
@@ -194,10 +246,29 @@ export class SelectionOverlayElement extends SelectionOverlayElementBase {
           this.textSelectionStartIndex = e.detail.selectionStartIndex;
           this.textSelectionEndIndex = e.detail.selectionEndIndex;
         });
-    this.eventTracker_.add(document, 'hide-text-context-menu', () => {
-      this.showTextContextMenu = false;
+    this.eventTracker_.add(
+        document, 'show-detected-text-context-menu', (e: CustomEvent) => {
+          this.showDetectedTextContextMenu = true;
+          this.contextMenuX = e.detail.left;
+          this.contextMenuY = e.detail.bottom;
+          this.detectedTextStartIndex = e.detail.selectionStartIndex;
+          this.detectedTextEndIndex = e.detail.selectionEndIndex;
+        });
+    this.eventTracker_.add(document, 'hide-selected-text-context-menu', () => {
+      this.showSelectedTextContextMenu = false;
       this.textSelectionStartIndex = -1;
       this.textSelectionEndIndex = -1;
+    });
+    this.eventTracker_.add(document, 'hide-detected-text-context-menu', () => {
+      this.showDetectedTextContextMenu = false;
+      this.detectedTextStartIndex = -1;
+      this.detectedTextEndIndex = -1;
+    });
+    this.eventTracker_.add(document, 'darken-extra-scrim-opacity', () => {
+      this.darkenExtraScrim = true;
+    });
+    this.eventTracker_.add(document, 'lighten-extra-scrim-opacity', () => {
+      this.darkenExtraScrim = false;
     });
   }
 
@@ -281,9 +352,9 @@ export class SelectionOverlayElement extends SelectionOverlayElementBase {
   private setCursorToText() {
     // Set body cursor style to handle dragging.
     document.body.style.cursor = 'text';
-    this.cursorImgUri = 'text.svg';
     this.cursorOffsetX = 3;
     this.cursorOffsetY = 8;
+    this.style.setProperty(CURSOR_IMG_URL, 'url("text.svg")');
   }
 
   // Called on region selection drag.
@@ -292,7 +363,7 @@ export class SelectionOverlayElement extends SelectionOverlayElementBase {
     document.body.style.cursor = 'crosshair';
     this.cursorOffsetX = 3;
     this.cursorOffsetY = 6;
-    this.cursorImgUri = 'lens.svg';
+    this.style.setProperty(CURSOR_IMG_URL, 'url("lens.svg")');
   }
 
   // Called on object hover.
@@ -300,25 +371,27 @@ export class SelectionOverlayElement extends SelectionOverlayElementBase {
     // No dragging for objects, so no need to set body cursor style.
     this.cursorOffsetX = 4;
     this.cursorOffsetY = 8;
-    this.cursorImgUri = 'lens.svg';
+    this.style.setProperty(CURSOR_IMG_URL, 'url("lens.svg")');
   }
 
   private resetCursor() {
     document.body.style.cursor = 'unset';
-    this.cursorImgUri = 'lens.svg';
     this.cursorOffsetX = 3;
     this.cursorOffsetY = 6;
+    this.style.setProperty(CURSOR_IMG_URL, 'url("lens.svg")');
   }
   // LINT.ThenChange(//chrome/browser/resources/lens/overlay/cursor_tooltip.ts:CursorOffsetValues)
 
   private handlePointerEnter() {
     this.isPointerInside = true;
-    this.dispatchEvent(
-        new CustomEvent<CursorTooltipData>('set-cursor-tooltip', {
-          bubbles: true,
-          composed: true,
-          detail: {tooltipType: CursorTooltipType.REGION_SEARCH},
-        }));
+    if (!this.isPointerInsideContextMenu) {
+      this.dispatchEvent(
+          new CustomEvent<CursorTooltipData>('set-cursor-tooltip', {
+            bubbles: true,
+            composed: true,
+            detail: {tooltipType: CursorTooltipType.REGION_SEARCH},
+          }));
+    }
   }
 
   private handlePointerLeave(event: PointerEvent) {
@@ -331,7 +404,7 @@ export class SelectionOverlayElement extends SelectionOverlayElementBase {
         boundingRect.top <= event.clientY &&
         boundingRect.right >= event.clientX &&
         boundingRect.bottom >= event.clientY;
-    if (!pointerInBounds) {
+    if (!pointerInBounds && !this.isPointerInsideContextMenu) {
       this.dispatchEvent(
           new CustomEvent<CursorTooltipData>('set-cursor-tooltip', {
             bubbles: true,
@@ -372,7 +445,11 @@ export class SelectionOverlayElement extends SelectionOverlayElementBase {
 
     if (!this.disableShimmer) {
       // Don't start the shimmer animation until the image has been rendered.
-      this.$.overlayShimmer.startAnimation();
+      if (this.useShimmerCanvas) {
+        this.$.overlayShimmerCanvas.startInvocationAnimation();
+      } else {
+        this.$.overlayShimmer.startAnimation();
+      }
     }
   }
 
@@ -402,6 +479,8 @@ export class SelectionOverlayElement extends SelectionOverlayElementBase {
                    this.currentGesture)) {
       this.draggingRespondent = DragFeature.POST_SELECTION;
     }
+
+    this.$.objectSelectionLayer.clearSelectedObject();
   }
 
   private onPointerUp(event: PointerEvent) {
@@ -503,6 +582,9 @@ export class SelectionOverlayElement extends SelectionOverlayElementBase {
     this.isResized =
         Math.abs(newRect.height - this.initialHeight) >= RESIZE_THRESHOLD ||
         Math.abs(newRect.width - this.initialWidth) >= RESIZE_THRESHOLD;
+    if (this.isResized) {
+      this.isInitialSize = false;
+    }
   }
 
   private handleSelectionElementsResize() {
@@ -512,6 +594,10 @@ export class SelectionOverlayElement extends SelectionOverlayElementBase {
         selectionOverlayBounds.width, selectionOverlayBounds.height);
     this.$.objectSelectionLayer.setCanvasSizeTo(
         selectionOverlayBounds.width, selectionOverlayBounds.height);
+    if (this.useShimmerCanvas) {
+      this.$.overlayShimmerCanvas.setCanvasSizeTo(
+          selectionOverlayBounds.width, selectionOverlayBounds.height);
+    }
   }
 
   // Updates the currentGesture to correspond with the given PointerEvent.
@@ -525,7 +611,8 @@ export class SelectionOverlayElement extends SelectionOverlayElementBase {
     const elementsAtPoint =
         this.shadowRoot!.elementsFromPoint(event.clientX, event.clientY);
     // Do not intercept events that should go to the following elements.
-    if (elementsAtPoint.includes(this.$.contextMenu) ||
+    if (elementsAtPoint.includes(this.$.selectedTextContextMenu) ||
+        elementsAtPoint.includes(this.$.detectedTextContextMenu) ||
         elementsAtPoint.includes(this.$.copyToast)) {
       return true;
     }
@@ -557,6 +644,7 @@ export class SelectionOverlayElement extends SelectionOverlayElementBase {
 
   private async handleCopy() {
     navigator.clipboard.writeText(this.highlightedText);
+    recordLensOverlayInteraction(UserAction.COPY_TEXT);
     if (this.$.copyToast.open) {
       // If toast already open, wait after hiding so that animation is
       // smoother.
@@ -573,20 +661,44 @@ export class SelectionOverlayElement extends SelectionOverlayElementBase {
     this.$.copyToast.hide();
   }
 
+  private handleSelectText() {
+    this.$.textSelectionLayer.selectAndSendWords(
+        this.detectedTextStartIndex, this.detectedTextEndIndex);
+    this.$.postSelectionRenderer.clearSelection();
+  }
+
   private handleTranslate() {
     BrowserProxyImpl.getInstance().handler.issueTranslateSelectionRequest(
         this.highlightedText, this.contentLanguage,
         this.textSelectionStartIndex, this.textSelectionEndIndex);
+    recordLensOverlayInteraction(UserAction.TRANSLATE_TEXT);
   }
 
   // Make the cursor disappear over the context menu, as if leaving the overlay.
   private handlePointerEnterContextMenu() {
     this.isPointerInside = false;
+    this.isPointerInsideContextMenu = true;
+    // Hide the cursor tooltip.
+    this.dispatchEvent(
+        new CustomEvent<CursorTooltipData>('set-cursor-tooltip', {
+          bubbles: true,
+          composed: true,
+          detail: {tooltipType: CursorTooltipType.NONE},
+        }));
     unfocusShimmer(this, ShimmerControlRequester.CURSOR);
   }
 
   private handlePointerLeaveContextMenu() {
     this.isPointerInside = true;
+    this.isPointerInsideContextMenu = false;
+  }
+
+  getShowDetectedTextContextMenuForTesting() {
+    return this.showDetectedTextContextMenu;
+  }
+
+  handleSelectTextForTesting() {
+    this.handleSelectText();
   }
 }
 

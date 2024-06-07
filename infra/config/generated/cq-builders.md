@@ -39,7 +39,7 @@ These builders must pass before a CL may land that affects files outside of
 
 * [chromeos-amd64-generic-rel-gtest](https://ci.chromium.org/p/chromium/builders/try/chromeos-amd64-generic-rel-gtest) ([definition](https://cs.chromium.org/search?q=+file:/try/.*\.star$+""chromeos-amd64-generic-rel-gtest""))
 
-    * Replaced with builder: [chromeos-amd64-generic-rel-gtest-and-tast](https://ci.chromium.org/p/chromium/builders/try/chromeos-amd64-generic-rel-gtest-and-tast) when CL owner is in group [chromeos-pa-with-chromium-accounts](https://chrome-infra-auth.appspot.com/auth/lookup?p=chromeos-pa-with-chromium-accounts)
+    * Replaced with builder: [chromeos-amd64-generic-rel-gtest-and-tast](https://ci.chromium.org/p/chromium/builders/try/chromeos-amd64-generic-rel-gtest-and-tast) when CL owner is in group [google/chromeos-pa@google.com](https://chrome-infra-auth.appspot.com/auth/lookup?p=google/chromeos-pa@google.com)
 
 * [chromeos-arm-generic-rel](https://ci.chromium.org/p/chromium/builders/try/chromeos-arm-generic-rel) ([definition](https://cs.chromium.org/search?q=+file:/try/.*\.star$+""chromeos-arm-generic-rel""))
 
@@ -53,7 +53,7 @@ These builders must pass before a CL may land that affects files outside of
 
 * [lacros-amd64-generic-rel-gtest](https://ci.chromium.org/p/chromium/builders/try/lacros-amd64-generic-rel-gtest) ([definition](https://cs.chromium.org/search?q=+file:/try/.*\.star$+""lacros-amd64-generic-rel-gtest""))
 
-    * Replaced with builder: [lacros-amd64-generic-rel-gtest-and-tast](https://ci.chromium.org/p/chromium/builders/try/lacros-amd64-generic-rel-gtest-and-tast) when CL owner is in group [chromeos-pa-with-chromium-accounts](https://chrome-infra-auth.appspot.com/auth/lookup?p=chromeos-pa-with-chromium-accounts)
+    * Replaced with builder: [lacros-amd64-generic-rel-gtest-and-tast](https://ci.chromium.org/p/chromium/builders/try/lacros-amd64-generic-rel-gtest-and-tast) when CL owner is in group [google/chromeos-pa@google.com](https://chrome-infra-auth.appspot.com/auth/lookup?p=google/chromeos-pa@google.com)
 
 * [lacros-arm-generic-rel](https://ci.chromium.org/p/chromium/builders/try/lacros-arm-generic-rel) ([definition](https://cs.chromium.org/search?q=+file:/try/.*\.star$+""lacros-arm-generic-rel""))
 
@@ -76,6 +76,8 @@ These builders must pass before a CL may land that affects files outside of
 * [mac-rel](https://ci.chromium.org/p/chromium/builders/try/mac-rel) ([definition](https://cs.chromium.org/search?q=+file:/try/.*\.star$+""mac-rel""))
 
 * [mac_chromium_compile_dbg_ng](https://ci.chromium.org/p/chromium/builders/try/mac_chromium_compile_dbg_ng) ([definition](https://cs.chromium.org/search?q=+file:/try/.*\.star$+""mac_chromium_compile_dbg_ng""))
+
+* [win-arm64-compile-dbg](https://ci.chromium.org/p/chromium/builders/try/win-arm64-compile-dbg) ([definition](https://cs.chromium.org/search?q=+file:/try/.*\.star$+""win-arm64-compile-dbg""))
 
 * [win-libfuzzer-asan-rel](https://ci.chromium.org/p/chromium/builders/try/win-libfuzzer-asan-rel) ([definition](https://cs.chromium.org/search?q=+file:/try/.*\.star$+""win-libfuzzer-asan-rel""))
 
@@ -429,6 +431,7 @@ builder.
   * [`//content/renderer/accessibility/.+`](https://cs.chromium.org/chromium/src/content/renderer/accessibility/)
   * [`//content/browser/accessibility/.+`](https://cs.chromium.org/chromium/src/content/browser/accessibility/)
   * [`//ui/accessibility/.+`](https://cs.chromium.org/chromium/src/ui/accessibility/)
+  * [`//ui/views/accessibility/.+`](https://cs.chromium.org/chromium/src/ui/views/accessibility/)
 
 * [linux-cfm-rel](https://ci.chromium.org/p/chromium/builders/try/linux-cfm-rel) ([definition](https://cs.chromium.org/search?q=+file:/try/.*\.star$+""linux-cfm-rel""))
 
@@ -467,6 +470,12 @@ builder.
 
   Location filters:
   * [`//chrome/updater/.+`](https://cs.chromium.org/chromium/src/chrome/updater/)
+
+* [linux-utr-tester](https://ci.chromium.org/p/chromium/builders/try/linux-utr-tester) ([definition](https://cs.chromium.org/search?q=+file:/try/.*\.star$+""linux-utr-tester""))
+
+  Location filters:
+  * [`//tools/utr/.+`](https://cs.chromium.org/chromium/src/tools/utr/)
+  * [`//tools/mb/.+`](https://cs.chromium.org/chromium/src/tools/mb/)
 
 * [linux-v4l2-codec-rel](https://ci.chromium.org/p/chromium/builders/try/linux-v4l2-codec-rel) ([definition](https://cs.chromium.org/search?q=+file:/try/.*\.star$+""linux-v4l2-codec-rel""))
 
@@ -582,12 +591,6 @@ builder.
   Location filters:
   * [`//infra/config/generated/builders/[^/]+/[^/]+/targets/.+\.json`](https://cs.chromium.org/search?q=+file:infra/config/generated/builders/[^/]+/[^/]+/targets/.+\.json)
 
-* [win-arm64-rel](https://ci.chromium.org/p/chromium/builders/try/win-arm64-rel) ([definition](https://cs.chromium.org/search?q=+file:/try/.*\.star$+""win-arm64-rel""))
-
-  Location filters:
-  * [`//sandbox/win/.+`](https://cs.chromium.org/chromium/src/sandbox/win/)
-  * [`//sandbox/policy/win/.+`](https://cs.chromium.org/chromium/src/sandbox/policy/win/)
-
 * [win-updater-try-builder-dbg](https://ci.chromium.org/p/chromium/builders/try/win-updater-try-builder-dbg) ([definition](https://cs.chromium.org/search?q=+file:/try/.*\.star$+""win-updater-try-builder-dbg""))
 
   Location filters:
@@ -686,13 +689,20 @@ as required builders.
 * [mac14-arm64-rel](https://ci.chromium.org/p/chromium/builders/try/mac14-arm64-rel) ([definition](https://cs.chromium.org/search?q=+file:/try/.*\.star$+""mac14-arm64-rel""))
   * Experiment percentage: 1.0
 
-* [win-arm64-compile-dbg](https://ci.chromium.org/p/chromium/builders/try/win-arm64-compile-dbg) ([definition](https://cs.chromium.org/search?q=+file:/try/.*\.star$+""win-arm64-compile-dbg""))
+* [win-arm64-rel](https://ci.chromium.org/p/chromium/builders/try/win-arm64-rel) ([definition](https://cs.chromium.org/search?q=+file:/try/.*\.star$+""win-arm64-rel""))
   * Experiment percentage: 100.0
+
+  Location filters:
+  * [`//sandbox/win/.+`](https://cs.chromium.org/chromium/src/sandbox/win/)
+  * [`//sandbox/policy/win/.+`](https://cs.chromium.org/chromium/src/sandbox/policy/win/)
 
 
 ## Mega CQ builders
 These builders run when the "Mega" CQ mode is triggered. This mode runs all the
 builders required in the standard CQ, plus a large amount of optional builders.
+
+### chrome
+* [mega-cq-launcher](https://ci.chromium.org/p/chrome/builders/try/mega-cq-launcher) ([definition](https://source.corp.google.com/search?q=+file:/try/.*\.star$+""mega-cq-launcher""))
 
 ### chromium
 * [mega-cq-launcher](https://ci.chromium.org/p/chromium/builders/try/mega-cq-launcher) ([definition](https://cs.chromium.org/search?q=+file:/try/.*\.star$+""mega-cq-launcher""))

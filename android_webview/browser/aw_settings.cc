@@ -15,7 +15,6 @@
 #include "android_webview/browser/aw_dark_mode.h"
 #include "android_webview/browser/aw_user_agent_metadata.h"
 #include "android_webview/browser/renderer_host/aw_render_view_host_ext.h"
-#include "android_webview/browser_jni_headers/AwSettings_jni.h"
 #include "android_webview/common/aw_content_client.h"
 #include "android_webview/common/aw_features.h"
 #include "base/android/jni_android.h"
@@ -40,6 +39,9 @@
 #include "third_party/blink/public/mojom/webpreferences/web_preferences.mojom.h"
 #include "url/gurl.h"
 #include "url/origin.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "android_webview/browser_jni_headers/AwSettings_jni.h"
 
 using base::android::ConvertJavaStringToUTF16;
 using base::android::ConvertJavaStringToUTF8;
@@ -141,7 +143,11 @@ AwSettings::AttributionBehavior AwSettings::GetAttributionBehavior() {
 }
 
 bool AwSettings::IsPrerender2Allowed() {
-  return (preloading_allowed_flags_ & PRERENDER_ENABLED);
+  return (spculative_loading_allowed_flags_ & PRERENDER_ENABLED);
+}
+
+bool AwSettings::IsBackForwardCacheEnabled() {
+  return bfcache_enabled_in_java_settings_;
 }
 
 void AwSettings::Destroy(JNIEnv* env, const JavaParamRef<jobject>& obj) {
@@ -219,7 +225,8 @@ void AwSettings::UpdateEverythingLocked(JNIEnv* env,
   UpdateAllowFileAccessLocked(env, obj);
   UpdateMixedContentModeLocked(env, obj);
   UpdateAttributionBehaviorLocked(env, obj);
-  UpdatePreloadingAllowedLocked(env, obj);
+  UpdateSpeculativeLoadingAllowedLocked(env, obj);
+  UpdateBackForwardCacheEnabledLocked(env, obj);
 }
 
 void AwSettings::UpdateUserAgentLocked(JNIEnv* env,
@@ -432,13 +439,14 @@ void AwSettings::UpdateAttributionBehaviorLocked(
   }
 }
 
-void AwSettings::UpdatePreloadingAllowedLocked(
+void AwSettings::UpdateSpeculativeLoadingAllowedLocked(
     JNIEnv* env,
     const JavaParamRef<jobject>& obj) {
-  PreloadingAllowedFlags previous = preloading_allowed_flags_;
-  preloading_allowed_flags_ = static_cast<PreloadingAllowedFlags>(
-      Java_AwSettings_getPreloadingAllowed(env, obj));
-  if (previous == preloading_allowed_flags_) {
+  SpeculativeLoadingAllowedFlags previous = spculative_loading_allowed_flags_;
+  spculative_loading_allowed_flags_ =
+      static_cast<SpeculativeLoadingAllowedFlags>(
+          Java_AwSettings_getSpeculativeLoadingAllowed(env, obj));
+  if (previous == spculative_loading_allowed_flags_) {
     return;
   }
 
@@ -452,8 +460,26 @@ void AwSettings::UpdatePreloadingAllowedLocked(
   // preloading is disabled.
 
   if ((previous & AwSettings::PRERENDER_ENABLED) &&
-      !(preloading_allowed_flags_ & AwSettings::PRERENDER_ENABLED)) {
+      !(spculative_loading_allowed_flags_ & AwSettings::PRERENDER_ENABLED)) {
     web_contents()->CancelAllPrerendering();
+  }
+}
+
+void AwSettings::UpdateBackForwardCacheEnabledLocked(
+    JNIEnv* env,
+    const JavaParamRef<jobject>& obj) {
+  bool bfcache_enabled_by_feature_flag =
+      base::FeatureList::IsEnabled(features::kWebViewBackForwardCache);
+  bool previous_enabled =
+      bfcache_enabled_in_java_settings_ || bfcache_enabled_by_feature_flag;
+  bfcache_enabled_in_java_settings_ =
+      Java_AwSettings_getBackForwardCacheEnabled(env, obj);
+  bool current_enabled =
+      bfcache_enabled_in_java_settings_ || bfcache_enabled_by_feature_flag;
+
+  if (!current_enabled && previous_enabled && web_contents()) {
+    AwContents* contents = AwContents::FromWebContents(web_contents());
+    contents->FlushBackForwardCache(env);
   }
 }
 

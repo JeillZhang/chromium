@@ -5,6 +5,7 @@
 #include "gpu/command_buffer/service/shared_image/compound_image_backing.h"
 
 #include "components/viz/common/resources/shared_image_format.h"
+#include "components/viz/common/resources/shared_image_format_utils.h"
 #include "gpu/command_buffer/common/shared_image_usage.h"
 #include "gpu/command_buffer/service/memory_tracking.h"
 #include "gpu/command_buffer/service/shared_context_state.h"
@@ -156,9 +157,9 @@ class CompoundImageBackingTest : public testing::Test {
             buffer_usage);
 
     return CompoundImageBacking::CreateSharedMemory(
-        &test_factory_, allow_shm_overlays, Mailbox::GenerateForSharedImage(),
-        std::move(handle), buffer_format, gfx::BufferPlane::DEFAULT, size,
-        gfx::ColorSpace(), kTopLeft_GrSurfaceOrigin, kOpaque_SkAlphaType,
+        &test_factory_, allow_shm_overlays, Mailbox::Generate(),
+        std::move(handle), viz::GetSinglePlaneSharedImageFormat(buffer_format),
+        size, gfx::ColorSpace(), kTopLeft_GrSurfaceOrigin, kOpaque_SkAlphaType,
         SHARED_IMAGE_USAGE_DISPLAY_READ, "TestLabel");
   }
 
@@ -176,7 +177,7 @@ class CompoundImageBackingTest : public testing::Test {
             buffer_usage);
 
     return CompoundImageBacking::CreateSharedMemory(
-        &test_factory_, allow_shm_overlays, Mailbox::GenerateForSharedImage(),
+        &test_factory_, allow_shm_overlays, Mailbox::Generate(),
         std::move(handle), viz::MultiPlaneFormat::kNV12, size,
         gfx::ColorSpace(), kTopLeft_GrSurfaceOrigin, kOpaque_SkAlphaType,
         SHARED_IMAGE_USAGE_DISPLAY_READ, "TestLabel");

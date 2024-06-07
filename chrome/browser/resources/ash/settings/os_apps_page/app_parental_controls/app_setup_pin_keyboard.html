@@ -15,8 +15,13 @@
     visibility: hidden;
   }
 </style>
-<pin-keyboard id="pinKeyboard" value="{{pinKeyboardValue_}}">
-  <div id="problemDiv">
-      <!--TODO(b/332936223): Add problem message here.-->
+<pin-keyboard id="pinKeyboard" on-pin-change="onPinChange_"
+    on-submit="onPinSubmit_" value="{{pinKeyboardValue_}}"
+    disabled="[[isSetPinCallPending_]]"
+    aria-label="[[ariaLabel]]">
+  <div id="problemDiv" invisible$="[[!problemMessage_]]">
+    <span aria-live="assertive">
+      [[problemMessage_]]
+    </span>
   </div>
 </pin-keyboard>

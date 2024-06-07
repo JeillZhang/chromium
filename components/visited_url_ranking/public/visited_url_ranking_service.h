@@ -15,7 +15,23 @@
 
 namespace visited_url_ranking {
 
-const char kTabResumptionRankerKey[] = "tab_resumption_ranker";
+// Value must match `segmentation_platform::kURLVisitResumptionClassifierKey`.
+const char kTabResumptionRankerKey[] = "url_visit_resumption_ranker";
+
+// Aggregate metrics event related names.
+const char kURLVisitSeenEventName[] = "VisitedURLRanking.URLVisit.Seen";
+const char kURLVisitActivatedEventName[] =
+    "VisitedURLRanking.URLVisit.Activated";
+const char kURLVisitDismissedEventName[] =
+    "VisitedURLRanking.URLVisit.Dismissed";
+
+// An action performed by the user on a `URLVisit` through a UI surface.
+// GENERATED_JAVA_ENUM_PACKAGE: org.chromium.components.visited_url_ranking
+enum ScoredURLUserAction {
+  kSeen = 0,
+  kActivated = 1,
+  kDismissed = 2,
+};
 
 // Settings leveraged for ranking `URLVisitAggregate` objects.
 struct Config {
@@ -55,22 +71,43 @@ class VisitedURLRankingService : public KeyedService {
   VisitedURLRankingService() = default;
   ~VisitedURLRankingService() override = default;
 
-  // Computes `URLVisitAggregate` objects based on a series of
-  // `options` from one or more data providers and triggers the `callback` with
-  // such data.
+  // Computes `URLVisitAggregate` objects based on a series of `options` for
+  // one or more data providers and triggers the `callback` with such data.
   using GetURLVisitAggregatesCallback =
       base::OnceCallback<void(ResultStatus, std::vector<URLVisitAggregate>)>;
   virtual void FetchURLVisitAggregates(
       const FetchOptions& options,
       GetURLVisitAggregatesCallback callback) = 0;
 
-  using RankVisitAggregatesCallback =
+  using RankURLVisitAggregatesCallback =
       base::OnceCallback<void(ResultStatus, std::vector<URLVisitAggregate>)>;
-  // Ranks a collection of `URLVisitAggregate` objects based on a
-  // client specified strategy.
-  virtual void RankURLVisitAggregates(const Config& config,
-                                      std::vector<URLVisitAggregate> visits,
-                                      RankVisitAggregatesCallback callback) = 0;
+  // Ranks a collection of `URLVisitAggregate` objects based on a client
+  // specified strategy.
+  virtual void RankURLVisitAggregates(
+      const Config& config,
+      std::vector<URLVisitAggregate> visit_aggregates,
+      RankURLVisitAggregatesCallback callback) = 0;
+
+  // Records a user action performed for a `URLVisitAggregate` object returned
+  // by `RankURLVisitAggregates`. This is needed to collect feedback on whether
+  // the predicted URL visit was a success or failure, to help train the ranking
+  // system. The caller must call `RecordAction` for every `URLVisitAggregate`
+  // object seen, dismissed, or activated by the user.  It would be preferred to
+  // not record actions in situations where the visit was not shown to the user,
+  // or the visit was not in a visible part of the screen. `visit_id` and
+  // `visit_request_id` are provided in the `URLVisitAggregate` object. Only
+  // valid to call within the same Chrome session as the call to
+  // `RankURLVisitAggregates`. It is ok to make multiple calls to
+  // `RankURLVisitAggregates` before calling `RecordAction` since
+  // `visit_request_id` is globally unique.
+  // WARNING: Only the first action for a `visit_request_id` is used. Any
+  // successive calls for the ID are ignored. So, the client would need to call
+  // this when the user selects one of the URLs or navigates away from NTP, to
+  // record the final action for the URL.
+  virtual void RecordAction(
+      ScoredURLUserAction action,
+      const std::string& visit_id,
+      segmentation_platform::TrainingRequestId visit_request_id) = 0;
 };
 
 }  // namespace visited_url_ranking

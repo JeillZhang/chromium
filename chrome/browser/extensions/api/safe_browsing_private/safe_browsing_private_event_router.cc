@@ -287,6 +287,8 @@ const char SafeBrowsingPrivateEventRouter::kTriggerWebContentUpload[] =
 const char SafeBrowsingPrivateEventRouter::kTriggerPagePrint[] = "PAGE_PRINT";
 const char SafeBrowsingPrivateEventRouter::kTriggerFileTransfer[] =
     "FILE_TRANSFER";
+const char SafeBrowsingPrivateEventRouter::kTriggerClipboardCopy[] =
+    "CLIPBOARD_COPY";
 
 SafeBrowsingPrivateEventRouter::SafeBrowsingPrivateEventRouter(
     content::BrowserContext* context)
@@ -1038,14 +1040,14 @@ void SafeBrowsingPrivateEventRouter::OnDataControlsSensitiveDataEvent(
 
   base::Value::List triggered_rule_info;
   triggered_rule_info.reserve(triggered_rules.size());
-  for (const auto& [rule_id, name] : triggered_rules) {
+  for (const auto& [index, rule] : triggered_rules) {
     base::Value::Dict triggered_rule;
     triggered_rule.Set(
         extensions::SafeBrowsingPrivateEventRouter::kKeyTriggeredRuleId,
-        rule_id);
+        rule.rule_id);
     triggered_rule.Set(
         extensions::SafeBrowsingPrivateEventRouter::kKeyTriggeredRuleName,
-        name);
+        rule.rule_name);
 
     triggered_rule_info.Append(std::move(triggered_rule));
   }

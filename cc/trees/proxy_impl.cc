@@ -272,6 +272,12 @@ void ProxyImpl::SetVisibleOnImpl(bool visible) {
   scheduler_->SetVisible(visible);
 }
 
+void ProxyImpl::SetShouldWarmUpOnImpl() {
+  TRACE_EVENT0("cc", "ProxyImpl::SetShouldWarmUpOnImpl");
+  DCHECK(IsImplThread());
+  scheduler_->SetShouldWarmUp();
+}
+
 void ProxyImpl::ReleaseLayerTreeFrameSinkOnImpl(CompletionEvent* completion) {
   DCHECK(IsImplThread());
 
@@ -467,6 +473,12 @@ void ProxyImpl::SetNeedsOneBeginImplFrameOnImplThread() {
   scheduler_->SetNeedsOneBeginImplFrame();
 }
 
+void ProxyImpl::SetNeedsUpdateDisplayTreeOnImplThread() {
+  TRACE_EVENT0("cc", "ProxyImpl::SetNeedsUpdateDisplayTreeOnImplThread");
+  DCHECK(IsImplThread());
+  scheduler_->SetNeedsUpdateDisplayTree();
+}
+
 void ProxyImpl::SetNeedsPrepareTilesOnImplThread() {
   DCHECK(IsImplThread());
   scheduler_->SetNeedsPrepareTiles();
@@ -497,10 +509,8 @@ void ProxyImpl::RenewTreePriority() {
   bool precise_scrolling_in_progress =
       host_impl_->GetActivelyScrollingType() == ActivelyScrollingType::kPrecise;
 
-  bool avoid_entering_smoothness =
-      host_impl_->CurrentScrollCheckerboardsDueToNoRecording() ||
-      (precise_scrolling_in_progress &&
-       host_impl_->IsCurrentScrollMainRepainted());
+  bool avoid_entering_smoothness = precise_scrolling_in_progress &&
+                                   host_impl_->IsCurrentScrollMainRepainted();
 
   bool non_scroll_interaction_in_progress =
       host_impl_->IsPinchGestureActive() ||
@@ -754,6 +764,41 @@ DrawResult ProxyImpl::ScheduledActionDrawForced() {
   return DrawInternal(forced_draw);
 }
 
+void ProxyImpl::ScheduledActionUpdateDisplayTree() {
+  TRACE_EVENT0("cc", "ProxyImpl::ScheduledActionUpdateDisplayTree");
+  DCHECK(IsImplThread());
+  DCHECK(host_impl_.get());
+
+  TRACE_EVENT_WITH_FLOW0("viz,benchmark", "MainFrame.UpdateDisplayTree",
+                         TRACE_ID_LOCAL(host_impl_->active_tree()->trace_id()),
+                         TRACE_EVENT_FLAG_FLOW_IN | TRACE_EVENT_FLAG_FLOW_OUT);
+
+  // TODO(rockot): Maybe this flag should be renamed to reflect that we hold it
+  // during display tree updates too.
+  base::AutoReset<bool> mark_inside(&inside_draw_, true);
+
+  LayerTreeHostImpl::FrameData frame;
+  frame.begin_frame_ack = scheduler_->CurrentBeginFrameAckForActiveTree();
+  frame.origin_begin_main_frame_args =
+      scheduler_->last_activate_origin_frame_args();
+  host_impl_->UpdateDisplayTree(frame);
+
+  // Tell the main thread that the frame was drawn.
+  if (next_frame_is_newly_committed_frame_) {
+    next_frame_is_newly_committed_frame_ = false;
+    MainThreadTaskRunner()->PostTask(
+        FROM_HERE,
+        base::BindOnce(&ProxyMain::DidCommitAndDrawFrame, proxy_main_weak_ptr_,
+                       host_impl_->active_tree()->source_frame_number()));
+  }
+
+  // The tile visibility/priority of the pending tree needs to be updated so
+  // that it doesn't get activated before the raster is complete.
+  if (host_impl_->pending_tree()) {
+    host_impl_->pending_tree()->UpdateDrawProperties();
+  }
+}
+
 void ProxyImpl::ScheduledActionCommit() {
   {
     TRACE_EVENT_WITH_FLOW0(
@@ -854,6 +899,11 @@ void ProxyImpl::ScheduledActionBeginMainFrameNotExpectedUntil(
   MainThreadTaskRunner()->PostTask(
       FROM_HERE, base::BindOnce(&ProxyMain::BeginMainFrameNotExpectedUntil,
                                 proxy_main_weak_ptr_, time));
+}
+
+void ProxyImpl::OnBeginImplFrameDeadline() {
+  DCHECK(IsImplThread());
+  host_impl_->OnBeginImplFrameDeadline();
 }
 
 DrawResult ProxyImpl::DrawInternal(bool forced_draw) {

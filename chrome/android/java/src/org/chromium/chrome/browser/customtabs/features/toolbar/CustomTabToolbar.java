@@ -62,7 +62,6 @@ import org.chromium.base.task.TaskTraits;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.browser_controls.BrowserStateBrowserControlsVisibilityDelegate;
 import org.chromium.chrome.browser.compositor.bottombar.ephemeraltab.EphemeralTabCoordinator;
-import org.chromium.chrome.browser.crash.ChromePureJavaExceptionReporter;
 import org.chromium.chrome.browser.customtabs.CustomTabFeatureOverridesManager;
 import org.chromium.chrome.browser.customtabs.features.branding.ToolbarBrandingDelegate;
 import org.chromium.chrome.browser.customtabs.features.branding.ToolbarBrandingOverlayCoordinator;
@@ -197,17 +196,7 @@ public class CustomTabToolbar extends ToolbarLayout implements View.OnLongClickL
          *
          * @param handler The handler for closing the current tab.
          */
-        void setCloseClickHandler(OnClickListener handler);
-
-        /**
-         * Start the closing animation. This should be invoked before the close click handler
-         * set via {@link #setCloseClickHandler} to avoid seeing a blank content during
-         * the animation.
-         */
-        void startCloseAnimation();
-
-        /** Close the toolbar and the tab. */
-        void close();
+        void setCloseClickHandler(Runnable handler);
     }
 
     private HandleStrategy mHandleStrategy;
@@ -269,20 +258,7 @@ public class CustomTabToolbar extends ToolbarLayout implements View.OnLongClickL
 
     @Override
     protected void setCustomTabCloseClickHandler(OnClickListener listener) {
-        mCloseClickListener = listener;
-        if (mHandleStrategy == null) {
-            // Normal CCT does not have HandleStrategy.
-            mCloseButton.setOnClickListener(listener);
-        } else {
-            setHandleStrategyCloseClickHandler(listener);
-        }
-    }
-
-    private void setHandleStrategyCloseClickHandler(OnClickListener listener) {
-        // Let the close button click initiate the closing animation first. The actual
-        // closing task will follow the animation.
-        mCloseButton.setOnClickListener(v -> mHandleStrategy.startCloseAnimation());
-        mHandleStrategy.setCloseClickHandler(listener);
+        mCloseButton.setOnClickListener(listener);
     }
 
     @Override
@@ -603,11 +579,12 @@ public class CustomTabToolbar extends ToolbarLayout implements View.OnLongClickL
 
     public void setHandleStrategy(HandleStrategy strategy) {
         mHandleStrategy = strategy;
-        if (mCloseClickListener != null) setHandleStrategyCloseClickHandler(mCloseClickListener);
+        mHandleStrategy.setCloseClickHandler(mCloseButton::callOnClick);
     }
 
     /**
      * Sets the close button position for this toolbar.
+     *
      * @param closeButtonPosition The {@link CloseButtonPosition}.
      */
     public void setCloseButtonPosition(@CloseButtonPosition int closeButtonPosition) {
@@ -729,6 +706,7 @@ public class CustomTabToolbar extends ToolbarLayout implements View.OnLongClickL
     }
 
     private void updateToolbarLayoutMargin() {
+        // TODO(crbug.com/335609494): Differentiate between isOffTheRecord() & isIncognitoBranded().
         final boolean shouldShowIncognitoIcon = getToolbarDataProvider().isIncognito();
         mIncognitoImageView.setVisibility(shouldShowIncognitoIcon ? VISIBLE : GONE);
 
@@ -1312,8 +1290,7 @@ public class CustomTabToolbar extends ToolbarLayout implements View.OnLongClickL
                             /* focusChangeCallback= */ (unused) -> {},
                             this,
                             new NoOpkeyboardVisibilityDelegate(),
-                            locationBarDataProvider.isIncognito(),
-                            ChromePureJavaExceptionReporter::reportJavaException);
+                            locationBarDataProvider.isIncognito());
             mTabCreator = tabCreator;
             mTouchTargetSize = getResources().getDimensionPixelSize(R.dimen.min_touch_target_size);
             updateColors();

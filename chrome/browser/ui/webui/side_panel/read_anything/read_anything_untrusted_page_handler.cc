@@ -333,6 +333,7 @@ ReadAnythingUntrustedPageHandler::~ReadAnythingUntrustedPageHandler() {
   main_observer_.reset();
   pdf_observer_.reset();
   LogTextStyle();
+  LogSpeechEventCounts();
 
   if (features::IsReadAnythingLocalSidePanelEnabled() && tab_helper_) {
     // If |this| is destroyed before the |ReadAnythingSidePanelController|, then
@@ -598,6 +599,16 @@ void ReadAnythingUntrustedPageHandler::OnSnapshotRequested() {
   web_snapshotter_->RequestSnapshot(main_observer_->web_contents());
 }
 
+void ReadAnythingUntrustedPageHandler::IncrementMetric(
+    const std::string& metric_name) {
+  if (auto it = metric_to_count_map_.find(metric_name);
+      it != metric_to_count_map_.end()) {
+    ++it->second;
+  } else {
+    receiver_.ReportBadMessage("unexpected metric");
+  }
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 // ReadAnythingModel::Observer:
 ///////////////////////////////////////////////////////////////////////////////
@@ -718,8 +729,10 @@ void ReadAnythingUntrustedPageHandler::SetUpPdfObserver() {
           inner_contents[0]->GetPrimaryMainFrame()->GetLastCommittedOrigin())) {
     pdf_observer_ = std::make_unique<ReadAnythingWebContentsObserver>(
         weak_factory_.GetSafeRef(), inner_contents[0], kReadAnythingAXMode);
-    screen_ai::PdfOcrControllerFactory::GetForProfile(browser_->profile())
-        ->Activate();
+    if (features::IsPdfOcrEnabled()) {
+      screen_ai::PdfOcrControllerFactory::GetForProfile(browser_->profile())
+          ->Activate();
+    }
   }
 }
 
@@ -746,16 +759,19 @@ void ReadAnythingUntrustedPageHandler::OnActiveAXTreeIDChanged() {
     translate::TranslateDriver* driver = translate_client->GetTranslateDriver();
     const std::string& source_language =
         translate_client->GetLanguageState().source_language();
-    // If the language is empty and we're not already observing these web
-    // contents, then observe them so we can get a callback when the language is
-    // determined. If we are already observing them, then the language couldn't
-    // be determined, so pass the empty code to SetLanguageCode. If the language
-    // is not empty then the language was already determined so we pass that to
-    // SetLanguageCode.
-    if (source_language.empty() &&
-        !translate_observation_.IsObservingSource(driver)) {
+    // If we're not already observing these web contents, then observe them so
+    // we can get a callback when the language is determined. Otherwise, we
+    // just set the language directly.
+    if (!translate_observation_.IsObservingSource(driver)) {
       translate_observation_.Reset();
       translate_observation_.Observe(driver);
+      // The language may have already been determined before (and then
+      // unobserved), so send the language if it's not empty. If the language
+      // is outdated, we'll receive a call in OnLanguageDetermined and send
+      // the updated lang there.
+      if (!source_language.empty()) {
+        SetLanguageCode(source_language);
+      }
     } else {
       SetLanguageCode(source_language);
     }
@@ -844,6 +860,12 @@ void ReadAnythingUntrustedPageHandler::LogTextStyle() {
           prefs->GetInteger(prefs::kAccessibilityReadAnythingLetterSpacing));
   base::UmaHistogramEnumeration(string_constants::kLetterSpacingHistogramName,
                                 letter_spacing);
+}
+
+void ReadAnythingUntrustedPageHandler::LogSpeechEventCounts() {
+  for (const auto& [metric, count] : metric_to_count_map_) {
+    base::UmaHistogramCounts1000(metric, count);
+  }
 }
 
 void ReadAnythingUntrustedPageHandler::ObserveWebContentsSidePanelController(

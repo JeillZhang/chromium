@@ -72,6 +72,7 @@
 #include "third_party/blink/renderer/core/css/style_engine.h"
 #include "third_party/blink/renderer/core/css_value_keywords.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
+#include "third_party/blink/renderer/core/frame/settings.h"
 #include "third_party/blink/renderer/core/frame/web_feature.h"
 #include "third_party/blink/renderer/core/style/computed_style_constants.h"
 #include "third_party/blink/renderer/core/style/coord_box_offset_path_operation.h"
@@ -1867,6 +1868,15 @@ static CSSToLengthConversionData LineHeightToLengthConversionData(
   if (LocalFrame* frame = state.GetDocument().GetFrame()) {
     multiplier *= frame->TextZoomFactor();
   }
+
+  if (!state.StyleBuilder().GetTextSizeAdjust().IsAuto()) {
+    if (RuntimeEnabledFeatures::TextSizeAdjustImprovementsEnabled()) {
+      Settings* settings = state.GetDocument().GetSettings();
+      if (settings && settings->GetTextAutosizingEnabled()) {
+        multiplier *= state.StyleBuilder().GetTextSizeAdjust().Multiplier();
+      }
+    }
+  }
   return state.CssToLengthConversionData().CopyWithAdjustedZoom(multiplier);
 }
 
@@ -1995,6 +2005,27 @@ ScopedCSSNameList* StyleBuilderConverter::ConvertAnchorName(
     return nullptr;
   }
   DCHECK(value.IsBaseValueList());
+  HeapVector<Member<const ScopedCSSName>> names;
+  for (const Member<const CSSValue>& item : To<CSSValueList>(value)) {
+    names.push_back(ConvertCustomIdent(state, *item));
+  }
+  return MakeGarbageCollected<ScopedCSSNameList>(std::move(names));
+}
+
+ScopedCSSNameList* StyleBuilderConverter::ConvertAnchorScope(
+    StyleResolverState& state,
+    const CSSValue& value) {
+  CHECK(value.IsScopedValue());
+  if (const auto* identifier_value = DynamicTo<CSSIdentifierValue>(value)) {
+    if (identifier_value->GetValueID() == CSSValueID::kAll) {
+      // An empty list represents "all".
+      return MakeGarbageCollected<ScopedCSSNameList>(
+          HeapVector<Member<const ScopedCSSName>>());
+    }
+    CHECK_EQ(identifier_value->GetValueID(), CSSValueID::kNone);
+    return nullptr;
+  }
+  CHECK(value.IsBaseValueList());
   HeapVector<Member<const ScopedCSSName>> names;
   for (const Member<const CSSValue>& item : To<CSSValueList>(value)) {
     names.push_back(ConvertCustomIdent(state, *item));
@@ -3029,8 +3060,7 @@ const CSSValue& StyleBuilderConverter::ConvertRegisteredPropertyValue(
 // (and registered) custom properties work correctly.
 //
 // https://drafts.css-houdini.org/css-properties-values-api-1/#substitution
-scoped_refptr<CSSVariableData>
-StyleBuilderConverter::ConvertRegisteredPropertyVariableData(
+CSSVariableData* StyleBuilderConverter::ConvertRegisteredPropertyVariableData(
     const CSSValue& value,
     bool is_animation_tainted) {
   // TODO(andruud): Produce tokens directly from CSSValue.

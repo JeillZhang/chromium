@@ -40,6 +40,17 @@ BASE_FEATURE(kTabGroupSyncUno,
              "TabGroupSyncUno",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
+// Feature flag on Android to control migration from Java SharedPrefs to
+// ModelTypeStore.
+BASE_FEATURE(kMigrationFromJavaSharedPrefs,
+             "MigrationFromJavaSharedPrefs",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+
+// Feature flag to remove any merge logic from saved tab group model.
+BASE_FEATURE(kAlwaysAcceptServerDataInModel,
+             "AlwaysAcceptServerDataInModel",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+
 bool IsTabGroupsSaveV2Enabled() {
   return base::FeatureList::IsEnabled(kTabGroupsSaveV2);
 }
@@ -48,9 +59,12 @@ bool IsTabGroupsSaveUIUpdateEnabled() {
   return base::FeatureList::IsEnabled(kTabGroupsSaveUIUpdate);
 }
 
-bool ShouldCloseAllTabGroupsOnSignOut() {
-  return GetFieldTrialParamByFeatureAsBool(
-      kTabGroupSyncUno, "close_all_tab_groups_on_sign_out", false);
+bool IsMigrationFromJavaSharedPrefsEnabled() {
+  return base::FeatureList::IsEnabled(kMigrationFromJavaSharedPrefs);
+}
+
+bool AlwaysAcceptServerDataInModel() {
+  return base::FeatureList::IsEnabled(kAlwaysAcceptServerDataInModel);
 }
 
 }  // namespace tab_groups

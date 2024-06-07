@@ -21,6 +21,19 @@ namespace gpu {
 
 namespace {
 
+gfx::GpuMemoryBufferType GetNativeBufferType() {
+#if BUILDFLAG(IS_APPLE)
+  return gfx::IO_SURFACE_BUFFER;
+#elif BUILDFLAG(IS_ANDROID)
+  return gfx::ANDROID_HARDWARE_BUFFER;
+#elif BUILDFLAG(IS_WIN)
+  return gfx::DXGI_SHARED_HANDLE;
+#else
+  // Ozone
+  return gfx::NATIVE_PIXMAP;
+#endif
+}
+
 // Creates a shared memory region and returns a handle to it.
 gfx::GpuMemoryBufferHandle CreateGMBHandle(
     const gfx::BufferFormat& buffer_format,
@@ -55,11 +68,14 @@ TestSharedImageInterface::CreateSharedImage(const SharedImageInfo& si_info,
                                             SurfaceHandle surface_handle) {
   SyncToken sync_token = GenUnverifiedSyncToken();
   base::AutoLock locked(lock_);
-  auto mailbox = Mailbox::GenerateForSharedImage();
+  auto mailbox = Mailbox::Generate();
   shared_images_.insert(mailbox);
   most_recent_size_ = si_info.meta.size;
+  auto gmb_handle_type = emulate_client_provided_native_buffer_
+                             ? GetNativeBufferType()
+                             : gfx::EMPTY_BUFFER;
   return base::MakeRefCounted<ClientSharedImage>(
-      mailbox, si_info.meta, sync_token, holder_, gfx::EMPTY_BUFFER);
+      mailbox, si_info.meta, sync_token, holder_, gmb_handle_type);
 }
 
 scoped_refptr<ClientSharedImage>
@@ -68,7 +84,7 @@ TestSharedImageInterface::CreateSharedImage(
     base::span<const uint8_t> pixel_data) {
   SyncToken sync_token = GenUnverifiedSyncToken();
   base::AutoLock locked(lock_);
-  auto mailbox = Mailbox::GenerateForSharedImage();
+  auto mailbox = Mailbox::Generate();
   shared_images_.insert(mailbox);
   return base::MakeRefCounted<ClientSharedImage>(
       mailbox, si_info.meta, sync_token, holder_, gfx::EMPTY_BUFFER);
@@ -85,7 +101,7 @@ TestSharedImageInterface::CreateSharedImage(const SharedImageInfo& si_info,
 
   // Create a ClientSharedImage with a GMB.
   base::AutoLock locked(lock_);
-  auto mailbox = Mailbox::GenerateForSharedImage();
+  auto mailbox = Mailbox::Generate();
   shared_images_.insert(mailbox);
   most_recent_size_ = si_info.meta.size;
 
@@ -127,7 +143,7 @@ TestSharedImageInterface::CreateSharedImage(
     gfx::GpuMemoryBufferHandle buffer_handle) {
   SyncToken sync_token = GenUnverifiedSyncToken();
   base::AutoLock locked(lock_);
-  auto mailbox = Mailbox::GenerateForSharedImage();
+  auto mailbox = Mailbox::Generate();
   shared_images_.insert(mailbox);
   most_recent_size_ = si_info.meta.size;
 
@@ -145,7 +161,7 @@ TestSharedImageInterface::CreateSharedImage(
     gfx::GpuMemoryBufferHandle buffer_handle) {
   SyncToken sync_token = GenUnverifiedSyncToken();
   base::AutoLock locked(lock_);
-  auto mailbox = Mailbox::GenerateForSharedImage();
+  auto mailbox = Mailbox::Generate();
   shared_images_.insert(mailbox);
   most_recent_size_ = si_info.meta.size;
   return base::MakeRefCounted<ClientSharedImage>(
@@ -157,7 +173,7 @@ TestSharedImageInterface::CreateSharedImage(
     const SharedImageInfo& si_info) {
   SyncToken sync_token = GenUnverifiedSyncToken();
   base::AutoLock locked(lock_);
-  auto mailbox = Mailbox::GenerateForSharedImage();
+  auto mailbox = Mailbox::Generate();
   shared_images_.insert(mailbox);
   most_recent_size_ = si_info.meta.size;
   return {base::MakeRefCounted<ClientSharedImage>(
@@ -173,7 +189,7 @@ TestSharedImageInterface::CreateSharedImage(
     const SharedImageInfo& si_info) {
   SyncToken sync_token = GenUnverifiedSyncToken();
   base::AutoLock locked(lock_);
-  auto mailbox = Mailbox::GenerateForSharedImage();
+  auto mailbox = Mailbox::Generate();
   shared_images_.insert(mailbox);
   most_recent_size_ = gpu_memory_buffer->GetSize();
   return base::MakeRefCounted<ClientSharedImage>(
@@ -237,8 +253,8 @@ TestSharedImageInterface::CreateSwapChain(viz::SharedImageFormat format,
                                           GrSurfaceOrigin surface_origin,
                                           SkAlphaType alpha_type,
                                           uint32_t usage) {
-  auto front_buffer = Mailbox::GenerateForSharedImage();
-  auto back_buffer = Mailbox::GenerateForSharedImage();
+  auto front_buffer = Mailbox::Generate();
+  auto back_buffer = Mailbox::Generate();
   SyncToken sync_token = GenUnverifiedSyncToken();
   shared_images_.insert(front_buffer);
   shared_images_.insert(back_buffer);

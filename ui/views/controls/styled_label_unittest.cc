@@ -2,6 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#if defined(UNSAFE_BUFFERS_BUILD)
+// TODO(https://crbug.com/344639839): fix the unsafe buffer errors in this file,
+// then remove this pragma.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "ui/views/controls/styled_label.h"
 
 #include <stddef.h>
@@ -85,7 +91,7 @@ class StyledLabelInWidgetTest : public ViewsTestBase {
   void SetUp() override {
     ViewsTestBase::SetUp();
 
-    widget_ = CreateTestWidget();
+    widget_ = CreateTestWidget(Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
   }
 
   void TearDown() override {
@@ -884,8 +890,10 @@ TEST_F(StyledLabelTest, AccessibleNameAndRole) {
   IgnoreMissingWidgetForTestingScopedSetter a11y_ignore_missing_widget_(
       styled->GetViewAccessibility());
 
-  EXPECT_EQ(styled->GetAccessibleName(), base::UTF8ToUTF16(text));
-  EXPECT_EQ(styled->GetAccessibleRole(), ax::mojom::Role::kStaticText);
+  EXPECT_EQ(styled->GetViewAccessibility().GetCachedName(),
+            base::UTF8ToUTF16(text));
+  EXPECT_EQ(styled->GetViewAccessibility().GetCachedRole(),
+            ax::mojom::Role::kStaticText);
 
   ui::AXNodeData data;
   styled->GetViewAccessibility().GetAccessibleNodeData(&data);
@@ -893,8 +901,11 @@ TEST_F(StyledLabelTest, AccessibleNameAndRole) {
   EXPECT_EQ(data.role, ax::mojom::Role::kStaticText);
 
   styled->SetTextContext(style::CONTEXT_DIALOG_TITLE);
-  EXPECT_EQ(styled->GetAccessibleName(), base::UTF8ToUTF16(text));
-  EXPECT_EQ(styled->GetAccessibleRole(), ax::mojom::Role::kTitleBar);
+
+  EXPECT_EQ(styled->GetViewAccessibility().GetCachedName(),
+            base::UTF8ToUTF16(text));
+  EXPECT_EQ(styled->GetViewAccessibility().GetCachedRole(),
+            ax::mojom::Role::kTitleBar);
 
   data = ui::AXNodeData();
   styled->GetViewAccessibility().GetAccessibleNodeData(&data);
@@ -902,9 +913,10 @@ TEST_F(StyledLabelTest, AccessibleNameAndRole) {
   EXPECT_EQ(data.role, ax::mojom::Role::kTitleBar);
 
   styled->SetText(u"New Text");
-  styled->SetAccessibleRole(ax::mojom::Role::kLink);
-  EXPECT_EQ(styled->GetAccessibleName(), u"New Text");
-  EXPECT_EQ(styled->GetAccessibleRole(), ax::mojom::Role::kLink);
+  styled->GetViewAccessibility().SetRole(ax::mojom::Role::kLink);
+  EXPECT_EQ(styled->GetViewAccessibility().GetCachedName(), u"New Text");
+  EXPECT_EQ(styled->GetViewAccessibility().GetCachedRole(),
+            ax::mojom::Role::kLink);
 
   data = ui::AXNodeData();
   styled->GetViewAccessibility().GetAccessibleNodeData(&data);

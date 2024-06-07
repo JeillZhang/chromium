@@ -264,7 +264,6 @@
 <translation id="2783001728278437613">{COUNT,plural, =1{mais de #}other{mais de #}}</translation>
 <translation id="2792200646155001340">Também pode deslizar rapidamente com um dedo da direita para a esquerda para se deslocar para o item anterior. Experimente agora.</translation>
 <translation id="280499067616661124">Localizar na página do ChromeVox</translation>
-<translation id="2811019999044652585">Para avançar para outras partes do ecrã, como barras de ferramentas ou o tabuleiro do sistema, prima Control + Avançar. Num Chromebook, a tecla Avançar está imediatamente acima da tecla número 2.</translation>
 <translation id="2811204574343810641">Linha</translation>
 <translation id="2816868829355607410">Área para praticar: comandos de avanço</translation>
 <translation id="2841013758207633010">Tempo</translation>
@@ -520,6 +519,7 @@
 <translation id="4432457053224379116">Vermelho-indiano</translation>
 <translation id="4432896207833262240">Conteúdo marcado</translation>
 <translation id="4437615272777527928">Escreva para pesquisar os menus. Utilize as setas para cima e para baixo para percorrer os resultados. Utilize as setas para a esquerda e para a direita para ajustar o cursor do texto e para se deslocar entre os menus.</translation>
+<translation id="4453530046591759283">Para avançar para outras partes do ecrã, como barras de ferramentas ou o tabuleiro do sistema, prima Control + F1. F1 é a primeira tecla à direita da tecla Esc.</translation>
 <translation id="4457472090507035117">Selecionar voz atual:</translation>
 <translation id="4476183483923481720">nova linha</translation>
 <translation id="4479068155583208887">Cor de tijolo</translation>
@@ -880,6 +880,7 @@
 <translation id="7091296112653361280">Branco navajo</translation>
 <translation id="7095834689119144465">Editar apenas números</translation>
 <translation id="7096001299300236431">Multimédia anterior</translation>
+<translation id="7096668131290451939">Prima Escape novamente para sair do modo de aprendizagem</translation>
 <translation id="7116595520562830928">multln</translation>
 <translation id="712735679809149106">eco da palavra</translation>
 <translation id="7137397390322864165">Salmão</translation>

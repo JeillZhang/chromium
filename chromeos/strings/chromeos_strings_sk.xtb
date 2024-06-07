@@ -236,7 +236,6 @@
 <translation id="2189104374785738357">Úprava podrobností názvu prístupového bodu (APN)</translation>
 <translation id="2195732836444333448">Služba je momentálne vyťažená. Vráťte sa o chvíľu.</translation>
 <translation id="2201758491318984023">bicykel</translation>
-<translation id="2203222757805818543">Aktuálny plán je nastavený na <ph name="SUNRISE" /> – <ph name="SUNSET" />. Ak chcete plán tmavého režimu automaticky aktualizovať, <ph name="BEGIN_LINK" />zapnite prístup k polohe<ph name="END_LINK" /></translation>
 <translation id="2203272733515928691">termálny prameň</translation>
 <translation id="2203642483788377106">útesu</translation>
 <translation id="2208388655216963643">impresionizmu</translation>
@@ -313,6 +312,7 @@
 <translation id="2618015542787108131">piesočnej duny</translation>
 <translation id="2619761439309613843">Obnovovať denne</translation>
 <translation id="2620436844016719705">Systém</translation>
+<translation id="2637303424821734920">VYPNUTÉ – ak si chcete zobraziť miestne počasie, <ph name="BEGIN_LINK" />zapnite prístup k polohe systému<ph name="END_LINK" /></translation>
 <translation id="2638662041295312666">Obrázok na prihlasovacej obrazovke</translation>
 <translation id="2640549051766135490">Album <ph name="TITLE" /> <ph name="DESC" /> bol vybraný</translation>
 <translation id="2645380101799517405">Ovládanie</translation>
@@ -364,6 +364,7 @@
 <translation id="3054177598518735801"><ph name="CURRENT_VALUE" /> mA</translation>
 <translation id="3056720590588772262">Konečný bod</translation>
 <translation id="3060579846059757016">Ohraničenie</translation>
+<translation id="3061850252076394168">povoliť počúvanie vybraného textu</translation>
 <translation id="3069085583900247081">Nepodarilo sa otestovať</translation>
 <translation id="3078740164268491126">tabuľka</translation>
 <translation id="3081652522083185657">svetlej</translation>
@@ -630,7 +631,6 @@
 <translation id="458794348635939462">Nepodarilo sa vybrať všetkých hostiteľov</translation>
 <translation id="4593212453765072419">Vyžaduje sa overenie servera proxy</translation>
 <translation id="4609350030397390689">Zníženie jasu klávesnice</translation>
-<translation id="4617553623719764431">Počasie sa nezobrazuje, pretože nepozná vašu polohu. Ak si chcete zobraziť miestne počasie, <ph name="BEGIN_LINK" />zapnite prístup k polohe<ph name="END_LINK" />.</translation>
 <translation id="4627232916386272576"><ph name="DOCUMENT_TITLE" />, <ph name="PRINTER_NAME" />, <ph name="CREATION_TIME" />, <ph name="PRINTED_PAGE_NUMBER" /> z <ph name="TOTAL_PAGE_NUMBER" />. Tlačovú úlohu zrušíte stlačením klávesa Enter.</translation>
 <translation id="463791356324567266">Ruší sa skenovanie…</translation>
 <translation id="4646949265910132906">Zabezpečené pripojenie Wi‑Fi</translation>
@@ -704,6 +704,7 @@
 <translation id="4985509611418653372">Spustiť</translation>
 <translation id="4987769320337599931">Firewall</translation>
 <translation id="4988526792673242964">Stránky</translation>
+<translation id="4989542687859782284">Nedostupné</translation>
 <translation id="4999333166442584738">Skryť prehľad</translation>
 <translation id="500920857929044050">Zastaviť test</translation>
 <translation id="5017508259293544172">LEAP</translation>
@@ -960,7 +961,6 @@
 <translation id="6412715219990689313">Vstavaná klávesnica</translation>
 <translation id="6417265370957905582">Asistent Google</translation>
 <translation id="6423239382391657905">OpenVPN</translation>
-<translation id="6438073885402882007">Týmto povolíte systémovým službám s daným povolením používať vašu polohu. Nastavenie Poloha pomáha odhadnúť polohu vášho zariadenia pomocou zdrojov, ako sú Wi-Fi, mobilné siete a senzory. <ph name="LINK_BEGIN" />Ďalšie informácie<ph name="LINK_END" /></translation>
 <translation id="6439505561246192797">Slabé (<ph name="SIGNAL_STRENGTH" />)</translation>
 <translation id="6447630859861661624">Prejsť do nastavení účtu</translation>
 <translation id="6462978824459367242">Tlačidlo Pridať názov prístupového bodu (APN) je teraz povolené</translation>

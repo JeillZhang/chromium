@@ -11,7 +11,7 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_actions.h"
 #include "chrome/browser/ui/browser_finder.h"
-#include "chrome/browser/ui/side_panel/side_panel_action_callback.h"
+#include "chrome/browser/ui/views/side_panel/side_panel_action_callback.h"
 #include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/side_panel/side_panel_coordinator.h"
@@ -24,6 +24,7 @@
 #include "extensions/common/permissions/permissions_data.h"
 #include "ui/actions/actions.h"
 #include "ui/base/ui_base_features.h"
+#include "third_party/abseil-cpp/absl/memory/memory.h"
 
 namespace extensions {
 
@@ -124,9 +125,8 @@ void ExtensionSidePanelManager::OnExtensionLoaded(
 
 void ExtensionSidePanelManager::MaybeCreateActionItemForExtension(
     const Extension* extension) {
-  if (!browser_ || !features::IsSidePanelPinningEnabled() ||
-      !extension->permissions_data()->HasAPIPermission(
-          mojom::APIPermissionID::kSidePanel)) {
+  if (!browser_ || !extension->permissions_data()->HasAPIPermission(
+                       mojom::APIPermissionID::kSidePanel)) {
     return;
   }
 
@@ -158,7 +158,6 @@ void ExtensionSidePanelManager::MaybeCreateActionItemForExtension(
 
 actions::ActionId ExtensionSidePanelManager::GetOrCreateActionIdForExtension(
     const Extension* extension) {
-  CHECK(features::IsSidePanelPinningEnabled());
   return actions::ActionIdMap::CreateActionId(
              SidePanelEntry::Key(SidePanelEntry::Id::kExtension,
                                  extension->id())
@@ -168,9 +167,8 @@ actions::ActionId ExtensionSidePanelManager::GetOrCreateActionIdForExtension(
 
 void ExtensionSidePanelManager::MaybeRemoveActionItemForExtension(
     const Extension* extension) {
-  if (browser_ && features::IsSidePanelPinningEnabled() &&
-      extension->permissions_data()->HasAPIPermission(
-          mojom::APIPermissionID::kSidePanel)) {
+  if (browser_ && extension->permissions_data()->HasAPIPermission(
+                      mojom::APIPermissionID::kSidePanel)) {
     BrowserActions* browser_actions = browser_->browser_actions();
     std::optional<actions::ActionId> extension_action_id =
         actions::ActionIdMap::StringToActionId(

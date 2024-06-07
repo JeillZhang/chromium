@@ -136,7 +136,7 @@ class VectorComboboxModel : public ui::ComboboxModel {
   }
 
  private:
-  size_t default_index_ = 0;
+  std::optional<size_t> default_index_ = std::nullopt;
   const raw_ptr<std::vector<std::string>> values_;
 };
 
@@ -217,7 +217,8 @@ class ComboboxTest : public ViewsTestBase {
 
     widget_ = std::make_unique<Widget>();
     Widget::InitParams params =
-        CreateParams(Widget::InitParams::TYPE_WINDOW_FRAMELESS);
+        CreateParams(Widget::InitParams::NATIVE_WIDGET_OWNS_WIDGET,
+                     Widget::InitParams::TYPE_WINDOW_FRAMELESS);
     params.bounds = gfx::Rect(200, 200, 200, 200);
     widget_->Init(std::move(params));
     View* container = widget_->SetContentsView(std::make_unique<View>());
@@ -347,7 +348,8 @@ TEST_F(ComboboxTest, DisabilityTest) {
 
   widget_ = std::make_unique<Widget>();
   Widget::InitParams params =
-      CreateParams(Widget::InitParams::TYPE_WINDOW_FRAMELESS);
+      CreateParams(Widget::InitParams::NATIVE_WIDGET_OWNS_WIDGET,
+                   Widget::InitParams::TYPE_WINDOW_FRAMELESS);
   params.bounds = gfx::Rect(100, 100, 100, 100);
   widget_->Init(std::move(params));
   View* container = widget_->SetContentsView(std::make_unique<View>());
@@ -892,7 +894,8 @@ TEST_F(ComboboxTest, SetTooltipTextNotifiesAccessibilityEvent) {
                                 ax::mojom::Role::kButton));
   EXPECT_EQ(1, counter.GetCount(ax::mojom::Event::kTextChanged,
                                 ax::mojom::Role::kComboBoxSelect));
-  EXPECT_EQ(test_tooltip_text, combobox()->GetAccessibleName());
+  EXPECT_EQ(test_tooltip_text,
+            combobox()->GetViewAccessibility().GetCachedName());
   ui::AXNodeData data;
   combobox()->GetViewAccessibility().GetAccessibleNodeData(&data);
   const std::string& name =

@@ -240,6 +240,8 @@ class StyleBuilderConverter {
                                                       const CSSValue& value);
   static ScopedCSSNameList* ConvertAnchorName(StyleResolverState&,
                                               const CSSValue&);
+  static ScopedCSSNameList* ConvertAnchorScope(StyleResolverState&,
+                                               const CSSValue&);
   static StyleInitialLetter ConvertInitialLetter(StyleResolverState&,
                                                  const CSSValue&);
   static StyleOffsetRotation ConvertOffsetRotate(StyleResolverState&,
@@ -330,7 +332,7 @@ class StyleBuilderConverter {
       const CSSValue&,
       const CSSParserContext*);
 
-  static scoped_refptr<CSSVariableData> ConvertRegisteredPropertyVariableData(
+  static CSSVariableData* ConvertRegisteredPropertyVariableData(
       const CSSValue&,
       bool is_animation_tainted);
 

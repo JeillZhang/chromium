@@ -12,7 +12,6 @@
 #include "third_party/blink/renderer/core/layout/out_of_flow_layout_part.h"
 #include "third_party/blink/renderer/core/layout/relative_utils.h"
 #include "third_party/blink/renderer/core/layout/space_utils.h"
-#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 
 namespace blink {
 
@@ -1258,6 +1257,8 @@ LayoutUnit GridLayoutAlgorithm::ContributionSizeForGridItem(
       // We could be clever is and make this an if-stmt, but each type has
       // subtle consequences. This forces us in the future when we add a new
       // length type to consider what the best thing is for grid.
+      // TODO(https://crbug.com/40339056): The separation here is not
+      // correct for calc-size().
       switch (main_length.GetType()) {
         case Length::kAuto:
         case Length::kFitContent:
@@ -1745,7 +1746,7 @@ void GridLayoutAlgorithm::InitializeTrackSizes(
     } else {
       // If this grid has a standalone axis, invalidate its min/max sizes cache,
       // since they're only valid for the current step of the sizing algorithm.
-      Node().InvalidateMinMaxSizesCache();
+      Node().InvalidateSubgridMinMaxSizesCache();
 
       auto& track_collection = layout_data.SizingCollection(track_direction);
       CacheGridItemsProperties(track_collection, &grid_items);

@@ -368,6 +368,8 @@ DEFINE_VARIATION_PARAM(kIPHWebUiHelpBubbleTestFeature,
 DEFINE_VARIATION_PARAM(kIPHPriceTrackingInSidePanelFeature,
                        "IPH_PriceTrackingInSidePanel");
 DEFINE_VARIATION_PARAM(kIPHBackNavigationMenuFeature, "IPH_BackNavigationMenu");
+DEFINE_VARIATION_PARAM(kIPHTabGroupsSaveV2IntroFeature,
+                       "IPH_TabGroupsSaveV2Intro");
 #endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_APPLE) || BUILDFLAG(IS_LINUX) ||
         // BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_FUCHSIA)
 
@@ -467,6 +469,10 @@ DEFINE_VARIATION_PARAM(kIPHDesktopPWAsLinkCapturingLaunch,
 #if !BUILDFLAG(IS_ANDROID) && BUILDFLAG(GOOGLE_CHROME_BRANDING)
 DEFINE_VARIATION_PARAM(kIPHiOSPasswordPromoDesktopFeature,
                        "IPH_iOSPasswordPromoDesktop");
+DEFINE_VARIATION_PARAM(kIPHiOSAddressPromoDesktopFeature,
+                       "IPH_iOSAddressPromoDesktop");
+DEFINE_VARIATION_PARAM(kIPHiOSPaymentPromoDesktopFeature,
+                       "IPH_iOSPaymentPromoDesktop");
 #endif  // !BUILDFLAG(IS_ANDROID) && BUILDFLAG(GOOGLE_CHROME_BRANDING)
 
 }  // namespace
@@ -723,6 +729,8 @@ constexpr flags_ui::FeatureEntry::FeatureVariation
 
 #if !BUILDFLAG(IS_ANDROID) && BUILDFLAG(GOOGLE_CHROME_BRANDING)
         VARIATION_ENTRY(kIPHiOSPasswordPromoDesktopFeature),
+        VARIATION_ENTRY(kIPHiOSAddressPromoDesktopFeature),
+        VARIATION_ENTRY(kIPHiOSPaymentPromoDesktopFeature),
 #endif  // !BUILDFLAG(IS_ANDROID) && BUILDFLAG(GOOGLE_CHROME_BRANDING)
 };
 

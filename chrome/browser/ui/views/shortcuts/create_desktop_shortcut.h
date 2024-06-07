@@ -8,6 +8,7 @@
 #include <string>
 
 #include "base/functional/callback_forward.h"
+#include "ui/base/interaction/element_tracker.h"
 
 namespace content {
 class WebContents;

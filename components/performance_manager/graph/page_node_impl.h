@@ -19,7 +19,6 @@
 #include "components/performance_manager/graph/node_attached_data.h"
 #include "components/performance_manager/graph/node_base.h"
 #include "components/performance_manager/public/graph/page_node.h"
-#include "components/performance_manager/public/web_contents_proxy.h"
 #include "url/gurl.h"
 
 namespace performance_manager {
@@ -58,9 +57,9 @@ class PageNodeImpl
   // WorkerNode uses blink::WorkerToken) but WebContents has no id to use.
   using PageToken = base::TokenType<class PageTokenTag>;
 
-  static constexpr NodeTypeEnum Type() { return NodeTypeEnum::kPage; }
+  using TypedNodeBase<PageNodeImpl, PageNode, PageNodeObserver>::FromNode;
 
-  PageNodeImpl(const WebContentsProxy& contents_proxy,
+  PageNodeImpl(base::WeakPtr<content::WebContents> web_contents,
                const std::string& browser_context_id,
                const GURL& visible_url,
                PagePropertyFlags initial_properties,
@@ -97,15 +96,10 @@ class PageNodeImpl
   uint64_t EstimateMainFramePrivateFootprintSize() const override;
   bool HadFormInteraction() const override;
   bool HadUserEdits() const override;
-  const WebContentsProxy& GetContentsProxy() const override;
+  base::WeakPtr<content::WebContents> GetWebContents() const override;
   PageState GetPageState() const override;
   uint64_t EstimateResidentSetSize() const override;
   uint64_t EstimatePrivateFootprintSize() const override;
-
-  // Returns the web contents associated with this page node. It is valid to
-  // call this function on any thread but the weak pointer must only be
-  // dereferenced on the UI thread.
-  const WebContentsProxy& contents_proxy() const;
 
   // Returns the unique token for the page node. This function can be called
   // from any thread.
@@ -250,8 +244,8 @@ class PageNodeImpl
   void SetHadFormInteraction(bool had_form_interaction);
   void SetHadUserEdits(bool had_user_edits);
 
-  // The WebContentsProxy associated with this page.
-  const WebContentsProxy contents_proxy_;
+  // The WebContents associated with this page.
+  const base::WeakPtr<content::WebContents> web_contents_;
 
   // The unique token that identifies this PageNode for the life of the browser.
   const PageToken page_token_;

@@ -1,7 +1,6 @@
 <?xml version="1.0" ?>
 <!DOCTYPE translationbundle>
 <translationbundle lang="it">
-<translation id="1001716830750249114">Vai alle impostazioni della versione di Chromium</translation>
 <translation id="1026101648481255140">Riprendi l'installazione</translation>
 <translation id="1029669172902658969">Riavvia per aggiornare &amp;Chromium OS</translation>
 <translation id="1040916596585577953">Chromium ti consiglia di esaminare questa estensione</translation>
@@ -185,6 +184,7 @@ A questo account potrebbero essere applicate le autorizzazioni già concesse a s
 <translation id="4055805654398742145">Gestore delle p&amp;assword</translation>
 <translation id="4095980151185649725">{COUNT,plural, =1{La tua organizzazione chiude automaticamente Chromium quando non viene utilizzato per 1 minuto. I dati di navigazione vengono eliminati. Potrebbero essere inclusi cronologia, compilazione automatica e download.}other{La tua organizzazione chiude automaticamente Chromium quando non viene utilizzato per # minuti. I dati di navigazione vengono eliminati. Potrebbero essere inclusi cronologia, compilazione automatica e download.}}</translation>
 <translation id="4118474109249235144">Modalità di navigazione in incognito di Chromium</translation>
+<translation id="4122186850977583290">Vai alla pagina Informazioni su Chromium</translation>
 <translation id="4148957013307229264">Installazione...</translation>
 <translation id="4149336151887611710">La tua organizzazione può vedere e gestire i dati di navigazione nel tuo profilo di lavoro, ad esempio i preferiti, la cronologia e le password. Non può vedere i dati di navigazione nei profili Chromium personali.</translation>
 <translation id="419998258129752635"><ph name="PAGE_TITLE" /> - Accesso rete - Chromium</translation>
@@ -217,11 +217,13 @@ A questo account potrebbero essere applicate le autorizzazioni già concesse a s
 <translation id="4594305310729380060">In Gestore delle password su questo dispositivo</translation>
 <translation id="459535195905078186">Applicazioni Chromium</translation>
 <translation id="4613863813562375431">Versione di Chromium OS</translation>
+<translation id="4617285639650863674">Per condividere lo schermo, consenti la Registrazione dello schermo per Chromium nelle Preferenze di sistema</translation>
 <translation id="4621240073146040695">Aggiornamento quasi completato. Riavvia Chromium per terminare l'aggiornamento.</translation>
 <translation id="4665829708273112819">Avviso: Chromium non è in grado di impedire alle estensioni di registrare la tua cronologia di navigazione. Per disattivare questa estensione in modalità di navigazione in incognito, deseleziona questa opzione.</translation>
 <translation id="4673151026126227699">Se condividi anche report sull'utilizzo di Chromium, questi report includono gli URL visitati</translation>
 <translation id="4677944499843243528">Sembra che il profilo sia in uso in un altro processo Chromium (<ph name="PROCESS_ID" />) su un altro computer (<ph name="HOST_NAME" />). Chromium ha bloccato il profilo affinché non venga danneggiato. Se sei sicuro che nessun altro processo stia utilizzando questo profilo, puoi sbloccare il profilo e riavviare Chromium.</translation>
 <translation id="4680828127924988555">Annulla l'installazione</translation>
+<translation id="469259825538636168">Alcuni dati di Chromium non sono ancora stati salvati nel tuo Account Google. Prova ad attendere qualche minuto prima di uscire. Se esci ora, questi dati verranno eliminati.</translation>
 <translation id="4708774505295300557">Qualcuno ha già eseguito l'accesso a Chromium su questo computer come <ph name="ACCOUNT_EMAIL_LAST" />. Crea un nuovo utente Chromium per tenere separate le tue informazioni.</translation>
 <translation id="4724676981607797757">Installazione non riuscita a causa di un errore di protocollo non supportato.</translation>
 <translation id="4746050847053251315">Vuoi chiudere comunque Chromium?</translation>
@@ -405,6 +407,7 @@ Chromium non è in grado di recuperare le impostazioni.</translation>
 <translation id="7483335560992089831">Impossibile installare una versione di Chromium uguale a quella in esecuzione. Chiudi Chromium e riprova.</translation>
 <translation id="751935028865900641">È probabile che i siti funzionino come previsto. Quando chiudi tutte le finestre di Chromium, uscirai dalla maggior parte dei siti, ma se hai eseguito l'accesso a Chromium non uscirai dal tuo Account Google.</translation>
 <translation id="753534427205733210">{0,plural, =1{Chromium verrà riavviato tra 1 minuto}other{Chromium verrà riavviato tra # minuti}}</translation>
+<translation id="7553334751796114046">Per condividere la finestra, consenti la Registrazione dello schermo per Chromium nelle Preferenze di sistema</translation>
 <translation id="7582945390259497898">Chromium può stimare i tuoi interessi. Dopodiché, un sito che visiti può chiedere a Chromium di conoscere i tuoi interessi per personalizzare gli annunci da mostrarti.</translation>
 <translation id="7583399374488819119">Programma di installazione di <ph name="COMPANY_NAME" /></translation>
 <translation id="7585391435984513350">Non hai visitato il sito di recente. Chromium ha rimosso <ph name="PERMISSION" /></translation>
@@ -455,7 +458,6 @@ Chromium non è in grado di recuperare le impostazioni.</translation>
 <translation id="8417404458978023919">{0,plural, =1{Riavvia Chromium entro un giorno}other{Riavvia Chromium entro # giorni}}</translation>
 <translation id="8453117565092476964">L'archivio di installazione è danneggiato o non valido. Scarica di nuovo Chromium.</translation>
 <translation id="8458614432758743027">Chromium richiede Windows 10 o versioni successive.</translation>
-<translation id="8461326814397467035">Alcuni dati di Chromium non sono ancora stati salvati nel tuo Account Google. Prova ad attendere qualche minuto prima di uscire.</translation>
 <translation id="8463672209299734063">(Facoltativo) Contribuisci a migliorare le funzionalità e le prestazioni di Chromium OS inviando automaticamente a Google dati diagnostici e sull'utilizzo.</translation>
 <translation id="8493179195440786826">Chromium non è aggiornato</translation>
 <translation id="8522801943730206384">Chromium può controllare le password quando le salvi</translation>

@@ -532,6 +532,7 @@ TEST_F(MahiPanelViewTest, PanelContentsViewBoundsStayConstant) {
 }
 
 TEST_F(MahiPanelViewTest, LoadingAnimations) {
+  ResetPanelWidget();
   // Config the mock mahi manager to return a summary asyncly.
   base::test::TestFuture<void> summary_waiter;
   ON_CALL(mock_mahi_manager(), GetSummary)
@@ -2003,6 +2004,30 @@ TEST_F(MahiPanelViewTest, RandomizedTextQuestionAnswerLabels) {
   EXPECT_LE(answer_label->width(), scroll_view->GetVisibleRect().width())
       << "Answer label width surpasses scroll view visible width: "
       << random_answer;
+}
+
+TEST_F(MahiPanelViewTest, OnlyOneFeedbackButtonCanKeepToggled) {
+  IconButton* thumbs_up_button = views::AsViewClass<IconButton>(
+      panel_view()->GetViewByID(mahi_constants::ViewId::kThumbsUpButton));
+  IconButton* thumbs_down_button = views::AsViewClass<IconButton>(
+      panel_view()->GetViewByID(mahi_constants::ViewId::kThumbsDownButton));
+  EXPECT_FALSE(thumbs_up_button->toggled());
+  EXPECT_FALSE(thumbs_down_button->toggled());
+
+  // Pressing thumbs up should toggle the button.
+  LeftClickOn(thumbs_up_button);
+  EXPECT_TRUE(thumbs_up_button->toggled());
+  EXPECT_FALSE(thumbs_down_button->toggled());
+
+  // Pressing thumbs down should just toggle down button on and up button off.
+  LeftClickOn(thumbs_down_button);
+  EXPECT_TRUE(thumbs_down_button->toggled());
+  EXPECT_FALSE(thumbs_up_button->toggled());
+
+  // Pressing thumbs up should just toggle up button on and down button off.
+  LeftClickOn(thumbs_up_button);
+  EXPECT_TRUE(thumbs_up_button->toggled());
+  EXPECT_FALSE(thumbs_down_button->toggled());
 }
 
 }  // namespace ash

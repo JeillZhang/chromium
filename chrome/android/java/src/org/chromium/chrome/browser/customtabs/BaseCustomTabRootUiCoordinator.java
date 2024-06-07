@@ -254,7 +254,7 @@ public class BaseCustomTabRootUiCoordinator extends RootUiCoordinator {
         mIntentDataProvider = intentDataProvider;
         if (intentDataProvider.get().getActivityType() == ActivityType.CUSTOM_TAB
                 && !intentDataProvider.get().isOpenedByChrome()
-                && !intentDataProvider.get().isIncognito()) {
+                && !intentDataProvider.get().isIncognitoBranded()) {
             String appId = mIntentDataProvider.get().getClientPackageName();
             if (TextUtils.isEmpty(appId)) {
                 appId = CustomTabIntentDataProvider.getAppIdFromReferrer(activity);
@@ -331,6 +331,11 @@ public class BaseCustomTabRootUiCoordinator extends RootUiCoordinator {
         super.onFinishNativeInitialization();
 
         maybeCreatePageInsightsComponent();
+
+        mGoogleBottomBarCoordinator = getGoogleBottomBarCoordinator();
+        if (mGoogleBottomBarCoordinator != null) {
+            mGoogleBottomBarCoordinator.onFinishNativeInitialization();
+        }
 
         new OneShotCallback<>(
                 mProfileSupplier,
@@ -515,7 +520,9 @@ public class BaseCustomTabRootUiCoordinator extends RootUiCoordinator {
     }
 
     @Override
-    protected IncognitoReauthCoordinatorFactory getIncognitoReauthCoordinatorFactory() {
+    protected IncognitoReauthCoordinatorFactory getIncognitoReauthCoordinatorFactory(
+            Profile profile) {
+        // TODO(crbug.com/335609494): Disable this for ephemeral CCTs.
         Intent showRegularOverviewIntent = new Intent(Intent.ACTION_MAIN);
         showRegularOverviewIntent.setClass(mActivity, ChromeLauncherActivity.class);
         showRegularOverviewIntent.putExtra(IntentHandler.EXTRA_OPEN_REGULAR_OVERVIEW_MODE, true);
@@ -525,7 +532,7 @@ public class BaseCustomTabRootUiCoordinator extends RootUiCoordinator {
                 mActivity,
                 mTabModelSelectorSupplier.get(),
                 mModalDialogManagerSupplier.get(),
-                new IncognitoReauthManager(),
+                new IncognitoReauthManager(mActivity, profile),
                 new SettingsLauncherImpl(),
                 /* incognitoReauthTopToolbarDelegate= */ null,
                 /* layoutManager= */ null,

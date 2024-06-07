@@ -55,8 +55,8 @@ class ComposeEnabling {
   // use member function version if you need to mock them out.
   static bool IsEnabledForProfile(Profile* profile);
 
-  // Instance method that verifies that the feature be enabled for profile
-  // provided associated with this instance.
+  // Instance method that verifies that the feature can be enabled for the
+  // profile associated with this instance upon construction.
   base::expected<void, compose::ComposeShowStatus> IsEnabled();
 
   // The following methods allow overriding is-enabled checks to facilitate
@@ -66,19 +66,26 @@ class ComposeEnabling {
   // instances are destroyed. These implementations are not multi-thread safe.
   static ScopedOverride ScopedEnableComposeForTesting();
   static ScopedOverride ScopedSkipUserCheckForTesting();
+  // VariationsService is not available for unit tests, hence the need for this
+  // override method. Browser tests are recommended to use
+  // VariationsService::OverrideStoredPermanentCountry because it exercises a
+  // code path closer to the runtime one.
+  static ScopedOverride OverrideCountryForTesting(std::string country_code);
 
-  base::expected<void, compose::ComposeNudgeDenyReason> ShouldTriggerPopup(
+  base::expected<void, compose::ComposeShowStatus> ShouldTriggerNoStatePopup(
       std::string_view autocomplete_attribute,
-      bool allows_writing_suggestions,
+      bool writingsuggestions_attribute,
       Profile* profile,
       PrefService* prefs,
       translate::TranslateManager* translate_manager,
-      bool ongoing_session,
       const url::Origin& top_level_frame_origin,
       const url::Origin& element_frame_origin,
       GURL url,
-      autofill::AutofillSuggestionTriggerSource trigger_source,
       bool is_msbb_enabled);
+
+  bool ShouldTriggerSavedStatePopup(
+      autofill::AutofillSuggestionTriggerSource trigger_source);
+
   bool ShouldTriggerContextMenu(Profile* profile,
                                 translate::TranslateManager* translate_manager,
                                 content::RenderFrameHost* rfh,
@@ -95,20 +102,6 @@ class ComposeEnabling {
       const url::Origin& element_frame_origin,
       bool is_newsted_within_fenced_frame);
 
-  base::expected<void, compose::ComposeShowStatus> ShouldTriggerNoStatePopup(
-      std::string_view autocomplete_attribute,
-      bool writingsuggestions_attribute,
-      Profile* profile,
-      PrefService* prefs,
-      translate::TranslateManager* translate_manager,
-      const url::Origin& top_level_frame_origin,
-      const url::Origin& element_frame_origin,
-      GURL url,
-      bool is_msbb_enabled);
-  base::expected<void, compose::ComposeNudgeDenyReason>
-  ShouldTriggerSavedStatePopup(
-      autofill::AutofillSuggestionTriggerSource trigger_source);
-
   static base::expected<void, compose::ComposeShowStatus> CheckEnabling(
       OptimizationGuideKeyedService* opt_guide,
       signin::IdentityManager* identity_manager);
@@ -117,6 +110,7 @@ class ComposeEnabling {
   raw_ptr<Profile> profile_;
   raw_ptr<OptimizationGuideKeyedService> opt_guide_;
   raw_ptr<signin::IdentityManager> identity_manager_;
+
   static int enabled_for_testing_;
   static int skip_user_check_for_testing_;
 };

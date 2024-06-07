@@ -236,7 +236,6 @@
 <translation id="2189104374785738357">Edite detalhes do APN (Nome do Ponto de Acesso)</translation>
 <translation id="2195732836444333448">Está no limite da sua capacidade neste momento. Volte em breve.</translation>
 <translation id="2201758491318984023">bicicleta</translation>
-<translation id="2203222757805818543">O horário atual está definido para <ph name="SUNRISE" /> - <ph name="SUNSET" />. Para atualizar automaticamente o horário do modo escuro, <ph name="BEGIN_LINK" />ative o acesso à localização<ph name="END_LINK" /></translation>
 <translation id="2203272733515928691">termas</translation>
 <translation id="2203642483788377106">penhasco</translation>
 <translation id="2208388655216963643">impressionista</translation>
@@ -361,9 +360,11 @@
 <translation id="3017079585324758401">Fundo</translation>
 <translation id="3027578600144895987">Fechar câmara</translation>
 <translation id="3031560714565892478">O dispositivo é uma câmara de vídeo.</translation>
+<translation id="3051968340259309715">Isto permite que os serviços do sistema usem a Precisão da localização para determinar a sua localização. A Precisão da localização usa informações sobre sinais sem fios, como pontos de acesso Wi-Fi, torres de redes móveis e GPS, juntamente com dados de sensores do dispositivo, como o acelerómetro e o giroscópio, para estimar a localização do dispositivo. Pode desativar a localização em Definições &gt; Privacidade e segurança &gt; Controlos de privacidade &gt; Acesso à localização. <ph name="LINK_BEGIN" />Saiba mais<ph name="LINK_END" /></translation>
 <translation id="3054177598518735801"><ph name="CURRENT_VALUE" /> mA</translation>
 <translation id="3056720590588772262">Ponto final</translation>
 <translation id="3060579846059757016">Destaques</translation>
+<translation id="3061850252076394168">ative a funcionalidade Selecionar para falar</translation>
 <translation id="3069085583900247081">O teste falhou</translation>
 <translation id="3078740164268491126">tabela</translation>
 <translation id="3081652522083185657">claro</translation>
@@ -630,7 +631,6 @@
 <translation id="458794348635939462">Falha ao resolver todos os anfitriões.</translation>
 <translation id="4593212453765072419">Autenticação proxy necessária</translation>
 <translation id="4609350030397390689">Diminuir o brilho do teclado</translation>
-<translation id="4617553623719764431">A meteorologia não é apresentada porque não sabe a sua localização. Para apresentar a meteorologia local, <ph name="BEGIN_LINK" />ative o acesso à localização<ph name="END_LINK" /></translation>
 <translation id="4627232916386272576"><ph name="DOCUMENT_TITLE" />, <ph name="PRINTER_NAME" />, <ph name="CREATION_TIME" />, <ph name="PRINTED_PAGE_NUMBER" /> de <ph name="TOTAL_PAGE_NUMBER" />. Prima Enter para cancelar a tarefa de impressão.</translation>
 <translation id="463791356324567266">A cancelar a digitalização…</translation>
 <translation id="4646949265910132906">Ligação segura ao Wi-Fi</translation>
@@ -704,6 +704,7 @@
 <translation id="4985509611418653372">Executar</translation>
 <translation id="4987769320337599931">Firewall</translation>
 <translation id="4988526792673242964">Páginas </translation>
+<translation id="4989542687859782284">Indisponível</translation>
 <translation id="4999333166442584738">Ocultar relatório</translation>
 <translation id="500920857929044050">Parar teste</translation>
 <translation id="5017508259293544172">LEAP</translation>
@@ -960,7 +961,6 @@
 <translation id="6412715219990689313">Teclado incorporado</translation>
 <translation id="6417265370957905582">Assistente Google</translation>
 <translation id="6423239382391657905">OpenVPN</translation>
-<translation id="6438073885402882007">Isto permite que os serviços do sistema com autorização usem a sua localização. A localização pode usar fontes como o Wi‑Fi, as redes móveis e os sensores para ajudar a calcular a localização do seu dispositivo. <ph name="LINK_BEGIN" />Saiba mais<ph name="LINK_END" /></translation>
 <translation id="6439505561246192797">Fraca (<ph name="SIGNAL_STRENGTH" />)</translation>
 <translation id="6447630859861661624">Aceda às definições da conta</translation>
 <translation id="6462978824459367242">O botão Adicionar APN está agora ativado</translation>

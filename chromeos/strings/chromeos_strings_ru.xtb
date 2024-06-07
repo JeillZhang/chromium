@@ -236,7 +236,6 @@
 <translation id="2189104374785738357">Изменение данных точки доступа</translation>
 <translation id="2195732836444333448">На сервере недостаточно ресурсов. Попробуйте ещё раз немного позже.</translation>
 <translation id="2201758491318984023">велосипед</translation>
-<translation id="2203222757805818543">Текущее расписание: <ph name="SUNRISE" />–<ph name="SUNSET" />. Чтобы автоматически изменять график включения тёмной темы, <ph name="BEGIN_LINK" />предоставьте доступ к геоданным<ph name="END_LINK" />.</translation>
 <translation id="2203272733515928691">горячий источник</translation>
 <translation id="2203642483788377106">утес</translation>
 <translation id="2208388655216963643">импрессионизм</translation>
@@ -313,6 +312,7 @@
 <translation id="2618015542787108131">дюна</translation>
 <translation id="2619761439309613843">Обновлять ежедневно</translation>
 <translation id="2620436844016719705">Система</translation>
+<translation id="2637303424821734920">Отключено. Чтобы узнать погоду в своем регионе, <ph name="BEGIN_LINK" />предоставьте доступ к геоданным<ph name="END_LINK" />.</translation>
 <translation id="2638662041295312666">Изображение на странице входа</translation>
 <translation id="2640549051766135490">Выбран альбом "<ph name="TITLE" />" с описанием "<ph name="DESC" />"</translation>
 <translation id="2645380101799517405">Элементы управления</translation>
@@ -364,6 +364,7 @@
 <translation id="3054177598518735801"><ph name="CURRENT_VALUE" /> мА</translation>
 <translation id="3056720590588772262">Конечная точка</translation>
 <translation id="3060579846059757016">Описание</translation>
+<translation id="3061850252076394168">включить озвучивание при нажатии</translation>
 <translation id="3069085583900247081">Проверка не пройдена</translation>
 <translation id="3078740164268491126">таблица</translation>
 <translation id="3081652522083185657">светлые тона</translation>
@@ -630,7 +631,6 @@
 <translation id="458794348635939462">Не удалось преобразовать имена всех хостов.</translation>
 <translation id="4593212453765072419">Требуется аутентификация на прокси-сервере</translation>
 <translation id="4609350030397390689">Уменьшение яркости клавиатуры</translation>
-<translation id="4617553623719764431">Прогноз недоступен, поскольку ваше местоположение не определено. Чтобы узнать погоду в своем регионе, <ph name="BEGIN_LINK" />предоставьте доступ к геоданным<ph name="END_LINK" />.</translation>
 <translation id="4627232916386272576">Файл "<ph name="DOCUMENT_TITLE" />", принтер "<ph name="PRINTER_NAME" />", дата – <ph name="CREATION_TIME" />, напечатано страниц: <ph name="PRINTED_PAGE_NUMBER" /> из <ph name="TOTAL_PAGE_NUMBER" />. Чтобы отменить задание печати, нажмите клавишу "Ввод".</translation>
 <translation id="463791356324567266">Отмена сканирования…</translation>
 <translation id="4646949265910132906">Защищенное подключение к Wi-Fi</translation>
@@ -704,6 +704,7 @@
 <translation id="4985509611418653372">Проверить</translation>
 <translation id="4987769320337599931">Брандмауэр</translation>
 <translation id="4988526792673242964">Страницы</translation>
+<translation id="4989542687859782284">Недоступные</translation>
 <translation id="4999333166442584738">Скрыть отчет</translation>
 <translation id="500920857929044050">Прекратить проверку</translation>
 <translation id="5017508259293544172">LEAP</translation>
@@ -960,7 +961,6 @@
 <translation id="6412715219990689313">Встроенная клавиатура</translation>
 <translation id="6417265370957905582">Google Ассистент</translation>
 <translation id="6423239382391657905">OpenVPN</translation>
-<translation id="6438073885402882007">Системные службы смогут использовать ваши геоданные. Для определения местоположения устройства могут использоваться датчики, мобильные сети, Wi-Fi и т. д. <ph name="LINK_BEGIN" />Подробнее…<ph name="LINK_END" /></translation>
 <translation id="6439505561246192797">Слабый (<ph name="SIGNAL_STRENGTH" />)</translation>
 <translation id="6447630859861661624">Перейти к настройкам аккаунта</translation>
 <translation id="6462978824459367242">Доступна кнопка "Добавить точку доступа"</translation>

@@ -30,7 +30,7 @@ export class DestinationSelectController extends EventTarget {
     super();
     eventTracker.add(
         this.destinationManager, DESTINATION_MANAGER_STATE_CHANGED,
-        (e: Event): void => this.onDestinationManagerStateChanged(e));
+        (): void => this.onDestinationManagerStateChanged());
     eventTracker.add(
         this.destinationManager, DESTINATION_MANAGER_SESSION_INITIALIZED,
         (): void => this.onDestinationManagerSessionInitialized());
@@ -40,12 +40,12 @@ export class DestinationSelectController extends EventTarget {
   // is initialized.
   shouldShowLoadingUi(): boolean {
     return !this.destinationManager.isSessionInitialized() ||
-        !this.destinationManager.hasLoadedAnInitialDestination();
+        !this.destinationManager.hasAnyDestinations();
   }
 
   // Handles notifying UI to update when destination manager
   // state changes.
-  private onDestinationManagerStateChanged(_event: Event): void {
+  private onDestinationManagerStateChanged(): void {
     this.dispatchEvent(
         createCustomEvent(DESTINATION_SELECT_SHOW_LOADING_UI_CHANGED));
   }

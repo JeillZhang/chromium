@@ -116,6 +116,17 @@ void SharedStorageWorklet::AddModuleHelper(ScriptState* script_state,
     return;
   }
 
+  // In an opaque origin context, addModule() is not allowed, but
+  // createWorklet() is allowed.
+  if (!cross_origin_script_allowed_) {
+    if (execution_context->GetSecurityOrigin()->IsOpaque()) {
+      resolver->Reject(V8ThrowDOMException::CreateOrEmpty(
+          script_state->GetIsolate(), DOMExceptionCode::kInvalidAccessError,
+          kOpaqueOriginCheckErrorMessage));
+      return;
+    }
+  }
+
   KURL script_source_url = execution_context->CompleteURL(module_url);
 
   if (!CheckSharedStoragePermissionsPolicy(*script_state, *execution_context,
@@ -254,7 +265,7 @@ ScriptPromise<V8SharedStorageResponse> SharedStorageWorklet::selectURL(
   if (!CheckBrowsingContextIsValid(*script_state, exception_state)) {
     LogSharedStorageWorkletError(
         SharedStorageWorkletErrorType::kSelectURLWebVisible);
-    return ScriptPromise<V8SharedStorageResponse>();
+    return EmptyPromise();
   }
 
   LocalFrame* frame = To<LocalDOMWindow>(execution_context)->GetFrame();
@@ -300,6 +311,11 @@ ScriptPromise<V8SharedStorageResponse> SharedStorageWorklet::selectURL(
         SharedStorageWorkletErrorType::kSelectURLWebVisible);
 
     return promise;
+  }
+
+  if (!cross_origin_script_allowed_) {
+    // The opaque origin should have been checked in addModule() already.
+    CHECK(!execution_context->GetSecurityOrigin()->IsOpaque());
   }
 
   if (!IsValidSharedStorageURLsArrayLength(urls.size())) {
@@ -517,14 +533,14 @@ ScriptPromise<IDLAny> SharedStorageWorklet::run(
 
   if (!CheckBrowsingContextIsValid(*script_state, exception_state)) {
     LogSharedStorageWorkletError(SharedStorageWorkletErrorType::kRunWebVisible);
-    return ScriptPromise<IDLAny>();
+    return EmptyPromise();
   }
 
   std::optional<BlinkCloneableMessage> serialized_data =
       Serialize(options, *execution_context, exception_state);
   if (!serialized_data) {
     LogSharedStorageWorkletError(SharedStorageWorkletErrorType::kRunWebVisible);
-    return ScriptPromise<IDLAny>();
+    return EmptyPromise();
   }
 
   auto* resolver = MakeGarbageCollected<ScriptPromiseResolver<IDLAny>>(
@@ -545,6 +561,11 @@ ScriptPromise<IDLAny> SharedStorageWorklet::run(
     LogSharedStorageWorkletError(SharedStorageWorkletErrorType::kRunWebVisible);
 
     return promise;
+  }
+
+  if (!cross_origin_script_allowed_) {
+    // The opaque origin should have been checked in addModule() already.
+    CHECK(!execution_context->GetSecurityOrigin()->IsOpaque());
   }
 
   if (!keep_alive_after_operation_) {

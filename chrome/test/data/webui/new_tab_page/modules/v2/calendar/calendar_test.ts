@@ -3,12 +3,14 @@
 // found in the LICENSE file.
 
 import {CalendarElement} from 'chrome://new-tab-page/lazy_load.js';
-import {assertEquals} from 'chrome://webui-test/chai_assert.js';
+import {$$} from 'chrome://new-tab-page/new_tab_page.js';
+import {assertEquals, assertTrue} from 'chrome://webui-test/chai_assert.js';
 import {waitAfterNextRender} from 'chrome://webui-test/polymer_test_util.js';
+import {isVisible} from 'chrome://webui-test/test_util.js';
 
 import {createEvents} from './test_support.js';
 
-suite('NewTabPageModulesGoogleCalendarModuleTest', () => {
+suite('NewTabPageModulesCalendarTest', () => {
   let element: CalendarElement;
 
   setup(async () => {
@@ -23,10 +25,21 @@ suite('NewTabPageModulesGoogleCalendarModuleTest', () => {
     await waitAfterNextRender(element);
 
     // Assert.
-    const eventElements = element.shadowRoot!.querySelectorAll('p');
+    const eventElements =
+        element.shadowRoot!.querySelectorAll('ntp-calendar-event');
     assertEquals(eventElements.length, numEvents);
-    for (let i = 0; i < numEvents; i++) {
-      assertEquals(eventElements[i]!.innerHTML, `Test Event ${i}`);
-    }
+    eventElements.forEach((element) => {
+      assertTrue(isVisible(element));
+    });
+  });
+
+  test('first event is expanded', async () => {
+    element.events = createEvents(3);
+    await waitAfterNextRender(element);
+
+    // Assert.
+    const firstEvent = $$(element, 'ntp-calendar-event');
+    assertTrue(!!firstEvent);
+    assertTrue(firstEvent.hasAttribute('expanded'));
   });
 });

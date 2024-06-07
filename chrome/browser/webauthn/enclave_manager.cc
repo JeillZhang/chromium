@@ -25,7 +25,6 @@
 #include "base/types/strong_alias.h"
 #include "build/build_config.h"
 #include "chrome/browser/webauthn/proto/enclave_local_state.pb.h"
-#include "chrome/common/chrome_version.h"
 #include "components/cbor/diagnostic_writer.h"
 #include "components/cbor/reader.h"
 #include "components/cbor/values.h"
@@ -114,10 +113,8 @@ struct EnclaveManager::PendingAction {
 
 namespace {
 
-#if BUILDFLAG(IS_MAC)
-constexpr char kUserVerifyingKeyKeychainAccessGroup[] =
-    MAC_TEAM_IDENTIFIER_STRING "." MAC_BUNDLE_IDENTIFIER_STRING ".webauthn-uvk";
-#endif  // BUILDFLAG(IS_MAC)
+// Used so the EnclaveManager can be forced into invalid states for testing.
+static bool g_invariant_override_ = false;
 
 // The maximum number of bytes that will be downloaded from the above two URLs.
 constexpr size_t kMaxFetchBodyBytes = 128 * 1024;
@@ -253,6 +250,9 @@ std::optional<int> CheckPINInvariants(
 // CheckInvariants checks all the invariants of `user`, returning either a
 // line-number for the failing check, or else `nullopt` to indicate success.
 std::optional<int> CheckInvariants(const EnclaveLocalState::User& user) {
+  if (g_invariant_override_) {
+    return std::nullopt;
+  }
   if (user.wrapped_hardware_private_key().empty() !=
       user.hardware_public_key().empty()) {
     return __LINE__;
@@ -857,7 +857,8 @@ std::unique_ptr<crypto::UnexportableKeyProvider> GetUnexportableKeyProvider() {
   }
   crypto::UnexportableKeyProvider::Config config;
 #if BUILDFLAG(IS_MAC)
-  config.keychain_access_group = kUserVerifyingKeyKeychainAccessGroup;
+  config.keychain_access_group =
+      EnclaveManager::kEnclaveKeysKeychainAccessGroup;
 #endif  // BUILDFLAG(IS_MAC)
   return crypto::GetUnexportableKeyProvider(std::move(config));
 }
@@ -866,7 +867,8 @@ crypto::UserVerifyingKeyProvider::Config MakeUserVerifyingKeyConfig(
     EnclaveManager::UVKeyOptions options) {
   crypto::UserVerifyingKeyProvider::Config config;
 #if BUILDFLAG(IS_MAC)
-  config.keychain_access_group = kUserVerifyingKeyKeychainAccessGroup;
+  config.keychain_access_group =
+      EnclaveManager::kEnclaveKeysKeychainAccessGroup;
   config.lacontext = std::move(options.lacontext);
 #endif  // BUILDFLAG(IS_MAC)
   return config;
@@ -3193,6 +3195,11 @@ void EnclaveManager::ClearRegistrationForTesting() {
 }
 
 // static
+void EnclaveManager::EnableInvariantChecksForTesting(bool enabled) {
+  g_invariant_override_ = !enabled;
+}
+
+// static
 std::string EnclaveManager::MakeWrappedPINForTesting(
     base::span<const uint8_t> security_domain_secret,
     std::string_view pin) {
@@ -3554,4 +3561,8 @@ void EnclaveManager::SetSecret(int32_t key_version,
                                base::span<const uint8_t> secret) {
   secret_version_ = key_version;
   secret_ = std::vector<uint8_t>(secret.begin(), secret.end());
+}
+
+base::WeakPtr<EnclaveManager> EnclaveManager::GetWeakPtr() {
+  return weak_ptr_factory_.GetWeakPtr();
 }

@@ -560,8 +560,7 @@ void InlineItemsBuilderTemplate<MappingBuilder>::AppendText(
     return;
   }
 
-  if (!RuntimeEnabledFeatures::OffsetMappingUnitVariableEnabled() ||
-      !layout_text->HasVariableLengthTransform()) {
+  if (!layout_text->HasVariableLengthTransform()) {
     AppendText(TransformedString(layout_text->TransformedText()), *layout_text);
     return;
   }
@@ -1253,29 +1252,13 @@ void InlineItemsBuilderTemplate<MappingBuilder>::AppendBlockInInline(
 template <typename MappingBuilder>
 void InlineItemsBuilderTemplate<MappingBuilder>::AppendFloating(
     LayoutObject* layout_object) {
-  if (ruby_text_nesting_level_ == 0) {
-    AppendOpaque(InlineItem::kFloating, kObjectReplacementCharacter,
-                 layout_object);
-  } else {
-    // It's hard for LineBreaker to handle floats in <ruby> correctly. So we
-    // append kFloating items after closing a ruby column.
-    pending_floats_in_ruby_.push_back(layout_object);
-  }
+  AppendOpaque(InlineItem::kFloating, kObjectReplacementCharacter,
+               layout_object);
   has_floats_ = true;
   // Floats/exclusions require computing line heights, which is currently
   // skipped during the bisect. See `ParagraphLineBreaker`.
   is_bisect_line_break_disabled_ = true;
   // `ScoreLineBreaker` supports "simple" floats. See`LineWidths`.
-}
-
-template <typename MappingBuilder>
-void InlineItemsBuilderTemplate<MappingBuilder>::FlushPendingFloatsInRuby() {
-  DCHECK_EQ(ruby_text_nesting_level_, 0u);
-  for (auto& layout_object : pending_floats_in_ruby_) {
-    AppendOpaque(InlineItem::kFloating, kObjectReplacementCharacter,
-                 layout_object);
-  }
-  pending_floats_in_ruby_.clear();
 }
 
 template <typename MappingBuilder>
@@ -1507,6 +1490,7 @@ void InlineItemsBuilderTemplate<MappingBuilder>::EnterInline(
   has_ruby_ = has_ruby_ || node->IsInlineRubyText();
   if (node->IsInlineRubyText()) {
     ++ruby_text_nesting_level_;
+    typename MappingBuilder::SourceNodeScope scope(&mapping_builder_, nullptr);
     if (!node->Parent()->IsInlineRuby()) {
       // This creates a ruby column with a placeholder-only ruby-base.
       AppendOpaque(InlineItem::kOpenRubyColumn,
@@ -1533,6 +1517,7 @@ void InlineItemsBuilderTemplate<MappingBuilder>::EnterInline(
     }
   }
 
+  typename MappingBuilder::SourceNodeScope scope(&mapping_builder_, nullptr);
   if (node->IsInlineRuby()) {
     AppendOpaque(InlineItem::kOpenRubyColumn,
                  IsLtr(style->Direction()) ? kLeftToRightIsolateCharacter
@@ -1566,12 +1551,23 @@ void InlineItemsBuilderTemplate<MappingBuilder>::ExitInline(
     if (kDisableForcedBreakInRubyColumn) {
       --ruby_text_nesting_level_;
     }
-    AppendOpaque(InlineItem::kCloseRubyColumn, kPopDirectionalIsolateCharacter,
-                 node);
-    if (ruby_text_nesting_level_ == 0) {
-      FlushPendingFloatsInRuby();
+    typename MappingBuilder::SourceNodeScope scope(&mapping_builder_, nullptr);
+    wtf_size_t size = items_->size();
+    if (size >= 3 &&
+        items_->at(size - 3).Type() == InlineItem::kCloseRubyColumn &&
+        items_->at(size - 2).Type() == InlineItem::kOpenRubyColumn &&
+        items_->at(size - 1).Type() == InlineItem::kRubyLinePlaceholder) {
+      // Remove the last kOpenRubyColumn and kRubyLinePlaceholder.
+      text_.Resize(items_->at(size - 2).StartOffset());
+      items_->Shrink(size - 2);
+      // kOpenRubyColumn called AppendIdentityMapping(1).
+      mapping_builder_.RevertIdentityMapping1();
+    } else {
+      AppendOpaque(InlineItem::kCloseRubyColumn,
+                   kPopDirectionalIsolateCharacter, node);
     }
   } else if (node->IsInlineRubyText()) {
+    typename MappingBuilder::SourceNodeScope scope(&mapping_builder_, nullptr);
     AppendOpaque(InlineItem::kRubyLinePlaceholder, node);
   }
 
@@ -1618,12 +1614,13 @@ void InlineItemsBuilderTemplate<MappingBuilder>::ExitInline(
 
   if (node->IsInlineRubyText()) {
     --ruby_text_nesting_level_;
+    typename MappingBuilder::SourceNodeScope scope(&mapping_builder_, nullptr);
     if (node->Parent()->IsInlineRuby()) {
       LayoutObject* ruby_container = node->Parent();
       AppendOpaque(InlineItem::kCloseRubyColumn,
                    kPopDirectionalIsolateCharacter, ruby_container);
       // This produces almost-empty ruby-columns if </ruby> follows.
-      // LineBreaker should ignore such ruby-columns.
+      // The beginning part of this function removes such ruby-columns.
       AppendOpaque(InlineItem::kOpenRubyColumn,
                    IsLtr(node->Parent()->Style()->Direction())
                        ? kLeftToRightIsolateCharacter
@@ -1633,9 +1630,6 @@ void InlineItemsBuilderTemplate<MappingBuilder>::ExitInline(
     } else {
       AppendOpaque(InlineItem::kCloseRubyColumn,
                    kPopDirectionalIsolateCharacter, nullptr);
-      if (ruby_text_nesting_level_ == 0) {
-        FlushPendingFloatsInRuby();
-      }
     }
   }
 

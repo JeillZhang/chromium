@@ -83,7 +83,7 @@
 #include "chrome/browser/ui/sad_tab_helper.h"
 #include "chrome/browser/ui/sharing_hub/sharing_hub_bubble_controller.h"
 #include "chrome/browser/ui/sharing_hub/sharing_hub_bubble_view.h"
-#include "chrome/browser/ui/side_panel/side_panel_ui.h"
+#include "chrome/browser/ui/views/side_panel/side_panel_ui.h"
 #include "chrome/browser/ui/side_search/side_search_utils.h"
 #include "chrome/browser/ui/sync/one_click_signin_links_delegate_impl.h"
 #include "chrome/browser/ui/tabs/tab_enums.h"
@@ -147,7 +147,6 @@
 #include "chrome/browser/ui/views/side_panel/side_panel_coordinator.h"
 #include "chrome/browser/ui/views/side_panel/side_panel_registry.h"
 #include "chrome/browser/ui/views/side_panel/side_panel_rounded_corner.h"
-#include "chrome/browser/ui/views/side_panel/side_panel_toolbar_container.h"
 #include "chrome/browser/ui/views/side_panel/side_panel_util.h"
 #include "chrome/browser/ui/views/status_bubble_views.h"
 #include "chrome/browser/ui/views/sync/one_click_signin_dialog_view.h"
@@ -347,8 +346,8 @@
 #endif
 
 using base::UserMetricsAction;
-using content::NativeWebKeyboardEvent;
 using content::WebContents;
+using input::NativeWebKeyboardEvent;
 using web_modal::WebContentsModalDialogHost;
 
 namespace {
@@ -440,13 +439,20 @@ bool WidgetHasChildModalDialog(views::Widget* parent_widget) {
   return false;
 }
 
-bool IsManagedGuestSession() {
 #if BUILDFLAG(IS_CHROMEOS)
-  return chromeos::IsManagedGuestSession();
-#else
-  return false;
-#endif
+// Returns whether immmersive fullscreen should replace fullscreen. This
+// should only occur for "browser-fullscreen" for tabbed-typed windows (not
+// for tab-fullscreen and not for app/popup type windows).
+bool ShouldUseImmersiveFullscreenForUrl(const GURL& url) {
+  // Kiosk mode needs the whole screen.
+  if (chrome::IsRunningInAppMode()) {
+    return false;
+  }
+  // An empty URL signifies browser fullscreen. Immersive is used for browser
+  // fullscreen only.
+  return url.is_empty();
 }
+#endif
 
 // Overlay view that owns TopContainerView in some cases (such as during
 // immersive fullscreen reveal).
@@ -1787,7 +1793,8 @@ void BrowserView::OnActiveTabChanged(content::WebContents* old_contents,
     SetWindowManagementPermissionSubscriptionForBorderlessMode(new_contents);
   }
 
-#if BUILDFLAG(ENTERPRISE_WATERMARK)
+#if BUILDFLAG(ENTERPRISE_WATERMARK) || \
+    BUILDFLAG(ENTERPRISE_SCREENSHOT_PROTECTION)
   enterprise_data_protection::DataProtectionNavigationObserver::
       GetDataProtectionSettings(
           GetProfile(), web_contents(),
@@ -1932,7 +1939,7 @@ void BrowserView::EnterFullscreen(const GURL& url,
     // Nothing to do.
     return;
   }
-  ProcessFullscreen(true, url, display_id);
+  ProcessFullscreen(true, display_id);
 }
 
 void BrowserView::ExitFullscreen() {
@@ -1942,7 +1949,7 @@ void BrowserView::ExitFullscreen() {
   if (IsForceFullscreen())
     return;
 
-  ProcessFullscreen(false, GURL(), display::kInvalidDisplayId);
+  ProcessFullscreen(false, display::kInvalidDisplayId);
 }
 
 void BrowserView::UpdateExclusiveAccessBubble(
@@ -1952,23 +1959,21 @@ void BrowserView::UpdateExclusiveAccessBubble(
   bool is_trusted_pinned =
       platform_util::IsBrowserLockedFullscreen(browser_.get());
 
-  // Immersive mode allows the toolbar to be shown, so do not show the bubble.
-  // However, do show the bubble in a managed guest session (see
-  // crbug.com/741069).
-  bool immersive_not_public = ShouldUseImmersiveFullscreenForUrl(params.url) &&
-                              !IsManagedGuestSession();
-
   // Whether we should remove the bubble if it exists, or not show the bubble.
   // TODO(jamescook): Figure out what to do with mouse-lock.
   bool should_close_bubble = is_trusted_pinned;
   if (!params.has_download) {
-    should_close_bubble = should_close_bubble ||
-                          // ...TYPE_NONE indicates deleting the bubble, except
-                          // when used with download.
-                          params.type == EXCLUSIVE_ACCESS_BUBBLE_TYPE_NONE ||
-                          // Immersive mode logic for downloads is handled by
-                          // the download controller.
-                          immersive_not_public;
+    // ...TYPE_NONE indicates deleting the bubble, except when used with
+    // download.
+    should_close_bubble |= params.type == EXCLUSIVE_ACCESS_BUBBLE_TYPE_NONE;
+#if BUILDFLAG(IS_CHROMEOS)
+    // Immersive mode allows the toolbar to be shown, so do not show the bubble.
+    // However, do show the bubble in a managed guest session (see
+    // crbug.com/741069).
+    // Immersive mode logic for downloads is handled by the download controller.
+    should_close_bubble |= ShouldUseImmersiveFullscreenForUrl(params.url) &&
+                           !chromeos::IsManagedGuestSession();
+#endif
   }
 
   if (should_close_bubble) {
@@ -2050,10 +2055,31 @@ void BrowserView::FullscreenStateChanging() {
     return;
   }
 
-  ProcessFullscreen(IsFullscreen(), GURL(), display::kInvalidDisplayId);
+  ProcessFullscreen(IsFullscreen(), display::kInvalidDisplayId);
 }
 
 void BrowserView::FullscreenStateChanged() {
+#if BUILDFLAG(IS_CHROMEOS)
+  if (platform_util::IsBrowserLockedFullscreen(browser_.get())) {
+    // Never use immersive in locked fullscreen as it allows the user to exit
+    // the locked mode.
+    immersive_mode_controller_->SetEnabled(false);
+  } else {
+    // Enable immersive before the browser refreshes its list of enabled
+    // commands.
+    bool should_stay_immersive =
+        !IsFullscreen() &&
+        immersive_mode_controller_->ShouldStayImmersiveAfterExitingFullscreen();
+    GURL url = IsFullscreen() ? GetExclusiveAccessManager()
+                                    ->fullscreen_controller()
+                                    ->GetURLForExclusiveAccessBubble()
+                              : GURL();
+    if (ShouldUseImmersiveFullscreenForUrl(url) && !should_stay_immersive) {
+      immersive_mode_controller_->SetEnabled(IsFullscreen());
+    }
+  }
+#endif
+
 #if BUILDFLAG(IS_MAC)
   if (AppUsesWindowControlsOverlay()) {
     UpdateWindowControlsOverlayEnabled();
@@ -2712,18 +2738,8 @@ void BrowserView::TouchModeChanged() {
   MaybeShowWebUITabStripIPH();
 }
 
-#if BUILDFLAG(ENTERPRISE_WATERMARK)
-void BrowserView::DidStartNavigation(
-    content::NavigationHandle* navigation_handle) {
-  if (base::FeatureList::IsEnabled(features::kEnableWatermarkView)) {
-    enterprise_data_protection::DataProtectionNavigationObserver::
-        CreateForNavigationIfNeeded(
-            GetProfile(), navigation_handle,
-            base::BindOnce(
-                &BrowserView::DelayApplyDataProtectionSettingsIfEmpty,
-                weak_ptr_factory_.GetWeakPtr(), web_contents()->GetWeakPtr()));
-  }
-}
+#if BUILDFLAG(ENTERPRISE_WATERMARK) || \
+    BUILDFLAG(ENTERPRISE_SCREENSHOT_PROTECTION)
 
 void BrowserView::DocumentOnLoadCompletedInPrimaryMainFrame() {
   // It is possible for `clear_watermark_text_on_page_load_` to be set to false
@@ -2751,12 +2767,21 @@ void BrowserView::DocumentOnLoadCompletedInPrimaryMainFrame() {
   // Note that steps #5 and #6 are racy but the final outcome is correct
   // regardless of the order in which they execute.
 
+#if BUILDFLAG(ENTERPRISE_WATERMARK)
   if (watermark_view_ && clear_watermark_text_on_page_load_) {
     ApplyWatermarkSettings(std::string());
   }
+#endif  // BUILDFLAG(ENTERPRISE_WATERMARK)
+
+#if BUILDFLAG(ENTERPRISE_SCREENSHOT_PROTECTION)
+  if (clear_screenshot_protection_on_page_load_) {
+    ApplyScreenshotSettings(true);
+  }
+#endif
 }
 
-#endif
+#endif  // BUILDFLAG(ENTERPRISE_WATERMARK) ||
+        // BUILDFLAG(ENTERPRISE_SCREENSHOT_PROTECTION)
 
 void BrowserView::MaybeShowWebUITabStripIPH() {
   if (!webui_tab_strip_)
@@ -3941,8 +3966,9 @@ views::View* BrowserView::CreateMacOverlayView() {
   DCHECK(UsesImmersiveFullscreenMode());
 
   auto create_overlay_widget = [this](views::Widget* parent) -> views::Widget* {
-    views::Widget::InitParams params;
-    params.type = views::Widget::InitParams::TYPE_POPUP;
+    views::Widget::InitParams params(
+        views::Widget::InitParams::NATIVE_WIDGET_OWNS_WIDGET,
+        views::Widget::InitParams::TYPE_POPUP);
     params.child = true;
     params.parent = parent->GetNativeView();
     params.shadow_type = views::Widget::InitParams::ShadowType::kNone;
@@ -4393,12 +4419,6 @@ void BrowserView::AddedToWidget() {
   // TODO(pbos): Investigate whether the side panels should be creatable when
   // the ToolbarView does not create a button for them. This specifically seems
   // to hit web apps. See https://crbug.com/1267781.
-  if (toolbar_->GetSidePanelButton()) {
-    if (toolbar()->side_panel_container()) {
-      toolbar()->side_panel_container()->ObserveSidePanelView(
-          unified_side_panel_);
-    }
-  }
   unified_side_panel_->AddObserver(
       SidePanelUtil::GetSidePanelCoordinatorForBrowser((browser_.get())));
 
@@ -4748,7 +4768,6 @@ void BrowserView::UpdateUIForContents(WebContents* contents) {
 }
 
 void BrowserView::ProcessFullscreen(bool fullscreen,
-                                    const GURL& url,
                                     const int64_t display_id) {
   if (in_process_fullscreen_)
     return;
@@ -4785,19 +4804,6 @@ void BrowserView::ProcessFullscreen(bool fullscreen,
 
   // TODO(b/40276379): Move this out from ProcessFullscreen.
   RequestFullscreen(fullscreen, display_id);
-
-  // Enable immersive before the browser refreshes its list of enabled commands.
-  const bool should_stay_in_immersive =
-      !fullscreen &&
-      immersive_mode_controller_->ShouldStayImmersiveAfterExitingFullscreen();
-  // Never use immersive in locked fullscreen as it allows the user to exit the
-  // locked mode.
-  if (platform_util::IsBrowserLockedFullscreen(browser_.get())) {
-    immersive_mode_controller_->SetEnabled(false);
-  } else if (ShouldUseImmersiveFullscreenForUrl(url) &&
-             !should_stay_in_immersive) {
-    immersive_mode_controller_->SetEnabled(fullscreen);
-  }
 
 #if !BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_CHROMEOS_LACROS)
   // On Mac platforms, FullscreenStateChanged() is invoked from
@@ -4878,20 +4884,6 @@ void BrowserView::RequestFullscreen(bool fullscreen, int64_t display_id) {
   if (!fullscreen && restore_pre_fullscreen_bounds_callback_)
     std::move(restore_pre_fullscreen_bounds_callback_).Run();
 #endif  // BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN) || BUILDFLAG(IS_CHROMEOS)
-}
-
-bool BrowserView::ShouldUseImmersiveFullscreenForUrl(const GURL& url) const {
-#if BUILDFLAG(IS_CHROMEOS)
-  // Kiosk mode needs the whole screen.
-  if (chrome::IsRunningInAppMode())
-    return false;
-  // An empty URL signifies browser fullscreen. Immersive is used for browser
-  // fullscreen only.
-  return url.is_empty();
-#else
-  // No immersive except in Chrome OS.
-  return false;
-#endif
 }
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
@@ -5235,11 +5227,14 @@ void BrowserView::NotifyPromoFeatureUsed(const base::Feature& feature) {
   }
 }
 
-bool BrowserView::MaybeShowNewBadgeFor(const base::Feature& feature) {
+user_education::DisplayNewBadge BrowserView::MaybeShowNewBadgeFor(
+    const base::Feature& feature) {
   auto* const service =
       UserEducationServiceFactory::GetForBrowserContext(GetProfile());
-  return service && service->new_badge_controller() &&
-         service->new_badge_controller()->MaybeShowNewBadge(feature);
+  if (!service || !service->new_badge_controller()) {
+    return user_education::DisplayNewBadge();
+  }
+  return service->new_badge_controller()->MaybeShowNewBadge(feature);
 }
 
 bool BrowserView::DoCutCopyPasteForWebContents(WebContents* contents,
@@ -5450,6 +5445,9 @@ void BrowserView::UpdateFullscreenAllowedFromPolicy(
   }
 }
 
+#if BUILDFLAG(ENTERPRISE_WATERMARK) || \
+    BUILDFLAG(ENTERPRISE_SCREENSHOT_PROTECTION)
+
 void BrowserView::ApplyDataProtectionSettings(
     base::WeakPtr<content::WebContents> expected_web_contents,
     const enterprise_data_protection::UrlSettings& settings) {
@@ -5459,9 +5457,16 @@ void BrowserView::ApplyDataProtectionSettings(
     return;
   }
 
+#if BUILDFLAG(ENTERPRISE_WATERMARK)
   ApplyWatermarkSettings(settings.watermark_text);
+#endif  // BUILDFLAG(ENTERPRISE_WATERMARK)
+
+#if BUILDFLAG(ENTERPRISE_SCREENSHOT_PROTECTION)
+  ApplyScreenshotSettings(settings.allow_screenshots);
+#endif  // BUILDFLAG(ENTERPRISE_SCREENSHOT_PROTECTION)
 }
 
+#if BUILDFLAG(ENTERPRISE_WATERMARK)
 void BrowserView::ApplyWatermarkSettings(const std::string& watermark_text) {
   if (watermark_view_) {
     watermark_view_->SetString(watermark_text);
@@ -5470,6 +5475,20 @@ void BrowserView::ApplyWatermarkSettings(const std::string& watermark_text) {
   // Watermark string should not be changed once the page loads.
   clear_watermark_text_on_page_load_ = false;
 }
+#endif  // BUILDFLAG(ENTERPRISE_WATERMARK)
+
+#if BUILDFLAG(ENTERPRISE_SCREENSHOT_PROTECTION)
+void BrowserView::ApplyScreenshotSettings(bool allow) {
+#if BUILDFLAG(IS_WIN)
+  DCHECK_NE(GetWidget()->GetNativeWindow()->GetHost()->GetAcceleratedWidget(),
+            gfx::kNullAcceleratedWidget);
+#endif  // BUILDFLAG(IS_WIN)
+  GetWidget()->SetAllowScreenshots(allow);
+
+  // Screenshot protection should not be changed once the page loads.
+  clear_screenshot_protection_on_page_load_ = false;
+}
+#endif  // BUILDFLAG(ENTERPRISE_SCREENSHOT_PROTECTION)
 
 void BrowserView::DelayApplyDataProtectionSettingsIfEmpty(
     base::WeakPtr<content::WebContents> expected_web_contents,
@@ -5480,13 +5499,25 @@ void BrowserView::DelayApplyDataProtectionSettingsIfEmpty(
     return;
   }
 
+#if BUILDFLAG(ENTERPRISE_SCREENSHOT_PROTECTION)
+  if (!settings.allow_screenshots) {
+    ApplyScreenshotSettings(settings.allow_screenshots);
+  } else {
+    // Screenshot protection should be cleared.  Delay that until the page
+    // finishes loading.
+    clear_screenshot_protection_on_page_load_ = true;
+  }
+#endif  // BUILDFLAG(ENTERPRISE_SCREENSHOT_PROTECTION)
+
+#if BUILDFLAG(ENTERPRISE_WATERMARK)
   if (!settings.watermark_text.empty()) {
-    ApplyDataProtectionSettings(expected_web_contents, settings);
+    ApplyWatermarkSettings(settings.watermark_text);
   } else {
     // The watermark string should be cleared.  Delay that until the page
     // finishes loading.
     clear_watermark_text_on_page_load_ = true;
   }
+#endif  // BUILDFLAG(ENTERPRISE_WATERMARK)
 
   if (!on_delay_apply_data_protection_settings_if_empty_called_for_testing_
            .is_null()) {
@@ -5495,6 +5526,9 @@ void BrowserView::DelayApplyDataProtectionSettingsIfEmpty(
         .Run();
   }
 }
+
+#endif  // BUILDFLAG(ENTERPRISE_WATERMARK) ||
+        // BUILDFLAG(ENTERPRISE_SCREENSHOT_PROTECTION)
 
 BEGIN_METADATA(BrowserView)
 ADD_READONLY_PROPERTY_METADATA(gfx::Rect, FindBarBoundingBox)

@@ -196,6 +196,7 @@ const base::Feature* const kAllFeatures[] = {
     &kIPHSideSearchAutoTriggeringFeature,
     &kIPHSideSearchPageActionLabelFeature,
     &kIPHSignoutWebInterceptFeature,
+    &kIPHTabGroupsSaveV2IntroFeature,
     &kIPHTabOrganizationSuccessFeature,
     &kIPHTabSearchFeature,
     &kIPHTrackingProtectionOffboardingFeature,
@@ -267,6 +268,8 @@ const base::Feature* const kAllFeatures[] = {
 
 #if !BUILDFLAG(IS_ANDROID) && BUILDFLAG(GOOGLE_CHROME_BRANDING)
     &kIPHiOSPasswordPromoDesktopFeature,
+    &kIPHiOSAddressPromoDesktopFeature,
+    &kIPHiOSPaymentPromoDesktopFeature
 #endif  // !BUILDFLAG(IS_ANDROID) && BUILDFLAG(GOOGLE_CHROME_BRANDING)
 };
 }  // namespace

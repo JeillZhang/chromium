@@ -258,12 +258,6 @@ void SetFlags(IsolateHolder::ScriptMode mode,
   SetV8FlagsIfOverridden(features::kV8PerContextMarkingWorklist,
                          "--stress-per-context-marking-worklist",
                          "--no-stress-per-context-marking-worklist");
-  SetV8FlagsIfOverridden(
-      features::kV8ProfileGuidedOptimization,
-      "--profile-guided-optimization "
-      "--profile-guided-optimization-for-empty-feedback-vector",
-      "--noprofile-guided-optimization "
-      "--noprofile-guided-optimization-for-empty-feedback-vector");
   SetV8FlagsIfOverridden(features::kV8FlushEmbeddedBlobICache,
                          "--experimental-flush-embedded-blob-icache",
                          "--no-experimental-flush-embedded-blob-icache");
@@ -319,9 +313,19 @@ void SetFlags(IsolateHolder::ScriptMode mode,
                          "--no-write-protect-code-memory");
   SetV8FlagsIfOverridden(features::kV8SlowHistograms, "--slow-histograms",
                          "--no-slow-histograms");
+  SetV8FlagsIfOverridden(features::kV8SideStepTransitions,
+                         "--clone_object_sidestep_transitions",
+                         "--noclone_object_sidestep_transitions");
   SetV8FlagsIfOverridden(features::kV8SingleThreadedGCInBackground,
                          "--single-threaded-gc-in-background",
                          "--no-single-threaded-gc-in-background");
+  SetV8FlagsIfOverridden(features::kV8SingleThreadedGCInBackgroundParallelPause,
+                         "--parallel-pause-for-gc-in-background",
+                         "--no-parallel-pause-for-gc-in-background");
+  SetV8FlagsIfOverridden(
+      features::kV8SingleThreadedGCInBackgroundNoIncrementalMarking,
+      "--no-incremental-marking-for-gc-in-background",
+      "--incremental-marking-for-gc-in-background");
   SetV8FlagsIfOverridden(features::kV8DecommitPooledPages,
                          "--decommit-pooled-pages",
                          "--no-decommit-pooled-pages");

@@ -236,7 +236,6 @@
 <translation id="2189104374785738357">APN সম্পর্কিত বিবরণ এডিট করুন</translation>
 <translation id="2195732836444333448">সর্বোচ্চ সীমায় পৌঁছে গেছে। কিছুক্ষণ পরে চেষ্টা করুন।</translation>
 <translation id="2201758491318984023">বাইসাইকেল</translation>
-<translation id="2203222757805818543">বর্তমান শিডিউল <ph name="SUNRISE" /> - <ph name="SUNSET" />-এর মধ্যে সেট করা হয়েছে। ডার্ক মোড শিডিউল অটোমেটিক আপডেট করতে, <ph name="BEGIN_LINK" />লোকেশন অ্যাক্সেস চালু করুন<ph name="END_LINK" /></translation>
 <translation id="2203272733515928691">উষ্ণ জলের ঝর্ণা</translation>
 <translation id="2203642483788377106">ক্লিফ</translation>
 <translation id="2208388655216963643">ইম্প্রেশনিস্ট</translation>
@@ -364,6 +363,7 @@
 <translation id="3054177598518735801"><ph name="CURRENT_VALUE" />mA</translation>
 <translation id="3056720590588772262">এন্ডপয়েন্ট</translation>
 <translation id="3060579846059757016">আউটলাইন</translation>
+<translation id="3061850252076394168">বাছুন ও শুনুন ফিচার চালু করুন</translation>
 <translation id="3069085583900247081">টেস্ট ব্যর্থ হয়েছে</translation>
 <translation id="3078740164268491126">সারণী</translation>
 <translation id="3081652522083185657">লাইট</translation>
@@ -630,7 +630,6 @@
 <translation id="458794348635939462">সব হোস্ট নেম যাচাই করা ব্যর্থ হয়েছে</translation>
 <translation id="4593212453765072419">প্রক্সি প্রমাণীকরণের প্রয়োজন</translation>
 <translation id="4609350030397390689">কীবোর্ড উজ্জ্বলতা কমান</translation>
-<translation id="4617553623719764431">এটি আপনার লোকেশন জানে না, তাই আবহওয়া সম্পর্কিত তথ্য় দেখানো হয় না। স্থানীয় আবহওয়া সম্পর্কিত তথ্য দেখাতে, <ph name="BEGIN_LINK" />লোকেশন অ্যাক্সেস চালু করুন<ph name="END_LINK" /></translation>
 <translation id="4627232916386272576"><ph name="DOCUMENT_TITLE" />, <ph name="PRINTER_NAME" />, <ph name="CREATION_TIME" />, <ph name="TOTAL_PAGE_NUMBER" />টির মধ্যে <ph name="PRINTED_PAGE_NUMBER" /> নম্বর পৃষ্ঠা। প্রিন্ট করা বাতিল করতে এন্টার প্রেস করুন।</translation>
 <translation id="463791356324567266">স্ক্যানিং বাতিল করা হচ্ছে...</translation>
 <translation id="4646949265910132906">নিরাপদ ওয়াই-ফাই কানেকশন</translation>
@@ -704,6 +703,7 @@
 <translation id="4985509611418653372">চালান</translation>
 <translation id="4987769320337599931">ফায়ারওয়াল</translation>
 <translation id="4988526792673242964">পৃষ্ঠাসমূহ</translation>
+<translation id="4989542687859782284">উপলভ্য নেই</translation>
 <translation id="4999333166442584738">রিপোর্ট লুকান</translation>
 <translation id="500920857929044050">টেস্ট বন্ধ করুন</translation>
 <translation id="5017508259293544172">LEAP</translation>
@@ -960,7 +960,6 @@
 <translation id="6412715219990689313">বিল্ট-ইন কীবোর্ড</translation>
 <translation id="6417265370957905582">Google Assistant</translation>
 <translation id="6423239382391657905">OpenVPN</translation>
-<translation id="6438073885402882007">এটি সিস্টেম পরিষেবাকে আপনার লোকেশন ব্যবহার কার অনুমতি দেয়। আপনি কোথায় আছেন তা জানতে লোকেশন, আপনার ওয়াই-ফাই, মোবাইল নেটওয়ার্ক ও সেন্সর ব্যবহার করতে পারে। <ph name="LINK_BEGIN" />আরও জানুন<ph name="LINK_END" /></translation>
 <translation id="6439505561246192797">খারাপ (<ph name="SIGNAL_STRENGTH" />)</translation>
 <translation id="6447630859861661624">অ্যাকাউন্ট সেটিংসে যান</translation>
 <translation id="6462978824459367242">'APN যোগ করুন' বোতাম এখন চালু আছে</translation>

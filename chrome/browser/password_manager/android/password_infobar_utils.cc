@@ -19,16 +19,14 @@ namespace password_manager {
 std::optional<AccountInfo> GetAccountInfoForPasswordMessages(Profile* profile) {
   DCHECK(profile);
 
-  // TODO(crbug.com/40067770): Migrate away from `ConsentLevel::kSync` on
-  // Android.
-  if (!sync_util::IsSyncFeatureEnabledIncludingPasswords(
+  if (password_manager::sync_util::HasChosenToSyncPasswords(
           SyncServiceFactory::GetForProfile(profile))) {
     return std::nullopt;
   }
   signin::IdentityManager* identity_manager =
       IdentityManagerFactory::GetForProfile(profile);
   CoreAccountId account_id =
-      identity_manager->GetPrimaryAccountId(signin::ConsentLevel::kSync);
+      identity_manager->GetPrimaryAccountId(signin::ConsentLevel::kSignin);
   return identity_manager->FindExtendedAccountInfoByAccountId(account_id);
 }
 

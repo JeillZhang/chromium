@@ -19,7 +19,7 @@
 #include "chrome/browser/ui/browser_navigator.h"
 #include "chrome/browser/ui/browser_navigator_params.h"
 #include "chrome/browser/ui/chrome_pages.h"
-#include "chrome/browser/ui/side_panel/side_panel_entry_id.h"
+#include "chrome/browser/ui/views/side_panel/side_panel_entry_id.h"
 #include "chrome/browser/ui/views/side_panel/side_panel_coordinator.h"
 #include "chrome/browser/ui/views/side_panel/side_panel_entry.h"
 #include "chrome/browser/ui/views/side_panel/side_panel_util.h"
@@ -251,10 +251,12 @@ FeaturePromoSpecification CreateLowUsagePromoSpecification(Profile* profile) {
                                 IDS_REENGAGEMENT_PROMO_LEARN_HOW_ACTION,
                                 GURL(kBrowserToolsUrl)),
 
+#if !BUILDFLAG(IS_CHROMEOS)
       // 7.
       CreateNavigatePromo(IDS_REENGAGEMENT_PROMO_NEW_FEATURES,
                           IDS_REENGAGEMENT_PROMO_VIEW_WHATS_NEW_ACTION,
                           GURL(chrome::kChromeUIWhatsNewURL)),
+#endif
 
       // 9.
       CreateNavigatePromo(IDS_REENGAGEMENT_PROMO_SAFETY,
@@ -267,10 +269,12 @@ FeaturePromoSpecification CreateLowUsagePromoSpecification(Profile* profile) {
                            SidePanelEntryId::kCustomizeChrome,
                            google_is_default_search_provider),
 
+#if !BUILDFLAG(IS_CHROMEOS)
       // 10.
       CreateNavigatePromo(IDS_REENGAGEMENT_PROMO_LATEST_TECHNOLOGY,
                           IDS_REENGAGEMENT_PROMO_VIEW_WHATS_NEW_ACTION,
                           GURL(chrome::kChromeUIWhatsNewURL)),
+#endif
 
       // 6.
       show_ai_promos

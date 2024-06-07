@@ -26,7 +26,7 @@ URLVisit::URLVisit(const URLVisit&) = default;
 
 URLVisit::~URLVisit() = default;
 
-URLVisitAggregate::URLVisitAggregate() = default;
+URLVisitAggregate::URLVisitAggregate(std::string key_arg) : url_key(key_arg) {}
 
 URLVisitAggregate::~URLVisitAggregate() = default;
 
@@ -63,8 +63,8 @@ URLVisitAggregate::Tab::Tab(const URLVisitAggregate::Tab&) = default;
 
 URLVisitAggregate::Tab::~Tab() = default;
 
-URLVisitAggregate::TabData::TabData(Tab tab)
-    : last_active_tab(std::move(tab)) {}
+URLVisitAggregate::TabData::TabData(Tab last_active_tab_arg)
+    : last_active_tab(std::move(last_active_tab_arg)) {}
 
 URLVisitAggregate::TabData::TabData(const URLVisitAggregate::TabData&) =
     default;
@@ -74,7 +74,6 @@ URLVisitAggregate::TabData::~TabData() = default;
 URLVisitAggregate::HistoryData::HistoryData(
     history::AnnotatedVisit annotated_visit)
     : last_visited(std::move(annotated_visit)) {
-  visit_count = 1;
   total_foreground_duration =
       last_visited.context_annotations.total_foreground_duration;
   if (last_visited.visit_row.app_id.has_value()) {

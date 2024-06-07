@@ -18,14 +18,15 @@
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/lens/lens_overlay_controller.h"
 #include "chrome/browser/ui/lens/lens_overlay_side_panel_coordinator.h"
+#include "chrome/browser/ui/qrcode_generator/qrcode_generator_bubble_controller.h"
 #include "chrome/browser/ui/send_tab_to_self/send_tab_to_self_bubble.h"
-#include "chrome/browser/ui/side_panel/companion/companion_utils.h"
-#include "chrome/browser/ui/side_panel/history_clusters/history_clusters_side_panel_utils.h"
-#include "chrome/browser/ui/side_panel/side_panel_action_callback.h"
-#include "chrome/browser/ui/side_panel/side_panel_entry_id.h"
-#include "chrome/browser/ui/side_panel/side_panel_entry_key.h"
-#include "chrome/browser/ui/side_panel/side_panel_enums.h"
-#include "chrome/browser/ui/side_panel/side_panel_ui.h"
+#include "chrome/browser/ui/views/side_panel/companion/companion_utils.h"
+#include "chrome/browser/ui/views/side_panel/history_clusters/history_clusters_side_panel_utils.h"
+#include "chrome/browser/ui/views/side_panel/side_panel_action_callback.h"
+#include "chrome/browser/ui/views/side_panel/side_panel_entry_id.h"
+#include "chrome/browser/ui/views/side_panel/side_panel_entry_key.h"
+#include "chrome/browser/ui/views/side_panel/side_panel_enums.h"
+#include "chrome/browser/ui/views/side_panel/side_panel_ui.h"
 #include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/views/page_info/page_info_view_factory.h"
 #include "chrome/grit/generated_resources.h"
@@ -35,13 +36,13 @@
 #include "components/search_engines/template_url.h"
 #include "components/search_engines/template_url_service.h"
 #include "components/strings/grit/components_strings.h"
-#include "components/user_notes/user_notes_features.h"
 #include "components/vector_icons/vector_icons.h"
 #include "ui/accessibility/accessibility_features.h"
 #include "ui/actions/actions.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/models/simple_menu_model.h"
 #include "ui/base/ui_base_features.h"
+#include "ui/gfx/text_utils.h"
 #include "ui/gfx/vector_icon_types.h"
 
 namespace {
@@ -51,29 +52,29 @@ actions::ActionItem::ActionItemBuilder ChromeMenuAction(
     int title_id,
     int tooltip_id,
     const gfx::VectorIcon& icon) {
+  auto clean_text = [](int str_id) {
+    return gfx::RemoveAccelerator(l10n_util::GetStringUTF16(str_id));
+  };
   return actions::ActionItem::Builder(callback)
       .SetActionId(action_id)
-      .SetText(l10n_util::GetStringUTF16(title_id))
-      .SetTooltipText(l10n_util::GetStringUTF16(tooltip_id))
+      .SetText(clean_text(title_id))
+      .SetTooltipText(clean_text(tooltip_id))
       .SetImage(ui::ImageModel::FromVectorIcon(icon, ui::kColorIcon))
       .SetProperty(actions::kActionItemPinnableKey, true);
 }
 
 actions::ActionItem::ActionItemBuilder SidePanelAction(
     SidePanelEntryId id,
-    std::optional<int> title_id,
+    int title_id,
     int tooltip_id,
     const gfx::VectorIcon& icon,
     actions::ActionId action_id,
     Browser* browser,
     bool is_pinnable) {
-  return actions::ActionItem::Builder(
-             CreateToggleSidePanelActionCallback(
-                 SidePanelEntryKey(id), browser))
+  return actions::ActionItem::Builder(CreateToggleSidePanelActionCallback(
+                                          SidePanelEntryKey(id), browser))
       .SetActionId(action_id)
-      .SetText(title_id.has_value()
-                   ? l10n_util::GetStringUTF16(title_id.value())
-                   : std::u16string())
+      .SetText(l10n_util::GetStringUTF16(title_id))
       .SetTooltipText(l10n_util::GetStringUTF16(tooltip_id))
       .SetImage(ui::ImageModel::FromVectorIcon(icon, ui::kColorIcon))
       .SetProperty(actions::kActionItemPinnableKey, is_pinnable);
@@ -94,39 +95,38 @@ BrowserActions::~BrowserActions() {
 
 void BrowserActions::InitializeBrowserActions() {
   Profile* profile = browser_->profile();
+  Browser* browser = &(browser_.get());
 
   actions::ActionManager::Get().AddAction(
       actions::ActionItem::Builder()
           .CopyAddressTo(&root_action_item_)
           .AddChildren(
-              SidePanelAction(SidePanelEntryId::kBookmarks,
-                              IDS_BOOKMARK_MANAGER_TITLE,
-                              IDS_BOOKMARK_MANAGER_TITLE,
-                              kBookmarksSidePanelRefreshIcon,
-                              kActionSidePanelShowBookmarks,
-                              &(browser_.get()), true),
+              SidePanelAction(
+                  SidePanelEntryId::kBookmarks, IDS_BOOKMARK_MANAGER_TITLE,
+                  IDS_BOOKMARK_MANAGER_TITLE, kBookmarksSidePanelRefreshIcon,
+                  kActionSidePanelShowBookmarks, browser, true),
               SidePanelAction(SidePanelEntryId::kReadingList,
                               IDS_READ_LATER_TITLE, IDS_READ_LATER_TITLE,
                               kReadingListIcon, kActionSidePanelShowReadingList,
-                              &(browser_.get()), true),
+                              browser, true),
               SidePanelAction(SidePanelEntryId::kAboutThisSite,
                               IDS_PAGE_INFO_ABOUT_THIS_PAGE_TITLE,
                               IDS_PAGE_INFO_ABOUT_THIS_PAGE_TITLE,
                               PageInfoViewFactory::GetAboutThisSiteVectorIcon(),
-                              kActionSidePanelShowAboutThisSite,
-                              &(browser_.get()), false),
+                              kActionSidePanelShowAboutThisSite, browser,
+                              false),
               SidePanelAction(SidePanelEntryId::kCustomizeChrome,
                               IDS_SIDE_PANEL_CUSTOMIZE_CHROME_TITLE,
                               IDS_SIDE_PANEL_CUSTOMIZE_CHROME_TITLE,
                               vector_icons::kEditChromeRefreshIcon,
-                              kActionSidePanelShowCustomizeChrome,
-                              &(browser_.get()), false),
+                              kActionSidePanelShowCustomizeChrome, browser,
+                              false),
               SidePanelAction(SidePanelEntryId::kShoppingInsights,
                               IDS_SHOPPING_INSIGHTS_SIDE_PANEL_TITLE,
                               IDS_SHOPPING_INSIGHTS_SIDE_PANEL_TITLE,
                               vector_icons::kShoppingBagIcon,
-                              kActionSidePanelShowShoppingInsights,
-                              &(browser_.get()), false))
+                              kActionSidePanelShowShoppingInsights, browser,
+                              false))
           .Build());
 
   if (side_panel::history_clusters::
@@ -135,8 +135,7 @@ void BrowserActions::InitializeBrowserActions() {
         SidePanelAction(SidePanelEntryId::kHistoryClusters, IDS_HISTORY_TITLE,
                         IDS_HISTORY_CLUSTERS_SHOW_SIDE_PANEL,
                         vector_icons::kHistoryChromeRefreshIcon,
-                        kActionSidePanelShowHistoryCluster, &(browser_.get()),
-                        true)
+                        kActionSidePanelShowHistoryCluster, browser, true)
             .Build());
   }
 
@@ -144,16 +143,7 @@ void BrowserActions::InitializeBrowserActions() {
     root_action_item_->AddChild(
         SidePanelAction(SidePanelEntryId::kReadAnything, IDS_READING_MODE_TITLE,
                         IDS_READING_MODE_TITLE, kMenuBookChromeRefreshIcon,
-                        kActionSidePanelShowReadAnything, &(browser_.get()),
-                        true)
-            .Build());
-  }
-
-  if (user_notes::IsUserNotesEnabled()) {
-    root_action_item_->AddChild(
-        SidePanelAction(SidePanelEntryId::kUserNote, IDS_USER_NOTE_TITLE,
-                        IDS_USER_NOTE_TITLE, kNoteOutlineIcon,
-                        kActionSidePanelShowUserNote, &(browser_.get()), true)
+                        kActionSidePanelShowReadAnything, browser, true)
             .Build());
   }
 
@@ -162,15 +152,14 @@ void BrowserActions::InitializeBrowserActions() {
     root_action_item_->AddChild(
         SidePanelAction(SidePanelEntryId::kPerformance, IDS_SHOW_PERFORMANCE,
                         IDS_SHOW_PERFORMANCE, kMemorySaverIcon,
-                        kActionSidePanelShowPerformance, &(browser_.get()),
-                        true)
+                        kActionSidePanelShowPerformance, browser, true)
             .Build());
   }
 
   if (LensOverlayController::IsEnabled(profile)) {
     actions::ActionItem::InvokeActionCallback callback =
         lens::LensOverlaySidePanelCoordinator::CreateSidePanelActionCallback(
-            &(browser_.get()));
+            browser);
     const gfx::VectorIcon& icon =
 #if BUILDFLAG(GOOGLE_CHROME_BRANDING)
         vector_icons::kGoogleLensMonochromeLogoIcon;
@@ -180,7 +169,7 @@ void BrowserActions::InitializeBrowserActions() {
     root_action_item_->AddChild(
         actions::ActionItem::Builder(callback)
             .SetActionId(kActionSidePanelShowLensOverlayResults)
-            .SetText(std::u16string())
+            .SetText(l10n_util::GetStringUTF16(IDS_SHOW_LENS_OVERLAY))
             .SetTooltipText(l10n_util::GetStringUTF16(
                 IDS_SIDE_PANEL_LENS_OVERLAY_TOOLBAR_TOOLTIP))
             .SetImage(ui::ImageModel::FromVectorIcon(
@@ -202,7 +191,7 @@ void BrowserActions::InitializeBrowserActions() {
 #else
               vector_icons::kSearchIcon,
 #endif
-              kActionSidePanelShowSearchCompanion, &(browser_.get()), true)
+              kActionSidePanelShowSearchCompanion, browser, true)
               .Build());
 
       companion_action_item->SetVisible(
@@ -217,7 +206,7 @@ void BrowserActions::InitializeBrowserActions() {
   root_action_item_->AddChild(
       SidePanelAction(SidePanelEntryId::kLens, IDS_LENS_DEFAULT_TITLE,
                       IDS_LENS_DEFAULT_TITLE, vector_icons::kImageSearchIcon,
-                      kActionSidePanelShowLens, &(browser_.get()), false)
+                      kActionSidePanelShowLens, browser, false)
           .Build());
 
   //------- Chrome Menu Actions --------//
@@ -227,7 +216,7 @@ void BrowserActions::InitializeBrowserActions() {
                               actions::ActionInvocationContext context) {
                              chrome::NewIncognitoWindow(browser->profile());
                            },
-                           base::Unretained(&(browser_.get()))),
+                           base::Unretained(browser)),
                        kActionNewIncognitoWindow, IDS_NEW_INCOGNITO_WINDOW,
                        IDS_NEW_INCOGNITO_WINDOW, kIncognitoRefreshMenuIcon)
           .Build());
@@ -238,9 +227,9 @@ void BrowserActions::InitializeBrowserActions() {
                               actions::ActionInvocationContext context) {
                              chrome::Print(browser);
                            },
-                           base::Unretained(&(browser_.get()))),
+                           base::Unretained(browser)),
                        kActionPrint, IDS_PRINT, IDS_PRINT, kPrintMenuIcon)
-          .SetEnabled(chrome::CanPrint(&(browser_.get())))
+          .SetEnabled(chrome::CanPrint(browser))
           .Build());
 
   root_action_item_->AddChild(
@@ -255,7 +244,7 @@ void BrowserActions::InitializeBrowserActions() {
                                    browser->GetBrowserForOpeningWebUi());
                              }
                            },
-                           base::Unretained(&(browser_.get()))),
+                           base::Unretained(browser)),
                        kActionClearBrowsingData, IDS_CLEAR_BROWSING_DATA,
                        IDS_CLEAR_BROWSING_DATA, kTrashCanRefreshIcon)
           .SetEnabled(
@@ -270,7 +259,7 @@ void BrowserActions::InitializeBrowserActions() {
                                 actions::ActionInvocationContext context) {
                                chrome::OpenTaskManager(browser);
                              },
-                             base::Unretained(&(browser_.get()))),
+                             base::Unretained(browser)),
                          kActionTaskManager, IDS_TASK_MANAGER, IDS_TASK_MANAGER,
                          kTaskManagerIcon)
             .Build());
@@ -284,7 +273,7 @@ void BrowserActions::InitializeBrowserActions() {
                                  browser, DevToolsToggleAction::Show(),
                                  DevToolsOpenedByAction::kPinnedToolbarButton);
                            },
-                           base::Unretained(&(browser_.get()))),
+                           base::Unretained(browser)),
                        kActionDevTools, IDS_DEV_TOOLS, IDS_DEV_TOOLS,
                        kDeveloperToolsIcon)
           .Build());
@@ -297,9 +286,32 @@ void BrowserActions::InitializeBrowserActions() {
                 send_tab_to_self::ShowBubble(
                     browser->tab_strip_model()->GetActiveWebContents());
               },
-              base::Unretained(&(browser_.get()))),
+              base::Unretained(browser)),
           kActionSendTabToSelf, IDS_SEND_TAB_TO_SELF, IDS_SEND_TAB_TO_SELF,
           kDevicesChromeRefreshIcon)
-          .SetEnabled(chrome::CanSendTabToSelf(&(browser_.get())))
+          .SetEnabled(chrome::CanSendTabToSelf(browser))
+          .Build());
+
+  root_action_item_->AddChild(
+      ChromeMenuAction(base::BindRepeating(
+                           [](Browser* browser, actions::ActionItem* item,
+                              actions::ActionInvocationContext context) {
+                             chrome::ShowTranslateBubble(browser);
+                           },
+                           base::Unretained(browser)),
+                       kActionShowTranslate, IDS_SHOW_TRANSLATE,
+                       IDS_TOOLTIP_TRANSLATE, kTranslateIcon)
+          .Build());
+
+  root_action_item_->AddChild(
+      ChromeMenuAction(base::BindRepeating(
+                           [](Browser* browser, actions::ActionItem* item,
+                              actions::ActionInvocationContext context) {
+                             chrome::GenerateQRCode(browser);
+                           },
+                           base::Unretained(browser)),
+                       kActionQrCodeGenerator, IDS_APP_MENU_CREATE_QR_CODE,
+                       IDS_APP_MENU_CREATE_QR_CODE, kQrCodeChromeRefreshIcon)
+          .SetEnabled(false)
           .Build());
 }

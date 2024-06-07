@@ -32,6 +32,7 @@
 #include "chrome/browser/profiles/profile_shortcut_manager.h"
 #include "chrome/browser/signin/account_consistency_mode_manager.h"
 #include "chrome/browser/signin/account_consistency_mode_manager_factory.h"
+#include "chrome/browser/signin/chrome_signin_client_factory.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/sync/sync_service_factory.h"
 #include "chrome/browser/ui/managed_ui.h"
@@ -85,6 +86,7 @@
 #include "components/signin/public/base/signin_switches.h"
 #include "components/strings/grit/components_branded_strings.h"
 #include "components/strings/grit/components_strings.h"
+#include "components/strings/grit/privacy_sandbox_strings.h"
 #include "components/subresource_filter/core/browser/subresource_filter_features.h"
 #include "components/sync/base/features.h"
 #include "components/sync/service/sync_service.h"
@@ -199,6 +201,8 @@ void AddCommonStrings(content::WebUIDataSource* html_source, Profile* profile) {
       {"ok", IDS_OK},
       {"opensInNewTab", IDS_SETTINGS_OPENS_IN_NEW_TAB},
       {"sendFeedbackButton", IDS_SETTINGS_SEND_FEEDBACK_ROLE_DESCRIPTION},
+      {"columnHeadingWhenOn", IDS_SETTINGS_COLUMN_HEADING_WHEN_ON},
+      {"columnHeadingConsider", IDS_SETTINGS_COLUMN_HEADING_CONSIDER},
 #if !BUILDFLAG(IS_CHROMEOS_ASH)
       {"relaunchConfirmationDialogTitle",
        IDS_RELAUNCH_CONFIRMATION_DIALOG_TITLE},
@@ -289,12 +293,6 @@ void AddA11yStrings(content::WebUIDataSource* html_source) {
       {"mainNodeAnnotationsTitle", IDS_SETTINGS_MAIN_NODE_ANNOTATIONS_TITLE},
       {"mainNodeAnnotationsSubtitle",
        IDS_SETTINGS_MAIN_NODE_ANNOTATIONS_SUBTITLE},
-      {"pdfOcrDownloadCompleteLabel", IDS_SETTINGS_PDF_OCR_DOWNLOAD_COMPLETE},
-      {"pdfOcrDownloadErrorLabel", IDS_SETTINGS_PDF_OCR_DOWNLOAD_ERROR},
-      {"pdfOcrDownloadProgressLabel", IDS_SETTINGS_PDF_OCR_DOWNLOAD_PROGRESS},
-      {"pdfOcrDownloadingLabel", IDS_SETTINGS_PDF_OCR_DOWNLOADING},
-      {"pdfOcrTitle", IDS_SETTINGS_PDF_OCR_TITLE},
-      {"pdfOcrSubtitle", IDS_SETTINGS_PDF_OCR_SUBTITLE},
 #endif  // BULDFLAG(ENABLE_SCREEN_AI_SERVICE)
 #endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC)
   };
@@ -305,8 +303,6 @@ void AddA11yStrings(content::WebUIDataSource* html_source) {
   html_source->AddBoolean(
       "mainNodeAnnotationsEnabled",
       base::FeatureList::IsEnabled(features::kMainNodeAnnotations));
-  html_source->AddBoolean("pdfOcrEnabled",
-                          base::FeatureList::IsEnabled(features::kPdfOcr));
 #endif
 
   AddCaptionSubpageStrings(html_source);
@@ -539,6 +535,13 @@ void AddClearBrowsingDataStrings(content::WebUIDataSource* html_source,
   html_source->AddBoolean(
       "unoDesktopEnabled",
       switches::IsExplicitBrowserSigninUIOnDesktopEnabled());
+#if !BUILDFLAG(IS_CHROMEOS)
+  html_source->AddBoolean(
+      "isClearPrimaryAccountAllowed",
+      !profile->IsGuestSession() &&
+          ChromeSigninClientFactory::GetForProfile(profile)
+              ->IsClearPrimaryAccountAllowed(/*has_sync_account=*/false));
+#endif  // !BUILDFLAG(IS_CHROMEOS)
 
   html_source->AddLocalizedStrings(kLocalizedStrings);
 }
@@ -1330,11 +1333,6 @@ void AddAutofillStrings(content::WebUIDataSource* html_source,
   html_source->AddString(
       "plusAddressManagementUrl",
       plus_addresses::features::kPlusAddressManagementUrl.Get());
-
-  html_source->AddBoolean(
-      "updateChromeSettingsLinkToGPayWebEnabled",
-      base::FeatureList::IsEnabled(
-          autofill::features::kAutofillUpdateChromeSettingsLinkToGPayWeb));
 }
 
 void AddSignOutDialogStrings(content::WebUIDataSource* html_source,
@@ -1474,6 +1472,8 @@ void AddPersonalizationOptionsStrings(content::WebUIDataSource* html_source) {
        IDS_SETTINGS_SIGNIN_CHROME_SIGNIN_OPTIONS_TITLE},
       {"chromeSigninChoiceDescription",
        IDS_SETTINGS_SIGNIN_CHROME_SIGNIN_OPTIONS_DESC},
+      {"chromeSigninChoiceSelectOptionPlaceholder",
+       IDS_SETTINGS_SIGNIN_CHROME_SIGNIN_OPTION_PLACEHOLDER},
       {"chromeSigninChoiceSignin",
        IDS_SETTINGS_SIGNIN_CHROME_SIGNIN_OPTION_SIGNIN},
       {"chromeSigninChoiceDoNotSignin",
@@ -1635,6 +1635,17 @@ void AddPeopleStrings(content::WebUIDataSource* html_source, Profile* profile) {
        IDS_SETTINGS_SYNC_DISCONNECT_DELETE_PROFILE_WARNING_WITH_COUNTS_PLURAL},
       {"deleteProfileWarningWithoutCounts",
        IDS_SETTINGS_SYNC_DISCONNECT_DELETE_PROFILE_WARNING_WITHOUT_COUNTS},
+
+      // History search strings:
+      {"historySearchSettingLabel", IDS_SETTINGS_HISTORY_SEARCH_SETTING_LABEL},
+      {"historySearchSettingSublabel",
+       IDS_SETTINGS_HISTORY_SEARCH_SETTING_SUBLABEL},
+      {"historySearchWhenOnBulletOne",
+       IDS_SETTINGS_HISTORY_SEARCH_WHEN_ON_BULLET_ONE},
+      {"historySearchConsiderBulletOne",
+       IDS_SETTINGS_HISTORY_SEARCH_CONSIDER_BULLET_ONE},
+      {"historySearchConsiderBulletTwo",
+       IDS_SETTINGS_HISTORY_SEARCH_CONSIDER_BULLET_TWO},
   };
   html_source->AddLocalizedStrings(kLocalizedStrings);
 
@@ -1647,6 +1658,13 @@ void AddPeopleStrings(content::WebUIDataSource* html_source, Profile* profile) {
           .spec());
   html_source->AddBoolean("profileShortcutsEnabled",
                           ProfileShortcutManager::IsFeatureEnabled());
+  // TODO(b/328300718): Update help article link.
+  html_source->AddString(
+      "historySearchLearnMore",
+      l10n_util::GetStringFUTF16(
+          IDS_SETTINGS_HISTORY_SEARCH_LEARN_MORE, u"https://google.com",
+          l10n_util::GetStringUTF16(
+              IDS_SETTINGS_HISTORY_SEARCH_LEARN_MORE_A11Y_LABEL)));
 
 #if BUILDFLAG(ENABLE_DICE_SUPPORT)
   auto* profile_entry =
@@ -1762,8 +1780,6 @@ void AddPrivacyStrings(content::WebUIDataSource* html_source,
        IDS_SETTINGS_SAFEBROWSING_ENHANCED_BULLET_FOUR},
       {"safeBrowsingEnhancedBulFive",
        IDS_SETTINGS_SAFEBROWSING_ENHANCED_BULLET_FIVE},
-      {"safeBrowsingEnhancedWhenOnLabel",
-       IDS_SETTINGS_SAFEBROWSING_ENHANCED_WHEN_ON_LABEL},
       {"safeBrowsingEnhancedWhenOnBulOne",
        IDS_SETTINGS_SAFEBROWSING_ENHANCED_WHEN_ON_BULLET_ONE},
       {"safeBrowsingEnhancedWhenOnBulTwo",
@@ -1774,8 +1790,6 @@ void AddPrivacyStrings(content::WebUIDataSource* html_source,
        IDS_SETTINGS_SAFEBROWSING_ENHANCED_WHEN_ON_BULLET_FOUR},
       {"safeBrowsingEnhancedWhenOnBulFive",
        IDS_SETTINGS_SAFEBROWSING_ENHANCED_WHEN_ON_BULLET_FIVE},
-      {"safeBrowsingEnhancedThingsToConsiderLabel",
-       IDS_SETTINGS_SAFEBROWSING_ENHANCED_THINGS_TO_CONSIDER_LABEL},
       {"safeBrowsingEnhancedThingsToConsiderBulOne",
        IDS_SETTINGS_SAFEBROWSING_ENHANCED_THINGS_TO_CONSIDER_BULLET_ONE},
       {"safeBrowsingEnhancedThingsToConsiderBulTwo",
@@ -2228,6 +2242,14 @@ void AddSafetyHubStrings(content::WebUIDataSource* html_source) {
        IDS_SETTINGS_SAFETY_HUB_USER_EDU_INCOGNITO_HEADER},
       {"safetyHubUserEduSafeBrowsingHeader",
        IDS_SETTINGS_SAFETY_HUB_USER_EDU_SAFE_BROWSING_HEADER},
+      {"safetyHubPasswordNavigationAriaLabel",
+       IDS_SETTINGS_SAFETY_HUB_PASSWORD_NAVIGATION_ARIA_LABEL},
+      {"safetyHubVersionNavigationAriaLabel",
+       IDS_SETTINGS_SAFETY_HUB_VERSION_NAVIGATION_ARIA_LABEL},
+      {"safetyHubVersionRelaunchAriaLabel",
+       IDS_SETTINGS_SAFETY_HUB_VERSION_RELAUNCH_ARIA_LABEL},
+      {"safetyHubSBNavigationAriaLabel",
+       IDS_SETTINGS_SAFETY_HUB_SB_NAVIGATION_ARIA_LABEL},
   };
   html_source->AddLocalizedStrings(kLocalizedStrings);
 
@@ -2471,8 +2493,6 @@ void AddSiteSettingsStrings(content::WebUIDataSource* html_source,
        IDS_SETTINGS_TRACKING_PROTECTION_THIRD_PARTY_COOKIES_LEARN_MORE_ARIA_LABEL},
       {"trackingProtectionIpProtectionToggleLabel",
        IDS_SETTINGS_TRACKING_PROTECTION_IP_PROTECTION_TOGGLE_LABEL},
-      {"trackingProtectionIpProtectionToggleSubLabel",
-       IDS_SETTINGS_TRACKING_PROTECTION_IP_PROTECTION_TOGGLE_SUB_LABEL},
       {"trackingProtectionFingerprintingProtectionToggleLabel",
        IDS_SETTINGS_TRACKING_PROTECTION_FINGERPRINTING_PROTECTION_TOGGLE_LABEL},
       {"trackingProtectionFingerprintingProtectionToggleSubLabel",
@@ -3225,15 +3245,12 @@ void AddSiteSettingsStrings(content::WebUIDataSource* html_source,
        IDS_SETTINGS_ANTI_ABUSE_ENABLED_SUB_LABEL},
       {"siteSettingsAntiAbuseDisabledSubLabel",
        IDS_SETTINGS_ANTI_ABUSE_DISABLED_SUB_LABEL},
-      {"antiAbuseWhenOnHeader", IDS_SETTINGS_ANTI_ABUSE_WHEN_ON_HEADER},
       {"antiAbuseWhenOnSectionOne",
        IDS_SETTINGS_ANTI_ABUSE_WHEN_ON_SECTION_ONE},
       {"antiAbuseWhenOnSectionTwo",
        IDS_SETTINGS_ANTI_ABUSE_WHEN_ON_SECTION_TWO},
       {"antiAbuseWhenOnSectionThree",
        IDS_SETTINGS_ANTI_ABUSE_WHEN_ON_SECTION_THREE},
-      {"antiAbuseThingsToConsiderHeader",
-       IDS_SETTINGS_ANTI_ABUSE_THINGS_TO_CONSIDER_HEADER},
       {"antiAbuseThingsToConsiderSectionOne",
        IDS_SETTINGS_ANTI_ABUSE_THINGS_TO_CONSIDER_SECTION_ONE},
       {"siteSettingsPerformance", IDS_SITE_SETTINGS_TYPE_PERFORMANCE},
@@ -3267,15 +3284,17 @@ void AddSiteSettingsStrings(content::WebUIDataSource* html_source,
           l10n_util::GetStringUTF16(
               IDS_SETTINGS_TRACKING_PROTECTION_BULLET_TWO_LEARN_MORE_ARIA_LABEL),
           l10n_util::GetStringUTF16(IDS_SETTINGS_OPENS_IN_NEW_TAB)));
-  html_source->AddString(
-      "trackingProtectionRollbackNotice",
-      l10n_util::GetStringFUTF16(
-          IDS_SETTINGS_TRACKING_PROTECTION_ROLLBACK_NOTICE,
-          chrome::kTrackingProtectionHelpCenterURL,
-          l10n_util::GetStringUTF16(
-              IDS_SETTINGS_TRACKING_PROTECTION_ROLLBACK_NOTICE_LEARN_MORE_ARIA_LABEL)));
   html_source->AddString("trackingProtectionThirdPartyCookiesLearnMoreUrl",
                          chrome::kManage3pcHelpCenterURL);
+  html_source->AddString(
+      "trackingProtectionIpProtectionToggleSubLabel",
+      l10n_util::GetStringFUTF16(
+          IDS_SETTINGS_TRACKING_PROTECTION_IP_PROTECTION_TOGGLE_SUB_LABEL,
+          l10n_util::GetStringUTF16(
+              IDS_SETTINGS_TRACKING_PROTECTION_IP_PROTECTION_TOGGLE_LEARN_MORE_ARIA_LABEL),
+          l10n_util::GetStringUTF16(IDS_SETTINGS_OPENS_IN_NEW_TAB)));
+  html_source->AddString("ipProtectionLearnMoreUrl",
+                         chrome::kIpProtectionHelpCenterURL);
 
   // These ones cannot be constexpr because we need to check base::FeatureList.
   static webui::LocalizedString kSensorsLocalizedStrings[] = {
@@ -3345,6 +3364,10 @@ void AddCertificateManagerV2Strings(content::WebUIDataSource* html_source) {
        IDS_SETTINGS_CERTIFICATE_MANAGER_V2_CRS_CERTIFICATES},
       {"certificateManagerV2HashCopiedToast",
        IDS_SETTINGS_CERTIFICATE_MANAGER_V2_HASH_COPIED_TOAST},
+      {"certificateManagerV2PolicyCertsSingular",
+       IDS_SETTINGS_CERTIFICATE_MANAGER_V2_ADMIN_CERTS_SINGULAR},
+      {"certificateManagerV2PolicyCertsPlural",
+       IDS_SETTINGS_CERTIFICATE_MANAGER_V2_ADMIN_CERTS_PLURAL},
   };
   html_source->AddLocalizedStrings(kLocalizedStrings);
 }

@@ -24,13 +24,13 @@ interface CertificateManagerPageHandlerFactory {
 };
 
 enum CertificateSource {
-  // An invalid source. Defined as value 0 so that if there is a bug in the
-  // typescript or html and it "helpfully" gets silently converted to a 0, it
-  // will cause an error rather than silently using the first source.
-  kInvalid=0,
+  // Note that the enum is defined to start from 1 so that if there is a bug in
+  // the typescript or html and it "helpfully" gets silently converted to a 0,
+  // it will cause a mojo message validation error rather than silently using
+  // the first source.
 
   // Trusted certs from the Chrome Root Store.
-  kChromeRootStore,
+  kChromeRootStore=1,
 
   // Client certificates from the platform store.
   kPlatformClientCert,
@@ -39,6 +39,22 @@ enum CertificateSource {
   // where that feature is available.
   [EnableIf=enable_provisioned_client_certs]
   kProvisionedClientCert,
+
+  // Extension provided client certificates.
+  [EnableIf=is_chromeos]
+  kExtensionsClientCert,
+};
+
+struct CertPolicyInfo {
+  // If true, user-added certs are imported from the system
+  bool include_system_trust_store;
+
+  // If true, an enterprise policy controls whether user-added certs are
+  // imported from the system.
+  bool is_include_system_trust_store_managed;
+
+  // Number of certificates added via enterprise policy.
+  uint8 num_policy_certs;
 };
 
 // Calls from TS -> C++  (Renderer -> Browser).
@@ -46,11 +62,20 @@ interface CertificateManagerPageHandler {
   // Get the list of certificates from a given source.
   GetCertificates(CertificateSource source) => (array<SummaryCertInfo> certs);
 
+  // Get information about enterprise policies impacting certificate
+  // verification.
+  GetPolicyInformation() => (CertPolicyInfo policy_info);
+
   // Open the view certificate dialog for a specific certificate.
   ViewCertificate(CertificateSource source, string sha256_hash_hex);
 
-  // Export all the certificates trusted through the Chrome Root Store.
-  ExportChromeRootStore();
+  // Export all the certificates from a given source.
+  ExportCertificates(CertificateSource source);
+
+  // Show the platform's native certificate management UI.
+  [EnableIf=native_cert_management]
+  ShowNativeManageCertificates();
+
 };
 
 // Calls from C++ -> TS (Browser -> Renderer).

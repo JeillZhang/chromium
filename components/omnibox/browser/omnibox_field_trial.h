@@ -557,7 +557,7 @@ struct MLConfig {
   // has no effect if `ml_url_scoring_unlimited_num_candidates` is true.
   std::string ml_url_scoring_max_matches_by_provider;
 
-  // There are 3 implementations for mapping ML scores [0, 1] to usable
+  // There are 2 implementations for mapping ML scores [0, 1] to usable
   // relevances scores.
   // 1) The original implementation in `RunBatchUrlScoringModel()`. This
   //    redistributes the traditional relevance scores and shortcut boosting so
@@ -568,12 +568,7 @@ struct MLConfig {
   //    number of URLs above searches by +/- 1; because it doesn't consider
   //    `allowed_to_be_default`. We've experimented with this for multiple
   //    milestone, so this has the advantage in potentially launching first.
-  // 2) The `stable_search_blending` implementation in
-  //    `RunBatchUrlScoringModelWithStableSearches()`. This is similar to (1)
-  //    but accounts for `allowed_to_be_default` and avoids changing the default
-  //    suggestion from a URL to a search; or vice versa; or the number of URLs
-  //    above searches. This is least likely to affect search metrics.
-  // 3) The `mapped_search_blending` implementation in
+  // 2) The `mapped_search_blending` implementation in
   //    `RunBatchUrlScoringModelMappedSearchBlending()`. It maps ML scores
   //    linearly to a relevance score. Unlike the above 2, instead of trying to
   //    maintain search v URL balance for each individual input, it tries to
@@ -583,9 +578,6 @@ struct MLConfig {
   //    approach.
 
   // Enables approach (2) above.
-  bool stable_search_blending{false};
-
-  // Enables approach (3) above. No effect if `stable_search_blending` is true.
   // Map ML scores [0, 1] to [`min`, `max`]. Groups URLs above searches if their
   // mapped relevance is greater than `grouping_threshold`
   bool mapped_search_blending{false};
@@ -720,11 +712,6 @@ constexpr base::FeatureParam<bool> kActionsInSuggestPromoteReviewsAction(
     false);
 // <- Actions In Suggest
 // ---------------------------------------------------------
-// Android UI Revamp ->
-extern const base::FeatureParam<bool>
-    kOmniboxModernizeVisualUpdateMergeClipboardOnNTP;
-// <- Android UI Revamp
-// ---------------------------------------------------------
 // Touch Down Trigger For Prefetch ->
 extern const base::FeatureParam<int>
     kTouchDownTriggerForPrefetchMaxPrefetchesPerOmniboxSession;
@@ -746,6 +733,10 @@ extern const base::FeatureParam<int> kStarterPackIPHPerSessionLimit;
 // When true, enables an informational IPH message at the bottom of the Omnibox
 // directing users to certain starter pack engines.
 bool IsStarterPackIPHEnabled();
+
+// When true, enables an informational IPH message at the bottom of the Omnibox
+// directing users to featured Enterprise search created by policy.
+bool IsFeaturedEnterpriseSearchIPHEnabled();
 
 // <- Site Search Starter Pack
 // ---------------------------------------------------------

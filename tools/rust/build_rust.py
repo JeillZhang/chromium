@@ -77,6 +77,9 @@ EXCLUDED_TESTS = [
     os.path.join('tests', 'ui', 'asm', 'inline-syntax.rs'),
     # TODO(https://crbug.com/324853415): benign failure; remove when fixed.
     os.path.join('tests', 'codegen', 'iter-repeat-n-trivial-drop.rs'),
+    # TODO(crbug.com/342026487): benign failure; remove when fixed.
+    os.path.join('tests', 'codegen', 'vec-in-place.rs'),
+
 ]
 EXCLUDED_TESTS_WINDOWS = [
     # https://github.com/rust-lang/rust/issues/96464
@@ -796,9 +799,10 @@ def main():
     building_on_host_triple = RustTargetTriple()
     xpy_args = ['--build', building_on_host_triple]
 
+    # Delete the build directory.
     if not args.skip_clean:
-        print('Cleaning build artifacts...')
-        xpy.run('clean', xpy_args)
+        print('Clearing build directory...')
+        shutil.rmtree(os.path.join(RUST_SRC_DIR, "build"))
 
     if not args.skip_test:
         print(f'Building stage 2 artifacts and running tests...')

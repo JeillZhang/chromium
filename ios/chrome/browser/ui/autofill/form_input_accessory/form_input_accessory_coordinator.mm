@@ -510,12 +510,13 @@ const CGFloat kIPHVerticalOffset = -5;
   [generationProvider triggerPasswordGeneration];
 }
 
-- (void)openPasswordDetailsForCredential:
+- (void)openPasswordDetailsInEditModeForCredential:
     (password_manager::CredentialUIEntry)credential {
   [self reset];
   id<SettingsCommands> settingsCommandsHandler = HandlerForProtocol(
       self.browser->GetCommandDispatcher(), SettingsCommands);
   [settingsCommandsHandler showPasswordDetailsForCredential:credential
+                                                 inEditMode:YES
                                            showCancelButton:YES];
 }
 
@@ -528,17 +529,28 @@ const CGFloat kIPHVerticalOffset = -5;
 
 #pragma mark - CardCoordinatorDelegate
 
-- (void)openCardSettings {
+- (void)cardCoordinatorDidTriggerOpenCardSettings:
+    (CardCoordinator*)cardCoordinator {
   [self reset];
   [self.navigator openCreditCardSettings];
 }
 
-- (void)openAddCreditCard {
+- (void)cardCoordinatorDidTriggerOpenAddCreditCard:
+    (CardCoordinator*)cardCoordinator {
   [self reset];
   CommandDispatcher* dispatcher = self.browser->GetCommandDispatcher();
   id<BrowserCoordinatorCommands> handler =
       HandlerForProtocol(dispatcher, BrowserCoordinatorCommands);
   [handler showAddCreditCard];
+}
+
+- (void)cardCoordinator:(CardCoordinator*)cardCoordinator
+    didTriggerOpenCardDetails:(const autofill::CreditCard*)card {
+  [self reset];
+  CommandDispatcher* dispatcher = self.browser->GetCommandDispatcher();
+  id<SettingsCommands> settingsCommandsHandler =
+      HandlerForProtocol(dispatcher, SettingsCommands);
+  [settingsCommandsHandler showCreditCardDetails:card];
 }
 
 #pragma mark - AddressCoordinatorDelegate

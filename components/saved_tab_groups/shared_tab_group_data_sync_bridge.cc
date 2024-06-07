@@ -6,6 +6,7 @@
 
 #include "base/functional/callback_helpers.h"
 #include "base/logging.h"
+#include "components/prefs/pref_service.h"
 #include "components/sync/base/model_type.h"
 #include "components/sync/model/in_memory_metadata_change_list.h"
 #include "components/sync/model/metadata_batch.h"
@@ -18,7 +19,8 @@ namespace tab_groups {
 SharedTabGroupDataSyncBridge::SharedTabGroupDataSyncBridge(
     SavedTabGroupModel* model,
     syncer::OnceModelTypeStoreFactory create_store_callback,
-    std::unique_ptr<syncer::ModelTypeChangeProcessor> change_processor)
+    std::unique_ptr<syncer::ModelTypeChangeProcessor> change_processor,
+    PrefService* pref_service)
     : syncer::ModelTypeSyncBridge(std::move(change_processor)), model_(model) {
   CHECK(model_);
   std::move(create_store_callback)
@@ -55,8 +57,8 @@ SharedTabGroupDataSyncBridge::ApplyIncrementalSyncChanges(
   return std::nullopt;
 }
 
-void SharedTabGroupDataSyncBridge::GetData(StorageKeyList storage_keys,
-                                           DataCallback callback) {
+void SharedTabGroupDataSyncBridge::GetDataForCommit(StorageKeyList storage_keys,
+                                                    DataCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   NOTIMPLEMENTED();
   auto batch = std::make_unique<syncer::MutableDataBatch>();
@@ -128,30 +130,18 @@ void SharedTabGroupDataSyncBridge::OnStoreCreated(
   }
 
   store_ = std::move(store);
-  store_->ReadAllData(
-      base::BindOnce(&SharedTabGroupDataSyncBridge::OnDatabaseLoad,
+  store_->ReadAllDataAndMetadata(
+      base::BindOnce(&SharedTabGroupDataSyncBridge::OnReadAllDataAndMetadata,
                      weak_ptr_factory_.GetWeakPtr()));
 }
 
-void SharedTabGroupDataSyncBridge::OnDatabaseLoad(
+void SharedTabGroupDataSyncBridge::OnReadAllDataAndMetadata(
     const std::optional<syncer::ModelError>& error,
-    std::unique_ptr<syncer::ModelTypeStore::RecordList> entries) {
-  if (error) {
-    change_processor()->ReportError(*error);
-    return;
-  }
-
-  store_->ReadAllMetadata(
-      base::BindOnce(&SharedTabGroupDataSyncBridge::OnReadAllMetadata,
-                     weak_ptr_factory_.GetWeakPtr(), std::move(entries)));
-}
-
-void SharedTabGroupDataSyncBridge::OnReadAllMetadata(
     std::unique_ptr<syncer::ModelTypeStore::RecordList> entries,
-    const std::optional<syncer::ModelError>& error,
     std::unique_ptr<syncer::MetadataBatch> metadata_batch) {
   if (error) {
-    change_processor()->ReportError({FROM_HERE, "Failed to read metadata."});
+    change_processor()->ReportError(
+        {FROM_HERE, "Failed to read data or metadata."});
     return;
   }
 

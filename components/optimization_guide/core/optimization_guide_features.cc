@@ -162,7 +162,7 @@ BASE_FEATURE(kLogOnDeviceMetricsOnStartup,
 // Whether to download the text safety classifier model.
 BASE_FEATURE(kTextSafetyClassifier,
              "TextSafetyClassifier",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 // Whether the text safety remote fallback should be used.
 BASE_FEATURE(kTextSafetyRemoteFallback,
@@ -704,6 +704,9 @@ bool IsPerformanceClassCompatibleWithOnDeviceModel(
       "compatible_on_device_performance_classes");
   if (perf_classes_string.empty()) {
     perf_classes_string = "3,4,5,6";
+  }
+  if (perf_classes_string == "*") {
+    return true;
   }
   std::vector<std::string_view> perf_classes_list = base::SplitStringPiece(
       perf_classes_string, ",", base::WhitespaceHandling::TRIM_WHITESPACE,

@@ -781,7 +781,7 @@ GpuProcessHost::GpuProcessHost(int host_id, GpuProcessKind kind)
 }
 
 GpuProcessHost::~GpuProcessHost() {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (in_process_gpu_thread_)
     DCHECK(process_);
 
@@ -794,7 +794,7 @@ GpuProcessHost::~GpuProcessHost() {
   }
 #endif
 
-  // This is only called on the IO thread so no race against the constructor
+  // This is only called on the UI thread so no race against the constructor
   // for another GpuProcessHost.
   if (g_gpu_process_hosts[kind_] == this)
     g_gpu_process_hosts[kind_] = nullptr;
@@ -928,7 +928,7 @@ bool GpuProcessHost::Init() {
     in_process_gpu_thread_.reset(GetGpuMainThreadFactory()(
         InProcessChildThreadParams(
             base::SingleThreadTaskRunner::GetCurrentDefault(),
-            process_->GetInProcessMojoInvitation()),
+            process_->GetInProcessMojoInvitation(), GetIOThreadTaskRunner()),
         gpu_preferences));
     base::Thread::Options options;
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
@@ -1237,7 +1237,9 @@ GpuProcessKind GpuProcessHost::kind() {
 
 // Atomically shut down the GPU process with a normal termination status.
 void GpuProcessHost::ForceShutdown() {
-  // This is only called on the IO thread so no race against the constructor
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+
+  // This is only called on the UI thread so no race against the constructor
   // for another GpuProcessHost.
   if (g_gpu_process_hosts[kind_] == this)
     g_gpu_process_hosts[kind_] = nullptr;

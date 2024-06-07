@@ -32,11 +32,13 @@
 #include "base/values.h"
 #include "content/browser/devtools/devtools_instrumentation.h"
 #include "content/browser/devtools/network_service_devtools_observer.h"
+#include "content/browser/interest_group/ad_auction_page_data.h"
 #include "content/browser/interest_group/interest_group_caching_storage.h"
 #include "content/browser/interest_group/interest_group_real_time_report_util.h"
 #include "content/browser/interest_group/interest_group_storage.h"
 #include "content/browser/interest_group/interest_group_update.h"
 #include "content/browser/renderer_host/frame_tree_node.h"
+#include "content/services/auction_worklet/public/cpp/real_time_reporting.h"
 #include "mojo/public/cpp/bindings/self_owned_receiver.h"
 #include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
@@ -59,6 +61,8 @@ constexpr int kMaxReportQueueLength = 1000;
 constexpr base::TimeDelta kMaxReportingRoundDuration = base::Minutes(10);
 // The time interval to wait before sending the next report after sending one.
 constexpr base::TimeDelta kReportingInterval = base::Milliseconds(50);
+// Version of real time report.
+constexpr int kRealTimeReportDataVersion = 1;
 
 constexpr net::NetworkTrafficAnnotationTag kTrafficAnnotation =
     net::DefineNetworkTrafficAnnotation("auction_report_sender", R"(
@@ -142,6 +146,33 @@ std::unique_ptr<network::ResourceRequest> BuildUncredentialedRequest(
   return resource_request;
 }
 
+std::string BuildRealTimeReport(
+    const std::vector<uint8_t>& real_time_histogram) {
+  base::Value::Dict contents_dict;
+  size_t num_user_buckets =
+      blink::features::kFledgeRealTimeReportingNumBuckets.Get();
+  size_t num_platform_buckets =
+      auction_worklet::RealTimeReportingPlatformError::kNumValues;
+  contents_dict.Set("version", kRealTimeReportDataVersion);
+  CHECK_EQ(real_time_histogram.size(), num_user_buckets + num_platform_buckets);
+  base::Value::List histogram_list;
+  histogram_list.reserve(num_user_buckets);
+  base::Value::List platform_histogram_list;
+  platform_histogram_list.reserve(num_platform_buckets);
+  for (size_t i = 0; i < real_time_histogram.size(); i++) {
+    if (i < num_user_buckets) {
+      histogram_list.Append(real_time_histogram[i]);
+    } else {
+      platform_histogram_list.Append(real_time_histogram[i]);
+    }
+  }
+  contents_dict.Set("histogram", std::move(histogram_list));
+  contents_dict.Set("platformHistogram", std::move(platform_histogram_list));
+  std::optional<std::string> contents_json = base::WriteJson(contents_dict);
+  CHECK(contents_json.has_value());
+  return *contents_json;
+}
+
 // Makes a SimpleURLLoader for a given request. Returns the SimpleURLLoader
 // which will be used to report the result of an in-browser interest group based
 // ad auction to an auction participant.
@@ -154,15 +185,8 @@ std::unique_ptr<network::SimpleURLLoader> BuildSimpleUrlLoader(
   simple_url_loader->SetAllowHttpErrorResults(true);
 
   if (real_time_histogram.has_value()) {
-    base::Value::List histogram_list;
-    histogram_list.reserve(real_time_histogram->size());
-    for (uint8_t value : *real_time_histogram) {
-      histogram_list.Append(value);
-    }
-    std::optional<std::string> contents_json = base::WriteJson(histogram_list);
-    CHECK(contents_json.has_value());
-    simple_url_loader->AttachStringForUpload(*contents_json,
-                                             "application/json");
+    simple_url_loader->AttachStringForUpload(
+        BuildRealTimeReport(*real_time_histogram), "application/json");
   }
 
   return simple_url_loader;
@@ -178,6 +202,23 @@ ConvertOwnerJoinerPairsToDataKeys(
   }
   return data_keys;
 }
+
+double GetRealTimeReportingQuota(
+    std::optional<std::pair<base::TimeTicks, double>> quota,
+    base::TimeTicks now,
+    double max_real_time_reports,
+    base::TimeDelta rate_limit_window) {
+  if (!quota.has_value()) {
+    return max_real_time_reports;
+  }
+
+  double recovered_quota = max_real_time_reports *
+                           (now - quota->first).InMillisecondsF() /
+                           rate_limit_window.InMilliseconds();
+  double new_quota = quota->second + recovered_quota;
+  return std::min(new_quota, max_real_time_reports);
+}
+
 }  // namespace
 
 InterestGroupManagerImpl::ReportRequest::ReportRequest() = default;
@@ -210,6 +251,10 @@ InterestGroupManagerImpl::InterestGroupManagerImpl(
       max_report_queue_length_(kMaxReportQueueLength),
       reporting_interval_(kReportingInterval),
       max_reporting_round_duration_(kMaxReportingRoundDuration),
+      real_time_reporting_window_(
+          blink::features::kFledgeRealTimeReportingWindow.Get()),
+      max_real_time_reports_(static_cast<double>(
+          blink::features::kFledgeRealTimeReportingMaxReports.Get())),
       ba_key_fetcher_(this) {}
 
 InterestGroupManagerImpl::~InterestGroupManagerImpl() = default;
@@ -301,10 +346,12 @@ void InterestGroupManagerImpl::JoinInterestGroup(blink::InterestGroup group,
       InterestGroupObserver::kJoin, group.owner, group.name);
 
   blink::InterestGroupKey group_key(group.owner, group.name);
-  caching_storage_.JoinInterestGroup(group, joining_url,
-                                     std::move(notify_callback));
-  // This needs to happen second so that the DB row is created.
-  QueueKAnonymityUpdateForInterestGroup(group_key);
+  caching_storage_.JoinInterestGroup(
+      group, joining_url,
+      base::BindOnce(
+          &InterestGroupManagerImpl::QueueKAnonymityUpdateForInterestGroup,
+          weak_factory_.GetWeakPtr(), group_key)
+          .Then(std::move(notify_callback)));
 }
 
 void InterestGroupManagerImpl::LeaveInterestGroup(
@@ -506,11 +553,18 @@ void InterestGroupManagerImpl::EnqueueReports(
 
 void InterestGroupManagerImpl::EnqueueRealTimeReports(
     std::map<url::Origin, RealTimeReportingContributions> contributions,
+    AdAuctionPageDataCallback ad_auction_page_data_callback,
     int frame_tree_node_id,
     const url::Origin& frame_origin,
     const network::mojom::ClientSecurityState& client_security_state,
     scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory) {
   if (contributions.empty()) {
+    return;
+  }
+
+  AdAuctionPageData* ad_auction_page_data = ad_auction_page_data_callback.Run();
+  if (!ad_auction_page_data) {
+    // The page is destroyed. Don't enqueue the real time reports.
     return;
   }
 
@@ -525,7 +579,16 @@ void InterestGroupManagerImpl::EnqueueRealTimeReports(
   std::map<url::Origin, std::vector<uint8_t>> histograms =
       CalculateRealTimeReportingHistograms(std::move(contributions));
 
+  base::TimeTicks now = base::TimeTicks::Now();
   for (auto& [origin, histogram] : histograms) {
+    double quota = GetRealTimeReportingQuota(
+        ad_auction_page_data->GetRealTimeReportingQuota(origin), now,
+        max_real_time_reports_, real_time_reporting_window_);
+    if (quota < 1) {
+      continue;
+    }
+    ad_auction_page_data->UpdateRealTimeReportingQuota(origin,
+                                                       {now, quota - 1});
     auto report_request = std::make_unique<ReportRequest>();
     GURL report_url = GetRealTimeReportDestination(origin);
     report_request->request_url_size_bytes = report_url.spec().size();
@@ -582,13 +645,21 @@ void InterestGroupManagerImpl::ClearPermissionsCache() {
 }
 
 void InterestGroupManagerImpl::QueueKAnonymityUpdateForInterestGroup(
-    const blink::InterestGroupKey& group_key) {
-  k_anonymity_manager_->QueryKAnonymityForInterestGroup(group_key);
+    const blink::InterestGroupKey& group_key,
+    const std::optional<InterestGroupKanonUpdateParameter> update_parameter) {
+  if (update_parameter) {
+    k_anonymity_manager_->QueryKAnonymityData(group_key,
+                                              update_parameter.value());
+  }
 }
 
 void InterestGroupManagerImpl::UpdateKAnonymity(
-    const StorageInterestGroup::KAnonymityData& data) {
-  caching_storage_.UpdateKAnonymity(data);
+    const blink::InterestGroupKey& interest_group_key,
+    const std::vector<std::string>& positive_hashed_keys,
+    const base::Time update_time,
+    bool replace_existing_values) {
+  caching_storage_.UpdateKAnonymity(interest_group_key, positive_hashed_keys,
+                                    update_time, replace_existing_values);
 }
 
 void InterestGroupManagerImpl::GetLastKAnonymityReported(
@@ -798,13 +869,6 @@ void InterestGroupManagerImpl::GetInterestGroupsForUpdate(
                                               std::move(callback));
 }
 
-void InterestGroupManagerImpl::GetKAnonymityDataForUpdate(
-    const blink::InterestGroupKey& group_key,
-    base::OnceCallback<void(
-        const std::vector<StorageInterestGroup::KAnonymityData>&)> callback) {
-  caching_storage_.GetKAnonymityDataForUpdate(group_key, std::move(callback));
-}
-
 void InterestGroupManagerImpl::GetDebugReportLockoutAndCooldowns(
     base::flat_set<url::Origin> origins,
     base::OnceCallback<void(std::optional<DebugReportLockoutAndCooldowns>)>
@@ -820,21 +884,22 @@ void InterestGroupManagerImpl::UpdateInterestGroup(
   caching_storage_.UpdateInterestGroup(
       group_key, std::move(update),
       base::BindOnce(&InterestGroupManagerImpl::OnUpdateComplete,
-                     weak_factory_.GetWeakPtr(), group_key.owner,
-                     group_key.name, std::move(callback)));
+                     weak_factory_.GetWeakPtr(), group_key,
+                     std::move(callback)));
 }
 
 void InterestGroupManagerImpl::OnUpdateComplete(
-    const url::Origin& owner_origin,
-    const std::string& name,
+    const blink::InterestGroupKey& group_key,
     base::OnceCallback<void(bool)> callback,
-    bool success) {
-  NotifyInterestGroupAccessed(/*devtools_auction_id=*/std::nullopt,
-                              InterestGroupObserver::kUpdate, owner_origin,
-                              name, /*component_seller_origin=*/std::nullopt,
-                              /*bid=*/std::nullopt,
-                              /*bid_currency=*/std::nullopt);
-  std::move(callback).Run(success);
+    std::optional<InterestGroupKanonUpdateParameter> kanon_update_parameter) {
+  NotifyInterestGroupAccessed(
+      /*devtools_auction_id=*/std::nullopt, InterestGroupObserver::kUpdate,
+      group_key.owner, group_key.name, /*component_seller_origin=*/std::nullopt,
+      /*bid=*/std::nullopt,
+      /*bid_currency=*/std::nullopt);
+  std::move(callback).Run(kanon_update_parameter.has_value());
+  QueueKAnonymityUpdateForInterestGroup(group_key,
+                                        std::move(kanon_update_parameter));
 }
 
 void InterestGroupManagerImpl::ReportUpdateFailed(

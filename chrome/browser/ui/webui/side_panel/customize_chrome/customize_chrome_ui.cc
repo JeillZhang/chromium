@@ -18,7 +18,7 @@
 #include "chrome/browser/search/background/ntp_custom_background_service_factory.h"
 #include "chrome/browser/search/background/wallpaper_search/wallpaper_search_background_manager.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
-#include "chrome/browser/ui/side_panel/customize_chrome/customize_chrome_utils.h"
+#include "chrome/browser/ui/views/side_panel/customize_chrome/customize_chrome_utils.h"
 #include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/webui/cr_components/customize_color_scheme_mode/customize_color_scheme_mode_handler.h"
 #include "chrome/browser/ui/webui/cr_components/theme_color_picker/theme_color_picker_handler.h"
@@ -41,7 +41,6 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_data_source.h"
-#include "ui/base/ui_base_features.h"
 #include "ui/base/webui/web_ui_util.h"
 #include "ui/webui/color_change_listener/color_change_handler.h"
 
@@ -234,7 +233,7 @@ CustomizeChromeUI::CustomizeChromeUI(content::WebUI* web_ui)
 
   source->AddBoolean("showDeviceThemeToggle",
 #if BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_WIN)
-                     features::IsChromeWebuiRefresh2023());
+                     true);
 #else
                      false);
 #endif
@@ -242,8 +241,7 @@ CustomizeChromeUI::CustomizeChromeUI(content::WebUI* web_ui)
   source->AddBoolean(
       "extensionsCardEnabled",
       base::FeatureList::IsEnabled(
-          ntp_features::kCustomizeChromeSidePanelExtensionsCard) &&
-          features::IsChromeWebuiRefresh2023());
+          ntp_features::kCustomizeChromeSidePanelExtensionsCard));
 
   source->AddBoolean("wallpaperSearchEnabled", wallpaper_search_enabled);
   source->AddBoolean(

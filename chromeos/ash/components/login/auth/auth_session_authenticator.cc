@@ -17,7 +17,6 @@
 #include "base/time/default_clock.h"
 #include "chromeos/ash/components/cryptohome/auth_factor.h"
 #include "chromeos/ash/components/cryptohome/cryptohome_parameters.h"
-#include "chromeos/ash/components/cryptohome/cryptohome_util.h"
 #include "chromeos/ash/components/cryptohome/error_types.h"
 #include "chromeos/ash/components/cryptohome/error_util.h"
 #include "chromeos/ash/components/cryptohome/system_salt_getter.h"
@@ -330,6 +329,15 @@ void AuthSessionAuthenticator::DoCompleteLogin(
         steps.push_back(base::BindOnce(
             &AuthSessionAuthenticator::RecordFirstAuthFactorAdded,
             weak_factory_.GetWeakPtr()));
+      } else if (ephemeral) {
+        // Short-terms fix for b/344603210:
+        // Ephemeral users don't have active authsession in onboarding
+        // flow, so we need to set up their password here, if they have one.
+        if (has_password) {
+          steps.push_back(
+              base::BindOnce(&AuthFactorEditor::AddContextKnowledgeKey,
+                             auth_factor_editor_->AsWeakPtr()));
+        }
       } else {
         // If Local passwords are enabled, password setup would
         // happen later in OOBE flow.
@@ -669,8 +677,8 @@ void AuthSessionAuthenticator::LoginAsKioskAccount(
 void AuthSessionAuthenticator::LoginAsArcKioskAccount(
     const AccountId& app_account_id,
     bool ephemeral) {
-  LoginAsKioskImpl(app_account_id, user_manager::UserType::kArcKioskApp,
-                   /*force_dircrypto=*/true, /*ephemeral=*/ephemeral);
+  // TODO(b/336756417): Remove this method
+  NOTREACHED_NORETURN();
 }
 
 void AuthSessionAuthenticator::LoginAsWebKioskAccount(

@@ -230,7 +230,7 @@ BASE_FEATURE(kDMServerOAuthForChildUser,
 
 BASE_FEATURE(kEnableWatermarkView,
              "EnableWatermarkView",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 #if !BUILDFLAG(IS_ANDROID)
 // Whether to allow installed-by-default web apps to be installed or not.
@@ -443,7 +443,7 @@ BASE_FEATURE(kHappinessTrackingSurveysConfiguration,
 
 const base::FeatureParam<std::string> kHappinessTrackingSurveysHostedUrl{
     &kHappinessTrackingSurveysConfiguration, "custom-url",
-    "https://storage.googleapis.com/chrome_hats/index.html"};
+    "https://www.google.com/chrome/hats/index.html"};
 
 // Enables or disables the Happiness Tracking System for COEP issues in Chrome
 // DevTools on Desktop.
@@ -702,6 +702,16 @@ BASE_FEATURE(kHappinessTrackingOsSettingsSearch,
 BASE_FEATURE(kHappinessTrackingBorealisGames,
              "HappinessTrackingBorealisGames",
              base::FEATURE_DISABLED_BY_DEFAULT);
+// Enables the Happiness Tracking System for ChromeOS Launcher survey. This
+// survey is enabled to 25% of users.
+BASE_FEATURE(kHappinessTrackingLauncherAppsFinding,
+             "HappinessTrackingLauncherAppsFinding",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+// Enables the Happiness Tracking System for ChromeOS Launcher survey. This
+// survey is enabled to 75% of users.
+BASE_FEATURE(kHappinessTrackingLauncherAppsNeeding,
+             "HappinessTrackingLauncherAppsNeeding",
+             base::FEATURE_DISABLED_BY_DEFAULT);
 #endif
 
 // Hides the origin text from showing up briefly in WebApp windows.
@@ -729,11 +739,18 @@ BASE_FEATURE(kHttpsFirstModeV2ForTypicallySecureUsers,
 // Enables automatically upgrading main frame navigations to HTTPS.
 BASE_FEATURE(kHttpsUpgrades, "HttpsUpgrades", base::FEATURE_ENABLED_BY_DEFAULT);
 
-// Enables HTTPS-First Mode by default in Incognito Mode, changing the binary
-// opt-in to HTTPS-First Mode with a tri-state setting (HFM everywhere, HFM in
-// Incognito, or no HFM) with HFM-in-Incognito the new default setting.
+// Enables HTTPS-First Mode by default in Incognito Mode. (The related feature
+// kHttpsFirstModeIncognitoNewSettings controls whether new settings controls
+// are available for opting out of this default behavior.)
 BASE_FEATURE(kHttpsFirstModeIncognito,
              "HttpsFirstModeIncognito",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+// Changes the binary opt-in to HTTPS-First Mode with a tri-state setting (HFM
+// everywhere, HFM in Incognito, or no HFM) with HFM-in-Incognito the new
+// default setting. This feature is dependent on kHttpsFirstModeIncognito.
+BASE_FEATURE(kHttpsFirstModeIncognitoNewSettings,
+             "HttpsFirstModeIncognitoNewSettings",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
 #if BUILDFLAG(IS_MAC)
@@ -1095,6 +1112,11 @@ BASE_FEATURE(kSafetyHub,
 #endif  // BUILDFLAG(IS_ANDROID)
 );
 
+// Enables or disables the Trust Safety Sentiment Survey for Safety Hub.
+BASE_FEATURE(kSafetyHubTrustSafetySentimentSurvey,
+             "TrustSafetySentimentSurveyForSafetyHub",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
 // Time between automated runs of the password check.
 const base::FeatureParam<base::TimeDelta> kBackgroundPasswordCheckInterval{
     &kSafetyHub, "background-password-check-interval", base::Days(30)};
@@ -1426,6 +1448,14 @@ const base::FeatureParam<double>
     kTrustSafetySentimentSurveyV2SafetyCheckProbability{
         &kTrustSafetySentimentSurveyV2, "safety-check-probability", 0.0};
 const base::FeatureParam<double>
+    kTrustSafetySentimentSurveyV2SafetyHubNotificationProbability{
+        &kTrustSafetySentimentSurveyV2, "safety-hub-notification-probability",
+        0.0};
+const base::FeatureParam<double>
+    kTrustSafetySentimentSurveyV2SafetyHubInteractionProbability{
+        &kTrustSafetySentimentSurveyV2, "safety-hub-interaction-probability",
+        0.0};
+const base::FeatureParam<double>
     kTrustSafetySentimentSurveyV2TrustedSurfaceProbability{
         &kTrustSafetySentimentSurveyV2, "trusted-surface-probability", 0.0};
 const base::FeatureParam<double>
@@ -1472,6 +1502,14 @@ extern const base::FeatureParam<std::string>
 const base::FeatureParam<std::string>
     kTrustSafetySentimentSurveyV2SafetyCheckTriggerId{
         &kTrustSafetySentimentSurveyV2, "safety-check-trigger-id", ""};
+const base::FeatureParam<std::string>
+    kTrustSafetySentimentSurveyV2SafetyHubInteractionTriggerId{
+        &kTrustSafetySentimentSurveyV2, "safety-hub-interaction-trigger-id",
+        ""};
+const base::FeatureParam<std::string>
+    kTrustSafetySentimentSurveyV2SafetyHubNotificationTriggerId{
+        &kTrustSafetySentimentSurveyV2, "safety-hub-notification-trigger-id",
+        ""};
 const base::FeatureParam<std::string>
     kTrustSafetySentimentSurveyV2TrustedSurfaceTriggerId{
         &kTrustSafetySentimentSurveyV2, "trusted-surface-trigger-id", ""};
@@ -1522,10 +1560,6 @@ BASE_FEATURE(kUserActivityEventLogging,
 #endif
 
 #if !BUILDFLAG(IS_ANDROID)
-BASE_FEATURE(kWebAppDedupeInstallUrls,
-             "WebAppDedupeInstallUrls",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
 BASE_FEATURE(kWebAppManifestIconUpdating,
              "WebAppManifestIconUpdating",
              base::FEATURE_DISABLED_BY_DEFAULT);

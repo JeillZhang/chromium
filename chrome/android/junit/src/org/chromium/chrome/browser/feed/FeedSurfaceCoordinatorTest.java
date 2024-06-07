@@ -283,7 +283,7 @@ public class FeedSurfaceCoordinatorTest {
         when(mProcessScope.obtainFeedSurfaceScope(any(FeedSurfaceScopeDependencyProvider.class)))
                 .thenReturn(mSurfaceScope);
         when(mSurfaceScope.provideListRenderer()).thenReturn(mRenderer);
-        when(mRenderer.bind(mContentManagerCaptor.capture(), isNull(), eq(false)))
+        when(mRenderer.bind(mContentManagerCaptor.capture(), isNull(), anyInt()))
                 .thenReturn(mRecyclerView);
         when(mSurfaceScope.getLaunchReliabilityLogger()).thenReturn(mLaunchReliabilityLogger);
         TrackerFactory.setTrackerForTests(mTracker);
@@ -510,7 +510,6 @@ public class FeedSurfaceCoordinatorTest {
     }
 
     @Test
-    @EnableFeatures(ChromeFeatureList.DYNAMIC_TOP_CHROME)
     @DisableFeatures(ChromeFeatureList.TAB_STRIP_LAYOUT_OPTIMIZATION)
     public void testTabStripHeightChangeCallback() {
         ArgumentCaptor<Callback<Integer>> captor = ArgumentCaptor.forClass(Callback.class);

@@ -202,6 +202,10 @@ extern bool IsLensOverlayEnabled();
 
 // Returns the finch configured help center URL for lens permission modal.
 COMPONENT_EXPORT(LENS_FEATURES)
+extern std::string GetLensOverlayActivityURL();
+
+// Returns the finch configured help center URL for lens permission modal.
+COMPONENT_EXPORT(LENS_FEATURES)
 extern std::string GetLensOverlayHelpCenterURL();
 
 // Returns the minimum amount of physical memory required to enable the Lens
@@ -225,17 +229,83 @@ extern int GetLensOverlayImageCompressionQuality();
 COMPONENT_EXPORT(LENS_FEATURES)
 extern int GetLensOverlayScreenshotRenderQuality();
 
-// Returns the finch configured max image area for the Lens overlay feature.
+// Returns whether to use the tiered downscaling approach. If false, defaults to
+// the normal since tier approach.
+COMPONENT_EXPORT(LENS_FEATURES)
+extern bool LensOverlayUseTieredDownscaling();
+
+// Returns the finch configured max image height for the Lens overlay feature
+// when tiered downscaling approach is disabled.
 COMPONENT_EXPORT(LENS_FEATURES)
 extern int GetLensOverlayImageMaxArea();
 
-// Returns the finch configured max image height for the Lens overlay feature.
+// Returns the finch configured max image height for the Lens overlay feature
+// between Tiers 1 and 2. With the UI scaling, there is a possibility the image
+// needs to be downscaled, but doesn't fit in a specific tier, which is when the
+// image gets downscaled to this value. Corresponds to Tier 1.5 in
+// go/lens-overlay-tiered-downscaling. This is also the value used if tier
+// downscaling approach is disabled.
 COMPONENT_EXPORT(LENS_FEATURES)
 extern int GetLensOverlayImageMaxHeight();
 
-// Returns the finch configured max image width for the Lens overlay feature.
+// Returns the finch configured max image width for the Lens overlay feature
+// between Tiers 1 and 2. With the UI scaling, there is a possibility the image
+// needs to be downscaled, but doesn't fit in a specific tier, which is when the
+// image gets downscaled to this value. Corresponds to Tier 1.5 in
+// go/lens-overlay-tiered-downscaling.
 COMPONENT_EXPORT(LENS_FEATURES)
 extern int GetLensOverlayImageMaxWidth();
+
+// Returns the finch configured max image area for the Lens overlay feature at
+// Tier 1. Tier 1 is the lower resolution we downscale to.
+COMPONENT_EXPORT(LENS_FEATURES)
+extern int GetLensOverlayImageMaxAreaTier1();
+
+// Returns the finch configured max image height for the Lens overlay feature at
+// Tier 1. Tier 1 is the lower resolution we downscale to.
+COMPONENT_EXPORT(LENS_FEATURES)
+extern int GetLensOverlayImageMaxHeightTier1();
+
+// Returns the finch configured max image width for the Lens overlay feature at
+// Tier 1. Tier 1 is the lower resolution we downscale to.
+COMPONENT_EXPORT(LENS_FEATURES)
+extern int GetLensOverlayImageMaxWidthTier1();
+
+// Returns the finch configured max image area for the Lens overlay feature at
+// Tier 2. Tier 2 is the middle tier resolution we downscale to.
+COMPONENT_EXPORT(LENS_FEATURES)
+extern int GetLensOverlayImageMaxAreaTier2();
+
+// Returns the finch configured max image height for the Lens overlay feature at
+// Tier 2. Tier 2 is the middle tier resolution we downscale to.
+COMPONENT_EXPORT(LENS_FEATURES)
+extern int GetLensOverlayImageMaxHeightTier2();
+
+// Returns the finch configured max image width for the Lens overlay feature at
+// Tier 2. Tier 2 is the middle tier resolution we downscale to.
+COMPONENT_EXPORT(LENS_FEATURES)
+extern int GetLensOverlayImageMaxWidthTier2();
+
+// Returns the finch configured max image area for the Lens overlay feature at
+// Tier 3. Tier 3 is the highest resolution we downscale to.
+COMPONENT_EXPORT(LENS_FEATURES)
+extern int GetLensOverlayImageMaxAreaTier3();
+
+// Returns the finch configured max image height for the Lens overlay feature at
+// Tier 3. Tier 3 is the highest resolution we downscale to.
+COMPONENT_EXPORT(LENS_FEATURES)
+extern int GetLensOverlayImageMaxHeightTier3();
+
+// Returns the finch configured max image width for the Lens overlay feature at
+// Tier 3. Tier 3 is the highest resolution we downscale to.
+COMPONENT_EXPORT(LENS_FEATURES)
+extern int GetLensOverlayImageMaxWidthTier3();
+
+// Returns the finch configured UI scaling factor that is used to decide what
+// tier the captured screenshot should be downscaled to. A lower scaling factor
+// threshold leads to more downscaling at that threshold.
+COMPONENT_EXPORT(LENS_FEATURES)
+extern int GetLensOverlayImageDownscaleUiScalingFactorThreshold();
 
 // Returns the finch configured endpoint URL for the Lens overlay.
 COMPONENT_EXPORT(LENS_FEATURES)
@@ -299,7 +369,7 @@ extern bool IsLensOverlayGoogleDseRequired();
 // Returns the finch configured loading image URL for the results in Lens
 // Overlay.
 COMPONENT_EXPORT(LENS_FEATURES)
-extern std::string GetLensOverlayResultsSearchLoadingURL();
+extern std::string GetLensOverlayResultsSearchLoadingURL(bool dark_mode);
 
 // Returns the ideal height of the region that is created when a user taps
 // rather than drags.
@@ -320,11 +390,43 @@ extern bool UseLensOverlayForImageSearch();
 COMPONENT_EXPORT(LENS_FEATURES)
 extern bool IsFindInPageEntryPointEnabled();
 
+// Returns whether to enable the omnibox entry point.
+COMPONENT_EXPORT(LENS_FEATURES)
+extern bool IsOmniboxEntryPointEnabled();
+
 // Returns whether or not to read the browser dark mode setting
 // for Lens Overlay. If false, it will fall back to light mode.
 COMPONENT_EXPORT(LENS_FEATURES)
 extern bool UseBrowserDarkModeSettingForLensOverlay();
 
+// Returns whether dynamic theme detection based on the screenshot is enabled.
+COMPONENT_EXPORT(LENS_FEATURES)
+extern bool IsDynamicThemeDetectionEnabled();
+
+// Returns the min threshold for the fraction of the pixels with the extracted
+// vibrant or dynamic color out of the total number of pixels in the screenshot.
+COMPONENT_EXPORT(LENS_FEATURES)
+extern double DynamicThemeMinPopulationPct();
+
+// Returns the min threshold for the chroma of the extracted vibrant or dynamic
+// color to be considered for matching to a set of candidate color palettes.
+COMPONENT_EXPORT(LENS_FEATURES)
+extern double DynamicThemeMinChroma();
+
+// Returns whether or not to send the visual search interaction param with
+// Lens text selection queries.
+COMPONENT_EXPORT(LENS_FEATURES)
+extern bool SendVisualSearchInteractionParamForLensTextQueries();
+
+// Returns the minimum intersection over union between region and text to serve
+// as a threshold for triggering select text chip over region search.
+COMPONENT_EXPORT(LENS_FEATURES)
+extern double GetLensOverlaySelectTextOverRegionTriggerThreshold();
+
+// Returns whether the shimmer should be rendered using Canvas2D or CSS Paint
+// Api.
+COMPONENT_EXPORT(LENS_FEATURES)
+extern bool GetLensOverlayUseShimmerCanvas();
 }  // namespace lens::features
 
 #endif  // COMPONENTS_LENS_LENS_FEATURES_H_

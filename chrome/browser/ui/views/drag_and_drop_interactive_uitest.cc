@@ -20,7 +20,6 @@
 #include "base/run_loop.h"
 #include "base/strings/escape.h"
 #include "base/strings/pattern.h"
-#include "base/strings/string_piece.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/sequenced_task_runner.h"
@@ -1129,7 +1128,13 @@ IN_PROC_BROWSER_TEST_P(DragAndDropBrowserTest, DropValidUrlFromOutside) {
 
 // Scenario: drag a URL into the Omnibox.  This is a regression test for
 // https://crbug.com/670123.
-IN_PROC_BROWSER_TEST_P(DragAndDropBrowserTest, DropUrlIntoOmnibox) {
+// TODO(crbug.com/344168586): Very flaky on linux-chromeos-rel bots.
+#if BUILDFLAG(IS_CHROMEOS_ASH) && defined(NDEBUG)
+#define MAYBE_DropUrlIntoOmnibox DISABLED_DropUrlIntoOmnibox
+#else
+#define MAYBE_DropUrlIntoOmnibox DropUrlIntoOmnibox
+#endif
+IN_PROC_BROWSER_TEST_P(DragAndDropBrowserTest, MAYBE_DropUrlIntoOmnibox) {
   std::string frame_site = use_cross_site_subframe() ? "b.test" : "a.test";
   ASSERT_TRUE(NavigateToTestPage("a.test"));
   ASSERT_TRUE(NavigateRightFrame(frame_site, "title1.html"));

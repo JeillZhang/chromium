@@ -5,6 +5,7 @@
 #ifndef COMPONENTS_SAVED_TAB_GROUPS_TAB_GROUP_SYNC_SERVICE_IMPL_H_
 #define COMPONENTS_SAVED_TAB_GROUPS_TAB_GROUP_SYNC_SERVICE_IMPL_H_
 
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -22,6 +23,8 @@
 #include "components/sync/model/model_type_store.h"
 #include "components/sync/model/model_type_sync_bridge.h"
 #include "components/sync/model/sync_data.h"
+
+class PrefService;
 
 namespace tab_groups {
 
@@ -46,7 +49,9 @@ class TabGroupSyncServiceImpl : public TabGroupSyncService,
       std::unique_ptr<SavedTabGroupModel> model,
       std::unique_ptr<SyncDataTypeConfiguration> saved_tab_group_configuration,
       std::unique_ptr<SyncDataTypeConfiguration> shared_tab_group_configuration,
-      std::unique_ptr<TabGroupStore> tab_group_store);
+      std::unique_ptr<TabGroupStore> tab_group_store,
+      PrefService* pref_service,
+      std::map<base::Uuid, LocalTabGroupID> migrated_android_local_ids);
   ~TabGroupSyncServiceImpl() override;
 
   // Disallow copy/assign.
@@ -54,7 +59,7 @@ class TabGroupSyncServiceImpl : public TabGroupSyncService,
   TabGroupSyncServiceImpl& operator=(const TabGroupSyncServiceImpl&) = delete;
 
   // TabGroupSyncService implementation.
-  void AddGroup(const SavedTabGroup& group) override;
+  void AddGroup(SavedTabGroup group) override;
   void RemoveGroup(const LocalTabGroupID& local_id) override;
   void RemoveGroup(const base::Uuid& sync_id) override;
   void UpdateVisualData(
@@ -123,6 +128,9 @@ class TabGroupSyncServiceImpl : public TabGroupSyncService,
                              TriggerSource source);
   void HandleTabGroupRemoved(const SavedTabGroup* removed_group,
                              TriggerSource source);
+
+  // Wrapper function that calls all metric recording functions.
+  void RecordMetrics();
 
   // The in-memory model representing the currently present saved tab groups.
   std::unique_ptr<SavedTabGroupModel> model_;

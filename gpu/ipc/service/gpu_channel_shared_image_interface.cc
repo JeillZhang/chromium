@@ -32,9 +32,10 @@ GpuChannelSharedImageInterface::GpuChannelSharedImageInterface(
       sync_point_client_state_(
           shared_image_stub->channel()
               ->sync_point_manager()
-              ->CreateSyncPointClientState(CommandBufferNamespace::GPU_IO,
-                                           command_buffer_id_,
-                                           sequence_)),
+              ->CreateSyncPointClientState(
+                  CommandBufferNamespace::GPU_CHANNEL_SHARED_IMAGE_INTERFACE,
+                  command_buffer_id_,
+                  sequence_)),
       shared_image_capabilities_(
           shared_image_stub->factory()->MakeCapabilities()) {
   DETACH_FROM_SEQUENCE(gpu_sequence_checker_);
@@ -69,7 +70,7 @@ GpuChannelSharedImageInterface::CreateSharedImage(
     const SharedImageInfo& si_info,
     gpu::SurfaceHandle surface_handle) {
   DCHECK(gpu::IsValidClientUsage(si_info.meta.usage));
-  auto mailbox = Mailbox::GenerateForSharedImage();
+  auto mailbox = Mailbox::Generate();
   {
     base::AutoLock lock(lock_);
     ScheduleGpuTask(
@@ -79,7 +80,7 @@ GpuChannelSharedImageInterface::CreateSharedImage(
         {});
   }
   return base::MakeRefCounted<ClientSharedImage>(mailbox, si_info.meta,
-                                                 GenUnverifiedSyncToken(),
+                                                 GenVerifiedSyncToken(),
                                                  holder_, gfx::EMPTY_BUFFER);
 }
 
@@ -110,7 +111,7 @@ GpuChannelSharedImageInterface::CreateSharedImage(
     const SharedImageInfo& si_info,
     base::span<const uint8_t> pixel_data) {
   DCHECK(gpu::IsValidClientUsage(si_info.meta.usage));
-  auto mailbox = Mailbox::GenerateForSharedImage();
+  auto mailbox = Mailbox::Generate();
   std::vector<uint8_t> pixel_data_copy(pixel_data.begin(), pixel_data.end());
   {
     base::AutoLock lock(lock_);
@@ -122,7 +123,7 @@ GpuChannelSharedImageInterface::CreateSharedImage(
         {});
   }
   return base::MakeRefCounted<ClientSharedImage>(mailbox, si_info.meta,
-                                                 GenUnverifiedSyncToken(),
+                                                 GenVerifiedSyncToken(),
                                                  holder_, gfx::EMPTY_BUFFER);
 }
 
@@ -154,7 +155,7 @@ GpuChannelSharedImageInterface::CreateSharedImage(
     SurfaceHandle surface_handle,
     gfx::BufferUsage buffer_usage) {
   DCHECK(gpu::IsValidClientUsage(si_info.meta.usage));
-  auto mailbox = Mailbox::GenerateForSharedImage();
+  auto mailbox = Mailbox::Generate();
   {
     base::AutoLock lock(lock_);
     ScheduleGpuTask(
@@ -166,7 +167,7 @@ GpuChannelSharedImageInterface::CreateSharedImage(
   }
 
   return base::MakeRefCounted<ClientSharedImage>(
-      mailbox, si_info.meta, GenUnverifiedSyncToken(),
+      mailbox, si_info.meta, GenVerifiedSyncToken(),
       GetGpuMemoryBufferHandleInfo(mailbox), holder_);
 }
 
@@ -249,7 +250,7 @@ GpuChannelSharedImageInterface::CreateSharedImage(
 #endif
 
   auto client_buffer_handle = buffer_handle.Clone();
-  auto mailbox = Mailbox::GenerateForSharedImage();
+  auto mailbox = Mailbox::Generate();
   {
     base::AutoLock lock(lock_);
     ScheduleGpuTask(
@@ -261,7 +262,7 @@ GpuChannelSharedImageInterface::CreateSharedImage(
   }
 
   return base::MakeRefCounted<ClientSharedImage>(
-      mailbox, si_info.meta, GenUnverifiedSyncToken(),
+      mailbox, si_info.meta, GenVerifiedSyncToken(),
       GpuMemoryBufferHandleInfo(std::move(client_buffer_handle),
                                 si_info.meta.format, si_info.meta.size,
                                 buffer_usage),
@@ -278,7 +279,7 @@ GpuChannelSharedImageInterface::CreateSharedImage(
   CHECK(!si_info.meta.format.PrefersExternalSampler());
 #endif
 
-  auto mailbox = Mailbox::GenerateForSharedImage();
+  auto mailbox = Mailbox::Generate();
   auto gmb_type = buffer_handle.type;
   {
     base::AutoLock lock(lock_);
@@ -291,7 +292,7 @@ GpuChannelSharedImageInterface::CreateSharedImage(
   }
 
   return base::MakeRefCounted<ClientSharedImage>(
-      mailbox, si_info.meta, GenUnverifiedSyncToken(), holder_, gmb_type);
+      mailbox, si_info.meta, GenVerifiedSyncToken(), holder_, gmb_type);
 }
 SharedImageInterface::SharedImageMapping
 GpuChannelSharedImageInterface::CreateSharedImage(
@@ -330,7 +331,7 @@ GpuChannelSharedImageInterface::CreateSharedImage(
       gfx::RowSizeForBufferFormat(si_info.meta.size.width(), buffer_format, 0));
   handle.region = std::move(shared_memory_region);
 
-  auto mailbox = Mailbox::GenerateForSharedImage();
+  auto mailbox = Mailbox::Generate();
   {
     base::AutoLock lock(lock_);
     ScheduleGpuTask(base::BindOnce(&GpuChannelSharedImageInterface::
@@ -340,7 +341,7 @@ GpuChannelSharedImageInterface::CreateSharedImage(
                     {});
   }
   shared_image_mapping.shared_image = base::MakeRefCounted<ClientSharedImage>(
-      mailbox, si_info.meta, GenUnverifiedSyncToken(), holder_,
+      mailbox, si_info.meta, GenVerifiedSyncToken(), holder_,
       gfx::SHARED_MEMORY_BUFFER);
 
   return shared_image_mapping;
@@ -380,7 +381,7 @@ GpuChannelSharedImageInterface::CreateSharedImage(
   DCHECK(IsPlaneValidForGpuMemoryBufferFormat(plane,
                                               gpu_memory_buffer->GetFormat()));
 
-  auto mailbox = Mailbox::GenerateForSharedImage();
+  auto mailbox = Mailbox::Generate();
   gfx::GpuMemoryBufferHandle handle = gpu_memory_buffer->CloneHandle();
   {
     base::AutoLock lock(lock_);
@@ -401,7 +402,7 @@ GpuChannelSharedImageInterface::CreateSharedImage(
           gpu_memory_buffer->GetSize(), si_info.meta.color_space,
           si_info.meta.surface_origin, si_info.meta.alpha_type,
           si_info.meta.usage),
-      GenUnverifiedSyncToken(), holder_, gpu_memory_buffer->GetType());
+      GenVerifiedSyncToken(), holder_, gpu_memory_buffer->GetType());
 }
 
 void GpuChannelSharedImageInterface::CreateGMBSharedImageOnGpuThread(

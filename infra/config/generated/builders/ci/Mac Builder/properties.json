@@ -241,7 +241,8 @@
           "builder": "mac_chromium_compile_rel_ng",
           "group": "tryserver.chromium.mac"
         }
-      ]
+      ],
+      "retry_failed_shards": true
     }
   },
   "$build/reclient": {
@@ -267,6 +268,9 @@
     ]
   },
   "builder_group": "chromium.mac",
+  "gardener_rotations": [
+    "chromium"
+  ],
   "recipe": "chromium",
   "sheriff_rotations": [
     "chromium"

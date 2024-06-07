@@ -236,7 +236,6 @@
 <translation id="2189104374785738357">ویرایش جزئیات «نام نقطه دستیابی»</translation>
 <translation id="2195732836444333448">به حداکثر ظرفیت رسیده‌ایم. به‌زودی دوباره برمی‌گردیم.</translation>
 <translation id="2201758491318984023">دوچرخه</translation>
-<translation id="2203222757805818543">زمان‌بندی فعلی روی <ph name="SUNRISE" /> تا <ph name="SUNSET" /> تنظیم شده است. برای به‌روزرسانی خودکار زمان‌بندی «حالت تاریک»، <ph name="BEGIN_LINK" />دسترسی به مکان را روشن کنید<ph name="END_LINK" /></translation>
 <translation id="2203272733515928691">چشمه آب‌گرم</translation>
 <translation id="2203642483788377106">صخره</translation>
 <translation id="2208388655216963643">امپرسیونیست</translation>
@@ -313,6 +312,7 @@
 <translation id="2618015542787108131">تپه شنی</translation>
 <translation id="2619761439309613843">بازآوری روزانه</translation>
 <translation id="2620436844016719705">سیستم</translation>
+<translation id="2637303424821734920">خاموش - برای نمایش آب‌وهوای محلی، <ph name="BEGIN_LINK" />دسترسی مکان سیستم را روشن کنید<ph name="END_LINK" /></translation>
 <translation id="2638662041295312666">تصویر ورود به سیستم</translation>
 <translation id="2640549051766135490">آلبوم <ph name="TITLE" /> <ph name="DESC" /> انتخاب شد</translation>
 <translation id="2645380101799517405">کنترل‌ها</translation>
@@ -364,6 +364,7 @@
 <translation id="3054177598518735801"><ph name="CURRENT_VALUE" /> میلی‌آمپر</translation>
 <translation id="3056720590588772262">نقطه پایان</translation>
 <translation id="3060579846059757016">رئوس مطالب</translation>
+<translation id="3061850252076394168">فعال کردن «انتخاب برای شنیدن»</translation>
 <translation id="3069085583900247081">آزمایش ناموفق بود</translation>
 <translation id="3078740164268491126">جدول</translation>
 <translation id="3081652522083185657">روشن</translation>
@@ -630,7 +631,6 @@
 <translation id="458794348635939462">تبدیل همه میزبانان ناموفق بود</translation>
 <translation id="4593212453765072419">راستی‌آزمایی پروکسی مورد نیاز است</translation>
 <translation id="4609350030397390689">کاهش روشنایی صفحه‌کلید</translation>
-<translation id="4617553623719764431">«آب‌وهوا» نمایش داده نمی‌شود زیرا مکانتان برای آن مشخص نیست. برای نمایش آب‌وهوای محلی، <ph name="BEGIN_LINK" />دسترسی به مکان را روشن کنید<ph name="END_LINK" /></translation>
 <translation id="4627232916386272576">‏<ph name="DOCUMENT_TITLE" />، <ph name="PRINTER_NAME" />، <ph name="CREATION_TIME" />، <ph name="PRINTED_PAGE_NUMBER" /> از مجموع <ph name="TOTAL_PAGE_NUMBER" />. برای لغو کار چاپ، Enter را فشار دهید.</translation>
 <translation id="463791356324567266">درحال لغو اسکن کردن…</translation>
 <translation id="4646949265910132906">‏اتصال Wi-Fi امن</translation>
@@ -704,6 +704,7 @@
 <translation id="4985509611418653372">اجرا</translation>
 <translation id="4987769320337599931">دیوار آتش</translation>
 <translation id="4988526792673242964">صفحات</translation>
+<translation id="4989542687859782284">دردسترس نیست</translation>
 <translation id="4999333166442584738">پنهان کردن گزارش</translation>
 <translation id="500920857929044050">توقف آزمایش</translation>
 <translation id="5017508259293544172">LEAP</translation>
@@ -960,7 +961,6 @@
 <translation id="6412715219990689313">صفحه‌کلید داخلی</translation>
 <translation id="6417265370957905582">‏دستیار Google</translation>
 <translation id="6423239382391657905">‏باز کردن VPN</translation>
-<translation id="6438073885402882007">‏با این کار، به خدمات سیستم اجازه می‌دهید از مکانتان استفاده کند. «مکان» ممکن است برای تخمین زدن مکان دستگاهتان از منابعی مثل Wi-Fi، شبکه‌های تلفن همراه، و حسگرها استفاده کند. <ph name="LINK_BEGIN" />بیشتر بدانید<ph name="LINK_END" /></translation>
 <translation id="6439505561246192797">ضعیف (<ph name="SIGNAL_STRENGTH" />)</translation>
 <translation id="6447630859861661624">رفتن به تنظیمات حساب</translation>
 <translation id="6462978824459367242">دکمه «افزودن نام نقطه دستیابی» اکنون فعال است</translation>

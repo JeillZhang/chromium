@@ -525,13 +525,12 @@ public class StartSurfaceCoordinator implements StartSurface {
                     new SingleTabSwitcherCoordinator(
                             mActivity,
                             mView.getCardTabSwitcherContainer(),
-                            null,
                             mTabModelSelector,
                             /* isShownOnNtp= */ false,
                             /* isTablet= */ false,
-                            /* isScrollableMvtEnabled= */ true,
                             /* mostRecentTab= */ null,
                             /* singleTabCardClickedCallback= */ null,
+                            /* seeMoreLinkClickedCallback= */ null,
                             /* snapshotParentViewRunnable= */ null,
                             mTabContentManager,
                             /* uiConfig= */ null,
@@ -544,8 +543,6 @@ public class StartSurfaceCoordinator implements StartSurface {
                         mActivityLifecycleDispatcher,
                         mvTilesContainer,
                         mWindowAndroid,
-                        /* isScrollableMVTEnabled= */ true,
-                        Integer.MAX_VALUE,
                         /* snapshotTileGridChangedRunnable= */ null,
                         /* tileCountChangedRunnable= */ null);
 

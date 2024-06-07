@@ -10,13 +10,16 @@
 #include "ash/birch/birch_item.h"
 #include "base/functional/bind.h"
 #include "base/hash/sha1.h"
+#include "base/task/task_traits.h"
 #include "base/time/time.h"
 
 namespace ash {
 
 BirchItemRemover::BirchItemRemover(base::FilePath path,
                                    base::OnceClosure on_init_callback)
-    : removed_items_proto_(path, /*write_delay=*/base::TimeDelta()) {
+    : removed_items_proto_(path,
+                           /*write_delay=*/base::TimeDelta(),
+                           base::TaskPriority::USER_VISIBLE) {
   removed_items_proto_.RegisterOnInitUnsafe(std::move(on_init_callback));
   removed_items_proto_.Init();
 }
@@ -45,6 +48,16 @@ void BirchItemRemover::RemoveItem(BirchItem* item) {
                       removed_items_proto_->mutable_removed_tab_items());
       return;
     };
+    case BirchItemType::kLastActive: {
+      hash_and_insert(static_cast<BirchLastActiveItem*>(item)->url().spec(),
+                      removed_items_proto_->mutable_removed_tab_items());
+      return;
+    }
+    case BirchItemType::kMostVisited: {
+      hash_and_insert(static_cast<BirchMostVisitedItem*>(item)->url().spec(),
+                      removed_items_proto_->mutable_removed_tab_items());
+      return;
+    }
     case BirchItemType::kSelfShare: {
       hash_and_insert(static_cast<BirchSelfShareItem*>(item)->url().spec(),
                       removed_items_proto_->mutable_removed_tab_items());
@@ -76,6 +89,24 @@ void BirchItemRemover::RemoveItem(BirchItem* item) {
 void BirchItemRemover::FilterRemovedTabs(std::vector<BirchTabItem>* tab_items) {
   CHECK(removed_items_proto_.initialized());
   std::erase_if(*tab_items, [this](const BirchTabItem& item) {
+    const std::string hashed_url = base::SHA1HashString(item.url().spec());
+    return removed_items_proto_->removed_tab_items().contains(hashed_url);
+  });
+}
+
+void BirchItemRemover::FilterRemovedLastActiveItems(
+    std::vector<BirchLastActiveItem>* items) {
+  CHECK(removed_items_proto_.initialized());
+  std::erase_if(*items, [this](const BirchLastActiveItem& item) {
+    const std::string hashed_url = base::SHA1HashString(item.url().spec());
+    return removed_items_proto_->removed_tab_items().contains(hashed_url);
+  });
+}
+
+void BirchItemRemover::FilterRemovedMostVisitedItems(
+    std::vector<BirchMostVisitedItem>* items) {
+  CHECK(removed_items_proto_.initialized());
+  std::erase_if(*items, [this](const BirchMostVisitedItem& item) {
     const std::string hashed_url = base::SHA1HashString(item.url().spec());
     return removed_items_proto_->removed_tab_items().contains(hashed_url);
   });

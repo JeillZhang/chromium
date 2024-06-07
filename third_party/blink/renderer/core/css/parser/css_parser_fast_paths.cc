@@ -570,7 +570,9 @@ ALWAYS_INLINE static unsigned ParsePositiveDouble(const LChar* string,
 }
 
 // Parse a float and clamp it upwards to max_value. Optimized for having
-// no decimal part.
+// no decimal part. Returns true if the parse was successful (though it
+// may not consume the entire string; you'll need to check string != end
+// yourself if that is the intention).
 ALWAYS_INLINE static bool ParseFloatWithMaxValue(const LChar*& string,
                                                  const LChar* end,
                                                  int max_value,
@@ -603,11 +605,7 @@ ALWAYS_INLINE static bool ParseFloatWithMaxValue(const LChar*& string,
     value = new_value;
   }
 
-  if (current == end) {
-    return false;
-  }
-
-  if (*current == '.') {
+  if (current != end && *current == '.') {
     // We already parsed the integral part, try to parse
     // the fraction part.
     double fractional = 0;
@@ -1578,6 +1576,11 @@ bool CSSParserFastPaths::IsValidKeywordPropertyAndValue(
     case CSSPropertyID::kWebkitRtlOrdering:
       return value_id == CSSValueID::kLogical ||
              value_id == CSSValueID::kVisual;
+    case CSSPropertyID::kRubyAlign:
+      return value_id == CSSValueID::kSpaceAround ||
+             value_id == CSSValueID::kStart ||
+             value_id == CSSValueID::kCenter ||
+             value_id == CSSValueID::kSpaceBetween;
     case CSSPropertyID::kWebkitRubyPosition:
       return value_id == CSSValueID::kBefore || value_id == CSSValueID::kAfter;
     case CSSPropertyID::kRubyPosition:
@@ -1729,7 +1732,7 @@ CSSBitset CSSParserFastPaths::handled_by_keyword_fast_paths_properties_{{
     CSSPropertyID::kOverscrollBehaviorBlock,
     CSSPropertyID::kOverscrollBehaviorX,
     CSSPropertyID::kOverscrollBehaviorY,
-    CSSPropertyID::kRubyPosition,
+    CSSPropertyID::kRubyAlign,
     CSSPropertyID::kShapeRendering,
     CSSPropertyID::kSpeak,
     CSSPropertyID::kStrokeLinecap,

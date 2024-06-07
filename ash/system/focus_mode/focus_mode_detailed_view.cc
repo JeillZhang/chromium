@@ -8,6 +8,7 @@
 #include <utility>
 
 #include "ash/accessibility/accessibility_controller.h"
+#include "ash/glanceables/common/glanceables_util.h"
 #include "ash/resources/vector_icons/vector_icons.h"
 #include "ash/shell.h"
 #include "ash/shell_delegate.h"
@@ -47,6 +48,7 @@
 #include "ui/gfx/geometry/insets.h"
 #include "ui/gfx/text_constants.h"
 #include "ui/gfx/vector_icon_types.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/animation/ink_drop.h"
 #include "ui/views/background.h"
 #include "ui/views/controls/highlight_path_generator.h"
@@ -326,9 +328,12 @@ FocusModeDetailedView::FocusModeDetailedView(DetailedViewDelegate* delegate)
 
   CreateTimerView();
 
-  CreateTaskView();
+  const bool is_network_connected = glanceables_util::IsNetworkConnected();
 
-  scroll_content()->AddChildView(std::make_unique<FocusModeSoundsView>());
+  CreateTaskView(is_network_connected);
+
+  scroll_content()->AddChildView(
+      std::make_unique<FocusModeSoundsView>(is_network_connected));
 
   FocusModeController* focus_mode_controller = FocusModeController::Get();
   const bool in_focus_session = focus_mode_controller->in_focus_session();
@@ -508,7 +513,7 @@ void FocusModeDetailedView::UpdateToggleButtonAccessibility(
     const std::u16string duration_string = focus_mode_util::GetDurationString(
         FocusModeController::Get()->session_duration(),
         /*digital_format=*/false);
-    toggle_button->SetAccessibleName(l10n_util::GetStringFUTF16(
+    toggle_button->GetViewAccessibility().SetName(l10n_util::GetStringFUTF16(
         IDS_ASH_STATUS_TRAY_FOCUS_MODE_TOGGLE_BUTTON_INACTIVE,
         duration_string));
     toggle_button->SetTooltipText(l10n_util::GetStringUTF16(
@@ -516,9 +521,10 @@ void FocusModeDetailedView::UpdateToggleButtonAccessibility(
     return;
   }
 
-  toggle_button->SetAccessibleName(l10n_util::GetStringUTF16(
+  toggle_button->GetViewAccessibility().SetName(l10n_util::GetStringUTF16(
       IDS_ASH_STATUS_TRAY_FOCUS_MODE_TOGGLE_END_BUTTON_ACCESSIBLE_NAME));
-  toggle_button->SetTooltipText(toggle_button->GetAccessibleName());
+  toggle_button->SetTooltipText(
+      toggle_button->GetViewAccessibility().GetCachedName());
 }
 
 void FocusModeDetailedView::UpdateTimerAdjustmentButtonAccessibility() {
@@ -536,7 +542,7 @@ void FocusModeDetailedView::UpdateTimerAdjustmentButtonAccessibility() {
     const std::u16string accessible_name = l10n_util::GetStringFUTF16(
         id, focus_mode_util::GetDurationString(base::Minutes(delta),
                                                /*digital_format=*/false));
-    button->SetAccessibleName(accessible_name);
+    button->GetViewAccessibility().SetName(accessible_name);
     button->SetTooltipText(accessible_name);
   };
 
@@ -716,7 +722,7 @@ void FocusModeDetailedView::HandleTextfieldActivationChange() {
   }
 }
 
-void FocusModeDetailedView::CreateTaskView() {
+void FocusModeDetailedView::CreateTaskView(bool is_network_connected) {
   task_view_container_ =
       scroll_content()->AddChildView(std::make_unique<RoundedContainer>(
           RoundedContainer::Behavior::kAllRounded));
@@ -729,8 +735,10 @@ void FocusModeDetailedView::CreateTaskView() {
   // Create the task header.
   auto* task_view_header =
       task_view_container_->AddChildView(std::make_unique<views::Label>());
-  task_view_header->SetText(
-      l10n_util::GetStringUTF16(IDS_ASH_STATUS_TRAY_FOCUS_MODE_TASK_SUBHEADER));
+  task_view_header->SetText(l10n_util::GetStringUTF16(
+      is_network_connected
+          ? IDS_ASH_STATUS_TRAY_FOCUS_MODE_TASK_SUBHEADER
+          : IDS_ASH_STATUS_TRAY_FOCUS_MODE_TASK_OFFLINE_SUBHEADER));
   task_view_header->SetHorizontalAlignment(
       gfx::HorizontalAlignment::ALIGN_TO_HEAD);
   task_view_header->SetBorder(views::CreateEmptyBorder(kTaskViewHeaderInsets));
@@ -739,8 +747,8 @@ void FocusModeDetailedView::CreateTaskView() {
                                         *task_view_header);
 
   // Create the focus mode task view.
-  focus_mode_task_view_ =
-      task_view_container_->AddChildView(std::make_unique<FocusModeTaskView>());
+  focus_mode_task_view_ = task_view_container_->AddChildView(
+      std::make_unique<FocusModeTaskView>(is_network_connected));
 }
 
 void FocusModeDetailedView::OnTaskViewAnimate(const int shift_height) {
@@ -791,7 +799,7 @@ void FocusModeDetailedView::CreateDoNotDisturbContainer() {
                           weak_factory_.GetWeakPtr()));
   auto* controller = FocusModeController::Get();
   const bool do_not_disturb_enabled = controller->turn_on_do_not_disturb();
-  toggle->SetAccessibleName(l10n_util::GetStringUTF16(
+  toggle->GetViewAccessibility().SetName(l10n_util::GetStringUTF16(
       IDS_ASH_STATUS_TRAY_FOCUS_MODE_DO_NOT_DISTURB_ACCESSIBLE_NAME));
   toggle->SetIsOn(do_not_disturb_enabled);
   do_not_disturb_toggle_button_ = toggle.get();
@@ -903,7 +911,7 @@ void FocusModeDetailedView::UpdateTimerSettingViewUI() {
   std::u16string new_session_duration_string =
       base::NumberToString16(session_duration.InMinutes());
   timer_textfield_->SetText(new_session_duration_string);
-  timer_textfield_->SetAccessibleName(l10n_util::GetStringFUTF16(
+  timer_textfield_->GetViewAccessibility().SetName(l10n_util::GetStringFUTF16(
       IDS_ASH_STATUS_TRAY_FOCUS_MODE_TIMER_TEXTFIELD,
       focus_mode_util::GetDurationString(session_duration,
                                          /*digital_format=*/false)));

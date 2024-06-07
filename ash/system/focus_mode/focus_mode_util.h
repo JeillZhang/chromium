@@ -24,10 +24,20 @@ enum class SoundState {
 };
 
 enum class SoundType {
-  kNone,
-  kSoundscape,
-  kYouTubeMusic,
+  kNone = 0,
+  kSoundscape = 1,
+  kYouTubeMusic = 2,
 };
+
+// Values for the "ash.focus_mode.focus_mode_sounds_enabled" policy.
+inline constexpr char kFocusModeSoundsEnabled[] = "enabled";
+inline constexpr char kFocusSoundsOnly[] = "focus-sounds";
+inline constexpr char kFocusModeSoundsDisabled[] = "disabled";
+
+constexpr std::string_view kTaskListIdKey = "taskListId";
+constexpr std::string_view kTaskIdKey = "taskId";
+constexpr std::string_view kSoundTypeKey = "SoundType";
+constexpr std::string_view kPlaylistIdKey = "playlistId";
 
 constexpr base::TimeDelta kMinimumDuration = base::Minutes(1);
 constexpr base::TimeDelta kMaximumDuration = base::Minutes(300);
@@ -64,7 +74,7 @@ ASH_EXPORT std::u16string GetFormattedClockString(const base::Time end_time);
 
 // Returns a string indicating that do not disturb will be turned off when the
 // focus session ends at `end_time`.
-ASH_EXPORT std::u16string GetNotificationTitleForFocusSession(
+ASH_EXPORT std::u16string GetNotificationDescriptionForFocusSession(
     const base::Time end_time);
 
 // Reads the `timer_textfield`'s text and converts it to an integer.

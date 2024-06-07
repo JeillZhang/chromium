@@ -153,7 +153,7 @@ class Shell : public WebContentsDelegate, public WebContentsObserver {
       WebContents* source) override;
 #if BUILDFLAG(IS_MAC)
   bool HandleKeyboardEvent(WebContents* source,
-                           const NativeWebKeyboardEvent& event) override;
+                           const input::NativeWebKeyboardEvent& event) override;
 #endif
   bool DidAddMessageToConsole(WebContents* source,
                               blink::mojom::ConsoleMessageLevel log_level,
@@ -178,7 +178,7 @@ class Shell : public WebContentsDelegate, public WebContentsObserver {
   void EnumerateDirectory(WebContents* web_contents,
                           scoped_refptr<FileSelectListener> listener,
                           const base::FilePath& path) override;
-  bool IsBackForwardCacheSupported() override;
+  bool IsBackForwardCacheSupported(WebContents& contents) override;
   PreloadingEligibility IsPrerender2Supported(
       WebContents& web_contents) override;
   void UpdateInspectedWebContentsIfNecessary(

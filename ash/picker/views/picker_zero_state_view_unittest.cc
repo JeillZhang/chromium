@@ -5,6 +5,8 @@
 #include "ash/picker/views/picker_zero_state_view.h"
 
 #include <memory>
+#include <utility>
+#include <vector>
 
 #include "ash/clipboard/clipboard_history_item.h"
 #include "ash/clipboard/test_support/clipboard_history_item_builder.h"
@@ -14,6 +16,7 @@
 #include "ash/picker/views/picker_category_type.h"
 #include "ash/picker/views/picker_item_view.h"
 #include "ash/picker/views/picker_list_item_view.h"
+#include "ash/picker/views/picker_pseudo_focus_handler.h"
 #include "ash/picker/views/picker_section_view.h"
 #include "ash/picker/views/picker_zero_state_view_delegate.h"
 #include "ash/public/cpp/picker/picker_category.h"
@@ -85,6 +88,10 @@ class MockZeroStateViewDelegate : public PickerZeroStateViewDelegate {
               (PickerCategory, SearchResultsCallback),
               (override));
   MOCK_METHOD(void, NotifyPseudoFocusChanged, (views::View*), (override));
+  MOCK_METHOD(PickerActionType,
+              GetActionForResult,
+              (const PickerSearchResult& result),
+              (override));
 };
 
 class PickerZeroStateViewTest : public views::ViewsTestBase {
@@ -100,25 +107,27 @@ TEST_F(PickerZeroStateViewTest, CreatesCategorySections) {
   PickerZeroStateView view(&mock_delegate, kAllCategories, {}, kPickerWidth,
                            &asset_fetcher_);
 
-  EXPECT_THAT(view.section_views_for_testing(),
+  EXPECT_THAT(view.category_section_views_for_testing(),
               ElementsAre(Key(PickerCategoryType::kEditorWrite),
                           Key(PickerCategoryType::kEditorRewrite),
                           Key(PickerCategoryType::kGeneral),
                           Key(PickerCategoryType::kCalculations)));
-  EXPECT_THAT(view.RecentSectionForTesting(), IsNull());
+  EXPECT_THAT(view.PrimarySectionForTesting().item_views_for_testing(),
+              IsEmpty());
 }
 
 TEST_F(PickerZeroStateViewTest, LeftClickSelectsCategory) {
-  std::unique_ptr<views::Widget> widget = CreateTestWidget();
+  std::unique_ptr<views::Widget> widget =
+      CreateTestWidget(views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
   widget->SetFullscreen(true);
   MockZeroStateViewDelegate mock_delegate;
   auto* view = widget->SetContentsView(std::make_unique<PickerZeroStateView>(
       &mock_delegate, std::vector<PickerCategory>{PickerCategory::kExpressions},
       std::vector<PickerCategory>{}, kPickerWidth, &asset_fetcher_));
   widget->Show();
-  ASSERT_THAT(view->section_views_for_testing(),
+  ASSERT_THAT(view->category_section_views_for_testing(),
               Contains(Key(PickerCategoryType::kGeneral)));
-  ASSERT_THAT(view->section_views_for_testing()
+  ASSERT_THAT(view->category_section_views_for_testing()
                   .find(PickerCategoryType::kGeneral)
                   ->second->item_views_for_testing(),
               Not(IsEmpty()));
@@ -127,7 +136,7 @@ TEST_F(PickerZeroStateViewTest, LeftClickSelectsCategory) {
               SelectZeroStateCategory(PickerCategory::kExpressions))
       .Times(1);
 
-  PickerItemView* category_view = view->section_views_for_testing()
+  PickerItemView* category_view = view->category_section_views_for_testing()
                                       .find(PickerCategoryType::kGeneral)
                                       ->second->item_views_for_testing()[0];
   ViewDrawnWaiter().Wait(category_view);
@@ -142,11 +151,11 @@ TEST_F(PickerZeroStateViewTest, ShowsRecentItems) {
                    MockZeroStateViewDelegate::SearchResultsCallback callback) {
         std::move(callback).Run({PickerSearchResult::DriveFile(
             /*title=*/u"test drive file",
-            /*url=*/GURL(),
-            /*icon=*/{})});
+            /*url=*/GURL(), base::FilePath())});
       });
 
-  std::unique_ptr<views::Widget> widget = CreateTestWidget();
+  std::unique_ptr<views::Widget> widget =
+      CreateTestWidget(views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
   widget->SetFullscreen(true);
   base::test::TestFuture<const PickerSearchResult&> future;
   auto* view = widget->SetContentsView(std::make_unique<PickerZeroStateView>(
@@ -163,9 +172,10 @@ TEST_F(PickerZeroStateViewTest, ShowsRecentItems) {
                       u"test drive file")))))
       .Times(1);
 
-  ASSERT_THAT(view->RecentSectionForTesting(), Not(IsNull()));
+  ASSERT_THAT(view->PrimarySectionForTesting().item_views_for_testing(),
+              Not(IsEmpty()));
   PickerItemView* item_view =
-      view->RecentSectionForTesting()->item_views_for_testing()[0];
+      view->PrimarySectionForTesting().item_views_for_testing()[0];
   ViewDrawnWaiter().Wait(item_view);
   LeftClickOn(*item_view);
 }
@@ -180,7 +190,7 @@ TEST_F(PickerZeroStateViewTest,
                            {}, kPickerWidth, &asset_fetcher_);
 
   EXPECT_THAT(
-      view.section_views_for_testing(),
+      view.category_section_views_for_testing(),
       ElementsAre(Pair(
           PickerCategoryType::kEditorRewrite,
           Pointee(Property("GetVisible", &views::View::GetVisible, false)))));
@@ -208,7 +218,7 @@ TEST_F(PickerZeroStateViewTest, ShowsEditorSuggestionsAsItems) {
                            {}, kPickerWidth, &asset_fetcher_);
 
   EXPECT_THAT(
-      view.section_views_for_testing(),
+      view.category_section_views_for_testing(),
       ElementsAre(Pair(
           PickerCategoryType::kEditorRewrite,
           Pointee(AllOf(
@@ -222,6 +232,68 @@ TEST_F(PickerZeroStateViewTest, ShowsEditorSuggestionsAsItems) {
                       AsView<PickerListItemView>(Property(
                           &PickerListItemView::GetPrimaryTextForTesting,
                           u"b")))))))));
+}
+
+TEST_F(PickerZeroStateViewTest, UpdatesPseudoFocusToTopRecentItem) {
+  MockZeroStateViewDelegate mock_delegate;
+  PickerZeroStateViewDelegate::SearchResultsCallback recent_results_callback;
+  EXPECT_CALL(mock_delegate,
+              GetZeroStateRecentResults(PickerCategory::kDriveFiles, _))
+      .WillOnce([&](PickerCategory category,
+                    MockZeroStateViewDelegate::SearchResultsCallback callback) {
+        recent_results_callback = std::move(callback);
+      });
+  std::unique_ptr<views::Widget> widget =
+      CreateTestWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET);
+  widget->SetFullscreen(true);
+  auto* view = widget->SetContentsView(std::make_unique<PickerZeroStateView>(
+      &mock_delegate, kAllCategories,
+      std::vector<PickerCategory>{PickerCategory::kDriveFiles}, kPickerWidth,
+      &asset_fetcher_));
+  widget->Show();
+
+  view->GainPseudoFocus(
+      PickerPseudoFocusHandler::PseudoFocusDirection::kForward);
+  recent_results_callback.Run({PickerSearchResult::DriveFile(
+      /*title=*/u"test drive file",
+      /*url=*/GURL(), base::FilePath())});
+
+  EXPECT_CALL(mock_delegate,
+              SelectZeroStateResult(Property(
+                  "data", &ash::PickerSearchResult::data,
+                  VariantWith<ash::PickerSearchResult::DriveFileData>(Field(
+                      "title", &ash::PickerSearchResult::DriveFileData::title,
+                      u"test drive file")))))
+      .Times(1);
+  EXPECT_TRUE(view->DoPseudoFocusedAction());
+}
+
+TEST_F(PickerZeroStateViewTest, NoPseudoFocusActionAfterLosingPseudoFocus) {
+  MockZeroStateViewDelegate mock_delegate;
+  PickerZeroStateViewDelegate::SearchResultsCallback recent_results_callback;
+  EXPECT_CALL(mock_delegate,
+              GetZeroStateRecentResults(PickerCategory::kDriveFiles, _))
+      .WillOnce([&](PickerCategory category,
+                    MockZeroStateViewDelegate::SearchResultsCallback callback) {
+        recent_results_callback = std::move(callback);
+      });
+  std::unique_ptr<views::Widget> widget =
+      CreateTestWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET);
+  widget->SetFullscreen(true);
+  auto* view = widget->SetContentsView(std::make_unique<PickerZeroStateView>(
+      &mock_delegate, kAllCategories,
+      std::vector<PickerCategory>{PickerCategory::kDriveFiles}, kPickerWidth,
+      &asset_fetcher_));
+  widget->Show();
+
+  view->GainPseudoFocus(
+      PickerPseudoFocusHandler::PseudoFocusDirection::kForward);
+  view->LosePseudoFocus();
+  recent_results_callback.Run({PickerSearchResult::DriveFile(
+      /*title=*/u"test drive file",
+      /*url=*/GURL(), base::FilePath())});
+
+  EXPECT_FALSE(view->DoPseudoFocusedAction());
 }
 
 }  // namespace

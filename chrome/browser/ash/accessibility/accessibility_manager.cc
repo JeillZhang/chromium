@@ -1793,8 +1793,8 @@ void AccessibilityManager::UpdateChromeOSAccessibilityHistograms() {
     if (large_cursor_enabled) {
       base::HistogramBase* histogram = base::LinearHistogram::FactoryGet(
           "Accessibility.CrosLargeCursorSize2", kMinLargeCursorSize,
-          kMaxExtraLargeCursorSize + 1,
-          (kMaxExtraLargeCursorSize + 1 - kMinLargeCursorSize) / 2 + 2,
+          kMaxLargeCursorSize + 1,
+          (kMaxLargeCursorSize + 1 - kMinLargeCursorSize) / 2 + 2,
           base::HistogramBase::kUmaTargetedHistogramFlag);
       histogram->Add(
           prefs->GetInteger(prefs::kAccessibilityLargeCursorDipSize));
@@ -1859,6 +1859,10 @@ void AccessibilityManager::UpdateChromeOSAccessibilityHistograms() {
   base::UmaHistogramBoolean(
       "Accessibility.CrosSpokenFeedback.BrailleDisplayConnected",
       IsBrailleDisplayConnected());
+  if (::features::IsAccessibilityFaceGazeEnabled()) {
+    base::UmaHistogramBoolean("Accessibility.CrosFaceGaze",
+                              IsFaceGazeEnabled());
+  }
 }
 
 void AccessibilityManager::PlayVolumeAdjustSound() {

@@ -532,8 +532,12 @@ void InlineLayoutStateStack::AddBoxData(const ConstraintSpace& space,
   }
 
   for (const auto& logical_column : ruby_column_list_) {
-    unsigned base_start = logical_column->start_index;
-    if (box->fragment_start <= base_start && base_start < fragment_end) {
+    // Skip a LogicalRubyColumn for which PlaceRubyAnnotation() is not done yet.
+    if (!logical_column->annotation_items) {
+      continue;
+    }
+    if (box->fragment_start <= logical_column->start_index &&
+        logical_column->EndIndex() <= fragment_end) {
       if (!box_data.ruby_column_list) {
         box_data.ruby_column_list =
             MakeGarbageCollected<HeapVector<Member<LogicalRubyColumn>>>();
@@ -1021,14 +1025,18 @@ const LayoutResult* InlineLayoutStateStack::BoxData::CreateBoxFragment(
   }
   if (ruby_column_list) {
     for (auto& logical_column : *ruby_column_list) {
-      for (unsigned i = 0; i < logical_column->annotation_items->size(); ++i) {
-        LogicalLineItem& child = (*logical_column->annotation_items)[i];
+      auto& annotation_items = *logical_column->annotation_items;
+      if (annotation_items.WasPropagated()) {
+        continue;
+      }
+      for (unsigned i = 0; i < annotation_items.size(); ++i) {
+        LogicalLineItem& child = annotation_items[i];
         if (child.children_count) {
           i += child.children_count - 1;
         }
         handle_box_child(child);
       }
-      logical_column->annotation_items->SetPropagated();
+      annotation_items.SetPropagated();
     }
     ruby_column_list.Clear();
   }

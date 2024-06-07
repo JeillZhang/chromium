@@ -126,6 +126,7 @@
 #include "chrome/browser/ash/net/network_pref_state_observer.h"
 #include "chrome/browser/ash/net/network_throttling_observer.h"
 #include "chrome/browser/ash/net/rollback_network_config/rollback_network_config_service.h"
+#include "chrome/browser/ash/net/secure_dns_manager.h"
 #include "chrome/browser/ash/net/system_proxy_manager.h"
 #include "chrome/browser/ash/net/traffic_counters_handler.h"
 #include "chrome/browser/ash/network_change_manager_client.h"
@@ -168,6 +169,7 @@
 #include "chrome/browser/browser_process_platform_part_ash.h"
 #include "chrome/browser/chromeos/kcer/kcer_factory.h"
 #include "chrome/browser/chromeos/mahi/mahi_web_contents_manager.h"
+#include "chrome/browser/chromeos/printing/print_preview/print_preview_webcontents_manager.h"
 #include "chrome/browser/chromeos/video_conference/video_conference_manager_client.h"
 #include "chrome/browser/component_updater/cros_component_installer_chromeos.h"
 #include "chrome/browser/defaults.h"
@@ -234,6 +236,7 @@
 #include "chromeos/ash/components/report/device_metrics/use_case/real_psm_client_manager.h"
 #include "chromeos/ash/components/report/device_metrics/use_case/use_case.h"
 #include "chromeos/ash/components/settings/cros_settings_names.h"
+#include "chromeos/ash/components/standalone_browser/migrator_util.h"
 #include "chromeos/ash/components/system/statistics_provider.h"
 #include "chromeos/ash/components/tpm/tpm_token_loader.h"
 #include "chromeos/ash/components/wifi_p2p/wifi_p2p_controller.h"
@@ -252,6 +255,7 @@
 #include "components/metrics/metrics_service.h"
 #include "components/ownership/owner_key_util.h"
 #include "components/policy/core/common/cloud/cloud_policy_constants.h"
+#include "components/policy/core/common/device_local_account_type.h"
 #include "components/prefs/pref_service.h"
 #include "components/quirks/quirks_manager.h"
 #include "components/safe_browsing/core/common/safe_browsing_prefs.h"
@@ -1063,7 +1067,7 @@ void ChromeBrowserMainPartsAsh::PreProfileInit() {
 
     user_manager::UserManager* user_manager = user_manager::UserManager::Get();
 
-    if (policy::IsDeviceLocalAccountUser(account_id.GetUserEmail(), nullptr) &&
+    if (policy::IsDeviceLocalAccountUser(account_id.GetUserEmail()) &&
         !user_manager->IsKnownUser(account_id)) {
       // When a device-local account is removed, its policy is deleted from disk
       // immediately. If a session using this account happens to be in progress,
@@ -1085,21 +1089,24 @@ void ChromeBrowserMainPartsAsh::PreProfileInit() {
 
     if (BrowserDataMigratorImpl::MaybeForceResumeMoveMigration(
             g_browser_process->local_state(), account_id, user_id_hash,
-            crosapi::browser_util::PolicyInitState::kBeforeInit)) {
+            ash::standalone_browser::migrator_util::PolicyInitState::
+                kBeforeInit)) {
       LOG(WARNING) << "Restarting chrome to resume move migration.";
       return;
     }
 
     if (BrowserDataMigratorImpl::MaybeRestartToMigrate(
             account_id, user_id_hash,
-            crosapi::browser_util::PolicyInitState::kBeforeInit)) {
+            ash::standalone_browser::migrator_util::PolicyInitState::
+                kBeforeInit)) {
       LOG(WARNING) << "Restarting chrome to run profile migration.";
       return;
     }
 
     if (BrowserDataBackMigrator::MaybeRestartToMigrateBack(
             account_id, user_id_hash,
-            crosapi::browser_util::PolicyInitState::kBeforeInit)) {
+            ash::standalone_browser::migrator_util::PolicyInitState::
+                kBeforeInit)) {
       LOG(WARNING) << "Restarting chrome to run backward profile migration.";
       return;
     }
@@ -1304,6 +1311,13 @@ void ChromeBrowserMainPartsAsh::PostProfileInit(Profile* profile,
     login_screen_extensions_storage_cleaner_ =
         std::make_unique<LoginScreenExtensionsStorageCleaner>();
 
+    // Initialize a local state observer for secure DNS (DNS-over-HTTPS).
+    // The lifetime of the class should match the browser's lifetime for its
+    // secure DNS settings UI. This is only modifiable when a user (including
+    // guest) is logged in, but is active for the entire browser session.
+    secure_dns_manager_ =
+        std::make_unique<SecureDnsManager>(g_browser_process->local_state());
+
     ash::ShillManagerClient::Get()->SetProperty(
         shill::kEnableRFC8925Property,
         base::Value(base::FeatureList::IsEnabled(features::kEnableRFC8925)),
@@ -1486,6 +1500,10 @@ void ChromeBrowserMainPartsAsh::PostBrowserStart() {
     mahi::MahiWebContentsManager::Get()->Initialize();
   }
 
+  if (base::FeatureList::IsEnabled(::features::kPrintPreviewCrosPrimary)) {
+    chromeos::PrintPreviewWebcontentsManager::Get()->Initialize();
+  }
+
   ChromeBrowserMainPartsLinux::PostBrowserStart();
 }
 
@@ -1558,6 +1576,7 @@ void ChromeBrowserMainPartsAsh::PostMainMessageLoopRun() {
 
   // We should remove observers attached to D-Bus clients before
   // DBusThreadManager is shut down.
+  secure_dns_manager_.reset();
   network_pref_state_observer_.reset();
   power_metrics_reporter_.reset();
   renderer_freezer_.reset();

@@ -1,6 +1,7 @@
 // Copyright 2024 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+import './calendar_event.js';
 
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
@@ -22,11 +23,21 @@ export class CalendarElement extends PolymerElement {
 
   static get properties() {
     return {
+      expandedEventIndex_: {
+        type: Number,
+        value: 0,
+      },
       events: Object,
     };
   }
 
+  private expandedEventIndex_: number;
+
   events: CalendarEvent[];
+
+  private isExpanded_(index: number) {
+    return index === this.expandedEventIndex_;
+  }
 }
 
 customElements.define(CalendarElement.is, CalendarElement);

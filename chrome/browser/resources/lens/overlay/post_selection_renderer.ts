@@ -10,8 +10,9 @@ import {PolymerElement} from '//resources/polymer/v3_0/polymer/polymer_bundled.m
 import {BrowserProxyImpl} from './browser_proxy.js';
 import {CenterRotatedBox_CoordinateType} from './geometry.mojom-webui.js';
 import type {CenterRotatedBox} from './geometry.mojom-webui.js';
-import {focusShimmerOnRegion, ShimmerControlRequester, unfocusShimmer} from './overlay_shimmer.js';
+import {recordLensOverlayInteraction, UserAction} from './metrics_utils.js';
 import {getTemplate} from './post_selection_renderer.html.js';
+import {focusShimmerOnRegion, ShimmerControlRequester, unfocusShimmer} from './selection_utils.js';
 import type {GestureEvent} from './selection_utils.js';
 import {toPercent} from './values_converter.js';
 
@@ -137,6 +138,8 @@ export class PostSelectionRendererElement extends PolymerElement {
     unfocusShimmer(this, ShimmerControlRequester.POST_SELECTION);
     this.height = 0;
     this.width = 0;
+    this.dispatchEvent(new CustomEvent(
+        'hide-detected-text-context-menu', {bubbles: true, composed: true}));
   }
 
   handleDownGesture(event: GestureEvent): boolean {
@@ -291,10 +294,19 @@ export class PostSelectionRendererElement extends PolymerElement {
   }
 
   handleUpGesture() {
-    if (this.shouldSendLensRequest()) {
+    if (this.areBoundsChanging()) {
       // Issue Lens request for new bounds
       BrowserProxyImpl.getInstance().handler.issueLensRequest(
           this.getNormalizedCenterRotatedBox());
+
+      // Check for selectable text
+      this.dispatchEvent(new CustomEvent('detect-text-in-region', {
+        bubbles: true,
+        composed: true,
+        detail: this.getNormalizedCenterRotatedBox(),
+      }));
+
+      recordLensOverlayInteraction(UserAction.REGION_SELECTION_CHANGE);
     }
 
     this.originalBounds = {left: 0, top: 0, width: 0, height: 0};
@@ -370,8 +382,8 @@ export class PostSelectionRendererElement extends PolymerElement {
         });
   }
 
-  // Returns if the current bounds should be sent to Lens.
-  private shouldSendLensRequest() {
+  // Returns if the current bounds are being updated.
+  private areBoundsChanging() {
     return this.originalBounds.top !== this.top ||
         this.originalBounds.left !== this.left ||
         this.originalBounds.height !== this.height ||

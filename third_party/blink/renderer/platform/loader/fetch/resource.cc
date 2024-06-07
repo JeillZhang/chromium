@@ -210,21 +210,8 @@ void Resource::CheckResourceIntegrity() {
     return;
   }
 
-  const char* data = nullptr;
-  size_t data_length = 0;
-
-  // Edge case: If a resource actually has zero bytes then it will not
-  // typically have a resource buffer, but we still need to check integrity
-  // because people might want to assert a zero-length resource.
-  CHECK(DecodedSize() == 0 || Data());
-  if (Data()) {
-    data = Data()->Data();
-    data_length = Data()->size();
-  }
-
-  if (SubresourceIntegrity::CheckSubresourceIntegrity(IntegrityMetadata(), data,
-                                                      data_length, Url(), *this,
-                                                      integrity_report_info_)) {
+  if (SubresourceIntegrity::CheckSubresourceIntegrity(
+          IntegrityMetadata(), Data(), Url(), *this, integrity_report_info_)) {
     integrity_disposition_ = ResourceIntegrityDisposition::kPassed;
   } else {
     integrity_disposition_ = ResourceIntegrityDisposition::kFailed;
@@ -1088,6 +1075,15 @@ void Resource::DidChangePriority(ResourceLoadPriority load_priority,
   resource_request_.SetPriority(load_priority, intra_priority_value);
   if (loader_)
     loader_->DidChangePriority(load_priority, intra_priority_value);
+}
+
+void Resource::UpdateResourceWidth(const AtomicString& resource_width) {
+  if (resource_width) {
+    resource_request_.SetHttpHeaderField(AtomicString("sec-ch-width"),
+                                         resource_width);
+  } else {
+    resource_request_.ClearHttpHeaderField(AtomicString("sec-ch-width"));
+  }
 }
 
 // TODO(toyoshim): Consider to generate automatically. https://crbug.com/675515.

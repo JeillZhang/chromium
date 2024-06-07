@@ -1964,6 +1964,112 @@ _BANNED_CPP_FUNCTIONS : Sequence[BanRule] = (
       ),
       treat_as_error = False,
     ),
+    BanRule(
+      pattern = r'/WIDGET_OWNS_NATIVE_WIDGET|'
+                r'NATIVE_WIDGET_OWNS_WIDGET',
+      explanation = (
+        'WIDGET_OWNS_NATIVE_WIDGET and NATIVE_WIDGET_OWNS_WIDGET are in the '
+        'process of being deprecated. Consider using the new '
+        'CLIENT_OWNS_WIDGET ownership model. Eventually, this will be the only '
+        'available ownership model available and the associated enumeration'
+        'will be removed.',
+      ),
+      treat_as_error = False,
+    ),
+    BanRule(
+      pattern = 'ProfileManager::GetLastUsedProfile',
+      explanation = (
+        'Most code should already be scoped to a Profile. Pass in a Profile* '
+        'or retreive from an existing entity with a reference to the Profile '
+        '(e.g. WebContents).'
+      ),
+      treat_as_error = False,
+    ),
+    BanRule(
+      pattern = (
+        r'/FindBrowserWithUiElementContext|'
+        r'FindBrowserWithTab|'
+        r'FindBrowserWithGroup|'
+        r'FindTabbedBrowser|'
+        r'FindAnyBrowser|'
+        r'FindBrowserWithProfile|'
+        r'FindBrowserWithActiveWindow'
+      ),
+      explanation = (
+        'Most code should already be scoped to a Browser. Pass in a Browser* '
+        'or retreive from an existing entity with a reference to the Browser.'
+      ),
+      treat_as_error = False,
+    ),
+    BanRule(
+      pattern = 'BrowserUserData',
+      explanation = (
+        'Do not use BrowserUserData to store state on a Browser instance. '
+        'Instead use BrowserWindowFeatures. BrowserWindowFeatures is '
+        'functionally identical but has two benefits: it does not force a '
+        'dependency onto class Browser, and lifetime semantics are explicit '
+        'rather than implicit. See BrowserUserData header file for more '
+        'details.'
+      ),
+      treat_as_error = False,
+    ),
+)
+
+_DEPRECATED_SYNC_CONSENT_FUNCTION_WARNING = (
+  'Used a predicate related to signin::ConsentLevel::kSync which will always '
+  'return false in the future (crbug.com/40066949). Prefer using a predicate '
+  'that also supports signin::ConsentLevel::kSignin when appropriate. It is '
+  'safe to ignore this warning if you are just moving an existing call, or if '
+  'you want special handling for users in the legacy state. In doubt, reach '
+  'out to //components/sync/OWNERS.',
+)
+
+# C++ functions related to signin::ConsentLevel::kSync which are deprecated.
+_DEPRECATED_SYNC_CONSENT_CPP_FUNCTIONS : Sequence[BanRule] = (
+    BanRule(
+      'HasSyncConsent',
+      _DEPRECATED_SYNC_CONSENT_FUNCTION_WARNING,
+      False,
+    ),
+    BanRule(
+      'CanSyncFeatureStart',
+      _DEPRECATED_SYNC_CONSENT_FUNCTION_WARNING,
+      False,
+    ),
+    BanRule(
+      'IsSyncFeatureEnabled',
+      _DEPRECATED_SYNC_CONSENT_FUNCTION_WARNING,
+      False,
+    ),
+    BanRule(
+      'IsSyncFeatureActive',
+      _DEPRECATED_SYNC_CONSENT_FUNCTION_WARNING,
+      False,
+    ),
+)
+
+# Java functions related to signin::ConsentLevel::kSync which are deprecated.
+_DEPRECATED_SYNC_CONSENT_JAVA_FUNCTIONS : Sequence[BanRule] = (
+    BanRule(
+      'hasSyncConsent',
+      _DEPRECATED_SYNC_CONSENT_FUNCTION_WARNING,
+      False,
+    ),
+    BanRule(
+      'canSyncFeatureStart',
+      _DEPRECATED_SYNC_CONSENT_FUNCTION_WARNING,
+      False,
+    ),
+    BanRule(
+      'isSyncFeatureEnabled',
+      _DEPRECATED_SYNC_CONSENT_FUNCTION_WARNING,
+      False,
+    ),
+    BanRule(
+      'isSyncFeatureActive',
+      _DEPRECATED_SYNC_CONSENT_FUNCTION_WARNING,
+      False,
+    ),
 )
 
 _BANNED_MOJOM_PATTERNS : Sequence[BanRule] = (
@@ -2735,6 +2841,26 @@ def CheckNoBannedFunctions(input_api, output_api):
             for ban_rule in _BANNED_CPP_FUNCTIONS:
                 CheckForMatch(f, line_num, line, ban_rule)
 
+    # As of 05/2024, iOS fully migrated ConsentLevel::kSync to kSignin, and
+    # Android is in the process of preventing new users from entering kSync.
+    # So the warning is restricted to those platforms.
+    ios_pattern = input_api.re.compile('(^|[\W_])ios[\W_]')
+    file_filter = lambda f: (f.LocalPath().endswith(('.cc', '.mm', '.h')) and
+                             ('android' in f.LocalPath() or
+                             # Simply checking for an 'ios' substring would
+                             # catch unrelated cases, use a regex.
+                              ios_pattern.search(f.LocalPath())))
+    for f in input_api.AffectedFiles(file_filter=file_filter):
+        for line_num, line in f.ChangedContents():
+            for ban_rule in _DEPRECATED_SYNC_CONSENT_CPP_FUNCTIONS:
+                CheckForMatch(f, line_num, line, ban_rule)
+
+    file_filter = lambda f: f.LocalPath().endswith(('.java'))
+    for f in input_api.AffectedFiles(file_filter=file_filter):
+        for line_num, line in f.ChangedContents():
+            for ban_rule in _DEPRECATED_SYNC_CONSENT_JAVA_FUNCTIONS:
+                CheckForMatch(f, line_num, line, ban_rule)
+
     file_filter = lambda f: f.LocalPath().endswith(('.mojom'))
     for f in input_api.AffectedFiles(file_filter=file_filter):
         for line_num, line in f.ChangedContents():
@@ -3291,6 +3417,71 @@ def CheckForNewDEPSDownloadFromGoogleStorageHooks(input_api, output_api):
     return []
 
 
+def CheckEachPerfettoTestDataFileHasDepsEntry(input_api, output_api):
+    test_data_filter = lambda f: input_api.FilterSourceFile(
+        f, files_to_check=[r'^base/tracing/test/data_sha256/.*\.sha256'])
+    if not any(input_api.AffectedFiles(file_filter=test_data_filter)):
+        return []
+
+    # Find DEPS entry
+    deps_entry = []
+    old_deps_entry = []
+    for f in input_api.AffectedFiles(include_deletes=False):
+        if f.LocalPath() == 'DEPS':
+            new_deps = _ParseDeps('\n'.join(f.NewContents()))['deps']
+            deps_entry = new_deps['src/base/tracing/test/data']
+            old_deps = _ParseDeps('\n'.join(f.OldContents()))['deps']
+            old_deps_entry = old_deps['src/base/tracing/test/data']
+    if not deps_entry:
+        # TODO(312895063):Add back error when .sha256 files have been moved.
+        return [output_api.PresubmitError(
+            'You must update the DEPS file when you update a '
+            '.sha256 file in base/tracing/test/data_sha256'
+        )]
+
+    output = []
+    for f in input_api.AffectedFiles(file_filter=test_data_filter):
+        objects = deps_entry['objects']
+        if not f.NewContents():
+            # Deleted file so check that DEPS entry removed
+            sha256_from_file = f.OldContents()[0]
+            object_entry = next(
+                (item for item in objects if item["sha256sum"] == sha256_from_file),
+                None)
+            old_entry = next(
+                (item for item in old_deps_entry['objects'] if item["sha256sum"] == sha256_from_file),
+                None)
+            if object_entry:
+                # Allow renaming of objects with the same hash
+                if object_entry['object_name'] != old_entry['object_name']:
+                    continue
+                output.append(output_api.PresubmitError(
+                    'You deleted %s so you must also remove the corresponding DEPS entry.'
+                    % f.LocalPath()
+                ))
+            continue
+
+        sha256_from_file = f.NewContents()[0]
+        object_entry = next(
+            (item for item in objects if item["sha256sum"] == sha256_from_file),
+            None)
+        if not object_entry:
+            output.append(output_api.PresubmitError(
+                'No corresponding DEPS entry found for %s. '
+                'Run `base/tracing/test/test_data.py get_deps --filepath %s` '
+                'to generate the DEPS entry.'
+                % (f.LocalPath(), f.LocalPath())
+            ))
+
+    if output:
+        output.append(output_api.PresubmitError(
+            'The DEPS entry for `src/base/tracing/test/data` in the DEPS file has not been '
+            'updated properly. Run `base/tracing/test/test_data.py get_all_deps` to see what '
+            'the DEPS entry should look like.'
+        ))
+    return output
+
+
 def CheckAddedDepsHaveTargetApprovals(input_api, output_api):
     """When a dependency prefixed with + is added to a DEPS file, we
     want to make sure that the change is reviewed by an OWNER of the
@@ -3446,8 +3637,8 @@ def CheckSpamLogging(input_api, output_api):
             r"^remoting/base/logging\.h$",
             r"^remoting/host/.*",
             r"^sandbox/linux/.*",
-            r"^services/webnn/tflite/graph_impl\.cc$",
-            r"^services/webnn/coreml/graph_impl\.mm$",
+            r"^services/webnn/tflite/graph_impl_tflite\.cc$",
+            r"^services/webnn/coreml/graph_impl_coreml\.mm$",
             r"^storage/browser/file_system/dump_file_system\.cc$",
             r"^tools/",
             r"^ui/base/resource/data_pack\.cc$",
@@ -5797,13 +5988,6 @@ def CheckBuildConfigMacrosWithoutInclude(input_api, output_api):
             ('.h', '.c', '.cc', '.cpp', '.m', '.mm')):
             continue
 
-        # See https://crbug.com/1508847. Temporary exclusion for PartitionAlloc,
-        # the time for its dependency on //build to be removed.
-        # PartitionAlloc has its own version of this script. See
-        # base/allocator/partition_alloc/PRESUBMIT.py
-        if "base/allocator/partition_allocator/" in f.LocalPath():
-            continue
-
         found_line_number = None
         found_macro = None
         all_lines = input_api.ReadFile(f, 'r').splitlines()
@@ -5954,14 +6138,26 @@ def _CheckForInvalidIfDefinedMacrosInFile(input_api, f):
 
 def CheckForInvalidIfDefinedMacros(input_api, output_api):
     """Check all affected files for invalid "if defined" macros."""
+    SKIPPED_PATHS = [
+        'base/allocator/partition_allocator/src/partition_alloc/build_config.h',
+        'build/build_config.h',
+        'third_party/abseil-cpp/',
+        'third_party/sqlite/',
+    ]
+    def affected_files_filter(f):
+        # Normalize the local path to Linux-style path separators so that the
+        # path comparisons work on Windows as well.
+        path = f.LocalPath().replace('\\', '/')
+
+        for skipped_path in SKIPPED_PATHS:
+            if path.startswith(skipped_path):
+                return False
+
+        return path.endswith(('.h', '.c', '.cc', '.m', '.mm'))
+
     bad_macros = []
-    skipped_paths = ['third_party/sqlite/', 'third_party/abseil-cpp/']
-    for f in input_api.AffectedFiles():
-        if any([f.LocalPath().startswith(path) for path in skipped_paths]):
-            continue
-        if f.LocalPath().endswith(('.h', '.c', '.cc', '.m', '.mm')):
-            bad_macros.extend(
-                _CheckForInvalidIfDefinedMacrosInFile(input_api, f))
+    for f in input_api.AffectedSourceFiles(affected_files_filter):
+        bad_macros.extend(_CheckForInvalidIfDefinedMacrosInFile(input_api, f))
 
     if not bad_macros:
         return []
@@ -5972,7 +6168,6 @@ def CheckForInvalidIfDefinedMacros(input_api, output_api):
             'or check the list of ALWAYS_DEFINED_MACROS in src/PRESUBMIT.py.',
             bad_macros)
     ]
-
 
 def CheckForIPCRules(input_api, output_api):
     """Check for same IPC rules described in
@@ -6055,6 +6250,7 @@ def CheckForIncludeGuards(input_api, output_api):
         guard_name = None
         guard_line_number = None
         seen_guard_end = False
+        bypass_checks_at_end_of_file = False
 
         file_with_path = input_api.os_path.normpath(f.LocalPath())
         base_file_name = input_api.os_path.splitext(
@@ -6092,7 +6288,7 @@ def CheckForIncludeGuards(input_api, output_api):
         for line_number, line in enumerate(f.NewContents()):
             if ('no-include-guard-because-multiply-included' in line
                     or 'no-include-guard-because-pch-file' in line):
-                guard_name = 'DUMMY'  # To not trigger check outside the loop.
+                bypass_checks_at_end_of_file = True
                 break
 
             if guard_name is None:
@@ -6137,6 +6333,9 @@ def CheckForIncludeGuards(input_api, output_api):
                                 % (guard_name), [f.LocalPath()]))
                         break  # Nothing else to check and enough to warn once.
 
+        if bypass_checks_at_end_of_file:
+            continue
+
         if guard_name is None:
             errors.append(
                 output_api.PresubmitPromptWarning(
@@ -6145,6 +6344,12 @@ def CheckForIncludeGuards(input_api, output_api):
                     'This check can be disabled by having the string\n'
                     '"no-include-guard-because-multiply-included" or\n'
                     '"no-include-guard-because-pch-file" in the header.'
+                    % (f.LocalPath(), expected_guard)))
+        elif not seen_guard_end:
+            errors.append(
+                output_api.PresubmitPromptWarning(
+                    'Incorrect or missing include guard #endif in %s\n'
+                    'Recommended #endif comment: // %s'
                     % (f.LocalPath(), expected_guard)))
 
     return errors
@@ -6972,12 +7177,6 @@ def _IsMiraclePtrDisallowed(input_api, affected_file):
     if ("third_party/blink/renderer/core/" in path
             or "third_party/blink/renderer/platform/heap/" in path
             or "third_party/blink/renderer/platform/wtf/" in path):
-        return True
-
-    # Blink's public/web API is only used/included by Renderer-only code.  Note
-    # that public/platform API may be used in non-Renderer processes (e.g. there
-    # are some includes in code used by Utility, PDF, or Plugin processes).
-    if "/blink/public/web/" in path:
         return True
 
     # We assume that everything else may be used outside of Renderer processes.

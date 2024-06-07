@@ -29,7 +29,7 @@
 #include "ash/wm/desks/desks_test_api.h"
 #include "ash/wm/desks/desks_test_util.h"
 #include "ash/wm/desks/desks_util.h"
-#include "ash/wm/desks/legacy_desk_bar_view.h"
+#include "ash/wm/desks/overview_desk_bar_view.h"
 #include "ash/wm/desks/templates/saved_desk_dialog_controller.h"
 #include "ash/wm/desks/templates/saved_desk_grid_view.h"
 #include "ash/wm/desks/templates/saved_desk_icon_container.h"
@@ -85,6 +85,7 @@
 #include "ui/events/keycodes/keyboard_codes_posix.h"
 #include "ui/events/test/event_generator.h"
 #include "ui/gfx/canvas.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/widget/any_widget_observer.h"
 #include "ui/views/window/dialog_delegate.h"
@@ -173,7 +174,7 @@ class SavedDeskTest : public OverviewTestBase,
   }
 
   // May return null in tablet mode.
-  const LegacyDeskBarView* GetDesksBarViewForRoot(aura::Window* root_window) {
+  const OverviewDeskBarView* GetDesksBarViewForRoot(aura::Window* root_window) {
     if (auto* overview_session = GetOverviewSession()) {
       return overview_session->GetGridWithRootWindow(root_window)
           ->desks_bar_view();
@@ -933,7 +934,8 @@ TEST_F(SavedDeskTest, SaveDeskButtonContainerAligned) {
   auto test_window1 = CreateAppWindow();
   auto test_window2 = CreateAppWindow();
   // A widget is needed to close.
-  auto test_widget = CreateTestWidget();
+  auto test_widget =
+      CreateTestWidget(views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
 
   ToggleOverview();
   aura::Window* root_window = Shell::GetPrimaryRootWindow();
@@ -960,7 +962,9 @@ TEST_F(SavedDeskTest, SaveDeskButtonContainerAligned) {
   // https://crbug.com/1289020.
 
   // Delete an overview item and verify.
-  GetOverviewItemForWindow(test_widget->GetNativeWindow())->CloseWindows();
+  OverviewItem* overview_item = static_cast<OverviewItem*>(
+      GetOverviewItemForWindow(test_widget->GetNativeWindow()));
+  overview_item->CloseWindow();
 
   // `NativeWidgetAura::Close()` fires a post task.
   base::RunLoop().RunUntilIdle();
@@ -1969,11 +1973,14 @@ TEST_F(SavedDeskTest, TabletModeActivationIssues) {
 }
 
 TEST_F(SavedDeskTest, OverviewTabbing) {
+  const base::Time saved_desk_creation_time =
+      base::Time::FromSecondsSinceUnixEpoch(10);
+
   auto test_window = CreateAppWindow();
-  AddEntry(base::Uuid::GenerateRandomV4(), "template1", base::Time::Now(),
-           DeskTemplateType::kTemplate);
-  AddEntry(base::Uuid::GenerateRandomV4(), "template2", base::Time::Now(),
-           DeskTemplateType::kTemplate);
+  AddEntry(base::Uuid::GenerateRandomV4(), "template1",
+           saved_desk_creation_time, DeskTemplateType::kTemplate);
+  AddEntry(base::Uuid::GenerateRandomV4(), "template2",
+           saved_desk_creation_time, DeskTemplateType::kTemplate);
 
   OpenOverviewAndShowSavedDeskGrid();
   SavedDeskItemView* first_item = GetItemViewFromSavedDeskGrid(0);
@@ -1993,6 +2000,14 @@ TEST_F(SavedDeskTest, OverviewTabbing) {
   // Testing that we traverse to the `name_view` of the second item.
   PressAndReleaseKey(ui::VKEY_TAB);
   EXPECT_EQ(second_item->name_view(), GetFocusedView());
+
+  // Traversing name views should not update the template if there was no
+  // editing.
+  std::vector<raw_ptr<const DeskTemplate, VectorExperimental>> entries =
+      GetAllEntries();
+  ASSERT_EQ(2u, entries.size());
+  EXPECT_EQ(saved_desk_creation_time, entries[0]->GetLastUpdatedTime());
+  EXPECT_EQ(saved_desk_creation_time, entries[1]->GetLastUpdatedTime());
 }
 
 // Tests that if the templates button is invisible, it is not part of the
@@ -2318,11 +2333,16 @@ TEST_F(SavedDeskTest, ShowTemplatesInAlphabeticalOrder) {
   ASSERT_EQ(5ul, grid_items.size());
 
   // Tests that templates are sorted in alphabetical order.
-  EXPECT_EQ(u"Template, 1_template", grid_items[0]->GetAccessibleName());
-  EXPECT_EQ(u"Template, a_template", grid_items[1]->GetAccessibleName());
-  EXPECT_EQ(u"Template, A_template", grid_items[2]->GetAccessibleName());
-  EXPECT_EQ(u"Template, b_template", grid_items[3]->GetAccessibleName());
-  EXPECT_EQ(u"Template, B_template", grid_items[4]->GetAccessibleName());
+  EXPECT_EQ(u"Template, 1_template",
+            grid_items[0]->GetViewAccessibility().GetCachedName());
+  EXPECT_EQ(u"Template, a_template",
+            grid_items[1]->GetViewAccessibility().GetCachedName());
+  EXPECT_EQ(u"Template, A_template",
+            grid_items[2]->GetViewAccessibility().GetCachedName());
+  EXPECT_EQ(u"Template, b_template",
+            grid_items[3]->GetViewAccessibility().GetCachedName());
+  EXPECT_EQ(u"Template, B_template",
+            grid_items[4]->GetViewAccessibility().GetCachedName());
 }
 
 // Tests that the color of the library button focus ring is as expected.
@@ -3987,8 +4007,10 @@ TEST_F(SavedDeskTest, SaveDeskButtonContainerVisibleAfterSwipeToClose) {
   // Use a test widget so we can close it properly after swiping to close. The
   // order matters here; overview items are ordered by MRU order, so the most
   // recently created widget corresponds to the first overview item.
-  auto widget2 = CreateTestWidget();
-  auto widget1 = CreateTestWidget();
+  auto widget2 =
+      CreateTestWidget(views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
+  auto widget1 =
+      CreateTestWidget(views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
 
   ToggleOverview();
 
@@ -4240,7 +4262,7 @@ TEST_F(SavedDeskTest,
   // Pre-check whether the save desk button is in the correct state.
   EXPECT_TRUE(overview_grid->IsSaveDeskButtonContainerVisible());
 
-  const LegacyDeskBarView* desks_bar_view = overview_grid->desks_bar_view();
+  const OverviewDeskBarView* desks_bar_view = overview_grid->desks_bar_view();
   ASSERT_EQ(2u, desks_bar_view->mini_views().size());
   DeskMiniView* mini_view_to_be_removed =
       desks_bar_view->FindMiniViewForDesk(active_desk);

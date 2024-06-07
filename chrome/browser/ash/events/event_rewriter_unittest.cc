@@ -84,6 +84,7 @@
 #include "ui/events/test/test_event_rewriter_continuation.h"
 #include "ui/events/test/test_event_source.h"
 #include "ui/events/types/event_type.h"
+#include "ui/lottie/resource.h"
 #include "ui/message_center/fake_message_center.h"
 #include "ui/wm/core/window_util.h"
 
@@ -615,6 +616,9 @@ class EventRewriterTestBase : public ChromeAshTestBase {
   ~EventRewriterTestBase() override {}
 
   void SetUp() override {
+    ui::ResourceBundle::SetLottieParsingFunctions(
+        &lottie::ParseLottieAsStillImage,
+        &lottie::ParseLottieAsThemedStillImage);
     keyboard_layout_engine_ = std::make_unique<ui::StubKeyboardLayoutEngine>();
     // Inject custom table to make this closer to en-US behavior.
     keyboard_layout_engine_->SetCustomLookupTableForTesting({
@@ -1837,6 +1841,47 @@ TEST_P(EventRewriterTest, TestRewriteToRightAlt) {
     EXPECT_EQ(KeyRightAlt::Typed(ui::EF_NONE, {kPropertyRightAlt}),
               RunRewriter(KeyLMeta::Typed()));
   }
+}
+
+TEST_P(EventRewriterTest, FnAndRightAltKeyPressedMetrics) {
+  if (!features::IsModifierSplitEnabled()) {
+    GTEST_SKIP() << "Test is only valid with the modifier split flag enabled";
+  }
+  base::HistogramTester histogram_tester;
+  scoped_feature_list_.InitAndEnableFeature(
+      features::kInputDeviceSettingsSplit);
+  SetUpKeyboard(kInternalChromeSplitModifierLayoutKeyboard);
+  SendKeyEvent(KeyFunction::Pressed());
+  histogram_tester.ExpectBucketCount(
+      "ChromeOS.Inputs.Keyboard.ModifierPressed.Internal",
+      ui::ModifierKeyUsageMetric::kFunction, 1);
+  histogram_tester.ExpectBucketCount(
+      "ChromeOS.Inputs.Keyboard.RemappedModifierPressed.Internal",
+      ui::ModifierKeyUsageMetric::kFunction, 1);
+
+  SendKeyEvent(KeyRightAlt::Pressed());
+  histogram_tester.ExpectBucketCount(
+      "ChromeOS.Inputs.Keyboard.ModifierPressed.Internal",
+      ui::ModifierKeyUsageMetric::kRightAlt, 1);
+  histogram_tester.ExpectBucketCount(
+      "ChromeOS.Inputs.Keyboard.RemappedModifierPressed.Internal",
+      ui::ModifierKeyUsageMetric::kRightAlt, 1);
+
+  // Remap RightAlt to Assistant
+  InitModifierKeyPref(nullptr, "", ui::mojom::ModifierKey::kRightAlt,
+                      ui::mojom::ModifierKey::kAssistant);
+
+  RunRewriter(KeyRightAlt::Typed());
+  histogram_tester.ExpectBucketCount(
+      "ChromeOS.Inputs.Keyboard.ModifierPressed.Internal",
+      ui::ModifierKeyUsageMetric::kRightAlt, 2);
+  histogram_tester.ExpectBucketCount(
+      "ChromeOS.Inputs.Keyboard.RemappedModifierPressed.Internal",
+      ui::ModifierKeyUsageMetric::kRightAlt, 1);
+  histogram_tester.ExpectBucketCount(
+      "ChromeOS.Inputs.Keyboard.RemappedModifierPressed.Internal",
+      ui::ModifierKeyUsageMetric::kAssistant, 1);
+  scoped_feature_list_.Reset();
 }
 
 TEST_P(EventRewriterTest, TestRewriteToFunction) {

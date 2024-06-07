@@ -107,6 +107,9 @@ void CrasAudioHandler::AudioObserver::OnInputMuteChanged(
 void CrasAudioHandler::AudioObserver::OnInputMutedByMicrophoneMuteSwitchChanged(
     bool /* muted */) {}
 
+void CrasAudioHandler::AudioObserver::OnInputMutedBySecurityCurtainChanged(
+    bool /* muted */) {}
+
 void CrasAudioHandler::AudioObserver::OnAudioNodesChanged() {}
 
 void CrasAudioHandler::AudioObserver::OnActiveOutputNodeChanged() {}
@@ -1186,6 +1189,10 @@ void CrasAudioHandler::SetInputMuteLockedBySecurityCurtain(bool mute_on) {
 
   input_mute_forced_by_security_curtain_ = mute_on;
   SetInputMute(mute_on, InputMuteChangeMethod::kOther);
+
+  for (auto& observer : observers_) {
+    observer.OnInputMutedBySecurityCurtainChanged(mute_on);
+  }
 }
 
 void CrasAudioHandler::SetActiveDevice(const AudioDevice& active_device,
@@ -1226,7 +1233,7 @@ void CrasAudioHandler::SetActiveDevice(const AudioDevice& active_device,
   // most recently activated device list.
   if (features::IsAudioSelectionImprovementEnabled()) {
     SyncDevicePrefSetMap(active_device.is_input);
-    AddDeviceToMostRecentActivatedList(active_device);
+    audio_pref_handler_->UpdateMostRecentActivatedDeviceIdList(active_device);
   }
 
   // Save active state for the nodes.
@@ -1599,10 +1606,12 @@ AudioDevice CrasAudioHandler::ConvertAudioNodeWithModifiedPriority(
 }
 
 const AudioDevice* CrasAudioHandler::GetDeviceFromStableDeviceId(
+    bool is_input,
     uint64_t stable_device_id) const {
   for (const auto& item : audio_devices_) {
     const AudioDevice& device = item.second;
-    if (device.stable_device_id == stable_device_id) {
+    if (device.is_input == is_input &&
+        device.stable_device_id == stable_device_id) {
       return &device;
     }
   }
@@ -2002,7 +2011,7 @@ bool CrasAudioHandler::HasDeviceChange(const AudioNodeList& new_nodes,
 CrasAudioHandler::DeviceStatus CrasAudioHandler::CheckDeviceStatus(
     const AudioDevice& device) {
   const AudioDevice* device_found =
-      GetDeviceFromStableDeviceId(device.stable_device_id);
+      GetDeviceFromStableDeviceId(device.is_input, device.stable_device_id);
   if (!device_found) {
     return NEW_DEVICE;
   }
@@ -2281,34 +2290,17 @@ void CrasAudioHandler::HandleSystemBoots(bool is_input,
   should_show_notification_ = true;
 }
 
-void CrasAudioHandler::AddDeviceToMostRecentActivatedList(
-    const AudioDevice& device) {
-  std::vector<std::string>& ids =
-      device.is_input ? most_recent_activated_input_device_ids_
-                      : most_recent_activated_output_device_ids_;
-  std::string target_device_id = GetDeviceIdString(device);
-  // Find if this device is already in the list, remove it if so.
-  for (auto it = ids.begin(); it != ids.end(); it++) {
-    if (target_device_id == *it) {
-      ids.erase(it);
-      break;
-    }
-  }
-
-  // Add this device to the end of the list.
-  ids.push_back(target_device_id);
-}
-
 bool CrasAudioHandler::ActivateMostRecentActiveDevice(bool is_input) {
-  const std::vector<std::string>& ids =
-      is_input ? most_recent_activated_input_device_ids_
-               : most_recent_activated_output_device_ids_;
+  const base::Value::List& ids =
+      audio_pref_handler_->GetMostRecentActivatedDeviceIdList(is_input);
   for (int i = ids.size() - 1; i >= 0; i--) {
-    std::optional<uint64_t> device_stable_id = ParseDeviceId(ids[i]);
+    std::optional<uint64_t> device_stable_id =
+        ParseDeviceId(ids[i].GetString());
     if (!device_stable_id.has_value()) {
       continue;
     }
-    const AudioDevice* device = GetDeviceFromStableDeviceId(*device_stable_id);
+    const AudioDevice* device =
+        GetDeviceFromStableDeviceId(is_input, *device_stable_id);
     if (!device) {
       continue;
     }
@@ -2411,6 +2403,13 @@ void CrasAudioHandler::SwitchToTopPriorityDevice(
 void CrasAudioHandler::SwitchToPreviousActiveDeviceIfAvailable(
     bool is_input,
     const AudioDeviceList& devices) {
+  // With new audio selection mechanism, activate the most recently active
+  // device first.
+  if (features::IsAudioSelectionImprovementEnabled() &&
+      ActivateMostRecentActiveDevice(is_input)) {
+    return;
+  }
+
   AudioDevice previous_active_device;
   if (GetActiveDeviceFromUserPref(is_input, &previous_active_device)) {
     DCHECK(previous_active_device.is_for_simple_usage());
@@ -3131,20 +3130,15 @@ const std::optional<AudioDevice>
 CrasAudioHandler::GetPreferredDeviceIfDeviceSetSeenBefore(
     bool is_input,
     const AudioDeviceList& devices) const {
-  const std::map<std::string, std::string>& device_pref_set_map =
-      is_input ? input_device_pref_set_map_ : output_device_pref_set_map_;
-  const std::string ids = GetDeviceSetIdString(devices);
-  const auto iter = device_pref_set_map.find(ids);
-  if (iter == device_pref_set_map.end()) {
-    return std::nullopt;
-  }
+  std::optional<uint64_t> id =
+      audio_pref_handler_->GetPreferredDeviceFromPreferenceSet(is_input,
+                                                               devices);
 
-  std::optional<uint64_t> id = ParseDeviceId(iter->second);
   if (!id.has_value()) {
     return std::nullopt;
   }
 
-  const AudioDevice* device = GetDeviceFromStableDeviceId(id.value());
+  const AudioDevice* device = GetDeviceFromStableDeviceId(is_input, id.value());
   if (!device) {
     return std::nullopt;
   }
@@ -3162,11 +3156,8 @@ void CrasAudioHandler::SyncDevicePrefSetMap(bool is_input) {
     return;
   }
 
-  std::map<std::string, std::string>& device_pref_set_map =
-      is_input ? input_device_pref_set_map_ : output_device_pref_set_map_;
-  const std::string ids = GetDeviceSetIdString(
-      GetSimpleUsageAudioDevices(audio_devices_, is_input));
-  device_pref_set_map[ids] = GetDeviceIdString(*active_device);
+  audio_pref_handler_->UpdateDevicePreferenceSet(
+      GetSimpleUsageAudioDevices(audio_devices_, is_input), *active_device);
 }
 
 void CrasAudioHandler::HandleHotPlugDeviceWithNotification(

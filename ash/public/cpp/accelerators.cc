@@ -8,6 +8,7 @@
 #include "base/functional/callback.h"
 #include "base/no_destructor.h"
 #include "media/base/media_switches.h"
+#include "ui/events/event_constants.h"
 
 namespace ash {
 
@@ -112,6 +113,8 @@ const AcceleratorData kAcceleratorData[] = {
      AcceleratorAction::kToggleHighContrast},
     {true, ui::VKEY_Z, ui::EF_CONTROL_DOWN | ui::EF_ALT_DOWN,
      AcceleratorAction::kToggleSpokenFeedback},
+    {true, ui::VKEY_S, ui::EF_COMMAND_DOWN,
+     AcceleratorAction::kEnableSelectToSpeak},
     {true, ui::VKEY_D, ui::EF_COMMAND_DOWN,
      AcceleratorAction::kEnableOrToggleDictation},
     {true, ui::VKEY_DICTATE, ui::EF_NONE,
@@ -243,11 +246,21 @@ const AcceleratorData kAcceleratorData[] = {
     {true, ui::VKEY_BROWSER_BACK, ui::EF_NONE,
      AcceleratorAction::kMinimizeTopWindowOnBack},
     {true, ui::VKEY_G, ui::EF_SHIFT_DOWN | ui::EF_COMMAND_DOWN,
-     AcceleratorAction::kToggleSnapGroupWindowsGroupAndUngroup},
+     AcceleratorAction::kCreateSnapGroup},
     {true, ui::VKEY_D, ui::EF_SHIFT_DOWN | ui::EF_COMMAND_DOWN,
      AcceleratorAction::kToggleSnapGroupWindowsMinimizeAndRestore},
     {true, ui::VKEY_Z, ui::EF_COMMAND_DOWN,
      AcceleratorAction::kToggleMultitaskMenu},
+
+    // Tiling window resize shortcuts.
+    {true, ui::VKEY_OEM_COMMA, ui::EF_COMMAND_DOWN | ui::EF_CONTROL_DOWN,
+     AcceleratorAction::kTilingWindowResizeLeft},
+    {true, ui::VKEY_OEM_PERIOD, ui::EF_COMMAND_DOWN | ui::EF_CONTROL_DOWN,
+     AcceleratorAction::kTilingWindowResizeRight},
+    {true, ui::VKEY_OEM_1, ui::EF_COMMAND_DOWN | ui::EF_CONTROL_DOWN,
+     AcceleratorAction::kTilingWindowResizeUp},
+    {true, ui::VKEY_OEM_2, ui::EF_COMMAND_DOWN | ui::EF_CONTROL_DOWN,
+     AcceleratorAction::kTilingWindowResizeDown},
 
     // Moving active window between displays shortcut.
     {true, ui::VKEY_M, ui::EF_COMMAND_DOWN | ui::EF_ALT_DOWN,
@@ -402,19 +415,11 @@ const size_t kToggleGameDashboardAcceleratorDataLength =
     std::size(kToggleGameDashboardAcceleratorData);
 
 const AcceleratorData kTogglePickerAcceleratorData[] = {
-    {true, ui::VKEY_RIGHT_ALT, ui::EF_NONE, AcceleratorAction::kTogglePicker},
-    {true, ui::VKEY_F, ui::EF_COMMAND_DOWN, AcceleratorAction::kTogglePicker},
-};
-
-const size_t kTogglePickerAcceleratorDataLength =
-    std::size(kTogglePickerAcceleratorData);
-
-const AcceleratorData kTogglePickerFlipAcceleratorData[] = {
     {false, ui::VKEY_RIGHT_ALT, ui::EF_NONE, AcceleratorAction::kTogglePicker},
     {true, ui::VKEY_F, ui::EF_COMMAND_DOWN, AcceleratorAction::kTogglePicker},
 };
 
-const size_t kTogglePickerFlipAcceleratorDataLength =
+const size_t kTogglePickerAcceleratorDataLength =
     std::size(kTogglePickerAcceleratorData);
 
 // static

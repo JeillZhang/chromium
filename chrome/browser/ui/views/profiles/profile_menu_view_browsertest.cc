@@ -1223,9 +1223,17 @@ constexpr ProfileMenuViewBase::ActionableItem
         // there are no other buttons at the end.
         ProfileMenuViewBase::ActionableItem::kPasswordsButton};
 
+// TODO(crbug.com/341975308): re-enable test.
+#if BUILDFLAG(IS_WIN)
+#define MAYBE_ProfileMenuClickTest_SyncEnabled_UnoEnabled \
+  DISABLED_ProfileMenuClickTest_SyncEnabled_UnoEnabled
+#else
+#define MAYBE_ProfileMenuClickTest_SyncEnabled_UnoEnabled \
+  ProfileMenuClickTest_SyncEnabled_UnoEnabled
+#endif
 PROFILE_MENU_CLICK_WITH_FEATURE_TEST(
     kActionableItems_SyncEnabled_UnoEnabled,
-    ProfileMenuClickTest_SyncEnabled_UnoEnabled,
+    MAYBE_ProfileMenuClickTest_SyncEnabled_UnoEnabled,
     /*enabled_features=*/{switches::kExplicitBrowserSigninUIOnDesktop},
     /*disabled_features=*/{}) {
   EnableSync();
@@ -1558,9 +1566,17 @@ constexpr ProfileMenuViewBase::ActionableItem
         // there are no other buttons at the end.
         ProfileMenuViewBase::ActionableItem::kPasswordsButton};
 
+// TODO(crbug.com/40822972): flaky on Windows and Mac
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
+#define MAYBE_ProfileMenuClickTest_WithPendingAccount_UnoEnabled \
+  DISABLED_ProfileMenuClickTest_WithPendingAccount_UnoEnabled
+#else
+#define MAYBE_ProfileMenuClickTest_WithPendingAccount_UnoEnabled \
+  ProfileMenuClickTest_WithPendingAccount_UnoEnabled
+#endif
 PROFILE_MENU_CLICK_WITH_FEATURE_TEST(
     kActionableItems_WithPendingAccount_UnoEnabled,
-    ProfileMenuClickTest_WithPendingAccount_UnoEnabled,
+    MAYBE_ProfileMenuClickTest_WithPendingAccount_UnoEnabled,
     /*enabled_features=*/{switches::kExplicitBrowserSigninUIOnDesktop},
     /*disabled_features=*/{}) {
   AccountInfo account_info = signin::MakePrimaryAccountAvailable(

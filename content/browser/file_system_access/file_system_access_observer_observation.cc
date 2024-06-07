@@ -103,6 +103,25 @@ blink::mojom::FileSystemAccessEntryPtr CreateEntryForUrl(
   }
 }
 
+std::optional<base::FilePath> GetRelativePath(const base::FilePath& root_path,
+                                              const base::FilePath& target) {
+  if (root_path.empty()) {
+    return base::FilePath(target);
+  }
+
+  if (root_path == target) {
+    return base::FilePath();
+  }
+
+  if (root_path.IsParent(target)) {
+    base::FilePath relative_path;
+    CHECK(root_path.AppendRelativePath(target, &relative_path));
+    return relative_path;
+  }
+
+  return std::nullopt;
+}
+
 }  // namespace
 
 FileSystemAccessObserverObservation::FileSystemAccessObserverObservation(
@@ -166,23 +185,16 @@ void FileSystemAccessObserverObservation::OnChanges(
   const storage::FileSystemURL& handle_url = AsHandleBase(handle_).url();
 
   // Do not relay changes if the site has lost read permission to the handle.
-  // TODO(crbug.com/40283887): Add tests for this.
+  // TODO(crbug.com/321980366): Add tests for this.
   if (handle_state.read_grant->GetStatus() !=
       blink::mojom::PermissionStatus::GRANTED) {
-    // TODO(crbug.com/40283887): Proactively listen for permission
+    // TODO(crbug.com/321980366): Proactively listen for permission
     // changes, rather than (or perhaps in addition to) checking on each change.
     return;
   }
 
   std::vector<blink::mojom::FileSystemAccessChangePtr> mojo_changes;
   for (const auto& change : changes) {
-    if (change.type->is_errored()) {
-      // TODO(crbug.com/40105284): Consider destroying `observation_`...
-      // Or don't bother passing along errored changes from the WatcherManager
-      // to its Observations in the first place.
-      continue;
-    }
-
     // TODO(crbug.com/40105284): Consider refactoring to keep the "scope"
     // concept within the WatcherManager and its associated classes. This method
     // just needs the root url.
@@ -193,8 +205,9 @@ void FileSystemAccessObserverObservation::OnChanges(
     blink::mojom::FileSystemAccessEntryPtr root_entry =
         CreateEntryForUrl(*manager, binding_context, handle_state, handle_url,
                           GetHandleType(handle_));
+    const auto& change_info = change.change_info;
     FileSystemAccessPermissionContext::HandleType changed_entry_handle_type;
-    switch (change.file_path_type) {
+    switch (change_info.file_path_type) {
       case FileSystemAccessChangeSource::FilePathType::kUnknown:
         // Fall back to using the same handle type as the root handle.
         changed_entry_handle_type = GetHandleType(handle_);
@@ -212,23 +225,75 @@ void FileSystemAccessObserverObservation::OnChanges(
         CreateEntryForUrl(*manager, binding_context, handle_state, change.url,
                           changed_entry_handle_type);
 
-    const base::FilePath& root_path = handle_url.path();
-    const base::FilePath& changed_path = change.url.path();
+    // TODO(crbug.com/321980270, crbug.com/321980447): Some platforms do not
+    // support ChangeInfo for Local FS changes, in which case a default, empty
+    // ChangeInfo is passed. In this case, report an event without metadata.
+    // Remove this section once ChangeInfo is supported in all platforms.
+    if (change_info == FileSystemAccessChangeSource::ChangeInfo()) {
+      mojo_changes.emplace_back(blink::mojom::FileSystemAccessChange::New(
+          blink::mojom::FileSystemAccessChangeMetadata::New(
+              std::move(root_entry), std::move(changed_entry),
+              std::vector<std::string>()),
+          blink::mojom::FileSystemAccessChangeType::NewUnknown(
+              blink::mojom::FileSystemAccessChangeTypeUnknown::New())));
+      continue;
+    }
 
-    base::FilePath relative_path;
-    if (root_path.empty()) {
-      relative_path = changed_path;
-    } else if (root_path.IsParent(changed_path)) {
-      CHECK(root_path.AppendRelativePath(changed_path, &relative_path));
-    } else {
-      CHECK_EQ(root_path, changed_path);
+    // TODO(crbug.com/340583257): It is expected that `ChangeInfo.modified_path`
+    // match the path of `Observation::Change.url`. Consider refactoring
+    // Observation::Change so that we do not need to do this check.
+    CHECK_EQ(change.url.virtual_path(), change_info.modified_path);
+
+    const base::FilePath& root_path = handle_url.path();
+    std::optional<base::FilePath> relative_modified_path =
+        GetRelativePath(root_path, change_info.modified_path);
+    // It is expected that modified_path is a descendent of the root,
+    // or the same as the root.
+    CHECK(relative_modified_path.has_value());
+    std::optional<base::FilePath> relative_moved_from_path =
+        change_info.moved_from_path.has_value()
+            ? GetRelativePath(root_path, change_info.moved_from_path.value())
+            : std::nullopt;
+
+    blink::mojom::FileSystemAccessChangeTypePtr mojo_change_type;
+    switch (change_info.change_type) {
+      case FileSystemAccessChangeSource::ChangeType::kUnknown:
+        mojo_change_type = blink::mojom::FileSystemAccessChangeType::NewUnknown(
+            blink::mojom::FileSystemAccessChangeTypeUnknown::New());
+        break;
+      case FileSystemAccessChangeSource::ChangeType::kCreated:
+        mojo_change_type =
+            blink::mojom::FileSystemAccessChangeType::NewAppeared(
+                blink::mojom::FileSystemAccessChangeTypeAppeared::New());
+        break;
+      case FileSystemAccessChangeSource::ChangeType::kDeleted:
+        mojo_change_type =
+            blink::mojom::FileSystemAccessChangeType::NewDisappeared(
+                blink::mojom::FileSystemAccessChangeTypeDisappeared::New());
+        break;
+      case FileSystemAccessChangeSource::ChangeType::kModified:
+        mojo_change_type =
+            blink::mojom::FileSystemAccessChangeType::NewModified(
+                blink::mojom::FileSystemAccessChangeTypeModified::New());
+        break;
+      case FileSystemAccessChangeSource::ChangeType::kMoved:
+        if (relative_moved_from_path.has_value()) {
+          mojo_change_type = blink::mojom::FileSystemAccessChangeType::NewMoved(
+              blink::mojom::FileSystemAccessChangeTypeMoved::New(
+                  GetRelativePathAsVectorOfStrings(
+                      relative_moved_from_path.value())));
+        } else {
+          mojo_change_type = blink::mojom::FileSystemAccessChangeType::NewMoved(
+              blink::mojom::FileSystemAccessChangeTypeMoved::New());
+        }
+        break;
     }
 
     mojo_changes.emplace_back(blink::mojom::FileSystemAccessChange::New(
         blink::mojom::FileSystemAccessChangeMetadata::New(
             std::move(root_entry), std::move(changed_entry),
-            GetRelativePathAsVectorOfStrings(relative_path)),
-        change.type->Clone()));
+            GetRelativePathAsVectorOfStrings(relative_modified_path.value())),
+        std::move(mojo_change_type)));
   }
 
   remote_->OnFileChanges(std::move(mojo_changes));

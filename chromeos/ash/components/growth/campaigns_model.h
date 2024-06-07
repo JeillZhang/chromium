@@ -9,15 +9,18 @@
 #include <optional>
 
 #include "base/component_export.h"
+#include "base/features.h"
 #include "base/time/time.h"
 #include "base/values.h"
 #include "chromeos/ash/components/growth/action_performer.h"
 
 namespace base {
 class Time;
+class Version;
 }  // namespace base
 
 namespace gfx {
+class Image;
 struct VectorIcon;
 }  // namespace gfx
 
@@ -40,7 +43,17 @@ enum class Slot {
 
 // These values are deserialized from Growth Campaign, so entries should not
 // be renumbered and numeric values should never be reused.
-enum class BuiltInIcon { kRedeem, kContainerApp, kG1 };
+enum class BuiltInVectorIcon { kRedeem = 0, kMaxValue = kRedeem };
+
+// These values are deserialized from Growth Campaign, so entries should not
+// be renumbered and numeric values should never be reused.
+enum class BuiltInImage {
+  kContainerApp = 0,
+  kG1 = 1,
+  kSparkRebuy = 2,
+  kSpark1PApp = 3,
+  kMaxValue = kSpark1PApp
+};
 
 // Supported window anchor element.
 // These values are deserialized from Growth Campaign, so entries should not
@@ -113,6 +126,10 @@ std::optional<int> GetCampaignId(const Campaign* campaign);
 COMPONENT_EXPORT(CHROMEOS_ASH_COMPONENTS_GROWTH)
 std::optional<int> GetStudyId(const Campaign* campaign);
 
+COMPONENT_EXPORT(CHROMEOS_ASH_COMPONENTS_GROWTH)
+std::optional<bool> ShouldRegisterTrialWithTriggerEventName(
+    const Campaign* campaign);
+
 // Lists of campaigns keyed by the targeted slot. The key is the slot ID in
 // string. For example:
 // {
@@ -180,8 +197,8 @@ class DemoModeTargeting : public TargetingBase {
   const base::Value::List* GetStoreIds() const;
   const base::Value::List* GetRetailers() const;
   const base::Value::List* GetCountries() const;
-  const std::string* GetAppMinVersion() const;
-  const std::string* GetAppMaxVersion() const;
+  const std::optional<base::Version> GetAppMinVersion() const;
+  const std::optional<base::Version> GetAppMaxVersion() const;
   const std::optional<bool> TargetCloudGamingDevice() const;
   const std::optional<bool> TargetFeatureAwareDevice() const;
 };
@@ -247,8 +264,12 @@ class DeviceTargeting : public TargetingBase {
 
   const base::Value::List* GetLocales() const;
   const base::Value::List* GetUserLocales() const;
+  const base::Value::List* GetIncludedCountries() const;
+  const base::Value::List* GetExcludedCountries() const;
   const std::optional<int> GetMinMilestone() const;
   const std::optional<int> GetMaxMilestone() const;
+  const std::optional<base::Version> GetMinVersion() const;
+  const std::optional<base::Version> GetMaxVersion() const;
   const std::optional<bool> GetFeatureAwareDevice() const;
   std::unique_ptr<TimeWindowTargeting> GetRegisteredTime() const;
   const std::unique_ptr<NumberRangeTargeting> GetDeviceAge() const;
@@ -269,6 +290,7 @@ class SessionTargeting : public TargetingBase {
   SessionTargeting& operator=(const SessionTargeting) = delete;
   ~SessionTargeting();
 
+  std::optional<const base::Feature*> GetFeature() const;
   const base::Value::List* GetExperimentTags() const;
 
   std::optional<bool> GetMinorUser() const;
@@ -433,7 +455,7 @@ class COMPONENT_EXPORT(CHROMEOS_ASH_COMPONENTS_GROWTH) Anchor {
 //
 // The structure looks like:
 // {
-//   "builtInImage": 0
+//  "builtInImage": 0
 // }
 class COMPONENT_EXPORT(CHROMEOS_ASH_COMPONENTS_GROWTH) Image {
  public:
@@ -442,14 +464,63 @@ class COMPONENT_EXPORT(CHROMEOS_ASH_COMPONENTS_GROWTH) Image {
   Image& operator=(const Image) = delete;
   ~Image();
 
-  const gfx::VectorIcon* GetVectorIcon() const;
-  const std::optional<ui::ImageModel> GetImage() const;
+  const gfx::Image* GetImage() const;
 
  private:
   // Get built in icon based on the given image data.
-  const std::optional<ui::ImageModel> GetBuiltInIcon() const;
+  const gfx::Image* GetBuiltInImage() const;
 
   raw_ptr<const base::Value::Dict> image_dict_;
+};
+
+// Wrapper around vector icon dictionary.
+//
+// The structure looks like:
+// {
+//  "builtVectorIcon": 0
+// }
+class COMPONENT_EXPORT(CHROMEOS_ASH_COMPONENTS_GROWTH) VectorIcon {
+ public:
+  explicit VectorIcon(const base::Value::Dict* vector_icon_dict);
+  VectorIcon(const VectorIcon&) = delete;
+  VectorIcon& operator=(const VectorIcon) = delete;
+  ~VectorIcon();
+
+  const gfx::VectorIcon* GetVectorIcon() const;
+
+ private:
+  // Get built in icon based on the given image data.
+  const gfx::VectorIcon* GetBuiltInVectorIcon() const;
+
+  raw_ptr<const base::Value::Dict> vector_icon_dict_;
+};
+
+// Wrapper around image model dictionary.
+//
+// The structure looks like:
+// {
+//   "image": {
+//    "builtInImage": 0
+//   }
+// }
+class COMPONENT_EXPORT(CHROMEOS_ASH_COMPONENTS_GROWTH) ImageModel {
+ public:
+  explicit ImageModel(const base::Value::Dict* image_model_dict);
+  ImageModel(const Image&) = delete;
+  ImageModel& operator=(const ImageModel) = delete;
+  ~ImageModel();
+
+  const std::optional<ui::ImageModel> GetImageModel() const;
+
+ private:
+  // Get built in icon based on the given image data.
+  // If given data is referring to an image, the image will be resized to 60 *
+  // 60 so it can be used in the nudge.
+  // TODO: b/340945779 - consider moving the resize logic to
+  // `ShowNudgeActionPerformer`.
+  const std::optional<ui::ImageModel> GetBuiltInImageModel() const;
+
+  raw_ptr<const base::Value::Dict> image_model_dict_;
 };
 
 }  // namespace growth

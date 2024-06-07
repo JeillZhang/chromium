@@ -109,15 +109,18 @@ class MEDIA_GPU_EXPORT V4L2StatelessVideoDecoder
 
   // Create a codec specific decoder. When successful this decoder is stored in
   // the |decoder_| member variable.
-  bool CreateDecoder(VideoCodecProfile profile, VideoColorSpace color_space);
+  bool CreateDecoder();
 
   // Allocate and configure buffers necessary for the current video bitstream.
   void ConfigureInputQueue();
 
+  // Prepare the output queue with the correct uncompressed format.
+  bool ConfigureOutputQueue(void* ctrls);
+
   // The uncompressed format that the driver produces is setup by the
   // |output_queue_|. This format then needs to be passed further down the
   // pipeline.
-  bool SetupOutputFormatForPipeline();
+  CroStatus SetupOutputFormatForPipeline();
 
   // Callbacks used to handle buffers that have been dequeued.
   void DequeueBuffers(bool success);
@@ -174,8 +177,10 @@ class MEDIA_GPU_EXPORT V4L2StatelessVideoDecoder
   // guaranteed to be proceeded in FIFO order.
   base::queue<scoped_refptr<StatelessDecodeSurface>> surfaces_queued_;
 
-  // Aspect ratio from config to use for output frames.
+  // Store configuration information from when Initialize() was called.
   VideoAspectRatio aspect_ratio_;
+  VideoCodecProfile profile_;
+  VideoColorSpace color_space_info_;
 
   // Int32 safe ID generator, starting at 0. Generated IDs are used to uniquely
   // identify a Decode() request for stateless backends. BitstreamID is just

@@ -10,6 +10,7 @@
 #include "chrome/browser/lens/core/mojom/text.mojom.h"
 #include "chrome/browser/ui/lens/lens_overlay_invocation_source.h"
 #include "chrome/browser/ui/lens/lens_overlay_request_id_generator.h"
+#include "chrome/browser/ui/lens/lens_overlay_url_builder.h"
 #include "components/endpoint_fetcher/endpoint_fetcher.h"
 #include "components/lens/proto/server/lens_overlay_response.pb.h"
 #include "third_party/lens_server_proto/lens_overlay_client_context.pb.h"
@@ -66,25 +67,25 @@ class LensOverlayQueryController {
   // testing.
   virtual void StartQueryFlow(const SkBitmap& screenshot,
                               std::optional<GURL> page_url,
-                              std::optional<std::string> page_title);
+                              std::optional<std::string> page_title,
+                              float ui_scale_factor);
 
   // Clears the state and resets stored values.
   void EndQuery();
 
-  // Sends a region search interaction. Expected to be called multiple times.
+  // Sends a region search interaction. Expected to be called multiple times. If
+  // region_bytes are included, those will be sent to Lens instead of cropping
+  // the region out of the screenshot. This should be used to provide a higher
+  // definition image than image cropping would provide.
   void SendRegionSearch(
       lens::mojom::CenterRotatedBoxPtr region,
-      std::map<std::string, std::string> additional_search_query_params);
-
-  // Sends an object selection interaction. Expected to be called multiple
-  // times.
-  void SendObjectSelection(
-      const std::string& object_id,
-      std::map<std::string, std::string> additional_search_query_params);
+      std::map<std::string, std::string> additional_search_query_params,
+      std::optional<SkBitmap> region_bytes);
 
   // Sends a text-only interaction. Expected to be called multiple times.
   void SendTextOnlyQuery(
       const std::string& query_text,
+      TextOnlyQueryType text_only_query_type,
       std::map<std::string, std::string> additional_search_query_params);
 
   // Sends a multimodal interaction. Expected to be called multiple times.
@@ -144,7 +145,8 @@ class LensOverlayQueryController {
       std::optional<std::string> query_text,
       std::optional<std::string> object_id,
       lens::LensOverlaySelectionType selection_type,
-      std::map<std::string, std::string> additional_search_query_params);
+      std::map<std::string, std::string> additional_search_query_params,
+      std::optional<SkBitmap> region_bytes);
 
   // Fetches the endpoint using the initial image data.
   void FetchFullImageRequest(
@@ -229,6 +231,10 @@ class LensOverlayQueryController {
 
   // The page title, if it is allowed to be shared.
   std::optional<std::string> page_title_;
+
+  // The UI Scaling Factor of the underlying page, if it has been passed in.
+  // Else 0.
+  float ui_scale_factor_ = 0;
 
   // The current state.
   QueryControllerState query_controller_state_ = QueryControllerState::kOff;

@@ -5,10 +5,13 @@
 #include "chrome/browser/ui/webui/print_preview/extension_printer_service_provider_lacros.h"
 
 #include <memory>
+#include <string>
+#include <unordered_map>
 
 #include "base/functional/bind.h"
-#include "base/json/json_writer.h"
+#include "base/no_destructor.h"
 #include "base/unguessable_token.h"
+#include "base/values.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/webui/print_preview/extension_printer_service_provider_factory_lacros.h"
@@ -17,6 +20,26 @@
 #include "chromeos/lacros/lacros_service.h"
 
 namespace printing {
+
+using crosapi::mojom::StartPrintStatus;
+
+StartPrintStatus ToStartPrintStatus(const base::Value& status) {
+  static base::NoDestructor<std::unordered_map<std::string, StartPrintStatus>>
+      string_to_status_map(
+          {{"UNKNOWN", StartPrintStatus::kUnknown},
+           {"OK", StartPrintStatus::KOk},
+           {"FAILED", StartPrintStatus::kFailed},
+           {"INVALID_TICKET", StartPrintStatus::kInvalidTicket},
+           {"INVALID_DATA", StartPrintStatus::kInvalidData}});
+
+  // Extension printer handler returns a none value when print status is "OK".
+  if (status.is_none()) {
+    return StartPrintStatus::KOk;
+  }
+  const auto it = string_to_status_map->find(status.GetString());
+  return it != string_to_status_map->end() ? it->second
+                                           : StartPrintStatus::kUnknown;
+}
 
 ExtensionPrinterServiceProviderLacros::ExtensionPrinterServiceProviderLacros(
     content::BrowserContext* browser_context)
@@ -74,7 +97,7 @@ void ExtensionPrinterServiceProviderLacros::OnAddedPrinters(
 
   chromeos::LacrosService::Get()
       ->GetRemote<crosapi::mojom::ExtensionPrinterService>()
-      ->PrintersAdded(request_id, std::move(printers), /* is_done=*/false);
+      ->PrintersAdded(request_id, std::move(printers), /*is_done=*/false);
 }
 
 void ExtensionPrinterServiceProviderLacros::OnGetPrintersDone(
@@ -82,10 +105,56 @@ void ExtensionPrinterServiceProviderLacros::OnGetPrintersDone(
   VLOG(1) << "ExtensionPrinterServiceProviderLacros::OnGetPrintersDone():"
           << " request_id=" << request_id;
 
-  base::Value::List printers;  // return an empty list of printers.
+  // return an empty list of printers.
   chromeos::LacrosService::Get()
       ->GetRemote<crosapi::mojom::ExtensionPrinterService>()
-      ->PrintersAdded(request_id, std::move(printers), /* is_done=*/true);
+      ->PrintersAdded(request_id, base::Value::List(), /*is_done=*/true);
+}
+
+void ExtensionPrinterServiceProviderLacros::DispatchResetRequest() {
+  VLOG(1) << "ExtensionPrinterServiceProviderLacros::ClearOngoingRequests()";
+  extension_printer_handler_->Reset();
+}
+
+void ExtensionPrinterServiceProviderLacros::DispatchStartGetCapability(
+    const std::string& destination_id,
+    DispatchStartGetCapabilityCallback callback) {
+  VLOG(1)
+      << "ExtensionPrinterServiceProviderLacros::DispatchStartGetCapability():"
+      << " destination_id=" << destination_id;
+  extension_printer_handler_->StartGetCapability(destination_id,
+                                                 std::move(callback));
+}
+
+void ExtensionPrinterServiceProviderLacros::DispatchStartPrint(
+    const std::u16string& job_title,
+    base::Value::Dict settings,
+    scoped_refptr<::base::RefCountedMemory> print_data,
+    DispatchStartPrintCallback callback) {
+  VLOG(1) << "ExtensionPrinterServiceProviderLacros::DispatchStartPrint():"
+          << " job_title=" << job_title;
+  extension_printer_handler_->StartPrint(
+      job_title, std::move(settings), print_data,
+      base::BindOnce(
+          [](DispatchStartPrintCallback callback, const base::Value& status) {
+            std::move(callback).Run(ToStartPrintStatus(status));
+          },
+          std::move(callback)));
+}
+
+void ExtensionPrinterServiceProviderLacros::DispatchStartGrantPrinterAccess(
+    const std::string& printer_id,
+    DispatchStartGrantPrinterAccessCallback callback) {
+  VLOG(1) << "ExtensionPrinterServiceProviderLacros::"
+             "DispatchStartGrantPrinterAccess():"
+          << " printer_id=" << printer_id;
+  extension_printer_handler_->StartGrantPrinterAccess(
+      printer_id, base::BindOnce(
+                      [](DispatchStartGrantPrinterAccessCallback callback,
+                         const base::Value::Dict& printer_info) {
+                        std::move(callback).Run(printer_info.Clone());
+                      },
+                      std::move(callback)));
 }
 
 }  // namespace printing

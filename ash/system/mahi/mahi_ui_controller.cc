@@ -30,6 +30,8 @@ bool IsErrorStatus(chromeos::MahiResponseStatus status) {
     case chromeos::MahiResponseStatus::kQuotaLimitHit:
     case chromeos::MahiResponseStatus::kResourceExhausted:
     case chromeos::MahiResponseStatus::kUnknownError:
+    case chromeos::MahiResponseStatus::kRestrictedCountry:
+    case chromeos::MahiResponseStatus::kUnsupportedLanguage:
       return true;
     case chromeos::MahiResponseStatus::kLowQuota:
     case chromeos::MahiResponseStatus::kSuccess:
@@ -69,16 +71,16 @@ void MahiUiController::RemoveDelegate(Delegate* delegate) {
   delegates_.RemoveObserver(delegate);
 }
 
-void MahiUiController::OpenMahiPanel(int64_t display_id) {
+void MahiUiController::OpenMahiPanel(int64_t display_id,
+                                     gfx::Rect mahi_menu_bounds) {
   // TODO(http://b/339250208): Use DCHECK instead of return early when
   // `IsEnabled()` is false.
   if (!chromeos::MahiManager::Get()->IsEnabled()) {
     return;
   }
 
-  mahi_panel_widget_ =
-      MahiPanelWidget::CreatePanelWidget(display_id, /*ui_controller=*/this);
-  mahi_panel_widget_->Show();
+  mahi_panel_widget_ = MahiPanelWidget::CreateAndShowPanelWidget(
+      display_id, mahi_menu_bounds, /*ui_controller=*/this);
 }
 
 void MahiUiController::CloseMahiPanel() {
@@ -136,6 +138,8 @@ void MahiUiController::Retry(VisibilityState origin_state) {
 void MahiUiController::SendQuestion(const std::u16string& question,
                                     bool current_panel_content,
                                     QuestionSource source) {
+  InvalidatePendingRequests();
+
   base::UmaHistogramEnumeration(
       mahi_constants::kMahiQuestionSourceHistogramName, source);
 
@@ -155,6 +159,8 @@ void MahiUiController::SendQuestion(const std::u16string& question,
 }
 
 void MahiUiController::UpdateSummaryAndOutlines() {
+  InvalidatePendingRequests();
+
   chromeos::MahiManager::Get()->GetSummary(base::BindOnce(
       &MahiUiController::OnSummaryLoaded, weak_ptr_factory_.GetWeakPtr()));
   chromeos::MahiManager::Get()->GetOutlines(base::BindOnce(
@@ -241,6 +247,12 @@ void MahiUiController::OnSummaryLoaded(std::u16string summary_text,
   }
 
   NotifyUiUpdate(MahiUiUpdate(MahiUiUpdateType::kSummaryLoaded, summary_text));
+}
+
+void MahiUiController::InvalidatePendingRequests() {
+  // By invalidating existing weak ptrs, the pending `OnAnswerLoaded`,
+  // `OnOutlinesLoaded` and `OnSummaryLoaded` callbacks are cancelled.
+  weak_ptr_factory_.InvalidateWeakPtrs();
 }
 
 }  // namespace ash

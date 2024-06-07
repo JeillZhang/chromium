@@ -26,6 +26,7 @@
 #include "base/test/with_feature_override.h"
 #include "base/time/time.h"
 #include "content/services/auction_worklet/auction_v8_helper.h"
+#include "content/services/auction_worklet/public/cpp/real_time_reporting.h"
 #include "content/services/auction_worklet/public/mojom/auction_network_events_handler.mojom.h"
 #include "content/services/auction_worklet/public/mojom/auction_worklet_service.mojom.h"
 #include "content/services/auction_worklet/public/mojom/private_aggregation_request.mojom.h"
@@ -7290,7 +7291,7 @@ TEST_F(SellerWorkletRealTimeReportingEnabledTest, RealTimeReporting) {
   // takes 0ms to run some times, which is not higher than the smallest allowed
   // latency threshold (0ms), in which case the contribution will be dropped.
   constexpr char kExtraCode[] = R"(
-realTimeReporting.contributeToRealTimeHistogram(100, {priorityWeight: 0.5})
+realTimeReporting.contributeToHistogram({bucket: 100, priorityWeight: 0.5})
 )";
 
   RealTimeReportingContributions expected_real_time_contributions;
@@ -7312,7 +7313,7 @@ TEST_F(SellerWorkletRealTimeReportingEnabledTest, InvalidScore) {
       /*latency_threshold=*/std::nullopt);
 
   constexpr char kExtraCode[] = R"(
-realTimeReporting.contributeToRealTimeHistogram(100, {priorityWeight: 0.5})
+realTimeReporting.contributeToHistogram({bucket: 100, priorityWeight: 0.5})
 )";
 
   RealTimeReportingContributions expected_real_time_contributions;
@@ -7343,9 +7344,9 @@ TEST_F(SellerWorkletRealTimeReportingEnabledTest, ScriptTimeout) {
   mojom::RealTimeReportingContribution expected_latency_histogram(
       /*bucket=*/200, /*priority_weight=*/2, /*latency_threshold=*/1);
   constexpr char kExtraCode[] = R"(
-realTimeReporting.contributeToRealTimeHistogram(100, {priorityWeight: 0.5});
-realTimeReporting.contributeOnWorkletLatency(
-    200, {priorityWeight: 2, latencyThreshold: 1});
+realTimeReporting.contributeToHistogram({bucket: 100, priorityWeight: 0.5});
+realTimeReporting.contributeToHistogram(
+    {bucket: 200, priorityWeight: 2, latencyThreshold: 1});
 while (1);
 )";
 
@@ -7366,7 +7367,7 @@ while (1);
       /*expected_pa_requests=*/{}, std::move(expected_real_time_contributions));
 }
 
-// contributeOnWorkletLatency's is dropped when the script's latency does not
+// contributeToHistogram's is dropped when the script's latency does not
 // exceed the threshold.
 TEST_F(SellerWorkletRealTimeReportingEnabledTest,
        NotExceedingLatencyThreshold) {
@@ -7374,19 +7375,110 @@ TEST_F(SellerWorkletRealTimeReportingEnabledTest,
       /*bucket=*/100, /*priority_weight=*/0.5,
       /*latency_threshold=*/std::nullopt);
   constexpr char kExtraCode[] = R"(
-realTimeReporting.contributeToRealTimeHistogram(100, {priorityWeight: 0.5});
-realTimeReporting.contributeOnWorkletLatency(
-    200, {priorityWeight: 2, latencyThreshold: 10000000})
+realTimeReporting.contributeToHistogram({bucket: 100, priorityWeight: 0.5});
+realTimeReporting.contributeToHistogram(
+    {bucket: 200, priorityWeight: 2, latencyThreshold: 10000000})
 )";
 
-  // Only contributeToRealTimeHistogram's contribution is kept.
-  // contributeOnWorkletLatency's is filtered out since the script's latency
+  // Only contributeToHistogram's contribution is kept.
+  // contributeToHistogram's is filtered out since the script's latency
   // didn't exceed the threshold.
   RealTimeReportingContributions expected_real_time_contributions;
   expected_real_time_contributions.push_back(expected_histogram.Clone());
 
   RunScoreAdWithJavascriptExpectingResult(
       CreateScoreAdScript("5", kExtraCode), 5, /*expected_errors=*/{},
+      mojom::ComponentAuctionModifiedBidParamsPtr(),
+      /*expected_data_version=*/std::nullopt,
+      /*expected_debug_loss_report_url=*/std::nullopt,
+      /*expected_debug_win_report_url=*/std::nullopt,
+      /*expected_reject_reason=*/mojom::RejectReason::kNotAvailable,
+      /*expected_pa_requests=*/{}, std::move(expected_real_time_contributions));
+}
+
+// A platform contribution is added when trusted scoring signals server returned
+// a non-2xx HTTP response code.
+TEST_F(SellerWorkletRealTimeReportingEnabledTest,
+       TrustedScoringSignalNetworkError) {
+  trusted_scoring_signals_url_ =
+      GURL("https://url.test/trusted_scoring_signals");
+  // Trusted scoring signals URL without any component ads.
+  const GURL kNoComponentSignalsUrl = GURL(
+      "https://url.test/trusted_scoring_signals?hostname=window.test"
+      "&renderUrls=https%3A%2F%2Frender.url.test%2F");
+
+  // A network error when fetching the scoring signals results in null
+  // `trustedScoringSignals`.
+  url_loader_factory_.AddResponse(kNoComponentSignalsUrl.spec(),
+                                  /*content=*/std::string(),
+                                  net::HTTP_NOT_FOUND);
+
+  auction_worklet::mojom::RealTimeReportingContribution expected_histogram(
+      /*bucket=*/100, /*priority_weight=*/0.5,
+      /*latency_threshold=*/std::nullopt);
+  mojom::RealTimeReportingContribution expected_trusted_signal_histogram(
+      /*bucket=*/1024 + auction_worklet::RealTimeReportingPlatformError::
+                            kTrustedScoringSignalsFailure,
+      /*priority_weight=*/1,
+      /*latency_threshold=*/std::nullopt);
+
+  constexpr char kExtraCode[] = R"(
+realTimeReporting.contributeToHistogram({bucket: 100, priorityWeight: 0.5})
+)";
+
+  RealTimeReportingContributions expected_real_time_contributions;
+  expected_real_time_contributions.push_back(expected_histogram.Clone());
+  expected_real_time_contributions.push_back(
+      expected_trusted_signal_histogram.Clone());
+
+  RunScoreAdWithJavascriptExpectingResult(
+      CreateScoreAdScript("trustedScoringSignals === null ? 1 : 0", kExtraCode),
+      1, /*expected_errors=*/
+      {base::StringPrintf("Failed to load %s HTTP status = 404 Not Found.",
+                          kNoComponentSignalsUrl.spec().c_str())},
+      mojom::ComponentAuctionModifiedBidParamsPtr(),
+      /*expected_data_version=*/std::nullopt,
+      /*expected_debug_loss_report_url=*/std::nullopt,
+      /*expected_debug_win_report_url=*/std::nullopt,
+      /*expected_reject_reason=*/mojom::RejectReason::kNotAvailable,
+      /*expected_pa_requests=*/{}, std::move(expected_real_time_contributions));
+}
+
+// A platform contribution is added when trusted scoring signals server returned
+// a non-2xx HTTP response code, even though scoreAd() failed.
+TEST_F(SellerWorkletRealTimeReportingEnabledTest,
+       TrustedScoringSignalNetworkErrorScoreAdFailed) {
+  trusted_scoring_signals_url_ =
+      GURL("https://url.test/trusted_scoring_signals");
+  // Trusted scoring signals URL without any component ads.
+  const GURL kNoComponentSignalsUrl = GURL(
+      "https://url.test/trusted_scoring_signals?hostname=window.test"
+      "&renderUrls=https%3A%2F%2Frender.url.test%2F");
+
+  // A network error when fetching the scoring signals results in null
+  // `trustedScoringSignals`.
+  url_loader_factory_.AddResponse(kNoComponentSignalsUrl.spec(),
+                                  /*content=*/std::string(),
+                                  net::HTTP_NOT_FOUND);
+
+  mojom::RealTimeReportingContribution expected_trusted_signal_histogram(
+      /*bucket=*/1024 + auction_worklet::RealTimeReportingPlatformError::
+                            kTrustedScoringSignalsFailure,
+      /*priority_weight=*/1,
+      /*latency_threshold=*/std::nullopt);
+
+  RealTimeReportingContributions expected_real_time_contributions;
+  expected_real_time_contributions.push_back(
+      expected_trusted_signal_histogram.Clone());
+
+  // scoreAd() failed due to no return value.
+  RunScoreAdWithJavascriptExpectingResult(
+      CreateScoreAdScript(""),
+      /*expected_score=*/0, /*expected_errors=*/
+      {base::StringPrintf("Failed to load %s HTTP status = 404 Not Found.",
+                          kNoComponentSignalsUrl.spec().c_str()),
+       "https://url.test/ scoreAd() return: Required field 'desirability' "
+       "is undefined."},
       mojom::ComponentAuctionModifiedBidParamsPtr(),
       /*expected_data_version=*/std::nullopt,
       /*expected_debug_loss_report_url=*/std::nullopt,

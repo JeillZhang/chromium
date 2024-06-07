@@ -4,6 +4,11 @@
 
 #include "pdf/pdf_view_web_plugin.h"
 
+#if defined(UNSAFE_BUFFERS_BUILD)
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -1970,6 +1975,13 @@ SkBitmap PdfViewWebPlugin::GetImageForOcr(int32_t page_index,
   return engine_->GetImageForOcr(page_index, page_object_index);
 }
 
+#if BUILDFLAG(ENABLE_PDF_INK2)
+void PdfViewWebPlugin::InkStrokeFinished() {
+  base::Value::Dict message;
+  message.Set("type", "finishInkStroke");
+  client_->PostMessage(std::move(message));
+}
+
 int PdfViewWebPlugin::VisiblePageIndexFromPoint(const gfx::PointF& point) {
   gfx::Point rounded_point = gfx::ToRoundedPoint(point);
   for (int i = 0; i < engine_->GetNumberOfPages(); ++i) {
@@ -1984,6 +1996,7 @@ int PdfViewWebPlugin::VisiblePageIndexFromPoint(const gfx::PointF& point) {
   }
   return -1;
 }
+#endif  // BUILDFLAG(ENABLE_PDF_INK2)
 
 void PdfViewWebPlugin::HandleAccessibilityAction(
     const AccessibilityActionData& action_data) {
@@ -2483,7 +2496,9 @@ void PdfViewWebPlugin::LoadAccessibility() {
       GetAccessibilityDocInfo());
 
   // Record whether the PDF is tagged when opened by an accessibility user.
-  metrics_handler_->RecordAccessibilityIsDocTagged(engine_->IsPDFDocTagged());
+  if (metrics_handler_) {
+    metrics_handler_->RecordAccessibilityIsDocTagged(engine_->IsPDFDocTagged());
+  }
 
   // If the document contents isn't accessible, don't send anything more.
   if (!(engine_->HasPermission(DocumentPermission::kCopy) ||

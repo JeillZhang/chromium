@@ -103,6 +103,10 @@ static_library("search_engines") {
     "//url",
   ]
 
+  if (!is_fuchsia) {
+    deps += [ "//components/variations/service" ]
+  }
+
   if (is_android) {
     sources += [
       "android/template_url_android.cc",
@@ -173,6 +177,8 @@ static_library("test_support") {
     "//base",
     "//base/test:test_support",
     "//components/country_codes",
+    "//components/metrics:metrics_pref_names",
+    "//components/prefs:test_support",
     "//components/sync_preferences:test_support",
     "//testing/gtest",
   ]

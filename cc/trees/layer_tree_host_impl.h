@@ -88,6 +88,7 @@ class ImageAnimationController;
 class ImageDecodeCache;
 class LCDTextMetricsReporter;
 class LatencyInfoSwapPromiseMonitor;
+class LayerContext;
 class LayerImpl;
 class LayerTreeFrameSink;
 class LayerTreeImpl;
@@ -122,6 +123,7 @@ class LayerTreeHostImplClient {
   // LayerTreeHostImpl's SetNeedsRedraw() and SetNeedsOneBeginImplFrame().
   virtual void SetNeedsRedrawOnImplThread() = 0;
   virtual void SetNeedsOneBeginImplFrameOnImplThread() = 0;
+  virtual void SetNeedsUpdateDisplayTreeOnImplThread() = 0;
   virtual void SetNeedsCommitOnImplThread() = 0;
   virtual void SetNeedsPrepareTilesOnImplThread() = 0;
   virtual void SetVideoNeedsBeginFrames(bool needs_begin_frames) = 0;
@@ -484,6 +486,9 @@ class CC_EXPORT LayerTreeHostImpl : public TileManagerClient,
   // Must be called if and only if PrepareToDraw was called.
   void DidDrawAllLayers(const FrameData& frame);
 
+  // Pushes differential updates to the display tree via a LayerContext.
+  void UpdateDisplayTree(FrameData& frame);
+
   const LayerTreeSettings& settings() const { return settings_; }
 
   // Evict all textures by enforcing a memory policy with an allocation of 0.
@@ -645,6 +650,7 @@ class CC_EXPORT LayerTreeHostImpl : public TileManagerClient,
   virtual void DidFinishImplFrame(const viz::BeginFrameArgs& args);
   void DidNotProduceFrame(const viz::BeginFrameAck& ack,
                           FrameSkippedReason reason);
+  void OnBeginImplFrameDeadline();
   void DidModifyTilePriorities();
   // Requests that we do not produce frames until the new viz::LocalSurfaceId
   // has been activated.
@@ -686,12 +692,6 @@ class CC_EXPORT LayerTreeHostImpl : public TileManagerClient,
   ActivelyScrollingType GetActivelyScrollingType() const;
   bool IsCurrentScrollMainRepainted() const;
   bool ScrollAffectsScrollHandler() const;
-  bool CurrentScrollCheckerboardsDueToNoRecording() const {
-    return current_scroll_did_checkerboard_large_area_;
-  }
-  void SetCurrentScrollCheckerboardsDueToNoRecording() {
-    current_scroll_did_checkerboard_large_area_ = true;
-  }
   void SetExternalPinchGestureActive(bool active);
   void set_force_smooth_wheel_scrolling_for_testing(bool enabled) {
     GetInputHandler().set_force_smooth_wheel_scrolling_for_testing(enabled);
@@ -702,6 +702,7 @@ class CC_EXPORT LayerTreeHostImpl : public TileManagerClient,
 
   void SetNeedsOneBeginImplFrame();
   void SetNeedsRedraw();
+  void SetNeedsUpdateDisplayTree();
 
   ManagedMemoryPolicy ActualManagedMemoryPolicy() const;
 
@@ -946,6 +947,12 @@ class CC_EXPORT LayerTreeHostImpl : public TileManagerClient,
   BeginFrameTracker current_begin_frame_tracker_;
 
  private:
+  // Holds image decode cache instance. It can either be a shared cache or
+  // a cache create by this instance. Which is used depends on the settings.
+  class ImageDecodeCacheHolder;
+
+  void UpdateChildLocalSurfaceId();
+
   void CollectScrollbarUpdatesForCommit(
       CompositorCommitData* commit_data) const;
 
@@ -1011,11 +1018,6 @@ class CC_EXPORT LayerTreeHostImpl : public TileManagerClient,
 
   void NotifyLatencyInfoSwapPromiseMonitors();
 
- private:
-  // Holds image decode cache instance. It can either be a shared cache or
-  // a cache create by this instance. Which is used depends on the settings.
-  class ImageDecodeCacheHolder;
-
   void SetMemoryPolicyImpl(const ManagedMemoryPolicy& policy);
   void SetContextVisibility(bool is_visible);
 
@@ -1057,11 +1059,19 @@ class CC_EXPORT LayerTreeHostImpl : public TileManagerClient,
   // Returns whether the LayerTreeHostImpl is running on a renderer process.
   bool RunningOnRendererProcess() const;
 
+  // Flags the tree as needing either a redraw or a display tree updating,
+  // depending on whether or not it has a display tree.
+  void SetNeedsRedrawOrUpdateDisplayTree();
+
+  // Returns the most up to date display color spaces.
+  gfx::DisplayColorSpaces GetDisplayColorSpaces() const;
+
   // Once bound, this instance owns the InputHandler. However, an InputHandler
   // need not be bound so this should be null-checked before dereferencing.
   std::unique_ptr<InputDelegateForCompositor> input_delegate_;
 
   const LayerTreeSettings settings_;
+  const bool use_layer_context_for_display_;
 
   // This is set to true only if:
   //  . The compositor is running single-threaded (i.e. there is no separate
@@ -1088,6 +1098,11 @@ class CC_EXPORT LayerTreeHostImpl : public TileManagerClient,
   // A pointer used for communicating with and submitting output to the display
   // compositor.
   raw_ptr<LayerTreeFrameSink> layer_tree_frame_sink_ = nullptr;
+
+  // Valid when we have a LayerTreeFrameSink and
+  // `use_layer_context_for_display_` is true. This object pushes updates to a
+  // remote display tree.
+  std::unique_ptr<LayerContext> layer_context_;
 
   // The following scoped variables must not outlive the
   // |layer_tree_frame_sink_|.
@@ -1284,11 +1299,6 @@ class CC_EXPORT LayerTreeHostImpl : public TileManagerClient,
   // TODO(bokan): This is quite old and scheduling has become much more
   // sophisticated since so it's not clear how much value it's still providing.
   bool scroll_affects_scroll_handler_ = false;
-
-  // Whether at least 30% of the viewport at the time of draw was
-  // checkerboarded during a scroll. This bit can get set during a scroll and
-  // is sticky for the duration of the scroll.
-  bool current_scroll_did_checkerboard_large_area_ = false;
 
   // Provides support for PaintWorklets which depend on input properties that
   // are being animated by the compositor (aka 'animated' PaintWorklets).

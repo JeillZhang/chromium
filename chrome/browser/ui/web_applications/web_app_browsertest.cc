@@ -20,7 +20,6 @@
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/run_loop.h"
-#include "base/strings/string_piece.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/bind.h"
 #include "base/test/metrics/histogram_tester.h"
@@ -68,7 +67,6 @@
 #include "chrome/browser/web_applications/mojom/user_display_mode.mojom-shared.h"
 #include "chrome/browser/web_applications/os_integration/os_integration_manager.h"
 #include "chrome/browser/web_applications/os_integration/web_app_shortcut.h"
-#include "chrome/browser/web_applications/os_integration/web_app_shortcut_manager.h"
 #include "chrome/browser/web_applications/test/os_integration_test_override_impl.h"
 #include "chrome/browser/web_applications/test/web_app_install_test_utils.h"
 #include "chrome/browser/web_applications/test/web_app_test_observers.h"
@@ -1869,19 +1867,16 @@ IN_PROC_BROWSER_TEST_F(WebAppBrowserTest, InstallToShelfContainsAppName) {
   size_t index = 0;
   EXPECT_TRUE(app_menu_model->GetModelAndIndexForCommandId(IDC_INSTALL_PWA,
                                                            &model, &index));
-  if (features::IsChromeRefresh2023()) {
-    // PWA install entry is in the Save and Share submenu in CR2023.
-    ui::MenuModel* save_and_share_submenu = app_menu_model.get();
-    size_t save_and_share_index = 0;
-    EXPECT_TRUE(app_menu_model->GetModelAndIndexForCommandId(
-        IDC_SAVE_AND_SHARE_MENU, &save_and_share_submenu,
-        &save_and_share_index));
-    save_and_share_submenu =
-        save_and_share_submenu->GetSubmenuModelAt(save_and_share_index);
-    EXPECT_EQ(save_and_share_submenu, model);
-  } else {
-    EXPECT_EQ(app_menu_model.get(), model);
-  }
+
+  // PWA install entry is in the Save and Share submenu in CR2023.
+  ui::MenuModel* save_and_share_submenu = app_menu_model.get();
+  size_t save_and_share_index = 0;
+  EXPECT_TRUE(app_menu_model->GetModelAndIndexForCommandId(
+      IDC_SAVE_AND_SHARE_MENU, &save_and_share_submenu, &save_and_share_index));
+  save_and_share_submenu =
+      save_and_share_submenu->GetSubmenuModelAt(save_and_share_index);
+  EXPECT_EQ(save_and_share_submenu, model);
+
   const std::u16string label = model->GetLabelAt(index);
   EXPECT_NE(std::u16string::npos, label.find(u"Manifest test"));
 }

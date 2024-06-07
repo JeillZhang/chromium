@@ -66,7 +66,6 @@
 #include "ui/base/models/dialog_model_field.h"
 #include "ui/base/models/image_model.h"
 #include "ui/base/pointer/touch_ui_controller.h"
-#include "ui/base/ui_base_features.h"
 #include "ui/events/types/event_type.h"
 #include "ui/gfx/color_palette.h"
 #include "ui/gfx/geometry/insets.h"
@@ -75,6 +74,7 @@
 #include "ui/gfx/range/range.h"
 #include "ui/gfx/text_constants.h"
 #include "ui/native_theme/native_theme.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/border.h"
 #include "ui/views/controls/button/button.h"
 #include "ui/views/controls/button/label_button.h"
@@ -122,9 +122,7 @@ std::unique_ptr<views::LabelButton> CreateMenuItem(
   auto button =
       CreateBubbleMenuItem(button_id, name, std::move(callback), icon);
   button->SetBorder(views::CreateEmptyBorder(control_insets));
-  if (features::IsChromeRefresh2023()) {
-    button->SetLabelStyle(views::style::STYLE_BODY_3_EMPHASIS);
-  }
+  button->SetLabelStyle(views::style::STYLE_BODY_3_EMPHASIS);
 
   return button;
 }
@@ -186,9 +184,7 @@ void TabGroupEditorBubbleView::AddedToWidget() {
     const SkColor text_color = menu_item->GetCurrentTextColor();
 
     const SkColor enabled_icon_color =
-        features::IsChromeRefresh2023()
-            ? color_provider->GetColor(kColorTabGroupDialogIconEnabled)
-            : color_utils::DeriveDefaultIconColor(text_color);
+        color_provider->GetColor(kColorTabGroupDialogIconEnabled);
     const SkColor icon_color = enabled ? enabled_icon_color : text_color;
 
     const std::optional<ui::ImageModel>& old_image_model =
@@ -209,9 +205,7 @@ void TabGroupEditorBubbleView::AddedToWidget() {
     const bool enabled = save_group_icon_->GetEnabled();
     const SkColor text_color = save_group_label_->GetEnabledColor();
     const SkColor enabled_icon_color =
-        features::IsChromeRefresh2023()
-            ? color_provider->GetColor(kColorTabGroupDialogIconEnabled)
-            : color_utils::DeriveDefaultIconColor(text_color);
+        color_provider->GetColor(kColorTabGroupDialogIconEnabled);
     const SkColor icon_color = enabled ? enabled_icon_color : text_color;
 
     const ui::ImageModel& old_image_model = save_group_icon_->GetImageModel();
@@ -275,7 +269,7 @@ TabGroupEditorBubbleView::TabGroupEditorBubbleView(
   title_field_ =
       AddChildView(std::make_unique<TitleField>(stop_context_menu_propagation));
   title_field_->SetText(title);
-  title_field_->SetAccessibleName(l10n_util::GetStringUTF16(
+  title_field_->GetViewAccessibility().SetName(l10n_util::GetStringUTF16(
       IDS_TAB_GROUP_HEADER_CXMENU_TAB_GROUP_TITLE_ACCESSIBLE_NAME));
   title_field_->SetPlaceholderText(
       l10n_util::GetStringUTF16(IDS_TAB_GROUP_HEADER_BUBBLE_TITLE_PLACEHOLDER));
@@ -533,7 +527,8 @@ void TabGroupEditorBubbleView::OnSaveTogglePressed() {
     saved_tab_group_service->UnsaveGroup(group_);
   }
 
-  save_group_toggle_->SetAccessibleName(GetSaveToggleAccessibleName());
+  save_group_toggle_->GetViewAccessibility().SetName(
+      GetSaveToggleAccessibleName());
   UpdateGroup();
 }
 
@@ -652,9 +647,7 @@ views::View* TabGroupEditorBubbleView::CreateSavedTabGroupItem() {
       save_group_line_container->AddChildView(std::make_unique<views::Label>(
           l10n_util::GetStringUTF16(IDS_TAB_GROUP_HEADER_CXMENU_SAVE_GROUP)));
   save_group_label_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
-  if (features::IsChromeRefresh2023()) {
-    save_group_label_->SetTextStyle(views::style::STYLE_BODY_3_EMPHASIS);
-  }
+  save_group_label_->SetTextStyle(views::style::STYLE_BODY_3_EMPHASIS);
 
   save_group_toggle_ = save_group_line_container->AddChildView(
       std::make_unique<views::ToggleButton>(
@@ -669,7 +662,8 @@ views::View* TabGroupEditorBubbleView::CreateSavedTabGroupItem() {
 
   save_group_toggle_->SetIsOn(
       saved_tab_group_service->model()->Contains(group_));
-  save_group_toggle_->SetAccessibleName(GetSaveToggleAccessibleName());
+  save_group_toggle_->GetViewAccessibility().SetName(
+      GetSaveToggleAccessibleName());
   save_group_toggle_->SetProperty(views::kElementIdentifierKey,
                                   kTabGroupEditorBubbleSaveToggleId);
 

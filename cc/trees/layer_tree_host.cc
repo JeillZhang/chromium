@@ -537,6 +537,7 @@ std::unique_ptr<LayerTreeFrameSink> LayerTreeHost::ReleaseLayerTreeFrameSink() {
 void LayerTreeHost::RequestNewLayerTreeFrameSink() {
   DCHECK(IsMainThread());
   client_->RequestNewLayerTreeFrameSink();
+  should_warm_up_ = false;
 }
 
 void LayerTreeHost::DidInitializeLayerTreeFrameSink() {
@@ -799,6 +800,21 @@ void LayerTreeHost::SetVisible(bool visible) {
 bool LayerTreeHost::IsVisible() const {
   DCHECK(IsMainThread());
   return visible_;
+}
+
+void LayerTreeHost::SetShouldWarmUp() {
+  DCHECK(IsMainThread());
+  CHECK(base::FeatureList::IsEnabled(features::kWarmUpCompositor));
+  should_warm_up_ = true;
+  proxy_->SetShouldWarmUp();
+}
+
+bool LayerTreeHost::ShouldWarmUp() const {
+  DCHECK(IsMainThread());
+  if (!base::FeatureList::IsEnabled(features::kWarmUpCompositor)) {
+    return false;
+  }
+  return should_warm_up_;
 }
 
 void LayerTreeHost::LayoutAndUpdateLayers() {
@@ -1625,6 +1641,17 @@ void LayerTreeHost::RequestViewportScreenshot(
       << "Must have requested a new LocalSurfaceID before making "
          "this request";
   pending_commit_state()->screenshot_destination_token = token;
+  SetNeedsCommit();
+}
+
+void LayerTreeHost::SetPrimaryMainFrameItemSequenceNumber(
+    int64_t primary_main_frame_item_sequence_number) {
+  if (pending_commit_state()->primary_main_frame_item_sequence_number ==
+      primary_main_frame_item_sequence_number) {
+    return;
+  }
+  pending_commit_state()->primary_main_frame_item_sequence_number =
+      primary_main_frame_item_sequence_number;
   SetNeedsCommit();
 }
 

@@ -46,13 +46,17 @@ BASE_FEATURE(kClientSideDetectionSamplePing,
              "ClientSideDetectionSamplePing",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
+BASE_FEATURE(kClientSideDetectionVibrationApi,
+             "ClientSideDetectionVibrationApi",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
 BASE_FEATURE(kCreateNotificationsAcceptedClientSafeBrowsingReports,
              "CreateNotificationsAcceptedClientSafeBrowsingReports",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 BASE_FEATURE(kCreateWarningShownClientSafeBrowsingReports,
              "CreateWarningShownClientSafeBrowsingReports",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 BASE_FEATURE(kDeepScanningPromptRemoval,
              "SafeBrowsingDeepScanningPromptRemoval",
@@ -79,7 +83,7 @@ BASE_FEATURE(kDlpRegionalizedEndpoints,
 
 BASE_FEATURE(kDownloadReportWithoutUserDecision,
              "DownloadReportWithoutUserDecision",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 BASE_FEATURE(kDownloadTailoredWarnings,
              "DownloadTailoredWarnings",
@@ -98,7 +102,7 @@ const base::FeatureParam<int> kDownloadWarningSurveyIgnoreDelaySeconds{
 
 BASE_FEATURE(kEncryptedArchivesMetadata,
              "SafeBrowsingEncryptedArchivesMetadata",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 BASE_FEATURE(kExtendedReportingRemovePrefDependency,
              "ExtendedReportingRemovePrefDependency",
@@ -157,6 +161,10 @@ BASE_FEATURE(kFriendlierSafeBrowsingSettingsStandardProtection,
              "FriendlierSafeBrowsingSettingsStandardProtection",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
+BASE_FEATURE(kGooglePlayProtectPrompt,
+             "SafeBrowsingGooglePlayProtectPrompt",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+
 BASE_FEATURE(kHashPrefixRealTimeLookups,
              "SafeBrowsingHashPrefixRealTimeLookups",
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || \
@@ -173,8 +181,16 @@ constexpr base::FeatureParam<std::string> kHashPrefixRealTimeLookupsRelayUrl{
     /*default_value=*/
     "https://google-ohttp-relay-safebrowsing.fastly-edge.com/"};
 
+BASE_FEATURE(kHashPrefixRealTimeLookupsFasterOhttpKeyRotation,
+             "SafeBrowsingHashPrefixRealTimeLookupsFasterOhttpKeyRotation",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
 BASE_FEATURE(kImprovedDownloadPageWarnings,
              "ImprovedDownloadPageWarnings",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+
+BASE_FEATURE(kDownloadsPageReferrerUrl,
+             "DownloadsPageReferrerUrl",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
 BASE_FEATURE(kLogAccountEnhancedProtectionStateInProtegoPings,
@@ -247,15 +263,15 @@ BASE_FEATURE(kSafeBrowsingAsyncRealTimeCheck,
 #if BUILDFLAG(IS_ANDROID)
 BASE_FEATURE(kSafeBrowsingCallNewGmsApiOnStartup,
              "SafeBrowsingCallNewGmsApiOnStartup",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 BASE_FEATURE(kSafeBrowsingNewGmsApiForBrowseUrlDatabaseCheck,
              "SafeBrowsingNewGmsApiForBrowseUrlDatabaseCheck",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 BASE_FEATURE(kSafeBrowsingNewGmsApiForSubresourceFilterCheck,
              "SafeBrowsingNewGmsApiForSubresourceFilterCheck",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             base::FEATURE_ENABLED_BY_DEFAULT);
 #endif
 
 BASE_FEATURE(kSafeBrowsingOnUIThread,
@@ -342,13 +358,9 @@ BASE_FEATURE(kSafeBrowsingDailyPhishingReportsLimit,
              "SafeBrowsingDailyPhishingReportsLimit",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
-BASE_FEATURE(kClientSideDetectionImagesCache,
-             "ClientSideDetectionImagesCache",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
 BASE_FEATURE(kClientSideDetectionDebuggingMetadataCache,
              "ClientSideDetectionDebuggingMetadataCache",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 BASE_FEATURE(kEnhancedSafeBrowsingPromo,
              "EnhancedSafeBrowsingPromo",
@@ -380,6 +392,7 @@ constexpr struct {
     {&kDlpRegionalizedEndpoints, true},
     {&kDownloadReportWithoutUserDecision, true},
     {&kDownloadTailoredWarnings, true},
+    {&kEnhancedSafeBrowsingPromo, true},
     {&kExtensionTelemetryDeclarativeNetRequestActionSignal, true},
     {&kExtensionTelemetryDisableOffstoreExtensions, true},
     {&kExtensionTelemetryInterceptRemoteHostsContactedInRenderer, true},
@@ -390,6 +403,7 @@ constexpr struct {
     {&kExtensionTelemetryTabsApiSignalCaptureVisibleTab, true},
     {&kExtensionTelemetryTabsExecuteScriptSignal, true},
     {&kHashPrefixRealTimeLookups, true},
+    {&kHashPrefixRealTimeLookupsFasterOhttpKeyRotation, true},
     {&kImprovedDownloadPageWarnings, true},
     {&kLogAccountEnhancedProtectionStateInProtegoPings, true},
     {&kMmapSafeBrowsingDatabase, true},

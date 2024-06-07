@@ -236,7 +236,6 @@
 <translation id="2189104374785738357">APN ವಿವರಗಳನ್ನು ಎಡಿಟ್ ಮಾಡಿ</translation>
 <translation id="2195732836444333448">ಪ್ರಸ್ತುತ ಗರಿಷ್ಠ ಸಾಮರ್ಥ್ಯ. ಶೀಘ್ರದಲ್ಲೇ ಹಿಂತಿರುಗಿ.</translation>
 <translation id="2201758491318984023">ಬೈಸಿಕಲ್</translation>
-<translation id="2203222757805818543">ಪ್ರಸ್ತುತ ವೇಳಾಪಟ್ಟಿಯನ್ನು <ph name="SUNRISE" /> - <ph name="SUNSET" /> ಗೆ ಸೆಟ್ ಮಾಡಲಾಗಿದೆ. ಕತ್ತಲೆ ಮೋಡ್ ವೇಳಾಪಟ್ಟಿಯನ್ನು ಸ್ವಯಂಚಾಲಿತವಾಗಿ ಅಪ್‌ಡೇಟ್ ಮಾಡಲು, <ph name="BEGIN_LINK" />ಸ್ಥಳದ ಆ್ಯಕ್ಸೆಸ್ ಅನ್ನು ಆನ್ ಮಾಡಿ<ph name="END_LINK" /></translation>
 <translation id="2203272733515928691">ಬಿಸಿನೀರಿನ ಬುಗ್ಗೆ</translation>
 <translation id="2203642483788377106">ಕ್ಲಿಫ್</translation>
 <translation id="2208388655216963643">ಇಂಪ್ರೆಷನಿಸ್ಟ್</translation>
@@ -364,6 +363,7 @@
 <translation id="3054177598518735801"><ph name="CURRENT_VALUE" />mA</translation>
 <translation id="3056720590588772262">ಅಂತಿಮ ಬಿಂದು</translation>
 <translation id="3060579846059757016">ಬಾಹ್ಯರೇಖೆಗಳು</translation>
+<translation id="3061850252076394168">ಆಯ್ಕೆಮಾಡಿ ಮತ್ತು ಆಲಿಸಿ ಎಂಬುದನ್ನು ಸಕ್ರಿಯಗೊಳಿಸಿ</translation>
 <translation id="3069085583900247081">ಪರೀಕ್ಷೆ ವಿಫಲವಾಗಿದೆ</translation>
 <translation id="3078740164268491126">ಕೋಷ್ಟಕ</translation>
 <translation id="3081652522083185657">ಲೈಟ್</translation>
@@ -630,7 +630,6 @@
 <translation id="458794348635939462">ಎಲ್ಲಾ ಹೋಸ್ಟ್‌ಗಳನ್ನು ಪರಿಹರಿಸಲು ವಿಫಲವಾಗಿದೆ</translation>
 <translation id="4593212453765072419">ಪ್ರಾಕ್ಸಿ ದೃಢೀಕರಣ ಅಗತ್ಯವಿದೆ</translation>
 <translation id="4609350030397390689">ಕೀಬೋರ್ಡ್ ಹೊಳಪನ್ನು ಕಡಿಮೆ ಮಾಡಿ</translation>
-<translation id="4617553623719764431">ನಿಮ್ಮ ಸ್ಥಳದ ಕುರಿತು ತಿಳಿಯದಿರುವ ಕಾರಣ ಹವಾಮಾನವನ್ನು ಪ್ರದರ್ಶಿಸಲಾಗಿಲ್ಲ. ಸ್ಥಳೀಯ ಹವಾಮಾನವನ್ನು ಪ್ರದರ್ಶಿಸಲು, <ph name="BEGIN_LINK" />ಸ್ಥಳದ ಆ್ಯಕ್ಸೆಸ್ ಅನ್ನು ಆನ್‌ ಮಾಡಿ<ph name="END_LINK" /></translation>
 <translation id="4627232916386272576"><ph name="DOCUMENT_TITLE" />, <ph name="PRINTER_NAME" />, <ph name="CREATION_TIME" />, <ph name="TOTAL_PAGE_NUMBER" /> ರಲ್ಲಿ <ph name="PRINTED_PAGE_NUMBER" /> ಮುದ್ರಣ ಕಾರ್ಯವನ್ನು ರದ್ದುಮಾಡಲು enter ಒತ್ತಿರಿ.</translation>
 <translation id="463791356324567266">ಸ್ಕ್ಯಾನಿಂಗ್ ಮಾಡುವಿಕೆಯನ್ನು ರದ್ದುಗೊಳಿಸಲಾಗುತ್ತಿದೆ...</translation>
 <translation id="4646949265910132906">ಸುರಕ್ಷಿತ Wi-Fi ಸಂಪರ್ಕ</translation>
@@ -704,6 +703,7 @@
 <translation id="4985509611418653372">ರನ್‌ ಮಾಡಿ</translation>
 <translation id="4987769320337599931">ಫೈರ್‌ವಾಲ್</translation>
 <translation id="4988526792673242964">ಪುಟಗಳು</translation>
+<translation id="4989542687859782284">ಲಭ್ಯವಿಲ್ಲ</translation>
 <translation id="4999333166442584738">ವರದಿಯನ್ನು ಮರೆಮಾಡಿ</translation>
 <translation id="500920857929044050">ಪರೀಕ್ಷೆ ನಿಲ್ಲಿಸಿ</translation>
 <translation id="5017508259293544172">LEAP</translation>
@@ -960,7 +960,6 @@
 <translation id="6412715219990689313">ಬಿಲ್ಟ್-ಇನ್ ಕೀಬೋರ್ಡ್</translation>
 <translation id="6417265370957905582">Google Assistant</translation>
 <translation id="6423239382391657905">VPN ತೆರೆಯಿರಿ</translation>
-<translation id="6438073885402882007">ಇದು ನಿಮ್ಮ ಸ್ಥಳವನ್ನು ಬಳಸಲು ಅನುಮತಿಯೊಂದಿಗೆ ಸಿಸ್ಟಮ್ ಸೇವೆಗಳನ್ನು ಅನುಮತಿಸುತ್ತದೆ. ನಿಮ್ಮ ಸಾಧನದ ಸ್ಥಳದ ಮಾಹಿತಿಯನ್ನು ಅಂದಾಜು ಮಾಡಲು ಸಹಾಯ ಮಾಡುವುದಕ್ಕಾಗಿ ಸ್ಥಳವು ವೈ-ಫೈ, ಮೊಬೈಲ್ ನೆಟ್‌ವರ್ಕ್‌ಗಳು ಮತ್ತು ಸೆನ್ಸರ್‌ಗಳಂತಹ ಮೂಲಗಳನ್ನು ಬಳಸಬಹುದು. <ph name="LINK_BEGIN" />ಇನ್ನಷ್ಟು ತಿಳಿಯಿರಿ<ph name="LINK_END" /></translation>
 <translation id="6439505561246192797">ದುರ್ಬಲ (<ph name="SIGNAL_STRENGTH" />)</translation>
 <translation id="6447630859861661624">ಖಾತೆಯ ಸೆಟ್ಟಿಂಗ್‌ಗಳಿಗೆ ಹೋಗಿ</translation>
 <translation id="6462978824459367242">APN ಸೇರಿಸಿ ಎಂಬ ಬಟನ್ ಅನ್ನು ಈಗ ಸಕ್ರಿಯಗೊಳಿಸಲಾಗಿದೆ</translation>

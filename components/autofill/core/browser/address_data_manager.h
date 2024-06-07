@@ -100,8 +100,8 @@ class AddressDataManager : public AutofillWebDataServiceObserverOnUISequence,
   // Only intended to be called during shutdown of the parent `KeyedService`.
   void Shutdown();
 
-  virtual void AddObserver(Observer* obs);
-  virtual void RemoveObserver(Observer* obs);
+  void AddObserver(Observer* obs);
+  void RemoveObserver(Observer* obs);
 
   // Adds a callback which will be triggered on the next address data change,
   // at the same time `Observer::OnAddressDataChanged()` of `observers_` is
@@ -122,32 +122,23 @@ class AddressDataManager : public AutofillWebDataServiceObserverOnUISequence,
   // `GetProfiles()` returns local-or-syncable and account profiles. Using
   // `GetProfilesFromSource()`, profiles from a single source can be retrieved.
   // The profiles are returned in the specified `order`.
-  // TODO(crbug.com/40283168): Change return type to
-  // std::vector<const AutofillProfile*>
-  std::vector<AutofillProfile*> GetProfiles(
+  std::vector<const AutofillProfile*> GetProfiles(
       ProfileOrder order = ProfileOrder::kNone) const;
-  // TODO(crbug.com/40283168): Change return type to
-  // std::vector<const AutofillProfile*>
-  std::vector<AutofillProfile*> GetProfilesFromSource(
+  std::vector<const AutofillProfile*> GetProfilesFromSource(
       AutofillProfile::Source profile_source,
       ProfileOrder order = ProfileOrder::kNone) const;
 
   // Returns the profiles to suggest to the user for filling, ordered by
   // frecency.
-  // TODO(crbug.com/40283168): Change return type to
-  // std::vector<const AutofillProfile*>
-  std::vector<AutofillProfile*> GetProfilesToSuggest() const;
+  std::vector<const AutofillProfile*> GetProfilesToSuggest() const;
 
   // Returns all `GetProfiles()` in the order that the should be shown in the
   // settings.
-  // TODO(crbug.com/40283168): Change return type to
-  // std::vector<const AutofillProfile*>
-  std::vector<AutofillProfile*> GetProfilesForSettings() const;
+  std::vector<const AutofillProfile*> GetProfilesForSettings() const;
 
   // Returns the profile with the specified `guid`, or nullptr if there is no
   // profile such profile. See `GetProfiles()` for the lifetime of the pointer.
-  // TODO(crbug.com/40283168): Change return type to const AutofillProfile*
-  AutofillProfile* GetProfileByGUID(const std::string& guid) const;
+  const AutofillProfile* GetProfileByGUID(const std::string& guid) const;
 
   // Adds |profile| to the web database.
   virtual void AddProfile(const AutofillProfile& profile);
@@ -404,6 +395,9 @@ class AddressDataManager : public AutofillWebDataServiceObserverOnUISequence,
   // Logs metrics around the number of stored profiles after the initial load
   // has finished.
   void LogStoredDataMetrics() const;
+
+  // Called when `prefs::kAutofillProfileEnabled` changed.
+  void OnAutofillProfilePrefChanged();
 
   std::unique_ptr<ContactInfoPreconditionChecker>
       contact_info_precondition_checker_;

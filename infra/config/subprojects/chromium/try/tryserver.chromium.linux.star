@@ -40,7 +40,7 @@ try_.builder(
     gn_args = gn_args.config(
         configs = [
             "release_try_builder",
-            "reclient",
+            "remoteexec",
         ],
     ),
     siso_remote_jobs = siso.remote_jobs.LOW_JOBS_FOR_CQ,
@@ -64,7 +64,7 @@ try_.builder(
             "asan",
             "shared",
             "release",
-            "reclient",
+            "remoteexec",
             "no_symbols",
             "dcheck_always_on",
             "chromeos_codecs",
@@ -130,19 +130,12 @@ try_.builder(
     name = "linux-centipede-asan-rel",
     branch_selector = branches.selector.LINUX_BRANCHES,
     executable = "recipe:chromium/fuzz",
+    mirrors = ["ci/Centipede Upload Linux ASan"],
     gn_args = gn_args.config(
         configs = [
-            "centipede",
-            "asan",
-            "shared",
-            "release",
-            "reclient",
-            "no_symbols",
+            "ci/Centipede Upload Linux ASan",
             "dcheck_always_on",
-            "chromeos_codecs",
-            "pdf_xfa",
-            "optimize_for_fuzzing",
-            "mojo_fuzzer",
+            "no_symbols",
             "skip_generate_fuzzer_owners",
         ],
     ),
@@ -160,7 +153,7 @@ try_.builder(
     gn_args = gn_args.config(
         configs = [
             "release_builder",
-            "reclient",
+            "remoteexec",
             "no_symbols",
             "dcheck_always_on",
         ],
@@ -175,7 +168,7 @@ try_.builder(
     gn_args = gn_args.config(
         configs = [
             "release_try_builder",
-            "reclient",
+            "remoteexec",
             "dcheck_off",
         ],
     ),
@@ -248,7 +241,7 @@ try_.builder(
         configs = [
             "gpu_tests",
             "release_builder",
-            "reclient",
+            "remoteexec",
             "no_symbols",
             "dcheck_always_on",
             "mbi_mode_per_render_process_host",
@@ -287,7 +280,7 @@ try_.builder(
     gn_args = gn_args.config(
         configs = [
             "release_builder",
-            "reclient",
+            "remoteexec",
             "no_symbols",
             "dcheck_always_on",
         ],
@@ -299,19 +292,14 @@ try_.builder(
     name = "linux-libfuzzer-asan-rel",
     branch_selector = branches.selector.LINUX_BRANCHES,
     executable = "recipe:chromium/fuzz",
+    mirrors = [
+        "ci/Libfuzzer Upload Linux ASan",
+    ],
     gn_args = gn_args.config(
         configs = [
-            "libfuzzer",
-            "asan",
-            "shared",
-            "release",
-            "reclient",
-            "no_symbols",
+            "ci/Libfuzzer Upload Linux ASan",
             "dcheck_always_on",
-            "chromeos_codecs",
-            "pdf_xfa",
-            "optimize_for_fuzzing",
-            "mojo_fuzzer",
+            "no_symbols",
             "skip_generate_fuzzer_owners",
         ],
     ),
@@ -478,13 +466,7 @@ try_.builder(
     mirrors = [
         "ci/WebKit Linux MSAN",
     ],
-    gn_args = gn_args.config(
-        configs = [
-            "msan",
-            "release_builder",
-            "reclient",
-        ],
-    ),
+    gn_args = "ci/WebKit Linux MSAN",
     # At this time, MSan is only compatibly with Focal. See
     # //docs/linux/instrumented_libraries.md.
     os = os.LINUX_FOCAL,
@@ -515,7 +497,7 @@ try_.builder(
     gn_args = gn_args.config(
         configs = [
             "release_builder",
-            "reclient",
+            "remoteexec",
         ],
     ),
     siso_remote_jobs = siso.remote_jobs.LOW_JOBS_FOR_CQ,
@@ -615,6 +597,7 @@ try_.builder(
     # //docs/linux/instrumented_libraries.md.
     os = os.LINUX_FOCAL,
     ssd = True,
+    execution_timeout = 6 * time.hour,
     siso_remote_jobs = siso.remote_jobs.HIGH_JOBS_FOR_CQ,
 )
 
@@ -624,7 +607,7 @@ try_.builder(
     gn_args = gn_args.config(
         configs = [
             "release_builder",
-            "reclient",
+            "remoteexec",
             "no_symbols",
             "dcheck_always_on",
         ],
@@ -644,7 +627,7 @@ try_.builder(
     gn_args = gn_args.config(
         configs = [
             "debug_try_builder",
-            "reclient",
+            "remoteexec",
         ],
     ),
     builderless = not settings.is_main,
@@ -675,7 +658,7 @@ try_.builder(
     gn_args = gn_args.config(
         configs = [
             "release_builder",
-            "reclient",
+            "remoteexec",
             "no_symbols",
             "dcheck_always_on",
         ],
@@ -694,7 +677,7 @@ try_.builder(
         configs = [
             "gpu_tests",
             "debug_try_builder",
-            "reclient",
+            "remoteexec",
         ],
     ),
     caches = [
@@ -722,10 +705,12 @@ try_.builder(
     # enabling DCHECKs seems to cause flaky failures that don't show up
     # on the continuous builder.
     gn_args = "ci/Linux MSan Builder",
+    cores = 16,
     # At this time, MSan is only compatibly with Focal. See
     # //docs/linux/instrumented_libraries.md.
     os = os.LINUX_FOCAL,
-    execution_timeout = 6 * time.hour,
+    ssd = True,
+    execution_timeout = 8 * time.hour,
     siso_remote_jobs = siso.remote_jobs.HIGH_JOBS_FOR_CQ,
 )
 
@@ -862,9 +847,6 @@ try_.gpu.optional_tests_builder(
     builder_spec = builder_config.builder_spec(
         gclient_config = builder_config.gclient_config(
             config = "chromium",
-            apply_configs = [
-                "angle_internal",
-            ],
         ),
         chromium_config = builder_config.chromium_config(
             config = "chromium",
@@ -884,7 +866,7 @@ try_.gpu.optional_tests_builder(
         configs = [
             "gpu_fyi_tests",
             "release_builder",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
             "dcheck_always_on",
         ],

@@ -38,8 +38,8 @@ class AwSettings : public content::WebContentsObserver {
   };
 
   // GENERATED_JAVA_ENUM_PACKAGE: org.chromium.android_webview.settings
-  enum PreloadingAllowedFlags {
-    PRELOADING_DISABLED = 0,
+  enum SpeculativeLoadingAllowedFlags {
+    SPECULATIVE_LOADING_DISABLED = 0,
     PRERENDER_ENABLED = 1,
   };
 
@@ -84,6 +84,7 @@ class AwSettings : public content::WebContentsObserver {
   MixedContentMode GetMixedContentMode();
   AttributionBehavior GetAttributionBehavior();
   bool IsPrerender2Allowed();
+  bool IsBackForwardCacheEnabled();
 
   // Called from Java. Methods with "Locked" suffix require that the settings
   // access lock is held during their execution.
@@ -129,7 +130,10 @@ class AwSettings : public content::WebContentsObserver {
   void UpdateAttributionBehaviorLocked(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj);
-  void UpdatePreloadingAllowedLocked(
+  void UpdateSpeculativeLoadingAllowedLocked(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& obj);
+  void UpdateBackForwardCacheEnabledLocked(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj);
 
@@ -178,8 +182,9 @@ class AwSettings : public content::WebContentsObserver {
   bool enterprise_authentication_app_link_policy_enabled_{true};
   MixedContentMode mixed_content_mode_;
   AttributionBehavior attribution_behavior_;
-  PreloadingAllowedFlags preloading_allowed_flags_{
-      PreloadingAllowedFlags::PRELOADING_DISABLED};
+  SpeculativeLoadingAllowedFlags spculative_loading_allowed_flags_{
+      SpeculativeLoadingAllowedFlags::SPECULATIVE_LOADING_DISABLED};
+  bool bfcache_enabled_in_java_settings_{false};
 
   scoped_refptr<AwContentsOriginMatcher> xrw_allowlist_matcher_;
 

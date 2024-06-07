@@ -73,7 +73,12 @@ namespace {
 const char kCsdDebugFeatureDirectoryFlag[] = "csd-debug-feature-directory";
 const char kSkipCSDAllowlistOnPreclassification[] =
     "safe-browsing-skip-csd-allowlist";
-const float kProbabilityForSendingSampleRequest = 0.0001;
+
+// Probability value used to sample pings on CSD allowlist match. For other safe
+// browsing countermeasures, we sample at 1 in 100 rate, but in this, we hit the
+// allowlist 1000 times more than the rate at which we send a ping due to local
+// model verdict. Therefore, we sample at 1 in 100,000 rate instead.
+const float kProbabilityForSendingSampleRequest = 0.00001;
 
 void WriteFeaturesToDisk(const ClientPhishingRequest& features,
                          const base::FilePath& base_path) {
@@ -119,6 +124,8 @@ std::string GetRequestTypeName(
       return "KeyboardLockRequested";
     case safe_browsing::ClientSideDetectionType::POINTER_LOCK_REQUESTED:
       return "PointerLockRequested";
+    case safe_browsing::ClientSideDetectionType::VIBRATION_API:
+      return "VibrationApi";
   }
 }
 
@@ -289,8 +296,7 @@ class ClientSideDetectionHost::ShouldClassifyUrlRequest
       base::UmaHistogramEnumeration(
           "SBClientPhishing.PreClassificationCheckResult", reason,
           PreClassificationCheckResult::NO_CLASSIFY_MAX);
-      if (base::FeatureList::IsEnabled(kClientSideDetectionImagesCache) &&
-          base::FeatureList::IsEnabled(
+      if (base::FeatureList::IsEnabled(
               kClientSideDetectionDebuggingMetadataCache) &&
           host_ && host_->delegate_->GetPrefs() &&
           IsEnhancedProtectionEnabled(*host_->delegate_->GetPrefs())) {
@@ -405,8 +411,7 @@ class ClientSideDetectionHost::ShouldClassifyUrlRequest
           "SBClientPhishing.PreClassificationCheckResult",
           PreClassificationCheckResult::CLASSIFY,
           PreClassificationCheckResult::NO_CLASSIFY_MAX);
-      if (base::FeatureList::IsEnabled(kClientSideDetectionImagesCache) &&
-          base::FeatureList::IsEnabled(
+      if (base::FeatureList::IsEnabled(
               kClientSideDetectionDebuggingMetadataCache) &&
           host_ && host_->delegate_->GetPrefs() &&
           IsEnhancedProtectionEnabled(*host_->delegate_->GetPrefs())) {
@@ -483,8 +488,7 @@ ClientSideDetectionHost::ClientSideDetectionHost(
   // Note: csd_service_ and sb_service will be nullptr here in testing.
   csd_service_ = delegate_->GetClientSideDetectionService();
 
-  if (csd_service_ &&
-      base::FeatureList::IsEnabled(kClientSideDetectionImagesCache)) {
+  if (csd_service_) {
     ClientSideDetectionFeatureCache::CreateForWebContents(web_contents());
     ClientSideDetectionFeatureCache::FromWebContents(web_contents())
         ->AddClearCacheSubscription(csd_service_);
@@ -593,6 +597,22 @@ void ClientSideDetectionHost::PointerLockRequested() {
   MaybeStartPreClassification(ClientSideDetectionType::POINTER_LOCK_REQUESTED);
 }
 
+void ClientSideDetectionHost::VibrationRequested() {
+  if (!IsEnhancedProtectionEnabled(*delegate_->GetPrefs()) ||
+      !base::FeatureList::IsEnabled(kClientSideDetectionVibrationApi)) {
+    return;
+  }
+  // Vibration API can be triggered on a page in intervals between 0 and 1
+  // seconds. Because of this, we want to only classify once per given URL since
+  // a page can send a request multiple vibration at a time.
+  ClientSideDetectionFeatureCache::CreateForWebContents(web_contents());
+  ClientSideDetectionFeatureCache* feature_cache_map =
+      ClientSideDetectionFeatureCache::FromWebContents(web_contents());
+  if (!feature_cache_map->WasVibrationClassificationTriggered(current_url_)) {
+    MaybeStartPreClassification(ClientSideDetectionType::VIBRATION_API);
+  }
+}
+
 void ClientSideDetectionHost::OnPhishingPreClassificationDone(
     ClientSideDetectionType request_type,
     bool should_classify,
@@ -628,11 +648,9 @@ void ClientSideDetectionHost::PhishingDetectionDone(
 
   ClientSideDetectionFeatureCache* feature_cache_map = nullptr;
 
-  if (base::FeatureList::IsEnabled(kClientSideDetectionImagesCache)) {
-    ClientSideDetectionFeatureCache::CreateForWebContents(web_contents());
-    feature_cache_map =
-        ClientSideDetectionFeatureCache::FromWebContents(web_contents());
-  }
+  ClientSideDetectionFeatureCache::CreateForWebContents(web_contents());
+  feature_cache_map =
+      ClientSideDetectionFeatureCache::FromWebContents(web_contents());
 
   phishing_detector_.reset();
 
@@ -802,8 +820,7 @@ void ClientSideDetectionHost::MaybeSendClientPhishingRequest(
       "SBClientPhishing.ClientSideDetectionTypeRequest",
       verdict->client_side_detection_type(), ClientSideDetectionType_MAX + 1);
 
-  if (base::FeatureList::IsEnabled(kClientSideDetectionImagesCache) &&
-      base::FeatureList::IsEnabled(
+  if (base::FeatureList::IsEnabled(
           kClientSideDetectionDebuggingMetadataCache) &&
       IsEnhancedProtectionEnabled(*delegate_->GetPrefs())) {
     ClientSideDetectionFeatureCache::CreateForWebContents(web_contents());
@@ -920,8 +937,7 @@ void ClientSideDetectionHost::MaybeShowPhishingWarning(
         is_phishing);
   }
 
-  if (base::FeatureList::IsEnabled(kClientSideDetectionImagesCache) &&
-      base::FeatureList::IsEnabled(
+  if (base::FeatureList::IsEnabled(
           kClientSideDetectionDebuggingMetadataCache) &&
       IsEnhancedProtectionEnabled(*delegate_->GetPrefs()) &&
       response_code.has_value()) {

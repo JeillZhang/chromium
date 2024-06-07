@@ -91,16 +91,15 @@ bool PickerSearchResultsView::MovePseudoFocusUp() {
   if (views::IsViewClass<PickerItemView>(pseudo_focused_view_)) {
     // Try to move directly to an item above the currently pseudo focused item,
     // i.e. skip non-item views.
-    if (PickerItemView* item = section_list_view_->GetItemAbove(
-            views::AsViewClass<PickerItemView>(pseudo_focused_view_))) {
+    if (views::View* item =
+            section_list_view_->GetItemAbove(pseudo_focused_view_)) {
       SetPseudoFocusedView(item);
       return true;
     }
   }
 
   // Default to backward pseudo focus traversal.
-  AdvancePseudoFocus(PseudoFocusDirection::kBackward);
-  return true;
+  return AdvancePseudoFocus(PseudoFocusDirection::kBackward);
 }
 
 bool PickerSearchResultsView::MovePseudoFocusDown() {
@@ -111,16 +110,15 @@ bool PickerSearchResultsView::MovePseudoFocusDown() {
   if (views::IsViewClass<PickerItemView>(pseudo_focused_view_)) {
     // Try to move directly to an item below the currently pseudo focused item,
     // i.e. skip non-item views.
-    if (PickerItemView* item = section_list_view_->GetItemBelow(
-            views::AsViewClass<PickerItemView>(pseudo_focused_view_))) {
+    if (views::View* item =
+            section_list_view_->GetItemBelow(pseudo_focused_view_)) {
       SetPseudoFocusedView(item);
       return true;
     }
   }
 
   // Default to forward pseudo focus traversal.
-  AdvancePseudoFocus(PseudoFocusDirection::kForward);
-  return true;
+  return AdvancePseudoFocus(PseudoFocusDirection::kForward);
 }
 
 bool PickerSearchResultsView::MovePseudoFocusLeft() {
@@ -133,8 +131,8 @@ bool PickerSearchResultsView::MovePseudoFocusLeft() {
   // left of the current pseudo focused item. In other situations, we prefer not
   // to handle the movement here so that it can instead be used for other
   // purposes, e.g. moving the caret in the search field.
-  if (PickerItemView* item = section_list_view_->GetItemLeftOf(
-          views::AsViewClass<PickerItemView>(pseudo_focused_view_))) {
+  if (views::View* item =
+          section_list_view_->GetItemLeftOf(pseudo_focused_view_)) {
     SetPseudoFocusedView(item);
     return true;
   }
@@ -151,40 +149,44 @@ bool PickerSearchResultsView::MovePseudoFocusRight() {
   // right of the current pseudo focused item. In other situations, we prefer
   // not to handle the movement here so that it can instead be used for other
   // purposes, e.g. moving the caret in the search field.
-  if (PickerItemView* item = section_list_view_->GetItemRightOf(
-          views::AsViewClass<PickerItemView>(pseudo_focused_view_))) {
+  if (views::View* item =
+          section_list_view_->GetItemRightOf(pseudo_focused_view_)) {
     SetPseudoFocusedView(item);
     return true;
   }
   return false;
 }
 
-void PickerSearchResultsView::AdvancePseudoFocus(
+bool PickerSearchResultsView::AdvancePseudoFocus(
     PseudoFocusDirection direction) {
   if (pseudo_focused_view_ == nullptr) {
-    return;
+    return false;
   }
 
   views::View* view = GetFocusManager()->GetNextFocusableView(
       pseudo_focused_view_, GetWidget(),
       direction == PseudoFocusDirection::kBackward,
       /*dont_loop=*/false);
-  // If the next view is outside this PickerSearchResultsView, then loop back to
-  // the first (or last) view.
-  if (!Contains(view)) {
-    view = GetFocusManager()->GetNextFocusableView(
-        this, GetWidget(), direction == PseudoFocusDirection::kBackward,
-        /*dont_loop=*/false);
-  }
-
-  // There can be a short period of time where child views have been added but
-  // not drawn yet, so are not considered focusable. The computed `view` may not
-  // be valid in these cases. If so, just leave the current pseudo focused view.
   if (view == nullptr || !Contains(view)) {
-    return;
+    return false;
   }
-
   SetPseudoFocusedView(view);
+  return true;
+}
+
+bool PickerSearchResultsView::GainPseudoFocus(PseudoFocusDirection direction) {
+  views::View* view = GetFocusManager()->GetNextFocusableView(
+      this, GetWidget(), direction == PseudoFocusDirection::kBackward,
+      /*dont_loop=*/false);
+  if (view == nullptr || !Contains(view)) {
+    return false;
+  }
+  SetPseudoFocusedView(view);
+  return true;
+}
+
+void PickerSearchResultsView::LosePseudoFocus() {
+  SetPseudoFocusedView(nullptr);
 }
 
 void PickerSearchResultsView::ClearSearchResults() {
@@ -236,9 +238,14 @@ void PickerSearchResultsView::AddResultToSection(
     PickerSectionView* section_view) {
   // `base::Unretained` is safe here because `this` will own the item view which
   // takes this callback.
-  section_view->AddResult(
-      result, base::BindRepeating(&PickerSearchResultsView::SelectSearchResult,
-                                  base::Unretained(this), result));
+  PickerItemView* view = section_view->AddResult(
+      result, &preview_controller_,
+      base::BindRepeating(&PickerSearchResultsView::SelectSearchResult,
+                          base::Unretained(this), result));
+
+  if (auto* list_item_view = views::AsViewClass<PickerListItemView>(view)) {
+    list_item_view->SetBadgeAction(delegate_->GetActionForResult(result));
+  }
 }
 
 void PickerSearchResultsView::SetPseudoFocusedView(views::View* view) {
@@ -269,19 +276,18 @@ void PickerSearchResultsView::ScrollPseudoFocusedViewToVisible() {
     return;
   }
 
-  auto* pseudo_focused_item =
-      views::AsViewClass<PickerItemView>(pseudo_focused_view_);
-  if (section_list_view_->GetItemAbove(pseudo_focused_item) == nullptr) {
+  if (section_list_view_->GetItemAbove(pseudo_focused_view_) == nullptr) {
     // For items at the top, scroll all the way up to let users see that they
     // have reached the top of the zero state view.
     ScrollRectToVisible(gfx::Rect(GetLocalBounds().origin(), gfx::Size()));
-  } else if (section_list_view_->GetItemBelow(pseudo_focused_item) == nullptr) {
+  } else if (section_list_view_->GetItemBelow(pseudo_focused_view_) ==
+             nullptr) {
     // For items at the bottom, scroll all the way down to let users see that
     // they have reached the bottom of the zero state view.
     ScrollRectToVisible(gfx::Rect(GetLocalBounds().bottom_left(), gfx::Size()));
   } else {
     // Otherwise, just ensure the item is visible.
-    pseudo_focused_item->ScrollViewToVisible();
+    pseudo_focused_view_->ScrollViewToVisible();
   }
 }
 

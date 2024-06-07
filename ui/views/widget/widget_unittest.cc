@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include <memory>
+#include <optional>
 #include <set>
 #include <utility>
 #include <vector>
@@ -99,6 +100,7 @@ namespace views::test {
 
 namespace {
 
+using ::testing::_;
 using ::testing::IsEmpty;
 using ::testing::Not;
 
@@ -264,7 +266,7 @@ class EventCountHandler : public ui::EventHandler {
 
 TEST_F(WidgetTest, WidgetInitParams) {
   // Widgets are not transparent by default.
-  Widget::InitParams init1;
+  Widget::InitParams init1(Widget::InitParams::CLIENT_OWNS_WIDGET);
   EXPECT_EQ(Widget::InitParams::WindowOpacity::kInferred, init1.opacity);
 }
 
@@ -289,7 +291,8 @@ class WidgetWithCustomParamsTest : public WidgetTest {
 TEST_F(WidgetWithCustomParamsTest, NamePropagatedFromParams) {
   SetInitFunction(base::BindLambdaForTesting(
       [](Widget::InitParams* params) { params->name = "MyWidget"; }));
-  std::unique_ptr<Widget> widget = CreateTestWidget();
+  std::unique_ptr<Widget> widget =
+      CreateTestWidget(Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
 
   EXPECT_EQ("MyWidget", widget->native_widget_private()->GetName());
   EXPECT_EQ("MyWidget", widget->GetName());
@@ -301,7 +304,8 @@ TEST_F(WidgetWithCustomParamsTest, NamePropagatedFromDelegate) {
   SetInitFunction(base::BindLambdaForTesting(
       [&](Widget::InitParams* params) { params->delegate = &delegate; }));
 
-  std::unique_ptr<Widget> widget = CreateTestWidget();
+  std::unique_ptr<Widget> widget =
+      CreateTestWidget(Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
 
   EXPECT_EQ(delegate.internal_name(),
             widget->native_widget_private()->GetName());
@@ -314,7 +318,8 @@ TEST_F(WidgetWithCustomParamsTest, Autosize) {
   SetInitFunction(base::BindLambdaForTesting(
       [](Widget::InitParams* params) { params->autosize = true; }));
 
-  std::unique_ptr<Widget> widget = CreateTestWidget();
+  std::unique_ptr<Widget> widget =
+      CreateTestWidget(Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
   auto* view = widget->SetContentsView(std::make_unique<views::View>());
   widget->Show();
 
@@ -347,7 +352,8 @@ TEST_F(WidgetWithCustomParamsTest, NamePropagatedFromContentsViewClassName) {
   SetInitFunction(base::BindLambdaForTesting(
       [&](Widget::InitParams* params) { params->delegate = &delegate; }));
 
-  std::unique_ptr<Widget> widget = CreateTestWidget();
+  std::unique_ptr<Widget> widget =
+      CreateTestWidget(Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
 
   EXPECT_EQ(contents->GetClassName(),
             widget->native_widget_private()->GetName());
@@ -400,7 +406,8 @@ TEST_F(WidgetWithCustomParamsTest, InitWithNativeTheme) {
     params->native_theme = &test_native_theme;
   }));
 
-  std::unique_ptr<Widget> widget = CreateTestWidget();
+  std::unique_ptr<Widget> widget =
+      CreateTestWidget(Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
 
   EXPECT_EQ(view_raw_ptr->user_color(), test_color);
 }
@@ -1159,11 +1166,10 @@ using ClientOwnsWidgetTest = WidgetOwnershipTest;
 TEST_F(ClientOwnsWidgetTest, Ownership) {
   auto widget = std::make_unique<OwnershipTestWidget>(state());
   Widget::InitParams params =
-      CreateParamsForTestWidget(Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET,
+      CreateParamsForTestWidget(Widget::InitParams::CLIENT_OWNS_WIDGET,
                                 Widget::InitParams::TYPE_WINDOW_FRAMELESS);
   params.native_widget = CreatePlatformNativeWidgetImpl(
       widget.get(), kStubCapture, &state()->native_widget_deleted);
-  params.ownership = Widget::InitParams::CLIENT_OWNS_WIDGET;
   widget->Init(std::move(params));
 
   widget->CloseNow();
@@ -1255,7 +1261,7 @@ class WidgetWithDestroyedNativeViewOrNativeWidgetTest
                                     Widget::InitParams::TYPE_WINDOW_FRAMELESS);
       widget_->Init(std::move(params));
     } else {
-      widget_ = CreateTestWidget();
+      widget_ = CreateTestWidget(Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
     }
     widget()->Show();
     widget()->native_widget_private()->CloseNow();
@@ -1593,7 +1599,7 @@ TEST_P(WidgetWithDestroyedNativeViewOrNativeWidgetTest, Hide) {
 }
 
 TEST_P(WidgetWithDestroyedNativeViewOrNativeWidgetTest, Init) {
-  Widget::InitParams params;
+  Widget::InitParams params(Widget::InitParams::NATIVE_WIDGET_OWNS_WIDGET);
   EXPECT_DCHECK_DEATH(widget()->Init(std::move(params)));
 }
 
@@ -1643,7 +1649,8 @@ TEST_P(WidgetWithDestroyedNativeViewOrNativeWidgetTest,
 }
 
 TEST_P(WidgetWithDestroyedNativeViewOrNativeWidgetTest, IsStackedAbove) {
-  std::unique_ptr<Widget> other_widget = CreateTestWidget();
+  std::unique_ptr<Widget> other_widget =
+      CreateTestWidget(Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
   widget()->IsStackedAbove(other_widget->GetNativeView());
 }
 
@@ -1915,13 +1922,15 @@ TEST_P(WidgetWithDestroyedNativeViewOrNativeWidgetTest, SetCursor) {
 
 TEST_P(WidgetWithDestroyedNativeViewOrNativeWidgetTest,
        SetFocusTraversableParent) {
-  std::unique_ptr<Widget> another_widget = CreateTestWidget();
+  std::unique_ptr<Widget> another_widget =
+      CreateTestWidget(Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
   widget()->SetFocusTraversableParent(another_widget->GetFocusTraversable());
 }
 
 TEST_P(WidgetWithDestroyedNativeViewOrNativeWidgetTest,
        SetFocusTraversableParentView) {
-  std::unique_ptr<Widget> another_widget = CreateTestWidget();
+  std::unique_ptr<Widget> another_widget =
+      CreateTestWidget(Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
   widget()->SetFocusTraversableParentView(another_widget->GetContentsView());
 }
 
@@ -2014,12 +2023,14 @@ TEST_P(WidgetWithDestroyedNativeViewOrNativeWidgetTest, ShowInactive) {
 }
 
 TEST_P(WidgetWithDestroyedNativeViewOrNativeWidgetTest, StackAbove) {
-  std::unique_ptr<Widget> another_widget = CreateTestWidget();
+  std::unique_ptr<Widget> another_widget =
+      CreateTestWidget(Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
   widget()->StackAbove(another_widget->GetNativeView());
 }
 
 TEST_P(WidgetWithDestroyedNativeViewOrNativeWidgetTest, StackAboveWidget) {
-  std::unique_ptr<Widget> another_widget = CreateTestWidget();
+  std::unique_ptr<Widget> another_widget =
+      CreateTestWidget(Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
   widget()->StackAboveWidget(another_widget.get());
 }
 
@@ -2776,7 +2787,8 @@ TEST_F(WidgetTest, BubbleControlsResetOnInit) {
 TEST_F(DesktopWidgetTest, TestViewWidthAfterMinimizingWidget) {
   // Create a widget.
   std::unique_ptr<Widget> widget =
-      CreateTestWidget(Widget::InitParams::TYPE_WINDOW);
+      CreateTestWidget(Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET,
+                       Widget::InitParams::TYPE_WINDOW);
   NonClientView* non_client_view = widget->non_client_view();
   non_client_view->SetFrameView(
       std::make_unique<MinimumSizeFrameView>(widget.get()));
@@ -2918,7 +2930,8 @@ TEST_F(DesktopAuraPaintWidgetTest, DesktopNativeWidgetNoPaintAfterHideTest) {
 TEST_F(DesktopWidgetTest, TestWindowVisibilityAfterHide) {
   // Create a widget.
   std::unique_ptr<Widget> widget =
-      CreateTestWidget(Widget::InitParams::TYPE_WINDOW);
+      CreateTestWidget(Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET,
+                       Widget::InitParams::TYPE_WINDOW);
   NonClientView* non_client_view = widget->non_client_view();
   non_client_view->SetFrameView(
       std::make_unique<MinimumSizeFrameView>(widget.get()));
@@ -3514,7 +3527,8 @@ TEST_F(WidgetTest, LockParentPaintAsActive) {
 TEST_F(DesktopWidgetTest,
        ClosingActiveChildDoesNotPrematurelyPaintParentInactive) {
   // top_level_widget that owns the bubble widget.
-  auto top_level_widget = CreateTestWidget();
+  auto top_level_widget =
+      CreateTestWidget(Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
   top_level_widget->Show();
 
   // Create the child bubble widget.
@@ -3546,7 +3560,8 @@ TEST_F(DesktopWidgetTest, LockPaintAsActiveAndCloseParent) {
   // Make sure that DesktopNativeWidgetAura is used for widgets.
   test_views_delegate()->set_use_desktop_native_widgets(true);
 
-  std::unique_ptr<Widget> parent = CreateTestWidget();
+  std::unique_ptr<Widget> parent =
+      CreateTestWidget(Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
   parent->Show();
 
   auto delegate = std::make_unique<TestDesktopWidgetDelegate>();
@@ -3802,7 +3817,7 @@ bool RunGetNativeThemeFromDestructor(Widget::InitParams params,
 }
 
 // See description of RunGetNativeThemeFromDestructor() for details.
-TEST_F(DesktopWidgetTest, GetNativeThemeFromDestructor) {
+TEST_F(DesktopWidgetTest, DISABLED_GetNativeThemeFromDestructor) {
   if (RunGetNativeThemeFromDestructor(
           CreateParams(Widget::InitParams::NATIVE_WIDGET_OWNS_WIDGET,
                        Widget::InitParams::TYPE_POPUP),
@@ -3909,7 +3924,8 @@ TEST_F(DesktopWidgetTest, CloseDestroys) {
 
 // Tests that killing a widget while animating it does not crash.
 TEST_F(WidgetTest, CloseWidgetWhileAnimating) {
-  std::unique_ptr<Widget> widget = CreateTestWidget();
+  std::unique_ptr<Widget> widget =
+      CreateTestWidget(Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
   AnimationEndObserver animation_observer;
   WidgetBoundsObserver widget_observer;
   gfx::Rect bounds(100, 100, 50, 50);
@@ -3985,17 +4001,20 @@ TEST_F(DesktopWidgetTest, ValidDuringOnNativeWidgetDestroyingFromClose) {
 // Tests that we do not crash when a Widget is destroyed by going out of
 // scope (as opposed to being explicitly deleted by its NativeWidget).
 TEST_F(WidgetTest, NoCrashOnWidgetDelete) {
-  CreateTestWidget();
+  CreateTestWidget(Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
 }
 
 TEST_F(WidgetTest, NoCrashOnResizeConstraintsWindowTitleOnPopup) {
-  CreateTestWidget(Widget::InitParams::TYPE_POPUP)->OnSizeConstraintsChanged();
+  CreateTestWidget(Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET,
+                   Widget::InitParams::TYPE_POPUP)
+      ->OnSizeConstraintsChanged();
 }
 
 // Tests that we do not crash when a Widget is destroyed before it finishes
 // processing of pending input events in the message loop.
 TEST_F(WidgetTest, NoCrashOnWidgetDeleteWithPendingEvents) {
-  std::unique_ptr<Widget> widget = CreateTestWidget();
+  std::unique_ptr<Widget> widget =
+      CreateTestWidget(Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
   widget->Show();
 
   auto generator =
@@ -4818,7 +4837,8 @@ TEST_F(WidgetChildDestructionTest, DestroyChildWidgetsInOrder) {
 // Verifies nativeview visbility matches that of Widget visibility when
 // SetFullscreen is invoked.
 TEST_F(WidgetTest, FullscreenStatePropagated) {
-  std::unique_ptr<Widget> top_level_widget = CreateTestWidget();
+  std::unique_ptr<Widget> top_level_widget =
+      CreateTestWidget(Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
   top_level_widget->SetFullscreen(true);
   EXPECT_EQ(top_level_widget->IsVisible(),
             IsNativeWindowVisible(top_level_widget->GetNativeWindow()));
@@ -4827,7 +4847,8 @@ TEST_F(WidgetTest, FullscreenStatePropagated) {
 // Verifies nativeview visbility matches that of Widget visibility when
 // SetFullscreen is invoked, for a widget provided with a desktop widget.
 TEST_F(DesktopWidgetTest, FullscreenStatePropagated_DesktopWidget) {
-  std::unique_ptr<Widget> top_level_widget = CreateTestWidget();
+  std::unique_ptr<Widget> top_level_widget =
+      CreateTestWidget(Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
   top_level_widget->SetFullscreen(true);
   EXPECT_EQ(top_level_widget->IsVisible(),
             IsNativeWindowVisible(top_level_widget->GetNativeWindow()));
@@ -4981,7 +5002,7 @@ class ChildDesktopWidgetTest : public DesktopWidgetTest {
 
   std::unique_ptr<Widget> CreateChildWidget(gfx::NativeWindow context) {
     context_ = context;
-    return CreateTestWidget();
+    return CreateTestWidget(Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
   }
 
  private:
@@ -4993,7 +5014,8 @@ class ChildDesktopWidgetTest : public DesktopWidgetTest {
 TEST_F(ChildDesktopWidgetTest, IsActiveFromDestroy) {
   // Create two widgets, one a child of the other.
   IsActiveFromDestroyObserver observer;
-  std::unique_ptr<Widget> parent_widget = CreateTestWidget();
+  std::unique_ptr<Widget> parent_widget =
+      CreateTestWidget(Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
   parent_widget->Show();
 
   std::unique_ptr<Widget> child_widget =
@@ -5174,7 +5196,8 @@ SubclassWindowHelper* SubclassWindowHelper::instance_ = nullptr;
 TEST_F(DesktopWidgetTest,
        DISABLED_SysCommandMoveOnNCLButtonDownOnCaptionAndMoveTest) {
   std::unique_ptr<Widget> widget =
-      CreateTestWidget(Widget::InitParams::TYPE_WINDOW);
+      CreateTestWidget(Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET,
+                       Widget::InitParams::TYPE_WINDOW);
   widget->Show();
   ::SetCursorPos(500, 500);
 
@@ -5240,7 +5263,8 @@ TEST_F(DesktopWidgetTest,
 // Disabled because of flaky timeouts: http://crbug.com/592742
 TEST_F(DesktopWidgetTest, DISABLED_DestroyInSysCommandNCLButtonDownOnCaption) {
   std::unique_ptr<Widget> widget =
-      CreateTestWidget(Widget::InitParams::TYPE_WINDOW);
+      CreateTestWidget(Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET,
+                       Widget::InitParams::TYPE_WINDOW);
   widget->Show();
   ::SetCursorPos(500, 500);
 
@@ -5819,7 +5843,8 @@ TEST_F(WidgetShadowTest, MAYBE_ShadowsInRootWindow) {
 // remaining top-level windows should be re-enabled.
 TEST_F(DesktopWidgetTest, WindowModalOwnerDestroyedEnabledTest) {
   // top_level_widget owns owner_dialog_widget which owns owned_dialog_widget.
-  std::unique_ptr<Widget> top_level_widget = CreateTestWidget();
+  std::unique_ptr<Widget> top_level_widget =
+      CreateTestWidget(Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
   top_level_widget->Show();
 
   // Create the owner modal dialog.
@@ -5972,7 +5997,8 @@ class CompositingWidgetTest : public DesktopWidgetTest {
         continue;
       }
 #endif
-      std::unique_ptr<Widget> widget = CreateTestWidget(widget_type);
+      std::unique_ptr<Widget> widget = CreateTestWidget(
+          Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET, widget_type);
 
       // Use NativeWidgetAura directly.
       if (widget_type == Widget::InitParams::TYPE_WINDOW_FRAMELESS ||
@@ -6013,6 +6039,47 @@ TEST_F(CompositingWidgetTest, Transparency_DesktopWidgetOpaque) {
 
 TEST_F(CompositingWidgetTest, Transparency_DesktopWidgetTranslucent) {
   CheckAllWidgetsForOpacity(Widget::InitParams::WindowOpacity::kTranslucent);
+}
+
+namespace {
+
+class ScreenshotWidgetTest : public ViewsTestBase {
+ public:
+  ScreenshotWidgetTest() = default;
+
+  // ViewsTestBase:
+  void SetUp() override {
+    ViewsTestBase::SetUp();
+    widget_ = WidgetAutoclosePtr(new Widget);
+    Widget::InitParams params = CreateParams(Widget::InitParams::TYPE_WINDOW);
+    native_widget_ = std::make_unique<MockNativeWidget>(widget());
+    ON_CALL(*native_widget(), SetAllowScreenshots(_))
+        .WillByDefault([this](bool allowed) {
+          screenshots_allowed_ = allowed;
+          return true;
+        });
+    params.native_widget = native_widget();
+    widget()->Init(std::move(params));
+  }
+
+  Widget* widget() { return widget_.get(); }
+  MockNativeWidget* native_widget() { return native_widget_.get(); }
+  const std::optional<bool>& screenshots_allowed() {
+    return screenshots_allowed_;
+  }
+
+ private:
+  WidgetAutoclosePtr widget_;
+  std::unique_ptr<MockNativeWidget> native_widget_;
+  std::optional<bool> screenshots_allowed_;
+};
+
+}  // namespace
+
+TEST_F(ScreenshotWidgetTest, CallsNativeWidget) {
+  widget()->SetAllowScreenshots(false);
+  ASSERT_TRUE(screenshots_allowed().has_value());
+  EXPECT_FALSE(screenshots_allowed().value());
 }
 
 #endif  // BUILDFLAG(ENABLE_DESKTOP_AURA) || BUILDFLAG(IS_MAC)

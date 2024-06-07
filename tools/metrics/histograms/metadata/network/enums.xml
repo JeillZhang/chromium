@@ -142,12 +142,6 @@ chromium-metrics-reviews@google.com.
   <int value="4" label="IncorrectlyLocked"/>
 </enum>
 
-<enum name="CellularCarrierLockOobeResult">
-  <int value="0" label="DevModeCarrierLocked"/>
-  <int value="1" label="DevModeLocked"/>
-  <int value="2" label="DevModeUnlocked"/>
-</enum>
-
 <enum name="CellularCarrierLockProvisioningResult">
   <int value="0" label="ConfigLocked"/>
   <int value="1" label="ConfigUnlocked"/>
@@ -649,14 +643,6 @@ chromium-metrics-reviews@google.com.
   <int value="1" label="Refresh"/>
 </enum>
 
-<enum name="MdnsResponderServiceError">
-  <int value="0" label="Fail to start manager"/>
-  <int value="1" label="Fail to create responder"/>
-  <int value="2" label="Fatal socket handler error"/>
-  <int value="3" label="Invalid IP to register name"/>
-  <int value="4" label="Conflicting name resolution"/>
-</enum>
-
 <enum name="NeighborLinkMonitorFailureType">
   <int value="0" label="Unknown type of failure"/>
   <int value="1" label="IPv4 gateway neighbor lost"/>
@@ -715,12 +701,6 @@ chromium-metrics-reviews@google.com.
   <int value="14" label="Not allowed because carrier is not known"/>
   <int value="15" label="Cellular device has no IP address"/>
   <int value="16" label="Cellular device doesn't exist"/>
-</enum>
-
-<enum name="NetworkCellularESimInstallResult">
-  <int value="0" label="Success"/>
-  <int value="1" label="Inhibit failed"/>
-  <int value="2" label="Hermes install failed"/>
 </enum>
 
 <enum name="NetworkCellularESimProfileStatus">
@@ -2593,6 +2573,11 @@ chromium-metrics-reviews@google.com.
   <int value="1" label="Only group owner is ready."/>
   <int value="2" label="Only group client is ready."/>
   <int value="3" label="Both group owner and client are ready."/>
+</enum>
+
+<enum name="WifiP2PDisconnectReason">
+  <int value="0" label="Client Initiated."/>
+  <int value="1" label="Internal Error."/>
 </enum>
 
 <enum name="WifiP2POperationResult">

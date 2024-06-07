@@ -22,6 +22,7 @@
 #include "components/guest_view/browser/guest_view_event.h"
 #include "components/guest_view/browser/guest_view_manager.h"
 #include "components/guest_view/common/guest_view_constants.h"
+#include "components/input/native_web_keyboard_event.h"
 #include "components/permissions/permission_util.h"
 #include "components/web_cache/browser/web_cache_manager.h"
 #include "content/public/browser/browser_context.h"
@@ -43,7 +44,6 @@
 #include "content/public/browser/web_contents_delegate.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/common/content_switches.h"
-#include "content/public/common/input/native_web_keyboard_event.h"
 #include "content/public/common/result_codes.h"
 #include "content/public/common/stop_find_action.h"
 #include "content/public/common/url_constants.h"
@@ -628,7 +628,7 @@ bool WebViewGuest::HandleContextMenu(
 
 bool WebViewGuest::HandleKeyboardEvent(
     WebContents* source,
-    const content::NativeWebKeyboardEvent& event) {
+    const input::NativeWebKeyboardEvent& event) {
   if (HandleKeyboardShortcuts(event))
     return true;
 
@@ -1199,7 +1199,7 @@ void WebViewGuest::NavigateGuest(
 }
 
 bool WebViewGuest::HandleKeyboardShortcuts(
-    const content::NativeWebKeyboardEvent& event) {
+    const input::NativeWebKeyboardEvent& event) {
   // <webview> outside of Chrome Apps do not handle keyboard shortcuts.
   if (!GuestViewManager::FromBrowserContext(browser_context())
            ->IsOwnedByExtension(this)) {

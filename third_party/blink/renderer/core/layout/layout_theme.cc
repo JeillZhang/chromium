@@ -292,18 +292,10 @@ void LayoutTheme::AdjustStyle(const Element* element,
 }
 
 String LayoutTheme::ExtraDefaultStyleSheet() {
-  if (RuntimeEnabledFeatures::VttCueDisplayRubyEnabled()) {
-    // !important is necessary because this style is loaded earlier than
-    // mediaControls.css.
-    //
-    // Avoid to write "video::cue" for a false-positive by
-    // audit_non_blink_usage.py.
-    return "video::"
-           "cue(rt) { display: ruby-text !important; }\n"
-           "video::"
-           "cue(ruby) { display: ruby; }\n";
-  }
-  return g_empty_string;
+  // If you want to add something depending on a runtime flag here,
+  // please consider using `@supports blink-feature(flag-name)` in a
+  // stylesheet resource file.
+  return "@namespace 'http://www.w3.org/1999/xhtml';\n";
 }
 
 String LayoutTheme::ExtraFullscreenStyleSheet() {
@@ -685,7 +677,7 @@ Color LayoutTheme::DefaultSystemColor(
     default:
       break;
   }
-  DUMP_WILL_BE_NOTREACHED_NORETURN()
+  DUMP_WILL_BE_NOTREACHED()
       << getValueName(css_value_id) << " is not a recognized system color";
   return Color();
 }
@@ -694,7 +686,6 @@ Color LayoutTheme::SystemColorFromColorProvider(
     CSSValueID css_value_id,
     mojom::blink::ColorScheme color_scheme,
     const ui::ColorProvider* color_provider) const {
-  CHECK(color_provider->HasMixers());
   SkColor system_theme_color;
   switch (css_value_id) {
     case CSSValueID::kActivetext:
@@ -726,9 +717,7 @@ Color LayoutTheme::SystemColorFromColorProvider(
           color_provider->GetColor(ui::kColorCssSystemGrayText);
       break;
     case CSSValueID::kHighlight:
-      system_theme_color =
-          color_provider->GetColor(ui::kColorCssSystemHighlight);
-      break;
+      return SystemHighlightFromColorProvider(color_scheme, color_provider);
     case CSSValueID::kHighlighttext:
       system_theme_color =
           color_provider->GetColor(ui::kColorCssSystemHighlightText);
@@ -761,6 +750,14 @@ Color LayoutTheme::SystemColorFromColorProvider(
   }
 
   return Color::FromSkColor(system_theme_color);
+}
+
+Color LayoutTheme::SystemHighlightFromColorProvider(
+    mojom::blink::ColorScheme color_scheme,
+    const ui::ColorProvider* color_provider) const {
+  SkColor system_highlight_color =
+      color_provider->GetColor(ui::kColorCssSystemHighlight);
+  return Color::FromSkColor(system_highlight_color).BlendWithWhite();
 }
 
 Color LayoutTheme::PlatformTextSearchHighlightColor(

@@ -144,7 +144,8 @@ class TabStripTestBase : public ChromeViewsTestBase {
         },
         tab_strip_parent.get()));
 
-    widget_ = CreateTestWidget();
+    widget_ =
+        CreateTestWidget(views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
     tab_strip_parent_ = widget_->SetContentsView(std::move(tab_strip_parent));
 
     // Prevent hover cards from appearing when the mouse is over the tab. Tests
@@ -182,10 +183,7 @@ class TabStripTestBase : public ChromeViewsTestBase {
   int GetInactiveTabWidth() { return tab_strip_->GetInactiveTabWidth(); }
 
   // End any outstanding drag and animate tabs back to their ideal bounds.
-  void StopDragging(
-      const std::vector<raw_ptr<TabSlotView, VectorExperimental>> views) {
-    tab_strip_->GetDragContext()->StoppedDragging(views);
-  }
+  void StopDragging() { tab_strip_->GetDragContext()->StoppedDragging(); }
 
   size_t NumTabSlotViews() {
     base::RepeatingCallback<size_t(views::View*)> num_tab_slot_views =
@@ -517,7 +515,7 @@ TEST_P(TabStripTest, ResetBoundsForDraggedTabs) {
   // Ending the drag triggers the tabstrip to begin animating this tab back
   // to its ideal bounds.
   ASSERT_FALSE(tab_strip_->IsAnimating());
-  StopDragging({dragged_tab});
+  StopDragging();
   EXPECT_TRUE(tab_strip_->IsAnimating());
 
   // Change the ideal bounds of the tabs mid-animation by selecting a
@@ -857,7 +855,7 @@ TEST_P(TabStripTestWithScrollingDisabled, GroupedTabSlotOverflowVisibility) {
   ASSERT_FALSE(controller_->IsGroupCollapsed(group2.value()));
   EXPECT_TRUE(tab_strip_->group_header(group2.value())->GetVisible());
   controller_->ToggleTabGroupCollapsedState(
-      group2.value(), ToggleTabGroupCollapsedStateOrigin::kImplicitAction);
+      group2.value(), ToggleTabGroupCollapsedStateOrigin::kMenuAction);
   ASSERT_TRUE(controller_->IsGroupCollapsed(group2.value()));
   EXPECT_TRUE(tab_strip_->group_header(group2.value())->GetVisible());
 }

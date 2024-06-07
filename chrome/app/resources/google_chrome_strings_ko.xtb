@@ -63,6 +63,7 @@
 <translation id="1873233029667955273">Chrome이 기본 브라우저로 설정되어 있지 않습니다</translation>
 <translation id="1874309113135274312">Chrome 베타(mDNS-In)</translation>
 <translation id="1877026089748256423">Chrome이 이전 버전임</translation>
+<translation id="1907925560334657849">창을 공유하려면 시스템 환경설정에서 Chrome의 화면 녹화를 허용하세요</translation>
 <translation id="1919130412786645364">Chrome 로그인 허용</translation>
 <translation id="1953553007165777902">다운로드 중... <ph name="MINUTE" />분 남음</translation>
 <translation id="1982647487457769627">Chrome은 다양한 플랫폼과 호환되므로 어떤 기기에서든 익숙한 환경을 이용할 수 있습니다.</translation>
@@ -127,6 +128,7 @@
 <translation id="2770231113462710648">다음으로 기본 브라우저 변경:</translation>
 <translation id="2775140325783767197">Chrome에서 비밀번호를 확인할 수 없습니다. 인터넷 연결 상태를 확인하세요.</translation>
 <translation id="2799223571221894425">다시 시작</translation>
+<translation id="2825024317344269723">위험한 사이트입니다. Chrome에서 알림을 삭제했습니다.</translation>
 <translation id="2846251086934905009">설치 오류: 설치 프로그램이 완료되지 않았습니다. 설치가 중단되었습니다.</translation>
 <translation id="2847461019998147611">이 언어로 Chrome 표시</translation>
 <translation id="2853415089995957805">Chrome은 사용자가 방문할 가능성이 있는 페이지를 미리 로드하여 사용자가 방문할 때 페이지를 더 빠르게 로드합니다.</translation>
@@ -188,6 +190,7 @@
 <translation id="3583751698304738917">이미 다른 Chrome 프로필에 <ph name="USER_EMAIL_ADDRESS" /> 계정으로 로그인되어 있습니다</translation>
 <translation id="3595784445906693824">새 프로필로 Chrome에 로그인하시겠습니까?</translation>
 <translation id="3596080736082218006">{COUNT,plural, =0{관리자의 요구에 따라 업데이트를 적용하려면 Chrome을 다시 실행해야 합니다.}=1{관리자의 요구에 따라 업데이트를 적용하려면 Chrome을 다시 실행해야 합니다. 시크릿 창이 다시 열리지 않습니다.}other{관리자의 요구에 따라 업데이트를 적용하려면 Chrome을 다시 실행해야 합니다. 시크릿 창 #개가 다시 열리지 않습니다.}}</translation>
+<translation id="3609788354808247807">최근에 사이트를 방문하지 않았습니다. Chrome에서 <ph name="PERMISSION_1" />, <ph name="PERMISSION_2" />, <ph name="PERMISSION_3" /> 권한을 삭제했습니다.</translation>
 <translation id="3622797965165704966">이제 Google 계정으로 공유 컴퓨터에서 Chrome을 손쉽게 사용할 수 있습니다.</translation>
 <translation id="3635073343384702370">비밀번호를 저장하면 Chrome에서 확인할 수 있습니다</translation>
 <translation id="3667616615096815454">설치할 수 없습니다. 서버에서 애플리케이션을 알 수 없습니다.</translation>
@@ -255,7 +258,6 @@
 <translation id="4624065194742029982">Chrome 시크릿 모드</translation>
 <translation id="4627412468266359539">선택사항: 진단 및 사용 데이터를 Google에 자동으로 전송하여 ChromeOS Flex의 기능과 성능을 개선할 수 있도록 도와주세요.</translation>
 <translation id="4633000520311261472">Google에서는 Chrome의 보안을 강화하기 위해 <ph name="IDS_EXTENSION_WEB_STORE_TITLE" />에 표시되지 않고 사용자 모르게 추가되었을 수 있는 일부 확장 프로그램의 사용을 중지했습니다.</translation>
-<translation id="4643107447730827793">Chrome 데이터 중 일부가 아직 Google 계정에 저장되지 않았습니다. 잠시 기다렸다가 로그아웃하세요</translation>
 <translation id="4680828127924988555">설치 취소</translation>
 <translation id="469553575393225953">알 수 없는 소스의 확장 프로그램, 앱, 테마는 기기를 손상시킬 수 있습니다. Chrome 웹 스토어에서 다운로드한 확장 프로그램, 앱, 테마만 설치하는 것이 좋습니다</translation>
 <translation id="4710245680469034439">자연, 아티스트 컬렉션 등에서 영감을 받은 테마로 브라우저를 맞춤설정하세요.</translation>
@@ -301,7 +303,6 @@
 <translation id="5337648990166757586">선택사항: 진단 및 사용 데이터를 Google에 자동으로 전송하여 ChromeOS의 기능 및 성능 개선에 참여합니다.</translation>
 <translation id="5357889879764279201">ChromeOS Flex 도움말 확인</translation>
 <translation id="5368118228313795342">추가 코드: <ph name="EXTRA_CODE" />.</translation>
-<translation id="5386118856456530849">Chrome 버전 설정으로 이동</translation>
 <translation id="5386244825306882791">또한 Chrome을 시작하거나 검색주소창에서 검색할 때 표시되는 페이지를 설정합니다.</translation>
 <translation id="5394833366792865639">Chrome 탭 공유</translation>
 <translation id="5412485296464121825">사이트에서는 Chrome에 내 관심분야에 관한 정보를 저장할 수 있습니다. 예를 들어 마라톤화를 구매하려고 사이트를 방문하면 사이트에서 내 관심분야를 마라톤으로 정의할 수 있습니다. 나중에 마라톤 대회에 등록하기 위해 다른 사이트에 방문하면 관심분야를 토대로 마라톤화 광고가 표시될 수 있습니다.</translation>
@@ -337,6 +338,7 @@ Chrome에서 설정을 복구할 수 없습니다.</translation>
 <translation id="5941711191222866238">최소화</translation>
 <translation id="5941830788786076944">Chrome을 기본 브라우저로</translation>
 <translation id="5947104538377036631">Chrome 단축키</translation>
+<translation id="5953954252731207958">최근에 사이트를 방문하지 않았습니다. Chrome에서 <ph name="PERMISSION" /> 권한을 삭제했습니다.</translation>
 <translation id="6003112304606738118">다운로드 중... <ph name="HOURS" />시간 남음</translation>
 <translation id="6014316319780893079"><ph name="BEGIN_LINK" />Chrome의 도구<ph name="END_LINK" />로 안전하게 탐색하고 관리할 수 있습니다.</translation>
 <translation id="6022659036123304283">나만의 Chrome 만들기</translation>
@@ -351,6 +353,7 @@ Chrome에서 설정을 복구할 수 없습니다.</translation>
 <translation id="6169866489629082767"><ph name="PAGE_TITLE" /> - Chrome</translation>
 <translation id="6173637689840186878"><ph name="PAGE_TITLE" /> - Chrome 베타</translation>
 <translation id="6182736845697986886">업데이트 서버 내부 오류로 인해 설치할 수 없습니다.</translation>
+<translation id="6200139057479872438">최근에 사이트를 방문하지 않았습니다. Chrome에서 <ph name="PERMISSION_1" />, <ph name="PERMISSION_2" /> 권한을 삭제했습니다.</translation>
 <translation id="6235018212288296708">Chrome이 mDNS 트래픽을 허용하는 인바운드 규칙입니다.</translation>
 <translation id="624230925347970731">Chrome이 곧 종료됩니다</translation>
 <translation id="6247557882553405851">Google 비밀번호 관리자</translation>
@@ -367,6 +370,7 @@ Chrome에서 설정을 복구할 수 없습니다.</translation>
 <translation id="6412673304250309937">Chrome에 저장된 안전하지 않은 사이트 목록을 사용하여 URL을 검사합니다. 사이트에서 사용자의 비밀번호를 도용하려고 하거나 사용자가 유해한 파일을 다운로드하는 경우, Chrome에서 페이지 콘텐츠 일부를 비롯한 URL을 세이프 브라우징 서비스에 보낼 수 있습니다.</translation>
 <translation id="6417690341895039567">{COUNT,plural, =1{Chrome을 1분 동안 사용하지 않으면 조직에서 자동으로 종료합니다. 인터넷 사용 기록이 삭제됩니다. 여기에는 방문 기록, 자동 완성, 다운로드가 포함될 수 있습니다.}other{Chrome을 #분 동안 사용하지 않으면 조직에서 자동으로 종료합니다. 인터넷 사용 기록이 삭제됩니다. 여기에는 방문 기록, 자동 완성, 다운로드가 포함될 수 있습니다.}}</translation>
 <translation id="6418662306461808273">기존 Chrome 프로필로 전환하시겠습니까?</translation>
+<translation id="6473905796280459355">Chrome 정보 페이지로 이동</translation>
 <translation id="6479881432656947268">Chrome 웹 스토어 방문하기</translation>
 <translation id="6481963882741794338">맞춤설정 등의 목적으로 Chrome과 다른 Google 서비스를 연결합니다</translation>
 <translation id="648319183876919572">향상된 세이프 브라우징은 위험한 웹사이트와 다운로드로부터 사용자를 보호합니다.</translation>
@@ -414,6 +418,7 @@ Chrome에서 설정을 복구할 수 없습니다.</translation>
 <translation id="7088681679121566888">Chrome이 최신 버전임</translation>
 <translation id="7098166902387133879">Chrome에서 마이크를 사용 중입니다.</translation>
 <translation id="7099479769133613710">다시 실행하여 ChromeOS 업데이트</translation>
+<translation id="7100085796996987445">화면을 공유하려면 시스템 환경설정에서 Chrome의 화면 녹화를 허용하세요</translation>
 <translation id="7106741999175697885">작업 관리자 - Chrome</translation>
 <translation id="7140653346177713799">{COUNT,plural, =0{새 Chrome 업데이트가 있습니다. Chrome을 다시 실행하면 업데이트가 바로 적용됩니다.}=1{새 Chrome 업데이트가 있습니다. Chrome을 다시 실행하면 업데이트가 바로 적용됩니다. 시크릿 창이 다시 열리지 않습니다.}other{새 Chrome 업데이트가 있습니다. Chrome을 다시 실행하면 업데이트가 바로 적용됩니다. 시크릿 창 #개가 다시 열리지 않습니다.}}</translation>
 <translation id="7155997830309522122">그렇다면 Chrome에 저장된 비밀번호가 새로운 비밀번호와 일치하도록 수정해 주세요.</translation>
@@ -423,6 +428,7 @@ Chrome에서 설정을 복구할 수 없습니다.</translation>
 <translation id="7242029209006116544">관리 계정으로 로그인하고 관리자에게 Chrome 프로필에 대한 제어권을 부여하려고 합니다. 앱, 북마크, 방문 기록, 비밀번호 및 기타 설정과 같은 Chrome 데이터가 <ph name="USER_NAME" /> 계정에 영구적으로 연결됩니다. 이후 이 데이터를 Google 계정 대시보드에서 삭제할 수는 있지만 다른 계정에 연결할 수는 없습니다. 기존 Chrome 데이터를 유지하려면 새 프로필을 만드는 방법이 있습니다. <ph name="LEARN_MORE" /></translation>
 <translation id="7295052994004373688">Chrome UI가 이 언어로 표시됩니다.</translation>
 <translation id="7296210096911315575">사용 및 안전 관련 주요 정보</translation>
+<translation id="7302361266603927550">Chrome 데이터 중 일부가 아직 Google 계정에 저장되지 않았습니다. 잠시 기다렸다가 로그아웃하세요. 지금 로그아웃하면 이 데이터가 삭제됩니다</translation>
 <translation id="7308322188646931570">파일을 다운로드하려면 Chrome에 저장소 액세스 권한이 있어야 합니다</translation>
 <translation id="7339898014177206373">새 창</translation>
 <translation id="7352881504289275361">향상된 세이프 브라우징은 Chrome의 가장 강력한 온라인 보호 기능으로, 인터넷을 탐색 중인 사용자를 안전하게 보호합니다.</translation>
@@ -448,6 +454,7 @@ Chrome에서 설정을 복구할 수 없습니다.</translation>
 <translation id="7651907282515937834">Chrome Enterprise 로고</translation>
 <translation id="76531479118467370">사용자가 세이프 브라우징을 사용 중지했으며 파일을 확인할 수 없기 때문에 Chrome에서 이 다운로드를 차단했습니다.</translation>
 <translation id="7655455401911432608">이 기기에서 Chrome을 사용해 방문한 사이트의 기록인 방문 기록이 사용됩니다.</translation>
+<translation id="7661924425853052955">최근에 사이트를 방문하지 않았습니다. Chrome에서 <ph name="PERMISSION_1" />, <ph name="PERMISSION_2" /> 외 권한 <ph name="COUNT" />개를 삭제했습니다.</translation>
 <translation id="7668816516367091728">주소 표시줄에서 바로 번역, 계산 등의 작업을 수행하세요.</translation>
 <translation id="769538538642757151">검토가 필요한 사항이 있으면 Chrome에서 알려 드립니다.</translation>
 <translation id="7747138024166251722">설치 프로그램이 임시 디렉터리를 만들지 못했습니다. 디스크 공간 및 설치 권한을 확인해 보세요.</translation>

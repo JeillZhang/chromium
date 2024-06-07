@@ -109,10 +109,6 @@ BASE_DECLARE_FEATURE(kOmniboxSteadyStateTextStyle);
 
 BASE_DECLARE_FEATURE(kOmniboxSteadyStateTextColor);
 
-// Omnibox & Suggestions UI - these affect both the omnibox and the suggestions
-// popup.
-BASE_DECLARE_FEATURE(kOmniboxModernizeVisualUpdate);
-
 // Android only flag that controls whether the new security indicator should be
 // used, on non-Android platforms this is controlled through the
 // ChromeRefresh2023 flag.
@@ -128,6 +124,7 @@ BASE_DECLARE_FEATURE(kMlUrlScoreCaching);
 BASE_DECLARE_FEATURE(kMlUrlScoring);
 BASE_DECLARE_FEATURE(kMlUrlSearchBlending);
 BASE_DECLARE_FEATURE(kUrlScoringModel);
+BASE_DECLARE_FEATURE(kEnableForceSkipMlScoring);
 
 // Actions in Suggest - Action Chips for Entity Suggestions.
 // Data driven feature; flag helps tune behavior.
@@ -151,6 +148,7 @@ BASE_DECLARE_FEATURE(kOmniboxTouchDownTriggerForPrefetch);
 // Site search/Keyword mode related features.
 BASE_DECLARE_FEATURE(kPolicyIndicationForManagedDefaultSearch);
 BASE_DECLARE_FEATURE(kShowFeaturedEnterpriseSiteSearch);
+BASE_DECLARE_FEATURE(kShowFeaturedEnterpriseSiteSearchIPH);
 BASE_DECLARE_FEATURE(kSiteSearchSettingsPolicy);
 BASE_DECLARE_FEATURE(kStarterPackExpansion);
 BASE_DECLARE_FEATURE(kStarterPackIPH);

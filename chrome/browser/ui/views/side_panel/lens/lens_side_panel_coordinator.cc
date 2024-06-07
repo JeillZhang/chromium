@@ -62,19 +62,16 @@ BrowserView* LensSidePanelCoordinator::GetBrowserView() {
 }
 
 actions::ActionItem* LensSidePanelCoordinator::GetActionItem() {
-  CHECK(features::IsSidePanelPinningEnabled());
   BrowserActions* browser_actions = GetBrowser().browser_actions();
   return actions::ActionManager::Get().FindAction(
       kActionSidePanelShowLens, browser_actions->root_action_item());
 }
 
 void LensSidePanelCoordinator::UpdateActionItem() {
-  if (features::IsSidePanelPinningEnabled()) {
-    actions::ActionItem* action_item = GetActionItem();
-    action_item->SetText(GetComboboxLabel());
-    action_item->SetTooltipText(GetComboboxLabel());
-    action_item->SetImage(GetFaviconImage());
-  }
+  actions::ActionItem* action_item = GetActionItem();
+  action_item->SetText(GetComboboxLabel());
+  action_item->SetTooltipText(GetComboboxLabel());
+  action_item->SetImage(GetFaviconImage());
 }
 
 SidePanelCoordinator* LensSidePanelCoordinator::GetSidePanelCoordinator() {
@@ -109,21 +106,7 @@ void LensSidePanelCoordinator::OnSidePanelDidClose() {
 
 void LensSidePanelCoordinator::OnFaviconFetched(const gfx::Image& favicon) {
   // Update the action item with the new favicon.
-  if (features::IsSidePanelPinningEnabled()) {
-    GetActionItem()->SetImage(ui::ImageModel::FromImage(favicon));
-  }
-  auto* registry =
-      SidePanelCoordinator::GetGlobalSidePanelRegistry(&GetBrowser());
-  if (registry == nullptr) {
-    return;
-  }
-
-  auto* lens_side_panel_entry =
-      registry->GetEntryForKey(SidePanelEntry::Key(SidePanelEntry::Id::kLens));
-  if (lens_side_panel_entry == nullptr)
-    return;
-
-  lens_side_panel_entry->ResetIcon(ui::ImageModel::FromImage(favicon));
+  GetActionItem()->SetImage(ui::ImageModel::FromImage(favicon));
 }
 
 void LensSidePanelCoordinator::OnTemplateURLServiceChanged() {
@@ -221,14 +204,14 @@ void LensSidePanelCoordinator::RegisterEntryAndShow(
   } else {
     base::RecordAction(
         base::UserMetricsAction("LensUnifiedSidePanel.LensQuery_New"));
-      auto entry = std::make_unique<SidePanelEntry>(
-          SidePanelEntry::Id::kLens, GetComboboxLabel(), GetFaviconImage(),
-          base::BindRepeating(&LensSidePanelCoordinator::CreateLensWebView,
-                              base::Unretained(this), params),
-          base::BindRepeating(&LensSidePanelCoordinator::GetOpenInNewTabURL,
-                              base::Unretained(this)));
-      entry->AddObserver(this);
-      registry->Register(std::move(entry));
+    auto entry = std::make_unique<SidePanelEntry>(
+        SidePanelEntry::Id::kLens,
+        base::BindRepeating(&LensSidePanelCoordinator::CreateLensWebView,
+                            base::Unretained(this), params),
+        base::BindRepeating(&LensSidePanelCoordinator::GetOpenInNewTabURL,
+                            base::Unretained(this)));
+    entry->AddObserver(this);
+    registry->Register(std::move(entry));
   }
 
   auto* side_panel_coordinator = GetSidePanelCoordinator();

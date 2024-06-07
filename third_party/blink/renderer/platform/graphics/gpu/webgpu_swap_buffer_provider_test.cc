@@ -40,6 +40,7 @@ class MockWebGPUInterface : public gpu::webgpu::WebGPUInterfaceStub {
                         GLuint,
                         GLuint,
                         GLuint,
+                        GLuint,
                         const WGPUTextureFormat*,
                         GLuint,
                         gpu::webgpu::MailboxFlags,
@@ -166,7 +167,7 @@ class WireSerializer : public dawn::wire::CommandSerializer {
  private:
   size_t offset_ = 0;
   char buf_[1024 * 1024];
-  dawn::wire::CommandHandler* handler_;
+  raw_ptr<dawn::wire::CommandHandler> handler_;
 };
 
 }  // anonymous namespace

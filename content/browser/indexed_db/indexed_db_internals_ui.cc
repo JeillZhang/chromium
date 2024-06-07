@@ -195,6 +195,35 @@ void IndexedDBInternalsUI::ForceClose(storage::BucketId bucket_id,
           std::move(callback)));
 }
 
+void IndexedDBInternalsUI::StartMetadataRecording(
+    storage::BucketId bucket_id,
+    StartMetadataRecordingCallback callback) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+
+  storage::mojom::IndexedDBControl* control = GetBucketControl(bucket_id);
+  if (!control) {
+    std::move(callback).Run("IndexedDb control not found");
+    return;
+  }
+
+  control->StartMetadataRecording(
+      bucket_id, base::BindOnce(std::move(callback), std::nullopt));
+}
+void IndexedDBInternalsUI::StopMetadataRecording(
+    storage::BucketId bucket_id,
+    StopMetadataRecordingCallback callback) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+
+  storage::mojom::IndexedDBControl* control = GetBucketControl(bucket_id);
+  if (!control) {
+    std::move(callback).Run("IndexedDb control not found", {});
+    return;
+  }
+
+  control->StopMetadataRecording(
+      bucket_id, base::BindOnce(std::move(callback), std::nullopt));
+}
+
 void IndexedDBInternalsUI::OnDownloadDataReady(
     DownloadBucketDataCallback callback,
     bool success,

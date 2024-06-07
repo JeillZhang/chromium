@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/containers/span.h"
 #include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
 #include "cc/base/features.h"
@@ -826,6 +827,49 @@ TEST_P(CompositingTest, HitTestOpaquenessOnChangeOfUsedPointerEvents) {
   EXPECT_TRUE(display_item_client->IsValid());
   UpdateAllLifecyclePhases();
   EXPECT_EQ(hit_test_opaque, target_layer->hit_test_opaqueness());
+}
+
+// Based on the minimized test case of https://crbug.com/343198769.
+TEST_P(CompositingTest,
+       NonStackedScrollerWithRelativeChildAboveFixedAndAbsolute) {
+  GetLocalFrameView()
+      ->GetFrame()
+      .GetSettings()
+      ->SetPreferCompositingToLCDTextForTesting(false);
+
+  InitializeWithHTML(*WebView()->MainFrameImpl()->GetFrame(), R"HTML(
+    <!doctype html>
+    <style>
+      div { width: 100px; height: 100px; }
+      ::-webkit-scrollbar { display: none; }
+    </style>
+    <div id="fixed" style="position: fixed"></div>
+    <div id="absolute" style="position: absolute"></div>
+    <div style="overflow: scroll">
+      <div id="relative" style="position: relative; height: 2000px">
+        Contents
+      </div>
+    </div>
+  )HTML");
+
+  EXPECT_TRUE(CcLayerByDOMElementId("fixed"));     // Directly composited.
+  EXPECT_TRUE(CcLayerByDOMElementId("absolute"));  // Overlaps with #fixed.
+  if (RuntimeEnabledFeatures::HitTestOpaquenessEnabled()) {
+    // Not merged because that would miss #relative's scroll state without a
+    // NonFastScrollableRegion.
+    EXPECT_TRUE(CcLayerByDOMElementId("relative"));
+  } else {
+    // Merged into #absolute.
+    EXPECT_FALSE(CcLayerByDOMElementId("relative"));
+  }
+
+  GetElementById("fixed")->SetInlineStyleProperty(CSSPropertyID::kPosition,
+                                                  "absolute");
+  UpdateAllLifecyclePhases();
+  // All layers are merged together.
+  EXPECT_FALSE(CcLayerByDOMElementId("fixed"));
+  EXPECT_FALSE(CcLayerByDOMElementId("absolute"));
+  EXPECT_FALSE(CcLayerByDOMElementId("relative"));
 }
 
 TEST_P(CompositingTest, AnchorPositionAdjustmentTransformIdReference) {
@@ -3303,8 +3347,8 @@ TEST_P(CompositingSimTest, CompositorAnimationRevealsChild) {
 
 static String ImageFileAsDataURL(const String& filename) {
   return "data:image/jpeg;base64," +
-         Base64Encode(test::ReadFromFile(test::CoreTestDataPath(filename))
-                          ->CopyAs<Vector<uint8_t>>());
+         Base64Encode(base::as_byte_span(
+             *test::ReadFromFile(test::CoreTestDataPath(filename))));
 }
 
 TEST_P(CompositingSimTest, CompositedImageWithSubpixelOffset) {
@@ -3319,7 +3363,7 @@ TEST_P(CompositingSimTest, CompositedImageWithSubpixelOffset) {
   ASSERT_TRUE(image_layer);
   EXPECT_EQ(gfx::Vector2dF(0.25f, 0.0625f),
             image_layer->GetRecordingSourceForTesting()
-                ->directly_composited_image_info()
+                .directly_composited_image_info()
                 ->default_raster_scale);
 }
 
@@ -3335,7 +3379,7 @@ TEST_P(CompositingSimTest, CompositedImageWithSubpixelOffsetAndOrientation) {
   ASSERT_TRUE(image_layer);
   EXPECT_EQ(gfx::Vector2dF(0.0625f, 0.25f),
             image_layer->GetRecordingSourceForTesting()
-                ->directly_composited_image_info()
+                .directly_composited_image_info()
                 ->default_raster_scale);
 }
 
@@ -3367,15 +3411,15 @@ TEST_P(CompositingSimTest, ScrollingContentsLayerRecordedBounds) {
   if (RuntimeEnabledFeatures::FillScrollingContentsLayerEnabled()) {
     EXPECT_EQ(gfx::Size(2000, 16000), layer->bounds());
     EXPECT_EQ(gfx::Rect(0, 0, 2000, 16000),
-              layer->GetRecordingSourceForTesting()->recorded_bounds());
+              layer->GetRecordingSourceForTesting().recorded_bounds());
   } else if (RuntimeEnabledFeatures::HitTestOpaquenessEnabled()) {
     EXPECT_EQ(gfx::Size(2000, 16000), layer->bounds());
     EXPECT_EQ(gfx::Rect(0, 2000, 2000, 2000),
-              layer->GetRecordingSourceForTesting()->recorded_bounds());
+              layer->GetRecordingSourceForTesting().recorded_bounds());
   } else {
     EXPECT_EQ(gfx::Size(2000, 2000), layer->bounds());
     EXPECT_EQ(gfx::Rect(0, 0, 2000, 2000),
-              layer->GetRecordingSourceForTesting()->recorded_bounds());
+              layer->GetRecordingSourceForTesting().recorded_bounds());
   }
 }
 

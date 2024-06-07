@@ -55,7 +55,7 @@ import org.chromium.chrome.browser.layouts.LayoutTestUtils;
 import org.chromium.chrome.browser.layouts.LayoutType;
 import org.chromium.chrome.browser.native_page.ContextMenuManager;
 import org.chromium.chrome.browser.suggestions.SiteSuggestion;
-import org.chromium.chrome.browser.suggestions.tile.MostVisitedTilesCarouselLayout;
+import org.chromium.chrome.browser.suggestions.tile.MostVisitedTilesLayout;
 import org.chromium.chrome.browser.suggestions.tile.SuggestionsTileView;
 import org.chromium.chrome.browser.tasks.tab_management.TabUiTestHelper;
 import org.chromium.chrome.browser.ui.messages.snackbar.SnackbarManager;
@@ -279,16 +279,16 @@ public class StartSurfaceMVTilesTest {
         return tileView;
     }
 
-    private MostVisitedTilesCarouselLayout getMvTilesLayout() {
+    private MostVisitedTilesLayout getMvTilesLayout() {
         onViewWaiting(withId(R.id.mv_tiles_layout));
-        MostVisitedTilesCarouselLayout mvTilesLayout =
+        MostVisitedTilesLayout mvTilesLayout =
                 mActivityTestRule.getActivity().findViewById(R.id.mv_tiles_layout);
         Assert.assertNotNull("Unable to retrieve the MvTilesLayout.", mvTilesLayout);
         return mvTilesLayout;
     }
 
     private void waitForTileRemoved(final SiteSuggestion suggestion) throws TimeoutException {
-        MostVisitedTilesCarouselLayout mvTilesLayout = getMvTilesLayout();
+        MostVisitedTilesLayout mvTilesLayout = getMvTilesLayout();
         final SuggestionsTileView removedTile = mvTilesLayout.findTileViewForTesting(suggestion);
         if (removedTile == null) return;
 
@@ -362,7 +362,7 @@ public class StartSurfaceMVTilesTest {
         View mvTilesLayout = cta.findViewById(org.chromium.chrome.test.R.id.mv_tiles_layout);
 
         int expectedMvtLateralMargin =
-                res.getDimensionPixelSize(R.dimen.mvt_container_lateral_margin_polish);
+                res.getDimensionPixelSize(R.dimen.mvt_container_lateral_margin);
         Assert.assertEquals(
                 "The left margin of the most visited tiles container is wrong.",
                 expectedMvtLateralMargin,
@@ -376,8 +376,7 @@ public class StartSurfaceMVTilesTest {
                 expectedMvtLateralMargin * 2,
                 startSurfaceView.getWidth() - mvTilesContainer.getWidth());
 
-        int expectedMvtTopMargin =
-                res.getDimensionPixelSize(R.dimen.mvt_container_top_margin_polish);
+        int expectedMvtTopMargin = res.getDimensionPixelSize(R.dimen.mvt_container_top_margin);
         Assert.assertEquals(
                 "The top margin of the most visited tiles container is wrong.",
                 expectedMvtTopMargin,
@@ -387,10 +386,9 @@ public class StartSurfaceMVTilesTest {
                 0,
                 ((MarginLayoutParams) mvTilesContainer.getLayoutParams()).bottomMargin);
 
-        int expectedMvtTopPadding =
-                res.getDimensionPixelSize(R.dimen.mvt_container_top_padding_polish);
+        int expectedMvtTopPadding = res.getDimensionPixelSize(R.dimen.mvt_container_top_padding);
         int expectedMvtBottomPadding =
-                res.getDimensionPixelSize(R.dimen.mvt_container_bottom_padding_polish);
+                res.getDimensionPixelSize(R.dimen.mvt_container_bottom_padding);
         Assert.assertEquals(
                 "The top padding of the most visited tiles container is wrong.",
                 expectedMvtTopPadding,
@@ -401,7 +399,7 @@ public class StartSurfaceMVTilesTest {
                 mvTilesContainer.getPaddingBottom());
 
         int expectedTitleTopMargin =
-                res.getDimensionPixelSize(R.dimen.tile_view_title_margin_top_modern_polish);
+                res.getDimensionPixelSize(R.dimen.tile_view_title_margin_top_modern);
         TileView suggestionsTileElement = (TileView) ((LinearLayout) mvTilesLayout).getChildAt(0);
         Assert.assertEquals(
                 "The top margin of the tile element's title is wrong.",

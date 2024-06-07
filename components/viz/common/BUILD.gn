@@ -41,7 +41,7 @@ viz_component("shared_image_format") {
     "//ui/gfx/geometry",
   ]
   if (enable_vulkan) {
-    deps += [ "//third_party/vulkan-deps/vulkan-headers/src:vulkan_headers" ]
+    deps += [ "//third_party/vulkan-headers/src:vulkan_headers" ]
   }
 }
 
@@ -125,6 +125,8 @@ viz_component("common") {
   defines = [ "VIZ_COMMON_IMPLEMENTATION" ]
 
   sources = [
+    "color_space_utils.cc",
+    "color_space_utils.h",
     "constants.cc",
     "constants.h",
     "delegated_ink_prediction_configuration.h",
@@ -193,6 +195,8 @@ viz_component("common") {
     "quads/frame_deadline.h",
     "quads/largest_draw_quad.cc",
     "quads/largest_draw_quad.h",
+    "quads/offset_tag.cc",
+    "quads/offset_tag.h",
     "quads/picture_draw_quad.cc",
     "quads/picture_draw_quad.h",
     "quads/quad_list.cc",

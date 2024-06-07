@@ -60,6 +60,7 @@ class SchedulerClient {
       const viz::BeginFrameArgs& args) = 0;
   virtual DrawResult ScheduledActionDrawIfPossible() = 0;
   virtual DrawResult ScheduledActionDrawForced() = 0;
+  virtual void ScheduledActionUpdateDisplayTree() = 0;
 
   // The Commit step occurs when the client received the BeginFrame from the
   // source and we perform at most one commit per BeginFrame. In this step the
@@ -88,6 +89,7 @@ class SchedulerClient {
   virtual void ScheduledActionBeginMainFrameNotExpectedUntil(
       base::TimeTicks time) = 0;
   virtual void FrameIntervalUpdated(base::TimeDelta interval) = 0;
+  virtual void OnBeginImplFrameDeadline() = 0;
 
  protected:
   virtual ~SchedulerClient() {}
@@ -122,6 +124,7 @@ class CC_EXPORT Scheduler : public viz::BeginFrameObserverBase {
 
   void SetVisible(bool visible);
   bool visible() { return state_machine_.visible(); }
+  void SetShouldWarmUp();
   void SetCanDraw(bool can_draw);
 
   // We have 2 copies of the layer trees on the compositor thread: pending_tree
@@ -159,6 +162,7 @@ class CC_EXPORT Scheduler : public viz::BeginFrameObserverBase {
   void SetNeedsOneBeginImplFrame();
 
   void SetNeedsRedraw();
+  void SetNeedsUpdateDisplayTree();
 
   void SetNeedsPrepareTiles();
 
@@ -384,6 +388,7 @@ class CC_EXPORT Scheduler : public viz::BeginFrameObserverBase {
   void BeginMainFrameNotExpectedSoon();
   void DrawIfPossible();
   void DrawForced();
+  void UpdateDisplayTree();
   void ProcessScheduledActions();
   void UpdateCompositorTimingHistoryRecordingEnabled();
   void AdvanceCommitStateIfPossible();

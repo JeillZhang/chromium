@@ -217,7 +217,6 @@ public class TabSwitcherCoordinator
                             mBrowserControlsStateProvider,
                             modalDialogManager,
                             currentTabModelFilterSupplier,
-                            () -> tabModelSelector.getModel(false),
                             mMultiThumbnailCardProvider,
                             true,
                             mMediator,
@@ -250,37 +249,27 @@ public class TabSwitcherCoordinator
             mTabListEditorManager =
                     new TabListEditorManager(
                             activity,
+                            mModalDialogManager,
                             mCoordinatorView,
                             rootView,
                             browserControls,
                             currentTabModelFilterSupplier,
-                            () -> mTabModelSelector.getModel(false),
                             tabContentManager,
                             mTabListCoordinator,
                             mode);
             mMediator.setTabListEditorControllerSupplier(
                     mTabListEditorManager.getControllerSupplier());
 
-            var tabListEditorControllerSupplier =
-                    LazyOneshotSupplier.fromSupplier(
-                            () -> {
-                                mTabListEditorManager.initTabListEditor();
-                                return mTabListEditorManager.getControllerSupplier().get();
-                            });
             mMessageManager =
                     new TabSwitcherMessageManager(
                             activity,
                             lifecycleDispatcher,
                             currentTabModelFilterSupplier,
-                            container,
                             multiWindowModeStateDispatcher,
                             snackbarManager,
-                            modalDialogManager,
-                            mTabListCoordinator,
-                            /* visibilitySupplier= */ () -> true,
-                            tabListEditorControllerSupplier,
-                            mMediator,
-                            mode);
+                            modalDialogManager);
+            mMessageManager.registerMessages(mTabListCoordinator);
+            mMessageManager.bind(mTabListCoordinator, container, mMediator);
 
             mMenuOrKeyboardActionController = menuOrKeyboardActionController;
             mTabSwitcherMenuActionHandler =
@@ -318,7 +307,6 @@ public class TabSwitcherCoordinator
                         mBrowserControlsStateProvider,
                         mBottomSheetController,
                         currentTabModelFilterSupplier,
-                        () -> mTabModelSelector.getModel(false),
                         mTabContentManager,
                         mTabCreatorManager,
                         mCoordinatorView,
@@ -363,7 +351,7 @@ public class TabSwitcherCoordinator
                     profile,
                     shouldUseDynamicResource ? mDynamicResourceLoaderSupplier.get() : null);
 
-            mMessageManager.initWithNative(profile);
+            mMessageManager.initWithNative(profile, mTabListCoordinator.getTabListMode());
 
             mMultiThumbnailCardProvider.initWithNative(profile);
             mMediator.initWithNative(mSnackbarManager);

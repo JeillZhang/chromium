@@ -71,8 +71,9 @@
   }
 </style>
 <product-specifications-header id="header" subtitle="[[setName_]]"
+    menu-button-disabled$="[[loadingState_.loading]]"
     on-add-to-new-group-click="addToNewGroup_"
-    on-delete-click="removeSet_"
+    on-delete-click="deleteSet_"
     on-name-change="updateSetName_"
     on-see-all-click="seeAllSets_">
 </product-specifications-header>
@@ -85,12 +86,17 @@
           on-selected-url-change="onUrlAdd_">
       </product-selector>
   </div>
-  <div id="specs" class="summary" hidden$="[[showEmptyState_]]">
+  <loading-state id="loading" hidden$="[[!loadingState_.loading]]"
+      column-count="[[loadingState_.urlCount]]">
+  </loading-state>
+  <div id="specs" class="summary"
+      hidden$="[[!showTable_(showEmptyState_, loadingState_.loading)]]">
     <product-specifications-table
         id="summaryTable"
         columns="[[specsTable_.columns]]"
         rows="[[specsTable_.rows]]"
-        on-url-change="onUrlChange_">
+        on-url-change="onUrlChange_"
+        on-url-remove="onUrlRemove_">
     </product-specifications-table>
     <new-column-selector on-selected-url-change="onUrlAdd_">
     </new-column-selector>

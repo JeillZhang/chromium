@@ -236,7 +236,6 @@
 <translation id="2189104374785738357">Badilisha maelezo ya APN</translation>
 <translation id="2195732836444333448">Nyenzo imefikia kikomo kwa sasa. Rudi tena baada ya muda mfupi.</translation>
 <translation id="2201758491318984023">baiskeli</translation>
-<translation id="2203222757805818543">Ratiba ya sasa imewekwa kuwa <ph name="SUNRISE" /> hadi <ph name="SUNSET" />. Ili usasishe kiotomatiki ratiba ya hali nyeusi, <ph name="BEGIN_LINK" />washa ufikiaji wa mahali<ph name="END_LINK" /></translation>
 <translation id="2203272733515928691">chemichemi ya maji moto</translation>
 <translation id="2203642483788377106">jabali</translation>
 <translation id="2208388655216963643">sanaa ya uhalisi</translation>
@@ -313,6 +312,7 @@
 <translation id="2618015542787108131">mlima wa mchanga</translation>
 <translation id="2619761439309613843">Onyesha Upya Kila Siku</translation>
 <translation id="2620436844016719705">Mfumo</translation>
+<translation id="2637303424821734920">IMEZIMWA - Ili uonyeshe taarifa za hali ya hewa ya mahali ulipo <ph name="BEGIN_LINK" />ruhusu ufikiaji wa data ya mahali kwenye kifaa<ph name="END_LINK" /></translation>
 <translation id="2638662041295312666">Picha ya akaunti kwenye kifaa</translation>
 <translation id="2640549051766135490">Albamu ya <ph name="TITLE" /> <ph name="DESC" /> imechaguliwa</translation>
 <translation id="2645380101799517405">Vidhibiti</translation>
@@ -364,6 +364,7 @@
 <translation id="3054177598518735801">mA <ph name="CURRENT_VALUE" /></translation>
 <translation id="3056720590588772262">Anwani halisi</translation>
 <translation id="3060579846059757016">Muhtasari</translation>
+<translation id="3061850252076394168">washa kipengele cha chagua ili izungumze</translation>
 <translation id="3069085583900247081">Jaribio halijafaulu</translation>
 <translation id="3078740164268491126">jedwali</translation>
 <translation id="3081652522083185657">meupe</translation>
@@ -630,7 +631,6 @@
 <translation id="458794348635939462">Imeshindwa kusuluhisha seva pangishi zote</translation>
 <translation id="4593212453765072419">Uthibitishaji wa proksi unahitajika</translation>
 <translation id="4609350030397390689">Punguza mwangaza wa kibodi</translation>
-<translation id="4617553623719764431">Hali ya hewa haionyeshwi kwa sababu mahali ulipo hapajulikani. Ili uonyeshe hali ya hewa ya mahali ulipo, <ph name="BEGIN_LINK" />washa ufikiaji wa mahali<ph name="END_LINK" /></translation>
 <translation id="4627232916386272576"><ph name="DOCUMENT_TITLE" />, <ph name="PRINTER_NAME" />, <ph name="CREATION_TIME" />, <ph name="PRINTED_PAGE_NUMBER" /> kati ya <ph name="TOTAL_PAGE_NUMBER" />. Bonyeza 'Enter' ili ughairi kazi ya kuchapisha.</translation>
 <translation id="463791356324567266">Inaghairi uchanganuzi...</translation>
 <translation id="4646949265910132906">Muunganisho Salama wa WiFi</translation>
@@ -704,6 +704,7 @@
 <translation id="4985509611418653372">Tekeleza</translation>
 <translation id="4987769320337599931">Kinga mtandao</translation>
 <translation id="4988526792673242964">Kurasa</translation>
+<translation id="4989542687859782284">Hayapatikani</translation>
 <translation id="4999333166442584738">Ficha ripoti</translation>
 <translation id="500920857929044050">Komesha jaribio</translation>
 <translation id="5017508259293544172">LEAP</translation>
@@ -960,7 +961,6 @@
 <translation id="6412715219990689313">Kibodi iliyojumuishwa ndani ya kifaa</translation>
 <translation id="6417265370957905582">Mratibu wa Google</translation>
 <translation id="6423239382391657905">OpenVPN</translation>
-<translation id="6438073885402882007">Hali hii inaruhusu huduma za mfumo zenye ruhusa ya kutumia data ya mahali ulipo. Huenda huduma za mahali zikatumia vyanzo kama vile Wi‑Fi, mitandao ya simu na vitambuzi ili kusaidia kukadiria mahali kifaa chako kilipo. <ph name="LINK_BEGIN" />Pata maelezo zaidi<ph name="LINK_END" /></translation>
 <translation id="6439505561246192797">Dhaifu (<ph name="SIGNAL_STRENGTH" />)</translation>
 <translation id="6447630859861661624">Nenda kwenye mipangilio ya akaunti</translation>
 <translation id="6462978824459367242">Kitufe cha "Ongeza APN" sasa kimewashwa</translation>

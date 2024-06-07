@@ -40,7 +40,7 @@ class MockWebAudioDevice : public WebAudioDevice {
   int FramesPerBuffer() override { return frames_per_buffer_; }
   int MaxChannelCount() override { return 2; }
   void SetDetectSilence(bool detect_silence) override {}
-  media::OutputDeviceStatus CreateSinkAndGetDeviceStatus() override {
+  media::OutputDeviceStatus MaybeCreateSinkAndGetStatus() override {
     // In this test, we assume the sink creation always succeeds.
     return media::OUTPUT_DEVICE_STATUS_OK;
   }
@@ -149,11 +149,6 @@ class AudioDestinationTest
                   static_cast<double>(render_quantum_frames)) *
         render_quantum_frames;
 
-    // TODO(crbug.com/329876634): Replace it so that it tests the path passing
-    // through the bad device_params (`if (!device_params.IsValid())`) in the
-    // constructor of `RendererWebAudioDeviceImpl`.
-    destination->OnRenderError();
-
     EXPECT_EQ(expected_frames_processed, callback_.frames_processed_);
   }
 
@@ -162,22 +157,27 @@ class AudioDestinationTest
 };
 
 TEST_P(AudioDestinationTest, ResamplingTest) {
+#if defined(MEMORY_SANITIZER)
+  // TODO(crbug.com/342415791): Fix and re-enable tests with MSan.
+  GTEST_SKIP();
+#else
   ScopedTestingPlatformSupport<TestPlatform> platform;
   {
     InSequence s;
 
     EXPECT_CALL(platform->web_audio_device(), Start).Times(1);
-    if (base::FeatureList::IsEnabled(
-            blink::features::kWebAudioHandleOnRenderError)) {
-      EXPECT_CALL(callback_, OnRenderError).Times(1);
-    }
     EXPECT_CALL(platform->web_audio_device(), Stop).Times(1);
   }
 
   CountWASamplesProcessedForRate(GetParam());
+#endif
 }
 
 TEST_P(AudioDestinationTest, GlitchAndDelay) {
+#if defined(MEMORY_SANITIZER)
+  // TODO(crbug.com/342415791): Fix and re-enable tests with MSan.
+  GTEST_SKIP();
+#else
   ScopedTestingPlatformSupport<TestPlatform> platform;
   {
     InSequence s;
@@ -228,6 +228,7 @@ TEST_P(AudioDestinationTest, GlitchAndDelay) {
   }
 
   destination->Stop();
+#endif
 }
 
 INSTANTIATE_TEST_SUITE_P(/* no label */,

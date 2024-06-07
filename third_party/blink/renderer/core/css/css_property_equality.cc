@@ -173,6 +173,8 @@ bool CSSPropertyEquality::PropertiesEqual(const PropertyHandle& property,
       return base::ValuesEquivalent(a.PositionAnchor(), b.PositionAnchor());
     case CSSPropertyID::kAnchorName:
       return base::ValuesEquivalent(a.AnchorName(), b.AnchorName());
+    case CSSPropertyID::kAnchorScope:
+      return base::ValuesEquivalent(a.AnchorScope(), b.AnchorScope());
     case CSSPropertyID::kAppearance:
       return a.Appearance() == b.Appearance();
     case CSSPropertyID::kAppRegion:
@@ -596,6 +598,8 @@ bool CSSPropertyEquality::PropertiesEqual(const PropertyHandle& property,
       return a.Resize() == b.Resize();
     case CSSPropertyID::kRight:
       return a.Right() == b.Right();
+    case CSSPropertyID::kRubyAlign:
+      return a.RubyAlign() == b.RubyAlign();
     case CSSPropertyID::kRubyPosition:
       return a.GetRubyPosition() == b.GetRubyPosition();
     case CSSPropertyID::kScrollMarkers:

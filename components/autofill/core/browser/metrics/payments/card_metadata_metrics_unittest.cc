@@ -10,6 +10,7 @@
 #include "components/autofill/core/browser/metrics/autofill_metrics_test_base.h"
 #include "components/autofill/core/browser/payments/constants.h"
 #include "components/autofill/core/browser/payments_data_manager.h"
+#include "components/autofill/core/common/credit_card_network_identifiers.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -84,7 +85,7 @@ class CardMetadataFormEventMetricsTest
       card_.set_card_art_url(GURL("https://www.example.com/cardart.png"));
     }
 
-    personal_data().AddServerCreditCard(card_);
+    personal_data().test_payments_data_manager().AddServerCreditCard(card_);
   }
 
   void TearDown() override { TearDownHelper(); }
@@ -125,7 +126,8 @@ TEST_P(CardMetadataFormEventMetricsTest, LogShownMetrics) {
   base::HistogramTester histogram_tester;
 
   // Simulate activating the autofill popup for the credit card field.
-  autofill_manager().OnAskForValuesToFillTest(form(), form().fields.back());
+  autofill_manager().OnAskForValuesToFillTest(form(),
+                                              form().fields.back().global_id());
   DidShowAutofillSuggestions(form(), /*field_index=*/form().fields.size() - 1,
                              SuggestionType::kCreditCardEntry);
 
@@ -171,7 +173,8 @@ TEST_P(CardMetadataFormEventMetricsTest, LogShownMetrics) {
                                       card_metadata_available(), 0);
 
   // Show the popup again.
-  autofill_manager().OnAskForValuesToFillTest(form(), form().fields.back());
+  autofill_manager().OnAskForValuesToFillTest(form(),
+                                              form().fields.back().global_id());
   DidShowAutofillSuggestions(form(), /*field_index=*/form().fields.size() - 1,
                              SuggestionType::kCreditCardEntry);
 
@@ -211,12 +214,13 @@ TEST_P(CardMetadataFormEventMetricsTest, LogSelectedMetrics) {
     card2.set_product_description(u"product description");
     card2.set_card_art_url(GURL("https://www.example.com/cardarturl.png"));
   }
-  personal_data().AddServerCreditCard(card2);
+  personal_data().test_payments_data_manager().AddServerCreditCard(card2);
 
   base::HistogramTester histogram_tester;
 
   // Simulate selecting the card.
-  autofill_manager().OnAskForValuesToFillTest(form(), form().fields.back());
+  autofill_manager().OnAskForValuesToFillTest(form(),
+                                              form().fields.back().global_id());
   DidShowAutofillSuggestions(form(), /*field_index=*/form().fields.size() - 1,
                              SuggestionType::kCreditCardEntry);
   autofill_manager().AuthenticateThenFillCreditCardForm(
@@ -321,7 +325,8 @@ TEST_P(CardMetadataFormEventMetricsTest, LogFilledMetrics) {
   base::HistogramTester histogram_tester;
 
   // Simulate filling the card.
-  autofill_manager().OnAskForValuesToFillTest(form(), form().fields.back());
+  autofill_manager().OnAskForValuesToFillTest(form(),
+                                              form().fields.back().global_id());
   DidShowAutofillSuggestions(form(), /*field_index=*/form().fields.size() - 1,
                              SuggestionType::kCreditCardEntry);
   autofill_manager().AuthenticateThenFillCreditCardForm(
@@ -408,7 +413,8 @@ TEST_P(CardMetadataFormEventMetricsTest, LogSubmitMetrics) {
   base::HistogramTester histogram_tester;
 
   // Simulate filling and then submitting the card.
-  autofill_manager().OnAskForValuesToFillTest(form(), form().fields.back());
+  autofill_manager().OnAskForValuesToFillTest(form(),
+                                              form().fields.back().global_id());
   autofill_manager().AuthenticateThenFillCreditCardForm(
       form(), form().fields.back(),
       *personal_data().payments_data_manager().GetCreditCardByGUID(kCardGuid),
@@ -508,7 +514,8 @@ class CardMetadataLatencyMetricsTest
       masked_server_card.set_card_art_url(
           GURL("https://www.example.com/cardart.png"));
     }
-    personal_data().AddServerCreditCard(masked_server_card);
+    personal_data().test_payments_data_manager().AddServerCreditCard(
+        masked_server_card);
   }
 
   void TearDown() override { TearDownHelper(); }
@@ -532,7 +539,8 @@ TEST_P(CardMetadataLatencyMetricsTest, LogMetrics) {
   base::HistogramTester histogram_tester;
 
   // Simulate activating the autofill popup for the credit card field.
-  autofill_manager().OnAskForValuesToFillTest(form(), form().fields.back());
+  autofill_manager().OnAskForValuesToFillTest(form(),
+                                              form().fields.back().global_id());
   DidShowAutofillSuggestions(form(), /*field_index=*/form().fields.size() - 1,
                              SuggestionType::kCreditCardEntry);
   task_environment_.FastForwardBy(base::Seconds(2));
@@ -617,7 +625,7 @@ class CardBenefitFormEventMetricsTest
   // Simulating selecting and filling the given `card`.
   void SelectAndFillCard(const CreditCard* card) {
     autofill_manager().OnAskForValuesToFillTest(
-        form(), form().fields[credit_card_number_field_index()]);
+        form(), form().fields[credit_card_number_field_index()].global_id());
     DidShowAutofillSuggestions(form(), credit_card_number_field_index(),
                                SuggestionType::kCreditCardEntry);
     autofill_manager().AuthenticateThenFillCreditCardForm(
@@ -643,7 +651,7 @@ class CardBenefitFormEventMetricsTest
     // Add a masked server card.
     card_ = test::GetMaskedServerCard();
     card_.set_issuer_id(issuer_id());
-    personal_data().AddServerCreditCard(card_);
+    personal_data().test_payments_data_manager().AddServerCreditCard(card_);
 
     // Initialize features based on test params.
     scoped_feature_list_.InitWithFeatureStates(
@@ -700,7 +708,7 @@ TEST_P(CardBenefitFormEventMetricsTest, LogShownMetrics_SuggestionHasBenefits) {
 
   // Simulate activating the autofill popup for the credit card field.
   autofill_manager().OnAskForValuesToFillTest(
-      form(), form().fields[credit_card_number_field_index()]);
+      form(), form().fields[credit_card_number_field_index()].global_id());
   DidShowAutofillSuggestions(form(), credit_card_number_field_index(),
                              SuggestionType::kCreditCardEntry);
 
@@ -747,7 +755,7 @@ TEST_P(CardBenefitFormEventMetricsTest,
 
   // Simulate activating the autofill popup for the credit card field.
   autofill_manager().OnAskForValuesToFillTest(
-      form(), form().fields[credit_card_number_field_index()]);
+      form(), form().fields[credit_card_number_field_index()].global_id());
   DidShowAutofillSuggestions(form(), credit_card_number_field_index(),
                              SuggestionType::kCreditCardEntry);
 
@@ -798,7 +806,7 @@ TEST_P(CardBenefitFormEventMetricsTest,
 
   // Simulate selecting the card.
   autofill_manager().OnAskForValuesToFillTest(
-      form(), form().fields[credit_card_number_field_index()]);
+      form(), form().fields[credit_card_number_field_index()].global_id());
   DidShowAutofillSuggestions(form(), credit_card_number_field_index(),
                              SuggestionType::kCreditCardEntry);
   autofill_manager().AuthenticateThenFillCreditCardForm(
@@ -865,7 +873,7 @@ TEST_P(CardBenefitFormEventMetricsTest,
 
   // Simulate selecting the card.
   autofill_manager().OnAskForValuesToFillTest(
-      form(), form().fields[credit_card_number_field_index()]);
+      form(), form().fields[credit_card_number_field_index()].global_id());
   DidShowAutofillSuggestions(form(), credit_card_number_field_index(),
                              SuggestionType::kCreditCardEntry);
   autofill_manager().AuthenticateThenFillCreditCardForm(
@@ -928,13 +936,13 @@ TEST_P(CardBenefitFormEventMetricsTest,
 
   // Add a second card which has no benefit available.
   CreditCard card2 = test::GetMaskedServerCard2();
-  personal_data().AddServerCreditCard(card2);
+  personal_data().test_payments_data_manager().AddServerCreditCard(card2);
 
   base::HistogramTester histogram_tester;
 
   // Simulate selecting the card with no benefit.
   autofill_manager().OnAskForValuesToFillTest(
-      form(), form().fields[credit_card_number_field_index()]);
+      form(), form().fields[credit_card_number_field_index()].global_id());
   DidShowAutofillSuggestions(form(), credit_card_number_field_index(),
                              SuggestionType::kCreditCardEntry);
   autofill_manager().AuthenticateThenFillCreditCardForm(
@@ -1097,7 +1105,7 @@ TEST_P(CardBenefitFormEventMetricsTest,
 
   // Add a second card which has no benefit available.
   CreditCard card2 = test::GetMaskedServerCard2();
-  personal_data().AddServerCreditCard(card2);
+  personal_data().test_payments_data_manager().AddServerCreditCard(card2);
 
   base::HistogramTester histogram_tester;
 
@@ -1256,7 +1264,7 @@ TEST_P(CardBenefitFormEventMetricsTest,
 
   // Add a second card which has no benefit available.
   CreditCard card2 = test::GetMaskedServerCard2();
-  personal_data().AddServerCreditCard(card2);
+  personal_data().test_payments_data_manager().AddServerCreditCard(card2);
 
   base::HistogramTester histogram_tester;
 

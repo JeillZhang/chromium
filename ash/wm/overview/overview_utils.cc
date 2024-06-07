@@ -18,6 +18,7 @@
 #include "ash/wm/mru_window_tracker.h"
 #include "ash/wm/overview/cleanup_animation_observer.h"
 #include "ash/wm/overview/delayed_animation_observer_impl.h"
+#include "ash/wm/overview/overview_constants.h"
 #include "ash/wm/overview/overview_controller.h"
 #include "ash/wm/overview/overview_focus_cycler_old.h"
 #include "ash/wm/overview/overview_grid.h"
@@ -92,7 +93,7 @@ void FadeInWidgetToOverview(views::Widget* widget,
   }
 }
 
-void PrepareWidgetForOverviewShutdown(views::Widget* widget) {
+void PrepareWidgetForShutdownAnimation(views::Widget* widget) {
   // The widget should no longer process events at this point.
   widget->SetVisibilityChangedAnimationsEnabled(false);
   widget->widget_delegate()->SetCanActivate(false);
@@ -104,7 +105,7 @@ void PrepareWidgetForOverviewShutdown(views::Widget* widget) {
 
 void FadeOutWidgetFromOverview(std::unique_ptr<views::Widget> widget,
                                OverviewAnimationType animation_type) {
-  PrepareWidgetForOverviewShutdown(widget.get());
+  PrepareWidgetForShutdownAnimation(widget.get());
 
   // The overview controller may be nullptr on shutdown.
   OverviewController* controller = OverviewController::Get();
@@ -151,6 +152,18 @@ gfx::RectF GetUnionScreenBoundsForWindow(aura::Window* window) {
   }
 
   return bounds;
+}
+
+OverviewItemFillMode GetOverviewItemFillMode(const gfx::Size& size) {
+  if (size.width() > size.height() * kExtremeWindowRatioThreshold) {
+    return OverviewItemFillMode::kLetterBoxed;
+  }
+
+  if (size.height() > size.width() * kExtremeWindowRatioThreshold) {
+    return OverviewItemFillMode::kPillarBoxed;
+  }
+
+  return OverviewItemFillMode::kNormal;
 }
 
 void MaximizeIfSnapped(aura::Window* window) {

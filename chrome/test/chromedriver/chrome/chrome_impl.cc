@@ -100,7 +100,9 @@ Status ChromeImpl::GetWebViewIdForFirstTab(std::string* web_view_id,
                                                 nullptr, views_info);
   if (status.IsError())
     return status;
-  status = UpdateWebViews(views_info, w3c_compliant);
+  do {
+    status = UpdateWebViews(views_info, w3c_compliant);
+  } while (status.code() == kTargetDetached);
   if (status.IsError())
     return status;
   for (int i = views_info.GetSize() - 1; i >= 0; --i) {
@@ -131,11 +133,15 @@ Status ChromeImpl::GetWebViewIds(std::list<std::string>* web_view_ids,
   WebViewsInfo views_info;
   Status status = target_utils::GetWebViewsInfo(*devtools_websocket_client_,
                                                 nullptr, views_info);
-  if (status.IsError())
+  if (status.IsError()) {
     return status;
-  status = UpdateWebViews(views_info, w3c_compliant);
-  if (status.IsError())
+  }
+  do {
+    status = UpdateWebViews(views_info, w3c_compliant);
+  } while (status.code() == kTargetDetached);
+  if (status.IsError()) {
     return status;
+  }
   std::list<std::string> web_view_ids_tmp;
   for (const auto& view : web_views_)
     web_view_ids_tmp.push_back(view->GetId());
@@ -221,6 +227,7 @@ Status ChromeImpl::GetWebViewById(const std::string& id, WebView** web_view) {
 
 Status ChromeImpl::NewWindow(const std::string& target_id,
                              WindowType type,
+                             bool is_background,
                              std::string* window_handle) {
   internal::Window window;
   Status status = GetWindow(target_id, window);
@@ -230,7 +237,7 @@ Status ChromeImpl::NewWindow(const std::string& target_id,
   base::Value::Dict params;
   params.Set("url", "about:blank");
   params.Set("newWindow", type == WindowType::kWindow);
-  params.Set("background", true);
+  params.Set("background", is_background);
   base::Value::Dict result;
   status = devtools_websocket_client_->SendCommandAndGetResult(
       "Target.createTarget", params, &result);

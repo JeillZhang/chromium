@@ -27,6 +27,7 @@
 #include "base/test/scoped_feature_list.h"
 #include "base/time/time.h"
 #include "content/browser/fenced_frame/fenced_frame_reporter.h"
+#include "content/browser/interest_group/ad_auction_page_data.h"
 #include "content/browser/interest_group/auction_worklet_manager.h"
 #include "content/browser/interest_group/header_direct_from_seller_signals.h"
 #include "content/browser/interest_group/interest_group_k_anonymity_manager.h"
@@ -36,6 +37,8 @@
 #include "content/browser/interest_group/test_interest_group_manager_impl.h"
 #include "content/browser/interest_group/test_interest_group_private_aggregation_manager.h"
 #include "content/browser/renderer_host/render_frame_host_impl.h"
+#include "content/public/browser/page_user_data.h"
+#include "content/public/browser/web_contents.h"
 #include "content/public/test/test_renderer_host.h"
 #include "content/public/test/test_utils.h"
 #include "content/services/auction_worklet/public/mojom/private_aggregation_request.mojom.h"
@@ -269,6 +272,9 @@ class InterestGroupAuctionReporterTest
             &private_aggregation_manager_,
             private_aggregation_manager_
                 .GetLogPrivateAggregationRequestsCallback(),
+            base::BindRepeating(
+                &InterestGroupAuctionReporterTest::GetAdAuctionPageDataCallback,
+                base::Unretained(this)),
             std::move(auction_config_), kDevtoolsAuctionId, kTopFrameOrigin,
             kFrameOrigin, frame_client_security_state_.Clone(),
             dummy_report_shared_url_loader_factory_,
@@ -484,6 +490,11 @@ class InterestGroupAuctionReporterTest
     errors_ = interest_group_auction_reporter_->errors();
   }
 
+  AdAuctionPageData* GetAdAuctionPageDataCallback() {
+    return PageUserData<AdAuctionPageData>::GetOrCreateForPage(
+        web_contents()->GetPrimaryPage());
+  }
+
   base::test::ScopedFeatureList feature_list_;
 
   EventReportingAttestationBrowserClient browser_client_;
@@ -660,7 +671,8 @@ class InterestGroupAuctionReporterTest
           /*is_web_secure_context=*/true,
           /*ip_address_space=*/network::mojom::IPAddressSpace::kPublic,
           /*is_web_secure_context=*/
-          network::mojom::PrivateNetworkRequestPolicy::kBlock)};
+          network::mojom::PrivateNetworkRequestPolicy::kBlock,
+          network::DocumentIsolationPolicy())};
 
   const GURL kSellerReportUrl =
       GURL("https://seller.report.test/seller-report");

@@ -30,11 +30,10 @@ ci.defaults.set(
 
 consoles.console_view(
     name = "chromium.fyi",
-    branch_selector = [
-        branches.selector.CROS_LTS_BRANCHES,
-        branches.selector.IOS_BRANCHES,
-        branches.selector.LINUX_BRANCHES,
-    ],
+    # FYI builders should not be branched; since they are not gardened there's
+    # no guarantee that the branch builders would be in a good state when they
+    # are created and become the responsibility of the branch gardeners
+    branch_selector = branches.selector.MAIN,
     ordering = {
         None: [
             "code_coverage",
@@ -111,7 +110,7 @@ ci.builder(
         configs = [
             "release_builder",
             "try_builder",
-            "reclient",
+            "remoteexec",
         ],
     ),
     os = os.LINUX_DEFAULT,
@@ -140,7 +139,7 @@ ci.builder(
         configs = [
             "android_builder",
             "release_builder",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
             "arm64",
             "strip_debug_info",
@@ -169,7 +168,7 @@ ci.builder(
     gn_args = gn_args.config(
         configs = [
             "release_builder",
-            "reclient",
+            "remoteexec",
         ],
     ),
     os = os.LINUX_DEFAULT,
@@ -207,7 +206,7 @@ ci.builder(
         configs = [
             "chromeos_with_codecs",
             "debug_builder",
-            "reclient",
+            "remoteexec",
             "use_cups",
         ],
     ),
@@ -242,7 +241,7 @@ ci.builder(
         configs = [
             "chromeos_with_codecs",
             "release_builder",
-            "reclient",
+            "remoteexec",
             "use_cups",
         ],
     ),
@@ -275,7 +274,7 @@ ci.builder(
     gn_args = gn_args.config(
         configs = [
             "release_builder_blink",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
         ],
     ),
@@ -302,7 +301,7 @@ ci.builder(
     gn_args = gn_args.config(
         configs = [
             "release_builder_blink",
-            "reclient",
+            "remoteexec",
             "enable_blink_heap_verification",
             "dcheck_always_on",
         ],
@@ -332,7 +331,7 @@ ci.builder(
     gn_args = gn_args.config(
         configs = [
             "release_builder",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
         ],
     ),
@@ -403,7 +402,7 @@ ci.builder(
     gn_args = gn_args.config(
         configs = [
             "release_builder",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
         ],
     ),
@@ -441,7 +440,7 @@ ci.builder(
         configs = [
             "android_builder",
             "release_builder",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
             "x64",
             "strip_debug_info",
@@ -478,7 +477,7 @@ fyi_ios_builder(
     gn_args = gn_args.config(
         configs = [
             "debug_static_builder",
-            "reclient",
+            "remoteexec",
             "ios_simulator",
             "arm64",
             "xctest",
@@ -511,7 +510,7 @@ ci.builder(
         configs = [
             "lacros_on_linux",
             "release_builder",
-            "reclient",
+            "remoteexec",
             "also_build_ash_chrome",
         ],
     ),
@@ -562,7 +561,7 @@ ci.builder(
         configs = [
             "lacros_on_linux",
             "debug_builder",
-            "reclient",
+            "remoteexec",
             "also_build_ash_chrome",
         ],
     ),
@@ -616,7 +615,7 @@ ci.builder(
     gn_args = gn_args.config(
         configs = [
             "release_builder",
-            "reclient",
+            "remoteexec",
             "android_builder",
             "x64",
         ],
@@ -644,7 +643,7 @@ ci.builder(
     gn_args = gn_args.config(
         configs = [
             "release_builder",
-            "reclient",
+            "remoteexec",
         ],
     ),
     os = os.LINUX_DEFAULT,
@@ -672,7 +671,7 @@ fyi_mac_builder(
     gn_args = gn_args.config(
         configs = [
             "release_builder",
-            "reclient",
+            "remoteexec",
             "x64",
         ],
     ),
@@ -704,7 +703,7 @@ ci.builder(
     ),
     gn_args = gn_args.config(
         configs = [
-            "reclient",
+            "remoteexec",
             "release_builder",
         ],
     ),
@@ -736,7 +735,7 @@ Chrome.\
     gn_args = gn_args.config(
         configs = [
             "release_builder_blink",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
             "x64",
             "dcheck_always_on",
@@ -773,7 +772,7 @@ Chrome.\
     gn_args = gn_args.config(
         configs = [
             "release_builder_blink",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
             "dcheck_always_on",
         ],
@@ -811,7 +810,7 @@ fyi_ios_builder(
             "ios_simulator",
             "x64",
             "release_builder",
-            "reclient",
+            "remoteexec",
             "xctest",
             "dcheck_always_on",
         ],
@@ -852,7 +851,7 @@ ci.builder(
             "no_symbols",
             "dcheck_always_on",
             "static",
-            "reclient",
+            "remoteexec",
             "x64",
         ],
     ),
@@ -884,7 +883,7 @@ ci.builder(
         configs = [
             "headless_shell",
             "release_builder",
-            "reclient",
+            "remoteexec",
         ],
     ),
     os = os.LINUX_DEFAULT,
@@ -905,7 +904,7 @@ ci.builder(
         configs = [
             "gpu_tests",
             "release_builder",
-            "reclient",
+            "remoteexec",
             "devtools_do_typecheck",
         ],
     ),
@@ -937,7 +936,7 @@ ci.builder(
     gn_args = gn_args.config(
         configs = [
             "release_builder",
-            "reclient",
+            "remoteexec",
         ],
     ),
     builderless = True,
@@ -960,7 +959,7 @@ ci.builder(
         configs = [
             "gpu_tests",
             "release_builder",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
         ],
     ),
@@ -989,7 +988,7 @@ ci.builder(
     gn_args = gn_args.config(
         configs = [
             "release_builder",
-            "reclient",
+            "remoteexec",
             "perfetto_zlib",
         ],
     ),
@@ -1019,7 +1018,7 @@ fyi_mac_builder(
     gn_args = gn_args.config(
         configs = [
             "release_builder",
-            "reclient",
+            "remoteexec",
             "perfetto_zlib",
         ],
     ),
@@ -1051,7 +1050,7 @@ ci.builder(
     gn_args = gn_args.config(
         configs = [
             "release_builder",
-            "reclient",
+            "remoteexec",
             "perfetto_zlib",
         ],
     ),
@@ -1076,7 +1075,7 @@ The bot specs should be in sync with <a href="https://ci.chromium.org/p/chromium
             configs = [
                 "android_builder",
                 "debug_static_builder",
-                "reclient",
+                "remoteexec",
                 "arm64",
                 "webview_google",
             ],
@@ -1085,7 +1084,7 @@ The bot specs should be in sync with <a href="https://ci.chromium.org/p/chromium
             configs = [
                 "android_builder",
                 "debug_static_builder",
-                "reclient",
+                "remoteexec",
                 "arm64",
                 "webview_google",
             ],
@@ -1133,7 +1132,7 @@ fyi_mac_reclient_comparison_builder(
             configs = [
                 "gpu_tests",
                 "release_builder",
-                "reclient",
+                "remoteexec",
                 "minimal_symbols",
             ],
         ),
@@ -1141,14 +1140,14 @@ fyi_mac_reclient_comparison_builder(
             configs = [
                 "gpu_tests",
                 "release_builder",
-                "reclient",
+                "remoteexec",
                 "minimal_symbols",
             ],
         ),
     },
     builderless = True,
-    cores = None,
-    cpu = cpu.ARM64,
+    cores = 12,
+    cpu = cpu.X86_64,
     console_view_entry = consoles.console_view_entry(
         category = "mac",
         short_name = "cmp",
@@ -1171,7 +1170,7 @@ fyi_mac_reclient_comparison_builder(
                 "arm64",
                 "gpu_tests",
                 "release_builder",
-                "reclient",
+                "remoteexec",
                 "minimal_symbols",
             ],
         ),
@@ -1180,7 +1179,7 @@ fyi_mac_reclient_comparison_builder(
                 "arm64",
                 "gpu_tests",
                 "release_builder",
-                "reclient",
+                "remoteexec",
                 "minimal_symbols",
             ],
         ),
@@ -1210,7 +1209,7 @@ fyi_mac_reclient_comparison_builder(
                 "arm64",
                 "gpu_tests",
                 "release_builder",
-                "reclient",
+                "remoteexec",
                 "minimal_symbols",
             ],
         ),
@@ -1219,7 +1218,7 @@ fyi_mac_reclient_comparison_builder(
                 "arm64",
                 "gpu_tests",
                 "release_builder",
-                "reclient",
+                "remoteexec",
                 "minimal_symbols",
             ],
         ),
@@ -1247,7 +1246,7 @@ fyi_reclient_comparison_builder(
             configs = [
                 "gpu_tests",
                 "release_builder",
-                "reclient",
+                "remoteexec",
                 "minimal_symbols",
             ],
         ),
@@ -1255,7 +1254,7 @@ fyi_reclient_comparison_builder(
             configs = [
                 "gpu_tests",
                 "release_builder",
-                "reclient",
+                "remoteexec",
                 "minimal_symbols",
             ],
         ),
@@ -1281,7 +1280,7 @@ fyi_reclient_comparison_builder(
             configs = [
                 "gpu_tests",
                 "release_builder",
-                "reclient",
+                "remoteexec",
                 "minimal_symbols",
             ],
         ),
@@ -1289,7 +1288,7 @@ fyi_reclient_comparison_builder(
             configs = [
                 "gpu_tests",
                 "release_builder",
-                "reclient",
+                "remoteexec",
                 "minimal_symbols",
             ],
         ),
@@ -1315,7 +1314,7 @@ fyi_reclient_comparison_builder(
             configs = [
                 "chromeos_device",
                 "dcheck_off",
-                "reclient",
+                "remoteexec",
                 "amd64-generic-vm",
                 "ozone_headless",
                 "use_fake_dbus_clients",
@@ -1326,7 +1325,7 @@ fyi_reclient_comparison_builder(
             configs = [
                 "chromeos_device",
                 "dcheck_off",
-                "reclient",
+                "remoteexec",
                 "amd64-generic-vm",
                 "ozone_headless",
                 "use_fake_dbus_clients",
@@ -1353,7 +1352,7 @@ fyi_mac_reclient_comparison_builder(
         "build1": gn_args.config(
             configs = [
                 "debug_static_builder",
-                "reclient",
+                "remoteexec",
                 "ios_simulator",
                 "x64",
                 "xctest",
@@ -1362,7 +1361,7 @@ fyi_mac_reclient_comparison_builder(
         "build2": gn_args.config(
             configs = [
                 "debug_static_builder",
-                "reclient",
+                "remoteexec",
                 "ios_simulator",
                 "x64",
                 "xctest",
@@ -1513,7 +1512,7 @@ ci.builder(
         configs = [
             "gpu_tests",
             "release_builder",
-            "reclient",
+            "remoteexec",
         ],
     ),
     cores = 32,
@@ -1560,7 +1559,7 @@ ci.builder(
         configs = [
             "gpu_tests",
             "release_builder",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
         ],
     ),
@@ -1596,7 +1595,7 @@ ci.builder(
         configs = [
             "gpu_tests",
             "release_builder",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
         ],
     ),
@@ -1644,7 +1643,7 @@ fyi_mac_builder(
         configs = [
             "gpu_tests",
             "release_builder",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
             "x64",
         ],
@@ -1689,7 +1688,7 @@ ci.builder(
         configs = [
             "lacros_on_linux",
             "release_builder",
-            "reclient",
+            "remoteexec",
             "also_build_ash_chrome",
         ],
     ),
@@ -1720,7 +1719,7 @@ fyi_ios_builder(
     gn_args = gn_args.config(
         configs = [
             "debug_static_builder",
-            "reclient",
+            "remoteexec",
             "ios_simulator",
             "arm64",
             "xctest",
@@ -1758,7 +1757,7 @@ fyi_ios_builder(
         configs = [
             "release_builder_blink",
             "try_builder",
-            "reclient",
+            "remoteexec",
             "ios_simulator",
             "arm64",
             "use_blink",
@@ -1794,7 +1793,7 @@ fyi_ios_builder(
     gn_args = gn_args.config(
         configs = [
             "debug_static_builder",
-            "reclient",
+            "remoteexec",
             "ios_simulator",
             "x64",
             "xctest",
@@ -1831,7 +1830,7 @@ fyi_ios_builder(
     gn_args = gn_args.config(
         configs = [
             "debug_static_builder",
-            "reclient",
+            "remoteexec",
             "ios_simulator",
             "x64",
             "xctest",
@@ -1864,7 +1863,7 @@ fyi_ios_builder(
     gn_args = gn_args.config(
         configs = [
             "debug_static_builder",
-            "reclient",
+            "remoteexec",
             "ios_simulator",
             "arm64",
             "xctest",
@@ -1904,7 +1903,7 @@ fyi_ios_builder(
             "arm64",
             "ios_disable_code_signing",
             "release_builder",
-            "reclient",
+            "remoteexec",
             "xctest",
         ],
     ),
@@ -1938,7 +1937,7 @@ fyi_ios_builder(
     gn_args = gn_args.config(
         configs = [
             "debug_static_builder",
-            "reclient",
+            "remoteexec",
             "ios_simulator",
             "arm64",
             "xctest",
@@ -1978,7 +1977,7 @@ fyi_ios_builder(
     gn_args = gn_args.config(
         configs = [
             "debug_static_builder",
-            "reclient",
+            "remoteexec",
             "ios_simulator",
             "arm64",
             "xctest",
@@ -2015,7 +2014,7 @@ fyi_ios_builder(
     gn_args = gn_args.config(
         configs = [
             "debug_static_builder",
-            "reclient",
+            "remoteexec",
             "ios_simulator",
             "arm64",
             "xctest",
@@ -2056,7 +2055,7 @@ fyi_mac_builder(
             "arm64",
             "gpu_tests",
             "debug_static_builder",
-            "reclient",
+            "remoteexec",
             "dcheck_off",
             "shared",
         ],
@@ -2076,7 +2075,7 @@ fyi_mac_builder(
     gn_args = gn_args.config(
         configs = [
             "release_builder",
-            "reclient",
+            "remoteexec",
             "mac_strip",
             "minimal_symbols",
         ],
@@ -2095,7 +2094,7 @@ fyi_mac_builder(
     gn_args = gn_args.config(
         configs = [
             "debug_builder",
-            "reclient",
+            "remoteexec",
         ],
     ),
     cores = None,
@@ -2131,7 +2130,7 @@ ci.builder(
         configs = [
             "release_builder",
             "try_builder",
-            "reclient",
+            "remoteexec",
         ],
     ),
     builderless = False,
@@ -2141,43 +2140,6 @@ ci.builder(
     ),
     notifies = ["Win 10 Fast Ring"],
     siso_remote_jobs = siso.remote_jobs.LOW_JOBS_FOR_CI,
-)
-
-ci.builder(
-    name = "win10-multiscreen-fyi-rel",
-    description_html = (
-        "This builder is intended to run tests related to multiscreen " +
-        "functionality on Windows. For more info, see " +
-        "<a href=\"http://shortn/_4L6uYvA1xU\">http://shortn/_4L6uYvA1xU</a>."
-    ),
-    schedule = "with 5h interval",
-    triggered_by = [],
-    builder_spec = builder_config.builder_spec(
-        gclient_config = builder_config.gclient_config(
-            config = "chromium",
-        ),
-        chromium_config = builder_config.chromium_config(
-            config = "chromium",
-            apply_configs = ["mb"],
-            build_config = builder_config.build_config.RELEASE,
-            target_bits = 64,
-            target_platform = builder_config.target_platform.WIN,
-        ),
-    ),
-    gn_args = gn_args.config(
-        configs = [
-            "release_builder_blink",
-            "reclient",
-            "minimal_symbols",
-        ],
-    ),
-    builderless = True,
-    os = os.WINDOWS_10,
-    console_view_entry = consoles.console_view_entry(
-        category = "win10",
-    ),
-    contact_team_email = "web-windowing-team@google.com",
-    experimental = True,
 )
 
 ci.builder(
@@ -2202,7 +2164,7 @@ Chrome.\
     gn_args = gn_args.config(
         configs = [
             "release_builder_blink",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
             "dcheck_always_on",
         ],
@@ -2235,7 +2197,7 @@ ci.builder(
             "arm64",
             "minimal_symbols",
             "release_builder",
-            "reclient",
+            "remoteexec",
         ],
     ),
     builderless = False,
@@ -2268,7 +2230,7 @@ ci.builder(
     gn_args = gn_args.config(
         configs = [
             "release_builder",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
         ],
     ),
@@ -2296,7 +2258,7 @@ ci.builder(
     gn_args = gn_args.config(
         configs = [
             "release_builder",
-            "reclient",
+            "remoteexec",
         ],
     ),
     builderless = True,
@@ -2337,7 +2299,7 @@ ci.builder(
         configs = [
             "lacros_on_linux",
             "release_builder",
-            "reclient",
+            "remoteexec",
             "also_build_ash_chrome",
             "use_cups",
             "enable_dangling_raw_ptr_checks",

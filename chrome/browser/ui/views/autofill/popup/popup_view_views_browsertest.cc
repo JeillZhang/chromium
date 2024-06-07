@@ -18,6 +18,7 @@
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/autofill/core/browser/filling_product.h"
 #include "components/autofill/core/browser/ui/suggestion.h"
+#include "components/autofill/core/browser/ui/suggestion_type.h"
 #include "components/autofill/core/common/aliases.h"
 #include "components/autofill/core/common/autofill_features.h"
 #include "components/strings/grit/components_strings.h"
@@ -139,7 +140,8 @@ std::vector<Suggestion> CreatePasswordSuggestions() {
 
   suggestions.emplace_back(u"Password main text",
                            SuggestionType::kPasswordEntry);
-  suggestions.back().additional_label = u"example.username@gmail.com";
+  suggestions.back().labels = {
+      {Suggestion::Text(u"example.username@gmail.com")}};
   suggestions.back().icon = Suggestion::Icon::kGlobe;
 
   suggestions.emplace_back(autofill::SuggestionType::kSeparator);
@@ -172,7 +174,7 @@ class PopupViewViewsBrowsertestBase
       EXPECT_CALL(controller(), ViewDestroyed);
     }
 
-    search_bar_config_ = {};
+    search_bar_config_ = std::nullopt;
     popup_has_parent_ = false;
     popup_parent_.reset();
     PopupPixelTest::TearDownOnMainThread();
@@ -198,9 +200,10 @@ class PopupViewViewsBrowsertestBase
   }
 
   void ShowAndVerifyUi(bool popup_has_parent = false,
-                       PopupViewSearchBarConfig search_bar_config = {}) {
+                       std::optional<AutofillPopupView::SearchBarConfig>
+                           search_bar_config = std::nullopt) {
     popup_has_parent_ = popup_has_parent;
-    search_bar_config_ = search_bar_config;
+    search_bar_config_ = std::move(search_bar_config);
     PopupPixelTest::ShowAndVerifyUi();
   }
 
@@ -221,7 +224,7 @@ class PopupViewViewsBrowsertestBase
 
   // Controls whether the view is created as a sub-popup (i.e. having a parent).
   bool popup_has_parent_ = false;
-  PopupViewSearchBarConfig search_bar_config_;
+  std::optional<AutofillPopupView::SearchBarConfig> search_bar_config_;
   std::unique_ptr<PopupViewViews> popup_parent_;
 };
 
@@ -331,8 +334,8 @@ IN_PROC_BROWSER_TEST_P(PopupViewViewsBrowsertest,
   std::vector<Suggestion> suggestions;
   Suggestion entry1(u"User1");
   entry1.main_text.is_primary = Suggestion::Text::IsPrimary(true);
-  entry1.additional_label =
-      std::u16string(10, gfx::RenderText::kPasswordReplacementChar);
+  entry1.labels = {{Suggestion::Text(
+      std::u16string(10, gfx::RenderText::kPasswordReplacementChar))}};
   entry1.type = SuggestionType::kAccountStoragePasswordEntry;
   entry1.icon = Suggestion::Icon::kGlobe;
   entry1.trailing_icon = Suggestion::Icon::kGoogle;
@@ -341,8 +344,8 @@ IN_PROC_BROWSER_TEST_P(PopupViewViewsBrowsertest,
   // A profile store entry.
   Suggestion entry2(u"User2");
   entry2.main_text.is_primary = Suggestion::Text::IsPrimary(true);
-  entry2.additional_label =
-      std::u16string(6, gfx::RenderText::kPasswordReplacementChar);
+  entry2.labels = {{Suggestion::Text(
+      std::u16string(6, gfx::RenderText::kPasswordReplacementChar))}};
   entry2.type = SuggestionType::kPasswordEntry;
   entry2.icon = Suggestion::Icon::kGlobe;
   entry2.trailing_icon = Suggestion::Icon::kNoIcon;
@@ -387,8 +390,15 @@ IN_PROC_BROWSER_TEST_P(PopupViewViewsBrowsertest,
   ShowAndVerifyUi(/*popup_has_parent=*/true);
 }
 
+// The test is flaky on Windows.
+#if BUILDFLAG(IS_WIN)
+#define MAYBE_ScrollingInRootPopupStickyFooter \
+  DISABLED_ScrollingInRootPopupStickyFooter
+#else
+#define MAYBE_ScrollingInRootPopupStickyFooter ScrollingInRootPopupStickyFooter
+#endif
 IN_PROC_BROWSER_TEST_P(PopupViewViewsBrowsertest,
-                       ScrollingInRootPopupStickyFooter) {
+                       MAYBE_ScrollingInRootPopupStickyFooter) {
   // Create many suggestions that don't fit the height and activate scrolling.
   std::vector<SuggestionType> suggestions(20, SuggestionType::kAddressEntry);
   suggestions.push_back(SuggestionType::kSeparator);
@@ -397,8 +407,16 @@ IN_PROC_BROWSER_TEST_P(PopupViewViewsBrowsertest,
   ShowAndVerifyUi();
 }
 
+// The test is flaky on Windows.
+#if BUILDFLAG(IS_WIN)
+#define MAYBE_ScrollingInNonRootPopupNonStickyFooter \
+  DISABLED_ScrollingInNonRootPopupNonStickyFooter
+#else
+#define MAYBE_ScrollingInNonRootPopupNonStickyFooter \
+  ScrollingInNonRootPopupNonStickyFooter
+#endif
 IN_PROC_BROWSER_TEST_P(PopupViewViewsBrowsertest,
-                       ScrollingInNonRootPopupNonStickyFooter) {
+                       MAYBE_ScrollingInNonRootPopupNonStickyFooter) {
   // Create many suggestions that don't fit the height and activate scrolling.
   std::vector<SuggestionType> suggestions(20, SuggestionType::kAddressEntry);
   suggestions.push_back(SuggestionType::kSeparator);
@@ -411,7 +429,20 @@ IN_PROC_BROWSER_TEST_P(PopupViewViewsBrowsertest, SearchBarViewProvided) {
   controller().set_suggestions({SuggestionType::kAddressEntry});
   ShowAndVerifyUi(
       /*popup_has_parent=*/false,
-      PopupViewSearchBarConfig{.enabled = true, .placeholder = u"Search"});
+      AutofillPopupView::SearchBarConfig{.placeholder = u"Search",
+                                         .no_results_message = u""});
+}
+
+IN_PROC_BROWSER_TEST_P(PopupViewViewsBrowsertest,
+                       SearchBarViewNoSuggestionsFound) {
+  // This set imitates empty search result, it contains footer suggestions only.
+  controller().set_suggestions(
+      {SuggestionType::kSeparator, SuggestionType::kAutofillOptions});
+  ON_CALL(controller(), HasFilteredOutSuggestions).WillByDefault(Return(true));
+  ShowAndVerifyUi(
+      /*popup_has_parent=*/false,
+      AutofillPopupView::SearchBarConfig{
+          .placeholder = u"Search", .no_results_message = u"No suggestions"});
 }
 
 INSTANTIATE_TEST_SUITE_P(All,

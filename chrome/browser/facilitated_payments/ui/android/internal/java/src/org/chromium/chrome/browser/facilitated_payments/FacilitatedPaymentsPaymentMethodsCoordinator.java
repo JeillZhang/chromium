@@ -31,17 +31,18 @@ public class FacilitatedPaymentsPaymentMethodsCoordinator
     private PropertyModel mFacilitatedPaymentsPaymentMethodsModel;
 
     @Override
-    public void initialize(Context context, BottomSheetController bottomSheetController) {
+    public void initialize(
+            Context context, BottomSheetController bottomSheetController, Delegate delegate) {
         mFacilitatedPaymentsPaymentMethodsModel = createModel();
-        mMediator.initialize(context, mFacilitatedPaymentsPaymentMethodsModel);
+        mMediator.initialize(context, mFacilitatedPaymentsPaymentMethodsModel, delegate);
         setUpModelChangeProcessors(
                 mFacilitatedPaymentsPaymentMethodsModel,
                 new FacilitatedPaymentsPaymentMethodsView(context, bottomSheetController));
     }
 
     @Override
-    public void showSheet(BankAccount[] bankAccounts) {
-        mMediator.showSheet(bankAccounts);
+    public boolean showSheet(BankAccount[] bankAccounts) {
+        return mMediator.showSheet(bankAccounts);
     }
 
     /**

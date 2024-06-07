@@ -47,6 +47,7 @@
 #include "build/chromeos_buildflags.h"
 #include "build/config/chromebox_for_meetings/buildflags.h"  // PLATFORM_CFM
 #include "chrome/browser/after_startup_task_utils.h"
+#include "chrome/browser/ai/ai_manager_impl.h"
 #include "chrome/browser/app_mode/app_mode_utils.h"
 #include "chrome/browser/bluetooth/chrome_bluetooth_delegate_impl_client.h"
 #include "chrome/browser/browser_about_handler.h"
@@ -97,7 +98,6 @@
 #include "chrome/browser/memory/chrome_browser_main_extra_parts_memory.h"
 #include "chrome/browser/metrics/chrome_browser_main_extra_parts_metrics.h"
 #include "chrome/browser/metrics/chrome_feature_list_creator.h"
-#include "chrome/browser/model_execution/model_manager_impl.h"
 #include "chrome/browser/navigation_predictor/anchor_element_preloader.h"
 #include "chrome/browser/net/chrome_network_delegate.h"
 #include "chrome/browser/net/profile_network_context_service.h"
@@ -512,6 +512,7 @@
 #include "chrome/browser/web_applications/isolated_web_apps/chrome_content_browser_client_isolated_web_apps_part.h"
 #include "chrome/browser/web_applications/locks/app_lock.h"
 #include "chrome/browser/web_applications/web_app_helpers.h"
+#include "chrome/browser/webid/digital_identity_provider_desktop.h"
 #include "third_party/blink/public/mojom/installedapp/related_application.mojom.h"
 #endif  // !BUILDFLAG(IS_ANDROID)
 
@@ -556,7 +557,7 @@
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/chrome_pages.h"
 #include "chrome/browser/ui/search/new_tab_page_navigation_throttle.h"
-#include "chrome/browser/ui/side_panel/read_anything/read_anything_side_panel_navigation_throttle.h"
+#include "chrome/browser/ui/views/side_panel/read_anything/read_anything_side_panel_navigation_throttle.h"
 #include "chrome/browser/ui/web_applications/tabbed_web_app_navigation_throttle.h"
 #include "chrome/browser/ui/web_applications/webui_web_app_navigation_throttle.h"
 #include "chrome/browser/ui/webui/chrome_content_browser_client_webui_part.h"
@@ -1607,6 +1608,10 @@ void ChromeContentBrowserClient::RegisterProfilePrefs(
 
   registry->RegisterBooleanPref(policy::policy_prefs::kMutationEventsEnabled,
                                 false);
+
+  registry->RegisterBooleanPref(
+      policy::policy_prefs::kCSSCustomStateDeprecatedSyntaxEnabled,
+      /*default_value=*/false);
 
   registry->RegisterBooleanPref(
       policy::policy_prefs::kBeforeunloadEventCancelByPreventDefaultEnabled,
@@ -2684,6 +2689,11 @@ void ChromeContentBrowserClient::AppendExtraCommandLineSwitches(
         command_line->AppendSwitch(
             blink::switches::kKeyboardFocusableScrollersOptOut);
       }
+      if (prefs->GetBoolean(
+              policy::policy_prefs::kCSSCustomStateDeprecatedSyntaxEnabled)) {
+        command_line->AppendSwitch(
+            blink::switches::kCSSCustomStateDeprecatedSyntaxEnabled);
+      }
 
       if (prefs->GetBoolean(policy::policy_prefs::
                                 kForcePermissionPolicyUnloadDefaultEnabled)) {
@@ -3354,6 +3364,7 @@ bool ChromeContentBrowserClient::IsAttributionReportingOperationAllowed(
       return allowed;
     }
     case AttributionReportingOperation::kSourceVerboseDebugReport:
+    case AttributionReportingOperation::kSourceAggregatableDebugReport:
     case AttributionReportingOperation::kOsSourceVerboseDebugReport:
       DCHECK(source_origin);
       DCHECK(reporting_origin);
@@ -3374,6 +3385,7 @@ bool ChromeContentBrowserClient::IsAttributionReportingOperationAllowed(
       return allowed;
     }
     case AttributionReportingOperation::kTriggerVerboseDebugReport:
+    case AttributionReportingOperation::kTriggerAggregatableDebugReport:
     case AttributionReportingOperation::kOsTriggerVerboseDebugReport:
       DCHECK(destination_origin);
       DCHECK(reporting_origin);
@@ -3514,6 +3526,7 @@ bool ChromeContentBrowserClient::IsCookieDeprecationLabelAllowedForContext(
 
 bool ChromeContentBrowserClient::IsFullCookieAccessAllowed(
     content::BrowserContext* browser_context,
+    content::WebContents* web_contents,
     const GURL& url,
     const blink::StorageKey& storage_key) {
   Profile* profile = Profile::FromBrowserContext(browser_context);
@@ -4976,6 +4989,12 @@ bool ChromeContentBrowserClient::ShouldEnableAudioProcessHighPriority() {
   return IsAudioProcessHighPriorityEnabled();
 }
 
+bool ChromeContentBrowserClient::ShouldUseSkiaFontManager(
+    const GURL& site_url) {
+  return (base::FeatureList::IsEnabled(features::kSkiaFontService) &&
+          IsTopChromeWebUIURL(site_url));
+}
+
 #endif  // BUILDFLAG(IS_WIN)
 
 void ChromeContentBrowserClient::
@@ -5356,9 +5375,15 @@ ChromeContentBrowserClient::CreateThrottlesForNavigation(
   }
 
   if (lens::features::IsLensOverlayEnabled()) {
-    MaybeAddThrottle(
-        lens::LensOverlaySidePanelNavigationThrottle::MaybeCreateFor(handle),
-        &throttles);
+    if (profile) {
+      if (ThemeService* theme_service =
+              ThemeServiceFactory::GetForProfile(profile)) {
+        MaybeAddThrottle(
+            lens::LensOverlaySidePanelNavigationThrottle::MaybeCreateFor(
+                handle, theme_service),
+            &throttles);
+      }
+    }
   }
 #endif
 
@@ -5535,24 +5560,13 @@ ChromeContentBrowserClient::GetDevToolsBackgroundServiceExpirations(
 std::optional<base::TimeDelta>
 ChromeContentBrowserClient::GetSpareRendererDelayForSiteURL(
     const GURL& site_url) {
-  if (!base::FeatureList::IsEnabled(
-          features::kDeferredSpareRendererForTopChromeWebUI)) {
-    return std::nullopt;
-  }
-
   if (!IsTopChromeWebUIURL(site_url)) {
     return std::nullopt;
   }
 
-  // Prevent new spare renderer creation until page loading completes, signaled
-  // by WebContentsImpl::DidStopLoading. When enabled, delay spare renderer
-  // creation indefinitely by returning the maximum TimeDelta value.
-  if (features::kSpareRendererWarmupDelayUntilPageStopsLoading.Get()) {
-    return base::TimeDelta::Max();
-  }
-
-  // Otherwise, schedule new spare renderer creation after a predefined delay.
-  return features::kSpareRendererWarmupDelay.Get();
+  // Experiments have shown that delaying 2s brings the most significant
+  // improvements to Top Chrome WebUIs. See crbug.com/41490050.
+  return base::Seconds(2);
 }
 
 std::unique_ptr<content::TracingDelegate>
@@ -5757,7 +5771,8 @@ std::unique_ptr<blink::URLLoaderThrottle> CreateGoogleURLLoaderThrottle(
       BoundSessionCookieRefreshServiceFactory::GetForProfile(profile);
   std::unique_ptr<BoundSessionRequestThrottledHandler>
       bound_session_request_throttled_handler;
-  chrome::mojom::BoundSessionThrottlerParamsPtr bound_session_throttler_params;
+  std::vector<chrome::mojom::BoundSessionThrottlerParamsPtr>
+      bound_session_throttler_params;
 
   if (bound_session_cookie_refresh_service) {
     bound_session_request_throttled_handler =
@@ -7857,7 +7872,8 @@ void RunDigitalIdentityCallback(
 
 }  // anonymous namespace
 
-void ChromeContentBrowserClient::ShowDigitalIdentityInterstitialIfNeeded(
+content::ContentBrowserClient::DigitalIdentityInterstitialAbortCallback
+ChromeContentBrowserClient::ShowDigitalIdentityInterstitialIfNeeded(
     content::WebContents& web_contents,
     const url::Origin& origin,
     bool is_only_requesting_age,
@@ -7866,17 +7882,21 @@ void ChromeContentBrowserClient::ShowDigitalIdentityInterstitialIfNeeded(
       std::make_unique<DigitalIdentitySafetyInterstitialBridgeAndroid>();
   auto* bridge_ptr = bridge.get();
   // Callback takes ownership of |bridge|.
-  bridge_ptr->ShowInterstitialIfNeeded(
+  return bridge_ptr->ShowInterstitialIfNeeded(
       web_contents, origin, is_only_requesting_age,
       base::BindOnce(&RunDigitalIdentityCallback, std::move(bridge),
                      std::move(callback)));
 }
+#endif
 
 std::unique_ptr<content::DigitalIdentityProvider>
 ChromeContentBrowserClient::CreateDigitalIdentityProvider() {
+#if BUILDFLAG(IS_ANDROID)
   return std::make_unique<DigitalIdentityProviderAndroid>();
-}
+#else
+  return std::make_unique<DigitalIdentityProviderDesktop>();
 #endif
+}
 
 bool ChromeContentBrowserClient::SuppressDifferentOriginSubframeJSDialogs(
     content::BrowserContext* browser_context) {
@@ -8376,18 +8396,18 @@ void ChromeContentBrowserClient::NotifyMultiCaptureStateChanged(
     content::GlobalRenderFrameHostId capturer_rfh_id,
     const std::string& label,
     MultiCaptureChanged state) {
-  content::WebContents* const web_contents = WebContents::FromRenderFrameHost(
-      RenderFrameHost::FromID(capturer_rfh_id));
-  if (!web_contents) {
-    return;
-  }
-
   switch (state) {
-    case MultiCaptureChanged::kStarted:
+    case MultiCaptureChanged::kStarted: {
+      content::WebContents* const web_contents =
+          WebContents::FromRenderFrameHost(
+              RenderFrameHost::FromID(capturer_rfh_id));
+      if (!web_contents) {
+        return;
+      }
       NotifyMultiCaptureStarted(
           label, web_contents,
           web_app::WebAppTabHelper::GetAppId(web_contents));
-      break;
+    } break;
     case MultiCaptureChanged::kStopped:
       NotifyMultiCaptureStopped(label);
       break;
@@ -8410,10 +8430,10 @@ bool ChromeContentBrowserClient::ShouldSuppressAXLoadComplete(
          url == GURL(chrome::kChromeUINewTabPageURL);
 }
 
-void ChromeContentBrowserClient::BindModelManager(
+void ChromeContentBrowserClient::BindAIManager(
     content::RenderFrameHost* rfh,
-    mojo::PendingReceiver<blink::mojom::ModelManager> receiver) {
-  ModelManagerImpl::Create(rfh, std::move(receiver));
+    mojo::PendingReceiver<blink::mojom::AIManager> receiver) {
+  AIManagerImpl::Create(rfh, std::move(receiver));
 }
 
 #if !BUILDFLAG(IS_ANDROID)

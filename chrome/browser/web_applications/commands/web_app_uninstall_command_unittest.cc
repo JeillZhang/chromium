@@ -5,6 +5,7 @@
 #include "chrome/browser/web_applications/commands/web_app_uninstall_command.h"
 
 #include <memory>
+#include <optional>
 
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
@@ -27,9 +28,11 @@
 #include "chrome/browser/web_applications/user_uninstalled_preinstalled_web_app_prefs.h"
 #include "chrome/browser/web_applications/web_app.h"
 #include "chrome/browser/web_applications/web_app_command_manager.h"
+#include "chrome/browser/web_applications/web_app_command_scheduler.h"
 #include "chrome/browser/web_applications/web_app_constants.h"
 #include "chrome/browser/web_applications/web_app_icon_manager.h"
 #include "chrome/browser/web_applications/web_app_registry_update.h"
+#include "chrome/browser/web_applications/web_app_sync_bridge.h"
 #include "chrome/browser/web_applications/web_app_utils.h"
 #include "components/prefs/testing_pref_service.h"
 #include "components/webapps/browser/installable/installable_metrics.h"
@@ -250,9 +253,11 @@ TEST_F(WebAppUninstallCommandTest, ExternalConfigMapMissing) {
 TEST_F(WebAppUninstallCommandTest, RemoveSourceAndTriggerOSUninstallation) {
   auto web_app = test::CreateWebApp(GURL("https://www.example.com"),
                                     WebAppManagement::kDefault);
-  web_app->AddSource(WebAppManagement::kPolicy);
   web_app->AddInstallURLToManagementExternalConfigMap(
       WebAppManagement::kDefault, GURL("https://example.com/install"));
+  web_app->AddSource(WebAppManagement::kPolicy);
+  web_app->AddInstallURLToManagementExternalConfigMap(
+      WebAppManagement::kPolicy, GURL("https://example.com/install"));
   EXPECT_FALSE(web_app->CanUserUninstallWebApp());
   webapps::AppId app_id = web_app->app_id();
   {
@@ -289,6 +294,15 @@ TEST_F(WebAppUninstallCommandTest, RemoveSourceAndTriggerOSUninstallation) {
 
   provider()->command_manager().ScheduleCommand(std::move(command));
   run_loop.Run();
+
+  // It should still be around from the default install.
+  EXPECT_THAT(provider()->registrar_unsafe().LookUpAppIdByInstallUrl(
+                  GURL("https://example.com/install")),
+              testing::Eq(app_id));
+  // But it shouldn't be there for policy.
+  EXPECT_EQ(provider()->registrar_unsafe().LookUpAppByInstallSourceInstallUrl(
+                WebAppManagement::kPolicy, GURL("https://example.com/install")),
+            nullptr);
 }
 
 TEST_F(WebAppUninstallCommandTest, Shutdown) {

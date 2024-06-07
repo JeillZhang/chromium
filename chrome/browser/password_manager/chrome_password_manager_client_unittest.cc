@@ -106,6 +106,9 @@
 #include "chrome/browser/password_manager/account_password_store_factory.h"
 #include "chrome/browser/password_manager/android/password_generation_controller.h"
 #include "chrome/common/chrome_switches.h"
+#else
+#include "chrome/browser/ui/hats/hats_service_factory.h"
+#include "chrome/browser/ui/hats/mock_hats_service.h"
 #endif  // BUILDFLAG(IS_ANDROID)
 
 using autofill::CalculateFormSignature;
@@ -146,9 +149,9 @@ namespace {
 #if BUILDFLAG(IS_ANDROID)
 FormData MakePasswordFormData() {
   FormData form_data;
-  form_data.url = GURL("https://www.example.com/");
-  form_data.action = GURL("https://www.example.com/");
-  form_data.name = u"form-name";
+  form_data.set_url(GURL("https://www.example.com/"));
+  form_data.set_action(GURL("https://www.example.com/"));
+  form_data.set_name(u"form-name");
 
   FormFieldData field;
   field.set_name(u"password-element");
@@ -427,11 +430,13 @@ ChromePasswordManagerClient* ChromePasswordManagerClientTest::GetClient() {
 bool ChromePasswordManagerClientTest::WasLoggingActivationMessageSent(
     bool* activation_flag) {
   base::RunLoop().RunUntilIdle();
-  if (!fake_agent_.called_set_logging_state())
+  if (!fake_agent_.called_set_logging_state()) {
     return false;
+  }
 
-  if (activation_flag)
+  if (activation_flag) {
     *activation_flag = fake_agent_.logging_state_active();
+  }
   fake_agent_.reset_data();
   return true;
 }
@@ -571,7 +576,7 @@ TEST_F(ChromePasswordManagerClientTest, ReceivesAutofillPredictions) {
                                         FormControlType::kInputText),
                     CreateTestFormField("Password", "password", "",
                                         FormControlType::kInputPassword)});
-  form.name = u"login";
+  form.set_name(u"login");
 
   {
     autofill::TestAutofillManagerWaiter waiter(
@@ -626,8 +631,8 @@ TEST_F(ChromePasswordManagerClientTest,
   // Ensure that the child frame is picked up as a child frame of `main_form`.
   {
     autofill::FrameTokenWithPredecessor child_frame_information;
-    child_frame_information.token = child_form.host_frame;
-    main_form.child_frames = {child_frame_information};
+    child_frame_information.token = child_form.host_frame();
+    main_form.set_child_frames({child_frame_information});
   }
 
   {
@@ -1072,22 +1077,22 @@ TEST_F(ChromePasswordManagerClientTest, CanShowBubbleOnURL) {
     const char* scheme;
     bool can_show_bubble;
   } kTestCases[] = {
-    {url::kHttpScheme, true},
-    {url::kHttpsScheme, true},
-    {url::kDataScheme, true},
-    {url::kBlobScheme, true},
-    {url::kFileSystemScheme, true},
+      {url::kHttpScheme, true},
+      {url::kHttpsScheme, true},
+      {url::kDataScheme, true},
+      {url::kBlobScheme, true},
+      {url::kFileSystemScheme, true},
 
-    {"invalid-scheme-i-just-made-up", false},
+      {"invalid-scheme-i-just-made-up", false},
 #if BUILDFLAG(ENABLE_EXTENSIONS)
-    {extensions::kExtensionScheme, false},
+      {extensions::kExtensionScheme, false},
 #endif
-    {url::kAboutScheme, false},
-    {content::kChromeDevToolsScheme, false},
-    {content::kChromeUIScheme, false},
-    {url::kJavaScriptScheme, false},
-    {url::kMailToScheme, false},
-    {content::kViewSourceScheme, false},
+      {url::kAboutScheme, false},
+      {content::kChromeDevToolsScheme, false},
+      {content::kChromeUIScheme, false},
+      {url::kJavaScriptScheme, false},
+      {url::kMailToScheme, false},
+      {content::kViewSourceScheme, false},
   };
 
   for (const TestCase& test_case : kTestCases) {
@@ -1098,6 +1103,40 @@ TEST_F(ChromePasswordManagerClientTest, CanShowBubbleOnURL) {
               ChromePasswordManagerClient::CanShowBubbleOnURL(url));
   }
 }
+
+#if !BUILDFLAG(IS_ANDROID)
+// Test that the hats service is called with the expected params.
+TEST_F(ChromePasswordManagerClientTest,
+       TriggerUserPerceptionOfAutofillPasswordSurvey) {
+  MockHatsService* mock_hats_service = static_cast<MockHatsService*>(
+      HatsServiceFactory::GetInstance()->SetTestingFactoryAndUse(
+          profile(), base::BindRepeating(&BuildMockHatsService)));
+  EXPECT_CALL(*mock_hats_service, CanShowAnySurvey)
+      .WillRepeatedly(Return(true));
+
+  const std::string filling_assistane = "Automatically filled";
+  const SurveyStringData filling_assistance_in_product_data = {
+      {"Filling assistance", filling_assistane}};
+  EXPECT_CALL(*mock_hats_service,
+              LaunchDelayedSurveyForWebContents(
+                  kHatsSurveyTriggerAutofillPasswordUserPerception, _, _, _,
+                  filling_assistance_in_product_data, _, _, _, _, _));
+
+  GetClient()->TriggerUserPerceptionOfPasswordManagerSurvey(filling_assistane);
+}
+
+TEST_F(
+    ChromePasswordManagerClientTest,
+    TriggerUserPerceptionOfAutofillPasswordSurvey_EmptyFillingAssistanceString_DoNotCallHats) {
+  MockHatsService* mock_hats_service = static_cast<MockHatsService*>(
+      HatsServiceFactory::GetInstance()->SetTestingFactoryAndUse(
+          profile(), base::BindRepeating(&BuildMockHatsService)));
+
+  EXPECT_CALL(*mock_hats_service, LaunchDelayedSurveyForWebContents).Times(0);
+
+  GetClient()->TriggerUserPerceptionOfPasswordManagerSurvey("");
+}
+#endif
 
 #if BUILDFLAG(FULL_SAFE_BROWSING)
 TEST_F(ChromePasswordManagerClientTest,
@@ -1356,7 +1395,7 @@ TEST_F(ChromePasswordManagerClientAndroidTest, FocusedInputChangedGoodFrame) {
 TEST_F(ChromePasswordManagerClientAndroidTest,
        FocusedInputChangedFormsNotFetchedMessagesFeature) {
   FormData observed_form_data = MakePasswordFormData();
-  SetUpGenerationPreconditions(observed_form_data.url);
+  SetUpGenerationPreconditions(observed_form_data.url());
 
   std::unique_ptr<password_manager::ContentPasswordManagerDriver> driver =
       CreateContentPasswordManagerDriver(main_rfh());
@@ -1386,7 +1425,7 @@ TEST_F(ChromePasswordManagerClientAndroidTest,
       static_cast<int>(
           password_manager::prefs::UseUpmLocalAndSeparateStoresState::kOn));
   FormData observed_form_data = MakePasswordFormData();
-  SetUpGenerationPreconditions(observed_form_data.url);
+  SetUpGenerationPreconditions(observed_form_data.url());
 
   std::unique_ptr<password_manager::ContentPasswordManagerDriver> driver =
       CreateContentPasswordManagerDriver(main_rfh());
@@ -1436,7 +1475,7 @@ TEST_F(ChromePasswordManagerClientAndroidTest,
       static_cast<int>(
           password_manager::prefs::UseUpmLocalAndSeparateStoresState::kOff));
   FormData observed_form_data = MakePasswordFormData();
-  SetUpGenerationPreconditions(observed_form_data.url);
+  SetUpGenerationPreconditions(observed_form_data.url());
 
   std::unique_ptr<password_manager::ContentPasswordManagerDriver> driver =
       CreateContentPasswordManagerDriver(main_rfh());

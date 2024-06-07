@@ -1286,8 +1286,6 @@ void AutocompleteController::MlRerank(OldResult& old_result) {
 #if BUILDFLAG(BUILD_WITH_TFLITE_LIB)
   if (OmniboxFieldTrial::GetMLConfig().mapped_search_blending) {
     RunBatchUrlScoringModelMappedSearchBlending(old_result);
-  } else if (OmniboxFieldTrial::GetMLConfig().stable_search_blending) {
-    RunBatchUrlScoringModelWithStableSearches(old_result);
   } else {
     RunBatchUrlScoringModel(old_result);
   }
@@ -1942,11 +1940,9 @@ void AutocompleteController::RunBatchUrlScoringModel(OldResult& old_result) {
   // would be scored independently with their partial signals.
   internal_result_.DeduplicateMatches(input_, template_url_service_);
 
-  size_t eligible_matches_count =
-      base::ranges::count_if(internal_result_.matches_, [](const auto& match) {
-        return match.IsUrlScoringEligible() &&
-               !AutocompleteMatch::IsSearchType(match.type);
-      });
+  size_t eligible_matches_count = base::ranges::count_if(
+      internal_result_.matches_,
+      [](const auto& match) { return match.IsUrlScoringEligible(); });
 
   if (eligible_matches_count == 0)
     return;
@@ -1964,10 +1960,6 @@ void AutocompleteController::RunBatchUrlScoringModel(OldResult& old_result) {
 
     RecordScoringSignalCoverageForProvider(match_itr->scoring_signals.value(),
                                            match_itr->provider.get());
-
-    if (AutocompleteMatch::IsSearchType(match_itr->type)) {
-      continue;
-    }
 
     // Verify the eligible match or one of its duplicates has an expected type.
     DCHECK(match_itr->MatchOrDuplicateMeets([](const auto& match) {
@@ -2067,120 +2059,6 @@ void AutocompleteController::RunBatchUrlScoringModel(OldResult& old_result) {
     obs.OnMlScored(this, internal_result_);
 }
 
-// TODO(crbug.com/40062540): Remove this variant which has fallen out of sync
-//   with the other versions of ML scoring.
-void AutocompleteController::RunBatchUrlScoringModelWithStableSearches(
-    OldResult& old_result) {
-  TRACE_EVENT0(
-      "omnibox",
-      "AutocompleteController::RunBatchUrlScoringModelWithStableSearches");
-
-  // Sort according to traditional scores. This is needed to determine the
-  // traditional default and # of shortcut boosted suggestions.
-  internal_result_.Sort(input_, template_url_service_,
-                        old_result.default_match_to_preserve);
-
-  // Run the model for the eligible matches. Keep a reference to those matches
-  // to later redistribute their relevance scores based on the model output.
-  std::vector<const ScoringSignals*> batch_scoring_signals;
-  std::vector<size_t> scored_positions;
-  // Redistribute shortcut boosting but preserve the # of URLs above searches.
-  // Don't count boosted shortcuts that were traditionally the default, because
-  // their position is already preserved when assuring the default suggestion
-  // remains a search or URL. Otherwise, if ML ranking picks a
-  // non-boosted-shortcut as the default, there would be an extra URL above
-  // searches.
-  size_t num_boosted_shortcuts_below_default = 0;
-  std::vector<int> scores_pool;
-  for (size_t i = 0; i < internal_result_.size(); ++i) {
-    const auto& match = internal_result_.matches_[i];
-    if (!match.IsUrlScoringEligible())
-      continue;
-    if (i > 0 && match.shortcut_boosted)
-      num_boosted_shortcuts_below_default++;
-    batch_scoring_signals.push_back(&match.scoring_signals.value());
-    scored_positions.push_back(i);
-    scores_pool.push_back(match.relevance);
-  }
-  base::ranges::sort(scores_pool, std::greater<>());
-
-  if (batch_scoring_signals.empty())
-    return;
-
-  auto elapsed_timer = base::ElapsedTimer();
-  const auto results = provider_client_->GetAutocompleteScoringModelService()
-                           ->BatchScoreAutocompleteUrlMatchesSync(
-                               std::move(batch_scoring_signals));
-  if (results.empty())
-    return;
-
-  // Record how many eligible matches the model was executed for.
-  base::UmaHistogramCounts1000("Omnibox.URLScoringModelExecuted.Matches",
-                               results.size());
-
-  // Record how long it took to execute the model for all eligible matches.
-  UMA_HISTOGRAM_CUSTOM_MICROSECONDS_TIMES(
-      "Omnibox.URLScoringModelExecuted.ElapsedTime", elapsed_timer.Elapsed(),
-      base::Microseconds(1), base::Milliseconds(3), 100);
-
-  // Record whether the model was executed for at least one eligible match.
-  provider_client_->GetOmniboxTriggeredFeatureService()->FeatureTriggered(
-      metrics::OmniboxEventProto_Feature_ML_URL_SCORING);
-
-  if (OmniboxFieldTrial::IsMlUrlScoringCounterfactual())
-    return;
-
-  std::vector<std::pair<float, size_t>> prediction_and_position_heap;
-  for (size_t i = 0; i < results.size(); ++i) {
-    auto& match = internal_result_.matches_[scored_positions[i]];
-    match.RecordAdditionalInfo("ml legacy relevance", match.relevance);
-    match.RecordAdditionalInfo("ml model output", *results[i]);
-    prediction_and_position_heap.push_back({*results[i], scored_positions[i]});
-  }
-  base::ranges::stable_sort(prediction_and_position_heap, std::greater<>(),
-                            [](const auto& pair) { return pair.first; });
-
-  if (internal_result_.matches_[0].IsUrlScoringEligible()) {
-    const auto& new_default = base::ranges::find_if(
-        prediction_and_position_heap, [&](const auto& tuple) {
-          return internal_result_.matches_[tuple.second]
-              .allowed_to_be_default_match;
-        });
-    // `new_default` can be null If there are no `allowed_to_be_default_match`
-    // matches.
-    if (new_default != prediction_and_position_heap.end()) {
-      internal_result_.matches_[new_default->second].relevance = scores_pool[0];
-      scores_pool.erase(scores_pool.begin());
-      prediction_and_position_heap.erase(new_default);
-    }
-  }
-
-  // Avoid duplicate scores, especially for matches with unique ML scores. Also
-  // avoid an ML URL default replacing a traditional search default.
-  int max_score = internal_result_.matches_[0].IsUrlScoringEligible()
-                      ? INT_MAX
-                      : internal_result_.matches_[0].relevance;
-  for (auto& score : scores_pool) {
-    score = std::min(score, max_score - 1);
-    max_score = score;
-  }
-
-  // Redistribute scores and shortcut boosting.
-  for (size_t i = 0; i < prediction_and_position_heap.size(); ++i) {
-    auto& match =
-        internal_result_.matches_[prediction_and_position_heap[i].second];
-    match.relevance = scores_pool[i];
-    if (num_boosted_shortcuts_below_default > 0) {
-      match.shortcut_boosted = true;
-      num_boosted_shortcuts_below_default--;
-    } else
-      match.shortcut_boosted = false;
-  }
-
-  for (Observer& obs : observers_)
-    obs.OnMlScored(this, internal_result_);
-}
-
 void AutocompleteController::RunBatchUrlScoringModelMappedSearchBlending(
     OldResult& old_result) {
   TRACE_EVENT0(
@@ -2191,6 +2069,8 @@ void AutocompleteController::RunBatchUrlScoringModelMappedSearchBlending(
   // This is needed in order to ensure that the relevance score assignment logic
   // can properly break ties when two (or more) URL suggestions have the same ML
   // score.
+  // TODO(crbug.com/40062540): Replace `Sort` with `DeduplicateMatches` for
+  //   better stability of matches.
   internal_result_.Sort(input_, template_url_service_,
                         old_result.default_match_to_preserve);
 
@@ -2210,10 +2090,6 @@ void AutocompleteController::RunBatchUrlScoringModelMappedSearchBlending(
 
     RecordScoringSignalCoverageForProvider(match.scoring_signals.value(),
                                            match.provider.get());
-
-    if (AutocompleteMatch::IsSearchType(match.type)) {
-      continue;
-    }
 
     batch_scoring_signals.push_back(&match.scoring_signals.value());
     scored_positions.push_back(i);
@@ -2276,8 +2152,7 @@ void AutocompleteController::RunBatchUrlScoringModelMappedSearchBlending(
     const auto& match = internal_result_.matches_[i];
     if (!match.IsUrlScoringEligible() ||
         (match.type == AutocompleteMatchType::DOCUMENT_SUGGESTION &&
-         match.relevance == 0) ||
-        AutocompleteMatch::IsSearchType(match.type)) {
+         match.relevance == 0)) {
       continue;
     }
     scores_pool.push_back(match.relevance);

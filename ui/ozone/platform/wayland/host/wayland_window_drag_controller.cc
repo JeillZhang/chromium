@@ -510,23 +510,6 @@ uint32_t WaylandWindowDragController::DispatchEvent(
   return POST_DISPATCH_PERFORM_DEFAULT;
 }
 
-void WaylandWindowDragController::OnToplevelWindowCreated(
-    WaylandToplevelWindow* window) {
-  // Skip unless a toplevel window is getting visible while in attached mode.
-  // E.g: A window/tab is being detached in a tab dragging session.
-  if (state_ != State::kAttached)
-    return;
-
-  DCHECK(window);
-  auto origin = window->GetBoundsInDIP().origin();
-  gfx::Vector2d offset = gfx::ToFlooredPoint(pointer_location_) - origin;
-  DVLOG(1) << "Toplevel window created (detached)."
-           << " widget=" << window->GetWidget()
-           << " calculated_offset=" << offset.ToString();
-
-  SetDraggedWindow(window, offset);
-}
-
 void WaylandWindowDragController::OnWindowRemoved(WaylandWindow* window) {
   DCHECK_NE(state_, State::kIdle);
   DVLOG(1) << "Window being destroyed. widget=" << window->GetWidget();
@@ -584,7 +567,7 @@ void WaylandWindowDragController::HandleMotionEvent(LocatedEvent* event) {
   should_process_drag_motion_events_ = false;
 }
 
-// Dispatch mouse release event (to tell clients that the drop just happened)
+// Dispatch mouse release events (to tell clients that the drop just happened)
 // clear focus and reset internal state. Must be called when the session is
 // about to finish.
 void WaylandWindowDragController::HandleDropAndResetState(
@@ -617,11 +600,8 @@ void WaylandWindowDragController::HandleDropAndResetState(
   } else {
     if (*drag_source_ == DragEventSource::kMouse) {
       if (pointer_grab_owner_) {
-        pointer_delegate_->OnPointerButtonEvent(
-            ET_MOUSE_RELEASED, EF_LEFT_MOUSE_BUTTON, timestamp,
-            pointer_grab_owner_, wl::EventDispatchPolicy::kImmediate,
-            /*allow_release_of_unpressed_button=*/false,
-            /*is_synthesized=*/true);
+        pointer_delegate_->ReleasePressedPointerButtons(pointer_grab_owner_,
+                                                        timestamp);
       }
     } else {
       const auto touch_pointer_ids = touch_delegate_->GetActiveTouchPointIds();

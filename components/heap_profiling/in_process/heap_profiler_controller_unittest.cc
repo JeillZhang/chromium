@@ -5,14 +5,18 @@
 #include "components/heap_profiling/in_process/heap_profiler_controller.h"
 
 #include <atomic>
-#include <map>
+#include <iomanip>
 #include <memory>
+#include <optional>
+#include <ostream>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 #include "base/allocator/dispatcher/notification_data.h"
 #include "base/allocator/dispatcher/subsystem.h"
+#include "base/auto_reset.h"
 #include "base/barrier_closure.h"
 #include "base/command_line.h"
 #include "base/containers/contains.h"
@@ -23,6 +27,7 @@
 #include "base/json/json_writer.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/metrics/field_trial_params.h"
+#include "base/metrics/metrics_hashes.h"
 #include "base/notreached.h"
 #include "base/process/launch.h"
 #include "base/process/process.h"
@@ -68,6 +73,39 @@
 #include "third_party/metrics_proto/execution_context.pb.h"
 #include "third_party/metrics_proto/sampled_profile.pb.h"
 
+namespace metrics {
+
+// Test printer for SampledProfile. This needs to be in the metrics namespace so
+// GTest can find it.
+void PrintTo(const SampledProfile& profile, std::ostream* os) {
+  *os << "process:" << profile.process() << ",samples";
+  if (profile.call_stack_profile().stack_sample_size() == 0) {
+    *os << ":none";
+  } else {
+    for (const auto& sample : profile.call_stack_profile().stack_sample()) {
+      *os << ":" << sample.count() << "/" << sample.weight();
+    }
+  }
+  *os << ",metadata";
+  if (profile.call_stack_profile().profile_metadata_size() == 0) {
+    *os << ":none";
+  } else {
+    const auto& name_hashes = profile.call_stack_profile().metadata_name_hash();
+    for (const auto& metadata :
+         profile.call_stack_profile().profile_metadata()) {
+      if (metadata.name_hash_index() < name_hashes.size()) {
+        *os << ":" << std::hex << "0x"
+            << name_hashes.at(metadata.name_hash_index()) << std::dec;
+      } else {
+        *os << ":unknown";
+      }
+      *os << "=" << metadata.value();
+    }
+  }
+}
+
+}  // namespace metrics
+
 namespace heap_profiling {
 
 namespace {
@@ -93,12 +131,17 @@ using ScopedMuteHookedSamplesForTesting =
 using ScopedSuppressRandomnessForTesting =
     base::PoissonAllocationSampler::ScopedSuppressRandomnessForTesting;
 
+using ::testing::_;
 using ::testing::AllOf;
 using ::testing::Conditional;
 using ::testing::ElementsAre;
+using ::testing::Ge;
 using ::testing::IsEmpty;
+using ::testing::Lt;
+using ::testing::Optional;
 using ::testing::Property;
-using ::testing::UnorderedElementsAre;
+using ::testing::ResultOf;
+using ::testing::UnorderedElementsAreArray;
 
 constexpr size_t kSamplingRate = 1024;
 constexpr size_t kAllocationSize = 42 * kSamplingRate;
@@ -375,17 +418,19 @@ class MultiprocessTestChild final : public mojom::TestConnector,
 
   // mojom::TestConnector:
 
-  void Connect(
-      mojo::PendingReceiver<mojom::SnapshotController> receiver,
-      mojo::PendingRemote<metrics::mojom::CallStackProfileCollector> remote,
+  void ConnectSnapshotController(
+      mojo::PendingReceiver<mojom::SnapshotController> controller,
       base::OnceClosure done_callback) final {
-    // Create full ChildProcessSnapshotController and
-    // ChildCallStackProfileCollector instances to send snapshots to the parent
-    // process.
     ChildProcessSnapshotController::CreateSelfOwnedReceiver(
-        std::move(receiver));
+        std::move(controller));
+    std::move(done_callback).Run();
+  }
+
+  void ConnectProfileCollector(
+      mojo::PendingRemote<metrics::mojom::CallStackProfileCollector> collector,
+      base::OnceClosure done_callback) final {
     metrics::CallStackProfileBuilder::SetParentProfileCollectorForChildProcess(
-        std::move(remote));
+        std::move(collector));
     std::move(done_callback).Run();
   }
 
@@ -442,23 +487,46 @@ class MultiprocessTestParent {
       int connector_id,
       mojo::PendingReceiver<mojom::SnapshotController> receiver,
       mojo::PendingRemote<metrics::mojom::CallStackProfileCollector> remote) {
-    // BrowserProcessSnapshotController holds the remote end of the
-    // mojom::SnapshotController, and the test fixture holds the receiver end of
-    // the CallStackProfileCollector. Pass the other ends to the test child.
-    // `on_child_connected_closure_` will be called with the response.
     mojom::TestConnector* connector = test_connectors_.Get(
         mojo::RemoteSetElementId::FromUnsafeValue(connector_id));
     ASSERT_TRUE(connector);
-    connector->Connect(std::move(receiver), std::move(remote),
-                       on_child_connected_closure_);
+
+    // BrowserProcessSnapshotController holds the remote end of the
+    // mojom::SnapshotController. Pass the other end to the test child if it
+    // should be profiled, otherwise drop it. This verifies that an unbound
+    // SnapshotController is handled correctly.
+    base::OnceClosure bind_receiver_closure;
+    if (should_profile_next_launch_) {
+      // Unretained is safe since `test_connectors_` won't be destroyed until
+      // the reply callback runs.
+      bind_receiver_closure =
+          base::BindOnce(&mojom::TestConnector::ConnectSnapshotController,
+                         base::Unretained(connector), std::move(receiver),
+                         on_child_connected_closure_);
+    } else {
+      bind_receiver_closure = on_child_connected_closure_;
+    }
+
+    // The test fixture holds the receiver end of the CallStackProfileCollector.
+    // Pass the other end to the test child. The response will eventually
+    // trigger `on_child_connected_closure_`.
+    connector->ConnectProfileCollector(std::move(remote),
+                                       std::move(bind_receiver_closure));
   }
 
   // Launches a multiprocess test child and registers it with `controller`.
   // The child will simulate a process of type `process_type` and make
-  // `num_allocations` memory allocations to report in heap snapshots.
+  // `num_allocations` memory allocations to report in heap snapshots. If
+  // `should_profile` is false, simulate the embedder refusing to profile the
+  // child process.
   void LaunchTestChild(HeapProfilerController* controller,
                        ProcessType process_type,
-                       int num_allocations) {
+                       int num_allocations,
+                       bool should_profile) {
+    // `should_profile` will apply during next call to BindTestConnector().
+    base::AutoReset should_profile_next_launch(&should_profile_next_launch_,
+                                               should_profile);
+
     base::LaunchOptions launch_options;
     base::CommandLine child_command_line =
         base::GetMultiProcessTestChildBaseCommandLine();
@@ -509,13 +577,18 @@ class MultiprocessTestParent {
 
   // Closure to call whenever a child process is finished connecting.
   base::RepeatingClosure on_child_connected_closure_;
+
+  // While this is false, calls to BindTestConnector should skip binding the
+  // mojom::SnapshotController, to verify that BrowserProcessSnapshotController
+  // can handle an embedder that doesn't bind the controller to some processes.
+  bool should_profile_next_launch_ = true;
 };
 
 #endif  // ENABLE_MULTIPROCESS_TESTS
 
 class MockSnapshotController : public mojom::SnapshotController {
  public:
-  MOCK_METHOD(void, TakeSnapshot, (), (override));
+  MOCK_METHOD(void, TakeSnapshot, (uint32_t, uint32_t), (override));
 };
 
 // Configurations of the HeapProfiler* features to test.
@@ -532,10 +605,14 @@ struct FeatureTestParams {
   const ProcessTypeSet supported_processes;
   ChannelParams stable;
   ChannelParams nonstable;
-  // Whether HeapProfilerIncludeZero is enabled.
-  bool include_zero_feature_enabled = true;
   // Whether HeapProfilerCentralControl is enabled.
   bool central_control_feature_enabled = false;
+  // Probabilities for snapshotting child processes. Only used of
+  // HeapProfilerCentralControl is enabled.
+  int gpu_snapshot_prob = 100;
+  int network_snapshot_prob = 100;
+  int renderer_snapshot_prob = 100;
+  int utility_snapshot_prob = 100;
 
   base::FieldTrialParams ToFieldTrialParams() const;
 
@@ -590,8 +667,7 @@ base::FieldTrialParams FeatureTestParams::ToFieldTrialParams() const {
         field_trial_params["network-process-params"] = is_supported_string;
         break;
       default:
-        NOTREACHED_IN_MIGRATION();
-        break;
+        NOTREACHED_NORETURN();
     }
   }
 
@@ -604,13 +680,15 @@ std::vector<FeatureRefAndParams> FeatureTestParams::GetEnabledFeatures() const {
     enabled_features.push_back(
         FeatureRefAndParams(kHeapProfilerReporting, ToFieldTrialParams()));
   }
-  if (include_zero_feature_enabled) {
-    enabled_features.push_back(
-        FeatureRefAndParams(kHeapProfilerIncludeZero, {}));
-  }
   if (central_control_feature_enabled) {
-    enabled_features.push_back(
-        FeatureRefAndParams(kHeapProfilerCentralControl, {}));
+    enabled_features.push_back(FeatureRefAndParams(
+        kHeapProfilerCentralControl,
+        {
+            {"gpu-prob-pct", base::NumberToString(gpu_snapshot_prob)},
+            {"network-prob-pct", base::NumberToString(network_snapshot_prob)},
+            {"renderer-prob-pct", base::NumberToString(renderer_snapshot_prob)},
+            {"utility-prob-pct", base::NumberToString(utility_snapshot_prob)},
+        }));
   }
   return enabled_features;
 }
@@ -619,9 +697,6 @@ std::vector<FeatureRef> FeatureTestParams::GetDisabledFeatures() const {
   std::vector<FeatureRef> disabled_features;
   if (!feature_enabled) {
     disabled_features.push_back(FeatureRef(kHeapProfilerReporting));
-  }
-  if (!include_zero_feature_enabled) {
-    disabled_features.push_back(FeatureRef(kHeapProfilerIncludeZero));
   }
   if (!central_control_feature_enabled) {
     disabled_features.push_back(FeatureRef(kHeapProfilerCentralControl));
@@ -644,8 +719,13 @@ std::ostream& operator<<(std::ostream& os, const FeatureTestParams& params) {
   os << "nonstable/browser:" << params.stable.expect_browser_sample << ",";
   os << "nonstable/child:" << params.stable.expect_child_sample;
   os << "},";
-  os << "include_zero:" << params.include_zero_feature_enabled << ",";
   os << "central_control:" << params.central_control_feature_enabled;
+  if (params.central_control_feature_enabled) {
+    os << ",gpu-prob:" << params.gpu_snapshot_prob << ",";
+    os << "network-prob:" << params.network_snapshot_prob << ",";
+    os << "renderer-prob:" << params.renderer_snapshot_prob << ",";
+    os << "utility-prob:" << params.utility_snapshot_prob;
+  }
   os << "}";
   return os;
 }
@@ -880,6 +960,18 @@ TEST_P(HeapProfilerControllerTest, UnhandledProcess) {
   histogram_tester_.ExpectTotalCount("HeapProfiling.InProcess.Enabled", 0);
 }
 
+TEST_P(HeapProfilerControllerTest, EmptyProfile) {
+  // Should save an empty profile even though no memory is allocated.
+  ScopedCallbacks callbacks = CreateScopedCallbacks(
+      /*expect_take_snapshot=*/true, /*expect_sampled_profile=*/true);
+  StartHeapProfiling(version_info::Channel::STABLE, ProcessType::kBrowser,
+                     /*expect_enabled=*/true,
+                     callbacks.first_snapshot_callback(),
+                     callbacks.collector_callback());
+  task_env().RunUntilQuit();
+  EXPECT_TRUE(sample_received_);
+}
+
 // Test the feature on various channels in the browser process.
 constexpr FeatureTestParams kChannelConfigs[] = {
     // Disabled.
@@ -1072,13 +1164,14 @@ TEST_P(HeapProfilerControllerProcessTest, BrowserProcess) {
         &child_command_line, ProcessType::kUtility, kTestChildProcessId);
 
     if (GetParam().stable.expect_child_sample) {
-      EXPECT_CALL(mock_child_snapshot_controller, TakeSnapshot()).WillOnce([&] {
-        // Record that BrowserProcessSnapshotController triggered a fake
-        // snapshot in the child process.
-        callbacks.other_process_callback().Run();
-      });
+      EXPECT_CALL(mock_child_snapshot_controller, TakeSnapshot(100, 0))
+          .WillOnce([&] {
+            // Record that BrowserProcessSnapshotController triggered a fake
+            // snapshot in the child process.
+            callbacks.other_process_callback().Run();
+          });
     } else {
-      EXPECT_CALL(mock_child_snapshot_controller, TakeSnapshot()).Times(0);
+      EXPECT_CALL(mock_child_snapshot_controller, TakeSnapshot(_, _)).Times(0);
     }
   }
 
@@ -1158,45 +1251,40 @@ TEST_P(HeapProfilerControllerProcessTest, ChildProcess) {
   EXPECT_EQ(sample_received_, GetParam().stable.expect_child_sample);
 }
 
-// Test the HeapProfilerIncludeZero feature.
-constexpr FeatureTestParams kIncludeZeroConfigs[] = {
-    {
-        .include_zero_feature_enabled = true,
-    },
-    {
-        .include_zero_feature_enabled = false,
-    },
-};
-
-using HeapProfilerControllerIncludeZeroTest = HeapProfilerControllerTest;
-
-INSTANTIATE_TEST_SUITE_P(All,
-                         HeapProfilerControllerIncludeZeroTest,
-                         ::testing::ValuesIn(kIncludeZeroConfigs));
-
-TEST_P(HeapProfilerControllerIncludeZeroTest, EmptyProfile) {
-  // TakeSnapshot() is always called, but since no memory is allocated it will
-  // only save a profile if HeapProfilerIncludeZero is enabled.
-  ScopedCallbacks callbacks = CreateScopedCallbacks(
-      /*expect_take_snapshot=*/true, GetParam().include_zero_feature_enabled);
-  StartHeapProfiling(version_info::Channel::STABLE, ProcessType::kBrowser,
-                     /*expect_enabled=*/true,
-                     callbacks.first_snapshot_callback(),
-                     callbacks.collector_callback());
-  task_env().RunUntilQuit();
-  EXPECT_EQ(sample_received_, GetParam().include_zero_feature_enabled);
-}
-
 #if ENABLE_MULTIPROCESS_TESTS
+
+// Returns a lambda that can be called from a GMock matcher. It will return the
+// value of a MetadataItem named `name` in a given CallStackProfile, or nullopt
+// if there's no metadata with that name.
+auto GetProfileMetadataFunc(std::string_view name) {
+  auto get_metadata =
+      [name_hash = base::HashMetricName(name)](
+          const metrics::CallStackProfile& profile) -> std::optional<int64_t> {
+    for (int32_t i = 0; i < profile.metadata_name_hash_size(); ++i) {
+      if (profile.metadata_name_hash(i) == name_hash) {
+        // Found index of `name_hash`.
+        for (const auto& metadata_item : profile.profile_metadata()) {
+          if (metadata_item.name_hash_index() == i) {
+            return metadata_item.value();
+          }
+        }
+      }
+    }
+    // No metadata matched `name_hash`.
+    return std::nullopt;
+  };
+  return get_metadata;
+}
 
 // End-to-end test of the HeapProfilerCentralControl feature with multiple child
 // processes.
 constexpr FeatureTestParams kMultipleChildConfigs[] = {
     {
-        .supported_processes = {ProcessType::kBrowser, ProcessType::kUtility,
-                                ProcessType::kRenderer},
-        .include_zero_feature_enabled = true,
+        .supported_processes = {ProcessType::kBrowser, ProcessType::kGpu,
+                                ProcessType::kUtility, ProcessType::kRenderer},
         .central_control_feature_enabled = true,
+        .renderer_snapshot_prob = 66,
+        .utility_snapshot_prob = 50,
     },
 };
 
@@ -1221,11 +1309,25 @@ TEST_P(HeapProfilerControllerMultipleChildTest, EndToEnd) {
 
   // Process types to test. Each will make a different
   // number of memory allocations so their reports are all different.
-  const std::map<ProcessType, size_t> kProcessesToTest{
+  const std::vector<std::pair<ProcessType, size_t>> kProcessesToTest{
       {ProcessType::kBrowser, 0},
-      {ProcessType::kUtility, 1},
-      {ProcessType::kRenderer, 2},
+      {ProcessType::kGpu, 1},
+      // 2 utility processes.
+      {ProcessType::kUtility, 2},
+      {ProcessType::kUtility, 3},
+      // 5 renderer processes including one with no samples. The first one will
+      // be ignored to simulate the embedder refusing to profile it.
+      {ProcessType::kRenderer, 10},
+      {ProcessType::kRenderer, 0},
+      {ProcessType::kRenderer, 4},
+      {ProcessType::kRenderer, 5},
+      {ProcessType::kRenderer, 6},
   };
+
+  // Expect only 1 utility process and 3 renderer processes to be sampled due
+  // to the "renderer-prob" and "utility-prob" params.
+  constexpr size_t kExpectedSampledProfiles =
+      /*browser*/ 1 + /*gpu*/ 1 + /*utility*/ 1 + /*renderer*/ 3;
 
   // Create callbacks that store profiles from all processes in a vector.
   std::vector<metrics::SampledProfile> received_profiles;
@@ -1234,8 +1336,7 @@ TEST_P(HeapProfilerControllerMultipleChildTest, EndToEnd) {
         received_profiles.push_back(std::move(profile));
       });
   ScopedCallbacks callbacks(
-      /*expect_take_snapshot=*/true,
-      /*expected_sampled_profiles=*/kProcessesToTest.size(),
+      /*expect_take_snapshot=*/true, kExpectedSampledProfiles,
       /*use_other_process_callback=*/false, std::move(collector_callback),
       task_env().QuitClosure());
 
@@ -1275,10 +1376,17 @@ TEST_P(HeapProfilerControllerMultipleChildTest, EndToEnd) {
   browser_snapshot_controller->SetBindRemoteForChildProcessCallback(
       std::move(binder_callback));
 
+  bool renderer_was_skipped = false;
   for (const auto [process_type, num_allocations] : kProcessesToTest) {
     if (process_type != ProcessType::kBrowser) {
+      // Skip the first renderer.
+      bool should_profile = true;
+      if (process_type == ProcessType::kRenderer && !renderer_was_skipped) {
+        should_profile = false;
+        renderer_was_skipped = true;
+      }
       test_parent.LaunchTestChild(controller_.get(), process_type,
-                                  num_allocations);
+                                  num_allocations, should_profile);
     }
   }
 
@@ -1286,44 +1394,61 @@ TEST_P(HeapProfilerControllerMultipleChildTest, EndToEnd) {
   task_env().RunUntilQuit();
 
   // GMock matcher that tests that the given CallStackProfile contains `count`
-  // stack samples, each with weight `avg_weight`.
-  auto call_stack_profile_matches = [](size_t count, size_t avg_weight) {
+  // stack samples with metadata containing `process_percent` and
+  // "process_index" < `sampled_processes`.
+  auto call_stack_profile_matches = [](size_t count, int64_t process_percent,
+                                       int64_t sampled_processes) {
     using StackSample = metrics::CallStackProfile::StackSample;
-    return Property(
-        "stack_sample", &metrics::CallStackProfile::stack_sample,
-        Conditional(
-            count > 0,
-            // The test makes allocations at addresses without symbols, so
-            // they're all counted in the same stack frame.
-            ElementsAre(AllOf(
-                Property("count", &StackSample::count, count),
-                Property("weight", &StackSample::weight, count * avg_weight))),
-            // No allocations means no stack frames.
-            IsEmpty()));
+    return AllOf(
+        Property(
+            "stack_sample", &metrics::CallStackProfile::stack_sample,
+            Conditional(
+                count > 0,
+                // The test makes allocations at addresses without symbols, so
+                // they're all counted in the same stack frame.
+                ElementsAre(AllOf(Property("count", &StackSample::count, count),
+                                  Property("weight", &StackSample::weight,
+                                           count * kAllocationSize))),
+                // No allocations means no stack frames.
+                IsEmpty())),
+        ResultOf("process_percent metadata",
+                 GetProfileMetadataFunc("process_percent"),
+                 Optional(process_percent)),
+        ResultOf("process_index metadata",
+                 GetProfileMetadataFunc("process_index"),
+                 // Processes can be sampled in any order, so just check the
+                 // range of "process_index".
+                 Optional(AllOf(Ge(0), Lt(sampled_processes)))));
   };
 
   // GMock matcher that tests that the given SampledProfile is a heap snapshot
-  // for the given `process_type` containing `count` stack
-  // samples, each with weight `avg_weight`.
+  // for the given `process_type` containing `count` stack samples with metadata
+  // containing `process_percent` and "process_index" < `sampled_processes`.
   auto sampled_profile_matches = [&](metrics::Process process_type,
-                                     size_t count, size_t avg_weight) {
+                                     size_t count, int64_t process_percent,
+                                     int64_t sampled_processes) {
     return AllOf(
-        Property("trigger_event", &metrics::SampledProfile::trigger_event,
-                 metrics::SampledProfile::PERIODIC_HEAP_COLLECTION),
         Property("process", &metrics::SampledProfile::process, process_type),
         Property("call_stack_profile",
                  &metrics::SampledProfile::call_stack_profile,
-                 call_stack_profile_matches(count, avg_weight)));
+                 call_stack_profile_matches(count, process_percent,
+                                            sampled_processes)));
   };
 
+  // Only the first 1/2 of utility processes and 2/3 of renderers should be
+  // included due to sampling. Renderers are rounded up to 3 of the 4 that can
+  // be profiled - the 5th is invisible to the profiler.
   EXPECT_THAT(
       received_profiles,
-      UnorderedElementsAre(
-          sampled_profile_matches(metrics::Process::BROWSER_PROCESS, 0, 0),
-          sampled_profile_matches(metrics::Process::UTILITY_PROCESS, 1,
-                                  kAllocationSize),
-          sampled_profile_matches(metrics::Process::RENDERER_PROCESS, 2,
-                                  kAllocationSize)));
+      UnorderedElementsAreArray({
+          sampled_profile_matches(metrics::Process::BROWSER_PROCESS, 0, 100, 1),
+          sampled_profile_matches(metrics::Process::GPU_PROCESS, 1, 100, 1),
+          sampled_profile_matches(metrics::Process::UTILITY_PROCESS, 2, 50, 1),
+          // The first renderer should be skipped.
+          sampled_profile_matches(metrics::Process::RENDERER_PROCESS, 0, 66, 3),
+          sampled_profile_matches(metrics::Process::RENDERER_PROCESS, 4, 66, 3),
+          sampled_profile_matches(metrics::Process::RENDERER_PROCESS, 5, 66, 3),
+      }));
 }
 
 #endif  // ENABLE_MULTIPROCESS_TESTS

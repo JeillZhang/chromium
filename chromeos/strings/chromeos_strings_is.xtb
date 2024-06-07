@@ -236,7 +236,6 @@
 <translation id="2189104374785738357">Breyta upplýsingum um aðgangsstað</translation>
 <translation id="2195732836444333448">Við getum ekki tekið meira að okkur eins og er. Komdu fljótt aftur.</translation>
 <translation id="2201758491318984023">reiðhjól</translation>
-<translation id="2203222757805818543">Núverandi stilling er á bilinu <ph name="SUNRISE" /> - <ph name="SUNSET" />. Til að uppfæra sjálfvirkt dökku stillinguna skaltu <ph name="BEGIN_LINK" />kveikja á aðgangi að staðsetningu<ph name="END_LINK" /></translation>
 <translation id="2203272733515928691">náttúrulaug</translation>
 <translation id="2203642483788377106">kletti</translation>
 <translation id="2208388655216963643">impressjónískum stíl</translation>
@@ -364,6 +363,7 @@
 <translation id="3054177598518735801"><ph name="CURRENT_VALUE" />mA</translation>
 <translation id="3056720590588772262">Endastaður</translation>
 <translation id="3060579846059757016">Útlínur</translation>
+<translation id="3061850252076394168">kveikja á textaupplestri</translation>
 <translation id="3069085583900247081">Próf mistókst</translation>
 <translation id="3078740164268491126">tafla</translation>
 <translation id="3081652522083185657">björtu</translation>
@@ -630,7 +630,6 @@
 <translation id="458794348635939462">Ekki tókst að leysa úr öllum hýslum</translation>
 <translation id="4593212453765072419">Auðkenningar staðgengilsþjóns krafist</translation>
 <translation id="4609350030397390689">Draga úr birtustigi lyklaborðs</translation>
-<translation id="4617553623719764431">Veður er ekki sýnt því það veit ekki staðsetningu þína. Til að birta staðbundið veður <ph name="BEGIN_LINK" />skaltu kveikja á aðgangi að staðsetningu<ph name="END_LINK" /></translation>
 <translation id="4627232916386272576"><ph name="DOCUMENT_TITLE" />, <ph name="PRINTER_NAME" />, <ph name="CREATION_TIME" />, <ph name="PRINTED_PAGE_NUMBER" /> af <ph name="TOTAL_PAGE_NUMBER" />. Ýttu á færslulykilinn til að hætta við prentverkið.</translation>
 <translation id="463791356324567266">Hættir við að skanna...</translation>
 <translation id="4646949265910132906">Örugg Wi-Fi tenging</translation>
@@ -704,6 +703,7 @@
 <translation id="4985509611418653372">Keyra</translation>
 <translation id="4987769320337599931">Eldveggur</translation>
 <translation id="4988526792673242964">Síður</translation>
+<translation id="4989542687859782284">Ekki tiltækt</translation>
 <translation id="4999333166442584738">Fela skýrslu</translation>
 <translation id="500920857929044050">Stöðva próf</translation>
 <translation id="5017508259293544172">LEAP</translation>
@@ -960,7 +960,6 @@
 <translation id="6412715219990689313">Innbyggt lyklaborð</translation>
 <translation id="6417265370957905582">Google-hjálpari</translation>
 <translation id="6423239382391657905">OpenVPN</translation>
-<translation id="6438073885402882007">Þetta gerir kerfisþjónustum með þessa heimild kleift að nota staðsetninguna þína. Staðsetning kann að nota tækni á borð við Wi-Fi, farsímakerfi og skynjara til að áætla staðsetningu tækisins. <ph name="LINK_BEGIN" />Nánar<ph name="LINK_END" /></translation>
 <translation id="6439505561246192797">Lítill (<ph name="SIGNAL_STRENGTH" />)</translation>
 <translation id="6447630859861661624">Fara í reikningsstillingar</translation>
 <translation id="6462978824459367242">Nú er hægt að bæta við hnappi fyrir aðgangsstað</translation>

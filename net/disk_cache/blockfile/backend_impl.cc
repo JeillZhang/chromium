@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "net/disk_cache/blockfile/backend_impl.h"
 
 #include <algorithm>
@@ -1161,7 +1166,7 @@ int32_t BackendImpl::GetEntryCount() const {
       data_->header.num_entries - data_->header.lru.sizes[Rankings::DELETED];
 
   if (not_deleted < 0) {
-    DUMP_WILL_BE_NOTREACHED_NORETURN();
+    DUMP_WILL_BE_NOTREACHED();
     not_deleted = 0;
   }
 

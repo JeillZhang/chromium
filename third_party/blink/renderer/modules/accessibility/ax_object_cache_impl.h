@@ -188,6 +188,16 @@ class MODULES_EXPORT AXObjectCacheImpl
   const WTF::Vector<gfx::Rect>* GetOptionsBounds(
       const AXObject& ax_menu_list) const;
 
+  // Return true if the node has previously had aria-hidden="true" that was used
+  // illegally, e.g. focus went inside of it.
+  bool HasBadAriaHidden(const AXObject&) const;
+  // Mark any aria-hidden ancestors of this object as "bad", ignoring their
+  // aria-hidden markup from this point forward, and rebuild the top aria-hidden
+  // element's subtree without the aria-hidden markup.
+  void DiscardBadAriaHiddenBecauseOfFocus(AXObject& focus);
+  // Mark an aria-hidden usage as bad/discarded when used on <body>/<html>/etc.
+  void DiscardBadAriaHiddenBecauseOfElement(const AXObject& obj);
+
   void ImageLoaded(const LayoutObject*) override;
 
   // Removes AXObject backed by passed-in object, if there is one.
@@ -242,7 +252,6 @@ class MODULES_EXPORT AXObjectCacheImpl
   void TextChanged(const LayoutObject*) override;
   void TextChangedWithCleanLayout(Node* optional_node, AXObject*);
 
-  void FocusableChangedWithCleanLayout(Node* node);
   void DocumentTitleChanged() override;
 
   // Returns true if we can immediately process tree updates for this node.
@@ -506,6 +515,7 @@ class MODULES_EXPORT AXObjectCacheImpl
   // called, it will only retrieve objects that have changed since now.
   void SerializeLocationChanges();
 
+  // This method is used to fulfill AXTreeSnapshotter requests.
   bool SerializeEntireTree(
       size_t max_node_count,
       base::TimeDelta timeout,
@@ -537,11 +547,11 @@ class MODULES_EXPORT AXObjectCacheImpl
   // The difference between this and IsDirty():
   // - IsDirty() means there are updates to be processed when layout becomes
   // clean, in order to have a complete representation in the tree structure.
-  // - HasDirtyOirtyObjects() means there are updates ready to be sent
+  // - HasObjectsPendingSerialization() means there are updates ready to be sent
   // to the serializer.
-  // TODO(accessibility) Differentiate naming -- there are too many kinds of
-  // "dirty", which leads to confusion.
-  bool HasDirtyObjects() const override { return !dirty_objects_.empty(); }
+  bool HasObjectsPendingSerialization() const override {
+    return !pending_objects_to_serialize_.empty();
+  }
   bool IsDirty() override;
 
   // Set the id of the node to fetch image data for. Normally the content
@@ -632,6 +642,99 @@ class MODULES_EXPORT AXObjectCacheImpl
   HeapHashMap<AXID, Member<AXObject>>& GetObjects() { return objects_; }
 #endif
 
+  // The following represent functions that could be used as callbacks for
+  // DeferTreeUpdate. Every enum value represents a function that would be
+  // called after a tree update is complete.
+  // Please don't reuse these enums in multiple callers to DeferTreeUpdate().
+  // Instead, add an enum where the suffix describes where it's being called
+  // from (this helps when debugging an issue apparent in clean layout, by
+  // helping clarify the code paths).
+  enum class TreeUpdateReason : uint8_t {
+    // These updates are always associated with a DOM Node:
+    kActiveDescendantChanged,
+    kAriaExpandedChanged,
+    kAriaOwnsChanged,
+    kAriaPressedChanged,
+    kAriaSelectedChanged,
+    kDelayEventFromPostNotification,
+    kDidShowMenuListPopup,
+    kEditableTextContentChanged,
+    kFocusableChanged,
+    kIdChanged,
+    kMarkDirtyFromHandleScroll,
+    kNodeIsAttached,
+    kNodeGainedFocus,
+    kNodeLostFocus,
+    kPostNotificationFromHandleLoadComplete,
+    kPostNotificationFromHandleLoadStart,
+    kPostNotificationFromHandleScrolledToAnchor,
+    kRemoveValidationMessageObjectFromFocusedUIElement,
+    kRemoveValidationMessageObjectFromValidationMessageObject,
+    kRoleChangeFromAriaHasPopup,
+    kRoleChangeFromImageMapName,
+    kRoleChangeFromRoleOrType,
+    kRoleMaybeChangedFromEventListener,
+    kRoleMaybeChangedFromHref,
+    kRoleMaybeChangedOnSelect,
+    kSectionOrRegionRoleMaybeChangedFromLabel,
+    kSectionOrRegionRoleMaybeChangedFromLabelledBy,
+    kSectionOrRegionRoleMaybeChangedFromTitle,
+    kTextChangedOnNode,
+    kTextChangedOnClosestNodeForLayoutObject,
+    kTextMarkerDataAdded,
+    kUpdateActiveMenuOption,
+    kUpdateAriaOwns,
+    kUpdateTableRole,
+    kUseMapAttributeChanged,
+    kValidationMessageVisibilityChanged,
+
+    // These updates are associated with an AXID:
+    kChildrenChanged,
+    kMarkAXObjectDirty,
+    kMarkAXSubtreeDirty,
+    kTextChangedOnLayoutObject
+  };
+
+  struct TreeUpdateParams final : public GarbageCollected<TreeUpdateParams> {
+    TreeUpdateParams(
+        Node* node_arg,
+        AXID axid_arg,
+        ax::mojom::blink::EventFrom event_from_arg,
+        ax::mojom::blink::Action event_from_action_arg,
+        const BlinkAXEventIntentsSet& intents_arg,
+        TreeUpdateReason update_reason_arg,
+        ax::mojom::blink::Event event_arg = ax::mojom::blink::Event::kNone)
+        : node(node_arg),
+          axid(axid_arg),
+          event(event_arg),
+          event_from(event_from_arg),
+          update_reason(update_reason_arg),
+          event_from_action(event_from_action_arg) {
+      for (const auto& intent : intents_arg) {
+        DCHECK(node || axid) << "Either a DOM Node or AXID is required.";
+        DCHECK(!node || !axid) << "Provide a DOM Node *or* AXID, not both.";
+        event_intents.insert(intent.key, intent.value);
+      }
+    }
+
+    // Only either node or AXID will be filled at a time. Some events use Node
+    // while others use AXObject.
+    WeakMember<Node> node;
+    AXID axid;
+
+    ax::mojom::blink::Event event;
+    ax::mojom::blink::EventFrom event_from;
+    TreeUpdateReason update_reason;
+    ax::mojom::blink::Action event_from_action;
+    BlinkAXEventIntentsSet event_intents;
+
+    virtual ~TreeUpdateParams() = default;
+    void Trace(Visitor* visitor) const { visitor->Trace(node); }
+#if DCHECK_IS_ON()
+    std::string ToString();
+#endif
+  };
+
  protected:
   void ScheduleImmediateSerialization() override;
 
@@ -720,9 +823,6 @@ class MODULES_EXPORT AXObjectCacheImpl
   void ProcessDeferredAccessibilityEventsImpl(Document&);
   void UpdateLifecycleIfNeeded(Document& document);
 
-  // Helper for ProcessDeferredAccessibilityEvents. Checks if layout is ready.
-  bool IsReadyToProcessDeferredEvents();
-
   // Is the main document currently parsing content, as opposed to being blocked
   // by script execution or being load complete state.
   bool IsParsingMainDocument() const;
@@ -759,99 +859,13 @@ class MODULES_EXPORT AXObjectCacheImpl
     void Trace(Visitor* visitor) const { visitor->Trace(target); }
   };
 
-  // The following represent functions that could be used as callbacks for
-  // DeferTreeUpdate. Every enum value represents a function that would be
-  // called after a tree update is complete.
-  // Please don't reuse these enums in multiple callers to DeferTreeUpdate().
-  // Instead, add an enum where the suffix describes where it's being called
-  // from (this helps when debugging an issue apparent in clean layout, by
-  // helping clarify the code paths).
-  enum class TreeUpdateReason : uint8_t {
-    // These updates are always associated with a DOM Node:
-    kActiveDescendantChanged = 1,
-    kAriaExpandedChanged = 2,
-    kAriaOwnsChanged = 3,
-    kAriaPressedChanged = 4,
-    kAriaSelectedChanged = 5,
-    kEditableTextContentChanged = 6,
-    kFocusableChanged = 7,
-    kDidShowMenuListPopup = 9,
-    kIdChanged = 10,
-    kMarkDirtyFromHandleScroll = 11,
-    kNodeGainedFocus = 12,
-    kNodeLostFocus = 13,
-    kPostNotificationFromHandleLoadComplete = 15,
-    kPostNotificationFromHandleLoadStart = 16,
-    kPostNotificationFromHandleScrolledToAnchor = 17,
-    kRemoveValidationMessageObjectFromFocusedUIElement = 18,
-    kRemoveValidationMessageObjectFromValidationMessageObject = 19,
-    kRoleChangeFromAriaHasPopup = 20,
-    kRoleChangeFromImageMapName = 21,
-    kRoleChangeFromRoleOrType = 22,
-    kRoleMaybeChangedFromEventListener = 23,
-    kRoleMaybeChangedFromHref = 24,
-    kRoleMaybeChangedOnSelect = 25,
-    kSectionOrRegionRoleMaybeChangedFromLabel = 26,
-    kSectionOrRegionRoleMaybeChangedFromLabelledBy = 27,
-    kSectionOrRegionRoleMaybeChangedFromTitle = 28,
-    kTextChangedOnNode = 29,
-    kTextChangedOnClosestNodeForLayoutObject = 30,
-    kTextMarkerDataAdded = 31,
-    kNodeIsAttached = 32,
-    kUpdateActiveMenuOption = 33,
-    kUpdateAriaOwns = 34,
-    kUpdateTableRole = 35,
-    kUseMapAttributeChanged = 36,
-    kValidationMessageVisibilityChanged = 37,
-
-    // These updates are associated with an AXID:
-    kChildrenChanged = 100,
-    kMarkAXObjectDirty = 101,
-    kMarkAXSubtreeDirty = 102,
-    kTextChangedOnLayoutObject = 103
-  };
-
-  struct TreeUpdateParams final : public GarbageCollected<TreeUpdateParams> {
-    TreeUpdateParams(
-        Node* node_arg,
-        AXID axid_arg,
-        ax::mojom::blink::EventFrom event_from_arg,
-        ax::mojom::blink::Action event_from_action_arg,
-        const BlinkAXEventIntentsSet& intents_arg,
-        TreeUpdateReason update_reason_arg,
-        ax::mojom::blink::Event event_arg = ax::mojom::blink::Event::kNone)
-        : node(node_arg),
-          axid(axid_arg),
-          event(event_arg),
-          event_from(event_from_arg),
-          update_reason(update_reason_arg),
-          event_from_action(event_from_action_arg) {
-      for (const auto& intent : intents_arg) {
-        DCHECK(node || axid) << "Either a DOM Node or AXID is required.";
-        DCHECK(!node || !axid) << "Provide a DOM Node *or* AXID, not both.";
-        event_intents.insert(intent.key, intent.value);
-      }
-    }
-
-    // Only either node or AXID will be filled at a time. Some events use Node
-    // while others use AXObject.
-    WeakMember<Node> node;
-    AXID axid;
-
-    ax::mojom::blink::Event event;
-    ax::mojom::blink::EventFrom event_from;
-    TreeUpdateReason update_reason;
-    ax::mojom::blink::Action event_from_action;
-    BlinkAXEventIntentsSet event_intents;
-
-    virtual ~TreeUpdateParams() = default;
-    void Trace(Visitor* visitor) const { visitor->Trace(node); }
-  };
-
   typedef HeapVector<Member<TreeUpdateParams>> TreeUpdateCallbackQueue;
 
   bool IsImmediateProcessingRequired(TreeUpdateParams* tree_update) const;
-  bool IsImmediateProcessingRequiredForEvent(AXEventParams* event) const;
+  bool IsImmediateProcessingRequiredForEvent(
+      ax::mojom::blink::EventFrom& event_from,
+      AXObject* target,
+      ax::mojom::blink::Event& event_type) const;
 
   ax::mojom::blink::EventFrom ComputeEventFrom();
 
@@ -939,17 +953,10 @@ class MODULES_EXPORT AXObjectCacheImpl
   // Otherwise, tree updates will unpause once the node is fully parsed.
   WeakMember<Node> node_to_parse_before_more_tree_updates_;
 
-  HeapVector<Member<AXEventParams>> notifications_to_post_main_;
-  HeapVector<Member<AXEventParams>> notifications_to_post_popup_;
-
   // Call the queued callback methods that do processing which must occur when
   // layout is clean. These callbacks are stored in tree_update_callback_queue_,
   // and have names like FooBarredWithCleanLayout().
   void ProcessCleanLayoutCallbacks(Document&);
-
-  // Send events to RenderAccessibilityImpl, which serializes them and then
-  // sends the serialized events and dirty objects to the browser process.
-  void PostNotifications(Document&);
 
   // Get the currently focused Node (an element or a document).
   Node* FocusedNode();
@@ -1001,7 +1008,8 @@ class MODULES_EXPORT AXObjectCacheImpl
   void DeferTreeUpdate(
       AXObjectCacheImpl::TreeUpdateReason update_reason,
       AXObject* obj,
-      ax::mojom::blink::Event event = ax::mojom::blink::Event::kNone);
+      ax::mojom::blink::Event event = ax::mojom::blink::Event::kNone,
+      bool invalidate_cached_values = true);
 
   void TextChangedWithCleanLayout(Node* node);
   void ChildrenChangedWithCleanLayout(Node* node);
@@ -1034,12 +1042,6 @@ class MODULES_EXPORT AXObjectCacheImpl
                                    Document& document);
   void FireTreeUpdatedEventForNode(TreeUpdateParams* update);
 
-  void FireAXEventImmediately(AXObject* obj,
-                              ax::mojom::blink::Event event_type,
-                              ax::mojom::blink::EventFrom event_from,
-                              ax::mojom::blink::Action event_from_action,
-                              const BlinkAXEventIntentsSet& event_intents);
-
   void SetMaxPendingUpdatesForTesting(wtf_size_t max_pending_updates) {
     max_pending_updates_ = max_pending_updates;
   }
@@ -1060,9 +1062,6 @@ class MODULES_EXPORT AXObjectCacheImpl
   // Get the queued tree update callbacks for the passed-in document
   TreeUpdateCallbackQueue& GetTreeUpdateCallbackQueue(Document& document);
 
-  // Get the event notifications to post for the passed-in document.
-  HeapVector<Member<AXEventParams>>& GetNotificationsToPost(Document& document);
-
   // Whether the user has granted permission for the user to install event
   // listeners for accessibility events using the AOM.
   mojom::PermissionStatus accessibility_event_permission_;
@@ -1082,6 +1081,12 @@ class MODULES_EXPORT AXObjectCacheImpl
 
   // Nodes with document markers that have received accessibility updates.
   HashSet<AXID> nodes_with_spelling_or_grammar_markers_;
+
+  // Container nodes with an bad aria-hidden="true" usage, where the aria-hidden
+  // will be ignored so that the user can navigate the page.
+  // Example, aria-hidden="true" on an element, where focus has gone inside
+  // of the element.
+  HashSet<AXID> nodes_with_bad_aria_hidden;
 
   AXID last_value_change_node_ = ui::AXNodeData::kInvalidAXID;
 
@@ -1177,9 +1182,9 @@ class MODULES_EXPORT AXObjectCacheImpl
                                        ui::AXNodeData>>
       ax_tree_serializer_;
 
-  HeapVector<Member<AXDirtyObject>> dirty_objects_;
+  HeapVector<Member<AXDirtyObject>> pending_objects_to_serialize_;
 
-  Vector<ui::AXEvent> pending_events_;
+  Vector<ui::AXEvent> pending_events_to_serialize_;
 
   HashMap<DOMNodeId, bool> whitespace_ignored_map_;
 
@@ -1227,9 +1232,6 @@ template <>
 struct DowncastTraits<AXObjectCacheImpl> {
   static bool AllowFrom(const AXObjectCache& cache) { return true; }
 };
-
-// This will let you know if aria-hidden was explicitly set to false.
-bool IsNodeAriaVisible(Node*);
 
 }  // namespace blink
 
