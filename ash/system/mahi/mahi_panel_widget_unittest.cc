@@ -4,16 +4,27 @@
 
 #include "ash/system/mahi/mahi_panel_widget.h"
 
+#include "ash/keyboard/keyboard_controller_impl.h"
+#include "ash/keyboard/virtual_keyboard_controller.h"
 #include "ash/public/cpp/shelf_config.h"
+#include "ash/public/cpp/shell_window_ids.h"
+#include "ash/shell.h"
+#include "ash/strings/grit/ash_strings.h"
 #include "ash/system/mahi/fake_mahi_manager.h"
 #include "ash/system/mahi/mahi_constants.h"
 #include "ash/system/mahi/mahi_ui_controller.h"
 #include "ash/test/ash_test_base.h"
+#include "ash/wm/window_util.h"
+#include "ash/wm/work_area_insets.h"
 #include "base/test/scoped_feature_list.h"
 #include "chromeos/components/mahi/public/cpp/mahi_manager.h"
 #include "chromeos/constants/chromeos_features.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "ui/aura/client/aura_constants.h"
 #include "ui/aura/window.h"
+#include "ui/base/l10n/l10n_util.h"
+#include "ui/base/mojom/window_show_state.mojom.h"
+#include "ui/base/ui_base_types.h"
 #include "ui/compositor/layer.h"
 #include "ui/compositor/layer_animator.h"
 #include "ui/compositor/scoped_animation_duration_scale_mode.h"
@@ -21,6 +32,7 @@
 #include "ui/display/screen.h"
 #include "ui/gfx/geometry/insets.h"
 #include "ui/gfx/geometry/rect.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/view.h"
 #include "ui/views/widget/unique_widget_ptr.h"
 #include "ui/views/widget/widget.h"
@@ -39,7 +51,11 @@ class MahiPanelWidgetTest : public AshTestBase {
  public:
   // AshTestBase:
   void SetUp() override {
-    scoped_feature_list_.InitAndEnableFeature(chromeos::features::kMahi);
+    scoped_feature_list_.InitWithFeatures(
+        /*enabled_features=*/{chromeos::features::kMahi,
+                              chromeos::features::kFeatureManagementMahi,
+                              chromeos::features::kMahiPanelResizable},
+        /*disabled_features=*/{});
     AshTestBase::SetUp();
 
     fake_mahi_manager_ = std::make_unique<FakeMahiManager>();
@@ -75,6 +91,15 @@ TEST_F(MahiPanelWidgetTest, DefaultWidgetBounds) {
             widget->GetRestoredBounds());
 }
 
+TEST_F(MahiPanelWidgetTest, AccessibleTitle) {
+  auto widget = MahiPanelWidget::CreateAndShowPanelWidget(
+      GetPrimaryDisplay().id(),
+      /*mahi_menu_bounds=*/gfx::Rect(10, 10, 300, 300), &ui_controller_);
+
+  EXPECT_EQ(widget->GetRootView()->GetViewAccessibility().GetCachedName(),
+            l10n_util::GetStringUTF16(IDS_ASH_MAHI_PANEL_TITLE));
+}
+
 TEST_F(MahiPanelWidgetTest, WidgetPositionWithConstrainedBottomSpace) {
   UpdateDisplay("800x700");
   // Place the menu 200px above the screen's bottom to ensure there is not
@@ -89,6 +114,68 @@ TEST_F(MahiPanelWidgetTest, WidgetPositionWithConstrainedBottomSpace) {
       display::Screen::GetScreen()->GetPrimaryDisplay().work_area().bottom() -
           kPanelBoundsShelfPadding,
       widget->GetRestoredBounds().bottom());
+}
+
+TEST_F(MahiPanelWidgetTest, WidgetAfterResize) {
+  UpdateDisplay("800x700");
+
+  auto widget = MahiPanelWidget::CreateAndShowPanelWidget(
+      GetPrimaryDisplay().id(),
+      /*mahi_menu_bounds=*/gfx::Rect(100, 100, 300, 300), &ui_controller_);
+
+  // Click on the top left of the panel and drag towards the top left of the
+  // screen to resize.
+  GetEventGenerator()->set_current_screen_location(
+      widget->GetWindowBoundsInScreen().origin());
+  constexpr gfx::Vector2d kDragOffset(-50, -70);
+  GetEventGenerator()->DragMouseBy(kDragOffset.x(), kDragOffset.y());
+
+  auto expected_bounds =
+      gfx::Rect(50, 30, kPanelDefaultWidth + 50, kPanelDefaultHeight + 70);
+  EXPECT_EQ(expected_bounds, widget->GetWindowBoundsInScreen());
+}
+
+TEST_F(MahiPanelWidgetTest, WidgetPositionAfterWorkAreaBoundsChange) {
+  auto default_work_area =
+      display::Screen::GetScreen()->GetPrimaryDisplay().work_area();
+
+  // Create a widget that has the same size as the work area and show it at the
+  // bottom of the work area bounds.
+  auto widget = MahiPanelWidget::CreateAndShowPanelWidget(
+      GetPrimaryDisplay().id(),
+      /*mahi_menu_bounds=*/
+      gfx::Rect(
+          gfx::Point(default_work_area.x(), default_work_area.bottom()),
+          gfx::Size(default_work_area.width(), default_work_area.height())),
+      &ui_controller_);
+
+  // Reduce the user work area bounds by force-showing the virtual keyboard.
+  Shell::Get()
+      ->keyboard_controller()
+      ->virtual_keyboard_controller()
+      ->ForceShowKeyboard();
+  base::RunLoop().RunUntilIdle();
+
+  auto current_work_area = WorkAreaInsets::ForWindow(widget->GetNativeWindow())
+                               ->user_work_area_bounds();
+  EXPECT_LT(current_work_area.bottom(), default_work_area.bottom());
+
+  // The panel's bottom should be `kPanelBoundsShelfPadding` pixels above the
+  // work_area's bottom.
+  EXPECT_EQ(current_work_area.bottom() - kPanelBoundsShelfPadding,
+            widget->GetRestoredBounds().bottom());
+
+  // Hide the virtual keyboard. The work area bounds should return to their
+  // default value.
+  Shell::Get()->keyboard_controller()->HideKeyboard(HideReason::kSystem);
+  current_work_area = WorkAreaInsets::ForWindow(widget->GetNativeWindow())
+                          ->user_work_area_bounds();
+  EXPECT_EQ(current_work_area.bottom(), default_work_area.bottom());
+
+  // The panel's top should be `kPanelBoundsShelfPadding` pixels below the
+  // work_area's top.
+  EXPECT_EQ(current_work_area.y() + kPanelBoundsShelfPadding,
+            widget->GetRestoredBounds().y());
 }
 
 TEST_F(MahiPanelWidgetTest, WidgetPositionWithConstrainedRightSpace) {
@@ -158,6 +245,63 @@ TEST_F(MahiPanelWidgetTest, WidgetBoundsAfterRefreshBannerUpdate) {
   // the refresh banner was shown.
   EXPECT_EQ(panel_widget->GetWindowBoundsInScreen(), kInitialPanelWidgetBounds);
   EXPECT_EQ(panel_view->GetBoundsInScreen(), kInitialPanelViewBounds);
+}
+
+// Tests that the Mahi panel widget should not resize due to a screen size
+// change e.g. due to using docked magnifier.
+TEST_F(MahiPanelWidgetTest, WidgetDoesNotResize) {
+  // Set a window size that fits the panel and cache the widget size.
+  UpdateDisplay("800x700");
+  auto widget = MahiPanelWidget::CreateAndShowPanelWidget(
+      GetPrimaryDisplay().id(),
+      /*mahi_menu_bounds=*/gfx::Rect(gfx::Point(10, 10), gfx::Size(300, 300)),
+      &ui_controller_);
+  const auto panel_widget_size = widget->GetSize();
+
+  // Reduce the screen size such that the panel widget would not entirely fit.
+  // It should keep its original size.
+  UpdateDisplay("200x180");
+  EXPECT_EQ(widget->GetSize(), panel_widget_size);
+}
+
+// Tests that the Mahi panel widget stays visible when another window goes
+// full-screen.
+TEST_F(MahiPanelWidgetTest, WidgetDoesNotHideOnFullScreen) {
+  // Create and show the panel widget. It should be visible.
+  auto widget = MahiPanelWidget::CreateAndShowPanelWidget(
+      GetPrimaryDisplay().id(),
+      /*mahi_menu_bounds=*/gfx::Rect(gfx::Point(10, 10), gfx::Size(300, 300)),
+      &ui_controller_);
+  EXPECT_TRUE(widget->IsVisible());
+
+  // Create a fullscreen window. The panel widget should still be visible.
+  auto window = CreateTestWindow();
+  window->SetProperty(aura::client::kShowStateKey,
+                      ui::mojom::WindowShowState::kFullscreen);
+  EXPECT_TRUE(widget->IsVisible());
+
+  // Expect the mahi panel widget to be in the top-most window compared to the
+  // regular window.
+  EXPECT_EQ(window_util::GetTopMostWindow(
+                {window->parent(), widget->GetNativeWindow()->parent()}),
+            widget->GetNativeWindow()->parent());
+}
+
+// Tests that the Mahi panel widget is activatable by selecting its textfield.
+TEST_F(MahiPanelWidgetTest, WidgetIsActivatable) {
+  // Create and show the panel widget, it should be activatable.
+  auto widget = MahiPanelWidget::CreateAndShowPanelWidget(
+      GetPrimaryDisplay().id(),
+      /*mahi_menu_bounds=*/gfx::Rect(gfx::Point(10, 10), gfx::Size(300, 300)),
+      &ui_controller_);
+  EXPECT_TRUE(widget->CanActivate());
+
+  // Click on the textfield which should add focus to it, meaning that the
+  // widget is activatable.
+  auto* question_textfield = widget->GetContentsView()->GetViewByID(
+      mahi_constants::ViewId::kQuestionTextfield);
+  LeftClickOn(question_textfield);
+  EXPECT_TRUE(question_textfield->HasFocus());
 }
 
 }  // namespace ash

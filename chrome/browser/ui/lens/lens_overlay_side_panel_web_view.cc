@@ -4,69 +4,60 @@
 
 #include "chrome/browser/ui/lens/lens_overlay_side_panel_web_view.h"
 
-#include "chrome/browser/file_select_helper.h"
 #include "chrome/browser/media/webrtc/media_capture_devices_dispatcher.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/lens/lens_overlay_controller.h"
-#include "chrome/browser/ui/lens/lens_overlay_dismissal_source.h"
+#include "chrome/browser/ui/lens/lens_overlay_event_handler.h"
 #include "chrome/browser/ui/lens/lens_overlay_side_panel_coordinator.h"
-#include "chrome/browser/ui/lens/lens_untrusted_ui.h"
-#include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/common/webui_url_constants.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/input/native_web_keyboard_event.h"
+#include "components/web_modal/web_contents_modal_dialog_manager.h"
 #include "content/public/browser/file_select_listener.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 
-using SidePanelWebUIViewT_LensUntrustedUI =
-    SidePanelWebUIViewT<lens::LensUntrustedUI>;
-BEGIN_TEMPLATE_METADATA(SidePanelWebUIViewT_LensUntrustedUI,
+using SidePanelWebUIViewT_LensSidePanelUntrustedUI =
+    SidePanelWebUIViewT<lens::LensSidePanelUntrustedUI>;
+BEGIN_TEMPLATE_METADATA(SidePanelWebUIViewT_LensSidePanelUntrustedUI,
                         SidePanelWebUIViewT)
 END_METADATA
 
-namespace {
-
-bool IsEscapeEvent(const input::NativeWebKeyboardEvent& event) {
-  return event.GetType() == input::NativeWebKeyboardEvent::Type::kRawKeyDown &&
-         event.windows_key_code == ui::VKEY_ESCAPE;
-}
-
-Browser* BrowserFromWebContents(content::WebContents* web_contents) {
-  BrowserWindow* window =
-      BrowserWindow::FindBrowserWindowWithWebContents(web_contents);
-  auto* browser_view = static_cast<BrowserView*>(window);
-  if (browser_view) {
-    return browser_view->browser();
-  }
-  return nullptr;
-}
-
-}  // namespace
+namespace {}  // namespace
 
 LensOverlaySidePanelWebView::LensOverlaySidePanelWebView(
-    Profile* profile,
-    lens::LensOverlaySidePanelCoordinator* coordinator)
+    content::BrowserContext* browser_context,
+    lens::LensOverlaySidePanelCoordinator* coordinator,
+    SidePanelEntryScope& scope)
     : SidePanelWebUIViewT(
+          scope,
           base::RepeatingClosure(),
           base::RepeatingClosure(),
-          std::make_unique<WebUIContentsWrapperT<lens::LensUntrustedUI>>(
-              GURL(chrome::kChromeUILensUntrustedSidePanelURL),
-              profile,
+          std::make_unique<
+              WebUIContentsWrapperT<lens::LensSidePanelUntrustedUI>>(
+              GURL(chrome::kChromeUILensUntrustedSidePanelAPIURL),
+              Profile::FromBrowserContext(browser_context),
               /*task_manager_string_id=*/IDS_SIDE_PANEL_COMPANION_TITLE,
-              /*webui_resizes_host=*/false,
               /*esc_closes_ui=*/false)),
-      coordinator_(coordinator) {}
+      coordinator_(coordinator) {
+  CHECK(coordinator);
+  // Register the modal dialog manager for this side panel web contents so
+  // browser dialogs can open when requested by the side panel WebUI.
+  web_modal::WebContentsModalDialogManager::CreateForWebContents(
+      GetWebContents());
+  web_modal::WebContentsModalDialogManager::FromWebContents(GetWebContents())
+      ->SetDelegate(coordinator);
+}
 
 LensOverlaySidePanelWebView::~LensOverlaySidePanelWebView() {
   if (coordinator_) {
     coordinator_->WebViewClosing();
-    coordinator_ = nullptr;
+    ClearCoordinator();
   }
 }
 
 void LensOverlaySidePanelWebView::ClearCoordinator() {
+  web_modal::WebContentsModalDialogManager::FromWebContents(GetWebContents())
+      ->SetDelegate(nullptr);
   coordinator_ = nullptr;
 }
 
@@ -81,34 +72,32 @@ content::WebContents* LensOverlaySidePanelWebView::OpenURLFromTab(
     const content::OpenURLParams& params,
     base::OnceCallback<void(content::NavigationHandle&)>
         navigation_handle_callback) {
-  Browser* browser = BrowserFromWebContents(web_contents());
-  if (browser) {
-    browser->OpenURL(params, std::move(navigation_handle_callback));
-  }
+  coordinator_->GetLensOverlayController()
+      ->GetTabInterface()
+      ->GetBrowserWindowInterface()
+      ->OpenURL(params, std::move(navigation_handle_callback));
   return nullptr;
 }
 
 bool LensOverlaySidePanelWebView::HandleKeyboardEvent(
     content::WebContents* source,
     const input::NativeWebKeyboardEvent& event) {
-  if (IsEscapeEvent(event)) {
-    Browser* browser = BrowserFromWebContents(web_contents());
-    if (browser) {
-      content::WebContents* tab_web_contents =
-          browser->tab_strip_model()->GetActiveWebContents();
-      LensOverlayController* controller =
-          LensOverlayController::GetController(tab_web_contents);
-      DCHECK(controller);
-
-      if (controller->IsOverlayShowing()) {
-        controller->CloseUIAsync(
-            lens::LensOverlayDismissalSource::kEscapeKeyPress);
-        return true;
-      }
-    }
+  if (!coordinator_) {
+    return false;
   }
-  return unhandled_keyboard_event_handler_.HandleKeyboardEvent(
-      event, GetFocusManager());
+  return coordinator_->GetLensOverlayController()
+      ->lens_overlay_event_handler()
+      ->HandleKeyboardEvent(source, event, GetFocusManager());
+}
+
+void LensOverlaySidePanelWebView::RequestMediaAccessPermission(
+    content::WebContents* web_contents,
+    const content::MediaStreamRequest& request,
+    content::MediaResponseCallback callback) {
+  // Note: This is needed for taking screenshots via the feedback form on the
+  // side panel.
+  MediaCaptureDevicesDispatcher::GetInstance()->ProcessMediaAccessRequest(
+      web_contents, request, std::move(callback), /*extension=*/nullptr);
 }
 
 BEGIN_METADATA(LensOverlaySidePanelWebView)

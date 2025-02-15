@@ -41,8 +41,8 @@ class CookieControlsController final
       scoped_refptr<content_settings::CookieSettings> cookie_settings,
       scoped_refptr<content_settings::CookieSettings> original_cookie_settings,
       HostContentSettingsMap* settings_map,
-      privacy_sandbox::TrackingProtectionSettings*
-          tracking_protection_settings);
+      privacy_sandbox::TrackingProtectionSettings* tracking_protection_settings,
+      bool is_incognito_profile);
   CookieControlsController(const CookieControlsController& other) = delete;
   CookieControlsController& operator=(const CookieControlsController& other) =
       delete;
@@ -64,8 +64,8 @@ class CookieControlsController final
   // Called when the entry point for cookie controls was animated.
   void OnEntryPointAnimated();
 
-  // Returns whether first-party cookies are blocked.
-  bool FirstPartyCookiesBlocked();
+  // Returns whether any ACT features should be shown.
+  bool ShowActFeatures();
 
   // Returns whether the cookie blocking setting for the current site was
   // changed by the user via user bypass.
@@ -151,6 +151,9 @@ class CookieControlsController final
         fpf_observation_{this};
   };
 
+  // Returns whether to update the TRACKING_PROTECTION content setting.
+  bool ShouldUpdateTpContentSetting();
+
   void OnThirdPartyCookieBlockingChanged(
       bool block_third_party_cookies) override;
   void OnCookieSettingChanged() override;
@@ -159,13 +162,17 @@ class CookieControlsController final
 
   std::vector<TrackingProtectionFeature> CreateTrackingProtectionFeatureList(
       CookieControlsEnforcement enforcement,
-      bool are_3pcs_allowed);
+      bool cookies_allowed,
+      bool act_exception);
 
   CookieControlsEnforcement GetEnforcementForThirdPartyCookieBlocking(
       CookieBlocking3pcdStatus status,
       const GURL url,
       SettingInfo info,
-      bool is_allowed);
+      bool cookies_allowed);
+
+  bool ShowIpProtection() const;
+  bool ShowFingerprintingProtection() const;
 
   bool HasOriginSandboxedTopLevelDocument() const;
 
@@ -198,9 +205,11 @@ class CookieControlsController final
   bool SiteDataAccessed(int third_party_allowed_sites,
                         int third_party_blocked_sites);
 
-  bool ShouldHighlightUserBypass();
-  bool ShouldUserBypassIconBeVisible(bool protections_on,
-                                     bool controls_visible);
+  bool ShouldHighlightUserBypass(bool protections_on);
+  bool ShouldUserBypassIconBeVisible(
+      std::vector<TrackingProtectionFeature> features,
+      bool protections_on,
+      bool controls_visible);
   content::WebContents* GetWebContents() const;
 
   std::unique_ptr<TabObserver> tab_observer_;
@@ -215,6 +224,8 @@ class CookieControlsController final
   // the regular profile if in incognito, since TP settings should still apply.
   raw_ptr<privacy_sandbox::TrackingProtectionSettings>
       tracking_protection_settings_;
+  // Whether the current profile is incognito.
+  bool is_incognito_profile_ = false;
 
   base::ScopedObservation<content_settings::CookieSettings,
                           content_settings::CookieSettings::Observer>

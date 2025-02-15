@@ -12,7 +12,7 @@ import android.view.View;
 import androidx.annotation.IntDef;
 
 import org.chromium.base.supplier.LazyOneshotSupplier;
-import org.chromium.ui.listmenu.ListMenuButtonDelegate;
+import org.chromium.ui.listmenu.ListMenuDelegate;
 import org.chromium.ui.modelutil.PropertyKey;
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.ui.modelutil.PropertyModel.WritableBooleanPropertyKey;
@@ -61,8 +61,8 @@ public class ImprovedBookmarkRowProperties {
             START_ICON_DRAWABLE = new WritableObjectPropertyKey<>();
     public static final WritableObjectPropertyKey<View> ACCESSORY_VIEW =
             new WritableObjectPropertyKey<>();
-    public static final WritableObjectPropertyKey<ListMenuButtonDelegate>
-            LIST_MENU_BUTTON_DELEGATE = new WritableObjectPropertyKey<>();
+    public static final WritableObjectPropertyKey<ListMenuDelegate> LIST_MENU_BUTTON_DELEGATE =
+            new WritableObjectPropertyKey<>();
     public static final WritableObjectPropertyKey<Runnable> POPUP_LISTENER =
             new WritableObjectPropertyKey<>();
     // Whether the row is currently selected.
@@ -73,7 +73,6 @@ public class ImprovedBookmarkRowProperties {
     // Not if the row is currently selected, but whether another row in the same list is selected.
     public static final WritableBooleanPropertyKey SELECTION_ACTIVE =
             new WritableBooleanPropertyKey();
-    public static final WritableBooleanPropertyKey DRAG_ENABLED = new WritableBooleanPropertyKey();
     public static final WritableBooleanPropertyKey EDITABLE = new WritableBooleanPropertyKey();
 
     public static final WritableObjectPropertyKey<Runnable> ROW_CLICK_LISTENER =
@@ -122,7 +121,6 @@ public class ImprovedBookmarkRowProperties {
         POPUP_LISTENER,
         SELECTED,
         SELECTION_ACTIVE,
-        DRAG_ENABLED,
         EDITABLE,
         ROW_CLICK_LISTENER,
         ROW_LONG_CLICK_LISTENER,

@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "base/debug/stack_trace.h"
 
 #include <string.h>
@@ -40,8 +35,7 @@ extern "C" void* __libc_stack_end;
 
 #endif  // BUILDFLAG(CAN_UNWIND_WITH_FRAME_POINTERS)
 
-namespace base {
-namespace debug {
+namespace base::debug {
 
 namespace {
 
@@ -79,33 +73,51 @@ static uintptr_t StripPointerAuthenticationBits(uintptr_t ptr) {
 
 uintptr_t GetNextStackFrame(uintptr_t fp) {
   const uintptr_t* fp_addr = reinterpret_cast<const uintptr_t*>(fp);
-  MSAN_UNPOISON(fp_addr, sizeof(uintptr_t));
-  return fp_addr[0] - kStackFrameAdjustment;
+  // SAFETY: `fp` is the address of an array of pointers. The first element
+  // is the next stack frame, the second element is the PC.
+  UNSAFE_BUFFERS({
+    MSAN_UNPOISON(&fp_addr[0], sizeof(uintptr_t));
+    return fp_addr[0] - kStackFrameAdjustment;
+  })
 }
 
 uintptr_t GetStackFramePC(uintptr_t fp) {
   const uintptr_t* fp_addr = reinterpret_cast<const uintptr_t*>(fp);
-  MSAN_UNPOISON(&fp_addr[1], sizeof(uintptr_t));
-  return StripPointerAuthenticationBits(fp_addr[1]);
+  // SAFETY: `fp` is the address of an array of pointers. The first element
+  // is the next stack frame, the second element is the PC.
+  UNSAFE_BUFFERS({
+    MSAN_UNPOISON(&fp_addr[1], sizeof(uintptr_t));
+    return StripPointerAuthenticationBits(fp_addr[1]);
+  })
 }
 
 bool IsStackFrameValid(uintptr_t fp, uintptr_t prev_fp, uintptr_t stack_end) {
   // With the stack growing downwards, older stack frame must be
   // at a greater address that the current one.
-  if (fp <= prev_fp) return false;
+  if (fp <= prev_fp) {
+    return false;
+  }
 
   // Assume huge stack frames are bogus.
-  if (fp - prev_fp > 100000) return false;
+  if (fp - prev_fp > 100000) {
+    return false;
+  }
 
   // Check alignment.
-  if (fp & (sizeof(uintptr_t) - 1)) return false;
+  if (fp & (sizeof(uintptr_t) - 1)) {
+    return false;
+  }
 
   if (stack_end) {
     // Both fp[0] and fp[1] must be within the stack.
-    if (fp > stack_end - 2 * sizeof(uintptr_t)) return false;
+    if (fp > stack_end - 2 * sizeof(uintptr_t)) {
+      return false;
+    }
 
     // Additional check to filter out false positives.
-    if (GetStackFramePC(fp) < 32768) return false;
+    if (GetStackFramePC(fp) < 32768) {
+      return false;
+    }
   }
 
   return true;
@@ -138,9 +150,9 @@ uintptr_t ScanStackForNextFrame(uintptr_t fp, uintptr_t stack_end) {
   }
 
   fp += sizeof(uintptr_t);  // current frame is known to be invalid
-  uintptr_t last_fp_to_scan = std::min(fp + kMaxStackScanArea, stack_end) -
-                                  sizeof(uintptr_t);
-  for (;fp <= last_fp_to_scan; fp += sizeof(uintptr_t)) {
+  uintptr_t last_fp_to_scan =
+      std::min(fp + kMaxStackScanArea, stack_end) - sizeof(uintptr_t);
+  for (; fp <= last_fp_to_scan; fp += sizeof(uintptr_t)) {
     uintptr_t next_fp = GetNextStackFrame(fp);
     if (IsStackFrameValid(next_fp, fp, stack_end)) {
       // Check two frames deep. Since stack frame is just a pointer to
@@ -194,7 +206,7 @@ uintptr_t GetStackEnd() {
   // values from its pthread_t argument.
   static uintptr_t main_stack_end = 0;
 
-  bool is_main_thread = GetCurrentProcId() == PlatformThread::CurrentId();
+  bool is_main_thread = GetCurrentProcId() == PlatformThread::CurrentId().raw();
   if (is_main_thread && main_stack_end) {
     return main_stack_end;
   }
@@ -222,7 +234,8 @@ uintptr_t GetStackEnd() {
 #else
 
 #if (BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)) && defined(__GLIBC__)
-  if (GetCurrentProcId() == PlatformThread::CurrentId()) {
+  static_assert(std::is_same_v<ProcessId, PlatformThreadId::UnderlyingType>);
+  if (GetCurrentProcId() == PlatformThread::CurrentId().raw()) {
     // For the main thread we have a shortcut.
     return reinterpret_cast<uintptr_t>(__libc_stack_end);
   }
@@ -239,13 +252,13 @@ StackTrace::StackTrace() : StackTrace(std::size(trace_)) {}
 StackTrace::StackTrace(size_t count)
     : count_(ShouldSuppressOutput()
                  ? 0
-                 : CollectStackTrace(trace_,
-                                     std::min(count, std::size(trace_)))) {}
+                 : CollectStackTrace(base::span(trace_).first(
+                       std::min(count, std::size(trace_))))) {}
 
-StackTrace::StackTrace(const void* const* trace, size_t count)
-    : count_(std::min(count, std::size(trace_))) {
+StackTrace::StackTrace(span<const void* const> trace)
+    : count_(std::min(trace.size(), std::size(trace_))) {
   if (count_) {
-    memcpy(trace_, trace, count_ * sizeof(trace_[0]));
+    base::span(trace_).copy_prefix_from(trace.first(count_));
   }
 }
 
@@ -372,23 +385,31 @@ bool IsWithinRange(uintptr_t address, const AddressRange& range) {
   return address >= range.start && address <= range.end;
 }
 
-// We force this function to be inlined into its callers (e.g.
-// TraceStackFramePointers()) in all build modes so we don't have to worry about
-// conditionally skipping a frame based on potential inlining or tail calls.
-__attribute__((always_inline)) size_t TraceStackFramePointersInternal(
-    uintptr_t fp,
-    uintptr_t stack_end,
-    size_t max_depth,
-    size_t skip_initial,
-    bool enable_scanning,
-    const void** out_trace) {
+NOINLINE size_t TraceStackFramePointers(span<const void*> out_trace,
+                                        size_t skip_initial,
+                                        bool enable_scanning) {
+  // Since the stack frame contains the return address (meaning the
+  // address of the next instruction in relation to the caller), it
+  // is necessary to decrement the size of the call instruction, in
+  // order to obtain the address to the call instruction.
+#if defined(ARCH_CPU_ARM64)
+  static constexpr uintptr_t kCallInstructionSize = 4;
+#else
+  // For all other ARCH, the call stack may be sightly off by 1 instruction
+  static constexpr uintptr_t kCallInstructionSize = 0;
+#endif
+
+  uintptr_t fp = reinterpret_cast<uintptr_t>(__builtin_frame_address(0)) -
+                 kStackFrameAdjustment;
+  uintptr_t stack_end = GetStackEnd();
   size_t depth = 0;
-  while (depth < max_depth) {
+  while (depth < out_trace.size()) {
     uintptr_t pc = GetStackFramePC(fp);
     if (skip_initial != 0) {
       skip_initial--;
     } else {
-      out_trace[depth++] = reinterpret_cast<const void*>(pc);
+      out_trace[depth++] =
+          reinterpret_cast<const void*>(pc - kCallInstructionSize);
     }
 
     uintptr_t next_fp = GetNextStackFrame(fp);
@@ -397,8 +418,9 @@ __attribute__((always_inline)) size_t TraceStackFramePointersInternal(
       continue;
     }
 
-    if (!enable_scanning)
+    if (!enable_scanning) {
       break;
+    }
 
     next_fp = ScanStackForNextFrame(fp, stack_end);
     if (next_fp) {
@@ -409,26 +431,6 @@ __attribute__((always_inline)) size_t TraceStackFramePointersInternal(
   }
 
   return depth;
-}
-
-NOINLINE size_t TraceStackFramePointers(const void** out_trace,
-                                        size_t max_depth,
-                                        size_t skip_initial,
-                                        bool enable_scanning) {
-  return TraceStackFramePointersInternal(
-      reinterpret_cast<uintptr_t>(__builtin_frame_address(0)) -
-          kStackFrameAdjustment,
-      GetStackEnd(), max_depth, skip_initial, enable_scanning, out_trace);
-}
-
-NOINLINE size_t TraceStackFramePointersFromBuffer(uintptr_t fp,
-                                                  uintptr_t stack_end,
-                                                  const void** out_trace,
-                                                  size_t max_depth,
-                                                  size_t skip_initial,
-                                                  bool enable_scanning) {
-  return TraceStackFramePointersInternal(fp, stack_end, max_depth, skip_initial,
-                                         enable_scanning, out_trace);
 }
 
 ScopedStackFrameLinker::ScopedStackFrameLinker(void* fp, void* parent_fp)
@@ -444,5 +446,4 @@ ScopedStackFrameLinker::~ScopedStackFrameLinker() {
 
 #endif  // BUILDFLAG(CAN_UNWIND_WITH_FRAME_POINTERS)
 
-}  // namespace debug
-}  // namespace base
+}  // namespace base::debug

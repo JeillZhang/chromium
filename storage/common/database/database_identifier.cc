@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "storage/common/database/database_identifier.h"
 
 #include <stddef.h>
@@ -14,7 +19,6 @@
 #include "url/gurl.h"
 #include "url/origin.h"
 #include "url/url_canon.h"
-#include "url/url_features.h"
 
 namespace storage {
 
@@ -151,14 +155,7 @@ DatabaseIdentifier DatabaseIdentifier::Parse(const std::string& identifier) {
   GURL url(scheme + "://" + hostname + "/");
 
   // If a url doesn't parse cleanly or doesn't round trip, reject it.
-  if (!url.is_valid() || url.scheme() != scheme) {
-    return DatabaseIdentifier();
-  }
-  // Unless StandardCompliantNonSpecialSchemeURLParsing feature is enabled,
-  // url.host() always return an empty string for non-special URLs.
-  if ((url::IsUsingStandardCompliantNonSpecialSchemeURLParsing() ||
-       url.IsStandard()) &&
-      (url.host() != hostname)) {
+  if (!url.is_valid() || url.scheme() != scheme || url.host() != hostname) {
     return DatabaseIdentifier();
   }
   // Clear hostname for a non-special URL. This behavior existed before

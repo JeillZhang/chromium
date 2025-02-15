@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include <memory>
 #include <string>
 #include <vector>
@@ -35,9 +40,6 @@
 #include "testing/gmock/include/gmock/gmock-matchers.h"
 #include "third_party/blink/public/common/features.h"
 #include "ui/gl/gl_switches.h"
-
-// TODO(crbug.com/40184242): Enable this test suite on Lacros.
-#if !BUILDFLAG(IS_CHROMEOS_LACROS)
 
 namespace {
 
@@ -99,7 +101,7 @@ const char* ToString(Frame frame) {
     case Frame::kEmbeddedFrame:
       return "embedded";
   }
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 const char* ToString(Track track) {
@@ -111,7 +113,7 @@ const char* ToString(Track track) {
     case Track::kSecond:
       return "second";
   }
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 const char* ToString(SubCaptureTargetType type) {
@@ -121,7 +123,7 @@ const char* ToString(SubCaptureTargetType type) {
     case SubCaptureTargetType::kRestrictionTarget:
       return "restriction-target";
   }
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 // Conveniently pack together all relevant information about a tab and
@@ -1160,5 +1162,3 @@ IN_PROC_BROWSER_TEST_P(SubCaptureSelfCaptureOnlyBrowserTest, ApplySubCapture) {
   EXPECT_EQ(expect_permitted, tabs_[kMainTab].ApplySubCaptureTarget(
                                   target, type_, capturing_entity_));
 }
-
-#endif  //  !BUILDFLAG(IS_CHROMEOS_LACROS)

@@ -10,11 +10,11 @@
 #include "base/files/file_util.h"
 #include "base/test/chrome_track_event.descriptor.h"
 #include "base/test/perfetto_sql_stdlib.h"
+#include "base/threading/thread_restrictions.h"
 #include "base/trace_event/trace_log.h"
 #include "third_party/perfetto/protos/perfetto/trace/extension_descriptor.pbzero.h"
 
 namespace base::test {
-
 
 namespace {
 // Emitting the chrome_track_event.descriptor into the trace allows the trace
@@ -30,8 +30,8 @@ void EmitChromeTrackEventDescriptor() {
         perfetto::protos::pbzero::TracePacket::kExtensionDescriptorFieldNumber);
     extension_descriptor->AppendBytes(
         perfetto::protos::pbzero::ExtensionDescriptor::kExtensionSetFieldNumber,
-        perfetto::kChromeTrackEventDescriptor.data(),
-        perfetto::kChromeTrackEventDescriptor.size());
+        base::testing::kChromeTrackEventDescriptor.data(),
+        base::testing::kChromeTrackEventDescriptor.size());
     handle->Finalize();
   });
 }
@@ -142,7 +142,7 @@ void TestTraceProcessor::StartTrace(const TraceConfig& config,
   // Some tests run the tracing service on the main thread and StartBlocking()
   // can deadlock so use a RunLoop instead.
   base::RunLoop run_loop;
-  session_->SetOnStartCallback([&run_loop]() { run_loop.QuitWhenIdle(); });
+  session_->SetOnStartCallback([&run_loop] { run_loop.QuitWhenIdle(); });
   session_->Start();
   run_loop.Run();
 }
@@ -169,6 +169,5 @@ TestTraceProcessor::RunQuery(const std::string& query) {
   }
   return base::ok(result_or_error.result());
 }
-
 
 }  // namespace base::test

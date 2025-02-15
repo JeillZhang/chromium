@@ -45,6 +45,8 @@ class ResumableUploadRequest : public ConnectorUploadRequest {
       BinaryUploadService::Result get_data_result,
       const base::FilePath& path,
       uint64_t file_size,
+      bool is_obfuscated,
+      const std::string& histogram_suffix,
       const net::NetworkTrafficAnnotationTag& traffic_annotation,
       Callback callback);
 
@@ -57,6 +59,7 @@ class ResumableUploadRequest : public ConnectorUploadRequest {
       const std::string& metadata,
       BinaryUploadService::Result get_data_result,
       base::ReadOnlySharedMemoryRegion page_region,
+      const std::string& histogram_suffix,
       const net::NetworkTrafficAnnotationTag& traffic_annotation,
       Callback callback);
 
@@ -74,6 +77,8 @@ class ResumableUploadRequest : public ConnectorUploadRequest {
       BinaryUploadService::Result get_data_result,
       const base::FilePath& file,
       uint64_t file_size,
+      bool is_obfuscated,
+      const std::string& histogram_suffix,
       const net::NetworkTrafficAnnotationTag& traffic_annotation,
       ResumableUploadRequest::Callback callback);
 
@@ -83,6 +88,7 @@ class ResumableUploadRequest : public ConnectorUploadRequest {
       const std::string& metadata,
       BinaryUploadService::Result get_data_result,
       base::ReadOnlySharedMemoryRegion page_region,
+      const std::string& histogram_suffix,
       const net::NetworkTrafficAnnotationTag& traffic_annotation,
       ResumableUploadRequest::Callback callback);
 
@@ -141,6 +147,8 @@ class ResumableUploadRequest : public ConnectorUploadRequest {
   // The result returned by BinaryUploadService::Request::GetRequestData() when
   // retrieving the data.
   BinaryUploadService::Result get_data_result_;
+
+  bool is_obfuscated_ = false;
 
   // Retrieved from metadata response to be used in upload content to the
   // server.

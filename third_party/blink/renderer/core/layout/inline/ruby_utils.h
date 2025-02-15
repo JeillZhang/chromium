@@ -20,11 +20,8 @@ class InlineItem;
 class LineInfo;
 class LogicalLineContainer;
 class LogicalLineItems;
-class PhysicalBoxFragment;
-class ShapeResultView;
 struct InlineItemResult;
 struct LogicalRubyColumn;
-struct PhysicalRect;
 
 struct RubyItemIndexes {
   // Points a kOpenRubyColumn item.
@@ -39,17 +36,9 @@ struct RubyItemIndexes {
 
 // Get item indexes for a ruby column starting at `start_item_index`.
 // `start_item_index` must point to kOpenRubyColumn item.
-RubyItemIndexes ParseRubyInInlineItems(const HeapVector<InlineItem>& items,
-                                       wtf_size_t start_item_index);
-
-// Adjust the specified |rect| of a text fragment for 'em' height.
-// This is called on computing scrollable overflow with kEmHeight.
-PhysicalRect AdjustTextRectForEmHeight(const PhysicalRect& rect,
-                                       const ComputedStyle& style,
-                                       const ShapeResultView* shape_view,
-                                       WritingMode writing_mode);
-
-PhysicalRect ComputeRubyEmHeightBox(const PhysicalBoxFragment& box_fragment);
+RubyItemIndexes ParseRubyInInlineItems(
+    const HeapVector<Member<InlineItem>>& items,
+    wtf_size_t start_item_index);
 
 struct AnnotationOverhang {
   LayoutUnit start;
@@ -57,7 +46,7 @@ struct AnnotationOverhang {
 };
 
 // Returns overhang values of the specified InlineItemResult representing
-// LayoutRubyColumn.
+// a ruby column.
 //
 // This is used by LineBreaker.
 AnnotationOverhang GetOverhang(const InlineItemResult& item);
@@ -159,7 +148,7 @@ class CORE_EXPORT RubyBlockPositionCalculator {
     bool IsFirstUnderLevel() const {
       return level_.size() == 1u && level_[0] == -1;
     }
-    const Vector<wtf_size_t> BaseIndexList() const { return base_index_list_; }
+    const Vector<wtf_size_t>& BaseIndexList() const { return base_index_list_; }
     // This operator defines lines below are smaller than lines above.
     bool operator<(const RubyLine& another) const;
 

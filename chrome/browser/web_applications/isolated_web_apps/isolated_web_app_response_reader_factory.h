@@ -15,11 +15,11 @@
 #include "base/memory/weak_ptr.h"
 #include "base/sequence_checker.h"
 #include "base/types/expected.h"
+#include "chrome/browser/web_applications/isolated_web_apps/error/unusable_swbn_file_error.h"
 #include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_response_reader.h"
 #include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_trust_checker.h"
 #include "chrome/browser/web_applications/isolated_web_apps/signed_web_bundle_reader.h"
 #include "components/web_package/mojom/web_bundle_parser.mojom-forward.h"
-#include "components/web_package/signed_web_bundles/signed_web_bundle_signature_verifier.h"
 #include "third_party/abseil-cpp/absl/types/variant.h"
 
 class Profile;
@@ -42,13 +42,7 @@ class IsolatedWebAppResponseReaderFactory {
  public:
   explicit IsolatedWebAppResponseReaderFactory(
       Profile& profile,
-      std::unique_ptr<IsolatedWebAppValidator> validator,
-      base::RepeatingCallback<
-          std::unique_ptr<web_package::SignedWebBundleSignatureVerifier>()>
-          signature_verifier_factory = base::BindRepeating([]() {
-            return std::make_unique<
-                web_package::SignedWebBundleSignatureVerifier>();
-          }));
+      std::unique_ptr<IsolatedWebAppValidator> validator);
   virtual ~IsolatedWebAppResponseReaderFactory();
 
   IsolatedWebAppResponseReaderFactory(
@@ -78,18 +72,13 @@ class IsolatedWebAppResponseReaderFactory {
 
  private:
   void OnIntegrityBlockRead(
+      std::unique_ptr<SignedWebBundleReader> reader,
+      const base::FilePath& web_bundle_path,
       const web_package::SignedWebBundleId& web_bundle_id,
       Flags flags,
-      const web_package::SignedWebBundleIntegrityBlock integrity_block,
-      base::OnceCallback<
-          void(SignedWebBundleReader::SignatureVerificationAction)> callback);
-
-  void OnIntegrityBlockValidated(
-      bool skip_signature_verification,
-      base::OnceCallback<
-          void(SignedWebBundleReader::SignatureVerificationAction)>
-          integrity_callback,
-      base::expected<void, std::string> validation_result);
+      Callback callback,
+      base::expected<web_package::SignedWebBundleIntegrityBlock,
+                     UnusableSwbnFileError> result);
 
   void OnIntegrityBlockAndMetadataRead(
       std::unique_ptr<SignedWebBundleReader> reader,
@@ -102,9 +91,6 @@ class IsolatedWebAppResponseReaderFactory {
   const raw_ref<Profile> profile_;
   IsolatedWebAppTrustChecker trust_checker_;
   std::unique_ptr<IsolatedWebAppValidator> validator_;
-  base::RepeatingCallback<
-      std::unique_ptr<web_package::SignedWebBundleSignatureVerifier>()>
-      signature_verifier_factory_;
 
   SEQUENCE_CHECKER(sequence_checker_);
   base::WeakPtrFactory<IsolatedWebAppResponseReaderFactory> weak_ptr_factory_{

@@ -16,11 +16,13 @@ import org.chromium.chrome.browser.signin.services.ProfileDataCache;
 import org.chromium.chrome.browser.signin.services.SigninManager;
 import org.chromium.chrome.browser.sync.SyncServiceFactory;
 import org.chromium.chrome.browser.ui.signin.MinorModeHelper;
+import org.chromium.chrome.browser.ui.signin.MinorModeHelper.ScreenMode;
 import org.chromium.chrome.browser.ui.signin.R;
 import org.chromium.components.signin.base.CoreAccountInfo;
 import org.chromium.components.signin.identitymanager.ConsentLevel;
 import org.chromium.components.signin.metrics.SigninAccessPoint;
 import org.chromium.components.signin.metrics.SignoutReason;
+import org.chromium.components.signin.metrics.SyncButtonClicked;
 import org.chromium.components.sync.SyncService;
 import org.chromium.components.sync.UserSelectableType;
 import org.chromium.ui.modelutil.PropertyModel;
@@ -32,13 +34,16 @@ class HistorySyncMediator implements ProfileDataCache.Observer, SigninManager.Si
     private final SigninManager mSigninManager;
     private final SyncService mSyncService;
     private final ProfileDataCache mProfileDataCache;
+    private final HistorySyncConfig mConfig;
     private final @SigninAccessPoint int mAccessPoint;
     private final boolean mShouldSignOutOnDecline;
+    private final HistorySyncHelper mHistorySyncHelper;
 
     HistorySyncMediator(
             Context context,
             HistorySyncCoordinator.HistorySyncDelegate delegate,
             Profile profile,
+            HistorySyncConfig config,
             @SigninAccessPoint int accessPoint,
             boolean showEmailInFooter,
             boolean shouldSignOutOnDecline,
@@ -49,8 +54,10 @@ class HistorySyncMediator implements ProfileDataCache.Observer, SigninManager.Si
         mProfileDataCache = ProfileDataCache.createWithDefaultImageSizeAndNoBadge(context);
         mSigninManager = IdentityServicesProvider.get().getSigninManager(profile);
         mSyncService = SyncServiceFactory.getForProfile(profile);
+        mHistorySyncHelper = HistorySyncHelper.getForProfile(profile);
         mProfileDataCache.addObserver(this);
         mSigninManager.addSignInStateObserver(this);
+        mConfig = config;
         mAccountEmail =
                 CoreAccountInfo.getEmailFrom(
                         mSigninManager
@@ -70,6 +77,8 @@ class HistorySyncMediator implements ProfileDataCache.Observer, SigninManager.Si
                         profileData,
                         this::onAcceptClicked,
                         this::onDeclineClicked,
+                        mConfig.titleId,
+                        mConfig.subtitleId,
                         footerString,
                         mUseLandscapeLayout);
     }
@@ -89,8 +98,8 @@ class HistorySyncMediator implements ProfileDataCache.Observer, SigninManager.Si
     @Override
     public void onSignedOut() {
         RecordHistogram.recordEnumeratedHistogram(
-                "Signin.HistorySyncOptIn.Aborted", mAccessPoint, SigninAccessPoint.MAX);
-        mDelegate.dismissHistorySync();
+                "Signin.HistorySyncOptIn.Aborted", mAccessPoint, SigninAccessPoint.MAX_VALUE);
+        mDelegate.dismissHistorySync(/* isHistorySyncAccepted= */ false);
     }
 
     void destroy() {
@@ -103,21 +112,53 @@ class HistorySyncMediator implements ProfileDataCache.Observer, SigninManager.Si
     }
 
     private void onAcceptClicked(View view) {
-        RecordHistogram.recordEnumeratedHistogram(
-                "Signin.HistorySyncOptIn.Completed", mAccessPoint, SigninAccessPoint.MAX);
+        int syncButtonType = mModel.get(HistorySyncProperties.MINOR_MODE_RESTRICTION_STATUS);
+
+        switch (syncButtonType) {
+            case ScreenMode.RESTRICTED:
+            case ScreenMode.DEADLINED:
+                mDelegate.recordHistorySyncOptIn(
+                        mAccessPoint, SyncButtonClicked.HISTORY_SYNC_OPT_IN_EQUAL_WEIGHTED);
+                break;
+            case ScreenMode.UNRESTRICTED:
+                mDelegate.recordHistorySyncOptIn(
+                        mAccessPoint, SyncButtonClicked.HISTORY_SYNC_OPT_IN_NOT_EQUAL_WEIGHTED);
+                break;
+            case ScreenMode.UNSUPPORTED:
+            case ScreenMode.PENDING:
+                throw new IllegalStateException("Unrecognized restriction status.");
+        }
+
         mSyncService.setSelectedType(UserSelectableType.HISTORY, /* isTypeOn= */ true);
         mSyncService.setSelectedType(UserSelectableType.TABS, /* isTypeOn= */ true);
-        mDelegate.dismissHistorySync();
+        mHistorySyncHelper.clearHistorySyncDeclinedPrefs();
+        mDelegate.dismissHistorySync(/* isHistorySyncAccepted= */ true);
     }
 
     private void onDeclineClicked(View view) {
-        RecordHistogram.recordEnumeratedHistogram(
-                "Signin.HistorySyncOptIn.Declined", mAccessPoint, SigninAccessPoint.MAX);
+        int syncButtonType = mModel.get(HistorySyncProperties.MINOR_MODE_RESTRICTION_STATUS);
+
+        switch (syncButtonType) {
+            case ScreenMode.RESTRICTED:
+            case ScreenMode.DEADLINED:
+                mDelegate.recordHistorySyncOptIn(
+                        mAccessPoint, SyncButtonClicked.HISTORY_SYNC_CANCEL_EQUAL_WEIGHTED);
+                break;
+            case ScreenMode.UNRESTRICTED:
+                mDelegate.recordHistorySyncOptIn(
+                        mAccessPoint, SyncButtonClicked.HISTORY_SYNC_CANCEL_NOT_EQUAL_WEIGHTED);
+                break;
+            case ScreenMode.UNSUPPORTED:
+            case ScreenMode.PENDING:
+                throw new IllegalStateException("Unrecognized restriction status.");
+        }
+
         if (mShouldSignOutOnDecline) {
             mSigninManager.signOut(
                     SignoutReason.USER_DECLINED_HISTORY_SYNC_AFTER_DEDICATED_SIGN_IN);
         }
-        mDelegate.dismissHistorySync();
+        mHistorySyncHelper.recordHistorySyncDeclinedPrefs();
+        mDelegate.dismissHistorySync(/* isHistorySyncAccepted= */ false);
     }
 
     /**

@@ -10,23 +10,24 @@
 #import "base/strings/sys_string_conversions.h"
 #import "base/test/ios/wait_util.h"
 #import "base/time/time.h"
-#import "components/autofill/core/browser/autofill_test_utils.h"
 #import "components/autofill/core/browser/data_model/autofill_profile.h"
 #import "components/autofill/core/browser/field_types.h"
+#import "components/autofill/core/browser/test_utils/autofill_test_utils.h"
 #import "components/autofill/ios/common/features.h"
 #import "components/password_manager/core/browser/features/password_features.h"
 #import "components/password_manager/core/common/password_manager_features.h"
+#import "components/plus_addresses/features.h"
 #import "components/strings/grit/components_strings.h"
 #import "components/sync/base/user_selectable_type.h"
 #import "components/sync/service/sync_prefs.h"
+#import "ios/chrome/browser/authentication/ui_bundled/signin_earl_grey.h"
+#import "ios/chrome/browser/authentication/ui_bundled/signin_earl_grey_ui_test_util.h"
+#import "ios/chrome/browser/autofill/ui_bundled/autofill_app_interface.h"
+#import "ios/chrome/browser/infobars/ui_bundled/banners/infobar_banner_constants.h"
 #import "ios/chrome/browser/passwords/model/password_manager_app_interface.h"
+#import "ios/chrome/browser/passwords/ui_bundled/bottom_sheet/password_suggestion_bottom_sheet_app_interface.h"
+#import "ios/chrome/browser/settings/ui_bundled/google_services/manage_sync_settings_constants.h"
 #import "ios/chrome/browser/signin/model/fake_system_identity.h"
-#import "ios/chrome/browser/ui/authentication/signin_earl_grey.h"
-#import "ios/chrome/browser/ui/authentication/signin_earl_grey_ui_test_util.h"
-#import "ios/chrome/browser/ui/autofill/autofill_app_interface.h"
-#import "ios/chrome/browser/ui/infobars/banners/infobar_banner_constants.h"
-#import "ios/chrome/browser/ui/passwords/bottom_sheet/password_suggestion_bottom_sheet_app_interface.h"
-#import "ios/chrome/browser/ui/settings/google_services/manage_sync_settings_constants.h"
 #import "ios/chrome/grit/ios_strings.h"
 #import "ios/chrome/test/earl_grey/chrome_actions.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
@@ -46,7 +47,6 @@ namespace {
 
 NSString* const kPassphrase = @"hello";
 
-using base::test::ios::kWaitForActionTimeout;
 using base::test::ios::kWaitForUIElementTimeout;
 using base::test::ios::WaitUntilConditionOrTimeout;
 using chrome_test_util::SettingsAccountButton;
@@ -71,15 +71,6 @@ id<GREYMatcher> SuggestPasswordChip() {
   return grey_allOf(
       grey_accessibilityLabel(l10n_util::GetNSString(IDS_IOS_SUGGEST_PASSWORD)),
       nil);
-}
-
-BOOL WaitForKeyboardToAppear() {
-  GREYCondition* waitForKeyboard = [GREYCondition
-      conditionWithName:@"Wait for keyboard"
-                  block:^BOOL {
-                    return [EarlGrey isKeyboardShownWithError:nil];
-                  }];
-  return [waitForKeyboard waitWithTimeout:kWaitForActionTimeout.InSecondsF()];
 }
 
 // Simulates a keyboard event where a character is typed.
@@ -121,7 +112,7 @@ void WaitForBottomSheetAndOpenKeyboard(NSString* username) {
   [ChromeEarlGrey
       waitForUIElementToAppearWithMatcher:grey_accessibilityID(username)];
   [[EarlGrey selectElementWithMatcher:buttonMatcher] performAction:grey_tap()];
-  GREYAssert(WaitForKeyboardToAppear(), @"Keyboard didn't appear.");
+  [ChromeEarlGrey waitForKeyboardToAppear];
 }
 
 // Types `text` on an input field with `fieldID`. Dismisses the password bottom
@@ -180,20 +171,17 @@ void LoginOnUff() {
   [AutofillAppInterface clearProfilesStore];
 }
 
-- (void)tearDown {
+- (void)tearDownHelper {
   GREYAssertTrue([PasswordManagerAppInterface clearCredentials],
                  @"Clearing credentials wasn't done.");
   [AutofillAppInterface clearProfilesStore];
   [PasswordSuggestionBottomSheetAppInterface setDismissCount:0];
-  [super tearDown];
+  [super tearDownHelper];
 }
 
 - (AppLaunchConfiguration)appConfigurationForTestCase {
   AppLaunchConfiguration config;
-  if ([self isRunningTest:@selector(testUpdatePromptAppearsOnFormSubmission)]) {
-    config.features_enabled.push_back(
-        password_manager::features::kIOSPasswordBottomSheet);
-  } else if ([self isRunningTest:@selector(testStickySavePromptJourney)]) {
+  if ([self isRunningTest:@selector(testStickySavePromptJourney)]) {
     config.features_enabled.push_back(kAutofillStickyInfobarIos);
   } else if ([self isRunningTest:@selector
                    (testSaveCredentialWithAutofilledEmailInUFF)] ||
@@ -202,9 +190,15 @@ void LoginOnUff() {
                    (DISABLED_testUpdateTypedCredentialInUff)]) {
     config.features_enabled.push_back(
         password_manager::features::kIosDetectUsernameInUff);
-    config.features_enabled.push_back(
-        password_manager::features::kIOSPasswordBottomSheet);
   }
+
+  // The proactive password suggestion bottom sheet isn't tested here, it
+  // is tested in its own suite in password_suggestion_egtest.mm.
+  config.features_disabled.push_back(
+      password_manager::features::kIOSProactivePasswordGenerationBottomSheet);
+  // The tests are incompatible with the feature.
+  config.features_disabled.push_back(
+      plus_addresses::features::kPlusAddressesEnabled);
   return config;
 }
 
@@ -308,8 +302,8 @@ void LoginOnUff() {
   GREYAssertEqual(1, credentialsCount, @"Wrong number of initial credentials.");
 
   // Sign in with identity where the credential still lives in the local store.
-  [SigninEarlGrey signinWithFakeIdentity:[FakeSystemIdentity fakeIdentity1]];
-  [ChromeEarlGrey waitForSyncTransportStateActiveWithTimeout:base::Seconds(10)];
+  [SigninEarlGrey signinAndWaitForSyncTransportStateActive:[FakeSystemIdentity
+                                                               fakeIdentity1]];
 
   // Load the page again and have a new password value to save.
   [self loadLoginPage];
@@ -421,8 +415,8 @@ void LoginOnUff() {
 #define MAYBE_testPasswordGeneration testPasswordGeneration
 #endif
 - (void)MAYBE_testPasswordGeneration {
-  [SigninEarlGrey signinWithFakeIdentity:[FakeSystemIdentity fakeIdentity1]];
-  [ChromeEarlGrey waitForSyncTransportStateActiveWithTimeout:base::Seconds(10)];
+  [SigninEarlGrey signinAndWaitForSyncTransportStateActive:[FakeSystemIdentity
+                                                               fakeIdentity1]];
 
   [ChromeEarlGrey loadURL:self.testServer->GetURL("/simple_signup_form.html")];
   [ChromeEarlGrey waitForWebStateContainingText:"Signup form."];
@@ -438,7 +432,7 @@ void LoginOnUff() {
       performAction:TapWebElementWithId(kFormPassword)];
 
   // Wait for the accessory icon to appear.
-  WaitForKeyboardToAppear();
+  [ChromeEarlGrey waitForKeyboardToAppear];
 
   // Tap on a suggest password chip.
   [[EarlGrey selectElementWithMatcher:SuggestPasswordChip()]
@@ -457,8 +451,8 @@ void LoginOnUff() {
 
 // Tests that password generation is offered for signed in not syncing users.
 - (void)testPasswordGenerationForSignedInAccount {
-  [SigninEarlGrey signinWithFakeIdentity:[FakeSystemIdentity fakeIdentity1]];
-  [ChromeEarlGrey waitForSyncTransportStateActiveWithTimeout:base::Seconds(10)];
+  [SigninEarlGrey signinAndWaitForSyncTransportStateActive:[FakeSystemIdentity
+                                                               fakeIdentity1]];
 
   [ChromeEarlGrey loadURL:self.testServer->GetURL("/simple_signup_form.html")];
   [ChromeEarlGrey waitForWebStateContainingText:"Signup form."];
@@ -474,7 +468,7 @@ void LoginOnUff() {
       performAction:TapWebElementWithId(kFormPassword)];
 
   // Wait for the accessory icon to appear.
-  WaitForKeyboardToAppear();
+  [ChromeEarlGrey waitForKeyboardToAppear];
 
   // Verify the suggest password chip is shown.
   [[EarlGrey selectElementWithMatcher:SuggestPasswordChip()]
@@ -491,9 +485,17 @@ void LoginOnUff() {
 
 // Tests that password generation is not offered for signed in not syncing users
 // with passwords toggle disabled.
-- (void)testPasswordGenerationWhileSignedInWithPasswordsDisabled {
-  [SigninEarlGrey signinWithFakeIdentity:[FakeSystemIdentity fakeIdentity1]];
-  [ChromeEarlGrey waitForSyncTransportStateActiveWithTimeout:base::Seconds(10)];
+// TODO(crbug.com/371189341): Test fails on device.
+#if TARGET_IPHONE_SIMULATOR
+#define MAYBE_testPasswordGenerationWhileSignedInWithPasswordsDisabled \
+  testPasswordGenerationWhileSignedInWithPasswordsDisabled
+#else
+#define MAYBE_testPasswordGenerationWhileSignedInWithPasswordsDisabled \
+  DISABLED_testPasswordGenerationWhileSignedInWithPasswordsDisabled
+#endif
+- (void)MAYBE_testPasswordGenerationWhileSignedInWithPasswordsDisabled {
+  [SigninEarlGrey signinAndWaitForSyncTransportStateActive:[FakeSystemIdentity
+                                                               fakeIdentity1]];
 
   // Disable Passwords toggle in account settings.
   [ChromeEarlGreyUI openSettingsMenu];
@@ -518,7 +520,7 @@ void LoginOnUff() {
       performAction:TapWebElementWithId(kFormPassword)];
 
   // Wait for the accessory icon to appear.
-  WaitForKeyboardToAppear();
+  [ChromeEarlGrey waitForKeyboardToAppear];
 
   // Verify the suggest password chip is not shown.
   [[EarlGrey selectElementWithMatcher:SuggestPasswordChip()]
@@ -527,21 +529,28 @@ void LoginOnUff() {
 
 // Tests that password generation is not offered for signed in not syncing users
 // with an encryption error; missing passphrase.
-- (void)testPasswordGenerationWhileSignedInWithError {
+// TODO(crbug.com/371189341): Test fails on device.
+#if TARGET_IPHONE_SIMULATOR
+#define MAYBE_testPasswordGenerationWhileSignedInWithError \
+  testPasswordGenerationWhileSignedInWithError
+#else
+#define MAYBE_testPasswordGenerationWhileSignedInWithError \
+  DISABLED_testPasswordGenerationWhileSignedInWithError
+#endif
+- (void)MAYBE_testPasswordGenerationWhileSignedInWithError {
   // Encrypt synced data with a passphrase to enable passphrase encryption for
   // the signed in account.
-  [ChromeEarlGrey addBookmarkWithSyncPassphrase:kPassphrase];
+  [ChromeEarlGrey addSyncPassphrase:kPassphrase];
 
-  [SigninEarlGrey signinWithFakeIdentity:[FakeSystemIdentity fakeIdentity1]];
-  [ChromeEarlGrey waitForSyncTransportStateActiveWithTimeout:base::Seconds(10)];
+  [SigninEarlGrey signinAndWaitForSyncTransportStateActive:[FakeSystemIdentity
+                                                               fakeIdentity1]];
 
   // Verify encryption error is showing in in account settings.
   [ChromeEarlGreyUI openSettingsMenu];
   [ChromeEarlGreyUI tapSettingsMenuButton:SettingsAccountButton()];
   // Verify the error section is showing.
-  [[EarlGrey selectElementWithMatcher:
-                 grey_accessibilityLabel(l10n_util::GetNSString(
-                     IDS_IOS_ACCOUNT_TABLE_ERROR_ENTER_PASSPHRASE_BUTTON))]
+  [[EarlGrey
+      selectElementWithMatcher:grey_accessibilityID(kSyncErrorButtonIdentifier)]
       assertWithMatcher:grey_sufficientlyVisible()];
   [[EarlGrey selectElementWithMatcher:SettingsDoneButton()]
       performAction:grey_tap()];
@@ -560,7 +569,7 @@ void LoginOnUff() {
       performAction:TapWebElementWithId(kFormPassword)];
 
   // Wait for the accessory icon to appear.
-  WaitForKeyboardToAppear();
+  [ChromeEarlGrey waitForKeyboardToAppear];
 
   // Verify the suggest password chip is not shown.
   [[EarlGrey selectElementWithMatcher:SuggestPasswordChip()]

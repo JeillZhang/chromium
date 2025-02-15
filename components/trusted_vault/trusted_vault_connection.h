@@ -9,7 +9,7 @@
 #include <optional>
 #include <vector>
 
-#include "base/functional/callback.h"
+#include "base/functional/callback_forward.h"
 #include "base/time/time.h"
 #include "base/types/strong_alias.h"
 #include "third_party/abseil-cpp/absl/types/variant.h"
@@ -79,7 +79,7 @@ enum class TrustedVaultRecoverabilityStatus {
   kError = 2,
   kMaxValue = kError,
 };
-// LINT.ThenChange(/tools/metrics/histograms/metadata/sync/enums.xml:TrustedVaultRecoverabilityStatus)
+// LINT.ThenChange(/tools/metrics/histograms/metadata/trusted_vault/enums.xml:TrustedVaultRecoverabilityStatus)
 
 // Contains information about a Google Password Manager PIN that is stored in
 // a trusted vault.
@@ -106,6 +106,38 @@ struct GpmPinMetadata {
   // The time when the underlying recovery-key-store entry will expire. Ignored
   // when uploading.
   base::Time expiry;
+};
+
+// A MemberKeys contains the cryptographic outputs needed to add or use an
+// authentication factor: the trusted vault key, encrypted to the public key of
+// the member, and an authenticator of that public key.
+struct MemberKeys {
+  MemberKeys(int version,
+             std::vector<uint8_t> wrapped_key,
+             std::vector<uint8_t> proof);
+  MemberKeys(const MemberKeys&) = delete;
+  MemberKeys& operator=(const MemberKeys&) = delete;
+  MemberKeys(MemberKeys&&);
+  MemberKeys& operator=(MemberKeys&&);
+  ~MemberKeys();
+
+  int version;
+  std::vector<uint8_t> wrapped_key;
+  std::vector<uint8_t> proof;
+};
+
+// A vault member public key and its member keys.
+struct VaultMember {
+  VaultMember(std::unique_ptr<SecureBoxPublicKey> public_key,
+              std::vector<MemberKeys> member_keys);
+  VaultMember(const VaultMember&) = delete;
+  VaultMember& operator=(const VaultMember&) = delete;
+  VaultMember(VaultMember&&);
+  VaultMember& operator=(VaultMember&&);
+  ~VaultMember();
+
+  std::unique_ptr<SecureBoxPublicKey> public_key;
+  std::vector<MemberKeys> member_keys;
 };
 
 // The result of calling
@@ -146,13 +178,13 @@ struct DownloadAuthenticationFactorsRegistrationStateResult {
   // for retrieval, then this will contain its metadata.
   std::optional<GpmPinMetadata> gpm_pin_metadata;
 
-  // The list of iCloud recovery key domain members as secure box public keys.
-  std::vector<std::unique_ptr<SecureBoxPublicKey>> icloud_keys;
+  // The list of iCloud recovery key domain members.
+  std::vector<VaultMember> icloud_keys;
 };
 
 // Authentication factor types:
-using PhysicalDevice =
-    base::StrongAlias<class PhysicalDeviceTag, absl::monostate>;
+using LocalPhysicalDevice =
+    base::StrongAlias<class LocalPhysicalDeviceTag, absl::monostate>;
 using LockScreenKnowledgeFactor =
     base::StrongAlias<class VirtualDeviceTag, absl::monostate>;
 using ICloudKeychain =
@@ -162,7 +194,7 @@ using UnspecifiedAuthenticationFactorType =
     base::StrongAlias<class UnspecifiedAuthenticationFactorTypeTag, int>;
 
 using AuthenticationFactorType =
-    absl::variant<PhysicalDevice,
+    absl::variant<LocalPhysicalDevice,
                   LockScreenKnowledgeFactor,
                   UnspecifiedAuthenticationFactorType,
                   GpmPinMetadata,
@@ -186,26 +218,10 @@ std::vector<TrustedVaultKeyAndVersion> GetTrustedVaultKeysWithVersions(
     const std::vector<std::vector<uint8_t>>& trusted_vault_keys,
     int last_key_version);
 
-// A PrecomputedMemberKeys contains the cryptographic outputs needed to
-// add an authentication factor: the trusted vault key, encrypted to the
-// public key of the member, and an authenticator of that public key.
-struct PrecomputedMemberKeys {
-  PrecomputedMemberKeys(int version,
-                        std::vector<uint8_t> wrapped_key,
-                        std::vector<uint8_t> proof);
-  PrecomputedMemberKeys(PrecomputedMemberKeys&&);
-  PrecomputedMemberKeys& operator=(PrecomputedMemberKeys&&);
-  ~PrecomputedMemberKeys();
-
-  int version;
-  std::vector<uint8_t> wrapped_key;
-  std::vector<uint8_t> proof;
-};
-
 // A MemberKeysSource provides a method of calculating the values needed to
 // add an authenticator factor.
-using MemberKeysSource = absl::variant<std::vector<TrustedVaultKeyAndVersion>,
-                                       PrecomputedMemberKeys>;
+using MemberKeysSource =
+    absl::variant<std::vector<TrustedVaultKeyAndVersion>, MemberKeys>;
 
 // Supports interaction with vault service, all methods must called on trusted
 // vault backend sequence.
@@ -259,7 +275,7 @@ class TrustedVaultConnection {
   // Special version of the above for the case where the caller has no local
   // keys available. Attempts to register the device using constant key. May
   // succeed only if constant key is the only key known server-side.
-  [[nodiscard]] virtual std::unique_ptr<Request> RegisterDeviceWithoutKeys(
+  [[nodiscard]] virtual std::unique_ptr<Request> RegisterLocalDeviceWithoutKeys(
       const CoreAccountInfo& account_info,
       const SecureBoxPublicKey& device_public_key,
       RegisterAuthenticationFactorCallback callback) = 0;
@@ -285,10 +301,13 @@ class TrustedVaultConnection {
   // Enumerates the members of the security domain and determines the
   // recoverability of the security domain. (See the values of
   // `DownloadAuthenticationFactorsRegistrationStateResult`.)
+  // |keep_alive_callback| will be called whenever there's a partial response
+  // from the server, i.e. we got a response but we still need more data.
   [[nodiscard]] virtual std::unique_ptr<Request>
   DownloadAuthenticationFactorsRegistrationState(
       const CoreAccountInfo& account_info,
-      DownloadAuthenticationFactorsRegistrationStateCallback callback) = 0;
+      DownloadAuthenticationFactorsRegistrationStateCallback callback,
+      base::RepeatingClosure keep_alive_callback) = 0;
 };
 
 }  // namespace trusted_vault

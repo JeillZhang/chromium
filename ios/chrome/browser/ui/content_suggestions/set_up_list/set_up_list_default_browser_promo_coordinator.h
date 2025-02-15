@@ -6,8 +6,12 @@
 #define IOS_CHROME_BROWSER_UI_CONTENT_SUGGESTIONS_SET_UP_LIST_SET_UP_LIST_DEFAULT_BROWSER_PROMO_COORDINATOR_H_
 
 #import "ios/chrome/browser/shared/coordinator/chrome_coordinator/chrome_coordinator.h"
-
 #import "ios/chrome/common/ui/promo_style/promo_style_view_controller_delegate.h"
+
+namespace segmentation_platform {
+class DeviceSwitcherResultDispatcher;
+class SegmentationPlatformService;
+}  // namespace segmentation_platform
 
 @protocol SetUpListDefaultBrowserPromoCoordinatorDelegate;
 
@@ -17,19 +21,27 @@
     : ChromeCoordinator <PromoStyleViewControllerDelegate,
                          UIAdaptivePresentationControllerDelegate>
 
-// Creates a coordinator that uses `viewController` and `browser`. Uses
-// `application` to open the app's settings.
-- (instancetype)initWithBaseViewController:(UIViewController*)viewController
-                                   browser:(Browser*)browser
-                               application:(UIApplication*)application
-    NS_DESIGNATED_INITIALIZER;
-
-- (instancetype)initWithBaseViewController:(UIViewController*)viewController
-                                   browser:(Browser*)browser NS_UNAVAILABLE;
-
 // The delegate that receives events from this coordinator.
 @property(nonatomic, weak) id<SetUpListDefaultBrowserPromoCoordinatorDelegate>
     delegate;
+
+// Creates a coordinator that uses `viewController` and `browser`. Uses
+// `application` to open the app's settings. Uses `segmentationService` and
+// `deviceSwitcherResultDispatcher` to retrieve segmentation data for
+// personalized messaging. Pass  `nullptr` to `segmentationService` and
+// `deviceSwitcherResultDispatcher` to not use segmentation features.
+- (instancetype)initWithBaseViewController:(UIViewController*)viewController
+                                   browser:(Browser*)browser
+                               application:(UIApplication*)application
+                       segmentationService:
+                           (segmentation_platform::SegmentationPlatformService*)
+                               segmentationService
+            deviceSwitcherResultDispatcher:
+                (segmentation_platform::DeviceSwitcherResultDispatcher*)
+                    dispatcher NS_DESIGNATED_INITIALIZER;
+
+- (instancetype)initWithBaseViewController:(UIViewController*)viewController
+                                   browser:(Browser*)browser NS_UNAVAILABLE;
 
 @end
 

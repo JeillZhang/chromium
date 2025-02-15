@@ -14,7 +14,6 @@ import org.chromium.base.ThreadUtils;
 import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.content_extraction.InnerTextBridge;
-import org.chromium.chrome.browser.feedback.HelpAndFeedbackLauncher;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.model_execution.ExecutionResult;
 import org.chromium.chrome.browser.model_execution.ModelExecutionFeature;
@@ -108,15 +107,12 @@ public class PageInfoSharingControllerImpl implements PageInfoSharingController 
             Context context,
             BottomSheetController bottomSheetController,
             ChromeOptionShareCallback chromeOptionShareCallback,
-            HelpAndFeedbackLauncher helpAndFeedbackLauncher,
             Tab tab) {
         PageSummaryMetrics.recordSummarySheetEvent(PageSummarySheetEvents.OPEN_SUMMARY_SHEET);
         if (!shouldShowInShareSheetInternal(tab, false)) return;
         if (sErrorMessage == null) {
             // TODO(salg): Improve the way this resource is fetched.
-            sErrorMessage =
-                    context.getResources()
-                            .getString(R.string.share_with_summary_sheet_error_message);
+            sErrorMessage = context.getString(R.string.share_with_summary_sheet_error_message);
         }
 
         mCurrentRequestInfoSupplier = new ObservableSupplierImpl<>();
@@ -125,7 +121,6 @@ public class PageInfoSharingControllerImpl implements PageInfoSharingController 
                         context,
                         tab,
                         chromeOptionShareCallback,
-                        helpAndFeedbackLauncher,
                         mCurrentRequestInfoSupplier,
                         this::onRequestDestroyed,
                         bottomSheetController);

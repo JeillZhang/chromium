@@ -268,6 +268,17 @@ TEST_F(WebstorePrivateGetExtensionStatusTest,
   VerifyResponse(ExtensionInstallStatus::kInstallable, *response);
 }
 
+TEST_F(WebstorePrivateGetExtensionStatusTest, ExtensionCorrupted) {
+  ExtensionRegistry::Get(profile())->AddDisabled(CreateExtension(kExtensionId));
+  ExtensionPrefs::Get(profile())->SetExtensionDisabled(
+      kExtensionId, {disable_reason::DISABLE_CORRUPTED});
+  auto function =
+      base::MakeRefCounted<WebstorePrivateGetExtensionStatusFunction>();
+  std::optional<base::Value> response = RunFunctionAndReturnValue(
+      function.get(), GenerateArgs(kExtensionId, kExtensionManifest));
+  VerifyResponse(ExtensionInstallStatus::kCorrupted, *response);
+}
+
 class SupervisedUserWebstorePrivateGetExtensionStatusTest
     : public WebstorePrivateGetExtensionStatusTest {
  public:
@@ -296,7 +307,7 @@ TEST_F(SupervisedUserWebstorePrivateGetExtensionStatusTest,
 
   ExtensionRegistry::Get(profile())->AddDisabled(CreateExtension(kExtensionId));
   ExtensionPrefs::Get(profile())->SetExtensionDisabled(
-      kExtensionId, disable_reason::DISABLE_CUSTODIAN_APPROVAL_REQUIRED);
+      kExtensionId, {disable_reason::DISABLE_CUSTODIAN_APPROVAL_REQUIRED});
   auto function =
       base::MakeRefCounted<WebstorePrivateGetExtensionStatusFunction>();
   std::optional<base::Value> response =
@@ -811,9 +822,33 @@ WebstorePrivateManifestV2DeprecationUnitTest::
     case MV2ExperimentStage::kNone:
       disabled_features.push_back(
           extensions_features::kExtensionManifestV2DeprecationWarning);
+      disabled_features.push_back(
+          extensions_features::kExtensionManifestV2Disabled);
+      disabled_features.push_back(
+          extensions_features::kExtensionManifestV2Unsupported);
       break;
     case MV2ExperimentStage::kWarning:
       enabled_features.push_back(
+          extensions_features::kExtensionManifestV2DeprecationWarning);
+      disabled_features.push_back(
+          extensions_features::kExtensionManifestV2Disabled);
+      disabled_features.push_back(
+          extensions_features::kExtensionManifestV2Unsupported);
+      break;
+    case MV2ExperimentStage::kDisableWithReEnable:
+      enabled_features.push_back(
+          extensions_features::kExtensionManifestV2Disabled);
+      disabled_features.push_back(
+          extensions_features::kExtensionManifestV2DeprecationWarning);
+      disabled_features.push_back(
+          extensions_features::kExtensionManifestV2Unsupported);
+      break;
+    case MV2ExperimentStage::kUnsupported:
+      enabled_features.push_back(
+          extensions_features::kExtensionManifestV2Unsupported);
+      disabled_features.push_back(
+          extensions_features::kExtensionManifestV2Disabled);
+      disabled_features.push_back(
           extensions_features::kExtensionManifestV2DeprecationWarning);
       break;
   }
@@ -824,13 +859,20 @@ WebstorePrivateManifestV2DeprecationUnitTest::
 INSTANTIATE_TEST_SUITE_P(
     ,
     WebstorePrivateManifestV2DeprecationUnitTest,
-    testing::Values(MV2ExperimentStage::kNone, MV2ExperimentStage::kWarning),
+    testing::Values(MV2ExperimentStage::kNone,
+                    MV2ExperimentStage::kWarning,
+                    MV2ExperimentStage::kDisableWithReEnable,
+                    MV2ExperimentStage::kUnsupported),
     [](const testing::TestParamInfo<MV2ExperimentStage>& info) {
       switch (info.param) {
         case MV2ExperimentStage::kNone:
           return "ExperimentDisabled";
         case MV2ExperimentStage::kWarning:
           return "WarningExperiment";
+        case MV2ExperimentStage::kDisableWithReEnable:
+          return "DisableExperiment";
+        case MV2ExperimentStage::kUnsupported:
+          return "UnsupportedExperiment";
       }
     });
 
@@ -851,6 +893,12 @@ TEST_P(WebstorePrivateManifestV2DeprecationUnitTest,
       break;
     case MV2ExperimentStage::kWarning:
       expected = "warning";
+      break;
+    case MV2ExperimentStage::kDisableWithReEnable:
+      expected = "soft_disable";
+      break;
+    case MV2ExperimentStage::kUnsupported:
+      expected = "hard_disable";
       break;
   }
 

@@ -3,26 +3,25 @@
 // found in the LICENSE file.
 
 // <if expr="enable_pdf_ink2">
-// Some brushes don't need colors and a size, but the brushes that do should
-// have values for the red, green, and blue colors and a value for the size.
-export interface AnnotationBrush {
-  type: AnnotationBrushType;
-  params?: AnnotationBrushParams;
-}
-
-// The annotation brush params, required for certain brush types.
-export interface AnnotationBrushParams {
-  colorR: number;
-  colorG: number;
-  colorB: number;
-  size: number;
-}
-
 // The different types of annotation brushes.
 export enum AnnotationBrushType {
   ERASER = 'eraser',
   HIGHLIGHTER = 'highlighter',
   PEN = 'pen',
+}
+
+export interface Color {
+  r: number;
+  g: number;
+  b: number;
+}
+
+// The brush with parameters. Colors are optional, since some brushes do not
+// need colors.
+export interface AnnotationBrush {
+  type: AnnotationBrushType;
+  color?: Color;
+  size: number;
 }
 // </if>
 
@@ -64,6 +63,17 @@ export enum FittingType {
   FIT_TO_BOUNDING_BOX_HEIGHT = 'fit-to-bounding-box-height',
 }
 
+/**
+ * The different types of form fields that can be focused.
+ */
+export enum FormFieldFocusType {
+  // LINT.IfChange(FocusFieldTypes)
+  NONE = 'none',
+  NON_TEXT = 'non-text',
+  TEXT = 'text',
+  // LINT.ThenChange(//pdf/pdf_view_web_plugin.cc:FocusFieldTypes)
+}
+
 export interface NamedDestinationMessageData {
   messageId: string;
   pageNumber: number;
@@ -78,6 +88,7 @@ export enum SaveRequestType {
   ANNOTATION,
   ORIGINAL,
   EDITED,
+  SEARCHIFIED,  // Saves the PDF with extracted text.
 }
 
 export interface Point {

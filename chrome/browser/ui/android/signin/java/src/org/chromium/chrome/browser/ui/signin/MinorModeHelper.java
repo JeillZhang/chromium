@@ -11,13 +11,14 @@ import androidx.annotation.IntDef;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.task.PostTask;
 import org.chromium.base.task.TaskTraits;
-import org.chromium.components.signin.SigninFeatureMap;
-import org.chromium.components.signin.SigninFeatures;
+import org.chromium.chrome.browser.signin.services.SigninMetricsUtils;
 import org.chromium.components.signin.Tribool;
 import org.chromium.components.signin.base.AccountCapabilities;
 import org.chromium.components.signin.base.AccountInfo;
 import org.chromium.components.signin.base.CoreAccountInfo;
 import org.chromium.components.signin.identitymanager.IdentityManager;
+import org.chromium.components.signin.metrics.SyncButtonClicked;
+import org.chromium.components.signin.metrics.SyncButtonsType;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -37,20 +38,30 @@ import java.lang.annotation.RetentionPolicy;
  *       is updated in minor-safe way.
  * </ol>
  *
- * <p>Use {@link resolveMinorMode} and {@link trackLatency} methods as entry points.
+ * <p>Use {@link resolveMinorMode} as an entry point.
  */
 public class MinorModeHelper implements IdentityManager.Observer {
 
     /** Screen modes indicated by capability. */
-    @IntDef({ScreenMode.PENDING, ScreenMode.RESTRICTED, ScreenMode.UNRESTRICTED})
+    @IntDef({
+        ScreenMode.UNSUPPORTED,
+        ScreenMode.PENDING,
+        ScreenMode.RESTRICTED,
+        ScreenMode.UNRESTRICTED,
+        ScreenMode.DEADLINED
+    })
     @Retention(RetentionPolicy.SOURCE)
     public @interface ScreenMode {
+        int UNSUPPORTED = 0;
         // Screen mode is pending resolution to RESTRICTED or UNRESTRICTED.
-        int PENDING = 0;
-        // The UI must be presented in minor-mode aware way.
-        int RESTRICTED = 1;
+        int PENDING = 1;
+        // The UI must be presented in minor-mode aware way because determined by the capability.
+        int RESTRICTED = 2;
         // The UI does not need to be presented in minor-mode aware way.
-        int UNRESTRICTED = 2;
+        int UNRESTRICTED = 3;
+        // The UI must be presented in minor-mode aware way because the time to load the
+        // capabilities was exceeded.
+        int DEADLINED = 4;
     }
 
     /** Controls the actual UI Update. */
@@ -64,35 +75,6 @@ public class MinorModeHelper implements IdentityManager.Observer {
             "Signin.AccountCapabilities.FetchLatency";
     private static final String IMMEDIATELY_AVAILABLE_HISTOGRAM_NAME =
             "Signin.AccountCapabilities.ImmediatelyAvailable";
-
-    private static final String BUTTONS_SHOWN_HISTOGRAM_NAME = "Signin.SyncButtons.Shown";
-    private static final String BUTTON_CLICKED_HISTOGRAM_NAME = "Signin.SyncButtons.Clicked";
-
-    public @interface SyncButtonsType {
-        // These values are persisted to logs. Entries should not be renumbered and
-        // numeric values should never be reused.
-        int SYNC_EQUAL_WEIGHTED = 0;
-        int SYNC_NOT_EQUAL_WEIGHTED = 1;
-        int HISTORY_SYNC_EQUAL_WEIGHTED = 2;
-        int HISTORY_SYNC_NOT_EQUAL_WEIGHTED = 3;
-        int NUM_ENTRIES = 4;
-    };
-
-    public @interface SyncButtonClicked {
-        // These values are persisted to logs. Entries should not be renumbered and
-        // numeric values should never be reused.
-        int SYNC_OPT_IN_EQUAL_WEIGHTED = 0;
-        int SYNC_CANCEL_EQUAL_WEIGHTED = 1;
-        int SYNC_SETTINGS_EQUAL_WEIGHTED = 2;
-        int SYNC_OPT_IN_NOT_EQUAL_WEIGHTED = 3;
-        int SYNC_CANCEL_NOT_EQUAL_WEIGHTED = 4;
-        int SYNC_SETTINGS_NOT_EQUAL_WEIGHTED = 5;
-        int HISTORY_SYNC_OPT_IN_EQUAL_WEIGHTED = 6;
-        int HISTORY_SYNC_CANCEL_EQUAL_WEIGHTED = 7;
-        int HISTORY_SYNC_OPT_IN_NOT_EQUAL_WEIGHTED = 8;
-        int HISTORY_SYNC_CANCEL_NOT_EQUAL_WEIGHTED = 9;
-        int NUM_ENTRIES = 8;
-    };
 
     private static boolean sDisableHistorySyncOptInTimeoutForTesting;
 
@@ -126,8 +108,7 @@ public class MinorModeHelper implements IdentityManager.Observer {
         AccountInfo accountInfo =
                 identityManager.findExtendedAccountInfoByEmailAddress(primaryAccount.getEmail());
 
-        // TODO(b/40284908): remove accountInfo null check
-        if (accountInfo != null && hasCapabilities(accountInfo)) {
+        if (hasCapabilities(accountInfo)) {
             uiUpdater.onScreenModeReady(
                     screenModeFromCapabilities(accountInfo.getAccountCapabilities()));
             recordImmediateAvailability();
@@ -139,19 +120,24 @@ public class MinorModeHelper implements IdentityManager.Observer {
                 new MinorModeHelper(identityManager, primaryAccount, uiUpdater));
     }
 
-    /** Similar to {@link resolveMinorMode}, but only tracks latency, without altering the UI. */
-    static void trackLatency(IdentityManager identityManager, CoreAccountInfo primaryAccount) {
-        resolveMinorMode(identityManager, primaryAccount, (mode) -> {});
+    /**
+     * Records whether the buttons on sync screen and history sync were equally weighted. If the
+     * buttons were unweighted it specifies if this was due to the deadline or the capability.
+     *
+     * @param type See {@link SyncButtonsType}
+     */
+    public static void recordButtonsShown(@SyncButtonsType int type) {
+        SigninMetricsUtils.recordButtonsShown(type);
     }
 
-    static void recordButtonsShown(@SyncButtonsType int type) {
-        RecordHistogram.recordEnumeratedHistogram(
-                BUTTONS_SHOWN_HISTOGRAM_NAME, type, SyncButtonsType.NUM_ENTRIES);
-    }
-
-    static void recordButtonClicked(@SyncButtonClicked int type) {
-        RecordHistogram.recordEnumeratedHistogram(
-                BUTTON_CLICKED_HISTOGRAM_NAME, type, SyncButtonClicked.NUM_ENTRIES);
+    /**
+     * Records which buttons (accept or decline) were clicked on sync screen and history sync and
+     * whether the buttons were equally weighted.
+     *
+     * @param type See {@link SyncButtonClicked}
+     */
+    public static void recordButtonClicked(@SyncButtonClicked int type) {
+        SigninMetricsUtils.recordButtonTypeClicked(type);
     }
 
     /**
@@ -189,14 +175,7 @@ public class MinorModeHelper implements IdentityManager.Observer {
         // When the sDisableHistorySyncOptInTimeoutForTesting is enabled in tests, the buttons
         // should only be updated due to a capability change and not due to a timeout.
         if (!sDisableHistorySyncOptInTimeoutForTesting) {
-            int timeoutMs =
-                    SigninFeatureMap.getInstance()
-                            .getFieldTrialParamByFeatureAsInt(
-                                    SigninFeatures.MINOR_MODE_RESTRICTIONS_FOR_HISTORY_SYNC_OPT_IN,
-                                    "MinorModeRestrictionsFetchDeadlineMs",
-                                    1000);
-
-            PostTask.postDelayedTask(TaskTraits.UI_DEFAULT, this::defaultToRestricted, timeoutMs);
+            PostTask.postDelayedTask(TaskTraits.UI_DEFAULT, this::onDeadline, /* delay= */ 1000);
         }
     }
 
@@ -214,8 +193,8 @@ public class MinorModeHelper implements IdentityManager.Observer {
         executeUiChanges(screenModeFromCapabilities(accountInfo.getAccountCapabilities()));
     }
 
-    private void defaultToRestricted() {
-        executeUiChanges(ScreenMode.RESTRICTED);
+    private void onDeadline() {
+        executeUiChanges(ScreenMode.DEADLINED);
     }
 
     /** Executes ui changes defined in {@link mUiUpdater}, but does this only once. */

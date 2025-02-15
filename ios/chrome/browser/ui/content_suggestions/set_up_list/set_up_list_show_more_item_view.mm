@@ -6,9 +6,11 @@
 
 #import "base/notreached.h"
 #import "ios/chrome/browser/ntp/model/set_up_list_item_type.h"
+#import "ios/chrome/browser/segmentation_platform/model/segmented_default_browser_utils.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/shared/ui/elements/crossfade_label.h"
 #import "ios/chrome/browser/shared/ui/util/uikit_ui_util.h"
+#import "ios/chrome/browser/ui/content_suggestions/set_up_list/constants.h"
 #import "ios/chrome/browser/ui/content_suggestions/set_up_list/set_up_list_item_icon.h"
 #import "ios/chrome/browser/ui/content_suggestions/set_up_list/set_up_list_item_view.h"
 #import "ios/chrome/browser/ui/content_suggestions/set_up_list/set_up_list_item_view_data.h"
@@ -17,6 +19,7 @@
 #import "ios/chrome/common/ui/util/constraints_ui_util.h"
 #import "ios/chrome/grit/ios_branded_strings.h"
 #import "ios/chrome/grit/ios_strings.h"
+#import "ui/base/device_form_factor.h"
 #import "ui/base/l10n/l10n_util.h"
 
 namespace {
@@ -157,6 +160,7 @@ NSAttributedString* Strikethrough(NSString* text) {
 - (CrossfadeLabel*)createTitle {
   CrossfadeLabel* label = [[CrossfadeLabel alloc] init];
   label.text = [self titleText];
+  label.accessibilityIdentifier = set_up_list::kAccessibilityID;
   label.font =
       CreateDynamicFont(UIFontTextStyleSubheadline, UIFontWeightSemibold);
   if (_data.complete) {
@@ -175,7 +179,10 @@ NSAttributedString* Strikethrough(NSString* text) {
       return l10n_util::GetNSString(
           IDS_IOS_CONSISTENCY_PROMO_DEFAULT_ACCOUNT_TITLE);
     case SetUpListItemType::kDefaultBrowser:
-      return l10n_util::GetNSString(IDS_IOS_SET_UP_LIST_DEFAULT_BROWSER_TITLE);
+      return l10n_util::GetNSString(
+          ui::GetDeviceFormFactor() == ui::DEVICE_FORM_FACTOR_TABLET
+              ? IDS_IOS_SET_UP_LIST_DEFAULT_BROWSER_TITLE_IPAD
+              : IDS_IOS_SET_UP_LIST_DEFAULT_BROWSER_TITLE);
     case SetUpListItemType::kAutofill:
       return l10n_util::GetNSString(IDS_IOS_SET_UP_LIST_AUTOFILL_TITLE);
     case SetUpListItemType::kNotifications:
@@ -184,11 +191,15 @@ NSAttributedString* Strikethrough(NSString* text) {
                        IDS_IOS_SET_UP_LIST_NOTIFICATIONS_TITLE)
                  : l10n_util::GetNSString(
                        IDS_IOS_SET_UP_LIST_CONTENT_NOTIFICATION_TITLE);
+    case SetUpListItemType::kDocking:
+      return l10n_util::GetNSString(IDS_IOS_SET_UP_LIST_DOCK_CHROME_TITLE);
+    case SetUpListItemType::kAddressBar:
+      return l10n_util::GetNSString(IDS_IOS_SET_UP_LIST_ADDRESS_BAR_TITLE);
     case SetUpListItemType::kAllSet:
       return l10n_util::GetNSString(IDS_IOS_SET_UP_LIST_ALL_SET_TITLE);
     case SetUpListItemType::kFollow:
       // TODO(crbug.com/40262090): Add a Follow item to the Set Up List.
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }
 
@@ -197,6 +208,7 @@ NSAttributedString* Strikethrough(NSString* text) {
   CrossfadeLabel* label = [[CrossfadeLabel alloc] init];
   label = [[CrossfadeLabel alloc] init];
   label.text = [self descriptionText];
+  label.accessibilityIdentifier = set_up_list::kAccessibilityID;
   label.numberOfLines = 0;
   label.lineBreakMode = NSLineBreakByWordWrapping;
   //  label.translatesAutoresizingMaskIntoConstraints = NO;
@@ -217,7 +229,9 @@ NSAttributedString* Strikethrough(NSString* text) {
       return l10n_util::GetNSString(IDS_IOS_IDENTITY_DISC_SIGN_IN_PROMO_LABEL);
     case SetUpListItemType::kDefaultBrowser:
       return l10n_util::GetNSString(
-          IDS_IOS_SET_UP_LIST_DEFAULT_BROWSER_SEE_MORE_DESCRIPTION);
+          IsSegmentedDefaultBrowserPromoEnabled()
+              ? GetSetUpListDefaultBrowserDescriptionStringID(_data.userSegment)
+              : IDS_IOS_SET_UP_LIST_DEFAULT_BROWSER_SEE_MORE_DESCRIPTION);
     case SetUpListItemType::kAutofill:
       return l10n_util::GetNSString(
           IDS_IOS_SET_UP_LIST_AUTOFILL_SEE_MORE_DESCRIPTION);
@@ -227,9 +241,15 @@ NSAttributedString* Strikethrough(NSString* text) {
                        IDS_IOS_SET_UP_LIST_NOTIFICATIONS_DESCRIPTION)
                  : l10n_util::GetNSString(
                        IDS_IOS_SET_UP_LIST_CONTENT_NOTIFICATION_DESCRIPTION);
+    case SetUpListItemType::kDocking:
+      return l10n_util::GetNSString(
+          IDS_IOS_SET_UP_LIST_DOCK_CHROME_SHORT_DESCRIPTION);
+    case SetUpListItemType::kAddressBar:
+      return l10n_util::GetNSString(
+          IDS_IOS_SET_UP_LIST_ADDRESS_BAR_LONG_DESCRIPTION);
     case SetUpListItemType::kAllSet:
     case SetUpListItemType::kFollow:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }
 

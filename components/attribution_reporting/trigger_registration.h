@@ -15,7 +15,9 @@
 #include "base/types/expected.h"
 #include "base/values.h"
 #include "components/attribution_reporting/aggregatable_debug_reporting_config.h"
+#include "components/attribution_reporting/aggregatable_named_budget_candidate.h"
 #include "components/attribution_reporting/aggregatable_trigger_config.h"
+#include "components/attribution_reporting/attribution_scopes_set.h"
 #include "components/attribution_reporting/filters.h"
 #include "components/attribution_reporting/suitable_origin.h"
 #include "components/attribution_reporting/trigger_registration_error.mojom-forward.h"
@@ -34,7 +36,7 @@ void RecordTriggerRegistrationError(mojom::TriggerRegistrationError);
 struct COMPONENT_EXPORT(ATTRIBUTION_REPORTING) TriggerRegistration {
   // Doesn't log metric on parsing failures.
   static base::expected<TriggerRegistration, mojom::TriggerRegistrationError>
-      Parse(base::Value::Dict);
+      Parse(base::Value);
 
   // Logs metric on parsing failures.
   static base::expected<TriggerRegistration, mojom::TriggerRegistrationError>
@@ -52,6 +54,8 @@ struct COMPONENT_EXPORT(ATTRIBUTION_REPORTING) TriggerRegistration {
 
   base::Value::Dict ToJson() const;
 
+  bool IsValid() const;
+
   friend bool operator==(const TriggerRegistration&,
                          const TriggerRegistration&) = default;
 
@@ -65,6 +69,9 @@ struct COMPONENT_EXPORT(ATTRIBUTION_REPORTING) TriggerRegistration {
   std::optional<SuitableOrigin> aggregation_coordinator_origin;
   AggregatableTriggerConfig aggregatable_trigger_config;
   AggregatableDebugReportingConfig aggregatable_debug_reporting_config;
+  AttributionScopesSet attribution_scopes;
+  std::vector<AggregatableNamedBudgetCandidate>
+      aggregatable_named_budget_candidates;
 };
 
 }  // namespace attribution_reporting

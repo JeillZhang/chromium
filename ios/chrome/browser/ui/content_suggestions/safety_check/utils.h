@@ -17,8 +17,10 @@
 @protocol SettingsCommands;
 namespace password_manager {
 struct CredentialUIEntry;
+struct InsecurePasswordCounts;
 }  // namespace password_manager
 class GURL;
+enum class SafetyCheckItemType;
 @class SafetyCheckState;
 
 // Fires the proper UI command to navigate users to `chrome_upgrade_url` if the
@@ -27,10 +29,11 @@ void HandleSafetyCheckUpdateChromeTap(
     const GURL& chrome_upgrade_url,
     id<ApplicationCommands> applicationHandler);
 
-// Fires the proper UI command based on the current compromised credentials
-// list, `credentials`.
+// Fires the proper UI command based on the current `insecure_credentials`
+// and `insecure_password_counts`.
 void HandleSafetyCheckPasswordTap(
-    std::vector<password_manager::CredentialUIEntry>& credentials,
+    std::vector<password_manager::CredentialUIEntry>& insecure_credentials,
+    password_manager::InsecurePasswordCounts insecure_password_counts,
     id<ApplicationCommands> applicationHandler,
     id<SettingsCommands> settingsHandler);
 
@@ -53,5 +56,12 @@ bool CanRunSafetyCheck(std::optional<base::Time> last_run_time);
 // timestamp.
 NSString* FormatElapsedTimeSinceLastSafetyCheck(
     std::optional<base::Time> last_run_time);
+
+// Returns the corresponding human-readable name (`NSString*`) for a given
+// `item_type`.
+NSString* NameForSafetyCheckItemType(SafetyCheckItemType item_type);
+
+// Returns the `SafetyCheckItemType` given a human-readable name (`NSString*`).
+SafetyCheckItemType SafetyCheckItemTypeForName(NSString* name);
 
 #endif  // IOS_CHROME_BROWSER_UI_CONTENT_SUGGESTIONS_SAFETY_CHECK_UTILS_H_

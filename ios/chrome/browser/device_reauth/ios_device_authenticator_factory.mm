@@ -4,10 +4,8 @@
 
 #import "ios/chrome/browser/device_reauth/ios_device_authenticator_factory.h"
 
-#import "components/keyed_service/ios/browser_state_dependency_manager.h"
 #import "ios/chrome/browser/device_reauth/ios_device_authenticator.h"
-#import "ios/chrome/browser/shared/model/browser_state/browser_state_otr_helper.h"
-#import "ios/chrome/browser/shared/model/browser_state/chrome_browser_state.h"
+#import "ios/chrome/browser/shared/model/profile/profile_ios.h"
 
 // static
 DeviceAuthenticatorProxyFactory*
@@ -17,16 +15,15 @@ DeviceAuthenticatorProxyFactory::GetInstance() {
 }
 
 // static
-DeviceAuthenticatorProxy* DeviceAuthenticatorProxyFactory::GetForBrowserState(
-    ChromeBrowserState* browser_state) {
-  return static_cast<DeviceAuthenticatorProxy*>(
-      GetInstance()->GetServiceForBrowserState(browser_state, true));
+DeviceAuthenticatorProxy* DeviceAuthenticatorProxyFactory::GetForProfile(
+    ProfileIOS* profile) {
+  return GetInstance()->GetServiceForProfileAs<DeviceAuthenticatorProxy>(
+      profile, /*create=*/true);
 }
 
 DeviceAuthenticatorProxyFactory::DeviceAuthenticatorProxyFactory()
-    : BrowserStateKeyedServiceFactory(
-          "DeviceAuthenticatorProxy",
-          BrowserStateDependencyManager::GetInstance()) {}
+    : ProfileKeyedServiceFactoryIOS("DeviceAuthenticatorProxy",
+                                    ProfileSelection::kRedirectedInIncognito) {}
 
 DeviceAuthenticatorProxyFactory::~DeviceAuthenticatorProxyFactory() = default;
 
@@ -36,18 +33,12 @@ DeviceAuthenticatorProxyFactory::BuildServiceInstanceFor(
   return std::make_unique<DeviceAuthenticatorProxy>();
 }
 
-web::BrowserState* DeviceAuthenticatorProxyFactory::GetBrowserStateToUse(
-    web::BrowserState* context) const {
-  return GetBrowserStateRedirectedInIncognito(context);
-}
-
 std::unique_ptr<IOSDeviceAuthenticator> CreateIOSDeviceAuthenticator(
     id<ReauthenticationProtocol> reauth_module,
-    ChromeBrowserState* browser_state,
+    ProfileIOS* profile,
     const device_reauth::DeviceAuthParams& params) {
   DeviceAuthenticatorProxy* proxy =
-      DeviceAuthenticatorProxyFactory::GetInstance()->GetForBrowserState(
-          browser_state);
+      DeviceAuthenticatorProxyFactory::GetForProfile(profile);
   CHECK(proxy);
   return std::make_unique<IOSDeviceAuthenticator>(reauth_module, proxy, params);
 }

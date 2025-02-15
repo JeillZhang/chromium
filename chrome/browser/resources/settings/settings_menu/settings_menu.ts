@@ -13,7 +13,7 @@ import 'chrome://resources/cr_elements/cr_nav_menu_item_style.css.js';
 import 'chrome://resources/cr_elements/cr_ripple/cr_ripple.js';
 import 'chrome://resources/cr_elements/cr_shared_vars.css.js';
 import 'chrome://resources/cr_elements/icons.html.js';
-import 'chrome://resources/polymer/v3_0/iron-icon/iron-icon.js';
+import 'chrome://resources/cr_elements/cr_icon/cr_icon.js';
 import '../settings_vars.css.js';
 import '../icons.html.js';
 
@@ -22,6 +22,8 @@ import {assert} from 'chrome://resources/js/assert.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {loadTimeData} from '../i18n_setup.js';
+import type {MetricsBrowserProxy} from '../metrics_browser_proxy.js';
+import {MetricsBrowserProxyImpl} from '../metrics_browser_proxy.js';
 import type {PageVisibility} from '../page_visibility.js';
 import type {Route, SettingsRoutes} from '../router.js';
 import {RouteObserverMixin, Router} from '../router.js';
@@ -54,16 +56,46 @@ export class SettingsMenuElement extends SettingsMenuElementBase {
        */
       pageVisibility: Object,
 
+      enableAiSettingsPageRefresh_: {
+        type: Boolean,
+        value: () => loadTimeData.getBoolean('enableAiSettingsPageRefresh'),
+      },
+
       showAdvancedFeaturesMainControl_: {
         type: Boolean,
         value: () => loadTimeData.getBoolean('showAdvancedFeaturesMainControl'),
       },
+
+      aiPageIcon_: {
+        type: String,
+        computed: 'computeAiPageIcon_(enableAiSettingsPageRefresh_)',
+      },
+
+      aiPageTitle_: {
+        type: String,
+        computed: 'computeAiPageTitle_(enableAiSettingsPageRefresh_)',
+      },
+
+      // <if expr="enable_glic">
+      glicEnabled_: {
+        type: Boolean,
+        value: () => loadTimeData.getBoolean('showGlicSettings'),
+      },
+      // </if>
     };
   }
 
   pageVisibility?: PageVisibility;
+  private enableAiSettingsPageRefresh_: boolean;
   private showAdvancedFeaturesMainControl_: boolean;
   private routes_: SettingsRoutes;
+  private aiPageIcon_: string;
+  private aiPageTitle_: string;
+  private metricsBrowserProxy_: MetricsBrowserProxy =
+      MetricsBrowserProxyImpl.getInstance();
+  // <if expr="enable_glic">
+  private glicEnabled_: boolean;
+  // </if>
 
   override ready() {
     super.ready();
@@ -75,18 +107,25 @@ export class SettingsMenuElement extends SettingsMenuElementBase {
         (!this.pageVisibility || this.pageVisibility.ai !== false);
   }
 
-  override currentRouteChanged(newRoute: Route) {
-    // <if expr="_google_chrome">
-    if (loadTimeData.getBoolean('showGetTheMostOutOfChromeSection') &&
-        newRoute === this.routes_.GET_MOST_CHROME) {
-      const about = this.shadowRoot!.querySelector('#about-menu');
-      assert(about);
-      // Purposefully grabbing the 'href' attribute and not the property.
-      this.setSelectedPath_(about.getAttribute('href')!);
-      return;
-    }
-    // </if>
+  // <if expr="enable_glic">
+  private showGlicMenuItem_(): boolean {
+    return this.glicEnabled_ &&
+        (!this.pageVisibility || this.pageVisibility.glic !== false);
+  }
+  // </if>
 
+  private computeAiPageIcon_(): string {
+    return this.enableAiSettingsPageRefresh_ ? 'settings20:magic' :
+                                               'settings20:ai';
+  }
+
+  private computeAiPageTitle_(): string {
+    return loadTimeData.getString(
+        this.enableAiSettingsPageRefresh_ ? 'aiInnovationsPageTitle' :
+                                            'aiPageTitle');
+  }
+
+  override currentRouteChanged(newRoute: Route) {
     // Focus the initially selected path.
     const anchors = this.shadowRoot!.querySelectorAll('a');
     for (let i = 0; i < anchors.length; ++i) {
@@ -112,7 +151,7 @@ export class SettingsMenuElement extends SettingsMenuElementBase {
 
   /**
    * Prevent clicks on sidebar items from navigating. These are only links for
-   * accessibility purposes, taps are handled separately by <iron-selector>.
+   * accessibility purposes, taps are handled separately.
    */
   private onLinkClick_(event: Event) {
     if ((event.target as HTMLElement).matches('a:not(#extensionsLink)')) {
@@ -136,12 +175,19 @@ export class SettingsMenuElement extends SettingsMenuElementBase {
     const route = Router.getInstance().getRouteForPath(path);
     assert(route, 'settings-menu has an entry with an invalid route.');
     Router.getInstance().navigateTo(
-        route!, /* dynamicParams */ undefined, /* removeSearch */ true);
+        route, /* dynamicParams */ undefined, /* removeSearch */ true);
   }
 
   private onExtensionsLinkClick_() {
     chrome.metricsPrivate.recordUserAction(
         'SettingsMenu_ExtensionsLinkClicked');
+  }
+
+  private onAiPageClick_() {
+    if (this.enableAiSettingsPageRefresh_) {
+      this.metricsBrowserProxy_.recordAction(
+          'SettingsMenu_AiPageEntryPointClicked');
+    }
   }
 }
 

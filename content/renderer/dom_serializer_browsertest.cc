@@ -5,6 +5,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <vector>
+
 #include "base/command_line.h"
 #include "base/compiler_specific.h"
 #include "base/containers/contains.h"
@@ -17,7 +19,6 @@
 #include "base/test/bind.h"
 #include "base/threading/thread_restrictions.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_switches.h"
@@ -33,7 +34,6 @@
 #include "third_party/blink/public/platform/web_data.h"
 #include "third_party/blink/public/platform/web_string.h"
 #include "third_party/blink/public/platform/web_url.h"
-#include "third_party/blink/public/platform/web_vector.h"
 #include "third_party/blink/public/test/test_web_frame_content_dumper.h"
 #include "third_party/blink/public/web/web_document.h"
 #include "third_party/blink/public/web/web_element.h"
@@ -58,7 +58,6 @@ using blink::WebMetaElement;
 using blink::WebNode;
 using blink::WebString;
 using blink::WebURL;
-using blink::WebVector;
 using blink::WebView;
 
 namespace content {
@@ -70,7 +69,8 @@ bool HasDocType(const WebDocument& doc) {
 // https://crbug.com/788788
 #if BUILDFLAG(IS_ANDROID) && defined(ADDRESS_SANITIZER)
 #define MAYBE_DomSerializerTests DISABLED_DomSerializerTests
-#elif defined(THREAD_SANITIZER) || defined(MEMORY_SANITIZER)
+#elif defined(THREAD_SANITIZER) || defined(MEMORY_SANITIZER) || \
+    defined(ADDRESS_SANITIZER)
 // http://crbug.com/1350508
 #define MAYBE_DomSerializerTests DISABLED_DomSerializerTests
 #else
@@ -91,7 +91,7 @@ class MAYBE_DomSerializerTests : public ContentBrowserTest,
   }
 
   // DomSerializerDelegate.
-  void DidSerializeDataForFrame(const WebVector<char>& data,
+  void DidSerializeDataForFrame(const std::vector<char>& data,
                                 FrameSerializationStatus status) override {
     // Check finish status of current frame.
     ASSERT_FALSE(serialization_reported_end_of_data_);
@@ -205,7 +205,7 @@ IN_PROC_BROWSER_TEST_F(MAYBE_DomSerializerTests,
   // Load the test file.
   EXPECT_TRUE(NavigateToURL(shell(), file_url));
 
-  PostTaskToInProcessRendererAndWait(base::BindLambdaForTesting([=] {
+  PostTaskToInProcessRendererAndWait(base::BindLambdaForTesting([=, this] {
     // Make sure original contents have document type.
     WebLocalFrame* web_frame = FindSubFrameByURL(file_url);
     ASSERT_TRUE(web_frame != nullptr);
@@ -219,7 +219,7 @@ IN_PROC_BROWSER_TEST_F(MAYBE_DomSerializerTests,
   ASSERT_TRUE(serialization_reported_end_of_data());
   LoadContents(serialized_contents(), file_url);
 
-  PostTaskToInProcessRendererAndWait(base::BindLambdaForTesting([=] {
+  PostTaskToInProcessRendererAndWait(base::BindLambdaForTesting([=, this] {
     // Make sure serialized contents still have document type.
     WebLocalFrame* web_frame = GetMainFrame();
     WebDocument doc = web_frame->GetDocument();
@@ -238,7 +238,7 @@ IN_PROC_BROWSER_TEST_F(MAYBE_DomSerializerTests,
   // Load the test file.
   EXPECT_TRUE(NavigateToURL(shell(), file_url));
 
-  PostTaskToInProcessRendererAndWait(base::BindLambdaForTesting([=] {
+  PostTaskToInProcessRendererAndWait(base::BindLambdaForTesting([=, this] {
     // Make sure original contents do not have document type.
     WebLocalFrame* web_frame = FindSubFrameByURL(file_url);
     ASSERT_TRUE(web_frame != nullptr);
@@ -252,7 +252,7 @@ IN_PROC_BROWSER_TEST_F(MAYBE_DomSerializerTests,
   ASSERT_TRUE(serialization_reported_end_of_data());
   LoadContents(serialized_contents(), file_url);
 
-  PostTaskToInProcessRendererAndWait(base::BindLambdaForTesting([=] {
+  PostTaskToInProcessRendererAndWait(base::BindLambdaForTesting([=, this] {
     // Make sure serialized contents do not have document type.
     WebLocalFrame* web_frame = GetMainFrame();
     WebDocument doc = web_frame->GetDocument();
@@ -284,7 +284,7 @@ IN_PROC_BROWSER_TEST_F(MAYBE_DomSerializerTests,
   // Load the test file.
   EXPECT_TRUE(NavigateToURL(shell(), file_url));
 
-  PostTaskToInProcessRendererAndWait(base::BindLambdaForTesting([=] {
+  PostTaskToInProcessRendererAndWait(base::BindLambdaForTesting([=, this] {
     // Do serialization.
     SerializeDomForURL(xml_file_url);
     // Compare the serialized contents with original contents.
@@ -313,7 +313,7 @@ IN_PROC_BROWSER_TEST_F(MAYBE_DomSerializerTests,
   // Load the test file.
   EXPECT_TRUE(NavigateToURL(shell(), file_url));
 
-  PostTaskToInProcessRendererAndWait(base::BindLambdaForTesting([=] {
+  PostTaskToInProcessRendererAndWait(base::BindLambdaForTesting([=, this] {
     // Make sure original contents does not have MOTW;
     std::string motw_declaration =
         WebFrameSerializer::GenerateMarkOfTheWebDeclaration(file_url).Utf8();
@@ -350,7 +350,7 @@ IN_PROC_BROWSER_TEST_F(MAYBE_DomSerializerTests,
   // Load the test file.
   EXPECT_TRUE(NavigateToURL(shell(), file_url));
 
-  PostTaskToInProcessRendererAndWait(base::BindLambdaForTesting([=] {
+  PostTaskToInProcessRendererAndWait(base::BindLambdaForTesting([=, this] {
     // Make sure original contents does not have MOTW;
     GURL frame_url = GURL("about:internet");
     std::string motw_declaration =
@@ -385,7 +385,7 @@ IN_PROC_BROWSER_TEST_F(
   // Load the test file.
   EXPECT_TRUE(NavigateToURL(shell(), file_url));
 
-  PostTaskToInProcessRendererAndWait(base::BindLambdaForTesting([=] {
+  PostTaskToInProcessRendererAndWait(base::BindLambdaForTesting([=, this] {
     // Make sure there is no META charset declaration in original document.
     WebLocalFrame* web_frame = FindSubFrameByURL(file_url);
     ASSERT_TRUE(web_frame != nullptr);
@@ -408,7 +408,7 @@ IN_PROC_BROWSER_TEST_F(
   ASSERT_TRUE(serialization_reported_end_of_data());
   LoadContents(serialized_contents(), file_url);
 
-  PostTaskToInProcessRendererAndWait(base::BindLambdaForTesting([=] {
+  PostTaskToInProcessRendererAndWait(base::BindLambdaForTesting([=, this] {
     // Make sure the first child of HEAD element is META which has charset
     // declaration in serialized contents.
     WebLocalFrame* web_frame = GetMainFrame();
@@ -452,7 +452,7 @@ IN_PROC_BROWSER_TEST_F(
   // Load the test file.
   EXPECT_TRUE(NavigateToURL(shell(), file_url));
 
-  PostTaskToInProcessRendererAndWait(base::BindLambdaForTesting([=] {
+  PostTaskToInProcessRendererAndWait(base::BindLambdaForTesting([=, this] {
     // Make sure there are multiple META charset declarations in original
     // document.
     WebLocalFrame* web_frame = FindSubFrameByURL(file_url);
@@ -481,7 +481,7 @@ IN_PROC_BROWSER_TEST_F(
   ASSERT_TRUE(serialization_reported_end_of_data());
   LoadContents(serialized_contents(), file_url);
 
-  PostTaskToInProcessRendererAndWait(base::BindLambdaForTesting([=] {
+  PostTaskToInProcessRendererAndWait(base::BindLambdaForTesting([=, this] {
     // Make sure only first child of HEAD element is META which has charset
     // declaration in serialized contents.
     WebLocalFrame* web_frame = GetMainFrame();
@@ -509,17 +509,9 @@ IN_PROC_BROWSER_TEST_F(
   }));
 }
 
-// TODO(crbug.com/40681859): Flaky on linux-lacros-tester-rel.
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-#define MAYBE_SerializeHTMLDOMWithEntitiesInText \
-  DISABLED_SerializeHTMLDOMWithEntitiesInText
-#else
-#define MAYBE_SerializeHTMLDOMWithEntitiesInText \
-  SerializeHTMLDOMWithEntitiesInText
-#endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
 // Test situation of html entities in text when serializing HTML DOM.
 IN_PROC_BROWSER_TEST_F(MAYBE_DomSerializerTests,
-                       MAYBE_SerializeHTMLDOMWithEntitiesInText) {
+                       SerializeHTMLDOMWithEntitiesInText) {
   // Need to spin up the renderer and also navigate to a file url so that the
   // renderer code doesn't attempt a fork when it sees a load to file scheme
   // from non-file scheme.
@@ -538,7 +530,7 @@ IN_PROC_BROWSER_TEST_F(MAYBE_DomSerializerTests,
   // Load the test contents.
   LoadContents(original_contents, file_url);
 
-  PostTaskToInProcessRendererAndWait(base::BindLambdaForTesting([=] {
+  PostTaskToInProcessRendererAndWait(base::BindLambdaForTesting([=, this] {
     // Get BODY's text content in DOM.
     WebLocalFrame* web_frame = FindSubFrameByURL(file_url);
     ASSERT_TRUE(web_frame != nullptr);
@@ -603,7 +595,7 @@ IN_PROC_BROWSER_TEST_F(MAYBE_DomSerializerTests,
   // Load the test contents.
   LoadContents(original_contents, file_url);
 
-  PostTaskToInProcessRendererAndWait(base::BindLambdaForTesting([=] {
+  PostTaskToInProcessRendererAndWait(base::BindLambdaForTesting([=, this] {
     // Get value of BODY's title attribute in DOM.
     WebLocalFrame* web_frame = FindSubFrameByURL(file_url);
     ASSERT_TRUE(web_frame != nullptr);
@@ -657,7 +649,7 @@ IN_PROC_BROWSER_TEST_F(MAYBE_DomSerializerTests,
   GURL file_url = net::FilePathToFileURL(page_file_path);
   EXPECT_TRUE(NavigateToURL(shell(), file_url));
 
-  PostTaskToInProcessRendererAndWait(base::BindLambdaForTesting([=] {
+  PostTaskToInProcessRendererAndWait(base::BindLambdaForTesting([=, this] {
     // Get value of BODY's title attribute in DOM.
     WebLocalFrame* web_frame = FindSubFrameByURL(file_url);
     WebDocument doc = web_frame->GetDocument();
@@ -712,7 +704,7 @@ IN_PROC_BROWSER_TEST_F(MAYBE_DomSerializerTests,
   // There are total 2 available base tags in this test file.
   const int kTotalBaseTagCountInTestFile = 2;
 
-  PostTaskToInProcessRendererAndWait(base::BindLambdaForTesting([=] {
+  PostTaskToInProcessRendererAndWait(base::BindLambdaForTesting([=, this] {
     // Since for this test, we assume there is no savable sub-resource links for
     // this test file, also all links are relative URLs in this test file, so we
     // need to check those relative URLs and make sure document has BASE tag.
@@ -757,7 +749,7 @@ IN_PROC_BROWSER_TEST_F(MAYBE_DomSerializerTests,
   ASSERT_TRUE(serialization_reported_end_of_data());
   LoadContents(serialized_contents(), file_url);
 
-  PostTaskToInProcessRendererAndWait(base::BindLambdaForTesting([=] {
+  PostTaskToInProcessRendererAndWait(base::BindLambdaForTesting([=, this] {
     // Make sure all links are absolute URLs and doc there are some number of
     // BASE tags in serialized HTML data. Each of those BASE tags have same base
     // URL which is as same as URL of current test file.
@@ -817,7 +809,7 @@ IN_PROC_BROWSER_TEST_F(MAYBE_DomSerializerTests,
       "<html><head></head><body>hello world</body></html>";
   LoadContents(empty_head_contents, file_url);
 
-  PostTaskToInProcessRendererAndWait(base::BindLambdaForTesting([=] {
+  PostTaskToInProcessRendererAndWait(base::BindLambdaForTesting([=, this] {
     // Make sure the head tag is empty.
     WebLocalFrame* web_frame = GetMainFrame();
     ASSERT_TRUE(web_frame != nullptr);
@@ -835,7 +827,7 @@ IN_PROC_BROWSER_TEST_F(MAYBE_DomSerializerTests,
   // Reload serialized contents and make sure there is only one META tag.
   LoadContents(serialized_contents(), file_url);
 
-  PostTaskToInProcessRendererAndWait(base::BindLambdaForTesting([=] {
+  PostTaskToInProcessRendererAndWait(base::BindLambdaForTesting([=, this] {
     WebLocalFrame* web_frame = GetMainFrame();
     ASSERT_TRUE(web_frame != nullptr);
     WebDocument doc = web_frame->GetDocument();
@@ -875,7 +867,7 @@ IN_PROC_BROWSER_TEST_F(MAYBE_DomSerializerTests,
   GURL file_url = net::FilePathToFileURL(page_file_path);
   EXPECT_TRUE(NavigateToURL(shell(), file_url));
 
-  PostTaskToInProcessRendererAndWait(base::BindLambdaForTesting([=] {
+  PostTaskToInProcessRendererAndWait(base::BindLambdaForTesting([=, this] {
     WebLocalFrame* web_frame = FindSubFrameByURL(file_url);
     ASSERT_TRUE(web_frame != nullptr);
     WebDocument doc = web_frame->GetDocument();

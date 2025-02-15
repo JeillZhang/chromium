@@ -10,7 +10,7 @@
 #include "gpu/config/gpu_feature_type.h"
 #include "gpu/ipc/common/gpu_feature_info.mojom.h"
 #include "gpu/ipc/common/gpu_feature_info_mojom_traits.h"
-#include "gpu/ipc/common/traits_test_service.mojom.h"
+#include "gpu/ipc/common/traits_test_service.test-mojom.h"
 #include "mojo/public/cpp/bindings/receiver_set.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -438,9 +438,7 @@ TEST_F(StructTraitsTest, GpuFeatureInfo) {
   GpuFeatureInfo output;
   ASSERT_TRUE(mojom::GpuFeatureInfo::Deserialize(
       mojom::GpuFeatureInfo::Serialize(&input), &output));
-  EXPECT_TRUE(std::equal(input.status_values,
-                         input.status_values + NUMBER_OF_GPU_FEATURE_TYPES,
-                         output.status_values));
+  EXPECT_EQ(input.status_values, output.status_values);
 }
 
 }  // namespace gpu

@@ -53,7 +53,7 @@ gfx::SizeF ResizeObserverUtilities::ComputeZoomAdjustedBox(
       return ComputeSnappedDevicePixelContentBox(box_size, layout_box, style);
     }
     default:
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
   }
 }
 
@@ -77,7 +77,7 @@ gfx::SizeF ResizeObserverUtilities::ComputeSnappedDevicePixelContentBox(
       layout_object, style);
 }
 
-DOMRectReadOnly* ResizeObserverUtilities::ZoomAdjustedLayoutRect(
+DOMRectReadOnly* ResizeObserverUtilities::ZoomAdjustedPhysicalRect(
     PhysicalRect content_rect,
     const ComputedStyle& style) {
   content_rect.SetX(

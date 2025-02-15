@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "ui/accelerated_widget_mac/ca_renderer_layer_tree.h"
 
 #import <AVFoundation/AVFoundation.h>
@@ -143,49 +148,52 @@ bool AVSampleBufferDisplayLayerEnqueueIOSurface(
     return false;
   }
 
-  if (__builtin_available(macos 11.0, *)) {
-    if (io_surface_color_space ==
-            gfx::ColorSpace(gfx::ColorSpace::PrimaryID::BT2020,
-                            gfx::ColorSpace::TransferID::PQ,
-                            gfx::ColorSpace::MatrixID::BT2020_NCL,
-                            gfx::ColorSpace::RangeID::LIMITED) ||
-        io_surface_color_space ==
-            gfx::ColorSpace(gfx::ColorSpace::PrimaryID::BT2020,
-                            gfx::ColorSpace::TransferID::HLG,
-                            gfx::ColorSpace::MatrixID::BT2020_NCL,
-                            gfx::ColorSpace::RangeID::LIMITED)) {
-      CVBufferSetAttachment(cv_pixel_buffer.get(),
-                            kCVImageBufferColorPrimariesKey,
-                            kCVImageBufferColorPrimaries_ITU_R_2020,
-                            kCVAttachmentMode_ShouldPropagate);
-      CVBufferSetAttachment(cv_pixel_buffer.get(), kCVImageBufferYCbCrMatrixKey,
-                            kCVImageBufferYCbCrMatrix_ITU_R_2020,
-                            kCVAttachmentMode_ShouldPropagate);
-      switch (io_surface_color_space.GetTransferID()) {
-        case gfx::ColorSpace::TransferID::HLG:
+  if (io_surface_color_space ==
+          gfx::ColorSpace(gfx::ColorSpace::PrimaryID::BT2020,
+                          gfx::ColorSpace::TransferID::PQ,
+                          gfx::ColorSpace::MatrixID::BT2020_NCL,
+                          gfx::ColorSpace::RangeID::LIMITED) ||
+      io_surface_color_space ==
+          gfx::ColorSpace(gfx::ColorSpace::PrimaryID::BT2020,
+                          gfx::ColorSpace::TransferID::HLG,
+                          gfx::ColorSpace::MatrixID::BT2020_NCL,
+                          gfx::ColorSpace::RangeID::LIMITED)) {
+    CVBufferSetAttachment(cv_pixel_buffer.get(),
+                          kCVImageBufferColorPrimariesKey,
+                          kCVImageBufferColorPrimaries_ITU_R_2020,
+                          kCVAttachmentMode_ShouldPropagate);
+    CVBufferSetAttachment(cv_pixel_buffer.get(), kCVImageBufferYCbCrMatrixKey,
+                          kCVImageBufferYCbCrMatrix_ITU_R_2020,
+                          kCVAttachmentMode_ShouldPropagate);
+    switch (io_surface_color_space.GetTransferID()) {
+      case gfx::ColorSpace::TransferID::HLG:
+        CVBufferSetAttachment(cv_pixel_buffer.get(),
+                              kCVImageBufferTransferFunctionKey,
+                              kCVImageBufferTransferFunction_ITU_R_2100_HLG,
+                              kCVAttachmentMode_ShouldPropagate);
+        if (@available(macOS 12, iOS 15, *)) {
           CVBufferSetAttachment(cv_pixel_buffer.get(),
-                                kCVImageBufferTransferFunctionKey,
-                                kCVImageBufferTransferFunction_ITU_R_2100_HLG,
+                                kCVImageBufferAmbientViewingEnvironmentKey,
+                                gfx::GenerateAmbientViewingEnvironment().get(),
                                 kCVAttachmentMode_ShouldPropagate);
-          break;
-        case gfx::ColorSpace::TransferID::PQ:
-          CVBufferSetAttachment(cv_pixel_buffer.get(),
-                                kCVImageBufferTransferFunctionKey,
-                                kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ,
-                                kCVAttachmentMode_ShouldPropagate);
-          CVBufferSetAttachment(
-              cv_pixel_buffer.get(),
-              kCVImageBufferMasteringDisplayColorVolumeKey,
-              gfx::GenerateMasteringDisplayColorVolume(hdr_metadata).get(),
-              kCVAttachmentMode_ShouldPropagate);
-          CVBufferSetAttachment(
-              cv_pixel_buffer.get(), kCVImageBufferContentLightLevelInfoKey,
-              gfx::GenerateContentLightLevelInfo(hdr_metadata).get(),
-              kCVAttachmentMode_ShouldPropagate);
-          break;
-        default:
-          break;
-      }
+        }
+        break;
+      case gfx::ColorSpace::TransferID::PQ:
+        CVBufferSetAttachment(cv_pixel_buffer.get(),
+                              kCVImageBufferTransferFunctionKey,
+                              kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ,
+                              kCVAttachmentMode_ShouldPropagate);
+        CVBufferSetAttachment(
+            cv_pixel_buffer.get(), kCVImageBufferMasteringDisplayColorVolumeKey,
+            gfx::GenerateMasteringDisplayColorVolume(hdr_metadata).get(),
+            kCVAttachmentMode_ShouldPropagate);
+        CVBufferSetAttachment(
+            cv_pixel_buffer.get(), kCVImageBufferContentLightLevelInfoKey,
+            gfx::GenerateContentLightLevelInfo(hdr_metadata).get(),
+            kCVAttachmentMode_ShouldPropagate);
+        break;
+      default:
+        break;
     }
   }
 
@@ -780,10 +788,8 @@ CARendererLayerTree::ContentLayer::ContentLayer(
       }
 
       if (protected_video_type_ != gfx::ProtectedVideoType::kClear) {
-        if (@available(macOS 11, *)) {
-          type_ = CALayerType::kVideo;
-          video_type_can_downgrade_ = false;
-        }
+        type_ = CALayerType::kVideo;
+        video_type_can_downgrade_ = false;
       }
     }
   }
@@ -1100,6 +1106,13 @@ void CARendererLayerTree::ContentLayer::CommitToCA(
         old_layer_->cv_pixel_buffer_ != cv_pixel_buffer_ ||
         old_layer_->solid_color_contents_ != solid_color_contents_ ||
         old_layer_->hdr_metadata_ != hdr_metadata_;
+    // If the HDR headroom has changed then the HDRCopierLayer's tone mapping
+    // may change, so re-draw this layer.
+    if (old_layer_->type_ == CALayerType::kHDRCopier &&
+        old_layer_->tree()->display_hdr_headroom_ !=
+            tree()->display_hdr_headroom_) {
+      update_contents = true;
+    }
     update_contents_rect = old_layer_->contents_rect_ != contents_rect_;
     update_rect = old_layer_->rect_ != rect_;
     update_background_color =
@@ -1117,9 +1130,7 @@ void CARendererLayerTree::ContentLayer::CommitToCA(
         ca_layer_ = av_layer_;
         av_layer_.videoGravity = AVLayerVideoGravityResize;
         if (protected_video_type_ != gfx::ProtectedVideoType::kClear) {
-          if (@available(macOS 11, *)) {
-            av_layer_.preventsCapture = true;
-          }
+          av_layer_.preventsCapture = true;
         }
         break;
       case CALayerType::kDefault:
@@ -1152,6 +1163,7 @@ void CARendererLayerTree::ContentLayer::CommitToCA(
       if (update_contents) {
         metal::UpdateHDRCopierLayer(ca_layer_, io_surface_.get(),
                                     tree()->metal_device_,
+                                    tree()->display_hdr_headroom_,
                                     io_surface_color_space_, hdr_metadata_);
       }
       break;
@@ -1262,8 +1274,7 @@ void CARendererLayerTree::ContentLayer::CommitToCA(
             green = blue = 1;
             break;
           default:
-            NOTREACHED_IN_MIGRATION();
-            break;
+            NOTREACHED();
         }
         break;
       case CALayerType::kDefault:

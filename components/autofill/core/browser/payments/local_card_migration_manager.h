@@ -14,11 +14,11 @@
 
 #include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
-#include "components/autofill/core/browser/autofill_client.h"
 #include "components/autofill/core/browser/metrics/autofill_metrics.h"
 #include "components/autofill/core/browser/metrics/payments/local_card_migration_metrics.h"
 #include "components/autofill/core/browser/payments/legal_message_line.h"
-#include "components/autofill/core/browser/payments/payments_network_interface.h"
+#include "components/autofill/core/browser/payments/payments_autofill_client.h"
+#include "components/autofill/core/browser/payments/payments_request_details.h"
 #include "components/autofill/core/browser/strike_databases/payments/local_card_migration_strike_database.h"
 
 namespace autofill {
@@ -88,8 +88,7 @@ class LocalCardMigrationManager {
   };
 
   // `client` must outlive the LocalCardMigrationManager.
-  LocalCardMigrationManager(AutofillClient* client,
-                            const std::string& app_locale);
+  explicit LocalCardMigrationManager(AutofillClient* client);
 
   LocalCardMigrationManager(const LocalCardMigrationManager&) = delete;
   LocalCardMigrationManager& operator=(const LocalCardMigrationManager&) =
@@ -151,11 +150,6 @@ class LocalCardMigrationManager {
   // store the supported ranges locally.
   void GetMigratableCreditCards();
 
-  // For testing.
-  void SetAppLocaleForTesting(const std::string& app_locale) {
-    app_locale_ = app_locale;
-  }
-
  protected:
   // Callback after successfully getting the legal documents. On success,
   // displays the offer-to-migrate dialog, which the user can accept or not.
@@ -163,7 +157,7 @@ class LocalCardMigrationManager {
   // directly. If not, trigger the intermediate prompt. Exposed for testing.
   virtual void OnDidGetUploadDetails(
       bool is_from_settings_page,
-      AutofillClient::PaymentsRpcResult result,
+      payments::PaymentsAutofillClient::PaymentsRpcResult result,
       const std::u16string& context_token,
       std::unique_ptr<base::Value::Dict> legal_message,
       std::vector<std::pair<int, int>> supported_card_bin_ranges);
@@ -173,7 +167,7 @@ class LocalCardMigrationManager {
   // trigger a window showing the migration result together with display text to
   // the user.
   void OnDidMigrateLocalCards(
-      AutofillClient::PaymentsRpcResult result,
+      payments::PaymentsAutofillClient::PaymentsRpcResult result,
       std::unique_ptr<std::unordered_map<std::string, std::string>> save_result,
       const std::string& display_text);
 
@@ -221,8 +215,6 @@ class LocalCardMigrationManager {
 
   const raw_ref<AutofillClient> client_;
 
-  std::string app_locale_;
-
   // The parsed lines from the legal message return from GetUploadDetails.
   LegalMessageLines legal_message_lines_;
 
@@ -233,8 +225,7 @@ class LocalCardMigrationManager {
   int credit_card_import_type_;
 
   // Collected information about a pending migration request.
-  payments::PaymentsNetworkInterface::MigrationRequestDetails
-      migration_request_;
+  payments::MigrationRequestDetails migration_request_;
 
   // The local credit cards to be uploaded. Owned by LocalCardMigrationManager.
   // The order of cards should not be changed.

@@ -30,6 +30,7 @@
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_LOADER_FETCH_RESOURCE_LOADER_H_
 
 #include <memory>
+
 #include "base/containers/span.h"
 #include "base/feature_list.h"
 #include "base/gtest_prod_util.h"
@@ -37,10 +38,12 @@
 #include "base/time/time.h"
 #include "mojo/public/cpp/base/big_buffer.h"
 #include "services/network/public/mojom/fetch_api.mojom-blink-forward.h"
+#include "third_party/abseil-cpp/absl/types/variant.h"
 #include "third_party/blink/public/mojom/blob/blob_registry.mojom-blink.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/heap/prefinalizer.h"
 #include "third_party/blink/renderer/platform/loader/fetch/data_pipe_bytes_consumer.h"
+#include "third_party/blink/renderer/platform/loader/fetch/fetch_context.h"
 #include "third_party/blink/renderer/platform/loader/fetch/loader_freeze_mode.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_load_scheduler.h"
@@ -54,6 +57,7 @@
 #include "third_party/blink/renderer/platform/scheduler/public/frame_or_worker_scheduler.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
 #include "third_party/blink/renderer/platform/wtf/gc_plugin.h"
+#include "third_party/blink/renderer/platform/wtf/shared_buffer.h"
 
 namespace base {
 class UnguessableToken;
@@ -61,7 +65,6 @@ class UnguessableToken;
 
 namespace blink {
 
-class FetchContext;
 class ResourceError;
 class ResourceFetcher;
 class ResponseBodyLoader;
@@ -167,6 +170,10 @@ class PLATFORM_EXPORT ResourceLoader final
   void CancelIfWebBundleTokenMatches(
       const base::UnguessableToken& web_bundle_token);
 
+  const FeatureContext* GetFeatureContext() const {
+    return Context().GetFeatureContext();
+  }
+
  private:
   friend class SubresourceIntegrityTest;
   friend class ResourceLoaderIsolatedCodeCacheTest;
@@ -183,6 +190,9 @@ class PLATFORM_EXPORT ResourceLoader final
   void DidFinishLoadingBody() override;
   void DidFailLoadingBody() override;
   void DidCancelLoadingBody() override;
+
+  void DidReceiveDataImpl(
+      absl::variant<SegmentedBuffer, base::span<const char>> data);
 
   bool ShouldFetchCodeCache();
   void StartFetch();
@@ -293,6 +303,10 @@ class PLATFORM_EXPORT ResourceLoader final
   int64_t received_body_length_from_service_worker_ = 0;
   CnameAliasInfoForTesting cname_alias_info_for_testing_;
   bool finished_ = false;
+
+  // This is used to keep the body handle of 304 Not Modified response until
+  // Blink receives the URLLoaderClient's OnComplete IPC.
+  mojo::ScopedDataPipeConsumerHandle empty_body_handle_for_revalidation_;
 };
 
 }  // namespace blink

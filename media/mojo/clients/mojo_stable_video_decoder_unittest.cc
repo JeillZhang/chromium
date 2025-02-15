@@ -2,9 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/mojo/clients/mojo_stable_video_decoder.h"
 
 #include <sys/mman.h>
+
+#include <array>
 
 #include "base/posix/eintr_wrapper.h"
 #include "base/task/sequenced_task_runner.h"
@@ -13,6 +20,7 @@
 #include "base/test/mock_callback.h"
 #include "base/test/task_environment.h"
 #include "gpu/command_buffer/client/shared_image_interface.h"
+#include "gpu/command_buffer/common/shared_image_pool_id.h"
 #include "gpu/command_buffer/common/shared_image_usage.h"
 #include "media/base/decoder.h"
 #include "media/base/media_util.h"
@@ -319,13 +327,18 @@ class MockStableVideoDecoderService : public stable::mojom::StableVideoDecoder {
   std::unique_ptr<MojoDecoderBufferReader> mojo_decoder_buffer_reader_;
 };
 
+}  // namespace
+
+// NOTE: This needs to be outside of an anonymous namespace to allow it to be
+// friended by SharedImageInterface.
 class MockSharedImageInterface : public gpu::SharedImageInterface {
  public:
   // gpu::SharedImageInterface implementation.
-  MOCK_METHOD2(
-      CreateSharedImage,
-      scoped_refptr<gpu::ClientSharedImage>(const gpu::SharedImageInfo& si_info,
-                                            gpu::SurfaceHandle surface_handle));
+  MOCK_METHOD3(CreateSharedImage,
+               scoped_refptr<gpu::ClientSharedImage>(
+                   const gpu::SharedImageInfo& si_info,
+                   gpu::SurfaceHandle surface_handle,
+                   std::optional<gpu::SharedImagePoolId> pool_id));
   MOCK_METHOD2(CreateSharedImage,
                scoped_refptr<gpu::ClientSharedImage>(
                    const gpu::SharedImageInfo& si_info,
@@ -340,13 +353,8 @@ class MockSharedImageInterface : public gpu::SharedImageInterface {
                scoped_refptr<gpu::ClientSharedImage>(
                    const gpu::SharedImageInfo& si_info,
                    gfx::GpuMemoryBufferHandle buffer_handle));
-  MOCK_METHOD1(CreateSharedImage,
-               SharedImageMapping(const gpu::SharedImageInfo& si_info));
-  MOCK_METHOD4(CreateSharedImage,
+  MOCK_METHOD1(CreateSharedImageForSoftwareCompositor,
                scoped_refptr<gpu::ClientSharedImage>(
-                   gfx::GpuMemoryBuffer* gpu_memory_buffer,
-                   gpu::GpuMemoryBufferManager* gpu_memory_buffer_manager,
-                   gfx::BufferPlane plane,
                    const gpu::SharedImageInfo& si_info));
   MOCK_METHOD2(UpdateSharedImage,
                void(const gpu::SyncToken& sync_token,
@@ -363,14 +371,14 @@ class MockSharedImageInterface : public gpu::SharedImageInterface {
                     scoped_refptr<gpu::ClientSharedImage> client_shared_image));
   MOCK_METHOD1(ImportSharedImage,
                scoped_refptr<gpu::ClientSharedImage>(
-                   const gpu::ExportedSharedImage& exported_shared_image));
+                   gpu::ExportedSharedImage exported_shared_image));
   MOCK_METHOD6(CreateSwapChain,
                SwapChainSharedImages(viz::SharedImageFormat format,
                                      const gfx::Size& size,
                                      const gfx::ColorSpace& color_space,
                                      GrSurfaceOrigin surface_origin,
                                      SkAlphaType alpha_type,
-                                     uint32_t usage));
+                                     gpu::SharedImageUsageSet usage));
   MOCK_METHOD2(PresentSwapChain,
                void(const gpu::SyncToken& sync_token,
                     const gpu::Mailbox& mailbox));
@@ -390,6 +398,8 @@ class MockSharedImageInterface : public gpu::SharedImageInterface {
  protected:
   ~MockSharedImageInterface() override = default;
 };
+
+namespace {
 
 // TestEndpoints groups a few members that result from creating and initializing
 // a MojoStableVideoDecoder so that tests can use them to set expectations
@@ -735,13 +745,14 @@ TEST_F(MojoStableVideoDecoderTest, Decode) {
       CreateAndInitializeMojoStableVideoDecoder(config);
   ASSERT_TRUE(endpoints);
 
-  constexpr base::TimeDelta kRealTimestamps[] = {
+  constexpr auto kRealTimestamps = std::to_array<base::TimeDelta>({
       base::Milliseconds(128u),
       base::Milliseconds(144u),
       base::Milliseconds(160u),
       base::Milliseconds(176u),
-  };
-  base::TimeDelta received_fake_timestamps[std::size(kRealTimestamps)] = {};
+  });
+  std::array<base::TimeDelta, std::size(kRealTimestamps)>
+      received_fake_timestamps = {};
 
   // First there's the Decode() portion of the test. This just sends a Decode()
   // request for each frame and waits for the decode callback for each request
@@ -841,10 +852,8 @@ TEST_F(MojoStableVideoDecoderTest, Decode) {
               kBackDiscardPadding);
     EXPECT_EQ(decoder_buffer_to_send->is_key_frame(), kIsKeyFrame);
     ASSERT_EQ(decoder_buffer_to_send->size(), std::size(kEncodedData));
-    EXPECT_EQ(base::make_span(decoder_buffer_to_send->data(),
-                              decoder_buffer_to_send->size()),
-              base::make_span(kEncodedData, std::size(kEncodedData)));
-    ASSERT_TRUE(decoder_buffer_to_send->side_data().has_value());
+    EXPECT_EQ(base::span(*decoder_buffer_to_send), base::span(kEncodedData));
+    ASSERT_TRUE(decoder_buffer_to_send->side_data());
     EXPECT_EQ(decoder_buffer_to_send->side_data()->secure_handle,
               kSecureHandle);
   }
@@ -927,11 +936,10 @@ TEST_F(MojoStableVideoDecoderTest, Decode) {
   EXPECT_EQ(received_decoded_video_frame_1->natural_size(),
             kDecodedFrame1NaturalSize);
   EXPECT_EQ(received_decoded_video_frame_1->ColorSpace(), gfx::ColorSpace());
-  ASSERT_TRUE(received_decoded_video_frame_1->HasTextures());
-  ASSERT_EQ(received_decoded_video_frame_1->NumTextures(), 1u);
-  EXPECT_EQ(received_decoded_video_frame_1->mailbox_holder(0).mailbox,
+  ASSERT_TRUE(received_decoded_video_frame_1->HasSharedImage());
+  EXPECT_EQ(received_decoded_video_frame_1->shared_image()->mailbox(),
             kDecodedFrame1Mailbox);
-  EXPECT_EQ(received_decoded_video_frame_1->mailbox_holder(0).sync_token,
+  EXPECT_EQ(received_decoded_video_frame_1->acquire_sync_token(),
             kDecodedFrame1SharedImageSyncToken);
   EXPECT_TRUE(
       received_decoded_video_frame_1->metadata().read_lock_fences_enabled);
@@ -998,11 +1006,10 @@ TEST_F(MojoStableVideoDecoderTest, Decode) {
   EXPECT_EQ(received_decoded_video_frame_2->natural_size(),
             kDecodedFrame2NaturalSize);
   EXPECT_EQ(received_decoded_video_frame_2->ColorSpace(), gfx::ColorSpace());
-  ASSERT_TRUE(received_decoded_video_frame_2->HasTextures());
-  ASSERT_EQ(received_decoded_video_frame_2->NumTextures(), 1u);
-  EXPECT_EQ(received_decoded_video_frame_2->mailbox_holder(0).mailbox,
+  ASSERT_TRUE(received_decoded_video_frame_2->HasSharedImage());
+  EXPECT_EQ(received_decoded_video_frame_2->shared_image()->mailbox(),
             kDecodedFrame1Mailbox);
-  EXPECT_EQ(received_decoded_video_frame_2->mailbox_holder(0).sync_token,
+  EXPECT_EQ(received_decoded_video_frame_2->acquire_sync_token(),
             kDecodedFrame2SharedImageSyncToken);
   EXPECT_TRUE(
       received_decoded_video_frame_2->metadata().read_lock_fences_enabled);
@@ -1081,11 +1088,10 @@ TEST_F(MojoStableVideoDecoderTest, Decode) {
             kDecodedFrame2NaturalSize);
   EXPECT_EQ(received_decoded_video_frame_3->ColorSpace(),
             kDecodedFrame3ColorSpace);
-  ASSERT_TRUE(received_decoded_video_frame_3->HasTextures());
-  ASSERT_EQ(received_decoded_video_frame_3->NumTextures(), 1u);
-  EXPECT_EQ(received_decoded_video_frame_3->mailbox_holder(0).mailbox,
+  ASSERT_TRUE(received_decoded_video_frame_3->HasSharedImage());
+  EXPECT_EQ(received_decoded_video_frame_3->shared_image()->mailbox(),
             kDecodedFrame3Mailbox);
-  EXPECT_EQ(received_decoded_video_frame_3->mailbox_holder(0).sync_token,
+  EXPECT_EQ(received_decoded_video_frame_3->acquire_sync_token(),
             kDecodedFrame3SharedImageSyncToken);
   EXPECT_TRUE(
       received_decoded_video_frame_3->metadata().read_lock_fences_enabled);
@@ -1166,11 +1172,10 @@ TEST_F(MojoStableVideoDecoderTest, Decode) {
   EXPECT_EQ(received_decoded_video_frame_4->natural_size(),
             kDecodedFrame4NaturalSize);
   EXPECT_EQ(received_decoded_video_frame_4->ColorSpace(), gfx::ColorSpace());
-  ASSERT_TRUE(received_decoded_video_frame_4->HasTextures());
-  ASSERT_EQ(received_decoded_video_frame_4->NumTextures(), 1u);
-  EXPECT_EQ(received_decoded_video_frame_4->mailbox_holder(0).mailbox,
+  ASSERT_TRUE(received_decoded_video_frame_4->HasSharedImage());
+  EXPECT_EQ(received_decoded_video_frame_4->shared_image()->mailbox(),
             kDecodedFrame4Mailbox);
-  EXPECT_EQ(received_decoded_video_frame_4->mailbox_holder(0).sync_token,
+  EXPECT_EQ(received_decoded_video_frame_4->acquire_sync_token(),
             kDecodedFrame4SharedImageSyncToken);
   EXPECT_TRUE(
       received_decoded_video_frame_4->metadata().read_lock_fences_enabled);

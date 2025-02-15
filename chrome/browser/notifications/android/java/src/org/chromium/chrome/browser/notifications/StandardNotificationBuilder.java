@@ -36,6 +36,9 @@ public class StandardNotificationBuilder extends NotificationBuilderBase {
         }
         builder.setLargeIcon(getNormalizedLargeIcon());
         setStatusBarIcon(builder, mSmallIconId, mSmallIconBitmapForStatusBar);
+        if (mExtras != null) {
+            builder.addExtras(mExtras);
+        }
         builder.setContentIntent(mContentIntent);
         if (mDeleteIntentActionType != NotificationUmaTracker.ActionType.UNKNOWN) {
             builder.setDeleteIntent(mDeleteIntent, mDeleteIntentActionType);
@@ -48,7 +51,6 @@ public class StandardNotificationBuilder extends NotificationBuilderBase {
         for (Action settingsAction : mSettingsActions) {
             addActionToBuilder(builder, settingsAction);
         }
-        builder.setPriorityBeforeO(mPriority);
         builder.setDefaults(mDefaults);
         if (mVibratePattern != null) builder.setVibrate(mVibratePattern);
         builder.setSilent(mSilent);

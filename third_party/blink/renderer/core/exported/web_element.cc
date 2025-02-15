@@ -131,9 +131,6 @@ WebString WebElement::InnerHTML() const {
 }
 
 bool WebElement::WritingSuggestions() const {
-  if (!RuntimeEnabledFeatures::WritingSuggestionsEnabled()) {
-    return true;
-  }
   const auto* html_element =
       blink::DynamicTo<HTMLElement>(ConstUnwrap<Element>());
   return html_element &&
@@ -257,7 +254,7 @@ void WebElement::PasteText(const WebString& text, bool replace_all) {
                                           /*should_smart_replace=*/true));
 }
 
-WebVector<WebLabelElement> WebElement::Labels() const {
+std::vector<WebLabelElement> WebElement::Labels() const {
   auto* html_element = blink::DynamicTo<HTMLElement>(ConstUnwrap<Element>());
   if (!html_element)
     return {};
@@ -265,7 +262,7 @@ WebVector<WebLabelElement> WebElement::Labels() const {
       const_cast<HTMLElement*>(html_element)->labels();
   if (!html_labels)
     return {};
-  Vector<WebLabelElement> labels;
+  std::vector<WebLabelElement> labels;
   for (unsigned i = 0; i < html_labels->length(); i++) {
     if (auto* label_element =
             blink::DynamicTo<HTMLLabelElement>(html_labels->item(i))) {

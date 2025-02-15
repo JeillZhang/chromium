@@ -8,25 +8,27 @@
 #import <UIKit/UIKit.h>
 
 enum class ContentSuggestionsModuleType;
-@protocol MagicStackModuleContainerDelegate;
+@class MagicStackContextMenuInteractionHandler;
 @class MagicStackModule;
+@protocol MagicStackModuleContainerDelegate;
 
 // Container View for a module in the Magic Stack.
-@interface MagicStackModuleContainer : UICollectionViewCell
+@interface MagicStackModuleContainer : UIView
 
 - (instancetype)initWithCoder:(NSCoder*)aDecoder NS_UNAVAILABLE;
 
 // Configures this container with `config`.
 - (void)configureWithConfig:(MagicStackModule*)config;
 
+// Reset the main configurations of the view.
+- (void)resetView;
+
+// Handler for magic stack context menu. Only available after
+// `configureWithConfig:` has been invoked.
+- (MagicStackContextMenuInteractionHandler*)contextMenuInteractionHandler;
+
 // Delegate for this container.
 @property(nonatomic, weak) id<MagicStackModuleContainerDelegate> delegate;
-
-// Returns the title string for the module `type`.
-+ (NSString*)titleStringForModule:(ContentSuggestionsModuleType)type;
-
-// The type of this container.
-@property(nonatomic, assign, readonly) ContentSuggestionsModuleType type;
 
 @end
 

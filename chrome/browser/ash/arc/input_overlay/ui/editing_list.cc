@@ -186,7 +186,7 @@ class EditingList::AddContainerButton : public views::Button {
     title_->SetText(l10n_util::GetStringUTF16(
         is_zero_state ? IDS_INPUT_OVERLAY_EDITING_LIST_FIRST_CONTROL_LABEL
                       : IDS_INPUT_OVERLAY_EDITING_LIST_NEW_CONTROL_LABEL));
-    GetViewAccessibility().SetName(title_->GetText());
+    GetViewAccessibility().SetName(std::u16string(title_->GetText()));
   }
 
   void UpdateAddButtonState(size_t current_controls_size) {
@@ -206,7 +206,7 @@ class EditingList::AddContainerButton : public views::Button {
  private:
   void OnTitleChanged() {
     CHECK(add_button_);
-    add_button_->SetTooltipText(title_->GetText());
+    add_button_->SetTooltipText(std::u16string(title_->GetText()));
   }
 
   // views::Button:
@@ -610,16 +610,16 @@ void EditingList::OnMouseReleased(const ui::MouseEvent& event) {
 
 void EditingList::OnGestureEvent(ui::GestureEvent* event) {
   switch (event->type()) {
-    case ui::ET_GESTURE_SCROLL_BEGIN:
+    case ui::EventType::kGestureScrollBegin:
       OnDragStart(*event);
       event->SetHandled();
       break;
-    case ui::ET_GESTURE_SCROLL_UPDATE:
+    case ui::EventType::kGestureScrollUpdate:
       OnDragUpdate(*event);
       event->SetHandled();
       break;
-    case ui::ET_GESTURE_SCROLL_END:
-    case ui::ET_SCROLL_FLING_START:
+    case ui::EventType::kGestureScrollEnd:
+    case ui::EventType::kScrollFlingStart:
       OnDragEnd(*event);
       event->SetHandled();
       break;

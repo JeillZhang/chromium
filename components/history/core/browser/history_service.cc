@@ -54,7 +54,7 @@
 #include "components/history/core/browser/visit_database.h"
 #include "components/history/core/browser/visit_delegate.h"
 #include "components/history/core/browser/web_history_service.h"
-#include "components/sync/model/proxy_model_type_controller_delegate.h"
+#include "components/sync/model/proxy_data_type_controller_delegate.h"
 #include "components/visitedlink/core/visited_link.h"
 #include "net/base/schemeful_site.h"
 #include "third_party/skia/include/core/SkBitmap.h"
@@ -465,7 +465,6 @@ void HistoryService::RemoveObserver(HistoryServiceObserver* observer) {
 void HistoryService::SetDeviceInfoServices(
     syncer::DeviceInfoTracker* device_info_tracker,
     syncer::LocalDeviceInfoProvider* local_device_info_provider) {
-  CHECK(history::IsSyncSegmentsDataEnabled());
   CHECK(device_info_tracker != nullptr);
   CHECK(local_device_info_provider != nullptr);
 
@@ -487,7 +486,6 @@ void HistoryService::SetDeviceInfoServices(
 
 void HistoryService::SetCanAddForeignVisitsToSegmentsOnBackend(
     bool add_foreign_visits) {
-  CHECK(history::IsSyncSegmentsDataEnabled());
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   backend_task_runner_->PostTask(
@@ -498,7 +496,6 @@ void HistoryService::SetCanAddForeignVisitsToSegmentsOnBackend(
 
 void HistoryService::OnDeviceInfoChange() {
   TRACE_EVENT0("browser,startup", "HistoryService::OnDeviceInfoChange");
-  CHECK(history::IsSyncSegmentsDataEnabled());
   CHECK(device_info_tracker_ != nullptr);
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
@@ -528,7 +525,6 @@ void HistoryService::OnDeviceInfoShutdown() {
 }
 
 void HistoryService::SendLocalDeviceOriginatorCacheGuidToBackend() {
-  CHECK(history::IsSyncSegmentsDataEnabled());
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   CHECK(local_device_info_provider_ != nullptr);
 
@@ -677,15 +673,41 @@ void HistoryService::AddPage(HistoryAddPageArgs add_page_args) {
 
 void HistoryService::AddPartitionedVisitedLinks(
     const HistoryAddPageArgs& args) {
+  // Ensure that we can communicate to our in-memory hashtable.
+  if (!visit_delegate_) {
+    return;
+  }
+
+  // When links are partitioned and the navigation comes from an ephemeral
+  // context we want to avoid adding it to the hashtable.
+  if (args.is_ephemeral) {
+    return;
+  }
+
   // We require each element of the triple-partition key <link url, top-level
-  // site, frame origin> to have a value.
-  if (!visit_delegate_ || !args.top_level_url.has_value()) {
+  // site, frame origin> to have a valid value.
+  GURL top_level_or_opener;
+  if (args.top_level_url.has_value() && args.top_level_url->is_valid()) {
+    top_level_or_opener = args.top_level_url.value();
+  } else {
+    // Context clicks may replace their empty or invalid top-level site with a
+    // valid opener value. Check if the navigation transition type matches
+    // context click.
+    if (ui::PageTransitionCoreTypeIs(args.transition,
+                                     ui::PAGE_TRANSITION_LINK)) {
+      if (args.opener.has_value() && args.opener->url.is_valid()) {
+        top_level_or_opener = args.opener->url;
+      }
+    }
+  }
+
+  // If we were unable to obtain valid URLs for either of our top-level or
+  // frame origin parameters, we cannot successfully construct our
+  // triple-partition key and should not add this navigation to the hashtable.
+  if (!top_level_or_opener.is_valid() || !args.referrer.is_valid()) {
     return;
   }
-  // We require each element of the triple-partition key to be valid GURLs.
-  if (!args.top_level_url->is_valid() || !args.referrer.is_valid()) {
-    return;
-  }
+
   // Add the VisitedLink representing each navigation to the partitioned
   // hashtable.
   if (!args.redirects.empty()) {
@@ -695,14 +717,12 @@ void HistoryService::AddPartitionedVisitedLinks(
     DCHECK_EQ(args.url, args.redirects.back());
     for (const GURL& redirect : args.redirects) {
       // All redirects originate from the same top-level site and frame origin.
-      VisitedLink link = {redirect,
-                          net::SchemefulSite(args.top_level_url.value()),
+      VisitedLink link = {redirect, net::SchemefulSite(top_level_or_opener),
                           url::Origin::Create(args.referrer)};
       visit_delegate_->AddVisitedLink(link);
     }
   } else {
-    VisitedLink link = {args.url,
-                        net::SchemefulSite(args.top_level_url.value()),
+    VisitedLink link = {args.url, net::SchemefulSite(top_level_or_opener),
                         url::Origin::Create(args.referrer)};
     visit_delegate_->AddVisitedLink(link);
   }
@@ -1173,20 +1193,6 @@ base::CancelableTaskTracker::TaskId HistoryService::QueryURL(
       std::move(callback));
 }
 
-base::CancelableTaskTracker::TaskId HistoryService::QueryURLs(
-    const std::vector<GURL>& urls,
-    bool want_visits,
-    QueryURLsCallback callback,
-    base::CancelableTaskTracker* tracker) {
-  DCHECK(backend_task_runner_) << "History service being called after cleanup";
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  return tracker->PostTaskAndReplyWithResult(
-      backend_task_runner_.get(), FROM_HERE,
-      base::BindOnce(&HistoryBackend::QueryURLs, history_backend_, urls,
-                     want_visits),
-      std::move(callback));
-}
-
 // Statistics ------------------------------------------------------------------
 
 base::CancelableTaskTracker::TaskId HistoryService::GetHistoryCount(
@@ -1292,26 +1298,11 @@ base::CancelableTaskTracker::TaskId HistoryService::GetLastVisitToOrigin(
       std::move(callback));
 }
 
-base::CancelableTaskTracker::TaskId HistoryService::GetLastVisitToURL(
-    const GURL& url,
-    base::Time end_time,
-    GetLastVisitCallback callback,
-    base::CancelableTaskTracker* tracker) {
-  DCHECK(backend_task_runner_) << "History service being called after cleanup";
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-
-  return tracker->PostTaskAndReplyWithResult(
-      backend_task_runner_.get(), FROM_HERE,
-      base::BindOnce(&HistoryBackend::GetLastVisitToURL, history_backend_, url,
-                     end_time),
-      std::move(callback));
-}
-
-base::CancelableTaskTracker::TaskId HistoryService::GetDailyVisitsToHost(
-    const GURL& host,
+base::CancelableTaskTracker::TaskId HistoryService::GetDailyVisitsToOrigin(
+    const url::Origin& origin,
     base::Time begin_time,
     base::Time end_time,
-    GetDailyVisitsToHostCallback callback,
+    GetDailyVisitsToOriginCallback callback,
     base::CancelableTaskTracker* tracker) {
   DCHECK(backend_task_runner_) << "History service being called after cleanup";
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
@@ -1319,7 +1310,7 @@ base::CancelableTaskTracker::TaskId HistoryService::GetDailyVisitsToHost(
   return tracker->PostTaskAndReplyWithResult(
       backend_task_runner_.get(), FROM_HERE,
       base::BindOnce(&HistoryBackend::GetDailyVisitsToHost, history_backend_,
-                     host, begin_time, end_time),
+                     origin.GetURL(), begin_time, end_time),
       std::move(callback));
 }
 
@@ -1579,9 +1570,9 @@ void HistoryService::ScheduleTask(SchedulePriority priority,
   // TODO(brettw): Do prioritization.
   // NOTE(mastiz): If this implementation changes, be cautious with implications
   // for sync, because a) the sync engine (sync thread) post tasks directly to
-  // the task runner via ModelTypeProcessorProxy (which is subtle); and b)
+  // the task runner via DataTypeProcessorProxy (which is subtle); and b)
   // SyncServiceImpl (UI thread) does the same via
-  // ProxyModelTypeControllerDelegate.
+  // ProxyDataTypeControllerDelegate.
   backend_task_runner_->PostTask(FROM_HERE, std::move(task));
 }
 
@@ -1604,13 +1595,13 @@ HistoryService::GetDeleteDirectivesSyncableService() {
   return delete_directive_handler_->AsWeakPtr();
 }
 
-std::unique_ptr<syncer::ModelTypeControllerDelegate>
+std::unique_ptr<syncer::DataTypeControllerDelegate>
 HistoryService::GetHistorySyncControllerDelegate() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   // Note that a callback is bound for GetHistorySyncControllerDelegate()
   // because this getter itself must also run in the backend sequence, and the
   // proxy object below will take care of that.
-  return std::make_unique<syncer::ProxyModelTypeControllerDelegate>(
+  return std::make_unique<syncer::ProxyDataTypeControllerDelegate>(
       backend_task_runner_,
       base::BindRepeating(&HistoryBackend::GetHistorySyncControllerDelegate,
                           base::Unretained(history_backend_.get())));
@@ -1829,12 +1820,16 @@ void HistoryService::NotifyDeletions(const DeletionInfo& deletion_info) {
   if (visit_delegate_) {
     if (deletion_info.IsAllHistory()) {
       visit_delegate_->DeleteAllURLs();
+      visit_delegate_->DeleteAllVisitedLinks();
     } else {
       std::vector<GURL> urls;
       urls.reserve(deletion_info.deleted_rows().size());
       for (const auto& row : deletion_info.deleted_rows())
         urls.push_back(row.url());
       visit_delegate_->DeleteURLs(urls);
+      // The deletion of individual VisitedLinks is completed by the
+      // ExpireHistoryBackend class, so we don't need to duplicate that behavior
+      // here.
     }
   }
 

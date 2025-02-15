@@ -17,28 +17,28 @@
 #import "components/policy/test_support/signature_provider.h"
 #import "components/safe_browsing/core/common/features.h"
 #import "components/strings/grit/components_strings.h"
+#import "ios/chrome/browser/authentication/ui_bundled/signin_earl_grey.h"
+#import "ios/chrome/browser/authentication/ui_bundled/signin_earl_grey_ui_test_util.h"
+#import "ios/chrome/browser/ntp/ui_bundled/new_tab_page_constants.h"
 #import "ios/chrome/browser/policy/model/cloud/user_policy_constants.h"
 #import "ios/chrome/browser/policy/model/policy_app_interface.h"
 #import "ios/chrome/browser/policy/model/policy_earl_grey_utils.h"
+#import "ios/chrome/browser/settings/ui_bundled/autofill/autofill_settings_constants.h"
+#import "ios/chrome/browser/settings/ui_bundled/elements/elements_constants.h"
+#import "ios/chrome/browser/settings/ui_bundled/language/language_settings_ui_constants.h"
+#import "ios/chrome/browser/settings/ui_bundled/password/password_settings/password_settings_constants.h"
+#import "ios/chrome/browser/settings/ui_bundled/password/password_settings_app_interface.h"
+#import "ios/chrome/browser/settings/ui_bundled/password/passwords_table_view_constants.h"
+#import "ios/chrome/browser/settings/ui_bundled/privacy/privacy_constants.h"
+#import "ios/chrome/browser/settings/ui_bundled/settings_root_table_constants.h"
+#import "ios/chrome/browser/settings/ui_bundled/settings_table_view_controller_constants.h"
 #import "ios/chrome/browser/shared/model/prefs/pref_names.h"
 #import "ios/chrome/browser/shared/model/url/chrome_url_constants.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/signin/model/fake_system_identity.h"
 #import "ios/chrome/browser/translate/model/translate_app_interface.h"
-#import "ios/chrome/browser/ui/authentication/signin_earl_grey.h"
-#import "ios/chrome/browser/ui/authentication/signin_earl_grey_ui_test_util.h"
 #import "ios/chrome/browser/ui/content_suggestions/content_suggestions_constants.h"
-#import "ios/chrome/browser/ui/ntp/new_tab_page_constants.h"
 #import "ios/chrome/browser/ui/popup_menu/popup_menu_constants.h"
-#import "ios/chrome/browser/ui/settings/autofill/autofill_settings_constants.h"
-#import "ios/chrome/browser/ui/settings/elements/elements_constants.h"
-#import "ios/chrome/browser/ui/settings/language/language_settings_ui_constants.h"
-#import "ios/chrome/browser/ui/settings/password/password_settings/password_settings_constants.h"
-#import "ios/chrome/browser/ui/settings/password/password_settings_app_interface.h"
-#import "ios/chrome/browser/ui/settings/password/passwords_table_view_constants.h"
-#import "ios/chrome/browser/ui/settings/privacy/privacy_constants.h"
-#import "ios/chrome/browser/ui/settings/settings_root_table_constants.h"
-#import "ios/chrome/browser/ui/settings/settings_table_view_controller_constants.h"
 #import "ios/chrome/common/ui/table_view/table_view_cells_constants.h"
 #import "ios/chrome/grit/ios_strings.h"
 #import "ios/chrome/test/earl_grey/chrome_actions.h"
@@ -135,13 +135,13 @@ NSString* const kDomain2 = @"domain2.com";
   std::unique_ptr<policy::EmbeddedPolicyTestServer> _server;
 }
 
-- (void)tearDown {
+- (void)tearDownHelper {
   if (_settingsOpened) {
     [ChromeEarlGrey dismissSettings];
     [ChromeEarlGreyUI waitForAppToIdle];
   }
   [PolicyAppInterface clearPolicies];
-  [super tearDown];
+  [super tearDownHelper];
 }
 
 - (void)openSettingsMenu {
@@ -296,7 +296,10 @@ NSString* const kDomain2 = @"domain2.com";
   const std::string pageText = "pony";
 
   // Set history to a clean state and verify it is clean.
-  [ChromeEarlGrey clearBrowsingHistory];
+  if (![ChromeTestCase forceRestartAndWipe]) {
+    [ChromeEarlGrey clearBrowsingHistory];
+  }
+
   [ChromeEarlGrey resetBrowsingDataPrefs];
   GREYAssertEqual([ChromeEarlGrey browsingHistoryEntryCount], 0,
                   @"History was unexpectedly non-empty");
@@ -480,9 +483,7 @@ NSString* const kDomain2 = @"domain2.com";
   NSString* managedAccountEmail = base::SysUTF8ToNSString(
       base::StrCat({"enterprise@", policy::SignatureProvider::kTestDomain1}));
   FakeSystemIdentity* fakeManagedIdentity =
-      [FakeSystemIdentity identityWithEmail:managedAccountEmail
-                                     gaiaID:@"exampleManagedID"
-                                       name:@"Fake Managed"];
+      [FakeSystemIdentity identityWithEmail:managedAccountEmail];
   [SigninEarlGrey signinWithFakeIdentity:fakeManagedIdentity];
 
   // Open the menu and click on the item.
@@ -510,9 +511,7 @@ NSString* const kDomain2 = @"domain2.com";
   NSString* managedAccountEmail = base::SysUTF8ToNSString(
       base::StrCat({"enterprise@", policy::SignatureProvider::kTestDomain1}));
   FakeSystemIdentity* fakeManagedIdentity =
-      [FakeSystemIdentity identityWithEmail:managedAccountEmail
-                                     gaiaID:@"exampleManagedID"
-                                       name:@"Fake Managed"];
+      [FakeSystemIdentity identityWithEmail:managedAccountEmail];
   [SigninEarlGrey signinWithFakeIdentity:fakeManagedIdentity];
 
   // Open the menu and click on the item.
@@ -592,9 +591,7 @@ NSString* const kDomain2 = @"domain2.com";
   NSString* managedAccountEmail =
       [@"enterprise@" stringByAppendingString:kDomain1];
   FakeSystemIdentity* fakeManagedIdentity =
-      [FakeSystemIdentity identityWithEmail:managedAccountEmail
-                                     gaiaID:@"exampleManagedID"
-                                       name:@"Fake Managed"];
+      [FakeSystemIdentity identityWithEmail:managedAccountEmail];
   [SigninEarlGrey signinWithFakeIdentity:fakeManagedIdentity];
 
   // Open the management page and check if the content is expected.
@@ -636,9 +633,7 @@ NSString* const kDomain2 = @"domain2.com";
   NSString* managedAccountEmail =
       [@"enterprise@" stringByAppendingString:kDomain2];
   FakeSystemIdentity* fakeManagedIdentity =
-      [FakeSystemIdentity identityWithEmail:managedAccountEmail
-                                     gaiaID:@"exampleManagedID"
-                                       name:@"Fake Managed"];
+      [FakeSystemIdentity identityWithEmail:managedAccountEmail];
   [SigninEarlGrey signinWithFakeIdentity:fakeManagedIdentity];
 
   // Open the management page and check if the content is expected.
@@ -682,9 +677,7 @@ NSString* const kDomain2 = @"domain2.com";
   NSString* managedAccountEmail =
       [@"enterprise@" stringByAppendingString:kDomain1];
   FakeSystemIdentity* fakeManagedIdentity =
-      [FakeSystemIdentity identityWithEmail:managedAccountEmail
-                                     gaiaID:@"exampleManagedID"
-                                       name:@"Fake Managed"];
+      [FakeSystemIdentity identityWithEmail:managedAccountEmail];
   [SigninEarlGrey signinWithFakeIdentity:fakeManagedIdentity];
 
   // Open the management page and check if the content is expected.
@@ -720,7 +713,7 @@ NSString* const kDomain2 = @"domain2.com";
   // Add the switch to make sure that fakeIdentity1 is known at startup to avoid
   // automatic sign out.
   config.additional_args.push_back(std::string("-") +
-                                   test_switches::kSignInAtStartup);
+                                   test_switches::kAddFakeIdentitiesAtStartup);
 
   // Relaunch the app to take the configuration into account.
   [[AppLaunchManager sharedManager] ensureAppLaunchedWithConfiguration:config];

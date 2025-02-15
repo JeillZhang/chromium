@@ -4,8 +4,6 @@
 
 package org.chromium.chrome.browser.app.bookmarks;
 
-import android.content.res.Resources;
-import android.os.Bundle;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
@@ -38,8 +36,6 @@ import org.chromium.chrome.browser.signin.services.IdentityServicesProvider;
 import org.chromium.components.bookmarks.BookmarkId;
 import org.chromium.components.bookmarks.BookmarkItem;
 import org.chromium.components.browser_ui.widget.TintedDrawable;
-import org.chromium.components.browser_ui.widget.selectable_list.SelectionDelegate;
-import org.chromium.components.favicon.LargeIconBridge;
 import org.chromium.components.image_fetcher.ImageFetcherConfig;
 import org.chromium.components.image_fetcher.ImageFetcherFactory;
 import org.chromium.components.url_formatter.UrlFormatter;
@@ -58,8 +54,6 @@ public class BookmarkEditActivity extends SnackbarActivity {
     static final int MOVE_REQUEST_CODE = 15;
 
     private static final String TAG = "BookmarkEdit";
-
-    private final SelectionDelegate mEmptySelectionDelegate = new SelectionDelegate();
 
     private ImprovedBookmarkRowCoordinator mFolderSelectRowCoordinator;
     private BookmarkModel mModel;
@@ -98,10 +92,8 @@ public class BookmarkEditActivity extends SnackbarActivity {
             };
 
     @Override
-    protected void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
-
-        Profile profile = getProfileProvider().getOriginalProfile();
+    protected void onProfileAvailable(Profile profile) {
+        super.onProfileAvailable(profile);
         mModel = BookmarkModel.getForProfile(profile);
         mBookmarkId =
                 BookmarkId.getBookmarkIdFromString(getIntent().getStringExtra(INTENT_BOOKMARK_ID));
@@ -117,12 +109,13 @@ public class BookmarkEditActivity extends SnackbarActivity {
                         /* context= */ this,
                         mModel,
                         getSnackbarManager(),
-                        IdentityServicesProvider.get().getIdentityManager(profile));
+                        IdentityServicesProvider.get()
+                                .getIdentityManager(profile.getOriginalProfile()));
         setContentView(R.layout.bookmark_edit);
         mTitleEditText = findViewById(R.id.title_text);
         mUrlEditText = findViewById(R.id.url_text);
 
-        Toolbar toolbar = (Toolbar) findViewById(R.id.toolbar);
+        Toolbar toolbar = findViewById(R.id.toolbar);
         setSupportActionBar(toolbar);
         getSupportActionBar().setDisplayHomeAsUpEnabled(true);
 
@@ -137,14 +130,13 @@ public class BookmarkEditActivity extends SnackbarActivity {
                         });
 
         boolean isFolder = item.isFolder();
-        TextView folderTitle = (TextView) findViewById(R.id.folder_title);
+        TextView folderTitle = findViewById(R.id.folder_title);
         folderTitle.setText(isFolder ? R.string.bookmark_parent_folder : R.string.bookmark_folder);
         mUrlEditText.setVisibility(isFolder ? View.GONE : View.VISIBLE);
         getSupportActionBar().setTitle(isFolder ? R.string.edit_folder : R.string.edit_bookmark);
         mBookmarkUiPrefs = new BookmarkUiPrefs(ChromeSharedPreferences.getInstance());
         mBookmarkUiPrefs.addObserver(mBookmarkUiPrefsObserver);
 
-        Resources res = getResources();
         mFolderSelectRowCoordinator =
                 new ImprovedBookmarkRowCoordinator(
                         this,
@@ -155,11 +147,8 @@ public class BookmarkEditActivity extends SnackbarActivity {
                                 ImageFetcherFactory.createImageFetcher(
                                         ImageFetcherConfig.DISK_CACHE_ONLY,
                                         profile.getProfileKey()),
-                                new LargeIconBridge(profile),
                                 BookmarkUtils.getRoundedIconGenerator(
-                                        this, BookmarkRowDisplayPref.VISUAL),
-                                BookmarkUtils.getImageIconSize(res, BookmarkRowDisplayPref.VISUAL),
-                                BookmarkUtils.getFaviconDisplaySize(res)),
+                                        this, BookmarkRowDisplayPref.VISUAL)),
                         mModel,
                         mBookmarkUiPrefs,
                         ShoppingServiceFactory.getForProfile(profile));

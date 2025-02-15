@@ -27,6 +27,8 @@ set(ABSL_INTERNAL_DLL_FILES
   "base/internal/low_level_scheduling.h"
   "base/internal/nullability_impl.h"
   "base/internal/per_thread_tls.h"
+  "base/internal/poison.cc"
+  "base/internal/poison.h"
   "base/prefetch.h"
   "base/internal/pretty_function.h"
   "base/internal/raw_logging.cc"
@@ -46,6 +48,8 @@ set(ABSL_INTERNAL_DLL_FILES
   "base/internal/thread_identity.h"
   "base/internal/throw_delegate.cc"
   "base/internal/throw_delegate.h"
+  "base/internal/tracing.cc"
+  "base/internal/tracing.h"
   "base/internal/tsan_mutex_interface.h"
   "base/internal/unaligned_access.h"
   "base/internal/unscaledcycleclock.cc"
@@ -121,6 +125,9 @@ set(ABSL_INTERNAL_DLL_FILES
   "debugging/symbolize.h"
   "debugging/internal/address_is_readable.cc"
   "debugging/internal/address_is_readable.h"
+  "debugging/internal/bounded_utf8_length_sequence.h"
+  "debugging/internal/decode_rust_punycode.cc"
+  "debugging/internal/decode_rust_punycode.h"
   "debugging/internal/demangle.cc"
   "debugging/internal/demangle.h"
   "debugging/internal/demangle_rust.cc"
@@ -133,6 +140,8 @@ set(ABSL_INTERNAL_DLL_FILES
   "debugging/internal/stack_consumption.h"
   "debugging/internal/stacktrace_config.h"
   "debugging/internal/symbolize.h"
+  "debugging/internal/utf8_for_code_point.cc"
+  "debugging/internal/utf8_for_code_point.h"
   "debugging/internal/vdso_support.cc"
   "debugging/internal/vdso_support.h"
   "functional/any_invocable.h"
@@ -183,6 +192,8 @@ set(ABSL_INTERNAL_DLL_FILES
   "log/internal/proto.cc"
   "log/internal/strip.h"
   "log/internal/structured.h"
+  "log/internal/structured_proto.cc"
+  "log/internal/structured_proto.h"
   "log/internal/vlog_config.cc"
   "log/internal/vlog_config.h"
   "log/internal/voidify.h"
@@ -313,7 +324,6 @@ set(ABSL_INTERNAL_DLL_FILES
   "strings/internal/string_constant.h"
   "strings/internal/stringify_sink.h"
   "strings/internal/stringify_sink.cc"
-  "strings/internal/has_absl_stringify.h"
   "strings/has_absl_stringify.h"
   "strings/has_ostream_operator.h"
   "strings/match.cc"
@@ -479,6 +489,7 @@ endif()
 set(ABSL_INTERNAL_DLL_TARGETS
   "absl_check"
   "absl_log"
+  "absl_vlog_is_on"
   "algorithm"
   "algorithm_container"
   "any"
@@ -636,6 +647,7 @@ set(ABSL_INTERNAL_DLL_TARGETS
   "utility"
   "variant"
   "vlog_config_internal"
+  "vlog_is_on"
 )
 
 if(NOT MSVC)
@@ -718,10 +730,8 @@ int main() { return 0; }
 
 if(ABSL_INTERNAL_AT_LEAST_CXX20)
   set(ABSL_INTERNAL_CXX_STD_FEATURE cxx_std_20)
-elseif(ABSL_INTERNAL_AT_LEAST_CXX17)
-  set(ABSL_INTERNAL_CXX_STD_FEATURE cxx_std_17)
 else()
-  set(ABSL_INTERNAL_CXX_STD_FEATURE cxx_std_14)
+  set(ABSL_INTERNAL_CXX_STD_FEATURE cxx_std_17)
 endif()
 
 function(absl_internal_dll_contains)
@@ -825,6 +835,7 @@ function(absl_make_dll)
     PRIVATE
       ${_dll_libs}
       ${ABSL_DEFAULT_LINKOPTS}
+      $<$<BOOL:${ANDROID}>:-llog>
   )
   set_target_properties(${_dll} PROPERTIES
     LINKER_LANGUAGE "CXX"
@@ -885,7 +896,7 @@ Cflags: -I\${includedir}${PC_CFLAGS}\n")
   )
 
   if(ABSL_PROPAGATE_CXX_STD)
-    # Abseil libraries require C++14 as the current minimum standard. When
+    # Abseil libraries require C++17 as the current minimum standard. When
     # compiled with a higher minimum (either because it is the compiler's
     # default or explicitly requested), then Abseil requires that standard.
     target_compile_features(${_dll} PUBLIC ${ABSL_INTERNAL_CXX_STD_FEATURE})

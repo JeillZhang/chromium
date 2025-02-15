@@ -4,18 +4,18 @@
 
 #include "components/autofill/core/browser/metrics/payments/virtual_card_standalone_cvc_suggestion_metrics.h"
 
+#include "base/test/gmock_callback_support.h"
 #include "base/test/metrics/histogram_tester.h"
-#include "components/autofill/core/browser/autofill_test_utils.h"
+#include "components/autofill/core/browser/data_manager/payments/payments_data_manager.h"
 #include "components/autofill/core/browser/metrics/autofill_metrics_test_base.h"
-#include "components/autofill/core/browser/payments_data_manager.h"
+#include "components/autofill/core/browser/test_utils/autofill_test_utils.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace autofill::autofill_metrics {
-
 namespace {
+
 constexpr char kCardGuid[] = "10000000-0000-0000-0000-000000000001";
-}  // namespace
 
 class VirtualCardStandaloneCvcMetricsTest : public AutofillMetricsBaseTest,
                                             public testing::Test {
@@ -27,8 +27,6 @@ class VirtualCardStandaloneCvcMetricsTest : public AutofillMetricsBaseTest,
   const CreditCard& card() const { return card_; }
 
   void SetUp() override {
-    scoped_feature_list_.InitAndEnableFeature(
-        features::kAutofillParseVcnCardOnFileStandaloneCvcFields);
     SetUpHelper();
 
     // Add a virtual card.
@@ -67,39 +65,42 @@ TEST_F(VirtualCardStandaloneCvcMetricsTest, LogShownMetrics) {
 
   // Simulate activating the autofill popup for the CVC field.
   autofill_manager().OnAskForValuesToFillTest(
-      form(), form().fields.front().global_id());
+      form(), form().fields().front().global_id());
   DidShowAutofillSuggestions(form(), /*field_index=*/0,
                              SuggestionType::kCreditCardEntry);
   EXPECT_THAT(
       histogram_tester.GetAllSamples(
           "Autofill.VirtualCard.StandaloneCvc.FormEvents"),
-      BucketsAre(
-          base::Bucket(
-              autofill_metrics::VirtualCardStandaloneCvcSuggestionFormEvent::
-                  kStandaloneCvcSuggestionShown,
-              1),
-          base::Bucket(
-              autofill_metrics::VirtualCardStandaloneCvcSuggestionFormEvent::
-                  kStandaloneCvcSuggestionShownOnce,
-              1)));
+      BucketsAre(base::Bucket(VirtualCardStandaloneCvcSuggestionFormEvent::
+                                  kStandaloneCvcSuggestionShown,
+                              1),
+                 base::Bucket(VirtualCardStandaloneCvcSuggestionFormEvent::
+                                  kStandaloneCvcSuggestionShownOnce,
+                              1)));
+  EXPECT_THAT(
+      histogram_tester.GetAllSamples("Autofill.FormEvents.StandaloneCvc"),
+      BucketsInclude(base::Bucket(FORM_EVENT_SUGGESTIONS_SHOWN, 1),
+                     base::Bucket(FORM_EVENT_SUGGESTIONS_SHOWN_ONCE, 1)));
 
   // Simulate activating the autofill popup for the CVC field again.
   autofill_manager().OnAskForValuesToFillTest(
-      form(), form().fields.front().global_id());
+      form(), form().fields().front().global_id());
   DidShowAutofillSuggestions(form(), /*field_index=*/0,
                              SuggestionType::kCreditCardEntry);
   EXPECT_THAT(
       histogram_tester.GetAllSamples(
           "Autofill.VirtualCard.StandaloneCvc.FormEvents"),
-      BucketsAre(
-          base::Bucket(
-              autofill_metrics::VirtualCardStandaloneCvcSuggestionFormEvent::
-                  kStandaloneCvcSuggestionShown,
-              2),
-          base::Bucket(
-              autofill_metrics::VirtualCardStandaloneCvcSuggestionFormEvent::
-                  kStandaloneCvcSuggestionShownOnce,
-              1)));
+      BucketsAre(base::Bucket(VirtualCardStandaloneCvcSuggestionFormEvent::
+                                  kStandaloneCvcSuggestionShown,
+                              2),
+                 base::Bucket(VirtualCardStandaloneCvcSuggestionFormEvent::
+                                  kStandaloneCvcSuggestionShownOnce,
+                              1)));
+  EXPECT_THAT(
+      histogram_tester.GetAllSamples("Autofill.FormEvents.StandaloneCvc"),
+      BucketsInclude(base::Bucket(FORM_EVENT_SUGGESTIONS_SHOWN, 2),
+                     base::Bucket(FORM_EVENT_SUGGESTIONS_SHOWN_ONCE, 1)));
+  histogram_tester.ExpectTotalCount("Autofill.FormEvents.CreditCard", 0);
 }
 
 // Test CVC suggestion selected metrics are correctly logged.
@@ -108,43 +109,50 @@ TEST_F(VirtualCardStandaloneCvcMetricsTest, LogSelectedMetrics) {
 
   // Simulate selecting the CVC suggestion.
   autofill_manager().OnAskForValuesToFillTest(
-      form(), form().fields.front().global_id());
-  autofill_manager().AuthenticateThenFillCreditCardForm(
-      form(), form().fields.front(),
+      form(), form().fields().front().global_id());
+  autofill_manager().FillOrPreviewCreditCardForm(
+      mojom::ActionPersistence::kFill, form(),
+      form().fields().front().global_id(),
       *personal_data().payments_data_manager().GetCreditCardByGUID(kCardGuid),
-      {.trigger_source = AutofillTriggerSource::kPopup});
+      AutofillTriggerSource::kPopup);
 
   EXPECT_THAT(
       histogram_tester.GetAllSamples(
           "Autofill.VirtualCard.StandaloneCvc.FormEvents"),
-      BucketsAre(
-          base::Bucket(
-              autofill_metrics::VirtualCardStandaloneCvcSuggestionFormEvent::
-                  kStandaloneCvcSuggestionSelected,
-              1),
-          base::Bucket(
-              autofill_metrics::VirtualCardStandaloneCvcSuggestionFormEvent::
-                  kStandaloneCvcSuggestionSelectedOnce,
-              1)));
+      BucketsAre(base::Bucket(VirtualCardStandaloneCvcSuggestionFormEvent::
+                                  kStandaloneCvcSuggestionSelected,
+                              1),
+                 base::Bucket(VirtualCardStandaloneCvcSuggestionFormEvent::
+                                  kStandaloneCvcSuggestionSelectedOnce,
+                              1)));
+  EXPECT_THAT(
+      histogram_tester.GetAllSamples("Autofill.FormEvents.StandaloneCvc"),
+      BucketsInclude(
+          base::Bucket(FORM_EVENT_VIRTUAL_CARD_SUGGESTION_SELECTED, 1),
+          base::Bucket(FORM_EVENT_VIRTUAL_CARD_SUGGESTION_SELECTED_ONCE, 1)));
 
   // Simulate selecting the suggestion again.
-  autofill_manager().AuthenticateThenFillCreditCardForm(
-      form(), form().fields.front(),
+  autofill_manager().FillOrPreviewCreditCardForm(
+      mojom::ActionPersistence::kFill, form(),
+      form().fields().front().global_id(),
       *personal_data().payments_data_manager().GetCreditCardByGUID(kCardGuid),
-      {.trigger_source = AutofillTriggerSource::kPopup});
+      AutofillTriggerSource::kPopup);
 
   EXPECT_THAT(
       histogram_tester.GetAllSamples(
           "Autofill.VirtualCard.StandaloneCvc.FormEvents"),
-      BucketsAre(
-          base::Bucket(
-              autofill_metrics::VirtualCardStandaloneCvcSuggestionFormEvent::
-                  kStandaloneCvcSuggestionSelected,
-              2),
-          base::Bucket(
-              autofill_metrics::VirtualCardStandaloneCvcSuggestionFormEvent::
-                  kStandaloneCvcSuggestionSelectedOnce,
-              1)));
+      BucketsAre(base::Bucket(VirtualCardStandaloneCvcSuggestionFormEvent::
+                                  kStandaloneCvcSuggestionSelected,
+                              2),
+                 base::Bucket(VirtualCardStandaloneCvcSuggestionFormEvent::
+                                  kStandaloneCvcSuggestionSelectedOnce,
+                              1)));
+  EXPECT_THAT(
+      histogram_tester.GetAllSamples("Autofill.FormEvents.StandaloneCvc"),
+      BucketsInclude(
+          base::Bucket(FORM_EVENT_VIRTUAL_CARD_SUGGESTION_SELECTED, 2),
+          base::Bucket(FORM_EVENT_VIRTUAL_CARD_SUGGESTION_SELECTED_ONCE, 1)));
+  histogram_tester.ExpectTotalCount("Autofill.FormEvents.CreditCard", 0);
 }
 
 // Test CVC suggestion filled metrics are correctly logged.
@@ -153,46 +161,53 @@ TEST_F(VirtualCardStandaloneCvcMetricsTest, LogFilledMetrics) {
 
   // Simulate filling the CVC suggestion.
   autofill_manager().OnAskForValuesToFillTest(
-      form(), form().fields.front().global_id());
-  autofill_manager().AuthenticateThenFillCreditCardForm(
-      form(), form().fields.front(),
+      form(), form().fields().front().global_id());
+  EXPECT_CALL(credit_card_access_manager(), FetchCreditCard)
+      .WillOnce(base::test::RunOnceCallback<1>(card()));
+  autofill_manager().FillOrPreviewCreditCardForm(
+      mojom::ActionPersistence::kFill, form(),
+      form().fields().front().global_id(),
       *personal_data().payments_data_manager().GetCreditCardByGUID(kCardGuid),
-      {.trigger_source = AutofillTriggerSource::kPopup});
-  test_api(autofill_manager())
-      .OnCreditCardFetched(CreditCardFetchResult::kSuccess, &card());
+      AutofillTriggerSource::kPopup);
 
   EXPECT_THAT(
       histogram_tester.GetAllSamples(
           "Autofill.VirtualCard.StandaloneCvc.FormEvents"),
+      BucketsInclude(base::Bucket(VirtualCardStandaloneCvcSuggestionFormEvent::
+                                      kStandaloneCvcSuggestionFilled,
+                                  1),
+                     base::Bucket(VirtualCardStandaloneCvcSuggestionFormEvent::
+                                      kStandaloneCvcSuggestionFilledOnce,
+                                  1)));
+  EXPECT_THAT(
+      histogram_tester.GetAllSamples("Autofill.FormEvents.StandaloneCvc"),
       BucketsInclude(
-          base::Bucket(
-              autofill_metrics::VirtualCardStandaloneCvcSuggestionFormEvent::
-                  kStandaloneCvcSuggestionFilled,
-              1),
-          base::Bucket(
-              autofill_metrics::VirtualCardStandaloneCvcSuggestionFormEvent::
-                  kStandaloneCvcSuggestionFilledOnce,
-              1)));
+          base::Bucket(FORM_EVENT_VIRTUAL_CARD_SUGGESTION_FILLED, 1),
+          base::Bucket(FORM_EVENT_VIRTUAL_CARD_SUGGESTION_FILLED_ONCE, 1)));
 
   // Fill the suggestion again.
-  autofill_manager().AuthenticateThenFillCreditCardForm(
-      form(), form().fields.front(),
+  EXPECT_CALL(credit_card_access_manager(), FetchCreditCard)
+      .WillOnce(base::test::RunOnceCallback<1>(card()));
+  autofill_manager().FillOrPreviewCreditCardForm(
+      mojom::ActionPersistence::kFill, form(),
+      form().fields().front().global_id(),
       *personal_data().payments_data_manager().GetCreditCardByGUID(kCardGuid),
-      {.trigger_source = AutofillTriggerSource::kPopup});
-  test_api(autofill_manager())
-      .OnCreditCardFetched(CreditCardFetchResult::kSuccess, &card());
+      AutofillTriggerSource::kPopup);
   EXPECT_THAT(
       histogram_tester.GetAllSamples(
           "Autofill.VirtualCard.StandaloneCvc.FormEvents"),
+      BucketsInclude(base::Bucket(VirtualCardStandaloneCvcSuggestionFormEvent::
+                                      kStandaloneCvcSuggestionFilled,
+                                  2),
+                     base::Bucket(VirtualCardStandaloneCvcSuggestionFormEvent::
+                                      kStandaloneCvcSuggestionFilledOnce,
+                                  1)));
+  EXPECT_THAT(
+      histogram_tester.GetAllSamples("Autofill.FormEvents.StandaloneCvc"),
       BucketsInclude(
-          base::Bucket(
-              autofill_metrics::VirtualCardStandaloneCvcSuggestionFormEvent::
-                  kStandaloneCvcSuggestionFilled,
-              2),
-          base::Bucket(
-              autofill_metrics::VirtualCardStandaloneCvcSuggestionFormEvent::
-                  kStandaloneCvcSuggestionFilledOnce,
-              1)));
+          base::Bucket(FORM_EVENT_VIRTUAL_CARD_SUGGESTION_FILLED, 2),
+          base::Bucket(FORM_EVENT_VIRTUAL_CARD_SUGGESTION_FILLED_ONCE, 1)));
+  histogram_tester.ExpectTotalCount("Autofill.FormEvents.CreditCard", 0);
 }
 
 // Test will submit and submitted metrics are correctly logged.
@@ -201,27 +216,33 @@ TEST_F(VirtualCardStandaloneCvcMetricsTest, LogSubmitMetrics) {
 
   // Simulate filling and then submitting the card.
   autofill_manager().OnAskForValuesToFillTest(
-      form(), form().fields.front().global_id());
-  autofill_manager().AuthenticateThenFillCreditCardForm(
-      form(), form().fields.front(),
+      form(), form().fields().front().global_id());
+  EXPECT_CALL(credit_card_access_manager(), FetchCreditCard)
+      .WillOnce(base::test::RunOnceCallback<1>(card()));
+  autofill_manager().FillOrPreviewCreditCardForm(
+      mojom::ActionPersistence::kFill, form(),
+      form().fields().front().global_id(),
       *personal_data().payments_data_manager().GetCreditCardByGUID(kCardGuid),
-      {.trigger_source = AutofillTriggerSource::kPopup});
-  test_api(autofill_manager())
-      .OnCreditCardFetched(CreditCardFetchResult::kSuccess, &card());
+      AutofillTriggerSource::kPopup);
   SubmitForm(form());
 
   EXPECT_THAT(
       histogram_tester.GetAllSamples(
           "Autofill.VirtualCard.StandaloneCvc.FormEvents"),
+      BucketsInclude(base::Bucket(VirtualCardStandaloneCvcSuggestionFormEvent::
+                                      kStandaloneCvcSuggestionWillSubmitOnce,
+                                  1),
+                     base::Bucket(VirtualCardStandaloneCvcSuggestionFormEvent::
+                                      kStandaloneCvcSuggestionSubmittedOnce,
+                                  1)));
+  EXPECT_THAT(
+      histogram_tester.GetAllSamples("Autofill.FormEvents.StandaloneCvc"),
       BucketsInclude(
-          base::Bucket(
-              autofill_metrics::VirtualCardStandaloneCvcSuggestionFormEvent::
-                  kStandaloneCvcSuggestionWillSubmitOnce,
-              1),
-          base::Bucket(
-              autofill_metrics::VirtualCardStandaloneCvcSuggestionFormEvent::
-                  kStandaloneCvcSuggestionSubmittedOnce,
-              1)));
+          base::Bucket(FORM_EVENT_VIRTUAL_CARD_SUGGESTION_WILL_SUBMIT_ONCE, 1),
+          base::Bucket(FORM_EVENT_VIRTUAL_CARD_SUGGESTION_SUBMITTED_ONCE, 1)));
+  // Verify that not logging to normal credit card UMA.
+  histogram_tester.ExpectTotalCount("Autofill.FormEvents.CreditCard", 0);
 }
 
+}  // namespace
 }  // namespace autofill::autofill_metrics

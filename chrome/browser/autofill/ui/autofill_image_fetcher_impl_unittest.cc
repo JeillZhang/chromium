@@ -35,34 +35,7 @@ class AutofillImageFetcherImplTest : public testing::Test {
   std::unique_ptr<AutofillImageFetcherImpl> autofill_image_fetcher_;
 };
 
-// TODO(crbug.com/40221039): Write tests for
-// kAutofillEnableNewCardArtAndNetworkImages code paths
-TEST_F(AutofillImageFetcherImplTest, ResolveCardArtImage) {
-  GURL card_art_url = GURL("https://www.example.com/fake_image1");
-  // The credit card network images cannot be found in the tests, but it should
-  // be okay since we don't care what the images are.
-  gfx::Image card_art_image = GetTestImage(IDR_DEFAULT_FAVICON);
-  gfx::Image resolved_image = autofill_image_fetcher()->ResolveCardArtImage(
-      card_art_url, card_art_image);
-  EXPECT_FALSE(gfx::test::AreImagesEqual(card_art_image, resolved_image));
-  EXPECT_TRUE(gfx::test::AreImagesEqual(
-      AutofillImageFetcherImpl::ApplyGreyOverlay(card_art_image),
-      resolved_image));
-
-  // Empty images should not have greyscale applied.
-  EXPECT_TRUE(gfx::test::AreImagesEqual(
-      gfx::Image(), autofill_image_fetcher()->ResolveCardArtImage(
-                        card_art_url, gfx::Image())));
-}
-
-class AutofillImageFetcherImplNewCardArtTest
-    : public AutofillImageFetcherImplTest {
- private:
-  base::test::ScopedFeatureList feature_list_{
-      features::kAutofillEnableNewCardArtAndNetworkImages};
-};
-
-TEST_F(AutofillImageFetcherImplNewCardArtTest, ResolveCardArtURL) {
+TEST_F(AutofillImageFetcherImplTest, ResolveCardArtURL) {
   // With kAutofillEnableNewCardArtAndNetworkImages enabled, we fetch the image
   // at height of 48.
   EXPECT_EQ(GURL("https://www.example.com/fake_image1=h48-pa"),

@@ -67,8 +67,7 @@ bool RulesContainsProxy(const net::ProxyConfig::ProxyRules& proxy_rules,
              CheckProxyList(proxy_rules.proxies_for_https, target_proxy);
   }
 
-  NOTREACHED_IN_MIGRATION();
-  return false;
+  NOTREACHED();
 }
 
 bool IsValidCustomProxyConfig(const mojom::CustomProxyConfig& config) {
@@ -84,8 +83,7 @@ bool IsValidCustomProxyConfig(const mojom::CustomProxyConfig& config) {
              !config.rules.proxies_for_https.IsEmpty();
   }
 
-  NOTREACHED_IN_MIGRATION();
-  return false;
+  NOTREACHED();
 }
 
 // Merges headers from |in| to |out|. If the header already exists in |out| they
@@ -93,9 +91,9 @@ bool IsValidCustomProxyConfig(const mojom::CustomProxyConfig& config) {
 void MergeRequestHeaders(net::HttpRequestHeaders* out,
                          const net::HttpRequestHeaders& in) {
   for (net::HttpRequestHeaders::Iterator it(in); it.GetNext();) {
-    std::string old_value;
-    if (out->GetHeader(it.name(), &old_value)) {
-      out->SetHeader(it.name(), old_value + ", " + it.value());
+    std::optional<std::string> old_value = out->GetHeader(it.name());
+    if (old_value) {
+      out->SetHeader(it.name(), *old_value + ", " + it.value());
     } else {
       out->SetHeader(it.name(), it.value());
     }

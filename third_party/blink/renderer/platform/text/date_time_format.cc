@@ -23,6 +23,11 @@
  * SUCH DAMAGE.
  */
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/platform/text/date_time_format.h"
 
 #include "base/notreached.h"
@@ -234,8 +239,7 @@ bool DateTimeFormat::Parse(const String& source, TokenHandler& token_handler) {
       return true;
   }
 
-  NOTREACHED_IN_MIGRATION();
-  return false;
+  NOTREACHED();
 }
 
 static bool IsASCIIAlphabetOrQuote(UChar ch) {

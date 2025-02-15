@@ -9,7 +9,9 @@ import androidx.annotation.VisibleForTesting;
 
 import org.chromium.base.Callback;
 import org.chromium.base.ContextUtils;
+import org.chromium.base.ObserverList;
 import org.chromium.base.lifetime.Destroyable;
+import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.omaha.UpdateStatusProvider;
 import org.chromium.chrome.browser.password_manager.PasswordCheckReferrer;
@@ -17,25 +19,31 @@ import org.chromium.chrome.browser.password_manager.PasswordManagerHelper;
 import org.chromium.chrome.browser.password_manager.PasswordManagerUtilBridge;
 import org.chromium.chrome.browser.preferences.Pref;
 import org.chromium.chrome.browser.profiles.Profile;
-import org.chromium.chrome.browser.sync.SyncServiceFactory;
+import org.chromium.chrome.browser.signin.services.IdentityServicesProvider;
+import org.chromium.chrome.browser.signin.services.SigninManager;
 import org.chromium.components.background_task_scheduler.BackgroundTaskSchedulerFactory;
 import org.chromium.components.background_task_scheduler.TaskIds;
 import org.chromium.components.background_task_scheduler.TaskInfo;
 import org.chromium.components.prefs.PrefService;
-import org.chromium.components.signin.base.CoreAccountInfo;
-import org.chromium.components.sync.SyncService;
 import org.chromium.components.user_prefs.UserPrefs;
 
 import java.util.concurrent.TimeUnit;
 
 /** Manages the scheduling of Safety Hub fetch jobs. */
-public class SafetyHubFetchService implements SyncService.SyncStateChangedListener, Destroyable {
+public class SafetyHubFetchService implements SigninManager.SignInStateObserver, Destroyable {
+    interface Observer {
+        void passwordCountsChanged();
+
+        void updateStatusChanged();
+    }
+
     private static final int SAFETY_HUB_JOB_INTERVAL_IN_DAYS = 1;
     private final Profile mProfile;
 
     private final Callback<UpdateStatusProvider.UpdateStatus> mUpdateCallback =
             status -> {
                 mUpdateStatus = status;
+                notifyUpdateStatusChanged();
             };
 
     /*
@@ -43,26 +51,63 @@ public class SafetyHubFetchService implements SyncService.SyncStateChangedListen
      * null} if the status hasn't been determined yet.
      */
     private @Nullable UpdateStatusProvider.UpdateStatus mUpdateStatus;
+    private final ObserverList<Observer> mObservers = new ObserverList<>();
+    private final SigninManager mSigninManager;
+
+    /**
+     * These booleans indicate if the specific type of credentials count has returned. They are used
+     * so the callback of `fetchCredentialsCount` call is only ran once.
+     */
+    private boolean mBreachedCredentialsCountFetched;
+    private boolean mWeakCredentialsCountFetched;
+    private boolean mReusedCredentialsCountFetched;
+
+    /**
+     * Indicates if any of the credential counts has returned with an error. Used when running the
+     * `fetchCredentialsCount` callback to indicate if a rescheduled is needed.
+     */
+    private boolean mCredentialCountError;
 
     @VisibleForTesting(otherwise = VisibleForTesting.PACKAGE_PRIVATE)
     SafetyHubFetchService(Profile profile) {
         assert profile != null;
         mProfile = profile;
 
-        SyncService syncService = SyncServiceFactory.getForProfile(mProfile);
-        if (syncService != null) {
-            syncService.addSyncStateChangedListener(this);
+        mSigninManager = IdentityServicesProvider.get().getSigninManager(mProfile);
+        if (mSigninManager != null) {
+            mSigninManager.addSignInStateObserver(this);
         }
 
         // Fetch latest update status.
         UpdateStatusProvider.getInstance().addObserver(mUpdateCallback);
+
+        recordMetricForUnusedSitePermissionsSettingState();
+    }
+
+    /**
+     * Records the metric related to the setting state of autorevoke unused site permissions. This
+     * should only be recorded on start up.
+     */
+    private void recordMetricForUnusedSitePermissionsSettingState() {
+        boolean unusedSitePermissionsRevocationEnabled =
+                UserPrefs.get(mProfile).getBoolean(Pref.UNUSED_SITE_PERMISSIONS_REVOCATION_ENABLED);
+        RecordHistogram.recordBooleanHistogram(
+                "Settings.SafetyHub.AutorevokeUnusedSitePermissions.StateOnStartup",
+                unusedSitePermissionsRevocationEnabled);
+    }
+
+    void addObserver(Observer observer) {
+        mObservers.addObserver(observer);
+    }
+
+    void removeObserver(Observer observer) {
+        mObservers.removeObserver(observer);
     }
 
     @Override
     public void destroy() {
-        SyncService syncService = SyncServiceFactory.getForProfile(mProfile);
-        if (syncService != null) {
-            syncService.removeSyncStateChangedListener(this);
+        if (mSigninManager != null) {
+            mSigninManager.removeSignInStateObserver(this);
         }
 
         UpdateStatusProvider.getInstance().removeObserver(mUpdateCallback);
@@ -103,7 +148,12 @@ public class SafetyHubFetchService implements SyncService.SyncStateChangedListen
 
     /** Schedules the next fetch job to run after a delay. */
     private void scheduleNextFetchJob() {
-        long nextFetchDelayMs = TimeUnit.DAYS.toMillis(SAFETY_HUB_JOB_INTERVAL_IN_DAYS);
+        int nextFetchDelayInDays =
+                ChromeFeatureList.getFieldTrialParamByFeatureAsInt(
+                        ChromeFeatureList.SAFETY_HUB,
+                        "background-password-check-interval-in-days",
+                        SAFETY_HUB_JOB_INTERVAL_IN_DAYS);
+        long nextFetchDelayMs = TimeUnit.DAYS.toMillis(nextFetchDelayInDays);
 
         // Cancel existing job if it wasn't already stopped.
         cancelFetchJob();
@@ -113,48 +163,131 @@ public class SafetyHubFetchService implements SyncService.SyncStateChangedListen
 
     private boolean checkConditions() {
         PasswordManagerHelper passwordManagerHelper = PasswordManagerHelper.getForProfile(mProfile);
-        SyncService syncService = SyncServiceFactory.getForProfile(mProfile);
-        String accountEmail =
-                (syncService != null)
-                        ? CoreAccountInfo.getEmailFrom(syncService.getAccountInfo())
-                        : null;
+        boolean isSignedIn = SafetyHubUtils.isSignedIn(mProfile);
+        String accountEmail = SafetyHubUtils.getAccountEmail(mProfile);
 
         return ChromeFeatureList.isEnabled(ChromeFeatureList.SAFETY_HUB)
-                && PasswordManagerHelper.hasChosenToSyncPasswords(syncService)
+                && isSignedIn
                 && PasswordManagerUtilBridge.areMinUpmRequirementsMet()
                 && passwordManagerHelper.canUseUpm()
                 && accountEmail != null;
     }
 
     /**
-     * Makes a call to GMSCore to fetch the latest leaked credentials count for the currently
-     * syncing profile.
+     * Triggers several calls to GMSCore to fetch the latest leaked, weak and reused credentials
+     * counts for the currently signed-in profile. `onFinishedCallback` is triggered when all calls
+     * to GMSCore have returned.
      */
-    void fetchBreachedCredentialsCount(Callback<Boolean> onFinishedCallback) {
+    void fetchCredentialsCount(Callback<Boolean> onFinishedCallback) {
         if (!checkConditions()) {
-            onFinishedCallback.onResult(/* needsReschedule= */ false);
+            onFinishedCallback.onResult(/* result= */ false);
             cancelFetchJob();
+            return;
+        }
+
+        mCredentialCountError = false;
+        mBreachedCredentialsCountFetched = false;
+        mWeakCredentialsCountFetched = false;
+        mReusedCredentialsCountFetched = false;
+
+        fetchBreachedCredentialsCount(onFinishedCallback);
+        fetchWeakCredentialsCount(onFinishedCallback);
+        fetchReusedCredentialsCount(onFinishedCallback);
+    }
+
+    /**
+     * Makes a call to GMSCore to fetch the latest leaked credentials count for the currently
+     * signed-in profile.
+     */
+    private void fetchBreachedCredentialsCount(Callback<Boolean> onFinishedCallback) {
+        PasswordManagerHelper passwordManagerHelper = PasswordManagerHelper.getForProfile(mProfile);
+        PrefService prefService = UserPrefs.get(mProfile);
+
+        passwordManagerHelper.getBreachedCredentialsCount(
+                PasswordCheckReferrer.SAFETY_CHECK,
+                SafetyHubUtils.getAccountEmail(mProfile),
+                count -> {
+                    mBreachedCredentialsCountFetched = true;
+                    prefService.setInteger(Pref.BREACHED_CREDENTIALS_COUNT, count);
+                    onFetchCredentialsFinished(onFinishedCallback);
+                },
+                error -> {
+                    mBreachedCredentialsCountFetched = true;
+                    mCredentialCountError = true;
+                    onFetchCredentialsFinished(onFinishedCallback);
+                });
+    }
+
+    /**
+     * Makes a call to GMSCore to fetch the latest weak credentials count for the currently
+     * signed-in profile.
+     */
+    private void fetchWeakCredentialsCount(Callback<Boolean> onFinishedCallback) {
+        if (!ChromeFeatureList.isEnabled(ChromeFeatureList.SAFETY_HUB_WEAK_AND_REUSED_PASSWORDS)) {
+            mWeakCredentialsCountFetched = true;
+            onFetchCredentialsFinished(onFinishedCallback);
             return;
         }
 
         PasswordManagerHelper passwordManagerHelper = PasswordManagerHelper.getForProfile(mProfile);
         PrefService prefService = UserPrefs.get(mProfile);
-        SyncService syncService = SyncServiceFactory.getForProfile(mProfile);
 
-        assert syncService != null;
-        String accountEmail = CoreAccountInfo.getEmailFrom(syncService.getAccountInfo());
-
-        passwordManagerHelper.getBreachedCredentialsCount(
+        passwordManagerHelper.getWeakCredentialsCount(
                 PasswordCheckReferrer.SAFETY_CHECK,
-                accountEmail,
+                SafetyHubUtils.getAccountEmail(mProfile),
                 count -> {
-                    prefService.setInteger(Pref.BREACHED_CREDENTIALS_COUNT, count);
-                    onFinishedCallback.onResult(/* needsReschedule= */ false);
-                    scheduleNextFetchJob();
+                    mWeakCredentialsCountFetched = true;
+                    prefService.setInteger(Pref.WEAK_CREDENTIALS_COUNT, count);
+                    onFetchCredentialsFinished(onFinishedCallback);
                 },
                 error -> {
-                    onFinishedCallback.onResult(/* needsReschedule= */ true);
+                    mWeakCredentialsCountFetched = true;
+                    mCredentialCountError = true;
+                    onFetchCredentialsFinished(onFinishedCallback);
                 });
+    }
+
+    /**
+     * Makes a call to GMSCore to fetch the latest reused credentials count for the currently
+     * signed-in profile.
+     */
+    private void fetchReusedCredentialsCount(Callback<Boolean> onFinishedCallback) {
+        if (!ChromeFeatureList.isEnabled(ChromeFeatureList.SAFETY_HUB_WEAK_AND_REUSED_PASSWORDS)) {
+            mReusedCredentialsCountFetched = true;
+            onFetchCredentialsFinished(onFinishedCallback);
+            return;
+        }
+
+        PasswordManagerHelper passwordManagerHelper = PasswordManagerHelper.getForProfile(mProfile);
+        PrefService prefService = UserPrefs.get(mProfile);
+
+        passwordManagerHelper.getReusedCredentialsCount(
+                PasswordCheckReferrer.SAFETY_CHECK,
+                SafetyHubUtils.getAccountEmail(mProfile),
+                count -> {
+                    mReusedCredentialsCountFetched = true;
+                    prefService.setInteger(Pref.REUSED_CREDENTIALS_COUNT, count);
+                    onFetchCredentialsFinished(onFinishedCallback);
+                },
+                error -> {
+                    mReusedCredentialsCountFetched = true;
+                    mCredentialCountError = true;
+                    onFetchCredentialsFinished(onFinishedCallback);
+                });
+    }
+
+    private void onFetchCredentialsFinished(Callback<Boolean> onFinishedCallback) {
+        if (!mBreachedCredentialsCountFetched
+                || !mWeakCredentialsCountFetched
+                || !mReusedCredentialsCountFetched) {
+            return;
+        }
+
+        notifyPasswordCountsChanged();
+        onFinishedCallback.onResult(/* result= */ mCredentialCountError);
+        if (!mCredentialCountError) {
+            scheduleNextFetchJob();
+        }
     }
 
     /**
@@ -167,9 +300,23 @@ public class SafetyHubFetchService implements SyncService.SyncStateChangedListen
         } else {
             // Clean up account specific prefs.
             PrefService prefService = UserPrefs.get(mProfile);
-            prefService.setInteger(Pref.BREACHED_CREDENTIALS_COUNT, 0);
+            prefService.clearPref(Pref.BREACHED_CREDENTIALS_COUNT);
+            prefService.clearPref(Pref.WEAK_CREDENTIALS_COUNT);
+            prefService.clearPref(Pref.REUSED_CREDENTIALS_COUNT);
 
             cancelFetchJob();
+        }
+    }
+
+    private void notifyPasswordCountsChanged() {
+        for (Observer observer : mObservers) {
+            observer.passwordCountsChanged();
+        }
+    }
+
+    private void notifyUpdateStatusChanged() {
+        for (Observer observer : mObservers) {
+            observer.updateStatusChanged();
         }
     }
 
@@ -181,7 +328,12 @@ public class SafetyHubFetchService implements SyncService.SyncStateChangedListen
     }
 
     @Override
-    public void syncStateChanged() {
+    public void onSignedIn() {
+        scheduleOrCancelFetchJob(/* delayMs= */ 0);
+    }
+
+    @Override
+    public void onSignedOut() {
         scheduleOrCancelFetchJob(/* delayMs= */ 0);
     }
 }

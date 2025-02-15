@@ -4,55 +4,50 @@
 
 #include "services/webnn/tflite/context_impl_tflite.h"
 
-#include "base/types/expected_macros.h"
 #include "services/webnn/public/mojom/webnn_context_provider.mojom.h"
 #include "services/webnn/public/mojom/webnn_graph.mojom-shared.h"
-#include "services/webnn/tflite/buffer_impl_tflite.h"
+#include "services/webnn/tflite/graph_builder_tflite.h"
 #include "services/webnn/tflite/graph_impl_tflite.h"
+#include "services/webnn/tflite/tensor_impl_tflite.h"
+#include "services/webnn/webnn_constant_operand.h"
+#include "services/webnn/webnn_context_impl.h"
+#include "services/webnn/webnn_graph_impl.h"
 
 namespace webnn::tflite {
-
-namespace {
-
-mojom::ContextPropertiesPtr GetProperties() {
-  return mojom::ContextProperties::New(
-      /*conv2d_input_layout=*/mojom::InputOperandLayout::kChannelsLast);
-}
-
-}  // namespace
 
 ContextImplTflite::ContextImplTflite(
     mojo::PendingReceiver<mojom::WebNNContext> receiver,
     WebNNContextProviderImpl* context_provider,
     mojom::CreateContextOptionsPtr options)
-    : WebNNContextImpl(std::move(receiver), context_provider, GetProperties()),
-      options_(std::move(options)) {}
+    : WebNNContextImpl(std::move(receiver),
+                       context_provider,
+                       GraphBuilderTflite::GetContextProperties(),
+                       std::move(options)) {}
 
 ContextImplTflite::~ContextImplTflite() = default;
 
-void ContextImplTflite::CreateGraphImpl(
-    mojom::GraphInfoPtr graph_info,
-    mojom::WebNNContext::CreateGraphCallback callback) {
-  ASSIGN_OR_RETURN(std::unique_ptr<GraphImplTflite> graph,
-                   GraphImplTflite::CreateAndBuild(std::move(graph_info), this),
-                   [&callback](mojom::ErrorPtr error) {
-                     std::move(callback).Run(
-                         mojom::CreateGraphResult::NewError(std::move(error)));
-                   });
-
-  mojo::PendingAssociatedRemote<mojom::WebNNGraph> remote;
-  graph_receivers_.Add(std::move(graph),
-                       remote.InitWithNewEndpointAndPassReceiver());
-  std::move(callback).Run(
-      mojom::CreateGraphResult::NewGraphRemote(std::move(remote)));
+base::WeakPtr<WebNNContextImpl> ContextImplTflite::AsWeakPtr() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  return weak_factory_.GetWeakPtr();
 }
 
-std::unique_ptr<WebNNBufferImpl> ContextImplTflite::CreateBufferImpl(
-    mojo::PendingAssociatedReceiver<mojom::WebNNBuffer> receiver,
-    mojom::BufferInfoPtr buffer_info,
-    const base::UnguessableToken& buffer_handle) {
-  return BufferImplTflite::Create(std::move(receiver), this,
-                                  std::move(buffer_info), buffer_handle);
+void ContextImplTflite::CreateGraphImpl(
+    mojom::GraphInfoPtr graph_info,
+    WebNNGraphImpl::ComputeResourceInfo compute_resource_info,
+    base::flat_map<uint64_t, std::unique_ptr<WebNNConstantOperand>>
+        constant_operands,
+    CreateGraphImplCallback callback) {
+  std::move(callback).Run(GraphImplTflite::CreateAndBuild(
+      std::move(graph_info), std::move(compute_resource_info),
+      std::move(constant_operands), this));
+}
+
+void ContextImplTflite::CreateTensorImpl(
+    mojo::PendingAssociatedReceiver<mojom::WebNNTensor> receiver,
+    mojom::TensorInfoPtr tensor_info,
+    CreateTensorImplCallback callback) {
+  std::move(callback).Run(TensorImplTflite::Create(std::move(receiver), this,
+                                                   std::move(tensor_info)));
 }
 
 }  // namespace webnn::tflite

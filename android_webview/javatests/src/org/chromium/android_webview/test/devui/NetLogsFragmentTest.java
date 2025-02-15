@@ -45,10 +45,10 @@ import org.chromium.android_webview.nonembedded_util.WebViewPackageHelper;
 import org.chromium.android_webview.services.AwNetLogService;
 import org.chromium.android_webview.test.AwJUnit4ClassRunner;
 import org.chromium.base.ContextUtils;
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.BaseActivityTestRule;
 import org.chromium.base.test.util.DoNotBatch;
 import org.chromium.base.test.util.Feature;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.ui.test.util.ViewUtils;
 
 import java.io.File;
@@ -82,7 +82,7 @@ public class NetLogsFragmentTest {
     public void setUp() throws Exception {
         Context context = ContextUtils.getApplicationContext();
         Intent intent = new Intent(context, MainActivity.class);
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     sMockFileList = initalizeTestFiles();
                     NetLogsFragment.setFileListForTesting(sMockFileList);
@@ -210,7 +210,6 @@ public class NetLogsFragmentTest {
 
         File firstFile = (File) filesList.getAdapter().getItem(1);
         String firstFileName = NetLogsFragment.getFilePackageName(firstFile);
-        onData(anything()).inAdapterView(withId(R.id.net_log_list)).atPosition(1).perform(click());
         onView(withText(firstFileName)).perform(click());
         onView(withText("Delete")).check(matches(isDisplayed()));
         onView(withText("Delete")).perform(click());
@@ -246,10 +245,6 @@ public class NetLogsFragmentTest {
                     .respondWith(new ActivityResult(Activity.RESULT_OK, null));
 
             String firstFileName = NetLogsFragment.getFilePackageName(sMockFileList.get(1));
-            onData(anything())
-                    .inAdapterView(withId(R.id.net_log_list))
-                    .atPosition(1)
-                    .perform(click());
             onView(withText(firstFileName)).perform(click());
             onView(withText("Share")).check(matches(isDisplayed()));
             onView(withText("Share")).perform(click());

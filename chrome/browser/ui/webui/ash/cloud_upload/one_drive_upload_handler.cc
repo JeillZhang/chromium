@@ -129,7 +129,13 @@ void OneDriveUploadHandler::CheckReauthenticationAndStartIOTask(
     // Try the copy/move anyway.
     LOG(ERROR) << "Failed to get reauthentication required state: "
                << metadata_or_error.error();
-  } else if (metadata_or_error->reauthentication_required) {
+  } else if (metadata_or_error->reauthentication_required ||
+             (metadata_or_error->account_state.has_value() &&
+              metadata_or_error->account_state.value() ==
+                  OdfsAccountState::kReauthenticationRequired)) {
+    // TODO(b/330786891): Only query account_state once
+    // reauthentication_required is no longer needed for backwards compatibility
+    // with ODFS.
     if (tried_reauth_ || !base::FeatureList::IsEnabled(
                              ash::features::kOneDriveUploadImmediateReauth)) {
       // We do not expect this failure because it would mean we became de-auth'd
@@ -202,8 +208,7 @@ void OneDriveUploadHandler::OnFailedUpload(
     LOG(ERROR) << "Upload to OneDrive: " << error_message;
     notification_manager_->ShowUploadError(error_message);
   }
-    std::move(callback_).Run(OfficeTaskResult::kFailedToUpload, std::nullopt,
-                             0);
+  std::move(callback_).Run(OfficeTaskResult::kFailedToUpload, std::nullopt, 0);
 }
 
 void OneDriveUploadHandler::OnIOTaskStatus(
@@ -248,10 +253,8 @@ void OneDriveUploadHandler::OnIOTaskStatus(
       ShowIOTaskError(status);
       return;
     case file_manager::io_task::State::kNeedPassword:
-      NOTREACHED_IN_MIGRATION()
-          << "Encrypted file should not need password to be copied or "
-             "moved. Case should not be reached.";
-      return;
+      NOTREACHED() << "Encrypted file should not need password to be copied or "
+                      "moved. Case should not be reached.";
   }
 }
 
@@ -263,8 +266,13 @@ void OneDriveUploadHandler::OnGetReauthenticationRequired(
   if (!metadata_or_error.has_value()) {
     LOG(ERROR) << "Failed to get reauthentication required state: "
                << metadata_or_error.error();
-  } else if (metadata_or_error->reauthentication_required) {
-    // Show the reauthentication required error notification.
+  } else if (metadata_or_error->reauthentication_required ||
+             (metadata_or_error->account_state.has_value() &&
+              metadata_or_error->account_state.value() ==
+                  OdfsAccountState::kReauthenticationRequired)) {
+    // TODO(b/330786891): Only query account_state once
+    // reauthentication_required is no longer needed for backwards compatibility
+    // with ODFS. Show the reauthentication required error notification.
     error_message = GetReauthenticationRequiredMessage();
     upload_result = OfficeFilesUploadResult::kCloudReauthRequired;
   }

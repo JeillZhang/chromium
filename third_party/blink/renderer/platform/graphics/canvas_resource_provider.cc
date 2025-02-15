@@ -6,8 +6,6 @@
 
 #include <string>
 
-#include "base/debug/dump_without_crashing.h"
-#include "base/debug/stack_trace.h"
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/metrics/field_trial_params.h"
@@ -15,6 +13,7 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/observer_list.h"
 #include "base/strings/stringprintf.h"
+#include "base/task/bind_post_task.h"
 #include "base/time/time.h"
 #include "base/trace_event/memory_allocator_dump.h"
 #include "base/trace_event/memory_dump_manager.h"
@@ -28,30 +27,37 @@
 #include "gpu/command_buffer/client/context_support.h"
 #include "gpu/command_buffer/client/raster_interface.h"
 #include "gpu/command_buffer/common/capabilities.h"
+#include "gpu/command_buffer/common/gpu_memory_buffer_support.h"
 #include "gpu/command_buffer/common/shared_image_capabilities.h"
 #include "gpu/command_buffer/common/shared_image_trace_utils.h"
+#include "gpu/command_buffer/common/shared_image_usage.h"
 #include "gpu/config/gpu_driver_bug_workaround_type.h"
 #include "gpu/config/gpu_feature_info.h"
 #include "gpu/config/gpu_feature_type.h"
 #include "skia/buildflags.h"
 #include "skia/ext/legacy_display_globals.h"
+#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/platform/platform.h"
+#include "third_party/blink/public/platform/web_graphics_shared_image_interface_provider.h"
 #include "third_party/blink/renderer/platform/graphics/accelerated_static_bitmap_image.h"
-#include "third_party/blink/renderer/platform/graphics/canvas_color_params.h"
+#include "third_party/blink/renderer/platform/graphics/canvas_deferred_paint_record.h"
 #include "third_party/blink/renderer/platform/graphics/gpu/shared_gpu_context.h"
+#include "third_party/blink/renderer/platform/graphics/graphics_types.h"
 #include "third_party/blink/renderer/platform/graphics/memory_managed_paint_canvas.h"
 #include "third_party/blink/renderer/platform/graphics/memory_managed_paint_recorder.h"
+#include "third_party/blink/renderer/platform/graphics/skia/skia_utils.h"
 #include "third_party/blink/renderer/platform/graphics/unaccelerated_static_bitmap_image.h"
 #include "third_party/blink/renderer/platform/instrumentation/canvas_memory_dump_provider.h"
 #include "third_party/blink/renderer/platform/scheduler/public/thread_scheduler.h"
+#include "third_party/skia/include/core/SkImageInfo.h"
 #include "third_party/skia/include/core/SkSurface.h"
 #include "third_party/skia/include/gpu/GpuTypes.h"
-#include "third_party/skia/include/gpu/GrBackendSurface.h"
-#include "third_party/skia/include/gpu/GrDirectContext.h"
-#include "third_party/skia/include/gpu/GrTypes.h"
+#include "third_party/skia/include/gpu/ganesh/GrBackendSurface.h"
+#include "third_party/skia/include/gpu/ganesh/GrDirectContext.h"
+#include "third_party/skia/include/gpu/ganesh/GrTypes.h"
 #include "third_party/skia/include/gpu/ganesh/SkSurfaceGanesh.h"
 #include "third_party/skia/include/gpu/ganesh/gl/GrGLBackendSurface.h"
-#include "third_party/skia/include/gpu/gl/GrGLTypes.h"
+#include "third_party/skia/include/gpu/ganesh/gl/GrGLTypes.h"
 
 namespace blink {
 
@@ -92,11 +98,18 @@ static FlushForImageListener* GetFlushForImageListener() {
 
 namespace {
 
-bool IsGMBAllowed(const SkImageInfo& info, const gpu::Capabilities& caps) {
-  const gfx::Size size(info.width(), info.height());
+// Serves as reverse-killswitch while we roll out the change for
+// CanvasResourceProviderSharedBitmap creation to require SW compositing.
+// TODO(crbug.com/379996128): Eliminet post-safe rollout.
+BASE_FEATURE(kCanvasAllowCRPSharedBitmapWithGPUCompositing,
+             "CanvasAllowCRPSharedBitmapWithGPUCompositing",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+bool IsGMBAllowed(gfx::Size size,
+                  viz::SharedImageFormat format,
+                  const gpu::Capabilities& caps) {
   const gfx::BufferFormat buffer_format =
-      viz::SinglePlaneSharedImageFormatToBufferFormat(
-          viz::SkColorTypeToSinglePlaneSharedImageFormat(info.colorType()));
+      viz::SinglePlaneSharedImageFormatToBufferFormat(format);
   return gpu::IsImageSizeValidForGpuMemoryBufferFormat(size, buffer_format) &&
          gpu::IsImageFromGpuMemoryBufferFormatSupported(buffer_format, caps);
 }
@@ -108,7 +121,7 @@ class CanvasResourceProvider::CanvasImageProvider : public cc::ImageProvider {
   CanvasImageProvider(cc::ImageDecodeCache* cache_n32,
                       cc::ImageDecodeCache* cache_f16,
                       const gfx::ColorSpace& target_color_space,
-                      SkColorType target_color_type,
+                      viz::SharedImageFormat canvas_format,
                       cc::PlaybackImageProvider::RasterMode raster_mode);
   CanvasImageProvider(const CanvasImageProvider&) = delete;
   CanvasImageProvider& operator=(const CanvasImageProvider&) = delete;
@@ -138,22 +151,22 @@ class CanvasResourceProvider::CanvasImageProvider : public cc::ImageProvider {
 // * Mailboxing is not supported : cannot be directly composited.
 class CanvasResourceProviderBitmap : public CanvasResourceProvider {
  public:
-  CanvasResourceProviderBitmap(
-      const SkImageInfo& info,
-      cc::PaintFlags::FilterQuality filter_quality,
-      base::WeakPtr<CanvasResourceDispatcher> resource_dispatcher,
-      CanvasResourceHost* resource_host)
+  CanvasResourceProviderBitmap(gfx::Size size,
+                               viz::SharedImageFormat format,
+                               SkAlphaType alpha_type,
+                               const gfx::ColorSpace& color_space,
+                               CanvasResourceHost* resource_host)
       : CanvasResourceProvider(kBitmap,
-                               info,
-                               filter_quality,
-                               /*is_origin_top_left=*/true,
+                               size,
+                               format,
+                               alpha_type,
+                               color_space,
                                /*context_provider_wrapper=*/nullptr,
-                               std::move(resource_dispatcher),
                                resource_host) {}
 
   ~CanvasResourceProviderBitmap() override = default;
 
-  bool IsValid() const final { return GetSkSurface(); }
+  bool IsValid() const override { return GetSkSurface(); }
   bool IsAccelerated() const final { return false; }
   bool SupportsDirectCompositing() const override { return false; }
 
@@ -180,35 +193,82 @@ class CanvasResourceProviderBitmap : public CanvasResourceProvider {
 
 // * Renders to a shared memory bitmap.
 // * Uses SharedBitmaps to pass frames directly to the compositor.
-class CanvasResourceProviderSharedBitmap : public CanvasResourceProviderBitmap {
+class CanvasResourceProviderSharedBitmap : public CanvasResourceProvider,
+                                           public BitmapGpuChannelLostObserver {
  public:
   CanvasResourceProviderSharedBitmap(
-      const SkImageInfo& info,
-      cc::PaintFlags::FilterQuality filter_quality,
-      base::WeakPtr<CanvasResourceDispatcher> resource_dispatcher,
+      gfx::Size size,
+      viz::SharedImageFormat format,
+      SkAlphaType alpha_type,
+      const gfx::ColorSpace& color_space,
+      WebGraphicsSharedImageInterfaceProvider* shared_image_interface_provider,
       CanvasResourceHost* resource_host)
-      : CanvasResourceProviderBitmap(info,
-                                     filter_quality,
-                                     std::move(resource_dispatcher),
-                                     resource_host) {
-    DCHECK(ResourceDispatcher());
-    type_ = kSharedBitmap;
+      : CanvasResourceProvider(kSharedBitmap,
+                               size,
+                               format,
+                               alpha_type,
+                               color_space,
+                               /*context_provider_wrapper=*/nullptr,
+                               resource_host),
+        shared_image_interface_provider_(
+            shared_image_interface_provider
+                ? shared_image_interface_provider->GetWeakPtr()
+                : nullptr) {
+    if (shared_image_interface_provider_) {
+      shared_image_interface_provider_->AddGpuChannelLostObserver(this);
+    }
   }
-  ~CanvasResourceProviderSharedBitmap() override = default;
+
+  scoped_refptr<StaticBitmapImage> Snapshot(
+      FlushReason reason,
+      ImageOrientation orientation) override {
+    TRACE_EVENT0("blink", "CanvasResourceProviderSharedBitmap::Snapshot");
+    return SnapshotInternal(orientation, reason);
+  }
+
+  sk_sp<SkSurface> CreateSkSurface() const override {
+    TRACE_EVENT0("blink",
+                 "CanvasResourceProviderSharedBitmap::CreateSkSurface");
+
+    const auto info = GetSkImageInfo().makeAlphaType(kPremul_SkAlphaType);
+    const auto props = GetSkSurfaceProps();
+    return SkSurfaces::Raster(info, &props);
+  }
+  ~CanvasResourceProviderSharedBitmap() override {
+    if (shared_image_interface_provider_) {
+      shared_image_interface_provider_->RemoveGpuChannelLostObserver(this);
+    }
+  }
+
+  // BitmapGpuChannelLostObserver implementation.
+  void OnGpuChannelLost() override { resource_host()->NotifyGpuContextLost(); }
+
+  bool IsValid() const final {
+    return !IsSharedBitmapGpuChannelLost() && GetSkSurface();
+  }
+
+  bool IsAccelerated() const final { return false; }
   bool SupportsDirectCompositing() const override { return true; }
+  base::WeakPtr<WebGraphicsSharedImageInterfaceProvider>
+      shared_image_interface_provider_;
+
+  bool IsSharedBitmapGpuChannelLost() const override {
+    return !shared_image_interface_provider_ ||
+           !shared_image_interface_provider_->SharedImageInterface();
+  }
 
  private:
   scoped_refptr<CanvasResource> CreateResource() final {
-    SkImageInfo info = GetSkImageInfo();
-    if (!viz::SkColorTypeToSinglePlaneSharedImageFormat(info.colorType())
-             .IsBitmapFormatSupported()) {
+    auto format = GetSharedImageFormat();
+    if (!format.IsBitmapFormatSupported()) {
       // If the rendering format is not supported, downgrade to 8-bits.
       // TODO(junov): Should we try 12-12-12-12 and 10-10-10-2?
-      info = info.makeColorType(kN32_SkColorType);
+      format = GetN32FormatForCanvas();
     }
 
-    return CanvasResourceSharedBitmap::Create(info, CreateWeakPtr(),
-                                              FilterQuality());
+    return CanvasResourceSharedBitmap::Create(Size(), format, GetAlphaType(),
+                                              GetColorSpace(), CreateWeakPtr(),
+                                              shared_image_interface_provider_);
   }
 
   scoped_refptr<CanvasResource> ProduceCanvasResource(
@@ -218,12 +278,12 @@ class CanvasResourceProviderSharedBitmap : public CanvasResourceProviderBitmap {
     if (!output_resource)
       return nullptr;
 
-    auto paint_image = MakeImageSnapshot(reason);
-    if (!paint_image)
-      return nullptr;
-    DCHECK(!paint_image.IsTextureBacked());
+    FlushCanvas(reason);
 
-    output_resource->TakeSkImage(paint_image.GetSwSkImage());
+    // Note that the resource *must* be a CanvasResourceSharedBitmap as this
+    // class creates CanvasResourceSharedBitmap instances exclusively.
+    static_cast<CanvasResourceSharedBitmap*>(output_resource.get())
+        ->UploadSoftwareRenderingResults(GetSkSurface());
 
     return output_resource;
   }
@@ -234,26 +294,27 @@ class CanvasResourceProviderSharedBitmap : public CanvasResourceProviderBitmap {
 class CanvasResourceProviderSharedImage : public CanvasResourceProvider {
  public:
   CanvasResourceProviderSharedImage(
-      const SkImageInfo& info,
-      cc::PaintFlags::FilterQuality filter_quality,
+      gfx::Size size,
+      viz::SharedImageFormat format,
+      SkAlphaType alpha_type,
+      const gfx::ColorSpace& color_space,
       base::WeakPtr<WebGraphicsContext3DProviderWrapper>
           context_provider_wrapper,
-      bool is_origin_top_left,
       bool is_accelerated,
-      uint32_t shared_image_usage_flags,
+      gpu::SharedImageUsageSet shared_image_usage_flags,
       CanvasResourceHost* resource_host)
       : CanvasResourceProvider(kSharedImage,
-                               info,
-                               filter_quality,
-                               is_origin_top_left,
+                               size,
+                               format,
+                               alpha_type,
+                               color_space,
                                std::move(context_provider_wrapper),
-                               /*resource_dispatcher=*/nullptr,
                                resource_host),
         is_accelerated_(is_accelerated),
         shared_image_usage_flags_(shared_image_usage_flags),
         use_oop_rasterization_(is_accelerated && ContextProviderWrapper()
                                                      ->ContextProvider()
-                                                     ->GetCapabilities()
+                                                     .GetCapabilities()
                                                      .gpu_rasterization) {
     resource_ = NewOrRecycledResource();
     GetFlushForImageListener()->AddObserver(this);
@@ -280,25 +341,51 @@ class CanvasResourceProviderSharedImage : public CanvasResourceProvider {
   }
 
   bool SupportsSingleBuffering() const override {
-    return shared_image_usage_flags_ &
-           gpu::SHARED_IMAGE_USAGE_CONCURRENT_READ_WRITE;
+    return shared_image_usage_flags_.Has(
+        gpu::SHARED_IMAGE_USAGE_CONCURRENT_READ_WRITE);
   }
-  gpu::Mailbox GetBackingMailboxForOverwrite(
-      MailboxSyncMode sync_mode) override {
+  scoped_refptr<gpu::ClientSharedImage>
+  GetBackingClientSharedImageForExternalWrite(
+      gpu::SyncToken* internal_access_sync_token,
+      gpu::SharedImageUsageSet required_shared_image_usages,
+      bool* was_copy_performed) override {
+    // This may cause the current resource and all cached resources to become
+    // unusable. WillDrawInternal() will detect this case, drop all cached
+    // resources, and copy the current resource to a newly-created resource
+    // which will by definition be usable.
+    shared_image_usage_flags_.PutAll(required_shared_image_usages);
+
     DCHECK(is_accelerated_);
 
     if (IsGpuContextLost())
-      return gpu::Mailbox();
+      return nullptr;
 
+    // End the internal write access before calling WillDrawInternal(), which
+    // has a precondition that there should be no current write access on the
+    // resource.
+    EndWriteAccess();
+
+    const CanvasResource* const original_resource = resource_.get();
     WillDrawInternal(false);
-    return resource_->GetOrCreateGpuMailbox(sync_mode);
+    if (was_copy_performed != nullptr) {
+      *was_copy_performed = resource_.get() != original_resource;
+    }
+
+    // NOTE: The above invocation of WillDrawInternal() ensures that this
+    // invocation of GetSyncToken() will generate a new sync token.
+    if (internal_access_sync_token) {
+      *internal_access_sync_token = resource_->GetSyncToken();
+    }
+
+    return resource_->GetClientSharedImage();
   }
 
-  GLenum GetBackingTextureTarget() const override {
-    return resource()->TextureTarget();
+  void EndExternalWrite(
+      const gpu::SyncToken& external_write_sync_token) override {
+    resource()->EndExternalWrite(external_write_sync_token);
   }
 
-  uint32_t GetSharedImageUsageFlags() const override {
+  gpu::SharedImageUsageSet GetSharedImageUsageFlags() const override {
     return shared_image_usage_flags_;
   }
 
@@ -316,10 +403,18 @@ class CanvasResourceProviderSharedImage : public CanvasResourceProvider {
     if (IsGpuContextLost())
       return false;
 
+    // TODO(crbug.com/352263194): This code calls WillDrawInternal(true)
+    // followed immediately by GetBackingClientSharedImageForOverwrite(), which
+    // calls WillDrawInternal(false). The former calls EnsureWriteAccess() and
+    // then the latter immediately calls EndWriteAccess(). Figure out what is
+    // actually intended here and either don't call the former (preserving
+    // current behavior) or call resource()->GetClientSharedImage() rather than
+    // the latter (if the current behavior is a bug).
     WillDrawInternal(true);
     RasterInterface()->WritePixels(
-        GetBackingMailboxForOverwrite(kOrderingBarrier), x, y,
-        GetBackingTextureTarget(), SkPixmap(orig_info, pixels, row_bytes));
+        GetBackingClientSharedImageForOverwrite()->mailbox(), x, y,
+        resource()->GetClientSharedImage()->GetTextureTarget(),
+        SkPixmap(orig_info, pixels, row_bytes));
 
     // If the overdraw optimization kicked in, we need to indicate that the
     // pixels do not need to be cleared, otherwise the subsequent
@@ -336,9 +431,9 @@ class CanvasResourceProviderSharedImage : public CanvasResourceProvider {
     if (IsGpuContextLost())
       return nullptr;
 
-    return CanvasResourceRasterSharedImage::Create(
-        GetSkImageInfo(), ContextProviderWrapper(), CreateWeakPtr(),
-        FilterQuality(), IsOriginTopLeft(), is_accelerated_,
+    return CanvasResourceSharedImage::Create(
+        Size(), GetSharedImageFormat(), GetAlphaType(), GetColorSpace(),
+        ContextProviderWrapper(), CreateWeakPtr(), is_accelerated_,
         shared_image_usage_flags_);
   }
 
@@ -378,10 +473,9 @@ class CanvasResourceProviderSharedImage : public CanvasResourceProvider {
       return nullptr;
     }
     scoped_refptr<CanvasResource> resource = resource_;
-    resource->SetFilterQuality(FilterQuality());
     if (ContextProviderWrapper()
             ->ContextProvider()
-            ->GetCapabilities()
+            .GetCapabilities()
             .disable_2d_canvas_copy_on_write) {
       // A readback operation may alter the texture parameters, which may affect
       // the compositor's behavior. Therefore, we must trigger copy-on-write
@@ -450,10 +544,18 @@ class CanvasResourceProviderSharedImage : public CanvasResourceProvider {
     // token for these writes.
     cached_snapshot_.reset();
 
-    // We don't need to do copy-on-write for the resource here since writes to
-    // the GMB are deferred until it needs to be dispatched to the display
-    // compositor via ProduceCanvasResource.
-    if (is_accelerated_ && ShouldReplaceTargetBuffer(cached_content_id_)) {
+    // Determine if a copy is needed for accelerated resources. This could be
+    // for one of two reasons: (1) copy-on-write is required, or (2) the
+    // SharedImage usages with which this provider should create resources has
+    // changed since this resource was created (this can occur, for example,
+    // when a client requests the backing ClientSharedImage with a specific
+    // required set of usages for an external write). Note that for
+    // unaccelerated resources, neither of these apply: writes to the
+    // SharedImage are deferred to ProduceCanvasResource and hence
+    // copy-on-write is never needed here, and the set of SharedImage usages
+    // doesn't change over the lifetime of the provider.
+    if (is_accelerated_ && (ShouldReplaceTargetBuffer(cached_content_id_) ||
+                            !IsResourceUsable(resource_.get()))) {
       cached_content_id_ = PaintImage::kInvalidContentId;
       DCHECK(!current_resource_has_write_access_)
           << "Write access must be released before sharing the resource";
@@ -461,49 +563,39 @@ class CanvasResourceProviderSharedImage : public CanvasResourceProvider {
       auto old_resource = std::move(resource_);
       auto* old_resource_shared_image =
           static_cast<CanvasResourceSharedImage*>(old_resource.get());
+
+      if (!IsResourceUsable(old_resource.get())) {
+        // If this resource has become unusable, all cached resources have also
+        // become unusable. Drop them to ensure that a new usable resource gets
+        // created in the below call to NewOrRecycledResource().
+        ClearRecycledResources();
+      }
       resource_ = NewOrRecycledResource();
-      DCHECK(resource_);
+      DCHECK(IsResourceUsable(resource_.get()));
 
-      auto* raster_interface = RasterInterface();
-      if (raster_interface) {
-        if (!use_oop_rasterization_)
-          TearDownSkSurface();
+      if (!use_oop_rasterization_) {
+        TearDownSkSurface();
+      }
 
-        if (mode_ == SkSurface::kRetain_ContentChangeMode) {
-          auto old_mailbox = old_resource_shared_image->GetOrCreateGpuMailbox(
-              kOrderingBarrier);
-          auto mailbox = resource()->GetOrCreateGpuMailbox(kOrderingBarrier);
+      if (mode_ == SkSurface::kRetain_ContentChangeMode) {
+        auto old_mailbox =
+            old_resource_shared_image->GetClientSharedImage()->mailbox();
+        auto mailbox = resource()->GetClientSharedImage()->mailbox();
 
-          raster_interface->CopySharedImage(
-              old_mailbox, mailbox, GetBackingTextureTarget(), 0, 0, 0, 0,
-              Size().width(), Size().height(), false /* unpack_flip_y */,
-              false /* unpack_premultiply_alpha */);
-        } else if (use_oop_rasterization_) {
-          // If we're not copying over the previous contents, we need to ensure
-          // that the image is cleared on the next BeginRasterCHROMIUM.
-          is_cleared_ = false;
-        }
+        RasterInterface()->CopySharedImage(old_mailbox, mailbox, 0, 0, 0, 0,
+                                           Size().width(), Size().height());
+      } else if (use_oop_rasterization_) {
+        // If we're not copying over the previous contents, we need to ensure
+        // that the image is cleared on the next BeginRasterCHROMIUM.
+        is_cleared_ = false;
+      }
 
-        // In non-OOPR mode we need to update the client side SkSurface with the
-        // copied texture. Recreating SkSurface here matches the GPU process
-        // behaviour that will happen in OOPR mode.
-        if (!use_oop_rasterization_) {
-          EnsureWriteAccess();
-          GetSkSurface();
-        }
-      } else {
+      // In non-OOPR mode we need to update the client side SkSurface with the
+      // copied texture. Recreating SkSurface here matches the GPU process
+      // behaviour that will happen in OOPR mode.
+      if (!use_oop_rasterization_) {
         EnsureWriteAccess();
-        if (surface_) {
-          // Take read access to the outgoing resource for the skia copy below.
-          if (!old_resource_shared_image->HasReadAccess()) {
-            old_resource_shared_image->BeginReadAccess();
-          }
-          surface_->replaceBackendTexture(CreateGrTextureForResource(),
-                                          GetGrSurfaceOrigin(), mode_);
-          if (!old_resource_shared_image->HasReadAccess()) {
-            old_resource_shared_image->EndReadAccess();
-          }
-        }
+        GetSkSurface();
       }
       UMA_HISTOGRAM_BOOLEAN("Blink.Canvas.ContentChangeMode",
                             mode_ == SkSurface::kRetain_ContentChangeMode);
@@ -531,7 +623,7 @@ class CanvasResourceProviderSharedImage : public CanvasResourceProvider {
     const bool needs_clear = !is_cleared_;
     is_cleared_ = true;
     RasterRecordOOP(std::move(last_recording), needs_clear,
-                    resource()->GetOrCreateGpuMailbox(kUnverifiedSyncToken));
+                    resource()->GetClientSharedImage()->mailbox());
   }
 
   bool ShouldReplaceTargetBuffer(
@@ -576,9 +668,10 @@ class CanvasResourceProviderSharedImage : public CanvasResourceProvider {
     const auto props = GetSkSurfaceProps();
     if (is_accelerated_) {
       return SkSurfaces::WrapBackendTexture(
-          GetGrContext(), CreateGrTextureForResource(), GetGrSurfaceOrigin(),
-          0 /* msaa_sample_count */, GetSkImageInfo().colorType(),
-          GetSkImageInfo().refColorSpace(), &props);
+          GetGrContext(), CreateGrTextureForResource(),
+          kTopLeft_GrSurfaceOrigin, 0 /* msaa_sample_count */,
+          GetSkImageInfo().colorType(), GetSkImageInfo().refColorSpace(),
+          &props);
     }
 
     // For software raster path, we render into cpu memory managed internally
@@ -658,8 +751,7 @@ class CanvasResourceProviderSharedImage : public CanvasResourceProvider {
       if (!resource() || !GetSkSurface()) {
         return;
       }
-      resource()->CopyRenderingResultsToGpuMemoryBuffer(
-          GetSkSurface()->makeImageSnapshot());
+      resource()->UploadSoftwareRenderingResults(GetSkSurface());
     }
 
     current_resource_has_write_access_ = false;
@@ -694,6 +786,14 @@ class CanvasResourceProviderSharedImage : public CanvasResourceProvider {
   }
 
  private:
+  bool IsResourceUsable(CanvasResource* resource) final {
+    // The only resources that should be coming in here are
+    // CanvasResourceSharedImage instances, since that is the only type of
+    // resource that this class creates.
+    return resource->GetClientSharedImage()->usage().HasAll(
+        shared_image_usage_flags_);
+  }
+
   void OnMemoryDump(base::trace_event::ProcessMemoryDump* pmd) override {
     std::string path = base::StringPrintf("canvas/ResourceProvider_0x%" PRIXPTR,
                                           reinterpret_cast<uintptr_t>(this));
@@ -715,7 +815,7 @@ class CanvasResourceProviderSharedImage : public CanvasResourceProvider {
   }
 
   const bool is_accelerated_;
-  const uint32_t shared_image_usage_flags_;
+  gpu::SharedImageUsageSet shared_image_usage_flags_;
   bool current_resource_has_write_access_ = false;
   const bool use_oop_rasterization_;
   bool is_cleared_ = false;
@@ -731,19 +831,19 @@ class CanvasResourceProviderSharedImage : public CanvasResourceProvider {
 class CanvasResourceProviderPassThrough final : public CanvasResourceProvider {
  public:
   CanvasResourceProviderPassThrough(
-      const SkImageInfo& info,
-      cc::PaintFlags::FilterQuality filter_quality,
+      gfx::Size size,
+      viz::SharedImageFormat format,
+      SkAlphaType alpha_type,
+      const gfx::ColorSpace& color_space,
       base::WeakPtr<WebGraphicsContext3DProviderWrapper>
           context_provider_wrapper,
-      base::WeakPtr<CanvasResourceDispatcher> resource_dispatcher,
-      bool is_origin_top_left,
       CanvasResourceHost* resource_host)
       : CanvasResourceProvider(kPassThrough,
-                               info,
-                               filter_quality,
-                               is_origin_top_left,
+                               size,
+                               format,
+                               alpha_type,
+                               color_space,
                                std::move(context_provider_wrapper),
-                               std::move(resource_dispatcher),
                                resource_host) {}
 
   ~CanvasResourceProviderPassThrough() override = default;
@@ -756,18 +856,14 @@ class CanvasResourceProviderPassThrough final : public CanvasResourceProvider {
   scoped_refptr<CanvasResource> CreateResource() final {
     // This class has no CanvasResource to provide: this must be imported via
     // ImportResource() and kept in the parent class.
-    NOTREACHED_IN_MIGRATION();
-    return nullptr;
+    NOTREACHED();
   }
 
   scoped_refptr<CanvasResource> ProduceCanvasResource(FlushReason) final {
     return NewOrRecycledResource();
   }
 
-  sk_sp<SkSurface> CreateSkSurface() const override {
-    NOTREACHED_IN_MIGRATION();
-    return nullptr;
-  }
+  sk_sp<SkSurface> CreateSkSurface() const override { NOTREACHED(); }
 
   scoped_refptr<StaticBitmapImage> Snapshot(FlushReason,
                                             ImageOrientation) override {
@@ -785,26 +881,27 @@ class CanvasResourceProviderPassThrough final : public CanvasResourceProvider {
 class CanvasResourceProviderSwapChain final : public CanvasResourceProvider {
  public:
   CanvasResourceProviderSwapChain(
-      const SkImageInfo& info,
-      cc::PaintFlags::FilterQuality filter_quality,
+      gfx::Size size,
+      viz::SharedImageFormat format,
+      SkAlphaType alpha_type,
+      const gfx::ColorSpace& color_space,
       base::WeakPtr<WebGraphicsContext3DProviderWrapper>
           context_provider_wrapper,
-      base::WeakPtr<CanvasResourceDispatcher> resource_dispatcher,
       CanvasResourceHost* resource_host)
       : CanvasResourceProvider(kSwapChain,
-                               info,
-                               filter_quality,
-                               /*is_origin_top_left=*/true,
+                               size,
+                               format,
+                               alpha_type,
+                               color_space,
                                std::move(context_provider_wrapper),
-                               std::move(resource_dispatcher),
                                resource_host),
         use_oop_rasterization_(ContextProviderWrapper()
                                    ->ContextProvider()
-                                   ->GetCapabilities()
+                                   .GetCapabilities()
                                    .gpu_rasterization) {
     resource_ = CanvasResourceSwapChain::Create(
-        GetSkImageInfo(), ContextProviderWrapper(), CreateWeakPtr(),
-        FilterQuality());
+        size, format, alpha_type, color_space, ContextProviderWrapper(),
+        CreateWeakPtr());
     // CanvasResourceProviderSwapChain can only operate in a single buffered
     // mode so enable it as soon as possible.
     TryEnableSingleBuffering();
@@ -870,11 +967,11 @@ class CanvasResourceProviderSwapChain final : public CanvasResourceProvider {
 
     GrGLTextureInfo texture_info = {};
     texture_info.fID = resource_->GetBackBufferTextureId();
-    texture_info.fTarget = resource_->TextureTarget();
+    texture_info.fTarget =
+        resource_->GetBackBufferClientSharedImage()->GetTextureTarget();
     texture_info.fFormat =
-        ContextProviderWrapper()->ContextProvider()->GetGrGLTextureFormat(
-            viz::SkColorTypeToSinglePlaneSharedImageFormat(
-                GetSkImageInfo().colorType()));
+        ContextProviderWrapper()->ContextProvider().GetGrGLTextureFormat(
+            GetSharedImageFormat());
 
     auto backend_texture = GrBackendTextures::MakeGL(
         Size().width(), Size().height(), skgpu::Mipmapped::kNo, texture_info);
@@ -894,7 +991,7 @@ class CanvasResourceProviderSwapChain final : public CanvasResourceProvider {
     }
     WillDraw();
     RasterRecordOOP(last_recording, initial_needs_clear_,
-                    resource_->GetBackBufferMailbox());
+                    resource_->GetBackBufferClientSharedImage()->mailbox());
     initial_needs_clear_ = false;
   }
 
@@ -915,9 +1012,10 @@ class CanvasResourceProviderSwapChain final : public CanvasResourceProvider {
       return false;
 
     WillDraw();
-    RasterInterface()->WritePixels(resource_->GetBackBufferMailbox(), x, y,
-                                   GetBackingTextureTarget(),
-                                   SkPixmap(orig_info, pixels, row_bytes));
+    RasterInterface()->WritePixels(
+        resource_->GetBackBufferClientSharedImage()->mailbox(), x, y,
+        resource_->GetBackBufferClientSharedImage()->GetTextureTarget(),
+        SkPixmap(orig_info, pixels, row_bytes));
     return true;
   }
 
@@ -945,12 +1043,14 @@ class CanvasResourceProviderSwapChain final : public CanvasResourceProvider {
 
 std::unique_ptr<CanvasResourceProvider>
 CanvasResourceProvider::CreateBitmapProvider(
-    const SkImageInfo& info,
-    cc::PaintFlags::FilterQuality filter_quality,
+    gfx::Size size,
+    viz::SharedImageFormat format,
+    SkAlphaType alpha_type,
+    const gfx::ColorSpace& color_space,
     ShouldInitialize should_initialize,
     CanvasResourceHost* resource_host) {
   auto provider = std::make_unique<CanvasResourceProviderBitmap>(
-      info, filter_quality, /*resource_dispatcher=*/nullptr, resource_host);
+      size, format, alpha_type, color_space, resource_host);
   if (provider->IsValid()) {
     if (should_initialize ==
         CanvasResourceProvider::ShouldInitialize::kCallClear)
@@ -962,18 +1062,26 @@ CanvasResourceProvider::CreateBitmapProvider(
 
 std::unique_ptr<CanvasResourceProvider>
 CanvasResourceProvider::CreateSharedBitmapProvider(
-    const SkImageInfo& info,
-    cc::PaintFlags::FilterQuality filter_quality,
+    gfx::Size size,
+    viz::SharedImageFormat format,
+    SkAlphaType alpha_type,
+    const gfx::ColorSpace& color_space,
     ShouldInitialize should_initialize,
-    base::WeakPtr<CanvasResourceDispatcher> resource_dispatcher,
+    WebGraphicsSharedImageInterfaceProvider* shared_image_interface_provider,
     CanvasResourceHost* resource_host) {
-  // SharedBitmapProvider has to have a valid resource_dispatecher to be able to
-  // be created.
-  if (!resource_dispatcher)
-    return nullptr;
+  if (!base::FeatureList::IsEnabled(
+          kCanvasAllowCRPSharedBitmapWithGPUCompositing)) {
+    // CanvasResourceProviderSharedBitmap works only with the software
+    // compositor. However, this was not historically enforced. We are rolling
+    // out this enforcement with a reverse killswitch.
+    if (SharedGpuContext::IsGpuCompositingEnabled()) {
+      return nullptr;
+    }
+  }
 
   auto provider = std::make_unique<CanvasResourceProviderSharedBitmap>(
-      info, filter_quality, std::move(resource_dispatcher), resource_host);
+      size, format, alpha_type, color_space, shared_image_interface_provider,
+      resource_host);
   if (provider->IsValid()) {
     if (should_initialize ==
         CanvasResourceProvider::ShouldInitialize::kCallClear)
@@ -986,12 +1094,14 @@ CanvasResourceProvider::CreateSharedBitmapProvider(
 
 std::unique_ptr<CanvasResourceProvider>
 CanvasResourceProvider::CreateSharedImageProvider(
-    const SkImageInfo& info,
-    cc::PaintFlags::FilterQuality filter_quality,
+    gfx::Size size,
+    viz::SharedImageFormat format,
+    SkAlphaType alpha_type,
+    const gfx::ColorSpace& color_space,
     ShouldInitialize should_initialize,
     base::WeakPtr<WebGraphicsContext3DProviderWrapper> context_provider_wrapper,
     RasterMode raster_mode,
-    uint32_t shared_image_usage_flags,
+    gpu::SharedImageUsageSet shared_image_usage_flags,
     CanvasResourceHost* resource_host) {
   // IsGpuCompositingEnabled can re-create the context if it has been lost, do
   // this up front so that we can fail early and not expose ourselves to
@@ -1002,34 +1112,33 @@ CanvasResourceProvider::CreateSharedImageProvider(
   // If the context is lost we don't want to re-create it here, the resulting
   // resource provider would be invalid anyway
   if (!context_provider_wrapper ||
-      context_provider_wrapper->ContextProvider()->IsContextLost())
+      context_provider_wrapper->ContextProvider().IsContextLost()) {
     return nullptr;
+  }
 
   const auto& capabilities =
-      context_provider_wrapper->ContextProvider()->GetCapabilities();
-  if ((info.width() < 1 || info.height() < 1 ||
-       info.width() > capabilities.max_texture_size ||
-       info.height() > capabilities.max_texture_size)) {
+      context_provider_wrapper->ContextProvider().GetCapabilities();
+  if ((size.width() < 1 || size.height() < 1 ||
+       size.width() > capabilities.max_texture_size ||
+       size.height() > capabilities.max_texture_size)) {
     return nullptr;
   }
 
   const bool is_accelerated = raster_mode == RasterMode::kGPU;
 
-  SkImageInfo adjusted_info = info;
   // TODO(https://crbug.com/1210946): Pass in info as is for all cases.
   // Overriding the info to use RGBA instead of N32 is needed because code
   // elsewhere assumes RGBA. OTOH the software path seems to be assuming N32
   // somewhere in the later pipeline but for offscreen canvas only.
-  if (!(shared_image_usage_flags & (gpu::SHARED_IMAGE_USAGE_WEBGPU_READ |
-                                    gpu::SHARED_IMAGE_USAGE_WEBGPU_WRITE))) {
-    adjusted_info = adjusted_info.makeColorType(
-        is_accelerated && info.colorType() != kRGBA_F16_SkColorType
-            ? kRGBA_8888_SkColorType
-            : info.colorType());
+  if (!shared_image_usage_flags.HasAny(gpu::SHARED_IMAGE_USAGE_WEBGPU_READ |
+                                       gpu::SHARED_IMAGE_USAGE_WEBGPU_WRITE)) {
+    if (is_accelerated && format != viz::SinglePlaneFormat::kRGBA_F16) {
+      format = viz::SinglePlaneFormat::kRGBA_8888;
+    }
   }
 
   const bool is_gpu_memory_buffer_image_allowed =
-      is_gpu_compositing_enabled && IsGMBAllowed(adjusted_info, capabilities) &&
+      is_gpu_compositing_enabled && IsGMBAllowed(size, format, capabilities) &&
       SharedGpuContext::GetGpuMemoryBufferManager();
 
   if (raster_mode == RasterMode::kCPU && !is_gpu_memory_buffer_image_allowed)
@@ -1038,29 +1147,31 @@ CanvasResourceProvider::CreateSharedImageProvider(
   // If we cannot use overlay, we have to remove the scanout flag and the
   // concurrent read write flag.
   const auto& shared_image_caps = context_provider_wrapper->ContextProvider()
-                                      ->SharedImageInterface()
+                                      .SharedImageInterface()
                                       ->GetCapabilities();
   if (!is_gpu_memory_buffer_image_allowed ||
       (is_accelerated && !shared_image_caps.supports_scanout_shared_images)) {
-    shared_image_usage_flags &= ~gpu::SHARED_IMAGE_USAGE_CONCURRENT_READ_WRITE;
-    shared_image_usage_flags &= ~gpu::SHARED_IMAGE_USAGE_SCANOUT;
+    shared_image_usage_flags.RemoveAll(
+        gpu::SHARED_IMAGE_USAGE_CONCURRENT_READ_WRITE |
+        gpu::SHARED_IMAGE_USAGE_SCANOUT);
+  }
+
+  if (resource_host && resource_host->TransferToGPUTextureWasInvoked()) {
+    shared_image_usage_flags.PutAll(gpu::SHARED_IMAGE_USAGE_WEBGPU_READ |
+                                    gpu::SHARED_IMAGE_USAGE_WEBGPU_WRITE);
   }
 
 #if BUILDFLAG(IS_MAC)
-  if ((shared_image_usage_flags & gpu::SHARED_IMAGE_USAGE_SCANOUT) &&
-      is_accelerated && adjusted_info.colorType() == kRGBA_8888_SkColorType) {
+  if (shared_image_usage_flags.Has(gpu::SHARED_IMAGE_USAGE_SCANOUT) &&
+      is_accelerated && format == viz::SinglePlaneFormat::kRGBA_8888) {
     // GPU-accelerated scannout usage on Mac uses IOSurface.  Must switch from
     // RGBA_8888 to BGRA_8888 in that case.
-    adjusted_info = adjusted_info.makeColorType(kBGRA_8888_SkColorType);
+    format = viz::SinglePlaneFormat::kBGRA_8888;
   }
 #endif
 
-  // Use top left origin for shared image CanvasResourceProviders since those
-  // can be used for rendering with Skia, and Skia's Graphite backend doesn't
-  // support bottom left origin SkSurfaces.
-  constexpr bool kIsOriginTopLeft = true;
   auto provider = std::make_unique<CanvasResourceProviderSharedImage>(
-      adjusted_info, filter_quality, context_provider_wrapper, kIsOriginTopLeft,
+      size, format, alpha_type, color_space, context_provider_wrapper,
       is_accelerated, shared_image_usage_flags, resource_host);
   if (provider->IsValid()) {
     if (should_initialize ==
@@ -1074,8 +1185,11 @@ CanvasResourceProvider::CreateSharedImageProvider(
 
 std::unique_ptr<CanvasResourceProvider>
 CanvasResourceProvider::CreateWebGPUImageProvider(
-    const SkImageInfo& info,
-    uint32_t shared_image_usage_flags,
+    gfx::Size size,
+    viz::SharedImageFormat format,
+    SkAlphaType alpha_type,
+    const gfx::ColorSpace& color_space,
+    gpu::SharedImageUsageSet shared_image_usage_flags,
     CanvasResourceHost* resource_host) {
   auto context_provider_wrapper = SharedGpuContext::ContextProviderWrapper();
   // The SharedImages created by this provider serve as a means of import/export
@@ -1087,7 +1201,7 @@ CanvasResourceProvider::CreateWebGPUImageProvider(
   //   the WebGPU interface)
   // Hence, both WEBGPU_READ and WEBGPU_WRITE usage are needed here.
   return CreateSharedImageProvider(
-      info, cc::PaintFlags::FilterQuality::kLow,
+      size, format, alpha_type, color_space,
       CanvasResourceProvider::ShouldInitialize::kNo,
       std::move(context_provider_wrapper), RasterMode::kGPU,
       shared_image_usage_flags | gpu::SHARED_IMAGE_USAGE_WEBGPU_READ |
@@ -1097,11 +1211,11 @@ CanvasResourceProvider::CreateWebGPUImageProvider(
 
 std::unique_ptr<CanvasResourceProvider>
 CanvasResourceProvider::CreatePassThroughProvider(
-    const SkImageInfo& info,
-    cc::PaintFlags::FilterQuality filter_quality,
+    gfx::Size size,
+    viz::SharedImageFormat format,
+    SkAlphaType alpha_type,
+    const gfx::ColorSpace& color_space,
     base::WeakPtr<WebGraphicsContext3DProviderWrapper> context_provider_wrapper,
-    base::WeakPtr<CanvasResourceDispatcher> resource_dispatcher,
-    bool is_origin_top_left,
     CanvasResourceHost* resource_host) {
   // SharedGpuContext::IsGpuCompositingEnabled can potentially replace the
   // context_provider_wrapper, so it's important to call that first as it can
@@ -1110,44 +1224,43 @@ CanvasResourceProvider::CreatePassThroughProvider(
     return nullptr;
 
   const auto& capabilities =
-      context_provider_wrapper->ContextProvider()->GetCapabilities();
-  if (info.width() > capabilities.max_texture_size ||
-      info.height() > capabilities.max_texture_size) {
+      context_provider_wrapper->ContextProvider().GetCapabilities();
+  if (size.width() > capabilities.max_texture_size ||
+      size.height() > capabilities.max_texture_size) {
     return nullptr;
   }
 
   const auto& shared_image_capabilities =
       context_provider_wrapper->ContextProvider()
-          ->SharedImageInterface()
+          .SharedImageInterface()
           ->GetCapabilities();
   // Either swap_chain or gpu memory buffer should be enabled for this be used
   if (!shared_image_capabilities.shared_image_swap_chain &&
-      (!IsGMBAllowed(info, capabilities) ||
+      (!IsGMBAllowed(size, format, capabilities) ||
        !Platform::Current()->GetGpuMemoryBufferManager())) {
     return nullptr;
   }
 
+  // Note: Unlike other CanvasResourceProvider subclasses, a
+  // CanvasResourceProviderPassThrough instance is always valid and does not
+  // require clearing as part of initialization (both of these being due to the
+  // fact that it simply delegates the internal parts of the resource to other
+  // classes).
   auto provider = std::make_unique<CanvasResourceProviderPassThrough>(
-      info, filter_quality, context_provider_wrapper, resource_dispatcher,
-      is_origin_top_left, resource_host);
-  if (provider->IsValid()) {
-    // All the other type of resources are doing a clear here. As a
-    // CanvasResourceProvider of type PassThrough is used to delegate the
-    // internal parts of the resource and provider to other classes, we should
-    // not attempt to do a clear here. clear is not needed here.
-    return provider;
-  }
-
-  return nullptr;
+      size, format, alpha_type, color_space, context_provider_wrapper,
+      resource_host);
+  CHECK(provider->IsValid());
+  return provider;
 }
 
 std::unique_ptr<CanvasResourceProvider>
 CanvasResourceProvider::CreateSwapChainProvider(
-    const SkImageInfo& info,
-    cc::PaintFlags::FilterQuality filter_quality,
+    gfx::Size size,
+    viz::SharedImageFormat format,
+    SkAlphaType alpha_type,
+    const gfx::ColorSpace& color_space,
     ShouldInitialize should_initialize,
     base::WeakPtr<WebGraphicsContext3DProviderWrapper> context_provider_wrapper,
-    base::WeakPtr<CanvasResourceDispatcher> resource_dispatcher,
     CanvasResourceHost* resource_host) {
   // SharedGpuContext::IsGpuCompositingEnabled can potentially replace the
   // context_provider_wrapper, so it's important to call that first as it can
@@ -1156,20 +1269,20 @@ CanvasResourceProvider::CreateSwapChainProvider(
     return nullptr;
 
   const auto& capabilities =
-      context_provider_wrapper->ContextProvider()->GetCapabilities();
+      context_provider_wrapper->ContextProvider().GetCapabilities();
   const auto& shared_image_capabilities =
       context_provider_wrapper->ContextProvider()
-          ->SharedImageInterface()
+          .SharedImageInterface()
           ->GetCapabilities();
 
-  if (info.width() > capabilities.max_texture_size ||
-      info.height() > capabilities.max_texture_size ||
+  if (size.width() > capabilities.max_texture_size ||
+      size.height() > capabilities.max_texture_size ||
       !shared_image_capabilities.shared_image_swap_chain) {
     return nullptr;
   }
 
   auto provider = std::make_unique<CanvasResourceProviderSwapChain>(
-      info, filter_quality, context_provider_wrapper, resource_dispatcher,
+      size, format, alpha_type, color_space, context_provider_wrapper,
       resource_host);
   if (provider->IsValid()) {
     if (should_initialize ==
@@ -1185,7 +1298,7 @@ CanvasResourceProvider::CanvasImageProvider::CanvasImageProvider(
     cc::ImageDecodeCache* cache_n32,
     cc::ImageDecodeCache* cache_f16,
     const gfx::ColorSpace& target_color_space,
-    SkColorType canvas_color_type,
+    viz::SharedImageFormat canvas_format,
     cc::PlaybackImageProvider::RasterMode raster_mode)
     : raster_mode_(raster_mode) {
   std::optional<cc::PlaybackImageProvider::Settings> settings =
@@ -1198,7 +1311,7 @@ CanvasResourceProvider::CanvasImageProvider::CanvasImageProvider(
                                        std::move(settings));
   // If the image provider may require to decode to half float instead of
   // uint8, create a f16 PlaybackImageProvider with the passed cache.
-  if (canvas_color_type == kRGBA_F16_SkColorType) {
+  if (canvas_format == viz::SinglePlaneFormat::kRGBA_F16) {
     DCHECK(cache_f16);
     settings = cc::PlaybackImageProvider::Settings();
     settings->raster_mode = raster_mode_;
@@ -1210,6 +1323,16 @@ CanvasResourceProvider::CanvasImageProvider::CanvasImageProvider(
 cc::ImageProvider::ScopedResult
 CanvasResourceProvider::CanvasImageProvider::GetRasterContent(
     const cc::DrawImage& draw_image) {
+  cc::PaintImage paint_image = draw_image.paint_image();
+  if (paint_image.IsDeferredPaintRecord()) {
+    CHECK(!paint_image.IsPaintWorklet());
+    scoped_refptr<CanvasDeferredPaintRecord> canvas_deferred_paint_record(
+        static_cast<CanvasDeferredPaintRecord*>(
+            paint_image.deferred_paint_record().get()));
+    return cc::ImageProvider::ScopedResult(
+        canvas_deferred_paint_record->GetPaintRecord());
+  }
+
   // TODO(xidachen): Ensure this function works for paint worklet generated
   // images.
   // If we like to decode high bit depth image source to half float backed
@@ -1313,25 +1436,31 @@ const base::FeatureParam<int> kMaxPinnedImageKB(&kCanvas2DAutoFlushParams,
                                                 "max_pinned_image_kb",
                                                 32 * 1024);
 
-// Feature only consulted if graphite is enabled.
-BASE_FEATURE(kUseLargerRecordedPaintOpBuffer,
-             "UseLargerRecordedPaintOpBuffer",
-             base::FEATURE_ENABLED_BY_DEFAULT);
+// Graphite can generally handle more ops, increase the size accordingly.
+const base::FeatureParam<int> kMaxRecordedOpGraphiteKB(
+    &kCanvas2DAutoFlushParams,
+    "max_recorded_op_graphite_kb",
+    6 * 1024);
 
 CanvasResourceProvider::CanvasResourceProvider(
     const ResourceProviderType& type,
-    const SkImageInfo& info,
-    cc::PaintFlags::FilterQuality filter_quality,
-    bool is_origin_top_left,
+    gfx::Size size,
+    viz::SharedImageFormat format,
+    SkAlphaType alpha_type,
+    const gfx::ColorSpace& color_space,
     base::WeakPtr<WebGraphicsContext3DProviderWrapper> context_provider_wrapper,
-    base::WeakPtr<CanvasResourceDispatcher> resource_dispatcher,
     CanvasResourceHost* resource_host)
     : type_(type),
       context_provider_wrapper_(std::move(context_provider_wrapper)),
-      resource_dispatcher_(resource_dispatcher),
-      info_(info),
-      filter_quality_(filter_quality),
-      is_origin_top_left_(is_origin_top_left),
+      info_(SkImageInfo::Make(size.width(),
+                              size.height(),
+                              viz::ToClosestSkColorType(format),
+                              alpha_type,
+                              color_space.ToSkColorSpace())),
+      size_(size),
+      format_(format),
+      alpha_type_(alpha_type),
+      color_space_(color_space),
       resource_host_(resource_host),
       recorder_(std::make_unique<MemoryManagedPaintRecorder>(Size(), this)),
       snapshot_paint_image_id_(cc::PaintImage::GetNextId()) {
@@ -1340,15 +1469,16 @@ CanvasResourceProvider::CanvasResourceProvider(
   if (context_provider_wrapper_) {
     context_provider_wrapper_->AddObserver(this);
     const auto& caps =
-        context_provider_wrapper_->ContextProvider()->GetCapabilities();
+        context_provider_wrapper_->ContextProvider().GetCapabilities();
     oopr_uses_dmsaa_ = !caps.msaa_is_slow && !caps.avoid_stencil_buffers;
     // Graphite can handle a large buffer size.
-    if (base::FeatureList::IsEnabled(kUseLargerRecordedPaintOpBuffer) &&
-        context_provider_wrapper_->ContextProvider()
-                ->GetGpuFeatureInfo()
-                .status_values[gpu::GPU_FEATURE_TYPE_SKIA_GRAPHITE] ==
-            gpu::kGpuFeatureStatusEnabled) {
-      max_recorded_op_bytes_ = 4 * 1024 * 1024;
+    if (context_provider_wrapper_->ContextProvider()
+            .GetGpuFeatureInfo()
+            .status_values[gpu::GPU_FEATURE_TYPE_SKIA_GRAPHITE] ==
+        gpu::kGpuFeatureStatusEnabled) {
+      max_recorded_op_bytes_ =
+          static_cast<size_t>(kMaxRecordedOpGraphiteKB.Get()) * 1024;
+      recorder_->DisableLineDrawingAsPaths();
     }
   }
 
@@ -1375,6 +1505,7 @@ CanvasResourceProvider::ReleaseRecorder() {
   auto recorder = std::make_unique<MemoryManagedPaintRecorder>(Size(), this);
   recorder_->SetClient(nullptr);
   recorder_.swap(recorder);
+  DisableLineDrawingAsPathsIfNecessary();
   return recorder;
 }
 
@@ -1382,6 +1513,7 @@ void CanvasResourceProvider::SetRecorder(
     std::unique_ptr<MemoryManagedPaintRecorder> recorder) {
   recorder->SetClient(this);
   recorder_ = std::move(recorder);
+  DisableLineDrawingAsPathsIfNecessary();
 }
 
 void CanvasResourceProvider::FlushIfRecordingLimitExceeded() {
@@ -1390,9 +1522,9 @@ void CanvasResourceProvider::FlushIfRecordingLimitExceeded() {
   if (IsPrinting() && clear_frame_) {
     return;
   }
-  if (UNLIKELY(recorder_->ReleasableOpBytesUsed() > max_recorded_op_bytes_) ||
-      UNLIKELY(recorder_->ReleasableImageBytesUsed() >
-               max_pinned_image_bytes_)) {
+  if (recorder_->ReleasableOpBytesUsed() > max_recorded_op_bytes_ ||
+      recorder_->ReleasableImageBytesUsed() > max_pinned_image_bytes_)
+      [[unlikely]] {
     FlushCanvas(FlushReason::kRecordingLimitExceeded);
   }
 }
@@ -1412,28 +1544,24 @@ void CanvasResourceProvider::NotifyWillTransfer(
 }
 
 bool CanvasResourceProvider::OverwriteImage(
-    const gpu::Mailbox& shared_image_mailbox,
+    const scoped_refptr<gpu::ClientSharedImage>& shared_image,
     const gfx::Rect& copy_rect,
-    bool unpack_flip_y,
-    bool unpack_premultiply_alpha,
     const gpu::SyncToken& ready_sync_token,
     gpu::SyncToken& completion_sync_token) {
   gpu::raster::RasterInterface* raster = RasterInterface();
   if (!raster) {
     return false;
   }
-  gpu::Mailbox dst_mailbox =
-      GetBackingMailboxForOverwrite(MailboxSyncMode::kOrderingBarrier);
-  if (dst_mailbox.IsZero()) {
+  auto dst_client_si = GetBackingClientSharedImageForOverwrite();
+  if (!dst_client_si) {
     return false;
   }
 
   raster->WaitSyncTokenCHROMIUM(ready_sync_token.GetConstData());
-  raster->CopySharedImage(shared_image_mailbox, dst_mailbox,
-                          GetBackingTextureTarget(), /*xoffset=*/0,
+  raster->CopySharedImage(shared_image->mailbox(), dst_client_si->mailbox(),
+                          /*xoffset=*/0,
                           /*yoffset=*/0, copy_rect.x(), copy_rect.y(),
-                          copy_rect.width(), copy_rect.height(), unpack_flip_y,
-                          unpack_premultiply_alpha);
+                          copy_rect.width(), copy_rect.height());
   raster->GenUnverifiedSyncTokenCHROMIUM(completion_sync_token.GetData());
   return true;
 }
@@ -1448,7 +1576,7 @@ void CanvasResourceProvider::EnsureSkiaCanvas() {
   if (IsAccelerated() && ContextProviderWrapper() &&
       !ContextProviderWrapper()
            ->ContextProvider()
-           ->GetGpuFeatureInfo()
+           .GetGpuFeatureInfo()
            .IsWorkaroundEnabled(gpu::DISABLE_2D_CANVAS_AUTO_FLUSH)) {
     context_flushes.enable = true;
     context_flushes.max_draws_before_flush = kMaxDrawsBeforeContextFlush;
@@ -1464,8 +1592,9 @@ CanvasResourceProvider::GetOrCreateCanvasImageProvider() {
     // Create an ImageDecodeCache for half float images only if the canvas is
     // using half float back storage.
     cc::ImageDecodeCache* cache_f16 = nullptr;
-    if (GetSkImageInfo().colorType() == kRGBA_F16_SkColorType)
+    if (GetSharedImageFormat() == viz::SinglePlaneFormat::kRGBA_F16) {
       cache_f16 = ImageDecodeCacheF16();
+    }
 
     auto raster_mode = cc::PlaybackImageProvider::RasterMode::kSoftware;
     if (UseHardwareDecodeCache()) {
@@ -1474,8 +1603,8 @@ CanvasResourceProvider::GetOrCreateCanvasImageProvider() {
                         : cc::PlaybackImageProvider::RasterMode::kGpu;
     }
     canvas_image_provider_ = std::make_unique<CanvasImageProvider>(
-        ImageDecodeCacheRGBA8(), cache_f16, GetColorSpace(), info_.colorType(),
-        raster_mode);
+        ImageDecodeCacheRGBA8(), cache_f16, GetColorSpace(),
+        GetSharedImageFormat(), raster_mode);
   }
   return canvas_image_provider_.get();
 }
@@ -1561,35 +1690,24 @@ cc::PaintImage CanvasResourceProvider::MakeImageSnapshot(FlushReason reason) {
 gpu::gles2::GLES2Interface* CanvasResourceProvider::ContextGL() const {
   if (!context_provider_wrapper_)
     return nullptr;
-  return context_provider_wrapper_->ContextProvider()->ContextGL();
+  return context_provider_wrapper_->ContextProvider().ContextGL();
 }
 
 gpu::raster::RasterInterface* CanvasResourceProvider::RasterInterface() const {
   if (!context_provider_wrapper_)
     return nullptr;
-  return context_provider_wrapper_->ContextProvider()->RasterInterface();
+  return context_provider_wrapper_->ContextProvider().RasterInterface();
 }
 
 GrDirectContext* CanvasResourceProvider::GetGrContext() const {
   if (!context_provider_wrapper_)
     return nullptr;
-  return context_provider_wrapper_->ContextProvider()->GetGrContext();
-}
-
-gfx::Size CanvasResourceProvider::Size() const {
-  return gfx::Size(info_.width(), info_.height());
+  return context_provider_wrapper_->ContextProvider().GetGrContext();
 }
 
 SkSurfaceProps CanvasResourceProvider::GetSkSurfaceProps() const {
-  const bool can_use_lcd_text =
-      GetSkImageInfo().alphaType() == kOpaque_SkAlphaType;
+  const bool can_use_lcd_text = GetAlphaType() == kOpaque_SkAlphaType;
   return skia::LegacyDisplayGlobals::ComputeSurfaceProps(can_use_lcd_text);
-}
-
-gfx::ColorSpace CanvasResourceProvider::GetColorSpace() const {
-  auto* color_space = GetSkImageInfo().colorSpace();
-  return color_space ? gfx::ColorSpace(*color_space)
-                     : gfx::ColorSpace::CreateSRGB();
 }
 
 std::optional<cc::PaintRecord> CanvasResourceProvider::FlushCanvas(
@@ -1617,10 +1735,22 @@ std::optional<cc::PaintRecord> CanvasResourceProvider::FlushCanvas(
     clear_frame_ = true;
     printing_fallback_reason_ = FlushReason::kNone;
   }
-  cc::PaintRecord recording = recorder_->ReleaseMainRecording();
+  cc::PaintRecord recording;
+  // TODO(issues.chromium.org/379034737): Certain draws, such a WritePixels,
+  // draw directly to the buffer and thus will not work as currently designed
+  // with placed elements.
+  if (resource_host_ && resource_host_->HasPlacedElements()) {
+    recording = recorder_->CopyMainRecording();
+  } else {
+    recording = recorder_->ReleaseMainRecording();
+  }
   RasterRecord(recording);
+  // Images are locked for the duration of the rasterization, in case they get
+  // used multiple times. We can unlock them once the rasterization is complete.
+  ReleaseLockedImages();
   last_recording_ =
       preserve_recording ? std::optional(recording) : std::nullopt;
+
   return recording;
 }
 
@@ -1636,10 +1766,9 @@ void CanvasResourceProvider::RasterRecordOOP(cc::PaintRecord last_recording,
   if (IsGpuContextLost())
     return;
   gpu::raster::RasterInterface* ri = RasterInterface();
-  SkColor4f background_color =
-      GetSkImageInfo().alphaType() == kOpaque_SkAlphaType
-          ? SkColors::kBlack
-          : SkColors::kTransparent;
+  SkColor4f background_color = GetAlphaType() == kOpaque_SkAlphaType
+                                   ? SkColors::kBlack
+                                   : SkColors::kTransparent;
 
   auto list = base::MakeRefCounted<cc::DisplayItemList>();
   list->StartPaint();
@@ -1654,8 +1783,7 @@ void CanvasResourceProvider::RasterRecordOOP(cc::PaintRecord last_recording,
   gfx::Vector2dF post_translate(0.f, 0.f);
   gfx::Vector2dF post_scale(1.f, 1.f);
 
-  const bool can_use_lcd_text =
-      GetSkImageInfo().alphaType() == kOpaque_SkAlphaType;
+  const bool can_use_lcd_text = GetAlphaType() == kOpaque_SkAlphaType;
   ri->BeginRasterCHROMIUM(background_color, needs_clear,
                           /*msaa_sample_count=*/oopr_uses_dmsaa_ ? 1 : 0,
                           oopr_uses_dmsaa_ ? gpu::raster::MsaaMode::kDMSAA
@@ -1675,6 +1803,10 @@ bool CanvasResourceProvider::IsGpuContextLost() const {
   auto* raster_interface = RasterInterface();
   return !raster_interface ||
          raster_interface->GetGraphicsResetStatusKHR() != GL_NO_ERROR;
+}
+
+bool CanvasResourceProvider::IsSharedBitmapGpuChannelLost() const {
+  return false;
 }
 
 bool CanvasResourceProvider::WritePixels(const SkImageInfo& orig_info,
@@ -1723,13 +1855,12 @@ uint32_t CanvasResourceProvider::ContentUniqueID() const {
 
 scoped_refptr<CanvasResource> CanvasResourceProvider::CreateResource() {
   // Needs to be implemented in subclasses that use resource recycling.
-  NOTREACHED_IN_MIGRATION();
-  return nullptr;
+  NOTREACHED();
 }
 
 cc::ImageDecodeCache* CanvasResourceProvider::ImageDecodeCacheRGBA8() {
   if (UseHardwareDecodeCache()) {
-    return context_provider_wrapper_->ContextProvider()->ImageDecodeCache(
+    return context_provider_wrapper_->ContextProvider().ImageDecodeCache(
         kN32_SkColorType);
   }
 
@@ -1738,7 +1869,7 @@ cc::ImageDecodeCache* CanvasResourceProvider::ImageDecodeCacheRGBA8() {
 
 cc::ImageDecodeCache* CanvasResourceProvider::ImageDecodeCacheF16() {
   if (UseHardwareDecodeCache()) {
-    return context_provider_wrapper_->ContextProvider()->ImageDecodeCache(
+    return context_provider_wrapper_->ContextProvider().ImageDecodeCache(
         kRGBA_F16_SkColorType);
   }
   return &Image::SharedCCDecodeCache(kRGBA_F16_SkColorType);
@@ -1753,9 +1884,11 @@ void CanvasResourceProvider::RecycleResource(
   }
 
   // Need to check HasOneRef() because if there are outstanding references to
-  // the resource, it cannot be safely recycled.
+  // the resource, it cannot be safely recycled. In addition, we must check
+  // whether the state of the resource provider has changed such that the
+  // resource has become unusable in the interim.
   if (resource->HasOneRef() && resource_recycling_enabled_ &&
-      !is_single_buffered_) {
+      !is_single_buffered_ && IsResourceUsable(resource.get())) {
     RegisterUnusedResource(std::move(resource));
     MaybePostUnusedResourcesReclaimTask();
   }
@@ -1777,6 +1910,7 @@ void CanvasResourceProvider::OnDestroyResource() {
 
 void CanvasResourceProvider::RegisterUnusedResource(
     scoped_refptr<CanvasResource>&& resource) {
+  CHECK(IsResourceUsable(resource.get()));
   canvas_resources_.emplace_back(base::TimeTicks::Now(), std::move(resource));
 }
 
@@ -1808,7 +1942,7 @@ void CanvasResourceProvider::ClearOldUnusedResources() {
   // side.
   if (cleared_resources && ContextProviderWrapper()) {
     if (gpu::ContextSupport* context_support =
-            ContextProviderWrapper()->ContextProvider()->ContextSupport()) {
+            ContextProviderWrapper()->ContextProvider().ContextSupport()) {
       context_support->FlushPendingWork();
     }
   }
@@ -1818,7 +1952,12 @@ void CanvasResourceProvider::ClearOldUnusedResources() {
 
 scoped_refptr<CanvasResource> CanvasResourceProvider::NewOrRecycledResource() {
   if (canvas_resources_.empty()) {
-    RegisterUnusedResource(CreateResource());
+    scoped_refptr<CanvasResource> resource = CreateResource();
+    if (!resource) {
+      return nullptr;
+    }
+
+    RegisterUnusedResource(std::move(resource));
     ++num_inflight_resources_;
     if (num_inflight_resources_ > max_inflight_resources_)
       max_inflight_resources_ = num_inflight_resources_;
@@ -1893,13 +2032,6 @@ void CanvasResourceProvider::OnMemoryDump(
   if (!surface_)
     return;
 
-  for (const auto& resource : canvas_resources_) {
-    // Don't report, to avoid double-counting.
-    if (resource.resource->HasDetailedMemoryDumpProvider()) {
-      return;
-    }
-  }
-
   std::string dump_name =
       base::StringPrintf("canvas/ResourceProvider/SkSurface/0x%" PRIXPTR,
                          reinterpret_cast<uintptr_t>(surface_.get()));
@@ -1922,6 +2054,16 @@ void CanvasResourceProvider::OnMemoryDump(
 
 size_t CanvasResourceProvider::GetSize() const {
   return ComputeSurfaceSize();
+}
+
+void CanvasResourceProvider::DisableLineDrawingAsPathsIfNecessary() {
+  if (context_provider_wrapper_ &&
+      context_provider_wrapper_->ContextProvider()
+              .GetGpuFeatureInfo()
+              .status_values[gpu::GPU_FEATURE_TYPE_SKIA_GRAPHITE] ==
+          gpu::kGpuFeatureStatusEnabled) {
+    recorder_->DisableLineDrawingAsPaths();
+  }
 }
 
 }  // namespace blink

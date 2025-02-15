@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "sandbox/linux/seccomp-bpf-helpers/baseline_policy.h"
 
 #include <errno.h>
@@ -31,7 +36,6 @@
 #include "base/posix/eintr_wrapper.h"
 #include "base/threading/thread.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "sandbox/linux/seccomp-bpf-helpers/sigsys_handlers.h"
 #include "sandbox/linux/seccomp-bpf/bpf_tests.h"
 #include "sandbox/linux/seccomp-bpf/sandbox_bpf.h"
@@ -83,7 +87,7 @@ void TestPipeOrSocketPair(base::ScopedFD read_end, base::ScopedFD write_end) {
   transfered =
       HANDLE_EINTR(write(write_end.get(), kTestString, kTestTransferSize));
   BPF_ASSERT_EQ(kTestTransferSize, transfered);
-  char read_buf[kTestTransferSize + 1] = {0};
+  char read_buf[kTestTransferSize + 1] = {};
   transfered = HANDLE_EINTR(read(read_end.get(), read_buf, sizeof(read_buf)));
   BPF_ASSERT_EQ(kTestTransferSize, transfered);
   BPF_ASSERT_EQ(0, memcmp(kTestString, read_buf, kTestTransferSize));
@@ -348,7 +352,7 @@ TEST_BASELINE_SIGSYS(__NR_inotify_init)
 TEST_BASELINE_SIGSYS(__NR_vserver)
 #endif
 
-#if defined(LIBC_GLIBC) && !BUILDFLAG(IS_CHROMEOS_ASH)
+#if defined(LIBC_GLIBC) && !BUILDFLAG(IS_CHROMEOS)
 BPF_TEST_C(BaselinePolicy, FutexEINVAL, BaselinePolicy) {
   int ops[] = {
       FUTEX_CMP_REQUEUE_PI, FUTEX_CMP_REQUEUE_PI_PRIVATE,
@@ -385,7 +389,7 @@ BPF_DEATH_TEST_C(BaselinePolicy,
   syscall(__NR_futex, nullptr, FUTEX_UNLOCK_PI_PRIVATE, 0, nullptr, nullptr, 0);
   _exit(1);
 }
-#endif  // defined(LIBC_GLIBC) && !BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // defined(LIBC_GLIBC) && !BUILDFLAG(IS_CHROMEOS)
 
 BPF_TEST_C(BaselinePolicy, PrctlDumpable, BaselinePolicy) {
   const int is_dumpable = prctl(PR_GET_DUMPABLE, 0, 0, 0, 0);

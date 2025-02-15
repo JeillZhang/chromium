@@ -6,12 +6,15 @@
 
 #include "ash/shell.h"
 #include "ash/style/rounded_label_widget.h"
+#include "ash/wm/desks/desk_preview_view.h"
 #include "ash/wm/overview/overview_grid.h"
+#include "ash/wm/overview/overview_item_view.h"
 #include "ash/wm/overview/overview_session.h"
 #include "ash/wm/window_properties.h"
 #include "ash/wm/window_util.h"
 #include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/focus/focus_manager.h"
+#include "ui/views/view_utils.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/widget/widget_delegate.h"
 #include "ui/views/widget/widget_observer.h"
@@ -92,6 +95,31 @@ class ScopedActivatable : public views::WidgetObserver {
     observation_.Reset();
   }
 
+  void OnWidgetActivationChanged(views::Widget* widget, bool active) override {
+    if (!active) {
+      return;
+    }
+
+    // If an overview item received focus, we need to restack the original
+    // window above the overview item widget, otherwise the overview backdrop
+    // would end up covering the original window.
+    auto* item_view =
+        views::AsViewClass<OverviewItemView>(widget->GetContentsView());
+    if (!item_view) {
+      return;
+    }
+
+    OverviewItemBase* item = item_view->overview_item();
+    if (!item) {
+      return;
+    }
+
+    aura::Window* parent = widget->GetNativeWindow()->parent();
+    if (parent == item->GetWindow()->parent()) {
+      parent->StackChildAbove(item->GetWindow(), widget->GetNativeWindow());
+    }
+  }
+
  private:
   base::ScopedObservation<views::Widget, views::WidgetObserver> observation_{
       this};
@@ -131,17 +159,50 @@ void OverviewFocusCycler::MoveFocus(bool reverse) {
     return;
   }
 
-  auto it = base::ranges::find(widgets, focused_view->GetWidget());
+  auto it = std::ranges::find(widgets, focused_view->GetWidget());
   CHECK(it != widgets.end());
 
   const int previous_index = std::distance(widgets.begin(), it);
   const int size = static_cast<int>(widgets.size());
+
+  // Jump to the desk removal toast if it exists. We introduce special logic
+  // here since it's not an overview UI.
+  if ((reverse && previous_index == 0) ||
+      (!reverse && previous_index == size - 1)) {
+    const bool ignore_activations = overview_session_->ignore_activations();
+    overview_session_->set_ignore_activations(true);
+    const bool focused_toast =
+        DesksController::Get()->RequestFocusOnUndoDeskRemovalToast();
+    overview_session_->set_ignore_activations(ignore_activations);
+    if (focused_toast) {
+      return;
+    }
+  }
 
   // Focus the last focusable view of the previous widget if `reverse`, or the
   // first focusable view of the next widget otherwise.
   const int next_index = AdvanceIndex(previous_index, size, reverse);
   ScopedActivatable scoped_activatable(widgets[next_index]);
   GetFirstOrLastFocusableView(widgets[next_index], reverse)->RequestFocus();
+}
+
+bool OverviewFocusCycler::AcceptSelection() {
+  views::View* focused_view = GetOverviewFocusedView();
+  if (!focused_view) {
+    return false;
+  }
+
+  if (auto* preview_view = views::AsViewClass<DeskPreviewView>(focused_view)) {
+    preview_view->AcceptSelection();
+    return true;
+  }
+
+  if (auto* item_view = views::AsViewClass<OverviewItemView>(focused_view)) {
+    item_view->AcceptSelection(overview_session_);
+    return true;
+  }
+
+  return false;
 }
 
 views::View* OverviewFocusCycler::GetOverviewFocusedView() {
@@ -179,7 +240,7 @@ void OverviewFocusCycler::UpdateAccessibilityFocus() {
   if (a11y_widgets.size() == 1) {
     get_view_a11y(/*index=*/0).SetPreviousFocus(nullptr);
     get_view_a11y(/*index=*/0).SetNextFocus(nullptr);
-    a11y_widgets[0]->GetContentsView()->NotifyAccessibilityEvent(
+    a11y_widgets[0]->GetContentsView()->NotifyAccessibilityEventDeprecated(
         ax::mojom::Event::kTreeChanged, true);
     return;
   }
@@ -190,7 +251,7 @@ void OverviewFocusCycler::UpdateAccessibilityFocus() {
     int next_index = (i + 1) % size;
     get_view_a11y(i).SetPreviousFocus(a11y_widgets[previous_index]);
     get_view_a11y(i).SetNextFocus(a11y_widgets[next_index]);
-    a11y_widgets[i]->GetContentsView()->NotifyAccessibilityEvent(
+    a11y_widgets[i]->GetContentsView()->NotifyAccessibilityEventDeprecated(
         ax::mojom::Event::kTreeChanged, true);
   }
 }
@@ -198,11 +259,14 @@ void OverviewFocusCycler::UpdateAccessibilityFocus() {
 std::vector<views::Widget*> OverviewFocusCycler::GetTraversableWidgets(
     bool for_accessibility) const {
   std::vector<views::Widget*> traversable_widgets;
-  traversable_widgets.reserve(10);  // Conservative default.
+  traversable_widgets.reserve(40);  // Conservative default.
 
   auto maybe_add_widget = [for_accessibility,
                            &traversable_widgets](views::Widget* widget) {
-    if (!widget) {
+    // The desks bar is invisible when in splitscreen. This is because of the
+    // high cost of creating and destroying it.
+    if (!widget || !widget->IsVisible() ||
+        widget->GetNativeWindow()->layer()->GetTargetOpacity() == 0.f) {
       return;
     }
 
@@ -225,20 +289,21 @@ std::vector<views::Widget*> OverviewFocusCycler::GetTraversableWidgets(
 
   maybe_add_widget(overview_session_->overview_focus_widget());
 
-  // TODO(http://b/325335020): Handle multidisplay focus.
-  OverviewGrid* primary_grid =
-      overview_session_->GetGridWithRootWindow(Shell::GetPrimaryRootWindow());
-  for (const auto& item : primary_grid->window_list()) {
-    maybe_add_widget(item->item_widget());
+  for (const auto& grid : overview_session_->grid_list()) {
+    for (const auto& item : grid->item_list()) {
+      // There may be two widgets if the item is a snap group item.
+      for (views::Widget* item_widget : item->GetFocusableWidgets()) {
+        maybe_add_widget(item_widget);
+      }
+    }
+    maybe_add_widget(grid->saved_desk_library_widget());
+    maybe_add_widget(grid->desks_widget());
+    maybe_add_widget(grid->save_desk_button_container_widget());
+    maybe_add_widget(grid->informed_restore_widget());
+    maybe_add_widget(grid->birch_bar_widget());
+    maybe_add_widget(grid->split_view_setup_widget());
+    maybe_add_widget(grid->no_windows_widget());
   }
-  maybe_add_widget(primary_grid->desks_widget());
-  maybe_add_widget(primary_grid->save_desk_button_container_widget());
-  maybe_add_widget(primary_grid->pine_widget());
-  maybe_add_widget(primary_grid->feedback_widget());
-  maybe_add_widget(primary_grid->birch_bar_widget());
-  maybe_add_widget(primary_grid->saved_desk_library_widget());
-  maybe_add_widget(primary_grid->faster_splitview_widget());
-  maybe_add_widget(primary_grid->no_windows_widget());
   return traversable_widgets;
 }
 

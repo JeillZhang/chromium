@@ -7,6 +7,7 @@ package org.chromium.chrome.browser.multiwindow;
 import android.app.Activity;
 import android.app.ActivityManager;
 import android.app.ActivityManager.AppTask;
+import android.app.ActivityOptions;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
@@ -32,7 +33,6 @@ import org.chromium.base.BuildInfo;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.IntentUtils;
 import org.chromium.base.ResettersForTesting;
-import org.chromium.base.cached_flags.IntCachedFieldTrialParameter;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.base.shared_preferences.SharedPreferencesManager;
@@ -48,8 +48,8 @@ import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.tabmodel.TabWindowManager;
 import org.chromium.chrome.browser.ui.desktop_windowing.AppHeaderUtils;
-import org.chromium.chrome.browser.ui.desktop_windowing.DesktopWindowStateProvider;
 import org.chromium.chrome.browser.util.AndroidTaskUtils;
+import org.chromium.components.browser_ui.desktop_windowing.DesktopWindowStateManager;
 import org.chromium.components.ukm.UkmRecorder;
 import org.chromium.ui.display.DisplayAndroidManager;
 
@@ -62,17 +62,11 @@ import java.util.Locale;
 /**
  * Utilities for detecting multi-window/multi-instance support.
  *
- * Thread-safe: This class may be accessed from any thread.
+ * <p>Thread-safe: This class may be accessed from any thread.
  */
 public class MultiWindowUtils implements ActivityStateListener {
     public static final int INVALID_INSTANCE_ID = TabWindowManager.INVALID_WINDOW_INDEX;
     public static final int INVALID_TASK_ID = -1; // Defined in android.app.ActivityTaskManager.
-    public static final IntCachedFieldTrialParameter
-            BACK_TO_BACK_CTA_CREATION_TIMESTAMP_DIFF_THRESHOLD_MS =
-                    ChromeFeatureList.newIntCachedFieldTrialParameter(
-                            ChromeFeatureList.TAB_WINDOW_MANAGER_REPORT_INDICES_MISMATCH,
-                            "activity_creation_timestamp_diff_threshold_ms",
-                            1000);
 
     static final String HISTOGRAM_NUM_ACTIVITIES_DESKTOP_WINDOW =
             "Android.MultiInstance.NumActivities.DesktopWindow";
@@ -173,7 +167,9 @@ public class MultiWindowUtils implements ActivityStateListener {
         return sMaxInstancesForTesting != null
                 ? sMaxInstancesForTesting
                 : (isMultiInstanceApi31Enabled()
-                        ? TabWindowManager.MAX_SELECTORS_S
+                        ? (ChromeFeatureList.sDisableInstanceLimit.isEnabled()
+                                ? TabWindowManager.MAX_SELECTORS
+                                : TabWindowManager.MAX_SELECTORS_S)
                         : TabWindowManager.MAX_SELECTORS_LEGACY);
     }
 
@@ -190,7 +186,7 @@ public class MultiWindowUtils implements ActivityStateListener {
         if (mIsInMultiWindowModeForTesting) return true;
         if (activity == null) return false;
 
-        return ApiCompatibilityUtils.isInMultiWindowMode(activity);
+        return activity.isInMultiWindowMode();
     }
 
     /**
@@ -386,7 +382,9 @@ public class MultiWindowUtils implements ActivityStateListener {
             throw new IllegalStateException(
                     "Attempting to open window in other display, but one is not found");
         }
-        return ApiCompatibilityUtils.createLaunchDisplayIdActivityOptions(id);
+        ActivityOptions options = ActivityOptions.makeBasic();
+        options.setLaunchDisplayId(id);
+        return options.toBundle();
     }
 
     /**
@@ -471,10 +469,17 @@ public class MultiWindowUtils implements ActivityStateListener {
             int taskId = activity.getTaskId();
             if (taskId != currentTaskId && isActivityVisible(activity)) {
                 // Found a visible task. Return its base ChromeTabbedActivity instance.
+                StringBuilder activityNameBuilder = new StringBuilder();
                 for (Activity a : runningActivities) {
-                    if (a instanceof ChromeTabbedActivity && a.getTaskId() == taskId) return a;
+                    if (a.getTaskId() == taskId) {
+                        activityNameBuilder.append(a.getClass().getName()).append(",");
+                        if (a instanceof ChromeTabbedActivity) return a;
+                    }
                 }
-                assert false : "Should have found the ChromeTabbedActivity of the visible task";
+                assert false
+                        : "Should have found the ChromeTabbedActivity of the visible task."
+                                + " Activities in this task: "
+                                + activityNameBuilder;
                 break;
             }
         }
@@ -629,7 +634,7 @@ public class MultiWindowUtils implements ActivityStateListener {
     }
 
     /**
-     * @returns A map taskID : boolean containing the visible tasks.
+     * @return A map taskID : boolean containing the visible tasks.
      */
     public static SparseBooleanArray getVisibleTasks() {
         SparseBooleanArray visibleTasks = new SparseBooleanArray();
@@ -768,32 +773,31 @@ public class MultiWindowUtils implements ActivityStateListener {
 
         if (tab == null || tab.isIncognito() || tab.getWebContents() == null) return;
 
-        new UkmRecorder.Bridge()
-                .recordEventWithIntegerMetric(
-                        tab.getWebContents(),
-                        "Android.MultiWindowChangeActivity",
+        new UkmRecorder(tab.getWebContents(), "Android.MultiWindowChangeActivity")
+                .addMetric(
                         "ActivityType",
                         isInMultiWindowMode
                                 ? MultiWindowActivityType.ENTER
-                                : MultiWindowActivityType.EXIT);
+                                : MultiWindowActivityType.EXIT)
+                .record();
     }
 
     /**
      * Records the ukms about if the activity is in multi-window mode when the activity is shown.
+     *
      * @param activity The current Context, used to retrieve the ActivityManager system service.
      * @param tab The current activity {@link Tab}.
      */
     public void recordMultiWindowStateUkm(Activity activity, Tab tab) {
         if (tab == null || tab.isIncognito() || tab.getWebContents() == null) return;
 
-        new UkmRecorder.Bridge()
-                .recordEventWithIntegerMetric(
-                        tab.getWebContents(),
-                        "Android.MultiWindowState",
+        new UkmRecorder(tab.getWebContents(), "Android.MultiWindowState")
+                .addMetric(
                         "WindowState",
                         isInMultiWindowMode(activity)
                                 ? MultiWindowState.MULTI_WINDOW
-                                : MultiWindowState.SINGLE_WINDOW);
+                                : MultiWindowState.SINGLE_WINDOW)
+                .record();
     }
 
     /**
@@ -856,11 +860,11 @@ public class MultiWindowUtils implements ActivityStateListener {
      * @param isColdStart Whether app startup is a cold start.
      */
     public static void maybeRecordDesktopWindowCountHistograms(
-            @Nullable DesktopWindowStateProvider desktopWindowStateProvider,
+            @Nullable DesktopWindowStateManager desktopWindowStateManager,
             @InstanceAllocationType int instanceAllocationType,
             boolean isColdStart) {
         // Emit the histogram only for an activity that starts in a desktop window.
-        if (!AppHeaderUtils.isAppInDesktopWindow(desktopWindowStateProvider)) return;
+        if (!AppHeaderUtils.isAppInDesktopWindow(desktopWindowStateManager)) return;
 
         // Emit the histogram only for a newly created activity that is cold-started.
         if (!isColdStart) return;

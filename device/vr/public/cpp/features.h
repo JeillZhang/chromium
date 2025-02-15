@@ -11,6 +11,7 @@
 
 namespace device::features {
 COMPONENT_EXPORT(VR_FEATURES) BASE_DECLARE_FEATURE(kWebXrHandInput);
+COMPONENT_EXPORT(VR_FEATURES) BASE_DECLARE_FEATURE(kWebXrWebGpuBinding);
 COMPONENT_EXPORT(VR_FEATURES) BASE_DECLARE_FEATURE(kWebXrIncubations);
 COMPONENT_EXPORT(VR_FEATURES) BASE_DECLARE_FEATURE(kWebXrInternals);
 COMPONENT_EXPORT(VR_FEATURES) BASE_DECLARE_FEATURE(kWebXrLayers);
@@ -32,6 +33,9 @@ BASE_DECLARE_FEATURE(kOpenXrExtendedFeatureSupport);
 COMPONENT_EXPORT(VR_FEATURES) BASE_DECLARE_FEATURE(kOpenXRSharedImages);
 COMPONENT_EXPORT(VR_FEATURES)
 BASE_DECLARE_FEATURE(kAllowOpenXrWithImmersiveFeature);
+#if BUILDFLAG(IS_ANDROID)
+COMPONENT_EXPORT(VR_FEATURES) BASE_DECLARE_FEATURE(kOpenXrAndroidSmoothDepth);
+#endif
 
 // Helper method to check if OpenXR should be enabled. It takes into account
 // both the kOpenXR feature, as well as the state of the system features on
@@ -45,7 +49,11 @@ COMPONENT_EXPORT(VR_FEATURES) bool IsOpenXrEnabled();
 // and should be checked instead of a direct query on the kOpenXR feature being
 // enabled.
 COMPONENT_EXPORT(VR_FEATURES) bool IsOpenXrArEnabled();
+
 #endif  // ENABLE_OPENXR
+COMPONENT_EXPORT(VR_FEATURES) bool HasImmersiveFeature();
+
+COMPONENT_EXPORT(VR_FEATURES) bool IsHandTrackingEnabled();
 
 }  // namespace device::features
 

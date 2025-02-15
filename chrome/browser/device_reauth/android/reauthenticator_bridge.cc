@@ -45,14 +45,11 @@ ReauthenticatorBridge::~ReauthenticatorBridge() {
   }
 }
 
-bool ReauthenticatorBridge::CanUseAuthenticationWithBiometric(JNIEnv* env) {
-  return authenticator_ && authenticator_->CanAuthenticateWithBiometrics();
-}
-
-bool ReauthenticatorBridge::CanUseAuthenticationWithBiometricOrScreenLock(
-    JNIEnv* env) {
-  return authenticator_ &&
-         authenticator_->CanAuthenticateWithBiometricOrScreenLock();
+jint ReauthenticatorBridge::GetBiometricAvailabilityStatus(JNIEnv* env) {
+  if (authenticator_ == nullptr) {
+    return static_cast<jint>(device_reauth::BiometricStatus::kUnavailable);
+  }
+  return static_cast<jint>(authenticator_->GetBiometricAvailabilityStatus());
 }
 
 void ReauthenticatorBridge::Reauthenticate(JNIEnv* env) {
@@ -71,4 +68,8 @@ void ReauthenticatorBridge::Reauthenticate(JNIEnv* env) {
 void ReauthenticatorBridge::OnReauthenticationCompleted(bool auth_succeeded) {
   Java_ReauthenticatorBridge_onReauthenticationCompleted(
       base::android::AttachCurrentThread(), java_bridge_, auth_succeeded);
+}
+
+void ReauthenticatorBridge::Destroy(JNIEnv* env) {
+  delete this;
 }

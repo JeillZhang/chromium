@@ -39,7 +39,6 @@ public class BookmarkFolderPickerCoordinator implements BackPressHandler {
     private final Context mContext;
     private final BookmarkModel mBookmarkModel;
     private final View mView;
-    private final View mMoveButton;
     private final RecyclerView mRecyclerView;
     private final BookmarkFolderPickerMediator mMediator;
     private final BookmarkUiPrefs mBookmarkUiPrefs;
@@ -58,7 +57,6 @@ public class BookmarkFolderPickerCoordinator implements BackPressHandler {
         mContext = context;
         mBookmarkModel = bookmarkModel;
         mView = LayoutInflater.from(mContext).inflate(R.layout.bookmark_folder_picker, null);
-        mMoveButton = mView.findViewById(R.id.move_button);
 
         mRecyclerView = mView.findViewById(R.id.folder_recycler_view);
         mRecyclerView.setLayoutManager(
@@ -93,15 +91,10 @@ public class BookmarkFolderPickerCoordinator implements BackPressHandler {
                         improvedBookmarkRowCoordinator,
                         shoppingService);
 
-        FadingShadowView shadow = (FadingShadowView) mView.findViewById(R.id.shadow);
+        FadingShadowView shadow = mView.findViewById(R.id.shadow);
         shadow.init(mContext.getColor(R.color.toolbar_shadow_color), FadingShadow.POSITION_TOP);
         mRecyclerView.setOnScrollListener(
                 new RecyclerView.OnScrollListener() {
-                    @Override
-                    public void onScrollStateChanged(RecyclerView recyclerView, int newState) {
-                        super.onScrollStateChanged(recyclerView, newState);
-                    }
-
                     @Override
                     public void onScrolled(RecyclerView recyclerView, int dx, int dy) {
                         super.onScrolled(recyclerView, dx, dy);
@@ -128,7 +121,7 @@ public class BookmarkFolderPickerCoordinator implements BackPressHandler {
 
     /** Returns the {@link Toolbar} for the folder picker. */
     public Toolbar getToolbar() {
-        return (Toolbar) mView.findViewById(R.id.toolbar);
+        return mView.findViewById(R.id.toolbar);
     }
 
     public void updateToolbarButtons() {

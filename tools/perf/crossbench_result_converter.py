@@ -8,6 +8,7 @@ See example inputs in testdata/crossbench_output folder.
 """
 
 import argparse
+import csv
 import json
 import pathlib
 import sys
@@ -18,6 +19,7 @@ tracing_dir = (pathlib.Path(__file__).absolute().parents[2] /
 sys.path.append(str(tracing_dir))
 from tracing.value import histogram, histogram_set
 from tracing.value.diagnostics import generic_set
+from tracing.value.diagnostics import reserved_infos
 
 
 def _get_crossbench_json_path(out_dir: pathlib.Path) -> pathlib.Path:
@@ -71,11 +73,16 @@ def _get_crossbench_json_path(out_dir: pathlib.Path) -> pathlib.Path:
 def convert(crossbench_out_dir: pathlib.Path,
             out_filename: pathlib.Path,
             benchmark: Optional[str] = None,
-            story: Optional[str] = None) -> None:
+            story: Optional[str] = None,
+            results_label: Optional[str] = None) -> None:
   """Do the conversion of crossbench output into histogram format.
 
   Args: See the help strings passed to argparse.ArgumentParser.
   """
+
+  if benchmark and benchmark.startswith('loadline'):
+    _loadline(crossbench_out_dir, out_filename, benchmark)
+    return
 
   crossbench_json_filename = _get_crossbench_json_path(crossbench_out_dir)
   with crossbench_json_filename.open() as f:
@@ -107,10 +114,49 @@ def convert(crossbench_out_dir: pathlib.Path,
 
   if benchmark:
     results.AddSharedDiagnosticToAllHistograms(
-        'benchmarks', generic_set.GenericSet([benchmark]))
+        reserved_infos.BENCHMARKS.name, generic_set.GenericSet([benchmark]))
   if story:
-    results.AddSharedDiagnosticToAllHistograms('stories',
-                                               generic_set.GenericSet([story]))
+    results.AddSharedDiagnosticToAllHistograms(
+        reserved_infos.STORIES.name, generic_set.GenericSet([story]))
+  if results_label:
+    results.AddSharedDiagnosticToAllHistograms(
+        reserved_infos.LABELS.name, generic_set.GenericSet([results_label]))
+
+  with out_filename.open('w') as f:
+    json.dump(results.AsDicts(), f)
+
+
+def _loadline(crossbench_out_dir: pathlib.Path,
+              out_filename: pathlib.Path,
+              benchmark: Optional[str] = None,
+              results_label: Optional[str] = None) -> None:
+  """Converts `loadline-*` benchmarks."""
+
+  crossbench_json_filename = crossbench_out_dir / 'loadline_probe.csv'
+  if not crossbench_json_filename.exists():
+    raise FileNotFoundError(
+        f'Missing crossbench results file: {crossbench_json_filename}')
+  with crossbench_json_filename.open() as f:
+    crossbench_result = next(csv.DictReader(f))
+
+  results = histogram_set.HistogramSet()
+  for key, value in crossbench_result.items():
+    data_point = None
+    if key == 'browser':
+      results.AddSharedDiagnosticToAllHistograms(
+          key, generic_set.GenericSet([value]))
+    else:
+      data_point = histogram.Histogram.Create(key, 'unitless_biggerIsBetter',
+                                              float(value))
+    if data_point:
+      results.AddHistogram(data_point)
+
+  if benchmark:
+    results.AddSharedDiagnosticToAllHistograms(
+        reserved_infos.BENCHMARKS.name, generic_set.GenericSet([benchmark]))
+  if results_label:
+    results.AddSharedDiagnosticToAllHistograms(
+        reserved_infos.LABELS.name, generic_set.GenericSet([results_label]))
 
   with out_filename.open('w') as f:
     json.dump(results.AsDicts(), f)

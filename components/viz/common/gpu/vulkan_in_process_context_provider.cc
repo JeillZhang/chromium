@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #include "components/viz/common/gpu/vulkan_in_process_context_provider.h"
 
 #include <string_view>
@@ -15,7 +20,7 @@
 #include "gpu/vulkan/vulkan_implementation.h"
 #include "gpu/vulkan/vulkan_instance.h"
 #include "gpu/vulkan/vulkan_util.h"
-#include "third_party/skia/include/gpu/GrDirectContext.h"
+#include "third_party/skia/include/gpu/ganesh/GrDirectContext.h"
 #include "third_party/skia/include/gpu/ganesh/vk/GrVkDirectContext.h"
 #include "third_party/skia/include/gpu/vk/VulkanBackendContext.h"
 #include "third_party/skia/include/gpu/vk/VulkanExtensions.h"
@@ -227,12 +232,12 @@ VulkanInProcessContextProvider::GetGrSecondaryCBDrawContext() {
 
 void VulkanInProcessContextProvider::EnqueueSecondaryCBSemaphores(
     std::vector<VkSemaphore> semaphores) {
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 void VulkanInProcessContextProvider::EnqueueSecondaryCBPostSubmitTask(
     base::OnceClosure closure) {
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 std::optional<uint32_t> VulkanInProcessContextProvider::GetSyncCpuMemoryLimit()

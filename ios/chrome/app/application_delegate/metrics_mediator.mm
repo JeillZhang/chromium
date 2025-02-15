@@ -64,7 +64,7 @@
 namespace {
 // The key to a NSUserDefaults entry logging the number of times classes are
 // loaded before a scene is attached.
-NSString* const kLoadTimePreferenceKey = @"LoadTimePreferenceKey";
+NSString* const kAppStartupCounterKey = @"LoadTimePreferenceKey";
 
 // The amount of time (in seconds) to wait for the user to start a new task.
 const NSTimeInterval kFirstUserActionTimeout = 30.0;
@@ -212,6 +212,18 @@ std::string WarmStartHistogramPrefix(bool version_mismatch) {
 }
 }  // namespace
 
+// A class to log the "load" count in uma.
+@interface AppStartupCounter : NSObject
+@end
+
+@implementation AppStartupCounter
++ (void)load {
+  NSUserDefaults* defaults = [NSUserDefaults standardUserDefaults];
+  [defaults setInteger:[defaults integerForKey:kAppStartupCounterKey] + 1
+                forKey:kAppStartupCounterKey];
+}
+@end
+
 namespace metrics_mediator {
 NSString* const kAppEnteredBackgroundDateKey = @"kAppEnteredBackgroundDate";
 NSString* const kAppDidFinishLaunchingConsecutiveCallsKey =
@@ -234,6 +246,10 @@ void RecordWidgetUsage(base::span<const HistogramNameCountPair> histograms) {
     kCredentialExtensionCopyURLCount : @"IOS.CredentialExtension.CopyURLCount",
     app_group::kCredentialExtensionCopyUsernameCount :
         @"IOS.CredentialExtension.CopyUsernameCount",
+    app_group::kCredentialExtensionCopyUserDisplayNameCount :
+        @"IOS.CredentialExtension.CopyUserDisplayNameCount",
+    app_group::kCredentialExtensionCopyCreationDateCount :
+        @"IOS.CredentialExtension.CopyCreationDateCount",
     app_group::kCredentialExtensionCopyPasswordCount :
         @"IOS.CredentialExtension.CopyPasswordCount",
     app_group::kCredentialExtensionShowPasswordCount :
@@ -242,8 +258,12 @@ void RecordWidgetUsage(base::span<const HistogramNameCountPair> histograms) {
     kCredentialExtensionSearchCount : @"IOS.CredentialExtension.SearchCount",
     app_group::kCredentialExtensionPasswordUseCount :
         @"IOS.CredentialExtension.PasswordUseCount",
+    app_group::kCredentialExtensionPasskeyUseCount :
+        @"IOS.CredentialExtension.PasskeyUseCount",
     app_group::kCredentialExtensionQuickPasswordUseCount :
         @"IOS.CredentialExtension.QuickPasswordUseCount",
+    app_group::kCredentialExtensionQuickPasskeyUseCount :
+        @"IOS.CredentialExtension.QuickPasskeyUseCount",
     app_group::kCredentialExtensionFetchPasswordFailureCount :
         @"IOS.CredentialExtension.FetchPasswordFailure",
     app_group::kCredentialExtensionFetchPasswordNilArgumentCount :
@@ -281,8 +301,8 @@ void RecordWidgetUsage(base::span<const HistogramNameCountPair> histograms) {
 }
 }  // namespace metrics_mediator
 
-using metrics_mediator::kAppEnteredBackgroundDateKey;
 using metrics_mediator::kAppDidFinishLaunchingConsecutiveCallsKey;
+using metrics_mediator::kAppEnteredBackgroundDateKey;
 
 @interface MetricsMediator ()
 // Starts or stops metrics recording.
@@ -352,8 +372,9 @@ BOOL _credentialExtensionWasUsed = NO;
 }
 
 + (void)logStartupDuration:(id<StartupInformation>)startupInformation {
-  if (![startupInformation isColdStart])
+  if (![startupInformation isColdStart]) {
     return;
+  }
 
   [MetricKitSubscriber endExtendedLaunchTask];
   base::TimeTicks now = base::TimeTicks::Now();
@@ -365,8 +386,8 @@ BOOL _credentialExtensionWasUsed = NO;
       now - [startupInformation firstSceneConnectionTime];
 
   NSUserDefaults* defaults = [NSUserDefaults standardUserDefaults];
-  int consecutiveLoads = [defaults integerForKey:kLoadTimePreferenceKey];
-  [defaults removeObjectForKey:kLoadTimePreferenceKey];
+  int consecutiveLoads = [defaults integerForKey:kAppStartupCounterKey];
+  [defaults removeObjectForKey:kAppStartupCounterKey];
   int consecutiveDidFinishLaunching =
       [defaults integerForKey:kAppDidFinishLaunchingConsecutiveCallsKey];
   [defaults removeObjectForKey:kAppDidFinishLaunchingConsecutiveCallsKey];
@@ -609,8 +630,9 @@ BOOL _credentialExtensionWasUsed = NO;
 
 - (void)updateMetricsStateBasedOnPrefsUserTriggered:(BOOL)isUserTriggered {
   BOOL optIn = [self areMetricsEnabled];
-  if (isUserTriggered)
+  if (isUserTriggered) {
     [self updateMetricsPrefsOnPermissionChange:optIn];
+  }
   [self setMetricsEnabled:optIn];
   crash_helper::SetEnabled(optIn);
   [self setAppGroupMetricsEnabled:optIn];
@@ -649,16 +671,19 @@ BOOL _credentialExtensionWasUsed = NO;
   metrics::MetricsService* metrics =
       GetApplicationContext()->GetMetricsService();
   DCHECK(metrics);
-  if (!metrics)
+  if (!metrics) {
     return;
+  }
   if (enabled) {
-    if (!metrics->recording_active())
+    if (!metrics->recording_active()) {
       metrics->Start();
+    }
 
     metrics->EnableReporting();
   } else {
-    if (metrics->recording_active())
+    if (metrics->recording_active()) {
       metrics->Stop();
+    }
   }
 }
 
@@ -703,14 +728,16 @@ BOOL _credentialExtensionWasUsed = NO;
   metrics::MetricsService* metrics =
       GetApplicationContext()->GetMetricsService();
   DCHECK(metrics);
-  if (!metrics)
+  if (!metrics) {
     return;
+  }
   if (enabled) {
     // When a user opts in to the metrics reporting service, the previously
     // collected data should be cleared to ensure that nothing is reported
     // before a user opts in and all reported data is accurate.
-    if (!metrics->recording_active())
+    if (!metrics->recording_active()) {
       metrics->ClearSavedStabilityMetrics();
+    }
   } else {
     // Clear the client id pref when opting out.
     // Note: Clearing client id will not affect the running state (e.g. field
@@ -747,7 +774,12 @@ BOOL _credentialExtensionWasUsed = NO;
       integerForKey:app_group::kCredentialExtensionPasswordUseCount];
   int quick_password_use_count = [shared_defaults
       integerForKey:app_group::kCredentialExtensionQuickPasswordUseCount];
-  if (password_use_count != 0 || quick_password_use_count != 0) {
+  int passkey_use_count = [shared_defaults
+      integerForKey:app_group::kCredentialExtensionPasskeyUseCount];
+  int quick_passkey_use_count = [shared_defaults
+      integerForKey:app_group::kCredentialExtensionQuickPasskeyUseCount];
+  if (password_use_count != 0 || quick_password_use_count != 0 ||
+      passkey_use_count != 0 || quick_passkey_use_count != 0) {
     _credentialExtensionWasUsed = YES;
   }
 }

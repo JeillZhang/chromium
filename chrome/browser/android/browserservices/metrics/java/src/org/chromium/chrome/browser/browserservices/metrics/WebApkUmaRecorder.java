@@ -118,19 +118,20 @@ public class WebApkUmaRecorder {
 
     /**
      * Records duration between starting the WebAPK shell until the splashscreen is shown.
+     *
      * @param durationMs duration in milliseconds
      */
     public static void recordShellApkLaunchToSplashVisible(long durationMs) {
-        RecordHistogram.recordMediumTimesHistogram(
+        RecordHistogram.deprecatedRecordMediumTimesHistogram(
                 HISTOGRAM_LAUNCH_TO_SPLASHSCREEN_VISIBLE, durationMs);
     }
 
     /**
-     * Records duration between starting the WebAPK shell until the shell displays the
-     * splashscreen for new-style WebAPKs.
+     * Records duration between starting the WebAPK shell until the shell displays the splashscreen
+     * for new-style WebAPKs.
      */
     public static void recordNewStyleShellApkLaunchToSplashVisible(long durationMs) {
-        RecordHistogram.recordMediumTimesHistogram(
+        RecordHistogram.deprecatedRecordMediumTimesHistogram(
                 HISTOGRAM_NEW_STYLE_LAUNCH_TO_SPLASHSCREEN_VISIBLE, durationMs);
     }
 
@@ -223,11 +224,6 @@ public class WebApkUmaRecorder {
         RecordHistogram.recordCount100Histogram("WebApk.WebappRegistry.NumberOfOrigins", count);
     }
 
-    private static int roundByteToMb(long bytes) {
-        int mbs = (int) (bytes / (long) ConversionUtils.BYTES_PER_MEGABYTE / 10L * 10L);
-        return Math.min(1000, Math.max(-1000, mbs));
-    }
-
     private static long getDirectorySizeInByte(File dir) {
         if (dir == null) return 0;
         if (!dir.isDirectory()) return dir.length();
@@ -276,14 +272,12 @@ public class WebApkUmaRecorder {
         final String sysStorageThresholdMaxBytes = "sys_storage_threshold_max_bytes";
 
         ContentResolver resolver = ContextUtils.getApplicationContext().getContentResolver();
-        int minFreePercent = 0;
-        long minFreeBytes = 0;
 
         // Retrieve platform-appropriate values first
-        minFreePercent =
+        int minFreePercent =
                 Settings.Global.getInt(
                         resolver, sysStorageThresholdPercentage, defaultThresholdPercentage);
-        minFreeBytes =
+        long minFreeBytes =
                 Settings.Global.getLong(
                         resolver, sysStorageThresholdMaxBytes, defaultThresholdMaxBytes);
 

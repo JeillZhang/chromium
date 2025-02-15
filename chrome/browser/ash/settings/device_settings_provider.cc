@@ -14,7 +14,7 @@
 
 #include "ash/constants/ash_features.h"
 #include "base/check.h"
-#include "base/containers/contains.h"
+#include "base/containers/fixed_flat_set.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/functional/callback_helpers.h"
@@ -33,7 +33,7 @@
 #include "chrome/browser/ash/settings/device_settings_cache.h"
 #include "chrome/browser/ash/settings/hardware_data_usage_controller.h"
 #include "chrome/browser/ash/settings/stats_reporting_controller.h"
-#include "chrome/browser/ash/tpm_firmware_update.h"
+#include "chrome/browser/ash/tpm/tpm_firmware_update.h"
 #include "chromeos/ash/components/dbus/dbus_thread_manager.h"
 #include "chromeos/ash/components/install_attributes/install_attributes.h"
 #include "chromeos/ash/components/settings/cros_settings.h"
@@ -57,7 +57,7 @@ namespace ash {
 namespace {
 
 // List of settings handled by the DeviceSettingsProvider.
-const char* const kKnownSettings[] = {
+constexpr auto kKnownSettings = base::MakeFixedFlatSet<std::string_view>({
     kAccountsPrefAllowGuest,
     kAccountsPrefAllowNewUser,
     kAccountsPrefFamilyLinkAccountsAllowed,
@@ -76,6 +76,7 @@ const char* const kKnownSettings[] = {
     kAllowRedeemChromeOsRegistrationOffers,
     kAttestationForContentProtectionEnabled,
     kCastReceiverName,
+    kDeviceFlexArcPreloadEnabled,
     kDeviceActivityHeartbeatCollectionRateMs,
     kDeviceActivityHeartbeatEnabled,
     kDeviceAllowedBluetoothServices,
@@ -186,7 +187,7 @@ const char* const kKnownSettings[] = {
     kVirtualMachinesAllowed,
     kDeviceReportXDREvents,
     kDeviceReportNetworkEvents,
-};
+});
 
 constexpr char InvalidCombinationsOfAllowedUsersPoliciesHistogram[] =
     "Login.InvalidCombinationsOfAllowedUsersPolicies";
@@ -451,7 +452,16 @@ void DecodeLoginPolicies(const em::ChromeDeviceSettingsProto& policy,
             static_cast<int>(
                 em::DeviceLocalAccountInfoProto::EPHEMERAL_MODE_UNSET));
       }
-
+      if (entry.has_isolated_kiosk_app()) {
+        if (entry.isolated_kiosk_app().has_web_bundle_id()) {
+          entry_dict.Set(kAccountsPrefDeviceLocalAccountsKeyIwaKioskBundleId,
+                         entry.isolated_kiosk_app().web_bundle_id());
+        }
+        if (entry.isolated_kiosk_app().has_update_manifest_url()) {
+          entry_dict.Set(kAccountsPrefDeviceLocalAccountsKeyIwaKioskUpdateUrl,
+                         entry.isolated_kiosk_app().update_manifest_url());
+        }
+      }
     } else if (entry.has_deprecated_public_session_id()) {
       // Deprecated public session specification.
       entry_dict.Set(kAccountsPrefDeviceLocalAccountsKeyId,
@@ -1066,6 +1076,15 @@ void DecodeGenericPolicies(const em::ChromeDeviceSettingsProto& policy,
     }
   }
 
+  if (policy.has_deviceflexarcpreloadenabled()) {
+    const em::BooleanPolicyProto& container(
+        policy.deviceflexarcpreloadenabled());
+    if (container.has_value()) {
+      new_values_cache->SetValue(kDeviceFlexArcPreloadEnabled,
+                                 base::Value(container.value()));
+    }
+  }
+
   if (policy.has_network_hostname()) {
     const em::NetworkHostnameProto& container(policy.network_hostname());
     if (container.has_device_hostname_template() &&
@@ -1378,7 +1397,7 @@ DeviceSettingsProvider::~DeviceSettingsProvider() {
 
 // static
 bool DeviceSettingsProvider::IsDeviceSetting(std::string_view name) {
-  return base::Contains(kKnownSettings, name);
+  return kKnownSettings.contains(name);
 }
 
 // static
@@ -1409,8 +1428,7 @@ void DeviceSettingsProvider::DoSet(const std::string& path,
   }
 
   if (!IsDeviceSetting(path)) {
-    NOTREACHED_IN_MIGRATION() << "Try to set unhandled cros setting " << path;
-    return;
+    NOTREACHED() << "Try to set unhandled cros setting " << path;
   }
 
   if (device_settings_service_->HasPrivateOwnerKey()) {
@@ -1617,7 +1635,7 @@ const base::Value* DeviceSettingsProvider::Get(std::string_view path) const {
     if (values_cache_.GetValue(path, &value))
       return value;
   } else {
-    NOTREACHED_IN_MIGRATION() << "Trying to get non cros setting.";
+    NOTREACHED() << "Trying to get non cros setting.";
   }
 
   return nullptr;

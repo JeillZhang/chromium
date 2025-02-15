@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/342213636): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "content/renderer/pepper/video_encoder_shim.h"
 
 #include <inttypes.h>
@@ -89,11 +94,7 @@ void GetVpxCodecParameters(media::VideoCodecProfile codec,
       *cpu_used = kVp9DefaultCpuUsed;
       break;
     default:
-      *vpx_codec = nullptr;
-      *min_quantizer = 0;
-      *max_quantizer = 0;
-      *cpu_used = 0;
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
   }
 }
 

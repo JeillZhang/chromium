@@ -15,11 +15,13 @@
 #include "components/page_info/core/about_this_site_validation.h"
 #include "components/page_info/core/features.h"
 #include "components/page_info/core/proto/about_this_site_metadata.pb.h"
+#include "components/search_engines/search_engines_test_environment.h"
 #include "components/search_engines/template_url_service.h"
 #include "services/metrics/public/cpp/ukm_recorder.h"
 #include "services/metrics/public/cpp/ukm_source_id.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/search_engines_data/resources/definitions/prepopulated_engines.h"
 #include "url/gurl.h"
 
 namespace page_info {
@@ -113,10 +115,8 @@ class AboutThisSiteServiceTest : public ::testing::TestWithParam<bool> {
       tab_helper_mock_ = std::make_unique<testing::StrictMock<MockTabHelper>>();
     }
 
-    template_url_service_ = std::make_unique<TemplateURLService>(nullptr, 0);
-
     service_ = std::make_unique<testing::StrictMock<MockAboutThisSiteService>>(
-        template_url_service_.get());
+        search_engines_test_environment_.template_url_service());
     SetOptimizationGuideAllowed(true);
   }
 
@@ -126,11 +126,13 @@ class AboutThisSiteServiceTest : public ::testing::TestWithParam<bool> {
   }
 
   MockTabHelper* tab_helper() { return tab_helper_mock_.get(); }
-  TemplateURLService* templateService() { return template_url_service_.get(); }
+  TemplateURLService* templateService() {
+    return search_engines_test_environment_.template_url_service();
+  }
   MockAboutThisSiteService* service() { return service_.get(); }
 
  private:
-  std::unique_ptr<TemplateURLService> template_url_service_;
+  search_engines::SearchEnginesTestEnvironment search_engines_test_environment_;
   std::unique_ptr<MockAboutThisSiteService> service_;
   std::unique_ptr<MockTabHelper> tab_helper_mock_;
 };
@@ -256,9 +258,9 @@ TEST_P(AboutThisSiteServiceTest, NotShownWhenNoGoogleDSE) {
           std::string_view(), std::string_view(), std::string_view(),
           std::string_view(), std::string_view(), std::string_view(),
           std::string_view(), std::string_view(), std::string_view(),
-          std::string_view(), std::string_view(), std::vector<std::string>(),
-          std::string_view(), std::string_view(), std::u16string_view(),
-          base::Value::List(), false, false, 0)));
+          std::vector<std::string>(), std::string_view(), std::string_view(),
+          std::u16string_view(), base::Value::List(), false, false, 0,
+          base::span<TemplateURLData::RegulatoryExtension>())));
   templateService()->SetUserSelectedDefaultSearchProvider(template_url);
 
   auto info = service()->GetAboutThisSiteInfo(

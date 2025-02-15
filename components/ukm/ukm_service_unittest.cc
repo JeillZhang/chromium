@@ -4,6 +4,7 @@
 
 #include "components/ukm/ukm_service.h"
 
+#include <algorithm>
 #include <map>
 #include <memory>
 #include <set>
@@ -20,7 +21,6 @@
 #include "base/hash/hash.h"
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/metrics_hashes.h"
-#include "base/ranges/algorithm.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -226,7 +226,7 @@ class ScopedUkmFeatureParams {
   ScopedUkmFeatureParams(const ScopedUkmFeatureParams&) = delete;
   ScopedUkmFeatureParams& operator=(const ScopedUkmFeatureParams&) = delete;
 
-  ~ScopedUkmFeatureParams() {}
+  ~ScopedUkmFeatureParams() = default;
 
  private:
   base::test::ScopedFeatureList scoped_feature_list_;
@@ -235,7 +235,7 @@ class ScopedUkmFeatureParams {
 class MockDemographicMetricsProvider
     : public metrics::UkmDemographicMetricsProvider {
  public:
-  ~MockDemographicMetricsProvider() override {}
+  ~MockDemographicMetricsProvider() override = default;
 
   // DemographicMetricsProvider:
   MOCK_METHOD1(ProvideSyncedUserNoisedBirthYearAndGenderToReport,
@@ -845,6 +845,35 @@ TEST_F(UkmServiceTest, SourceSerialization) {
   EXPECT_EQ(id, proto_source.id());
   EXPECT_EQ(GURL("https://google.com/final").spec(),
             proto_source.urls(1).url());
+}
+
+TEST_F(UkmServiceTest, SourceSerializationForAllowlistedButNonNavigationType) {
+  UkmService service(&prefs_, &client_,
+                     std::make_unique<MockDemographicMetricsProvider>());
+  TestRecordingHelper recorder(&service);
+  EXPECT_EQ(GetPersistedLogCount(), 0);
+  service.Initialize();
+  task_runner_->RunUntilIdle();
+  service.UpdateRecording({UkmConsentType::MSBB});
+  service.EnableReporting();
+
+  const GURL kURL("https://example.com/");
+
+  SourceId id = ConvertToSourceId(0, SourceIdType::NOTIFICATION_ID);
+  recorder.UpdateSourceURL(id, kURL);
+
+  service.Flush(metrics::MetricsLogsEventManager::CreateReason::kUnknown);
+  EXPECT_EQ(GetPersistedLogCount(), 1);
+
+  Report proto_report = GetPersistedReport();
+  ASSERT_EQ(1, proto_report.sources_size());
+  EXPECT_TRUE(proto_report.has_session_id());
+  const Source& proto_source = proto_report.sources(0);
+
+  EXPECT_EQ(id, proto_source.id());
+  EXPECT_EQ(static_cast<int>(SourceIdType::NOTIFICATION_ID), proto_source.type());
+  ASSERT_EQ(1, proto_source.urls_size());
+  EXPECT_EQ(kURL.spec(), proto_source.urls(0).url());
 }
 
 TEST_F(UkmServiceTest, LogMetadataOnlyAppKMSourceType) {
@@ -2184,9 +2213,7 @@ TEST_F(UkmServiceTest, NotifyObserverOnShutdown) {
   ukm::UkmRecorder::Get()->AddObserver(&observer);
   EXPECT_CALL(observer, OnStartingShutdown()).Times(1);
 }
-#endif  // BUILDFLAG(IS_CHROMEOS)
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
 namespace {
 
 class UkmServiceTestWithIndependentAppKM
@@ -2373,7 +2400,7 @@ INSTANTIATE_TEST_SUITE_P(
       }
     });
 
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 class MockUkmRecorder : public ukm::UkmRecorder {
  public:

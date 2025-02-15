@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "services/accessibility/features/devtools/os_devtools_session.h"
 
 #include <string_view>
@@ -285,7 +290,7 @@ blink::mojom::DevToolsMessagePtr OSDevToolsSession::FinalizeMessage(
     message_to_send = std::move(json);
   }
   auto mojo_msg = blink::mojom::DevToolsMessage::New();
-  mojo_msg->data = std::move(message_to_send);
+  mojo_msg->data = {message_to_send};
   return mojo_msg;
 }
 

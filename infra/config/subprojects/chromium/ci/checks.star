@@ -26,6 +26,7 @@ ci.builder(
     builderless = True,
     cores = 32,
     os = os.LINUX_DEFAULT,
+    gardener_rotations = gardener_rotations.CHROMIUM,
     console_view_entry = consoles.console_view_entry(
         console_view = "checks",
         category = "presubmit",
@@ -33,7 +34,6 @@ ci.builder(
     ),
     contact_team_email = "chrome-browser-infra-team@google.com",
     execution_timeout = ci.DEFAULT_EXECUTION_TIMEOUT,
-    gardener_rotations = gardener_rotations.CHROMIUM,
     properties = {
         "$depot_tools/presubmit": {
             "runhooks": True,
@@ -47,8 +47,11 @@ ci.builder(
     name = "win-presubmit",
     executable = "recipe:presubmit",
     builderless = True,
-    cores = 32,
+    cores = "16|32",
     os = os.WINDOWS_DEFAULT,
+    # TODO: crrev.com/i/7808548 - Drop cores=32 and add ssd=True after bot migration.
+    ssd = None,
+    gardener_rotations = gardener_rotations.CHROMIUM,
     console_view_entry = consoles.console_view_entry(
         console_view = "checks",
         category = "presubmit",
@@ -56,7 +59,6 @@ ci.builder(
     ),
     contact_team_email = "chrome-browser-infra-team@google.com",
     execution_timeout = 6 * time.hour,
-    gardener_rotations = gardener_rotations.CHROMIUM,
     properties = {
         "$depot_tools/presubmit": {
             "runhooks": True,

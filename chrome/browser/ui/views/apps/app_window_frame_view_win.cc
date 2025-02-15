@@ -26,7 +26,7 @@ const int kResizeAreaCornerSize = 16;
 AppWindowFrameViewWin::AppWindowFrameViewWin(views::Widget* widget)
     : widget_(widget) {}
 
-AppWindowFrameViewWin::~AppWindowFrameViewWin() {}
+AppWindowFrameViewWin::~AppWindowFrameViewWin() = default;
 
 gfx::Insets AppWindowFrameViewWin::GetFrameInsets() const {
   int caption_height =
@@ -129,6 +129,8 @@ gfx::Size AppWindowFrameViewWin::GetMaximumSize() const {
   gfx::Size max_size = widget_->client_view()->GetMaximumSize();
 
   gfx::Insets insets = GetFrameInsets();
+  insets += GetClientAreaInsets(
+      MonitorFromWindow(HWNDForView(this), MONITOR_DEFAULTTONEAREST));
   if (max_size.width()) {
     max_size.Enlarge(insets.left() + insets.right(), 0);
   }

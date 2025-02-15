@@ -24,11 +24,10 @@ void SplitCookiesIntoAllowedAndBlocked(
     CookieAccessDetails* blocked);
 
 // Logs cookie warnings to DevTools Issues Panel and logs events to UseCounters
-// and UKM for duplicate cookie-accessed events. Does not log to the JS console.
+// and UKM. Does not log to the JS console.
 // TODO(crbug.com/40632967): Remove when no longer needed.
 void EmitCookieWarningsAndMetrics(
     RenderFrameHostImpl* rfh,
-    NavigationRequest* navigation_request,
     const network::mojom::CookieAccessDetailsPtr& cookie_details);
 
 }  // namespace content

@@ -25,9 +25,9 @@ import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.base.supplier.Supplier;
 import org.chromium.blink.mojom.DisplayMode;
 import org.chromium.chrome.R;
-import org.chromium.chrome.browser.AppHooks;
 import org.chromium.chrome.browser.IntentHandler;
 import org.chromium.chrome.browser.SwipeRefreshHandler;
+import org.chromium.chrome.browser.app.tabmodel.TabWindowManagerSingleton;
 import org.chromium.chrome.browser.browser_controls.BrowserControlsStateProvider;
 import org.chromium.chrome.browser.compositor.CompositorViewHolder;
 import org.chromium.chrome.browser.contextmenu.ContextMenuUtils;
@@ -43,12 +43,15 @@ import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.tab.EmptyTabObserver;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabLaunchType;
+import org.chromium.chrome.browser.tab.TabUtils;
 import org.chromium.chrome.browser.tab.TabWebContentsDelegateAndroid;
 import org.chromium.chrome.browser.tabmodel.TabCreator;
 import org.chromium.chrome.browser.tabmodel.TabCreatorManager;
+import org.chromium.chrome.browser.tabmodel.TabGroupModelFilter;
 import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.tabmodel.TabModelUtils;
+import org.chromium.chrome.browser.ui.edge_to_edge.EdgeToEdgeControllerFactory;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.content_public.common.ResourceRequestBody;
 import org.chromium.ui.base.WindowAndroid;
@@ -61,10 +64,11 @@ import org.chromium.ui.mojom.WindowOpenDisposition;
 import org.chromium.ui.util.ColorUtils;
 import org.chromium.url.GURL;
 
+import java.util.Arrays;
+
 /**
- * {@link WebContentsDelegateAndroid} that interacts with {@link Activity} and those
- * of the lifetime of the activity to process requests from underlying {@link WebContents}
- * for a given {@link Tab}.
+ * {@link WebContentsDelegateAndroid} that interacts with {@link Activity} and those of the lifetime
+ * of the activity to process requests from underlying {@link WebContents} for a given {@link Tab}.
  */
 public class ActivityTabWebContentsDelegateAndroid extends TabWebContentsDelegateAndroid {
     private static final String TAG = "ActivityTabWCDA";
@@ -197,23 +201,46 @@ public class ActivityTabWebContentsDelegateAndroid extends TabWebContentsDelegat
         boolean success =
                 tabCreator.createTabWithWebContents(
                         mTab, webContents, TabLaunchType.FROM_LONGPRESS_FOREGROUND, url);
+        if (!success) return false;
 
-        if (success) {
-            if (disposition == WindowOpenDisposition.NEW_FOREGROUND_TAB) {
-                RecordUserAction.record("LinkNavigationOpenedInForegroundTab");
-            } else if (disposition == WindowOpenDisposition.NEW_POPUP) {
-                PolicyAuditor auditor = AppHooks.get().getPolicyAuditor();
-                if (auditor != null) {
-                    auditor.notifyAuditEvent(
-                            ContextUtils.getApplicationContext(),
-                            AuditEvent.OPEN_POPUP_URL_SUCCESS,
-                            url.getSpec(),
-                            "");
-                }
+        if (disposition == WindowOpenDisposition.NEW_FOREGROUND_TAB) {
+            RecordUserAction.record("LinkNavigationOpenedInForegroundTab");
+        } else if (disposition == WindowOpenDisposition.NEW_POPUP) {
+            PolicyAuditor auditor = PolicyAuditor.maybeCreate();
+            if (auditor != null) {
+                auditor.notifyAuditEvent(
+                        ContextUtils.getApplicationContext(),
+                        AuditEvent.OPEN_POPUP_URL_SUCCESS,
+                        url.getSpec(),
+                        "");
             }
         }
 
-        return success;
+        Tab sourceTab = fromWebContents(sourceWebContents);
+        if (sourceTab == null
+                || sourceTab.getTabGroupId() == null
+                || !ChromeFeatureList.isEnabled(ChromeFeatureList.GROUP_NEW_TAB_WITH_PARENT)) {
+            return true;
+        }
+
+        if (disposition != WindowOpenDisposition.NEW_FOREGROUND_TAB
+                && disposition != WindowOpenDisposition.NEW_BACKGROUND_TAB) {
+            return true;
+        }
+
+        Tab newTab = fromWebContents(webContents);
+        // If the new tab is in a different TabModel from the parent tab, don't group them.
+        if (TabWindowManagerSingleton.getInstance().getTabModelForTab(sourceTab)
+                == TabWindowManagerSingleton.getInstance().getTabModelForTab(newTab)) {
+            TabGroupModelFilter tabGroupModelFilter = getTabGroupModelFilter(sourceTab);
+            // Set notify to false so snackbar to undo the grouping will not be shown.
+            if (tabGroupModelFilter != null) {
+                tabGroupModelFilter.mergeListOfTabsToGroup(
+                        Arrays.asList(newTab), sourceTab, /* notify= */ false);
+            }
+        }
+
+        return true;
     }
 
     @Override
@@ -238,7 +265,7 @@ public class ActivityTabWebContentsDelegateAndroid extends TabWebContentsDelegat
         TabModel model = mTabModelSelectorSupplier.get().getModel(mTab.isIncognito());
         int index = model.indexOf(mTab);
         if (index == TabModel.INVALID_TAB_INDEX) return;
-        TabModelUtils.setIndex(model, index, false);
+        TabModelUtils.setIndex(model, index);
 
         // Do nothing if the mActivity is visible (STOPPED is the only valid invisible state as we
         // explicitly check isActivityFinishingOrDestroyed above).
@@ -510,5 +537,18 @@ public class ActivityTabWebContentsDelegateAndroid extends TabWebContentsDelegat
     @Override
     protected boolean isModalContextMenu() {
         return !ContextMenuUtils.usePopupContextMenuForContext(mActivity);
+    }
+
+    @Override
+    protected boolean isDynamicSafeAreaInsetsEnabled() {
+        return EdgeToEdgeControllerFactory.isSupportedConfiguration(mActivity);
+    }
+
+    protected TabGroupModelFilter getTabGroupModelFilter(Tab tab) {
+        return TabModelUtils.getTabGroupModelFilterByTab(tab);
+    }
+
+    protected Tab fromWebContents(WebContents webContents) {
+        return TabUtils.fromWebContents(webContents);
     }
 }

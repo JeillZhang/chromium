@@ -6,8 +6,14 @@
 
 #import <CoreML/CoreML.h>
 
+#include "base/sequence_checker.h"
+#include "services/webnn/coreml/graph_builder_coreml.h"
 #include "services/webnn/coreml/graph_impl_coreml.h"
+#include "services/webnn/coreml/tensor_impl_coreml.h"
+#include "services/webnn/public/cpp/context_properties.h"
 #include "services/webnn/public/mojom/webnn_context_provider.mojom.h"
+#include "services/webnn/webnn_constant_operand.h"
+#include "services/webnn/webnn_context_impl.h"
 #include "services/webnn/webnn_context_provider_impl.h"
 
 namespace webnn::coreml {
@@ -18,26 +24,34 @@ ContextImplCoreml::ContextImplCoreml(
     mojom::CreateContextOptionsPtr options)
     : WebNNContextImpl(std::move(receiver),
                        context_provider,
-                       GraphBuilderCoreml::GetContextProperties()),
-      options_(std::move(options)) {}
+                       GraphBuilderCoreml::GetContextProperties(),
+                       std::move(options)) {}
 
 ContextImplCoreml::~ContextImplCoreml() = default;
 
-void ContextImplCoreml::CreateGraphImpl(
-    mojom::GraphInfoPtr graph_info,
-    mojom::WebNNContext::CreateGraphCallback callback) {
-  GraphImplCoreml::CreateAndBuild(std::move(graph_info), options_.Clone(),
-                                  std::move(callback));
+base::WeakPtr<WebNNContextImpl> ContextImplCoreml::AsWeakPtr() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  return weak_factory_.GetWeakPtr();
 }
 
-std::unique_ptr<WebNNBufferImpl> ContextImplCoreml::CreateBufferImpl(
-    mojo::PendingAssociatedReceiver<mojom::WebNNBuffer> receiver,
-    mojom::BufferInfoPtr buffer_info,
-    const base::UnguessableToken& buffer_handle) {
-  // TODO(crbug.com/40278771): Implement MLBuffer for CoreML. Involve
-  // an IPC security reviewer.
-  NOTIMPLEMENTED();
-  return {};
+void ContextImplCoreml::CreateGraphImpl(
+    mojom::GraphInfoPtr graph_info,
+    WebNNGraphImpl::ComputeResourceInfo compute_resource_info,
+    base::flat_map<uint64_t, std::unique_ptr<WebNNConstantOperand>>
+        constant_operands,
+    CreateGraphImplCallback callback) {
+  GraphImplCoreml::CreateAndBuild(
+      this, std::move(graph_info), std::move(compute_resource_info),
+      std::move(constant_operands), options().Clone(), properties(),
+      std::move(callback));
+}
+
+void ContextImplCoreml::CreateTensorImpl(
+    mojo::PendingAssociatedReceiver<mojom::WebNNTensor> receiver,
+    mojom::TensorInfoPtr tensor_info,
+    CreateTensorImplCallback callback) {
+  std::move(callback).Run(TensorImplCoreml::Create(std::move(receiver), this,
+                                                   std::move(tensor_info)));
 }
 
 }  // namespace webnn::coreml

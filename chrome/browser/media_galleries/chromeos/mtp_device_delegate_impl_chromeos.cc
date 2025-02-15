@@ -17,8 +17,10 @@
 #include "base/containers/circular_deque.h"
 #include "base/containers/contains.h"
 #include "base/files/file_util.h"
+#include "base/files/safe_base_name.h"
 #include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
+#include "base/not_fatal_until.h"
 #include "base/notreached.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/posix/eintr_wrapper.h"
@@ -1405,7 +1407,7 @@ void MTPDeviceDelegateImplLinux::RunTask(PendingTaskInfo task_info) {
                                                    std::move(task_info.task));
       break;
     case content::BrowserThread::ID_COUNT:
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
   }
 }
 
@@ -1658,7 +1660,7 @@ void MTPDeviceDelegateImplLinux::OnDidReadDirectory(
   DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
 
   FileIdToMTPFileNodeMap::iterator it = file_id_to_node_map_.find(dir_id);
-  DCHECK(it != file_id_to_node_map_.end());
+  CHECK(it != file_id_to_node_map_.end(), base::NotFatalUntil::M130);
   MTPFileNode* dir_node = it->second;
 
   // Traverse the MTPFileNode tree to reconstuct the full path for |dir_id|.
@@ -1675,7 +1677,9 @@ void MTPDeviceDelegateImplLinux::OnDidReadDirectory(
   storage::AsyncFileUtil::EntryList file_list;
   for (const auto& mtp_entry : mtp_entries) {
     filesystem::mojom::DirectoryEntry entry;
-    entry.name = base::FilePath(mtp_entry.name);
+    auto name = base::SafeBaseName::Create(mtp_entry.name);
+    CHECK(name) << mtp_entry.name;
+    entry.name = *name;
     entry.type = mtp_entry.file_info.is_directory
                      ? filesystem::mojom::FsFileType::DIRECTORY
                      : filesystem::mojom::FsFileType::REGULAR_FILE;

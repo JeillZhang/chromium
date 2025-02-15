@@ -61,10 +61,9 @@ import 'chrome://resources/ash/common/cr_elements/cr_hidden_style.css.js';
 import 'chrome://resources/ash/common/cr_elements/cr_slider/cr_slider.js';
 import 'chrome://resources/ash/common/cr_elements/cros_color_overrides.css.js';
 
-import {CrSliderElement, SliderTick} from 'chrome://resources/ash/common/cr_elements/cr_slider/cr_slider.js';
+import type {CrSliderElement, SliderTick} from 'chrome://resources/ash/common/cr_elements/cr_slider/cr_slider.js';
 import {assert} from 'chrome://resources/js/assert.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
-import {PolymerElementProperties} from 'chrome://resources/polymer/v3_0/polymer/interfaces.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {PrefControlMixinInternal} from './pref_control_mixin_internal.js';
@@ -87,11 +86,7 @@ export class SettingsSliderV2Element extends SettingsSliderV2ElementBase {
     return getTemplate();
   }
 
-  /**
-   * Shared properties with other elements that may encapsulate this element
-   * internally (e.g. settings-slider-row).
-   */
-  static get sharedProperties(): PolymerElementProperties {
+  static get properties() {
     return {
       /**
        * The current value of the slider. It shouldn't be used or updated if
@@ -162,12 +157,6 @@ export class SettingsSliderV2Element extends SettingsSliderV2ElementBase {
         type: Boolean,
         value: false,
       },
-    };
-  }
-
-  static get properties() {
-    return {
-      ...this.sharedProperties,
 
       /**
        * By default, the slider value will only be updated when the dragging
@@ -178,6 +167,19 @@ export class SettingsSliderV2Element extends SettingsSliderV2ElementBase {
         type: Boolean,
         value: false,
         observer: 'onSliderChanged_',
+      },
+
+      // A11y properties added since they are data-bound in HTML.
+      ariaLabel: {
+        type: String,
+        reflectToAttribute: false,
+        observer: 'onAriaLabelSet_',
+      },
+
+      ariaDescription: {
+        type: String,
+        reflectToAttribute: false,
+        observer: 'onAriaDescriptionSet_',
       },
 
       loaded_: Boolean,
@@ -328,6 +330,34 @@ export class SettingsSliderV2Element extends SettingsSliderV2ElementBase {
 
   private getAriaDisabled_(): string {
     return this.disabled ? 'true' : 'false';
+  }
+
+  /**
+   * Manually remove the aria-label attribute from the host node since it is
+   * applied to the internal slider. `reflectToAttribute=false` does not resolve
+   * this issue. This prevents the aria-label from being duplicated by
+   * screen readers.
+   */
+  private onAriaLabelSet_(): void {
+    const ariaLabel = this.getAttribute('aria-label');
+    this.removeAttribute('aria-label');
+    if (ariaLabel) {
+      this.ariaLabel = ariaLabel;
+    }
+  }
+
+  /**
+   * Manually remove the aria-description attribute from the host node since it
+   * is applied to the internal slider. `reflectToAttribute=false` does not
+   * resolve this issue. This prevents the aria-description from being
+   * duplicated by screen readers.
+   */
+  private onAriaDescriptionSet_(): void {
+    const ariaDescription = this.getAttribute('aria-description');
+    this.removeAttribute('aria-description');
+    if (ariaDescription) {
+      this.ariaDescription = ariaDescription;
+    }
   }
 }
 

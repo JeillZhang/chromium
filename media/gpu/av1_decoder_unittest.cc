@@ -2,10 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/gpu/av1_decoder.h"
 
 #include <string.h>
 
+#include <algorithm>
+#include <array>
 #include <string>
 #include <vector>
 
@@ -15,19 +22,19 @@
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
 #include "base/numerics/safe_conversions.h"
-#include "base/ranges/algorithm.h"
 #include "media/base/decoder_buffer.h"
 #include "media/base/test_data_util.h"
 #include "media/ffmpeg/ffmpeg_common.h"
 #include "media/ffmpeg/scoped_av_packet.h"
 #include "media/filters/ffmpeg_demuxer.h"
 #include "media/filters/in_memory_url_protocol.h"
-#include "media/filters/ivf_parser.h"
 #include "media/gpu/av1_picture.h"
 #include "media/media_buildflags.h"
+#include "media/parsers/ivf_parser.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/libgav1/src/src/obu_parser.h"
+#include "third_party/libgav1/src/src/utils/common.h"
 #include "third_party/libgav1/src/src/utils/constants.h"
 #include "third_party/libgav1/src/src/utils/types.h"
 
@@ -198,7 +205,7 @@ void AV1DecoderTest::Reset() {
   EXPECT_TRUE(decoder_->parser_);
   EXPECT_EQ(decoder_->accelerator_.get(), mock_accelerator_);
   EXPECT_LT(base::checked_cast<AV1ReferenceFrameVector::size_type>(
-                base::ranges::count(decoder_->ref_frames_, nullptr)),
+                std::ranges::count(decoder_->ref_frames_, nullptr)),
             decoder_->ref_frames_.size());
   EXPECT_FALSE(decoder_->current_frame_header_);
   EXPECT_FALSE(decoder_->current_frame_);
@@ -211,7 +218,7 @@ void AV1DecoderTest::Reset() {
   EXPECT_FALSE(decoder_->parser_);
   EXPECT_EQ(decoder_->accelerator_.get(), mock_accelerator_);
   EXPECT_EQ(base::checked_cast<AV1ReferenceFrameVector::size_type>(
-                base::ranges::count(decoder_->ref_frames_, nullptr)),
+                std::ranges::count(decoder_->ref_frames_, nullptr)),
             decoder_->ref_frames_.size());
   EXPECT_FALSE(decoder_->current_frame_header_);
   EXPECT_FALSE(decoder_->current_frame_);
@@ -250,7 +257,7 @@ std::vector<scoped_refptr<DecoderBuffer>> AV1DecoderTest::ReadIVF(
   while (ivf_parser.ParseNextFrame(&ivf_frame_header, &data)) {
     buffers.push_back(DecoderBuffer::CopyFrom(
         // TODO(crbug.com/40284755): `ParseNextFrame` should return a span.
-        UNSAFE_BUFFERS(base::span(data, ivf_frame_header.frame_size))));
+        UNSAFE_TODO(base::span(data, ivf_frame_header.frame_size))));
   }
   return buffers;
 }
@@ -546,10 +553,12 @@ TEST_F(AV1DecoderTest, DecodeFilmGrain) {
 TEST_F(AV1DecoderTest, ConfigChange) {
   constexpr auto kProfile = libgav1::BitstreamProfile::kProfile0;
   constexpr auto kMediaProfile = VideoCodecProfile::AV1PROFILE_PROFILE_MAIN;
-  const std::string kSimpleStreams[] = {"bear-av1.webm",
-                                        "bear-av1-480x360.webm"};
-  constexpr gfx::Size kFrameSizes[] = {{320, 240}, {480, 360}};
-  constexpr gfx::Size kRenderSizes[] = {{320, 240}, {480, 360}};
+  const auto kSimpleStreams =
+      std::to_array<std::string>({"bear-av1.webm", "bear-av1-480x360.webm"});
+  constexpr auto kFrameSizes =
+      std::to_array<gfx::Size>({{320, 240}, {480, 360}});
+  constexpr auto kRenderSizes =
+      std::to_array<gfx::Size>({{320, 240}, {480, 360}});
   std::vector<DecodeResult> expected;
   std::vector<DecodeResult> results;
   for (size_t i = 0; i < std::size(kSimpleStreams); ++i) {
@@ -643,10 +652,12 @@ TEST_F(AV1DecoderTest, Reset) {
 TEST_F(AV1DecoderTest, ResetAndConfigChange) {
   constexpr auto kProfile = libgav1::BitstreamProfile::kProfile0;
   constexpr auto kMediaProfile = VideoCodecProfile::AV1PROFILE_PROFILE_MAIN;
-  const std::string kSimpleStreams[] = {"bear-av1.webm",
-                                        "bear-av1-480x360.webm"};
-  constexpr gfx::Size kFrameSizes[] = {{320, 240}, {480, 360}};
-  constexpr gfx::Size kRenderSizes[] = {{320, 240}, {480, 360}};
+  const auto kSimpleStreams =
+      std::to_array<std::string>({"bear-av1.webm", "bear-av1-480x360.webm"});
+  constexpr auto kFrameSizes =
+      std::to_array<gfx::Size>({{320, 240}, {480, 360}});
+  constexpr auto kRenderSizes =
+      std::to_array<gfx::Size>({{320, 240}, {480, 360}});
   constexpr uint8_t kBitDepth = 8u;
   std::vector<DecodeResult> expected;
   std::vector<DecodeResult> results;
@@ -724,13 +735,13 @@ TEST_F(AV1DecoderTest, InconsistentReferenceFrameState) {
     // frames are valid.
     const libgav1::DecoderState* decoder_state = GetDecoderState();
     ASSERT_TRUE(decoder_state);
-    EXPECT_EQ(base::ranges::count(decoder_state->reference_frame, nullptr),
+    EXPECT_EQ(std::ranges::count(decoder_state->reference_frame, nullptr),
               base::checked_cast<long>(decoder_state->reference_frame.size()));
 
     // And to be consistent, AV1Decoder should not be tracking any reference
     // frames yet.
     const AV1ReferenceFrameVector& internal_ref_frames = GetReferenceFrames();
-    EXPECT_EQ(base::ranges::count(internal_ref_frames, nullptr),
+    EXPECT_EQ(std::ranges::count(internal_ref_frames, nullptr),
               base::checked_cast<long>(internal_ref_frames.size()));
 
     // Now try to decode one frame and make sure that the frame is intra.
@@ -743,19 +754,19 @@ TEST_F(AV1DecoderTest, InconsistentReferenceFrameState) {
     // SubmitDecode() should have received the reference frames before they were
     // updated. That means that it should have received no reference frames
     // since this SubmitDecode() refers to the first frame.
-    EXPECT_EQ(base::ranges::count(ref_frames, nullptr),
+    EXPECT_EQ(std::ranges::count(ref_frames, nullptr),
               base::checked_cast<long>(ref_frames.size()));
 
     // Now let's inspect the current state of things (which is after the
     // reference frames have been updated): libgav1 should have decided that all
     // reference frames are valid.
     ASSERT_TRUE(decoder_state);
-    EXPECT_EQ(base::ranges::count(decoder_state->reference_frame, nullptr), 0);
+    EXPECT_EQ(std::ranges::count(decoder_state->reference_frame, nullptr), 0);
 
     // And to be consistent, all the reference frames tracked by the AV1Decoder
     // should also be valid and they should be pointing to the only AV1Picture
     // so far.
-    EXPECT_TRUE(base::ranges::all_of(
+    EXPECT_TRUE(std::ranges::all_of(
         internal_ref_frames,
         [&av1_picture](const scoped_refptr<AV1Picture>& ref_frame) {
           return ref_frame.get() == av1_picture.get();
@@ -788,7 +799,7 @@ TEST_F(AV1DecoderTest, InconsistentReferenceFrameState) {
   // were valid.
   const libgav1::DecoderState* decoder_state = GetDecoderState();
   ASSERT_TRUE(decoder_state);
-  EXPECT_EQ(base::ranges::count(decoder_state->reference_frame, nullptr), 0);
+  EXPECT_EQ(std::ranges::count(decoder_state->reference_frame, nullptr), 0);
 }
 
 TEST_F(AV1DecoderTest, TryAgainSubmitDecode) {

@@ -131,6 +131,11 @@ std::unique_ptr<GradientData> LayoutSVGResourceGradient::BuildGradientData(
 
   // Create gradient object
   gradient_data->gradient = BuildGradient();
+  gradient_data->gradient->SetColorInterpolationSpace(
+      StyleRef().ColorInterpolation() == EColorInterpolation::kLinearrgb
+          ? Color::ColorSpace::kSRGBLinear
+          : Color::ColorSpace::kNone,
+      Color::HueInterpolationMethod::kShorter);
   gradient_data->gradient->AddColorStops(attributes.Stops());
 
   gradient_data->userspace_transform *= attributes.GradientTransform();
@@ -210,8 +215,7 @@ GradientSpreadMethod LayoutSVGResourceGradient::PlatformSpreadMethodFromSVGType(
       return kSpreadMethodRepeat;
   }
 
-  NOTREACHED_IN_MIGRATION();
-  return kSpreadMethodPad;
+  NOTREACHED();
 }
 
 }  // namespace blink

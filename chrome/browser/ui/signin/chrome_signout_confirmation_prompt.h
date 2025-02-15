@@ -5,10 +5,6 @@
 #ifndef CHROME_BROWSER_UI_SIGNIN_CHROME_SIGNOUT_CONFIRMATION_PROMPT_H_
 #define CHROME_BROWSER_UI_SIGNIN_CHROME_SIGNOUT_CONFIRMATION_PROMPT_H_
 
-#include "base/functional/callback_forward.h"
-
-class Browser;
-
 // These values are persisted to logs. Entries should not be renumbered and
 // numeric values should never be reused.
 // LINT.IfChange(ChromeSignoutConfirmationChoice)
@@ -22,20 +18,24 @@ enum class ChromeSignoutConfirmationChoice {
 // LINT.ThenChange(//tools/metrics/histograms/metadata/signin/enums.xml:ChromeSignoutConfirmationChoice)
 
 enum class ChromeSignoutConfirmationPromptVariant {
+  // The user does not have unsynced data.
+  // Available choices: `kSignout` and `kDismissed`.
+  kNoUnsyncedData,
   // The user has unsynced data, and can choose between canceling the signout
   // or proceeding anyway.
   // Available choices: `kSignout` and `kDismissed`.
   kUnsyncedData,
-  // The user has unsynced data, and can choose between canceling the signout
-  // or proceeding anyway.
+  // The user has unsynced data, and can choose between reauthenticating or
+  // proceeding anyway. Dismissing the dialog closes it without any action.
   // Available choices: `kReauth`, `kSignout` and `kDismissed`.
   kUnsyncedDataWithReauthButton,
+  // The user is supervised and parental controls apply to their profile.
+  // Available choices: `kSignout` and `kDismissed`.
+  kProfileWithParentalControls,
 };
 
-// Factory function to create and show the Chrome signout confirmation prompt.
-void ShowChromeSignoutConfirmationPrompt(
-    Browser& browser,
+void RecordChromeSignoutConfirmationPromptMetrics(
     ChromeSignoutConfirmationPromptVariant variant,
-    base::OnceCallback<void(ChromeSignoutConfirmationChoice)> callback);
+    ChromeSignoutConfirmationChoice choice);
 
 #endif  // CHROME_BROWSER_UI_SIGNIN_CHROME_SIGNOUT_CONFIRMATION_PROMPT_H_

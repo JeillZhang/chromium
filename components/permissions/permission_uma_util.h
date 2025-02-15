@@ -6,6 +6,8 @@
 #define COMPONENTS_PERMISSIONS_PERMISSION_UMA_UTIL_H_
 
 #include <optional>
+#include <set>
+#include <string>
 #include <vector>
 
 #include "base/memory/raw_ptr.h"
@@ -14,10 +16,10 @@
 #include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "components/content_settings/core/common/content_settings_types.h"
 #include "components/permissions/permission_request.h"
+#include "components/permissions/permission_request_enums.h"
 #include "components/permissions/prediction_service/prediction_service_messages.pb.h"
 #include "components/permissions/request_type.h"
 #include "content/public/browser/permission_result.h"
-#include "third_party/blink/public/mojom/permissions_policy/permissions_policy_feature.mojom-forward.h"
 
 namespace blink {
 enum class PermissionType;
@@ -74,7 +76,7 @@ enum class RequestTypeForUma {
   PERMISSION_FLASH = 12,
   PERMISSION_MEDIASTREAM_MIC = 13,
   PERMISSION_MEDIASTREAM_CAMERA = 14,
-  PERMISSION_ACCESSIBILITY_EVENTS = 15,
+  // PERMISSION_ACCESSIBILITY_EVENTS = 15,  // Removed in M131.
   // PERMISSION_CLIPBOARD_READ = 16, // Replaced by
   // PERMISSION_CLIPBOARD_READ_WRITE in M81.
   // PERMISSION_SECURITY_KEY_ATTESTATION = 17,
@@ -100,6 +102,8 @@ enum class RequestTypeForUma {
   PERMISSION_KEYBOARD_LOCK = 37,
   PERMISSION_POINTER_LOCK = 38,
   MULTIPLE_KEYBOARD_AND_POINTER_LOCK = 39,
+  PERMISSION_HAND_TRACKING = 40,
+  PERMISSION_WEB_APP_INSTALLATION = 41,
   // NUM must be the last value in the enum.
   NUM,
 };
@@ -398,7 +402,7 @@ enum class PermissionAutoRevocationHistory {
 
 // This enum backs up the `AutoDSEPermissionRevertTransition` histogram enum.
 // Never reuse values and mirror any updates to it.
-// Describes the transition that has occured for the setting of a DSE origin
+// Describes the transition that has occurred for the setting of a DSE origin
 // when DSE autogrant becomes disabled.
 enum class AutoDSEPermissionRevertTransition {
   // The user has not previously made any decision so it results in an `ASK` end
@@ -431,11 +435,12 @@ enum class AutoDSEPermissionRevertTransition {
 // indicates whether the permission prediction was done by the local on device
 // model or by the server side model.
 enum class PermissionPredictionSource {
-  ON_DEVICE = 0,
+  ON_DEVICE_TFLITE = 0,
   SERVER_SIDE = 1,
+  SERVER_SIDE_AND_ON_DEVICE_GENAI = 2,
 
   // Always keep at the end.
-  kMaxValue = SERVER_SIDE,
+  kMaxValue = SERVER_SIDE_AND_ON_DEVICE_GENAI,
 };
 
 // This enum backs up the 'PageInfoDialogAccessType' histogram enum.
@@ -593,8 +598,13 @@ enum class DismissalType {
   // quietly dismissed.
   kAutodismissOsDenied = 4,
 
+  // It's possible that the modal dialog manager is null when showing a dialog,
+  // for example if the tab has been navigated/closed or the layout might not be
+  // inflated in some embedders (e.g WebEngine).
+  kAutodismissNoDialogManager = 5,
+
   // Always keep this at the end.
-  kMaxValue = kAutodismissOsDenied,
+  kMaxValue = kAutodismissNoDialogManager,
 };
 
 // Provides a convenient way of logging UMA for permission related operations.
@@ -615,6 +625,7 @@ class PermissionUmaUtil {
   static const char kPermissionsPromptDenied[];
   static const char kPermissionsPromptDeniedGesture[];
   static const char kPermissionsPromptDeniedNoGesture[];
+  static const char kPermissionsPromptDismissed[];
 
   static const char kPermissionsExperimentalUsagePrefix[];
   static const char kPermissionsActionPrefix[];
@@ -692,13 +703,12 @@ class PermissionUmaUtil {
       std::optional<PermissionPromptDispositionReason> ui_reason,
       std::optional<std::vector<ElementAnchoredBubbleVariant>> variants,
       std::optional<PredictionGrantLikelihood> predicted_grant_likelihood,
+      std::optional<PermissionRequestRelevance> permission_request_relevance,
       std::optional<bool> prediction_decision_held_back,
       std::optional<permissions::PermissionIgnoredReason> ignored_reason,
       bool did_show_prompt,
       bool did_click_manage,
       bool did_click_learn_more);
-
-  static void RecordInfobarDetailsExpanded(bool expanded);
 
   static void RecordCrowdDenyDelayedPushNotification(base::TimeDelta delay);
 
@@ -734,6 +744,13 @@ class PermissionUmaUtil {
                                     content::BrowserContext* browser_context,
                                     content::WebContents* web_contents,
                                     const GURL& requesting_origin);
+
+  static void RecordPermissionUsageNotificationShown(
+      bool did_user_always_allow_notifications,
+      bool is_allowlisted,
+      int suspicious_score,
+      content::BrowserContext* browser_context,
+      const GURL& requesting_origin);
 
   static void RecordTimeElapsedBetweenGrantAndUse(
       ContentSettingsType type,
@@ -846,6 +863,12 @@ class PermissionUmaUtil {
       content::WebContents* web_contents,
       content::BrowserContext* browser_context);
 
+  // Records `TimeDelta` between two consecutive indicators of the same
+  // `RequestTypeForUma`.
+  static void RecordPermissionIndicatorElapsedTimeSinceLastUsage(
+      RequestTypeForUma request_type,
+      base::TimeDelta time_delta);
+
   // A scoped class that will check the current resolved content setting on
   // construction and report a revocation metric accordingly if the revocation
   // condition is met (from ALLOW to something else).
@@ -881,8 +904,8 @@ class PermissionUmaUtil {
  private:
   friend class PermissionUmaUtilTest;
 
-  // Records UMA and UKM metrics for ContentSettingsTypes that have user facing
-  // permission prompts. The passed in `permission` must be such that
+  // Records UMA and UKM metrics for ContentSettingsTypes that have user
+  // facing permission prompts. The passed in `permission` must be such that
   // PermissionUtil::IsPermission(permission) returns true.
   // web_contents may be null when for recording non-prompt actions.
   static void RecordPermissionAction(
@@ -899,6 +922,7 @@ class PermissionUmaUtil {
       content::BrowserContext* browser_context,
       content::RenderFrameHost* render_frame_host,
       std::optional<PredictionGrantLikelihood> predicted_grant_likelihood,
+      std::optional<PermissionRequestRelevance> permission_request_relevance,
       std::optional<bool> prediction_decision_held_back);
 
   // Records |count| total prior actions for a prompt of type |permission|

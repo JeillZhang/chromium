@@ -4,10 +4,11 @@
 
 #include "components/safe_browsing/core/common/utils.h"
 
+#include <algorithm>
+
 #include "base/feature_list.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/time/time.h"
@@ -18,11 +19,14 @@
 #include "components/safe_browsing/core/common/features.h"
 #include "components/security_interstitials/core/unsafe_resource.h"
 #include "crypto/sha2.h"
+#include "mojo/public/cpp/bindings/self_owned_receiver.h"
 #include "net/base/ip_address.h"
 #include "net/base/url_util.h"
 #include "net/http/http_request_headers.h"
 #include "net/http/http_status_code.h"
 #include "services/network/public/cpp/resource_request.h"
+#include "services/network/public/mojom/cookie_access_observer.mojom.h"
+#include "services/network/public/mojom/url_response_head.mojom.h"
 
 #if BUILDFLAG(IS_WIN)
 #include "base/enterprise_util.h"
@@ -38,6 +42,35 @@ const char kAuthHeaderBearer[] = "Bearer ";
 
 // Represents the HTTP response code when it has not explicitly been set.
 const int kUnsetHttpResponseCode = 0;
+
+class CookieWriteLogger : public network::mojom::CookieAccessObserver {
+ public:
+  explicit CookieWriteLogger(
+      safe_browsing::SafeBrowsingAuthenticatedEndpoint endpoint)
+      : endpoint_(endpoint) {}
+
+  // network::mojom::CookieAccessObserver:
+  void OnCookiesAccessed(
+      std::vector<network::mojom::CookieAccessDetailsPtr> details) override {
+    for (const network::mojom::CookieAccessDetailsPtr& access : details) {
+      if (access->type != network::mojom::CookieAccessDetails::Type::kChange) {
+        continue;
+      }
+
+      base::UmaHistogramEnumeration(
+          "SafeBrowsing.AuthenticatedCookieResetEndpoint", endpoint_);
+    }
+  }
+
+  void Clone(mojo::PendingReceiver<network::mojom::CookieAccessObserver>
+                 listener) override {
+    mojo::MakeSelfOwnedReceiver(std::make_unique<CookieWriteLogger>(endpoint_),
+                                std::move(listener));
+  }
+
+ private:
+  safe_browsing::SafeBrowsingAuthenticatedEndpoint endpoint_;
+};
 
 }  // namespace
 
@@ -105,7 +138,7 @@ bool CanGetReputationOfUrl(const GURL& url) {
   const std::string hostname = url.host();
   // There is no reason to send URLs with very short or single-label hosts.
   // The Safe Browsing server does not check them.
-  if (hostname.size() < 4 || base::ranges::count(hostname, '.') < 1) {
+  if (hostname.size() < 4 || std::ranges::count(hostname, '.') < 1) {
     return false;
   }
 
@@ -117,6 +150,14 @@ bool CanGetReputationOfUrl(const GURL& url) {
   }
 
   return true;
+}
+
+void LogAuthenticatedCookieResets(network::ResourceRequest& resource_request,
+                                  SafeBrowsingAuthenticatedEndpoint endpoint) {
+  resource_request.trusted_params = network::ResourceRequest::TrustedParams();
+  mojo::MakeSelfOwnedReceiver(std::make_unique<CookieWriteLogger>(endpoint),
+                              resource_request.trusted_params->cookie_observer
+                                  .InitWithNewPipeAndPassReceiver());
 }
 
 void SetAccessTokenAndClearCookieInResourceRequest(
@@ -149,8 +190,6 @@ bool ErrorIsRetriable(int net_error, int http_error) {
 std::string GetExtraMetricsSuffix(
     security_interstitials::UnsafeResource unsafe_resource) {
   switch (unsafe_resource.threat_source) {
-    case safe_browsing::ThreatSource::REMOTE:
-      return "from_device";
     case safe_browsing::ThreatSource::LOCAL_PVER4:
       return "from_device_v4";
     case safe_browsing::ThreatSource::CLIENT_SIDE_DETECTION:
@@ -166,7 +205,7 @@ std::string GetExtraMetricsSuffix(
     case safe_browsing::ThreatSource::UNKNOWN:
       break;
   }
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 }  // namespace safe_browsing

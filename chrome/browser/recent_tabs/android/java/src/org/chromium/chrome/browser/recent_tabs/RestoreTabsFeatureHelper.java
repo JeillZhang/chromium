@@ -61,37 +61,50 @@ public class RestoreTabsFeatureHelper {
 
         Tracker tracker = TrackerFactory.getTrackerForProfile(profile);
 
-        if (!tracker.wouldTriggerHelpUI(FeatureConstants.RESTORE_TABS_ON_FRE_FEATURE)) {
+        if (!tracker.wouldTriggerHelpUi(FeatureConstants.RESTORE_TABS_ON_FRE_FEATURE)) {
             RestoreTabsMetricsHelper.recordPromoShowResultHistogram(
                     RestoreTabsOnFREPromoShowResult.NOT_ELIGIBLE);
             return;
         }
 
         mForeignSessionHelper = new ForeignSessionHelper(profile);
-        List<ForeignSession> sessions = mForeignSessionHelper.getMobileAndTabletForeignSessions();
+        if (!mForeignSessionHelper.isTabSyncEnabled()) {
+            destroy();
+
+            RestoreTabsMetricsHelper.recordPromoShowResultHistogram(
+                    RestoreTabsOnFREPromoShowResult.TAB_SYNC_DISABLED);
+            return;
+        }
+        // Trigger a session sync in the event one has not occurred. This is asynchronous so it may
+        // not finish by the time we attempt to show. However, we need to show immediately to avoid
+        // showing up after the GTS is already visible to avoid potential misclicks. Triggering
+        // this does mean next time the GTS becomes visible we are more likely to have tabs
+        // available.
+        mForeignSessionHelper.triggerSessionSync();
 
         // Determines whether the promo is to be shown for the first or second time.
         // To determine if it is the first time that the promo is being triggered, the logic checks
-        // if the promo has ever triggered. Since wouldTriggerHelpUI indicates that the promo
-        // will be shown if the shouldTriggerHelpUI is called, it is assumed that it will show,
+        // if the promo has ever triggered. Since wouldTriggerHelpUi indicates that the promo
+        // will be shown if the shouldTriggerHelpUi is called, it is assumed that it will show,
         // hence setting the showCount to 1. If it has already triggered and the same criteria is
         // fulfilled, it can be assumed this will be the second time the promo shows. Note that this
         // logic only works for the 2 count max for promo showing. The hasEverTriggered call must be
-        // before the shouldTriggerHelpUI call, otherwise it will always return true.
+        // before the shouldTriggerHelpUi call, otherwise it will always return true.
         int showCount =
                 tracker.hasEverTriggered(FeatureConstants.RESTORE_TABS_ON_FRE_FEATURE, false)
                         ? 2
                         : 1;
         RestoreTabsMetricsHelper.setPromoShownCount(showCount);
 
-        // The difference between wouldTriggerHelpUI and shouldTriggerHelpUI is that the latter
+        // The difference between wouldTriggerHelpUi and shouldTriggerHelpUi is that the latter
         // increments an internal trigger count if it returns true, which means that if it is called
         // successfully, IPH must show. Alternatively, the former lets the logic know if the promo
         // is expected to show, which can help determine if it is being shown for the first or
         // second time.
+        List<ForeignSession> sessions = mForeignSessionHelper.getMobileAndTabletForeignSessions();
         if (hasValidSyncedDevices(sessions)
-                && (tracker.shouldTriggerHelpUI(FeatureConstants.RESTORE_TABS_ON_FRE_FEATURE))) {
-            setDelegate(
+                && tracker.shouldTriggerHelpUi(FeatureConstants.RESTORE_TABS_ON_FRE_FEATURE)) {
+            createDelegate(
                     activity,
                     profile,
                     tabCreatorManager,
@@ -106,7 +119,6 @@ public class RestoreTabsFeatureHelper {
             destroy();
 
             // This metric covers the situations where:
-            // * sync is not enabled.
             // * no tabs are synced.
             // * synced tabs haven't finished syncing.
             RestoreTabsMetricsHelper.recordPromoShowResultHistogram(
@@ -114,7 +126,7 @@ public class RestoreTabsFeatureHelper {
         }
     }
 
-    private void setDelegate(
+    private void createDelegate(
             Activity activity,
             Profile profile,
             TabCreatorManager tabCreatorManager,

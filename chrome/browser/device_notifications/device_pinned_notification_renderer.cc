@@ -42,8 +42,9 @@ std::u16string GetMessageLabel(DeviceConnectionTracker* connection_tracker,
       l10n_util::GetStringUTF16(message_id),
       static_cast<int>(extension_names.size()), extension_names[0],
       extension_names[1], static_cast<int>(extension_names.size() - 2));
+#else
+  NOTREACHED();
 #endif  // BUILDFLAG(ENABLE_EXTENSIONS)
-  NOTREACHED_NORETURN();
 }
 
 }  // namespace

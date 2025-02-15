@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/modules/webaudio/audio_worklet_processor.h"
 
 #include <memory>
@@ -147,7 +152,14 @@ bool AudioWorkletProcessor::Process(
     TRACE_EVENT0(
         TRACE_DISABLED_BY_DEFAULT("audio-worklet"),
         "AudioWorkletProcessor::Process (author script execution)");
-    if (!definition->ProcessFunction()
+    auto* process_function = definition->ProcessFunction();
+    if (!process_function) {
+      SetErrorState(
+          AudioWorkletProcessorErrorState::kProcessMethodUndefinedError);
+      return false;
+    }
+
+    if (!process_function
              ->Invoke(this, ScriptValue(isolate, inputs_.Get(isolate)),
                       ScriptValue(isolate, outputs_.Get(isolate)),
                       ScriptValue(isolate, params_.Get(isolate)))

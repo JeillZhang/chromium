@@ -59,23 +59,14 @@ ModelAssets& ModelAssets::operator=(ModelAssets&&) = default;
 ModelAssets::~ModelAssets() = default;
 
 ModelAssets LoadModelAssets(const ModelAssetPaths& paths) {
-  PrefetchFile(paths.weights);
+  if (!paths.weights.empty()) {
+    PrefetchFile(paths.weights);
+  }
 
   ModelAssets assets;
-
-  if (paths.HasSafetyFiles()) {
-    assets.ts_data = base::File(paths.ts_data,
-                                base::File::FLAG_OPEN | base::File::FLAG_READ);
-    assets.ts_sp_model = base::File(
-        paths.ts_sp_model, base::File::FLAG_OPEN | base::File::FLAG_READ);
+  if (!paths.weights.empty()) {
+    assets.weights = base::File(paths.weights, kWeightsFlags);
   }
-
-  if (!paths.language_detection_model.empty()) {
-    assets.language_detection_model =
-        base::File(paths.language_detection_model,
-                   base::File::FLAG_OPEN | base::File::FLAG_READ);
-  }
-  assets.weights = base::File(paths.weights, kWeightsFlags);
   return assets;
 }
 
@@ -90,10 +81,11 @@ AdaptationAssets& AdaptationAssets::operator=(AdaptationAssets&&) = default;
 AdaptationAssets::~AdaptationAssets() = default;
 
 AdaptationAssets LoadAdaptationAssets(const AdaptationAssetPaths& paths) {
-  PrefetchFile(paths.weights);
-
   AdaptationAssets assets;
-  assets.weights = base::File(paths.weights, kWeightsFlags);
+  if (!paths.weights.empty()) {
+    PrefetchFile(paths.weights);
+    assets.weights = base::File(paths.weights, kWeightsFlags);
+  }
   return assets;
 }
 

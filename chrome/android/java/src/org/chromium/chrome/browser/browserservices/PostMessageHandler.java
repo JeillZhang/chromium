@@ -66,6 +66,11 @@ public class PostMessageHandler implements OriginVerificationListener {
                         return;
                     }
 
+                    if (mWebContents == null || mWebContents.isDestroyed()) {
+                        Log.e(TAG, "Discarding postMessage as web contents has been destroyed.");
+                        return;
+                    }
+
                     Bundle bundle = null;
                     GURL url = mWebContents.getMainFrame().getLastCommittedURL();
                     if (url != null) {
@@ -104,7 +109,7 @@ public class PostMessageHandler implements OriginVerificationListener {
                         && navigation.hasCommitted()
                         && !navigation.isSameDocument()
                         && mChannel != null) {
-                    webContents.removeObserver(this);
+                    observe(null);
                     disconnectChannel();
                     return;
                 }
@@ -190,8 +195,6 @@ public class PostMessageHandler implements OriginVerificationListener {
                         mChannel[0].postMessage(new MessagePayload(message), null);
                     }
                 });
-        RecordHistogram.recordBooleanHistogram(
-                "CustomTabs.PostMessage.PostMessageFromClientApp", true);
         return CustomTabsService.RESULT_SUCCESS;
     }
 

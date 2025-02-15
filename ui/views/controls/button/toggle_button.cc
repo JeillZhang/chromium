@@ -18,6 +18,7 @@
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/color/color_id.h"
 #include "ui/color/color_provider.h"
+#include "ui/color/color_variant.h"
 #include "ui/events/event.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/color_palette.h"
@@ -41,11 +42,6 @@ namespace views {
 namespace {
 
 // Constants are measured in dip.
-
-// Margins from edge of track to edge of view.
-constexpr int kTrackHorizontalMargin = 6;
-// Inset from the rounded edge of the thumb to the rounded edge of the track.
-constexpr int kHorizontalThumbInset = 2;
 constexpr gfx::Size kTrackSize = gfx::Size(26, 16);
 constexpr int kThumbInset = -4;
 constexpr int kThumbInsetSelected = -2;
@@ -59,21 +55,6 @@ const gfx::Size GetTrackSize() {
 
 int GetThumbInset(bool is_on) {
   return is_on ? kThumbInsetSelected : kThumbInset;
-}
-
-std::optional<SkColor> GetSkColorFromVariant(
-    const absl::variant<ui::ColorId, SkColor>& color_variant) {
-  return absl::holds_alternative<SkColor>(color_variant)
-             ? std::make_optional(absl::get<SkColor>(color_variant))
-             : std::nullopt;
-}
-
-SkColor ConvertVariantToSkColor(
-    const absl::variant<ui::ColorId, SkColor> color_variant,
-    const ui::ColorProvider* color_provider) {
-  return absl::holds_alternative<SkColor>(color_variant)
-             ? absl::get<SkColor>(color_variant)
-             : color_provider->GetColor(absl::get<ui::ColorId>(color_variant));
 }
 
 }  // namespace
@@ -125,7 +106,7 @@ class ToggleButton::ThumbView : public View {
   }
 
   std::optional<SkColor> GetThumbColor(bool is_on) const {
-    return GetSkColorFromVariant(is_on ? thumb_on_color_ : thumb_off_color_);
+    return (is_on ? thumb_on_color_ : thumb_off_color_).GetSkColor();
   }
 
  private:
@@ -148,9 +129,9 @@ class ToggleButton::ThumbView : public View {
     }
     thumb_flags.setAntiAlias(true);
     const SkColor thumb_on_color =
-        ConvertVariantToSkColor(thumb_on_color_, color_provider);
+        thumb_on_color_.ConvertToSkColor(color_provider);
     const SkColor thumb_off_color =
-        ConvertVariantToSkColor(thumb_off_color_, color_provider);
+        thumb_off_color_.ConvertToSkColor(color_provider);
     SkColor thumb_color =
         color_utils::AlphaBlend(thumb_on_color, thumb_off_color, color_ratio_);
     if (is_hovered_ && is_on_) {
@@ -177,12 +158,12 @@ class ToggleButton::ThumbView : public View {
 
   void OnEnabledStateChanged() {
     // If using default color ID, update it according to the enabled state.
-    if (absl::holds_alternative<ui::ColorId>(thumb_on_color_)) {
+    if (thumb_on_color_.GetColorId()) {
       thumb_on_color_ = GetEnabled() ? ui::kColorToggleButtonThumbOn
                                      : ui::kColorToggleButtonThumbOnDisabled;
     }
 
-    if (absl::holds_alternative<ui::ColorId>(thumb_off_color_)) {
+    if (thumb_off_color_.GetColorId()) {
       thumb_off_color_ = GetEnabled() ? ui::kColorToggleButtonThumbOff
                                       : ui::kColorToggleButtonThumbOffDisabled;
     }
@@ -192,10 +173,8 @@ class ToggleButton::ThumbView : public View {
   const bool has_shadow_;
 
   // Colors used for the thumb.
-  absl::variant<ui::ColorId, SkColor> thumb_on_color_ =
-      ui::kColorToggleButtonThumbOn;
-  absl::variant<ui::ColorId, SkColor> thumb_off_color_ =
-      ui::kColorToggleButtonThumbOff;
+  ui::ColorVariant thumb_on_color_ = ui::kColorToggleButtonThumbOn;
+  ui::ColorVariant thumb_off_color_ = ui::kColorToggleButtonThumbOff;
 
   bool is_on_ = false;
   bool is_hovered_ = false;
@@ -278,7 +257,9 @@ ToggleButton::ToggleButton(PressedCallback callback, bool has_thumb_shadow)
   FocusRing::Get(this)->SetPathGenerator(
       std::make_unique<FocusRingHighlightPathGenerator>());
 
-  GetViewAccessibility().SetRole(ax::mojom::Role::kSwitch);
+  auto& view_accessibility = GetViewAccessibility();
+  view_accessibility.SetRole(ax::mojom::Role::kSwitch);
+  view_accessibility.SetCheckedState(ax::mojom::CheckedState::kFalse);
 }
 
 ToggleButton::~ToggleButton() {
@@ -297,6 +278,9 @@ void ToggleButton::AnimateIsOn(bool is_on) {
   } else {
     slide_animation_.Hide();
   }
+  GetViewAccessibility().SetCheckedState(GetIsOn()
+                                             ? ax::mojom::CheckedState::kTrue
+                                             : ax::mojom::CheckedState::kFalse);
   OnPropertyChanged(&slide_animation_, kPropertyEffectsNone);
 }
 
@@ -305,6 +289,9 @@ void ToggleButton::SetIsOn(bool is_on) {
     return;
   }
   slide_animation_.Reset(is_on ? 1.0 : 0.0);
+  GetViewAccessibility().SetCheckedState(GetIsOn()
+                                             ? ax::mojom::CheckedState::kTrue
+                                             : ax::mojom::CheckedState::kFalse);
   UpdateThumb();
   OnPropertyChanged(&slide_animation_, kPropertyEffectsPaint);
 }
@@ -334,7 +321,7 @@ void ToggleButton::SetTrackOnColor(SkColor track_on_color) {
 }
 
 std::optional<SkColor> ToggleButton::GetTrackOnColor() const {
-  return GetSkColorFromVariant(track_on_color_);
+  return track_on_color_.GetSkColor();
 }
 
 void ToggleButton::SetTrackOffColor(SkColor track_off_color) {
@@ -342,7 +329,7 @@ void ToggleButton::SetTrackOffColor(SkColor track_off_color) {
 }
 
 std::optional<SkColor> ToggleButton::GetTrackOffColor() const {
-  return GetSkColorFromVariant(track_off_color_);
+  return track_off_color_.GetSkColor();
 }
 
 void ToggleButton::SetInnerBorderEnabled(bool enabled) {
@@ -367,10 +354,6 @@ void ToggleButton::SetAcceptsEvents(bool accepts_events) {
 
 bool ToggleButton::GetAcceptsEvents() const {
   return accepts_events_;
-}
-
-int ToggleButton::GetVisualHorizontalMargin() const {
-  return kTrackHorizontalMargin - kHorizontalThumbInset;
 }
 
 void ToggleButton::AddLayerToRegion(ui::Layer* layer,
@@ -433,8 +416,8 @@ void ToggleButton::UpdateThumb() {
 }
 
 SkColor ToggleButton::GetTrackColor(bool is_on) const {
-  return ConvertVariantToSkColor(is_on ? track_on_color_ : track_off_color_,
-                                 GetColorProvider());
+  return (is_on ? track_on_color_ : track_off_color_)
+      .ConvertToSkColor(GetColorProvider());
 }
 
 SkColor ToggleButton::GetHoverColor() const {
@@ -472,12 +455,12 @@ void ToggleButton::StateChanged(ButtonState old_state) {
 
   // Update default track color ID and propagate the enabled state to the thumb.
   const bool enabled = GetState() != ButtonState::STATE_DISABLED;
-  if (absl::holds_alternative<ui::ColorId>(track_on_color_)) {
+  if (track_on_color_.GetColorId()) {
     track_on_color_ = enabled ? ui::kColorToggleButtonTrackOn
                               : ui::kColorToggleButtonTrackOnDisabled;
   }
 
-  if (absl::holds_alternative<ui::ColorId>(track_off_color_)) {
+  if (track_off_color_.GetColorId()) {
     track_off_color_ = enabled ? ui::kColorToggleButtonTrackOff
                                : ui::kColorToggleButtonTrackOffDisabled;
   }
@@ -497,6 +480,12 @@ void ToggleButton::StateChanged(ButtonState old_state) {
   }
 }
 
+void ToggleButton::UpdateAccessibleCheckedState() {
+  GetViewAccessibility().SetCheckedState(GetIsOn()
+                                             ? ax::mojom::CheckedState::kTrue
+                                             : ax::mojom::CheckedState::kFalse);
+}
+
 SkPath ToggleButton::GetFocusRingPath() const {
   SkPath path;
   gfx::RectF bounds(GetTrackBounds());
@@ -504,14 +493,6 @@ SkPath ToggleButton::GetFocusRingPath() const {
   const float corner_radius = sk_rect.height() / 2;
   path.addRoundRect(sk_rect, corner_radius, corner_radius);
   return path;
-}
-
-void ToggleButton::GetAccessibleNodeData(ui::AXNodeData* node_data) {
-  Button::GetAccessibleNodeData(node_data);
-
-  node_data->role = ax::mojom::Role::kSwitch;
-  node_data->SetCheckedState(GetIsOn() ? ax::mojom::CheckedState::kTrue
-                                       : ax::mojom::CheckedState::kFalse);
 }
 
 void ToggleButton::PaintButtonContents(gfx::Canvas* canvas) {

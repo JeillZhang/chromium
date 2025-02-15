@@ -12,9 +12,9 @@
 #include "base/test/gmock_move_support.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/task_environment.h"
+#include "components/affiliations/core/browser/affiliation_api.pb.h"
 #include "components/affiliations/core/browser/affiliation_service_impl.h"
 #include "components/affiliations/core/browser/affiliation_utils.h"
-#include "components/affiliations/core/browser/affiliation_api.pb.h"
 #include "components/affiliations/core/browser/mock_affiliation_fetcher_delegate.h"
 #include "components/variations/scoped_variations_ids_provider.h"
 #include "crypto/sha2.h"
@@ -124,10 +124,13 @@ void HashAffiliationFetcherTest::VerifyRequestPayload(
   for (const auto prefix : request.hash_prefixes())
     actual_hash_prefixes.push_back(prefix);
 
-  std::string content_type;
-  intercepted_headers_.GetHeader(net::HttpRequestHeaders::kContentType,
-                                 &content_type);
-  EXPECT_EQ("application/x-protobuf", content_type);
+  EXPECT_EQ(
+      "application/x-protobuf",
+      intercepted_headers_.GetHeader(net::HttpRequestHeaders::kContentType)
+          .value_or(std::string()));
+  EXPECT_EQ("CgIIAQ==",
+            intercepted_headers_.GetHeader("x-goog-ext-174067345-bin")
+                .value_or(std::string()));
   EXPECT_THAT(actual_hash_prefixes,
               testing::UnorderedElementsAreArray(expected_hash_prefixes));
   EXPECT_EQ(request.mask().change_password_info(),

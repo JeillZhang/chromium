@@ -6,10 +6,11 @@
 
 #include <memory>
 
+#include "base/functional/callback.h"
 #include "base/no_destructor.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
-#include "chrome/browser/sync/model_type_store_service_factory.h"
+#include "chrome/browser/sync/data_type_store_service_factory.h"
 #include "chrome/common/channel_info.h"
 #include "components/data_sharing/internal/data_sharing_service_impl.h"
 #include "components/data_sharing/internal/empty_data_sharing_service.h"
@@ -17,14 +18,17 @@
 #include "components/data_sharing/public/data_sharing_service.h"
 #include "components/data_sharing/public/data_sharing_ui_delegate.h"
 #include "components/data_sharing/public/features.h"
-#include "components/sync/model/model_type_store_service.h"
+#include "components/sync/model/data_type_store_service.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/storage_partition.h"
 
 #if BUILDFLAG(IS_ANDROID)
-#include "chrome/browser/data_sharing/data_sharing_ui_delegate_android.h"
-#include "components/data_sharing/public/data_sharing_sdk_delegate.h"
-#endif  // BUILDFLAG(IS_ANDROID)
+#include "chrome/browser/data_sharing/android/data_sharing_ui_delegate_android.h"
+#include "chrome/browser/data_sharing/data_sharing_service_factory_bridge.h"
+#else  // BUILDFLAG(IS_ANDROID)
+#include "chrome/browser/data_sharing/desktop/data_sharing_sdk_delegate_desktop.h"
+#include "chrome/browser/data_sharing/desktop/data_sharing_ui_delegate_desktop.h"
+#endif
 
 namespace data_sharing {
 // static
@@ -44,18 +48,26 @@ DataSharingServiceFactory::DataSharingServiceFactory()
           "DataSharingService",
           ProfileSelections::Builder()
               .WithRegular(ProfileSelection::kOwnInstance)
+              // TODO(crbug.com/41488885): Check if this service is needed for
+              // Ash Internals.
+              .WithAshInternals(ProfileSelection::kOwnInstance)
               .Build()) {
+  DependsOn(DataTypeStoreServiceFactory::GetInstance());
   DependsOn(IdentityManagerFactory::GetInstance());
-  DependsOn(ModelTypeStoreServiceFactory::GetInstance());
 }
 
 DataSharingServiceFactory::~DataSharingServiceFactory() = default;
 
-KeyedService* DataSharingServiceFactory::BuildServiceInstanceFor(
+std::unique_ptr<KeyedService>
+DataSharingServiceFactory::BuildServiceInstanceForBrowserContext(
     content::BrowserContext* context) const {
-  if (!base::FeatureList::IsEnabled(features::kDataSharingFeature) ||
-      context->IsOffTheRecord()) {
-    return new EmptyDataSharingService();
+  bool isFeatureEnabled = base::FeatureList::IsEnabled(
+                              data_sharing::features::kDataSharingFeature) ||
+                          base::FeatureList::IsEnabled(
+                              data_sharing::features::kDataSharingJoinOnly);
+
+  if (!isFeatureEnabled || context->IsOffTheRecord()) {
+    return std::make_unique<EmptyDataSharingService>();
   }
 
   Profile* profile = Profile::FromBrowserContext(context);
@@ -64,14 +76,21 @@ KeyedService* DataSharingServiceFactory::BuildServiceInstanceFor(
 
 #if BUILDFLAG(IS_ANDROID)
   ui_delegate = std::make_unique<DataSharingUIDelegateAndroid>(profile);
-  sdk_delegate = DataSharingSDKDelegate::CreateDelegate();
+  // Profile will be alive by the time callback runs.
+  auto callback = base::BindOnce(
+      &DataSharingServiceFactoryBridge::CreateJavaSDKDelegate, profile);
+  sdk_delegate = DataSharingSDKDelegate::CreateDelegate(std::move(callback));
+#else
+  ui_delegate = std::make_unique<DataSharingUIDelegateDesktop>(profile);
+  sdk_delegate = std::make_unique<DataSharingSDKDelegateDesktop>(context);
 #endif  // BUILDFLAG(IS_ANDROID)
 
-  return new DataSharingServiceImpl(
+  return std::make_unique<DataSharingServiceImpl>(
+      profile->GetPath(),
       profile->GetDefaultStoragePartition()
           ->GetURLLoaderFactoryForBrowserProcess(),
       IdentityManagerFactory::GetForProfile(profile),
-      ModelTypeStoreServiceFactory::GetForProfile(profile)->GetStoreFactory(),
+      DataTypeStoreServiceFactory::GetForProfile(profile)->GetStoreFactory(),
       chrome::GetChannel(), std::move(sdk_delegate), std::move(ui_delegate));
 }
 

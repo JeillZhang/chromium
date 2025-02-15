@@ -27,6 +27,8 @@
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/base/models/table_model.h"
+#include "ui/base/mojom/dialog_button.mojom.h"
+#include "ui/base/mojom/ui_base_types.mojom-shared.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/base/window_open_disposition_utils.h"
 #include "ui/gfx/favicon_size.h"
@@ -153,14 +155,16 @@ DeprecatedAppsDialogView::DeprecatedAppsDialogView(
     const extensions::Extension* extension =
         extensions::ExtensionRegistry::Get(web_contents_->GetBrowserContext())
             ->GetInstalledExtension(optional_launched_extension_id);
-    launched_extension_name_ = base::UTF8ToUTF16(extension->name());
+    launched_extension_name_ =
+        extensions::util::GetFixupExtensionNameForUIDisplay(extension->name());
   }
   if (deprecated_app_ids_.size() == 1) {
     const extensions::Extension* extension =
         extensions::ExtensionRegistry::Get(web_contents_->GetBrowserContext())
             ->GetInstalledExtension(*deprecated_app_ids_.begin());
     DCHECK(extension);
-    single_app_name_ = base::UTF8ToUTF16(extension->name());
+    single_app_name_ =
+        extensions::util::GetFixupExtensionNameForUIDisplay(extension->name());
   }
   deprecated_apps_table_model_ = std::make_unique<DeprecatedAppsTableModel>(
       deprecated_app_ids, web_contents,
@@ -170,7 +174,7 @@ DeprecatedAppsDialogView::DeprecatedAppsDialogView(
 
 void DeprecatedAppsDialogView::InitDialog() {
   SetCanResize(false);
-  SetModalType(ui::MODAL_TYPE_CHILD);
+  SetModalType(ui::mojom::ModalType::kChild);
 
   set_margins(ChromeLayoutProvider::Get()->GetDialogInsetsForContentType(
       views::DialogContentType::kText, views::DialogContentType::kControl));
@@ -182,19 +186,19 @@ void DeprecatedAppsDialogView::InitDialog() {
   set_fixed_width(views::LayoutProvider::Get()->GetDistanceMetric(
       views::DISTANCE_MODAL_DIALOG_PREFERRED_WIDTH));
   // Set up buttons.
-  SetButtonLabel(ui::DIALOG_BUTTON_OK,
+  SetButtonLabel(ui::mojom::DialogButton::kOk,
                  l10n_util::GetPluralStringFUTF16(
                      IDS_DEPRECATED_APPS_OK_LABEL,
                      deprecated_apps_table_model_->RowCount()));
   SetAcceptCallback(base::BindOnce(&DeprecatedAppsDialogView::OnAccept,
                                    base::Unretained(this)));
 
-    SetButtonLabel(ui::DIALOG_BUTTON_CANCEL,
-                   l10n_util::GetStringUTF16(IDS_DEPRECATED_APPS_CANCEL_LABEL));
+  SetButtonLabel(ui::mojom::DialogButton::kCancel,
+                 l10n_util::GetStringUTF16(IDS_DEPRECATED_APPS_CANCEL_LABEL));
   SetCancelCallback(base::BindOnce(&DeprecatedAppsDialogView::OnCancel,
                                    base::Unretained(this)));
 
-  SetDefaultButton(ui::DIALOG_BUTTON_OK);
+  SetDefaultButton(static_cast<int>(ui::mojom::DialogButton::kOk));
 
   info_label_ = AddChildView(std::make_unique<views::Label>(
       l10n_util::GetStringUTF16(IDS_DEPRECATED_APPS_MONITOR_RENDERER)));
@@ -221,7 +225,7 @@ void DeprecatedAppsDialogView::InitDialog() {
 
   // Set up the table view.
   std::vector<ui::TableColumn> columns;
-  columns.emplace_back(ui::TableColumn());
+  columns.emplace_back();
 
   auto table = std::make_unique<views::TableView>(
       deprecated_apps_table_model_.get(), columns,

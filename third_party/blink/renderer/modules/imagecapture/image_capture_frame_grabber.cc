@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/modules/imagecapture/image_capture_frame_grabber.h"
 
 #include "base/synchronization/lock.h"
@@ -153,7 +158,7 @@ void ImageCaptureFrameGrabber::SingleShotFrameHandler::ConvertAndDeliverFrame(
   const bool is_readable = frame->format() == media::PIXEL_FORMAT_I420 ||
                            frame->format() == media::PIXEL_FORMAT_I420A ||
                            (frame->format() == media::PIXEL_FORMAT_NV12 &&
-                            frame->HasGpuMemoryBuffer());
+                            frame->HasMappableGpuBuffer());
   if (!is_readable) {
     cc::SkiaPaintCanvas canvas(surface->getCanvas());
     cc::PaintFlags paint_flags;
@@ -235,7 +240,7 @@ void ImageCaptureFrameGrabber::SingleShotFrameHandler::ConvertAndDeliverFrame(
                              destination_width, destination_height);
           break;
         default:
-          NOTREACHED_IN_MIGRATION();
+          NOTREACHED();
       }
     }
   } else {

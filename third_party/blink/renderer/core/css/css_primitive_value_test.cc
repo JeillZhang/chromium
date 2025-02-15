@@ -10,6 +10,7 @@
 #include "third_party/blink/renderer/core/css/css_numeric_literal_value.h"
 #include "third_party/blink/renderer/core/css/css_test_helpers.h"
 #include "third_party/blink/renderer/core/css/css_to_length_conversion_data.h"
+#include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/testing/page_test_base.h"
 #include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 
@@ -109,7 +110,7 @@ TEST_F(CSSPrimitiveValueTest, ClampAngleToNonNegative) {
   UnitValue a = {89, UnitType::kDegrees};
   UnitValue b = {0.25, UnitType::kTurns};
   EXPECT_EQ(0.0, CreateNonNegativeSubtraction(a, b)->ComputeDegrees(
-                     CSSToLengthConversionData()));
+                     CSSToLengthConversionData(/*element=*/nullptr)));
 }
 
 TEST_F(CSSPrimitiveValueTest, IsResolution) {
@@ -130,7 +131,7 @@ TEST_F(CSSPrimitiveValueTest, Zooming) {
   UnitValue b = {10, UnitType::kPercentage};
   CSSPrimitiveValue* original = CreateAddition(a, b);
 
-  CSSToLengthConversionData conversion_data;
+  CSSToLengthConversionData conversion_data(/*element=*/nullptr);
   conversion_data.SetZoom(0.5);
 
   Length length = original->ConvertToLength(conversion_data);
@@ -148,7 +149,7 @@ TEST_F(CSSPrimitiveValueTest, PositiveInfinityLengthClamp) {
   UnitValue a = {std::numeric_limits<double>::infinity(), UnitType::kPixels};
   UnitValue b = {1, UnitType::kPixels};
   CSSPrimitiveValue* value = CreateAddition(a, b);
-  CSSToLengthConversionData conversion_data;
+  CSSToLengthConversionData conversion_data(/*element=*/nullptr);
   EXPECT_EQ(std::numeric_limits<double>::max(),
             value->ComputeLength<double>(conversion_data));
 }
@@ -157,7 +158,7 @@ TEST_F(CSSPrimitiveValueTest, NegativeInfinityLengthClamp) {
   UnitValue a = {-std::numeric_limits<double>::infinity(), UnitType::kPixels};
   UnitValue b = {1, UnitType::kPixels};
   CSSPrimitiveValue* value = CreateAddition(a, b);
-  CSSToLengthConversionData conversion_data;
+  CSSToLengthConversionData conversion_data(/*element=*/nullptr);
   EXPECT_EQ(std::numeric_limits<double>::lowest(),
             value->ComputeLength<double>(conversion_data));
 }
@@ -166,14 +167,14 @@ TEST_F(CSSPrimitiveValueTest, NaNLengthClamp) {
   UnitValue a = {-std::numeric_limits<double>::quiet_NaN(), UnitType::kPixels};
   UnitValue b = {1, UnitType::kPixels};
   CSSPrimitiveValue* value = CreateAddition(a, b);
-  CSSToLengthConversionData conversion_data;
+  CSSToLengthConversionData conversion_data(/*element=*/nullptr);
   EXPECT_EQ(0.0, value->ComputeLength<double>(conversion_data));
 }
 
 TEST_F(CSSPrimitiveValueTest, PositiveInfinityPercentLengthClamp) {
   CSSPrimitiveValue* value =
       Create({std::numeric_limits<double>::infinity(), UnitType::kPercentage});
-  CSSToLengthConversionData conversion_data;
+  CSSToLengthConversionData conversion_data(/*element=*/nullptr);
   Length length = value->ConvertToLength(conversion_data);
   EXPECT_EQ(std::numeric_limits<float>::max(), length.Percent());
 }
@@ -181,7 +182,7 @@ TEST_F(CSSPrimitiveValueTest, PositiveInfinityPercentLengthClamp) {
 TEST_F(CSSPrimitiveValueTest, NegativeInfinityPercentLengthClamp) {
   CSSPrimitiveValue* value =
       Create({-std::numeric_limits<double>::infinity(), UnitType::kPercentage});
-  CSSToLengthConversionData conversion_data;
+  CSSToLengthConversionData conversion_data(/*element=*/nullptr);
   Length length = value->ConvertToLength(conversion_data);
   EXPECT_EQ(std::numeric_limits<float>::lowest(), length.Percent());
 }
@@ -189,7 +190,7 @@ TEST_F(CSSPrimitiveValueTest, NegativeInfinityPercentLengthClamp) {
 TEST_F(CSSPrimitiveValueTest, NaNPercentLengthClamp) {
   CSSPrimitiveValue* value = Create(
       {-std::numeric_limits<double>::quiet_NaN(), UnitType::kPercentage});
-  CSSToLengthConversionData conversion_data;
+  CSSToLengthConversionData conversion_data(/*element=*/nullptr);
   Length length = value->ConvertToLength(conversion_data);
   EXPECT_EQ(0.0, length.Percent());
 }
@@ -346,10 +347,11 @@ TEST_F(CSSPrimitiveValueTest, ComputeMethodsWithLengthResolver) {
         sign, degs, CSSMathOperator::kMultiply);
     CSSPrimitiveValue* value = CSSMathFunctionValue::Create(expression);
 
-    Font font;
-    CSSToLengthConversionData length_resolver = CSSToLengthConversionData();
+    Font* font = MakeGarbageCollected<Font>();
+    CSSToLengthConversionData length_resolver =
+        CSSToLengthConversionData(/*element=*/nullptr);
     length_resolver.SetFontSizes(
-        CSSToLengthConversionData::FontSizes(10.0f, 10.0f, &font, 1.0f));
+        CSSToLengthConversionData::FontSizes(10.0f, 10.0f, font, 1.0f));
     EXPECT_EQ(10.0, value->ComputeDegrees(length_resolver));
     EXPECT_EQ("calc(sign(-1em + 12px) * 10deg)", value->CustomCSSText());
   }
@@ -409,6 +411,28 @@ TEST_F(CSSPrimitiveValueTest, CSSPrimitiveValueOperations) {
   EXPECT_EQ(numeric_number->Subtract(10, CSSPrimitiveValue::UnitType::kNumber)
                 ->CustomCSSText(),
             "0");
+}
+
+TEST_F(CSSPrimitiveValueTest, ComputeValueToCanonicalUnit) {
+  CSSNumericLiteralValue* numeric_percentage = CSSNumericLiteralValue::Create(
+      10, CSSPrimitiveValue::UnitType::kPercentage);
+  CSSMathExpressionNode* node_20_px = CSSMathExpressionNumericLiteral::Create(
+      20, CSSPrimitiveValue::UnitType::kPixels);
+  CSSMathExpressionNode* node_2_em = CSSMathExpressionNumericLiteral::Create(
+      2, CSSPrimitiveValue::UnitType::kEms);
+  CSSMathExpressionNode* node_sub =
+      CSSMathExpressionOperation::CreateArithmeticOperation(
+          node_20_px, node_2_em, CSSMathOperator::kSubtract);
+  auto* function = CSSMathFunctionValue::Create(node_sub);
+
+  Font* font = MakeGarbageCollected<Font>();
+  CSSToLengthConversionData length_resolver(/*element=*/nullptr);
+  length_resolver.SetFontSizes(
+      CSSToLengthConversionData::FontSizes(10.0f, 10.0f, font, 1.0f));
+
+  EXPECT_EQ(function->ComputeValueInCanonicalUnit(length_resolver), 0);
+  EXPECT_EQ(numeric_percentage->ComputeValueInCanonicalUnit(length_resolver),
+            10);
 }
 
 }  // namespace

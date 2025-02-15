@@ -23,19 +23,24 @@ public class SigninPreferencesManager {
     private final SharedPreferencesManager mManager;
 
     /** Suffix strings for promo shown count preference and histograms. */
+    // LINT.IfChange(SigninPromoAccessPointId)
     @StringDef({
-        SyncPromoAccessPointId.BOOKMARKS,
-        SyncPromoAccessPointId.NTP,
-        SyncPromoAccessPointId.RECENT_TABS,
-        SyncPromoAccessPointId.SETTINGS
+        SigninPromoAccessPointId.BOOKMARKS,
+        SigninPromoAccessPointId.HISTORY_PAGE,
+        SigninPromoAccessPointId.NTP,
+        SigninPromoAccessPointId.RECENT_TABS,
+        SigninPromoAccessPointId.SETTINGS
     })
     @Retention(RetentionPolicy.SOURCE)
-    public @interface SyncPromoAccessPointId {
+    public @interface SigninPromoAccessPointId {
         String BOOKMARKS = "Bookmarks";
+        String HISTORY_PAGE = "HistoryPage";
         String NTP = "Ntp";
         String RECENT_TABS = "RecentTabs"; // Only used for histograms
         String SETTINGS = "Settings";
     }
+
+    // LINT.ThenChange(/tools/metrics/histograms/metadata/signin/histograms.xml:SigninPromoAccessPoint)
 
     private SigninPreferencesManager() {
         mManager = ChromeSharedPreferences.getInstance();
@@ -121,6 +126,36 @@ public class SigninPreferencesManager {
     @VisibleForTesting(otherwise = VisibleForTesting.PACKAGE_PRIVATE)
     public void clearNewTabPageSigninPromoSuppressionPeriodStart() {
         mManager.removeKey(ChromePreferenceKeys.SIGNIN_PROMO_NTP_PROMO_SUPPRESSION_PERIOD_START);
+    }
+
+    /**
+     * Sets the timestamp of the suppression period start for the CCT account mismatch
+     * notifications.
+     *
+     * @param timeMillis the epoch time in milliseconds (see {@link System#currentTimeMillis()}).
+     */
+    public void setCctMismatchNoticeSuppressionPeriodStart(long timeMillis) {
+        mManager.writeLong(
+                ChromePreferenceKeys.CUSTOM_TABS_MISMATCH_NOTICE_SUPPRESSION_PERIOD_START,
+                timeMillis);
+    }
+
+    /**
+     * Returns the timestamp of the suppression period start for the CCT account mismatch
+     * notifications.
+     */
+    public long getCctMismatchNoticeSuppressionPeriodStart() {
+        return mManager.readLong(
+                ChromePreferenceKeys.CUSTOM_TABS_MISMATCH_NOTICE_SUPPRESSION_PERIOD_START);
+    }
+
+    /**
+     * Clears the timestamp of the suppression period start for the CCT account mismatch
+     * notifications.
+     */
+    public void clearCctMismatchNoticeSuppressionPeriodStart() {
+        mManager.removeKey(
+                ChromePreferenceKeys.CUSTOM_TABS_MISMATCH_NOTICE_SUPPRESSION_PERIOD_START);
     }
 
     /**

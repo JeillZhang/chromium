@@ -145,11 +145,10 @@ class SafeBrowsingBlockingPage : public BaseBlockingPage {
                            int num_visits) override;
 
   // Log UKM for the user bypassing a safe browsing interstitial.
-  void LogSafeBrowsingInterstitialBypassedUKM(
-      content::WebContents* web_contents);
+  void LogSafeBrowsingInterstitialBypassedUKM();
 
   // Log UKM for the safe browsing interstitial being shown to the user.
-  void LogSafeBrowsingInterstitialShownUKM(content::WebContents* web_contents4);
+  void LogSafeBrowsingInterstitialShownUKM();
 
   // Whether ThreatDetails collection is in progress as part of this
   // interstitial.
@@ -160,9 +159,6 @@ class SafeBrowsingBlockingPage : public BaseBlockingPage {
 
   // The threat type of the resource that triggered the blocking page.
   SBThreatType threat_type_;
-
-  // Whether the blocking page is triggered by subresource.
-  bool is_subresource_;
 
  private:
   raw_ptr<history::HistoryService> history_service_ = nullptr;

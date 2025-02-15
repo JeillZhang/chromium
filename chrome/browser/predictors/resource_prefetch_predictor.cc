@@ -27,6 +27,7 @@
 #include "components/history/core/browser/url_utils.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/web_contents.h"
+#include "net/base/network_anonymization_key.h"
 #include "net/base/url_util.h"
 #include "services/network/public/mojom/fetch_api.mojom.h"
 #include "third_party/blink/public/common/features.h"
@@ -86,13 +87,12 @@ PreconnectRequest::PreconnectRequest(
 
 PrefetchRequest::PrefetchRequest(
     const GURL& url,
-    const net::NetworkAnonymizationKey& network_anonymization_key,
     network::mojom::RequestDestination destination)
     : url(url),
-      network_anonymization_key(network_anonymization_key),
       destination(destination) {
-  DCHECK(base::FeatureList::IsEnabled(features::kLoadingPredictorPrefetch));
-  DCHECK(!network_anonymization_key.IsEmpty());
+  CHECK(
+      base::FeatureList::IsEnabled(features::kLoadingPredictorPrefetch) ||
+      base::FeatureList::IsEnabled(blink::features::kLCPPPrefetchSubresource));
 }
 
 PreconnectPrediction::PreconnectPrediction() = default;
@@ -258,7 +258,7 @@ ResourcePrefetchPredictor::ResourcePrefetchPredictor(
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 }
 
-ResourcePrefetchPredictor::~ResourcePrefetchPredictor() {}
+ResourcePrefetchPredictor::~ResourcePrefetchPredictor() = default;
 
 void ResourcePrefetchPredictor::StartInitialization() {
   TRACE_EVENT0("browser", "ResourcePrefetchPredictor::StartInitialization");
@@ -274,7 +274,10 @@ void ResourcePrefetchPredictor::StartInitialization() {
   auto origin_data = std::make_unique<OriginDataMap>(
       tables_, tables_->origin_table(), config_.max_hosts_to_track,
       base::Seconds(config_.flush_data_to_disk_delay_seconds));
-  auto lcpp_data = std::make_unique<LcppDataMap>(*tables_, config_);
+  auto lcpp_data =
+      use_lcpp_mock_table_for_testing_
+          ? LcppDataMap::CreateWithMockTableForTesting(tables_, config_)
+          : std::make_unique<LcppDataMap>(tables_, config_);
 
   // Get raw pointers to pass to the first task. Ownership of the unique_ptrs
   // will be passed to the reply task.
@@ -312,9 +315,8 @@ bool ResourcePrefetchPredictor::TryEnsureRecordingPrecondition() {
   } else if (initialization_state_ == INITIALIZING) {
     return false;
   } else if (initialization_state_ != INITIALIZED) {
-    NOTREACHED_IN_MIGRATION()
-        << "Unexpected initialization_state_: " << initialization_state_;
-    return false;
+    NOTREACHED() << "Unexpected initialization_state_: "
+                 << initialization_state_;
   }
 
   CHECK(host_redirect_data_);
@@ -407,6 +409,7 @@ void ResourcePrefetchPredictor::CreateCaches(
 
   host_redirect_data_ = std::move(host_redirect_data);
   origin_data_ = std::move(origin_data);
+  lcpp_data->InitializeAfterDBInitialization();
   lcpp_data_ = std::move(lcpp_data);
 
   ConnectToHistoryService();
@@ -623,18 +626,22 @@ void ResourcePrefetchPredictor::LearnOrigins(
     origin_data_->UpdateData(host, data);
 }
 
-void ResourcePrefetchPredictor::LearnLcpp(const GURL& url,
-                                          const LcppDataInputs& inputs) {
+void ResourcePrefetchPredictor::LearnLcpp(
+    const std::optional<url::Origin>& initiator_origin,
+    const GURL& url,
+    const LcppDataInputs& inputs) {
   if (!TryEnsureRecordingPrecondition()) {
     return;
   }
-  const bool data_updated = lcpp_data_->LearnLcpp(url, inputs);
+  const bool data_updated =
+      lcpp_data_->LearnLcpp(initiator_origin, url, inputs);
   if (data_updated && observer_) {
     observer_->OnLcppLearned();
   }
 }
 
 std::optional<LcppStat> ResourcePrefetchPredictor::GetLcppStat(
+    const std::optional<url::Origin>& initiator_origin,
     const GURL& url) const {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   // The `initialization_state_` can be not `INITIALIZED` in the very first
@@ -643,7 +650,23 @@ std::optional<LcppStat> ResourcePrefetchPredictor::GetLcppStat(
   if (initialization_state_ != INITIALIZED) {
     return std::nullopt;
   }
-  return lcpp_data_->GetLcppStat(url);
+  return lcpp_data_->GetLcppStat(initiator_origin, url);
+}
+
+void ResourcePrefetchPredictor::GetPreconnectAndPrefetchRequest(
+    const std::optional<url::Origin>& initiator_origin,
+    const GURL& url,
+    PreconnectPrediction& prediction) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  // The `initialization_state_` can be not `INITIALIZED` in the very first
+  // navigation on browser startup. Because this object is initialized on the
+  // first navigation.
+  if (initialization_state_ != INITIALIZED) {
+    return;
+  }
+
+  lcpp_data_->GetPreconnectAndPrefetchRequest(initiator_origin, url,
+                                              prediction);
 }
 
 void ResourcePrefetchPredictor::OnHistoryDeletions(

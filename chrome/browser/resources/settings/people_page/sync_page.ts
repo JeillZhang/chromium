@@ -12,8 +12,7 @@ import '//resources/cr_elements/icons.html.js';
 import '//resources/cr_elements/cr_shared_style.css.js';
 import '//resources/cr_elements/cr_shared_vars.css.js';
 import '//resources/cr_elements/cr_expand_button/cr_expand_button.js';
-import '//resources/polymer/v3_0/iron-icon/iron-icon.js';
-import '//resources/polymer/v3_0/iron-flex-layout/iron-flex-layout-classes.js';
+import '//resources/cr_elements/cr_icon/cr_icon.js';
 // <if expr="not chromeos_ash">
 import '//resources/cr_elements/cr_toast/cr_toast.js';
 // </if>
@@ -198,19 +197,6 @@ export class SettingsSyncPageElement extends SettingsSyncPageElementBase {
             'syncPrefs.explicitPassphraseTime)',
       },
 
-      // <if expr="chromeos_lacros">
-      /**
-       * Whether to show the new UI for OS Sync Settings and
-       * Browser Sync Settings  which include sublabel and
-       * Apps toggle shared between Ash and Lacros.
-       */
-      showSyncSettingsRevamp_: {
-        type: Boolean,
-        value: loadTimeData.getBoolean('showSyncSettingsRevamp'),
-        readOnly: true,
-      },
-      //</if>
-
       // TODO(crbug.com/324091979): Remove once crbug.com/324091979 launched.
       enableLinkedServicesSetting_: {
         type: Boolean,
@@ -254,10 +240,6 @@ export class SettingsSyncPageElement extends SettingsSyncPageElementBase {
   private enableLinkedServicesSetting_: boolean;
   private isEeaChoiceCountry_: boolean;
   private personalizationCollapseExpanded_: boolean;
-
-  // <if expr="chromeos_lacros">
-  private showSyncSettingsRevamp_: boolean;
-  // </if>
 
   // <if expr="not chromeos_ash">
   private showSetupCancelDialog_: boolean;
@@ -360,19 +342,6 @@ export class SettingsSyncPageElement extends SettingsSyncPageElementBase {
   private computeSignedIn_(): boolean {
     return this.syncStatus.signedInState === SignedInState.SYNCING;
   }
-
-  // <if expr="chromeos_lacros">
-  private onOsSyncSettingsLinkClick_(): void {
-    OpenWindowProxyImpl.getInstance().openUrl(
-        loadTimeData.getString('osSyncSettingsUrl'));
-  }
-
-  private getManageSyncedDataSubtitle_(): string {
-    return this.showSyncSettingsRevamp_ ?
-        this.i18n('manageSyncedDataSubtitle') :
-        '';
-  }
-  // </if>
 
   private computeSyncSectionDisabled_(): boolean {
     return this.syncStatus !== undefined &&

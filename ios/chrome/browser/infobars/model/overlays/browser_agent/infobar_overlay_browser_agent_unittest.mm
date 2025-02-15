@@ -20,7 +20,7 @@
 #import "ios/chrome/browser/overlays/model/test/fake_overlay_request_callback_installer.h"
 #import "ios/chrome/browser/overlays/model/test/overlay_test_macros.h"
 #import "ios/chrome/browser/shared/model/browser/test/test_browser.h"
-#import "ios/chrome/browser/shared/model/browser_state/test_chrome_browser_state.h"
+#import "ios/chrome/browser/shared/model/profile/test/test_profile_ios.h"
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_list.h"
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_opener.h"
 #import "ios/web/public/test/fakes/fake_web_state.h"
@@ -60,8 +60,8 @@ class InfobarOverlayBrowserAgentTest
     : public testing::TestWithParam<InfobarOverlayType> {
  public:
   InfobarOverlayBrowserAgentTest()
-      : browser_state_(TestChromeBrowserState::Builder().Build()),
-        browser_(std::make_unique<TestBrowser>(browser_state_.get())),
+      : profile_(TestProfileIOS::Builder().Build()),
+        browser_(std::make_unique<TestBrowser>(profile_.get())),
         interaction_handler_builder_(InfobarType::kInfobarTypeConfirm) {
     // Add an activated WebState into whose queues infobar OverlayRequests will
     // be added.
@@ -83,7 +83,7 @@ class InfobarOverlayBrowserAgentTest
     // Create the interaction handler and set up the mock handlers to return
     // fake callback installers.
     std::unique_ptr<InfobarInteractionHandler> interaction_handler =
-        interaction_handler_builder_.Build();
+        std::move(interaction_handler_builder_).Build();
     EXPECT_CALL(*mock_handler(InfobarOverlayType::kBanner), CreateInstaller())
         .WillOnce(Return(ByMove(CreateInstaller(InfobarOverlayType::kBanner))));
     EXPECT_CALL(*mock_handler(InfobarOverlayType::kModal), CreateInstaller())
@@ -143,7 +143,7 @@ class InfobarOverlayBrowserAgentTest
 
  protected:
   web::WebTaskEnvironment task_environment_;
-  std::unique_ptr<ChromeBrowserState> browser_state_;
+  std::unique_ptr<ProfileIOS> profile_;
   std::unique_ptr<TestBrowser> browser_;
   raw_ptr<web::WebState> web_state_ = nullptr;
   std::map<InfobarOverlayType, FakeInfobarOverlayRequestSupport>

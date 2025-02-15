@@ -11,15 +11,15 @@
 #include <vector>
 
 #include "base/check.h"
-#include "base/containers/contains.h"
-#include "base/containers/fixed_flat_set.h"
-#include "base/debug/dump_without_crashing.h"
 #include "base/functional/bind.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/not_fatal_until.h"
 #include "base/state_transitions.h"
 #include "base/task/sequenced_task_runner.h"
+#include "base/time/time.h"
+#include "base/trace_event/named_trigger.h"
 #include "base/trace_event/trace_event.h"
 #include "chrome/browser/prefetch/prefetch_headers.h"
 #include "chrome/browser/preloading/chrome_preloading.h"
@@ -94,63 +94,38 @@ const char* SearchPrefetchStatusToString(SearchPrefetchStatus status) {
   switch (status) {
     case SearchPrefetchStatus::kNotStarted:
       return "NotStarted";
-    case SearchPrefetchStatus::kInFlight:
-      return "InFlight";
     case SearchPrefetchStatus::kCanBeServed:
       return "CanBeServed";
-    case SearchPrefetchStatus::kCanBeServedAndUserClicked:
-      return "CanBeServedAndUserClicked";
     case SearchPrefetchStatus::kComplete:
       return "Complete";
-    case SearchPrefetchStatus::kRequestCancelled:
-      return "RequestCancelled";
     case SearchPrefetchStatus::kRequestFailed:
       return "RequestFailed";
-    case SearchPrefetchStatus::kPrerendered:
-      return "Prerendered";
-    case SearchPrefetchStatus::kPrerenderedAndClicked:
-      return "PrerenderedAndClicked";
     case SearchPrefetchStatus::kPrefetchServedForRealNavigation:
       return "kPrefetchServedForRealNavigation";
-    case SearchPrefetchStatus::kPrerenderActivated:
-      return "PrerenderActivated";
   }
 }
 
-#if BUILDFLAG(IS_ANDROID)
-// TODO(crbug.com/345275145): remove this block.
-
-bool is_test = false;
-
-bool CheckPrefetchParameterExistence(const GURL& url, int throttle_position) {
-  std::string_view query_piece = url.query_piece();
-  url::Component query(0, url.query_piece().length());
-  url::Component key, value;
-  while (url::ExtractQueryKeyValue(query_piece, &query, &key, &value)) {
-    if (query_piece.substr(key.begin, key.len) == "pf" && !value.is_empty()) {
-      return true;
-    }
+void MaybeRecordTraceFromSearchPrefetchRequestStartToNavigationIntercepted(
+    SearchPrefetchRequest* search_prefetch_request,
+    base::TimeTicks time_start_prefetch_request) {
+  if (time_start_prefetch_request.is_null()) {
+    return;
   }
-  // It is quite common that a test does not specify the parameter.
-  if (!is_test) {
-    SCOPED_CRASH_KEY_NUMBER("Bug_345275145", "throttle", throttle_position);
-    base::debug::DumpWithoutCrashing();
-    return false;
-  }
-  // Let tests continue fetching.
-  return true;
+
+  const char kSearchPrefetchRequestStartToNavigationIntercepted[] =
+      "SearchPrefetchRequestStartToNavigationIntercepted";
+  const auto trace_id =
+      TRACE_ID_WITH_SCOPE(kSearchPrefetchRequestStartToNavigationIntercepted,
+                          TRACE_ID_LOCAL(search_prefetch_request));
+  TRACE_EVENT_NESTABLE_ASYNC_BEGIN_WITH_TIMESTAMP0(
+      "navigation", kSearchPrefetchRequestStartToNavigationIntercepted,
+      trace_id, time_start_prefetch_request);
+  TRACE_EVENT_NESTABLE_ASYNC_END_WITH_TIMESTAMP0(
+      "navigation", kSearchPrefetchRequestStartToNavigationIntercepted,
+      trace_id, base::TimeTicks::Now());
 }
-#endif  // BUILDFLAG(IS_ANDROID)
 
 }  // namespace
-
-#if BUILDFLAG(IS_ANDROID)
-// static
-void SearchPrefetchRequest::SetIsTest() {
-  CHECK_IS_TEST();
-  is_test = true;
-}
-#endif
 
 SearchPrefetchRequest::SearchPrefetchRequest(
     const GURL& canonical_search_url,
@@ -165,7 +140,9 @@ SearchPrefetchRequest::SearchPrefetchRequest(
           prefetch_preloading_attempt
               ? prefetch_preloading_attempt->GetWeakPtr()
               : nullptr),
-      report_error_callback_(std::move(report_error_callback)) {}
+      report_error_callback_(std::move(report_error_callback)) {
+  base::trace_event::EmitNamedTrigger("search-prefetch-start");
+}
 
 SearchPrefetchRequest::~SearchPrefetchRequest() {
   StopPrerender();
@@ -221,6 +198,7 @@ SearchPrefetchRequest::NetworkAnnotationForPrefetch() {
 
 bool SearchPrefetchRequest::StartPrefetchRequest(Profile* profile) {
   TRACE_EVENT0("loading", "SearchPrefetchRequest::StartPrefetchRequest");
+  time_start_prefetch_request_ = base::TimeTicks::Now();
 
   url::Origin prefetch_origin = url::Origin::Create(prefetch_url_);
 
@@ -246,14 +224,18 @@ bool SearchPrefetchRequest::StartPrefetchRequest(Profile* profile) {
       net::IsolationInfo::RequestType::kOther, prefetch_origin, prefetch_origin,
       resource_request->site_for_cookies);
   resource_request->referrer_policy = net::ReferrerPolicy::NO_REFERRER;
+  resource_request->update_first_party_url_on_redirect = true;
 
-  bool js_enabled = profile->GetPrefs() && profile->GetPrefs()->GetBoolean(
-                                               prefs::kWebKitJavascriptEnabled);
+  // `SearchPrefetchService::MaybePrefetchURL()` should be already prohibiting
+  // this.
+  CHECK(profile->GetPrefs() &&
+            profile->GetPrefs()->GetBoolean(prefs::kWebKitJavascriptEnabled),
+        base::NotFatalUntil::M136);
 
   AddClientHintsHeadersToPrefetchNavigation(
       prefetch_origin, &(resource_request->headers), profile,
       profile->GetClientHintsControllerDelegate(),
-      /*is_ua_override_on=*/false, js_enabled);
+      /*is_ua_override_on=*/false);
 
   // Tack an 'Upgrade-Insecure-Requests' header to outgoing navigational
   // requests, as described in
@@ -297,8 +279,7 @@ bool SearchPrefetchRequest::StartPrefetchRequest(Profile* profile) {
   std::vector<std::unique_ptr<blink::URLLoaderThrottle>> throttles =
       content::CreateContentBrowserURLLoaderThrottles(
           *resource_request, profile, std::move(wc_getter),
-          /*navigation_ui_data=*/nullptr,
-          content::RenderFrameHost::kNoFrameTreeNodeId,
+          /*navigation_ui_data=*/nullptr, content::FrameTreeNodeId(),
           /*navigation_id=*/std::nullopt);
 
   bool should_defer = false;
@@ -306,12 +287,6 @@ bool SearchPrefetchRequest::StartPrefetchRequest(Profile* profile) {
     TRACE_EVENT0(
         "loading",
         "SearchPrefetchRequest::StartPrefetchRequest.ExecuteThrottles");
-#if BUILDFLAG(IS_ANDROID)
-    if (!CheckPrefetchParameterExistence(resource_request->url, -1)) {
-      return false;
-    }
-    size_t throttle_id = 0;
-#endif
 
     for (auto& throttle : throttles) {
       CheckForCancelledOrPausedDelegate cancel_or_pause_delegate;
@@ -323,13 +298,6 @@ bool SearchPrefetchRequest::StartPrefetchRequest(Profile* profile) {
             "SearchPrefetchRequest::StartPrefetchRequest.WillStartRequest");
         throttle->WillStartRequest(resource_request.get(), &should_defer);
       }
-#if BUILDFLAG(IS_ANDROID)
-      if (!CheckPrefetchParameterExistence(resource_request->url,
-                                           throttle_id++)) {
-        return false;
-      }
-#endif
-
       // Make sure throttles are deleted before |cancel_or_pause_delegate| in
       // case they call into the delegate in the destructor.
       throttle.reset();
@@ -338,7 +306,7 @@ bool SearchPrefetchRequest::StartPrefetchRequest(Profile* profile) {
 
       // Check that the search preloading URL has not been altered by a
       // navigation throttle such that its canonical representation has changed.
-      HasCanoncialPreloadingOmniboxSearchURL(resource_request->url, profile,
+      HasCanonicalPreloadingOmniboxSearchURL(resource_request->url, profile,
                                              &new_canonical_search_url);
 
       if (should_defer || new_canonical_search_url != canonical_search_url_ ||
@@ -349,31 +317,12 @@ bool SearchPrefetchRequest::StartPrefetchRequest(Profile* profile) {
   }
 
   prefetch_url_ = resource_request->url;
-
-  SetSearchPrefetchStatus(SearchPrefetchStatus::kInFlight);
-
-  StartPrefetchRequestInternal(profile, std::move(resource_request),
-                               std::move(report_error_callback_));
+  SetSearchPrefetchStatus(SearchPrefetchStatus::kCanBeServed);
+  streaming_url_loader_ =
+      base::MakeRefCounted<StreamingSearchPrefetchURLLoader>(
+          this, profile, navigation_prefetch_, std::move(resource_request),
+          NetworkAnnotationForPrefetch(), std::move(report_error_callback_));
   return true;
-}
-
-bool SearchPrefetchRequest::ShouldBeCancelledOnResultChanges() const {
-  if (SearchPrefetchSkipsCancel()) {
-    return false;
-  }
-  static constexpr auto CancelableStatus =
-      base::MakeFixedFlatSet<SearchPrefetchStatus>({
-          SearchPrefetchStatus::kInFlight,
-          SearchPrefetchStatus::kCanBeServed,
-          SearchPrefetchStatus::kPrerendered,
-      });
-  return base::Contains(CancelableStatus, current_status_);
-}
-
-void SearchPrefetchRequest::CancelPrefetch() {
-  SetSearchPrefetchStatus(SearchPrefetchStatus::kRequestCancelled);
-  StopPrefetch();
-  StopPrerender();
 }
 
 void SearchPrefetchRequest::MaybeStartPrerenderSearchResult(
@@ -396,12 +345,9 @@ void SearchPrefetchRequest::MaybeStartPrerenderSearchResult(
       attempt.SetEligibility(ToPreloadingEligibility(
           ChromePreloadingEligibility::kPrefetchNotStarted));
       return;
-    case SearchPrefetchStatus::kInFlight:
     case SearchPrefetchStatus::kCanBeServed:
-    case SearchPrefetchStatus::kCanBeServedAndUserClicked:
     case SearchPrefetchStatus::kComplete:
       break;
-    case SearchPrefetchStatus::kRequestCancelled:
     case SearchPrefetchStatus::kRequestFailed:
       // Case N: The prefetch request failed, or has failed. Prerender cannot
       // reuse the response and will fail for sure, so this does not start
@@ -409,16 +355,8 @@ void SearchPrefetchRequest::MaybeStartPrerenderSearchResult(
       attempt.SetEligibility(ToPreloadingEligibility(
           ChromePreloadingEligibility::kPrefetchFailed));
       return;
-    case SearchPrefetchStatus::kPrerendered:
-    case SearchPrefetchStatus::kPrerenderedAndClicked:
-      // Case 4: Prerender has started and taken the response away. No action is
-      // needed.
-      attempt.SetEligibility(ToPreloadingEligibility(
-          ChromePreloadingEligibility::kPrerenderConsumed));
-      return;
     case SearchPrefetchStatus::kPrefetchServedForRealNavigation:
-    case SearchPrefetchStatus::kPrerenderActivated:
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
   }
 
   // maintain a weak ptr so that this can cancel prerendering when
@@ -438,10 +376,7 @@ void SearchPrefetchRequest::MaybeStartPrerenderSearchResult(
 }
 
 void SearchPrefetchRequest::ErrorEncountered() {
-  // When prerender fails, don't set the prefetch status to failure.
-  if (current_status_ != SearchPrefetchStatus::kPrerendered) {
-    SetSearchPrefetchStatus(SearchPrefetchStatus::kRequestFailed);
-  }
+  SetSearchPrefetchStatus(SearchPrefetchStatus::kRequestFailed);
   StopPrefetch();
   StopPrerender();
 }
@@ -455,32 +390,8 @@ void SearchPrefetchRequest::OnServableResponseCodeReceived() {
 
   // TODO(crbug.com/40214220): Do not start prerendering if this request
   // is about to expire.
-  if (prerender_utils::SearchPreloadShareableCacheIsEnabled()) {
-    // Start prerender synchronously. For shareable cache cases, the request
-    // will build the data pipe by itself and we do not need to wait.
-    prerender_manager_->StartPrerenderSearchResult(
-        canonical_search_url_, prerender_url_, prerender_preloading_attempt_);
-  } else {
-    // Start prerender asynchronously, so that the request can prepare the
-    // data pipe completely
-    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
-        FROM_HERE,
-        base::BindOnce(&PrerenderManager::StartPrerenderSearchResult,
-                       prerender_manager_, canonical_search_url_,
-                       prerender_url_, prerender_preloading_attempt_));
-  }
-}
-
-void SearchPrefetchRequest::MarkPrefetchAsServable() {
-  SetSearchPrefetchStatus(SearchPrefetchStatus::kCanBeServed);
-}
-
-void SearchPrefetchRequest::MarkPrefetchAsPrerendered() {
-  SetSearchPrefetchStatus(SearchPrefetchStatus::kPrerendered);
-}
-
-void SearchPrefetchRequest::MarkPrefetchAsPrerenderActivated() {
-  SetSearchPrefetchStatus(SearchPrefetchStatus::kPrerenderActivated);
+  prerender_manager_->StartPrerenderSearchResult(
+      canonical_search_url_, prerender_url_, prerender_preloading_attempt_);
 }
 
 void SearchPrefetchRequest::ResetPrerenderUpgrader() {
@@ -491,12 +402,6 @@ void SearchPrefetchRequest::ResetPrerenderUpgrader() {
 
 void SearchPrefetchRequest::MarkPrefetchAsComplete() {
   SetSearchPrefetchStatus(SearchPrefetchStatus::kComplete);
-}
-
-void SearchPrefetchRequest::MarkPrefetchAsClicked() {
-  if (current_status_ == SearchPrefetchStatus::kPrerendered) {
-    SetSearchPrefetchStatus(SearchPrefetchStatus::kPrerenderedAndClicked);
-  }
 }
 
 void SearchPrefetchRequest::MarkPrefetchAsServed() {
@@ -512,6 +417,9 @@ void SearchPrefetchRequest::RecordClickTime() {
 
 scoped_refptr<StreamingSearchPrefetchURLLoader>
 SearchPrefetchRequest::TakeSearchPrefetchURLLoader() {
+  TRACE_EVENT0("loading", "SearchPrefetchRequest::TakeSearchPrefetchURLLoader");
+  MaybeRecordTraceFromSearchPrefetchRequestStartToNavigationIntercepted(
+      this, time_start_prefetch_request_);
   DCHECK(streaming_url_loader_);
   // This method should be called upon serving, so the service does not want to
   // keep the request.
@@ -522,7 +430,6 @@ SearchPrefetchRequest::TakeSearchPrefetchURLLoader() {
 
 SearchPrefetchURLLoader::RequestHandler
 SearchPrefetchRequest::CreateResponseReader() {
-  DCHECK(prerender_utils::SearchPreloadShareableCacheIsEnabled());
   DCHECK(streaming_url_loader_);
   if (!servable_response_code_received_) {
     // It is not expected to reach here, as DSE prerender should only be
@@ -530,22 +437,11 @@ SearchPrefetchRequest::CreateResponseReader() {
     // unexpectedly trigger prerendering due to https://crbug.com/1484914.
     return {};
   }
+  TRACE_EVENT0("loading", "SearchPrefetchRequest::CreateResponseReader");
+  MaybeRecordTraceFromSearchPrefetchRequestStartToNavigationIntercepted(
+      this, time_start_prefetch_request_);
   return StreamingSearchPrefetchURLLoader::
       GetCallbackForReadingViaResponseReader(streaming_url_loader_);
-}
-
-void SearchPrefetchRequest::StartPrefetchRequestInternal(
-    Profile* profile,
-    std::unique_ptr<network::ResourceRequest> resource_request,
-    base::OnceCallback<void(bool)> report_error_callback) {
-  TRACE_EVENT0("loading",
-               "SearchPrefetchRequest::StartPrefetchRequestInternal");
-  profile_ = profile;
-  prefetch_url_ = resource_request->url;
-  streaming_url_loader_ =
-      base::MakeRefCounted<StreamingSearchPrefetchURLLoader>(
-          this, profile, navigation_prefetch_, std::move(resource_request),
-          NetworkAnnotationForPrefetch(), std::move(report_error_callback));
 }
 
 void SearchPrefetchRequest::StopPrefetch() {
@@ -601,49 +497,20 @@ void SearchPrefetchRequest::SetSearchPrefetchStatus(
   static const base::NoDestructor<base::StateTransitions<SearchPrefetchStatus>>
       allowed_transitions(base::StateTransitions<SearchPrefetchStatus>({
           {SearchPrefetchStatus::kNotStarted,
-           {SearchPrefetchStatus::kInFlight}},
-
-          {SearchPrefetchStatus::kInFlight,
            {SearchPrefetchStatus::kCanBeServed,
-            SearchPrefetchStatus::kRequestCancelled,
             SearchPrefetchStatus::kRequestFailed}},
 
           {SearchPrefetchStatus::kCanBeServed,
-           {SearchPrefetchStatus::kCanBeServedAndUserClicked,
-            SearchPrefetchStatus::kComplete,
+           {SearchPrefetchStatus::kComplete,
             SearchPrefetchStatus::kRequestFailed,
-            SearchPrefetchStatus::kRequestCancelled,
-            SearchPrefetchStatus::kPrerendered,
             SearchPrefetchStatus::kPrefetchServedForRealNavigation}},
 
-          {SearchPrefetchStatus::kCanBeServedAndUserClicked,
-           {SearchPrefetchStatus::kComplete,
-            SearchPrefetchStatus::kPrefetchServedForRealNavigation,
-            SearchPrefetchStatus::kRequestFailed,
-            // TODO(crbug.com/40250486): Add a test to cover this.
-            SearchPrefetchStatus::kPrerenderActivated}},
-
           {SearchPrefetchStatus::kComplete,
-           {SearchPrefetchStatus::kPrefetchServedForRealNavigation,
-            SearchPrefetchStatus::kPrerendered,
-            SearchPrefetchStatus::kPrerenderActivated}},
+           {SearchPrefetchStatus::kPrefetchServedForRealNavigation}},
 
           {SearchPrefetchStatus::kPrefetchServedForRealNavigation, {}},
 
-          {SearchPrefetchStatus::kPrerendered,
-           {SearchPrefetchStatus::kPrerenderedAndClicked,
-            SearchPrefetchStatus::kRequestCancelled,
-            SearchPrefetchStatus::kPrerenderActivated}},
-
-          {SearchPrefetchStatus::kPrerenderedAndClicked,
-           {SearchPrefetchStatus::kPrerenderActivated}},
-
-          {SearchPrefetchStatus::kPrerenderActivated, {}},
-
           {SearchPrefetchStatus::kRequestFailed, {}},
-
-          {SearchPrefetchStatus::kRequestCancelled, {}},
-
       }));
   DCHECK_STATE_TRANSITION(allowed_transitions,
                           /*old_state=*/current_status_,
@@ -658,42 +525,26 @@ void SearchPrefetchRequest::SetSearchPrefetchStatus(
       // PreloadingTriggeringOutcome as kUnspecified. The exact reason why
       // prefetch is not started is recorded in PreloadingEligibility.
       return;
-    case SearchPrefetchStatus::kInFlight:
-      // Once prefetch started set TriggeringOutcome to kRunning.
-      SetPrefetchAttemptTriggeringOutcome(
-          content::PreloadingTriggeringOutcome::kRunning);
-      return;
     case SearchPrefetchStatus::kCanBeServed:
       // Mark prefetch to ready, once we can serve prefetch. With
       // PreloadingAttempt, ready means the attempt can be used when needed.
       SetPrefetchAttemptTriggeringOutcome(
           content::PreloadingTriggeringOutcome::kReady);
       return;
-    case SearchPrefetchStatus::kCanBeServedAndUserClicked:
     case SearchPrefetchStatus::kComplete:
       // Don't update the TriggeringOutcome here as we have already set the
       // TriggeringOutcome when the status was updated to kCanServed.
       return;
-    case SearchPrefetchStatus::kRequestCancelled:
     case SearchPrefetchStatus::kRequestFailed:
-      // Since we are cancelling prefetch when either request failed or
-      // cancelled we consider it as a failure with PreloadingTriggeringOutcome.
+      // Since we are cancelling prefetch when the request failed, we consider
+      // it as a failure with PreloadingTriggeringOutcome.
       SetPrefetchAttemptTriggeringOutcome(
           content::PreloadingTriggeringOutcome::kFailure);
-      return;
-    case SearchPrefetchStatus::kPrerendered:
-      SetPrefetchAttemptTriggeringOutcome(content::PreloadingTriggeringOutcome::
-                                              kTriggeredButUpgradedToPrerender);
       return;
     case SearchPrefetchStatus::kPrefetchServedForRealNavigation:
       // Once prefetch is served mark it as success.
       SetPrefetchAttemptTriggeringOutcome(
           content::PreloadingTriggeringOutcome::kSuccess);
-      return;
-    case SearchPrefetchStatus::kPrerenderedAndClicked:
-    case SearchPrefetchStatus::kPrerenderActivated:
-      // In case of prerender we don't update the triggering outcome to success
-      // because we measure this with prerender attempt.
       return;
   }
 }

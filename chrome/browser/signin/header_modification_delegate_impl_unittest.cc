@@ -23,6 +23,7 @@
 #if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
 #include "chrome/browser/signin/bound_session_credentials/bound_session_cookie_refresh_service.h"
 #include "chrome/browser/signin/bound_session_credentials/bound_session_cookie_refresh_service_factory.h"
+#include "chrome/browser/signin/bound_session_credentials/bound_session_debug_info.h"
 #endif  // BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
 
 namespace {
@@ -67,7 +68,8 @@ class MockBoundSessionCookieRefreshService
               (override));
   MOCK_METHOD(void,
               HandleRequestBlockedOnCookie,
-              (HandleRequestBlockedOnCookieCallback resume_blocked_request),
+              (const GURL&,
+               HandleRequestBlockedOnCookieCallback resume_blocked_request),
               (override));
   MOCK_METHOD(base::WeakPtr<BoundSessionCookieRefreshService>,
               GetWeakPtr,
@@ -75,6 +77,10 @@ class MockBoundSessionCookieRefreshService
               (override));
   MOCK_METHOD(void, AddObserver, (Observer* observer), (override));
   MOCK_METHOD(void, RemoveObserver, (Observer* observer), (override));
+  MOCK_METHOD((std::vector<BoundSessionDebugInfo>),
+              GetBoundSessionDebugInfo,
+              (),
+              (const, override));
 };
 
 class TestResponseAdapter : public signin::ResponseAdapter {
@@ -161,8 +167,8 @@ void SetValidRegistrationHeader(TestResponseAdapter* response_adapter) {
 void SetValidRegistrationListHeader(TestResponseAdapter* response_adapter) {
   response_adapter->SetHeader(
       "Sec-Session-Google-Registration-List",
-      "\"startsession\";es256;challenge=\"Y2hhbGxlbmdl\","
-      "\"startsession2\";es256;challenge=\"Y2hhbGxlbmdlMg==\"");
+      "(ES256);path=\"startsession\";challenge=\"Y2hhbGxlbmdl\","
+      "(ES256);path=\"startsession2\";challenge=\"Y2hhbGxlbmdlMg==\"");
 }
 
 class BoundSessionHeaderModificationDelegateImplTest : public testing::Test {

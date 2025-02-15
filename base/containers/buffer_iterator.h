@@ -12,6 +12,7 @@
 
 #include "base/compiler_specific.h"
 #include "base/containers/span.h"
+#include "base/memory/raw_span.h"
 #include "base/numerics/checked_math.h"
 
 namespace base {
@@ -62,7 +63,7 @@ class BufferIterator {
                     std::same_as<std::remove_const_t<B>, unsigned char>,
                 "Underlying buffer type must be char-type.");
   // Constructs an empty BufferIterator that will always return null pointers.
-  BufferIterator() {}
+  BufferIterator() = default;
 
   // Constructs a BufferIterator over the `buffer` span, that will return
   // pointers into the span.
@@ -231,9 +232,9 @@ class BufferIterator {
 
  private:
   // The original buffer that the iterator was constructed with.
-  const span<B> buffer_;
+  const raw_span<B> buffer_;
   // A subspan of `buffer_` containing the remaining bytes to iterate over.
-  span<B> remaining_;
+  raw_span<B> remaining_;
   // Copy and assign allowed.
 };
 

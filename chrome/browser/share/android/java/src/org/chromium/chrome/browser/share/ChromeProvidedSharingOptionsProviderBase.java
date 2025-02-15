@@ -14,6 +14,7 @@ import androidx.annotation.Nullable;
 import org.chromium.base.BuildInfo;
 import org.chromium.base.Callback;
 import org.chromium.base.supplier.Supplier;
+import org.chromium.build.BuildConfig;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.preferences.Pref;
 import org.chromium.chrome.browser.profiles.Profile;
@@ -266,9 +267,15 @@ public abstract class ChromeProvidedSharingOptionsProviderBase {
     protected void initializeFirstPartyOptionsInOrder() {
         maybeAddPageInfoFirstPartyOption();
         maybeAddCopyFirstPartyOption();
-        // Only show a limited first party share selection for automotive.
-        if (!BuildInfo.getInstance().isAutomotive) {
-            maybeAddLongScreenshotFirstPartyOption();
+
+        // TODO(386833405): Decide on priority for this option.
+        maybeAddCollaborateFirstPartyOption();
+
+        // Only show a limited first party share selection for automotive and PDF pages.
+        if (!isAutomotive()) {
+            if (!isPdfTab()) {
+                maybeAddLongScreenshotFirstPartyOption();
+            }
             maybeAddPrintFirstPartyOption();
         }
         maybeAddSendTabToSelfFirstPartyOption();
@@ -279,6 +286,16 @@ public abstract class ChromeProvidedSharingOptionsProviderBase {
         FirstPartyOption pageInfoOption = createPageInfoFirstPartyOption();
         if (pageInfoOption != null) {
             mOrderedFirstPartyOptions.add(pageInfoOption);
+        }
+    }
+
+    private void maybeAddCollaborateFirstPartyOption() {
+        if (BuildConfig.IS_DESKTOP_ANDROID) {
+            return;
+        }
+        FirstPartyOption option = createCollaborateFirstPartyOption();
+        if (option != null) {
+            mOrderedFirstPartyOptions.add(option);
         }
     }
 
@@ -307,7 +324,10 @@ public abstract class ChromeProvidedSharingOptionsProviderBase {
     }
 
     private void maybeAddPrintFirstPartyOption() {
-        if (mTabProvider.hasValue() && UserPrefs.get(mProfile).getBoolean(Pref.PRINTING_ENABLED)) {
+        // For the desktop case, the Print action will be showed in the main menu.
+        if (!BuildConfig.IS_DESKTOP_ANDROID
+                && mTabProvider.hasValue()
+                && UserPrefs.get(mProfile).getBoolean(Pref.PRINTING_ENABLED)) {
             mOrderedFirstPartyOptions.add(createPrintingFirstPartyOption());
         }
     }
@@ -317,6 +337,16 @@ public abstract class ChromeProvidedSharingOptionsProviderBase {
         mOrderedFirstPartyOptions.add(createCopyImageFirstPartyOption());
         mOrderedFirstPartyOptions.add(createCopyFirstPartyOption());
         mOrderedFirstPartyOptions.add(createCopyTextFirstPartyOption());
+    }
+
+    private boolean isPdfTab() {
+        return mTabProvider.hasValue()
+                && mTabProvider.get().isNativePage()
+                && mTabProvider.get().getNativePage().isPdf();
+    }
+
+    private static boolean isAutomotive() {
+        return BuildInfo.getInstance().isAutomotive;
     }
 
     private FirstPartyOption createCopyLinkFirstPartyOption() {
@@ -454,4 +484,10 @@ public abstract class ChromeProvidedSharingOptionsProviderBase {
      * Create a {@link FirstPartyOption} used for page info sharing. Return null if not supported.
      */
     protected abstract @Nullable FirstPartyOption createPageInfoFirstPartyOption();
+
+    /**
+     * Create a {@link FirstPartyOption} used for sharing as collaboration. Return null if not
+     * supported.
+     */
+    protected abstract @Nullable FirstPartyOption createCollaborateFirstPartyOption();
 }

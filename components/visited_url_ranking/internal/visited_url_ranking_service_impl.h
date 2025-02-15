@@ -9,17 +9,22 @@
 #include <memory>
 #include <queue>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
+#include "base/time/time.h"
 #include "components/segmentation_platform/public/database_client.h"
 #include "components/segmentation_platform/public/model_provider.h"
 #include "components/segmentation_platform/public/trigger.h"
+#include "components/url_deduplication/deduplication_strategy.h"
+#include "components/url_deduplication/url_deduplication_helper.h"
 #include "components/visited_url_ranking/public/fetch_options.h"
 #include "components/visited_url_ranking/public/fetch_result.h"
 #include "components/visited_url_ranking/public/url_visit.h"
+#include "components/visited_url_ranking/public/url_visit_aggregates_transformer.h"
 #include "components/visited_url_ranking/public/url_visit_data_fetcher.h"
 #include "components/visited_url_ranking/public/visited_url_ranking_service.h"
 
@@ -32,17 +37,39 @@ class SegmentationPlatformService;
 
 namespace visited_url_ranking {
 
+// The status of an execution step performed by the service when handling a
+// request. These values are persisted to logs. Entries should not be
+// renumbered and numeric values should never be reused.
+// LINT.IfChange(URLVisitAggregatesTransformType)
+enum class VisitedURLRankingRequestStepStatus {
+  kUnknown = 0,
+  kSuccess = 1,
+  kSuccessEmpty = 2,
+  kFailed = 3,
+  kFailedNotFound = 4,
+  kFailedMissingBackend = 5,
+  kMaxValue = kFailedMissingBackend
+};
+// LINT.ThenChange(/tools/metrics/histograms/visited_url_ranking/enums.xml:VisitedURLRankingRequestStepStatus)
+
 enum class Status;
 
 // The internal implementation of the VisitedURLRankingService.
 class VisitedURLRankingServiceImpl : public VisitedURLRankingService {
  public:
+  // Wait time before which we record kSeen events as feedback.
+  constexpr static int kSeenRecordDelaySec = 300;
+
   VisitedURLRankingServiceImpl(
       segmentation_platform::SegmentationPlatformService*
           segmentation_platform_service,
       std::map<Fetcher, std::unique_ptr<URLVisitDataFetcher>> data_fetchers,
       std::map<URLVisitAggregatesTransformType,
-               std::unique_ptr<URLVisitAggregatesTransformer>> transformers);
+               std::unique_ptr<URLVisitAggregatesTransformer>> transformers,
+      std::unique_ptr<url_deduplication::URLDeduplicationHelper>
+          deduplication_helper =
+              std::make_unique<url_deduplication::URLDeduplicationHelper>(
+                  url_deduplication::DeduplicationStrategy()));
   ~VisitedURLRankingServiceImpl() override;
 
   // Disallow copy/assign.
@@ -56,24 +83,45 @@ class VisitedURLRankingServiceImpl : public VisitedURLRankingService {
   void RankURLVisitAggregates(const Config& config,
                               std::vector<URLVisitAggregate> visits,
                               RankURLVisitAggregatesCallback callback) override;
+  void DecorateURLVisitAggregates(
+      const Config& config,
+      visited_url_ranking::URLVisitsMetadata url_visits_metadata,
+      std::vector<URLVisitAggregate> visit_aggregates,
+      DecorateURLVisitAggregatesCallback callback) override;
   void RecordAction(
       ScoredURLUserAction action,
       const std::string& visit_id,
       segmentation_platform::TrainingRequestId visit_request_id) override;
 
  private:
+  // Trigger training data collection with the user action.
+  void TriggerTrainingData(
+      ScoredURLUserAction action,
+      const std::string& visit_id,
+      segmentation_platform::TrainingRequestId visit_request_id);
+
   // Callback invoked when the various fetcher instances have completed.
   void MergeVisitsAndCallback(
       GetURLVisitAggregatesCallback callback,
+      const FetchOptions& options,
       const std::vector<URLVisitAggregatesTransformType>& ordered_transforms,
-      std::vector<FetchResult> fetcher_visits);
+      std::vector<std::pair<Fetcher, FetchResult>> fetcher_results);
 
   // Callback invoked when the various transformers have completed.
   void TransformVisitsAndCallback(
       GetURLVisitAggregatesCallback callback,
+      const FetchOptions& options,
       std::queue<URLVisitAggregatesTransformType> transform_type_queue,
+      URLVisitAggregatesTransformType transform_type,
+      size_t previous_aggregates_count,
+      URLVisitsMetadata url_visits_metadata,
+      base::Time start_time,
       URLVisitAggregatesTransformer::Status status,
       std::vector<URLVisitAggregate> aggregates);
+
+  // Returns true if the visit should be discarded from candidates based on
+  // threshold.
+  bool ShouldDiscardVisit(const URLVisitAggregate& visit);
 
   // Invoked to get the score (i.e. numeric result) for a given URL visit
   // aggregate.
@@ -102,6 +150,23 @@ class VisitedURLRankingServiceImpl : public VisitedURLRankingService {
   std::map<URLVisitAggregatesTransformType,
            std::unique_ptr<URLVisitAggregatesTransformer>>
       transformers_;
+
+  // Time delay to record kSeen events in case kActivation events are recorded.
+  const base::TimeDelta seen_record_delay_;
+
+  // Sampling rate for kSeen events to balance training collection.
+  const int seen_records_sampling_rate_;
+
+  // Threshold for when the "You just visited" communication should be
+  // displayed instead of relative time.
+  const base::TimeDelta recently_visited_minutes_threshold_;
+
+  // Score thresholds for varying URL types.
+  std::map<URLVisitAggregate::URLType, double> score_thresholds_;
+
+  // The helper used by the fetchers to deduplicate URLs.
+  std::unique_ptr<url_deduplication::URLDeduplicationHelper>
+      deduplication_helper_;
 
   base::WeakPtrFactory<VisitedURLRankingServiceImpl> weak_ptr_factory_{this};
 };

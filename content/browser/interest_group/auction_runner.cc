@@ -77,6 +77,7 @@ blink::AuctionConfig* LookupAuction(
 }  // namespace
 
 std::unique_ptr<AuctionRunner> AuctionRunner::CreateAndStart(
+    AuctionMetricsRecorder* auction_metrics_recorder,
     AuctionWorkletManager* auction_worklet_manager,
     AuctionNonceManager* auction_nonce_manager,
     InterestGroupManagerImpl* interest_group_manager,
@@ -88,7 +89,7 @@ std::unique_ptr<AuctionRunner> AuctionRunner::CreateAndStart(
     const blink::AuctionConfig& auction_config,
     const url::Origin& main_frame_origin,
     const url::Origin& frame_origin,
-    ukm::SourceId ukm_source_id,
+    std::optional<std::string> user_agent_override,
     network::mojom::ClientSecurityStatePtr client_security_state,
     scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
     IsInterestGroupApiAllowedCallback is_interest_group_api_allowed_callback,
@@ -96,13 +97,13 @@ std::unique_ptr<AuctionRunner> AuctionRunner::CreateAndStart(
     mojo::PendingReceiver<AbortableAdAuction> abort_receiver,
     RunAuctionCallback callback) {
   std::unique_ptr<AuctionRunner> instance(new AuctionRunner(
-      auction_worklet_manager, auction_nonce_manager, interest_group_manager,
-      browser_context, private_aggregation_manager,
+      auction_metrics_recorder, auction_worklet_manager, auction_nonce_manager,
+      interest_group_manager, browser_context, private_aggregation_manager,
       std::move(ad_auction_page_data_callback),
       std::move(log_private_aggregation_requests_callback),
       DetermineKAnonMode(), std::move(auction_config), main_frame_origin,
-      frame_origin, ukm_source_id, std::move(client_security_state),
-      std::move(url_loader_factory),
+      frame_origin, std::move(user_agent_override),
+      std::move(client_security_state), std::move(url_loader_factory),
       std::move(is_interest_group_api_allowed_callback),
       std::move(attestation_callback), std::move(abort_receiver),
       std::move(callback)));
@@ -376,31 +377,19 @@ void AuctionRunner::ResolvedAuctionAdResponsePromise(
     return;
   }
   config->server_response->got_response = true;
-  AdAuctionPageData* page_data = ad_auction_page_data_callback_.Run();
-  if (!page_data) {
-    // There's no page data attached so we can't decode the response. There's
-    // no way the auction can proceed.
-    FailAuction(false);
-    return;
-  }
 
   if (auction_id->is_main_auction()) {
-    auction_.HandleServerResponse(std::move(response), *page_data);
+    auction_.HandleServerResponse(std::move(response),
+                                  ad_auction_page_data_callback_);
   } else {
     auction_.HandleComponentServerResponse(auction_id->get_component_auction(),
-                                           std::move(response), *page_data);
+                                           std::move(response),
+                                           ad_auction_page_data_callback_);
   }
 }
 
 void AuctionRunner::ResolvedAdditionalBids(
     blink::mojom::AuctionAdConfigAuctionIdPtr auction_id) {
-  if (!base::FeatureList::IsEnabled(
-          blink::features::kFledgeNegativeTargeting)) {
-    mojo::ReportBadMessage(
-        "ResolvedAdditionalBids with FledgeNegativeTargeting off");
-    return;
-  }
-
   if (state_ == State::kFailed) {
     return;
   }
@@ -477,12 +466,9 @@ void AuctionRunner::FailAuction(
 
   // Can have loss report URLs if the auction failed because the seller
   // rejected all bids.
-  std::vector<GURL> debug_win_report_urls;
-  std::vector<GURL> debug_loss_report_urls;
-  auction_.TakeDebugReportUrlsAndFillInPrivateAggregationRequests(
-      debug_win_report_urls, debug_loss_report_urls);
+  auction_.CollectBiddingAndScoringPhaseReports();
   // Shouldn't have any win report URLs if nothing won the auction.
-  DCHECK(debug_win_report_urls.empty());
+  CHECK(auction_.TakeDebugWinReportUrls().empty());
 
   if (!aborted_by_script) {
     // A different metric is recorded for script-triggered abort in
@@ -497,14 +483,13 @@ void AuctionRunner::FailAuction(
         auction_.GetKAnonKeysToJoin());
     interest_group_manager_->EnqueueReports(
         InterestGroupManagerImpl::ReportType::kDebugLoss,
-        std::move(debug_loss_report_urls),
-        FrameTreeNode::kFrameTreeNodeInvalidId, frame_origin_,
+        auction_.TakeDebugLossReportUrls(), FrameTreeNodeId(), frame_origin_,
         *client_security_state_, url_loader_factory_);
 
     interest_group_manager_->EnqueueRealTimeReports(
         auction_.TakeRealTimeReportingContributions(),
-        ad_auction_page_data_callback_, FrameTreeNode::kFrameTreeNodeInvalidId,
-        frame_origin_, *client_security_state_, url_loader_factory_);
+        ad_auction_page_data_callback_, FrameTreeNodeId(), frame_origin_,
+        *client_security_state_, url_loader_factory_);
 
     InterestGroupAuctionReporter::OnFledgePrivateAggregationRequests(
         private_aggregation_manager_, main_frame_origin_,
@@ -515,18 +500,24 @@ void AuctionRunner::FailAuction(
 
   UpdateInterestGroupsPostAuction();
 
+  auto [contained_server_auction, contained_on_device_auction] =
+      IncludesServerAndOnDeviceAuctions();
+
   // When the auction fails, private aggregation requests of non-reserved event
   // types cannot be triggered anyway, so no need to pass it along.
-  std::move(callback_).Run(this, aborted_by_script,
-                           /*winning_group_key=*/std::nullopt,
-                           /*requested_ad_size=*/std::nullopt,
-                           /*ad_descriptor=*/std::nullopt,
-                           /*ad_component_descriptors=*/{},
-                           auction_.TakeErrors(),
-                           /*reporter=*/nullptr);
+  std::move(callback_).Run(
+      this, aborted_by_script,
+      /*winning_group_key=*/std::nullopt,
+      /*requested_ad_size=*/std::nullopt,
+      /*ad_descriptor=*/std::nullopt,
+      /*ad_component_descriptors=*/{}, auction_.TakeErrors(),
+      /*reporter=*/nullptr, contained_server_auction,
+      contained_on_device_auction,
+      auction_.final_auction_result().value_or(AuctionResult::kAborted));
 }
 
 AuctionRunner::AuctionRunner(
+    AuctionMetricsRecorder* auction_metrics_recorder,
     AuctionWorkletManager* auction_worklet_manager,
     AuctionNonceManager* auction_nonce_manager,
     InterestGroupManagerImpl* interest_group_manager,
@@ -539,7 +530,7 @@ AuctionRunner::AuctionRunner(
     const blink::AuctionConfig& auction_config,
     const url::Origin& main_frame_origin,
     const url::Origin& frame_origin,
-    ukm::SourceId ukm_source_id,
+    std::optional<std::string> user_agent_override,
     network::mojom::ClientSecurityStatePtr client_security_state,
     scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
     IsInterestGroupApiAllowedCallback is_interest_group_api_allowed_callback,
@@ -552,6 +543,7 @@ AuctionRunner::AuctionRunner(
       main_frame_origin_(main_frame_origin),
       frame_origin_(frame_origin),
       client_security_state_(std::move(client_security_state)),
+      user_agent_override_(std::move(user_agent_override)),
       url_loader_factory_(std::move(url_loader_factory)),
       is_interest_group_api_allowed_callback_(
           std::move(is_interest_group_api_allowed_callback)),
@@ -563,14 +555,15 @@ AuctionRunner::AuctionRunner(
           std::make_unique<blink::AuctionConfig>(auction_config)),
       callback_(std::move(callback)),
       promise_fields_in_auction_config_(owned_auction_config_->NumPromises()),
-      auction_metrics_recorder_(ukm_source_id),
       auction_(kanon_mode_,
+               main_frame_origin,
+               client_security_state_->ip_address_space,
                owned_auction_config_.get(),
                /*parent=*/nullptr,
+               auction_metrics_recorder,
                auction_worklet_manager,
                auction_nonce_manager,
                interest_group_manager,
-               &auction_metrics_recorder_,
                base::BindRepeating(&AuctionRunner::GetDataDecoder,
                                    // `this` owns `auction_`.
                                    base::Unretained(this)),
@@ -645,7 +638,12 @@ void AuctionRunner::OnBidsGeneratedAndScored(base::TimeTicks start_time,
     return;
   }
   DCHECK(callback_);
+  // Whether the top-level auction is a server auction.
   bool is_server_auction = owned_auction_config_->server_response.has_value();
+  // Whether the top-level auction or any component is a server auction or
+  // on-device auction.
+  auto [contained_server_auction, contained_on_device_auction] =
+      IncludesServerAndOnDeviceAuctions();
 
   blink::InterestGroupSet interest_groups_that_bid;
   auction_.GetInterestGroupsThatBidAndReportBidCounts(interest_groups_that_bid);
@@ -691,7 +689,9 @@ void AuctionRunner::OnBidsGeneratedAndScored(base::TimeTicks start_time,
       this, /*aborted_by_script=*/false, std::move(winning_group_key),
       std::move(requested_ad_size), std::move(ad_descriptor_with_replacements),
       std::move(component_ad_descriptors_with_replacements), std::move(errors),
-      std::move(reporter));
+      std::move(reporter), contained_server_auction,
+      contained_on_device_auction,
+      auction_.final_auction_result().value_or(AuctionResult::kAborted));
 }
 
 void AuctionRunner::UpdateInterestGroupsPostAuction() {
@@ -713,11 +713,12 @@ void AuctionRunner::UpdateInterestGroupsPostAuction() {
           features::kFledgeDelayPostAuctionInterestGroupUpdate)) {
     interest_group_manager_->UpdateInterestGroupsOfOwnersWithDelay(
         std::move(update_owners), client_security_state_.Clone(),
-        std::move(attestation_callback_), kPostAuctionInterestGroupUpdateDelay);
+        std::move(user_agent_override_), std::move(attestation_callback_),
+        kPostAuctionInterestGroupUpdateDelay);
   } else {
     interest_group_manager_->UpdateInterestGroupsOfOwners(
         std::move(update_owners), client_security_state_.Clone(),
-        attestation_callback_);
+        std::move(user_agent_override_), attestation_callback_);
   }
 }
 
@@ -746,6 +747,26 @@ data_decoder::DataDecoder* AuctionRunner::GetDataDecoder(
     return nullptr;
   }
   return page_data->GetDecoderFor(origin);
+}
+
+std::pair<bool, bool> AuctionRunner::IncludesServerAndOnDeviceAuctions() {
+  bool includes_on_device = false;
+  bool includes_server = false;
+  if (owned_auction_config_->server_response) {
+    includes_server = true;
+  } else {
+    includes_on_device = true;
+  }
+  for (const blink::AuctionConfig& config :
+       owned_auction_config_->non_shared_params.component_auctions) {
+    if (config.server_response) {
+      includes_server = true;
+    } else {
+      includes_on_device = true;
+    }
+  }
+
+  return std::make_pair(includes_server, includes_on_device);
 }
 
 }  // namespace content

@@ -11,7 +11,7 @@
 #include <string>
 
 #include "base/memory/weak_ptr.h"
-#include "components/autofill/core/browser/autofill_client.h"
+#include "components/autofill/core/browser/foundations/autofill_client.h"
 #include "components/autofill/core/common/aliases.h"
 #include "components/input/native_web_keyboard_event.h"
 
@@ -49,8 +49,10 @@ class AutofillPopupView {
 
   // Refreshes the position and redraws popup when suggestions change. Returns
   // whether the resulting popup was shown (or had to hide, e.g. due to
-  // insufficient size).
-  virtual void OnSuggestionsChanged() = 0;
+  // insufficient size). If `prefer_prev_arrow_side` is `true`, the view takes
+  // prev arrow side as the first preferred when recalculating the popup
+  // position (potentially changed due to the change of the content).
+  virtual void OnSuggestionsChanged(bool prefer_prev_arrow_side) = 0;
 
   // Returns true if the autofill popup overlaps with the
   // picture-in-picture window.
@@ -78,7 +80,7 @@ class AutofillPopupView {
   virtual base::WeakPtr<AutofillPopupView> GetWeakPtr() = 0;
 
  protected:
-  virtual ~AutofillPopupView() {}
+  virtual ~AutofillPopupView() = default;
 };
 
 }  // namespace autofill

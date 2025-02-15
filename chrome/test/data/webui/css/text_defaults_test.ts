@@ -20,12 +20,8 @@ function getExpectedFontFamily(expectingSystemFont: boolean): string {
       // <if expr="is_win">
       '"Segoe UI"';
       // </if>
-      // <if expr="chromeos_ash">
+      // <if expr="is_chromeos">
       'Roboto';
-      // </if>
-      // <if expr="chromeos_lacros">
-      // TODO(crbug.com/40261940): Change to 'Roboto' once bug is fixed.
-      'sans';
       // </if>
       // <if expr="is_fuchsia">
       // TODO(dpapad): WebUI tests are compiled on Fuchsia but don't seem to run

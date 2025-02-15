@@ -22,19 +22,20 @@ class RequestSender;
 
 namespace youtube_music {
 
-// Request that gets music recommendations from the API server. For API usage,
-// please check below:
+// Request that gets music sections from the API server. For now this always
+// sets the intent to "focus". For API usage, please check below:
 //   https://developers.google.com/youtube/mediaconnect/reference/rest/v1/musicSections/load
-class GetPlaylistsRequest : public UrlFetchRequestBase {
+class GetMusicSectionRequest : public UrlFetchRequestBase {
  public:
   using Callback = base::OnceCallback<void(
-      base::expected<std::unique_ptr<TopLevelMusicRecommendations>,
-                     ApiErrorCode>)>;
+      base::expected<std::unique_ptr<TopLevelMusicRecommendations>, ApiError>)>;
 
-  GetPlaylistsRequest(RequestSender* sender, Callback callback);
-  GetPlaylistsRequest(const GetPlaylistsRequest&) = delete;
-  GetPlaylistsRequest& operator=(const GetPlaylistsRequest&) = delete;
-  ~GetPlaylistsRequest() override;
+  GetMusicSectionRequest(RequestSender* sender,
+                         const std::string& device_info,
+                         Callback callback);
+  GetMusicSectionRequest(const GetMusicSectionRequest&) = delete;
+  GetMusicSectionRequest& operator=(const GetMusicSectionRequest&) = delete;
+  ~GetMusicSectionRequest() override;
 
  protected:
   // UrlFetchRequestBase:
@@ -42,6 +43,7 @@ class GetPlaylistsRequest : public UrlFetchRequestBase {
   ApiErrorCode MapReasonToError(ApiErrorCode code,
                                 const std::string& reason) override;
   bool IsSuccessfulErrorCode(ApiErrorCode error) override;
+  std::vector<std::string> GetExtraRequestHeaders() const override;
   void ProcessURLFetchResults(
       const network::mojom::URLResponseHead* response_head,
       const base::FilePath response_file,
@@ -52,20 +54,66 @@ class GetPlaylistsRequest : public UrlFetchRequestBase {
   static std::unique_ptr<TopLevelMusicRecommendations> Parse(
       const std::string& json);
 
-  void OnDataParsed(std::unique_ptr<TopLevelMusicRecommendations> sections);
+  void OnDataParsed(
+      std::unique_ptr<TopLevelMusicRecommendations> recommendations);
+
+  Callback callback_;
+  const std::string device_info_;
+
+  base::WeakPtrFactory<GetMusicSectionRequest> weak_ptr_factory_{this};
+};
+
+// Request that gets playlist with name `playlist_name` from the API server. For
+// API usage, please check below:
+//   https://developers.google.com/youtube/mediaconnect/reference/rest/v1/playlists/get
+class GetPlaylistRequest : public UrlFetchRequestBase {
+ public:
+  using Callback = base::OnceCallback<void(
+      base::expected<std::unique_ptr<Playlist>, ApiError>)>;
+
+  GetPlaylistRequest(RequestSender* sender,
+                     const std::string& device_info,
+                     const std::string& playlist_name,
+                     Callback callback);
+  GetPlaylistRequest(const GetPlaylistRequest&) = delete;
+  GetPlaylistRequest& operator=(const GetPlaylistRequest&) = delete;
+  ~GetPlaylistRequest() override;
+
+ protected:
+  // UrlFetchRequestBase:
+  GURL GetURL() const override;
+  ApiErrorCode MapReasonToError(ApiErrorCode code,
+                                const std::string& reason) override;
+  bool IsSuccessfulErrorCode(ApiErrorCode error) override;
+  std::vector<std::string> GetExtraRequestHeaders() const override;
+  void ProcessURLFetchResults(
+      const network::mojom::URLResponseHead* response_head,
+      const base::FilePath response_file,
+      std::string response_body) override;
+  void RunCallbackOnPrematureFailure(ApiErrorCode code) override;
+
+ private:
+  static std::unique_ptr<Playlist> Parse(const std::string& json);
+
+  void OnDataParsed(std::unique_ptr<Playlist> playlist);
+
+  const std::string device_info_;
+
+  // Playlist name. Unique identifier of a playlist.
+  std::string playlist_name_;
 
   Callback callback_;
 
-  base::WeakPtrFactory<GetPlaylistsRequest> weak_ptr_factory_{this};
+  base::WeakPtrFactory<GetPlaylistRequest> weak_ptr_factory_{this};
 };
 
 // Request that prepares the playback queue for the API server. For API usage,
 // please check below:
 //   https://developers.google.com/youtube/mediaconnect/reference/rest/v1/queues/preparePlayback
-class PlaybackQueuePrepareRequest : public UrlFetchRequestBase {
+class PlaybackQueuePrepareRequest : public SignedRequest {
  public:
   using Callback = base::OnceCallback<void(
-      base::expected<std::unique_ptr<Queue>, ApiErrorCode>)>;
+      base::expected<std::unique_ptr<Queue>, ApiError>)>;
 
   PlaybackQueuePrepareRequest(RequestSender* sender,
                               const PlaybackQueuePrepareRequestPayload& payload,
@@ -81,7 +129,6 @@ class PlaybackQueuePrepareRequest : public UrlFetchRequestBase {
   ApiErrorCode MapReasonToError(ApiErrorCode code,
                                 const std::string& reason) override;
   bool IsSuccessfulErrorCode(ApiErrorCode error) override;
-  HttpRequestMethod GetRequestType() const override;
   bool GetContentData(std::string* upload_content_type,
                       std::string* upload_content) override;
   void ProcessURLFetchResults(
@@ -93,7 +140,7 @@ class PlaybackQueuePrepareRequest : public UrlFetchRequestBase {
  private:
   static std::unique_ptr<Queue> Parse(const std::string& json);
 
-  void OnDataParsed(std::unique_ptr<Queue> sections);
+  void OnDataParsed(std::unique_ptr<Queue> queue);
 
   const PlaybackQueuePrepareRequestPayload payload_;
 
@@ -105,14 +152,15 @@ class PlaybackQueuePrepareRequest : public UrlFetchRequestBase {
 // Request to play the next in the playback queue for the API server. For API
 // usage, please check below:
 //   https://developers.google.com/youtube/mediaconnect/reference/rest/v1/queues/next
-class PlaybackQueueNextRequest : public UrlFetchRequestBase {
+class PlaybackQueueNextRequest : public SignedRequest {
  public:
   using Callback = base::OnceCallback<void(
-      base::expected<std::unique_ptr<QueueContainer>, ApiErrorCode>)>;
+      base::expected<std::unique_ptr<QueueContainer>, ApiError>)>;
 
   PlaybackQueueNextRequest(RequestSender* sender,
+                           const PlaybackQueueNextRequestPayload& payload,
                            Callback callback,
-                           const std::string& playlist_name);
+                           const std::string& playback_queue_name);
   PlaybackQueueNextRequest(const PlaybackQueueNextRequest&) = delete;
   PlaybackQueueNextRequest& operator=(const PlaybackQueueNextRequest&) = delete;
   ~PlaybackQueueNextRequest() override;
@@ -130,7 +178,8 @@ class PlaybackQueueNextRequest : public UrlFetchRequestBase {
   ApiErrorCode MapReasonToError(ApiErrorCode code,
                                 const std::string& reason) override;
   bool IsSuccessfulErrorCode(ApiErrorCode error) override;
-  HttpRequestMethod GetRequestType() const override;
+  bool GetContentData(std::string* upload_content_type,
+                      std::string* upload_content) override;
   void ProcessURLFetchResults(
       const network::mojom::URLResponseHead* response_head,
       const base::FilePath response_file,
@@ -140,14 +189,61 @@ class PlaybackQueueNextRequest : public UrlFetchRequestBase {
  private:
   static std::unique_ptr<QueueContainer> Parse(const std::string& json);
 
-  void OnDataParsed(std::unique_ptr<QueueContainer> sections);
+  void OnDataParsed(std::unique_ptr<QueueContainer> queue_container);
 
-  // Playlist queue name.
+  const PlaybackQueueNextRequestPayload payload_;
+
+  // Playlist queue name. Unique identifier of a queue.
   std::string playback_queue_name_;
 
   Callback callback_;
 
   base::WeakPtrFactory<PlaybackQueueNextRequest> weak_ptr_factory_{this};
+};
+
+// Request to report the playback to the API server. For API usage, please check
+// below:
+//   https://developers.google.com/youtube/mediaconnect/reference/rest/v1/reports/playback
+class ReportPlaybackRequest : public SignedRequest {
+ public:
+  using Callback = base::OnceCallback<void(
+      base::expected<std::unique_ptr<ReportPlaybackResult>, ApiError>)>;
+
+  ReportPlaybackRequest(RequestSender* sender,
+                        std::unique_ptr<ReportPlaybackRequestPayload> payload,
+                        Callback callback);
+  ReportPlaybackRequest(const ReportPlaybackRequest&) = delete;
+  ReportPlaybackRequest& operator=(const ReportPlaybackRequest&) = delete;
+  ~ReportPlaybackRequest() override;
+
+  void SetBaseUrlForTesting(const GURL& base_url);
+
+ protected:
+  // UrlFetchRequestBase:
+  GURL GetURL() const override;
+  ApiErrorCode MapReasonToError(ApiErrorCode code,
+                                const std::string& reason) override;
+  bool IsSuccessfulErrorCode(ApiErrorCode error) override;
+  bool GetContentData(std::string* upload_content_type,
+                      std::string* upload_content) override;
+  void ProcessURLFetchResults(
+      const network::mojom::URLResponseHead* response_head,
+      const base::FilePath response_file,
+      std::string response_body) override;
+  void RunCallbackOnPrematureFailure(ApiErrorCode code) override;
+
+ private:
+  static std::unique_ptr<ReportPlaybackResult> Parse(const std::string& json);
+
+  void OnDataParsed(
+      std::unique_ptr<ReportPlaybackResult> report_playback_result);
+
+  const std::unique_ptr<ReportPlaybackRequestPayload> payload_;
+
+  GURL base_url_;
+  Callback callback_;
+
+  base::WeakPtrFactory<ReportPlaybackRequest> weak_ptr_factory_{this};
 };
 
 }  // namespace youtube_music

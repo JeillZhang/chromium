@@ -28,6 +28,11 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #include "third_party/blink/renderer/platform/fonts/web_font_decoder.h"
 
 #include <hb.h>
@@ -88,8 +93,7 @@ void BlinkOTSContext::Message(int level, const char* format, ...) {
     va_start(args, format);
     vsnprintf(buffer.data(), buffer.size(), format, args);
     va_end(args);
-    error_string_ =
-        StringImpl::Create(reinterpret_cast<const LChar*>(buffer.data()), len);
+    error_string_ = StringImpl::Create(base::span(buffer).first(len));
   }
 }
 
@@ -179,7 +183,7 @@ sk_sp<SkTypeface> WebFontDecoder::Decode(SegmentedBuffer* buffer) {
 
   TRACE_EVENT_BEGIN0("blink", "DecodeFont");
   bool ok = ots_context.Process(
-      &output, reinterpret_cast<const uint8_t*>(flattened_buffer.Data()),
+      &output, reinterpret_cast<const uint8_t*>(flattened_buffer.data()),
       buffer->size());
   TRACE_EVENT_END0("blink", "DecodeFont");
 

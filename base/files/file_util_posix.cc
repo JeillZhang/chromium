@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #include "base/files/file_util.h"
 
 #include <dirent.h>
@@ -24,6 +29,7 @@
 #include <iomanip>
 #include <memory>
 #include <optional>
+#include <string_view>
 
 #include "base/base_export.h"
 #include "base/base_switches.h"
@@ -45,7 +51,6 @@
 #include "base/posix/eintr_wrapper.h"
 #include "base/strings/cstring_view.h"
 #include "base/strings/strcat.h"
-#include "base/strings/string_piece.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/sys_string_conversions.h"
@@ -376,7 +381,7 @@ bool DoDeleteFile(const FilePath& path, bool recursive) {
 
 #if BUILDFLAG(IS_ANDROID)
   if (path.IsContentUri()) {
-    return DeleteContentUri(path);
+    return internal::DeleteContentUri(path);
   }
 #endif  // BUILDFLAG(IS_ANDROID)
 
@@ -387,7 +392,7 @@ bool DoDeleteFile(const FilePath& path, bool recursive) {
 // Appends |mode_char| to |mode| before the optional character set encoding; see
 // https://www.gnu.org/software/libc/manual/html_node/Opening-Streams.html for
 // details.
-std::string AppendModeCharacter(StringPiece mode, char mode_char) {
+std::string AppendModeCharacter(std::string_view mode, char mode_char) {
   std::string result(mode);
   size_t comma_pos = result.find(',');
   result.insert(comma_pos == std::string::npos ? result.length() : comma_pos, 1,
@@ -451,7 +456,7 @@ std::optional<FilePath> MakeAbsoluteFilePathNoResolveSymbolicLinks(
   // a relative |input|.
   if (input.IsAbsolute()) {
     collapsed_path = FilePath(components_span[0]);
-    components_span = components_span.subspan(1);
+    components_span = components_span.subspan<1>();
   } else {
     if (!GetCurrentDirectory(&collapsed_path)) {
       return std::nullopt;
@@ -596,7 +601,7 @@ bool PathExists(const FilePath& path) {
   ScopedBlockingCall scoped_blocking_call(FROM_HERE, BlockingType::MAY_BLOCK);
 #if BUILDFLAG(IS_ANDROID)
   if (path.IsContentUri()) {
-    return ContentUriExists(path);
+    return internal::ContentUriExists(path);
   }
 #endif
   return access(path.value().c_str(), F_OK) == 0;
@@ -701,6 +706,14 @@ bool GetPosixFilePermissions(const FilePath& path, int* mode) {
   ScopedBlockingCall scoped_blocking_call(FROM_HERE, BlockingType::MAY_BLOCK);
   DCHECK(mode);
 
+#if BUILDFLAG(IS_ANDROID)
+  // Stat() for content URIs only implements dir bit currently, so fail for
+  // GetPosixFilePermissions() until permissions are implemented.
+  if (path.IsContentUri()) {
+    return false;
+  }
+#endif
+
   stat_wrapper_t file_info;
   // Uses stat(), because on symbolic link, lstat() does not return valid
   // permission bits in st_mode
@@ -744,7 +757,7 @@ bool ExecutableExistsInPath(Environment* env,
     return false;
   }
 
-  for (const StringPiece& cur_path :
+  for (std::string_view cur_path :
        SplitStringPiece(path, ":", KEEP_WHITESPACE, SPLIT_WANT_NONEMPTY)) {
     FilePath file(cur_path);
     int permissions;
@@ -819,13 +832,13 @@ bool CreateTemporaryFileInDir(const FilePath& dir, FilePath* temp_file) {
   return fd.is_valid();
 }
 
-FilePath FormatTemporaryFileName(FilePath::StringPieceType identifier) {
+FilePath FormatTemporaryFileName(FilePath::StringViewType identifier) {
 #if BUILDFLAG(IS_APPLE)
-  StringPiece prefix = base::apple::BaseBundleID();
+  std::string_view prefix = base::apple::BaseBundleID();
 #elif BUILDFLAG(GOOGLE_CHROME_BRANDING)
-  StringPiece prefix = "com.google.Chrome";
+  std::string_view prefix = "com.google.Chrome";
 #else
-  StringPiece prefix = "org.chromium.Chromium";
+  std::string_view prefix = "org.chromium.Chromium";
 #endif
   return FilePath(StrCat({".", prefix, ".", identifier}));
 }
@@ -868,7 +881,7 @@ static bool CreateTemporaryDirInDirImpl(const FilePath& base_dir,
 }
 
 bool CreateTemporaryDirInDir(const FilePath& base_dir,
-                             FilePath::StringPieceType prefix,
+                             FilePath::StringViewType prefix,
                              FilePath* new_dir) {
   FilePath::StringType mkdtemp_template(prefix);
   mkdtemp_template.append("XXXXXX");
@@ -980,21 +993,9 @@ bool IsLink(const FilePath& file_path) {
 
 bool GetFileInfo(const FilePath& file_path, File::Info* results) {
   stat_wrapper_t file_info;
-#if BUILDFLAG(IS_ANDROID)
-  if (file_path.IsContentUri()) {
-    File file = OpenContentUriForRead(file_path);
-    if (!file.IsValid()) {
-      return false;
-    }
-    return file.GetInfo(results);
-  } else {
-#endif  // BUILDFLAG(IS_ANDROID)
-    if (File::Stat(file_path, &file_info) != 0) {
-      return false;
-    }
-#if BUILDFLAG(IS_ANDROID)
+  if (File::Stat(file_path, &file_info) != 0) {
+    return false;
   }
-#endif  // BUILDFLAG(IS_ANDROID)
 
   results->FromStat(file_info);
   return true;
@@ -1077,24 +1078,18 @@ std::optional<uint64_t> ReadFile(const FilePath& filename, span<char> buffer) {
   return bytes_read;
 }
 
-int WriteFile(const FilePath& filename, const char* data, int size) {
+bool WriteFile(const FilePath& filename, span<const uint8_t> data) {
   ScopedBlockingCall scoped_blocking_call(FROM_HERE, BlockingType::MAY_BLOCK);
-  if (size < 0) {
-    return -1;
-  }
   int fd = HANDLE_EINTR(creat(filename.value().c_str(), 0666));
   if (fd < 0) {
-    return -1;
+    return false;
   }
 
-  int bytes_written =
-      WriteFileDescriptor(fd, StringPiece(data, static_cast<size_t>(size)))
-          ? size
-          : -1;
+  bool success = WriteFileDescriptor(fd, data);
   if (IGNORE_EINTR(close(fd)) < 0) {
-    return -1;
+    return false;
   }
-  return bytes_written;
+  return success;
 }
 
 bool WriteFileDescriptor(int fd, span<const uint8_t> data) {
@@ -1110,8 +1105,8 @@ bool WriteFileDescriptor(int fd, span<const uint8_t> data) {
   return true;
 }
 
-bool WriteFileDescriptor(int fd, StringPiece data) {
-  return WriteFileDescriptor(fd, as_bytes(make_span(data)));
+bool WriteFileDescriptor(int fd, std::string_view data) {
+  return WriteFileDescriptor(fd, as_byte_span(data));
 }
 
 bool AllocateFileRegion(File* file, int64_t offset, size_t size) {
@@ -1219,8 +1214,8 @@ bool AppendToFile(const FilePath& filename, span<const uint8_t> data) {
   return ret;
 }
 
-bool AppendToFile(const FilePath& filename, StringPiece data) {
-  return AppendToFile(filename, as_bytes(make_span(data)));
+bool AppendToFile(const FilePath& filename, std::string_view data) {
+  return AppendToFile(filename, as_byte_span(data));
 }
 
 bool GetCurrentDirectory(FilePath* dir) {
@@ -1344,16 +1339,7 @@ bool GetShmemTempDir(bool executable, FilePath* path) {
 // Mac has its own implementation, this is for all other Posix systems.
 bool CopyFile(const FilePath& from_path, const FilePath& to_path) {
   ScopedBlockingCall scoped_blocking_call(FROM_HERE, BlockingType::MAY_BLOCK);
-  File infile;
-#if BUILDFLAG(IS_ANDROID)
-  if (from_path.IsContentUri()) {
-    infile = OpenContentUriForRead(from_path);
-  } else {
-    infile = File(from_path, File::FLAG_OPEN | File::FLAG_READ);
-  }
-#else
-  infile = File(from_path, File::FLAG_OPEN | File::FLAG_READ);
-#endif
+  File infile(from_path, File::FLAG_OPEN | File::FLAG_READ);
   if (!infile.IsValid()) {
     return false;
   }

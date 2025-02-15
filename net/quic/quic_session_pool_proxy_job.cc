@@ -17,6 +17,7 @@
 #include "net/quic/quic_crypto_client_config_handle.h"
 #include "net/quic/quic_http_stream.h"
 #include "net/quic/quic_session_pool.h"
+#include "net/spdy/multiplexed_session_creation_initiator.h"
 #include "net/third_party/quiche/src/quiche/quic/core/quic_packet_writer.h"
 #include "net/third_party/quiche/src/quiche/quic/core/quic_versions.h"
 
@@ -27,6 +28,7 @@ QuicSessionPool::ProxyJob::ProxyJob(
     quic::ParsedQuicVersion target_quic_version,
     QuicSessionAliasKey key,
     NetworkTrafficAnnotationTag proxy_annotation_tag,
+    MultiplexedSessionCreationInitiator session_creation_initiator,
     const HttpUserAgentSettings* http_user_agent_settings,
     std::unique_ptr<CryptoClientConfigHandle> client_config_handle,
     RequestPriority priority,
@@ -44,6 +46,7 @@ QuicSessionPool::ProxyJob::ProxyJob(
                                        base::Unretained(this))),
       target_quic_version_(target_quic_version),
       proxy_annotation_tag_(proxy_annotation_tag),
+      session_creation_initiator_(session_creation_initiator),
       cert_verify_flags_(cert_verify_flags),
       http_user_agent_settings_(http_user_agent_settings) {
   DCHECK(!Job::key().session_key().proxy_chain().is_direct());
@@ -95,12 +98,9 @@ void QuicSessionPool::ProxyJob::PopulateNetErrorDetails(
   }
 
   // Finally, return the error from the session attempt.
-  if (!session_attempt_ || !session_attempt_->session()) {
-    return;
+  if (session_attempt_) {
+    session_attempt_->PopulateNetErrorDetails(details);
   }
-  details->connection_info = QuicHttpStream::ConnectionInfoFromQuicVersion(
-      session_attempt_->session()->connection()->version());
-  details->quic_connection_error = session_attempt_->session()->error();
 }
 
 int QuicSessionPool::ProxyJob::DoLoop(int rv) {
@@ -126,8 +126,7 @@ int QuicSessionPool::ProxyJob::DoLoop(int rv) {
         rv = DoAttemptSession();
         break;
       default:
-        NOTREACHED_IN_MIGRATION() << "io_state_: " << io_state_;
-        break;
+        NOTREACHED() << "io_state_: " << io_state_;
     }
   } while (io_state_ != STATE_NONE && rv != ERR_IO_PENDING);
   return rv;
@@ -188,7 +187,7 @@ int QuicSessionPool::ProxyJob::DoCreateProxySession() {
                     : session_key.network_anonymization_key(),
       session_key.secure_dns_policy(), session_key.require_dns_https_alpn(),
       cert_verify_flags_, GURL("https://" + last_server.ToString()), net_log(),
-      &net_error_details_,
+      &net_error_details_, session_creation_initiator_,
       /*failed_on_default_network_callback=*/CompletionOnceCallback(),
       io_callback_);
 }
@@ -244,10 +243,10 @@ int QuicSessionPool::ProxyJob::DoAttemptSession() {
     return rv;
   }
 
-  session_attempt_ = std::make_unique<SessionAttempt>(
+  session_attempt_ = std::make_unique<QuicSessionAttempt>(
       this, std::move(local_address), std::move(peer_address),
       target_quic_version_, cert_verify_flags_, std::move(proxy_stream_),
-      http_user_agent_settings_);
+      http_user_agent_settings_, session_creation_initiator_);
 
   return session_attempt_->Start(
       base::BindOnce(&ProxyJob::OnSessionAttemptComplete, GetWeakPtr()));

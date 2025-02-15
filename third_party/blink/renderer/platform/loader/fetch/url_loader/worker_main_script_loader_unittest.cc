@@ -60,9 +60,9 @@ class WorkerMainScriptLoaderTest : public testing::Test {
     // Implements WorkerMainScriptLoaderClient.
     void DidReceiveDataWorkerMainScript(base::span<const char> data) override {
       if (!data_)
-        data_ = SharedBuffer::Create(data.data(), data.size());
+        data_ = SharedBuffer::Create(data);
       else
-        data_->Append(data.data(), data.size());
+        data_->Append(data);
     }
     void OnFinishedLoadingWorkerMainScript() override { finished_ = true; }
     void OnFailedLoadingWorkerMainScript() override { failed_ = true; }
@@ -100,8 +100,6 @@ class WorkerMainScriptLoaderTest : public testing::Test {
                         const std::optional<GURL>&) override {}
     void SetPriority(net::RequestPriority priority,
                      int32_t intra_priority_value) override {}
-    void PauseReadingBodyFromNet() override {}
-    void ResumeReadingBodyFromNet() override {}
 
    private:
     mojo::Receiver<network::mojom::URLLoader> receiver_;
@@ -128,7 +126,7 @@ class WorkerMainScriptLoaderTest : public testing::Test {
                       const Resource* resource,
                       ResponseSource));
     MOCK_METHOD2(DidReceiveData,
-                 void(uint64_t identifier, base::span<const char> chunk));
+                 void(uint64_t identifier, base::SpanOrSize<const char> chunk));
     MOCK_METHOD2(DidReceiveTransferSizeUpdate,
                  void(uint64_t identifier, int transfer_size_diff));
     MOCK_METHOD2(DidDownloadToBlob, void(uint64_t identifier, BlobDataHandle*));
@@ -145,6 +143,7 @@ class WorkerMainScriptLoaderTest : public testing::Test {
                       IsInternalRequest));
     MOCK_METHOD2(DidChangeRenderBlockingBehavior,
                  void(Resource* resource, const FetchParameters& params));
+    MOCK_METHOD0(InterestedInAllRequests, bool());
     MOCK_METHOD1(EvictFromBackForwardCache,
                  void(mojom::blink::RendererEvictionReason));
   };

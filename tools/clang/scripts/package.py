@@ -100,15 +100,10 @@ def PackageInArchive(directory_path, archive_path):
   with tarfile.open(archive_path + '.tar.xz',
                     'w:xz',
                     preset=9 | lzma.PRESET_EXTREME) as tar_xz:
-    with tarfile.open(archive_path + '.tgz', 'w:gz') as tar_gz:
-      for f in sorted(os.listdir(directory_path)):
-        tar_xz.add(os.path.join(directory_path, f),
-                   arcname=f,
-                   filter=PrintTarProgress)
-        # TODO(crbug.com/40202359) Stop making gzip'ed archives once the
-        # reclient push processes are updated to consume the .xz files
-        # instead.
-        tar_gz.add(os.path.join(directory_path, f), arcname=f)
+    for f in sorted(os.listdir(directory_path)):
+      tar_xz.add(os.path.join(directory_path, f),
+                 arcname=f,
+                 filter=PrintTarProgress)
 
 
 def MaybeUpload(do_upload,
@@ -195,18 +190,9 @@ def main():
       '--bucket',
       default=DEFAULT_GCS_BUCKET,
       help='Google Cloud Storage bucket where the target archive is uploaded')
-  parser.add_argument('--build-mac-arm', action='store_true',
-                      help='Build arm binaries. Only valid on macOS.')
   parser.add_argument('--revision',
                       help='LLVM revision to use. Default: based on update.py')
   args = parser.parse_args()
-
-  if args.build_mac_arm and sys.platform != 'darwin':
-    print('--build-mac-arm only valid on macOS')
-    return 1
-  if args.build_mac_arm and platform.machine() == 'arm64':
-    print('--build-mac-arm only valid on intel to cross-build arm')
-    return 1
 
   if args.revision:
     # Use upload_revision.py to set the revision first.
@@ -231,7 +217,7 @@ def main():
     # 'Mac_arm64' here when there's no flag and 'Mac' when --build-mac-intel is
     # passed. Also update the build script to explicitly pass a default triple
     # then.
-    if args.build_mac_arm or platform.machine() == 'arm64':
+    if platform.machine() == 'arm64':
       gcs_platform = 'Mac_arm64'
     else:
       gcs_platform = 'Mac'
@@ -240,7 +226,7 @@ def main():
   else:
     gcs_platform = 'Linux_x64'
 
-  with open('buildlog.txt', 'w') as log:
+  with open('buildlog.txt', 'w', encoding='utf-8') as log:
     Tee('Starting build\n', log)
 
     # Do a clobber build.
@@ -250,11 +236,15 @@ def main():
 
     build_cmd = [
         sys.executable,
-        os.path.join(THIS_DIR, 'build.py'), '--bootstrap', '--disable-asserts',
-        '--run-tests', '--pgo'
+        os.path.join(THIS_DIR, 'build.py'),
+        '--bootstrap',
+        '--disable-asserts',
+        '--run-tests',
     ]
-    if args.build_mac_arm:
-      build_cmd.append('--build-mac-arm')
+    # PGO drastically increases packaging time and x86-64 macs are almost
+    # obsolete while being slow, so don't PGO-optimize x86-64 mac toolchains.
+    if sys.platform != 'darwin' or platform.machine() == 'arm64':
+      build_cmd.append('--pgo')
     if sys.platform != 'darwin':
       build_cmd.append('--thinlto')
     if sys.platform.startswith('linux'):
@@ -324,6 +314,7 @@ def main():
     runtime_package_name = 'clang-mac-runtime-library'
     runtime_packages = set([
         # AddressSanitizer runtime.
+        'lib/clang/$V/lib/darwin/libclang_rt.asan_ios_dynamic.dylib',
         'lib/clang/$V/lib/darwin/libclang_rt.asan_iossim_dynamic.dylib',
         'lib/clang/$V/lib/darwin/libclang_rt.asan_osx_dynamic.dylib',
 
@@ -331,6 +322,8 @@ def main():
         'lib/clang/$V/lib/darwin/libclang_rt.ios.a',
         'lib/clang/$V/lib/darwin/libclang_rt.iossim.a',
         'lib/clang/$V/lib/darwin/libclang_rt.osx.a',
+        'lib/clang/$V/lib/darwin/libclang_rt.tvos.a',
+        'lib/clang/$V/lib/darwin/libclang_rt.tvossim.a',
         'lib/clang/$V/lib/darwin/libclang_rt.watchos.a',
         'lib/clang/$V/lib/darwin/libclang_rt.watchossim.a',
         'lib/clang/$V/lib/darwin/libclang_rt.xros.a',
@@ -457,25 +450,20 @@ def main():
     ])
   elif sys.platform == 'win32':
     runtime_package_name = 'clang-win-runtime-library'
+
     runtime_packages = set([
         # pylint: disable=line-too-long
         'bin/llvm-symbolizer.exe',
 
-        # AddressSanitizer C runtime (pure C won't link with *_cxx).
-        'lib/clang/$V/lib/windows/clang_rt.asan-x86_64.lib',
-
-        # AddressSanitizer C++ runtime.
-        'lib/clang/$V/lib/windows/clang_rt.asan_cxx-x86_64.lib',
-
-        # Thunk for AddressSanitizer needed for static build of a shared lib.
-        'lib/clang/$V/lib/windows/clang_rt.asan_dll_thunk-x86_64.lib',
-
-        # AddressSanitizer runtime for component build.
+        # AddressSanitizer runtime.
         'lib/clang/$V/lib/windows/clang_rt.asan_dynamic-x86_64.dll',
         'lib/clang/$V/lib/windows/clang_rt.asan_dynamic-x86_64.lib',
 
-        # Thunk for AddressSanitizer for component build of a shared lib.
+        # Thunk for AddressSanitizer for component builds.
         'lib/clang/$V/lib/windows/clang_rt.asan_dynamic_runtime_thunk-x86_64.lib',
+
+        # Thunk for AddressSanitizer for static builds.
+        'lib/clang/$V/lib/windows/clang_rt.asan_static_runtime_thunk-x86_64.lib',
 
         # Builtins for C/C++.
         'lib/clang/$V/lib/windows/clang_rt.builtins-i386.lib',
@@ -618,7 +606,7 @@ def main():
 
   # Create main archive.
   PackageInArchive(pdir, pdir)
-  MaybeUpload(args.upload, args.bucket, pdir + '.t*z', gcs_platform)
+  MaybeUpload(args.upload, args.bucket, pdir + '.tar.xz', gcs_platform)
 
   # Upload build log next to it.
   os.rename('buildlog.txt', pdir + '-buildlog.txt')
@@ -640,7 +628,7 @@ def main():
           os.path.join(runtime_dir, f),
       )
     PackageInArchive(runtime_dir, runtime_dir)
-    MaybeUpload(args.upload, args.bucket, f'{runtime_dir}.t*z', gcs_platform)
+    MaybeUpload(args.upload, args.bucket, f'{runtime_dir}.tar.xz', gcs_platform)
 
   # Zip up llvm-code-coverage for code coverage.
   code_coverage_dir = 'llvm-code-coverage-' + stamp
@@ -650,7 +638,7 @@ def main():
     shutil.copy(os.path.join(LLVM_RELEASE_DIR, 'bin', filename + exe_ext),
                 os.path.join(code_coverage_dir, 'bin'))
   PackageInArchive(code_coverage_dir, code_coverage_dir)
-  MaybeUpload(args.upload, args.bucket, code_coverage_dir + '.t*z',
+  MaybeUpload(args.upload, args.bucket, code_coverage_dir + '.tar.xz',
               gcs_platform)
 
   # Zip up llvm-objdump and related tools for sanitizer coverage and Supersize.
@@ -671,7 +659,7 @@ def main():
   if sys.platform != 'win32':
     os.symlink('llvm-objdump', os.path.join(objdumpdir, 'bin', 'llvm-otool'))
   PackageInArchive(objdumpdir, objdumpdir)
-  MaybeUpload(args.upload, args.bucket, objdumpdir + '.t*z', gcs_platform)
+  MaybeUpload(args.upload, args.bucket, objdumpdir + '.tar.xz', gcs_platform)
 
   # Zip up clang-tidy for users who opt into it, and Tricium.
   clang_tidy_dir = 'clang-tidy-' + stamp
@@ -680,7 +668,8 @@ def main():
   shutil.copy(os.path.join(LLVM_RELEASE_DIR, 'bin', 'clang-tidy' + exe_ext),
               os.path.join(clang_tidy_dir, 'bin'))
   PackageInArchive(clang_tidy_dir, clang_tidy_dir)
-  MaybeUpload(args.upload, args.bucket, clang_tidy_dir + '.t*z', gcs_platform)
+  MaybeUpload(args.upload, args.bucket, clang_tidy_dir + '.tar.xz',
+              gcs_platform)
 
   # Zip up clangd and related tools for users who opt into it.
   clangd_dir = 'clangd-' + stamp
@@ -692,7 +681,7 @@ def main():
       os.path.join(LLVM_RELEASE_DIR, 'bin', 'clang-include-cleaner' + exe_ext),
       os.path.join(clangd_dir, 'bin'))
   PackageInArchive(clangd_dir, clangd_dir)
-  MaybeUpload(args.upload, args.bucket, clangd_dir + '.t*z', gcs_platform)
+  MaybeUpload(args.upload, args.bucket, clangd_dir + '.tar.xz', gcs_platform)
 
   # Zip up clang-format so we can update it (separately from the clang roll).
   clang_format_dir = 'clang-format-' + stamp
@@ -701,7 +690,8 @@ def main():
   shutil.copy(os.path.join(LLVM_RELEASE_DIR, 'bin', 'clang-format' + exe_ext),
               os.path.join(clang_format_dir, 'bin'))
   PackageInArchive(clang_format_dir, clang_format_dir)
-  MaybeUpload(args.upload, args.bucket, clang_format_dir + '.t*z', gcs_platform)
+  MaybeUpload(args.upload, args.bucket, clang_format_dir + '.tar.xz',
+              gcs_platform)
 
   if sys.platform == 'darwin':
     # dsymutil isn't part of the main zip, and it gets periodically
@@ -713,7 +703,7 @@ def main():
     shutil.copy(os.path.join(LLVM_RELEASE_DIR, 'bin', 'dsymutil'),
                 os.path.join(dsymdir, 'bin'))
     PackageInArchive(dsymdir, dsymdir)
-    MaybeUpload(args.upload, args.bucket, dsymdir + '.t*z', gcs_platform)
+    MaybeUpload(args.upload, args.bucket, dsymdir + '.tar.xz', gcs_platform)
 
   # Zip up the translation_unit tool.
   translation_unit_dir = 'translation_unit-' + stamp
@@ -723,7 +713,7 @@ def main():
                            exe_ext),
               os.path.join(translation_unit_dir, 'bin'))
   PackageInArchive(translation_unit_dir, translation_unit_dir)
-  MaybeUpload(args.upload, args.bucket, translation_unit_dir + '.t*z',
+  MaybeUpload(args.upload, args.bucket, translation_unit_dir + '.tar.xz',
               gcs_platform)
 
   # Zip up the libclang binaries.
@@ -734,12 +724,13 @@ def main():
   if sys.platform == 'win32':
     shutil.copy(os.path.join(LLVM_RELEASE_DIR, 'bin', 'libclang.dll'),
                 os.path.join(libclang_dir, 'bin'))
-  for filename in ['__init__.py', 'cindex.py', 'enumerations.py']:
-    shutil.copy(os.path.join(LLVM_DIR, 'clang', 'bindings', 'python', 'clang',
-                             filename),
+  py_bindings_dir = os.path.join(LLVM_DIR, 'clang', 'bindings', 'python',
+                                 'clang')
+  for filename in os.listdir(py_bindings_dir):
+    shutil.copy(os.path.join(py_bindings_dir, filename),
                 os.path.join(libclang_dir, 'bindings', 'python', 'clang'))
   PackageInArchive(libclang_dir, libclang_dir)
-  MaybeUpload(args.upload, args.bucket, libclang_dir + '.t*z', gcs_platform)
+  MaybeUpload(args.upload, args.bucket, libclang_dir + '.tar.xz', gcs_platform)
 
   if sys.platform == 'win32' and args.upload:
     binaries = [f for f in want if f.endswith('.exe') or f.endswith('.dll')]

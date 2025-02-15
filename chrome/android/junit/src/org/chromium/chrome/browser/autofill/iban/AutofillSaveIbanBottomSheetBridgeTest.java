@@ -25,26 +25,38 @@ import org.mockito.junit.MockitoRule;
 import org.robolectric.Robolectric;
 
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.base.test.util.JniMocker;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.layouts.LayoutManagerAppUtils;
 import org.chromium.chrome.browser.layouts.ManagedLayoutManager;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.test.util.browser.tabmodel.MockTabModel;
+import org.chromium.components.autofill.payments.AutofillSaveIbanUiInfo;
+import org.chromium.components.browser_ui.bottomsheet.BottomSheetController.StateChangeReason;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetControllerFactory;
 import org.chromium.components.browser_ui.bottomsheet.ManagedBottomSheetController;
 import org.chromium.ui.base.WindowAndroid;
+
+import java.util.Collections;
 
 /** Unit tests for {@link AutofillSaveIbanBottomSheetBridge}. */
 @RunWith(BaseRobolectricTestRunner.class)
 @SmallTest
 public final class AutofillSaveIbanBottomSheetBridgeTest {
     private static final long MOCK_POINTER = 0xb00fb00f;
-    private static final String IBAN_LABEL = "CH56 **** **** **** *800 9";
     private static final String USER_PROVIDED_NICKNAME = "My Doctor's IBAN";
+    private static final AutofillSaveIbanUiInfo TEST_IBAN_UI_INFO =
+            new AutofillSaveIbanUiInfo.Builder()
+                    .withAcceptText("Save")
+                    .withCancelText("No thanks")
+                    .withDescriptionText("")
+                    .withIbanValue("CH5604835012345678009")
+                    .withTitleText("Save IBAN?")
+                    .withLegalMessageLines(Collections.EMPTY_LIST)
+                    .withLogoIcon(0)
+                    .withTitleText("")
+                    .build();
 
     @Rule public MockitoRule mMockitoRule = MockitoJUnit.rule();
-    @Rule public JniMocker mJniMocker = new JniMocker();
 
     @Mock private AutofillSaveIbanBottomSheetBridge.Natives mBridgeNatives;
     @Mock private ManagedBottomSheetController mBottomSheetController;
@@ -56,11 +68,11 @@ public final class AutofillSaveIbanBottomSheetBridgeTest {
 
     @Before
     public void setUp() {
-        mJniMocker.mock(AutofillSaveIbanBottomSheetBridgeJni.TEST_HOOKS, mBridgeNatives);
+        AutofillSaveIbanBottomSheetBridgeJni.setInstanceForTesting(mBridgeNatives);
         Activity activity = Robolectric.buildActivity(Activity.class).create().get();
         // set a MaterialComponents theme which is required for the `OutlinedBox` text field.
         activity.setTheme(R.style.Theme_BrowserUI_DayNight);
-        mWindow = new WindowAndroid(activity);
+        mWindow = new WindowAndroid(activity, /* trackOcclusion= */ true);
         BottomSheetControllerFactory.attach(mWindow, mBottomSheetController);
         LayoutManagerAppUtils.attach(mWindow, mLayoutManager);
         MockTabModel tabModel = new MockTabModel(mProfile, /* delegate= */ null);
@@ -77,7 +89,7 @@ public final class AutofillSaveIbanBottomSheetBridgeTest {
 
     @Test
     public void testRequestShowContent() {
-        mAutofillSaveIbanBottomSheetBridge.requestShowContent(IBAN_LABEL);
+        mAutofillSaveIbanBottomSheetBridge.requestShowContent(TEST_IBAN_UI_INFO);
 
         verify(mBottomSheetController)
                 .requestShowContent(
@@ -85,12 +97,27 @@ public final class AutofillSaveIbanBottomSheetBridgeTest {
     }
 
     @Test
+    public void testHide() {
+        mAutofillSaveIbanBottomSheetBridge.requestShowContent(TEST_IBAN_UI_INFO);
+        mAutofillSaveIbanBottomSheetBridge.hide();
+
+        verify(mBottomSheetController)
+                .hideContent(
+                        any(AutofillSaveIbanBottomSheetContent.class),
+                        /* animate= */ eq(true),
+                        eq(StateChangeReason.INTERACTION_COMPLETE));
+    }
+
+    @Test
     public void testDestroy() {
-        mAutofillSaveIbanBottomSheetBridge.requestShowContent(IBAN_LABEL);
+        mAutofillSaveIbanBottomSheetBridge.requestShowContent(TEST_IBAN_UI_INFO);
         mAutofillSaveIbanBottomSheetBridge.destroy();
 
         verify(mBottomSheetController)
-                .hideContent(any(AutofillSaveIbanBottomSheetContent.class), eq(true));
+                .hideContent(
+                        any(AutofillSaveIbanBottomSheetContent.class),
+                        /* animate= */ eq(true),
+                        eq(StateChangeReason.NONE));
     }
 
     @Test
@@ -102,7 +129,7 @@ public final class AutofillSaveIbanBottomSheetBridgeTest {
 
     @Test
     public void testDestroy_whenDestroyed() {
-        mAutofillSaveIbanBottomSheetBridge.requestShowContent(IBAN_LABEL);
+        mAutofillSaveIbanBottomSheetBridge.requestShowContent(TEST_IBAN_UI_INFO);
 
         mAutofillSaveIbanBottomSheetBridge.destroy();
         clearInvocations(mBottomSheetController);

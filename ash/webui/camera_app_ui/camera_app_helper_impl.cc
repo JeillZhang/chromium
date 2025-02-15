@@ -7,17 +7,18 @@
 #include <utility>
 
 #include "ash/constants/ash_features.h"
-#include "ash/public/cpp/holding_space/holding_space_client.h"
 #include "ash/public/cpp/new_window_delegate.h"
 #include "ash/public/cpp/window_properties.h"
 #include "base/feature_list.h"
 #include "base/functional/callback_helpers.h"
 #include "base/notreached.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/system/sys_info.h"
 #include "base/trace_event/typed_macros.h"
 #include "chromeos/ash/components/mojo_service_manager/connection.h"
 #include "components/onc/onc_constants.h"
 #include "content/public/browser/web_contents.h"
+#include "media/capture/video/chromeos/camera_sw_privacy_switch_state_observer.h"
 #include "mojo/public/cpp/base/big_buffer.h"
 #include "net/base/url_util.h"
 #include "third_party/cros_system_api/mojo/service_constants.h"
@@ -29,7 +30,6 @@ namespace ash {
 
 namespace {
 
-using camera_app::mojom::ToteMetricFormat;
 using chromeos::machine_learning::mojom::Rotation;
 
 camera_app::mojom::ScreenState ToMojoScreenState(ScreenBacklightState s) {
@@ -41,7 +41,7 @@ camera_app::mojom::ScreenState ToMojoScreenState(ScreenBacklightState s) {
     case ScreenBacklightState::OFF_AUTO:
       return camera_app::mojom::ScreenState::kOffAuto;
     default:
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
   }
 }
 
@@ -54,8 +54,7 @@ camera_app::mojom::LidState ToMojoLidState(cros::mojom::LidState state) {
     case cros::mojom::LidState::kNotPresent:
       return camera_app::mojom::LidState::kNotPresent;
     default:
-      NOTREACHED_IN_MIGRATION()
-          << "Unexpected Lid type: " << static_cast<int>(state);
+      NOTREACHED() << "Unexpected Lid type: " << static_cast<int>(state);
   }
 }
 
@@ -69,7 +68,7 @@ camera_app::mojom::FileMonitorResult ToMojoFileMonitorResult(
     case CameraAppUIDelegate::FileMonitorResult::kError:
       return camera_app::mojom::FileMonitorResult::kError;
     default:
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
   }
 }
 
@@ -101,8 +100,8 @@ std::string FromMojoSecurityType(
     case camera_app::mojom::WifiSecurityType::kWpa:
       return onc::wifi::kWPA_PSK;
     default:
-      NOTREACHED_IN_MIGRATION()
-          << "Unexpected security type: " << static_cast<int>(security_type);
+      NOTREACHED() << "Unexpected security type: "
+                   << static_cast<int>(security_type);
   }
 }
 
@@ -117,8 +116,7 @@ std::string FromMojoEapMethod(camera_app::mojom::WifiEapMethod eap_method) {
     case camera_app::mojom::WifiEapMethod::kPeap:
       return onc::eap::kPEAP;
     default:
-      NOTREACHED_IN_MIGRATION()
-          << "Unexpected EAP method: " << static_cast<int>(eap_method);
+      NOTREACHED() << "Unexpected EAP method: " << static_cast<int>(eap_method);
   }
 }
 
@@ -140,8 +138,8 @@ std::string FromMojoEapPhase2Method(
     case camera_app::mojom::WifiEapPhase2Method::kPap:
       return onc::eap::kPAP;
     default:
-      NOTREACHED_IN_MIGRATION() << "Unexpected EAP Phase2 method: "
-                                << static_cast<int>(eap_phase2_method);
+      NOTREACHED() << "Unexpected EAP Phase2 method: "
+                   << static_cast<int>(eap_phase2_method);
   }
 }
 
@@ -206,21 +204,24 @@ CameraAppHelperImpl::CameraAppHelperImpl(
     CameraAppUI* camera_app_ui,
     CameraResultCallback camera_result_callback,
     SendBroadcastCallback send_broadcast_callback,
-    aura::Window* window,
-    HoldingSpaceClient* holding_space_client)
+    aura::Window* window)
     : camera_app_ui_(camera_app_ui),
       camera_result_callback_(std::move(camera_result_callback)),
       send_broadcast_callback_(std::move(send_broadcast_callback)),
       has_external_screen_(HasExternalScreen()),
       pending_intent_id_(std::nullopt),
       window_(window),
-      document_scanner_service_(DocumentScannerServiceClient::Create()),
-      holding_space_client_(holding_space_client) {
+      document_scanner_service_(DocumentScannerServiceClient::Create()) {
   DCHECK(camera_app_ui);
   DCHECK(window);
   window->SetProperty(kCanConsumeSystemKeysKey, true);
   ScreenBacklight::Get()->AddObserver(this);
   ash::SessionManagerClient::Get()->AddObserver(this);
+  sw_privacy_switch_state_observer_ =
+      std::make_unique<media::CrosCameraSWPrivacySwitchStateObserver>(
+          base::BindRepeating(
+              &CameraAppHelperImpl::OnSWPrivacySwitchStateChanged,
+              weak_factory_.GetWeakPtr()));
 }
 
 CameraAppHelperImpl::~CameraAppHelperImpl() {
@@ -372,37 +373,6 @@ void CameraAppHelperImpl::SendNewCaptureBroadcast(bool is_video,
   send_broadcast_callback_.Run(is_video, file_path);
 }
 
-void CameraAppHelperImpl::NotifyTote(const ToteMetricFormat format,
-                                     const std::string& name) {
-  CHECK(holding_space_client_);
-  base::FilePath file_path =
-      camera_app_ui_->delegate()->GetFilePathByName(name);
-  switch (format) {
-    case ToteMetricFormat::kPhoto:
-      holding_space_client_->AddItemOfType(
-          HoldingSpaceItem::Type::kCameraAppPhoto, file_path);
-      return;
-    case ToteMetricFormat::kScanJpg:
-      holding_space_client_->AddItemOfType(
-          HoldingSpaceItem::Type::kCameraAppScanJpg, file_path);
-      return;
-    case ToteMetricFormat::kScanPdf:
-      holding_space_client_->AddItemOfType(
-          HoldingSpaceItem::Type::kCameraAppScanPdf, file_path);
-      return;
-    case ToteMetricFormat::kVideoGif:
-      holding_space_client_->AddItemOfType(
-          HoldingSpaceItem::Type::kCameraAppVideoGif, file_path);
-      return;
-    case ToteMetricFormat::kVideoMp4:
-      holding_space_client_->AddItemOfType(
-          HoldingSpaceItem::Type::kCameraAppVideoMp4, file_path);
-      return;
-    default:
-      NOTREACHED_IN_MIGRATION() << "Unexpected new metric format.";
-  }
-}
-
 void CameraAppHelperImpl::MonitorFileDeletion(
     const std::string& name,
     MonitorFileDeletionCallback callback) {
@@ -440,7 +410,7 @@ void CameraAppHelperImpl::ScanDocumentCorners(
     std::move(callback).Run({});
     return;
   }
-  memcpy(memory.mapping.memory(), jpeg_data.data(), jpeg_data.size());
+  base::span(memory.mapping).copy_from(jpeg_data);
 
   // Since |this| owns |document_scanner_service|, and the callback will be
   // posted to other sequence with weak pointer of |document_scanner_service|.
@@ -470,7 +440,7 @@ void CameraAppHelperImpl::ConvertToDocument(
     std::move(callback).Run({});
     return;
   }
-  memcpy(memory.mapping.memory(), jpeg_data.data(), jpeg_data.size());
+  base::span(memory.mapping).copy_from(jpeg_data);
 
   // Since |this| owns |document_scanner_service|, and the callback will be
   // posted to other sequence with weak pointer of |document_scanner_service|.
@@ -580,12 +550,28 @@ void CameraAppHelperImpl::SetLidStateMonitor(
   monitor_->AddLidObserver(lid_observer_receiver_.BindNewPipeAndPassRemote());
 }
 
+void CameraAppHelperImpl::SetSWPrivacySwitchMonitor(
+    mojo::PendingRemote<SWPrivacySwitchMonitor> monitor,
+    SetSWPrivacySwitchMonitorCallback callback) {
+  sw_privacy_switch_monitor_ =
+      mojo::Remote<SWPrivacySwitchMonitor>(std::move(monitor));
+  std::move(callback).Run(is_sw_privacy_switch_on_);
+}
+
 void CameraAppHelperImpl::OnLidStateChanged(cros::mojom::LidState state) {
   auto lid_state = ToMojoLidState(state);
   if (!lid_callback_.is_null()) {
     std::move(lid_callback_).Run(lid_state);
   } else if (lid_state_monitor_.is_bound()) {
     lid_state_monitor_->Update(lid_state);
+  }
+}
+
+void CameraAppHelperImpl::OnSWPrivacySwitchStateChanged(
+    cros::mojom::CameraPrivacySwitchState state) {
+  is_sw_privacy_switch_on_ = state == cros::mojom::CameraPrivacySwitchState::ON;
+  if (sw_privacy_switch_monitor_.is_bound()) {
+    sw_privacy_switch_monitor_->Update(is_sw_privacy_switch_on_);
   }
 }
 
@@ -623,9 +609,43 @@ void CameraAppHelperImpl::PerformOcr(mojo_base::BigBuffer jpeg_data,
   camera_app_ui_->delegate()->PerformOcr(jpeg_data, std::move(callback));
 }
 
+void CameraAppHelperImpl::PerformOcrInline(
+    const std::vector<uint8_t>& jpeg_data,
+    PerformOcrCallback callback) {
+  camera_app_ui_->delegate()->PerformOcr(jpeg_data, std::move(callback));
+}
+
 void CameraAppHelperImpl::CreatePdfBuilder(
     mojo::PendingReceiver<camera_app::mojom::PdfBuilder> receiver) {
   return camera_app_ui_->delegate()->CreatePdfBuilder(std::move(receiver));
+}
+
+void CameraAppHelperImpl::GetAspectRatioOrder(
+    GetAspectRatioOrderCallback callback) {
+  base::SysInfo::GetHardwareInfo(base::BindOnce(
+      [](GetAspectRatioOrderCallback callback,
+         base::SysInfo::HardwareInfo hardware_info) {
+        std::string board = base::SysInfo::HardwareModelName();
+        std::string model = hardware_info.model;
+        // This customization is added to use the device's maximum resolution by
+        // default. It's not intended for general use and should not be
+        // replicated. Refer to crbug.com/316111545 for more details.
+        if ((board == "REX" && model == "screebo") ||
+            (board == "REX" && model == "screebo4es")) {
+          std::move(callback).Run({
+              camera_app::mojom::AspectRatio::k16To9,
+              camera_app::mojom::AspectRatio::k4To3,
+              camera_app::mojom::AspectRatio::kOthers,
+          });
+        } else {
+          std::move(callback).Run({
+              camera_app::mojom::AspectRatio::k4To3,
+              camera_app::mojom::AspectRatio::k16To9,
+              camera_app::mojom::AspectRatio::kOthers,
+          });
+        }
+      },
+      std::move(callback)));
 }
 
 }  // namespace ash

@@ -7,8 +7,11 @@
 
 #include "base/functional/callback_forward.h"
 #include "base/memory/raw_ptr.h"
+#include "base/observer_list_types.h"
+#include "base/time/time.h"
 #include "base/types/expected.h"
 #include "components/optimization_guide/core/model_execution/feature_keys.h"
+#include "components/optimization_guide/core/model_execution/multimodal_message.h"
 #include "components/optimization_guide/core/model_execution/optimization_guide_model_execution_error.h"
 #include "components/optimization_guide/core/model_quality/model_quality_log_entry.h"
 #include "components/optimization_guide/proto/model_execution.pb.h"
@@ -16,9 +19,20 @@
 namespace optimization_guide {
 
 // The result type of model execution.
-using OptimizationGuideModelExecutionResult =
-    base::expected<const proto::Any /*response_metadata*/,
-                   OptimizationGuideModelExecutionError>;
+struct OptimizationGuideModelExecutionResult {
+  OptimizationGuideModelExecutionResult();
+  explicit OptimizationGuideModelExecutionResult(
+      base::expected<const proto::Any /*response_metadata*/,
+                     OptimizationGuideModelExecutionError> response,
+      std::unique_ptr<proto::ModelExecutionInfo> execution_info);
+  OptimizationGuideModelExecutionResult(
+      OptimizationGuideModelExecutionResult&& other);
+  ~OptimizationGuideModelExecutionResult();
+  base::expected<const proto::Any /*response_metadata*/,
+                 OptimizationGuideModelExecutionError>
+      response;
+  std::unique_ptr<proto::ModelExecutionInfo> execution_info;
+};
 
 // A response type used for OptimizationGuideModelExecutor::Session.
 struct StreamingResponse {
@@ -30,6 +44,11 @@ struct StreamingResponse {
 
   // True if streaming has finished.
   bool is_complete = false;
+
+  // The number of tokens in this response's input.
+  size_t input_token_count = 0;
+  // The number of tokens in this response.
+  size_t output_token_count = 0;
 };
 
 struct OptimizationGuideModelStreamingExecutionResult {
@@ -38,7 +57,9 @@ struct OptimizationGuideModelStreamingExecutionResult {
       base::expected<const StreamingResponse,
                      OptimizationGuideModelExecutionError> response,
       bool provided_by_on_device,
-      std::unique_ptr<ModelQualityLogEntry> log_entry = nullptr);
+      // TODO(372535824): remove this parameter.
+      std::unique_ptr<ModelQualityLogEntry> log_entry = nullptr,
+      std::unique_ptr<proto::ModelExecutionInfo> execution_info = nullptr);
 
   ~OptimizationGuideModelStreamingExecutionResult();
   OptimizationGuideModelStreamingExecutionResult(
@@ -50,19 +71,32 @@ struct OptimizationGuideModelStreamingExecutionResult {
   bool provided_by_on_device = false;
   // The log entry will be null until `StreamingResponse.is_complete` is true.
   std::unique_ptr<ModelQualityLogEntry> log_entry;
+  // The execution info will be null until `StreamingResponse.is_complete` is
+  // true.
+  std::unique_ptr<proto::ModelExecutionInfo> execution_info;
 };
 
 // The callback for receiving the model execution result and model quality log
 // entry.
 using OptimizationGuideModelExecutionResultCallback =
     base::OnceCallback<void(OptimizationGuideModelExecutionResult,
+                            // TODO(372535824): remove this parameter.
                             std::unique_ptr<ModelQualityLogEntry>)>;
+
+// A callback for receiving a score from the model, or nullopt if the model
+// is not running.
+using OptimizationGuideModelScoreCallback =
+    base::OnceCallback<void(std::optional<float>)>;
 
 // The callback for receiving streamed output from the model. The log entry will
 // be null until `StreamingResponse.is_complete` is true.
 using OptimizationGuideModelExecutionResultStreamingCallback =
     base::RepeatingCallback<void(
         OptimizationGuideModelStreamingExecutionResult)>;
+
+// The callback for receiving the token size of the given input.
+using OptimizationGuideModelSizeInTokenCallback =
+    base::OnceCallback<void(uint32_t)>;
 
 // Params used to control sampling output tokens for the on-device model.
 struct SamplingParams {
@@ -74,25 +108,42 @@ struct SamplingParams {
 struct SessionConfigParams {
   std::optional<SamplingParams> sampling_params;
 
-  // Whether to disable server fallback if on-device model is unavailable.
-  //
-  // This API will change but is done here quickly for simplicity while the
-  // capabilities API gets designed. Please ask owners before using this API.
-  bool disable_server_fallback = false;
+  enum class ExecutionMode {
+    // Allows for infrastructure to choose what is most appropriate.
+    kDefault,
+    // Only allows for on-device execution.
+    kOnDeviceOnly,
+    // Only allows for server execution.
+    kServerOnly,
+  };
+
+  // How the execution of this feature should be configured.
+  ExecutionMode execution_mode = ExecutionMode::kDefault;
+
+  enum class LoggingMode {
+    // Enable logging if it's enabled for ModelBasedCapability.
+    kDefault,
+    // Always disable logging.
+    kAlwaysDisable,
+  };
+  LoggingMode logging_mode = LoggingMode::kDefault;
 };
 
 // Reasons why the on-device model was not available for use.
 //
 // These values are persisted to logs. Entries should not be renumbered and
 // numeric values should never be reused.
+// LINT.IfChange(OnDeviceModelEligibilityReason)
 enum class OnDeviceModelEligibilityReason {
   kUnknown = 0,
   // Success.
   kSuccess = 1,
   // The feature flag gating on-device model execution was disabled.
   kFeatureNotEnabled = 2,
+  // DEPRECATED: split into kModelNotEligible, kInsufficientDiskSpace and
+  // kNoOnDeviceFeatureUsed.
   // There was no on-device model available.
-  kModelNotAvailable = 3,
+  kDeprecatedModelNotAvailable = 3,
   // The on-device model was available but there was not an execution config
   // available for the feature.
   kConfigNotAvailableForFeature = 4,
@@ -100,8 +151,9 @@ enum class OnDeviceModelEligibilityReason {
   kGpuBlocked = 5,
   // The on-device model process crashed too many times for this version.
   kTooManyRecentCrashes = 6,
+  // DEPRECATED
   // The on-device model took too long too many times for this version.
-  kTooManyRecentTimeouts = 7,
+  // kTooManyRecentTimeouts = 7,
   // The on-device safety model was required but not available.
   kSafetyModelNotAvailable = 8,
   // The on-device safety model was available but there was not a safety config
@@ -113,12 +165,64 @@ enum class OnDeviceModelEligibilityReason {
   kFeatureExecutionNotEnabled = 11,
   // On-device model adaptation was required but not available.
   kModelAdaptationNotAvailable = 12,
-
-  // This must be kept in sync with
-  // OptimizationGuideOnDeviceModelEligibilityReason in optimization/enums.xml.
+  // Validation has not completed for the model yet.
+  kValidationPending = 13,
+  // Validation failed for the model.
+  kValidationFailed = 14,
+  // There was no on-device model available, but it may be downloaded and
+  // installed later.
+  kModelToBeInstalled = 15,
+  // The device is not eligible for running the on-device model.
+  kModelNotEligible = 16,
+  // The device does not have enough space to download and install the
+  // on-device model.
+  kInsufficientDiskSpace = 17,
+  // There was no on-device feature usage so the model has not been
+  // downloaded yet.
+  kNoOnDeviceFeatureUsed = 18,
 
   // Insert new values before this line.
-  kMaxValue = kModelAdaptationNotAvailable,
+  kMaxValue = kNoOnDeviceFeatureUsed,
+};
+// LINT.ThenChange(//tools/metrics/histograms/metadata/optimization/enums.xml:OptimizationGuideOnDeviceModelEligibilityReason)
+
+std::ostream& operator<<(std::ostream& out,
+                         const OnDeviceModelEligibilityReason& val);
+
+// Observer that is notified when the on-device model availability changes for
+// the on-device eligible features.
+class OnDeviceModelAvailabilityObserver : public base::CheckedObserver {
+ public:
+  // Notifies the consumers whenever the on-device model availability for the
+  // `feature` changes. `reason` indicates the current availability of the
+  // model. This could be invoked without the model availability state toggling.
+  // This is not called automatically when the observer is added initially.
+  // Consumers should call `OnDeviceModelServiceController::CanCreateSession` to
+  // check the initial (or current) model availability state.
+  virtual void OnDeviceModelAvailabilityChanged(
+      ModelBasedCapabilityKey feature,
+      OnDeviceModelEligibilityReason reason) = 0;
+};
+
+// The model's configured limits on tokens.
+struct TokenLimits {
+  // The full combined limit for input and output tokens.
+  uint32_t max_tokens = 0;
+  // The number of context tokens guaranteed to be processed before context
+  // processing can be cancelled to begin execution.
+  uint32_t min_context_tokens = 0;
+  // The maximum number of tokens that can be used by AddContext.
+  uint32_t max_context_tokens = 0;
+  // The maximum number of tokens that can be used by ExecuteModel.
+  uint32_t max_execute_tokens = 0;
+  // The maximum number of tokens that can be generated as output.
+  uint32_t max_output_tokens = 0;
+};
+
+// The configuration that specifies the default sampling params.
+struct SamplingParamsConfig {
+  uint32_t default_top_k;
+  float default_temperature;
 };
 
 // Interface for model execution.
@@ -131,6 +235,17 @@ class OptimizationGuideModelExecutor {
    public:
     virtual ~Session() = default;
 
+    virtual const TokenLimits& GetTokenLimits() const = 0;
+
+    // Sets the input context for this session, replacing any previous context.
+    // This will generate prompt text from the feature config's
+    // "input_context_substitutions". Data provided here (including images) will
+    // be merged with data provided to an ExecuteModel() call and be available
+    // for use in later prompt templates based on the request. Calling this will
+    // cancel any ongoing executions and invoke their 'callback' methods with
+    // the 'kCancelled' error.
+    virtual void SetInput(MultimodalMessage request) = 0;
+
     // Adds context to this session. This will be saved for future Execute()
     // calls. Calling multiple times will replace previous calls to
     // AddContext(). Calling this while a ExecuteModel() call is still streaming
@@ -138,6 +253,12 @@ class OptimizationGuideModelExecutor {
     // `callback` with the kCancelled error.
     virtual void AddContext(
         const google::protobuf::MessageLite& request_metadata) = 0;
+
+    // Gets the probability score of the first token in `text` on top of the
+    // current context. Returns nullopt if there is no on-device session (such
+    // as due to a disconnect).
+    virtual void Score(const std::string& text,
+                       OptimizationGuideModelScoreCallback callback) = 0;
 
     // Execute the model with `request_metadata` and streams the result to
     // `callback`. The execute call will include context from the last
@@ -148,14 +269,34 @@ class OptimizationGuideModelExecutor {
     virtual void ExecuteModel(
         const google::protobuf::MessageLite& request_metadata,
         OptimizationGuideModelExecutionResultStreamingCallback callback) = 0;
-  };
 
-  // Whether an on-device session can be created for `feature`. An optional
-  // `debug_reason` parameter can be provided for more detailed reasons for why
-  // an on-device session could not be created.
-  virtual bool CanCreateOnDeviceSession(
-      ModelBasedCapabilityKey feature,
-      raw_ptr<OnDeviceModelEligibilityReason> debug_reason) = 0;
+    // Call `GetSizeInTokens()` from the model to get the size of the given text
+    // in tokens. The result will be passed back through the callback.
+    virtual void GetSizeInTokens(
+        const std::string& text,
+        OptimizationGuideModelSizeInTokenCallback callback) = 0;
+
+    // Gets the size in tokens used by request_metadata in tokens as it would be
+    // formatted by a call to `ExecuteModel()`. The result will be passed back
+    // through the callback.
+    virtual void GetExecutionInputSizeInTokens(
+        const google::protobuf::MessageLite& request_metadata,
+        OptimizationGuideModelSizeInTokenCallback callback) = 0;
+
+    // Gets the size in tokens used by request_metadata as it would be formatted
+    // by a call to `AddContext()`. The result will be passed back through the
+    // callback.
+    virtual void GetContextSizeInTokens(
+        const google::protobuf::MessageLite& request_metadata,
+        OptimizationGuideModelSizeInTokenCallback callback) = 0;
+
+    // Return the sampling params for the current session.
+    virtual const SamplingParams GetSamplingParams() const = 0;
+
+    // Returns the feature_metadata from the
+    // OnDeviceModelExecutionFeatureConfig.
+    virtual const proto::Any& GetOnDeviceFeatureMetadata() const = 0;
+  };
 
   // Starts a session which allows streaming input and output from the model.
   // May return nullptr if model execution is not supported. This session should
@@ -169,7 +310,16 @@ class OptimizationGuideModelExecutor {
   virtual void ExecuteModel(
       ModelBasedCapabilityKey feature,
       const google::protobuf::MessageLite& request_metadata,
+      const std::optional<base::TimeDelta>& execution_timeout,
       OptimizationGuideModelExecutionResultCallback callback) = 0;
+
+  // Observer for on-device model availability changes.
+  virtual void AddOnDeviceModelAvailabilityChangeObserver(
+      optimization_guide::ModelBasedCapabilityKey feature,
+      OnDeviceModelAvailabilityObserver* observer) {}
+  virtual void RemoveOnDeviceModelAvailabilityChangeObserver(
+      optimization_guide::ModelBasedCapabilityKey feature,
+      OnDeviceModelAvailabilityObserver* observer) {}
 };
 
 }  // namespace optimization_guide

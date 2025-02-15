@@ -78,7 +78,6 @@ std::ostream& operator<<(std::ostream& os, const IwaSourceProxy& source);
 enum class IwaSourceBundleModeAndFileOp {
   kDevModeCopy,
   kDevModeMove,
-  kDevModeReference,
 
   kProdModeCopy,
   kProdModeMove,
@@ -90,7 +89,6 @@ std::ostream& operator<<(std::ostream& os,
 enum class IwaSourceBundleDevFileOp {
   kCopy,
   kMove,
-  kReference,
 };
 std::ostream& operator<<(std::ostream& os, IwaSourceBundleDevFileOp file_op);
 
@@ -100,18 +98,6 @@ enum class IwaSourceBundleProdFileOp {
   // References are not allowed outside of dev mode.
 };
 std::ostream& operator<<(std::ostream& os, IwaSourceBundleProdFileOp file_op);
-
-// TODO(crbug.com/40286084): Currently, we do not copy/move bundles installed in
-// dev mode (via CLI or dev mode UI) into the profile directory, but instead
-// just reference them. This is because, ideally, we'd like the browser to use
-// an updated bundle as soon as the user generates a new bundle. However, our
-// bundle reading code is currently not able to deal with bundles that mutate
-// while the browser is running, which causes the bundle reading code to produce
-// garbage when the bundle is modified. We could either fix the bundle reading
-// code for unowned dev-mode bundles, or change this to move/copy the bundle
-// instead.
-inline constexpr IwaSourceBundleDevFileOp kDefaultBundleDevFileOp =
-    IwaSourceBundleDevFileOp::kReference;
 
 namespace internal {
 

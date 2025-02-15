@@ -70,7 +70,8 @@ TEST_F(AttributionSqlQueryPlanTest, kMinPrioritySql) {
 
 TEST_F(AttributionSqlQueryPlanTest, kGetMatchingSourcesSql) {
   EXPECT_THAT(GetPlan(attribution_queries::kGetMatchingSourcesSql),
-              ValueIs(UsesIndex("sources_by_expiry_time")));
+              ValueIs(AllOf(UsesCoveringIndex("sources_by_destination_site"),
+                            UsesPrimaryKey())));
 }
 
 TEST_F(AttributionSqlQueryPlanTest, kSelectExpiredSourcesSql) {
@@ -99,7 +100,7 @@ TEST_F(AttributionSqlQueryPlanTest, kScanReportsData) {
 
 TEST_F(AttributionSqlQueryPlanTest, kDeleteVestigialConversionSql) {
   EXPECT_THAT(GetPlan(attribution_queries::kDeleteVestigialConversionSql),
-              ValueIs(UsesIndex("reports_by_source_id_report_type")));
+              ValueIs(UsesCoveringIndex("reports_by_source_id_report_type")));
 }
 
 TEST_F(AttributionSqlQueryPlanTest, kCountSourcesSql) {
@@ -122,7 +123,7 @@ TEST_F(AttributionSqlQueryPlanTest, kGetSourcesDataKeysSql) {
 TEST_F(AttributionSqlQueryPlanTest, kGetNullReportsDataKeysSql) {
   EXPECT_THAT(GetPlan(attribution_queries::kGetNullReportsDataKeysSql,
                       SqlFullScanReason::kNotOptimized),
-              ValueIs(UsesIndex("reports_by_reporting_origin")));
+              ValueIs(UsesCoveringIndex("reports_by_reporting_origin")));
 }
 
 TEST_F(AttributionSqlQueryPlanTest, kGetRateLimitDataKeysSql) {
@@ -131,10 +132,18 @@ TEST_F(AttributionSqlQueryPlanTest, kGetRateLimitDataKeysSql) {
               base::test::HasValue());
 }
 
-TEST_F(AttributionSqlQueryPlanTest, kCountReportsForDestinationSql) {
-  EXPECT_THAT(GetPlan(attribution_queries::kCountReportsForDestinationSql),
-              ValueIs(AllOf(UsesCoveringIndex("sources_by_destination_site"),
-                            UsesIndex("reports_by_source_id_report_type"))));
+TEST_F(AttributionSqlQueryPlanTest, kCountEventLevelReportsForDestinationSql) {
+  EXPECT_THAT(
+      GetPlan(attribution_queries::kCountEventLevelReportsForDestinationSql),
+      ValueIs(AllOf(UsesCoveringIndex("sources_by_destination_site"),
+                    UsesCoveringIndex("reports_by_source_id_report_type"))));
+}
+
+TEST_F(AttributionSqlQueryPlanTest,
+       kCountAggregatableReportsForDestinationSql) {
+  EXPECT_THAT(
+      GetPlan(attribution_queries::kCountAggregatableReportsForDestinationSql),
+      ValueIs(UsesCoveringIndex("reports_by_context_site")));
 }
 
 TEST_F(AttributionSqlQueryPlanTest, kNextReportTimeSql) {
@@ -172,6 +181,20 @@ TEST_F(AttributionSqlQueryPlanTest, kUpdateFailedReportSql) {
               ValueIs(UsesPrimaryKey()));
 }
 
+TEST_F(AttributionSqlQueryPlanTest,
+       kDeleteEventLevelReportsForDestinationLimitSql) {
+  EXPECT_THAT(
+      GetPlan(attribution_queries::kDeletePendingEventLevelReportsForSourceSql),
+      ValueIs(UsesIndex("reports_by_source_id_report_type")));
+}
+
+TEST_F(AttributionSqlQueryPlanTest,
+       kDeleteAggregatableReportsForDestinationLimitSql) {
+  EXPECT_THAT(GetPlan(attribution_queries::
+                          kDeleteAggregatableReportsForDestinationLimitSql),
+              ValueIs(UsesCoveringIndex("reports_by_source_id_report_type")));
+}
+
 TEST_F(AttributionSqlQueryPlanTest, kRateLimitAttributionAllowedSql) {
   EXPECT_THAT(GetPlan(attribution_queries::kRateLimitAttributionAllowedSql),
               ValueIs(UsesIndex("rate_limit_reporting_origin_idx",
@@ -193,12 +216,30 @@ TEST_F(AttributionSqlQueryPlanTest,
                         {"scope", "source_site"})));
 }
 
+TEST_F(AttributionSqlQueryPlanTest,
+       kRateLimitSourceAllowedDestinationPerDayRateLimitSql) {
+  EXPECT_THAT(GetPlan(attribution_queries::
+                          kRateLimitSourceAllowedDestinationPerDayRateLimitSql),
+              ValueIs(UsesIndex("rate_limit_reporting_origin_idx",
+                                {"scope", "source_site"})));
+}
+
 TEST_F(AttributionSqlQueryPlanTest, kRateLimitSourceReportingOriginsBySiteSql) {
   EXPECT_THAT(
       GetPlan(
           attribution_queries::kRateLimitSelectSourceReportingOriginsBySiteSql),
       ValueIs(UsesIndex("rate_limit_reporting_origin_idx",
                         {"scope", "source_site"})));
+}
+
+TEST_F(AttributionSqlQueryPlanTest,
+       kRateLimitCountUniqueReportingOriginsPerSiteForAttributionSql) {
+  EXPECT_THAT(
+      GetPlan(
+          attribution_queries::
+              kRateLimitCountUniqueReportingOriginsPerSiteForAttributionSql),
+      ValueIs(
+          UsesIndex("rate_limit_attribution_destination_reporting_site_idx")));
 }
 
 TEST_F(AttributionSqlQueryPlanTest, kRateLimitSelectSourceReportingOriginsSql) {
@@ -218,15 +259,19 @@ TEST_F(AttributionSqlQueryPlanTest,
 }
 
 TEST_F(AttributionSqlQueryPlanTest, kDeleteRateLimitRangeSql) {
-  EXPECT_THAT(GetPlan(attribution_queries::kDeleteRateLimitRangeSql),
-              ValueIs(AllOf(UsesIndex("rate_limit_time_idx"),
-                            UsesIndex("rate_limit_reporting_origin_idx"))));
+  EXPECT_THAT(
+      GetPlan(attribution_queries::kDeleteRateLimitRangeSql),
+      ValueIs(AllOf(
+          UsesIndex("rate_limit_time_idx"),
+          UsesIndex("rate_limit_attribution_destination_reporting_site_idx"))));
 }
 
 TEST_F(AttributionSqlQueryPlanTest, kSelectRateLimitsForDeletionSql) {
-  EXPECT_THAT(GetPlan(attribution_queries::kSelectRateLimitsForDeletionSql),
-              ValueIs(AllOf(UsesIndex("rate_limit_time_idx"),
-                            UsesIndex("rate_limit_reporting_origin_idx"))));
+  EXPECT_THAT(
+      GetPlan(attribution_queries::kSelectRateLimitsForDeletionSql),
+      ValueIs(AllOf(
+          UsesIndex("rate_limit_time_idx"),
+          UsesIndex("rate_limit_attribution_destination_reporting_site_idx"))));
 }
 
 TEST_F(AttributionSqlQueryPlanTest, kDeleteExpiredRateLimitsSql) {
@@ -237,6 +282,12 @@ TEST_F(AttributionSqlQueryPlanTest, kDeleteExpiredRateLimitsSql) {
 TEST_F(AttributionSqlQueryPlanTest, kDeleteRateLimitsBySourceIdSql) {
   EXPECT_THAT(GetPlan(attribution_queries::kDeleteRateLimitsBySourceIdSql),
               ValueIs(UsesIndex("rate_limit_source_id_idx")));
+}
+
+TEST_F(AttributionSqlQueryPlanTest, kDeactivateForSourceDestinationLimitSql) {
+  EXPECT_THAT(
+      GetPlan(attribution_queries::kDeactivateForSourceDestinationLimitSql),
+      ValueIs(UsesIndex("rate_limit_source_id_idx")));
 }
 
 TEST_F(AttributionSqlQueryPlanTest, kDeleteAttributionRateLimitByReportIdSql) {
@@ -272,6 +323,36 @@ TEST_F(AttributionSqlQueryPlanTest, kDeleteAggregatableDebugRateLimitRangeSql) {
   EXPECT_THAT(
       GetPlan(attribution_queries::kDeleteAggregatableDebugRateLimitRangeSql),
       ValueIs(UsesIndex("aggregatable_debug_rate_limits_time_idx")));
+}
+
+TEST_F(AttributionSqlQueryPlanTest, kDeleteExpiredOsRegistrationsSql) {
+  EXPECT_THAT(GetPlan(attribution_queries::kDeleteExpiredOsRegistrationsSql),
+              ValueIs(UsesCoveringIndex("os_registrations_time_idx")));
+}
+
+TEST_F(AttributionSqlQueryPlanTest, kSelectOsRegistrationsForDeletionSql) {
+  EXPECT_THAT(
+      GetPlan(attribution_queries::kSelectOsRegistrationsForDeletionSql),
+      ValueIs(UsesCoveringIndex("os_registrations_time_idx")));
+}
+
+TEST_F(AttributionSqlQueryPlanTest, kDeleteOsRegistrationsRangeSql) {
+  EXPECT_THAT(GetPlan(attribution_queries::kDeleteOsRegistrationsRangeSql),
+              ValueIs(UsesCoveringIndex("os_registrations_time_idx")));
+}
+
+TEST_F(AttributionSqlQueryPlanTest, kDeleteOsRegistrationSql) {
+  EXPECT_THAT(GetPlan(attribution_queries::kDeleteOsRegistrationSql),
+              ValueIs(UsesPrimaryKey()));
+}
+
+TEST_F(AttributionSqlQueryPlanTest, kGetOsRegistrationDataKeysSql) {
+  // Based on the output from EXPLAIN, while it is effectively a full scan, it
+  // is doing a streaming deduplication based on the fact that the rows are
+  // already primarily ordered by `registration_origin`.
+  EXPECT_THAT(GetPlan(attribution_queries::kGetOsRegistrationDataKeysSql),
+              base::test::ErrorIs(
+                  SqlQueryPlanExplainer::Error::kMissingFullScanAnnotation));
 }
 
 }  // namespace

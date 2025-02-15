@@ -46,10 +46,6 @@ HEADER = headers.header(
             url = "https://chrome-ops-rotation-proxy.appspot.com/current/grotation:angle-wrangler",
         ),
         headers.oncall(
-            name = "Perfbot",
-            url = "https://chrome-ops-rotation-proxy.appspot.com/current/grotation:chromium-perf-bot-sheriff",
-        ),
-        headers.oncall(
             name = "Trooper",
             branch_selector = branches.selector.ALL_BRANCHES,
             url = "https://chrome-ops-rotation-proxy.appspot.com/current/oncallator:chrome-ops-client-infra",
@@ -150,6 +146,12 @@ HEADER = headers.header(
                     alt = "Chromium Android console",
                 ),
                 headers.link(
+                    text = "android.desktop",
+                    branch_selector = branches.selector.ANDROID_BRANCHES,
+                    url = "/p/{}/g/chromium.android.desktop".format(settings.project),
+                    alt = "Chromium Android Desktop console",
+                ),
+                headers.link(
                     text = "angle",
                     url = "/p/{}/g/chromium.angle".format(settings.project),
                     alt = "Chromium ANGLE console",
@@ -183,6 +185,11 @@ HEADER = headers.header(
                     ],
                     url = "/p/{}/g/chromium.dawn".format(settings.project),
                     alt = "Chromium Dawn console",
+                ),
+                headers.link(
+                    text = "enterprise companion",
+                    url = "/p/{}/g/chromium.enterprise_companion".format(settings.project),
+                    alt = "Chromium Enterprise Companion App console",
                 ),
                 headers.link(
                     text = "flakiness",
@@ -450,4 +457,5 @@ HEADER = headers.header(
         ),
     ],
     tree_status_host = "chromium-status.appspot.com" if settings.is_main else None,
+    tree_name = "chromium" if settings.is_main else None,
 )

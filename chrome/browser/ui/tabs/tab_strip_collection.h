@@ -33,10 +33,14 @@ class TabStripCollection : public TabCollection {
   TabStripCollection(const TabStripCollection&) = delete;
   TabStripCollection& operator=(const TabStripCollection&) = delete;
 
-  PinnedTabCollection* GetPinnedCollection() { return pinned_collection_; }
-  UnpinnedTabCollection* GetUnpinnedCollection() {
-    return unpinned_collection_;
-  }
+  PinnedTabCollection* pinned_collection() { return pinned_collection_; }
+  UnpinnedTabCollection* unpinned_collection() { return unpinned_collection_; }
+
+  size_t IndexOfFirstNonPinnedTab() const;
+  // Returns the tab at a particular index from the collection tree.
+  // The index is a recursive index and if the index is invalid it returns
+  // nullptr.
+  tabs::TabModel* GetTabAtIndexRecursive(size_t index) const;
 
   // Adds a tab to a particular index in the collection in a
   // recursive method. This forwards calls to either the pinned
@@ -47,25 +51,38 @@ class TabStripCollection : public TabCollection {
                        std::optional<tab_groups::TabGroupId> new_group_id,
                        bool new_pinned_state);
 
-  // Returns the tab at a particular index from the collection tree.
-  // The index is a recursive index and if the index is invalid it returns
-  // nullptr.
-  tabs::TabModel* GetTabAtIndexRecursive(size_t index) const;
+  void MoveTabRecursive(size_t initial_index,
+                        size_t final_index,
+                        std::optional<tab_groups::TabGroupId> new_group_id,
+                        bool new_pinned_state);
+  void MoveTabsRecursive(const std::vector<int>& tab_indices,
+                         size_t destination_index,
+                         std::optional<tab_groups::TabGroupId> new_group_id,
+                         bool new_pinned_state);
+  void MoveGroupTo(const tab_groups::TabGroupId& group, int to_index);
+  size_t TotalTabCount() const;
 
   // Removes the tab present at a recursive index in the collection and
   // returns the unique_ptr to the tab model. If there is no tab present
   // due to bad input then CHECK.
   std::unique_ptr<TabModel> RemoveTabAtIndexRecursive(size_t index);
 
+  // Removes the tab from the collection. If `close_empty_group_collection` is
+  // true then group collection is closed when the last tab is removed from
+  // the group collection.
+  std::unique_ptr<TabModel> RemoveTabRecursive(
+      TabModel* tab,
+      bool close_empty_group_collection = true);
+
   // TabCollection:
   // This will be false as this does not contain a tab as a direct child.
-  bool ContainsTab(TabModel* tab_model) const override;
-  bool ContainsTabRecursive(TabModel* tab_model) const override;
+  bool ContainsTab(const TabInterface* tab) const override;
+  bool ContainsTabRecursive(const TabInterface* tab) const override;
   // Returns true if the collection is the pinned collection or the
   // unpinned collection.
   bool ContainsCollection(TabCollection* collection) const override;
   std::optional<size_t> GetIndexOfTabRecursive(
-      const TabModel* tab_model) const override;
+      const TabInterface* tab) const override;
   std::optional<size_t> GetIndexOfCollection(
       TabCollection* collection) const override;
   // Tabs and Collections are not allowed to be removed from TabStripCollection.
@@ -74,19 +91,34 @@ class TabStripCollection : public TabCollection {
   std::unique_ptr<TabCollection> MaybeRemoveCollection(
       TabCollection* collection) override;
   size_t ChildCount() const override;
-  size_t TabCountRecursive() const override;
 
-  // Creates a new group collection with respect to a tab based on the
-  // position of the tab in the collection.
-  TabGroupTabCollection* CreateNewGroupCollectionForTab(
-      const TabModel* tab_model,
-      const tab_groups::TabGroupId& new_group);
+  // Adds the `tab_group_collection` to `detached_group_collections_`
+  // so that it can be used when inserting a tab to a group.
+  void CreateTabGroup(
+      std::unique_ptr<tabs::TabGroupTabCollection> tab_group_collection);
+
+  // Clears all detached groups present in `detached_group_collections_`.
+  void CloseDetachedTabGroup(const tab_groups::TabGroupId& group_id);
 
   TabCollectionStorage* GetTabCollectionStorageForTesting() {
     return impl_.get();
   }
 
+  void ValidateData();
+
  private:
+  // Creates a new group collection with respect to a tab based on the
+  // position of the tab in the collection.
+  TabGroupTabCollection* MaybeCreateNewGroupCollectionForTab(
+      int index,
+      const tab_groups::TabGroupId& new_group);
+  void MaybeRemoveGroupCollection(const tab_groups::TabGroupId& group);
+
+  // Removes the group collection with `group_id` from
+  // `detached_group_collections_`.
+  std::unique_ptr<tabs::TabGroupTabCollection> PopDetachedGroupCollection(
+      const tab_groups::TabGroupId& group_id);
+
   // Underlying implementation for the storage of children.
   std::unique_ptr<TabCollectionStorage> impl_;
 
@@ -99,6 +131,11 @@ class TabStripCollection : public TabCollection {
   // collection. This should be below `impl_` to avoid being a dangling pointer
   // during destruction.
   raw_ptr<UnpinnedTabCollection> unpinned_collection_;
+
+  // `tab_strip_model` creates this to allow extension of lifetime for groups to
+  // allow for group_model_ updates and observation methods.
+  std::vector<std::unique_ptr<tabs::TabGroupTabCollection>>
+      detached_group_collections_;
 };
 
 }  // namespace tabs

@@ -22,6 +22,7 @@
 #include "ash/accelerators/exit_warning_handler.h"
 #include "ash/accelerators/suspend_state_machine.h"
 #include "ash/accelerators/tablet_volume_controller.h"
+#include "ash/accelerators/top_row_key_usage_recorder.h"
 #include "ash/accessibility/accessibility_controller.h"
 #include "ash/accessibility/ui/accessibility_confirmation_dialog.h"
 #include "ash/ash_export.h"
@@ -55,6 +56,16 @@ class ASH_EXPORT AcceleratorControllerImpl
       public AshAcceleratorConfiguration::Observer,
       public AcceleratorPrefs::Observer {
  public:
+  // Used to record the keyboard type which triggers a screenshot action via the
+  // overview key. Do not reorder values of this enum.
+  enum class OverviewBasedScreenshotKeyboardType {
+    kNonChromeOSKeyboard,
+    kChromeOSKeyboardWithScreenshot,
+    kChromeOSKeyboardWithoutScreenshot,
+    kMinValue = kNonChromeOSKeyboard,
+    kMaxValue = kChromeOSKeyboardWithoutScreenshot,
+  };
+
   // TestApi is used for tests to get internal implementation details.
   class TestApi {
    public:
@@ -250,6 +261,9 @@ class ASH_EXPORT AcceleratorControllerImpl
   std::unique_ptr<AcceleratorShiftDisableCapslockStateMachine>
       shift_disable_state_machine_;
   std::unique_ptr<SuspendStateMachine> suspend_state_machine_;
+
+  // Metrics recorders that listen to the input stream to emit metrics.
+  std::unique_ptr<TopRowKeyUsageRecorder> top_row_key_usage_recorder_;
 
   // Manages all accelerator mappings.
   raw_ptr<AshAcceleratorConfiguration> accelerator_configuration_;

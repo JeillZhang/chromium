@@ -8,6 +8,7 @@
 
 #include "base/test/scoped_feature_list.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/platform/web_runtime_features.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/execution_context/security_context.h"
@@ -202,7 +203,6 @@ using HTMLImageElementSimTest = SimTest;
 
 TEST_F(HTMLImageElementSimTest, Sharedstoragewritable_SecureContext_Allowed) {
   WebRuntimeFeaturesBase::EnableSharedStorageAPI(true);
-  WebRuntimeFeaturesBase::EnableSharedStorageAPIM118(true);
   SimRequest main_resource("https://example.com/index.html", "text/html");
   SimSubresourceRequest image_resource("https://example.com/foo.png",
                                        "image/png");
@@ -220,7 +220,6 @@ TEST_F(HTMLImageElementSimTest, Sharedstoragewritable_SecureContext_Allowed) {
 TEST_F(HTMLImageElementSimTest,
        Sharedstoragewritable_InsecureContext_NotAllowed) {
   WebRuntimeFeaturesBase::EnableSharedStorageAPI(true);
-  WebRuntimeFeaturesBase::EnableSharedStorageAPIM118(true);
   SimRequest main_resource("http://example.com/index.html", "text/html");
   SimSubresourceRequest image_resource("http://example.com/foo.png",
                                        "image/png");
@@ -241,11 +240,30 @@ TEST_F(HTMLImageElementSimTest,
       << ConsoleMessages().front();
 }
 
-TEST_F(HTMLImageElementSimTest, OnloadTransparentPlaceholderImage) {
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndEnableFeature(
-      features::kSimplifyLoadingTransparentPlaceholderImage);
+class TransparentPlaceholderImageSimTest
+    : public SimTest,
+      public ::testing::WithParamInterface<bool> {
+ protected:
+  void SetUp() override {
+    SimTest::SetUp();
+    if (GetParam()) {
+      feature_list_.InitAndEnableFeature(
+          features::kSimplifyLoadingTransparentPlaceholderImage);
+    } else {
+      feature_list_.InitAndDisableFeature(
+          features::kSimplifyLoadingTransparentPlaceholderImage);
+    }
+  }
 
+ private:
+  base::test::ScopedFeatureList feature_list_;
+};
+
+INSTANTIATE_TEST_SUITE_P(TransparentPlaceholderImageSimTest,
+                         TransparentPlaceholderImageSimTest,
+                         testing::Bool());
+
+TEST_P(TransparentPlaceholderImageSimTest, OnloadTransparentPlaceholderImage) {
   SimRequest main_resource("http://example.com/index.html", "text/html");
   LoadURL("http://example.com/index.html");
   main_resource.Complete(R"(
@@ -262,11 +280,8 @@ TEST_F(HTMLImageElementSimTest, OnloadTransparentPlaceholderImage) {
   EXPECT_TRUE(ConsoleMessages().Contains("image element onload"));
 }
 
-TEST_F(HTMLImageElementSimTest, CurrentSrcForTransparentPlaceholderImage) {
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndEnableFeature(
-      features::kSimplifyLoadingTransparentPlaceholderImage);
-
+TEST_P(TransparentPlaceholderImageSimTest,
+       CurrentSrcForTransparentPlaceholderImage) {
   const String image_source =
       "data:image/gif;base64,R0lGODlhAQABAIAAAP///////"
       "yH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";

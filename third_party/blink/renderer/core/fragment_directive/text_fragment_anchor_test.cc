@@ -44,6 +44,7 @@
 #include "third_party/blink/renderer/core/testing/sim/sim_request.h"
 #include "third_party/blink/renderer/platform/scheduler/public/main_thread_scheduler.h"
 #include "third_party/blink/renderer/platform/scheduler/public/thread_scheduler.h"
+#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
 
 #if BUILDFLAG(ENABLE_UNHANDLED_TAP)
@@ -164,9 +165,8 @@ class TextFragmentAnchorTestController : public TextFragmentAnchorTestBase {
           WebCoalescedInputEvent(event, ui::LatencyInfo()));
       WebView().MainFrameWidget()->DispatchBufferedTouchEvents();
     } else {
-      NOTREACHED_IN_MIGRATION()
-          << "Only needed to support Gesture/Touch until now. "
-             "Implement others if new modality is needed.";
+      NOTREACHED() << "Only needed to support Gesture/Touch until now. "
+                      "Implement others if new modality is needed.";
     }
   }
 };
@@ -949,8 +949,7 @@ INSTANTIATE_TEST_SUITE_P(
                     mojom::blink::ScrollType::kProgrammatic,
                     mojom::blink::ScrollType::kClamping,
                     mojom::blink::ScrollType::kCompositor,
-                    mojom::blink::ScrollType::kAnchoring,
-                    mojom::blink::ScrollType::kSequenced));
+                    mojom::blink::ScrollType::kAnchoring));
 
 // Test that a user scroll cancels the scroll into view.
 TEST_P(TextFragmentAnchorScrollTest, ScrollCancelled) {

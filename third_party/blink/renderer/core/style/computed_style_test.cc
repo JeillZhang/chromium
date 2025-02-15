@@ -28,7 +28,6 @@
 #include "third_party/blink/renderer/core/css/resolver/style_resolver_state.h"
 #include "third_party/blink/renderer/core/css/style_engine.h"
 #include "third_party/blink/renderer/core/dom/document.h"
-#include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
 #include "third_party/blink/renderer/core/html/html_body_element.h"
 #include "third_party/blink/renderer/core/layout/layout_object.h"
@@ -43,7 +42,6 @@
 #include "third_party/blink/renderer/core/testing/dummy_page_holder.h"
 #include "third_party/blink/renderer/core/testing/null_execution_context.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
-#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 #include "third_party/blink/renderer/platform/testing/task_environment.h"
 #include "third_party/blink/renderer/platform/transforms/scale_transform_operation.h"
 #include "ui/base/ui_base_features.h"
@@ -69,6 +67,10 @@ class ComputedStyleTest : public testing::Test {
   ComputedStyleBuilder CreateComputedStyleBuilderFrom(
       const ComputedStyle& style) {
     return ComputedStyleBuilder(style);
+  }
+
+  const ComputedStyle& StyleForElement(const char* id) {
+    return GetDocument().getElementById(AtomicString(id))->ComputedStyleRef();
   }
 
  private:
@@ -574,7 +576,7 @@ TEST_F(ComputedStyleTest, AnimationFlags) {
   TEST_ANIMATION_FLAG(HasCurrentOpacityAnimation, kNonInherited);
   TEST_ANIMATION_FLAG(HasCurrentFilterAnimation, kNonInherited);
   TEST_ANIMATION_FLAG(HasCurrentBackdropFilterAnimation, kNonInherited);
-  TEST_ANIMATION_FLAG(SubtreeWillChangeContents, kNonInherited);
+  TEST_ANIMATION_FLAG(SubtreeWillChangeContents, kInherited);
   TEST_ANIMATION_FLAG_NO_DIFF(IsRunningTransformAnimationOnCompositor);
   TEST_ANIMATION_FLAG_NO_DIFF(IsRunningScaleAnimationOnCompositor);
   TEST_ANIMATION_FLAG_NO_DIFF(IsRunningRotateAnimationOnCompositor);
@@ -863,20 +865,20 @@ TEST_F(ComputedStyleTest, ApplyLightDarkColor) {
 
   StyleCascade cascade1(state);
   cascade1.MutableMatchResult().BeginAddingAuthorRulesForTreeScope(document);
-  cascade1.MutableMatchResult().AddMatchedProperties(color_declaration,
-                                                     CascadeOrigin::kAuthor);
-  cascade1.MutableMatchResult().AddMatchedProperties(dark_declaration,
-                                                     CascadeOrigin::kAuthor);
+  cascade1.MutableMatchResult().AddMatchedProperties(
+      color_declaration, {.origin = CascadeOrigin::kAuthor});
+  cascade1.MutableMatchResult().AddMatchedProperties(
+      dark_declaration, {.origin = CascadeOrigin::kAuthor});
   cascade1.Apply();
   const ComputedStyle* style = state.StyleBuilder().CloneStyle();
   EXPECT_EQ(Color::kWhite, style->VisitedDependentColor(GetCSSPropertyColor()));
 
   StyleCascade cascade2(state);
   cascade2.MutableMatchResult().BeginAddingAuthorRulesForTreeScope(document);
-  cascade2.MutableMatchResult().AddMatchedProperties(color_declaration,
-                                                     CascadeOrigin::kAuthor);
-  cascade2.MutableMatchResult().AddMatchedProperties(light_declaration,
-                                                     CascadeOrigin::kAuthor);
+  cascade2.MutableMatchResult().AddMatchedProperties(
+      color_declaration, {.origin = CascadeOrigin::kAuthor});
+  cascade2.MutableMatchResult().AddMatchedProperties(
+      light_declaration, {.origin = CascadeOrigin::kAuthor});
   cascade2.Apply();
   style = state.StyleBuilder().CloneStyle();
   EXPECT_EQ(Color::kBlack, style->VisitedDependentColor(GetCSSPropertyColor()));
@@ -905,10 +907,10 @@ TEST_F(ComputedStyleTest, ApplyLightDarkBackgroundImage) {
 
   StyleCascade cascade1(state);
   cascade1.MutableMatchResult().BeginAddingAuthorRulesForTreeScope(document);
-  cascade1.MutableMatchResult().AddMatchedProperties(bgimage_declaration,
-                                                     CascadeOrigin::kAuthor);
-  cascade1.MutableMatchResult().AddMatchedProperties(dark_declaration,
-                                                     CascadeOrigin::kAuthor);
+  cascade1.MutableMatchResult().AddMatchedProperties(
+      bgimage_declaration, {.origin = CascadeOrigin::kAuthor});
+  cascade1.MutableMatchResult().AddMatchedProperties(
+      dark_declaration, {.origin = CascadeOrigin::kAuthor});
   cascade1.Apply();
   EXPECT_TRUE(state.TakeStyle()->HasBackgroundImage());
 
@@ -916,10 +918,10 @@ TEST_F(ComputedStyleTest, ApplyLightDarkBackgroundImage) {
 
   StyleCascade cascade2(state);
   cascade2.MutableMatchResult().BeginAddingAuthorRulesForTreeScope(document);
-  cascade2.MutableMatchResult().AddMatchedProperties(bgimage_declaration,
-                                                     CascadeOrigin::kAuthor);
-  cascade2.MutableMatchResult().AddMatchedProperties(light_declaration,
-                                                     CascadeOrigin::kAuthor);
+  cascade2.MutableMatchResult().AddMatchedProperties(
+      bgimage_declaration, {.origin = CascadeOrigin::kAuthor});
+  cascade2.MutableMatchResult().AddMatchedProperties(
+      light_declaration, {.origin = CascadeOrigin::kAuthor});
   cascade2.Apply();
   EXPECT_FALSE(state.TakeStyle()->HasBackgroundImage());
 }
@@ -1581,9 +1583,9 @@ TEST_F(ComputedStyleTest, ShouldApplyAnyContainment) {
        {CSSValueID::kNone, CSSValueID::kLayout, CSSValueID::kPaint,
         CSSValueID::kSize, CSSValueID::kStyle}) {
     html->SetInlineStyleProperty(CSSPropertyID::kContain,
-                                 getValueName(contain));
+                                 GetCSSValueNameAs<String>(contain));
     body->SetInlineStyleProperty(CSSPropertyID::kContain,
-                                 getValueName(contain));
+                                 GetCSSValueNameAs<String>(contain));
     for (auto html_display : display_types) {
       html->SetInlineStyleProperty(CSSPropertyID::kDisplay, html_display);
       for (auto body_display : display_types) {
@@ -1597,8 +1599,8 @@ TEST_F(ComputedStyleTest, ShouldApplyAnyContainment) {
         EXPECT_EQ(html->GetLayoutObject()->ShouldApplyAnyContainment(),
                   html->GetLayoutObject()->StyleRef().ShouldApplyAnyContainment(
                       *html))
-            << "html contain:" << getValueName(contain)
-            << " display:" << getValueName(html_display);
+            << "html contain:" << GetCSSValueName(contain)
+            << " display:" << GetCSSValueName(html_display);
         if (!body->GetLayoutObject()) {
           if (const auto* body_style = body->GetComputedStyle()) {
             EXPECT_EQ(body_style->Display(), EDisplay::kContents);
@@ -1610,8 +1612,8 @@ TEST_F(ComputedStyleTest, ShouldApplyAnyContainment) {
         EXPECT_EQ(body->GetLayoutObject()->ShouldApplyAnyContainment(),
                   body->GetLayoutObject()->StyleRef().ShouldApplyAnyContainment(
                       *body))
-            << "body contain:" << getValueName(contain)
-            << " display:" << getValueName(body_display);
+            << "body contain:" << GetCSSValueName(contain)
+            << " display:" << GetCSSValueName(body_display);
       }
     }
   }
@@ -1661,14 +1663,14 @@ TEST_F(ComputedStyleTest, DerivedDebugDiff) {
   ASSERT_EQ(2u, style1->DebugDiffFields(*style2).size());
 
   EXPECT_EQ(DebugField::forces_stacking_context_,
-            style1->DebugDiffFields(*style2)[0].field);
-  EXPECT_EQ("1", style1->DebugDiffFields(*style2)[0].actual);
-  EXPECT_EQ("0", style1->DebugDiffFields(*style2)[0].correct);
+            style1->DebugDiffFields(*style2)[1].field);
+  EXPECT_EQ("1", style1->DebugDiffFields(*style2)[1].actual);
+  EXPECT_EQ("0", style1->DebugDiffFields(*style2)[1].correct);
 
   EXPECT_EQ(DebugField::is_stacking_context_without_containment_,
-            style1->DebugDiffFields(*style2)[1].field);
-  EXPECT_EQ("true", style1->DebugDiffFields(*style2)[1].actual);
-  EXPECT_EQ("false", style1->DebugDiffFields(*style2)[1].correct);
+            style1->DebugDiffFields(*style2)[0].field);
+  EXPECT_EQ("true", style1->DebugDiffFields(*style2)[0].actual);
+  EXPECT_EQ("false", style1->DebugDiffFields(*style2)[0].correct);
 }
 
 TEST_F(ComputedStyleTest, DerivedDebugDiffLazy) {
@@ -1997,7 +1999,7 @@ TEST_F(ComputedStyleTest, DynamicRangeLimitMixStandardToConstrainedHigh) {
   ASSERT_NE(dynamic_range_limit_mix_value, nullptr);
 
   EXPECT_EQ(dynamic_range_limit_mix_value->CssText(),
-            "dynamic-range-limit-mix(standard, constrained-high, 70%)");
+            "dynamic-range-limit-mix(standard 30%, constrained-high 70%)");
 
   Document& document = GetDocument();
   const ComputedStyle* initial =
@@ -2031,7 +2033,7 @@ TEST_F(ComputedStyleTest, DynamicRangeLimitMixStandardToHigh) {
   ASSERT_NE(dynamic_range_limit_mix_value, nullptr);
 
   EXPECT_EQ(dynamic_range_limit_mix_value->CssText(),
-            "dynamic-range-limit-mix(standard, high, 60%)");
+            "dynamic-range-limit-mix(standard 40%, high 60%)");
 
   Document& document = GetDocument();
   const ComputedStyle* initial =
@@ -2065,7 +2067,7 @@ TEST_F(ComputedStyleTest, DynamicRangeLimitMixConstrainedHighToHigh) {
   ASSERT_NE(dynamic_range_limit_mix_value, nullptr);
 
   EXPECT_EQ(dynamic_range_limit_mix_value->CssText(),
-            "dynamic-range-limit-mix(constrained-high, high, 45%)");
+            "dynamic-range-limit-mix(constrained-high 55%, high 45%)");
 
   Document& document = GetDocument();
   const ComputedStyle* initial =
@@ -2098,9 +2100,9 @@ TEST_F(ComputedStyleTest, DynamicRangeLimitMixAllThree) {
           false /* allow_visited_style */, CSSValuePhase::kComputedValue);
   ASSERT_NE(dynamic_range_limit_mix_value, nullptr);
 
-  EXPECT_EQ(dynamic_range_limit_mix_value->CssText(),
-            "dynamic-range-limit-mix(standard, "
-            "dynamic-range-limit-mix(constrained-high, high, 25%), 80%)");
+  EXPECT_EQ(
+      dynamic_range_limit_mix_value->CssText(),
+      "dynamic-range-limit-mix(standard 20%, constrained-high 60%, high 20%)");
 
   Document& document = GetDocument();
   const ComputedStyle* initial =
@@ -2120,6 +2122,164 @@ TEST_F(ComputedStyleTest, DynamicRangeLimitMixAllThree) {
   EXPECT_FLOAT_EQ(converted_limit.standard_mix, limit.standard_mix);
   EXPECT_FLOAT_EQ(converted_limit.constrained_high_mix,
                   limit.constrained_high_mix);
+}
+
+TEST_F(ComputedStyleTest, UseCountInsideListMarkerPositionQuirk) {
+  Document& document = GetDocument();
+  document.body()->setInnerHTML(R"HTML(
+    <style>.marker-content-none::marker { content: none }</style>
+    <ul><li></li></ul>
+    <ol><li></li></ol>
+    <ul><div><li></li></ul>
+    <ol><li><li></li></li></ol>
+    <div style="display: list-item"></div>
+    <li style="list-style-position: inside"></li>
+    <li style="list-style: none"></li>
+    <li class="marker-content-none"></li>
+    <li style="display: flex"></li>
+  )HTML");
+  document.View()->UpdateAllLifecyclePhasesForTest();
+  EXPECT_FALSE(
+      document.IsUseCounted(WebFeature::kInsideListMarkerPositionQuirk));
+
+  document.body()->setInnerHTML("<li></li>");
+  document.View()->UpdateAllLifecyclePhasesForTest();
+  EXPECT_TRUE(
+      document.IsUseCounted(WebFeature::kInsideListMarkerPositionQuirk));
+}
+
+TEST_F(ComputedStyleTest, ZoomInheritance) {
+  Document& document = GetDocument();
+  document.body()->setInnerHTML(R"HTML(
+    <div id="target" style="line-height: revert; zoom: 2;">Hello, world!</div>
+  )HTML");
+  document.View()->UpdateAllLifecyclePhasesForTest();
+  ASSERT_TRUE(true) << "Test passes if it doesn't hit a DCHECK.";
+}
+
+TEST_F(ComputedStyleTest, ColorSchemeFlagsIsNormal) {
+  Document& document = GetDocument();
+  ColorSchemeHelper color_scheme_helper(document);
+  color_scheme_helper.SetPreferredColorScheme(
+      mojom::blink::PreferredColorScheme::kLight);
+
+  document.body()->setInnerHTML(R"HTML(
+    <div id="normal" style="color-scheme: normal"></div>
+    <div id="light" style="color-scheme: light"></div>
+    <div id="dark" style="color-scheme: dark"></div>
+  )HTML");
+  document.View()->UpdateAllLifecyclePhasesForTest();
+  EXPECT_TRUE(GetDocument()
+                  .getElementById(AtomicString("normal"))
+                  ->ComputedStyleRef()
+                  .ColorSchemeFlagsIsNormal());
+  EXPECT_FALSE(GetDocument()
+                   .getElementById(AtomicString("light"))
+                   ->ComputedStyleRef()
+                   .ColorSchemeFlagsIsNormal());
+  EXPECT_FALSE(GetDocument()
+                   .getElementById(AtomicString("dark"))
+                   ->ComputedStyleRef()
+                   .ColorSchemeFlagsIsNormal());
+}
+
+TEST_F(ComputedStyleTest, ColorSchemeFlagsIsNormal_WithMeta) {
+  Document& document = GetDocument();
+  ColorSchemeHelper color_scheme_helper(document);
+  color_scheme_helper.SetPreferredColorScheme(
+      mojom::blink::PreferredColorScheme::kLight);
+
+  document.body()->setInnerHTML(R"HTML(
+    <meta name="color-scheme" content="light">
+    <div id="normal" style="color-scheme: normal"></div>
+    <div id="light" style="color-scheme: light"></div>
+    <div id="dark" style="color-scheme: dark"></div>
+  )HTML");
+  document.View()->UpdateAllLifecyclePhasesForTest();
+  EXPECT_FALSE(GetDocument()
+                   .getElementById(AtomicString("normal"))
+                   ->ComputedStyleRef()
+                   .ColorSchemeFlagsIsNormal());
+  EXPECT_FALSE(GetDocument()
+                   .getElementById(AtomicString("light"))
+                   ->ComputedStyleRef()
+                   .ColorSchemeFlagsIsNormal());
+  EXPECT_FALSE(GetDocument()
+                   .getElementById(AtomicString("dark"))
+                   ->ComputedStyleRef()
+                   .ColorSchemeFlagsIsNormal());
+}
+
+TEST_F(ComputedStyleTest, BottomRelativeToSafeAreaInset) {
+  Document& document = GetDocument();
+  document.body()->setInnerHTML(R"HTML(
+    <div id="f1" style="bottom: 5px"></div>
+    <div id="f2" style="bottom: calc(5px + 5px)"></div>
+    <div id="f3" style="bottom: env(safe-area-inset-top)"></div>
+    <div id="f4" style="bottom: calc(env(safe-area-inset-top))"></div>
+    <div id="f5" style="bottom: calc(env(safe-area-inset-bottom) * 2)"></div>
+    <div id="f6" style="bottom: calc(-env(safe-area-inset-bottom))"></div>
+
+    <div id="t1" style="bottom: env(safe-area-inset-bottom)"></div>
+    <div id="t2" style="bottom:   env(  safe-area-inset-bottom, 0px)"></div>
+    <div id="t3" style="bottom: calc(env(safe-area-inset-bottom))"></div>
+    <div id="t4" style="bottom: calc( env( safe-area-inset-bottom , 0px) )"></div>
+    <div id="t5" style="bottom: calc(env(safe-area-inset-bottom, 0px)+999px)"></div>
+    <div id="t6" style="--foo:1px; bottom: calc(env(safe-area-inset-bottom, 0px)-var(--foo))"></div>
+  )HTML");
+  document.View()->UpdateAllLifecyclePhasesForTest();
+
+  EXPECT_FALSE(StyleForElement("f1").IsBottomRelativeToSafeAreaInset());
+  EXPECT_FALSE(StyleForElement("f2").IsBottomRelativeToSafeAreaInset());
+  EXPECT_FALSE(StyleForElement("f3").IsBottomRelativeToSafeAreaInset());
+  EXPECT_FALSE(StyleForElement("f4").IsBottomRelativeToSafeAreaInset());
+  EXPECT_FALSE(StyleForElement("f5").IsBottomRelativeToSafeAreaInset());
+  EXPECT_FALSE(StyleForElement("f6").IsBottomRelativeToSafeAreaInset());
+
+  EXPECT_TRUE(StyleForElement("t1").IsBottomRelativeToSafeAreaInset());
+  EXPECT_TRUE(StyleForElement("t2").IsBottomRelativeToSafeAreaInset());
+  EXPECT_TRUE(StyleForElement("t3").IsBottomRelativeToSafeAreaInset());
+  EXPECT_TRUE(StyleForElement("t4").IsBottomRelativeToSafeAreaInset());
+  EXPECT_TRUE(StyleForElement("t5").IsBottomRelativeToSafeAreaInset());
+  EXPECT_TRUE(StyleForElement("t6").IsBottomRelativeToSafeAreaInset());
+}
+
+TEST_F(ComputedStyleTest, HasEnvSafeAreaInsetBottom) {
+  Document& document = GetDocument();
+  document.body()->setInnerHTML(R"HTML(
+    <div id="f1" style="bottom: 5px"></div>
+    <div id="f2" style="bottom: calc(5px + 5px)"></div>
+    <div id="f3" style="bottom: env(safe-area-inset-top)"></div>
+    <div id="f4" style="bottom: calc(env(safe-area-inset-top))"></div>
+    <div id="f5" style="padding: env(safe-area-inset-left)"></div>
+    <div id="f6" style="padding-bottom: env(safe-area-inset-top)"></div>
+    <div id="f7" style="margin-bottom: env(safe-area-inset-top)"></div>
+    <div id="f8" style="height: calc(env(safe-area-inset-top) + 30px)"></div>
+
+    <div id="t1" style="bottom: env(safe-area-inset-bottom)"></div>
+    <div id="t2" style="bottom: calc(env(safe-area-inset-bottom))"></div>
+    <div id="t3" style="padding: env(safe-area-inset-bottom)"></div>
+    <div id="t4" style="padding-bottom: env(safe-area-inset-bottom)"></div>
+    <div id="t5" style="margin-bottom: env(safe-area-inset-bottom)"></div>
+    <div id="t6" style="height: calc(env(safe-area-inset-bottom) + 30px)"></div>
+  )HTML");
+  document.View()->UpdateAllLifecyclePhasesForTest();
+
+  EXPECT_FALSE(StyleForElement("f1").HasEnvSafeAreaInsetBottom());
+  EXPECT_FALSE(StyleForElement("f2").HasEnvSafeAreaInsetBottom());
+  EXPECT_FALSE(StyleForElement("f3").HasEnvSafeAreaInsetBottom());
+  EXPECT_FALSE(StyleForElement("f4").HasEnvSafeAreaInsetBottom());
+  EXPECT_FALSE(StyleForElement("f5").HasEnvSafeAreaInsetBottom());
+  EXPECT_FALSE(StyleForElement("f6").HasEnvSafeAreaInsetBottom());
+  EXPECT_FALSE(StyleForElement("f7").HasEnvSafeAreaInsetBottom());
+  EXPECT_FALSE(StyleForElement("f8").HasEnvSafeAreaInsetBottom());
+
+  EXPECT_TRUE(StyleForElement("t1").HasEnvSafeAreaInsetBottom());
+  EXPECT_TRUE(StyleForElement("t2").HasEnvSafeAreaInsetBottom());
+  EXPECT_TRUE(StyleForElement("t3").HasEnvSafeAreaInsetBottom());
+  EXPECT_TRUE(StyleForElement("t4").HasEnvSafeAreaInsetBottom());
+  EXPECT_TRUE(StyleForElement("t5").HasEnvSafeAreaInsetBottom());
+  EXPECT_TRUE(StyleForElement("t6").HasEnvSafeAreaInsetBottom());
 }
 
 }  // namespace blink

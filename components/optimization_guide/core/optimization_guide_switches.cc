@@ -121,6 +121,17 @@ const char kModelQualityServiceAPIKey[] = "model-quality-service-api-key";
 const char kEnableModelQualityDogfoodLogging[] =
     "enable-model-quality-dogfood-logging";
 
+const char kGetFreeDiskSpaceWithUserVisiblePriorityTask[] =
+    "optimization-guide-get-free-disk-space-with-user-visible-priority-task";
+
+// Allows sending an language code to the backend.
+const char kOptimizationGuideLanguageOverride[] =
+    "optimization-guide-language-override";
+
+// Enables overriding Google API key configuration check for permissions.
+const char kGoogleApiKeyConfigurationCheckOverride[] =
+    "optimization-guide-google-api-key-configuration-check-override";
+
 std::string GetModelQualityServiceAPIKey() {
   // Command line override takes priority.
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
@@ -221,11 +232,6 @@ bool ShouldSkipModelDownloadVerificationForTesting() {
   return command_line->HasSwitch(kDisableModelDownloadVerificationForTesting);
 }
 
-bool IsModelOverridePresent() {
-  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
-  return command_line->HasSwitch(kModelOverride);
-}
-
 bool ShouldValidateModel() {
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
   return command_line->HasSwitch(kModelValidate);
@@ -236,27 +242,12 @@ bool ShouldValidateModelExecution() {
   return command_line->HasSwitch(kModelExecutionValidate);
 }
 
-std::optional<std::string> GetModelOverride() {
-  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
-  if (!command_line->HasSwitch(kModelOverride))
-    return std::nullopt;
-  return command_line->GetSwitchValueASCII(kModelOverride);
-}
-
 std::optional<std::string> GetOnDeviceModelExecutionOverride() {
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
   if (!command_line->HasSwitch(kOnDeviceModelExecutionOverride)) {
     return std::nullopt;
   }
   return command_line->GetSwitchValueASCII(kOnDeviceModelExecutionOverride);
-}
-
-std::optional<std::string> GetOnDeviceModelAdaptationsOverride() {
-  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
-  if (!command_line->HasSwitch(kOnDeviceModelAdaptationsOverride)) {
-    return std::nullopt;
-  }
-  return command_line->GetSwitchValueASCII(kOnDeviceModelAdaptationsOverride);
 }
 
 std::optional<base::FilePath> GetOnDeviceValidationRequestOverride() {
@@ -273,6 +264,16 @@ std::optional<base::FilePath> GetOnDeviceValidationWriteToFile() {
     return std::nullopt;
   }
   return command_line->GetSwitchValuePath(kOnDeviceValidationWriteToFile);
+}
+
+bool ShouldGetFreeDiskSpaceWithUserVisiblePriorityTask() {
+  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
+  return command_line->HasSwitch(kGetFreeDiskSpaceWithUserVisiblePriorityTask);
+}
+
+bool ShouldSkipGoogleApiKeyConfigurationCheck() {
+  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
+  return command_line->HasSwitch(kGoogleApiKeyConfigurationCheckOverride);
 }
 
 }  // namespace switches

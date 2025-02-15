@@ -8,7 +8,7 @@ import 'chrome://resources/cr_elements/cr_profile_avatar_selector/cr_profile_ava
 import type {CrButtonElement} from 'chrome://resources/cr_elements/cr_button/cr_button.js';
 import type {CrProfileAvatarSelectorElement} from 'chrome://resources/cr_elements/cr_profile_avatar_selector/cr_profile_avatar_selector.js';
 import {getDeepActiveElement} from 'chrome://resources/js/util.js';
-import {keyDownOn, pressAndReleaseKeyOn} from 'chrome://resources/polymer/v3_0/iron-test-helpers/mock-interactions.js';
+import {keyDownOn, pressAndReleaseKeyOn} from 'chrome://webui-test/keyboard_mock_interactions.js';
 import {assertEquals, assertFalse, assertNull, assertTrue} from 'chrome://webui-test/chai_assert.js';
 import {eventToPromise, microtasksFinished} from 'chrome://webui-test/test_util.js';
 // clang-format on
@@ -46,7 +46,7 @@ suite('cr-profile-avatar-selector', function() {
   }
 
   function getGridItems() {
-    return avatarSelector.shadowRoot!.querySelectorAll<CrButtonElement>(
+    return avatarSelector.shadowRoot.querySelectorAll<CrButtonElement>(
         '.avatar');
   }
 
@@ -161,7 +161,7 @@ suite('cr-profile-avatar-selector', function() {
   });
 
   test('sets ignoreModifiedKeyEvents', async function() {
-    const grid = avatarSelector.shadowRoot!.querySelector('cr-grid');
+    const grid = avatarSelector.shadowRoot.querySelector('cr-grid');
     assertTrue(!!grid);
 
     assertFalse(avatarSelector.ignoreModifiedKeyEvents);

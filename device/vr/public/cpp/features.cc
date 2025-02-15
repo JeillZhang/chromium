@@ -16,6 +16,11 @@ namespace device::features {
 // Enables access to articulated hand tracking sensor input.
 BASE_FEATURE(kWebXrHandInput,
              "WebXRHandInput",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+
+// Enables rendering to WebXR sessions with the WebGPU API.
+BASE_FEATURE(kWebXrWebGpuBinding,
+             "WebXRWebGPUBinding",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
 // Enables access to experimental WebXR features.
@@ -50,6 +55,7 @@ BASE_FEATURE(kWebXrOrientationSensorDevice,
 BASE_FEATURE(kWebXrSharedBuffers,
              "WebXrSharedBuffers",
              base::FEATURE_ENABLED_BY_DEFAULT);
+
 #endif
 
 #if BUILDFLAG(ENABLE_OPENXR)
@@ -81,6 +87,12 @@ BASE_FEATURE(kAllowOpenXrWithImmersiveFeature,
              "AllowOpenXrWithImmersiveFeature",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
+#if BUILDFLAG(IS_ANDROID)
+BASE_FEATURE(kOpenXrAndroidSmoothDepth,
+             "OpenXrAndroidSmoothDepth",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+#endif
+
 // Helper for enabling a feature if either the base flag is enabled or if the
 // device has an immersive feature that we will allow to override the default
 // state.
@@ -92,12 +104,7 @@ bool IsImmersiveFeatureEnabled(const base::Feature& base_feature,
   static bool feature_enabled = base::FeatureList::IsEnabled(base_feature);
   static bool allow_with_immersive_feature =
       base::FeatureList::IsEnabled(immersive_feature_guard);
-#if BUILDFLAG(IS_ANDROID)
-  static bool has_immersive_feature = Java_XrFeatureStatus_hasImmersiveFeature(
-      base::android::AttachCurrentThread());
-#else
-  static bool has_immersive_feature = false;
-#endif
+  static bool has_immersive_feature = HasImmersiveFeature();
 
   return feature_enabled ||
          (allow_with_immersive_feature && has_immersive_feature);
@@ -114,4 +121,21 @@ bool IsOpenXrArEnabled() {
 }
 
 #endif  // ENABLE_OPENXR
+
+bool HasImmersiveFeature() {
+#if BUILDFLAG(IS_ANDROID) && BUILDFLAG(ENABLE_OPENXR)
+  return device::Java_XrFeatureStatus_hasImmersiveFeature(
+      base::android::AttachCurrentThread());
+#else
+  return false;
+#endif
+}
+
+bool IsHandTrackingEnabled() {
+#if BUILDFLAG(ENABLE_OPENXR)
+  return IsOpenXrEnabled() && base::FeatureList::IsEnabled(kWebXrHandInput);
+#else
+  return false;
+#endif
+}
 }  // namespace device::features

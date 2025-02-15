@@ -4,21 +4,25 @@
 
 package org.chromium.chrome.browser.facilitated_payments;
 
-import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.ItemType.BANK_ACCOUNT;
-import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.ItemType.HEADER;
-import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.SHEET_ITEMS;
-import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.VISIBLE;
+import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.DISMISS_HANDLER;
+import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.SCREEN;
+import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.SequenceScreen.UNINITIALIZED;
+import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.UI_EVENT_LISTENER;
+import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.VISIBLE_STATE;
+import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.VisibleState.HIDDEN;
 
 import android.content.Context;
 
 import androidx.annotation.VisibleForTesting;
 
+import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.components.autofill.payments.BankAccount;
+import org.chromium.components.autofill.payments.Ewallet;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController;
-import org.chromium.ui.modelutil.MVCListAdapter.ModelList;
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.ui.modelutil.PropertyModelChangeProcessor;
-import org.chromium.ui.modelutil.SimpleRecyclerViewAdapter;
+
+import java.util.List;
 
 /**
  * Implements the FacilitatedPaymentsPaymentMethodsComponent. It uses a bottom sheet to let the user
@@ -32,17 +36,45 @@ public class FacilitatedPaymentsPaymentMethodsCoordinator
 
     @Override
     public void initialize(
-            Context context, BottomSheetController bottomSheetController, Delegate delegate) {
-        mFacilitatedPaymentsPaymentMethodsModel = createModel();
-        mMediator.initialize(context, mFacilitatedPaymentsPaymentMethodsModel, delegate);
+            Context context,
+            BottomSheetController bottomSheetController,
+            Delegate delegate,
+            Profile profile) {
+        mFacilitatedPaymentsPaymentMethodsModel = createModel(mMediator);
+        mMediator.initialize(context, mFacilitatedPaymentsPaymentMethodsModel, delegate, profile);
         setUpModelChangeProcessors(
                 mFacilitatedPaymentsPaymentMethodsModel,
                 new FacilitatedPaymentsPaymentMethodsView(context, bottomSheetController));
     }
 
     @Override
-    public boolean showSheet(BankAccount[] bankAccounts) {
-        return mMediator.showSheet(bankAccounts);
+    public boolean isInLandscapeMode() {
+        return mMediator.isInLandscapeMode();
+    }
+
+    @Override
+    public void showSheetForPix(List<BankAccount> bankAccounts) {
+        mMediator.showSheetForPix(bankAccounts);
+    }
+
+    @Override
+    public void showSheetForEwallet(List<Ewallet> eWallets) {
+        mMediator.showSheetForEwallet(eWallets);
+    }
+
+    @Override
+    public void showProgressScreen() {
+        mMediator.showProgressScreen();
+    }
+
+    @Override
+    public void showErrorScreen() {
+        mMediator.showErrorScreen();
+    }
+
+    @Override
+    public void dismiss() {
+        mMediator.dismiss();
     }
 
     /**
@@ -62,30 +94,20 @@ public class FacilitatedPaymentsPaymentMethodsCoordinator
                         ::bindFacilitatedPaymentsPaymentMethodsView);
     }
 
-    /**
-     * Register payment methods items to RecyclerViewAdapter.
-     *
-     * @param model The observed {@link PropertyModel}. Its data need to be reflected in the view.
-     * @param view The {@link FacilitatedPaymentsPaymentMethodsView} to update.
-     */
-    public static void setUpPaymentMethodsItems(
-            PropertyModel model, FacilitatedPaymentsPaymentMethodsView view) {
-        SimpleRecyclerViewAdapter adapter = new SimpleRecyclerViewAdapter(model.get(SHEET_ITEMS));
-        adapter.registerType(
-                HEADER,
-                FacilitatedPaymentsPaymentMethodsViewBinder::createHeaderItemView,
-                FacilitatedPaymentsPaymentMethodsViewBinder::bindHeaderView);
-        adapter.registerType(
-                BANK_ACCOUNT,
-                BankAccountViewBinder::createBankAccountItemView,
-                BankAccountViewBinder::bindBankAccountItemView);
-        view.getSheetItemListView().setAdapter(adapter);
+    PropertyModel createModel(FacilitatedPaymentsPaymentMethodsMediator mediator) {
+        return new PropertyModel.Builder(FacilitatedPaymentsPaymentMethodsProperties.ALL_KEYS)
+                .with(VISIBLE_STATE, HIDDEN)
+                .with(SCREEN, UNINITIALIZED)
+                .with(DISMISS_HANDLER, mediator::onDismissed)
+                .with(UI_EVENT_LISTENER, mediator::onUiEvent)
+                .build();
     }
 
-    PropertyModel createModel() {
-        return new PropertyModel.Builder(FacilitatedPaymentsPaymentMethodsProperties.ALL_KEYS)
-                .with(VISIBLE, false)
-                .with(SHEET_ITEMS, new ModelList())
-                .build();
+    PropertyModel getModelForTesting() {
+        return mFacilitatedPaymentsPaymentMethodsModel;
+    }
+
+    FacilitatedPaymentsPaymentMethodsMediator getMediatorForTesting() {
+        return mMediator;
     }
 }

@@ -86,9 +86,8 @@ bool WebCodecsEncodedChunkStreamParser::AppendToParseBuffer(
   // the SourceBuffer. Maybe a better MEDIA_LOG here would be sufficient?  Or
   // instead have the top-level SourceBuffer throw synchronous exception when
   // attempting the wrong append method, without causing parse/decode error?
-  NOTREACHED_IN_MIGRATION();  // ProcessChunks() is the method to use instead
-                              // for this parser.
-  return true;   // Subsequent async Parse failure will occur below.
+  NOTREACHED();  // ProcessChunks() is the method to use instead for this
+                 // parser.
 }
 
 StreamParser::ParseStatus WebCodecsEncodedChunkStreamParser::Parse(
@@ -98,9 +97,8 @@ StreamParser::ParseStatus WebCodecsEncodedChunkStreamParser::Parse(
   // the SourceBuffer. Maybe a better MEDIA_LOG here would be sufficient?  Or
   // instead have the top-level SourceBuffer throw synchronous exception when
   // attempting the wrong append method, without causing parse/decode error?
-  NOTREACHED_IN_MIGRATION();  // ProcessChunks() is the method to use instead
-                              // for this parser.
-  return ParseStatus::kFailed;
+  NOTREACHED();  // ProcessChunks() is the method to use instead for this
+                 // parser.
 }
 
 bool WebCodecsEncodedChunkStreamParser::ProcessChunks(
@@ -117,13 +115,15 @@ bool WebCodecsEncodedChunkStreamParser::ProcessChunks(
            (video_config_ && !audio_config_));
     auto media_tracks = std::make_unique<MediaTracks>();
     if (audio_config_) {
-      media_tracks->AddAudioTrack(
-          *audio_config_, kWebCodecsAudioTrackId, MediaTrack::Kind("main"),
-          MediaTrack::Label(""), MediaTrack::Language(""));
+      media_tracks->AddAudioTrack(*audio_config_, true, kWebCodecsAudioTrackId,
+                                  MediaTrack::Kind("main"),
+                                  MediaTrack::Label(""),
+                                  MediaTrack::Language(""));
     } else if (video_config_) {
-      media_tracks->AddVideoTrack(
-          *video_config_, kWebCodecsVideoTrackId, MediaTrack::Kind("main"),
-          MediaTrack::Label(""), MediaTrack::Language(""));
+      media_tracks->AddVideoTrack(*video_config_, true, kWebCodecsVideoTrackId,
+                                  MediaTrack::Kind("main"),
+                                  MediaTrack::Label(""),
+                                  MediaTrack::Language(""));
     }
 
     if (!config_cb_.Run(std::move(media_tracks))) {

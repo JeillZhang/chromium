@@ -15,14 +15,14 @@
 #include "content/browser/attribution_reporting/attribution_resolver_delegate.h"
 #include "content/common/content_export.h"
 
+namespace attribution_reporting {
+class AttributionScopesData;
+}
+
 namespace base {
 class Time;
 class TimeDelta;
 }  // namespace base
-
-namespace network {
-class TriggerVerification;
-}  // namespace network
 
 namespace content {
 
@@ -79,21 +79,17 @@ class CONTENT_EXPORT AttributionResolverDelegateImpl
   base::Time GetAggregatableReportTime(base::Time trigger_time) const override;
   base::TimeDelta GetDeleteExpiredSourcesFrequency() const override;
   base::TimeDelta GetDeleteExpiredRateLimitsFrequency() const override;
+  base::TimeDelta GetDeleteExpiredOsRegistrationsFrequency() const override;
   base::Uuid NewReportID() const override;
   std::optional<OfflineReportDelayConfig> GetOfflineReportDelayConfig()
       const override;
   void ShuffleReports(std::vector<AttributionReport>& reports) override;
-  void ShuffleTriggerVerifications(
-      std::vector<network::TriggerVerification>& verifications) override;
-  double GetRandomizedResponseRate(
-      const attribution_reporting::TriggerSpecs&,
-      attribution_reporting::MaxEventLevelReports,
-      attribution_reporting::EventLevelEpsilon) const override;
   GetRandomizedResponseResult GetRandomizedResponse(
       attribution_reporting::mojom::SourceType,
       const attribution_reporting::TriggerSpecs&,
-      attribution_reporting::MaxEventLevelReports,
-      attribution_reporting::EventLevelEpsilon) override;
+      attribution_reporting::EventLevelEpsilon,
+      const std::optional<attribution_reporting::AttributionScopesData>&)
+      override;
   bool GenerateNullAggregatableReportForLookbackDay(
       int lookback_day,
       attribution_reporting::mojom::SourceRegistrationTimeConfig)

@@ -5,8 +5,10 @@
 package org.chromium.ui.base;
 
 import org.chromium.base.MutableFlagWithSafeDefault;
+import org.chromium.build.annotations.NullMarked;
 
 /** Helpers and state for features from {@link UiAndroidFeatures}. */
+@NullMarked
 public class UiAndroidFeatureList {
     private static MutableFlagWithSafeDefault newMutableFlagWithSafeDefault(
             String featureName, boolean defaultValue) {
@@ -17,4 +19,6 @@ public class UiAndroidFeatureList {
     public static final MutableFlagWithSafeDefault sRequireLeadingInTextViewWithLeading =
             newMutableFlagWithSafeDefault(
                     UiAndroidFeatures.REQUIRE_LEADING_IN_TEXT_VIEW_WITH_LEADING, false);
+
+    public static final String DRAG_DROP_EMPTY = "DragDropEmpty";
 }

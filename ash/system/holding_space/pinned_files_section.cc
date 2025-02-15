@@ -62,16 +62,16 @@ constexpr int kPlaceholderGSuiteIconSpacing = 8;
 
 // Create a builder for an image view for the given G Suite icon.
 views::Builder<views::ImageView> CreateGSuiteIcon(const gfx::VectorIcon& icon) {
-  return views::Builder<views::ImageView>().SetImage(gfx::CreateVectorIcon(
-      icon, kPlaceholderGSuiteIconSize, gfx::kPlaceholderColor));
+  return views::Builder<views::ImageView>().SetImage(
+      ui::ImageModel::FromVectorIcon(icon, gfx::kPlaceholderColor,
+                                     kPlaceholderGSuiteIconSize));
 }
 #endif
 
 // Returns true if the given pref service or currently active features are in a
 // state where the placeholder should be shown in the pinned files section.
 bool ShouldShowPlaceholder(PrefService* prefs) {
-  if (features::IsHoldingSpacePredictabilityEnabled() ||
-      features::IsHoldingSpaceSuggestionsEnabled()) {
+  if (features::IsHoldingSpaceSuggestionsEnabled()) {
     return true;
   }
 
@@ -117,11 +117,7 @@ class FilesAppChip : public views::Button {
       const views::SizeBounds& available_size) const override {
     const int width =
         views::Button::CalculatePreferredSize(available_size).width();
-    return gfx::Size(width, GetHeightForWidth(width));
-  }
-
-  int GetHeightForWidth(int width) const override {
-    return kFilesAppChipHeight;
+    return gfx::Size(width, kFilesAppChipHeight);
   }
 
   void OnThemeChanged() override {
@@ -152,8 +148,8 @@ class FilesAppChip : public views::Button {
 
     // Icon.
     auto* icon = AddChildView(std::make_unique<views::ImageView>());
-    icon->SetImage(gfx::CreateVectorIcon(kFilesAppIcon, kFilesAppChipIconSize,
-                                         gfx::kPlaceholderColor));
+    icon->SetImage(ui::ImageModel::FromVectorIcon(
+        kFilesAppIcon, gfx::kPlaceholderColor, kFilesAppChipIconSize));
 
     // Label.
     auto* label =
@@ -214,8 +210,7 @@ std::unique_ptr<views::View> PinnedFilesSection::CreateContainer() {
 
 std::unique_ptr<HoldingSpaceItemView> PinnedFilesSection::CreateView(
     const HoldingSpaceItem* item) {
-  if (!(features::IsHoldingSpaceSuggestionsEnabled() ||
-        features::IsHoldingSpacePredictabilityEnabled())) {
+  if (!features::IsHoldingSpaceSuggestionsEnabled()) {
     // When `PinnedFilesSection::CreateView()` is called it implies that the
     // user has at some point in time pinned a file to holding space. That being
     // the case, the placeholder is no longer relevant and can be destroyed.
@@ -282,8 +277,7 @@ void PinnedFilesSection::OnFilesAppChipPressed(const ui::Event& event) {
 
   HoldingSpaceController::Get()->client()->OpenMyFiles(base::DoNothing());
 
-  if (!(features::IsHoldingSpaceSuggestionsEnabled() ||
-        features::IsHoldingSpacePredictabilityEnabled())) {
+  if (!features::IsHoldingSpaceSuggestionsEnabled()) {
     // Once the user has pressed the Files app chip, the placeholder should no
     // longer be displayed. This is accomplished by destroying it. If the
     // holding space model is empty, the holding space tray will also need to

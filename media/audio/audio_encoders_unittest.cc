@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include <cstring>
 #include <limits>
 #include <memory>
@@ -14,6 +19,7 @@
 #include "base/test/bind.h"
 #include "base/test/task_environment.h"
 #include "base/time/time.h"
+#include "base/win/windows_version.h"
 #include "build/build_config.h"
 #include "media/audio/audio_opus_encoder.h"
 #include "media/audio/simple_sources.h"
@@ -28,15 +34,7 @@
 #if BUILDFLAG(IS_WIN)
 #include "base/win/scoped_com_initializer.h"
 #include "media/gpu/windows/mf_audio_encoder.h"
-
-// The AAC tests are failing on Arm64. Disable the AAC part of these tests until
-// those failures can be fixed. TODO(https://crbug.com/1424215): Fix tests,
-// and/or investigate if AAC support should be turned off in Chrome for Arm64
-// Windows, or if these are an issue with the tests.
-#if !defined(ARCH_CPU_ARM64)
 #define HAS_AAC_ENCODER 1
-#endif
-
 #endif  // IS_WIN
 
 #if BUILDFLAG(IS_MAC) && BUILDFLAG(USE_PROPRIETARY_CODECS)
@@ -124,7 +122,7 @@ std::string EncoderStatusCodeToString(EncoderStatus::Codes code) {
     case EncoderStatus::Codes::kEncoderMojoConnectionError:
       return "kEncoderMojoConnectionError";
     default:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }
 
@@ -171,6 +169,15 @@ class AudioEncodersTest : public ::testing::TestWithParam<TestAudioParams> {
           buffer_duration_, options_.sample_rate);
     } else if (options_.codec == AudioCodec::kAAC) {
 #if BUILDFLAG(IS_WIN) && HAS_AAC_ENCODER
+      if ((base::win::OSInfo::GetInstance()->version() ==
+               base::win::Version::WIN11_22H2 ||
+           base::win::OSInfo::GetInstance()->version() ==
+               base::win::Version::WIN11_23H2) &&
+          base::win::OSInfo::GetInstance()->version_number().patch < 4112) {
+        GTEST_SKIP() << "https://crbug.com/325249353: AAC encoder requires "
+                        "a fix in Win11 patch 4112.";
+        // GTEST_SKIP() returns.
+      }
       EXPECT_TRUE(com_initializer_.Succeeded());
       ASSERT_TRUE(base::SequencedTaskRunner::HasCurrentDefault());
       encoder_ = std::make_unique<MFAudioEncoder>(
@@ -195,10 +202,10 @@ class AudioEncodersTest : public ::testing::TestWithParam<TestAudioParams> {
         // GTEST_SKIP() returns.
       }
 #else
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
 #endif
     } else {
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
     }
 
     min_number_input_frames_needed_ = frames_per_buffer_;
@@ -738,7 +745,7 @@ TEST_P(AudioOpusEncoderTest, FullCycleEncodeDecode) {
     // get the expected number of frames per buffer.
     EXPECT_EQ(kOpusDecoderFramesPerBuffer,
               opus_decode_float(opus_decoder, output.encoded_data.data(),
-                                output.encoded_data_size, buffer.data(),
+                                output.encoded_data.size(), buffer.data(),
                                 kOpusDecoderFramesPerBuffer, 0));
   };
 
@@ -791,7 +798,7 @@ TEST_P(AudioOpusEncoderTest, FullCycleEncodeDecode_BitrateMode) {
       // get the expected number of frames per buffer.
       EXPECT_EQ(kOpusDecoderFramesPerBuffer,
                 opus_decode_float(opus_decoder, output.encoded_data.data(),
-                                  output.encoded_data_size, buffer.data(),
+                                  output.encoded_data.size(), buffer.data(),
                                   kOpusDecoderFramesPerBuffer, 0));
     };
 
@@ -874,7 +881,7 @@ TEST_P(AudioOpusEncoderTest, FullCycleEncodeDecode_OpusOptions) {
       // get the expected number of frames per buffer.
       EXPECT_EQ(decoder_frames_per_buffer,
                 opus_decode_float(opus_decoder, output.encoded_data.data(),
-                                  output.encoded_data_size, buffer.data(),
+                                  output.encoded_data.size(), buffer.data(),
                                   decoder_frames_per_buffer, 0));
     };
 
@@ -968,7 +975,7 @@ class AACAudioEncoderTest : public AudioEncodersTest {
         channel_layout = CHANNEL_LAYOUT_5_1_BACK;
         break;
       default:
-        NOTREACHED_IN_MIGRATION();
+        NOTREACHED();
     }
     AudioDecoderConfig config(AudioCodec::kAAC, SampleFormat::kSampleFormatS16,
                               channel_layout, options_.sample_rate,
@@ -1020,8 +1027,8 @@ TEST_P(AACAudioEncoderTest, FullCycleEncodeDecode) {
       ++decode_status_callback_count;
       EXPECT_EQ(status, DecoderStatus::Codes::kOk);
     };
-    scoped_refptr<DecoderBuffer> decoder_buffer = DecoderBuffer::FromArray(
-        std::move(output.encoded_data), output.encoded_data_size);
+    scoped_refptr<DecoderBuffer> decoder_buffer =
+        DecoderBuffer::FromArray(std::move(output.encoded_data));
     decoder_->Decode(decoder_buffer, base::BindLambdaForTesting(decode_cb));
   };
 
@@ -1062,8 +1069,8 @@ TEST_P(AACAudioEncoderTest, FullCycleEncodeDecode_BitrateMode) {
       auto decode_cb = [&](DecoderStatus status) {
         EXPECT_EQ(status, DecoderStatus::Codes::kOk);
       };
-      scoped_refptr<DecoderBuffer> decoder_buffer = DecoderBuffer::FromArray(
-          std::move(output.encoded_data), output.encoded_data_size);
+      scoped_refptr<DecoderBuffer> decoder_buffer =
+          DecoderBuffer::FromArray(std::move(output.encoded_data));
       decoder_->Decode(decoder_buffer, base::BindLambdaForTesting(decode_cb));
     };
 

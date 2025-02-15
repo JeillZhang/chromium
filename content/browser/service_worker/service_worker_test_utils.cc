@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/342213636): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "content/browser/service_worker/service_worker_test_utils.h"
 
 #include <algorithm>
@@ -20,6 +25,7 @@
 #include "base/uuid.h"
 #include "content/browser/renderer_host/frame_tree_node.h"
 #include "content/browser/service_worker/embedded_worker_test_helper.h"
+#include "content/browser/service_worker/service_worker_client.h"
 #include "content/browser/service_worker/service_worker_consts.h"
 #include "content/browser/service_worker/service_worker_container_host.h"
 #include "content/browser/service_worker/service_worker_context_core.h"
@@ -44,8 +50,9 @@
 #include "net/http/http_util.h"
 #include "third_party/blink/public/common/loader/throttling_url_loader.h"
 #include "third_party/blink/public/common/navigation/navigation_params.h"
+#include "third_party/blink/public/common/permissions_policy/permissions_policy_declaration.h"
 #include "third_party/blink/public/common/storage_key/storage_key.h"
-#include "third_party/blink/public/mojom/back_forward_cache_not_restored_reasons.mojom-blink.h"
+#include "third_party/blink/public/mojom/back_forward_cache_not_restored_reasons.mojom.h"
 #include "third_party/blink/public/mojom/loader/referrer.mojom.h"
 #include "third_party/blink/public/mojom/loader/transferrable_url_loader.mojom.h"
 #include "third_party/blink/public/mojom/service_worker/service_worker_registration_options.mojom.h"
@@ -188,7 +195,7 @@ class ResourceWriter {
 
   void DidWriteResponseHead(int result) {
     DCHECK_GE(result, 0);
-    mojo_base::BigBuffer buffer(base::as_bytes(base::make_span(body_)));
+    mojo_base::BigBuffer buffer(base::as_byte_span(body_));
     body_writer_->WriteData(
         std::move(buffer),
         base::BindOnce(&ResourceWriter::DidWriteData, base::Unretained(this)));
@@ -196,7 +203,7 @@ class ResourceWriter {
 
   void DidWriteData(int result) {
     DCHECK_EQ(result, static_cast<int>(body_.size()));
-    mojo_base::BigBuffer buffer(base::as_bytes(base::make_span(meta_data_)));
+    mojo_base::BigBuffer buffer(base::as_byte_span(meta_data_));
     metadata_writer_->WriteMetadata(
         std::move(buffer), base::BindOnce(&ResourceWriter::DidWriteMetadata,
                                           base::Unretained(this)));
@@ -239,18 +246,22 @@ CommittedServiceWorkerClient::CommittedServiceWorkerClient(
     ScopedServiceWorkerClient service_worker_client,
     const GlobalRenderFrameHostId& render_frame_host_id)
     : service_worker_client_(std::move(service_worker_client.AsWeakPtr())) {
-  // Establish a dummy connection to allow sending messages without errors.
+  // Establish dummy connections to allow sending messages without errors.
   mojo::PendingRemote<network::mojom::CrossOriginEmbedderPolicyReporter>
-      reporter;
-  auto dummy = reporter.InitWithNewPipeAndPassReceiver();
+      coep_reporter;
+  auto coep_dummy = coep_reporter.InitWithNewPipeAndPassReceiver();
+  mojo::PendingRemote<network::mojom::DocumentIsolationPolicyReporter>
+      dip_reporter;
+  auto dip_dummy = dip_reporter.InitWithNewPipeAndPassReceiver();
 
   // In production code this is called from NavigationRequest in the browser
   // process right before navigation commit.
-  blink::mojom::ServiceWorkerContainerInfoForClientPtr container_info =
+  auto [container_info, controller_info] =
       std::move(service_worker_client)
-          .CommitResponseAndRelease(render_frame_host_id,
-                                    PolicyContainerPolicies(),
-                                    std::move(reporter), ukm::kInvalidSourceId);
+          .CommitResponseAndRelease(
+              render_frame_host_id, PolicyContainerPolicies(),
+              std::move(coep_reporter), std::move(dip_reporter),
+              ukm::kInvalidSourceId);
 
   // We establish a message pipe for connecting |navigation_client_| to a fake
   // navigation client, then simulate sending the navigation commit IPC which
@@ -279,7 +290,8 @@ CommittedServiceWorkerClient::CommittedServiceWorkerClient(
       /*url_loader_client_endpoints=*/nullptr,
       /*subresource_loader_factories=*/nullptr,
       /*subresource_overrides=*/std::nullopt,
-      /*controller_service_worker_info=*/nullptr, std::move(container_info),
+      /*controller_service_worker_info=*/std::move(controller_info),
+      std::move(container_info),
       /*subresource_proxying_loader_factory=*/mojo::NullRemote(),
       /*keep_alive_loader_factory=*/mojo::NullRemote(),
       /*fetch_later_loader_factory=*/mojo::NullAssociatedRemote(),
@@ -308,16 +320,22 @@ CommittedServiceWorkerClient::CommittedServiceWorkerClient(
     ScopedServiceWorkerClient service_worker_client)
     : service_worker_client_(std::move(service_worker_client.AsWeakPtr())) {
   // For worker cases the mojo call is not emulated (just not implemented).
-  blink::mojom::ServiceWorkerContainerInfoForClientPtr received_info =
+  auto [received_info, controller_info] =
       std::move(service_worker_client)
           .CommitResponseAndRelease(
-              /*render_frame_host_id*/ std::nullopt, PolicyContainerPolicies(),
-              /*coep_reporter=*/{}, ukm::kInvalidSourceId);
+              /*render_frame_host_id=*/std::nullopt, PolicyContainerPolicies(),
+              /*coep_reporter=*/{}, /*dip_reporter=*/{}, ukm::kInvalidSourceId);
 
   service_worker_client_->SetContainerReady();
 
   client_receiver_ = std::move(received_info->client_receiver);
   host_remote_.Bind(std::move(received_info->host_remote));
+}
+
+ServiceWorkerContainerHost& CommittedServiceWorkerClient::container_host()
+    const {
+  CHECK(service_worker_client_->container_host());
+  return *service_worker_client_->container_host();
 }
 
 base::OnceCallback<void(blink::ServiceWorkerStatusCode)>
@@ -384,9 +402,10 @@ void StopServiceWorker(ServiceWorkerVersion* version) {
 ScopedServiceWorkerClient CreateServiceWorkerClient(
     ServiceWorkerContextCore* context,
     bool are_ancestors_secure,
-    int frame_tree_node_id) {
-  return ScopedServiceWorkerClient(context->CreateServiceWorkerClientForWindow(
-      are_ancestors_secure, frame_tree_node_id));
+    FrameTreeNodeId frame_tree_node_id) {
+  return ScopedServiceWorkerClient(
+      context->service_worker_client_owner().CreateServiceWorkerClientForWindow(
+          are_ancestors_secure, frame_tree_node_id));
 }
 
 ScopedServiceWorkerClient CreateServiceWorkerClient(
@@ -394,7 +413,7 @@ ScopedServiceWorkerClient CreateServiceWorkerClient(
     const GURL& document_url,
     const url::Origin& top_frame_origin,
     bool are_ancestors_secure,
-    int frame_tree_node_id) {
+    FrameTreeNodeId frame_tree_node_id) {
   ScopedServiceWorkerClient service_worker_client = CreateServiceWorkerClient(
       context, are_ancestors_secure, frame_tree_node_id);
   service_worker_client->UpdateUrls(
@@ -407,7 +426,7 @@ ScopedServiceWorkerClient CreateServiceWorkerClient(
     ServiceWorkerContextCore* context,
     const GURL& document_url,
     bool are_ancestors_secure,
-    int frame_tree_node_id) {
+    FrameTreeNodeId frame_tree_node_id) {
   return CreateServiceWorkerClient(context, document_url,
                                    url::Origin::Create(document_url),
                                    are_ancestors_secure, frame_tree_node_id);
@@ -800,7 +819,7 @@ ServiceWorkerUpdateCheckTestUtils::CreatePausedCacheWriter(
       base::MakeRefCounted<net::HttpResponseHeaders>(new_headers);
   cache_writer->bytes_compared_ = bytes_compared;
   cache_writer->data_to_write_ =
-      base::MakeRefCounted<net::WrappedIOBuffer>(base::make_span(
+      base::MakeRefCounted<net::WrappedIOBuffer>(base::span(
           pending_network_buffer ? pending_network_buffer->buffer() : nullptr,
           pending_network_buffer ? pending_network_buffer->size() : 0));
   cache_writer->len_to_write_ = consumed_size;
@@ -871,12 +890,9 @@ void ServiceWorkerUpdateCheckTestUtils::
     // Create a data pipe which has the new block sent from the network.
     ASSERT_EQ(MOJO_RESULT_OK, mojo::CreateDataPipe(nullptr, *out_body_handle,
                                                    network_consumer));
-    size_t written_size = diff_data_block.size();
-    ASSERT_EQ(MOJO_RESULT_OK,
-              (*out_body_handle)
-                  ->WriteData(diff_data_block.c_str(), &written_size,
-                              MOJO_WRITE_DATA_FLAG_ALL_OR_NONE));
-    ASSERT_EQ(diff_data_block.size(), written_size);
+    ASSERT_EQ(
+        MOJO_RESULT_OK,
+        (*out_body_handle)->WriteAllData(base::as_byte_span(diff_data_block)));
     base::RunLoop().RunUntilIdle();
 
     // Read the data to make a pending buffer.
@@ -964,15 +980,12 @@ void ReadDataPipeInternal(mojo::DataPipeConsumerHandle handle,
                           std::string* result,
                           base::OnceClosure quit_closure) {
   while (true) {
-    size_t num_bytes;
-    const void* buffer = nullptr;
-    MojoResult rv =
-        handle.BeginReadData(&buffer, &num_bytes, MOJO_READ_DATA_FLAG_NONE);
+    base::span<const uint8_t> buffer;
+    MojoResult rv = handle.BeginReadData(MOJO_READ_DATA_FLAG_NONE, buffer);
     switch (rv) {
       case MOJO_RESULT_BUSY:
       case MOJO_RESULT_INVALID_ARGUMENT:
-        NOTREACHED_IN_MIGRATION();
-        return;
+        NOTREACHED();
       case MOJO_RESULT_FAILED_PRECONDITION:
         std::move(quit_closure).Run();
         return;
@@ -982,19 +995,18 @@ void ReadDataPipeInternal(mojo::DataPipeConsumerHandle handle,
                                       std::move(quit_closure)));
         return;
       case MOJO_RESULT_OK:
-        EXPECT_NE(nullptr, buffer);
-        EXPECT_GT(num_bytes, 0u);
-        uint32_t before_size = result->size();
-        result->append(static_cast<const char*>(buffer), num_bytes);
-        uint32_t read_size = result->size() - before_size;
-        EXPECT_EQ(num_bytes, read_size);
+        EXPECT_NE(nullptr, buffer.data());
+        EXPECT_GT(buffer.size(), 0u);
+        size_t before_size = result->size();
+        result->append(base::as_string_view(buffer));
+        size_t read_size = result->size() - before_size;
+        EXPECT_EQ(buffer.size(), read_size);
         rv = handle.EndReadData(read_size);
         EXPECT_EQ(MOJO_RESULT_OK, rv);
         break;
     }
   }
-  NOTREACHED_IN_MIGRATION();
-  return;
+  NOTREACHED();
 }
 
 std::string ReadDataPipe(mojo::ScopedDataPipeConsumerHandle handle) {

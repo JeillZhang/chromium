@@ -64,7 +64,7 @@ class SharedWorkerHostTest : public testing::Test {
         &mock_render_process_host_factory_);
     site_instance_ =
         SiteInstanceImpl::CreateForTesting(&browser_context_, kWorkerUrl);
-    RenderProcessHost* rph = site_instance_->GetProcess();
+    RenderProcessHost* rph = site_instance_->GetOrCreateProcess();
 
     std::vector<std::unique_ptr<MockRenderProcessHost>>* processes =
         mock_render_process_host_factory_.GetProcesses();
@@ -127,32 +127,35 @@ class SharedWorkerHostTest : public testing::Test {
     // Set up for service worker.
     auto service_worker_handle =
         std::make_unique<ServiceWorkerMainResourceHandle>(
-            helper_->context_wrapper(), base::DoNothing());
+            helper_->context_wrapper(), base::DoNothing(),
+            /*fetch_event_client_id=*/"");
     service_worker_handle->set_service_worker_client(
-        helper_->context()->CreateServiceWorkerClientForWorker(
-            mock_render_process_host_->GetID(),
-            ServiceWorkerClientInfo(host->token())));
+        helper_->context()
+            ->service_worker_client_owner()
+            .CreateServiceWorkerClientForWorker(
+                mock_render_process_host_->GetDeprecatedID(),
+                ServiceWorkerClientInfo(host->token())),
+        net::IsolationInfo());
     host->SetServiceWorkerHandle(std::move(service_worker_handle));
 
     TestContentBrowserClient client;
-    host->Start(
-        std::move(factory),
-        blink::mojom::FetchClientSettingsObject::New(
-            network::mojom::ReferrerPolicy::kDefault,
-            /*outgoing_referrer=*/GURL(),
-            blink::mojom::InsecureRequestsPolicy::kDoNotUpgrade),
-        &client,
-        WorkerScriptFetcherResult(
-            std::move(subresource_loader_factories),
-            std::move(main_script_load_params), PolicyContainerPolicies(),
-            /*service_worker_client=*/nullptr, final_response_url));
+    host->Start(std::move(factory),
+                blink::mojom::FetchClientSettingsObject::New(
+                    network::mojom::ReferrerPolicy::kDefault,
+                    /*outgoing_referrer=*/GURL(),
+                    blink::mojom::InsecureRequestsPolicy::kDoNotUpgrade),
+                &client,
+                WorkerScriptFetcherResult(
+                    std::move(subresource_loader_factories),
+                    std::move(main_script_load_params),
+                    PolicyContainerPolicies(), final_response_url));
   }
 
   MessagePortChannel AddClient(
       SharedWorkerHost* host,
       mojo::PendingRemote<blink::mojom::SharedWorkerClient> client) {
     GlobalRenderFrameHostId dummy_render_frame_host_id(
-        mock_render_process_host_->GetID(), 22);
+        mock_render_process_host_->GetDeprecatedID(), 22);
 
     blink::MessagePortDescriptorPair port_pair;
     MessagePortChannel local_port(port_pair.TakePort0());

@@ -26,6 +26,8 @@ namespace views {
 class ToggleButton;
 }  // namespace views
 
+DECLARE_ELEMENT_IDENTIFIER_VALUE(kExtensionMenuItemViewElementId);
+
 // Single row inside the extensions menu for every installed extension. Includes
 // information about the extension, a button to pin the extension to the toolbar
 // and a button for accessing the associated context menu.
@@ -77,9 +79,6 @@ class ExtensionMenuItemView : public views::FlexLayoutView {
   ExtensionMenuItemView(const ExtensionMenuItemView&) = delete;
   ExtensionMenuItemView& operator=(const ExtensionMenuItemView&) = delete;
   ~ExtensionMenuItemView() override;
-
-  // views::View:
-  void OnThemeChanged() override;
 
   // Updates the controller and child views to be on sync with the parent views.
   void Update(SiteAccessToggleState site_access_toggle_state,

@@ -14,7 +14,8 @@
 #include "base/memory/raw_ptr.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
-#include "components/user_education/common/help_bubble_params.h"
+#include "components/user_education/common/help_bubble/help_bubble_params.h"
+#include "components/user_education/views/help_bubble_event_relay.h"
 #include "ui/base/interaction/element_identifier.h"
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/gfx/geometry/rect.h"
@@ -33,8 +34,6 @@ namespace user_education {
 class HelpBubbleDelegate;
 
 namespace internal {
-
-class MenuEventMonitor;
 
 // Describes how a help bubble should be anchored to a Views element, beyond
 // what is specified by the HelpBubbleParams. Should only be instantiated by
@@ -75,7 +74,8 @@ class HelpBubbleView : public views::BubbleDialogDelegateView {
 
   HelpBubbleView(const HelpBubbleDelegate* delegate,
                  const internal::HelpBubbleAnchorParams& anchor,
-                 HelpBubbleParams params);
+                 HelpBubbleParams params,
+                 std::unique_ptr<HelpBubbleEventRelay> event_relay = nullptr);
   HelpBubbleView(const HelpBubbleView&) = delete;
   HelpBubbleView& operator=(const HelpBubbleView&) = delete;
   ~HelpBubbleView() override;
@@ -104,8 +104,9 @@ class HelpBubbleView : public views::BubbleDialogDelegateView {
  private:
   FRIEND_TEST_ALL_PREFIXES(HelpBubbleViewTimeoutTest,
                            RespectsProvidedTimeoutAfterActivate);
+  FRIEND_TEST_ALL_PREFIXES(HelpBubbleViewsTest, RootViewAccessibleName);
   friend class HelpBubbleViewsTest;
-  friend class internal::MenuEventMonitor;
+  friend class HelpBubbleEventRelay;
 
   class AnchorViewObserver;
 
@@ -148,13 +149,23 @@ class HelpBubbleView : public views::BubbleDialogDelegateView {
   // focus, even if it's marked as close_on_deactivate.
   std::unique_ptr<CloseOnDeactivatePin> anchor_pin_;
 
-  // Sniffs events intended for a menu to ensure that for bubbles anchored to
-  // menus, hover, click, and tap events are still registered.
-  std::unique_ptr<internal::MenuEventMonitor> menu_event_monitor_;
+  // Sniffs events intended for a menu or dialog to ensure that hover, click,
+  // and tap events are still registered.
+  std::unique_ptr<HelpBubbleEventRelay> event_relay_;
 
   // Observes the anchor view. Dismisses the help bubble if it loses visibility.
   // Useful when our anchor element is not the anchor view.
   std::unique_ptr<AnchorViewObserver> anchor_observer_;
+
+// TODO(https://crbug.com/382611284): On some platforms the help bubble is not
+// minimized with the window, leading to visual artifacts and errors. For now,
+// work around this problem by closing the bubble if the widget is minimized.
+// When the underlying issue is fixed at the framework level, this can be
+// removed.
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC)
+  class PrimaryWidgetObserver;
+  std::unique_ptr<PrimaryWidgetObserver> primary_widget_observer_;
+#endif
 
   // Auto close timeout. If the value is 0 (default), the bubble never times
   // out.

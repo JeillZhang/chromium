@@ -31,6 +31,7 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.CriteriaHelper;
 import org.chromium.base.test.util.DisableIf;
@@ -45,9 +46,8 @@ import org.chromium.chrome.browser.password_manager.PasswordStoreBridge;
 import org.chromium.chrome.browser.password_manager.PasswordStoreCredential;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.net.test.EmbeddedTestServer;
-import org.chromium.ui.test.util.UiDisableIf;
+import org.chromium.ui.base.DeviceFormFactor;
 import org.chromium.url.GURL;
 
 import java.util.concurrent.TimeoutException;
@@ -55,6 +55,10 @@ import java.util.concurrent.TimeoutException;
 /** Integration tests for password accessory views. */
 @RunWith(ChromeJUnit4ClassRunner.class)
 @CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE, "show-autofill-signatures"})
+@DisableFeatures({
+    ChromeFeatureList.EDGE_TO_EDGE_BOTTOM_CHIN,
+    ChromeFeatureList.EDGE_TO_EDGE_WEB_OPT_IN
+})
 public class PasswordAccessoryIntegrationTest {
     @Rule
     public ChromeTabbedActivityTestRule mActivityTestRule = new ChromeTabbedActivityTestRule();
@@ -84,7 +88,7 @@ public class PasswordAccessoryIntegrationTest {
     @MediumTest
     public void testPasswordSheetDisplaysProvidedItems() throws TimeoutException {
         preparePasswordBridge();
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mPasswordStoreBridge.insertPasswordCredential(
                             new PasswordStoreCredential(
@@ -109,7 +113,7 @@ public class PasswordAccessoryIntegrationTest {
         Looper.prepare();
         mActivityTestRule.startMainActivityOnBlankPage();
         mTestServer = mActivityTestRule.getTestServer();
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mPasswordStoreBridge =
                             new PasswordStoreBridge(mActivityTestRule.getProfile(false));
@@ -136,11 +140,11 @@ public class PasswordAccessoryIntegrationTest {
 
     @Test
     @MediumTest
-    @DisableIf.Device(type = {UiDisableIf.TABLET}) // https://crbug.com/1111770
+    @DisableIf.Device(DeviceFormFactor.TABLET) // https://crbug.com/1111770
     @DisableFeatures({ChromeFeatureList.UNIFIED_PASSWORD_MANAGER_LOCAL_PWD_MIGRATION_WARNING})
     public void testFillsPasswordOnTap() throws TimeoutException {
         preparePasswordBridge();
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mPasswordStoreBridge.insertPasswordCredential(
                             new PasswordStoreCredential(
@@ -187,7 +191,7 @@ public class PasswordAccessoryIntegrationTest {
     public void testEnablesUndenylistingToggle() throws TimeoutException, InterruptedException {
         preparePasswordBridge();
         String url = mTestServer.getURL("/chrome/test/data/password/password_form.html");
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mPasswordStoreBridge.blocklistForTesting(url);
                 });

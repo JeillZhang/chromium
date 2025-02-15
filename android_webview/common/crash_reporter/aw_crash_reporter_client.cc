@@ -56,12 +56,10 @@ class AwCrashReporterClient : public crash_reporter::CrashReporterClient {
     return false;
   }
 
-  void GetProductNameAndVersion(std::string* product_name,
-                                std::string* version,
-                                std::string* channel) override {
-    *product_name = "AndroidWebView";
-    *version = PRODUCT_VERSION;
-    *channel =
+  void GetProductInfo(ProductInfo* product_info) override {
+    product_info->product_name = "AndroidWebView";
+    product_info->version = PRODUCT_VERSION;
+    product_info->channel =
         version_info::GetChannelString(version_info::android::GetChannel());
   }
 
@@ -117,8 +115,7 @@ bool g_enabled;
 
 void EnableCrashReporter(const std::string& process_type) {
   if (g_enabled) {
-    NOTREACHED_IN_MIGRATION() << "EnableCrashReporter called more than once";
-    return;
+    NOTREACHED() << "EnableCrashReporter called more than once";
   }
 
   AwCrashReporterClient* client = AwCrashReporterClient::Get();

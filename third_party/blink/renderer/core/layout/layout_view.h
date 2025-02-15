@@ -26,8 +26,7 @@
 #include "base/dcheck_is_on.h"
 #include "third_party/blink/public/mojom/scroll/scrollbar_mode.mojom-blink.h"
 #include "third_party/blink/renderer/core/core_export.h"
-#include "third_party/blink/renderer/core/layout/layout_ng_block_flow.h"
-#include "third_party/blink/renderer/core/layout/layout_quote.h"
+#include "third_party/blink/renderer/core/layout/layout_block_flow.h"
 #include "third_party/blink/renderer/core/scroll/scrollable_area.h"
 #include "third_party/blink/renderer/platform/graphics/overlay_scrollbar_clip_behavior.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_set.h"
@@ -63,9 +62,8 @@ struct VariableLengthTransformResult {
 // about the different viewports.
 //
 // Because there is one LayoutView per rooted layout tree (or Frame), this class
-// is used to add members shared by this tree (e.g. m_layoutState or
-// m_layoutQuoteHead).
-class CORE_EXPORT LayoutView : public LayoutNGBlockFlow {
+// is used to add members shared by this tree.
+class CORE_EXPORT LayoutView : public LayoutBlockFlow {
  public:
   explicit LayoutView(ContainerNode* document);
   ~LayoutView() override;
@@ -161,8 +159,9 @@ class CORE_EXPORT LayoutView : public LayoutNGBlockFlow {
 
   void CommitPendingSelection();
 
-  void AbsoluteQuads(Vector<gfx::QuadF>&,
-                     MapCoordinatesFlags mode = 0) const override;
+  void QuadsInAncestorInternal(Vector<gfx::QuadF>&,
+                               const LayoutBoxModelObject* ancestor,
+                               MapCoordinatesFlags) const override;
 
   PhysicalRect ViewRect() const override;
   PhysicalRect OverflowClipRect(const PhysicalOffset& location,
@@ -281,8 +280,6 @@ class CORE_EXPORT LayoutView : public LayoutNGBlockFlow {
   // settings (i.e. unaffected by CSS). This is used for matching width / height
   // media queries when printing.
   gfx::SizeF DefaultPageAreaSize() const;
-
-  PhysicalRect LocalVisualRectIgnoringVisibility() const override;
 
   // Invalidates paint for the entire view, including composited descendants,
   // but not including child frames.

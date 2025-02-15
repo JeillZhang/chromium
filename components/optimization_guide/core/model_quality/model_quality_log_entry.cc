@@ -4,15 +4,15 @@
 
 #include "components/optimization_guide/core/model_quality/model_quality_log_entry.h"
 
+#include "components/optimization_guide/core/feature_registry/mqls_feature_registry.h"
 #include "components/optimization_guide/core/model_execution/feature_keys.h"
 #include "components/optimization_guide/core/model_quality/model_quality_util.h"
 
 namespace optimization_guide {
 
 ModelQualityLogEntry::ModelQualityLogEntry(
-    std::unique_ptr<proto::LogAiDataRequest> log_ai_data_request,
     base::WeakPtr<ModelQualityLogsUploaderService> uploader)
-    : log_ai_data_request_(std::move(log_ai_data_request)),
+    : log_ai_data_request_(std::make_unique<proto::LogAiDataRequest>()),
       uploader_(uploader) {}
 
 ModelQualityLogEntry::~ModelQualityLogEntry() {
@@ -26,8 +26,14 @@ ModelQualityLogEntry::~ModelQualityLogEntry() {
   if (!log_ai_data_request_) {
     return;
   }
-  auto feature = GetModelExecutionFeature(log_ai_data_request_->feature_case());
-  if (!feature || !uploader_ || !uploader_->CanUploadLogs(*feature)) {
+  const MqlsFeatureMetadata* metadata =
+      MqlsFeatureRegistry::GetInstance().GetFeature(
+          log_ai_data_request_->feature_case());
+  if (!metadata) {
+    // The feature is not configured to use MQLS, don't upload anything.
+    return;
+  }
+  if (!uploader_ || !uploader_->CanUploadLogs(metadata)) {
     return;
   }
 
@@ -36,14 +42,18 @@ ModelQualityLogEntry::~ModelQualityLogEntry() {
 
 // static
 void ModelQualityLogEntry::Upload(std::unique_ptr<ModelQualityLogEntry> entry) {
-  // Destroying the log entry triggers an upload.
-  entry.reset();
+  if (entry) {
+    // Destroying the log entry triggers an upload.
+    entry.reset();
+  }
 }
 
 // static
 void ModelQualityLogEntry::Drop(std::unique_ptr<ModelQualityLogEntry> entry) {
-  // Clearing the data results in dropping the log.
-  entry->log_ai_data_request_.reset();
+  if (entry) {
+    // Clearing the data results in dropping the log.
+    entry->log_ai_data_request_.reset();
+  }
 }
 
 }  // namespace optimization_guide

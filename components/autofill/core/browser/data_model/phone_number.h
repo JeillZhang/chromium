@@ -11,6 +11,7 @@
 
 #include "base/memory/raw_ptr.h"
 #include "components/autofill/core/browser/data_model/form_group.h"
+#include "components/autofill/core/browser/field_types.h"
 #include "components/autofill/core/browser/geo/phone_number_i18n.h"
 
 namespace autofill {
@@ -28,12 +29,6 @@ class AutofillProfile;
 // best to see the exact behavior of learning phone numbers from submitted forms
 // and filling phone numbers into new forms.
 //
-// If no country code is submitted (as a separate PHONE_HOME_COUNTRY_CODE field
-// or as part of a PHONE_HOME_WHOLE_NUMBER or PHONE_HOME_CITY_AND_NUMBER) at
-// form submission time, no attempt is made to save one. As a consequence, we
-// cannot fill country code fields nor international phone number fields with
-// the country code. See b/322330285.
-//
 // Phone numbers of form submissions are validated by libphonenumber for
 // plausibility before getting saved (in the context of the country, which is
 // the first of 1) country in the form, 2) country of GeoIP, 3) country of
@@ -49,6 +44,10 @@ class AutofillProfile;
 // countries but the US, where the + is dropped.
 class PhoneNumber : public FormGroup {
  public:
+  // See `AutofillProfile::kDatabaseStoredTypes` for a documentation of the
+  // purpose of this constant.
+  static constexpr FieldTypeSet kDatabaseStoredTypes{PHONE_HOME_WHOLE_NUMBER};
+
   explicit PhoneNumber(const AutofillProfile* profile);
   PhoneNumber(const PhoneNumber& number);
   ~PhoneNumber() override;
@@ -62,10 +61,17 @@ class PhoneNumber : public FormGroup {
   void GetMatchingTypes(const std::u16string& text,
                         const std::string& app_locale,
                         FieldTypeSet* matching_types) const override;
+  std::u16string GetInfo(const AutofillType& type,
+                         const std::string& app_locale) const override;
   std::u16string GetRawInfo(FieldType type) const override;
   void SetRawInfoWithVerificationStatus(FieldType type,
                                         const std::u16string& value,
                                         VerificationStatus status) override;
+  bool SetInfoWithVerificationStatus(const AutofillType& type,
+                                     const std::u16string& value,
+                                     const std::string& app_locale,
+                                     const VerificationStatus status) override;
+  VerificationStatus GetVerificationStatus(FieldType type) const override;
 
   // The class used to combine home phone parts into a whole number.
   class PhoneCombineHelper {
@@ -105,13 +111,7 @@ class PhoneNumber : public FormGroup {
 
  private:
   // FormGroup:
-  void GetSupportedTypes(FieldTypeSet* supported_types) const override;
-  std::u16string GetInfoImpl(const AutofillType& type,
-                             const std::string& app_locale) const override;
-  bool SetInfoWithVerificationStatusImpl(const AutofillType& type,
-                                         const std::u16string& value,
-                                         const std::string& app_locale,
-                                         VerificationStatus status) override;
+  FieldTypeSet GetSupportedTypes() const override;
 
   // Updates the cached parsed number if the profile's region has changed
   // since the last time the cache was updated.

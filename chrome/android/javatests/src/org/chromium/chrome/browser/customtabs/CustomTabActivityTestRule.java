@@ -12,25 +12,19 @@ import android.content.Intent;
 import androidx.annotation.NonNull;
 
 import org.junit.Assert;
-import org.junit.runner.Description;
-import org.junit.runners.model.Statement;
 import org.mockito.Mockito;
 
 import org.chromium.base.Log;
-import org.chromium.base.test.util.ScalableTimeout;
-import org.chromium.chrome.browser.WarmupManager;
 import org.chromium.chrome.browser.feature_engagement.TrackerFactory;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabTestUtils;
 import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.components.feature_engagement.Tracker;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
 
 /**
  * Custom ActivityTestRule for all instrumentation tests that require a {@link CustomTabActivity}.
  */
 public class CustomTabActivityTestRule extends ChromeActivityTestRule<CustomTabActivity> {
-    protected static final long STARTUP_TIMEOUT_MS = ScalableTimeout.scaleTimeout(5L * 1000);
     protected static final long LONG_TIMEOUT_MS = 10L * 1000;
     private static final String TAG = "CustomTabTestRule";
     private static int sCustomTabId;
@@ -40,33 +34,17 @@ public class CustomTabActivityTestRule extends ChromeActivityTestRule<CustomTabA
     }
 
     @Override
-    public Statement apply(final Statement base, Description description) {
-        Statement statement =
-                new Statement() {
-                    @Override
-                    public void evaluate() throws Throwable {
-                        // TODO(crbug.com/342240475): Find a better way to deal with IPH in tests.
-                        Log.w(
-                                TAG,
-                                "A mock Tracker is set in CustomTabActivityTestRule. This will"
-                                    + " prevent any IPH from showing. See crbug.com/342240475.");
-                        Tracker tracker = Mockito.mock(Tracker.class);
-                        // Disable IPH to prevent it from interfering with the tests.
-                        when(tracker.shouldTriggerHelpUI(anyString())).thenReturn(false);
-                        TrackerFactory.setTrackerForTests(tracker);
-                        try {
-                            base.evaluate();
-                        } finally {
-                            TestThreadUtils.runOnUiThreadBlocking(
-                                    () -> {
-                                        WarmupManager.getInstance().destroySpareTab();
-                                        // Prevent further async spare tab creation.
-                                        CustomTabsConnection.sSkipTabPrewarmingForTesting = true;
-                                    });
-                        }
-                    }
-                };
-        return super.apply(statement, description);
+    protected void before() throws Throwable {
+        super.before();
+        // TODO(crbug.com/342240475): Find a better way to deal with IPH in tests.
+        Log.w(
+                TAG,
+                "A mock Tracker is set in CustomTabActivityTestRule. This will"
+                        + " prevent any IPH from showing. See crbug.com/342240475.");
+        Tracker tracker = Mockito.mock(Tracker.class);
+        // Disable IPH to prevent it from interfering with the tests.
+        when(tracker.shouldTriggerHelpUi(anyString())).thenReturn(false);
+        TrackerFactory.setTrackerForTests(tracker);
     }
 
     public static void putCustomTabIdInIntent(Intent intent) {
@@ -78,14 +56,10 @@ public class CustomTabActivityTestRule extends ChromeActivityTestRule<CustomTabA
         intent.putExtra(CustomTabsTestUtils.EXTRA_CUSTOM_TAB_ID, sCustomTabId++);
     }
 
-    public static int getCustomTabIdFromIntent(Intent intent) {
-        return intent.getIntExtra(CustomTabsTestUtils.EXTRA_CUSTOM_TAB_ID, -1);
-    }
-
     @Override
-    public void launchActivity(@NonNull Intent intent) {
+    public CustomTabActivity launchActivity(@NonNull Intent intent) {
         putCustomTabIdInIntent(intent);
-        super.launchActivity(intent);
+        return super.launchActivity(intent);
     }
 
     /**

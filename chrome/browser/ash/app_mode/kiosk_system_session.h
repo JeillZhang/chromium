@@ -13,10 +13,11 @@
 #include "base/memory/raw_ptr.h"
 #include "chrome/browser/ash/app_mode/auto_sleep/device_weekly_scheduled_suspend_controller.h"
 #include "chrome/browser/ash/app_mode/kiosk_app_types.h"
+#include "chrome/browser/ash/app_mode/kiosk_network_state_observer.h"
 #include "chrome/browser/ash/app_mode/metrics/low_disk_metrics_service.h"
 #include "chrome/browser/ash/app_mode/metrics/periodic_metrics_service.h"
 #include "chrome/browser/chromeos/app_mode/kiosk_browser_session.h"
-#include "chromeos/ash/components/kiosk/vision/kiosk_vision.h"
+#include "chrome/browser/profiles/profile.h"
 
 class PrefRegistrySimple;
 
@@ -36,12 +37,12 @@ class KioskSystemSession {
   KioskSystemSession& operator=(const KioskSystemSession&) = delete;
   ~KioskSystemSession();
 
-  static void RegisterLocalStatePrefs(PrefRegistrySimple* registry);
-
   // Destroys ash observers.
   void ShuttingDown();
 
   void OnGuestAdded(content::WebContents* guest_web_contents);
+
+  static void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry);
 
   bool is_shutting_down() const;
 
@@ -55,11 +56,16 @@ class KioskSystemSession {
     return device_weekly_scheduled_suspend_controller_.get();
   }
 
- private:
-  class LacrosWatcher;
+  KioskNetworkStateObserver& network_state_observer_for_testing() {
+    return network_state_observer_;
+  }
 
+ private:
   void InitForChromeAppKiosk();
   void InitForWebKiosk(const std::optional<std::string>& app_name);
+  void InitForIwaKiosk(const std::optional<std::string>& app_name);
+
+  void InitCommon(bool is_offline_enabled);
 
   // Initialize the Kiosk app update service. The external update will be
   // triggered if a USB stick is used.
@@ -86,13 +92,12 @@ class KioskSystemSession {
   const std::unique_ptr<PeriodicMetricsService> periodic_metrics_service_;
   const std::unique_ptr<DeviceWeeklyScheduledSuspendController>
       device_weekly_scheduled_suspend_controller_;
-  std::unique_ptr<LacrosWatcher> lacros_watcher_;
 
   // Tracks low disk notifications.
   LowDiskMetricsService low_disk_metrics_service_;
 
-  // Implements the Kiosk Vision ML feature.
-  kiosk_vision::KioskVision kiosk_vision_;
+  // Observes network state and changes an active network scope..
+  KioskNetworkStateObserver network_state_observer_;
 };
 
 }  // namespace ash

@@ -26,9 +26,9 @@ const base::FilePath::CharType kPolicyCache[] =
     FILE_PATH_LITERAL("Machine Level User Cloud Policy");
 const base::FilePath::CharType kKeyCache[] =
     FILE_PATH_LITERAL("Machine Level User Cloud Policy Signing Key");
-constexpr base::FilePath::StringPieceType kExternalPolicyCache =
+constexpr base::FilePath::StringViewType kExternalPolicyCache =
     FILE_PATH_LITERAL("PolicyFetchResponse");
-constexpr base::FilePath::StringPieceType kExternalPolicyInfo =
+constexpr base::FilePath::StringViewType kExternalPolicyInfo =
     FILE_PATH_LITERAL("CachedPolicyInfo");
 }  // namespace
 
@@ -52,7 +52,7 @@ MachineLevelUserCloudPolicyStore::MachineLevelUserCloudPolicyStore(
       machine_dm_token_(machine_dm_token),
       machine_client_id_(machine_client_id) {}
 
-MachineLevelUserCloudPolicyStore::~MachineLevelUserCloudPolicyStore() {}
+MachineLevelUserCloudPolicyStore::~MachineLevelUserCloudPolicyStore() = default;
 
 // static
 std::unique_ptr<MachineLevelUserCloudPolicyStore>

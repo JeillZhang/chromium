@@ -11,10 +11,10 @@
 #include "base/memory/weak_ptr.h"
 #include "base/synchronization/waitable_event.h"
 #include "media/base/android/media_resource_getter.h"
-#include "media/base/android/media_url_interceptor.h"
 #include "net/base/auth.h"
 #include "net/cookies/canonical_cookie.h"
 #include "net/cookies/site_for_cookies.h"
+#include "net/storage_access_api/status.h"
 
 namespace content {
 
@@ -43,7 +43,7 @@ class MediaResourceGetterImpl : public media::MediaResourceGetter {
   void GetCookies(const GURL& url,
                   const net::SiteForCookies& site_for_cookies,
                   const url::Origin& top_frame_origin,
-                  bool has_storage_access,
+                  net::StorageAccessApiStatus storage_access_api_status,
                   GetCookieCB callback) override;
 
  private:

@@ -5,7 +5,6 @@
 #include "chrome/browser/ui/views/chrome_typography_provider.h"
 
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/ui/color/chrome_color_id.h"
 #include "chrome/browser/ui/views/chrome_typography.h"
 #include "ui/base/default_style.h"
@@ -22,7 +21,7 @@
 #include "ui/native_theme/native_theme_win.h"
 #endif
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 // gn check complains on Linux Ozone.
 #include "ash/public/cpp/ash_typography.h"  // nogncheck
 #endif
@@ -39,7 +38,7 @@ bool ChromeTypographyProvider::StyleAllowedForContext(int context,
     // Limit emphasizing text to contexts where it's obviously correct. If you
     // hit this check, ensure it's sane and UX-approved to extend it to your
     // new case (e.g. don't add CONTEXT_BUTTON_MD).
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
     // TODO(crbug.com/40234831): Limit more specific Ash contexts.
     return true;
 #else
@@ -75,7 +74,7 @@ ui::ResourceBundle::FontDetails ChromeTypographyProvider::GetFontDetailsImpl(
 
   details.size_delta = gfx::PlatformFont::GetFontSizeDelta(kDefaultSize);
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   ash::ApplyAshFontStyles(context, style, details);
 #endif
 
@@ -135,8 +134,8 @@ ui::ResourceBundle::FontDetails ChromeTypographyProvider::GetFontDetailsImpl(
     details.weight = gfx::Font::Weight::SEMIBOLD;
   }
 
-  if (style == STYLE_PRIMARY_MONOSPACED ||
-      style == STYLE_SECONDARY_MONOSPACED) {
+  if (style == views::style::STYLE_PRIMARY_MONOSPACED ||
+      style == views::style::STYLE_SECONDARY_MONOSPACED) {
 #if BUILDFLAG(IS_MAC)
     details.typeface = "Menlo";
 #elif BUILDFLAG(IS_WIN)
@@ -146,6 +145,10 @@ ui::ResourceBundle::FontDetails ChromeTypographyProvider::GetFontDetailsImpl(
 #endif
   }
 
+  if (style == STYLE_SMALL) {
+    details.size_delta -= 2;
+  }
+
   return details;
 }
 
@@ -153,13 +156,14 @@ ui::ColorId ChromeTypographyProvider::GetColorIdImpl(int context,
                                                      int style) const {
   // Body text styles are the same as for labels.
   if (context == views::style::CONTEXT_DIALOG_BODY_TEXT ||
-      context == CONTEXT_DIALOG_BODY_TEXT_SMALL)
+      context == CONTEXT_DIALOG_BODY_TEXT_SMALL) {
     context = views::style::CONTEXT_LABEL;
+  }
 
   // Monospaced styles have the same colors as their normal counterparts.
-  if (style == STYLE_PRIMARY_MONOSPACED) {
+  if (style == views::style::STYLE_PRIMARY_MONOSPACED) {
     style = views::style::STYLE_PRIMARY;
-  } else if (style == STYLE_SECONDARY_MONOSPACED) {
+  } else if (style == views::style::STYLE_SECONDARY_MONOSPACED) {
     style = views::style::STYLE_SECONDARY;
   }
 

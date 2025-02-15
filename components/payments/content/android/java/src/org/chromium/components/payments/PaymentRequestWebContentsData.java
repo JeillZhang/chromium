@@ -22,8 +22,6 @@ import org.chromium.content_public.browser.WebContentsObserver;
  */
 @JNINamespace("payments::android")
 public class PaymentRequestWebContentsData extends WebContentsObserver implements UserData {
-    private static final Class<PaymentRequestWebContentsData> USER_DATA_KEY =
-            PaymentRequestWebContentsData.class;
     private static PaymentRequestWebContentsData sInstanceForTesting;
 
     private static final class UserDataFactoryLazyHolder {
@@ -57,9 +55,13 @@ public class PaymentRequestWebContentsData extends WebContentsObserver implement
         super(webContents);
     }
 
-    /** @return Whether there has been an activationless PaymentRequest.show() for this WebContents. */
+    /**
+     * @return Whether there has been an activationless PaymentRequest.show() for this WebContents.
+     */
     public boolean hadActivationlessShow() {
-        return PaymentRequestWebContentsDataJni.get().hadActivationlessShow(mWebContents.get());
+        WebContents webContents = getWebContents();
+        if (webContents == null || webContents.isDestroyed()) return false;
+        return PaymentRequestWebContentsDataJni.get().hadActivationlessShow(webContents);
     }
 
     /**
@@ -67,7 +69,9 @@ public class PaymentRequestWebContentsData extends WebContentsObserver implement
      * tracked on the native side in PaymentRequestWebContentsManager.
      */
     public void recordActivationlessShow() {
-        PaymentRequestWebContentsDataJni.get().recordActivationlessShow(mWebContents.get());
+        WebContents webContents = getWebContents();
+        if (webContents == null || webContents.isDestroyed()) return;
+        PaymentRequestWebContentsDataJni.get().recordActivationlessShow(webContents);
     }
 
     @VisibleForTesting(otherwise = VisibleForTesting.PACKAGE_PRIVATE)

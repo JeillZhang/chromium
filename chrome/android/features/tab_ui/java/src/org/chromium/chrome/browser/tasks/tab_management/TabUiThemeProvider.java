@@ -28,7 +28,7 @@ public class TabUiThemeProvider {
      *
      * @param context {@link Context} used to retrieve color.
      */
-    public static @ColorInt int getDefaultNTBContainerColor(Context context) {
+    public static @ColorInt int getDefaultNtbContainerColor(Context context) {
         return MaterialColors.getColor(context, R.attr.colorPrimaryContainer, TAG);
     }
 
@@ -410,7 +410,7 @@ public class TabUiThemeProvider {
     public static int getMessageCardActionButtonTextAppearance(boolean isIncognito) {
         return isIncognito
                 ? R.style.TextAppearance_Button_Text_Blue_Dark
-                : R.style.TextAppearance_Button_Text_Blue;
+                : R.style.TextAppearance_ClickableButtonInverse;
     }
 
     /**
@@ -500,16 +500,8 @@ public class TabUiThemeProvider {
     }
 
     /**
-     * Return the padding around favicon if it is visible.
-     * @param context {@link Context} used to retrieve dimension.
-     * @return The padding space around favicon.
-     */
-    public static float getTabCardTopFaviconPadding(Context context) {
-        return context.getResources().getDimension(R.dimen.tab_grid_card_favicon_padding);
-    }
-
-    /**
      * Return the size represented by dimension for padding between tab cards.
+     *
      * @param context {@link Context} to retrieve dimension.
      * @return The padding between tab cards in float number.
      */
@@ -544,5 +536,15 @@ public class TabUiThemeProvider {
      */
     public static float getMessageCardMarginDimension(Context context) {
         return context.getResources().getDimension(R.dimen.tab_list_selected_inset);
+    }
+
+    /**
+     * Returns the color used for the shared tab notification bubble.
+     *
+     * @param context {@link Context} used to retrieve color.
+     * @return The color for the tab notification bubble.
+     */
+    public static @ColorInt int getTabBubbleFillColor(Context context) {
+        return MaterialColors.getColor(context, R.attr.colorPrimary, TAG);
     }
 }

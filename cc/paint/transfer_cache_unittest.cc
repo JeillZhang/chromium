@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include <vector>
 
 #include "base/command_line.h"
@@ -72,7 +77,7 @@ class TransferCacheTest : public testing::Test {
     uint32_t size = entry.SerializedSize();
     void* data = context_support->MapTransferCacheEntry(size);
     ASSERT_TRUE(data);
-    entry.Serialize(base::make_span(static_cast<uint8_t*>(data), size));
+    entry.Serialize(base::span(static_cast<uint8_t*>(data), size));
     context_support->UnmapAndCreateTransferCacheEntry(entry.UnsafeType(),
                                                       entry.Id());
   }

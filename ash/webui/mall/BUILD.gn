@@ -23,6 +23,7 @@ source_set("mall") {
     "//ash/webui/mall/resources",
     "//base",
     "//chromeos/constants/",
+    "//components/strings:components_strings_grit",
     "//content/public/browser",
     "//ui/webui",
   ]
@@ -36,7 +37,17 @@ mojom("mojo_bindings") {
 }
 
 source_set("url_constants") {
-  sources = [ "url_constants.h" ]
+  sources = [
+    "url_constants.cc",
+    "url_constants.h",
+  ]
+
+  deps = [
+    "//ash/constants",
+    "//base",
+    "//chromeos/constants",
+    "//url",
+  ]
 }
 
 source_set("app_id") {

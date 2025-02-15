@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/modules/media_capabilities/media_capabilities.h"
 
 #include <memory>
@@ -12,6 +17,7 @@
 #include "base/feature_list.h"
 #include "base/metrics/field_trial_params.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/numerics/safe_conversions.h"
 #include "base/task/single_thread_task_runner.h"
 #include "media/base/media_switches.h"
 #include "media/base/media_util.h"
@@ -26,9 +32,9 @@
 #include "media/mojo/mojom/media_metrics_provider.mojom-blink.h"
 #include "media/mojo/mojom/media_types.mojom-blink.h"
 #include "media/video/gpu_video_accelerator_factories.h"
-#include "third_party/blink/public/common/browser_interface_broker_proxy.h"
-#include "third_party/blink/public/mojom/permissions_policy/permissions_policy.mojom-blink.h"
+#include "services/network/public/mojom/permissions_policy/permissions_policy_feature.mojom-blink.h"
 #include "third_party/blink/public/mojom/use_counter/metrics/web_feature.mojom-blink.h"
+#include "third_party/blink/public/platform/browser_interface_broker_proxy.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/public/platform/task_type.h"
 #include "third_party/blink/public/platform/web_encrypted_media_client.h"
@@ -212,10 +218,12 @@ class MediaCapabilitiesKeySystemAccessInitializer final
       const HeapVector<Member<MediaKeySystemConfiguration>>&
           supported_configurations,
       GetPerfCallback get_perf_callback)
-      : MediaKeySystemAccessInitializerBase(context,
-                                            resolver,
-                                            key_system,
-                                            supported_configurations),
+      : MediaKeySystemAccessInitializerBase(
+            context,
+            resolver,
+            key_system,
+            supported_configurations,
+            /*is_from_media_capabilities=*/true),
         get_perf_callback_(std::move(get_perf_callback)) {}
 
   MediaCapabilitiesKeySystemAccessInitializer(
@@ -290,7 +298,7 @@ bool IsValidMimeType(const String& content_type,
   if (parameters.ParameterCount() == 0)
     return true;
 
-  return parameters.begin()->name.LowerASCII() == kCodecsMimeTypeParam;
+  return EqualIgnoringASCIICase(parameters.begin()->name, kCodecsMimeTypeParam);
 }
 
 bool IsValidMediaConfiguration(const MediaConfiguration* configuration) {
@@ -471,12 +479,13 @@ WebMediaConfiguration ToWebMediaConfiguration(
 
   // |type| is required.
   DCHECK(configuration->hasType());
-  if (configuration->type() == "record")
+  if (configuration->type() == "record") {
     web_configuration.type = MediaConfigurationType::kRecord;
-  else if (configuration->type() == "transmission")
+  } else if (configuration->type() == "transmission") {
     web_configuration.type = MediaConfigurationType::kTransmission;
-  else
-    NOTREACHED_IN_MIGRATION();
+  } else {
+    NOTREACHED();
+  }
 
   if (configuration->hasAudio()) {
     web_configuration.audio_configuration =
@@ -534,7 +543,7 @@ bool CheckMseSupport(const String& mime_type, const String& codec) {
 
   const std::string codec_ascii = codec.Ascii();
   if (!codec.Ascii().empty())
-    codecs = base::make_span(&codec_ascii, 1u);
+    codecs = base::span_from_ref(codec_ascii);
 
   if (media::SupportsType::kSupported !=
       media::StreamParserFactory::IsTypeSupported(mime_type.Ascii(), codecs)) {
@@ -568,7 +577,7 @@ void ParseDynamicRangeConfigurations(
     } else if (hdr_metadata_type == kSmpteSt209440HdrMetadataType) {
       *hdr_metadata = gfx::HdrMetadataType::kSmpteSt2094_40;
     } else {
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
     }
   } else {
     *hdr_metadata = gfx::HdrMetadataType::kNone;
@@ -584,7 +593,7 @@ void ParseDynamicRangeConfigurations(
     } else if (color_gamut == kRec2020ColorGamut) {
       color_space->primaries = media::VideoColorSpace::PrimaryID::BT2020;
     } else {
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
     }
   }
 
@@ -598,7 +607,7 @@ void ParseDynamicRangeConfigurations(
     } else if (transfer_function == kHlgTransferFunction) {
       color_space->transfer = media::VideoColorSpace::TransferID::ARIB_STD_B67;
     } else {
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
     }
   }
 }
@@ -685,7 +694,7 @@ bool IsAudioConfigurationSupported(
   if (audio_config->hasSpatialRendering())
     is_spatial_rendering = audio_config->spatialRendering();
 
-  return media::IsSupportedAudioType(
+  return media::IsDecoderSupportedAudioType(
       {audio_codec, audio_profile, is_spatial_rendering});
 }
 
@@ -725,9 +734,9 @@ bool IsVideoConfigurationSupported(const String& mime_type,
     video_color_space = result->color_space;
   }
 
-  return media::IsSupportedVideoType({result->codec, result->profile,
-                                      result->level, video_color_space,
-                                      hdr_metadata_type});
+  return media::IsDecoderSupportedVideoType({result->codec, result->profile,
+                                             result->level, video_color_space,
+                                             hdr_metadata_type});
 }
 
 void OnMediaCapabilitiesEncodingInfo(
@@ -890,7 +899,7 @@ ScriptPromise<MediaCapabilitiesDecodingInfo> MediaCapabilities::decodingInfo(
         codec_profile =
             WebRtcVideoFormatToMediaVideoCodecProfile(*sdp_video_format);
         video_pixels = config->video()->width() * config->video()->height();
-        frames_per_second = static_cast<int>(config->video()->framerate());
+        frames_per_second = base::ClampRound(config->video()->framerate());
       }
       media::mojom::blink::WebrtcPredictionFeaturesPtr features =
           media::mojom::blink::WebrtcPredictionFeatures::New(
@@ -1104,7 +1113,7 @@ ScriptPromise<MediaCapabilitiesInfo> MediaCapabilities::encodingInfo(
         codec_profile =
             WebRtcVideoFormatToMediaVideoCodecProfile(*sdp_video_format);
         video_pixels = config->video()->width() * config->video()->height();
-        frames_per_second = static_cast<int>(config->video()->framerate());
+        frames_per_second = base::ClampRound(config->video()->framerate());
       }
       media::mojom::blink::WebrtcPredictionFeaturesPtr features =
           media::mojom::blink::WebrtcPredictionFeatures::New(
@@ -1134,13 +1143,17 @@ ScriptPromise<MediaCapabilitiesInfo> MediaCapabilities::encodingInfo(
   DCHECK_EQ(config->type(), "record");
   DCHECK(RuntimeEnabledFeatures::MediaCapabilitiesEncodingInfoEnabled());
 
+  auto task_runner = resolver->GetExecutionContext()->GetTaskRunner(
+      TaskType::kInternalMediaRealTime);
   if (auto* handler = MakeGarbageCollected<MediaRecorderHandler>(
-          resolver->GetExecutionContext()->GetTaskRunner(
-              TaskType::kInternalMediaRealTime),
-          KeyFrameRequestProcessor::Configuration())) {
-    handler->EncodingInfo(ToWebMediaConfiguration(config),
-                          WTF::BindOnce(&OnMediaCapabilitiesEncodingInfo,
-                                        WrapPersistent(resolver)));
+          task_runner, KeyFrameRequestProcessor::Configuration())) {
+    task_runner->PostTask(
+        FROM_HERE,
+        WTF::BindOnce(&MediaRecorderHandler::EncodingInfo, WrapPersistent(handler),
+                      ToWebMediaConfiguration(config),
+                      WTF::BindOnce(&OnMediaCapabilitiesEncodingInfo,
+                                    WrapPersistent(resolver))));
+
     return promise;
   }
 
@@ -1249,7 +1262,7 @@ ScriptPromise<MediaCapabilitiesDecodingInfo> MediaCapabilities::GetEmeSupport(
   // See context here:
   // https://sites.google.com/a/chromium.org/dev/Home/chromium-security/deprecating-permissions-in-cross-origin-iframes
   if (!execution_context->IsFeatureEnabled(
-          mojom::blink::PermissionsPolicyFeature::kEncryptedMedia,
+          network::mojom::PermissionsPolicyFeature::kEncryptedMedia,
           ReportOptions::kReportOnFailure)) {
     UseCounter::Count(execution_context,
                       WebFeature::kEncryptedMediaDisabledByFeaturePolicy);
@@ -1700,7 +1713,8 @@ void MediaCapabilities::OnGpuFactoriesSupport(int callback_id,
   PendingCallbackState* pending_cb = pending_cb_map_.at(callback_id);
 
   pending_cb->is_gpu_factories_supported = is_supported;
-  pending_cb->is_builtin_video_codec = media::IsBuiltInVideoCodec(video_codec);
+  pending_cb->is_builtin_video_codec =
+      media::IsDecoderBuiltInVideoCodec(video_codec);
 
   ResolveCallbackIfReady(callback_id);
 }

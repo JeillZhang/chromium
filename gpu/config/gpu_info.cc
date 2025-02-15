@@ -9,13 +9,7 @@
 #include "base/logging.h"
 #include "base/notreached.h"
 #include "build/build_config.h"
-#include "gpu/command_buffer/common/gpu_memory_buffer_support.h"
 #include "gpu/config/gpu_util.h"
-
-#if BUILDFLAG(IS_MAC)
-#include <GLES2/gl2.h>
-#include <GLES2/gl2extchromium.h>
-#endif  // BUILDFLAG(IS_MAC)
 
 namespace {
 
@@ -77,8 +71,7 @@ const char* ImageDecodeAcceleratorTypeToString(
     case gpu::ImageDecodeAcceleratorType::kUnknown:
       return "Unknown";
   }
-  NOTREACHED_IN_MIGRATION() << "Invalid ImageDecodeAcceleratorType.";
-  return "";
+  NOTREACHED() << "Invalid ImageDecodeAcceleratorType.";
 }
 
 const char* ImageDecodeAcceleratorSubsamplingToString(
@@ -154,19 +147,6 @@ const char* OverlaySupportToString(gpu::OverlaySupport support) {
 }
 #endif  // BUILDFLAG(IS_WIN)
 
-#if BUILDFLAG(IS_MAC)
-GPU_EXPORT bool ValidateMacOSSpecificTextureTarget(int target) {
-  switch (target) {
-    case GL_TEXTURE_2D:
-    case GL_TEXTURE_RECTANGLE_ARB:
-      return true;
-
-    default:
-      return false;
-  }
-}
-#endif  // BUILDFLAG(IS_MAC)
-
 VideoDecodeAcceleratorCapabilities::VideoDecodeAcceleratorCapabilities()
     : flags(0) {}
 
@@ -232,9 +212,6 @@ GPUInfo::GPUInfo()
       sandboxed(false),
       in_process_gpu(true),
       passthrough_cmd_decoder(false),
-#if BUILDFLAG(IS_MAC)
-      macos_specific_texture_target(gpu::GetPlatformSpecificTextureTarget()),
-#endif  // BUILDFLAG(IS_MAC)
       jpeg_decode_accelerator_supported(false),
       subpixel_font_rendering(true) {
 }
@@ -310,6 +287,7 @@ void GPUInfo::EnumerateFields(Enumerator* enumerator) const {
     bool amd_switchable;
     GPUDevice gpu;
     std::vector<GPUDevice> secondary_gpus;
+    std::vector<GPUDevice> npus;
     std::string pixel_shader_version;
     std::string vertex_shader_version;
     std::string max_msaa_samples;
@@ -333,9 +311,6 @@ void GPUInfo::EnumerateFields(Enumerator* enumerator) const {
     bool is_asan;
     bool is_clang_coverage;
     uint32_t target_cpu_bits;
-#if BUILDFLAG(IS_MAC)
-    uint32_t macos_specific_texture_target;
-#endif  // BUILDFLAG(IS_MAC)
 #if BUILDFLAG(IS_WIN)
     uint32_t directml_feature_level;
     uint32_t d3d12_feature_level;
@@ -358,6 +333,7 @@ void GPUInfo::EnumerateFields(Enumerator* enumerator) const {
     uint32_t visibility_callback_call_count;
 
 #if BUILDFLAG(ENABLE_VULKAN)
+    bool hardware_supports_vulkan;
     std::optional<VulkanInfo> vulkan_info;
 #endif
   };
@@ -375,7 +351,9 @@ void GPUInfo::EnumerateFields(Enumerator* enumerator) const {
   EnumerateGPUDevice(gpu, enumerator);
   for (const auto& secondary_gpu : secondary_gpus)
     EnumerateGPUDevice(secondary_gpu, enumerator);
-
+  for (const auto& npu : npus) {
+    EnumerateGPUDevice(npu, enumerator);
+  }
   enumerator->BeginAuxAttributes();
   enumerator->AddTimeDeltaInSecondsF("initializationTime", initialization_time);
   enumerator->AddBool("optimus", optimus);
@@ -404,10 +382,6 @@ void GPUInfo::EnumerateFields(Enumerator* enumerator) const {
   enumerator->AddInt("targetCpuBits", static_cast<int>(target_cpu_bits));
   enumerator->AddBool("canSupportThreadedTextureMailbox",
                       can_support_threaded_texture_mailbox);
-#if BUILDFLAG(IS_MAC)
-  enumerator->AddInt("macOSSpecificTextureTarget",
-                     macos_specific_texture_target);
-#endif  // BUILDFLAG(IS_MAC)
   // TODO(kbr): add dx_diagnostics on Windows.
 #if BUILDFLAG(IS_WIN)
   EnumerateOverlayInfo(overlay_info, enumerator);
@@ -435,6 +409,7 @@ void GPUInfo::EnumerateFields(Enumerator* enumerator) const {
   enumerator->AddInt("visibilityCallbackCallCount",
                      visibility_callback_call_count);
 #if BUILDFLAG(ENABLE_VULKAN)
+  enumerator->AddBool("hardwareSupportsVulkan", hardware_supports_vulkan);
   if (vulkan_info) {
     auto blob = vulkan_info->Serialize();
     enumerator->AddBinary("vulkanInfo", base::span<const uint8_t>(blob));

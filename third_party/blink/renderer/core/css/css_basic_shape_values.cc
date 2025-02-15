@@ -109,7 +109,8 @@ static CSSValuePair* BuildSerializablePositionOffset(CSSValue* offset,
     side = default_side;
     amount = CSSNumericLiteralValue::Create(
         50, CSSPrimitiveValue::UnitType::kPercentage);
-  } else if (!amount || (amount->IsLength() && amount->IsZero())) {
+  } else if (!amount ||
+             (amount->IsLength() && amount->GetValueIfKnown() == 0.0)) {
     if (side == CSSValueID::kRight || side == CSSValueID::kBottom) {
       amount = CSSNumericLiteralValue::Create(
           100, CSSPrimitiveValue::UnitType::kPercentage);

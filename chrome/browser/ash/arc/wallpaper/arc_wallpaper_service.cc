@@ -9,8 +9,6 @@
 #include <string>
 #include <utility>
 
-#include "ash/components/arc/arc_browser_context_keyed_service_factory_base.h"
-#include "ash/components/arc/session/arc_bridge_service.h"
 #include "ash/public/cpp/wallpaper/wallpaper_controller.h"
 #include "base/functional/bind.h"
 #include "base/logging.h"
@@ -18,11 +16,14 @@
 #include "base/memory/singleton.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/task/thread_pool.h"
-#include "chrome/browser/ui/ash/wallpaper_controller_client_impl.h"
+#include "chrome/browser/ui/ash/wallpaper/wallpaper_controller_client_impl.h"
+#include "chromeos/ash/experiences/arc/arc_browser_context_keyed_service_factory_base.h"
+#include "chromeos/ash/experiences/arc/session/arc_bridge_service.h"
 #include "components/account_id/account_id.h"
 #include "components/user_manager/user.h"
 #include "components/user_manager/user_manager.h"
 #include "content/public/browser/browser_thread.h"
+#include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/gfx/codec/png_codec.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/image/image.h"
@@ -49,9 +50,10 @@ void RecordApiUsage(const ArcWallpaperApi api) {
 }
 
 std::vector<uint8_t> EncodeImagePng(const gfx::ImageSkia& image) {
-  std::vector<uint8_t> result;
-  gfx::PNGCodec::FastEncodeBGRASkBitmap(*image.bitmap(), true, &result);
-  return result;
+  std::optional<std::vector<uint8_t>> result =
+      gfx::PNGCodec::FastEncodeBGRASkBitmap(*image.bitmap(),
+                                            /*discard_transparency=*/true);
+  return result.value_or(std::vector<uint8_t>());
 }
 
 // Singleton factory for ArcWallpaperService.

@@ -100,10 +100,10 @@ export class UrlVisitElement extends ClusterMenuElementBase {
   // Properties
   //============================================================================
 
-  query: string;
-  visit: URLVisit;
-  fromPersistence: boolean;
-  protected annotations_: string[];
+  query: string = '';
+  visit?: URLVisit;
+  fromPersistence: boolean = false;
+  protected annotations_: string[] = [];
   protected allowDeletingHistory_: boolean =
       loadTimeData.getBoolean('allowDeletingHistory');
   private inSidePanel_: boolean = loadTimeData.getBoolean('inSidePanel');
@@ -113,6 +113,7 @@ export class UrlVisitElement extends ClusterMenuElementBase {
     super.updated(changedProperties);
 
     if (changedProperties.has('visit')) {
+      assert(this.visit);
       insertHighlightedTextWithMatchesIntoElement(
           this.$.title, this.visit.pageTitle, this.visit.titleMatchPositions);
       insertHighlightedTextWithMatchesIntoElement(
@@ -127,11 +128,7 @@ export class UrlVisitElement extends ClusterMenuElementBase {
 
   private onAuxClick_() {
     // Notify the parent <history-cluster> element of this event.
-    this.dispatchEvent(new CustomEvent('visit-clicked', {
-      bubbles: true,
-      composed: true,
-      detail: this.visit,
-    }));
+    this.fire('visit-clicked', this.visit);
   }
 
   protected onClick_(event: MouseEvent) {
@@ -151,7 +148,7 @@ export class UrlVisitElement extends ClusterMenuElementBase {
   protected onContextMenu_(event: MouseEvent) {
     // Because WebUI has a Blink-provided context menu that's suitable, and
     // Side Panel always UIs always have a custom context menu.
-    if (!loadTimeData.getBoolean('inSidePanel')) {
+    if (!loadTimeData.getBoolean('inSidePanel') || !this.visit) {
       return;
     }
 
@@ -178,7 +175,7 @@ export class UrlVisitElement extends ClusterMenuElementBase {
       this.renderActionMenu_ = true;
       await this.updateComplete;
     }
-    const menu = this.shadowRoot!.querySelector('cr-action-menu');
+    const menu = this.shadowRoot.querySelector('cr-action-menu');
     assert(menu);
     menu.showAt(this.$.actionMenuButton);
   }
@@ -194,16 +191,12 @@ export class UrlVisitElement extends ClusterMenuElementBase {
   private emitMenuButtonClick_(event: Event, emitEventName: string) {
     event.preventDefault();  // Prevent default browser action (navigation).
 
-    this.dispatchEvent(new CustomEvent(emitEventName, {
-      bubbles: true,
-      composed: true,
-      detail: this.visit,
-    }));
+    this.fire(emitEventName, this.visit);
 
     // This can also be triggered from the hide visit icon, in which case the
     // menu may not be rendered.
     if (this.renderActionMenu_) {
-      const menu = this.shadowRoot!.querySelector('cr-action-menu');
+      const menu = this.shadowRoot.querySelector('cr-action-menu');
       assert(menu);
       menu.close();
     }
@@ -216,7 +209,7 @@ export class UrlVisitElement extends ClusterMenuElementBase {
   protected computeAnnotations_(): string[] {
     // Disabling annotations until more appropriate design for annotations in
     // the side panel is complete.
-    if (this.inSidePanel_) {
+    if (this.inSidePanel_ || !this.visit) {
       return [];
     }
     return this.visit.annotations
@@ -230,7 +223,7 @@ export class UrlVisitElement extends ClusterMenuElementBase {
   }
 
   protected computeDebugInfo_(): string {
-    if (!loadTimeData.getBoolean('isHistoryClustersDebug')) {
+    if (!loadTimeData.getBoolean('isHistoryClustersDebug') || !this.visit) {
       return '';
     }
 
@@ -238,7 +231,8 @@ export class UrlVisitElement extends ClusterMenuElementBase {
   }
 
   private openUrl_(event: MouseEvent|KeyboardEvent) {
-    BrowserProxyImpl.getInstance().handler.openHistoryCluster(
+    assert(this.visit);
+    BrowserProxyImpl.getInstance().handler.openHistoryUrl(
         this.visit.normalizedUrl, {
           middleButton: (event as MouseEvent).button === 1,
           altKey: event.altKey,

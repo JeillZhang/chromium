@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "gpu/command_buffer/common/mailbox.h"
 
 #include <stddef.h>
@@ -9,6 +14,7 @@
 #include <string.h>
 
 #include "base/check.h"
+#include "base/numerics/byte_conversions.h"
 #include "base/rand_util.h"
 #include "base/strings/stringprintf.h"
 
@@ -74,6 +80,10 @@ bool Mailbox::Verify() const {
 #else
   return true;
 #endif
+}
+
+uint32_t Mailbox::ToU32() const {
+  return base::U32FromBigEndian(base::as_byte_span(name).first<4>());
 }
 
 std::string Mailbox::ToDebugString() const {

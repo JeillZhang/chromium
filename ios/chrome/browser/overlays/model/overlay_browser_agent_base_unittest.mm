@@ -15,7 +15,7 @@
 #import "ios/chrome/browser/overlays/model/test/overlay_test_macros.h"
 #import "ios/chrome/browser/shared/model/browser/browser_user_data.h"
 #import "ios/chrome/browser/shared/model/browser/test/test_browser.h"
-#import "ios/chrome/browser/shared/model/browser_state/test_chrome_browser_state.h"
+#import "ios/chrome/browser/shared/model/profile/test/test_profile_ios.h"
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_list.h"
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_opener.h"
 #import "ios/web/public/test/fakes/fake_web_state.h"
@@ -70,9 +70,9 @@ class OverlayBrowserAgentBaseTest : public PlatformTest {
  public:
   OverlayBrowserAgentBaseTest() {
     // Create the Browser and set up the browser agent.
-    TestChromeBrowserState::Builder builder;
-    browser_state_ = builder.Build();
-    browser_ = std::make_unique<TestBrowser>(browser_state_.get());
+    TestProfileIOS::Builder builder;
+    profile_ = std::move(builder).Build();
+    browser_ = std::make_unique<TestBrowser>(profile_.get());
     FakeOverlayBrowserAgent::CreateForBrowser(browser_.get());
     // Set up the infobar OverlayPresenter.
     OverlayPresenter::FromBrowser(browser_.get(), kModality)
@@ -105,7 +105,7 @@ class OverlayBrowserAgentBaseTest : public PlatformTest {
 
  protected:
   web::WebTaskEnvironment task_environment_;
-  std::unique_ptr<ChromeBrowserState> browser_state_;
+  std::unique_ptr<ProfileIOS> profile_;
   raw_ptr<web::WebState> web_state_ = nullptr;
   std::unique_ptr<Browser> browser_;
   FakeOverlayPresentationContext presentation_context_;

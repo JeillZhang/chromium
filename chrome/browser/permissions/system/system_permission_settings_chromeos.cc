@@ -4,34 +4,63 @@
 
 #include "chrome/browser/permissions/system/system_permission_settings.h"
 
-#include "base/feature_list.h"
-#include "chrome/browser/ash/privacy_hub/privacy_hub_util.h"
-#include "chrome/browser/profiles/profile_manager.h"
-#include "components/content_settings/core/common/content_settings_types.h"
-#include "components/content_settings/core/common/features.h"
+#include <utility>
 
-class SystemPermissionSettingsImpl : public SystemPermissionSettings {
-  bool IsPermissionDeniedImpl(content::WebContents* web_contents,
-                              ContentSettingsType type) const override {
-    if (base::FeatureList::IsEnabled(
-            content_settings::features::
-                kCrosSystemLevelPermissionBlockedWarnings)) {
+#include "base/feature_list.h"
+#include "base/functional/bind.h"
+#include "chrome/browser/ash/privacy_hub/privacy_hub_util.h"
+#include "chrome/browser/permissions/system/platform_handle.h"
+#include "chrome/browser/web_applications/manifest_update_utils.h"
+#include "components/content_settings/core/common/content_settings_types.h"
+
+namespace system_permission_settings {
+
+namespace {
+
+class PlatformObservationWrapper : public ScopedObservation {
+ public:
+  explicit PlatformObservationWrapper(
+      std::unique_ptr<ash::privacy_hub_util::ContentBlockObservation>
+          observation)
+      : ScopedObservation(), observation_(std::move(observation)) {}
+
+ private:
+  std::unique_ptr<ash::privacy_hub_util::ContentBlockObservation> observation_;
+};
+
+class PlatformHandleImpl : public PlatformHandle {
+ public:
+  bool CanPrompt(ContentSettingsType type) override { return false; }
+
+  bool IsDenied(ContentSettingsType type) override {
       return ash::privacy_hub_util::ContentBlocked(type);
-    }
-    return false;
   }
 
+  bool IsAllowed(ContentSettingsType type) override { return !IsDenied(type); }
+
   void OpenSystemSettings(content::WebContents*,
-                          ContentSettingsType type) const override {
-    if (base::FeatureList::IsEnabled(
-            content_settings::features::
-                kCrosSystemLevelPermissionBlockedWarnings)) {
-      ash::privacy_hub_util::OpenSystemSettings(
-          ProfileManager::GetActiveUserProfile(), type);
-    }
+                          ContentSettingsType type) override {
+    ash::privacy_hub_util::OpenSystemSettings(type);
+  }
+
+  void Request(ContentSettingsType type,
+               SystemPermissionResponseCallback callback) override {
+    std::move(callback).Run();
+    NOTREACHED();
+  }
+
+  std::unique_ptr<ScopedObservation> Observe(
+      SystemPermissionChangedCallback observer) override {
+    return make_unique<PlatformObservationWrapper>(
+        ash::privacy_hub_util::CreateObservationForBlockedContent(
+            std::move(observer)));
   }
 };
 
-std::unique_ptr<SystemPermissionSettings> SystemPermissionSettings::Create() {
-  return std::make_unique<SystemPermissionSettingsImpl>();
+}  // namespace
+
+std::unique_ptr<PlatformHandle> PlatformHandle::Create() {
+  return std::make_unique<PlatformHandleImpl>();
 }
+
+}  // namespace system_permission_settings

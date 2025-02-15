@@ -56,16 +56,16 @@ class FormFetcherImpl : public FormFetcher,
   bool IsMovingBlocked(const signin::GaiaIdHash& destination,
                        const std::u16string& username) const override;
 
-  const std::vector<raw_ptr<const PasswordForm, VectorExperimental>>&
-  GetAllRelevantMatches() const override;
+  base::span<const PasswordForm> GetAllRelevantMatches() const override;
   base::span<const PasswordForm> GetBestMatches() const override;
   const PasswordForm* GetPreferredMatch() const override;
+  std::optional<PasswordFormMetricsRecorder::MatchedFormType>
+  GetPreferredOrPotentialMatchedFormType() const override;
   std::unique_ptr<FormFetcher> Clone() override;
   std::optional<PasswordStoreBackendError> GetProfileStoreBackendError()
       const override;
   std::optional<PasswordStoreBackendError> GetAccountStoreBackendError()
       const override;
-  bool WereGroupedCredentialsAvailable() const override;
 
   inline void set_filter_grouped_credentials(bool filter_grouped_credentials) {
     filter_grouped_credentials_ = filter_grouped_credentials;
@@ -111,7 +111,9 @@ class FormFetcherImpl : public FormFetcher,
   // password store returning results in the meantime.
   bool need_to_refetch_ = false;
 
-  // Results obtained from PasswordStore:
+  // Results obtained from PasswordStore. Matches with the same schema as the
+  // observed form are always at the beginning of the vector, sorted by their
+  // priority.
   std::vector<PasswordForm> non_federated_;
 
   // Federated credentials relevant to the observed form. They are neither
@@ -130,10 +132,6 @@ class FormFetcherImpl : public FormFetcher,
   base::flat_map<PasswordStoreInterface*,
                  std::unique_ptr<HttpPasswordStoreMigrator>>
       http_migrators_;
-
-  // Non-federated credentials of the same scheme as the observed form.
-  std::vector<raw_ptr<const PasswordForm, VectorExperimental>>
-      non_federated_same_scheme_;
 
   // Set of nonblocklisted PasswordForms from the password store that best match
   // the form being managed by |this|.
@@ -164,9 +162,12 @@ class FormFetcherImpl : public FormFetcher,
   std::optional<PasswordStoreBackendError> profile_store_backend_error_;
   std::optional<PasswordStoreBackendError> account_store_backend_error_;
 
-  // Stores information whether grouped credentials were available, but were
-  // filtered out.
-  bool were_grouped_credentials_availible_ = false;
+  // If any grouped credentials were available, stores the form type of the
+  // first such credential returned by the password store. If grouped
+  // credentials are configured to not be ignored, this member variable won't
+  // be store any data.
+  std::optional<PasswordFormMetricsRecorder::MatchedFormType>
+      grouped_credentials_form_type_;
 
   base::WeakPtrFactory<FormFetcherImpl> weak_ptr_factory_{this};
 };

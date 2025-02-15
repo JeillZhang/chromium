@@ -34,11 +34,7 @@ void HandleExported(const std::string& method_name,
 constexpr char FlossAdapterClient::kErrorUnknownAdapter[] =
     "org.chromium.Error.UnknownAdapter";
 constexpr char FlossAdapterClient::kExportedCallbacksPath[] =
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-    "/org/chromium/bluetooth/adapter/callback/lacros";
-#else
     "/org/chromium/bluetooth/adapter/callback";
-#endif
 static uint32_t callback_path_index_ = 0;
 
 void FlossAdapterClient::SetName(ResponseCallback<Void> callback,
@@ -337,6 +333,12 @@ void FlossAdapterClient::Init(dbus::Bus* bus,
                           weak_ptr_factory_.GetWeakPtr()),
       base::BindOnce(&HandleExported, adapter::kOnDeviceDisconnected));
 
+  callbacks->ExportMethod(
+      adapter::kConnectionCallbackInterface, adapter::kOnDeviceConnectionFailed,
+      base::BindRepeating(&FlossAdapterClient::OnDeviceConnectionFailed,
+                          weak_ptr_factory_.GetWeakPtr()),
+      base::BindOnce(&HandleExported, adapter::kOnDeviceConnectionFailed));
+
   property_address_.Init(
       this, bus_, service_name_, adapter_path_,
       dbus::ObjectPath(exported_callback_path_),
@@ -528,15 +530,12 @@ void FlossAdapterClient::OnSspRequest(
     return;
   }
 
-  // Block the event in LaCrOS so it won't race with AshChrome. See b/308988818.
   // TODO(b/274706838): Redesign DBus API so it's only received by the correct
   // client.
-#if !BUILDFLAG(IS_CHROMEOS_LACROS)
   for (auto& observer : observers_) {
     observer.AdapterSspRequest(
         device, cod, static_cast<BluetoothSspVariant>(variant), passkey);
   }
-#endif  // !BUILDFLAG(IS_CHROMEOS_LACROS)
 
   std::move(response_sender).Run(dbus::Response::FromMethodCall(method_call));
 }
@@ -555,14 +554,11 @@ void FlossAdapterClient::OnPinDisplay(
     return;
   }
 
-  // Block the event in LaCrOS so it won't race with AshChrome. See b/308988818.
   // TODO(b/274706838): Redesign DBus API so it's only received by the correct
   // client.
-#if !BUILDFLAG(IS_CHROMEOS_LACROS)
   for (auto& observer : observers_) {
     observer.AdapterPinDisplay(device, pincode);
   }
-#endif  // !BUILDFLAG(IS_CHROMEOS_LACROS)
 
   std::move(response_sender).Run(dbus::Response::FromMethodCall(method_call));
 }
@@ -582,14 +578,11 @@ void FlossAdapterClient::OnPinRequest(
     return;
   }
 
-  // Block the event in LaCrOS so it won't race with AshChrome. See b/308988818.
   // TODO(b/274706838): Redesign DBus API so it's only received by the correct
   // client.
-#if !BUILDFLAG(IS_CHROMEOS_LACROS)
   for (auto& observer : observers_) {
     observer.AdapterPinRequest(device, cod, min_16_digit);
   }
-#endif  // !BUILDFLAG(IS_CHROMEOS_LACROS)
 
   std::move(response_sender).Run(dbus::Response::FromMethodCall(method_call));
 }
@@ -726,6 +719,28 @@ void FlossAdapterClient::OnDeviceDisconnected(
 
   for (auto& observer : observers_) {
     observer.AdapterDeviceDisconnected(device);
+  }
+
+  std::move(response_sender).Run(dbus::Response::FromMethodCall(method_call));
+}
+
+void FlossAdapterClient::OnDeviceConnectionFailed(
+    dbus::MethodCall* method_call,
+    dbus::ExportedObject::ResponseSender response_sender) {
+  dbus::MessageReader reader(method_call);
+  FlossDeviceId device;
+  uint32_t status;
+
+  if (!ReadAllDBusParams(&reader, &device, &status)) {
+    std::move(response_sender)
+        .Run(dbus::ErrorResponse::FromMethodCall(
+            method_call, kErrorInvalidParameters,
+            /*error_message=*/std::string()));
+    return;
+  }
+
+  for (auto& observer : observers_) {
+    observer.AdapterDeviceConnectionFailed(device, status);
   }
 
   std::move(response_sender).Run(dbus::Response::FromMethodCall(method_call));

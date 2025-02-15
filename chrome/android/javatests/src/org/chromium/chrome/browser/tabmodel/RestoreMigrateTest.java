@@ -21,10 +21,12 @@ import org.mockito.MockitoAnnotations;
 
 import org.chromium.base.ContextUtils;
 import org.chromium.base.FileUtils;
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.AdvancedMockContext;
 import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.Feature;
 import org.chromium.chrome.browser.app.tabmodel.TabWindowManagerSingleton;
+import org.chromium.chrome.browser.crypto.CipherFactory;
 import org.chromium.chrome.browser.preferences.ChromePreferenceKeys;
 import org.chromium.chrome.browser.preferences.ChromeSharedPreferences;
 import org.chromium.chrome.browser.profiles.Profile;
@@ -35,7 +37,6 @@ import org.chromium.chrome.browser.tabpersistence.TabStateDirectory;
 import org.chromium.chrome.browser.tabpersistence.TabStateFileManager;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.util.browser.tabmodel.MockTabModelSelector;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
 
 import java.io.File;
 import java.io.IOException;
@@ -51,15 +52,16 @@ public class RestoreMigrateTest {
     @Mock private Profile mIncognitoProfile;
 
     private Context mAppContext;
+    private CipherFactory mCipherFactory;
 
     private void writeStateFile(final TabModelSelector selector, int index) throws IOException {
         TabModelSelectorMetadata data =
-                TestThreadUtils.runOnUiThreadBlockingNoException(
+                ThreadUtils.runOnUiThreadBlocking(
                         new Callable<TabModelSelectorMetadata>() {
                             @Override
                             public TabModelSelectorMetadata call() throws Exception {
                                 return TabPersistentStore.saveTabModelSelectorMetadata(
-                                        selector, null, false);
+                                        selector, null);
                             }
                         });
 
@@ -91,6 +93,8 @@ public class RestoreMigrateTest {
                                 .getApplicationContext());
         ContextUtils.initApplicationContextForTests(mAppContext);
         TabIdManager.resetInstanceForTesting();
+
+        mCipherFactory = new CipherFactory();
     }
 
     static class AdvancedMockContextWithTestDir extends AdvancedMockContext {
@@ -122,21 +126,23 @@ public class RestoreMigrateTest {
 
     private TabPersistentStore buildTabPersistentStore(
             final TabModelSelector selector, final int selectorIndex) {
-        return TestThreadUtils.runOnUiThreadBlockingNoException(
+        return ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     TabPersistencePolicy persistencePolicy =
                             new TabbedModeTabPersistencePolicy(selectorIndex, false, true);
                     TabPersistentStore store =
-                            new TabPersistentStore(persistencePolicy, selector, null);
+                            new TabPersistentStore(
+                                    TabPersistentStore.CLIENT_TAG_REGULAR,
+                                    persistencePolicy,
+                                    selector,
+                                    null,
+                                    TabWindowManagerSingleton.getInstance(),
+                                    mCipherFactory);
                     return store;
                 });
     }
 
-    /**
-     * Test that normal migration of state files works.
-     *
-     * @throws IOException
-     */
+    /** Test that normal migration of state files works. */
     @Test
     @SuppressWarnings("unused")
     @SmallTest
@@ -194,11 +200,7 @@ public class RestoreMigrateTest {
         Assert.assertFalse("Could still find old tab 3 file", tab3.exists());
     }
 
-    /**
-     * Test that migration skips if it already has files in the new folder.
-     *
-     * @throws IOException
-     */
+    /** Test that migration skips if it already has files in the new folder. */
     @Test
     @SuppressWarnings("unused")
     @SmallTest
@@ -253,11 +255,7 @@ public class RestoreMigrateTest {
         Assert.assertFalse("Could find new tab 3 file", newTab3.exists());
     }
 
-    /**
-     * Test that the state file migration skips unrelated files.
-     *
-     * @throws IOException
-     */
+    /** Test that the state file migration skips unrelated files. */
     @Test
     @SuppressWarnings("unused")
     @SmallTest
@@ -296,11 +294,7 @@ public class RestoreMigrateTest {
         Assert.assertFalse("Could find new other file", newOtherFile.exists());
     }
 
-    /**
-     * Tests that the max id returned is the max of all of the tab models.
-     *
-     * @throws IOException
-     */
+    /** Tests that the max id returned is the max of all of the tab models. */
     @Test
     @SmallTest
     @Feature({"TabPersistentStore"})
@@ -330,8 +324,6 @@ public class RestoreMigrateTest {
      * Tests that each model loads the subset of tabs it is responsible for. In this case, just
      * check that the model has the expected number of tabs to load. Since each model is loading a
      * different number of tabs we can tell if they are each attempting to load their specific set.
-     *
-     * @throws IOException
      */
     @Test
     @SmallTest

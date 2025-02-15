@@ -18,6 +18,7 @@
 #include "base/time/time.h"
 #include "chrome/browser/ash/app_list/search/local_image_search/annotation_storage.h"
 #include "chrome/browser/ash/app_list/search/local_image_search/image_content_annotator.h"
+#include "chrome/browser/ash/app_list/search/local_image_search/search_utils.h"
 #include "chrome/browser/screen_ai/public/optical_character_recognizer.h"
 
 class Profile;
@@ -69,35 +70,45 @@ class ImageAnnotationWorker {
     image_processing_delay_for_test_ = image_processing_delay;
   }
 
+  void set_indexing_source_for_testing(IndexingSource indexing_source) {
+    source_for_test_ = indexing_source;
+  }
+
  private:
   void OnFileChange(const base::FilePath& path, bool error);
 
-  // Processes the next item from the `files_to_process_` queue.
-  void ProcessNextItem();
+  // Processes the items from the `files_to_process_` queue. Do it in a
+  // non-recursive way as recursion can lead to one stack frame per file and
+  // result in chrome crash if there a long list of non-image files in the
+  // queue.
+  void ProcessItems();
 
-  // Processes the next item from the `files_to_process_` queue if the
-  // `file_path` matches the head of the queue.
+  // This function should be called from the image processing callbacks, and
+  // item processing has stopped at this time. Restarts the item processing from
+  // the `files_to_process_` queue if the `file_path` matches the head of the
+  // queue.
   // If `timeout_timer_` has started, sets `use_timer` to true and it will also
-  // stop it if the `file_path` matches the head of the queue.
-  // Image processing callback can return after `timeout_timer_` gets timeout,
-  // which starts a new sequence. It results in multiple sequences executing on
-  // a single queue with certain files get skipped and certain files are
-  // computed multiple times. Thus, we should check if the callback is still
-  // up-to-date before we process the next item.
+  // stop it if the `file_path` matches the head of the queue. Image processing
+  // callback can return after `timeout_timer_` gets timeout, which starts a new
+  // sequence. It results in multiple sequences executing on a single queue with
+  // certain files get skipped and certain files are computed multiple times.
+  // Thus, we should check if the callback is still up-to-date before we restart
+  // the item processing.
   void MaybeProcessNextItem(const base::FilePath& file_path,
                             bool use_timer = false);
 
   // Processes the next directory from the `files_to_process_` queue.
   void ProcessNextDirectory();
 
-  // Processes the next image from the `files_to_process_` queue.
-  void ProcessNextImage();
+  // Processes the next image from the `files_to_process_` queue. Return true if
+  // the image needs to be decoded, and return false otherwise.
+  bool ProcessNextImage();
 
   // Remove all the files from a deleted directory.
   void RemoveOldDirectory();
 
   // Removes deleted images from the annotation storage.
-  void FindAndRemoveDeletedFiles(const std::vector<base::FilePath> images);
+  void FindAndRemoveDeletedFiles(std::vector<base::FilePath> images);
 
   // For testing. File name annotator.
   void RunFakeImageAnnotator(ImageInfo image_info);
@@ -117,7 +128,7 @@ class ImageAnnotationWorker {
   void OnPerformOcr(ImageInfo image_info,
                     screen_ai::mojom::VisualAnnotationPtr visual_annotation);
 
-  void OnImageProcessTimeout();
+  void OnImageProcessTimeout(const base::FilePath& file_path);
 
   std::unique_ptr<base::FilePathWatcher> file_watcher_;
   base::FilePath root_path_;
@@ -148,6 +159,9 @@ class ImageAnnotationWorker {
   // Fake delay for image processing callback. Used in tests only.
   std::optional<base::TimeDelta> image_processing_delay_for_test_ =
       std::nullopt;
+  // Simulate the source for annotation indexing in tests, as we cannot run the
+  // actual models in unit tests. Use OCR by default.
+  IndexingSource source_for_test_ = IndexingSource::kOcr;
 
   base::OneShotTimer timeout_timer_;
   base::TimeTicks queue_processing_start_time_;

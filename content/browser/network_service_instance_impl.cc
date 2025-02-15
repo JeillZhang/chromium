@@ -4,6 +4,8 @@
 
 #include "content/browser/network_service_instance_impl.h"
 
+#include <stdint.h>
+
 #include <memory>
 #include <string>
 #include <string_view>
@@ -25,6 +27,7 @@
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/no_destructor.h"
+#include "base/numerics/safe_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/waitable_event.h"
@@ -37,7 +40,6 @@
 #include "base/threading/thread_restrictions.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "content/browser/browser_main_loop.h"
 #include "content/browser/first_party_sets/first_party_sets_handler_impl.h"
 #include "content/browser/network/http_cache_backend_file_operations_factory.h"
@@ -349,6 +351,11 @@ void CreateInProcessNetworkService(
     base::Thread::Options options(base::MessagePumpType::IO, 0);
     GetNetworkServiceDedicatedThread().StartWithOptions(std::move(options));
     task_runner = GetNetworkServiceDedicatedThread().task_runner();
+    task_runner->PostTask(
+        FROM_HERE, base::BindOnce([]() {
+          mojo::InterfaceEndpointClient::SetThreadNameSuffixForMetrics(
+              "NetworkService");
+        }));
   } else {
     task_runner = GetIOThreadTaskRunner({});
   }
@@ -522,7 +529,7 @@ net::NetLogCaptureMode GetNetCaptureModeFromCommandLine(
 
 // Parse the maximum file size for the NetLog, if one was specified.
 // kNoLimit indicates no, valid, maximum size was specified.
-int64_t GetNetMaximumFileSizeFromCommandLine(
+base::StrictNumeric<uint64_t> GetNetLogMaximumFileSizeFromCommandLine(
     const base::CommandLine& command_line) {
   std::string_view switch_name = network::switches::kNetLogMaxSizeMb;
 
@@ -547,11 +554,16 @@ int64_t GetNetMaximumFileSizeFromCommandLine(
 
   // Value is currently in megabytes, convert to bytes. 1024*1024 == 2^20 ==
   // left shift by 20 bits
-  uint64_t max_size_bytes = max_size_megabytes << 20;
+  uint64_t max_size_bytes = uint64_t{max_size_megabytes} << 20;
   return max_size_bytes;
 }
 
 }  // namespace
+
+uint64_t GetNetLogMaximumFileSizeFromCommandLineForTesting(  // IN-TEST
+    const base::CommandLine& command_line) {
+  return GetNetLogMaximumFileSizeFromCommandLine(command_line);
+}
 
 class NetworkServiceInstancePrivate {
  public:
@@ -650,12 +662,10 @@ network::mojom::NetworkService* GetNetworkService() {
         if (!file.IsValid()) {
           LOG(ERROR) << "Failed opening NetLog: " << log_path.value();
         } else {
-          uint64_t max_file_size =
-              GetNetMaximumFileSizeFromCommandLine(*command_line);
-
           (*g_network_service_remote)
               ->StartNetLog(
-                  std::move(file), max_file_size,
+                  std::move(file),
+                  GetNetLogMaximumFileSizeFromCommandLine(*command_line),
                   GetNetCaptureModeFromCommandLine(*command_line),
                   GetContentClient()->browser()->GetNetLogConstants());
         }
@@ -860,10 +870,9 @@ GetCertVerifierServiceFactory() {
       !factory_remote_storage.is_connected()) {
     factory_remote_storage.reset();
 #if BUILDFLAG(IS_CHROMEOS)
-    // In-process CertVerifierService in Ash and Lacros should run on the IO
-    // thread because it interacts with IO-bound NSS and ChromeOS user slots.
-    // See for example InitializeNSSForChromeOSUser() or
-    // CertDbInitializerIOImpl.
+    // In-process CertVerifierService should run on the IO thread because it
+    // interacts with IO-bound NSS and ChromeOS user slots. See for example
+    // InitializeNSSForChromeOSUser() or CertDbInitializerIOImpl.
     GetIOThreadTaskRunner({})->PostTask(
         FROM_HERE,
         base::BindOnce(&RunInProcessCertVerifierServiceFactory,

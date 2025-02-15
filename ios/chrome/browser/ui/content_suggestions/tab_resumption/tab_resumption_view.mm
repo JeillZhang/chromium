@@ -10,9 +10,11 @@
 #import "base/strings/utf_string_conversions.h"
 #import "base/time/time.h"
 #import "components/url_formatter/elide_url.h"
+#import "ios/chrome/browser/price_notifications/ui_bundled/cells/price_notifications_price_chip_view.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/shared/ui/symbols/symbols.h"
 #import "ios/chrome/browser/shared/ui/util/uikit_ui_util.h"
+#import "ios/chrome/browser/ui/content_suggestions/shop_card/shop_card_data.h"
 #import "ios/chrome/browser/ui/content_suggestions/tab_resumption/tab_resumption_commands.h"
 #import "ios/chrome/browser/ui/content_suggestions/tab_resumption/tab_resumption_constants.h"
 #import "ios/chrome/browser/ui/content_suggestions/tab_resumption/tab_resumption_item.h"
@@ -53,6 +55,12 @@ const CGFloat kContainerStackSpacing = 14.0;
 const CGFloat kNewLabelStackSpacing = 6.0;
 const CGFloat kLabelStackSpacing = 5.0;
 
+// Title constants.
+const CGFloat kTitleLineSpacing = 18.0;
+
+// The inset around the reason label.
+const CGFloat kReasonInset = 4;
+
 // Adds the fallback image that should be used if there is no salient nor
 // favicon image.
 void SetFallbackImageToImageView(UIImageView* image_view,
@@ -80,6 +88,16 @@ void SetFallbackImageToImageView(UIImageView* image_view,
   TabResumptionItem* _item;
   // The view container.
   UIStackView* _containerStackView;
+
+  // The reason views. Keep track to update corner radius.
+  UILabel* _reasonLabel;
+  UIView* _reasonLabelContainer;
+  NSLayoutConstraint* _leadingLabelConstraint;
+  NSLayoutConstraint* _trailingLabelConstraint;
+
+  // Displays the price drop chip if a price drop exists for
+  // the tab resumption url.
+  PriceNotificationsPriceChipView* _priceNotificationsChip;
 }
 
 - (instancetype)initWithItem:(TabResumptionItem*)item {
@@ -101,6 +119,24 @@ void SetFallbackImageToImageView(UIImageView* image_view,
   }
 }
 
+#if !defined(__IPHONE_17_0) || __IPHONE_OS_VERSION_MIN_REQUIRED < __IPHONE_17_0
+- (void)traitCollectionDidChange:(UITraitCollection*)previousTraitCollection {
+  [super traitCollectionDidChange:previousTraitCollection];
+
+  if (@available(iOS 17, *)) {
+    return;
+  }
+  if (!_reasonLabelContainer) {
+    return;
+  }
+
+  if (self.traitCollection.preferredContentSizeCategory !=
+      previousTraitCollection.preferredContentSizeCategory) {
+    [self updateCornerRadius];
+  }
+}
+#endif
+
 #pragma mark - Private methods
 
 // Creates all the subviews.
@@ -117,26 +153,47 @@ void SetFallbackImageToImageView(UIImageView* image_view,
   UIStackView* labelStackView = [self configuredLabelStackView];
   [_containerStackView addArrangedSubview:labelStackView];
 
+  NSMutableArray* accessibilityLabel = [NSMutableArray array];
   UILabel* sessionLabel;
   if (_item.itemType == TabResumptionItemType::kLastSyncedTab &&
       !IsTabResumption1_5Enabled()) {
     sessionLabel = [self configuredSessionLabel];
     [labelStackView addArrangedSubview:sessionLabel];
+    [accessibilityLabel addObject:sessionLabel.text];
   }
   UILabel* tabTitleLabel = [self configuredTabTitleLabel];
   [labelStackView addArrangedSubview:tabTitleLabel];
+  [accessibilityLabel addObject:tabTitleLabel.text];
   UILabel* hostnameAndSyncTimeLabel = [self configuredHostNameAndSyncTimeLabel];
   [labelStackView addArrangedSubview:hostnameAndSyncTimeLabel];
+  [accessibilityLabel addObject:hostnameAndSyncTimeLabel.text];
 
-  if (_item.itemType == TabResumptionItemType::kLastSyncedTab) {
-    self.accessibilityLabel = [NSString
-        stringWithFormat:@"%@,%@,%@", sessionLabel.text, tabTitleLabel.text,
-                         hostnameAndSyncTimeLabel.text];
-  } else {
-    self.accessibilityLabel =
-        [NSString stringWithFormat:@"%@,%@", tabTitleLabel.text,
-                                   hostnameAndSyncTimeLabel.text];
+  if (IsTabResumption2ReasonEnabled() && _item.reason) {
+    // If there is a reason, limit the title to 1 line and add the reason.
+    tabTitleLabel.numberOfLines = 1;
+    UIView* reasonLabel = [self configuredReasonLabel];
+    [labelStackView addArrangedSubview:reasonLabel];
+    [accessibilityLabel addObject:_reasonLabel.text];
+    if (@available(iOS 17, *)) {
+      [self
+          registerForTraitChanges:@[ UITraitPreferredContentSizeCategory.class ]
+                       withAction:@selector(updateCornerRadius)];
+    }
   }
+  if (_item.shopCardData &&
+      _item.shopCardData.shopCardItemType ==
+          ShopCardItemType::kPriceDropOnTab &&
+      _item.shopCardData.priceDrop.has_value()) {
+    _priceNotificationsChip = [[PriceNotificationsPriceChipView alloc] init];
+    _priceNotificationsChip.translatesAutoresizingMaskIntoConstraints = NO;
+    _priceNotificationsChip.isAccessibilityElement = YES;
+    [_priceNotificationsChip
+         setPriceDrop:_item.shopCardData.priceDrop->current_price
+        previousPrice:_item.shopCardData.priceDrop->previous_price];
+    [labelStackView addArrangedSubview:_priceNotificationsChip];
+  }
+
+  self.accessibilityLabel = [accessibilityLabel componentsJoinedByString:@","];
 
   [self addSubview:_containerStackView];
   AddSameConstraints(_containerStackView, self);
@@ -166,6 +223,7 @@ void SetFallbackImageToImageView(UIImageView* image_view,
 - (UIStackView*)configuredLabelStackView {
   UIStackView* labelStackView = [[UIStackView alloc] init];
   labelStackView.axis = UILayoutConstraintAxisVertical;
+  labelStackView.alignment = UIStackViewAlignmentLeading;
   if (IsTabResumption1_5Enabled()) {
     labelStackView.spacing = kNewLabelStackSpacing;
   } else {
@@ -248,8 +306,8 @@ void SetFallbackImageToImageView(UIImageView* image_view,
   UIImageView* salientView = [[UIImageView alloc] init];
 
   // Compute the size of the image.
-  CGFloat width = _item.salientImage.size.width;
-  CGFloat height = _item.salientImage.size.height;
+  CGFloat width = _item.contentImage.size.width;
+  CGFloat height = _item.contentImage.size.height;
   if (width > height) {
     width = (width * containerSize) / height;
     height = containerSize;
@@ -260,7 +318,7 @@ void SetFallbackImageToImageView(UIImageView* image_view,
 
   // Resize the salient image.
   UIGraphicsBeginImageContextWithOptions(CGSize(width, height), NO, 0.0);
-  [_item.salientImage drawInRect:CGRectMake(0, 0, width, height)];
+  [_item.contentImage drawInRect:CGRectMake(0, 0, width, height)];
   UIImage* scaledImage = UIGraphicsGetImageFromCurrentImageContext();
   UIGraphicsEndImageContext();
   [salientView setImage:scaledImage];
@@ -291,8 +349,10 @@ void SetFallbackImageToImageView(UIImageView* image_view,
 
   BOOL hasSalientImage = NO;
   CGFloat containerSize;
-  if (_item.salientImage && IsTabResumption1_5SalientImageEnabled() &&
-      _item.salientImage.size.width && _item.salientImage.size.height) {
+  if (_item.contentImage &&
+      (IsTabResumptionImagesSalientEnabled() ||
+       IsTabResumptionImagesThumbnailsEnabled()) &&
+      _item.contentImage.size.width && _item.contentImage.size.height) {
     hasSalientImage = YES;
     containerSize = kImageSalientContainerSize;
     UIView* salientView =
@@ -352,16 +412,48 @@ void SetFallbackImageToImageView(UIImageView* image_view,
 // Configures and returns the UILabel that contains the session name.
 - (UILabel*)configuredTabTitleLabel {
   UILabel* label = [[UILabel alloc] init];
-  label.text = [_item.tabTitle length]
-                   ? _item.tabTitle
-                   : l10n_util::GetNSString(
-                         IDS_IOS_TAB_RESUMPTION_TAB_TITLE_PLACEHOLDER);
-  label.font = CreateDynamicFont(UIFontTextStyleFootnote, UIFontWeightSemibold);
-  label.numberOfLines = IsTabResumption1_5Enabled() ? 2 : 1;
-  label.lineBreakMode = NSLineBreakByTruncatingTail;
-  label.adjustsFontForContentSizeCategory = YES;
-  label.textColor = [UIColor colorNamed:kTextPrimaryColor];
+  NSString* text = [_item.tabTitle length]
+                       ? _item.tabTitle
+                       : l10n_util::GetNSString(
+                             IDS_IOS_TAB_RESUMPTION_TAB_TITLE_PLACEHOLDER);
+  if (!IsTabResumption1_5Enabled()) {
+    label.text = text;
+    label.font =
+        CreateDynamicFont(UIFontTextStyleFootnote, UIFontWeightSemibold);
+    label.numberOfLines = 1;
+    label.lineBreakMode = NSLineBreakByTruncatingTail;
+    label.adjustsFontForContentSizeCategory = YES;
+    label.textColor = [UIColor colorNamed:kTextPrimaryColor];
+  } else {
+    // This is the default "Dynamic type" trait collection.
+    // It is necessary to get the font in this size as it will be scaled later
+    // using UIFontMetrics.
+    UITraitCollection* traitCollection =
+        [UITraitCollection traitCollectionWithPreferredContentSizeCategory:
+                               UIContentSizeCategoryLarge];
+    UIFontDescriptor* descriptor = [UIFontDescriptor
+        preferredFontDescriptorWithTextStyle:UIFontTextStyleFootnote
+               compatibleWithTraitCollection:traitCollection];
+    UIFont* font = [UIFont systemFontOfSize:descriptor.pointSize
+                                     weight:UIFontWeightSemibold];
 
+    NSMutableParagraphStyle* style = [[NSMutableParagraphStyle alloc] init];
+    style.lineHeightMultiple = kTitleLineSpacing / font.lineHeight;
+    style.lineBreakMode = NSLineBreakByTruncatingTail;
+    UIFontMetrics* footnoteMetrics =
+        [UIFontMetrics metricsForTextStyle:UIFontTextStyleFootnote];
+    NSAttributedString* attrString = [[NSAttributedString alloc]
+        initWithString:text
+            attributes:@{
+              NSFontAttributeName : [footnoteMetrics scaledFontForFont:font],
+              NSForegroundColorAttributeName :
+                  [UIColor colorNamed:kTextPrimaryColor],
+              NSParagraphStyleAttributeName : style
+            }];
+    label.attributedText = attrString;
+    label.numberOfLines = IsTabResumption1_5Enabled() ? 2 : 1;
+    label.adjustsFontForContentSizeCategory = YES;
+  }
   return label;
 }
 
@@ -370,9 +462,14 @@ void SetFallbackImageToImageView(UIImageView* image_view,
   NSString* hostnameAndSyncTimeString;
   UILabel* label = [[UILabel alloc] init];
   if (IsTabResumption1_5Enabled()) {
-    hostnameAndSyncTimeString = [NSString
-        stringWithFormat:@"%@ • %@", [self hostnameFromGURL:_item.tabURL],
-                         _item.sessionName];
+    if (_item.itemType == kLastSyncedTab && _item.sessionName) {
+      hostnameAndSyncTimeString = [NSString
+          stringWithFormat:@"%@ • %@", [self hostnameFromGURL:_item.tabURL],
+                           _item.sessionName];
+    } else {
+      hostnameAndSyncTimeString = [NSString
+          stringWithFormat:@"%@", [self hostnameFromGURL:_item.tabURL]];
+    }
     label.lineBreakMode = NSLineBreakByTruncatingTail;
     label.font = [UIFont preferredFontForTextStyle:UIFontTextStyleCaption2];
   } else {
@@ -390,6 +487,53 @@ void SetFallbackImageToImageView(UIImageView* image_view,
   label.textColor = [UIColor colorNamed:kTextSecondaryColor];
 
   return label;
+}
+
+// Configures and returns the UILabel that contains the reason. Note: The label
+// is contained in a background UIView, hence the UIView return type.
+- (UIView*)configuredReasonLabel {
+  _reasonLabel = [[UILabel alloc] init];
+  _reasonLabel.translatesAutoresizingMaskIntoConstraints = NO;
+  _reasonLabel.adjustsFontForContentSizeCategory = YES;
+  _reasonLabel.textColor =
+      [UIColor colorNamed:kTextLightTertiaryDarkPrimaryColor];
+
+  [_reasonLabel setText:_item.reason];
+  UIFont* font = [UIFont preferredFontForTextStyle:UIFontTextStyleCaption2];
+  _reasonLabel.font = font;
+
+  _reasonLabelContainer = [[UIView alloc] init];
+  _reasonLabelContainer.translatesAutoresizingMaskIntoConstraints = NO;
+  [_reasonLabelContainer addSubview:_reasonLabel];
+  _reasonLabelContainer.backgroundColor =
+      [UIColor colorNamed:kTertiaryBackgroundColor];
+
+  _leadingLabelConstraint = [_reasonLabel.leadingAnchor
+      constraintEqualToAnchor:_reasonLabelContainer.leadingAnchor];
+  _trailingLabelConstraint = [_reasonLabel.trailingAnchor
+      constraintEqualToAnchor:_reasonLabelContainer.trailingAnchor];
+  [NSLayoutConstraint activateConstraints:@[
+    _leadingLabelConstraint,
+    _trailingLabelConstraint,
+    [_reasonLabel.topAnchor
+        constraintEqualToAnchor:_reasonLabelContainer.topAnchor
+                       constant:kReasonInset],
+    [_reasonLabel.bottomAnchor
+        constraintEqualToAnchor:_reasonLabelContainer.bottomAnchor
+                       constant:-kReasonInset],
+  ]];
+  [self updateCornerRadius];
+
+  return _reasonLabelContainer;
+}
+
+// Updates the corner radius of the reason label container.
+- (void)updateCornerRadius {
+  UIFont* font = [UIFont preferredFontForTextStyle:UIFontTextStyleCaption2];
+  CGFloat radius = font.lineHeight / 2 + kReasonInset;
+  _leadingLabelConstraint.constant = font.lineHeight / 2;
+  _trailingLabelConstraint.constant = -font.lineHeight / 2;
+  _reasonLabelContainer.layer.cornerRadius = radius;
 }
 
 // Returns the tab hostname from the given `URL`.

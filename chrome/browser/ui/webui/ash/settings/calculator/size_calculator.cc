@@ -8,9 +8,6 @@
 #include <numeric>
 #include <type_traits>
 
-#include "ash/components/arc/disk_space/arc_disk_space_bridge.h"
-#include "ash/components/arc/session/arc_bridge_service.h"
-#include "ash/components/arc/session/arc_service_manager.h"
 #include "ash/constants/ash_features.h"
 #include "base/containers/contains.h"
 #include "base/functional/callback_helpers.h"
@@ -20,6 +17,7 @@
 #include "base/values.h"
 #include "chrome/browser/ash/borealis/borealis_features.h"
 #include "chrome/browser/ash/borealis/borealis_service.h"
+#include "chrome/browser/ash/borealis/borealis_service_factory.h"
 #include "chrome/browser/ash/crostini/crostini_features.h"
 #include "chrome/browser/ash/crostini/crostini_pref_names.h"
 #include "chrome/browser/ash/drive/drive_integration_service.h"
@@ -29,8 +27,13 @@
 #include "chrome/browser/browsing_data/browsing_data_file_system_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chromeos/ash/components/cryptohome/userdataauth_util.h"
+#include "chromeos/ash/components/dbus/concierge/concierge_client.h"
 #include "chromeos/ash/components/dbus/spaced/spaced_client.h"
 #include "chromeos/ash/components/dbus/userdataauth/userdataauth_client.h"
+#include "chromeos/ash/components/dbus/vm_concierge/concierge_service.pb.h"
+#include "chromeos/ash/experiences/arc/disk_space/arc_disk_space_bridge.h"
+#include "chromeos/ash/experiences/arc/session/arc_bridge_service.h"
+#include "chromeos/ash/experiences/arc/session/arc_service_manager.h"
 #include "components/browsing_data/content/browsing_data_quota_helper.h"
 #include "components/browsing_data/content/conditional_cache_counting_helper.h"
 #include "components/browsing_data/content/cookie_helper.h"
@@ -90,7 +93,7 @@ std::ostream& operator<<(std::ostream& out, SizeCalculator::CalculationType t) {
 SizeCalculator::SizeCalculator(CalculationType calculation_type)
     : calculation_type_(calculation_type) {}
 
-SizeCalculator::~SizeCalculator() {}
+SizeCalculator::~SizeCalculator() = default;
 
 void SizeCalculator::StartCalculation() {
   if (calculating_) {
@@ -410,7 +413,7 @@ void AppsSizeCalculator::OnGetAndroidAppsSize(
 
 void AppsSizeCalculator::UpdateBorealisAppsSize() {
   borealis::BorealisService* borealis_service =
-      borealis::BorealisService::GetForProfile(profile_);
+      borealis::BorealisServiceFactory::GetForProfile(profile_);
   if (!borealis_service || !borealis_service->Features().IsEnabled()) {
     has_borealis_apps_size_ = true;
     return;
@@ -441,8 +444,8 @@ void AppsSizeCalculator::OnGetBorealisAppsSize(
     UpdateAppsAndExtensionsSize();
     return;
   }
-  auto image = base::ranges::find(response->images(), "borealis",
-                                  &vm_tools::concierge::VmDiskInfo::name);
+  auto image = std::ranges::find(response->images(), "borealis",
+                                 &vm_tools::concierge::VmDiskInfo::name);
   if (image == response->images().end()) {
     LOG(ERROR) << "Couldn't find Borealis VM";
     has_borealis_apps_size_ = true;
@@ -504,11 +507,11 @@ void CrostiniSizeCalculator::OnGetCrostiniSize(
 
   // If Borealis is installed then we need to subtract its size from Crostini
   // in order for it to not be double counted.
-  if (borealis::BorealisService::GetForProfile(profile_)
+  if (borealis::BorealisServiceFactory::GetForProfile(profile_)
           ->Features()
           .IsEnabled()) {
-    auto image = base::ranges::find(response->images(), "borealis",
-                                    &vm_tools::concierge::VmDiskInfo::name);
+    auto image = std::ranges::find(response->images(), "borealis",
+                                   &vm_tools::concierge::VmDiskInfo::name);
     if (image == response->images().end()) {
       LOG(ERROR) << "Couldn't find Borealis VM";
     } else {
@@ -529,7 +532,7 @@ void OtherUsersSizeCalculator::PerformCalculation() {
   other_users_.clear();
   user_sizes_.clear();
   const user_manager::UserList& users =
-      user_manager::UserManager::Get()->GetUsers();
+      user_manager::UserManager::Get()->GetPersistedUsers();
   for (user_manager::User* user : users) {
     if (user->is_active()) {
       continue;

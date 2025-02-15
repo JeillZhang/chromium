@@ -14,6 +14,8 @@ enum OverviewAnimationType {
   OVERVIEW_ANIMATION_ENTER_OVERVIEW_MODE_FADE_IN,
   // Used to fade out the label.
   OVERVIEW_ANIMATION_EXIT_OVERVIEW_MODE_FADE_OUT,
+  // Used to show the informed restore dialog when entering Overview.
+  OVERVIEW_ANIMATION_SHOW_INFORMED_RESTORE_DIALOG_ON_ENTER,
   // Used to position windows when entering/exiting overview mode and when a
   // window is closed while overview mode is active.
   OVERVIEW_ANIMATION_LAYOUT_OVERVIEW_ITEMS_ON_ENTER,
@@ -94,10 +96,10 @@ enum class OverviewEnterExitType {
   // on the trackpad, each window will be put in an "in-between" state, between
   // their current and final state, according to the scroll offset.
   kContinuousAnimationEnterOnScrollUpdate,
-  // Like `kNormal` but this is triggered from the pine service when the login
-  // work is still being completed. Birch uses this to determine what timeout to
-  // use.
-  kPine,
+  // Like `kNormal` but this is triggered from the full restore service when the
+  // login work is still being completed. Birch uses this to determine what
+  // timeout to use.
+  kInformedRestore,
 };
 
 // Overview items have certain properties if their aspect ratio exceeds a
@@ -115,6 +117,22 @@ enum class OverviewItemFillMode {
   // the item will be filled with a backdrop.
   kPillarBoxed,
 };
+
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
+//
+// LINT.IfChange(DeskBarVisibility)
+enum class DeskBarVisibility {
+  // Desk bar is shown in the first overview frame.
+  kShownImmediately = 0,
+  // Desk bar is shown after the first overview frame (usually after the
+  // enter-overview animation is complete).
+  kShownAfterFirstFrame = 1,
+  // Desk bar was never shown during the overview session.
+  kNotShown = 2,
+  kMaxValue = kNotShown,
+};
+// LINT.ThenChange(//tools/metrics/histograms/metadata/ash/enums.xml:DeskBarVisibility)
 
 }  // namespace ash
 

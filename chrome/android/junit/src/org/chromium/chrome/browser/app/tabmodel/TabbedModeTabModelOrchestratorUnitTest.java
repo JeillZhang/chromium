@@ -24,6 +24,7 @@ import org.chromium.base.task.AsyncTask;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Feature;
 import org.chromium.chrome.browser.ChromeTabbedActivity;
+import org.chromium.chrome.browser.crypto.CipherFactory;
 import org.chromium.chrome.browser.lifecycle.ActivityLifecycleDispatcher;
 import org.chromium.chrome.browser.multiwindow.MultiWindowTestUtils;
 import org.chromium.chrome.browser.multiwindow.MultiWindowUtils;
@@ -31,6 +32,7 @@ import org.chromium.chrome.browser.profiles.ProfileProvider;
 import org.chromium.chrome.browser.tabmodel.MismatchedIndicesHandler;
 import org.chromium.chrome.browser.tabmodel.NextTabPolicy.NextTabPolicySupplier;
 import org.chromium.chrome.browser.tabmodel.TabCreatorManager;
+import org.chromium.ui.modaldialog.ModalDialogManager;
 
 import java.io.DataInputStream;
 import java.util.List;
@@ -39,6 +41,7 @@ import java.util.List;
 @RunWith(BaseRobolectricTestRunner.class)
 public class TabbedModeTabModelOrchestratorUnitTest {
     @Mock private ChromeTabbedActivity mChromeActivity;
+    @Mock private ModalDialogManager mModalDialogManager;
     @Mock private TabCreatorManager mTabCreatorManager;
     @Mock private ProfileProvider mProfileProvider;
     @Mock private NextTabPolicySupplier mNextTabPolicySupplier;
@@ -47,12 +50,13 @@ public class TabbedModeTabModelOrchestratorUnitTest {
 
     private OneshotSupplierImpl<ProfileProvider> mProfileProviderSupplier =
             new OneshotSupplierImpl<>();
+    private CipherFactory mCipherFactory;
 
     // TabbedModeTabModelOrchestrator running on Android S where tab merging into other instance
     // is not performed.
     private class TabbedModeTabModelOrchestratorApi31 extends TabbedModeTabModelOrchestrator {
         public TabbedModeTabModelOrchestratorApi31() {
-            super(/* tabMergingEnabled= */ false, mActivityLifecycleDispatcher);
+            super(/* tabMergingEnabled= */ false, mActivityLifecycleDispatcher, mCipherFactory);
         }
 
         @Override
@@ -65,6 +69,7 @@ public class TabbedModeTabModelOrchestratorUnitTest {
     public void setUp() {
         MockitoAnnotations.initMocks(this);
         mProfileProviderSupplier.set(mProfileProvider);
+        mCipherFactory = new CipherFactory();
     }
 
     @After
@@ -87,6 +92,7 @@ public class TabbedModeTabModelOrchestratorUnitTest {
         TabbedModeTabModelOrchestrator orchestrator = new TabbedModeTabModelOrchestratorApi31();
         orchestrator.createTabModels(
                 mChromeActivity,
+                mModalDialogManager,
                 mProfileProviderSupplier,
                 mTabCreatorManager,
                 mNextTabPolicySupplier,
@@ -103,6 +109,7 @@ public class TabbedModeTabModelOrchestratorUnitTest {
         orchestrator = new TabbedModeTabModelOrchestratorApi31();
         orchestrator.createTabModels(
                 mChromeActivity,
+                mModalDialogManager,
                 mProfileProviderSupplier,
                 mTabCreatorManager,
                 mNextTabPolicySupplier,

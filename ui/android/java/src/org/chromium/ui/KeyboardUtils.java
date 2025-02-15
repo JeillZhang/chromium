@@ -5,8 +5,10 @@
 package org.chromium.ui;
 
 import android.content.Context;
+import android.content.res.Configuration;
 import android.os.Handler;
 import android.os.StrictMode;
+import android.provider.Settings;
 import android.view.View;
 import android.view.inputmethod.InputMethodManager;
 
@@ -14,10 +16,12 @@ import androidx.core.view.WindowInsetsCompat;
 
 import org.chromium.base.Log;
 import org.chromium.base.TraceEvent;
+import org.chromium.build.annotations.NullMarked;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
 /** Utility methods used for Android's software keyboard. */
+@NullMarked
 public final class KeyboardUtils {
     private static final String TAG = "KeyboardVisibility";
 
@@ -113,5 +117,32 @@ public final class KeyboardUtils {
     public static boolean isAndroidSoftKeyboardShowing(View view) {
         View rootView = view.getRootView();
         return rootView != null && calculateKeyboardHeightFromWindowInsets(rootView) > 0;
+    }
+
+    /**
+     * Detects whether the soft keyboard is expected to show when keyboard input is required.
+     *
+     * <p>When there is a physical keyboard and show_ime_with_hard_keyboard is off, the soft
+     * keyboard is not shown.
+     */
+    public static boolean isSoftKeyboardEnabled(Context context) {
+        return !isHardKeyboardConnected(context) || shouldShowImeWithHardwareKeyboard(context);
+    }
+
+    /** Detects whether there is a hardware keyboard connected. */
+    public static boolean isHardKeyboardConnected(Context context) {
+        return context.getResources().getConfiguration().keyboard == Configuration.KEYBOARD_QWERTY;
+    }
+
+    /**
+     * Reports whether Software keyboard is requested to come up while Hardware keyboard is in use.
+     * This helps with cases where the Hardware keyboard is unconventional (e.g. Yubikey), and the
+     * User explicitly requests the System to show up the Software keyboard when interacting with
+     * input fields. NOTE: This is the default behavior on emulated devices.
+     */
+    public static boolean shouldShowImeWithHardwareKeyboard(Context context) {
+        return Settings.Secure.getInt(
+                        context.getContentResolver(), "show_ime_with_hard_keyboard", 0)
+                != 0;
     }
 }

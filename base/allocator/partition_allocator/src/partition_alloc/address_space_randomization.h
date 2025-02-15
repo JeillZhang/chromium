@@ -178,14 +178,26 @@ AslrMask(uintptr_t bits) {
         }
 
       #else  // !PA_BUILDFLAG(IS_AIX) && !PA_BUILDFLAG(PA_ARCH_CPU_BIG_ENDIAN)
+        #if PA_BUILDFLAG(IS_LINUX)
 
         // Little-endian Linux PPC has 48 bits of virtual addressing. Use 46.
+        PA_ALWAYS_INLINE PAGE_ALLOCATOR_CONSTANTS_DECLARE_CONSTEXPR uintptr_t ASLRMask() {
+          return AslrMask(46);
+        }
+        PA_ALWAYS_INLINE PAGE_ALLOCATOR_CONSTANTS_DECLARE_CONSTEXPR uintptr_t ASLROffset() {
+          return AslrAddress(0);
+        }
+
+        #else
+
         PA_ALWAYS_INLINE constexpr uintptr_t ASLRMask() {
           return AslrMask(46);
         }
         PA_ALWAYS_INLINE constexpr uintptr_t ASLROffset() {
           return AslrAddress(0);
         }
+
+        #endif
 
       #endif  // !PA_BUILDFLAG(IS_AIX) && !PA_BUILDFLAG(PA_ARCH_CPU_BIG_ENDIAN)
 
@@ -280,7 +292,7 @@ AslrMask(uintptr_t bits) {
 
 #endif  // PA_BUILDFLAG(PA_ARCH_CPU_32_BITS)
 
-    // clang-format on
+// clang-format on
 
 }  // namespace internal
 

@@ -69,7 +69,7 @@ class DownloadProtectionService {
  public:
   // Creates a download service.  The service is initially disabled.  You need
   // to call SetEnabled() to start it.  |sb_service| owns this object.
-  explicit DownloadProtectionService(SafeBrowsingService* sb_service);
+  explicit DownloadProtectionService(SafeBrowsingServiceImpl* sb_service);
 
   DownloadProtectionService(const DownloadProtectionService&) = delete;
   DownloadProtectionService& operator=(const DownloadProtectionService&) =
@@ -146,9 +146,9 @@ class DownloadProtectionService {
                               content::PageNavigator* navigator);
 
   // Enables or disables the service.  This is usually called by the
-  // SafeBrowsingService, which tracks whether any profile uses these services
-  // at all.  Disabling causes any pending and future requests to have their
-  // callbacks called with "UNKNOWN" results.
+  // SafeBrowsingServiceImpl, which tracks whether any profile uses these
+  // services at all.  Disabling causes any pending and future requests to have
+  // their callbacks called with "UNKNOWN" results.
   void SetEnabled(bool enabled);
 
   bool enabled() const { return enabled_; }
@@ -158,10 +158,10 @@ class DownloadProtectionService {
 
   // Checks the user permissions, and submits the downloaded file if
   // appropriate. Returns whether the submission was successful.
-  bool MaybeBeginFeedbackForDownload(
-      Profile* profile,
-      download::DownloadItem* download,
-      DownloadCommands::Command download_command);
+  bool MaybeBeginFeedbackForDownload(Profile* profile,
+                                     download::DownloadItem* download,
+                                     const std::string& ping_request,
+                                     const std::string& ping_response);
 
   // Registers a callback that will be run when a ClientDownloadRequest has
   // been formed.
@@ -199,16 +199,8 @@ class DownloadProtectionService {
   static ClientDownloadResponse::TailoredVerdict
   GetDownloadProtectionTailoredVerdict(const download::DownloadItem* item);
 
-  // Sends dangerous download report if the following conditions are met:
-  // (1) it is a dangerous download.
-  // (2) user is NOT in incognito mode.
-  // (3) user is opted-in for extended reporting.
-  // (4) there is a download ping token associated with the download (i.e.
-  //     Safe Browsing returns a dangerous verdict).
-  static bool ShouldSendDangerousDownloadReport(download::DownloadItem* item);
-
   // Sends dangerous download opened report when download is opened or
-  // shown in folder, and if |ShouldSendDangerousDownloadReport| is true.
+  // shown in folder.
   void MaybeSendDangerousDownloadOpenedReport(download::DownloadItem* item,
                                               bool show_download_in_folder);
 
@@ -281,7 +273,7 @@ class DownloadProtectionService {
   friend class DeepScanningRequest;
   friend class DownloadRequestMaker;
 
-  FRIEND_TEST_ALL_PREFIXES(DownloadProtectionServiceTest,
+  FRIEND_TEST_ALL_PREFIXES(DownloadProtectionServiceMockTimeTest,
                            TestDownloadRequestTimeout);
   FRIEND_TEST_ALL_PREFIXES(DownloadProtectionServiceTest,
                            PPAPIDownloadRequest_InvalidResponse);
@@ -373,7 +365,7 @@ class DownloadProtectionService {
       CheckDownloadRepeatingCallback callback,
       DownloadCheckResult result);
 
-  raw_ptr<SafeBrowsingService> sb_service_;
+  raw_ptr<SafeBrowsingServiceImpl> sb_service_;
   // These pointers may be NULL if SafeBrowsing is disabled.
   scoped_refptr<SafeBrowsingUIManager> ui_manager_;
   scoped_refptr<SafeBrowsingDatabaseManager> database_manager_;

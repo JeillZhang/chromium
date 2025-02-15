@@ -53,7 +53,7 @@ public class TrustedWebActivityBrowserControlsVisibilityManagerTest {
     @Before
     public void setUp() {
         MockitoAnnotations.initMocks(this);
-        SecurityStateModelJni.TEST_HOOKS.setInstanceForTesting(mSecurityStateMocks);
+        SecurityStateModelJni.setInstanceForTesting(mSecurityStateMocks);
         when(mTabProvider.getTab()).thenReturn(mTab);
         doReturn(Tab.INVALID_TAB_ID).when(mTab).getParentId();
         setTabSecurityLevel(ConnectionSecurityLevel.NONE);

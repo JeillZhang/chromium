@@ -31,8 +31,6 @@ class PrefService;
 #endif
 
 #if BUILDFLAG(IS_MAC)
-#include "ui/display/screen.h"
-
 namespace device {
 class GeolocationSystemPermissionManager;
 }  // namespace device
@@ -71,8 +69,6 @@ class HEADLESS_EXPORT HeadlessBrowserImpl : public HeadlessBrowser {
       const override;
   void Shutdown() override;
   std::vector<HeadlessBrowserContext*> GetAllBrowserContexts() override;
-  HeadlessWebContents* GetWebContentsForDevToolsAgentHostId(
-      const std::string& devtools_agent_host_id) override;
   HeadlessBrowserContext* GetBrowserContextForId(
       const std::string& id) override;
   void SetDefaultBrowserContext(
@@ -145,7 +141,6 @@ class HEADLESS_EXPORT HeadlessBrowserImpl : public HeadlessBrowser {
   base::OnceClosure quit_main_message_loop_;
 
 #if BUILDFLAG(IS_MAC)
-  std::unique_ptr<display::ScopedNativeScreen> screen_;
   std::unique_ptr<device::GeolocationSystemPermissionManager>
       geolocation_system_permission_manager_;
 #endif

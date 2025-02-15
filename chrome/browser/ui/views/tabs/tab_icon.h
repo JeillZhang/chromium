@@ -89,8 +89,7 @@ class TabIcon : public views::View, public views::AnimationDelegateViews {
   class CrashAnimation;
   friend CrashAnimation;
   friend class TabTest;
-  FRIEND_TEST_ALL_PREFIXES(TabTestWithDiscardRingImprovements,
-                           DiscardIndicatorResponsiveness);
+  FRIEND_TEST_ALL_PREFIXES(TabTest, DiscardIndicatorResponsiveness);
 
   // views::View:
   void OnPaint(gfx::Canvas* canvas) override;
@@ -162,9 +161,6 @@ class TabIcon : public views::View, public views::AnimationDelegateViews {
 
   // The point in time when the tab icon was first painted in the loading state.
   base::TimeTicks loading_animation_start_time_;
-
-  // Paint state for the loading animation after the most recent waiting paint.
-  gfx::ThrobberWaitingState waiting_state_;
 
   // When the favicon_ has theming applied to it, the themed version will be
   // cached here. If this isNull(), then there is no theming and favicon_

@@ -16,11 +16,13 @@
 #include "base/files/file_path.h"
 #include "base/functional/bind.h"
 #include "base/location.h"
+#include "base/not_fatal_until.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/task/thread_pool.h"
 #include "base/values.h"
 #include "build/build_config.h"
+#include "components/policy/core/browser/configuration_policy_handler.h"
 #include "components/policy/core/browser/url_blocklist_policy_handler.h"
 #include "components/policy/core/common/policy_pref_names.h"
 #include "components/pref_registry/pref_registry_syncable.h"
@@ -221,13 +223,15 @@ URLBlocklist::URLBlocklist() : url_matcher_(new URLMatcher) {}
 URLBlocklist::~URLBlocklist() = default;
 
 void URLBlocklist::Block(const base::Value::List& filters) {
-  url_matcher::util::AddFilters(url_matcher_.get(), /*allow=*/false, &id_,
-                                filters, &filters_);
+  url_matcher::util::AddFiltersWithLimit(url_matcher_.get(), /*allow=*/false,
+                                         &id_, filters, &filters_,
+                                         kMaxUrlFiltersPerPolicy);
 }
 
 void URLBlocklist::Allow(const base::Value::List& filters) {
-  url_matcher::util::AddFilters(url_matcher_.get(), /*allow=*/true, &id_,
-                                filters, &filters_);
+  url_matcher::util::AddFiltersWithLimit(url_matcher_.get(), /*allow=*/true,
+                                         &id_, filters, &filters_,
+                                         kMaxUrlFiltersPerPolicy);
 }
 
 bool URLBlocklist::IsURLBlocked(const GURL& url) const {
@@ -262,7 +266,7 @@ const FilterComponents* URLBlocklist::GetHighestPriorityFilterFor(
   const FilterComponents* highest_priority_filter = nullptr;
   for (const auto& pattern_id : url_matcher_->MatchURL(url)) {
     const auto it = filters_.find(pattern_id);
-    DCHECK(it != filters_.end());
+    CHECK(it != filters_.end(), base::NotFatalUntil::M130);
     const FilterComponents& filter = it->second;
     if (!highest_priority_filter ||
         FilterTakesPrecedence(filter, *highest_priority_filter)) {
@@ -283,7 +287,7 @@ URLBlocklistManager::URLBlocklistManager(
   // |pref_service_| lives on.
   ui_task_runner_ = base::SequencedTaskRunner::GetCurrentDefault();
   background_task_runner_ = base::ThreadPool::CreateSequencedTaskRunner(
-      {base::TaskPriority::BEST_EFFORT});
+      {base::TaskPriority::USER_VISIBLE});
 
   default_blocklist_source_ = std::make_unique<DefaultBlocklistSource>(
       pref_service, blocklist_pref_path, allowlist_pref_path);

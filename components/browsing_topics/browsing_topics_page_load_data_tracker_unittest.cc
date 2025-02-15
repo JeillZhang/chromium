@@ -24,7 +24,7 @@
 #include "content/test/test_render_view_host.h"
 #include "services/metrics/public/cpp/metrics_utils.h"
 #include "services/metrics/public/cpp/ukm_builders.h"
-#include "third_party/blink/public/common/permissions_policy/origin_with_possible_wildcards.h"
+#include "services/network/public/cpp/permissions_policy/origin_with_possible_wildcards.h"
 
 namespace browsing_topics {
 
@@ -93,21 +93,22 @@ class BrowsingTopicsPageLoadDataTrackerTest
 
     if (!browsing_topics_permissions_policy_allowed) {
       policy.emplace_back(
-          blink::mojom::PermissionsPolicyFeature::kBrowsingTopics,
-          /*allowed_origins=*/std::vector<blink::OriginWithPossibleWildcards>(),
+          network::mojom::PermissionsPolicyFeature::kBrowsingTopics,
+          /*allowed_origins=*/
+          std::vector<network::OriginWithPossibleWildcards>(),
           /*self_if_matches=*/std::nullopt,
           /*matches_all_origins=*/false,
           /*matches_opaque_src=*/false);
     }
 
     if (!interest_cohort_permissions_policy_allowed) {
-      policy.emplace_back(
-          blink::mojom::PermissionsPolicyFeature::
-              kBrowsingTopicsBackwardCompatible,
-          /*allowed_origins=*/std::vector<blink::OriginWithPossibleWildcards>(),
-          /*self_if_matches=*/std::nullopt,
-          /*matches_all_origins=*/false,
-          /*matches_opaque_src=*/false);
+      policy.emplace_back(network::mojom::PermissionsPolicyFeature::
+                              kBrowsingTopicsBackwardCompatible,
+                          /*allowed_origins=*/
+                          std::vector<network::OriginWithPossibleWildcards>(),
+                          /*self_if_matches=*/std::nullopt,
+                          /*matches_all_origins=*/false,
+                          /*matches_opaque_src=*/false);
     }
 
     simulator->SetPermissionsPolicyHeader(std::move(policy));
@@ -154,15 +155,17 @@ TEST_F(BrowsingTopicsPageLoadDataTrackerTest, IniializeWithRedirectStatus) {
                  /*browsing_topics_permissions_policy_allowed=*/true,
                  /*interest_cohort_permissions_policy_allowed=*/true);
 
+  ukm::SourceId source_id = ukm::UkmRecorder::GetNewSourceID();
   BrowsingTopicsPageLoadDataTracker::CreateForPage(
       web_contents()->GetPrimaryMainFrame()->GetPage(),
       /*redirect_count=*/10,
-      /*redirect_with_topics_invoked_count=*/5);
+      /*redirect_with_topics_invoked_count=*/5, source_id);
 
   auto* tracker = GetBrowsingTopicsPageLoadDataTracker();
 
   EXPECT_EQ(tracker->redirect_count(), 10);
   EXPECT_EQ(tracker->redirect_with_topics_invoked_count(), 5);
+  EXPECT_EQ(tracker->source_id_before_redirects(), source_id);
   EXPECT_FALSE(tracker->topics_invoked());
 
   GetBrowsingTopicsPageLoadDataTracker()->OnBrowsingTopicsApiUsed(

@@ -14,9 +14,7 @@ import android.view.View;
 
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
@@ -24,11 +22,14 @@ import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
 import org.chromium.base.Callback;
+import org.chromium.base.MathUtils;
 import org.chromium.base.supplier.ObservableSupplier;
+import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.base.test.util.Features;
+import org.chromium.base.test.util.Features.DisableFeatures;
 import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.chrome.browser.browser_controls.BrowserControlsStateProvider;
+import org.chromium.chrome.browser.browser_controls.BrowserControlsStateProvider.ControlsPosition;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.layouts.LayoutStateProvider;
 import org.chromium.chrome.browser.layouts.LayoutType;
@@ -42,8 +43,6 @@ import org.chromium.ui.modelutil.PropertyModel;
 public class TopToolbarOverlayMediatorTest {
     private TopToolbarOverlayMediator mMediator;
     private PropertyModel mModel;
-
-    @Rule public TestRule mProcessor = new Features.JUnitProcessor();
 
     @Mock private Context mContext;
 
@@ -67,6 +66,8 @@ public class TopToolbarOverlayMediatorTest {
     @Mock private ObservableSupplier<Tab> mTabSupplier;
 
     @Captor private ArgumentCaptor<Callback<Tab>> mActivityTabObserverCaptor;
+    private ObservableSupplierImpl<Integer> mBottomControlsOffsetSupplier =
+            new ObservableSupplierImpl<>(0);
 
     @Before
     public void beforeTest() {
@@ -99,6 +100,7 @@ public class TopToolbarOverlayMediatorTest {
                         mTabSupplier,
                         mBrowserControlsProvider,
                         mTopUiThemeColorProvider,
+                        mBottomControlsOffsetSupplier,
                         LayoutType.BROWSING,
                         false);
 
@@ -126,13 +128,17 @@ public class TopToolbarOverlayMediatorTest {
     @Test
     public void testShadowVisibility_browserControlsOffsets() {
         when(mBrowserControlsProvider.getBrowserControlHiddenRatio()).thenReturn(0.0f);
-        mBrowserControlsObserverCaptor.getValue().onControlsOffsetChanged(0, 0, 0, 0, false);
+        mBrowserControlsObserverCaptor
+                .getValue()
+                .onControlsOffsetChanged(0, 0, false, 0, 0, false, false, false);
 
         Assert.assertFalse(
                 "Shadow should be invisible.", mModel.get(TopToolbarOverlayProperties.SHOW_SHADOW));
 
         when(mBrowserControlsProvider.getBrowserControlHiddenRatio()).thenReturn(0.5f);
-        mBrowserControlsObserverCaptor.getValue().onControlsOffsetChanged(100, 0, 0, 0, false);
+        mBrowserControlsObserverCaptor
+                .getValue()
+                .onControlsOffsetChanged(100, 0, false, 0, 0, false, false, false);
 
         Assert.assertTrue(
                 "Shadow should be visible.", mModel.get(TopToolbarOverlayProperties.SHOW_SHADOW));
@@ -179,6 +185,7 @@ public class TopToolbarOverlayMediatorTest {
                         mTabSupplier,
                         mBrowserControlsProvider,
                         mTopUiThemeColorProvider,
+                        mBottomControlsOffsetSupplier,
                         LayoutType.BROWSING,
                         false);
         mMediator.setIsAndroidViewVisible(true);
@@ -234,7 +241,9 @@ public class TopToolbarOverlayMediatorTest {
         Assert.assertTrue(
                 "View should be visible.", mModel.get(TopToolbarOverlayProperties.VISIBLE));
 
-        mBrowserControlsObserverCaptor.getValue().onControlsOffsetChanged(100, 0, 0, 0, false);
+        mBrowserControlsObserverCaptor
+                .getValue()
+                .onControlsOffsetChanged(100, 0, false, 0, 0, false, false, false);
 
         Assert.assertTrue(
                 "Shadow should be visible.", mModel.get(TopToolbarOverlayProperties.SHOW_SHADOW));
@@ -271,5 +280,44 @@ public class TopToolbarOverlayMediatorTest {
         mTabObserverCaptor.getValue().onContentChanged(mTab2);
 
         Assert.assertFalse(mModel.get(TopToolbarOverlayProperties.ANONYMIZE));
+    }
+
+    @Test
+    @DisableFeatures(ChromeFeatureList.BROWSER_CONTROLS_IN_VIZ)
+    public void testBottomToolbarOffset() {
+        float height = 700.0f;
+        mMediator.setViewportHeight(height);
+        mBottomControlsOffsetSupplier.set(-40);
+
+        doReturn(ControlsPosition.TOP).when(mBrowserControlsProvider).getControlsPosition();
+        mBrowserControlsObserverCaptor
+                .getValue()
+                .onControlsOffsetChanged(0, 0, false, 30, 0, false, false, false);
+        Assert.assertEquals(
+                0.0f, mModel.get(TopToolbarOverlayProperties.CONTENT_OFFSET), MathUtils.EPSILON);
+
+        doReturn(ControlsPosition.BOTTOM).when(mBrowserControlsProvider).getControlsPosition();
+        mBrowserControlsObserverCaptor
+                .getValue()
+                .onControlsOffsetChanged(0, 0, false, 30, 0, false, false, false);
+
+        Assert.assertEquals(
+                height + mBottomControlsOffsetSupplier.get(),
+                mModel.get(TopToolbarOverlayProperties.CONTENT_OFFSET),
+                MathUtils.EPSILON);
+
+        float newHeight = 1700.0f;
+        mMediator.setViewportHeight(newHeight);
+
+        Assert.assertEquals(
+                newHeight + mBottomControlsOffsetSupplier.get(),
+                mModel.get(TopToolbarOverlayProperties.CONTENT_OFFSET),
+                MathUtils.EPSILON);
+
+        mBottomControlsOffsetSupplier.set(-80);
+        Assert.assertEquals(
+                newHeight + mBottomControlsOffsetSupplier.get(),
+                mModel.get(TopToolbarOverlayProperties.CONTENT_OFFSET),
+                MathUtils.EPSILON);
     }
 }

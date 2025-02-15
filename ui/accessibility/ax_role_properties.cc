@@ -5,14 +5,14 @@
 #include "ui/accessibility/ax_role_properties.h"
 
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
+#include "ui/accessibility/accessibility_features.h"
 #include "ui/accessibility/ax_enums.mojom.h"
 
 namespace ui {
 
 namespace {
 
-#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_CHROMEOS)
 constexpr bool kExposeLayoutTableAsDataTable = true;
 #else
 constexpr bool kExposeLayoutTableAsDataTable = false;
@@ -134,7 +134,6 @@ bool IsClickable(const ax::mojom::Role role) {
     case ax::mojom::Role::kMenuListOption:
     case ax::mojom::Role::kPdfActionableHighlight:
     case ax::mojom::Role::kPopUpButton:
-    case ax::mojom::Role::kPortal:
     case ax::mojom::Role::kRadioButton:
     case ax::mojom::Role::kSearchBox:
     case ax::mojom::Role::kSpinButton:
@@ -300,7 +299,6 @@ bool IsEmbeddingElement(const ax::mojom::Role role) {
     case ax::mojom::Role::kIframe:
     case ax::mojom::Role::kIframePresentational:
     case ax::mojom::Role::kPluginObject:
-    case ax::mojom::Role::kPortal:
       return true;
     default:
       return false;
@@ -334,6 +332,9 @@ bool IsFormatBoundary(const ax::mojom::Role role) {
 
 bool IsHeading(const ax::mojom::Role role) {
   switch (role) {
+    case ax::mojom::Role::kDisclosureTriangle:
+    case ax::mojom::Role::kDisclosureTriangleGrouped:
+      return ::features::IsAccessibilityExposeSummaryAsHeadingEnabled();
     case ax::mojom::Role::kHeading:
     case ax::mojom::Role::kDocSubtitle:
       return true;
@@ -373,6 +374,7 @@ bool IsItemLike(const ax::mojom::Role role) {
   switch (role) {
     case ax::mojom::Role::kArticle:
     case ax::mojom::Role::kComment:
+    case ax::mojom::Role::kDisclosureTriangle:
     case ax::mojom::Role::kDisclosureTriangleGrouped:
     case ax::mojom::Role::kListItem:
     case ax::mojom::Role::kMenuItem:
@@ -826,35 +828,6 @@ bool IsTableHeader(ax::mojom::Role role) {
   }
 }
 
-bool IsTableItem(ax::mojom::Role role) {
-  switch (role) {
-    case ax::mojom::Role::kListBoxOption:
-    case ax::mojom::Role::kListItem:
-    case ax::mojom::Role::kTerm:
-    case ax::mojom::Role::kTreeItem:
-      return true;
-    default:
-      return IsCellOrTableHeader(role);
-  }
-}
-
-#if BUILDFLAG(IS_ANDROID)
-bool IsTableLike(const ax::mojom::Role role) {
-  switch (role) {
-    case ax::mojom::Role::kGrid:
-    case ax::mojom::Role::kDescriptionList:
-    case ax::mojom::Role::kList:
-    case ax::mojom::Role::kListBox:
-    case ax::mojom::Role::kListGrid:
-    case ax::mojom::Role::kTable:
-    case ax::mojom::Role::kTree:
-    case ax::mojom::Role::kTreeGrid:
-      return true;
-    default:
-      return false;
-  }
-}
-#else
 bool IsTableLike(const ax::mojom::Role role) {
   switch (role) {
     case ax::mojom::Role::kGrid:
@@ -868,7 +841,6 @@ bool IsTableLike(const ax::mojom::Role role) {
       return false;
   }
 }
-#endif
 
 bool IsTableRow(ax::mojom::Role role) {
   switch (role) {

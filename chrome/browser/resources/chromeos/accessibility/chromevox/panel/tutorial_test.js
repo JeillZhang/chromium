@@ -568,9 +568,7 @@ AX_TEST_F('ChromeVoxTutorialTest', 'RestartNudges', async function() {
 });
 
 // Tests that the tutorial closes and ChromeVox navigates to a resource link.
-//
-// Flaky. See crbug.com/336702956.
-AX_TEST_F('ChromeVoxTutorialTest', 'DISABLED_ResourcesTest', async function() {
+AX_TEST_F('ChromeVoxTutorialTest', 'ResourcesTest', async function() {
   const mockFeedback = this.createMockFeedback();
   const root = await this.runWithLoadedTree(this.simpleDoc);
   await this.launchAndWaitForTutorial();
@@ -640,14 +638,16 @@ AX_TEST_F(
       this.getPanel().exportBackgroundBridgeForTesting();
       // Swap in functions below so we can track the number of times
       // ForcedActionPath is created and destroyed.
-      this.getPanelWindow().BackgroundBridge.ForcedActionPath.create = () => {
-        userActionMonitorCreatedCount += 1;
-        isForcedActionPathActive = true;
-      };
-      this.getPanelWindow().BackgroundBridge.ForcedActionPath.destroy = () => {
-        userActionMonitorDestroyedCount += 1;
-        isForcedActionPathActive = false;
-      };
+      this.getPanelWindow().BackgroundBridge.ForcedActionPath.listenFor =
+          () => {
+            userActionMonitorCreatedCount += 1;
+            isForcedActionPathActive = true;
+          };
+      this.getPanelWindow().BackgroundBridge.ForcedActionPath.stopListening =
+          () => {
+            userActionMonitorDestroyedCount += 1;
+            isForcedActionPathActive = false;
+          };
 
       // A helper to make assertions on four variables of interest.
       const makeAssertions = expectedVars => {

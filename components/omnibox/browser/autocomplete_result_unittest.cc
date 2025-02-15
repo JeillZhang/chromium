@@ -2,10 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "components/omnibox/browser/autocomplete_result.h"
 
 #include <stddef.h>
 
+#include <algorithm>
 #include <iterator>
 #include <memory>
 #include <string>
@@ -14,10 +20,10 @@
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/field_trial.h"
 #include "base/metrics/field_trial_params.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/gtest_util.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
@@ -39,6 +45,7 @@
 #include "components/omnibox/common/omnibox_features.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/testing_pref_service.h"
+#include "components/search_engines/search_engines_test_environment.h"
 #include "components/search_engines/template_url_service.h"
 #include "components/variations/variations_associated_data.h"
 #include "omnibox_focus_type.pb.h"
@@ -143,12 +150,14 @@ class AutocompleteResultTest : public testing::Test {
 
     // Inline autocompletion.
     std::string inline_autocompletion;
+
+    IphType iph_type = IphType::kNone;
   };
 
   AutocompleteResultTest() {
     variations::testing::ClearAllVariationParams();
 
-    // Create the list of mock providers. 5 is enough.
+    // Create the list of mock providers. 6 is enough.
     mock_provider_list_.push_back(new FakeAutocompleteProvider(
         AutocompleteProvider::Type::TYPE_HISTORY_QUICK));
     mock_provider_list_.push_back(new FakeAutocompleteProvider(
@@ -159,17 +168,16 @@ class AutocompleteResultTest : public testing::Test {
         AutocompleteProvider::Type::TYPE_ON_DEVICE_HEAD));
     mock_provider_list_.push_back(new FakeAutocompleteProvider(
         AutocompleteProvider::Type::TYPE_FEATURED_SEARCH));
+    mock_provider_list_.push_back(new FakeAutocompleteProvider(
+        AutocompleteProvider::Type::TYPE_UNSCOPED_EXTENSION));
 
     for (const auto& provider : mock_provider_list_)
       provider->done_ = false;
+
+    template_url_service().Load();
   }
   AutocompleteResultTest(const AutocompleteResultTest&) = delete;
   AutocompleteResultTest& operator=(const AutocompleteResultTest&) = delete;
-
-  void SetUp() override {
-    template_url_service_ = std::make_unique<TemplateURLService>(nullptr, 0);
-    template_url_service_->Load();
-  }
 
   void TearDown() override { task_environment_.RunUntilIdle(); }
 
@@ -223,8 +231,12 @@ class AutocompleteResultTest : public testing::Test {
     return &triggered_feature_service_;
   }
 
+  TemplateURLService& template_url_service() {
+    return *search_engines_test_environment_.template_url_service();
+  }
+
  protected:
-  std::unique_ptr<TemplateURLService> template_url_service_;
+  search_engines::SearchEnginesTestEnvironment search_engines_test_environment_;
 
  private:
   base::test::TaskEnvironment task_environment_;
@@ -249,6 +261,7 @@ AutocompleteMatch AutocompleteResultTest::PopulateAutocompleteMatch(
     match.suggestion_group_id = data.suggestion_group_id.value();
   }
   match.inline_autocompletion = base::UTF8ToUTF16(data.inline_autocompletion);
+  match.iph_type = data.iph_type;
   return match;
 }
 
@@ -316,17 +329,17 @@ void AutocompleteResultTest::RunTransferOldMatchesTest(
   PopulateAutocompleteMatches(last, last_size, &last_matches);
   AutocompleteResult last_result;
   last_result.AppendMatches(last_matches);
-  last_result.SortAndCull(input, template_url_service_.get(),
+  last_result.SortAndCull(input, &template_url_service(),
                           triggered_feature_service());
 
   ACMatches current_matches;
   PopulateAutocompleteMatches(current, current_size, &current_matches);
   AutocompleteResult current_result;
   current_result.AppendMatches(current_matches);
-  current_result.SortAndCull(input, template_url_service_.get(),
+  current_result.SortAndCull(input, &template_url_service(),
                              triggered_feature_service());
   current_result.TransferOldMatches(input, &last_result);
-  current_result.SortAndCull(input, template_url_service_.get(),
+  current_result.SortAndCull(input, &template_url_service(),
                              triggered_feature_service());
 
   AssertResultMatches(current_result, {expected, expected_size});
@@ -342,7 +355,7 @@ void AutocompleteResultTest::SortMatchesAndVerifyOrder(
                           TestSchemeClassifier());
   AutocompleteResult result;
   result.AppendMatches(matches);
-  result.SortAndCull(input, template_url_service_.get(),
+  result.SortAndCull(input, &template_url_service(),
                      triggered_feature_service());
 
   ASSERT_EQ(expected_order.size(), result.size());
@@ -372,8 +385,7 @@ TEST_F(AutocompleteResultTest, SwapMatches) {
                           TestSchemeClassifier());
   matches.push_back(match);
   r1.AppendMatches(matches);
-  r1.SortAndCull(input, template_url_service_.get(),
-                 triggered_feature_service());
+  r1.SortAndCull(input, &template_url_service(), triggered_feature_service());
   EXPECT_TRUE(r1.default_match());
   EXPECT_EQ(&*r1.begin(), r1.default_match());
 
@@ -746,7 +758,7 @@ TEST_F(AutocompleteResultTest, SortAndCullEmptyDestinationURLs) {
                           TestSchemeClassifier());
   AutocompleteResult result;
   result.AppendMatches(matches);
-  result.SortAndCull(input, template_url_service_.get(),
+  result.SortAndCull(input, &template_url_service(),
                      triggered_feature_service());
 
   // Of the two results with the same non-empty destination URL, the
@@ -787,7 +799,7 @@ TEST_F(AutocompleteResultTest, SortAndCullTailSuggestions) {
                           TestSchemeClassifier());
   AutocompleteResult result;
   result.AppendMatches(matches);
-  result.SortAndCull(input, template_url_service_.get(),
+  result.SortAndCull(input, &template_url_service(),
                      triggered_feature_service());
 
   EXPECT_EQ(3UL, result.size());
@@ -822,7 +834,7 @@ TEST_F(AutocompleteResultTest, SortAndCullKeepDefaultTailSuggestions) {
                           TestSchemeClassifier());
   AutocompleteResult result;
   result.AppendMatches(matches);
-  result.SortAndCull(input, template_url_service_.get(),
+  result.SortAndCull(input, &template_url_service(),
                      triggered_feature_service());
 
   EXPECT_EQ(3UL, result.size());
@@ -855,7 +867,7 @@ TEST_F(AutocompleteResultTest, SortAndCullKeepMoreDefaultTailSuggestions) {
                           TestSchemeClassifier());
   AutocompleteResult result;
   result.AppendMatches(matches);
-  result.SortAndCull(input, template_url_service_.get(),
+  result.SortAndCull(input, &template_url_service(),
                      triggered_feature_service());
 
   EXPECT_EQ(5UL, result.size());
@@ -890,7 +902,7 @@ TEST_F(AutocompleteResultTest, SortAndCullZeroRelevanceSuggestions) {
                           TestSchemeClassifier());
   AutocompleteResult result;
   result.AppendMatches(matches);
-  result.SortAndCull(input, template_url_service_.get(),
+  result.SortAndCull(input, &template_url_service(),
                      triggered_feature_service());
 
   EXPECT_EQ(4UL, result.size());
@@ -924,7 +936,7 @@ TEST_F(AutocompleteResultTest, SortAndCullZeroRelevanceDefaultMatches) {
                           TestSchemeClassifier());
   AutocompleteResult result;
   result.AppendMatches(matches);
-  result.SortAndCull(input, template_url_service_.get(),
+  result.SortAndCull(input, &template_url_service(),
                      triggered_feature_service());
 
   // It should ignore the first suggestion, despite it being marked as
@@ -962,7 +974,7 @@ TEST_F(AutocompleteResultTest, SortAndCullOnlyTailSuggestions) {
                           TestSchemeClassifier());
   AutocompleteResult result;
   result.AppendMatches(matches);
-  result.SortAndCull(input, template_url_service_.get(),
+  result.SortAndCull(input, &template_url_service(),
                      triggered_feature_service());
 
   EXPECT_EQ(5UL, result.size());
@@ -989,7 +1001,7 @@ TEST_F(AutocompleteResultTest, SortAndCullNoMatchesAllowedToBeDefault) {
                           TestSchemeClassifier());
   AutocompleteResult result;
   result.AppendMatches(matches);
-  result.SortAndCull(input, template_url_service_.get(),
+  result.SortAndCull(input, &template_url_service(),
                      triggered_feature_service());
 
   EXPECT_EQ(3UL, result.size());
@@ -1006,7 +1018,7 @@ TEST_F(AutocompleteResultTest, SortAndCullDuplicateSearchURLs) {
   url_data.SetShortName(u"unittest");
   url_data.SetKeyword(u"foo");
   url_data.SetURL("http://www.foo.com/s?q={searchTerms}");
-  template_url_service_->Add(std::make_unique<TemplateURL>(url_data));
+  template_url_service().Add(std::make_unique<TemplateURL>(url_data));
 
   TestData data[] = {
       {0, 1, 1300, true}, {1, 1, 1200, true}, {2, 1, 1100, true},
@@ -1025,7 +1037,7 @@ TEST_F(AutocompleteResultTest, SortAndCullDuplicateSearchURLs) {
                           TestSchemeClassifier());
   AutocompleteResult result;
   result.AppendMatches(matches);
-  result.SortAndCull(input, template_url_service_.get(),
+  result.SortAndCull(input, &template_url_service(),
                      triggered_feature_service());
 
   // We expect the 3rd and 4th results to be removed.
@@ -1046,7 +1058,7 @@ TEST_F(AutocompleteResultTest, SortAndCullWithMatchDups) {
   url_data.SetShortName(u"unittest");
   url_data.SetKeyword(u"foo");
   url_data.SetURL("http://www.foo.com/s?q={searchTerms}");
-  template_url_service_->Add(std::make_unique<TemplateURL>(url_data));
+  template_url_service().Add(std::make_unique<TemplateURL>(url_data));
 
   AutocompleteMatch dup_match;
   dup_match.destination_url = GURL("http://www.foo.com/s?q=foo&oq=dup");
@@ -1071,7 +1083,7 @@ TEST_F(AutocompleteResultTest, SortAndCullWithMatchDups) {
                           TestSchemeClassifier());
   AutocompleteResult result;
   result.AppendMatches(matches);
-  result.SortAndCull(input, template_url_service_.get(),
+  result.SortAndCull(input, &template_url_service(),
                      triggered_feature_service());
 
   // Expect 3 unique results after SortAndCull().
@@ -1127,7 +1139,7 @@ TEST_F(AutocompleteResultTest, SortAndCullWithDemotionsByType) {
                           TestSchemeClassifier());
   AutocompleteResult result;
   result.AppendMatches(matches);
-  result.SortAndCull(input, template_url_service_.get(),
+  result.SortAndCull(input, &template_url_service(),
                      triggered_feature_service());
 
   // Check the new ordering.  The history-title results should be omitted.
@@ -1152,7 +1164,7 @@ TEST_F(AutocompleteResultTest, SortAndCullWithPreserveDefaultMatch) {
     ACMatches last_matches = PopulateAutocompleteMatches(last);
     AutocompleteResult last_result;
     last_result.AppendMatches(last_matches);
-    last_result.SortAndCull(input, template_url_service_.get(),
+    last_result.SortAndCull(input, &template_url_service(),
                             triggered_feature_service());
 
     ACMatches current_matches = PopulateAutocompleteMatches(current);
@@ -1160,7 +1172,7 @@ TEST_F(AutocompleteResultTest, SortAndCullWithPreserveDefaultMatch) {
     current_result.AppendMatches(current_matches);
 
     // Run SortAndCull, but try to keep the first entry of last_matches on top.
-    current_result.SortAndCull(input, template_url_service_.get(),
+    current_result.SortAndCull(input, &template_url_service(),
                                triggered_feature_service(),
                                *last_result.match_at(0));
 
@@ -1352,9 +1364,8 @@ TEST_F(AutocompleteResultTest, DemoteByType) {
   // page classification of fakebox/realbox, and make sure history-title is now
   // demoted. We also make sure history-URL is the last match due to the logic
   // which groups searches and URLs together.
-  SortMatchesAndVerifyOrder(
-      "a", OmniboxEventProto::INSTANT_NTP_WITH_FAKEBOX_AS_STARTING_FOCUS,
-      matches, expected_demoted_order, data);
+  SortMatchesAndVerifyOrder("a", OmniboxEventProto::NTP_REALBOX, matches,
+                            expected_demoted_order, data);
   SortMatchesAndVerifyOrder("a", OmniboxEventProto::NTP_REALBOX, matches,
                             expected_demoted_order, data);
 
@@ -1363,10 +1374,8 @@ TEST_F(AutocompleteResultTest, DemoteByType) {
   // clearly trying to navigate. So here we re-sort with a page classification
   // of fakebox/realbox and an input that's a URL, and make sure history-title
   // is once again the default match.
-  SortMatchesAndVerifyOrder(
-      "www.example.com",
-      OmniboxEventProto::INSTANT_NTP_WITH_FAKEBOX_AS_STARTING_FOCUS, matches,
-      expected_natural_order, data);
+  SortMatchesAndVerifyOrder("www.example.com", OmniboxEventProto::NTP_REALBOX,
+                            matches, expected_natural_order, data);
   SortMatchesAndVerifyOrder("www.example.com", OmniboxEventProto::NTP_REALBOX,
                             matches, expected_natural_order, data);
 }
@@ -1388,7 +1397,7 @@ TEST_F(AutocompleteResultTest, SortAndCullReorderForDefaultMatch) {
                             test_scheme_classifier);
     AutocompleteResult result;
     result.AppendMatches(matches);
-    result.SortAndCull(input, template_url_service_.get(),
+    result.SortAndCull(input, &template_url_service(),
                        triggered_feature_service());
     AssertResultMatches(result, data);
   }
@@ -1403,7 +1412,7 @@ TEST_F(AutocompleteResultTest, SortAndCullReorderForDefaultMatch) {
                             test_scheme_classifier);
     AutocompleteResult result;
     result.AppendMatches(matches);
-    result.SortAndCull(input, template_url_service_.get(),
+    result.SortAndCull(input, &template_url_service(),
                        triggered_feature_service());
     ASSERT_EQ(4U, result.size());
     EXPECT_EQ("http://c/", result.match_at(0)->destination_url.spec());
@@ -1439,10 +1448,9 @@ TEST_F(AutocompleteResultTest, SortAndCullFailsWithIncorrectDefaultScheme) {
                           test_scheme_classifier);
   AutocompleteResult result;
   result.AppendMatches(matches);
-  EXPECT_DEATH_IF_SUPPORTED(
-      result.SortAndCull(input, template_url_service_.get(),
-                         triggered_feature_service()),
-      "");
+  EXPECT_DEATH_IF_SUPPORTED(result.SortAndCull(input, &template_url_service(),
+                                               triggered_feature_service()),
+                            "");
 }
 #endif
 
@@ -1472,7 +1480,7 @@ TEST_F(AutocompleteResultTest, SortAndCullPermitSearchForSchemeMatching) {
   AutocompleteResult result;
   result.AppendMatches(matches);
   // Must not assert.
-  result.SortAndCull(input, template_url_service_.get(),
+  result.SortAndCull(input, &template_url_service(),
                      triggered_feature_service());
 }
 
@@ -1492,7 +1500,7 @@ TEST_F(AutocompleteResultTest, SortAndCullPromoteDefaultMatch) {
                           test_scheme_classifier);
   AutocompleteResult result;
   result.AppendMatches(matches);
-  result.SortAndCull(input, template_url_service_.get(),
+  result.SortAndCull(input, &template_url_service(),
                      triggered_feature_service());
   ASSERT_EQ(3U, result.size());
   EXPECT_EQ("http://c/", result.match_at(0)->destination_url.spec());
@@ -1521,7 +1529,7 @@ TEST_F(AutocompleteResultTest, SortAndCullPromoteUnconsecutiveMatches) {
                           test_scheme_classifier);
   AutocompleteResult result;
   result.AppendMatches(matches);
-  result.SortAndCull(input, template_url_service_.get(),
+  result.SortAndCull(input, &template_url_service(),
                      triggered_feature_service());
   ASSERT_EQ(5U, result.size());
   EXPECT_EQ("http://b/", result.match_at(0)->destination_url.spec());
@@ -1594,7 +1602,7 @@ TEST_F(AutocompleteResultTest, SortAndCullPreferEntities) {
                           TestSchemeClassifier());
   AutocompleteResult result;
   result.AppendMatches(matches);
-  result.SortAndCull(input, template_url_service_.get(),
+  result.SortAndCull(input, &template_url_service(),
                      triggered_feature_service());
 
   // The first result will be the personalized suggestion.
@@ -1646,7 +1654,7 @@ TEST_F(AutocompleteResultTest,
                           TestSchemeClassifier());
   AutocompleteResult result;
   result.AppendMatches(matches);
-  result.SortAndCull(input, template_url_service_.get(),
+  result.SortAndCull(input, &template_url_service(),
                      triggered_feature_service());
 
   ASSERT_EQ(result.size(), 3u);
@@ -1705,7 +1713,7 @@ TEST_F(AutocompleteResultTest,
                           TestSchemeClassifier());
   AutocompleteResult result;
   result.AppendMatches(matches);
-  result.SortAndCull(input, template_url_service_.get(),
+  result.SortAndCull(input, &template_url_service(),
                      triggered_feature_service());
 
   ASSERT_EQ(result.size(), 2u);
@@ -1745,7 +1753,7 @@ TEST_F(AutocompleteResultTest, SortAndCullPreferEntitiesFillIntoEditMustMatch) {
                           TestSchemeClassifier());
   AutocompleteResult result;
   result.AppendMatches(matches);
-  result.SortAndCull(input, template_url_service_.get(),
+  result.SortAndCull(input, &template_url_service(),
                      triggered_feature_service());
 
   // The entity suggestion won't be chosen in this case because it has a non-
@@ -1785,7 +1793,7 @@ TEST_F(AutocompleteResultTest,
                           TestSchemeClassifier());
   AutocompleteResult result;
   result.AppendMatches(matches);
-  result.SortAndCull(input, template_url_service_.get(),
+  result.SortAndCull(input, &template_url_service(),
                      triggered_feature_service());
 
   // The first result will be a plain match.
@@ -1837,7 +1845,7 @@ TEST_F(
                           TestSchemeClassifier());
   AutocompleteResult result;
   result.AppendMatches(matches);
-  result.SortAndCull(input, template_url_service_.get(),
+  result.SortAndCull(input, &template_url_service(),
                      triggered_feature_service());
 
   ASSERT_EQ(result.size(), 2u);
@@ -1869,7 +1877,7 @@ TEST_F(AutocompleteResultTest, SortAndCullPromoteDuplicateSearchURLs) {
   url_data.SetShortName(u"unittest");
   url_data.SetKeyword(u"foo");
   url_data.SetURL("http://www.foo.com/s?q={searchTerms}");
-  template_url_service_->Add(std::make_unique<TemplateURL>(url_data));
+  template_url_service().Add(std::make_unique<TemplateURL>(url_data));
 
   TestData data[] = {
       {0, 1, 1300, false}, {1, 1, 1200, true}, {2, 1, 1100, true},
@@ -1889,7 +1897,7 @@ TEST_F(AutocompleteResultTest, SortAndCullPromoteDuplicateSearchURLs) {
                           TestSchemeClassifier());
   AutocompleteResult result;
   result.AppendMatches(matches);
-  result.SortAndCull(input, template_url_service_.get(),
+  result.SortAndCull(input, &template_url_service(),
                      triggered_feature_service());
 
   // We expect the 3rd and 4th results to be removed.
@@ -1924,7 +1932,7 @@ TEST_F(AutocompleteResultTest, SortAndCullFeaturedSearchBeforeStarterPack) {
                           TestSchemeClassifier());
   AutocompleteResult result;
   result.AppendMatches(matches);
-  result.SortAndCull(input, template_url_service_.get(),
+  result.SortAndCull(input, &template_url_service(),
                      triggered_feature_service());
 
   ASSERT_EQ(5U, AutocompleteResult::GetMaxMatches(/*is_zero_suggest=*/false));
@@ -1983,6 +1991,51 @@ TEST_F(AutocompleteResultTest,
       {expected_data, expected_data + AutocompleteResult::GetMaxMatches()});
 }
 
+#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
+TEST_F(AutocompleteResultTest, GroupSuggestionsByExtension) {
+  const auto group1 = omnibox::GROUP_UNSCOPED_EXTENSION_1;
+  const auto group2 = omnibox::GROUP_UNSCOPED_EXTENSION_2;
+
+  TestData data[] = {
+      {0, 5, 400, false, {}, AutocompleteMatchType::HISTORY_TITLE, group1},
+      {1, 1, 800, false, {}, AutocompleteMatchType::CLIPBOARD_URL},
+      {2, 1, 700, false, {}, AutocompleteMatchType::TILE_NAVSUGGEST},
+      {3, 5, 600, false, {}, AutocompleteMatchType::HISTORY_TITLE, group2},
+      {4, 5, 1000, false, {}, AutocompleteMatchType::HISTORY_TITLE, group1},
+      {5, 2, 900, true, {}, AutocompleteMatchType::SEARCH_SUGGEST},
+      {6, 5, 800, false, {}, AutocompleteMatchType::HISTORY_TITLE, group2},
+  };
+
+  omnibox::GroupConfigMap suggestion_groups_map;
+  suggestion_groups_map[group1].set_section(
+      omnibox::SECTION_UNSCOPED_EXTENSION_1);
+  suggestion_groups_map[group2].set_section(
+      omnibox::SECTION_UNSCOPED_EXTENSION_2);
+
+  ACMatches matches;
+  PopulateAutocompleteMatches(data, std::size(data), &matches);
+  AutocompleteInput input(u"a", metrics::OmniboxEventProto::OTHER,
+                          TestSchemeClassifier());
+  AutocompleteResultForTesting result;
+  result.MergeSuggestionGroupsMap(suggestion_groups_map);
+  result.AppendMatches(matches);
+
+  result.SortAndCull(input, &template_url_service(),
+                     triggered_feature_service());
+
+  TestData expected_data[] = {
+      {5, 2, 900, true, {}, AutocompleteMatchType::SEARCH_SUGGEST},
+      {1, 1, 800, false, {}, AutocompleteMatchType::CLIPBOARD_URL},
+      {2, 1, 700, false, {}, AutocompleteMatchType::TILE_NAVSUGGEST},
+      {4, 5, 1000, false, {}, AutocompleteMatchType::HISTORY_TITLE, group1},
+      {0, 5, 400, false, {}, AutocompleteMatchType::HISTORY_TITLE, group1},
+      {6, 5, 800, false, {}, AutocompleteMatchType::HISTORY_TITLE, group2},
+      {3, 5, 600, false, {}, AutocompleteMatchType::HISTORY_TITLE, group2},
+  };
+
+  AssertResultMatches(result, expected_data);
+}
+
 TEST_F(AutocompleteResultTest, SortAndCullMaxHistoryClusterSuggestions) {
   base::test::ScopedFeatureList feature_list;
   feature_list.InitAndDisableFeature(omnibox::kGroupingFrameworkForNonZPS);
@@ -2004,12 +2057,13 @@ TEST_F(AutocompleteResultTest, SortAndCullMaxHistoryClusterSuggestions) {
                           TestSchemeClassifier());
   AutocompleteResult result;
   result.AppendMatches(matches);
-  result.SortAndCull(input, template_url_service_.get(),
+  result.SortAndCull(input, &template_url_service(),
                      triggered_feature_service());
 
   ASSERT_EQ(result.size(), 1u);
   EXPECT_EQ(result.match_at(0)->type, AutocompleteMatchType::HISTORY_CLUSTER);
 }
+#endif
 
 TEST_F(AutocompleteResultTest, SortAndCullMaxURLMatches) {
   base::test::ScopedFeatureList feature_list;
@@ -2046,7 +2100,7 @@ TEST_F(AutocompleteResultTest, SortAndCullMaxURLMatches) {
                             TestSchemeClassifier());
     AutocompleteResult result;
     result.AppendMatches(matches);
-    result.SortAndCull(input, template_url_service_.get(),
+    result.SortAndCull(input, &template_url_service(),
                        triggered_feature_service());
 
     // Expect the search suggest to be moved about URL suggestions due to
@@ -2085,7 +2139,7 @@ TEST_F(AutocompleteResultTest, SortAndCullMaxURLMatches) {
                             TestSchemeClassifier());
     AutocompleteResult result;
     result.AppendMatches(matches);
-    result.SortAndCull(input, template_url_service_.get(),
+    result.SortAndCull(input, &template_url_service(),
                        triggered_feature_service());
 
     EXPECT_EQ(result.size(), AutocompleteResult::GetMaxMatches());
@@ -2254,7 +2308,7 @@ TEST_F(AutocompleteResultTest, DocumentSuggestionsCanMergeButNotToDefault) {
                           TestSchemeClassifier());
   AutocompleteResult result;
   result.AppendMatches(matches);
-  result.SortAndCull(input, template_url_service_.get(),
+  result.SortAndCull(input, &template_url_service(),
                      triggered_feature_service());
 
   // We expect three results:
@@ -2313,7 +2367,8 @@ TEST_F(AutocompleteResultTest, CalculateNumMatchesPerUrlCountTest) {
       matches.push_back(m);
     }
     const size_t num_matches = AutocompleteResult::CalculateNumMatches(
-        false, matches, comparison_object);
+        false, AutocompleteInput::FeaturedKeywordMode::kFalse, matches,
+        comparison_object);
     EXPECT_EQ(num_matches, expected_num_matches);
   };
 
@@ -2325,6 +2380,60 @@ TEST_F(AutocompleteResultTest, CalculateNumMatchesPerUrlCountTest) {
   test("2", "0", "4", {search, url, search, search, search}, 2);
   test("2", "1", "4", {search, url, search, search, search}, 4);
   test("2", "1", "4", {search, url, search, url, search}, 3);
+}
+
+TEST_F(AutocompleteResultTest,
+       CalculateNumMatchesPerUrlCountWithUnscopedExtensions) {
+  CompareWithDemoteByType<AutocompleteMatch> comparison_object(
+      metrics::OmniboxEventProto::OTHER);
+  enum SuggestionType { search, url };
+
+  auto test = [this, comparison_object](
+                  std::string base_limit, std::string url_cutoff,
+                  std::string increased_limit,
+                  std::vector<std::pair<SuggestionType, int>>
+                      suggestion_and_provider_type,
+                  size_t expected_num_matches) {
+    base::test::ScopedFeatureList feature_list;
+    feature_list.InitWithFeaturesAndParameters(
+        {{omnibox::kDynamicMaxAutocomplete,
+          {{OmniboxFieldTrial::kDynamicMaxAutocompleteUrlCutoffParam,
+            url_cutoff},
+           {OmniboxFieldTrial::kDynamicMaxAutocompleteIncreasedLimitParam,
+            increased_limit}}},
+         {omnibox::kUIExperimentMaxAutocompleteMatches,
+          {{OmniboxFieldTrial::kUIMaxAutocompleteMatchesParam, base_limit}}}},
+        {});
+
+    ACMatches matches;
+    for (auto pair : suggestion_and_provider_type) {
+      AutocompleteMatch m;
+      m.relevance = 100;
+      if (pair.first) {
+        m.type = AutocompleteMatchType::URL_WHAT_YOU_TYPED;
+      }
+      m.provider = GetProvider(pair.second);
+      matches.push_back(m);
+    }
+    const size_t num_matches = AutocompleteResult::CalculateNumMatches(
+        false, AutocompleteInput::FeaturedKeywordMode::kFalse, matches,
+        comparison_object);
+    EXPECT_EQ(num_matches, expected_num_matches);
+  };
+
+  test("2", "0", "4", {{search, 2}, {search, 2}, {search, 5}}, 3);
+  test("2", "0", "4",
+       {{search, 2}, {search, 5}, {search, 2}, {search, 2}, {search, 2}}, 5);
+  test("2", "1", "4",
+       {{search, 2}, {url, 2}, {search, 5}, {search, 2}, {url, 2}}, 4);
+  test("2", "1", "3",
+       {{search, 2}, {search, 5}, {search, 5}, {search, 2}, {url, 2}}, 5);
+  test("2", "2", "4",
+       {{search, 5}, {url, 5}, {search, 5}, {url, 2}, {search, 2}, {search, 2}},
+       6);
+  test("2", "1", "4",
+       {{search, 5}, {search, 5}, {search, 2}, {url, 2}, {url, 2}, {url, 2}},
+       4);
 }
 
 TEST_F(AutocompleteResultTest, ClipboardSuggestionOnTopOfSearchSuggestionTest) {
@@ -2363,7 +2472,7 @@ TEST_F(AutocompleteResultTest, ClipboardSuggestionOnTopOfSearchSuggestionTest) {
                           TestSchemeClassifier());
   AutocompleteResult result;
   result.AppendMatches(matches);
-  result.SortAndCull(input, template_url_service_.get(),
+  result.SortAndCull(input, &template_url_service(),
                      triggered_feature_service());
 
   EXPECT_EQ(result.size(), 5u);
@@ -2374,16 +2483,16 @@ TEST_F(AutocompleteResultTest, ClipboardSuggestionOnTopOfSearchSuggestionTest) {
 TEST_F(AutocompleteResultTest, MaybeCullTailSuggestions) {
   auto test = [&](std::vector<CullTailTestMatch> input_matches) {
     ACMatches matches;
-    base::ranges::transform(input_matches, std::back_inserter(matches),
-                            [&](const CullTailTestMatch& test_match) {
-                              AutocompleteMatch match;
-                              match.contents = test_match.id;
-                              match.type = test_match.type;
-                              match.allowed_to_be_default_match =
-                                  test_match.allowed_default;
-                              match.relevance = 1000;
-                              return match;
-                            });
+    std::ranges::transform(input_matches, std::back_inserter(matches),
+                           [&](const CullTailTestMatch& test_match) {
+                             AutocompleteMatch match;
+                             match.contents = test_match.id;
+                             match.type = test_match.type;
+                             match.allowed_to_be_default_match =
+                                 test_match.allowed_default;
+                             match.relevance = 1000;
+                             return match;
+                           });
 
     auto page_classification = metrics::OmniboxEventProto::PageClassification::
         OmniboxEventProto_PageClassification_OTHER;
@@ -2391,7 +2500,7 @@ TEST_F(AutocompleteResultTest, MaybeCullTailSuggestions) {
         &matches, {page_classification});
 
     std::vector<CullTailTestMatch> output_matches;
-    base::ranges::transform(
+    std::ranges::transform(
         matches, std::back_inserter(output_matches), [](const auto& match) {
           return CullTailTestMatch{match.contents, match.type,
                                    match.allowed_to_be_default_match};
@@ -2520,7 +2629,7 @@ TEST_F(AutocompleteResultTest, Desktop_TwoColumnRealbox) {
     AutocompleteResult result;
     result.MergeSuggestionGroupsMap(suggestion_groups_map);
     result.AppendMatches(matches);
-    result.SortAndCull(omnibox_zps_input, template_url_service_.get(),
+    result.SortAndCull(omnibox_zps_input, &template_url_service(),
                        triggered_feature_service());
 
     const std::array<TestData, 5> expected_data{{
@@ -2546,7 +2655,7 @@ TEST_F(AutocompleteResultTest, Desktop_TwoColumnRealbox) {
     AutocompleteResult result;
     result.MergeSuggestionGroupsMap(suggestion_groups_map);
     result.AppendMatches(matches);
-    result.SortAndCull(omnibox_zps_input, template_url_service_.get(),
+    result.SortAndCull(omnibox_zps_input, &template_url_service(),
                        triggered_feature_service());
 
     const std::array<TestData, 8> expected_data{{
@@ -2583,7 +2692,7 @@ TEST_F(AutocompleteResultTest, Desktop_TwoColumnRealbox) {
     AutocompleteResult result;
     result.MergeSuggestionGroupsMap(suggestion_groups_map);
     result.AppendMatches(matches);
-    result.SortAndCull(realbox_zps_input, template_url_service_.get(),
+    result.SortAndCull(realbox_zps_input, &template_url_service(),
                        triggered_feature_service());
 
     const std::array<TestData, 8> expected_data{{
@@ -2613,7 +2722,7 @@ TEST_F(AutocompleteResultTest, Desktop_TwoColumnRealbox) {
     // Clear the SideType_SECONDARY from the 3rd group.
     result.suggestion_groups_map_[group3].clear_side_type();
     result.AppendMatches(matches);
-    result.SortAndCull(realbox_zps_input, template_url_service_.get(),
+    result.SortAndCull(realbox_zps_input, &template_url_service(),
                        triggered_feature_service());
 
     const std::array<TestData, 5> expected_data{{
@@ -2653,7 +2762,9 @@ TEST_F(AutocompleteResultTest, Desktop_ZpsGroupingIPH) {
        false,
        {},
        AutocompleteMatchType::NULL_RESULT_MESSAGE,
-       group2},
+       group2,
+       "",
+       IphType::kFeaturedEnterpriseSearch},
   };
   ACMatches matches;
   PopulateAutocompleteMatches(data, std::size(data), &matches);
@@ -2677,7 +2788,7 @@ TEST_F(AutocompleteResultTest, Desktop_ZpsGroupingIPH) {
     AutocompleteResult result;
     result.MergeSuggestionGroupsMap(suggestion_groups_map);
     result.AppendMatches(matches);
-    result.SortAndCull(omnibox_zps_input, template_url_service_.get(),
+    result.SortAndCull(omnibox_zps_input, &template_url_service(),
                        triggered_feature_service());
 
     // There should be 8 total suggestions, including the IPH suggestion.
@@ -2713,7 +2824,7 @@ TEST_F(AutocompleteResultTest, Desktop_ZpsGroupingIPH) {
     AutocompleteResult result;
     result.MergeSuggestionGroupsMap(suggestion_groups_map);
     result.AppendMatches(matches);
-    result.SortAndCull(realbox_zps_input, template_url_service_.get(),
+    result.SortAndCull(realbox_zps_input, &template_url_service(),
                        triggered_feature_service());
 
     // The IPH suggestion should not be shown in the Realbox, even if it's
@@ -2740,7 +2851,7 @@ TEST_F(AutocompleteResultTest, Desktop_ZpsGroupingIPH) {
     AutocompleteResult result;
     result.MergeSuggestionGroupsMap(suggestion_groups_map);
     result.AppendMatches(matches);
-    result.SortAndCull(omnibox_zps_input, template_url_service_.get(),
+    result.SortAndCull(omnibox_zps_input, &template_url_service(),
                        triggered_feature_service());
 
     // There should be 8 total suggestions, including the IPH suggestion.
@@ -2846,6 +2957,26 @@ TEST_F(AutocompleteResultTest, SplitActionsToSuggestions) {
 
 #endif  // !(BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS))
 
+TEST_F(AutocompleteResultTest, BadDestinationUrls) {
+  AutocompleteMatch empty_url_match;
+  empty_url_match.destination_url = GURL();
+  AutocompleteMatch invalid_scheme_match;
+  invalid_scheme_match.destination_url = GURL("bad_scheme");
+  AutocompleteMatch invalid_url_match;
+  invalid_url_match.destination_url = GURL("https://?k=v");
+
+  ACMatches invalid_matches;
+  invalid_matches.push_back(empty_url_match);
+  invalid_matches.push_back(invalid_scheme_match);
+  invalid_matches.push_back(invalid_url_match);
+
+  AutocompleteResult result;
+  EXPECT_DCHECK_DEATH(result.AppendMatches(invalid_matches));
+
+  // Result set of matches should remain empty.
+  EXPECT_TRUE(result.empty());
+}
+
 #if BUILDFLAG(IS_ANDROID)
 TEST_F(AutocompleteResultTest, Android_InspireMe) {
   const auto group1 = omnibox::GROUP_PERSONALIZED_ZERO_SUGGEST;
@@ -2885,7 +3016,7 @@ TEST_F(AutocompleteResultTest, Android_InspireMe) {
     AutocompleteResult result;
     result.MergeSuggestionGroupsMap(suggestion_groups_map);
     result.AppendMatches(matches);
-    result.SortAndCull(zero_input, template_url_service_.get(),
+    result.SortAndCull(zero_input, &template_url_service(),
                        triggered_feature_service());
 
     const std::array<TestData, 5> expected_data{{
@@ -2926,40 +3057,24 @@ TEST_F(AutocompleteResultTest, Android_UndedupTopSearch) {
 
   struct UndedupTestData {
     std::string test_name;
-    bool promote_entities;
     std::vector<AutocompleteMatch> input;
     std::vector<AutocompleteMatch> expected_result;
   } test_cases[]{
-      {"no op with no matches", true, {}, {}},
-      {"no op with no entities / 1", true, {what_you_typed}, {what_you_typed}},
+      {"no op with no matches", {}, {}},
+      {"no op with no entities / 1", {what_you_typed}, {what_you_typed}},
       {"no op with no entities / 2",
-       true,
        {what_you_typed, search},
        {what_you_typed, search}},
       {"no op with entities with no actions",
-       true,
        {what_you_typed, entity_without_action},
        {what_you_typed, entity_without_action}},
       {"no op with entities with actions at low positions",
-       true,
        {what_you_typed, entity_with_action},
        {what_you_typed, entity_with_action}},
-
-      // Undedup and possibly rotate eligible cases.
-      {"no rotation when promotion is disabled with no actions at top position",
-       false,
-       {entity_without_action},
-       {search, entity_without_action}},
       {"no rotation when promotion is enabled with no actions at top position",
-       true,
        {entity_without_action},
        {search, entity_without_action}},
-      {"no rotation when promotion is disabled with actions at top position",
-       false,
-       {entity_with_action},
-       {search, entity_with_action}},
       {"rotation when promotion is enabled with actions at top position",
-       true,
        {entity_with_action},
        {entity_with_action, search}},
   };
@@ -2971,11 +3086,6 @@ TEST_F(AutocompleteResultTest, Android_UndedupTopSearch) {
   // matches we want to see.
   for (const auto& test_case : test_cases) {
     auto result = test_case.input;
-    base::test::ScopedFeatureList feature_list;
-    feature_list.InitAndEnableFeatureWithParameters(
-        omnibox::kActionsInSuggest,
-        {{OmniboxFieldTrial::kActionsInSuggestPromoteEntitySuggestion.name,
-          test_case.promote_entities ? "true" : "false"}});
     AutocompleteResult::UndedupTopSearchEntityMatch(&result);
 
     EXPECT_EQ(result.size(), test_case.expected_result.size());
@@ -3030,7 +3140,7 @@ TEST_F(AutocompleteResultTest, IOS_InspireMe) {
     AutocompleteResult result;
     result.MergeSuggestionGroupsMap(suggestion_groups_map);
     result.AppendMatches(matches);
-    result.SortAndCull(zero_input, template_url_service_.get(),
+    result.SortAndCull(zero_input, &template_url_service(),
                        triggered_feature_service());
 
     if (ui::GetDeviceFormFactor() == ui::DEVICE_FORM_FACTOR_TABLET) {
@@ -3061,6 +3171,7 @@ TEST_F(AutocompleteResultTest, Mobile_TrimOmniboxActions) {
   scoped_refptr<FakeAutocompleteProvider> provider =
       new FakeAutocompleteProvider(AutocompleteProvider::Type::TYPE_SEARCH);
   using OmniboxActionId::ACTION_IN_SUGGEST;
+  using OmniboxActionId::ANSWER_ACTION;
   using OmniboxActionId::PEDAL;
   using OmniboxActionId::UNKNOWN;
   const std::set<OmniboxActionId> all_actions_to_test{ACTION_IN_SUGGEST, PEDAL};
@@ -3070,6 +3181,7 @@ TEST_F(AutocompleteResultTest, Mobile_TrimOmniboxActions) {
     std::vector<std::vector<OmniboxActionId>> input_matches_and_actions;
     std::vector<std::vector<OmniboxActionId>> result_matches_and_actions_zps;
     std::vector<std::vector<OmniboxActionId>> result_matches_and_actions_typed;
+    bool include_url = false;
   } test_cases[]{
       {"No actions attached to matches",
        {{}, {}, {}, {}},
@@ -3109,6 +3221,25 @@ TEST_F(AutocompleteResultTest, Mobile_TrimOmniboxActions) {
        {{PEDAL}, {PEDAL}, {PEDAL}, {}},
        // Typed
        {{ACTION_IN_SUGGEST}, {PEDAL}, {PEDAL}, {}}},
+      {"Answer actions promoted over pedals; can go in any position",
+       {{ANSWER_ACTION, PEDAL},
+        {ANSWER_ACTION, PEDAL},
+        {ANSWER_ACTION, PEDAL},
+        {ANSWER_ACTION, PEDAL}},
+       // ZPS
+       {{ANSWER_ACTION}, {ANSWER_ACTION}, {ANSWER_ACTION}, {ANSWER_ACTION}},
+       // Typed
+       {{ANSWER_ACTION}, {ANSWER_ACTION}, {ANSWER_ACTION}, {ANSWER_ACTION}}},
+      {"Answer actions suppressed when there are urls",
+       {{PEDAL, ANSWER_ACTION},
+        {ANSWER_ACTION},
+        {ANSWER_ACTION},
+        {ANSWER_ACTION}},
+       // ZPS
+       {{PEDAL}, {}, {}, {}},
+       // Typed
+       {{PEDAL}, {}, {}, {}},
+       /* include_url= */ true},
   };
 
   // Crete matches following the `input_matches_and_actions` input.
@@ -3121,8 +3252,10 @@ TEST_F(AutocompleteResultTest, Mobile_TrimOmniboxActions) {
     AutocompleteResult zps_result;
     AutocompleteResult typed_result;
     for (const auto& actions : data.input_matches_and_actions) {
-      AutocompleteMatch match(provider.get(), 1, false,
-                              AutocompleteMatchType::SEARCH_SUGGEST_ENTITY);
+      AutocompleteMatch match(
+          provider.get(), 1, false,
+          data.include_url ? AutocompleteMatchType::URL_WHAT_YOU_TYPED
+                           : AutocompleteMatchType::SEARCH_SUGGEST_ENTITY);
       for (auto& action_id : actions) {
         if (action_id == OmniboxActionId::ACTION_IN_SUGGEST) {
           omnibox::ActionInfo info;

@@ -51,16 +51,10 @@ void ChromeContentBrowserClientIsolatedWebAppsPart::
     AppendExtraRendererCommandLineSwitches(
         base::CommandLine* command_line,
         content::RenderProcessHost& process) {
-  if (!content::IsolatedWebAppsPolicy::AreIsolatedWebAppsEnabled(
-          process.GetBrowserContext())) {
+  if (!content::AreIsolatedWebAppsEnabled(process.GetBrowserContext())) {
     return;
   }
   command_line->AppendSwitch(switches::kEnableIsolatedWebAppsInRenderer);
-  if (process.GetWebExposedIsolationLevel() >=
-      content::WebExposedIsolationLevel::kIsolatedApplication) {
-    command_line->AppendSwitchASCII(switches::kEnableBlinkFeatures,
-                                    "DirectSockets");
-  }
 }
 
 }  // namespace web_apps

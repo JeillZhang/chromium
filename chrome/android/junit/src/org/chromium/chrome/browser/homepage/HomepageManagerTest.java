@@ -9,7 +9,6 @@ import static org.mockito.Mockito.doReturn;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentMatchers;
@@ -21,8 +20,8 @@ import org.robolectric.annotation.Implementation;
 import org.robolectric.annotation.Implements;
 
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.base.test.util.Features;
 import org.chromium.chrome.browser.common.ChromeUrlConstants;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.new_tab_url.DseNewTabUrlManager;
 import org.chromium.chrome.browser.partnercustomizations.PartnerBrowserCustomizations;
 import org.chromium.chrome.browser.preferences.ChromePreferenceKeys;
@@ -73,8 +72,6 @@ public class HomepageManagerTest {
             sPartnerBrowserCustomizations = partnerBrowserCustomizations;
         }
     }
-
-    @Rule public Features.JUnitProcessor mFeaturesProcessor = new Features.JUnitProcessor();
 
     @Mock private PartnerBrowserCustomizations mPartnerBrowserCustomizations;
 
@@ -225,8 +222,8 @@ public class HomepageManagerTest {
 
         DseNewTabUrlManager.setIsEeaChoiceCountryForTesting(true);
         ShadowHomepagePolicyManager.sHomepageUrl = GURL.emptyGURL();
-        DseNewTabUrlManager.SWAP_OUT_NTP.setForTesting(true);
-        Assert.assertTrue(DseNewTabUrlManager.SWAP_OUT_NTP.getValue());
+        ChromeFeatureList.sNewTabSearchEngineUrlAndroidSwapOutNtp.setForTesting(true);
+        Assert.assertTrue(ChromeFeatureList.sNewTabSearchEngineUrlAndroidSwapOutNtp.getValue());
 
         Assert.assertNull(DseNewTabUrlManager.getDSENewTabUrl(null));
         Assert.assertEquals(ChromeUrlConstants.nativeNtpGurl(), homepageManager.getHomepageGurl());

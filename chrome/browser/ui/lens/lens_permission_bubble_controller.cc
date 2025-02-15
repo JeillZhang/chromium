@@ -7,14 +7,21 @@
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/user_metrics.h"
 #include "base/metrics/user_metrics_action.h"
+#include "build/branding_buildflags.h"
+#include "chrome/browser/themes/theme_service_factory.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
-#include "chrome/browser/ui/lens/lens_overlay_permission_utils.h"
+#include "chrome/browser/ui/lens/lens_overlay_theme_utils.h"
+#include "chrome/grit/branded_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/grit/theme_resources.h"
 #include "components/constrained_window/constrained_window_views.h"
 #include "components/lens/lens_features.h"
+#include "components/lens/lens_overlay_metrics.h"
+#include "components/lens/lens_overlay_permission_utils.h"
+#include "components/lens/lens_permission_user_action.h"
 #include "components/prefs/pref_service.h"
+#include "components/vector_icons/vector_icons.h"
 #include "content/public/browser/page_navigator.h"
 #include "content/public/common/referrer.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -26,27 +33,18 @@
 #include "ui/base/ui_base_types.h"
 #include "ui/base/window_open_disposition.h"
 #include "ui/base/window_open_disposition_utils.h"
+#include "ui/compositor/layer.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/widget/widget.h"
 
 namespace lens {
-namespace {
-
-void LogShown(bool shown) {
-  base::UmaHistogramBoolean("Lens.Overlay.PermissionBubble.Shown", shown);
-}
-
-void LogUserAction(LensPermissionBubbleController::UserAction user_action) {
-  base::UmaHistogramEnumeration("Lens.Overlay.PermissionBubble.UserAction",
-                                user_action);
-}
-
-}  // namespace
 
 LensPermissionBubbleController::LensPermissionBubbleController(
     BrowserWindowInterface* browser_window_interface,
-    PrefService* pref_service)
-    : browser_window_interface_(browser_window_interface),
+    PrefService* pref_service,
+    LensOverlayInvocationSource invocation_source)
+    : invocation_source_(invocation_source),
+      browser_window_interface_(browser_window_interface),
       pref_service_(pref_service) {}
 
 LensPermissionBubbleController::~LensPermissionBubbleController() {
@@ -64,24 +62,38 @@ void LensPermissionBubbleController::RequestPermission(
     if (!dialog_widget_->IsVisible()) {
       dialog_widget_->Show();
     }
-    LogShown(false);
+    RecordPermissionRequestedToBeShown(false, invocation_source_);
     return;
   }
-  LogShown(true);
+  RecordPermissionRequestedToBeShown(true, invocation_source_);
 
   // Observe pref changes. Reset the pref observer in case this method called
   // several times in succession.
   pref_observer_.Reset();
   pref_observer_.Init(pref_service_);
-  pref_observer_.Add(
-      prefs::kLensSharingPageScreenshotEnabled,
-      base::BindRepeating(
-          &LensPermissionBubbleController::OnPermissionPreferenceUpdated,
-          weak_ptr_factory_.GetWeakPtr(), std::move(callback)));
+  if (lens::features::IsLensOverlayContextualSearchboxEnabled()) {
+    pref_observer_.Add(
+        prefs::kLensSharingPageContentEnabled,
+        base::BindRepeating(
+            &LensPermissionBubbleController::OnPermissionPreferenceUpdated,
+            weak_ptr_factory_.GetWeakPtr(), std::move(callback)));
+  } else {
+    pref_observer_.Add(
+        prefs::kLensSharingPageScreenshotEnabled,
+        base::BindRepeating(
+            &LensPermissionBubbleController::OnPermissionPreferenceUpdated,
+            weak_ptr_factory_.GetWeakPtr(), std::move(callback)));
+  }
 
   // Show a tab-modal dialog and keep a reference to its widget.
   dialog_widget_ = constrained_window::ShowWebModal(
       CreateLensPermissionDialogModel(), web_contents);
+  // Clip layers to root layer bounds so that they don't render outside of the
+  // dialog boundary when the dialog is small.
+  // TODO(crbug.com/358379367): this should live in the framework and should
+  // clip to the window opaque area. Currently child layers will bleed into the
+  // window shadow area.
+  dialog_widget_->GetLayer()->SetMasksToBounds(true);
 }
 
 std::unique_ptr<ui::DialogModel>
@@ -92,15 +104,25 @@ LensPermissionBubbleController::CreateLensPermissionDialogModel() {
           &LensPermissionBubbleController::OnHelpCenterLinkClicked,
           weak_ptr_factory_.GetWeakPtr()));
 
+  auto description_text =
+      lens::features::IsLensOverlayContextualSearchboxEnabled()
+          ? ui::DialogModelLabel::CreateWithReplacement(
+                IDS_LENS_PERMISSION_BUBBLE_DIALOG_CSB_DESCRIPTION, link)
+          : ui::DialogModelLabel::CreateWithReplacement(
+                IDS_LENS_PERMISSION_BUBBLE_DIALOG_DESCRIPTION, link);
+
   return ui::DialogModel::Builder()
       .SetInternalName(kLensPermissionDialogName)
       .SetTitle(
           l10n_util::GetStringUTF16(IDS_LENS_PERMISSION_BUBBLE_DIALOG_TITLE))
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
+      .SetIcon(ui::ImageModel::FromVectorIcon(vector_icons::kGoogleColorIcon,
+                                              ui::kColorIcon, 20))
       .SetBannerImage(ui::ImageModel::FromImageSkia(
           *ui::ResourceBundle::GetSharedInstance().GetImageSkiaNamed(
               IDR_LENS_PERMISSION_MODAL_IMAGE)))
-      .AddParagraph(ui::DialogModelLabel::CreateWithReplacement(
-          IDS_LENS_PERMISSION_BUBBLE_DIALOG_DESCRIPTION, link))
+#endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
+      .AddParagraph(description_text)
       .AddOkButton(
           base::BindOnce(
               &LensPermissionBubbleController::OnPermissionDialogAccept,
@@ -116,7 +138,7 @@ LensPermissionBubbleController::CreateLensPermissionDialogModel() {
               weak_ptr_factory_.GetWeakPtr()),
           ui::DialogModel::Button::Params()
               .SetLabel(l10n_util::GetStringUTF16(
-                  IDS_LENS_PERMISSION_BUBBLE_DIALOG_CLOSE_BUTTON))
+                  IDS_LENS_PERMISSION_BUBBLE_DIALOG_CANCEL_BUTTON))
               .SetId(kLensPermissionDialogCancelButtonElementId)
               .SetStyle(ui::ButtonStyle::kTonal))
       .SetCloseActionCallback(base::BindOnce(
@@ -131,34 +153,43 @@ bool LensPermissionBubbleController::HasOpenDialogWidget() {
 
 void LensPermissionBubbleController::OnHelpCenterLinkClicked(
     const ui::Event& event) {
-  LogUserAction(UserAction::kLinkOpened);
-  browser_window_interface_->OpenURL(
+  RecordPermissionUserAction(LensPermissionUserAction::kLinkOpened,
+                             invocation_source_);
+  browser_window_interface_->OpenGURL(
       GURL(lens::features::GetLensOverlayHelpCenterURL()),
       ui::DispositionFromEventFlags(event.flags(),
                                     WindowOpenDisposition::NEW_BACKGROUND_TAB));
 }
 
 void LensPermissionBubbleController::OnPermissionDialogAccept() {
-  LogUserAction(UserAction::kAcceptButtonPressed);
+  RecordPermissionUserAction(LensPermissionUserAction::kAcceptButtonPressed,
+                             invocation_source_);
   pref_service_->SetBoolean(prefs::kLensSharingPageScreenshotEnabled, true);
+  if (lens::features::IsLensOverlayContextualSearchboxEnabled()) {
+    pref_service_->SetBoolean(prefs::kLensSharingPageContentEnabled, true);
+  }
   dialog_widget_ = nullptr;
 }
 
 void LensPermissionBubbleController::OnPermissionDialogCancel() {
-  LogUserAction(UserAction::kCancelButtonPressed);
+  RecordPermissionUserAction(LensPermissionUserAction::kCancelButtonPressed,
+                             invocation_source_);
   dialog_widget_ = nullptr;
 }
 
 void LensPermissionBubbleController::OnPermissionDialogClose() {
   if (dialog_widget_->closed_reason() ==
       views::Widget::ClosedReason::kEscKeyPressed) {
-    LogUserAction(UserAction::kEscKeyPressed);
+    RecordPermissionUserAction(LensPermissionUserAction::kEscKeyPressed,
+                               invocation_source_);
   }
   dialog_widget_ = nullptr;
 }
 
 void LensPermissionBubbleController::OnPermissionPreferenceUpdated(
     RequestPermissionCallback callback) {
+  // If sharing page content pref is enabled, the screenshot pref will also be
+  // enabled. Only need to check for the latter when a pref gets updated.
   if (CanSharePageScreenshotWithLensOverlay(pref_service_)) {
     if (HasOpenDialogWidget()) {
       dialog_widget_->CloseWithReason(

@@ -49,6 +49,7 @@ import "third_party/blink/public/mojom/navigation/navigation_initiator_activatio
 import "third_party/blink/public/mojom/page/browsing_context_group_info.mojom";
 import "third_party/blink/public/mojom/page/page.mojom";
 import "third_party/blink/public/mojom/page/prerender_page_param.mojom";
+import "third_party/blink/public/mojom/partitioned_popins/partitioned_popin_params.mojom";
 import "third_party/blink/public/mojom/picture_in_picture_window_options/picture_in_picture_window_options.mojom";
 import "third_party/blink/public/mojom/widget/platform_widget.mojom";
 import "third_party/blink/public/mojom/page/widget.mojom";
@@ -98,7 +99,7 @@ struct CreateViewParams {
   // The session storage namespace ID this view should use.
   string session_storage_namespace_id;
 
-  // The frame token of the opener frame if one exists, or absl::nullopt
+  // The frame token of the opener frame if one exists, or std::nullopt
   // otherwise.
   blink.mojom.FrameToken? opener_frame_token;
 
@@ -168,12 +169,17 @@ struct CreateViewParams {
   // Indicates whether web or OS-level Attribution Reporting is supported. See
   // https://github.com/WICG/attribution-reporting-api/blob/main/app_to_web.md
   network.mojom.AttributionSupport attribution_support;
+
+  // This must be null unless the view being created is a partitioned popin.
+  // See https://explainers-by-googlers.github.io/partitioned-popins/
+  blink.mojom.PartitionedPopinParams? partitioned_popin_params;
 };
 
 // A union to distinguish between parameters specific to local main frame
 // creation and remote main frame creation.
 union CreateMainFrameUnion {
   CreateLocalMainFrameParams local_params;
+  CreateProvisionalLocalMainFrameParams provisional_local_params;
   CreateRemoteMainFrameParams remote_params;
 };
 
@@ -215,6 +221,12 @@ struct CreateLocalMainFrameParams {
   // Subresource loader factories to be used by the initial empty document.
   blink.mojom.URLLoaderFactoryBundle subresource_loader_factories;
 
+};
+
+// Parameters used for browser-initiated provisional local main frame creation.
+struct CreateProvisionalLocalMainFrameParams {
+  CreateLocalMainFrameParams local_params;
+
   // The FrameToken of the previous LocalFrame that this new LocalFrame will
   // replace. Will only be set when RenderDocument is enabled, for main frame
   // LocalFrame <-> LocalFrame swap.
@@ -230,7 +242,7 @@ struct CreateRemoteMainFrameParams {
   blink.mojom.RemoteMainFrameInterfaces main_frame_interfaces;
 };
 
-// Parameters used for creating a new frame widget.
+// Parameters used for creating a new frame widget for a local root.
 struct CreateFrameWidgetParams {
   // Gives the routing ID for the RenderWidget that will be attached to the
   // new RenderFrame.
@@ -245,9 +257,9 @@ struct CreateFrameWidgetParams {
   // The initial visual properties of the widget.
   blink.mojom.VisualProperties visual_properties;
 
-  // If set, this widget should take the compositor from this frame instead of
-  // creating a new instance.
-  blink.mojom.FrameToken? previous_frame_token_for_compositor_reuse;
+  // If true, reuse the compositor by taking it from the current local root's
+  // frame widget when this frame widget's frame commits and is swapped in.
+  bool reuse_compositor;
 };
 
 // Used for recreating child frames after a crash (does this still happen?) and
@@ -274,7 +286,7 @@ struct CreateFrameParams {
   blink.mojom.FrameToken? previous_frame_token;
 
   // Specifies the new frame's opener.  The opener will be null if this is
-  // absl::nullopt.
+  // std::nullopt.
   blink.mojom.FrameToken? opener_frame_token;
 
   // The new frame should be created as a child of the object identified by
@@ -441,12 +453,16 @@ interface Frame {
   // RenderFrameProxy. `is_loading` mirrors the loading state of the
   // FrameTreeNode's current RenderFrameHost and determines whether
   // the newly-constructed RenderFrameProxy is marked as loading or not.
+  // `devtools_frame_token` is optional and only set when Unload is called for
+  // the placeholder frame when attaching a guest (it is the guest's main
+  // frame's devtools_frame_token and is created in the browser process).
   Unload(
       bool is_loading,
       blink.mojom.FrameReplicationState new_remote_frame_replication_state,
       blink.mojom.RemoteFrameToken new_remote_frame_token,
       blink.mojom.RemoteFrameInterfacesFromBrowser new_remote_frame_interfaces,
-      blink.mojom.RemoteMainFrameInterfaces new_remote_main_frame_interfaces);
+      blink.mojom.RemoteMainFrameInterfaces new_remote_main_frame_interfaces,
+      mojo_base.mojom.UnguessableToken? devtools_frame_token);
 
   // Delete the frame. This is only called for child frames that the browser
   // wants to detach, or for speculative main frames which are owned by the
@@ -522,7 +538,7 @@ interface FrameBindingsControl {
   // Used to tell a render frame whether it should expose various bindings
   // that allow JS content extended privileges. See BindingsPolicy for valid
   // flag values.
-  AllowBindings(int32 enabled_bindings_flags);
+  AllowBindings(int64 enabled_bindings_flags);
 
   // Used to tell the RenderFrame to enable Mojo JS bindings, which allows
   // JS code running in the renderer process to connect to Mojo interfaces
@@ -678,6 +694,10 @@ struct CreateNewWindowReply {
 
   // The ColorProviderColorMaps for this view.
   blink.mojom.ColorProviderColorMaps color_provider_colors;
+
+  // This must be null unless the view being created is a partitioned popin.
+  // See https://explainers-by-googlers.github.io/partitioned-popins/
+  blink.mojom.PartitionedPopinParams? partitioned_popin_params;
 };
 
 // A per-navigation interface passed along with the BeginNavigation call, used

@@ -13,10 +13,8 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "components/live_caption/pref_names.h"
 #include "components/prefs/pref_service.h"
-#include "media/base/media_switches.h"
 #include "ui/base/ui_base_switches.h"
 #include "ui/native_theme/native_theme.h"
 
@@ -128,10 +126,6 @@ std::optional<ui::CaptionStyle> GetCaptionStyleFromUserSettings(
 }
 
 bool IsLiveCaptionFeatureSupported() {
-  if (!base::FeatureList::IsEnabled(media::kLiveCaption)) {
-    return false;
-  }
-
 #if !BUILDFLAG(IS_FUCHSIA) && !BUILDFLAG(IS_ANDROID)
   return speech::IsOnDeviceSpeechRecognitionSupported();
 #else
@@ -142,24 +136,17 @@ bool IsLiveCaptionFeatureSupported() {
 std::string GetCaptionSettingsUrl() {
 #if BUILDFLAG(IS_CHROMEOS)
   return "chrome://os-settings/audioAndCaptions";
-#endif  // BUILDFLAG(IS_CHROMEOS)
-
-#if BUILDFLAG(IS_LINUX)
+#elif BUILDFLAG(IS_LINUX)
   return "chrome://settings/captions";
-#endif  // BUILDFLAG(IS_LINUX)
-
-#if BUILDFLAG(IS_WIN)
+#elif BUILDFLAG(IS_WIN)
   return base::win::GetVersion() >= base::win::Version::WIN10
              ? "chrome://settings/accessibility"
              : "chrome://settings/captions";
-#endif  // BUILDFLAG(IS_WIN)
-
-#if BUILDFLAG(IS_MAC)
+#elif BUILDFLAG(IS_MAC)
   return "chrome://settings/accessibility";
-#endif  // BUILDFLAG(IS_MAC)
-
-  NOTREACHED_IN_MIGRATION();
-  return std::string();
+#else
+  NOTREACHED();
+#endif
 }
 
 }  // namespace captions

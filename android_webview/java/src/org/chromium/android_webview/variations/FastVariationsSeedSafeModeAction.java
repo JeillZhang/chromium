@@ -178,7 +178,7 @@ public class FastVariationsSeedSafeModeAction implements SafeModeAction {
         }
     }
 
-    private class SeedParser {
+    private static class SeedParser {
         public boolean parseSeedAsByteArray(byte[] protoAsByteArray) {
             if (protoAsByteArray == null) {
                 Log.w(TAG, "Seed String is empty");
@@ -214,11 +214,11 @@ public class FastVariationsSeedSafeModeAction implements SafeModeAction {
             RecordHistogram.recordEnumeratedHistogram(
                     "Variations.SafeMode.LoadSafeSeed.Result",
                     result,
-                    LoadSeedResult.MAX_VALUE + 1);
+                    LoadSeedResult.MAX_VALUE);
         }
     }
 
-    private class SeedWriterTask implements Runnable {
+    private static class SeedWriterTask implements Runnable {
         private byte[] mProtoAsByteArray;
 
         public SeedWriterTask(byte[] protoAsByteArray) {

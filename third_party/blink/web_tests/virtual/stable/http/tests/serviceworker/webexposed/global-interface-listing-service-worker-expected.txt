@@ -1,4 +1,9 @@
 [INTERFACES]
+interface AICreateMonitor : EventTarget
+    attribute @@toStringTag
+    getter ondownloadprogress
+    method constructor
+    setter ondownloadprogress
 interface AbortController
     attribute @@toStringTag
     getter signal
@@ -19,6 +24,16 @@ interface AbortSignal : EventTarget
     method constructor
     method throwIfAborted
     setter onabort
+interface AsyncDisposableStack
+    attribute @@toStringTag
+    getter disposed
+    method Symbol(Symbol.asyncDispose)
+    method adopt
+    method constructor
+    method defer
+    method disposeAsync
+    method move
+    method use
 interface BackgroundFetchEvent : ExtendableEvent
     attribute @@toStringTag
     getter registration
@@ -387,6 +402,16 @@ interface DecompressionStream
     getter readable
     getter writable
     method constructor
+interface DisposableStack
+    attribute @@toStringTag
+    getter disposed
+    method Symbol(Symbol.dispose)
+    method adopt
+    method constructor
+    method defer
+    method dispose
+    method move
+    method use
 interface ErrorEvent : Event
     attribute @@toStringTag
     getter colno
@@ -599,13 +624,14 @@ interface GPUAdapter
     getter isFallbackAdapter
     getter limits
     method constructor
-    method requestAdapterInfo
     method requestDevice
 interface GPUAdapterInfo
     attribute @@toStringTag
     getter architecture
     getter description
     getter device
+    getter subgroupMaxSize
+    getter subgroupMinSize
     getter vendor
     method constructor
 interface GPUBindGroup
@@ -635,6 +661,7 @@ interface GPUCanvasContext
     getter canvas
     method configure
     method constructor
+    method getConfiguration
     method getCurrentTexture
     method unconfigure
 interface GPUCommandBuffer
@@ -694,6 +721,7 @@ interface GPUComputePipeline
     setter label
 interface GPUDevice : EventTarget
     attribute @@toStringTag
+    getter adapterInfo
     getter features
     getter label
     getter limits
@@ -858,7 +886,6 @@ interface GPUSupportedLimits
     getter maxComputeWorkgroupsPerDimension
     getter maxDynamicStorageBuffersPerPipelineLayout
     getter maxDynamicUniformBuffersPerPipelineLayout
-    getter maxInterStageShaderComponents
     getter maxInterStageShaderVariables
     getter maxSampledTexturesPerShaderStage
     getter maxSamplersPerShaderStage
@@ -1235,6 +1262,7 @@ interface OffscreenCanvasRenderingContext2D
     method fill
     method fillRect
     method fillText
+    method getContextAttributes
     method getImageData
     method getLineDash
     method getTransform
@@ -1374,6 +1402,7 @@ interface PerformanceResourceTiming : PerformanceEntry
     getter domainLookupStart
     getter encodedBodySize
     getter fetchStart
+    getter finalResponseHeadersStart
     getter firstInterimResponseStart
     getter initiatorType
     getter nextHopProtocol
@@ -1438,6 +1467,7 @@ interface PushMessageData
     attribute @@toStringTag
     method arrayBuffer
     method blob
+    method bytes
     method constructor
     method json
     method text
@@ -1501,6 +1531,10 @@ interface ReadableStreamDefaultReader
     method constructor
     method read
     method releaseLock
+interface ReportBody
+    attribute @@toStringTag
+    method constructor
+    method toJSON
 interface ReportingObserver
     attribute @@toStringTag
     method constructor
@@ -1514,6 +1548,7 @@ interface Request
     getter cache
     getter credentials
     getter destination
+    getter duplex
     getter headers
     getter integrity
     getter isHistoryNavigation
@@ -1528,6 +1563,7 @@ interface Request
     getter url
     method arrayBuffer
     method blob
+    method bytes
     method clone
     method constructor
     method formData
@@ -1548,15 +1584,20 @@ interface Response
     getter url
     method arrayBuffer
     method blob
+    method bytes
     method clone
     method constructor
     method formData
     method json
     method text
+interface RestrictionTarget
+    attribute @@toStringTag
+    method constructor
 interface Scheduler
     attribute @@toStringTag
     method constructor
     method postTask
+    method yield
 interface SecurityPolicyViolationEvent : Event
     attribute @@toStringTag
     getter blockedURI
@@ -1623,7 +1664,7 @@ interface StorageBucketManager
     method delete
     method keys
     method open
-interface StorageManager : EventTarget
+interface StorageManager
     attribute @@toStringTag
     method constructor
     method estimate
@@ -1644,6 +1685,10 @@ interface SubtleCrypto
     method unwrapKey
     method verify
     method wrapKey
+interface SuppressedError : Error
+    attribute message
+    attribute name
+    method constructor
 interface SyncEvent : ExtendableEvent
     attribute @@toStringTag
     getter lastChance

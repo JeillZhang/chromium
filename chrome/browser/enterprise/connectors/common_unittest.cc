@@ -2,9 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #include "chrome/browser/enterprise/connectors/common.h"
 
 #include "base/memory/raw_ptr.h"
+#include "base/strings/to_string.h"
 #include "chrome/browser/enterprise/connectors/connectors_service.h"
 #include "chrome/browser/enterprise/connectors/test/deep_scanning_test_utils.h"
 #include "chrome/browser/policy/dm_token_utils.h"
@@ -24,6 +30,7 @@ namespace enterprise_connectors {
 
 namespace {
 
+#if BUILDFLAG(ENTERPRISE_CONTENT_ANALYSIS)
 struct CustomMessageTestCase {
   TriggeredRule::Action action;
   std::string message;
@@ -97,9 +104,11 @@ class BaseTest : public testing::Test {
   TestingProfileManager profile_manager_;
   raw_ptr<TestingProfile> profile_;
 };
+#endif  // BUILDFLAG(ENTERPRISE_CONTENT_ANALYSIS)
 
 }  // namespace
 
+#if BUILDFLAG(ENTERPRISE_CONTENT_ANALYSIS)
 class EnterpriseConnectorsResultShouldAllowDataUseTest
     : public BaseTest,
       public testing::WithParamInterface<bool> {
@@ -115,7 +124,7 @@ class EnterpriseConnectorsResultShouldAllowDataUseTest
   }
 
   bool allowed() const { return !GetParam(); }
-  const char* bool_setting() const { return GetParam() ? "true" : "false"; }
+  std::string bool_setting() const { return base::ToString(GetParam()); }
   const char* default_action_setting() const {
     return GetParam() ? "block" : "allow";
   }
@@ -321,4 +330,6 @@ INSTANTIATE_TEST_SUITE_P(
                 {.action = TriggeredRule::BLOCK,
                  .message = kTestEscapedHtmlMessage}},
             /*expected_message=*/kTestUnescapedHtmlMessage)));
+#endif  // BUILDFLAG(ENTERPRISE_CONTENT_ANALYSIS)
+
 }  // namespace enterprise_connectors

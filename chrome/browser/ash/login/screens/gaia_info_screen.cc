@@ -11,6 +11,7 @@
 #include "chrome/browser/ui/webui/ash/login/gaia_info_screen_handler.h"
 #include "chrome/browser/ui/webui/ash/login/mojom/screens_common.mojom.h"
 #include "chromeos/ash/components/install_attributes/install_attributes.h"
+#include "chromeos/ash/components/quick_start/quick_start_metrics.h"
 
 namespace ash {
 
@@ -91,6 +92,8 @@ void GaiaInfoScreen::OnNextClicked(UserCreationFlowType user_flow) {
   if (user_flow == UserCreationFlowType::kManual) {
     exit_callback_.Run(Result::kManual);
   } else {
+    CHECK(context()->quick_start_enabled);
+    CHECK(!context()->quick_start_setup_ongoing);
     exit_callback_.Run(Result::kEnterQuickStart);
   }
 }
@@ -98,6 +101,12 @@ void GaiaInfoScreen::OnNextClicked(UserCreationFlowType user_flow) {
 void GaiaInfoScreen::SetQuickStartButtonVisibility(bool visible) {
   if (visible && GetRemote()->is_bound()) {
     (*GetRemote())->SetQuickStartVisible();
+
+    if (!has_emitted_quick_start_visible) {
+      has_emitted_quick_start_visible = true;
+      quick_start::QuickStartMetrics::RecordEntryPointVisible(
+          quick_start::QuickStartMetrics::EntryPoint::GAIA_INFO_SCREEN);
+    }
   }
 }
 

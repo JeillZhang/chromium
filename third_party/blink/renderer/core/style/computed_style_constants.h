@@ -65,14 +65,22 @@ enum PseudoId : uint8_t {
   kPseudoIdNone,
   kPseudoIdFirstLine,
   kPseudoIdFirstLetter,
+  kPseudoIdCheckMark,
   kPseudoIdBefore,
   kPseudoIdAfter,
+  kPseudoIdPickerIcon,
   kPseudoIdMarker,
   kPseudoIdBackdrop,
   kPseudoIdSelection,
   kPseudoIdScrollbar,
   kPseudoIdScrollMarker,
   kPseudoIdScrollMarkerGroup,
+  kPseudoIdScrollButton,
+  kPseudoIdScrollButtonBlockStart,
+  kPseudoIdScrollButtonInlineStart,
+  kPseudoIdScrollButtonInlineEnd,
+  kPseudoIdScrollButtonBlockEnd,
+  kPseudoIdColumn,
   kPseudoIdSearchText,
   kPseudoIdTargetText,
   kPseudoIdHighlight,
@@ -95,6 +103,10 @@ enum PseudoId : uint8_t {
   kPseudoIdScrollMarkerGroupBefore,
   kPseudoIdResizer,
   kPseudoIdInputListButton,
+  kPseudoIdPlaceholder,
+  kPseudoIdFileSelectorButton,
+  kPseudoIdDetailsContent,
+  kPseudoIdPickerSelect,
   // Special values follow:
   kAfterLastInternalPseudoId,
   kPseudoIdInvalid,
@@ -391,6 +403,8 @@ enum class TextEmphasisPosition : unsigned {
   kUnderLeft,
 };
 
+enum class StyleViewTransitionCaptureMode : unsigned { kFlat, kLayered };
+
 inline bool IsOver(TextEmphasisPosition position) {
   return position == TextEmphasisPosition::kOverRight ||
          position == TextEmphasisPosition::kOverLeft;
@@ -499,12 +513,19 @@ enum class CompositingOperator : unsigned {
   kPlusLighter
 };
 
-// https://drafts.csswg.org/css-anchor-position-1/#typedef-position-try-options-try-tactic
+// https://drafts.csswg.org/css-anchor-position-1/#typedef-position-try-fallbacks-try-tactic
 enum class TryTactic : uint8_t {
   kNone,
   kFlipBlock,
   kFlipInline,
   kFlipStart,
+};
+
+enum class EAnimationTriggerType : uint8_t {
+  kOnce,
+  kRepeat,
+  kAlternate,
+  kState,
 };
 
 // TODO(crbug.com/332933527): Support anchors-valid.

@@ -152,17 +152,6 @@ NSMenuItem* BuildFileMenu(NSApplication* nsapp,
           .Build();
   // clang-format on
 
-  // The default key bindings assign Cmd-W to Close Tab, and Shift-Cmd-W to
-  // Close Window. For PWAs, we skipped adding the Close Tab item, but Close
-  // Window still has the Shift-Cmd-W shortcut. Remove Shift from the shortcut.
-  if (is_pwa) {
-    NSMenuItem* closeWindowMenuItem =
-        [[item submenu] itemWithTag:IDC_CLOSE_WINDOW];
-    // @"W" corresponds to the "Shift-W" portion of Shift-Cmd-W. We remove the
-    // Shift by making the equivalent string lower case.
-    closeWindowMenuItem.keyEquivalent = @"w";
-  }
-
   return item;
 }
 
@@ -292,6 +281,8 @@ NSMenuItem* BuildViewMenu(NSApplication* nsapp,
                   .command_id(IDC_TOGGLE_FULLSCREEN_TOOLBAR),
               Item(IDS_CONTEXT_MENU_SHOW_FULL_URLS)
                   .command_id(IDC_SHOW_FULL_URLS),
+              Item(IDS_CONTEXT_MENU_SHOW_GOOGLE_LENS_SHORTCUT)
+                  .command_id(IDC_SHOW_GOOGLE_LENS_SHORTCUT),
               Item(IDS_CUSTOMIZE_TOUCH_BAR)
                   .tag(IDC_CUSTOMIZE_TOUCH_BAR)
                   .action(@selector(toggleTouchBarCustomizationPalette:))
@@ -311,7 +302,6 @@ NSMenuItem* BuildViewMenu(NSApplication* nsapp,
               Item(IDS_ENTER_FULLSCREEN_MAC)
                   .action(@selector(toggleFullScreen:))
                   .is_alternate()
-                  .remove_if(base::mac::MacOSMajorVersion() <= 11)
                   .key_equivalent(@"f", NSEventModifierFlagCommand |
                                             NSEventModifierFlagControl),
               Item(IDS_TEXT_DEFAULT_MAC)
@@ -460,7 +450,7 @@ NSMenuItem* BuildWindowMenu(NSApplication* nsapp,
                   .command_id(IDC_MANAGE_EXTENSIONS)
                   .remove_if(is_pwa),
               Item(IDS_TASK_MANAGER_MAC)
-                  .command_id(IDC_TASK_MANAGER)
+                  .command_id(IDC_TASK_MANAGER_MAIN_MENU)
                   .remove_if(is_pwa),
               Item().is_separator()
                   .remove_if(is_pwa),
@@ -562,10 +552,12 @@ NSMenuItem* BuildHelpMenu(NSApplication* nsapp,
 
 }  // namespace
 
-void BuildMainMenu(NSApplication* nsapp,
-                   id<NSApplicationDelegate> app_delegate,
-                   const std::u16string& product_name,
-                   bool is_pwa) {
+NSMenu* BuildMainMenu(NSApplication* nsapp,
+                      id<NSApplicationDelegate> app_delegate,
+                      const std::u16string& product_name,
+                      bool is_pwa) {
+  AcceleratorsCocoa::CreateForPWA(is_pwa);
+
   NSMenu* main_menu = [[NSMenu alloc] initWithTitle:@""];
   for (auto* builder : {
            &BuildAppMenu,
@@ -586,10 +578,17 @@ void BuildMainMenu(NSApplication* nsapp,
   }
 
   nsapp.mainMenu = main_menu;
+
+  return main_menu;
 }
 
 NSMenuItem* BuildFileMenuForTesting(bool is_pwa) {
-  return BuildFileMenu(nil, nil, u"", is_pwa);
+  NSMenu* mainMenu = BuildMainMenu(nil, nil, u"", is_pwa);
+
+  // First is the App menu, then the File menu.
+  const int kFileMenuItemIndex = 1;
+
+  return [mainMenu itemArray][kFileMenuItemIndex];
 }
 
 namespace internal {

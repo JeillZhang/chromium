@@ -37,14 +37,11 @@
 #include "chrome/browser/extensions/mv2_experiment_stage.h"
 #include "chrome/browser/extensions/scoped_active_install.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/profiles/profile_observer.h"
 #include "chrome/browser/safe_browsing/safe_browsing_metrics_collector_factory.h"
 #include "chrome/browser/safe_browsing/safe_browsing_navigation_observer_manager_factory.h"
-#include "chrome/browser/safe_browsing/safe_browsing_service.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/supervised_user/supervised_user_browser_utils.h"
-#include "chrome/browser/ui/app_list/app_list_util.h"
 #include "chrome/browser/ui/extensions/extensions_dialogs.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/common/pref_names.h"
@@ -66,6 +63,7 @@
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/browser/extension_util.h"
+#include "extensions/browser/extensions_browser_client.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/manifest.h"
 #include "extensions/common/manifest_constants.h"
@@ -74,6 +72,10 @@
 #include "net/base/load_flags.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "url/gurl.h"
+
+#if BUILDFLAG(SAFE_BROWSING_AVAILABLE)
+#include "chrome/browser/safe_browsing/safe_browsing_service.h"
+#endif
 
 using safe_browsing::SafeBrowsingNavigationObserverManager;
 
@@ -124,16 +126,18 @@ class PendingApprovals : public ProfileObserver {
   }
 
   void MaybeAddObservation(Profile* profile) {
-    if (!observation_.IsObservingSource(profile))
+    if (!observation_.IsObservingSource(profile)) {
       observation_.AddObservation(profile);
+    }
   }
 
   // Remove observation if there are no pending approvals
   // for the Profile.
   void MaybeRemoveObservation(Profile* profile) {
     for (const auto& entry : approvals_) {
-      if (entry->profile == profile)
+      if (entry->profile == profile) {
         return;
+      }
     }
     observation_.RemoveObservation(profile);
   }
@@ -181,8 +185,7 @@ api::webstore_private::Result WebstoreInstallHelperResultToApiResult(
     case WebstoreInstallHelper::Delegate::kManifestError:
       return api::webstore_private::Result::kManifestError;
   }
-  NOTREACHED_IN_MIGRATION();
-  return api::webstore_private::Result::kNone;
+  NOTREACHED();
 }
 
 static base::LazyInstance<PendingApprovals>::DestructorAtExit
@@ -204,18 +207,14 @@ const char kWebstoreBlockByPolicy[] =
     "Extension installation is blocked by policy";
 const char kIncognitoError[] =
     "Apps cannot be installed in guest/incognito mode";
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-const char kSecondaryProfileError[] =
-    "Apps may only be installed using the main profile";
-const char kLegacyPackagedAppError[] =
-    "Legacy packaged apps are no longer supported";
-#endif
 
 const char kParentBlockedExtensionInstallError[] =
     "Parent has blocked extension/app installation";
 
+#if BUILDFLAG(SAFE_BROWSING_AVAILABLE)
 // The number of user gestures to trace back for the referrer chain.
 const int kExtensionReferrerUserGestureLimit = 2;
+#endif
 
 WebstorePrivateApi::Delegate* test_delegate = nullptr;
 
@@ -225,17 +224,14 @@ WebstorePrivateApi::Delegate* test_delegate = nullptr;
 // there was previously stored data, or an empty string otherwise. The Set will
 // overwrite any previous login.
 std::string GetWebstoreLogin(Profile* profile) {
-  if (profile->GetPrefs()->HasPrefPath(kWebstoreLogin))
+  if (profile->GetPrefs()->HasPrefPath(kWebstoreLogin)) {
     return profile->GetPrefs()->GetString(kWebstoreLogin);
+  }
   return std::string();
 }
 
 void SetWebstoreLogin(Profile* profile, const std::string& login) {
   profile->GetPrefs()->SetString(kWebstoreLogin, login);
-}
-
-void RecordWebstoreExtensionInstallResult(bool success) {
-  UMA_HISTOGRAM_BOOLEAN("Webstore.ExtensionInstallResult", success);
 }
 
 api::webstore_private::ExtensionInstallStatus
@@ -265,6 +261,11 @@ ConvertExtensionInstallStatusForAPI(ExtensionInstallStatus status) {
           kCustodianApprovalRequiredForInstallation;
     case kForceInstalled:
       return api::webstore_private::ExtensionInstallStatus::kForceInstalled;
+    case kDeprecatedManifestVersion:
+      return api::webstore_private::ExtensionInstallStatus::
+          kDeprecatedManifestVersion;
+    case kCorrupted:
+      return api::webstore_private::ExtensionInstallStatus::kCorrupted;
   }
   return api::webstore_private::ExtensionInstallStatus::kNone;
 }
@@ -315,10 +316,11 @@ ExtensionInstallStatus AddExtensionToPendingList(
   ExtensionInstallStatus new_status =
       GetWebstoreExtensionInstallStatus(id, profile);
 #if DCHECK_IS_ON()
-  if (status == kCanRequest)
+  if (status == kCanRequest) {
     DCHECK_EQ(kRequestPending, new_status);
-  else
+  } else {
     DCHECK_EQ(status, new_status);
+  }
 #endif  // DCHECK_IS_ON()
   return new_status;
 }
@@ -326,8 +328,9 @@ ExtensionInstallStatus AddExtensionToPendingList(
 // Returns the extension's icon if it exists, otherwise the default icon of the
 // extension type.
 gfx::ImageSkia GetIconImage(const SkBitmap& icon, bool is_app) {
-  if (!icon.empty())
+  if (!icon.empty()) {
     return gfx::ImageSkia::CreateFrom1xBitmap(icon);
+  }
 
   return is_app ? extensions::util::GetDefaultAppIcon()
                 : extensions::util::GetDefaultExtensionIcon();
@@ -347,12 +350,13 @@ void ReportWebStoreInstallEsbAllowlistParameter(
     const std::optional<bool>& allowlist_parameter) {
   WebStoreInstallAllowlistParameter value;
 
-  if (!allowlist_parameter)
+  if (!allowlist_parameter) {
     value = WebStoreInstallAllowlistParameter::kUndefined;
-  else if (*allowlist_parameter)
+  } else if (*allowlist_parameter) {
     value = WebStoreInstallAllowlistParameter::kAllowlisted;
-  else
+  } else {
     value = WebStoreInstallAllowlistParameter::kNotAllowlisted;
+  }
 
   base::UmaHistogramEnumeration(
       "Extensions.WebStoreInstall.EsbAllowlistParameter", value);
@@ -371,6 +375,16 @@ void ReportWebStoreInstallNotAllowlistedInstalled(bool installed,
         installed);
   }
 }
+
+// Returns whether the app launcher has been enabled.
+bool IsAppLauncherEnabled() {
+#if BUILDFLAG(IS_CHROMEOS)
+  return true;
+#else
+  return false;
+#endif
+}
+
 }  // namespace
 
 // static
@@ -503,8 +517,7 @@ void WebstorePrivateBeginInstallWithManifest3Function::OnWebstoreParseSuccess(
   // Check if the supervised user is allowed to install extensions in the legacy
   // flow. NOTE: we do not block themes.
   if (!dummy_extension_->is_theme()) {
-    if (supervised_user::AreExtensionsPermissionsEnabled(
-            *profile_->GetPrefs()) &&
+    if (supervised_user::AreExtensionsPermissionsEnabled(profile_) &&
         !supervised_user::
             IsSupervisedUserSkipParentApprovalToInstallExtensionsEnabled()) {
       SupervisedUserExtensionsDelegate* supervised_user_extensions_delegate =
@@ -662,8 +675,7 @@ void WebstorePrivateBeginInstallWithManifest3Function::
 
 bool WebstorePrivateBeginInstallWithManifest3Function::
     PromptForParentApproval() {
-  DCHECK(
-      supervised_user::AreExtensionsPermissionsEnabled(*profile_->GetPrefs()));
+  DCHECK(supervised_user::AreExtensionsPermissionsEnabled(profile_));
   content::WebContents* web_contents = GetSenderWebContents();
   if (!web_contents) {
     // The browser window has gone away.
@@ -722,13 +734,12 @@ void WebstorePrivateBeginInstallWithManifest3Function::OnInstallPromptDone(
     case ExtensionInstallPrompt::Result::ACCEPTED_WITH_WITHHELD_PERMISSIONS: {
       // TODO(b/202064235): The only user of this branch is ChromeOs v1 flow.
       // Handle parent permission for child accounts on ChromeOS.
-      if (!dummy_extension_->is_theme()  // Parent permission not required for
-                                         // theme installation
-          && g_browser_process->profile_manager()->IsValidProfile(profile_) &&
-          supervised_user::AreExtensionsPermissionsEnabled(
-              *profile_->GetPrefs()) &&
+      // Parent permission not required for theme installation.
+      if (!dummy_extension_->is_theme() &&
+          ExtensionsBrowserClient::Get()->IsValidContext(profile_) &&
+          supervised_user::AreExtensionsPermissionsEnabled(profile_) &&
           !supervised_user::SupervisedUserCanSkipExtensionParentApprovals(
-              *profile_->GetPrefs())) {
+              profile_)) {
         if (PromptForParentApproval()) {
           // If we are showing parent permission dialog, return instead of
           // break, so that we don't release the ref below.
@@ -766,7 +777,7 @@ void WebstorePrivateBeginInstallWithManifest3Function::OnRequestPromptDone(
     case ExtensionInstallPrompt::Result::ABORTED:
       break;
     case ExtensionInstallPrompt::Result::ACCEPTED_WITH_WITHHELD_PERMISSIONS:
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
   }
 
   Respond(BuildResponse(api::webstore_private::Result::kUserCancelled,
@@ -799,8 +810,9 @@ void WebstorePrivateBeginInstallWithManifest3Function::HandleInstallProceed(
   approval->installing_icon = gfx::ImageSkia::CreateFrom1xBitmap(icon_);
   approval->bypassed_safebrowsing_friction = friction_dialog_shown_;
   approval->withhold_permissions = withhold_permissions;
-  if (details().authuser)
+  if (details().authuser) {
     approval->authuser = *details().authuser;
+  }
   g_pending_approvals.Get().PushApproval(std::move(approval));
 
   DCHECK(scoped_active_install_.get());
@@ -860,8 +872,9 @@ bool WebstorePrivateBeginInstallWithManifest3Function::ShouldShowFrictionDialog(
       !details().esb_allowlist || *details().esb_allowlist;
 
   // Never show friction if the extension is considered allowlisted.
-  if (consider_allowlisted)
+  if (consider_allowlisted) {
     return false;
+  }
 
   // Only show friction if the allowlist warnings are enabled for the profile.
   auto* extension_system = ExtensionSystem::Get(profile);
@@ -885,17 +898,21 @@ void WebstorePrivateBeginInstallWithManifest3Function::ShowInstallDialog(
 
   if (!dummy_extension_->is_theme()) {
     const bool requires_parent_permission =
-        supervised_user::AreExtensionsPermissionsEnabled(
-            *profile_->GetPrefs()) &&
+        supervised_user::AreExtensionsPermissionsEnabled(profile_) &&
         !supervised_user::SupervisedUserCanSkipExtensionParentApprovals(
-            *profile_->GetPrefs());
+            profile_);
 
     // We don't prompt for parent permission for themes, so no need
     // to configure the install prompt to indicate that this is a child
     // asking a parent for installation permission.
     prompt->set_requires_parent_permission(requires_parent_permission);
-    if (requires_parent_permission) {
+    // Record metrics for supervised users that are in "Skip parent approval"-mode
+    // and use the Extension install dialog (that is used by non-supervised
+    // users).
+    if (supervised_user::AreExtensionsPermissionsEnabled(profile_)) {
       prompt->AddObserver(&supervised_user_extensions_metrics_recorder_);
+    }
+    if (requires_parent_permission) {
       // Bypass the install prompt dialog if V2 is enabled. The
       // ParentAccessDialog handles both the blocked and install use case.
 #if BUILDFLAG(IS_CHROMEOS)
@@ -970,8 +987,9 @@ WebstorePrivateCompleteInstallFunction::Run() {
     return RespondNow(Error(kIncognitoError));
   }
 
-  if (!crx_file::id_util::IdIsValid(params->expected_id))
+  if (!crx_file::id_util::IdIsValid(params->expected_id)) {
     return RespondNow(Error(kWebstoreInvalidIdError));
+  }
 
   approval_ =
       g_pending_approvals.Get().PopApproval(profile, params->expected_id);
@@ -979,23 +997,6 @@ WebstorePrivateCompleteInstallFunction::Run() {
     return RespondNow(
         Error(kNoPreviousBeginInstallWithManifestError, params->expected_id));
   }
-
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-  // TODO(crbug.com/40239506): Centralize logic for disallowing
-  // installation with other installation paths.
-  if (!profile->IsMainProfile()) {
-    bool allowed = approval_->dummy_extension &&
-                   (approval_->dummy_extension->is_extension() ||
-                    approval_->dummy_extension->is_theme());
-    if (!allowed) {
-      return RespondNow(Error(kSecondaryProfileError));
-    }
-  }
-  if (approval_->dummy_extension &&
-      approval_->dummy_extension->is_legacy_packaged_app()) {
-    return RespondNow(Error(kLegacyPackagedAppError));
-  }
-#endif
 
   content::WebContents* web_contents = GetSenderWebContents();
   if (!web_contents) {
@@ -1032,8 +1033,6 @@ void WebstorePrivateCompleteInstallFunction::OnExtensionInstallSuccess(
   VLOG(1) << "Install success, sending response";
   Respond(NoArguments());
 
-  RecordWebstoreExtensionInstallResult(true);
-
   // Matches the AddRef in Run().
   Release();
 }
@@ -1048,8 +1047,6 @@ void WebstorePrivateCompleteInstallFunction::OnExtensionInstallFailure(
 
   VLOG(1) << "Install failed, sending response";
   Respond(Error(error));
-
-  RecordWebstoreExtensionInstallResult(false);
 
   // Matches the AddRef in Run().
   Release();
@@ -1066,7 +1063,7 @@ WebstorePrivateEnableAppLauncherFunction::
     WebstorePrivateEnableAppLauncherFunction() = default;
 
 WebstorePrivateEnableAppLauncherFunction::
-    ~WebstorePrivateEnableAppLauncherFunction() {}
+    ~WebstorePrivateEnableAppLauncherFunction() = default;
 
 ExtensionFunction::ResponseAction
 WebstorePrivateEnableAppLauncherFunction::Run() {
@@ -1079,7 +1076,7 @@ WebstorePrivateGetBrowserLoginFunction::
     WebstorePrivateGetBrowserLoginFunction() = default;
 
 WebstorePrivateGetBrowserLoginFunction::
-    ~WebstorePrivateGetBrowserLoginFunction() {}
+    ~WebstorePrivateGetBrowserLoginFunction() = default;
 
 ExtensionFunction::ResponseAction
 WebstorePrivateGetBrowserLoginFunction::Run() {
@@ -1095,7 +1092,8 @@ WebstorePrivateGetBrowserLoginFunction::Run() {
 WebstorePrivateGetStoreLoginFunction::WebstorePrivateGetStoreLoginFunction() =
     default;
 
-WebstorePrivateGetStoreLoginFunction::~WebstorePrivateGetStoreLoginFunction() {}
+WebstorePrivateGetStoreLoginFunction::~WebstorePrivateGetStoreLoginFunction() =
+    default;
 
 ExtensionFunction::ResponseAction WebstorePrivateGetStoreLoginFunction::Run() {
   return RespondNow(ArgumentList(GetStoreLogin::Results::Create(
@@ -1105,7 +1103,8 @@ ExtensionFunction::ResponseAction WebstorePrivateGetStoreLoginFunction::Run() {
 WebstorePrivateSetStoreLoginFunction::WebstorePrivateSetStoreLoginFunction() =
     default;
 
-WebstorePrivateSetStoreLoginFunction::~WebstorePrivateSetStoreLoginFunction() {}
+WebstorePrivateSetStoreLoginFunction::~WebstorePrivateSetStoreLoginFunction() =
+    default;
 
 ExtensionFunction::ResponseAction WebstorePrivateSetStoreLoginFunction::Run() {
   std::optional<SetStoreLogin::Params> params =
@@ -1123,7 +1122,7 @@ WebstorePrivateGetWebGLStatusFunction::WebstorePrivateGetWebGLStatusFunction()
                          base::Unretained(this)))) {}
 
 WebstorePrivateGetWebGLStatusFunction::
-    ~WebstorePrivateGetWebGLStatusFunction() {}
+    ~WebstorePrivateGetWebGLStatusFunction() = default;
 
 ExtensionFunction::ResponseAction WebstorePrivateGetWebGLStatusFunction::Run() {
   feature_checker_->CheckGpuFeatureAvailability();
@@ -1138,10 +1137,10 @@ void WebstorePrivateGetWebGLStatusFunction::OnFeatureCheck(
 }
 
 WebstorePrivateGetIsLauncherEnabledFunction::
-    WebstorePrivateGetIsLauncherEnabledFunction() {}
+    WebstorePrivateGetIsLauncherEnabledFunction() = default;
 
 WebstorePrivateGetIsLauncherEnabledFunction::
-    ~WebstorePrivateGetIsLauncherEnabledFunction() {}
+    ~WebstorePrivateGetIsLauncherEnabledFunction() = default;
 
 ExtensionFunction::ResponseAction
 WebstorePrivateGetIsLauncherEnabledFunction::Run() {
@@ -1153,7 +1152,7 @@ WebstorePrivateIsInIncognitoModeFunction::
     WebstorePrivateIsInIncognitoModeFunction() = default;
 
 WebstorePrivateIsInIncognitoModeFunction::
-    ~WebstorePrivateIsInIncognitoModeFunction() {}
+    ~WebstorePrivateIsInIncognitoModeFunction() = default;
 
 ExtensionFunction::ResponseAction
 WebstorePrivateIsInIncognitoModeFunction::Run() {
@@ -1166,7 +1165,7 @@ WebstorePrivateIsPendingCustodianApprovalFunction::
     WebstorePrivateIsPendingCustodianApprovalFunction() = default;
 
 WebstorePrivateIsPendingCustodianApprovalFunction::
-    ~WebstorePrivateIsPendingCustodianApprovalFunction() {}
+    ~WebstorePrivateIsPendingCustodianApprovalFunction() = default;
 
 ExtensionFunction::ResponseAction
 WebstorePrivateIsPendingCustodianApprovalFunction::Run() {
@@ -1175,7 +1174,7 @@ WebstorePrivateIsPendingCustodianApprovalFunction::Run() {
   EXTENSION_FUNCTION_VALIDATE(params);
 
   auto* profile = Profile::FromBrowserContext(browser_context());
-  if (!supervised_user::AreExtensionsPermissionsEnabled(*profile->GetPrefs())) {
+  if (!supervised_user::AreExtensionsPermissionsEnabled(profile)) {
     return RespondNow(BuildResponse(false));
   }
   ExtensionRegistry* registry = ExtensionRegistry::Get(browser_context());
@@ -1207,10 +1206,11 @@ WebstorePrivateGetReferrerChainFunction::
     WebstorePrivateGetReferrerChainFunction() = default;
 
 WebstorePrivateGetReferrerChainFunction::
-    ~WebstorePrivateGetReferrerChainFunction() {}
+    ~WebstorePrivateGetReferrerChainFunction() = default;
 
 ExtensionFunction::ResponseAction
 WebstorePrivateGetReferrerChainFunction::Run() {
+#if BUILDFLAG(SAFE_BROWSING_AVAILABLE)
   Profile* profile = Profile::FromBrowserContext(browser_context());
   if (!SafeBrowsingNavigationObserverManager::IsEnabledAndReady(
           profile->GetPrefs(), g_browser_process->safe_browsing_service()))
@@ -1259,6 +1259,10 @@ WebstorePrivateGetReferrerChainFunction::Run() {
   return RespondNow(
       ArgumentList(api::webstore_private::GetReferrerChain::Results::Create(
           base::Base64Encode(request.SerializeAsString()))));
+#else
+  return RespondNow(ArgumentList(
+      api::webstore_private::GetReferrerChain::Results::Create("")));
+#endif
 }
 
 WebstorePrivateGetExtensionStatusFunction::
@@ -1278,8 +1282,9 @@ WebstorePrivateGetExtensionStatusFunction::Run() {
     return RespondNow(Error(kWebstoreInvalidIdError));
   }
 
-  if (!params->manifest)
+  if (!params->manifest) {
     return RespondNow(BuildResponseWithoutManifest(extension_id));
+  }
 
   data_decoder::DataDecoder::ParseJsonIsolated(
       *(params->manifest),
@@ -1308,8 +1313,9 @@ void WebstorePrivateGetExtensionStatusFunction::OnManifestParsed(
   }
 
   Profile* const profile = Profile::FromBrowserContext(browser_context());
-  if (!g_browser_process->profile_manager()->IsValidProfile(profile)) {
+  if (!ExtensionsBrowserClient::Get()->IsValidContext(profile)) {
     Respond(Error(kWebstoreUserCancelledError));
+    return;
   }
 
   std::string error;
@@ -1363,6 +1369,12 @@ WebstorePrivateGetMV2DeprecationStatusFunction::Run() {
       break;
     case MV2ExperimentStage::kWarning:
       api_status = api::webstore_private::MV2DeprecationStatus::kWarning;
+      break;
+    case MV2ExperimentStage::kDisableWithReEnable:
+      api_status = api::webstore_private::MV2DeprecationStatus::kSoftDisable;
+      break;
+    case MV2ExperimentStage::kUnsupported:
+      api_status = api::webstore_private::MV2DeprecationStatus::kHardDisable;
       break;
   }
 

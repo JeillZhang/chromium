@@ -30,10 +30,13 @@ import org.robolectric.Robolectric;
 import org.robolectric.annotation.Config;
 import org.robolectric.shadows.ShadowDrawable;
 
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.task.TaskTraits;
 import org.chromium.base.task.test.ShadowPostTask;
 import org.chromium.base.test.BaseRobolectricTestRunner;
+import org.chromium.base.test.util.Features;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.search_engines.TemplateUrlServiceFactory;
 import org.chromium.chrome.browser.suggestions.ImageFetcher;
@@ -43,7 +46,6 @@ import org.chromium.components.browser_ui.widget.RoundedIconGenerator;
 import org.chromium.components.favicon.IconType;
 import org.chromium.components.favicon.LargeIconBridge.LargeIconCallback;
 import org.chromium.components.search_engines.TemplateUrlService;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.ui.base.TestActivity;
 import org.chromium.url.GURL;
 import org.chromium.url.JUnitTestGURLs;
@@ -56,6 +58,7 @@ import java.util.List;
 @Config(
         manifest = Config.NONE,
         shadows = {ShadowPostTask.class})
+@Features.EnableFeatures(ChromeFeatureList.TILE_CONTEXT_MENU_REFACTOR)
 public class TileRendererTest {
     /**
      * Backend that substitutes normal PostTask operations. Allow us to coordinate task execution
@@ -131,7 +134,7 @@ public class TileRendererTest {
     }
 
     private SuggestionsTileView buildTileView(@TileStyle int style, int titleLines) {
-        return TestThreadUtils.runOnUiThreadBlockingNoException(
+        return ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     TileRenderer tileRenderer =
                             new TileRenderer(mActivity, style, titleLines, mMockImageFetcher);

@@ -11,10 +11,10 @@
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/element.h"
 #include "third_party/blink/renderer/core/dom/element_traversal.h"
-#include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/dom/shadow_root.h"
 #include "third_party/blink/renderer/core/html/html_slot_element.h"
 #include "third_party/blink/renderer/core/inspector/inspector_trace_events.h"
+#include "third_party/blink/renderer/core/inspector/invalidation_set_to_selector_map.h"
 
 namespace blink {
 
@@ -26,7 +26,17 @@ void PendingInvalidations::ScheduleInvalidationSetsForNode(
   bool requires_descendant_invalidation = false;
 
   if (node.GetStyleChangeType() < kSubtreeStyleChange) {
+    // In addition to scheduling invalidation sets, we may immediately call
+    // SetNeedsStyleRecalc(), so make sure we're set up to trace invalidations
+    // if necessary.
+    InvalidationSetToSelectorMap::StartOrStopTrackingIfNeeded(
+        node.GetDocument().GetStyleEngine());
+
     for (auto& invalidation_set : invalidation_lists.descendants) {
+      if (invalidation_set->InvalidatesNth()) {
+        PossiblyScheduleNthPseudoInvalidations(node);
+      }
+
       if (invalidation_set->WholeSubtreeInvalid()) {
         auto* shadow_root = DynamicTo<ShadowRoot>(node);
         auto* subtree_root = shadow_root ? &shadow_root->host() : &node;
@@ -49,10 +59,6 @@ void PendingInvalidations::ScheduleInvalidationSetsForNode(
         node.SetNeedsStyleRecalc(kLocalStyleChange,
                                  StyleChangeReasonForTracing::Create(
                                      style_change_reason::kRelatedStyleRule));
-      }
-
-      if (invalidation_set->InvalidatesNth()) {
-        PossiblyScheduleNthPseudoInvalidations(node);
       }
 
       if (!invalidation_set->IsEmpty()) {
@@ -130,6 +136,12 @@ void PendingInvalidations::ScheduleSiblingInvalidationsAsDescendants(
   if (!subtree_root) {
     subtree_root = &To<ShadowRoot>(scheduling_parent).host();
   }
+
+  // In addition to scheduling invalidation sets, we may immediately call
+  // SetNeedsStyleRecalc(), so make sure we're set up to trace invalidations
+  // if necessary.
+  InvalidationSetToSelectorMap::StartOrStopTrackingIfNeeded(
+      scheduling_parent.GetDocument().GetStyleEngine());
 
   for (auto& invalidation_set : invalidation_lists.siblings) {
     DescendantInvalidationSet* descendants =

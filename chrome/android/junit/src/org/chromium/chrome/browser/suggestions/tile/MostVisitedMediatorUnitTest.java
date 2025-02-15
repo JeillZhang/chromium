@@ -27,9 +27,7 @@ import android.view.ViewStub;
 
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.Mockito;
@@ -37,7 +35,6 @@ import org.mockito.MockitoAnnotations;
 import org.robolectric.annotation.Config;
 
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.base.test.util.Features;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.native_page.ContextMenuManager;
 import org.chromium.chrome.browser.offlinepages.OfflinePageBridge;
@@ -84,8 +81,6 @@ public class MostVisitedMediatorUnitTest {
     private FakeMostVisitedSites mMostVisitedSites;
     private PropertyModel mModel;
     private MostVisitedTilesMediator mMediator;
-
-    @Rule public TestRule mProcessor = new Features.JUnitProcessor();
 
     @Before
     public void setUp() {
@@ -238,7 +233,7 @@ public class MostVisitedMediatorUnitTest {
 
         Assert.assertEquals(
                 mResources.getDimensionPixelSize(R.dimen.tile_view_padding_edge_portrait),
-                (int) (mModel.get(HORIZONTAL_EDGE_PADDINGS)));
+                (int) mModel.get(HORIZONTAL_EDGE_PADDINGS));
         int tileViewWidth = mResources.getDimensionPixelOffset(R.dimen.tile_view_width);
         Assert.assertEquals(
                 (int)
@@ -246,7 +241,7 @@ public class MostVisitedMediatorUnitTest {
                                         - mModel.get(HORIZONTAL_EDGE_PADDINGS)
                                         - tileViewWidth * 4.5)
                                 / 4),
-                (int) (mModel.get(HORIZONTAL_INTERVAL_PADDINGS)));
+                (int) mModel.get(HORIZONTAL_INTERVAL_PADDINGS));
     }
 
     @Test
@@ -260,7 +255,7 @@ public class MostVisitedMediatorUnitTest {
 
         Assert.assertEquals(
                 mResources.getDimensionPixelSize(R.dimen.tile_view_padding_edge_portrait),
-                (int) (mModel.get(HORIZONTAL_EDGE_PADDINGS)));
+                (int) mModel.get(HORIZONTAL_EDGE_PADDINGS));
         int tileViewWidth = mResources.getDimensionPixelOffset(R.dimen.tile_view_width_condensed);
         Assert.assertEquals(
                 Integer.max(
@@ -270,7 +265,7 @@ public class MostVisitedMediatorUnitTest {
                                                 - mModel.get(HORIZONTAL_EDGE_PADDINGS)
                                                 - tileViewWidth * 4.5)
                                         / 4)),
-                (int) (mModel.get(HORIZONTAL_INTERVAL_PADDINGS)));
+                (int) mModel.get(HORIZONTAL_INTERVAL_PADDINGS));
     }
 
     @Test
@@ -281,10 +276,10 @@ public class MostVisitedMediatorUnitTest {
 
         Assert.assertEquals(
                 mResources.getDimensionPixelSize(R.dimen.tile_view_padding_landscape),
-                (int) (mModel.get(HORIZONTAL_EDGE_PADDINGS)));
+                (int) mModel.get(HORIZONTAL_EDGE_PADDINGS));
         Assert.assertEquals(
                 mResources.getDimensionPixelSize(R.dimen.tile_view_padding_landscape),
-                (int) (mModel.get(HORIZONTAL_INTERVAL_PADDINGS)));
+                (int) mModel.get(HORIZONTAL_INTERVAL_PADDINGS));
     }
 
     @Test

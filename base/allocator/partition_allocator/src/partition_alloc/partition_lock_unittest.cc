@@ -5,7 +5,7 @@
 #include "partition_alloc/partition_lock.h"
 
 #include "partition_alloc/build_config.h"
-#include "partition_alloc/partition_alloc_base/debug/debugging_buildflags.h"
+#include "partition_alloc/buildflags.h"
 #include "partition_alloc/partition_alloc_base/thread_annotations.h"
 #include "partition_alloc/partition_alloc_base/threading/platform_thread_for_testing.h"
 #include "partition_alloc/partition_alloc_base/time/time.h"
@@ -163,10 +163,33 @@ TEST(PartitionAllocLockTest, AssertAcquired) {
   lock.Release();
 }
 
+#if defined(GTEST_HAS_DEATH_TEST) && \
+    (PA_BUILDFLAG(DCHECKS_ARE_ON) || \
+     PA_BUILDFLAG(ENABLE_PARTITION_LOCK_REENTRANCY_CHECK))
+
+// Need to bypass `-Wthread-safety-analysis` for this test.
+#if __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wthread-safety-analysis"
+#endif
+
+TEST(PartitionAllocLockTest, ReentrancyDeathTest) {
+  Lock lock;
+  lock.Acquire();
+  EXPECT_DEATH(lock.Acquire(), "");
+}
+
+#if __clang__
+#pragma clang diagnostic pop
+#endif
+
+#endif  // defined(GTEST_HAS_DEATH_TEST) && (PA_BUILDFLAG(DCHECKS_ARE_ON) ||
+        // PA_BUILDFLAG(ENABLE_PARTITION_LOCK_REENTRANCY_CHECK))
+
 // AssertAcquired() is only enforced with DCHECK()s.
 // DCHECKs don't work with EXPECT_DEATH on official builds.
-#if defined(GTEST_HAS_DEATH_TEST) && PA_BUILDFLAG(PA_DCHECK_IS_ON) && \
-    (!defined(OFFICIAL_BUILD) || !defined(NDEBUG))
+#if defined(GTEST_HAS_DEATH_TEST) && PA_BUILDFLAG(DCHECKS_ARE_ON) && \
+    (!defined(OFFICIAL_BUILD) || PA_BUILDFLAG(IS_DEBUG))
 
 TEST(PartitionAllocLockTest, AssertAcquiredDeathTest) {
   Lock lock;
@@ -201,8 +224,8 @@ TEST(PartitionAllocLockTest, AssertAcquiredAnotherThreadHoldsTheLock) {
   base::PlatformThreadForTesting::Join(handle);
 
   // DCHECKs don't work with EXPECT_DEATH on official builds.
-#if PA_BUILDFLAG(PA_DCHECK_IS_ON) && \
-    (!defined(OFFICIAL_BUILD) || !defined(NDEBUG))
+#if PA_BUILDFLAG(DCHECKS_ARE_ON) && \
+    (!defined(OFFICIAL_BUILD) || PA_BUILDFLAG(IS_DEBUG))
   EXPECT_DEATH(lock.AssertAcquired(), "");
 #endif
 }
@@ -241,6 +264,6 @@ TEST(PartitionAllocLockTest, ReinitInOtherThread) PA_NO_THREAD_SAFETY_ANALYSIS {
 }
 #endif  // PA_BUILDFLAG(IS_APPLE)
 
-#endif  // defined(GTEST_HAS_DEATH_TEST) && PA_BUILDFLAG(PA_DCHECK_IS_ON)
+#endif  // defined(GTEST_HAS_DEATH_TEST) && PA_BUILDFLAG(DCHECKS_ARE_ON)
 
 }  // namespace partition_alloc::internal

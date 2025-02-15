@@ -25,10 +25,13 @@
 #include "base/test/scoped_feature_list.h"
 #include "chrome/browser/certificate_provider/certificate_provider.h"
 #include "chromeos/ash/components/network/policy_certificate_provider.h"
-#include "chromeos/components/kcer/extra_instances.h"
 #include "chromeos/components/onc/certificate_scope.h"
 #include "chromeos/constants/chromeos_features.h"
 #endif  // BUILDFLAG(IS_CHROMEOS)
+
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+#include "chromeos/ash/components/kcer/extra_instances.h"
+#endif
 
 namespace {
 
@@ -68,7 +71,7 @@ CertificateManagerModel::CertInfo* GetCertInfoFromOrgGroupingMap(
 
 class CertificateManagerModelTest : public testing::Test {
  public:
-  CertificateManagerModelTest() {}
+  CertificateManagerModelTest() = default;
 
   CertificateManagerModelTest(const CertificateManagerModelTest&) = delete;
   CertificateManagerModelTest& operator=(const CertificateManagerModelTest&) =
@@ -236,8 +239,7 @@ class FakePolicyCertificateProvider : public ash::PolicyCertificateProvider {
   net::CertificateList GetAllAuthorityCertificates(
       const chromeos::onc::CertificateScope& scope) const override {
     // This function is not called by CertificateManagerModel.
-    NOTREACHED_IN_MIGRATION();
-    return net::CertificateList();
+    NOTREACHED();
   }
 
   net::CertificateList GetWebTrustedCertificates(
@@ -259,8 +261,7 @@ class FakePolicyCertificateProvider : public ash::PolicyCertificateProvider {
   const std::set<std::string>& GetExtensionIdsWithPolicyCertificates()
       const override {
     // This function is not called by CertificateManagerModel.
-    NOTREACHED_IN_MIGRATION();
-    return kNoExtensions;
+    NOTREACHED();
   }
 
   void SetPolicyProvidedCertificates(
@@ -333,7 +334,9 @@ class CertificateManagerModelChromeOSTest : public CertificateManagerModelTest {
     params->extension_certificate_provider =
         std::make_unique<FakeExtensionCertificateProvider>(
             &extension_client_certs_, &extensions_hang_);
+#if BUILDFLAG(IS_CHROMEOS_ASH)
     params->kcer = kcer::ExtraInstances::GetEmptyKcer();
+#endif
     return params;
   }
 
@@ -677,6 +680,7 @@ TEST_F(CertificateManagerModelChromeOSTest,
   }
 }
 
+#if BUILDFLAG(IS_CHROMEOS_ASH)
 // Test that CertificateManagerModel handles PKCS#12 import correctly.
 // The test doesn't simulate a valid certificate, actual handling of PKCS#12
 // data is covered by the tests for NSSCertDatabase and/or Kcer, but it tests
@@ -730,5 +734,6 @@ TEST_F(CertificateManagerModelChromeOSTest, ImportFromPKCS12) {
     EXPECT_EQ(import_waiter.Get(), net::ERR_PKCS12_IMPORT_INVALID_FILE);
   }
 }
+#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
 #endif  // BUILDFLAG(IS_CHROMEOS)

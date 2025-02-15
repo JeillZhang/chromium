@@ -72,6 +72,7 @@ constexpr char kAppListSortDiscoveryDurationAfterNudgeClamshell[] =
 constexpr char kAppListSortDiscoveryDurationAfterNudgeTablet[] =
     "Apps.AppList.SortDiscoveryDurationAfterEducationNudgeV2.TabletMode";
 
+// LINT.IfChange(SearchSessionConclusion)
 std::string SearchSessionConclusionToString(
     SearchSessionConclusion conclusion) {
   switch (conclusion) {
@@ -83,6 +84,7 @@ std::string SearchSessionConclusionToString(
       return "AnswerCardSeen";
   }
 }
+// LINT.ThenChange(//tools/metrics/histograms/metadata/apps/enums.xml:LauncherSearchSessionConclusion)
 
 bool IsAppListShowSourceUserTriggered(AppListShowSource show_source) {
   switch (show_source) {
@@ -99,7 +101,7 @@ bool IsAppListShowSourceUserTriggered(AppListShowSource show_source) {
     case AppListShowSource::kWelcomeTour:
       return false;
   }
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 void RecordSearchResultOpenTypeHistogram(AppListLaunchedFrom launch_location,
@@ -142,8 +144,7 @@ void RecordSearchResultOpenTypeHistogram(AppListLaunchedFrom launch_location,
     case AppListLaunchedFrom::kLaunchedFromDiscoveryChip:
       // Search results don't live in the shelf, the app grid, apps collections
       // or recent apps.
-      NOTREACHED_IN_MIGRATION();
-      break;
+      NOTREACHED();
   }
 }
 

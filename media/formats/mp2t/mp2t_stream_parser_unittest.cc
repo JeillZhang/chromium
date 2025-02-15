@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/formats/mp2t/mp2t_stream_parser.h"
 
 #include <openssl/aes.h>
@@ -79,7 +84,6 @@ std::string DecryptSampleAES(const std::string& key,
                              bool has_pattern) {
   DCHECK(input);
   EXPECT_EQ(input_size % 16, 0);
-  crypto::EnsureOpenSSLInit();
   std::string result;
   const EVP_CIPHER* cipher = EVP_aes_128_cbc();
   ScopedCipherCTX ctx;
@@ -262,7 +266,7 @@ class Mp2tStreamParserTest : public testing::Test {
     size_t audio_track_count = 0;
     size_t video_track_count = 0;
     for (const auto& track : tracks->tracks()) {
-      const auto& track_id = track->bytestream_track_id();
+      const auto& track_id = track->stream_id();
       if (track->type() == MediaTrack::Type::kAudio) {
         audio_track_id_ = track_id;
         audio_track_count++;
@@ -402,7 +406,7 @@ class Mp2tStreamParserTest : public testing::Test {
       // Attempt to incrementally parse each appended chunk to test out the
       // parser's internal management of input queue and pending data bytes.
       EXPECT_TRUE(AppendAllDataThenParseInPieces(
-          buffer->AsSpan().subspan(start, chunk_size),
+          (*buffer).subspan(start, chunk_size),
           (chunk_size > 7) ? (chunk_size - 7) : chunk_size));
       start += chunk_size;
     } while (start < end);

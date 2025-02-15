@@ -11,14 +11,12 @@
 #include <map>
 #include <memory>
 #include <unordered_set>
-#include <utility>
 
 #include "base/memory/raw_ptr.h"
 #include "base/observer_list.h"
 #include "base/process/process_handle.h"
 #include "base/sequence_checker.h"
 #include "components/performance_manager/execution_context/execution_context_registry_impl.h"
-#include "components/performance_manager/graph/initializing_frame_node_observer.h"
 #include "components/performance_manager/owned_objects.h"
 #include "components/performance_manager/public/graph/graph.h"
 #include "components/performance_manager/public/graph/graph_registered.h"
@@ -96,10 +94,6 @@ class GraphImpl : public Graph {
 #if DCHECK_IS_ON()
   bool IsOnGraphSequence() const override;
 #endif
-  void AddInitializingFrameNodeObserver(
-      InitializingFrameNodeObserver* frame_node_observer) override;
-  void RemoveInitializingFrameNodeObserver(
-      InitializingFrameNodeObserver* frame_node_observer) override;
   GraphRegistered* GetRegisteredObject(uintptr_t type_id) override;
 
   // Helper function for safely downcasting to the implementation. This also
@@ -134,22 +128,13 @@ class GraphImpl : public Graph {
   // Returns true if |node| is in this graph.
   bool NodeInGraph(const NodeBase* node) const;
 
+  // Returns true iff `node` is in a state where its edges are publicly visible.
+  bool NodeEdgesArePublic(const NodeBase* node) const;
+
   // Management functions for node owners, any node added to the graph must be
   // removed from the graph before it's deleted.
   void AddNewNode(NodeBase* new_node);
   void RemoveNode(NodeBase* node);
-
-  // Sends the `OnFrameNodeInitializing()` and `OnFrameNodeTearingDown()`
-  // notifications to initializing frame node observers (See
-  // InitializingFrameNodeObserver for details).
-  void NotifyFrameNodeInitializing(const FrameNode* frame_node);
-  void NotifyFrameNodeTearingDown(const FrameNode* frame_node);
-
-  // A |key| of nullptr counts all instances associated with the |node|. A
-  // |node| of null counts all instances associated with the |key|. If both are
-  // null then the entire map size is provided.
-  size_t GetNodeAttachedDataCountForTesting(const Node* node,
-                                            const void* key) const;
 
   // Allows explicitly invoking SystemNode destruction for testing.
   void ReleaseSystemNodeForTesting() {
@@ -200,11 +185,13 @@ class GraphImpl : public Graph {
   };
 
   using ProcessByPidMap = std::map<base::ProcessId, ProcessNodeImpl*>;
-  using FrameById = std::map<ProcessAndFrameId, FrameNodeImpl*>;
+  using FrameById =
+      std::map<ProcessAndFrameId, raw_ptr<FrameNodeImpl, CtnExperimental>>;
 
+  void DispatchBeforeNodeAddedNotifications(NodeBase* node);
   void DispatchNodeAddedNotifications(NodeBase* node);
+  void DispatchBeforeNodeRemovedNotifications(NodeBase* node);
   void DispatchNodeRemovedNotifications(NodeBase* node);
-  void RemoveNodeAttachedData(NodeBase* node);
 
   // Returns a new serialization ID.
   friend class NodeBase;
@@ -262,28 +249,17 @@ class GraphImpl : public Graph {
   // flat_map.
   OwnedObjects<GraphOwned,
                /* CallbackArgType = */ Graph*,
-               &GraphOwned::OnPassedToGraph,
-               &GraphOwned::OnTakenFromGraph>
+               &GraphOwned::PassToGraphImpl,
+               &GraphOwned::TakeFromGraphImpl>
       graph_owned_ GUARDED_BY_CONTEXT(sequence_checker_);
 
   // Allocated on first use.
   mutable std::unique_ptr<NodeDataDescriberRegistry> describer_registry_
       GUARDED_BY_CONTEXT(sequence_checker_);
 
-  // User data storage for the graph.
-  friend class NodeAttachedDataMapHelper;
-  using NodeAttachedDataKey = std::pair<const Node*, const void*>;
-  using NodeAttachedDataMap =
-      std::map<NodeAttachedDataKey, std::unique_ptr<NodeAttachedData>>;
-  NodeAttachedDataMap node_attached_data_map_
-      GUARDED_BY_CONTEXT(sequence_checker_);
-
   // Storage for GraphRegistered objects.
   RegisteredObjects<GraphRegistered> registered_objects_
       GUARDED_BY_CONTEXT(sequence_checker_);
-
-  InitializingFrameNodeObserverManager
-      initializing_frame_node_observer_manager_;
 
   execution_context::ExecutionContextRegistryImpl
       execution_context_registry_impl_;

@@ -21,6 +21,7 @@
 #include "chrome/browser/web_applications/external_install_options.h"
 #include "chrome/browser/web_applications/locks/app_lock.h"
 #include "chrome/browser/web_applications/mojom/user_display_mode.mojom.h"
+#include "chrome/browser/web_applications/proto/web_app_install_state.pb.h"
 #include "chrome/browser/web_applications/test/fake_data_retriever.h"
 #include "chrome/browser/web_applications/test/fake_os_integration_manager.h"
 #include "chrome/browser/web_applications/test/fake_web_app_provider.h"
@@ -37,6 +38,8 @@
 #include "chrome/browser/web_applications/web_app_icon_manager.h"
 #include "chrome/browser/web_applications/web_app_install_info.h"
 #include "chrome/browser/web_applications/web_app_install_utils.h"
+#include "chrome/browser/web_applications/web_app_management_type.h"
+#include "chrome/browser/web_applications/web_app_registrar.h"
 #include "chrome/browser/web_applications/web_contents/web_app_data_retriever.h"
 #include "chrome/browser/web_applications/web_contents/web_contents_manager.h"
 #include "components/services/app_service/public/cpp/icon_info.h"
@@ -50,6 +53,7 @@
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/gfx/geometry/size.h"
 
+using base::BucketsAre;
 using testing::_;
 using testing::Return;
 
@@ -258,6 +262,7 @@ class ExternalAppResolutionCommandTest : public WebAppTest {
 };
 
 TEST_F(ExternalAppResolutionCommandTest, SuccessInternalDefault) {
+  // TODO(crbug.com/381408483): Review usage of ExternalInstallOptions in tests.
   ExternalInstallOptions install_options(
       kWebAppUrl, mojom::UserDisplayMode::kBrowser,
       ExternalInstallSource::kInternalDefault);
@@ -267,7 +272,8 @@ TEST_F(ExternalAppResolutionCommandTest, SuccessInternalDefault) {
   auto result = InstallAndWait(install_options);
   EXPECT_EQ(result.code, webapps::InstallResultCode::kSuccessNewInstall);
   ASSERT_TRUE(result.app_id.has_value());
-  EXPECT_TRUE(registrar().IsLocallyInstalled(*result.app_id));
+  EXPECT_EQ(proto::INSTALLED_WITH_OS_INTEGRATION,
+            registrar().GetInstallState(*result.app_id));
   EXPECT_FALSE(IsPlaceholderAppUrl(kWebAppUrl));
   std::optional<webapps::AppId> id =
       registrar().LookupExternalAppId(kWebAppUrl);
@@ -282,6 +288,7 @@ TEST_F(ExternalAppResolutionCommandTest, SuccessInternalDefault) {
 }
 
 TEST_F(ExternalAppResolutionCommandTest, SuccessAppFromPolicy) {
+  // TODO(crbug.com/381408483): Review usage of ExternalInstallOptions in tests.
   ExternalInstallOptions install_options(
       kWebAppUrl, mojom::UserDisplayMode::kBrowser,
       ExternalInstallSource::kExternalDefault);
@@ -291,7 +298,8 @@ TEST_F(ExternalAppResolutionCommandTest, SuccessAppFromPolicy) {
   auto result = InstallAndWait(install_options);
   EXPECT_EQ(result.code, webapps::InstallResultCode::kSuccessNewInstall);
   ASSERT_TRUE(result.app_id.has_value());
-  EXPECT_TRUE(registrar().IsLocallyInstalled(*result.app_id));
+  EXPECT_EQ(proto::INSTALLED_WITH_OS_INTEGRATION,
+            registrar().GetInstallState(*result.app_id));
   EXPECT_FALSE(IsPlaceholderAppUrl(kWebAppUrl));
   std::optional<webapps::AppId> id =
       registrar().LookupExternalAppId(kWebAppUrl);
@@ -612,7 +620,8 @@ TEST_F(ExternalAppResolutionCommandTest,
                     .GetAppById(placeholder_app_id)
                     ->HasOnlySource(WebAppManagement::Type::kPolicy));
     EXPECT_TRUE(IsPlaceholderAppId(placeholder_app_id));
-    EXPECT_TRUE(registrar().IsInstalled(placeholder_app_id));
+    EXPECT_EQ(proto::InstallState::INSTALLED_WITH_OS_INTEGRATION,
+              registrar().GetInstallState(placeholder_app_id));
   }
 
   // Replace the placeholder with a real app.
@@ -753,8 +762,11 @@ TEST_F(ExternalAppResolutionCommandTest, InstallWithWebAppInfoSucceeds) {
             webapps::WebappInstallSource::EXTERNAL_DEFAULT);
 
   // Ensure that the WebApp.Install.Result histogram is only measured once.
-  tester.ExpectBucketCount("WebApp.Install.Result", /*sample=*/true,
-                           /*expected_count=*/1);
+  EXPECT_THAT(tester.GetAllSamples("WebApp.Install.Result"),
+              BucketsAre(base::Bucket(true, 1)));
+  EXPECT_THAT(tester.GetAllSamples("WebApp.Install.Source.Success"),
+              BucketsAre(base::Bucket(
+                  webapps::WebappInstallSource::EXTERNAL_DEFAULT, 1)));
 }
 
 TEST_F(ExternalAppResolutionCommandTest, InstallWithWebAppInfoFails) {
@@ -783,11 +795,15 @@ TEST_F(ExternalAppResolutionCommandTest, InstallWithWebAppInfoFails) {
   EXPECT_FALSE(result.app_id.has_value());
 
   EXPECT_FALSE(id.has_value());
-  tester.ExpectBucketCount("WebApp.Install.Result", /*sample=*/false,
-                           /*expected_count=*/1);
+  EXPECT_THAT(tester.GetAllSamples("WebApp.Install.Result"),
+              BucketsAre(base::Bucket(false, 1)));
+  EXPECT_THAT(tester.GetAllSamples("WebApp.Install.Source.Failure"),
+              BucketsAre(base::Bucket(
+                  webapps::WebappInstallSource::EXTERNAL_DEFAULT, 1)));
 }
 
 TEST_F(ExternalAppResolutionCommandTest, SucessInstallForcedContainerWindow) {
+  // TODO(crbug.com/381408483): Review usage of ExternalInstallOptions in tests.
   ExternalInstallOptions install_options(
       kWebAppUrl, mojom::UserDisplayMode::kStandalone,
       ExternalInstallSource::kInternalDefault);
@@ -797,7 +813,8 @@ TEST_F(ExternalAppResolutionCommandTest, SucessInstallForcedContainerWindow) {
   auto result = InstallAndWait(install_options);
   EXPECT_EQ(result.code, webapps::InstallResultCode::kSuccessNewInstall);
   ASSERT_TRUE(result.app_id.has_value());
-  EXPECT_TRUE(registrar().IsLocallyInstalled(*result.app_id));
+  EXPECT_EQ(proto::INSTALLED_WITH_OS_INTEGRATION,
+            registrar().GetInstallState(*result.app_id));
   EXPECT_FALSE(IsPlaceholderAppUrl(kWebAppUrl));
   std::optional<webapps::AppId> id =
       registrar().LookupExternalAppId(kWebAppUrl);
@@ -824,7 +841,7 @@ TEST_F(ExternalAppResolutionCommandTest, GetWebAppInstallInfoFailed) {
   EXPECT_EQ(result.code,
             webapps::InstallResultCode::kGetWebAppInstallInfoFailed);
   ASSERT_FALSE(result.app_id.has_value());
-  EXPECT_FALSE(registrar().IsLocallyInstalled(kWebAppId));
+  EXPECT_FALSE(registrar().IsInRegistrar(kWebAppId));
 }
 
 TEST_F(ExternalAppResolutionCommandTest, UpgradeLock) {
@@ -892,7 +909,8 @@ TEST_F(ExternalAppResolutionCommandTest, UpgradeLock) {
 
   EXPECT_EQ(result.code, webapps::InstallResultCode::kSuccessNewInstall);
   ASSERT_TRUE(result.app_id.has_value());
-  EXPECT_TRUE(registrar().IsLocallyInstalled(*result.app_id));
+  EXPECT_EQ(proto::INSTALLED_WITH_OS_INTEGRATION,
+            registrar().GetInstallState(*result.app_id));
 
   EXPECT_TRUE(callback_command_run);
 
@@ -1197,7 +1215,8 @@ TEST_F(ExternalAppResolutionCommandTest, SuccessWithUninstallAndReplace) {
   auto result = InstallAndWait(install_options, std::move(data_retriever));
   EXPECT_EQ(result.code, webapps::InstallResultCode::kSuccessNewInstall);
   ASSERT_TRUE(result.app_id.has_value());
-  EXPECT_TRUE(registrar().IsLocallyInstalled(*result.app_id));
+  EXPECT_EQ(proto::INSTALLED_WITH_OS_INTEGRATION,
+            registrar().GetInstallState(*result.app_id));
 
   std::optional<proto::WebAppOsIntegrationState> os_state =
       registrar().GetAppCurrentOsIntegrationState(*result.app_id);

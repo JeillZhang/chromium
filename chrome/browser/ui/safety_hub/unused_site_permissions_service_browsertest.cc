@@ -18,17 +18,27 @@
 #include "chrome/browser/ui/safety_hub/safety_hub_test_util.h"
 #include "chrome/browser/ui/safety_hub/safety_hub_util.h"
 #include "chrome/browser/ui/safety_hub/unused_site_permissions_service_factory.h"
+#include "chrome/common/webui_url_constants.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/content_settings/core/browser/content_settings_registry.h"
+#include "components/content_settings/core/browser/content_settings_uma_util.h"
 #include "components/content_settings/core/browser/content_settings_utils.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/content_settings/core/common/content_settings_constraints.h"
 #include "components/content_settings/core/common/features.h"
+#include "components/permissions/constants.h"
 #include "components/permissions/features.h"
 #include "components/safe_browsing/core/common/features.h"
 #include "content/public/test/browser_test.h"
+
+namespace {
+
+const char histogram_name[] =
+    "Settings.SafetyHub.UnusedSitePermissionsModule.AutoRevoked2";
+
+}  // namespace
 
 class UnusedSitePermissionsServiceBrowserTest : public InProcessBrowserTest {
  public:
@@ -168,8 +178,6 @@ IN_PROC_BROWSER_TEST_F(UnusedSitePermissionsServiceBrowserTest,
   service->SetClockForTesting(&clock);
 
   GURL url = embedded_test_server()->GetURL("/title1.html");
-  const std::string histogram_name =
-      "Settings.SafetyHub.UnusedSitePermissionsModule.AutoRevoked";
   base::HistogramTester histogram_tester;
 
   // TODO(b/338365161): Remove the skip list, once the bug is fixed. Currently,
@@ -225,22 +233,34 @@ IN_PROC_BROWSER_TEST_F(UnusedSitePermissionsServiceBrowserTest,
   clock.Advance(base::Days(70));
   safety_hub_test_util::UpdateUnusedSitePermissionsServiceAsync(service);
 
+  // Assert there are revoked permission only for one origin.
+  ContentSettingsForOneType revoked_permissions =
+      GetRevokedUnusedPermissions(map);
+  EXPECT_EQ(revoked_permissions.size(), 1u);
+
+  // Get the revoked permission types for the origin.
+  const base::Value::Dict& permission_types_by_values =
+      revoked_permissions[0].setting_value.GetDict();
+  const base::Value::List revoked_permission_types =
+      permission_types_by_values.FindList(permissions::kRevokedKey)->Clone();
+
   // Assert all the allowed permissions are revoked.
-  ASSERT_EQ(GetRevokedUnusedPermissions(map).size(), 1u);
-  const auto revoked_permission_types_size = GetRevokedUnusedPermissions(map)[0]
-                                                 .setting_value.GetDict()
-                                                 .Find("revoked")
-                                                 ->GetList()
-                                                 .size();
-  ASSERT_EQ(allowed_permission_types.size(), revoked_permission_types_size);
-  // TODO(b/40267370): Add an assertion that contents of
-  // allowed_permission_types and revoked permissions list are the same.
+  EXPECT_EQ(allowed_permission_types.size(), revoked_permission_types.size());
+
+  for (int i = 0; i < (int)revoked_permission_types.size(); i++) {
+    ContentSettingsType revoked_permission_type =
+        UnusedSitePermissionsService::ConvertKeyToContentSettingsType(
+            revoked_permission_types[i].GetString());
+    EXPECT_EQ(allowed_permission_types[i], revoked_permission_type);
+  }
 
   // Assert all auto-revocations are recorded in UMA metrics.
   EXPECT_EQ(allowed_permission_types.size(),
             histogram_tester.GetAllSamples(histogram_name).size());
   for (const ContentSettingsType type : allowed_permission_types) {
-    histogram_tester.ExpectBucketCount(histogram_name, type, 1);
+    histogram_tester.ExpectBucketCount(
+        histogram_name,
+        content_settings_uma_util::ContentSettingTypeToHistogramValue(type), 1);
   }
 
   // Navigate to content settings page.
@@ -296,6 +316,7 @@ IN_PROC_BROWSER_TEST_F(AbusiveNotificationPermissionsRevocationBrowserTest,
       UnusedSitePermissionsServiceFactory::GetForProfile(browser()->profile());
   const GURL url("https://example1.com");
   AddDangerousUrl(url);
+  base::HistogramTester histogram_tester;
 
   // Create granted abusive notification permission.
   map->SetContentSettingDefaultScope(
@@ -312,6 +333,14 @@ IN_PROC_BROWSER_TEST_F(AbusiveNotificationPermissionsRevocationBrowserTest,
   EXPECT_EQ(
       CONTENT_SETTING_ASK,
       map->GetContentSetting(url, url, ContentSettingsType::NOTIFICATIONS));
+
+  // Assert notification auto-revocation is recorded in UMA metrics.
+  EXPECT_EQ(1u, histogram_tester.GetAllSamples(histogram_name).size());
+  histogram_tester.ExpectBucketCount(
+      histogram_name,
+      content_settings_uma_util::ContentSettingTypeToHistogramValue(
+          ContentSettingsType::NOTIFICATIONS),
+      1);
 }
 
 // Test that revocation is happen correctly when auto-revoke is on for a site

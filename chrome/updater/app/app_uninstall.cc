@@ -16,12 +16,14 @@
 #include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/notreached.h"
 #include "base/process/launch.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/task_traits.h"
 #include "base/task/thread_pool.h"
 #include "build/build_config.h"
+#include "chrome/enterprise_companion/installer_paths.h"
 #include "chrome/updater/app/app.h"
 #include "chrome/updater/app/app_utils.h"
 #include "chrome/updater/configurator.h"
@@ -70,15 +72,9 @@ std::vector<base::FilePath> GetVersionExecutablePaths(UpdaterScope scope) {
 
         const base::FilePath version_executable_path =
             version_folder_path.Append(GetExecutableRelativePath());
-
-        if (base::PathExists(version_executable_path)) {
-          version_executable_paths.push_back(version_executable_path);
-          VLOG(1) << __func__ << " : added to version_executable_paths: "
-                  << version_executable_path;
-        } else {
-          VLOG(1) << __func__
-                  << " : File does not exist: " << version_executable_path;
-        }
+        version_executable_paths.push_back(version_executable_path);
+        VLOG(1) << __func__ << " : added to version_executable_paths: "
+                << version_executable_path;
       });
 
   return version_executable_paths;
@@ -97,19 +93,56 @@ base::CommandLine GetUninstallSelfCommandLine(
 
 namespace {
 
+// Uninstalls the enterprise companion app if it exists.
+[[nodiscard]] int UninstallEnterpriseCompanionApp() {
+  std::optional<base::FilePath> exe_path =
+      enterprise_companion::FindExistingInstall();
+  if (!exe_path) {
+    VLOG(1) << __func__
+            << ": Could not locate an enterprise companion app installation.";
+    return kErrorOk;
+  }
+
+  base::CommandLine command_line(*exe_path);
+  command_line.AppendSwitch(kUninstallCompanionAppSwitch);
+  int exit_code = -1;
+  std::string output;
+  if (!base::GetAppOutputWithExitCode(command_line, &output, &exit_code)) {
+    return kErrorFailedToUninstallCompanionApp;
+  }
+  VLOG(1) << __func__ << ": Ran: " << command_line.GetCommandLineString()
+          << ": " << output << ": " << exit_code;
+  return exit_code == 0 ? kErrorOk : kErrorFailedToUninstallCompanionApp;
+}
+
 // Uninstalls all versions not matching the current version of the updater for
 // the given `scope`.
-void UninstallOtherVersions(UpdaterScope scope) {
+[[nodiscard]] int UninstallOtherVersions(UpdaterScope scope) {
+  bool has_error = false;
   for (const base::FilePath& version_executable_path :
        GetVersionExecutablePaths(scope)) {
     const base::CommandLine command_line(
         GetUninstallSelfCommandLine(scope, version_executable_path));
+    if (!base::PathExists(command_line.GetProgram())) {
+      VLOG(1)
+          << __func__
+          << ": Other version updater has no main binary, skip the uninstall.";
+      return kErrorOk;
+    }
     int exit_code = -1;
     std::string output;
-    base::GetAppOutputWithExitCode(command_line, &output, &exit_code);
-    VLOG(1) << __func__ << ": Ran: " << command_line.GetCommandLineString()
-            << ": " << output << ": " << exit_code;
+    if (base::GetAppOutputWithExitCode(command_line, &output, &exit_code)) {
+      VLOG(1) << __func__ << ": Ran: " << command_line.GetCommandLineString()
+              << ": " << output << ": " << exit_code;
+      if (exit_code != 0) {
+        has_error = true;
+      }
+    } else {
+      VLOG(1) << "Failed to run the command to uninstall other versions.";
+      has_error = true;
+    }
   }
+  return has_error ? kErrorFailedToUninstallOtherVersion : kErrorOk;
 }
 
 void UninstallInThreadPool(UpdaterScope scope,
@@ -118,8 +151,23 @@ void UninstallInThreadPool(UpdaterScope scope,
       FROM_HERE, {base::MayBlock()},
       base::BindOnce(
           [](UpdaterScope scope) {
-            UninstallOtherVersions(scope);
-            return Uninstall(scope);
+            int error_code = kErrorOk;
+            if (IsSystemInstall(scope)) {
+              error_code = UninstallEnterpriseCompanionApp();
+            }
+            if (int result = UninstallOtherVersions(scope);
+                result != kErrorOk) {
+#if !BUILDFLAG(IS_LINUX)
+              // TODO(crbug.com/366249606): Ignores the errors when uninstalls
+              // the other versions, because currently older Linux updater on
+              // CIPD exits with error `kErrorFailedToDeleteFolder`.
+              error_code = result;
+#endif
+            }
+            if (int result = Uninstall(scope); result != kErrorOk) {
+              error_code = result;
+            }
+            return error_code;
           },
           scope),
       std::move(shutdown));
@@ -129,9 +177,6 @@ void UninstallInThreadPool(UpdaterScope scope,
 
 // AppUninstall uninstalls the updater.
 class AppUninstall : public App {
- public:
-  AppUninstall() = default;
-
  private:
   ~AppUninstall() override = default;
   [[nodiscard]] int Initialize() override;
@@ -241,7 +286,7 @@ void AppUninstall::FirstTaskRun() {
     return;
   }
 
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 scoped_refptr<App> MakeAppUninstall() {

@@ -19,9 +19,9 @@
 
 namespace safe_browsing {
 
-BinaryFeatureExtractor::BinaryFeatureExtractor() {}
+BinaryFeatureExtractor::BinaryFeatureExtractor() = default;
 
-BinaryFeatureExtractor::~BinaryFeatureExtractor() {}
+BinaryFeatureExtractor::~BinaryFeatureExtractor() = default;
 
 bool BinaryFeatureExtractor::ExtractImageFeatures(
     const base::FilePath& file_path,
@@ -48,8 +48,8 @@ bool BinaryFeatureExtractor::ExtractImageFeatures(
   if (!mapped_file.Initialize(std::move(temp_file))) {
     return false;
   }
-  return ExtractImageFeaturesFromData(mapped_file.data(), mapped_file.length(),
-                                      options, image_headers, signed_data);
+  return ExtractImageFeaturesFromData(mapped_file.bytes(), options,
+                                      image_headers, signed_data);
 }
 
 bool BinaryFeatureExtractor::ExtractImageFeaturesFromFile(
@@ -60,8 +60,8 @@ bool BinaryFeatureExtractor::ExtractImageFeaturesFromFile(
   base::MemoryMappedFile mapped_file;
   if (!mapped_file.Initialize(std::move(file)))
     return false;
-  return ExtractImageFeaturesFromData(mapped_file.data(), mapped_file.length(),
-      options, image_headers, signed_data);
+  return ExtractImageFeaturesFromData(mapped_file.bytes(), options,
+                                      image_headers, signed_data);
 }
 
 void BinaryFeatureExtractor::ExtractDigest(

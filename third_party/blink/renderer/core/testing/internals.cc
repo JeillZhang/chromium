@@ -24,6 +24,11 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/core/testing/internals.h"
 
 #include <atomic>
@@ -32,6 +37,7 @@
 #include <utility>
 
 #include "base/functional/function_ref.h"
+#include "base/notreached.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/process/process_handle.h"
 #include "base/task/single_thread_task_runner.h"
@@ -59,7 +65,6 @@
 #include "third_party/blink/renderer/core/dom/dom_string_list.h"
 #include "third_party/blink/renderer/core/dom/element.h"
 #include "third_party/blink/renderer/core/dom/flat_tree_traversal.h"
-#include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/dom/pseudo_element.h"
 #include "third_party/blink/renderer/core/dom/range.h"
 #include "third_party/blink/renderer/core/dom/shadow_root.h"
@@ -106,7 +111,6 @@
 #include "third_party/blink/renderer/core/html/forms/form_controller.h"
 #include "third_party/blink/renderer/core/html/forms/html_input_element.h"
 #include "third_party/blink/renderer/core/html/forms/html_select_element.h"
-#include "third_party/blink/renderer/core/html/forms/html_select_list_element.h"
 #include "third_party/blink/renderer/core/html/forms/html_text_area_element.h"
 #include "third_party/blink/renderer/core/html/forms/text_control_inner_elements.h"
 #include "third_party/blink/renderer/core/html/html_iframe_element.h"
@@ -131,7 +135,6 @@
 #include "third_party/blink/renderer/core/loader/document_loader.h"
 #include "third_party/blink/renderer/core/loader/frame_loader.h"
 #include "third_party/blink/renderer/core/loader/history_item.h"
-#include "third_party/blink/renderer/core/offscreencanvas/offscreen_canvas.h"
 #include "third_party/blink/renderer/core/page/chrome_client.h"
 #include "third_party/blink/renderer/core/page/focus_controller.h"
 #include "third_party/blink/renderer/core/page/page.h"
@@ -169,6 +172,7 @@
 #include "third_party/blink/renderer/core/testing/internal_settings.h"
 #include "third_party/blink/renderer/core/testing/internals_ukm_recorder.h"
 #include "third_party/blink/renderer/core/testing/mock_hyphenation.h"
+#include "third_party/blink/renderer/core/testing/nadc_attribute_test.h"
 #include "third_party/blink/renderer/core/testing/origin_trials_test.h"
 #include "third_party/blink/renderer/core/testing/record_test.h"
 #include "third_party/blink/renderer/core/testing/scoped_mock_overlay_scrollbars.h"
@@ -316,30 +320,29 @@ class TestReadableStreamSource : public UnderlyingSourceBase {
   TestReadableStreamSource(ScriptState* script_state, Type type)
       : UnderlyingSourceBase(script_state), type_(type) {}
 
-  ScriptPromiseUntyped Start(ScriptState* script_state,
-                             ExceptionState&) override {
+  ScriptPromise<IDLUndefined> Start(ScriptState* script_state) override {
     if (generator_) {
-      return ScriptPromiseUntyped::CastUndefined(script_state);
+      return ToResolvedUndefinedPromise(script_state);
     }
     resolver_ =
         MakeGarbageCollected<ScriptPromiseResolver<IDLUndefined>>(script_state);
     return resolver_->Promise();
   }
 
-  ScriptPromiseUntyped Pull(ScriptState* script_state,
-                            ExceptionState&) override {
+  ScriptPromise<IDLUndefined> Pull(ScriptState* script_state,
+                                   ExceptionState&) override {
     if (!generator_) {
-      return ScriptPromiseUntyped::CastUndefined(script_state);
+      return ToResolvedUndefinedPromise(script_state);
     }
 
     const auto result = generator_->Generate();
     if (!result) {
       Controller()->Close();
-      return ScriptPromiseUntyped::CastUndefined(script_state);
+      return ToResolvedUndefinedPromise(script_state);
     }
     Controller()->Enqueue(
         v8::Integer::New(script_state->GetIsolate(), *result));
-    return ScriptPromiseUntyped::CastUndefined(script_state);
+    return ToResolvedUndefinedPromise(script_state);
   }
 
   std::unique_ptr<ReadableStreamTransferringOptimizer>
@@ -717,10 +720,6 @@ Internals::Internals(ExecutionContext* context)
   document_->Fetcher()->EnableIsPreloadedForTest();
 }
 
-Internals::~Internals() {
-  ResetMockOverlayScrollbars();
-}
-
 LocalFrame* Internals::GetFrame() const {
   if (!document_)
     return nullptr;
@@ -913,8 +912,8 @@ bool Internals::isLoading(const String& url) {
   if (!document_)
     return false;
   const KURL full_url = document_->CompleteURL(url);
-  const String cache_identifier =
-      document_->Fetcher()->GetCacheIdentifier(full_url);
+  const String cache_identifier = document_->Fetcher()->GetCacheIdentifier(
+      full_url, /*skip_service_worker=*/false);
   Resource* resource =
       MemoryCache::Get()->ResourceForURL(full_url, cache_identifier);
   // We check loader() here instead of isLoading(), because a multipart
@@ -926,8 +925,8 @@ bool Internals::isLoadingFromMemoryCache(const String& url) {
   if (!document_)
     return false;
   const KURL full_url = document_->CompleteURL(url);
-  const String cache_identifier =
-      document_->Fetcher()->GetCacheIdentifier(full_url);
+  const String cache_identifier = document_->Fetcher()->GetCacheIdentifier(
+      full_url, /*skip_service_worker=*/false);
   Resource* resource =
       MemoryCache::Get()->ResourceForURL(full_url, cache_identifier);
   return resource && resource->GetStatus() == ResourceStatus::kCached;
@@ -1203,8 +1202,7 @@ String Internals::ShadowRootMode(const Node* root,
     case ShadowRootMode::kClosed:
       return String("ClosedShadowRoot");
     default:
-      NOTREACHED_IN_MIGRATION();
-      return String("Unknown");
+      NOTREACHED();
   }
 }
 
@@ -1721,15 +1719,6 @@ void Internals::setTextMatchMarkersActive(Node* node,
       To<Text>(*node), start_offset, end_offset, active);
 }
 
-void Internals::setMarkedTextMatchesAreHighlighted(Document* document,
-                                                   bool highlight) {
-  if (!document || !document->GetFrame())
-    return;
-
-  document->GetFrame()->GetEditor().SetMarkedTextMatchesAreHighlighted(
-      highlight);
-}
-
 String Internals::viewportAsText(Document* document,
                                  float,
                                  int available_width,
@@ -1774,7 +1763,7 @@ String Internals::viewportAsText(Document* document,
   builder.Append(String::Number(constraints.maximum_scale));
 
   builder.Append("] and userScalable ");
-  builder.Append(description.user_zoom ? "true" : "false");
+  builder.Append(String::Boolean(description.user_zoom));
 
   return builder.ToString();
 }
@@ -2401,11 +2390,11 @@ AtomicString Internals::htmlNamespace() {
 }
 
 Vector<AtomicString> Internals::htmlTags() {
-  Vector<AtomicString> tags(html_names::kTagsCount);
-  std::unique_ptr<const HTMLQualifiedName*[]> qualified_names =
-      html_names::GetTags();
-  for (wtf_size_t i = 0; i < html_names::kTagsCount; ++i)
+  base::HeapArray<const QualifiedName*> qualified_names = html_names::GetTags();
+  Vector<AtomicString> tags(qualified_names.size());
+  for (size_t i = 0; i < qualified_names.size(); ++i) {
     tags[i] = qualified_names[i]->LocalName();
+  }
   return tags;
 }
 
@@ -2414,11 +2403,11 @@ AtomicString Internals::svgNamespace() {
 }
 
 Vector<AtomicString> Internals::svgTags() {
-  Vector<AtomicString> tags(svg_names::kTagsCount);
-  std::unique_ptr<const SVGQualifiedName*[]> qualified_names =
-      svg_names::GetTags();
-  for (wtf_size_t i = 0; i < svg_names::kTagsCount; ++i)
+  base::HeapArray<const QualifiedName*> qualified_names = svg_names::GetTags();
+  Vector<AtomicString> tags(qualified_names.size());
+  for (size_t i = 0; i < qualified_names.size(); ++i) {
     tags[i] = qualified_names[i]->LocalName();
+  }
   return tags;
 }
 
@@ -2541,20 +2530,19 @@ unsigned Internals::numberOfScrollableAreas(Document* document) {
 
   unsigned count = 0;
   LocalFrame* frame = document->GetFrame();
-  if (frame->View()->UserScrollableAreas()) {
-    for (const auto& scrollable_area : *frame->View()->UserScrollableAreas()) {
-      if (scrollable_area->ScrollsOverflow())
-        count++;
+  for (const auto& scrollable_area :
+       frame->View()->ScrollableAreas().Values()) {
+    if (scrollable_area->ScrollsOverflow()) {
+      count++;
     }
   }
 
   for (Frame* child = frame->Tree().FirstChild(); child;
        child = child->Tree().NextSibling()) {
     auto* child_local_frame = DynamicTo<LocalFrame>(child);
-    if (child_local_frame && child_local_frame->View() &&
-        child_local_frame->View()->UserScrollableAreas()) {
+    if (child_local_frame && child_local_frame->View()) {
       for (const auto& scrollable_area :
-           *child_local_frame->View()->UserScrollableAreas()) {
+           child_local_frame->View()->ScrollableAreas().Values()) {
         if (scrollable_area->ScrollsOverflow())
           count++;
       }
@@ -2584,10 +2572,6 @@ String Internals::layerTreeAsText(Document* document,
   return document->GetFrame()->GetLayerTreeAsTextForTesting(flags);
 }
 
-String Internals::scrollingStateTreeAsText(Document*) const {
-  return String();
-}
-
 String Internals::mainThreadScrollingReasons(
     Document* document,
     ExceptionState& exception_state) const {
@@ -2601,47 +2585,6 @@ String Internals::mainThreadScrollingReasons(
   document->GetFrame()->View()->UpdateAllLifecyclePhasesForTest();
 
   return document->GetFrame()->View()->MainThreadScrollingReasonsAsText();
-}
-
-DOMRectList* Internals::nonFastScrollableRects(
-    Document* document,
-    ExceptionState& exception_state) const {
-  DCHECK(document);
-  const LocalFrame* frame = document->GetFrame();
-  if (!frame) {
-    exception_state.ThrowDOMException(DOMExceptionCode::kInvalidAccessError,
-                                      "The document provided is invalid.");
-    return nullptr;
-  }
-
-  frame->View()->UpdateAllLifecyclePhasesForTest();
-
-  auto* pac = document->View()->GetPaintArtifactCompositor();
-  auto* layer_tree_host = pac->RootLayer()->layer_tree_host();
-  // Ensure |cc::TransformTree| has updated the correct ToScreen transforms.
-  layer_tree_host->UpdateLayers();
-
-  Vector<gfx::Rect> layer_non_fast_scrollable_rects;
-  for (auto* layer : *layer_tree_host) {
-    const cc::Region& non_fast_region = layer->non_fast_scrollable_region();
-    for (gfx::Rect non_fast_rect : non_fast_region) {
-      gfx::RectF layer_rect(non_fast_rect);
-
-      // Map |layer_rect| into screen space.
-      layer_rect.Offset(layer->offset_to_transform_parent());
-      auto& transform_tree =
-          layer->layer_tree_host()->property_trees()->transform_tree_mutable();
-      transform_tree.UpdateTransforms(layer->transform_tree_index());
-      const gfx::Transform& to_screen =
-          transform_tree.ToScreen(layer->transform_tree_index());
-      gfx::Rect screen_rect =
-          gfx::ToEnclosingRect(to_screen.MapRect(layer_rect));
-
-      layer_non_fast_scrollable_rects.push_back(screen_rect);
-    }
-  }
-
-  return MakeGarbageCollected<DOMRectList>(layer_non_fast_scrollable_rects);
 }
 
 void Internals::evictAllResources() const {
@@ -2753,14 +2696,14 @@ void Internals::setPageScaleFactorLimits(float min_scale_factor,
   page->SetDefaultPageScaleLimits(min_scale_factor, max_scale_factor);
 }
 
-float Internals::pageZoomFactor(ExceptionState& exception_state) {
+float Internals::layoutZoomFactor(ExceptionState& exception_state) {
   if (!document_->GetPage()) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kInvalidAccessError,
         "The document's page cannot be retrieved.");
     return 0;
   }
-  // Page zoom without Device Scale Factor.
+  // Layout zoom without Device Scale Factor.
   return document_->GetPage()->GetChromeClient().UserZoomFactor(
       document_->GetFrame());
 }
@@ -2907,6 +2850,10 @@ OriginTrialsTest* Internals::originTrialsTest() const {
 
 CallbackFunctionTest* Internals::callbackFunctionTest() const {
   return MakeGarbageCollected<CallbackFunctionTest>();
+}
+
+NADCAttributeTest* Internals::nadcAttributeTest() const {
+  return MakeGarbageCollected<NADCAttributeTest>();
 }
 
 Vector<String> Internals::getReferencedFilePaths() const {
@@ -3146,8 +3093,7 @@ static const char* CursorTypeToString(
       return "NorthWestSouthEastNoResize";
   }
 
-  NOTREACHED_IN_MIGRATION();
-  return "UNKNOWN";
+  NOTREACHED();
 }
 
 String Internals::getCurrentCursorInfo() {
@@ -3213,8 +3159,7 @@ DOMArrayBuffer* Internals::serializeObject(
 ScriptValue Internals::deserializeBuffer(v8::Isolate* isolate,
                                          DOMArrayBuffer* buffer) const {
   scoped_refptr<SerializedScriptValue> serialized_value =
-      SerializedScriptValue::Create(base::make_span(
-          static_cast<const uint8_t*>(buffer->Data()), buffer->ByteLength()));
+      SerializedScriptValue::Create(buffer->ByteSpan());
   return ScriptValue(isolate, serialized_value->Deserialize(isolate));
 }
 
@@ -3254,40 +3199,36 @@ StaticSelection* Internals::getSelectionInFlatTree(
 Node* Internals::visibleSelectionAnchorNode() {
   if (!GetFrame())
     return nullptr;
-  Position position = GetFrame()
-                          ->Selection()
-                          .ComputeVisibleSelectionInDOMTreeDeprecated()
-                          .Anchor();
+  GetFrame()->GetDocument()->UpdateStyleAndLayout(DocumentUpdateReason::kTest);
+  Position position =
+      GetFrame()->Selection().ComputeVisibleSelectionInDOMTree().Anchor();
   return position.IsNull() ? nullptr : position.ComputeContainerNode();
 }
 
 unsigned Internals::visibleSelectionAnchorOffset() {
   if (!GetFrame())
     return 0;
-  Position position = GetFrame()
-                          ->Selection()
-                          .ComputeVisibleSelectionInDOMTreeDeprecated()
-                          .Anchor();
+  GetFrame()->GetDocument()->UpdateStyleAndLayout(DocumentUpdateReason::kTest);
+  Position position =
+      GetFrame()->Selection().ComputeVisibleSelectionInDOMTree().Anchor();
   return position.IsNull() ? 0 : position.ComputeOffsetInContainerNode();
 }
 
 Node* Internals::visibleSelectionFocusNode() {
   if (!GetFrame())
     return nullptr;
-  Position position = GetFrame()
-                          ->Selection()
-                          .ComputeVisibleSelectionInDOMTreeDeprecated()
-                          .Focus();
+  GetFrame()->GetDocument()->UpdateStyleAndLayout(DocumentUpdateReason::kTest);
+  Position position =
+      GetFrame()->Selection().ComputeVisibleSelectionInDOMTree().Focus();
   return position.IsNull() ? nullptr : position.ComputeContainerNode();
 }
 
 unsigned Internals::visibleSelectionFocusOffset() {
   if (!GetFrame())
     return 0;
-  Position position = GetFrame()
-                          ->Selection()
-                          .ComputeVisibleSelectionInDOMTreeDeprecated()
-                          .Focus();
+  GetFrame()->GetDocument()->UpdateStyleAndLayout(DocumentUpdateReason::kTest);
+  Position position =
+      GetFrame()->Selection().ComputeVisibleSelectionInDOMTree().Focus();
   return position.IsNull() ? 0 : position.ComputeOffsetInContainerNode();
 }
 
@@ -3331,7 +3272,7 @@ String Internals::selectMenuListText(HTMLSelectElement* select) {
   DCHECK(select);
   if (!select->UsesMenuList())
     return String();
-  return select->InnerElementForAppearanceAuto().innerText();
+  return select->InnerElement().innerText();
 }
 
 bool Internals::isSelectPopupVisible(Node* node) {
@@ -3366,7 +3307,7 @@ int Internals::selectPopupItemStyleFontHeight(Node* node, int item_index) {
       select->ItemComputedStyle(*select->GetListItems()[item_index]);
 
   if (item_style) {
-    const SimpleFontData* font_data = item_style->GetFont().PrimaryFont();
+    const SimpleFontData* font_data = item_style->GetFont()->PrimaryFont();
     DCHECK(font_data);
     return font_data ? font_data->GetFontMetrics().Height() : 0;
   }
@@ -3376,12 +3317,6 @@ int Internals::selectPopupItemStyleFontHeight(Node* node, int item_index) {
 void Internals::resetTypeAheadSession(HTMLSelectElement* select) {
   DCHECK(select);
   select->ResetTypeAheadSessionForTesting();
-}
-
-void Internals::resetSelectListTypeAheadSession(
-    HTMLSelectListElement* selectlist) {
-  DCHECK(selectlist);
-  selectlist->ResetTypeAheadSessionForTesting();
 }
 
 void Internals::forceCompositingUpdate(Document* document,
@@ -3401,7 +3336,7 @@ void Internals::setForcedColorsAndDarkPreferredColorScheme(Document* document) {
   color_scheme_helper_.emplace(*document);
   color_scheme_helper_->SetPreferredColorScheme(
       mojom::blink::PreferredColorScheme::kDark);
-  color_scheme_helper_->SetInForcedColors(/*in_forced_colors=*/true);
+  color_scheme_helper_->SetInForcedColors(*document, /*in_forced_colors=*/true);
   color_scheme_helper_->SetEmulatedForcedColors(*document,
                                                 /*is_dark_theme=*/false);
 }
@@ -3435,17 +3370,15 @@ void Internals::setShouldRevealPassword(Element* element,
 
 namespace {
 
-class AddOneFunction : public ScriptFunction::Callable {
+class AddOneFunction : public ThenCallable<IDLLong, AddOneFunction, IDLLong> {
  public:
-  ScriptValue Call(ScriptState* script_state, ScriptValue value) override {
-    v8::Local<v8::Value> v8_value = value.V8Value();
-    DCHECK(v8_value->IsNumber());
-    int32_t int_value =
-        static_cast<int32_t>(v8_value.As<v8::Integer>()->Value());
-    return ScriptValue(
-        script_state->GetIsolate(),
-        v8::Integer::New(script_state->GetIsolate(), int_value + 1));
-  }
+  int32_t React(ScriptState*, int32_t value) { return value + 1; }
+};
+
+class AddOneTypeMismatch
+    : public ThenCallable<IDLAny, AddOneTypeMismatch, IDLAny> {
+ public:
+  ScriptValue React(ScriptState*, ScriptValue value) { return value; }
 };
 
 }  // namespace
@@ -3462,10 +3395,11 @@ ScriptPromise<IDLAny> Internals::createRejectedPromise(
   return ScriptPromise<IDLAny>::Reject(script_state, value);
 }
 
-ScriptPromise<IDLAny> Internals::addOneToPromise(ScriptState* script_state,
-                                                 ScriptPromiseUntyped promise) {
-  return promise.Then(MakeGarbageCollected<ScriptFunction>(
-      script_state, MakeGarbageCollected<AddOneFunction>()));
+ScriptPromise<IDLLong> Internals::addOneToPromise(
+    ScriptState* script_state,
+    ScriptPromise<IDLLong> promise) {
+  return promise.Then(script_state, MakeGarbageCollected<AddOneFunction>(),
+                      MakeGarbageCollected<AddOneTypeMismatch>());
 }
 
 ScriptPromise<IDLAny> Internals::promiseCheck(ScriptState* script_state,
@@ -3563,23 +3497,7 @@ unsigned Internals::canvasFontCacheMaxFonts() {
   return CanvasFontCache::MaxFonts();
 }
 
-void Internals::forceLoseCanvasContext(HTMLCanvasElement* canvas,
-                                       const String& context_type) {
-  CanvasContextCreationAttributesCore attr;
-  CanvasRenderingContext* context =
-      canvas->GetCanvasRenderingContext(context_type, attr);
-  if (!context)
-    return;
-  context->LoseContext(CanvasRenderingContext::kSyntheticLostContext);
-}
-
-void Internals::forceLoseCanvasContext(OffscreenCanvas* offscreencanvas,
-                                       const String& context_type) {
-  CanvasContextCreationAttributesCore attr;
-  CanvasRenderingContext* context = offscreencanvas->GetCanvasRenderingContext(
-      document_->GetExecutionContext(), context_type, attr);
-  if (!context)
-    return;
+void Internals::forceLoseCanvasContext(CanvasRenderingContext* context) {
   context->LoseContext(CanvasRenderingContext::kSyntheticLostContext);
 }
 
@@ -3610,19 +3528,20 @@ String Internals::selectedTextForClipboard() {
 void Internals::setVisualViewportOffset(int css_x, int css_y) {
   if (!GetFrame())
     return;
-  float zoom = GetFrame()->PageZoomFactor();
+  float zoom = GetFrame()->LayoutZoomFactor();
   gfx::PointF offset(css_x * zoom, css_y * zoom);
   GetFrame()->GetPage()->GetVisualViewport().SetLocation(offset);
 }
 
 bool Internals::isUseCounted(Document* document, uint32_t feature) {
-  if (feature >= static_cast<int32_t>(WebFeature::kNumberOfFeatures))
+  if (feature > static_cast<int32_t>(WebFeature::kMaxValue)) {
     return false;
+  }
   return document->IsUseCounted(static_cast<WebFeature>(feature));
 }
 
 bool Internals::isWebDXFeatureUseCounted(Document* document, uint32_t feature) {
-  if (feature >= static_cast<int32_t>(WebDXFeature::kNumberOfFeatures)) {
+  if (feature > static_cast<int32_t>(WebDXFeature::kMaxValue)) {
     return false;
   }
   return document->IsWebDXFeatureCounted(static_cast<WebDXFeature>(feature));
@@ -3641,8 +3560,9 @@ bool Internals::isAnimatedCSSPropertyUseCounted(Document* document,
 }
 
 void Internals::clearUseCounter(Document* document, uint32_t feature) {
-  if (feature >= static_cast<int32_t>(WebFeature::kNumberOfFeatures))
+  if (feature > static_cast<int32_t>(WebFeature::kMaxValue)) {
     return;
+  }
   document->ClearUseCounterForTesting(static_cast<WebFeature>(feature));
 }
 
@@ -3689,7 +3609,7 @@ ScriptPromise<IDLUndefined> Internals::observeUseCounter(
   auto* resolver =
       MakeGarbageCollected<ScriptPromiseResolver<IDLUndefined>>(script_state);
   auto promise = resolver->Promise();
-  if (feature >= static_cast<int32_t>(WebFeature::kNumberOfFeatures)) {
+  if (feature > static_cast<int32_t>(WebFeature::kMaxValue)) {
     resolver->Reject();
     return promise;
   }
@@ -3783,7 +3703,7 @@ String Internals::getProgrammaticScrollAnimationState(Node* node) const {
 }
 
 void Internals::crash() {
-  CHECK(false) << "Intentional crash";
+  NOTREACHED() << "Intentional crash";
 }
 
 String Internals::evaluateInInspectorOverlay(const String& script) {
@@ -4003,7 +3923,8 @@ ScriptValue Internals::createWritableStreamAndSink(
   object
       ->Set(script_state->GetContext(),
             V8String(script_state->GetIsolate(), "sink"),
-            ToV8Traits<IDLPromise>::ToV8(script_state, resolver->Promise()))
+            ToV8Traits<IDLPromise<IDLString>>::ToV8(script_state,
+                                                    resolver->Promise()))
       .Check();
   return ScriptValue(script_state->GetIsolate(), object);
 }
@@ -4037,6 +3958,16 @@ void Internals::stopResponsivenessMetricsUkmSampling() {
 Vector<String> Internals::getCreatorScripts(HTMLImageElement* img) {
   DCHECK(img);
   return Vector<String>(img->creator_scripts());
+}
+
+String Internals::lastCompiledScriptFileName(Document* document) {
+  return ToScriptStateForMainWorld(document->GetFrame())
+      ->last_compiled_script_file_name();
+}
+
+bool Internals::lastCompiledScriptUsedCodeCache(Document* document) {
+  return ToScriptStateForMainWorld(document->GetFrame())
+      ->last_compiled_script_used_code_cache();
 }
 
 ScriptPromise<IDLString> Internals::LCPPrediction(ScriptState* script_state,

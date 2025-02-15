@@ -9,6 +9,7 @@ alignSelf
 alignmentBaseline
 all
 anchorName
+anchorScope
 animation
 animationComposition
 animationDelay
@@ -107,6 +108,7 @@ borderTopStyle
 borderTopWidth
 borderWidth
 bottom
+boxDecorationBreak
 boxShadow
 boxSizing
 breakAfter
@@ -194,6 +196,7 @@ fontVariant
 fontVariantAlternates
 fontVariantCaps
 fontVariantEastAsian
+fontVariantEmoji
 fontVariantLigatures
 fontVariantNumeric
 fontVariantPosition
@@ -232,13 +235,14 @@ initialLetter
 initialValue
 inlineSize
 inset
-insetArea
 insetBlock
 insetBlockEnd
 insetBlockStart
 insetInline
 insetInlineEnd
 insetInlineStart
+interactivity
+interpolateSize
 isolation
 item
 justifyContent
@@ -313,7 +317,9 @@ outlineStyle
 outlineWidth
 overflow
 overflowAnchor
+overflowBlock
 overflowClipMargin
+overflowInline
 overflowWrap
 overflowX
 overflowY
@@ -351,8 +357,9 @@ placeSelf
 pointerEvents
 position
 positionAnchor
+positionArea
 positionTry
-positionTryOptions
+positionTryFallbacks
 positionTryOrder
 positionVisibility
 prefix
@@ -364,11 +371,13 @@ resize
 right
 rotate
 rowGap
+rubyAlign
 rubyPosition
 rx
 ry
 scale
 scrollBehavior
+scrollInitialTarget
 scrollMargin
 scrollMarginBlock
 scrollMarginBlockEnd
@@ -429,6 +438,9 @@ tableLayout
 textAlign
 textAlignLast
 textAnchor
+textBox
+textBoxEdge
+textBoxTrim
 textCombineUpright
 textDecoration
 textDecorationColor
@@ -451,6 +463,8 @@ textTransform
 textUnderlineOffset
 textUnderlinePosition
 textWrap
+textWrapMode
+textWrapStyle
 timelineScope
 top
 touchAction

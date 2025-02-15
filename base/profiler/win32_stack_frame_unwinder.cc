@@ -38,8 +38,8 @@ class Win32UnwindFunctions : public Win32StackFrameUnwinder::UnwindFunctions {
                      CONTEXT* context) override;
 };
 
-Win32UnwindFunctions::Win32UnwindFunctions() {}
-Win32UnwindFunctions::~Win32UnwindFunctions() {}
+Win32UnwindFunctions::Win32UnwindFunctions() = default;
+Win32UnwindFunctions::~Win32UnwindFunctions() = default;
 
 PRUNTIME_FUNCTION Win32UnwindFunctions::LookupFunctionEntry(
     DWORD64 program_counter,
@@ -47,8 +47,7 @@ PRUNTIME_FUNCTION Win32UnwindFunctions::LookupFunctionEntry(
 #if defined(ARCH_CPU_64_BITS)
   return ::RtlLookupFunctionEntry(program_counter, image_base, nullptr);
 #else
-  NOTREACHED_IN_MIGRATION();
-  return nullptr;
+  NOTREACHED();
 #endif
 }
 
@@ -64,7 +63,7 @@ void Win32UnwindFunctions::VirtualUnwind(DWORD64 image_base,
                      runtime_function, context, &handler_data,
                      &establisher_frame, &nvcontext);
 #else
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 #endif
 }
 
@@ -78,7 +77,7 @@ Win32StackFrameUnwinder::UnwindFunctions::UnwindFunctions() = default;
 Win32StackFrameUnwinder::Win32StackFrameUnwinder()
     : Win32StackFrameUnwinder(std::make_unique<Win32UnwindFunctions>()) {}
 
-Win32StackFrameUnwinder::~Win32StackFrameUnwinder() {}
+Win32StackFrameUnwinder::~Win32StackFrameUnwinder() = default;
 
 bool Win32StackFrameUnwinder::TryUnwind(
     bool at_top_frame,
@@ -134,8 +133,7 @@ bool Win32StackFrameUnwinder::TryUnwind(
   // code. See https://crbug.com/542919.
   return false;
 #else
-  NOTREACHED_IN_MIGRATION();
-  return false;
+  NOTREACHED();
 #endif
 }
 

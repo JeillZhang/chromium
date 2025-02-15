@@ -17,13 +17,15 @@ import org.jni_zero.NativeMethods;
 import org.chromium.chrome.browser.layouts.LayoutManagerProvider;
 import org.chromium.chrome.browser.layouts.LayoutStateProvider;
 import org.chromium.chrome.browser.tabmodel.TabModel;
+import org.chromium.components.autofill.payments.AutofillSaveIbanUiInfo;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetControllerProvider;
 import org.chromium.ui.base.WindowAndroid;
 
 /** JNI wrapper to trigger Android bottom sheet prompting the user to save their IBAN locally. */
 @JNINamespace("autofill")
-public class AutofillSaveIbanBottomSheetBridge {
+public class AutofillSaveIbanBottomSheetBridge
+        implements AutofillSaveIbanBottomSheetCoordinator.NativeDelegate {
     private long mNativeAutofillSaveIbanBottomSheetBridge;
     private final BottomSheetController mBottomSheetController;
     private final Context mContext;
@@ -54,15 +56,27 @@ public class AutofillSaveIbanBottomSheetBridge {
     /**
      * Requests to show the bottom sheet. Called via JNI from C++.
      *
-     * @param ibanLabel String value of the IBAN being saved, e.g. CH56 **** **** **** *800 9.
+     * @param uiInfo An object providing UI resources to the bottom sheet view.
      */
     @CalledByNative
-    public void requestShowContent(@JniType("std::u16string_view") String ibanLabel) {
+    public void requestShowContent(AutofillSaveIbanUiInfo uiInfo) {
         if (mNativeAutofillSaveIbanBottomSheetBridge == 0) return;
         mCoordinator =
                 new AutofillSaveIbanBottomSheetCoordinator(
-                        this, mContext, mBottomSheetController, mLayoutStateProvider, mTabModel);
-        mCoordinator.requestShowContent(ibanLabel);
+                        this,
+                        uiInfo,
+                        mContext,
+                        mBottomSheetController,
+                        mLayoutStateProvider,
+                        mTabModel);
+        mCoordinator.requestShowContent();
+    }
+
+    /** Requests to hide the bottom sheet if showing. */
+    @CalledByNative
+    public void hide() {
+        if (mNativeAutofillSaveIbanBottomSheetBridge == 0) return;
+        mCoordinator.destroy(BottomSheetController.StateChangeReason.INTERACTION_COMPLETE);
     }
 
     @CalledByNative
@@ -70,7 +84,7 @@ public class AutofillSaveIbanBottomSheetBridge {
     /*package*/ void destroy() {
         mNativeAutofillSaveIbanBottomSheetBridge = 0;
         if (mCoordinator == null) return;
-        mCoordinator.destroy();
+        mCoordinator.destroy(BottomSheetController.StateChangeReason.NONE);
         mCoordinator = null;
     }
 
@@ -80,6 +94,7 @@ public class AutofillSaveIbanBottomSheetBridge {
      * @param userProvidedNickname The nickname provided by the user when the "Save" button is
      *     clicked.
      */
+    @Override
     public void onUiAccepted(String userProvidedNickname) {
         if (mNativeAutofillSaveIbanBottomSheetBridge != 0) {
             AutofillSaveIbanBottomSheetBridgeJni.get()
@@ -88,6 +103,7 @@ public class AutofillSaveIbanBottomSheetBridge {
     }
 
     /** Called when the cancel button is clicked or bottom sheet dismissed (e.g. back press). */
+    @Override
     public void onUiCanceled() {
         if (mNativeAutofillSaveIbanBottomSheetBridge != 0) {
             AutofillSaveIbanBottomSheetBridgeJni.get()
@@ -96,6 +112,7 @@ public class AutofillSaveIbanBottomSheetBridge {
     }
 
     /** Called when the the bottom sheet is hidden without interaction with the bottom sheet. */
+    @Override
     public void onUiIgnored() {
         if (mNativeAutofillSaveIbanBottomSheetBridge != 0) {
             AutofillSaveIbanBottomSheetBridgeJni.get()

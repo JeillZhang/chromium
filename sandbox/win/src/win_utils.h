@@ -5,24 +5,21 @@
 #ifndef SANDBOX_WIN_SRC_WIN_UTILS_H_
 #define SANDBOX_WIN_SRC_WIN_UTILS_H_
 
+#include <stdint.h>
 #include <stdlib.h>
 
-#include <map>
 #include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
-#include <vector>
 
+#include "base/containers/span.h"
 #include "base/win/windows_types.h"
 
 namespace sandbox {
 
 // Prefix for path used by NT calls.
 const wchar_t kNTPrefix[] = L"\\??\\";
-
-// List of handles mapped to their kernel object type name.
-using ProcessHandleMap = std::map<std::wstring, std::vector<HANDLE>>;
 
 // Basic implementation of a singleton which calls the destructor
 // when the exe is shutting down or the DLL is being unloaded.
@@ -59,15 +56,14 @@ std::optional<std::wstring> GetNtPathFromWin32Path(const std::wstring& path);
 // Resolves a handle to its type name. Returns the typename if successful.
 std::optional<std::wstring> GetTypeNameFromHandle(HANDLE handle);
 
-// Allocates |buffer_bytes| in child (PAGE_READWRITE) and copies data
+// Allocates |local_buffer.size()| in child (PAGE_READWRITE) and copies data
 // from |local_buffer| in this process into |child|. |remote_buffer|
 // contains the address in the chile.  If a zero byte copy is
 // requested |true| is returned and no allocation or copying is
 // attempted.  Returns false if allocation or copying fails. If
 // copying fails, the allocation will be reversed.
 bool CopyToChildMemory(HANDLE child,
-                       const void* local_buffer,
-                       size_t buffer_bytes,
+                       base::span<uint8_t> local_buffer,
                        void** remote_buffer);
 
 // Returns true if the provided path points to a pipe using a native path.
@@ -80,13 +76,6 @@ DWORD GetLastErrorFromNtStatus(NTSTATUS status);
 // address space layout randomization. This uses the process' PEB to extract
 // the base address. This should only be called on new, suspended processes.
 void* GetProcessBaseAddress(HANDLE process);
-
-// Returns a map of handles open in the current process. The map is keyed by the
-// kernel object type name. If querying the handles fails an empty optional
-// value is returned. Note that unless all threads are suspended in the process
-// the valid handles could change between the return of the list and when you
-// use them.
-std::optional<ProcessHandleMap> GetCurrentProcessHandles();
 
 // Returns true if the string contains a NUL ('\0') character.
 bool ContainsNulCharacter(std::wstring_view str);

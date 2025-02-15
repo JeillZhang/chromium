@@ -29,7 +29,6 @@
 #include "chromeos/ash/components/network/network_state.h"
 #include "chromeos/ash/components/network/network_state_handler.h"
 #include "chromeos/ash/components/network/network_state_handler_observer.h"
-#include "chromeos/crosapi/mojom/drive_integration_service.mojom.h"
 #include "components/drive/event_logger.h"
 #include "components/drive/file_errors.h"
 #include "components/drive/file_system_core_util.h"
@@ -37,7 +36,6 @@
 #include "components/prefs/pref_change_registrar.h"
 #include "google_apis/common/api_error_codes.h"
 #include "google_apis/common/auth_service_interface.h"
-#include "mojo/public/cpp/bindings/pending_remote.h"
 #include "third_party/abseil-cpp/absl/types/variant.h"
 
 class PrefService;
@@ -48,6 +46,7 @@ class SequencedTaskRunner;
 
 namespace drivefs {
 class DriveFsHost;
+class DriveFsSearchQuery;
 
 namespace mojom {
 class DriveFs;
@@ -119,8 +118,7 @@ class DriveIntegrationService : public KeyedService,
   using GetQuickAccessItemsCallback =
       base::OnceCallback<void(FileError, std::vector<QuickAccessItem>)>;
   using SearchDriveByFileNameCallback =
-      base::OnceCallback<void(FileError,
-                              std::vector<drivefs::mojom::QueryItemPtr>)>;
+      drivefs::mojom::SearchQuery::GetNextPageCallback;
   using GetThumbnailCallback =
       base::OnceCallback<void(const std::optional<std::vector<uint8_t>>&)>;
   using GetReadOnlyAuthenticationTokenCallback =
@@ -262,6 +260,13 @@ class DriveIntegrationService : public KeyedService,
       drivefs::mojom::QueryParameters::SortDirection sort_direction,
       drivefs::mojom::QueryParameters::QuerySource query_source,
       SearchDriveByFileNameCallback callback) const;
+  // Returns nullptr if DriveFS is not mounted.
+  std::unique_ptr<drivefs::DriveFsSearchQuery> CreateSearchQueryByFileName(
+      std::string query,
+      int max_results,
+      drivefs::mojom::QueryParameters::SortField sort_field,
+      drivefs::mojom::QueryParameters::SortDirection sort_direction,
+      drivefs::mojom::QueryParameters::QuerySource query_source) const;
 
   // Returns the metadata for Drive file at |local_path|.
   void GetMetadata(const base::FilePath& local_path,
@@ -367,12 +372,6 @@ class DriveIntegrationService : public KeyedService,
   void ImmediatelyUpload(
       const base::FilePath& path,
       drivefs::mojom::DriveFs::ImmediatelyUploadCallback callback);
-
-  // Called by lacros to register a bridge that this service can call into when
-  // DriveFS wants to initiate a connection to an extension in lacros.
-  void RegisterDriveFsNativeMessageHostBridge(
-      mojo::PendingRemote<crosapi::mojom::DriveFsNativeMessageHostBridge>
-          bridge);
 
   // Gets counts of files in docs offline extension.
   void GetDocsOfflineStats(
@@ -631,8 +630,8 @@ class DriveIntegrationServiceFactory : public ProfileKeyedServiceFactory {
   // This is static so it can be set without instantiating the factory. This
   // allows factory creation to be delayed until it normally happens (on profile
   // creation) rather than when tests are set up. DriveIntegrationServiceFactory
-  // transitively depends on ExtensionSystemFactory which crashes if created too
-  // soon (i.e. before the BrowserProcess exists).
+  // transitively depends on ChromeExtensionSystemFactory which crashes if
+  // created too soon (i.e. before the BrowserProcess exists).
   static FactoryCallback* factory_for_test_;
 };
 

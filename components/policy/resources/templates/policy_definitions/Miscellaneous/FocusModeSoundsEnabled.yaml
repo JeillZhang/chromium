@@ -7,7 +7,7 @@ desc: |-
 
   Setting the policy to Enabled will allow access to all sounds in Focus Mode.
 
-  Setting the policy to FocusSounds only will enable the sound feature with just Focus Sounds.
+  Setting the policy to EnabledFocusSoundsOnly will enable the sound feature with just Focus Sounds.
 
   Setting the policy to Disabled will disable sounds in Focus Mode.
 example_value: focus-sounds
@@ -34,7 +34,7 @@ schema:
   - focus-sounds
   - disabled
   type: string
-future_on:
-- chrome_os
+supported_on:
+- chrome_os:129-
 tags: []
 type: string-enum

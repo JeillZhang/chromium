@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #include "third_party/blink/renderer/modules/compression/deflate_transformer.h"
 
 #include <algorithm>
@@ -112,7 +117,8 @@ void DeflateTransformer::Deflate(const uint8_t* start,
 
     wtf_size_t bytes = out_buffer_.size() - stream_.avail_out;
     if (bytes) {
-      buffers.push_back(DOMUint8Array::Create(out_buffer_.data(), bytes));
+      buffers.push_back(
+          DOMUint8Array::Create(base::span(out_buffer_).first(bytes)));
     }
   } while (stream_.avail_out == 0);
 

@@ -6,6 +6,7 @@
 
 #include "third_party/blink/public/mojom/devtools/console_message.mojom-shared.h"
 #include "third_party/blink/public/mojom/frame/frame.mojom-blink.h"
+#include "third_party/blink/renderer/bindings/core/v8/promise_all.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_function.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_navigate_event_init.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_navigation_intercept_handler.h"
@@ -19,6 +20,7 @@
 #include "third_party/blink/renderer/core/event_interface_names.h"
 #include "third_party/blink/renderer/core/event_type_names.h"
 #include "third_party/blink/renderer/core/frame/deprecation/deprecation.h"
+#include "third_party/blink/renderer/core/frame/history_util.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/local_frame_client.h"
@@ -32,23 +34,38 @@
 
 namespace blink {
 
-enum class ResolveType { kFulfill, kReject };
-class NavigateEvent::Reaction final : public ScriptFunction::Callable {
+class NavigateEvent::FulfillReaction final
+    : public ThenCallable<IDLUndefined, FulfillReaction> {
  public:
-  Reaction(NavigateEvent* navigate_event, ResolveType resolve_type)
-      : navigate_event_(navigate_event), resolve_type_(resolve_type) {}
+  explicit FulfillReaction(NavigateEvent* navigate_event)
+      : navigate_event_(navigate_event) {}
   void Trace(Visitor* visitor) const final {
-    ScriptFunction::Callable::Trace(visitor);
+    ThenCallable<IDLUndefined, FulfillReaction>::Trace(visitor);
     visitor->Trace(navigate_event_);
   }
-  ScriptValue Call(ScriptState*, ScriptValue value) final {
-    navigate_event_->ReactDone(value, resolve_type_ == ResolveType::kFulfill);
-    return ScriptValue();
+  void React(ScriptState*) {
+    navigate_event_->ReactDone(ScriptValue(), /*did_fulfill=*/true);
   }
 
  private:
   Member<NavigateEvent> navigate_event_;
-  ResolveType resolve_type_;
+};
+
+class NavigateEvent::RejectReaction final
+    : public ThenCallable<IDLAny, RejectReaction> {
+ public:
+  explicit RejectReaction(NavigateEvent* navigate_event)
+      : navigate_event_(navigate_event) {}
+  void Trace(Visitor* visitor) const final {
+    ThenCallable<IDLAny, RejectReaction>::Trace(visitor);
+    visitor->Trace(navigate_event_);
+  }
+  void React(ScriptState*, ScriptValue value) {
+    navigate_event_->ReactDone(value, /*did_fulfill=*/false);
+  }
+
+ private:
+  Member<NavigateEvent> navigate_event_;
 };
 
 NavigateEvent::NavigateEvent(ExecutionContext* context,
@@ -57,7 +74,7 @@ NavigateEvent::NavigateEvent(ExecutionContext* context,
                              AbortController* controller)
     : Event(type, init),
       ExecutionContextClient(context),
-      navigation_type_(init->navigationType()),
+      navigation_type_(init->navigationType().AsEnum()),
       destination_(init->destination()),
       can_intercept_(init->canIntercept()),
       user_initiated_(init->userInitiated()),
@@ -190,42 +207,84 @@ void NavigateEvent::intercept(NavigationInterceptOptions* options,
     navigation_action_handlers_list_.push_back(options->handler());
 }
 
-void NavigateEvent::commit(ExceptionState& exception_state) {
-  if (!PerformSharedChecks("commit", exception_state)) {
-    return;
+bool NavigateEvent::PerformSharedCommitChecks(const String& function_name,
+                                              ExceptionState& exception_state) {
+  if (!PerformSharedChecks(function_name, exception_state)) {
+    return false;
   }
 
   if (intercept_state_ == InterceptState::kNone) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kInvalidStateError,
-        "intercept() must be called before commit().");
-    return;
+        "intercept() must be called before " + function_name + "().");
+    return false;
   }
   if (ShouldCommitImmediately()) {
-    exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
-                                      "commit() may only be used if { commit: "
-                                      "'after-transition' } was specified.");
-    return;
+    exception_state.ThrowDOMException(
+        DOMExceptionCode::kInvalidStateError,
+        function_name +
+            "() may only be used if a navigate event was "
+            "intercepted with { commit: 'after-transition' } specified.");
+    return false;
   }
   if (IsBeingDispatched()) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kInvalidStateError,
-        "commit() may not be called during event dispatch");
-    return;
+        function_name + "() may not be called during event dispatch");
+    return false;
   }
   if (intercept_state_ == InterceptState::kFinished) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kInvalidStateError,
-        "commit() may not be called after transition completes.");
-    return;
+        function_name + "() may not be called after transition completes.");
+    return false;
   }
   if (intercept_state_ == InterceptState::kCommitted ||
       intercept_state_ == InterceptState::kScrolled) {
     exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
-                                      "commit() already called.");
+                                      "navigation has already committed.");
+    return false;
+  }
+  return true;
+}
+
+void NavigateEvent::commit(ExceptionState& exception_state) {
+  if (!PerformSharedCommitChecks("commit", exception_state)) {
     return;
   }
   CommitNow();
+}
+
+void NavigateEvent::redirect(const String& url_string,
+                             ExceptionState& exception_state) {
+  if (!PerformSharedCommitChecks("redirect", exception_state)) {
+    return;
+  }
+
+  if (navigation_type_ != V8NavigationType::Enum::kPush &&
+      navigation_type_ != V8NavigationType::Enum::kReplace) {
+    exception_state.ThrowDOMException(
+        DOMExceptionCode::kInvalidStateError,
+        "redirect() may only be used on push and replace navigations.");
+    return;
+  }
+
+  KURL url = KURL(DomWindow()->BaseURL(), url_string);
+  if (!url.IsValid()) {
+    exception_state.ThrowDOMException(DOMExceptionCode::kSyntaxError,
+                                      "Invalid URL '" + url.GetString() + "'.");
+    return;
+  }
+  if (!CanChangeToUrlForHistoryApi(url, DomWindow()->GetSecurityOrigin(),
+                                   DomWindow()->Url())) {
+    exception_state.ThrowSecurityError(
+        "Cannot redirect to '" + url.ElidedString() +
+        "' in a document with origin '" +
+        DomWindow()->GetSecurityOrigin()->ToString() + "' and URL '" +
+        DomWindow()->Url().ElidedString() + "'.");
+    return;
+  }
+  dispatch_params_->url = url;
 }
 
 void NavigateEvent::MaybeCommitImmediately(ScriptState* script_state) {
@@ -267,6 +326,10 @@ void NavigateEvent::CommitNow() {
       dispatch_params_->url, dispatch_params_->destination_item,
       mojom::blink::SameDocumentNavigationType::kNavigationApiIntercept,
       state_object, dispatch_params_->frame_load_type,
+      dispatch_params_->event_type == NavigateEventType::kHistoryApi
+          ? FirePopstate::kNo
+          : FirePopstate::kYes,
+      dispatch_params_->should_skip_screenshot,
       dispatch_params_->is_browser_initiated,
       dispatch_params_->is_synchronously_committed_same_document,
       dispatch_params_->soft_navigation_heuristics_task_id);
@@ -275,30 +338,23 @@ void NavigateEvent::CommitNow() {
 void NavigateEvent::React(ScriptState* script_state) {
   CHECK(navigation_action_handlers_list_.empty());
 
-  ScriptPromiseUntyped promise;
-  if (!navigation_action_promises_list_.empty()) {
-    promise = ScriptPromiseUntyped::All(script_state,
-                                        navigation_action_promises_list_);
-  } else {
+  if (navigation_action_promises_list_.empty()) {
     // There is a subtle timing difference between the fast-path for zero
     // promises and the path for 1+ promises, in both spec and implementation.
-    // In most uses of ScriptPromiseUntyped::All / the Web IDL spec's "wait for
+    // In most uses of Promise.all() / the Web IDL spec's "wait for
     // all", this does not matter. However for us there are so many events and
     // promise handlers firing around the same time (navigatesuccess, committed
     // promise, finished promise, ...) that the difference is pretty easily
     // observable by web developers and web platform tests. So, let's make sure
     // we always go down the 1+ promises path.
-    promise = ScriptPromiseUntyped::All(
-        script_state, HeapVector<ScriptPromiseUntyped>(
-                          {ScriptPromiseUntyped::CastUndefined(script_state)}));
+    navigation_action_promises_list_.push_back(
+        ToResolvedUndefinedPromise(script_state));
   }
 
-  promise.Then(MakeGarbageCollected<ScriptFunction>(
-                   script_state,
-                   MakeGarbageCollected<Reaction>(this, ResolveType::kFulfill)),
-               MakeGarbageCollected<ScriptFunction>(
-                   script_state,
-                   MakeGarbageCollected<Reaction>(this, ResolveType::kReject)));
+  auto promise = PromiseAll<IDLUndefined>::Create(
+      script_state, navigation_action_promises_list_);
+  promise.Then(script_state, MakeGarbageCollected<FulfillReaction>(this),
+               MakeGarbageCollected<RejectReaction>(this));
 
   if (HasNavigationActions() && DomWindow()) {
     if (AXObjectCache* cache =
@@ -355,13 +411,19 @@ void NavigateEvent::ReactDone(ScriptValue value, bool did_fulfill) {
   }
 }
 
-void NavigateEvent::Abort(ScriptState* script_state, ScriptValue error) {
+void NavigateEvent::Abort(ScriptState* script_state,
+                          ScriptValue error,
+                          CancelNavigationReason reason) {
   if (IsBeingDispatched()) {
     preventDefault();
   }
   CHECK(controller_);
   controller_->abort(script_state, error);
   delayed_load_start_task_handle_.Cancel();
+  if (!defaultPrevented() && intercept_state_ == InterceptState::kIntercepted &&
+      reason != CancelNavigationReason::kNavigateEvent) {
+    DomWindow()->GetFrame()->Client()->DidFailAsyncSameDocumentCommit();
+  }
 }
 
 void NavigateEvent::DelayedLoadStartTimerFired() {
@@ -378,7 +440,7 @@ void NavigateEvent::FinalizeNavigationActionPromisesList() {
   handlers_list.swap(navigation_action_handlers_list_);
 
   for (auto& function : handlers_list) {
-    ScriptPromiseUntyped result;
+    ScriptPromise<IDLUndefined> result;
     if (function->Invoke(this).To(&result))
       navigation_action_promises_list_.push_back(result);
   }
@@ -462,16 +524,19 @@ void NavigateEvent::PotentiallyProcessScrollBehavior() {
   ProcessScrollBehavior();
 }
 
-WebFrameLoadType LoadTypeFromNavigation(const String& navigation_type) {
-  if (navigation_type == "push")
-    return WebFrameLoadType::kStandard;
-  if (navigation_type == "replace")
-    return WebFrameLoadType::kReplaceCurrentItem;
-  if (navigation_type == "traverse")
-    return WebFrameLoadType::kBackForward;
-  if (navigation_type == "reload")
-    return WebFrameLoadType::kReload;
-  NOTREACHED_NORETURN();
+WebFrameLoadType LoadTypeFromNavigation(
+    V8NavigationType::Enum navigation_type) {
+  switch (navigation_type) {
+    case V8NavigationType::Enum::kPush:
+      return WebFrameLoadType::kStandard;
+    case V8NavigationType::Enum::kReplace:
+      return WebFrameLoadType::kReplaceCurrentItem;
+    case V8NavigationType::Enum::kTraverse:
+      return WebFrameLoadType::kBackForward;
+    case V8NavigationType::Enum::kReload:
+      return WebFrameLoadType::kReload;
+  }
+  NOTREACHED();
 }
 
 void NavigateEvent::ProcessScrollBehavior() {
@@ -482,13 +547,16 @@ void NavigateEvent::ProcessScrollBehavior() {
       dispatch_params_->destination_item
           ? dispatch_params_->destination_item->GetViewState()
           : std::nullopt;
+  auto scroll_behavior = has_ua_visual_transition_
+                             ? mojom::blink::ScrollBehavior::kInstant
+                             : mojom::blink::ScrollBehavior::kAuto;
   // Use mojom::blink::ScrollRestorationType::kAuto unconditionally here
   // because we are certain that we want to actually scroll if we reach this
   // point. Using mojom::blink::ScrollRestorationType::kManual would block the
   // scroll.
   DomWindow()->GetFrame()->Loader().ProcessScrollForSameDocumentNavigation(
       dispatch_params_->url, LoadTypeFromNavigation(navigation_type_),
-      view_state, mojom::blink::ScrollRestorationType::kAuto);
+      view_state, mojom::blink::ScrollRestorationType::kAuto, scroll_behavior);
 }
 
 const AtomicString& NavigateEvent::InterfaceName() const {

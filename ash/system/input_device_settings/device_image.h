@@ -15,18 +15,23 @@ namespace ash {
 // and associated metadata (device key, data URI).
 class ASH_EXPORT DeviceImage {
  public:
+  DeviceImage();
+  ~DeviceImage();
+  DeviceImage(const DeviceImage&) = delete;
+  DeviceImage& operator=(const DeviceImage&) = delete;
   explicit DeviceImage(const std::string& device_key,
                        const gfx::ImageSkia& image);
   DeviceImage(const std::string& device_key, const std::string& data_url);
 
   std::string device_key() const { return device_key_; }
   std::string data_url() const { return data_url_; }
-  gfx::Image gfx_image() const { return image_; }
+  gfx::ImageSkia gfx_image_skia() const { return image_; }
+  bool IsValid() const;
 
  private:
   std::string device_key_;
   std::string data_url_;
-  gfx::Image image_;
+  gfx::ImageSkia image_;
 };
 
 }  // namespace ash

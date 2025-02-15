@@ -9,8 +9,11 @@
 #include "ash/wm/desks/desk_bar_view_base.h"
 #include "ash/wm/overview/overview_grid.h"
 #include "ui/base/metadata/metadata_header_macros.h"
+#include "ui/gfx/geometry/rect.h"
 
 namespace ash {
+
+class WindowOcclusionCalculator;
 
 // A bar that resides at the top portion of the overview, which contains desk
 // mini views, the new desk button, the library button, and the scroll arrow
@@ -19,7 +22,10 @@ class ASH_EXPORT OverviewDeskBarView : public DeskBarViewBase {
   METADATA_HEADER(OverviewDeskBarView, DeskBarViewBase)
 
  public:
-  explicit OverviewDeskBarView(base::WeakPtr<OverviewGrid> overview_grid);
+  OverviewDeskBarView(
+      base::WeakPtr<OverviewGrid> overview_grid,
+      base::WeakPtr<WindowOcclusionCalculator> window_occlusion_calculator,
+      const gfx::Rect& initial_widget_bounds);
 
   OverviewDeskBarView(const OverviewDeskBarView&) = delete;
   OverviewDeskBarView& operator=(const OverviewDeskBarView&) = delete;
@@ -30,6 +36,9 @@ class ASH_EXPORT OverviewDeskBarView : public DeskBarViewBase {
 
   // DeskBarViewBase:
   gfx::Rect GetAvailableBounds() const override;
+
+ private:
+  const gfx::Rect initial_widget_bounds_;
 };
 
 }  // namespace ash

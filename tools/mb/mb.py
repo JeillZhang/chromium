@@ -15,14 +15,15 @@ import collections
 import errno
 import json
 import os
-import shlex
 import platform
 import re
+import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
 import traceback
+from typing import List, Optional
 import urllib.request
 import zipfile
 
@@ -35,6 +36,9 @@ sys.path.insert(0, os.path.join(
 
 import gn_helpers
 from mb.lib import validation
+
+_DEFAULT_ERROR_RETCODE = 1
+_CONFIG_NOT_FOUND_RETCODE = 2
 
 
 def DefaultVals():
@@ -79,8 +83,9 @@ class MetaBuildWrapper:
     self.chromium_src_dir = CHROMIUM_SRC_DIR
     self.default_config = os.path.join(self.chromium_src_dir, 'tools', 'mb',
                                        'mb_config.pyl')
-    self.default_isolate_map = os.path.join(self.chromium_src_dir, 'testing',
-                                            'buildbot', 'gn_isolate_map.pyl')
+    self.default_isolate_map = os.path.join(self.chromium_src_dir, 'infra',
+                                            'config', 'generated', 'testing',
+                                            'gn_isolate_map.pyl')
     self.executable = sys.executable
     self.platform = sys.platform
     self.sep = os.sep
@@ -93,6 +98,8 @@ class MetaBuildWrapper:
     self.isolate_exe = 'isolate.exe' if self.platform.startswith(
         'win') else 'isolate'
     self.use_luci_auth = False
+    self.rts_out_dir = self.PathJoin('gen', 'rts')
+    self.rts_banned_suites = set()
 
   def PostArgsInit(self):
     self.use_luci_auth = getattr(self.args, 'luci_auth', False)
@@ -103,6 +110,14 @@ class MetaBuildWrapper:
     if 'expectations_dir' in self.args and self.args.expectations_dir is None:
       self.args.expectations_dir = os.path.join(
           os.path.dirname(self.args.config_file), 'mb_config_expectations')
+    rts_banned_suites_map = json.loads(
+        self.ReadFile(
+            self.PathJoin(self.chromium_src_dir, 'tools', 'mb',
+                          'rts_banned_suites.json')))
+    self.rts_banned_suites.update(rts_banned_suites_map.get('*', set()))
+    if getattr(self.args, 'builder', None):
+      self.rts_banned_suites.update(
+          rts_banned_suites_map.get(self.args.builder, set()))
 
   def Main(self, args):
     self.ParseArgs(args)
@@ -115,12 +130,12 @@ class MetaBuildWrapper:
     except KeyboardInterrupt:
       self.Print('interrupted, exiting')
       return 130
-    except Exception:
+    except Exception as e:
       self.DumpInputFiles()
       s = traceback.format_exc()
       for l in s.splitlines():
         self.Print(l)
-      return 1
+      return getattr(e, 'retcode', _DEFAULT_ERROR_RETCODE)
 
   def ParseArgs(self, argv):
     def AddCommonOptions(subp):
@@ -163,7 +178,9 @@ class MetaBuildWrapper:
                         help='Sets GN arg android_default_version_code')
       subp.add_argument('--android-version-name',
                         help='Sets GN arg android_default_version_name')
-
+      subp.add_argument('--rts-model',
+                        default=None,
+                        help='which regression test selection model to use')
       # TODO(crbug.com/40122201): Remove this once swarming task templates
       # support command prefixes.
       luci_auth_group = subp.add_mutually_exclusive_group()
@@ -479,6 +496,22 @@ class MetaBuildWrapper:
       self.WriteFile(expectation_file, json_s)
     return 0
 
+  def RtsSelect(self, targets: List[str]):
+    """Looks for RTS Model arg and writes filter file to isolate.
+
+    Args:
+        targets: List of requested target test suites.
+    """
+    filter_data = ''
+    for target in targets:
+      # TODO: crbug.com/374962112 - Support 'filegraph-selection'.
+      # TODO: crbug.com/375209059 - Add Doc Link for RTS
+      if self.args.rts_model == 'smart_test_selection':
+        # TODO: crbug.com/360881028 - Android API: GetTasksToSkip(target)
+        self.WriteFile(self.GetFilterFilePath(target=target, absolute=True),
+                       filter_data,
+                       force_verbose=False)
+
   def CmdGen(self):
     vals = self.Lookup()
     return self.RunGNGen(vals)
@@ -639,9 +672,9 @@ class MetaBuildWrapper:
       return 1
 
     tags = ['-tag=%s' % tag for tag in self.args.tags]
+    json_dir = self.TempDir()
 
     try:
-      json_dir = self.TempDir()
       json_file = self.PathJoin(json_dir, 'task.json')
       cmd = [
           self.PathJoin('tools', 'luci-go', 'swarming'),
@@ -912,15 +945,23 @@ class MetaBuildWrapper:
 
   def _convert_args_dict_to_args_string(self, args_dict):
     """Format a dict of GN args into a single string."""
-    for k, v in args_dict.items():
+
+    def convert_value(v):
+      if isinstance(v, dict):
+        return '{' + ' '.join(f'{k1}={convert_value(v1)}'
+                              for k1, v1 in v.items()) + '}'
+      if isinstance(v, list):
+        return f'[{",".join(convert_value(e) for e in v)}]'
       if isinstance(v, str):
         # Re-add the quotes around strings so they show up as they would in the
         # args.gn file.
-        args_dict[k] = '"%s"' % v
-      elif isinstance(v, bool):
+        return f'"{v}"'
+      if isinstance(v, bool):
         # Convert boolean values to lower case strings.
-        args_dict[k] = str(v).lower()
-    return ' '.join(['%s=%s' % (k, v) for (k, v) in args_dict.items()])
+        return str(v).lower()
+      return v
+
+    return ' '.join(f'{k}={convert_value(v)}' for k, v in args_dict.items())
 
   def Lookup(self):
     self.ReadConfigFile(self.args.config_file)
@@ -1034,13 +1075,15 @@ class MetaBuildWrapper:
         }
 
     if not self.args.builder_group in self.builder_groups:
-      raise MBErr('Builder group name "%s" not found in "%s"' %
-                  (self.args.builder_group, self.args.config_file))
+      raise MBErr(('Builder group name "%s" not found in "%s"' %
+                   (self.args.builder_group, self.args.config_file)),
+                  retcode=_CONFIG_NOT_FOUND_RETCODE)
 
     if not self.args.builder in self.builder_groups[self.args.builder_group]:
-      raise MBErr('Builder name "%s"  not found under groups[%s] in "%s"' %
-                  (self.args.builder, self.args.builder_group,
-                   self.args.config_file))
+      raise MBErr(
+          ('Builder name "%s" not found under groups[%s] in "%s"' %
+           (self.args.builder, self.args.builder_group, self.args.config_file)),
+          retcode=_CONFIG_NOT_FOUND_RETCODE)
 
     config = self.builder_groups[self.args.builder_group][self.args.builder]
     if isinstance(config, dict):
@@ -1060,6 +1103,8 @@ class MetaBuildWrapper:
 
   def RunGNGen(self, vals, compute_inputs_for_analyze=False, check=True):
     build_dir = self.args.path
+    isolate_targets = None
+    isolate_map = None
 
     if check:
       cmd = self.GNCmd('gen', build_dir, '--check')
@@ -1115,7 +1160,7 @@ class MetaBuildWrapper:
       self.Print('GN gen failed: %d' % ret)
       return ret
 
-    if getattr(self.args, 'swarming_targets_file', None):
+    if isolate_targets is not None:
       ret = self.GenerateIsolates(vals, isolate_targets, isolate_map, build_dir)
 
     return ret
@@ -1241,6 +1286,8 @@ class MetaBuildWrapper:
     """
     possible_rpaths = self.PossibleRuntimeDepsPaths(vals, ninja_targets,
                                                     isolate_map)
+    if self.args.rts_model:
+      self.RtsSelect(ninja_targets)
 
     for target, rpaths in possible_rpaths.items():
       # TODO(crbug.com/41441724): We don't know where each .runtime_deps
@@ -1271,6 +1318,52 @@ class MetaBuildWrapper:
         return ret
     return 0
 
+  def GetFilterFilePath(self, target: str, *, absolute: bool = False) -> str:
+    """Uses build directory and filter file path to pass on to the Isolate.
+
+    Args:
+        target: Name of the test suite (target) that will be used
+            as part of the filename of the filter file. Ensures that the filter
+            file has been created and written by the RtsSelect function.
+        absolute: Determines what type of path to return. If True,
+            return the entire path, else the relative path.
+
+    Returns:
+        Absolute or relative path to the filter file.
+    """
+    filter_file = target + '.filter'
+    filter_file_path = self.PathJoin(self.rts_out_dir, filter_file)
+    abs_filter_file_path = self.ToAbsPath(self.args.path, filter_file_path)
+    self.MaybeMakeDirectory(os.path.dirname(abs_filter_file_path))
+    if absolute:
+      return abs_filter_file_path
+    return filter_file_path
+
+  def AddFilterFileArg(self, target: str,
+                       command: List[str]) -> Optional[List[str]]:
+    """Adds the filter file arg and filter filename to existing command.
+
+    This will filter out test cases from a specific test suite based on
+    predicitive models using a form of regression test selection (RTS).
+
+    Args:
+        target: Name of the test suite (target) that will be used
+            as part of the filename of the filter file.
+        command: Existing command line to append new filter arg to.
+
+    Returns:
+        Updated command line list or None if no file was added.
+    """
+    filter_file_path = self.GetFilterFilePath(target=target, absolute=False)
+    if filter_file_path:
+      filtered_command = command.copy()
+      filtered_command.append('--test-launcher-filter-file=%s' %
+                              filter_file_path)
+      self.Print('added test selection filter file to command: %s' %
+                 filter_file_path)
+      return filtered_command
+    return None
+
   def PossibleRuntimeDepsPaths(self, vals, ninja_targets, isolate_map):
     """Returns a map of targets to possible .runtime_deps paths.
 
@@ -1291,6 +1384,7 @@ class MetaBuildWrapper:
     for target in ninja_targets:
       target_type = isolate_map[target]['type']
       label = isolate_map[target]['label']
+      target_runtime_deps = 'obj/%s.runtime_deps' % label.replace(':', '/')
       stamp_runtime_deps = 'obj/%s.stamp.runtime_deps' % label.replace(':', '/')
       # TODO(crbug.com/40590196): 'official_tests' use
       # type='additional_compile_target' to isolate tests. This is not the
@@ -1304,15 +1398,15 @@ class MetaBuildWrapper:
       if fuchsia or ios or target_type == 'generated_script':
         # iOS and Fuchsia targets end up as groups.
         # generated_script targets are always actions.
-        rpaths = [stamp_runtime_deps]
+        rpaths = [stamp_runtime_deps, target_runtime_deps]
       elif android:
         # Android targets may be either android_apk or executable. The former
         # will result in runtime_deps associated with the stamp file, while the
         # latter will result in runtime_deps associated with the executable.
         label = isolate_map[target]['label']
         rpaths = [
-            target + '.runtime_deps',
-            stamp_runtime_deps]
+            target + '.runtime_deps', stamp_runtime_deps, target_runtime_deps
+        ]
       elif (target_type == 'script'
             or isolate_map[target].get('label_type') == 'group'):
         # For script targets, the build target is usually a group,
@@ -1320,7 +1414,7 @@ class MetaBuildWrapper:
         # for the label, which lives under the obj/ directory, but it may
         # also be an executable.
         label = isolate_map[target]['label']
-        rpaths = [stamp_runtime_deps]
+        rpaths = [stamp_runtime_deps, target_runtime_deps]
         if win:
           rpaths += [ target + '.exe.runtime_deps' ]
         else:
@@ -1432,9 +1526,13 @@ class MetaBuildWrapper:
               'test_data/chrome/browser/resources/chromeos/accessibility/'
               'select_to_speak/',
           )) or (is_mac and f in (  # https://crbug.com/1000667
+              'ChromeEnterpriseCompanion.app/',
+              'ChromeEnterpriseCompanion_test.app/',
               'Chromium Framework.framework/',
               'Chromium Helper.app/',
               'Chromium.app/',
+              'ChromiumEnterpriseCompanion.app/',
+              'ChromiumEnterpriseCompanion_test.app/',
               'ChromiumUpdater.app/',
               'ChromiumUpdater_test.app/',
               'Content Shell.app/',
@@ -1456,6 +1554,7 @@ class MetaBuildWrapper:
               'corb_test_plugin.plugin/',
               'obj/tools/grit/brotli_mac_asan_workaround/',
               'ppapi_tests.plugin/',
+              'registration_test_app_bundle.app/',
               'ui_unittests Framework.framework/',
           ))):
         continue
@@ -1479,6 +1578,16 @@ class MetaBuildWrapper:
             'files': files,
         }
     }
+
+    if self.args.rts_model:
+      # When RTS Model is selected, set the RTS command to be used by the
+      # test launcher. When the target is not in the banned suites, the
+      # filter file argument will be added to the command.
+      if target not in self.rts_banned_suites:
+        rts_command = self.AddFilterFileArg(target, command)
+        if rts_command:
+          self.Print('Adding RTS filter file to command.')
+          isolate['variables']['rts_command'] = rts_command
 
     self.WriteFile(isolate_path, json.dumps(isolate, sort_keys=True) + '\n')
 
@@ -1512,8 +1621,7 @@ class MetaBuildWrapper:
           else:
             labels.append(isolate_map[target]['label'])
         else:
-          err += ('target "%s" not found in '
-                  '//testing/buildbot/gn_isolate_map.pyl\n' % target)
+          err += f'target "{target}" not found in gn_isolate_map.pyl\n'
 
     return err, labels
 
@@ -1549,6 +1657,9 @@ class MetaBuildWrapper:
     android_version_name = self.args.android_version_name
     if android_version_name:
       gn_args += ' android_default_version_name="%s"' % android_version_name
+
+    if self.args.rts_model:
+      gn_args += ' use_rts=true'
 
     args_gn_lines = []
     parsed_gn_args = {}
@@ -1920,6 +2031,7 @@ class MetaBuildWrapper:
     output_path = self.args.output_path
     if not self.Exists(path):
       self.WriteFailureAndRaise('"%s" does not exist' % path, output_path)
+    inp = None
 
     try:
       inp = json.loads(self.ReadFile(path))
@@ -2115,10 +2227,11 @@ def FlattenMixins(mixin_pool, mixins_to_flatten, vals, visited):
       FlattenMixins(mixin_pool, mixin_vals['mixins'], vals, visited)
   return vals
 
-
-
 class MBErr(Exception):
-  pass
+
+  def __init__(self, *args: object, retcode=_DEFAULT_ERROR_RETCODE) -> None:
+    super().__init__(*args)
+    self.retcode = retcode
 
 
 # See http://goo.gl/l5NPDW and http://goo.gl/4Diozm for the painful

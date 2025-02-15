@@ -10,12 +10,14 @@
 
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/tracing/background_tracing_field_trial.h"
+#include "chrome/browser/metrics/accessibility_state_provider.h"
 #include "chrome/common/channel_info.h"
 #include "components/metrics/field_trials_provider.h"
 #include "components/metrics/metrics_log.h"
 #include "components/metrics/metrics_service.h"
 #include "components/metrics/version_utils.h"
+#include "components/tracing/common/background_tracing_utils.h"
+#include "services/tracing/public/cpp/trace_startup_config.h"
 
 #if BUILDFLAG(IS_WIN)
 #include "chrome/browser/metrics/antivirus_metrics_provider_win.h"
@@ -37,7 +39,9 @@ ChromeBackgroundTracingMetricsProvider::
     ~ChromeBackgroundTracingMetricsProvider() = default;
 
 void ChromeBackgroundTracingMetricsProvider::DoInit() {
-  MaybeSetupBackgroundTracingFromFieldTrial();
+  tracing::TraceStartupConfig::GetInstance().SetBackgroundStartupTracingEnabled(
+      tracing::ShouldTraceStartup());
+  SetupFieldTracingFromFieldTrial();
 
 #if BUILDFLAG(IS_WIN)
   // AV metrics provider is initialized asynchronously. It might not be
@@ -56,6 +60,9 @@ void ChromeBackgroundTracingMetricsProvider::DoInit() {
           metrics::MetricsLogUploader::UMA, cros_system_profile_provider_));
   chromeos_metrics_provider_ = system_profile_providers_.back().get();
 #endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+
+  system_profile_providers_.emplace_back(
+      std::make_unique<AccessibilityStateProvider>());
 
   // Metrics service can be null in some testing contexts.
   if (g_browser_process->metrics_service() != nullptr) {

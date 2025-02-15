@@ -114,11 +114,6 @@ class ASH_EXPORT DesksController : public chromeos::DesksHelper,
     virtual ~Observer() = default;
   };
 
-  // The timeout duration that we allow an app window on a closed desk to run
-  // its "close" hooks before being forcefully closed.
-  static constexpr base::TimeDelta kCloseAllWindowCloseTimeout =
-      base::Seconds(1);
-
   DesksController();
 
   DesksController(const DesksController&) = delete;
@@ -201,8 +196,9 @@ class ASH_EXPORT DesksController : public chromeos::DesksHelper,
   // -1 if no match is found.
   int GetDeskIndexByUuid(const base::Uuid& desk_uuid) const;
 
-  // Creates a new desk. CanCreateDesks() must be checked before calling this.
+  // Creates a new desk. `CanCreateDesks()` must be checked before calling this.
   void NewDesk(DesksCreationRemovalSource source);
+  void NewDesk(DesksCreationRemovalSource source, std::u16string name);
 
   bool HasDesk(const Desk* desk) const;
 
@@ -259,6 +255,15 @@ class ASH_EXPORT DesksController : public chromeos::DesksHelper,
                                   Desk* target_desk,
                                   aura::Window* target_root,
                                   DesksMoveWindowFromActiveDeskSource source);
+
+  // Similar function to `MoveWindowFromActiveDeskTo`. Instead of moving the
+  // window from the active desk, it moves window from the desk with the give
+  // `index`;
+  bool MoveWindowFromDeskAtIndexTo(aura::Window* window,
+                                   size_t index,
+                                   Desk* target_desk,
+                                   aura::Window* target_root,
+                                   DesksMoveWindowFromActiveDeskSource source);
 
   // Adds |window| to |visible_on_all_desks_windows_|.
   void AddVisibleOnAllDesksWindow(aura::Window* window);
@@ -324,6 +329,7 @@ class ASH_EXPORT DesksController : public chromeos::DesksHelper,
 
   // chromeos::DesksHelper:
   bool BelongsToActiveDesk(aura::Window* window) override;
+  bool BelongsToDesk(aura::Window* window, size_t index) override;
   int GetActiveDeskIndex() const override;
   std::u16string GetDeskName(int index) const override;
   int GetNumberOfDesks() const override;
@@ -332,10 +338,14 @@ class ASH_EXPORT DesksController : public chromeos::DesksHelper,
   // Captures the active desk and returns it as a saved desk (of type
   // `template_type`) containing necessary information that can be used to
   // create a same desk via provided `callback`, `root_window_to_show` is used
-  // to determine which monitor to show saved desk related dialog.
-  void CaptureActiveDeskAsSavedDesk(GetDeskTemplateCallback callback,
-                                    DeskTemplateType template_type,
-                                    aura::Window* root_window_to_show) const;
+  // to determine which monitor to show saved desk related dialog. If the
+  // `template_type` is coral, then we only want a subset of the apps on the
+  // active desk, defined by `coral_app_id_allowlist`.
+  void CaptureActiveDeskAsSavedDesk(
+      GetDeskTemplateCallback callback,
+      DeskTemplateType template_type,
+      aura::Window* root_window_to_show,
+      const base::flat_set<std::string>& coral_app_id_allowlist) const;
 
   // Creates a new desk and optionally activates it depending on
   // `template_type`. If `customized_desk_name` is provided, desk name will be
@@ -345,6 +355,10 @@ class ASH_EXPORT DesksController : public chromeos::DesksHelper,
   Desk* CreateNewDeskForSavedDesk(
       DeskTemplateType template_type,
       const std::u16string& customized_desk_name = std::u16string());
+
+  // Creates a new desk for the Coral group and activates it.
+  Desk* CreateNewDeskForCoralGroup(
+      const std::u16string& coral_desk_name = std::u16string());
 
   // Called when an app with `app_id` is a single instance app which is about to
   // get launched from a saved desk. Moves the existing app instance to the
@@ -517,6 +531,18 @@ class ASH_EXPORT DesksController : public chromeos::DesksHelper,
   // Reports custom desk name metrics for the number of desks with custom names
   // and the percentage of the user's desks with custom names.
   void ReportCustomDeskNames() const;
+
+  // The internal function that moves `window` from `source_desk` to
+  // `target_desk`
+  bool MoveWindowFromSourceDeskTo(aura::Window* window,
+                                  Desk* source_desk,
+                                  Desk* target_desk,
+                                  aura::Window* target_root,
+                                  DesksMoveWindowFromActiveDeskSource source);
+
+  static base::TimeDelta GetCloseAllWindowCloseTimeoutForTest();
+  static base::AutoReset<base::TimeDelta> SetCloseAllWindowCloseTimeoutForTest(
+      base::TimeDelta interval);
 
   std::vector<std::unique_ptr<Desk>> desks_;
 

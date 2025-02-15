@@ -2,11 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/342213636): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "content/browser/service_worker/service_worker_cache_writer.h"
 
 #include <algorithm>
 #include <string>
 
+#include "base/containers/span.h"
 #include "base/functional/bind.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
@@ -151,9 +157,7 @@ int ServiceWorkerCacheWriter::DoLoop(int status) {
         status = DoDone(status);
         break;
       default:
-        NOTREACHED_IN_MIGRATION() << "Unknown state in DoLoop";
-        state_ = STATE_DONE;
-        break;
+        NOTREACHED() << "Unknown state in DoLoop";
     }
   } while (status != net::ERR_IO_PENDING && state_ != STATE_DONE);
   io_pending_ = (status == net::ERR_IO_PENDING);
@@ -739,8 +743,9 @@ class ServiceWorkerCacheWriter::DataPipeReader {
 
  private:
   void ReadInternal(MojoResult) {
-    MojoResult result = data_->ReadData(buffer_->data(), &num_bytes_to_read_,
-                                        MOJO_READ_DATA_FLAG_NONE);
+    MojoResult result = data_->ReadData(
+        MOJO_READ_DATA_FLAG_NONE, buffer_->span().first(num_bytes_to_read_),
+        num_bytes_to_read_);
     if (result == MOJO_RESULT_SHOULD_WAIT) {
       watcher_.ArmOrNotify();
       return;
@@ -864,7 +869,7 @@ int ServiceWorkerCacheWriter::WriteDataToResponseWriter(
   }
 
   mojo_base::BigBuffer big_buffer(
-      base::as_bytes(base::make_span(data->data(), length)));
+      base::as_bytes(base::span(data->data(), length)));
   writer_->WriteData(
       std::move(big_buffer),
       base::BindOnce(&AsyncOnlyCompletionCallbackAdaptor::WrappedCallback,

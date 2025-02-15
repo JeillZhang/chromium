@@ -43,7 +43,7 @@ class SupervisedUserExtensionTestBase : public ExtensionServiceTestWithInstall {
   void InitServices(bool profile_is_supervised) {
     ExtensionServiceInitParams params;
     params.profile_is_supervised = profile_is_supervised;
-    InitializeExtensionService(params);
+    InitializeExtensionService(std::move(params));
     CreateExtensionManager();
   }
 
@@ -112,8 +112,7 @@ class SupervisedUserExtensionTestBase : public ExtensionServiceTestWithInstall {
     EXPECT_TRUE(registry()->enabled_extensions().Contains(extension_id));
     EXPECT_FALSE(IsPendingCustodianApproval(extension_id));
     ExtensionPrefs* extension_prefs = ExtensionPrefs::Get(profile());
-    EXPECT_EQ(disable_reason::DISABLE_NONE,
-              extension_prefs->GetDisableReasons(extension_id));
+    EXPECT_TRUE(extension_prefs->GetDisableReasons(extension_id).empty());
     return registry()->enabled_extensions().GetByID(extension_id);
   }
 
@@ -244,6 +243,9 @@ class SupervisedUserExtensionTest
       disabled_features.push_back(
           supervised_user::
               kEnableExtensionsPermissionsForSupervisedUsersOnDesktop);
+      disabled_features.push_back(
+          supervised_user::
+              kEnableSupervisedUserSkipParentApprovalToInstallExtensions);
 #endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
     }
 
@@ -829,7 +831,7 @@ TEST_P(SupervisedUserExtensionTest,
        ExtensionsOnDesktopRemainEnabledOnSkipParentApprovalRelease) {
   ExtensionServiceInitParams params;
   params.profile_is_supervised = true;
-  InitializeExtensionService(params);
+  InitializeExtensionService(std::move(params));
   SetDefaultParentalControlSettings();
   // Install an extension. It should be enabled as we haven't created the SU
   // extension manager yet. Treated as a pre-existing extension.
@@ -874,7 +876,7 @@ TEST_P(SupervisedUserExtensionTest,
        ExtensionsEnabledOnSkipParentApprovalReleaseCanBeUpgraded) {
   ExtensionServiceInitParams params;
   params.profile_is_supervised = true;
-  InitializeExtensionService(params);
+  InitializeExtensionService(std::move(params));
   SetDefaultParentalControlSettings();
   // Install an extension. It should be enabled as we haven't created the SU
   // extension manager yet. Treated as a pre-existing extension.
@@ -1012,7 +1014,7 @@ class SupervisedUserWithEnabledExtensionParentalControlsTest
           supervised_user::
               kEnableSupervisedUserSkipParentApprovalToInstallExtensions);
     }
-    feature_list_.InitWithFeatures(enabled_features, disabled_features);
+    scoped_feature_list_.InitWithFeatures(enabled_features, disabled_features);
   }
 
   // SupervisedUserExtensionTestBase implementation:

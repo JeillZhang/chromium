@@ -137,10 +137,10 @@ void ShowFramebustBlockMessageInternal(content::WebContents* web_contents,
 
 namespace android {
 
-TabWebContentsDelegateAndroid::TabWebContentsDelegateAndroid(JNIEnv* env,
-                                                                   jobject obj)
-    : WebContentsDelegateAndroid(env, obj) {
-}
+TabWebContentsDelegateAndroid::TabWebContentsDelegateAndroid(
+    JNIEnv* env,
+    const jni_zero::JavaRef<jobject>& obj)
+    : WebContentsDelegateAndroid(env, obj) {}
 
 TabWebContentsDelegateAndroid::~TabWebContentsDelegateAndroid() = default;
 
@@ -320,7 +320,7 @@ bool TabWebContentsDelegateAndroid::ShouldResumeRequestsForCreatedWindow() {
       env, obj);
 }
 
-void TabWebContentsDelegateAndroid::AddNewContents(
+WebContents* TabWebContentsDelegateAndroid::AddNewContents(
     WebContents* source,
     std::unique_ptr<WebContents> new_contents,
     const GURL& target_url,
@@ -379,12 +379,13 @@ void TabWebContentsDelegateAndroid::AddNewContents(
   // creates a new TabAndroid instance to own the WebContents.
   if (handled)
     new_contents.release();
+
+  return nullptr;
 }
 
 void TabWebContentsDelegateAndroid::OnDidBlockNavigation(
     content::WebContents* web_contents,
     const GURL& blocked_url,
-    const GURL& initiator_url,
     blink::mojom::NavigationBlockedReason reason) {
   ShowFramebustBlockMessageInternal(web_contents, blocked_url);
 }
@@ -415,7 +416,8 @@ bool TabWebContentsDelegateAndroid::IsBackForwardCacheSupported(
 
 content::PreloadingEligibility
 TabWebContentsDelegateAndroid::IsPrerender2Supported(
-    content::WebContents& web_contents) {
+    content::WebContents& web_contents,
+    content::PreloadingTriggerType trigger_type) {
   Profile* profile =
       Profile::FromBrowserContext(web_contents.GetBrowserContext());
   return prefetch::IsSomePreloadingEnabled(*profile->GetPrefs());
@@ -568,6 +570,16 @@ bool TabWebContentsDelegateAndroid::IsModalContextMenu() const {
   return Java_TabWebContentsDelegateAndroidImpl_isModalContextMenu(env, obj);
 }
 
+bool TabWebContentsDelegateAndroid::IsDynamicSafeAreaInsetsEnabled() const {
+  JNIEnv* env = base::android::AttachCurrentThread();
+  ScopedJavaLocalRef<jobject> obj = GetJavaDelegate(env);
+  if (obj.is_null()) {
+    return false;
+  }
+  return Java_TabWebContentsDelegateAndroidImpl_isDynamicSafeAreaInsetsEnabled(
+      env, obj);
+}
+
 }  // namespace android
 
 void JNI_TabWebContentsDelegateAndroidImpl_OnRendererUnresponsive(
@@ -579,14 +591,4 @@ void JNI_TabWebContentsDelegateAndroidImpl_OnRendererUnresponsive(
       content::WebContents::FromJavaWebContents(java_web_contents);
   if (base::RandDouble() < 0.01)
     web_contents->GetPrimaryMainFrame()->GetProcess()->DumpProcessStack();
-}
-
-void JNI_TabWebContentsDelegateAndroidImpl_ShowFramebustBlockInfoBar(
-    JNIEnv* env,
-    const JavaParamRef<jobject>& java_web_contents,
-    std::u16string& url_string) {
-  GURL url(url_string);
-  content::WebContents* web_contents =
-      content::WebContents::FromJavaWebContents(java_web_contents);
-  ShowFramebustBlockMessageInternal(web_contents, url);
 }

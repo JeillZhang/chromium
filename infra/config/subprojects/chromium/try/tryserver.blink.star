@@ -6,9 +6,11 @@
 load("//lib/builders.star", "cpu", "os", "siso")
 load("//lib/builder_config.star", "builder_config")
 load("//lib/branches.star", "branches")
+load("//lib/html.star", "linkify")
 load("//lib/try.star", "try_")
 load("//lib/consoles.star", "consoles")
 load("//lib/gn_args.star", "gn_args")
+load("//lib/targets.star", "targets")
 
 try_.defaults.set(
     executable = try_.DEFAULT_EXECUTABLE,
@@ -20,6 +22,12 @@ try_.defaults.set(
     siso_enabled = True,
     siso_project = siso.project.DEFAULT_UNTRUSTED,
     siso_remote_jobs = siso.remote_jobs.LOW_JOBS_FOR_CQ,
+)
+
+targets.builder_defaults.set(
+    mixins = [
+        "chromium-tester-service-account",
+    ],
 )
 
 consoles.list_view(
@@ -64,7 +72,30 @@ try_.builder(
             "remoteexec",
             "chrome_with_codecs",
             "minimal_symbols",
+            "linux",
+            "x64",
         ],
+    ),
+    # Should be kept in sync with v8_linux_blink_rel in tryserver.v8
+    targets = targets.bundle(
+        targets = [
+            "chromium_linux_blink_rel_isolated_scripts",
+        ],
+        mixins = [
+            "linux-jammy",
+        ],
+        per_test_modifications = {
+            "blink_wpt_tests": targets.mixin(
+                swarming = targets.swarming(
+                    hard_timeout_sec = 2400,
+                ),
+            ),
+            "blink_web_tests": targets.mixin(
+                swarming = targets.swarming(
+                    hard_timeout_sec = 2400,
+                ),
+            ),
+        },
     ),
     os = os.LINUX_DEFAULT,
     main_list_view = "try",
@@ -74,10 +105,9 @@ try_.builder(
 # (tests content shell) to avoid coupling their build configurations.
 try_.builder(
     name = "linux-wpt-chromium-rel",
-    description_html = """\
-Runs <a href="https://web-platform-tests.org">web platform tests</a> against
-Chrome.\
-""",
+    description_html = "Runs {} against Chrome.".format(
+        linkify("https://web-platform-tests.org", "web platform tests"),
+    ),
     mirrors = ["ci/linux-wpt-chromium-rel"],
     builder_config_settings = builder_config.try_settings(
         retry_failed_shards = False,
@@ -90,10 +120,6 @@ Chrome.\
 
 try_.builder(
     name = "win10-wpt-chromium-rel",
-    description_html = """\
-Runs <a href="https://web-platform-tests.org">web platform tests</a> against
-Chrome.\
-""",
     mirrors = ["ci/win10-wpt-chromium-rel"],
     builder_config_settings = builder_config.try_settings(
         retry_failed_shards = False,
@@ -131,9 +157,36 @@ try_.builder(
             "release_builder",
             "remoteexec",
             "chrome_with_codecs",
+            "win",
             "x64",
             "minimal_symbols",
         ],
+    ),
+    targets = targets.bundle(
+        targets = [
+            "chromium_webkit_isolated_scripts",
+        ],
+        mixins = [
+            targets.mixin(
+                swarming = targets.swarming(
+                    hard_timeout_sec = 900,
+                ),
+            ),
+            "win10",
+        ],
+        per_test_modifications = {
+            "blink_wpt_tests": targets.mixin(
+                swarming = targets.swarming(
+                    hard_timeout_sec = 2400,
+                ),
+            ),
+            "blink_web_tests": targets.mixin(
+                swarming = targets.swarming(
+                    hard_timeout_sec = 2400,
+                    shards = 6,
+                ),
+            ),
+        },
     ),
     builderless = True,
     os = os.WINDOWS_ANY,
@@ -164,9 +217,38 @@ try_.builder(
             "release_builder",
             "remoteexec",
             "chrome_with_codecs",
+            "win",
             "arm64",
             "minimal_symbols",
         ],
+    ),
+    targets = targets.bundle(
+        targets = [
+            "chromium_webkit_isolated_scripts",
+        ],
+        mixins = [
+            targets.mixin(
+                swarming = targets.swarming(
+                    dimensions = {
+                        "os": "Windows-11",
+                    },
+                    hard_timeout_sec = 900,
+                ),
+            ),
+            "arm64",
+        ],
+        per_test_modifications = {
+            "blink_wpt_tests": targets.mixin(
+                swarming = targets.swarming(
+                    hard_timeout_sec = 2400,
+                ),
+            ),
+            "blink_web_tests": targets.mixin(
+                swarming = targets.swarming(
+                    hard_timeout_sec = 2400,
+                ),
+            ),
+        },
     ),
     builderless = True,
     os = os.WINDOWS_ANY,
@@ -197,44 +279,38 @@ try_.builder(
             "release_builder",
             "remoteexec",
             "chrome_with_codecs",
+            "win",
             "x64",
             "minimal_symbols",
         ],
+    ),
+    targets = targets.bundle(
+        targets = [
+            "chromium_webkit_isolated_scripts",
+        ],
+        mixins = [
+            targets.mixin(
+                swarming = targets.swarming(
+                    hard_timeout_sec = 900,
+                ),
+            ),
+            "win11",
+        ],
+        per_test_modifications = {
+            "blink_wpt_tests": targets.mixin(
+                swarming = targets.swarming(
+                    hard_timeout_sec = 2400,
+                ),
+            ),
+            "blink_web_tests": targets.mixin(
+                swarming = targets.swarming(
+                    hard_timeout_sec = 2400,
+                ),
+            ),
+        },
     ),
     builderless = True,
     os = os.WINDOWS_ANY,
-)
-
-blink_mac_builder(
-    name = "mac10.15-blink-rel",
-    builder_spec = builder_config.builder_spec(
-        gclient_config = builder_config.gclient_config(
-            config = "chromium",
-        ),
-        chromium_config = builder_config.chromium_config(
-            config = "chromium",
-            apply_configs = [
-                "mb",
-            ],
-            build_config = builder_config.build_config.RELEASE,
-            target_bits = 64,
-            target_platform = builder_config.target_platform.MAC,
-        ),
-    ),
-    builder_config_settings = builder_config.try_settings(
-        retry_failed_shards = True,
-    ),
-    gn_args = gn_args.config(
-        configs = [
-            "release_builder",
-            "remoteexec",
-            "chrome_with_codecs",
-            "minimal_symbols",
-            "x64",
-        ],
-    ),
-    cores = None,
-    cpu = cpu.ARM64,
 )
 
 blink_mac_builder(
@@ -262,7 +338,29 @@ blink_mac_builder(
             "remoteexec",
             "chrome_with_codecs",
             "minimal_symbols",
+            "mac",
+            "x64",
         ],
+    ),
+    targets = targets.bundle(
+        targets = [
+            "chromium_webkit_isolated_scripts",
+        ],
+        mixins = [
+            "mac_11_x64",
+        ],
+        per_test_modifications = {
+            "blink_wpt_tests": targets.mixin(
+                swarming = targets.swarming(
+                    hard_timeout_sec = 2400,
+                ),
+            ),
+            "blink_web_tests": targets.mixin(
+                swarming = targets.swarming(
+                    hard_timeout_sec = 2400,
+                ),
+            ),
+        },
     ),
     builderless = False,
 )
@@ -294,7 +392,28 @@ blink_mac_builder(
             "chrome_with_codecs",
             "arm64",
             "minimal_symbols",
+            "mac",
         ],
+    ),
+    targets = targets.bundle(
+        targets = [
+            "chromium_webkit_isolated_scripts",
+        ],
+        mixins = [
+            "mac_11_arm64",
+        ],
+        per_test_modifications = {
+            "blink_wpt_tests": targets.mixin(
+                swarming = targets.swarming(
+                    hard_timeout_sec = 2400,
+                ),
+            ),
+            "blink_web_tests": targets.mixin(
+                swarming = targets.swarming(
+                    hard_timeout_sec = 2400,
+                ),
+            ),
+        },
     ),
     cores = None,
     cpu = cpu.ARM64,
@@ -325,8 +444,29 @@ blink_mac_builder(
             "remoteexec",
             "chrome_with_codecs",
             "minimal_symbols",
+            "mac",
             "x64",
         ],
+    ),
+    targets = targets.bundle(
+        targets = [
+            "chromium_webkit_isolated_scripts",
+        ],
+        mixins = [
+            "mac_12_x64",
+        ],
+        per_test_modifications = {
+            "blink_wpt_tests": targets.mixin(
+                swarming = targets.swarming(
+                    hard_timeout_sec = 2400,
+                ),
+            ),
+            "blink_web_tests": targets.mixin(
+                swarming = targets.swarming(
+                    hard_timeout_sec = 2400,
+                ),
+            ),
+        },
     ),
     cpu = cpu.ARM64,
 )
@@ -355,9 +495,30 @@ blink_mac_builder(
             "release_builder",
             "remoteexec",
             "chrome_with_codecs",
+            "mac",
             "arm64",
             "minimal_symbols",
         ],
+    ),
+    targets = targets.bundle(
+        targets = [
+            "chromium_webkit_isolated_scripts",
+        ],
+        mixins = [
+            "mac_12_arm64",
+        ],
+        per_test_modifications = {
+            "blink_wpt_tests": targets.mixin(
+                swarming = targets.swarming(
+                    hard_timeout_sec = 2400,
+                ),
+            ),
+            "blink_web_tests": targets.mixin(
+                swarming = targets.swarming(
+                    hard_timeout_sec = 2400,
+                ),
+            ),
+        },
     ),
     cores = None,
     cpu = cpu.ARM64,
@@ -388,7 +549,16 @@ blink_mac_builder(
             "remoteexec",
             "chrome_with_codecs",
             "minimal_symbols",
+            "mac",
             "x64",
+        ],
+    ),
+    targets = targets.bundle(
+        targets = [
+            "chromium_webkit_isolated_scripts",
+        ],
+        mixins = [
+            "mac_13_x64",
         ],
     ),
     cores = None,
@@ -397,10 +567,6 @@ blink_mac_builder(
 
 try_.builder(
     name = "mac13-wpt-chromium-rel",
-    description_html = """\
-Runs <a href="https://web-platform-tests.org">web platform tests</a> against
-Chrome.\
-""",
     mirrors = ["ci/mac13-wpt-chromium-rel"],
     builder_config_settings = builder_config.try_settings(
         retry_failed_shards = False,
@@ -438,8 +604,17 @@ blink_mac_builder(
             "release_builder",
             "remoteexec",
             "chrome_with_codecs",
+            "mac",
             "arm64",
             "minimal_symbols",
+        ],
+    ),
+    targets = targets.bundle(
+        targets = [
+            "chromium_webkit_isolated_scripts",
+        ],
+        mixins = [
+            "mac_13_arm64",
         ],
     ),
     cores = None,
@@ -447,35 +622,32 @@ blink_mac_builder(
 )
 
 blink_mac_builder(
-    name = "mac13.arm64-skia-alt-blink-rel",
-    builder_spec = builder_config.builder_spec(
-        gclient_config = builder_config.gclient_config(
-            config = "chromium",
-        ),
-        chromium_config = builder_config.chromium_config(
-            config = "chromium",
-            apply_configs = [
-                "mb",
-            ],
-            build_config = builder_config.build_config.RELEASE,
-            target_bits = 64,
-            target_platform = builder_config.target_platform.MAC,
-        ),
-    ),
-    builder_config_settings = builder_config.try_settings(
-        retry_failed_shards = True,
-    ),
+    name = "mac-skia-alt-arm64-blink-rel",
+    branch_selector = None,
+    mirrors = [
+        "ci/mac-arm64-rel",
+        "ci/mac-skia-alt-arm64-rel-tests",
+    ],
     gn_args = gn_args.config(
+        # TODO(crbug.com/40937352): Currently we override the gn args instead
+        # of using mac-arm64-rel's gn args. Ideally Graphite should be tested
+        # with dcheck on. However, mac-arm64-rel's gn args has dcheck off so
+        # we override gn args here to enable dcheck via "release_try_builder".
+        # In future, we should add a dedicated CI builder with dcheck enabled
+        # and mirror it here.
         configs = [
-            "release_builder",
+            "release_try_builder",
             "remoteexec",
             "chrome_with_codecs",
+            "mac",
             "arm64",
             "minimal_symbols",
         ],
     ),
     cores = None,
     cpu = cpu.ARM64,
+    contact_team_email = "chrome-skia-graphite@google.com",
+    main_list_view = "try",
 )
 
 blink_mac_builder(
@@ -506,7 +678,16 @@ blink_mac_builder(
             "remoteexec",
             "chrome_with_codecs",
             "minimal_symbols",
+            "mac",
             "x64",
+        ],
+    ),
+    targets = targets.bundle(
+        targets = [
+            "chromium_webkit_isolated_scripts",
+        ],
+        mixins = [
+            "mac_14_x64",
         ],
     ),
     cpu = cpu.ARM64,
@@ -540,8 +721,107 @@ blink_mac_builder(
             "release_builder",
             "remoteexec",
             "chrome_with_codecs",
+            "mac",
             "arm64",
             "minimal_symbols",
+        ],
+    ),
+    targets = targets.bundle(
+        targets = [
+            "chromium_webkit_isolated_scripts",
+        ],
+        mixins = [
+            "mac_14_arm64",
+        ],
+    ),
+    cpu = cpu.ARM64,
+    contact_team_email = "chrome-blink-engprod@google.com",
+)
+
+blink_mac_builder(
+    name = "mac15-blink-rel",
+    description_html = """\
+    Runs web tests against content-shell on Mac 15 (Intel) as a
+    <a href="https://chromium.googlesource.com/chromium/src/+/HEAD/docs/testing/web_test_expectations.md#rebaselining-using-try-jobs">standalone trybot to generate new web test expectations</a>.\
+    """,
+    builder_spec = builder_config.builder_spec(
+        gclient_config = builder_config.gclient_config(
+            config = "chromium",
+        ),
+        chromium_config = builder_config.chromium_config(
+            config = "chromium",
+            apply_configs = [
+                "mb",
+            ],
+            build_config = builder_config.build_config.RELEASE,
+            target_bits = 64,
+            target_platform = builder_config.target_platform.MAC,
+        ),
+    ),
+    builder_config_settings = builder_config.try_settings(
+        retry_failed_shards = False,
+    ),
+    gn_args = gn_args.config(
+        configs = [
+            "release_builder",
+            "remoteexec",
+            "chrome_with_codecs",
+            "minimal_symbols",
+            "mac",
+            "x64",
+        ],
+    ),
+    targets = targets.bundle(
+        targets = [
+            "chromium_webkit_isolated_scripts",
+        ],
+        mixins = [
+            "mac_15_x64",
+        ],
+    ),
+    cpu = cpu.ARM64,
+    contact_team_email = "chrome-blink-engprod@google.com",
+)
+
+blink_mac_builder(
+    name = "mac15.arm64-blink-rel",
+    description_html = """\
+    Runs web tests against content-shell on Mac 15 (Intel) as a
+    <a href="https://chromium.googlesource.com/chromium/src/+/HEAD/docs/testing/web_test_expectations.md#rebaselining-using-try-jobs">standalone trybot to generate new web test expectations</a>.\
+    """,
+    builder_spec = builder_config.builder_spec(
+        gclient_config = builder_config.gclient_config(
+            config = "chromium",
+        ),
+        chromium_config = builder_config.chromium_config(
+            config = "chromium",
+            apply_configs = [
+                "mb",
+            ],
+            build_config = builder_config.build_config.RELEASE,
+            target_bits = 64,
+            target_platform = builder_config.target_platform.MAC,
+        ),
+    ),
+    builder_config_settings = builder_config.try_settings(
+        retry_failed_shards = True,
+    ),
+    gn_args = gn_args.config(
+        configs = [
+            "release_builder",
+            "remoteexec",
+            "chrome_with_codecs",
+            "mac",
+            "arm64",
+            "minimal_symbols",
+        ],
+    ),
+    targets = targets.bundle(
+        targets = [
+            "chromium_webkit_isolated_scripts",
+        ],
+        mixins = [
+            "mac_15_arm64",
         ],
     ),
     cpu = cpu.ARM64,

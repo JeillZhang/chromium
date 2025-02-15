@@ -21,16 +21,17 @@ import androidx.annotation.Nullable;
 import org.chromium.base.Callback;
 import org.chromium.chrome.browser.browsing_data.TimePeriod;
 import org.chromium.chrome.browser.browsing_data.TimePeriodUtils.TimePeriodSpinnerOption;
+import org.chromium.chrome.browser.settings.SettingsNavigationFactory;
 import org.chromium.chrome.browser.tab.TabLaunchType;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
-import org.chromium.components.browser_ui.settings.SettingsLauncher;
+import org.chromium.components.browser_ui.settings.SettingsNavigation;
 import org.chromium.components.embedder_support.util.UrlConstants;
 import org.chromium.content_public.browser.LoadUrlParams;
 import org.chromium.ui.modaldialog.DialogDismissalCause;
 import org.chromium.ui.modaldialog.ModalDialogManager;
 import org.chromium.ui.modaldialog.ModalDialogProperties;
 import org.chromium.ui.modelutil.PropertyModel;
-import org.chromium.ui.text.NoUnderlineClickableSpan;
+import org.chromium.ui.text.ChromeClickableSpan;
 import org.chromium.ui.text.SpanApplier;
 import org.chromium.ui.widget.ButtonCompat;
 import org.chromium.ui.widget.TextViewWithClickableSpans;
@@ -52,7 +53,6 @@ class QuickDeleteDialogDelegate {
     private final @NonNull View mQuickDeleteView;
     private final @NonNull Callback<Integer> mOnDismissCallback;
     private final @NonNull TabModelSelector mTabModelSelector;
-    private final @NonNull SettingsLauncher mSettingsLauncher;
     private final @NonNull TimePeriodChangeObserver mTimePeriodChangeObserver;
 
     /**
@@ -86,19 +86,16 @@ class QuickDeleteDialogDelegate {
             };
 
     /**
-     * @param context            The associated {@link Context}.
-     * @param quickDeleteView    {@link View} of the quick delete.
+     * @param context The associated {@link Context}.
+     * @param quickDeleteView {@link View} of the quick delete.
      * @param modalDialogManager A {@link ModalDialogManager} responsible for showing the quick
-     *                           delete modal dialog.
-     * @param onDismissCallback  A {@link Callback} that will be notified when the user
-     *                           confirms or
-     *                           cancels the deletion;
-     * @param tabModelSelector   {@link TabModelSelector} to use for opening the links in search
-     *                           history disambiguation notice.
-     * @param settingsLauncher   @link SettingsLauncher} used to launch the Clear browsing data
-     *                           settings fragment.
+     *     delete modal dialog.
+     * @param onDismissCallback A {@link Callback} that will be notified when the user confirms or
+     *     cancels the deletion;
+     * @param tabModelSelector {@link TabModelSelector} to use for opening the links in search
+     *     history disambiguation notice.
      * @param timePeriodChangeObserver {@link TimePeriodChangeObserver} which would be notified when
-     *         the spinner is toggled.
+     *     the spinner is toggled.
      */
     QuickDeleteDialogDelegate(
             @NonNull Context context,
@@ -106,14 +103,12 @@ class QuickDeleteDialogDelegate {
             @NonNull ModalDialogManager modalDialogManager,
             @NonNull Callback<Integer> onDismissCallback,
             @NonNull TabModelSelector tabModelSelector,
-            @NonNull SettingsLauncher settingsLauncher,
             @NonNull TimePeriodChangeObserver timePeriodChangeObserver) {
         mContext = context;
         mQuickDeleteView = quickDeleteView;
         mModalDialogManager = modalDialogManager;
         mOnDismissCallback = onDismissCallback;
         mTabModelSelector = tabModelSelector;
-        mSettingsLauncher = settingsLauncher;
         mTimePeriodChangeObserver = timePeriodChangeObserver;
 
         mCurrentTimePeriodOption =
@@ -202,8 +197,8 @@ class QuickDeleteDialogDelegate {
     private void openClearBrowsingDataDialog() {
         QuickDeleteMetricsDelegate.recordHistogram(
                 QuickDeleteMetricsDelegate.QuickDeleteAction.MORE_OPTIONS_CLICKED);
-        mSettingsLauncher.launchSettingsActivity(
-                mContext, SettingsLauncher.SettingsFragment.CLEAR_BROWSING_DATA_ADVANCED_PAGE);
+        SettingsNavigationFactory.createSettingsNavigation()
+                .startSettings(mContext, SettingsNavigation.SettingsFragment.CLEAR_BROWSING_DATA);
         mModalDialogManager.dismissDialog(
                 mModalDialogPropertyModel, DialogDismissalCause.ACTION_ON_CONTENT);
     }
@@ -222,11 +217,11 @@ class QuickDeleteDialogDelegate {
                         new SpanApplier.SpanInfo(
                                 "<link1>",
                                 "</link1>",
-                                new NoUnderlineClickableSpan(mContext, openHistoryCallback)),
+                                new ChromeClickableSpan(mContext, openHistoryCallback)),
                         new SpanApplier.SpanInfo(
                                 "<link2>",
                                 "</link2>",
-                                new NoUnderlineClickableSpan(mContext, openActivityCallback)));
+                                new ChromeClickableSpan(mContext, openActivityCallback)));
         text.setText(searchHistoryText);
         text.setMovementMethod(LinkMovementMethod.getInstance());
     }

@@ -16,7 +16,7 @@ import org.chromium.components.prefs.PrefService;
 import org.chromium.components.user_prefs.UserPrefs;
 import org.chromium.content_public.browser.LoadUrlParams;
 import org.chromium.ui.modelutil.PropertyModel;
-import org.chromium.ui.text.NoUnderlineClickableSpan;
+import org.chromium.ui.text.ChromeClickableSpan;
 import org.chromium.ui.text.SpanApplier;
 import org.chromium.ui.widget.ChromeBulletSpan;
 
@@ -25,8 +25,10 @@ import java.util.regex.Pattern;
 
 /** A mediator for the {@link ManagementCoordinator} responsible for handling business logic. */
 public class ManagementMediator {
-    private static final String LEARN_MORE_URL =
+    private static final String CHROME_MANAGED_LEARN_MORE_URL =
             "https://support.google.com/chrome/?p=is_chrome_managed";
+    private static final String PROFILE_REPORTING_LEARN_MORE_URL =
+            "https://support.google.com/chrome/a/?p=browser_profile_details";
 
     private final NativePageHost mHost;
     private final PropertyModel mModel;
@@ -42,7 +44,9 @@ public class ManagementMediator {
                                 ManagementProperties.PROFILE_IS_MANAGED,
                                 ManagedBrowserUtils.isProfileManaged(profile))
                         .with(ManagementProperties.TITLE, ManagedBrowserUtils.getTitle(profile))
-                        .with(ManagementProperties.LEARN_MORE_TEXT, getLearnMoreClickableText())
+                        .with(
+                                ManagementProperties.LEARN_MORE_TEXT,
+                                getLearnMoreClickableText(CHROME_MANAGED_LEARN_MORE_URL))
                         .with(
                                 ManagementProperties.BROWSER_REPORTING_IS_ENABLED,
                                 ManagedBrowserUtils.isBrowserReportingEnabled())
@@ -65,13 +69,13 @@ public class ManagementMediator {
         return mModel;
     }
 
-    private SpannableString getLearnMoreClickableText() {
+    private SpannableString getLearnMoreClickableText(String url) {
         final Context context = mHost.getContext();
-        final NoUnderlineClickableSpan clickableLearnMoreSpan =
-                new NoUnderlineClickableSpan(
+        final ChromeClickableSpan clickableLearnMoreSpan =
+                new ChromeClickableSpan(
                         context,
                         (v) -> {
-                            showHelpCenterArticle();
+                            showHelpCenterArticle(url);
                         });
         return SpanApplier.applySpans(
                 context.getString(R.string.management_learn_more),
@@ -93,7 +97,15 @@ public class ManagementMediator {
                 .append("\n")
                 .append(buildBulletString(R.string.management_profile_reporting_browser))
                 .append("\n")
-                .append(buildBulletString(R.string.management_profile_reporting_policy));
+                .append(buildBulletString(R.string.management_profile_reporting_policy))
+                .append("\n");
+
+        SpannableString learn_more_link =
+                getLearnMoreClickableText(PROFILE_REPORTING_LEARN_MORE_URL);
+        learn_more_link.setSpan(
+                new ChromeBulletSpan(mHost.getContext()), 0, learn_more_link.length(), 0);
+        spannableString.append(learn_more_link);
+
         return spannableString;
     }
 
@@ -116,8 +128,8 @@ public class ManagementMediator {
             return new SpannableString(text);
         }
 
-        NoUnderlineClickableSpan linkSpan =
-                new NoUnderlineClickableSpan(
+        ChromeClickableSpan linkSpan =
+                new ChromeClickableSpan(
                         context,
                         v -> {
                             mHost.loadUrl(
@@ -129,7 +141,7 @@ public class ManagementMediator {
                 new SpanApplier.SpanInfo("<link>", "</link>", linkSpan));
     }
 
-    private void showHelpCenterArticle() {
-        mHost.loadUrl(new LoadUrlParams(LEARN_MORE_URL), /* incognito= */ false);
+    private void showHelpCenterArticle(String url) {
+        mHost.loadUrl(new LoadUrlParams(url), /* incognito= */ false);
     }
 }

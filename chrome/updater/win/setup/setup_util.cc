@@ -27,6 +27,7 @@
 #include "base/path_service.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/win/registry.h"
 #include "base/win/win_util.h"
 #include "chrome/installer/util/install_service_work_item.h"
@@ -40,7 +41,9 @@
 #include "chrome/updater/util/util.h"
 #include "chrome/updater/util/win_util.h"
 #include "chrome/updater/win/task_scheduler.h"
+#include "chrome/updater/win/ui/l10n_util.h"
 #include "chrome/updater/win/ui/resources/resources.grh"
+#include "chrome/updater/win/ui/resources/updater_installer_strings.h"
 #include "chrome/updater/win/win_constants.h"
 
 namespace updater {
@@ -133,6 +136,7 @@ std::vector<std::pair<IID, std::wstring>> GetActiveInterfaces(
             return {
                 INTERFACE_PAIR(IUpdateStateUser),
                 INTERFACE_PAIR(IUpdaterUser),
+                INTERFACE_PAIR(IUpdater2User),
                 INTERFACE_PAIR(ICompleteStatusUser),
                 INTERFACE_PAIR(IUpdaterObserverUser),
                 INTERFACE_PAIR(IUpdaterCallbackUser),
@@ -156,6 +160,7 @@ std::vector<std::pair<IID, std::wstring>> GetActiveInterfaces(
             return {
                 INTERFACE_PAIR(IUpdateStateSystem),
                 INTERFACE_PAIR(IUpdaterSystem),
+                INTERFACE_PAIR(IUpdater2System),
                 INTERFACE_PAIR(ICompleteStatusSystem),
                 INTERFACE_PAIR(IUpdaterObserverSystem),
                 INTERFACE_PAIR(IUpdaterCallbackSystem),
@@ -349,7 +354,7 @@ void AddInstallServerWorkItems(HKEY root,
 
   base::CommandLine run_com_server_command(com_server_path);
   run_com_server_command.AppendSwitch(kServerSwitch);
-  run_com_server_command.AppendSwitchASCII(
+  run_com_server_command.AppendSwitchUTF8(
       kServerServiceSwitch, internal_service
                                 ? kServerUpdateServiceInternalSwitchValue
                                 : kServerUpdateServiceSwitchValue);
@@ -395,7 +400,7 @@ void AddComServiceWorkItems(const base::FilePath& com_service_path,
   base::CommandLine com_service_command(com_service_path);
   com_service_command.AppendSwitch(kSystemSwitch);
   com_service_command.AppendSwitch(kWindowsServiceSwitch);
-  com_service_command.AppendSwitchASCII(
+  com_service_command.AppendSwitchUTF8(
       kServerServiceSwitch, internal_service
                                 ? kServerUpdateServiceInternalSwitchValue
                                 : kServerUpdateServiceSwitchValue);
@@ -419,10 +424,16 @@ void AddComServiceWorkItems(const base::FilePath& com_service_path,
     }
   }
 
+  const std::wstring language = base::UTF8ToWide(GetTagLanguage());
   list->AddWorkItem(new installer::InstallServiceWorkItem(
       GetServiceName(internal_service).c_str(),
-      GetServiceDisplayName(internal_service).c_str(), SERVICE_AUTO_START,
-      com_service_command, com_switch, UPDATER_KEY, clsids, {}));
+      GetLocalizedString(internal_service
+                             ? IDS_INTERNAL_UPDATER_SERVICE_DISPLAY_NAME_BASE
+                             : IDS_UPDATER_SERVICE_DISPLAY_NAME_BASE,
+                         language),
+      GetLocalizedString(IDS_UPDATER_SERVICE_DESCRIPTION_BASE, language),
+      SERVICE_AUTO_START, com_service_command, com_switch, UPDATER_KEY, clsids,
+      {}));
 
   for (const auto& clsid : clsids) {
     AddInstallComProgIdWorkItems(UpdaterScope::kSystem, clsid, list);
@@ -542,6 +553,7 @@ std::wstring GetComTypeLibResourceIndex(REFIID iid) {
       // Updater user typelib.
       {__uuidof(ICompleteStatusUser), kUpdaterUserIndex},
       {__uuidof(IUpdaterUser), kUpdaterUserIndex},
+      {__uuidof(IUpdater2User), kUpdaterUserIndex},
       {__uuidof(IUpdaterObserverUser), kUpdaterUserIndex},
       {__uuidof(IUpdateStateUser), kUpdaterUserIndex},
       {__uuidof(IUpdaterCallbackUser), kUpdaterUserIndex},
@@ -551,6 +563,7 @@ std::wstring GetComTypeLibResourceIndex(REFIID iid) {
       // Updater system typelib.
       {__uuidof(ICompleteStatusSystem), kUpdaterSystemIndex},
       {__uuidof(IUpdaterSystem), kUpdaterSystemIndex},
+      {__uuidof(IUpdater2System), kUpdaterSystemIndex},
       {__uuidof(IUpdaterObserverSystem), kUpdaterSystemIndex},
       {__uuidof(IUpdateStateSystem), kUpdaterSystemIndex},
       {__uuidof(IUpdaterCallbackSystem), kUpdaterSystemIndex},
@@ -636,13 +649,15 @@ bool DeleteLegacyEntriesPerUser() {
   // registered for system since r1154562. So the code below removes these
   // interfaces from the user hive.
   bool success = true;
-  for (const auto& iid :
-       {__uuidof(IProcessLauncher), __uuidof(IProcessLauncher2)}) {
-    for (const auto& reg_path :
-         {GetComIidRegistryPath(iid), GetComTypeLibRegistryPath(iid)}) {
-      if (!installer::DeleteRegistryKey(HKEY_CURRENT_USER, reg_path,
-                                        WorkItem::kWow64Default)) {
-        success = false;
+  for (REGSAM bitness : {KEY_WOW64_32KEY, KEY_WOW64_64KEY}) {
+    for (const auto& iid :
+         {__uuidof(IProcessLauncher), __uuidof(IProcessLauncher2)}) {
+      for (const auto& reg_path :
+           {GetComIidRegistryPath(iid), GetComTypeLibRegistryPath(iid)}) {
+        if (!installer::DeleteRegistryKey(HKEY_CURRENT_USER, reg_path,
+                                          bitness)) {
+          success = false;
+        }
       }
     }
   }

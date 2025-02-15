@@ -25,6 +25,7 @@ class COMPONENT_EXPORT(CHROMEOS_ASH_COMPONENTS_AUDIO) AudioDevicesPrefHandler
   static constexpr double kDefaultOutputVolumePercent = 75;
   static constexpr double kDefaultHdmiOutputVolumePercent = 100;
   static constexpr double kDefaultBluetoothOutputVolumePercent = 25;
+  static constexpr double kDefaultUsbOutputVolumePercent = 25;
 
   // Gets the audio output volume value from prefs for a device. Since we can
   // only have either a gain or a volume for a device (depending on whether it
@@ -38,6 +39,14 @@ class COMPONENT_EXPORT(CHROMEOS_ASH_COMPONENTS_AUDIO) AudioDevicesPrefHandler
   virtual bool GetMuteValue(const AudioDevice& device) = 0;
   // Sets the audio mute value to prefs for a device.
   virtual void SetMuteValue(const AudioDevice& device, bool mute_on) = 0;
+
+  // Reads whether input voice isolation is on from profile prefs.
+  virtual bool GetVoiceIsolationState() const = 0;
+  // Sets the input voice isolation in profile prefs.
+  virtual void SetVoiceIsolationState(bool voice_isolation_state) = 0;
+
+  virtual uint32_t GetVoiceIsolationPreferredEffect() const = 0;
+  virtual void SetVoiceIsolationPreferredEffect(uint32_t effect) = 0;
 
   // Reads whether input noise cancellation is on from profile prefs.
   virtual bool GetNoiseCancellationState() = 0;
@@ -117,6 +126,11 @@ class COMPONENT_EXPORT(CHROMEOS_ASH_COMPONENTS_AUDIO) AudioDevicesPrefHandler
   virtual bool GetHfpMicSrState() = 0;
   // Sets the hfp_mic_sr in profile prefs.
   virtual void SetHfpMicSrState(bool hfp_mic_sr_state) = 0;
+
+  // Reads whether spatial audio is on from profile prefs.
+  virtual bool GetSpatialAudioState() = 0;
+  // Sets the spatial audio in profile prefs.
+  virtual void SetSpatialAudioState(bool spatial_audio) = 0;
 
  protected:
   virtual ~AudioDevicesPrefHandler() = default;

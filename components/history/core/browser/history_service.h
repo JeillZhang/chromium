@@ -59,7 +59,7 @@ class FaviconServiceImpl;
 }
 
 namespace syncer {
-class ModelTypeControllerDelegate;
+class DataTypeControllerDelegate;
 class SyncableService;
 }  // namespace syncer
 
@@ -315,21 +315,6 @@ class HistoryService : public KeyedService,
       QueryURLCallback callback,
       base::CancelableTaskTracker* tracker);
 
-  using QueryURLsCallback =
-      base::OnceCallback<void(std::vector<QueryURLResult>)>;
-
-  // Queries the basic information about the URLs in the history database. If
-  // the caller is interested in the visits (each time the URL is visited),
-  // set `want_visits` to true. If these are not needed, the function will be
-  // faster by setting this to false. Same as QueryURL but takes a
-  // vector of URLs and returns a vector of results.
-  // Note: Virtual needed for mocking.
-  virtual base::CancelableTaskTracker::TaskId QueryURLs(
-      const std::vector<GURL>& urls,
-      bool want_visits,
-      QueryURLsCallback callback,
-      base::CancelableTaskTracker* tracker);
-
   // Provides the result of a query. See QueryResults in history_types.h.
   // The common use will be to use QueryResults.Swap to suck the contents of
   // the results out of the passed in parameter and take ownership of them.
@@ -432,7 +417,7 @@ class HistoryService : public KeyedService,
                           DomainDiversityCallback callback,
                           base::CancelableTaskTracker* tracker);
 
-  // Returns, via a callback, unique domains (eLTD+1) visited within the time
+  // Returns, via a callback, unique domains (eTLD+1) visited within the time
   // range [`begin_time`, `end_time`) for local and synced visits sorted in
   // reverse-chronological order.
   using GetUniqueDomainsVisitedCallback =
@@ -471,29 +456,18 @@ class HistoryService : public KeyedService,
       GetLastVisitCallback callback,
       base::CancelableTaskTracker* tracker);
 
-  // Gets the last time `url` was visited before `end_time`. If the given URL
-  // has not been visited in the past, the callback will be called with a null
-  // base::Time.
-  base::CancelableTaskTracker::TaskId GetLastVisitToURL(
-      const GURL& url,
-      base::Time end_time,
-      GetLastVisitCallback callback,
-      base::CancelableTaskTracker* tracker);
-
-  using GetDailyVisitsToHostCallback =
+  using GetDailyVisitsToOriginCallback =
       base::OnceCallback<void(DailyVisitsResult)>;
 
   // TODO(crbug.com/40158714): Use this function.
   // Gets counts for total visits and days visited for pages matching `host`'s
   // scheme, port, and host. Counts only user-visible visits (i.e. no redirects
   // or subframes) within the time range [`begin_time`, `end_time`).
-  // TODO(crbug.com/40778368): Rename this function to use origin instead of
-  // host.
-  base::CancelableTaskTracker::TaskId GetDailyVisitsToHost(
-      const GURL& host,
+  base::CancelableTaskTracker::TaskId GetDailyVisitsToOrigin(
+      const url::Origin& origin,
       base::Time begin_time,
       base::Time end_time,
-      GetDailyVisitsToHostCallback callback,
+      GetDailyVisitsToOriginCallback callback,
       base::CancelableTaskTracker* tracker);
 
   // Generic operations --------------------------------------------------------
@@ -838,7 +812,7 @@ class HistoryService : public KeyedService,
 
   // For sync codebase only: instantiates a controller delegate to interact with
   // HistorySyncBridge. Must be called from the UI thread.
-  std::unique_ptr<syncer::ModelTypeControllerDelegate>
+  std::unique_ptr<syncer::DataTypeControllerDelegate>
   GetHistorySyncControllerDelegate();
 
   // Sends the SyncService's TransportState `state` to the backend, which will

@@ -6,10 +6,10 @@
 
 #include <stddef.h>
 
+#include <algorithm>
 #include <utility>
 
 #include "base/check.h"
-#include "base/check_deref.h"
 #include "base/check_op.h"
 #include "base/command_line.h"
 #include "base/debug/crash_logging.h"
@@ -18,11 +18,9 @@
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/notreached.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/thread_pool.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
@@ -34,6 +32,7 @@
 #include "ui/accessibility/platform/ax_platform_node.h"
 #include "ui/events/base_event_utils.h"
 #include "ui/gfx/color_utils.h"
+#include "ui/native_theme/native_theme.h"
 
 namespace content {
 
@@ -161,41 +160,21 @@ ui::AXMode FilterAccessibilityModeInvariants(ui::AXMode mode) {
   // WebContents if that WebContents also has the kWebContents mode enabled;
   // see `content::RenderFrameHostImpl::UpdateAccessibilityMode()` and
   // `content::RenderAccessibilityManager::SetMode()`.
-  return mode.has_mode(ui::AXMode::kWebContents)
-             ? mode
-             : (mode & ui::AXMode::kNativeAPIs);
-}
-
-// Helper for GetProductName and GetProductVersion, gets the product name and
-// version from the content client.
-std::vector<std::string> GetProductNameAndVersion() {
-  // GetProduct() returns a string like "Chrome/aa.bb.cc.dd", split out
-  // the part before and after the "/".
-  std::vector<std::string> product_components = base::SplitString(
-      CHECK_DEREF(CHECK_DEREF(GetContentClient()).browser()).GetProduct(), "/",
-      base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
-  return product_components;
-}
-
-std::string GetProductName() {
-  std::vector<std::string> product_components = GetProductNameAndVersion();
-  if (product_components.size() != 2) {
-    return "";
+  if (!mode.has_mode(ui::AXMode::kWebContents)) {
+    return mode & ui::AXMode::kNativeAPIs;
   }
-  return product_components[0];
-}
 
-std::string GetProductVersion() {
-  std::vector<std::string> product_components = GetProductNameAndVersion();
-  if (product_components.size() != 2) {
-    return "";
+  // Form controls mode is restrictive. There are other modes that should not be
+  // used in combination with it. This could occur if something that needs
+  // screen reader mode is turned on after forms control mode. In that case,
+  // forms mode must be removed.
+  if (mode.has_mode(ui::AXMode::kInlineTextBoxes) ||
+      mode.has_mode(ui::AXMode::kScreenReader)) {
+    return ui::AXMode(mode.flags(), mode.experimental_flags() &
+                                        ~ui::AXMode::kExperimentalFormControls);
   }
-  return product_components[1];
-}
 
-std::string GetToolkitVersion() {
-  CHECK(GetContentClient() && GetContentClient()->browser());
-  return CHECK_DEREF(CHECK_DEREF(GetContentClient()).browser()).GetUserAgent();
+  return mode;
 }
 
 }  // namespace
@@ -211,9 +190,8 @@ BrowserAccessibilityStateImpl* BrowserAccessibilityStateImpl::GetInstance() {
   return g_instance;
 }
 
-// On Android, Mac, Lacros, and Windows there are platform-specific subclasses.
-#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_WIN) && !BUILDFLAG(IS_MAC) && \
-    !BUILDFLAG(IS_CHROMEOS_LACROS)
+// On Android, Mac, and Windows there are platform-specific subclasses.
+#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_WIN) && !BUILDFLAG(IS_MAC)
 // static
 std::unique_ptr<BrowserAccessibilityStateImpl>
 BrowserAccessibilityStateImpl::Create() {
@@ -223,10 +201,7 @@ BrowserAccessibilityStateImpl::Create() {
 
 BrowserAccessibilityStateImpl::BrowserAccessibilityStateImpl()
     : BrowserAccessibilityState(),
-      ax_platform_(*this,
-                   GetProductName(),
-                   GetProductVersion(),
-                   GetToolkitVersion()),
+      ax_platform_(*this),
       histogram_delay_(base::Seconds(ACCESSIBILITY_HISTOGRAM_DELAY_SECS)),
       scoped_modes_for_process_(base::BindRepeating(
           &BrowserAccessibilityStateImpl::OnModeChangedForProcess,
@@ -362,8 +337,9 @@ void BrowserAccessibilityStateImpl::MaybeResetAccessibilityMode() {
   // `OnScreenReaderStopped` sets `disable_accessibility_request_time_`, and
   // `OnScreenReaderDetected` clears it. If we no longer have a request time
   // to disable accessibility, this delayed task is obsolete.
-  if (disable_accessibility_request_time_.is_null())
+  if (disable_accessibility_request_time_.is_null()) {
     return;
+  }
 
   // `OnScreenReaderStopped` could be called multiple times prior to the delay
   // expiring. The value of `disable_accessibility_request_time_` is updated
@@ -414,22 +390,33 @@ bool BrowserAccessibilityStateImpl::IsPerformanceFilteringAllowed() {
 }
 
 void BrowserAccessibilityStateImpl::UpdateHistogramsOnUIThread() {
-  for (auto& callback : ui_thread_histogram_callbacks_)
+  for (auto& callback : ui_thread_histogram_callbacks_) {
     std::move(callback).Run();
+  }
   ui_thread_histogram_callbacks_.clear();
 
   UMA_HISTOGRAM_BOOLEAN(
       "Accessibility.ManuallyEnabled",
       !GetAccessibilityMode().is_mode_off() && !allow_ax_mode_changes_);
 
+#if BUILDFLAG(IS_WIN)
+  base::UmaHistogramEnumeration(
+      "Accessibility.WinHighContrastTheme",
+      ui::NativeTheme::GetInstanceForNativeUi()
+          ->GetPlatformHighContrastColorScheme(),
+      ui::NativeTheme::PlatformHighContrastColorScheme::kMaxValue);
+#endif
+
   ui_thread_done_ = true;
-  if (other_thread_done_ && background_thread_done_callback_)
+  if (other_thread_done_ && background_thread_done_callback_) {
     std::move(background_thread_done_callback_).Run();
+  }
 }
 
 void BrowserAccessibilityStateImpl::UpdateHistogramsOnOtherThread() {
-  for (auto& callback : other_thread_histogram_callbacks_)
+  for (auto& callback : other_thread_histogram_callbacks_) {
     std::move(callback).Run();
+  }
   other_thread_histogram_callbacks_.clear();
 
   GetUIThreadTaskRunner({})->PostTask(
@@ -440,15 +427,21 @@ void BrowserAccessibilityStateImpl::UpdateHistogramsOnOtherThread() {
 
 void BrowserAccessibilityStateImpl::OnOtherThreadDone() {
   other_thread_done_ = true;
-  if (ui_thread_done_ && background_thread_done_callback_)
+  if (ui_thread_done_ && background_thread_done_callback_) {
     std::move(background_thread_done_callback_).Run();
+  }
 }
 
 void BrowserAccessibilityStateImpl::UpdateAccessibilityActivityTask() {
+  if (!g_instance) {
+    // There can be a race on shutdown since this is posted as a delayed task.
+    return;
+  }
   base::TimeTicks now = ui::EventTimeForNow();
   accessibility_last_usage_time_ = now;
-  if (accessibility_active_start_time_.is_null())
+  if (accessibility_active_start_time_.is_null()) {
     accessibility_active_start_time_ = now;
+  }
   // If accessibility was enabled but inactive until now, log the amount
   // of time between now and the last API usage.
   if (!accessibility_inactive_start_time_.is_null()) {
@@ -487,8 +480,9 @@ void BrowserAccessibilityStateImpl::OnUserInputEvent() {
     return;
   }
 
-  if (user_input_event_count_ < kAutoDisableAccessibilityEventCount)
+  if (user_input_event_count_ < kAutoDisableAccessibilityEventCount) {
     return;
+  }
 
   if (now - first_user_input_event_time_ >
       base::Seconds(kAutoDisableAccessibilityTimeSecs)) {
@@ -499,8 +493,9 @@ void BrowserAccessibilityStateImpl::OnUserInputEvent() {
 
       // This will help track the time accessibility spends enabled, but
       // inactive.
-      if (!features::IsAutoDisableAccessibilityEnabled())
+      if (!features::IsAutoDisableAccessibilityEnabled()) {
         accessibility_inactive_start_time_ = accessibility_last_usage_time_;
+      }
 
       accessibility_active_start_time_ = base::TimeTicks();
     }
@@ -528,6 +523,13 @@ void BrowserAccessibilityStateImpl::SetAXModeChangeAllowed(bool allowed) {
 
 bool BrowserAccessibilityStateImpl::IsAXModeChangeAllowed() const {
   return allow_ax_mode_changes_;
+}
+
+void BrowserAccessibilityStateImpl::NotifyWebContentsPreferencesChanged()
+    const {
+  for (WebContentsImpl* wc : WebContentsImpl::GetAllWebContents()) {
+    wc->OnWebPreferencesChanged();
+  }
 }
 
 void BrowserAccessibilityStateImpl::AddAccessibilityModeFlags(ui::AXMode mode) {
@@ -585,13 +587,6 @@ void BrowserAccessibilityStateImpl::SetProcessMode(ui::AXMode new_mode) {
     return;
   }
 
-  // Form controls mode is restrictive. There are other modes that should not be
-  // used in combination with it.
-  if (new_mode.HasExperimentalFlags(ui::AXMode::kExperimentalFormControls)) {
-    CHECK(!new_mode.has_mode(ui::AXMode::kInlineTextBoxes));
-    CHECK(!new_mode.has_mode(ui::AXMode::kScreenReader));
-  }
-
   process_accessibility_mode_ = CreateScopedModeForProcess(new_mode);
 }
 
@@ -613,6 +608,7 @@ void BrowserAccessibilityStateImpl::OnAccessibilityApiUsage() {
 }
 
 void BrowserAccessibilityStateImpl::OnInputEvent(
+    const RenderWidgetHost& widget,
     const blink::WebInputEvent& event) {
   // |this| observer cares about user input events (specifically keyboard,
   // mouse & touch events) to decide if the accessibility APIs can be disabled.
@@ -647,7 +643,7 @@ void BrowserAccessibilityStateImpl::OnModeChangedForProcess(
 
   // Combine the new mode for the process with the effective mode for each
   // WebContents and its associated BrowserContext.
-  base::ranges::for_each(
+  std::ranges::for_each(
       WebContentsImpl::GetAllWebContents(),
       [new_mode](WebContentsImpl* web_contents) {
         if (!web_contents->IsBeingDestroyed()) {
@@ -696,7 +692,7 @@ void BrowserAccessibilityStateImpl::OnModeChangedForBrowserContext(
 
   // Combine this with the effective mode for each WebContents associated with
   // `browser_context`.
-  base::ranges::for_each(
+  std::ranges::for_each(
       WebContentsImpl::GetAllWebContents(),
       [browser_context, mode_for_context](WebContentsImpl* web_contents) {
         if (!web_contents->IsBeingDestroyed() &&

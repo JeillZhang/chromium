@@ -108,25 +108,24 @@ class TokenService : public TokenServiceInterface {
  public:
   TokenService(const base::FilePath& enrollment_token_path,
                const base::FilePath& dm_token_path);
-  ~TokenService() override = default;
 
   // Overrides for TokenServiceInterface.
   std::string GetDeviceID() const override { return device_id_; }
   bool IsEnrollmentMandatory() const override { return false; }
   bool StoreEnrollmentToken(const std::string& enrollment_token) override;
   bool DeleteEnrollmentToken() override;
-  std::string GetEnrollmentToken() const override { return enrollment_token_; }
+  std::string GetEnrollmentToken() const override;
   bool StoreDmToken(const std::string& dm_token) override;
   bool DeleteDmToken() override;
-  std::string GetDmToken() const override { return dm_token_; }
+  std::string GetDmToken() const override;
 
  private:
   // Cached values in memory.
   const std::string device_id_ = base::mac::GetPlatformSerialNumber();
   const base::FilePath enrollment_token_path_;
   const base::FilePath dm_token_path_;
-  std::string enrollment_token_;
-  std::string dm_token_;
+  mutable std::string enrollment_token_;
+  mutable std::string dm_token_;
 };
 
 TokenService::TokenService(const base::FilePath& enrollment_token_path,
@@ -135,13 +134,7 @@ TokenService::TokenService(const base::FilePath& enrollment_token_path,
                                  ? GetEnrollmentTokenFilePath()
                                  : enrollment_token_path),
       dm_token_path_(dm_token_path.empty() ? GetDmTokenFilePath()
-                                           : dm_token_path),
-      dm_token_(LoadTokenFromFile(dm_token_path_)) {
-  enrollment_token_ = LoadEnrollmentTokenFromPolicy();
-  if (enrollment_token_.empty()) {
-    enrollment_token_ = LoadTokenFromFile(enrollment_token_path_);
-  }
-}
+                                           : dm_token_path) {}
 
 bool TokenService::StoreEnrollmentToken(const std::string& enrollment_token) {
   if (enrollment_token_path_.empty() ||
@@ -161,6 +154,14 @@ bool TokenService::DeleteEnrollmentToken() {
   enrollment_token_ = "";
   DeletePolicyEnrollmentToken();
   return base::DeleteFile(base::FilePath(enrollment_token_path_));
+}
+
+std::string TokenService::GetEnrollmentToken() const {
+  enrollment_token_ = LoadEnrollmentTokenFromPolicy();
+  if (enrollment_token_.empty()) {
+    enrollment_token_ = LoadTokenFromFile(enrollment_token_path_);
+  }
+  return enrollment_token_;
 }
 
 bool TokenService::StoreDmToken(const std::string& token) {
@@ -185,21 +186,28 @@ bool TokenService::DeleteDmToken() {
   return true;
 }
 
+std::string TokenService::GetDmToken() const {
+  dm_token_ = LoadTokenFromFile(dm_token_path_);
+  return dm_token_;
+}
+
 }  // namespace
 
-DMStorage::DMStorage(const base::FilePath& policy_cache_root,
-                     const base::FilePath& enrollment_token_path,
-                     const base::FilePath& dm_token_path)
-    : DMStorage(policy_cache_root,
-                std::make_unique<TokenService>(enrollment_token_path,
-                                               dm_token_path)) {}
+scoped_refptr<DMStorage> CreateDMStorage(
+    const base::FilePath& policy_cache_root,
+    const base::FilePath& enrollment_token_path,
+    const base::FilePath& dm_token_path) {
+  return CreateDMStorage(
+      policy_cache_root,
+      std::make_unique<TokenService>(enrollment_token_path, dm_token_path));
+}
 
 scoped_refptr<DMStorage> GetDefaultDMStorage() {
   std::optional<base::FilePath> keystone_path =
       updater::GetKeystoneFolderPath(updater::UpdaterScope::kSystem);
-  return keystone_path ? base::MakeRefCounted<DMStorage>(
-                             keystone_path->AppendASCII("DeviceManagement"))
-                       : nullptr;
+  return keystone_path
+             ? CreateDMStorage(keystone_path->AppendASCII("DeviceManagement"))
+             : nullptr;
 }
 
 }  // namespace device_management_storage

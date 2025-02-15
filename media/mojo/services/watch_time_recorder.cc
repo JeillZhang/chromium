@@ -4,13 +4,13 @@
 
 #include "media/mojo/services/watch_time_recorder.h"
 
+#include <algorithm>
 #include <cmath>
 
 #include "base/containers/contains.h"
 #include "base/containers/flat_set.h"
 #include "base/hash/hash.h"
 #include "base/metrics/histogram_functions.h"
-#include "base/ranges/algorithm.h"
 #include "media/base/limits.h"
 #include "media/base/video_codecs.h"
 #include "media/base/video_decoder.h"
@@ -30,8 +30,7 @@ static void RecordWatchTimeInternal(
     base::TimeDelta value,
     base::TimeDelta minimum = kMinimumElapsedWatchTime) {
   DCHECK(!key.empty());
-  base::UmaHistogramCustomTimes(std::string(key), value, minimum,
-                                base::Hours(10), 50);
+  base::UmaHistogramCustomTimes(key, value, minimum, base::Hours(10), 50);
 }
 
 static void RecordMeanTimeBetweenRebuffers(std::string_view key,
@@ -46,13 +45,13 @@ static void RecordMeanTimeBetweenRebuffers(std::string_view key,
 static void RecordDiscardedWatchTime(std::string_view key,
                                      base::TimeDelta value) {
   DCHECK(!key.empty());
-  base::UmaHistogramCustomTimes(std::string(key), value, base::TimeDelta(),
+  base::UmaHistogramCustomTimes(key, value, base::TimeDelta(),
                                 kMinimumElapsedWatchTime, 50);
 }
 
 static void RecordRebuffersCount(std::string_view key, int underflow_count) {
   DCHECK(!key.empty());
-  base::UmaHistogramCounts100(std::string(key), underflow_count);
+  base::UmaHistogramCounts100(key, underflow_count);
 }
 
 WatchTimeRecorder::WatchTimeUkmRecord::WatchTimeUkmRecord(
@@ -121,8 +120,8 @@ void WatchTimeRecorder::FinalizeWatchTime(
       if (kv.second >= kMinimumElapsedWatchTime) {
         RecordWatchTimeInternal(key_str, kv.second);
       } else if (kv.second.is_positive()) {
-        auto it = base::ranges::find(extended_metrics_keys_, kv.first,
-                                     &ExtendedMetricsKeyMap::watch_time_key);
+        auto it = std::ranges::find(extended_metrics_keys_, kv.first,
+                                    &ExtendedMetricsKeyMap::watch_time_key);
         if (it != extended_metrics_keys_.end())
           RecordDiscardedWatchTime(it->discard_key, kv.second);
       }

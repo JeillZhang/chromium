@@ -9,8 +9,10 @@ including tips and tricks.
 ## Code Organization
 
 ## Bots & Lab
+
 >**_NOTE:_** Knowledge in this section may become out-of-date as LUCI evolves
 quickly.
+
 ### Builders / Testers
 There are two sets of configuration files for our builders/testers. One is
 for chromium-branded and locates in `src`. The other one is for chrome-branded
@@ -121,7 +123,7 @@ Example:
  TODO(crbug.com/40841197): Document how to remote into bots for debugging.
 
 ### Updating the Checked-In Version of the Updater
-An older version of the updater is checked in under `//third_party/updater`.
+An older version of the updater is checked in under `//third_party/updater/*/cipd`.
 This version of the updater is used in some integration tests. The updater is
 pulled from
 [CIPD](https://chrome-infra-packages.appspot.com/p/chromium/third_party/updater)
@@ -141,6 +143,27 @@ To update these copies of the updaters:
         script. The min version usually is different per-platform, since
         Chromium does not archive a version at every CL. After making these
         changes, 3pp will import the new versions within a few hours.
+    *   As an example, let us suppose that
+        [revision 1371769](https://crrev.com/1371769)
+        is the change that needs to be picked up for the checked-in version.
+        * Look up the chrome version by checking
+          [chromiumdash](https://chromiumdash.appspot.com/).
+        * It shows that version `132.0.6791.0` is the version `1371769` was
+          released with.
+        * Make sure the `updater` is shipping at a `version` higher than
+          `132.0.6791.0`
+          [here](https://versionhistory.googleapis.com/v1/chromium_updater/platforms/win/channels/canary/versions/all/releases?filter=endtime=none)
+          .
+        * Look up the chromium versions under
+          [commondatastorage](https://commondatastorage.googleapis.com/chromium-browser-snapshots/index.html)
+          , in the folders corresponding to `get_platform()` for each
+          `fetch.py`, for instance, the `Win`, `Win_x64`, and `Win_Arm64`
+          folders for the Windows `fetch.py` files, and look up a build with a
+          revision greater than `1371781`, corresponding to `r1371769`, and make
+          sure that the `updater.zip` file is present in those folders.
+        * Make changes to the `fetch.py` files based on the lookups, and send it
+          out for review.
+        * After the change lands, give it a few hours for the fetch to complete.
 3.  Update //DEPS to point to the new versions.
 
 ## Developing
@@ -221,6 +244,25 @@ Updater branding affects the path the updater installs itself to, among other
 things. Differently-branded copies of Chromium Updater are intended to coexist
 on a machine, operating independently from each other.
 
+### Build output
+The build generates the following main files:
+
+  - `updater.exe` (Windows) / `ChromiumUpdater.app` (macOS): The actual updater
+    application.
+  - `UpdaterSetup.exe` (Windows): The self-extracting "metainstaller", suitable
+    for tagging, signing, and further distribution.
+  - `UpdaterSigning`: A collection of scripts and tools used to sign the
+    updater.
+  - `qualification_app` (.exe on Windows): A simple app run by each version of
+    the updater prior to taking over as the active updater. Updaters will
+    download and run whatever version is actually released (not what you've
+    built), and the qualification app can be version skewed with the updater.
+  - `ChromiumUpdaterUtil` (macOS): A utility program for debugging the updater.
+  - `chrome/updater/.install` (macOS): A Keystone-compatible install script that
+    drives the updater's installation during update.
+  - `updater.zip`: A zip file containing all of the above, for uploading to the
+    archive / signing infrastructure.
+
 ### Cleaning the build output
 Running `ninja` with `t clean` cleans the build out directory. For example:
 ```
@@ -250,8 +292,26 @@ providing to assorted `gn`, `ninja`, and `autoninja` commands. `updater.zip`
 contains copies of the "final" outputs created by the build. `UpdaterSetup` is
 probably what you want for installing the updater you have built.
 
-TODO(crbug.com/40269445): list the relevant/interesting outputs here and what
-they are, why they're relevant/interesting, etc.
+## Signing
+
+GoogleUpdater signing doesn't take place on Chromium infra, but rather on
+proprietary Google infrastructure (go/o4signing). The build system packages all
+necessary ingredients for signing in updater.zip, which is uploaded by Chrome
+archive builders to the unsigned builds bucket in GCS. The zip contains both
+the artifacts to be signed and scripts to sign them. Signing infrastructure is
+triggered after each upload, ingests the files, injects the key material, signs,
+and then uploads the results to the signed builds bucket. More detail is
+available for Googlers at go/o4signing.
+
+On Windows, it's important to sign updater.exe, and then package that into
+UpdaterSetup.exe, and sign UpdaterSetup.exe. The signing scripts take an
+unsigned UpdaterSetup.exe, extract updater.exe, sign, reconstruct, and then
+sign the new UpdaterSetup.exe.
+
+On macOS, the GoogleUpdater.app bundle is signed directly, and then notarized
+(sent to Apple for countersigning). Notarization is "stapled" into the app
+bundle, and then the entire thing is packaged into a DMG, which in turn is
+signed, notarized, and stapled.
 
 ## Code Coverage
 Gerrit now down-votes the changes that do not have enough coverage. And it's
@@ -429,16 +489,37 @@ in chrome/updater/win/ui/resources/create_metainstaller_string_rc.py.
 ```
 * Add tests for the new string in the UI if applicable.
 * Capture a screenshot of the UI with the new string.
-* Save the screenshot as chrome\app\chromium_strings_grd\IDS_NO_NETWORK_PRESENT_ERROR.png and chrome\app\google_chrome_strings_grd\IDS_NO_NETWORK_PRESENT_ERROR.png.
+* Save the screenshot as chrome\app\chromium_strings_grd\IDS_NO_NETWORK_PRESENT_ERROR.png
+and chrome\app\google_chrome_strings_grd\IDS_NO_NETWORK_PRESENT_ERROR.png.
 * Run `python3 tools/translation/upload_screenshots.py`
-* This will generate chrome\app\chromium_strings_grd\IDS_NO_NETWORK_PRESENT_ERROR.png.sha1.
-* Add this file to your CL. Do not add the actual image to your CL.
-* Upload the image to the crbug and delete it from your local enlistment.
+* This will generate chrome\app\chromium_strings_grd\IDS_NO_NETWORK_PRESENT_ERROR.png.sha1
+and chrome\app\google_chrome_strings_grd\IDS_NO_NETWORK_PRESENT_ERROR.png.sha1.
+* Add these `.sha1` files to your CL. Do not add the actual `.png` images to
+your CL.
+* Once the images are successfully uploaded via `upload_screenshots.py`, delete
+them from your local enlistment.
 
-If tools/translation/upload_screenshots.py encounters the following error:
-`ServiceException: 401 Anonymous caller does not have storage.objects.list access to the Google Cloud Storage bucket. Permission 'storage.objects.list' denied on resource (or it may not exist).`
+However, if `upload_screenshots.py` encounters the following error, then the
+screenshots have to be manually uploaded to
+https://storage.cloud.google.com/chromium-translation-screenshots/.
 
-see crbug.com/1491876 for a resolution or workaround.
+```
+ServiceException: 401 Anonymous caller does not have storage.objects.list
+access to the Google Cloud Storage bucket. Permission 'storage.objects.list'
+denied on resource (or it may not exist).
+```
+
+To manually upload each screenshot:
+* Get the `sha1` generated from the tool. So for example, for
+chrome/app/chromium_strings_grd/IDS_UNKNOWN_APPLICATION.png, the `sha1` is
+`085c88707d854787e0c1310d93b519e93d906592`.
+* Rename the `.png` file to the `sha1` hash name. So for example, rename
+`chrome/app/chromium_strings_grd/IDS_UNKNOWN_APPLICATION.png` to
+`chrome/app/chromium_strings_grd/085c88707d854787e0c1310d93b519e93d906592`.
+* upload
+`chrome/app/chromium_strings_grd/085c88707d854787e0c1310d93b519e93d906592` to
+https://storage.cloud.google.com/chromium-translation-screenshots/.
+* Edit the `content-type` from `application/octet-stream` to `image/png`.
 
 ## Troubleshooting
 

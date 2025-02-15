@@ -375,11 +375,13 @@ public class TabbedModeTabPersistencePolicy implements TabPersistencePolicy {
         TabModelSelector selector =
                 TabWindowManagerSingleton.getInstance().getTabModelSelectorById(index);
         if (selector != null) {
-            // Remove all the tabs from the instance if it is in running state to be able to
-            // delete the corresponding tab state file.
             for (int i = 0; i < selector.getModels().size(); i++) {
                 TabModel tabModel = selector.getModels().get(i);
-                while (tabModel.getCount() > 0) tabModel.removeTab(tabModel.getTabAt(0));
+                if (tabModel.getCount() != 0) {
+                    throw new IllegalStateException(
+                            "A running instance that is being cleaned up should have closed all its"
+                                    + " tabs.");
+                }
             }
         }
         synchronized (CLEAN_UP_TASK_LOCK) {
@@ -448,11 +450,6 @@ public class TabbedModeTabPersistencePolicy implements TabPersistencePolicy {
     public void destroy() {
         mTabContentManager = null;
         mDestroyed = true;
-    }
-
-    @Override
-    public boolean allowSkipLoadingTab() {
-        return true;
     }
 
     private class CleanUpTabStateDataTask extends AsyncTask<Void> {
@@ -537,12 +534,12 @@ public class TabbedModeTabPersistencePolicy implements TabPersistencePolicy {
         }
 
         private boolean shouldDeleteTabFile(int tabId, TabWindowManager tabWindowManager) {
-            return tabWindowManager.getTabById(tabId) == null && !mOtherTabIds.get(tabId);
+            return tabWindowManager.canTabStateBeDeleted(tabId) && !mOtherTabIds.get(tabId);
         }
 
         @Override
         protected void onCancelled(Void result) {
-            super.onCancelled(result);
+            super.onCancelled(null);
             synchronized (CLEAN_UP_TASK_LOCK) {
                 sCleanupTask = null;
             }

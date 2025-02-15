@@ -69,6 +69,17 @@ size_t GetMaxPredictions(bool max_predictions_is_ten_for_testing) {
   return max_predictions_is_ten_for_testing ? 10 : kMaxPredictions;
 }
 
+std::optional<double> GetSamplingLikelihood(
+    bool max_predictions_is_ten_for_testing,
+    size_t total_seen_predictions) {
+  const size_t max_predictions =
+      GetMaxPredictions(max_predictions_is_ten_for_testing);
+  return (total_seen_predictions <= max_predictions)
+             ? std::nullopt
+             : std::optional<double>{static_cast<double>(max_predictions) /
+                                     total_seen_predictions};
+}
+
 // We may produce a large number of predictions over the lifetime of a long
 // lived page. After the number of predictions grows sufficiently large, we'll
 // start randomly sampling and replacing existing predictions in order to limit
@@ -115,24 +126,23 @@ PreloadingURLMatchCallback PreloadingData::GetSameURLMatcher(
 
 // static
 PreloadingURLMatchCallback PreloadingDataImpl::GetPrefetchServiceMatcher(
-    PrefetchService* prefetch_service,
+    PrefetchService& prefetch_service,
     const PrefetchContainer::Key& predicted) {
   return base::BindRepeating(
       [](base::WeakPtr<PrefetchService> prefetch_service,
          const PrefetchContainer::Key& predicted, const GURL& navigated_url) {
         if (!prefetch_service) {
-          return predicted.prefetch_url() == navigated_url;
+          return predicted.url() == navigated_url;
         }
-        if (predicted.prefetch_url() == navigated_url) {
+        if (predicted.url() == navigated_url) {
           return true;
         }
 
         base::WeakPtr<PrefetchContainer> prefetch_container =
             prefetch_service->MatchUrl(predicted.WithNewUrl(navigated_url));
-        return prefetch_container &&
-               prefetch_container->GetPrefetchContainerKey() == predicted;
+        return prefetch_container && prefetch_container->key() == predicted;
       },
-      prefetch_service ? prefetch_service->GetWeakPtr() : nullptr, predicted);
+      prefetch_service.GetWeakPtr(), predicted);
 }
 
 // static
@@ -317,6 +327,14 @@ void PreloadingDataImpl::WebContentsDestroyed() {
   experimental_predictions_.clear();
   total_seen_experimental_predictions_ = 0;
 
+  const std::optional<double> sampling_likelihood = GetSamplingLikelihood(
+      max_predictions_is_ten_for_testing_, total_seen_ml_predictions_);
+  for (auto& ml_prediction : ml_predictions_) {
+    ml_prediction.Record(sampling_likelihood);
+  }
+  ml_predictions_.clear();
+  total_seen_ml_predictions_ = 0;
+
   // Delete the user data after logging.
   web_contents()->RemoveUserData(UserDataKey());
 }
@@ -335,6 +353,16 @@ void PreloadingDataImpl::RecordPreloadingAttemptPrecisionToUMA(
                                    ? PredictorConfusionMatrix::kTruePositive
                                    : PredictorConfusionMatrix::kFalsePositive);
   }
+}
+
+// static
+bool PreloadingDataImpl::IsLinkClickNavigation(
+    NavigationHandle* navigation_handle) {
+  auto page_transition = navigation_handle->GetPageTransition();
+  return ui::PageTransitionCoreTypeIs(
+             page_transition, ui::PageTransition::PAGE_TRANSITION_LINK) &&
+         (page_transition & ui::PAGE_TRANSITION_CLIENT_REDIRECT) == 0 &&
+         ui::PageTransitionIsNewNavigation(page_transition);
 }
 
 void PreloadingDataImpl::RecordPredictionPrecisionToUMA(
@@ -414,6 +442,15 @@ void PreloadingDataImpl::SetIsAccurateTriggeringAndPrediction(
   experimental_predictions_.clear();
   total_seen_experimental_predictions_ = 0;
 
+  const std::optional<double> sampling_likelihood = GetSamplingLikelihood(
+      max_predictions_is_ten_for_testing_, total_seen_ml_predictions_);
+  for (auto& ml_prediction : ml_predictions_) {
+    ml_prediction.SetIsAccuratePrediction(navigated_url);
+    ml_prediction.Record(sampling_likelihood);
+  }
+  ml_predictions_.clear();
+  total_seen_ml_predictions_ = 0;
+
   for (auto& attempt : preloading_attempts_) {
     attempt->SetIsAccurateTriggering(navigated_url);
     RecordPreloadingAttemptPrecisionToUMA(*attempt);
@@ -432,6 +469,16 @@ void PreloadingDataImpl::SetHasSpeculationRulesPrerender() {
 }
 bool PreloadingDataImpl::HasSpeculationRulesPrerender() {
   return has_speculation_rules_prerender_;
+}
+
+void PreloadingDataImpl::OnPreloadingHeuristicsModelInput(
+    const GURL& url,
+    ModelPredictionTrainingData::OutcomeCallback on_record_outcome) {
+  PredictionReservoirSample(
+      ml_predictions_, total_seen_ml_predictions_,
+      max_predictions_is_ten_for_testing_,
+      ModelPredictionTrainingData{std::move(on_record_outcome),
+                                  GetSameURLMatcher(url)});
 }
 
 void PreloadingDataImpl::RecordMetricsForPreloadingAttempts(
@@ -453,13 +500,8 @@ void PreloadingDataImpl::RecordMetricsForPreloadingAttempts(
 
 void PreloadingDataImpl::RecordUKMForPreloadingPredictions(
     ukm::SourceId navigated_page_source_id) {
-  const size_t max_predictions =
-      GetMaxPredictions(max_predictions_is_ten_for_testing_);
-  const std::optional<double> sampling_likelihood =
-      (total_seen_preloading_predictions_ <= max_predictions)
-          ? std::nullopt
-          : std::optional<double>{static_cast<double>(max_predictions) /
-                                  total_seen_preloading_predictions_};
+  const std::optional<double> sampling_likelihood = GetSamplingLikelihood(
+      max_predictions_is_ten_for_testing_, total_seen_preloading_predictions_);
   for (auto& prediction : preloading_predictions_) {
     // Check the validity at the time of UKMs reporting, as the UKMs are
     // reported from the same thread (whichever thread calls

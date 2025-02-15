@@ -30,20 +30,11 @@ class CheckTraceVisitor : public clang::RecursiveASTVisitor<CheckTraceVisitor> {
  private:
   bool IsTraceCallName(const std::string& name);
 
-#if defined(LLVM_FORCE_HEAD_REVISION)
   clang::CXXRecordDecl* GetDependentTemplatedDecl(
       clang::DependentScopeDeclRefExpr* expr);
 
   void CheckDependentScopeDeclRefExpr(clang::CallExpr* call,
                                       clang::DependentScopeDeclRefExpr* expr);
-#else
-  clang::CXXRecordDecl* GetDependentTemplatedDecl(
-      clang::CXXDependentScopeMemberExpr* expr);
-
-  void CheckCXXDependentScopeMemberExpr(
-      clang::CallExpr* call,
-      clang::CXXDependentScopeMemberExpr* expr);
-#endif
   bool CheckTraceBaseCall(clang::CallExpr* call);
   bool CheckTraceFieldMemberCall(clang::CXXMemberCallExpr* call);
   bool CheckTraceFieldCall(const std::string& name,
@@ -56,7 +47,8 @@ class CheckTraceVisitor : public clang::RecursiveASTVisitor<CheckTraceVisitor> {
   bool IsWeakCallback() const;
 
   void MarkTraced(RecordInfo::Fields::iterator it);
-  void FoundField(clang::FieldDecl* field);
+  void MarkTracedIfNeeded(RecordInfo::Fields::iterator it);
+  void FoundField(clang::FieldDecl* field, bool is_trace_if_needed);
   void MarkAllWeakMembersTraced();
 
   clang::CXXMethodDecl* trace_;

@@ -54,12 +54,13 @@ class CONTENT_EXPORT PreloadingAttemptImpl : public PreloadingAttempt {
 
   bool IsAccurateTriggering() const { return is_accurate_triggering_; }
 
-  PreloadingAttemptImpl(const PreloadingPredictor& creating_predictor,
-                        const PreloadingPredictor& enacting_predictor,
-                        PreloadingType preloading_type,
-                        ukm::SourceId triggered_primary_page_source_id,
-                        PreloadingURLMatchCallback url_match_predicate,
-                        uint32_t sampling_seed);
+  PreloadingAttemptImpl(
+      const PreloadingPredictor& creating_predictor,
+      const PreloadingPredictor& enacting_predictor,
+      PreloadingType preloading_type,
+      ukm::SourceId triggered_primary_page_source_id,
+      PreloadingURLMatchCallback url_match_predicate,
+      uint32_t sampling_seed);
 
   std::vector<PreloadingPredictor> GetPredictors() const;
 

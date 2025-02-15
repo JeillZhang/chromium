@@ -4,12 +4,13 @@
 
 import {mojoString16ToString} from 'chrome://resources/js/mojo_type_util.js';
 
-import {StandardAcceleratorProperties} from './accelerator_info.mojom-webui.js';
-import {ShortcutInputKeyElement} from './shortcut_input_key.js';
+import type {StandardAcceleratorProperties} from './accelerator_info.mojom-webui.js';
+import * as MetaKeyTypes from './meta_key.mojom-webui.js';
+import type {ShortcutInputKeyElement} from './shortcut_input_key.js';
 
 export interface ShortcutLabelProperties extends StandardAcceleratorProperties {
   shortcutLabelText: TrustedHTML;
-  hasLauncherKey: boolean;
+  metaKey: MetaKey;
 }
 
 /**
@@ -56,6 +57,14 @@ export const ModifierKeyCodes: AllowedModifierKeyCodes[] = [
   AllowedModifierKeyCodes.FN_KEY,
 ];
 
+/**
+ * Enumeration of meta key denoting all the possible options deducable from
+ * the users keyboard. Used to show the correct key to the user in the settings
+ * UI.
+ */
+export type MetaKey = MetaKeyTypes.MetaKey;
+export const MetaKey = MetaKeyTypes.MetaKey;
+
 export const getSortedModifiers = (modifierStrings: string[]): string[] => {
   const sortOrder = ['meta', 'ctrl', 'alt', 'shift', 'fn'];
   if (modifierStrings.length <= 1) {
@@ -68,6 +77,7 @@ export const getSortedModifiers = (modifierStrings: string[]): string[] => {
 // The keys in this map are pulled from the file:
 // ui/events/keycodes/dom/dom_code_data.inc
 export const KeyToIconNameMap: {[key: string]: string|undefined} = {
+  'Accessibility': 'accessibility',
   'ArrowDown': 'arrow-down',
   'ArrowLeft': 'arrow-left',
   'ArrowRight': 'arrow-right',
@@ -76,19 +86,20 @@ export const KeyToIconNameMap: {[key: string]: string|undefined} = {
   'AudioVolumeMute': 'volume-mute',
   'AudioVolumeUp': 'volume-up',
   'BrightnessDown': 'display-brightness-down',
-  'BrightnessUp': 'display-brightness-up',
+  'BrightnessUp': 'brightness-up-refresh',
   'BrowserBack': 'back',
   'BrowserForward': 'forward',
   'BrowserHome': 'browser-home',
   'BrowserRefresh': 'refresh',
   'BrowserSearch': 'browser-search',
   'ContextMenu': 'menu',
+  'DoNotDisturb': 'do-not-disturb',
   'EmojiPicker': 'emoji-picker',
   'EnableOrToggleDictation': 'dictation-toggle',
   'KeyboardBacklightToggle': 'keyboard-brightness-toggle',
   'KeyboardBrightnessUp': 'keyboard-brightness-up',
   'KeyboardBrightnessDown': 'keyboard-brightness-down',
-  'LaunchApplication1': 'overview',
+  'LaunchApplication1': 'overview-refresh',
   'LaunchApplication2': 'calculator',
   'LaunchAssistant': 'assistant',
   'LaunchMail': 'launch-mail',
@@ -107,6 +118,7 @@ export const KeyToIconNameMap: {[key: string]: string|undefined} = {
   'Settings': 'settings-icon',
   'Standby': 'lock',
   'ZoomToggle': 'fullscreen',
+  'QuickInsert': 'quick-insert',
 };
 
 /**
@@ -133,7 +145,7 @@ export function createInputKeyParts(
       // Current use cases outside keyboard page or shortcut page only consider
       // 'meta' instead of 'command'.
       key.key = modifierName === 'command' ? 'meta' : modifierName;
-      key.hasLauncherButton = shortcutLabelProperties.hasLauncherKey;
+      key.metaKey = shortcutLabelProperties.metaKey;
       key.narrow = useNarrowLayout;
       inputKeys.push(key);
       pressedModifiers.push(modifierName);

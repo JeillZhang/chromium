@@ -81,10 +81,17 @@ std::optional<FeatureConfig> GetStandardPromoConfig(
                                     feature_engagement::kMaxStoragePeriod);
     }
 
-    // Show the promo if promo specific conditions are met during last 21 days.
-    // Skip this check for trigger criteria experiment.
-    if (!base::FeatureList::IsEnabled(
+    if (base::FeatureList::IsEnabled(
             kDefaultBrowserTriggerCriteriaExperiment)) {
+      // Skip the regular conditions check for trigger criteria experiment and
+      // check experiment specific condition(it has been enabled for at least 21
+      // days).
+      config->event_configs.insert(
+          EventConfig("default_browser_promo_trigger_criteria_conditions_met",
+                      Comparator(GREATER_THAN, 0), 365, 365));
+    } else {
+      // Show the promo if promo specific conditions are met during last 21
+      // days.
       config->event_configs.insert(
           EventConfig("generic_default_browser_promo_conditions_met",
                       Comparator(GREATER_THAN, 0), 21, 365));
@@ -172,28 +179,6 @@ std::optional<FeatureConfig> GetStandardPromoConfig(
     config->event_configs.insert(
         EventConfig("credential_provider_extension_promo_snoozed",
                     Comparator(EQUAL, 0), 1, 365));
-    return config;
-  }
-
-  if (kIPHiOSPromoOmniboxPositionFeature.name == feature->name) {
-    // Shown only once.
-    config = FeatureConfig();
-    config->valid = true;
-    config->availability = Comparator(ANY, 0);
-    config->session_rate = Comparator(ANY, 0);
-    config->used = EventConfig("omnibox_position_promo_used",
-                               Comparator(ANY, 0), 365, 365);
-    config->trigger =
-        EventConfig("omnibox_position_promo_trigger", Comparator(EQUAL, 0),
-                    feature_engagement::kMaxStoragePeriod,
-                    feature_engagement::kMaxStoragePeriod);
-
-    // Blocks the app launch promo if it has been shown in another context (the
-    // promo can also be shown in FRE).
-    config->event_configs.insert(
-        EventConfig(events::kOmniboxPositionPromoShown, Comparator(EQUAL, 0),
-                    feature_engagement::kMaxStoragePeriod,
-                    feature_engagement::kMaxStoragePeriod));
     return config;
   }
 
@@ -304,6 +289,27 @@ std::optional<FeatureConfig> GetCustomConfig(const base::Feature* feature) {
     return config;
   }
 
+  if (kIPHiOSPromoNonModalUrlPasteDefaultBrowserFeature.name == feature->name) {
+    std::optional<FeatureConfig> config = FeatureConfig();
+    config->valid = true;
+    config->availability = Comparator(ANY, 0);
+    config->session_rate = Comparator(ANY, 0);
+    config->used =
+        EventConfig("non_modal_default_browser_promo_omnibox_paste_used",
+                    Comparator(ANY, 0), 365, 365);
+    // Should be triggered no more than once every 14 days.
+    config->trigger = EventConfig(
+        feature_engagement::events::kNonModalDefaultBrowserPromoUrlPasteTrigger,
+        Comparator(LESS_THAN, 1), 14, 365);
+    // The limit for promo triggers should be 10.
+    config->event_configs.insert(EventConfig(
+        feature_engagement::events::kNonModalDefaultBrowserPromoUrlPasteTrigger,
+        Comparator(LESS_THAN, 10), feature_engagement::kMaxStoragePeriod,
+        feature_engagement::kMaxStoragePeriod));
+
+    return config;
+  }
+
   if (kIPHiOSDockingPromoRemindMeLaterFeature.name == feature->name) {
     std::optional<FeatureConfig> config = FeatureConfig();
     config->valid = true;
@@ -316,6 +322,52 @@ std::optional<FeatureConfig> GetCustomConfig(const base::Feature* feature) {
     config->event_configs.insert(
         EventConfig(feature_engagement::events::kDockingPromoRemindMeLater,
                     Comparator(LESS_THAN, 1), 3, 365));
+    return config;
+  }
+
+  if (kIPHiOSSavedTabGroupClosed.name == feature->name) {
+    std::optional<FeatureConfig> config = FeatureConfig();
+    config->valid = true;
+    config->availability = Comparator(ANY, 0);
+    config->session_rate = Comparator(ANY, 0);
+    config->used = EventConfig("saved_tab_group_closed_used",
+                               Comparator(ANY, 0), 365, 365);
+    config->trigger = EventConfig("saved_tab_group_closed_trigger",
+                                  Comparator(EQUAL, 0), 365, 365);
+    return config;
+  }
+
+  if (kIPHiOSSharedTabGroupForeground.name == feature->name) {
+    // Should show this promo only once if promo specific and group conditions
+    // are met.
+    std::optional<FeatureConfig> config = FeatureConfig();
+    config->valid = true;
+    config->availability = Comparator(ANY, 0);
+    config->session_rate = Comparator(ANY, 0);
+    config->used = EventConfig("shared_tab_group_foreground_used",
+                               Comparator(ANY, 0), 365, 365);
+    config->trigger = EventConfig("shared_tab_group_foreground_trigger",
+                                  Comparator(EQUAL, 0), 365, 365);
+    return config;
+  }
+
+  if (kIPHiOSDefaultBrowserBannerPromoFeature.name == feature->name) {
+    // Promo should show only once, and also require time since other promos.
+    std::optional<FeatureConfig> config = FeatureConfig();
+    config->valid = true;
+    config->availability = Comparator(ANY, 0);
+    config->session_rate = Comparator(EQUAL, 0);
+    config->used = EventConfig("default_browser_banner_promo_used",
+                               Comparator(ANY, 0), 365, 365);
+    config->trigger =
+        EventConfig("default_browser_banner_promo_trigger",
+                    Comparator(EQUAL, 0), feature_engagement::kMaxStoragePeriod,
+                    feature_engagement::kMaxStoragePeriod);
+    // This promo counts as a default browser promo despite not being a
+    // fullscreen promo from the promos manager because it's still a
+    // non-contextual default browser promo. Thus, it should share cooldown
+    // rules.
+    config->groups.push_back(kiOSDefaultBrowserPromosGroup.name);
     return config;
   }
 

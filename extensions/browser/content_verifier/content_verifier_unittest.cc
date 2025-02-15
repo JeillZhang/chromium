@@ -106,8 +106,9 @@ struct FilePathVariants {
   explicit FilePathVariants(const base::FilePath& path) : original_path(path) {
     auto insert_if_non_empty_and_different =
         [&path](std::set<base::FilePath>* container, base::FilePath new_path) {
-          if (!new_path.empty() && new_path != path)
+          if (!new_path.empty() && new_path != path) {
             container->insert(new_path);
+          }
         };
 
     // 1. Case variant 1/2: All uppercase.
@@ -331,8 +332,8 @@ TEST_F(ContentVerifierTest, NormalizeRelativePath) {
 // This macro helps avoid wrapped lines in the test structs.
 #define FPL(x) FILE_PATH_LITERAL(x)
   struct TestData {
-    base::FilePath::StringPieceType input;
-    base::FilePath::StringPieceType expected;
+    base::FilePath::StringViewType input;
+    base::FilePath::StringViewType expected;
   } test_cases[] = {{FPL("foo/bar"), FPL("foo/bar")},
                     {FPL("foo//bar"), FPL("foo/bar")},
                     {FPL("foo/bar/"), FPL("foo/bar/")},

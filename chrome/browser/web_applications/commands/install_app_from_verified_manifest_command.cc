@@ -15,6 +15,7 @@
 #include "base/containers/flat_tree.h"
 #include "base/functional/bind.h"
 #include "base/strings/to_string.h"
+#include "chrome/browser/web_applications/commands/command_metrics.h"
 #include "chrome/browser/web_applications/locks/shared_web_contents_lock.h"
 #include "chrome/browser/web_applications/locks/shared_web_contents_with_app_lock.h"
 #include "chrome/browser/web_applications/locks/web_app_lock_manager.h"
@@ -70,6 +71,8 @@ InstallAppFromVerifiedManifestCommand::InstallAppFromVerifiedManifestCommand(
     GURL verified_manifest_url,
     std::string verified_manifest_contents,
     webapps::AppId expected_id,
+    bool is_diy_app,
+    std::optional<WebAppInstallParams> install_params,
     OnceInstallCallback callback)
     : WebAppCommand<SharedWebContentsLock,
                     const webapps::AppId&,
@@ -85,13 +88,25 @@ InstallAppFromVerifiedManifestCommand::InstallAppFromVerifiedManifestCommand(
       document_url_(std::move(document_url)),
       verified_manifest_url_(std::move(verified_manifest_url)),
       verified_manifest_contents_(std::move(verified_manifest_contents)),
-      expected_id_(std::move(expected_id)) {
+      expected_id_(std::move(expected_id)),
+      is_diy_app_(is_diy_app),
+      install_params_(std::move(install_params)) {
+  if (install_params_) {
+    // Not every `install_params` option has an effect, check that unused params
+    // are not set.
+    CHECK_EQ(install_params->install_state,
+             proto::InstallState::INSTALLED_WITH_OS_INTEGRATION);
+    CHECK(install_params->fallback_start_url.is_empty());
+    CHECK(!install_params->fallback_app_name.has_value());
+  }
+
   GetMutableDebugValue().Set("document_url", document_url_.spec());
   GetMutableDebugValue().Set("verified_manifest_url",
                              verified_manifest_url_.spec());
   GetMutableDebugValue().Set("expected_id", expected_id_);
   GetMutableDebugValue().Set("verified_manifest_contents",
                              verified_manifest_contents_);
+  GetMutableDebugValue().Set("has_install_params", !!install_params_);
 }
 
 InstallAppFromVerifiedManifestCommand::
@@ -145,13 +160,25 @@ void InstallAppFromVerifiedManifestCommand::OnManifestParsed(
     return;
   }
 
+  if (manifest->manifest_url != verified_manifest_url_) {
+    mojo::ReportBadMessage("Returned manifest has incorrect manifest URL");
+    Abort(CommandResult::kFailure,
+          webapps::InstallResultCode::kNotValidManifestForWebApp);
+    return;
+  }
+
   GetMutableDebugValue().Set("manifest_parsed", true);
   web_app_info_ =
       std::make_unique<WebAppInstallInfo>(manifest->id, manifest->start_url);
   web_app_info_->user_display_mode = mojom::UserDisplayMode::kStandalone;
+  web_app_info_->is_diy_app = is_diy_app_;
 
-  UpdateWebAppInfoFromManifest(*manifest, verified_manifest_url_,
-                               web_app_info_.get());
+  UpdateWebAppInfoFromManifest(*manifest, web_app_info_.get());
+
+  if (install_params_) {
+    // TODO(crbug.com/354981650): Remove this call.
+    ApplyParamsToWebAppInstallInfo(*install_params_, *web_app_info_);
+  }
 
   IconUrlSizeSet icon_urls = GetValidIconUrlsToDownload(*web_app_info_);
   base::EraseIf(icon_urls, [](const IconUrlWithSize& url_with_size) {
@@ -201,7 +228,7 @@ void InstallAppFromVerifiedManifestCommand::OnIconsRetrieved(
   PopulateOtherIcons(web_app_info_.get(), icons_map);
 
   webapps::AppId app_id =
-      GenerateAppIdFromManifestId(web_app_info_->manifest_id);
+      GenerateAppIdFromManifestId(web_app_info_->manifest_id());
 
   if (app_id != expected_id_) {
     Abort(CommandResult::kFailure,
@@ -209,18 +236,24 @@ void InstallAppFromVerifiedManifestCommand::OnIconsRetrieved(
     return;
   }
 
+  app_lock_ = std::make_unique<SharedWebContentsWithAppLock>();
   command_manager()->lock_manager().UpgradeAndAcquireLock(
-      std::move(web_contents_lock_), {app_id},
+      std::move(web_contents_lock_), *app_lock_, {app_id},
       base::BindOnce(&InstallAppFromVerifiedManifestCommand::OnAppLockAcquired,
                      weak_ptr_factory_.GetWeakPtr()));
 }
 
-void InstallAppFromVerifiedManifestCommand::OnAppLockAcquired(
-    std::unique_ptr<SharedWebContentsWithAppLock> app_lock) {
-  app_lock_ = std::move(app_lock);
+void InstallAppFromVerifiedManifestCommand::OnAppLockAcquired() {
+  CHECK(app_lock_);
+  CHECK(app_lock_->IsGranted());
   WebAppInstallFinalizer::FinalizeOptions finalize_options(install_source_);
   finalize_options.add_to_quick_launch_bar = false;
   finalize_options.overwrite_existing_manifest_fields = false;
+
+  if (install_params_) {
+    ApplyParamsToFinalizeOptions(*install_params_, finalize_options);
+  }
+
   // TODO(crbug.com/40197834): apply host_allowlist instead of disabling origin
   // association validate for all origins.
   finalize_options.skip_origin_association_validation = true;
@@ -234,6 +267,9 @@ void InstallAppFromVerifiedManifestCommand::OnAppLockAcquired(
 void InstallAppFromVerifiedManifestCommand::OnInstallFinalized(
     const webapps::AppId& app_id,
     webapps::InstallResultCode code) {
+  GetMutableDebugValue().Set("error_code", base::ToString(code));
+  RecordInstallMetrics(InstallCommand::kInstallAppFromVerifiedManifest,
+                       WebAppType::kCraftedApp, code, install_source_);
   CompleteAndSelfDestruct(webapps::IsSuccess(code) ? CommandResult::kSuccess
                                                    : CommandResult::kFailure,
                           app_id, code);
@@ -243,6 +279,8 @@ void InstallAppFromVerifiedManifestCommand::Abort(
     CommandResult result,
     webapps::InstallResultCode code) {
   GetMutableDebugValue().Set("error_code", base::ToString(code));
+  RecordInstallMetrics(InstallCommand::kInstallAppFromVerifiedManifest,
+                       WebAppType::kCraftedApp, code, install_source_);
   CompleteAndSelfDestruct(result, webapps::AppId(), code);
 }
 

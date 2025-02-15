@@ -32,6 +32,7 @@
 #include "content/public/test/mock_download_manager.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "ui/base/mojom/dialog_button.mojom.h"
 #include "ui/color/color_id.h"
 #include "ui/views/bubble/bubble_dialog_delegate_view.h"
 #include "ui/views/vector_icons.h"
@@ -239,12 +240,22 @@ class DownloadBubbleSecurityViewTest : public ChromeViewsTestBase {
     ON_CALL(download_item1_, GetDangerType())
         .WillByDefault(Return(
             download::DownloadDangerType::DOWNLOAD_DANGER_TYPE_DANGEROUS_FILE));
+    ON_CALL(download_item1_, IsDangerous()).WillByDefault(Return(true));
+    ON_CALL(download_item1_, GetReferrerUrl())
+        .WillByDefault(ReturnRefOfCopy(GURL("https://chromium.org")));
+    ON_CALL(download_item1_, GetTargetFilePath())
+        .WillByDefault(ReturnRefOfCopy(base::FilePath()));
     ON_CALL(download_item1_, GetURL())
         .WillByDefault(ReturnRefOfCopy(GURL("https://example.com/a.exe")));
 
     ON_CALL(download_item2_, GetDangerType())
         .WillByDefault(Return(
             download::DownloadDangerType::DOWNLOAD_DANGER_TYPE_DANGEROUS_FILE));
+    ON_CALL(download_item2_, IsDangerous()).WillByDefault(Return(true));
+    ON_CALL(download_item2_, GetReferrerUrl())
+        .WillByDefault(ReturnRefOfCopy(GURL("https://chromium.org")));
+    ON_CALL(download_item2_, GetTargetFilePath())
+        .WillByDefault(ReturnRefOfCopy(base::FilePath()));
     ON_CALL(download_item2_, GetURL())
         .WillByDefault(ReturnRefOfCopy(GURL("https://example.com/a.exe")));
   }
@@ -299,9 +310,11 @@ TEST_F(DownloadBubbleSecurityViewTest,
        SubpageButton(DownloadCommands::Command::KEEP, std::u16string(),
                      /*is_prominent=*/false, ui::kColorAlertHighSeverity)});
 
-  EXPECT_EQ(bubble_delegate_->GetDialogButtons(),
-            ui::DIALOG_BUTTON_OK | ui::DIALOG_BUTTON_CANCEL);
-  EXPECT_EQ(bubble_delegate_->GetDefaultDialogButton(), ui::DIALOG_BUTTON_OK);
+  EXPECT_EQ(bubble_delegate_->buttons(),
+            static_cast<int>(ui::mojom::DialogButton::kOk) |
+                static_cast<int>(ui::mojom::DialogButton::kCancel));
+  EXPECT_EQ(bubble_delegate_->GetDefaultDialogButton(),
+            static_cast<int>(ui::mojom::DialogButton::kOk));
 
   // Two buttons, none prominent
   security_view_->Reset();
@@ -313,9 +326,11 @@ TEST_F(DownloadBubbleSecurityViewTest,
                      /*is_prominent=*/false, ui::kColorAlertHighSeverity)});
   UpdateView();
 
-  EXPECT_EQ(bubble_delegate_->GetDialogButtons(),
-            ui::DIALOG_BUTTON_OK | ui::DIALOG_BUTTON_CANCEL);
-  EXPECT_EQ(bubble_delegate_->GetDefaultDialogButton(), ui::DIALOG_BUTTON_NONE);
+  EXPECT_EQ(bubble_delegate_->buttons(),
+            static_cast<int>(ui::mojom::DialogButton::kOk) |
+                static_cast<int>(ui::mojom::DialogButton::kCancel));
+  EXPECT_EQ(bubble_delegate_->GetDefaultDialogButton(),
+            static_cast<int>(ui::mojom::DialogButton::kNone));
 
   // One button, none prominent
   security_view_->Reset();
@@ -325,8 +340,10 @@ TEST_F(DownloadBubbleSecurityViewTest,
                      /*is_prominent=*/false)});
   UpdateView();
 
-  EXPECT_EQ(bubble_delegate_->GetDialogButtons(), ui::DIALOG_BUTTON_OK);
-  EXPECT_EQ(bubble_delegate_->GetDefaultDialogButton(), ui::DIALOG_BUTTON_NONE);
+  EXPECT_EQ(bubble_delegate_->buttons(),
+            static_cast<int>(ui::mojom::DialogButton::kOk));
+  EXPECT_EQ(bubble_delegate_->GetDefaultDialogButton(),
+            static_cast<int>(ui::mojom::DialogButton::kNone));
 
   // No buttons, none prominent
   security_view_->Reset();
@@ -334,8 +351,10 @@ TEST_F(DownloadBubbleSecurityViewTest,
   security_view_info_->SetSubpageButtonsForTesting({});
   UpdateView();
 
-  EXPECT_EQ(bubble_delegate_->GetDialogButtons(), ui::DIALOG_BUTTON_NONE);
-  EXPECT_EQ(bubble_delegate_->GetDefaultDialogButton(), ui::DIALOG_BUTTON_NONE);
+  EXPECT_EQ(bubble_delegate_->buttons(),
+            static_cast<int>(ui::mojom::DialogButton::kNone));
+  EXPECT_EQ(bubble_delegate_->GetDefaultDialogButton(),
+            static_cast<int>(ui::mojom::DialogButton::kNone));
 }
 
 TEST_F(DownloadBubbleSecurityViewTest, VerifyLogWarningActions) {

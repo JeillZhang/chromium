@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "chrome/browser/ui/views/borealis/borealis_disallowed_dialog.h"
+
 #include <memory>
 #include <string>
 
@@ -16,7 +17,6 @@
 #include "chrome/browser/ash/borealis/borealis_util.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/ash/system_web_apps/system_web_app_ui_utils.h"
-#include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/browser/ui/views/chrome_typography.h"
 #include "chrome/common/webui_url_constants.h"
 #include "chrome/grit/generated_resources.h"
@@ -25,6 +25,8 @@
 #include "content/public/browser/browser_thread.h"
 #include "ui/aura/window.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/base/mojom/dialog_button.mojom.h"
+#include "ui/base/mojom/ui_base_types.mojom-shared.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/strings/grit/ui_strings.h"
 #include "ui/views/controls/label.h"
@@ -151,22 +153,23 @@ class BorealisDisallowedDialog : public DialogDelegate {
     set_internal_name("BorealisDisallowedDialog");
     MaybeAction second_action = behaviour->GetAction();
     if (second_action.has_value()) {
-      SetButtons(ui::DIALOG_BUTTON_OK | ui::DIALOG_BUTTON_CANCEL);
-      SetButtonLabel(ui::DIALOG_BUTTON_CANCEL,
+      SetButtons(static_cast<int>(ui::mojom::DialogButton::kOk) |
+                 static_cast<int>(ui::mojom::DialogButton::kCancel));
+      SetButtonLabel(ui::mojom::DialogButton::kCancel,
                      l10n_util::GetStringUTF16(IDS_CLOSE));
-      SetButtonLabel(ui::DIALOG_BUTTON_OK,
+      SetButtonLabel(ui::mojom::DialogButton::kOk,
                      std::move(second_action.value().first));
       SetAcceptCallback(std::move(second_action.value().second));
     } else {
-      SetButtons(ui::DIALOG_BUTTON_OK);
-      SetButtonLabel(ui::DIALOG_BUTTON_OK,
+      SetButtons(static_cast<int>(ui::mojom::DialogButton::kOk));
+      SetButtonLabel(ui::mojom::DialogButton::kOk,
                      l10n_util::GetStringUTF16(IDS_CLOSE));
     }
     InitializeView(*behaviour, title_id);
-    SetModalType(ui::MODAL_TYPE_SYSTEM);
+    SetModalType(ui::mojom::ModalType::kSystem);
     SetOwnedByWidget(true);
     SetShowCloseButton(false);
-    set_fixed_width(ChromeLayoutProvider::Get()->GetDistanceMetric(
+    set_fixed_width(views::LayoutProvider::Get()->GetDistanceMetric(
         views::DISTANCE_MODAL_DIALOG_PREFERRED_WIDTH));
   }
 

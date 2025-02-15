@@ -115,8 +115,7 @@ void OnRenderProcessGone(
                      << " killing application.";
           kill(getpid(), SIGKILL);
         }
-        NOTREACHED_IN_MIGRATION();
-        break;
+        NOTREACHED();
       case AwRenderProcessGoneDelegate::RenderProcessGoneResult::kHandled:
         // Don't log UMA yet. This WebView may be handled, but we need to wait
         // until we're out of the loop to know if all WebViews were handled.
@@ -155,7 +154,7 @@ void AwBrowserTerminator::OnChildExit(
   // optimization.
   if (base::FeatureList::IsEnabled(
           features::kCreateSpareRendererOnBrowserContextCreation) &&
-      AwRenderProcess::IsUnused(rph)) {
+      rph && AwRenderProcess::IsUnused(rph)) {
     return;
   }
 

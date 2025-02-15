@@ -17,7 +17,6 @@
 #include "base/test/run_until.h"
 #include "base/test/test_timeouts.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/apps/platform_apps/app_browsertest_util.h"
 #include "chrome/browser/profiles/profile.h"
@@ -97,7 +96,7 @@ class NewSubViewAddedObserver : content::RenderWidgetHostViewCocoaObserver {
 
   NewSubViewAddedObserver(const NewSubViewAddedObserver&) = delete;
   NewSubViewAddedObserver& operator=(const NewSubViewAddedObserver&) = delete;
-  ~NewSubViewAddedObserver() override {}
+  ~NewSubViewAddedObserver() override = default;
 
   void WaitForNextSubView() {
     if (did_receive_rect_)
@@ -110,10 +109,10 @@ class NewSubViewAddedObserver : content::RenderWidgetHostViewCocoaObserver {
   const gfx::Rect& view_bounds_in_screen() const { return bounds_; }
 
  private:
-  void DidAddSubviewWillBeDismissed(
-      const gfx::Rect& bounds_in_root_view) override {
+  void DidAttemptToShowPopup(const gfx::Rect& bounds,
+                             int selected_item) override {
     did_receive_rect_ = true;
-    bounds_ = bounds_in_root_view;
+    bounds_ = bounds;
     if (run_loop_)
       run_loop_->Quit();
   }
@@ -127,11 +126,7 @@ class NewSubViewAddedObserver : content::RenderWidgetHostViewCocoaObserver {
 class WebViewInteractiveTest : public extensions::PlatformAppBrowserTest {
  public:
   WebViewInteractiveTest()
-      : guest_view_(nullptr),
-        embedder_web_contents_(nullptr),
-        corner_(gfx::Point()),
-        mouse_click_result_(false),
-        first_click_(true) {}
+      : guest_view_(nullptr), embedder_web_contents_(nullptr) {}
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
     extensions::PlatformAppBrowserTest::SetUpCommandLine(command_line);
@@ -492,8 +487,8 @@ class WebViewInteractiveTest : public extensions::PlatformAppBrowserTest {
       embedder_web_contents_;
 
   gfx::Point corner_;
-  bool mouse_click_result_;
-  bool first_click_;
+  bool mouse_click_result_ = false;
+  bool first_click_ = true;
 };
 
 class WebViewImeInteractiveTest : public WebViewInteractiveTest {
@@ -554,7 +549,7 @@ class DISABLED_WebViewPopupInteractiveTest : public WebViewInteractiveTest {};
 
 // Timeouts flakily: crbug.com/1003345
 #if defined(SUPPORTS_SYNC_MOUSE_UTILS) && !BUILDFLAG(IS_CHROMEOS) && \
-    !BUILDFLAG(IS_MAC) && defined(NDEBUG)
+    !BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_WIN) && defined(NDEBUG)
 #define MAYBE_PointerLock PointerLock
 #else
 #define MAYBE_PointerLock DISABLED_PointerLock
@@ -653,8 +648,14 @@ IN_PROC_BROWSER_TEST_F(WebViewPointerLockInteractiveTest,
 
 // Tests that if a <webview> is focused before navigation then the guest starts
 // off focused.
+// TODO(crbug.com/346863842): Flaky on linux-rel.
+#if BUILDFLAG(IS_LINUX) && defined(NDEBUG)
+#define MAYBE_Focus_FocusBeforeNavigation DISABLED_Focus_FocusBeforeNavigation
+#else
+#define MAYBE_Focus_FocusBeforeNavigation Focus_FocusBeforeNavigation
+#endif
 IN_PROC_BROWSER_TEST_F(WebViewFocusInteractiveTest,
-                       Focus_FocusBeforeNavigation) {
+                       MAYBE_Focus_FocusBeforeNavigation) {
   TestHelper("testFocusBeforeNavigation", "web_view/focus", NO_TEST_SERVER);
 }
 
@@ -777,8 +778,14 @@ IN_PROC_BROWSER_TEST_F(WebViewFocusInteractiveTest, Focus_BlurEvent) {
 }
 
 // Tests that a <webview> can't steal focus from the embedder.
+// TODO(crbug.com/349299938): Flaky on mac14-arm64-rel
+#if BUILDFLAG(IS_MAC) && defined(NDEBUG)
+#define MAYBE_FrameInGuestWontStealFocus DISABLED_FrameInGuestWontStealFocus
+#else
+#define MAYBE_FrameInGuestWontStealFocus FrameInGuestWontStealFocus
+#endif
 IN_PROC_BROWSER_TEST_F(WebViewFocusInteractiveTest,
-                       FrameInGuestWontStealFocus) {
+                       MAYBE_FrameInGuestWontStealFocus) {
   LoadAndLaunchPlatformApp("web_view/simple", "WebViewTest.LAUNCHED");
 
   content::WebContents* embedder_web_contents = GetFirstAppWindowWebContents();
@@ -1667,4 +1674,8 @@ IN_PROC_BROWSER_TEST_F(WebViewInteractiveTest,
       content::IsRenderWidgetHostFocused(guest_rfh2->GetRenderWidgetHost()));
   EXPECT_EQ(true, content::EvalJs(guest_rfh2, "document.hasFocus()"));
   EXPECT_EQ(guest_rfh2, embedder_web_contents->GetFocusedFrame());
+}
+
+IN_PROC_BROWSER_TEST_F(WebViewInteractiveTest, CannotLockKeyboard) {
+  TestHelper("testCannotLockKeyboard", "web_view/shim", NEEDS_TEST_SERVER);
 }

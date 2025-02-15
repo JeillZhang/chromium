@@ -28,8 +28,9 @@
 
 namespace {
 
-#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN) || BUILDFLAG(IS_CHROMEOS)
 std::u16string GetAuthenticationMessage(PasswordsModelDelegate* delegate) {
+  std::u16string message;
   if (!delegate || !delegate->GetWebContents()) {
     return u"";
   }
@@ -37,8 +38,14 @@ std::u16string GetAuthenticationMessage(PasswordsModelDelegate* delegate) {
       password_manager::GetShownOrigin(delegate->GetWebContents()
                                            ->GetPrimaryMainFrame()
                                            ->GetLastCommittedOrigin()));
-  return l10n_util::GetStringFUTF16(IDS_PASSWORD_MANAGER_FILLING_REAUTH,
-                                    origin);
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
+  message =
+      l10n_util::GetStringFUTF16(IDS_PASSWORD_MANAGER_FILLING_REAUTH, origin);
+#elif BUILDFLAG(IS_CHROMEOS)
+  message = l10n_util::GetStringFUTF16(
+      IDS_PASSWORD_MANAGER_FILLING_REAUTH_CHROMEOS, origin);
+#endif
+  return message;
 }
 #endif
 
@@ -86,7 +93,7 @@ CredentialManagerDialogControllerImpl::GetLocalForms() const {
   return local_credentials_;
 }
 
-std::u16string CredentialManagerDialogControllerImpl::GetAccoutChooserTitle()
+std::u16string CredentialManagerDialogControllerImpl::GetAccountChooserTitle()
     const {
   return l10n_util::GetStringUTF16(IDS_PASSWORD_MANAGER_ACCOUNT_CHOOSER_TITLE);
 }
@@ -125,7 +132,7 @@ bool CredentialManagerDialogControllerImpl::ShouldShowFooter() const {
 void CredentialManagerDialogControllerImpl::OnChooseCredentials(
     const password_manager::PasswordForm& password_form,
     password_manager::CredentialType credential_type) {
-#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN) || BUILDFLAG(IS_CHROMEOS)
   if (delegate_->GetPasswordFeatureManager()
           ->IsBiometricAuthenticationBeforeFillingEnabled()) {
     delegate_->AuthenticateUserWithMessage(
@@ -142,7 +149,7 @@ void CredentialManagerDialogControllerImpl::OnChooseCredentials(
 
 void CredentialManagerDialogControllerImpl::OnSignInClicked() {
   CHECK_EQ(1u, local_credentials_.size());
-#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN) || BUILDFLAG(IS_CHROMEOS)
   if (delegate_->GetPasswordFeatureManager()
           ->IsBiometricAuthenticationBeforeFillingEnabled()) {
     delegate_->AuthenticateUserWithMessage(

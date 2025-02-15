@@ -117,13 +117,14 @@ class Shell : public WebContentsDelegate, public WebContentsObserver {
       const OpenURLParams& params,
       base::OnceCallback<void(content::NavigationHandle&)>
           navigation_handle_callback) override;
-  void AddNewContents(WebContents* source,
-                      std::unique_ptr<WebContents> new_contents,
-                      const GURL& target_url,
-                      WindowOpenDisposition disposition,
-                      const blink::mojom::WindowFeatures& window_features,
-                      bool user_gesture,
-                      bool* was_blocked) override;
+  WebContents* AddNewContents(
+      WebContents* source,
+      std::unique_ptr<WebContents> new_contents,
+      const GURL& target_url,
+      WindowOpenDisposition disposition,
+      const blink::mojom::WindowFeatures& window_features,
+      bool user_gesture,
+      bool* was_blocked) override;
   void LoadingStateChanged(WebContents* source,
                            bool should_show_loading_ui) override;
 #if BUILDFLAG(IS_ANDROID)
@@ -180,11 +181,8 @@ class Shell : public WebContentsDelegate, public WebContentsObserver {
                           const base::FilePath& path) override;
   bool IsBackForwardCacheSupported(WebContents& contents) override;
   PreloadingEligibility IsPrerender2Supported(
-      WebContents& web_contents) override;
-  void UpdateInspectedWebContentsIfNecessary(
-      WebContents* old_contents,
-      WebContents* new_contents,
-      base::OnceCallback<void()> callback) override;
+      WebContents& web_contents,
+      PreloadingTriggerType trigger_type) override;
   bool ShouldAllowRunningInsecureContent(WebContents* web_contents,
                                          bool allowed_per_prefs,
                                          const url::Origin& origin,
@@ -204,6 +202,10 @@ class Shell : public WebContentsDelegate, public WebContentsObserver {
 
   // Counts both RunFileChooser and EnumerateDirectory.
   size_t run_file_chooser_count() const { return run_file_chooser_count_; }
+
+  FileSelectListener* held_file_chooser_listener() const {
+    return held_file_chooser_listener_.get();
+  }
 
  private:
   class DevToolsWebContentsObserver;

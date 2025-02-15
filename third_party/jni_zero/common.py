@@ -4,6 +4,7 @@
 """Common logic needed by other modules."""
 
 import contextlib
+import dataclasses
 import filecmp
 import os
 import shutil
@@ -14,7 +15,17 @@ import zipfile
 
 # Only some methods respect line length, so this is more of a best-effort
 # limit.
-_TARGET_LINE_LENGTH = 80
+_TARGET_LINE_LENGTH = 100
+
+
+@dataclasses.dataclass(frozen=True)
+class JniMode:
+  is_hashing: bool = False
+  is_muxing: bool = False
+  is_per_file: bool = False
+
+
+JniMode.MUXING = JniMode(is_muxing=True)
 
 
 class StringBuilder:
@@ -62,17 +73,44 @@ class StringBuilder:
           self(',\n'.join(values))
     self(')')
 
+  def line(self, value=None):
+    self(value)
+    self('\n')
+
   @contextlib.contextmanager
   def statement(self):
     yield
     self(';\n')
 
   @contextlib.contextmanager
-  def block(self, start=' {\n', end='}\n'):
-    self(start)
-    with self.indent(2):
+  def section(self, section_title):
+    if not ''.join(self._sb[-2:]).endswith('\n\n'):
+      self('\n')
+    self(f'// {section_title}\n')
+    yield
+    self('\n')
+
+  @contextlib.contextmanager
+  def namespace(self, namespace_name):
+    if namespace_name is None:
       yield
-    self(end)
+      return
+    value = f' {namespace_name}' if namespace_name else ''
+    self(f'namespace{value} {{\n\n')
+    yield
+    self(f'\n}}  // namespace{value}\n')
+
+  @contextlib.contextmanager
+  def block(self, *, indent=2, after=None):
+    self(' {\n')
+    with self.indent(indent):
+      yield
+    if after:
+      self('}')
+      self(after)
+      self('\n')
+    else:
+      self('}\n')
 
   @contextlib.contextmanager
   def indent(self, amount):
@@ -88,10 +126,10 @@ def capitalize(value):
   return value[0].upper() + value[1:]
 
 
-def escape_class_name(fully_qualified_class):
-  """Returns an escaped string concatenating the Java package and class."""
-  escaped = fully_qualified_class.replace('_', '_1')
-  return escaped.replace('/', '_').replace('$', '_00024')
+def jni_mangle(name):
+  """Performs JNI mangling on the given name."""
+  # https://docs.oracle.com/javase/1.5.0/docs/guide/jni/spec/design.html#wp615
+  return name.replace('_', '_1').replace('/', '_').replace('$', '_00024')
 
 
 @contextlib.contextmanager
@@ -114,3 +152,13 @@ def add_to_zip_hermetic(zip_file, zip_path, data=None):
   zipinfo.external_attr = 0o644 << 16
   zipinfo.date_time = (2001, 1, 1, 0, 0, 0)
   zip_file.writestr(zipinfo, data, zipfile.ZIP_STORED)
+
+
+def should_rename_package(package_name, filter_list_string):
+  # If the filter list is empty, all packages should be renamed.
+  if not filter_list_string:
+    return True
+
+  return any(
+      package_name.startswith(pkg_prefix)
+      for pkg_prefix in filter_list_string.split(':'))

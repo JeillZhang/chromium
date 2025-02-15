@@ -4,13 +4,13 @@
 
 #include "components/media_message_center/media_notification_view_impl.h"
 
+#include <algorithm>
 #include <memory>
 
 #include "base/containers/flat_set.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/mock_callback.h"
@@ -182,7 +182,7 @@ class MediaNotificationViewImplTest : public views::ViewsTestBase {
 
   views::Button* GetButtonForAction(MediaSessionAction action) const {
     auto buttons = view()->get_buttons_for_testing();
-    const auto i = base::ranges::find(
+    const auto i = std::ranges::find(
         buttons, static_cast<int>(action),
         [](const views::View* v) { return views::Button::AsButton(v)->tag(); });
     return (i == buttons.end()) ? nullptr : views::Button::AsButton(*i);
@@ -215,18 +215,19 @@ class MediaNotificationViewImplTest : public views::ViewsTestBase {
     EXPECT_TRUE(button->GetVisible());
 
     views::test::ButtonTestApi(button).NotifyClick(
-        ui::MouseEvent(ui::ET_MOUSE_PRESSED, gfx::Point(), gfx::Point(),
+        ui::MouseEvent(ui::EventType::kMousePressed, gfx::Point(), gfx::Point(),
                        ui::EventTimeForNow(), 0, 0));
   }
 
   void SimulateHeaderClick() {
     views::test::ButtonTestApi(header_row())
-        .NotifyClick(ui::MouseEvent(ui::ET_MOUSE_PRESSED, gfx::Point(),
+        .NotifyClick(ui::MouseEvent(ui::EventType::kMousePressed, gfx::Point(),
                                     gfx::Point(), ui::EventTimeForNow(), 0, 0));
   }
 
   void SimulateTab() {
-    ui::KeyEvent pressed_tab(ui::ET_KEY_PRESSED, ui::VKEY_TAB, ui::EF_NONE);
+    ui::KeyEvent pressed_tab(ui::EventType::kKeyPressed, ui::VKEY_TAB,
+                             ui::EF_NONE);
     view()->GetFocusManager()->OnKeyEvent(pressed_tab);
   }
 
@@ -340,7 +341,7 @@ TEST_F(MediaNotificationViewImplTest, PlayPauseButtonTooltipCheck) {
   EXPECT_CALL(container(), OnMediaSessionInfoChanged(_));
 
   auto* button = GetButtonForAction(MediaSessionAction::kPlay);
-  std::u16string tooltip = button->GetTooltipText(gfx::Point());
+  std::u16string tooltip = button->GetRenderedTooltipText(gfx::Point());
   EXPECT_FALSE(tooltip.empty());
 
   media_session::mojom::MediaSessionInfoPtr session_info(
@@ -350,7 +351,7 @@ TEST_F(MediaNotificationViewImplTest, PlayPauseButtonTooltipCheck) {
   session_info->is_controllable = true;
   view()->UpdateWithMediaSessionInfo(std::move(session_info));
 
-  std::u16string new_tooltip = button->GetTooltipText(gfx::Point());
+  std::u16string new_tooltip = button->GetRenderedTooltipText(gfx::Point());
   EXPECT_FALSE(new_tooltip.empty());
   EXPECT_NE(tooltip, new_tooltip);
 }
@@ -865,13 +866,16 @@ TEST_F(MediaNotificationViewImplTest, NotifysContainerOfExpandedState) {
   EXPECT_FALSE(expanded);
 }
 
-TEST_F(MediaNotificationViewImplTest, AccessibleNodeData) {
+TEST_F(MediaNotificationViewImplTest, AccessibleProperties) {
   ui::AXNodeData data;
-  view()->GetAccessibleNodeData(&data);
+  view()->GetViewAccessibility().GetAccessibleNodeData(&data);
 
   EXPECT_TRUE(
       data.HasStringAttribute(ax::mojom::StringAttribute::kRoleDescription));
   EXPECT_EQ(u"title - artist", accessible_name());
+
+  EXPECT_EQ(view()->GetViewAccessibility().GetCachedRole(),
+            ax::mojom::Role::kListItem);
 }
 
 TEST_F(MediaNotificationViewImplTest, ForcedExpandedState) {

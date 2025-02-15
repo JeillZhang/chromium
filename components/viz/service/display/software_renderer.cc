@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "base/memory/raw_ptr.h"
+#include "base/not_fatal_until.h"
 #include "base/process/memory.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
@@ -38,6 +39,7 @@
 #include "skia/ext/opacity_filter_canvas.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkColor.h"
+#include "third_party/skia/include/core/SkColorFilter.h"
 #include "third_party/skia/include/core/SkImage.h"
 #include "third_party/skia/include/core/SkImageFilter.h"
 #include "third_party/skia/include/core/SkMaskFilter.h"
@@ -54,6 +56,26 @@
 
 namespace viz {
 namespace {
+
+// Return a color filter that multiplies the incoming color by the fixed alpha
+sk_sp<SkColorFilter> MakeOpacityFilter(float alpha, sk_sp<SkColorFilter> in) {
+  SkColor4f alpha_as_color = {1.0, 1.0, 1.0, alpha};
+  // MakeModeFilter treats fixed color as src, and input color as dst.
+  // kDstIn is (srcAlpha * dstColor, srcAlpha * dstAlpha) so this makes the
+  // output color equal to input color * alpha.
+  // TODO(michaelludwig): Update to pass alpha_as_color as-is once
+  // skbug.com/13637 is resolved (adds Blend + SkColor4f variation).
+  sk_sp<SkColorFilter> opacity =
+      SkColorFilters::Blend(alpha_as_color.toSkColor(), SkBlendMode::kDstIn);
+  // Opaque (alpha = 1.0) and kDstIn returns nullptr to signal a no-op, so that
+  // case should just return 'in'.
+  if (opacity) {
+    return opacity->makeComposed(std::move(in));
+  } else {
+    return in;
+  }
+}
+
 class AnimatedImagesProvider : public cc::ImageProvider {
  public:
   AnimatedImagesProvider(
@@ -96,7 +118,7 @@ SoftwareRenderer::SoftwareRenderer(
                      overlay_processor),
       output_device_(output_surface->software_device()) {}
 
-SoftwareRenderer::~SoftwareRenderer() {}
+SoftwareRenderer::~SoftwareRenderer() = default;
 
 bool SoftwareRenderer::CanPartialSwap() {
   return true;
@@ -220,8 +242,8 @@ void SoftwareRenderer::BeginDrawingRenderPass(
     current_framebuffer_canvas_.reset();
   } else {
     auto it = render_pass_bitmaps_.find(render_pass->id);
-    DCHECK(it != render_pass_bitmaps_.end());
-    SkBitmap& bitmap = it->second;
+    CHECK(it != render_pass_bitmaps_.end(), base::NotFatalUntil::M130);
+    SkBitmap& bitmap = it->second.bitmap;
 
     current_framebuffer_canvas_ = std::make_unique<SkCanvas>(
         bitmap, skia::LegacyDisplayGlobals::GetSkSurfaceProps());
@@ -324,8 +346,7 @@ void SoftwareRenderer::DoDrawQuad(const DrawQuad* quad,
     case DrawQuad::Material::kCompositorRenderPass:
       // At this point, all RenderPassDrawQuads should be converted to
       // AggregatedRenderPassDrawQuads.
-      NOTREACHED_IN_MIGRATION();
-      break;
+      NOTREACHED();
     case DrawQuad::Material::kSolidColor:
       DrawSolidColorQuad(SolidColorDrawQuad::MaterialCast(quad));
       break;
@@ -338,14 +359,10 @@ void SoftwareRenderer::DoDrawQuad(const DrawQuad* quad,
     case DrawQuad::Material::kSurfaceContent:
       // Surface content should be fully resolved to other quad types before
       // reaching a direct renderer.
-      NOTREACHED_IN_MIGRATION();
-      break;
+      NOTREACHED();
     case DrawQuad::Material::kInvalid:
-    case DrawQuad::Material::kYuvVideoContent:
     case DrawQuad::Material::kSharedElement:
-      DrawUnsupportedQuad(quad);
-      NOTREACHED_IN_MIGRATION();
-      break;
+      NOTREACHED();
     case DrawQuad::Material::kVideoHole:
       // VideoHoleDrawQuad should only be used by Cast, and should
       // have been replaced by cast-specific OverlayProcessor before
@@ -384,8 +401,7 @@ void SoftwareRenderer::DrawPictureQuad(const PictureDrawQuad* quad) {
 
   const bool needs_transparency =
       SkScalarRoundToInt(quad->shared_quad_state->opacity * 255) < 255;
-  const bool disable_image_filtering =
-      disable_picture_quad_image_filtering_ || quad->nearest_neighbor;
+  const bool disable_image_filtering = quad->nearest_neighbor;
 
   TRACE_EVENT0("viz", "SoftwareRenderer::DrawPictureQuad");
 
@@ -414,7 +430,8 @@ void SoftwareRenderer::DrawPictureQuad(const PictureDrawQuad* quad) {
   raster_canvas->translate(-quad->content_rect.x(), -quad->content_rect.y());
   raster_canvas->clipRect(gfx::RectToSkRect(quad->content_rect));
   raster_canvas->scale(quad->contents_scale, quad->contents_scale);
-  quad->display_item_list->Raster(raster_canvas, &image_provider);
+  quad->display_item_list->Raster(raster_canvas, &image_provider,
+                                  &quad->raster_inducing_scroll_offsets);
   raster_canvas->restore();
 }
 
@@ -428,13 +445,13 @@ void SoftwareRenderer::DrawSolidColorQuad(const SolidColorDrawQuad* quad) {
 }
 
 void SoftwareRenderer::DrawTextureQuad(const TextureDrawQuad* quad) {
-  if (!IsSoftwareResource(quad->resource_id()) || quad->is_stream_video) {
+  if (!IsSoftwareResource(quad->resource_id) || quad->is_stream_video) {
     DrawUnsupportedQuad(quad);
     return;
   }
 
   DisplayResourceProviderSoftware::ScopedReadLockSkImage lock(
-      resource_provider(), quad->resource_id(),
+      resource_provider(), quad->resource_id,
       quad->premultiplied_alpha ? kPremul_SkAlphaType : kUnpremul_SkAlphaType);
 
   if (!lock.valid())
@@ -450,28 +467,36 @@ void SoftwareRenderer::DrawTextureQuad(const TextureDrawQuad* quad) {
       QuadVertexRect(), gfx::RectF(quad->rect), gfx::RectF(quad->visible_rect));
   SkRect quad_rect = gfx::RectFToSkRect(visible_quad_vertex_rect);
 
-  if (quad->y_flipped)
+  const bool y_flipped = resource_provider()->GetOrigin(quad->resource_id) ==
+                         kBottomLeft_GrSurfaceOrigin;
+  if (y_flipped) {
     current_canvas_->scale(1, -1);
+  }
 
   bool blend_background =
       quad->background_color != SkColors::kTransparent && !image->isOpaque();
-  bool needs_layer = blend_background && (current_paint_.getAlphaf() != 1.f);
-  if (needs_layer) {
-    current_canvas_->saveLayerAlphaf(&quad_rect, current_paint_.getAlphaf());
-    current_paint_.setAlphaf(1.f);
-  }
   if (blend_background) {
-    SkPaint background_paint;
-    background_paint.setColor(quad->background_color);
-    current_canvas_->drawRect(quad_rect, background_paint);
+    // Add a color filter that does DstOver blending between texture and the
+    // background color. Then, modulate by quad's opacity *after* blending.
+    // TODO(crbug.com/40219248) remove toSkColor and make all SkColor4f
+    sk_sp<SkColorFilter> cf = SkColorFilters::Blend(
+        quad->background_color.toSkColor(), SkBlendMode::kDstOver);
+    if (current_paint_.getAlphaf() < 1.f) {
+      cf = MakeOpacityFilter(current_paint_.getAlphaf(), std::move(cf));
+      current_paint_.setAlphaf(1.f);
+      DCHECK(cf);
+    }
+    // |cf| could be null if alpha in |quad->background_color| is 0.
+    if (cf) {
+      current_paint_.setColorFilter(
+          cf->makeComposed(current_paint_.refColorFilter()));
+    }
   }
   SkSamplingOptions sampling(quad->nearest_neighbor ? SkFilterMode::kNearest
                                                     : SkFilterMode::kLinear);
   current_canvas_->drawImageRect(image, sk_uv_rect, quad_rect, sampling,
                                  &current_paint_,
                                  SkCanvas::kStrict_SrcRectConstraint);
-  if (needs_layer)
-    current_canvas_->restore();
 }
 
 DBG_FLAG_FBOOL("software.toggle.capture", software_toggle_capture)
@@ -480,10 +505,10 @@ void SoftwareRenderer::DrawTileQuad(const TileDrawQuad* quad) {
   // |resource_provider_| can be NULL in resourceless software draws, which
   // should never produce tile quads in the first place.
   DCHECK(resource_provider_);
-  DCHECK(IsSoftwareResource(quad->resource_id()));
+  DCHECK(IsSoftwareResource(quad->resource_id));
 
   DisplayResourceProviderSoftware::ScopedReadLockSkImage lock(
-      resource_provider(), quad->resource_id(),
+      resource_provider(), quad->resource_id,
       quad->is_premultiplied ? kPremul_SkAlphaType : kUnpremul_SkAlphaType);
   if (!lock.valid())
     return;
@@ -528,7 +553,7 @@ void SoftwareRenderer::DrawRenderPassQuad(
   auto it = render_pass_bitmaps_.find(quad->render_pass_id);
   if (it == render_pass_bitmaps_.end())
     return;
-  SkBitmap& source_bitmap = it->second;
+  SkBitmap& source_bitmap = it->second.bitmap;
 
   SkRect dest_rect = gfx::RectFToSkRect(QuadVertexRect());
   SkRect dest_visible_rect =
@@ -679,10 +704,11 @@ void SoftwareRenderer::CopyDrawnRenderPass(
     const auto& blit_request = request->blit_request();
 
     auto representation = resource_provider()->GetSharedImageRepresentation(
-        blit_request.mailbox(0).mailbox, blit_request.mailbox(0).sync_token);
+        blit_request.mailbox(), blit_request.sync_token());
 
     if (!representation) {
       DLOG(ERROR) << "BlitRequest: Couldn't create shared image representation";
+      return;
     }
 
     const auto dest_rect =
@@ -733,9 +759,8 @@ void SoftwareRenderer::CopyDrawnRenderPass(
 
     request->SendResult(std::make_unique<CopyOutputTextureResult>(
         CopyOutputResult::Format::RGBA, geometry.result_selection,
-        CopyOutputResult::TextureResult(
-            request->blit_request().mailbox(0).mailbox, gpu::SyncToken(),
-            representation->color_space()),
+        CopyOutputResult::TextureResult(request->blit_request().mailbox(),
+                                        representation->color_space()),
         CopyOutputResult::ReleaseCallbacks()));
 
     return;
@@ -1006,7 +1031,7 @@ void SoftwareRenderer::UpdateRenderPassTextures(
     gfx::Size required_size = render_pass_it->second.size;
     // The RenderPassRequirements have a hint, which is only used for gpu
     // compositing so it is ignored here.
-    const SkBitmap& bitmap = pair.second;
+    const SkBitmap& bitmap = pair.second.bitmap;
 
     bool size_appropriate = bitmap.width() >= required_size.width() &&
                             bitmap.height() >= required_size.height();
@@ -1025,8 +1050,8 @@ void SoftwareRenderer::AllocateRenderPassResourceIfNeeded(
     const RenderPassRequirements& requirements) {
   auto it = render_pass_bitmaps_.find(render_pass_id);
   if (it != render_pass_bitmaps_.end()) {
-    DCHECK(it->second.width() >= requirements.size.width() &&
-           it->second.height() >= requirements.size.height());
+    DCHECK(it->second.bitmap.width() >= requirements.size.width() &&
+           it->second.bitmap.height() >= requirements.size.height());
     return;
   }
 
@@ -1056,10 +1081,28 @@ bool SoftwareRenderer::IsRenderPassResourceAllocated(
 
 gfx::Size SoftwareRenderer::GetRenderPassBackingPixelSize(
     const AggregatedRenderPassId& render_pass_id) {
-  auto it = render_pass_bitmaps_.find(render_pass_id);
-  DCHECK(it != render_pass_bitmaps_.end());
-  SkBitmap& bitmap = it->second;
+  SkBitmap& bitmap = render_pass_bitmaps_.at(render_pass_id).bitmap;
   return gfx::Size(bitmap.width(), bitmap.height());
+}
+
+void SoftwareRenderer::SetRenderPassBackingDrawnRect(
+    const AggregatedRenderPassId& render_pass_id,
+    const gfx::Rect& drawn_rect) {
+  render_pass_bitmaps_.at(render_pass_id).drawn_rect = drawn_rect;
+}
+
+gfx::Rect SoftwareRenderer::GetRenderPassBackingDrawnRect(
+    const AggregatedRenderPassId& render_pass_id) const {
+  auto it = render_pass_bitmaps_.find(render_pass_id);
+  if (it != render_pass_bitmaps_.end()) {
+    return it->second.drawn_rect;
+  } else {
+    // DirectRenderer can call this before it has allocated a render pass
+    // backing if this is the first contiguous frame we're seeing
+    // |render_pass_id|. This can happen because it calculates the render pass
+    // scissor rect before it actually allocates the backing.
+    return gfx::Rect();
+  }
 }
 
 }  // namespace viz

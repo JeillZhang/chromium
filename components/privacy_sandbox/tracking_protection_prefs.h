@@ -46,22 +46,6 @@ inline constexpr char kTrackingProtectionOnboardingAcked[] =
 inline constexpr char kTrackingProtectionOnboardingAckAction[] =
     "tracking_protection.tracking_protection_onboarding_ack_action";
 
-// Offboarding
-
-// Unsynced boolean that indicates whether or not the user has been offboarded
-// (After being onboarded previously).
-inline constexpr char kTrackingProtectionOffboarded[] =
-    "tracking_protection.tracking_protection_offboarded";
-
-// Unsynced pref that indicates when the profile was offboarded.
-inline constexpr char kTrackingProtectionOffboardedSince[] =
-    "tracking_protection.tracking_protection_offboarded_since";
-
-// Unsynced pref that indicates the action taken to acknowledge the Offboarding
-// Notice.
-inline constexpr char kTrackingProtectionOffboardingAckAction[] =
-    "tracking_protection.tracking_protection_offboarding_ack_action";
-
 // Silent onboarding
 
 // Unsynced pref that indicates what status the profile is at with regards to
@@ -78,12 +62,6 @@ inline constexpr char kTrackingProtectionSilentEligibleSince[] =
 // onto tracking protection control groups.
 inline constexpr char kTrackingProtectionSilentOnboardedSince[] =
     "tracking_protection.tracking_protection_silent_onboarded_since";
-
-// Tracking Protection Reminder Prefs.
-
-// Unsynced pref that indicates the reminder status for a profile.
-inline constexpr char kTrackingProtectionReminderStatus[] =
-    "tracking_protection.reminder_status";
 
 // Tracking Protection Settings Prefs.
 
@@ -113,6 +91,11 @@ inline constexpr char kTrackingProtection3pcdEnabled[] =
 inline constexpr char kIpProtectionEnabled[] =
     "tracking_protection.ip_protection_enabled";
 
+// Synced boolean that indicates whether the user has had their IP protection
+// pref initialized. Used ONLY for Google dogfood.
+inline constexpr char kIpProtectionInitializedByDogfood[] =
+    "tracking_protection.ip_protection_initialized_by_dogfood";
+
 // Synced boolean that indicates whether the user has enabled the
 // fingerprinting protection setting.
 inline constexpr char kFingerprintingProtectionEnabled[] =
@@ -120,6 +103,11 @@ inline constexpr char kFingerprintingProtectionEnabled[] =
 
 // Whether to send the DNT header.
 inline constexpr char kEnableDoNotTrack[] = "enable_do_not_track";
+
+// Whether User Bypass 3PC exceptions have been migrated to Tracking Protection
+// exceptions.
+inline constexpr char kUserBypass3pcExceptionsMigrated[] =
+    "tracking_protection.user_bypass_3pc_exceptions_migrated";
 
 }  // namespace prefs
 
@@ -158,17 +146,6 @@ enum class TrackingProtectionOnboardingAckAction {
   // Acked by clicking the close button/ESC/Swipe away.
   kClosed = 5,
   kMaxValue = kClosed,
-};
-
-// Tracking protection reminder statues.
-enum class TrackingProtectionReminderStatus {
-  kUnset = 0,
-  kInvalid = 1,
-  kPendingReminder = 2,
-  kExperiencedReminder = 3,
-  kModeBUserSkipped = 4,
-  kFeatureDisabledSkipped = 5,
-  kMaxValue = kFeatureDisabledSkipped,
 };
 
 void RegisterProfilePrefs(PrefRegistrySimple* registry);

@@ -83,7 +83,7 @@ class GoogleTtsIntegrationTest : public AshIntegrationTest {
   GoogleTtsIntegrationTest& operator=(const GoogleTtsIntegrationTest&) = delete;
 
   void EnableGoogleTts() {
-    base::RunLoop loop;
+    base::RunLoop loop{base::RunLoop::Type::kNestableTasksAllowed};
     Profile* profile = AccessibilityManager::Get()->profile();
     extensions::ExtensionHostTestHelper host_helper(
         profile, extension_misc::kGoogleSpeechSynthesisExtensionId);
@@ -132,7 +132,6 @@ class GoogleTtsIntegrationTest : public AshIntegrationTest {
 
 IN_PROC_BROWSER_TEST_F(GoogleTtsIntegrationTest, Speak) {
   SetupContextWidget();
-  WaitForAshFullyStarted();
   RunTestSequence(Log("Setting up Google TTS extension"), Do([this] {
                     EnableGoogleTts();
                     InjectTestSupportScript();

@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #ifndef NET_SOCKET_SOCKET_TEST_UTIL_H_
 #define NET_SOCKET_SOCKET_TEST_UTIL_H_
 
@@ -22,6 +27,7 @@
 #include "base/functional/callback.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
+#include "base/memory/raw_span.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "build/build_config.h"
@@ -70,10 +76,63 @@ enum {
 
 class AsyncSocket;
 class MockClientSocket;
+class MockTCPClientSocket;
+class MockSSLClientSocket;
 class SSLClientSocket;
 class StreamSocket;
 
 enum IoMode { ASYNC, SYNCHRONOUS };
+
+// Used to delay MockClientSocket::Connect.
+// Example usage:
+// TEST(FooTest, Test) {
+//   MockClientSocketFactory socket_factory;
+//
+//   MockConnectCompleter completer;
+//   SequencedSocketData data;
+//   data.set_connect_data(MockConnect(&completer));
+//   socket_factory.AddSocketDataProvider(&data);
+//
+//   // Create a MockClientSocket somehow.
+//   std::unique_ptr<StreamSocket> stream = CreateStreamSocket();
+//   std::optional<int> delayed_result;
+//   int rv = stream->Connect(base::BindLambdaForTesting([&](int result){
+//      delayed_result = result;
+//   }));
+//   // Connect() returns ERR_IO_PENDING.
+//   EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
+//
+//   RunUntilIdle();
+//   // Connect() is still blocked.
+//   ASSERT_FALSE(delayed_result.has_value());
+//
+//   completer.Complete(OK);
+//   RunUntilIdle();
+//   EXPECT_THAT(delayed_result, Optional(IsOk()));
+// }
+class MockConnectCompleter {
+ public:
+  MockConnectCompleter();
+
+  MockConnectCompleter(const MockConnectCompleter&) = delete;
+  MockConnectCompleter& operator=(const MockConnectCompleter&) = delete;
+
+  ~MockConnectCompleter();
+
+  // Completes Connect() with `result`.
+  void Complete(int result);
+
+ private:
+  friend class MockTCPClientSocket;
+  friend class MockSSLClientSocket;
+  friend class MockUDPClientSocket;
+
+  // Sets a completion callback that is passed to Connect(). Called by
+  // MockClientSocket implementations.
+  void SetCallback(CompletionOnceCallback callback);
+
+  CompletionOnceCallback callback_;
+};
 
 struct MockConnect {
   // Asynchronous connection success.
@@ -85,12 +144,16 @@ struct MockConnect {
   MockConnect(IoMode io_mode, int r);
   MockConnect(IoMode io_mode, int r, IPEndPoint addr);
   MockConnect(IoMode io_mode, int r, IPEndPoint addr, bool first_attempt_fails);
+  // Creates a MockConnect that delays connection until `completer` invokes
+  // Complete().
+  explicit MockConnect(MockConnectCompleter* completer);
   ~MockConnect();
 
   IoMode mode;
   int result;
   IPEndPoint peer_addr;
   bool first_attempt_fails = false;
+  raw_ptr<MockConnectCompleter> completer;
 };
 
 struct MockConfirm {
@@ -436,9 +499,9 @@ class StaticSocketDataHelper {
   // fails if no data is available.
   const MockWrite& PeekRealWrite() const;
 
-  const base::span<const MockRead> reads_;
+  const base::raw_span<const MockRead, DanglingUntriaged> reads_;
   size_t read_index_ = 0;
-  const base::span<const MockWrite> writes_;
+  const base::raw_span<const MockWrite, DanglingUntriaged> writes_;
   size_t write_index_ = 0;
 };
 
@@ -485,6 +548,7 @@ class StaticSocketDataProvider : public SocketDataProvider {
 // to Connect().
 struct SSLSocketDataProvider {
   SSLSocketDataProvider(IoMode mode, int result);
+  explicit SSLSocketDataProvider(MockConnectCompleter* completer);
   SSLSocketDataProvider(const SSLSocketDataProvider& other);
   ~SSLSocketDataProvider();
 
@@ -511,7 +575,7 @@ struct SSLSocketDataProvider {
   base::RepeatingClosure confirm_callback;
 
   // Result for GetNegotiatedProtocol().
-  NextProto next_proto = kProtoUnknown;
+  NextProto next_proto = NextProto::kProtoUnknown;
 
   // Result for GetPeerApplicationSettings().
   std::optional<std::string> peer_application_settings;
@@ -945,10 +1009,8 @@ class MockSSLClientSocket : public AsyncSocket, public SSLClientSocket {
 
   // SSLSocket implementation.
   int ExportKeyingMaterial(std::string_view label,
-                           bool has_context,
-                           std::string_view context,
-                           unsigned char* out,
-                           unsigned int outlen) override;
+                           std::optional<base::span<const uint8_t>> context,
+                           base::span<uint8_t> out) override;
 
   // SSLClientSocket implementation.
   std::vector<uint8_t> GetECHRetryConfigs() override;
@@ -1152,7 +1214,9 @@ class ClientSocketPoolTest {
     int rv = request->handle()->Init(
         group_id, socket_params, std::nullopt /* proxy_annotation_tag */,
         priority, SocketTag(), respect_limits, request->callback(),
-        ClientSocketPool::ProxyAuthCallback(), socket_pool, NetLogWithSource());
+        ClientSocketPool::ProxyAuthCallback(),
+        /*fail_if_alias_requires_proxy_override=*/false, socket_pool,
+        NetLogWithSource());
     if (rv != ERR_IO_PENDING)
       request_order_.push_back(request);
     return rv;
@@ -1265,6 +1329,7 @@ class MockTransportClientSocketPool : public TransportClientSocketPool {
       ClientSocketHandle* handle,
       CompletionOnceCallback callback,
       const ProxyAuthCallback& on_auth_callback,
+      bool fail_if_alias_requires_proxy_override,
       const NetLogWithSource& net_log) override;
   void SetPriority(const GroupId& group_id,
                    ClientSocketHandle* handle,

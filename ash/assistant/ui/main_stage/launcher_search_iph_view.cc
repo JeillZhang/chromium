@@ -6,6 +6,7 @@
 
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include "ash/assistant/ui/main_stage/chip_view.h"
@@ -239,7 +240,7 @@ void LauncherSearchIphView::NotifyAssistantButtonPressedEvent() {
   }
 }
 
-std::u16string LauncherSearchIphView::GetTitleText() const {
+std::u16string_view LauncherSearchIphView::GetTitleText() const {
   return title_label_->GetText();
 }
 
@@ -279,7 +280,8 @@ void LauncherSearchIphView::CreateChips(
     ChipView* chip = actions_container->AddChildView(
         std::make_unique<ChipView>(ChipView::Type::kLarge));
     chip->SetText(GetQueryText(query_type));
-    chip->SetAccessibleName(GetQueryTextAccessibleName(query_type));
+    chip->GetViewAccessibility().SetName(
+        GetQueryTextAccessibleName(query_type));
     chip->SetCallback(
         base::BindRepeating(&LauncherSearchIphView::RunLauncherSearchQuery,
                             weak_ptr_factory_.GetWeakPtr(), query_type));
@@ -312,7 +314,8 @@ void LauncherSearchIphView::ShuffleChipsQuery() {
     CHECK_LT(chip_index, chips_.size());
     auto chip = chips_[chip_index++];
     chip->SetText(GetQueryText(query_type));
-    chip->SetAccessibleName(GetQueryTextAccessibleName(query_type));
+    chip->GetViewAccessibility().SetName(
+        GetQueryTextAccessibleName(query_type));
     chip->SetCallback(
         base::BindRepeating(&LauncherSearchIphView::RunLauncherSearchQuery,
                             weak_ptr_factory_.GetWeakPtr(), query_type));

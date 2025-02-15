@@ -24,7 +24,7 @@
 #include "content/public/browser/privacy_sandbox_invoking_api.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/services/auction_worklet/public/mojom/private_aggregation_request.mojom.h"
-#include "services/network/public/cpp/attribution_reporting_runtime_features.h"
+#include "net/url_request/referrer_policy.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "services/network/public/mojom/attribution.mojom-forward.h"
 #include "third_party/blink/public/common/fenced_frame/redacted_fenced_frame_config.h"
@@ -256,13 +256,10 @@ class CONTENT_EXPORT FencedFrameReporter
       const DestinationVariant& event_variant,
       blink::FencedFrame::ReportingDestination reporting_destination,
       RenderFrameHostImpl* request_initiator_frame,
-      network::AttributionReportingRuntimeFeatures
-          attribution_reporting_runtime_features,
       std::string& error_message,
       blink::mojom::ConsoleMessageLevel& console_message_level,
-      int initiator_frame_tree_node_id = RenderFrameHost::kNoFrameTreeNodeId,
-      std::optional<int64_t> navigation_id = std::nullopt,
-      std::optional<url::Origin> ad_root_origin = std::nullopt);
+      FrameTreeNodeId initiator_frame_tree_node_id = FrameTreeNodeId(),
+      std::optional<int64_t> navigation_id = std::nullopt);
 
   // Called when a mapping for private aggregation requests of non-reserved
   // event types is received. Currently it is only called inside
@@ -331,16 +328,15 @@ class CONTENT_EXPORT FencedFrameReporter
     BeaconId beacon_id;
     bool is_automatic_beacon;
     network::mojom::AttributionSupport attribution_reporting_support;
-    network::AttributionReportingRuntimeFeatures
-        attribution_reporting_runtime_features;
   };
 
   struct PendingEvent {
     PendingEvent(
         const DestinationVariant& event,
         const url::Origin& request_initiator,
+        const net::ReferrerPolicy request_referrer_policy,
         std::optional<AttributionReportingData> attribution_reporting_data,
-        int initiator_frame_tree_node_id);
+        FrameTreeNodeId initiator_frame_tree_node_id);
 
     PendingEvent(const PendingEvent&);
     PendingEvent(PendingEvent&&);
@@ -352,10 +348,11 @@ class CONTENT_EXPORT FencedFrameReporter
 
     DestinationVariant event;
     url::Origin request_initiator;
+    net::ReferrerPolicy request_referrer_policy;
     // The data necessary for attribution reporting. Will be `std::nullopt` if
     // attribution reporting is disallowed in the initiator frame.
     std::optional<AttributionReportingData> attribution_reporting_data;
-    int initiator_frame_tree_node_id;
+    FrameTreeNodeId initiator_frame_tree_node_id;
   };
 
   // The per-blink::FencedFrame::ReportingDestination reporting information.
@@ -392,8 +389,9 @@ class CONTENT_EXPORT FencedFrameReporter
       const DestinationVariant& event,
       blink::FencedFrame::ReportingDestination reporting_destination,
       const url::Origin& request_initiator,
+      const net::ReferrerPolicy request_referrer_policy,
       const std::optional<AttributionReportingData>& attribution_reporting_data,
-      int initiator_frame_tree_node_id,
+      FrameTreeNodeId initiator_frame_tree_node_id,
       std::string& error_message,
       blink::mojom::ConsoleMessageLevel& console_message_level,
       const std::string& devtools_request_id);

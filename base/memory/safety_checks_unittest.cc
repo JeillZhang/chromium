@@ -2,12 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
+#include "base/memory/safety_checks.h"
+
 #include <new>
 
 #include "base/allocator/partition_alloc_features.h"
 #include "base/feature_list.h"
-#include "base/memory/safety_checks.h"
 #include "partition_alloc/partition_address_space.h"
+#include "partition_alloc/tagging.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace {
@@ -115,7 +122,7 @@ TEST(MemorySafetyCheckTest, AllocatorFunctions) {
 // AdvancedChecks is kForcePartitionAlloc.
 #if PA_BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
   EXPECT_TRUE(partition_alloc::IsManagedByPartitionAlloc(
-      reinterpret_cast<uintptr_t>(ptr2)));
+      reinterpret_cast<uintptr_t>(partition_alloc::UntagPtr(ptr2))));
 #endif  // PA_BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
 
   // void operator delete(void* ptr);
@@ -131,7 +138,7 @@ TEST(MemorySafetyCheckTest, AllocatorFunctions) {
 // AdvancedChecks is kForcePartitionAlloc.
 #if PA_BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
   EXPECT_TRUE(partition_alloc::IsManagedByPartitionAlloc(
-      reinterpret_cast<uintptr_t>(ptr2)));
+      reinterpret_cast<uintptr_t>(partition_alloc::UntagPtr(ptr2))));
 #endif  // PA_BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
 
   // void operator delete(void* ptr, std::align_val_t alignment)
@@ -145,7 +152,7 @@ TEST(MemorySafetyCheckTest, AllocatorFunctions) {
 // AlignedAdvancedChecks is kForcePartitionAlloc.
 #if PA_BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
   EXPECT_TRUE(partition_alloc::IsManagedByPartitionAlloc(
-      reinterpret_cast<uintptr_t>(ptr3)));
+      reinterpret_cast<uintptr_t>(partition_alloc::UntagPtr(ptr3))));
 #endif  // PA_BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
 
   // void operator delete(void* ptr, std::align_val_t alignment)
@@ -203,12 +210,14 @@ TEST(MemorySafetyCheckTest, ZapOnFree) {
   }
 
   static_assert(
-      !is_memory_safety_checked<DefaultChecks, MemorySafetyCheck::kZapOnFree>);
+      !is_memory_safety_checked<DefaultChecks,
+                                MemorySafetyCheck::kSchedulerLoopQuarantine>);
   static_assert(
-      is_memory_safety_checked<AdvancedChecks, MemorySafetyCheck::kZapOnFree>);
+      is_memory_safety_checked<AdvancedChecks,
+                               MemorySafetyCheck::kSchedulerLoopQuarantine>);
 
   {
-    // Without kZapOnFree.
+    // Without kSchedulerLoopQuarantine.
     auto* ptr = new DefaultChecks();
     EXPECT_NE(ptr, nullptr);
     delete ptr;
@@ -216,7 +225,7 @@ TEST(MemorySafetyCheckTest, ZapOnFree) {
   }
 
   {
-    // With kZapOnFree.
+    // With kSchedulerLoopQuarantine.
     auto* ptr = new AdvancedChecks();
     EXPECT_NE(ptr, nullptr);
     memset(ptr->data, 'A', sizeof(ptr->data));

@@ -26,6 +26,11 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/platform/weborigin/security_policy.h"
 
 #include <memory>
@@ -147,8 +152,7 @@ Referrer SecurityPolicy::GenerateReferrer(
     case network::mojom::ReferrerPolicy::kNoReferrerWhenDowngrade:
       break;
     case network::mojom::ReferrerPolicy::kDefault:
-      NOTREACHED_IN_MIGRATION();
-      break;
+      NOTREACHED();
   }
 
   return Referrer(ShouldHideReferrer(url, referrer_url) ? Referrer::NoReferrer()
@@ -291,8 +295,7 @@ String SecurityPolicy::ReferrerPolicyAsString(
     case network::mojom::ReferrerPolicy::kStrictOriginWhenCrossOrigin:
       return "strict-origin-when-cross-origin";
   }
-  NOTREACHED_IN_MIGRATION();
-  return String();
+  NOTREACHED();
 }
 
 namespace {

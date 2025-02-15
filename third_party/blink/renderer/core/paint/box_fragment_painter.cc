@@ -4,8 +4,11 @@
 
 #include "third_party/blink/renderer/core/paint/box_fragment_painter.h"
 
+#include <algorithm>
+#include <numeric>
+#include <vector>
+
 #include "base/containers/adapters.h"
-#include "base/ranges/algorithm.h"
 #include "third_party/blink/renderer/core/css/style_engine.h"
 #include "third_party/blink/renderer/core/editing/drag_caret.h"
 #include "third_party/blink/renderer/core/editing/frame_selection.h"
@@ -57,6 +60,7 @@
 #include "third_party/blink/renderer/core/paint/url_metadata_utils.h"
 #include "third_party/blink/renderer/core/paint/view_painter.h"
 #include "third_party/blink/renderer/core/scroll/scroll_types.h"
+#include "third_party/blink/renderer/core/view_transition/view_transition_utils.h"
 #include "third_party/blink/renderer/platform/graphics/graphics_context_state_saver.h"
 #include "third_party/blink/renderer/platform/graphics/paint/display_item_cache_skipper.h"
 #include "third_party/blink/renderer/platform/graphics/paint/drawing_recorder.h"
@@ -88,7 +92,8 @@ inline bool IsVisibleToPaint(const PhysicalFragment& fragment,
   // the line. However, when it has self-painting layer, the fragment stored in
   // |LayoutBlockFlow| will be painted. Check |IsHiddenForPaint| of the fragment
   // in the inline formatting context.
-  if (UNLIKELY(fragment.IsAtomicInline() && fragment.HasSelfPaintingLayer())) {
+  if (fragment.IsAtomicInline() && fragment.HasSelfPaintingLayer())
+      [[unlikely]] {
     const LayoutObject* layout_object = fragment.GetLayoutObject();
     if (layout_object->IsInLayoutNGInlineFormattingContext()) {
       InlineCursor cursor;
@@ -124,8 +129,10 @@ inline bool IsVisibleToHitTest(const FragmentItem& item,
     return false;
   PointerEventsHitRules hit_rules(PointerEventsHitRules::kSvgTextHitTesting,
                                   request, style.UsedPointerEvents());
-  if (hit_rules.require_visible && style.Visibility() != EVisibility::kVisible)
+  if (hit_rules.require_visible &&
+      style.Visibility() != EVisibility::kVisible) {
     return false;
+  }
   if (hit_rules.can_hit_bounding_box ||
       (hit_rules.can_hit_stroke &&
        (style.HasStroke() || !hit_rules.require_stroke)) ||
@@ -199,8 +206,9 @@ bool HitTestCulledInlineAncestors(HitTestResult& result,
                                   const PhysicalOffset& physical_offset) {
   // Ellipsis can appear under a different parent from the ellipsized object
   // that it can confuse culled inline logic.
-  if (UNLIKELY(item.IsEllipsis()))
+  if (item.IsEllipsis()) [[unlikely]] {
     return false;
+  }
   // To be passed as |accumulated_offset| to LayoutInline::HitTestCulledInline,
   // where it equals the physical offset of the containing block in paint layer.
   const PhysicalOffset fallback_accumulated_offset =
@@ -268,7 +276,7 @@ Vector<PhysicalRect> BuildBackplate(InlineCursor* descendants,
       }
       continue;
     }
-    NOTREACHED_IN_MIGRATION();
+    NOTREACHED();
   }
 
   if (!backplates.current_backplate.IsEmpty())
@@ -367,8 +375,10 @@ void PaintFragment(const PhysicalBoxFragment& fragment,
     return;
   }
 
-  if (!fragment.IsFirstForNode() && !CanPaintMultipleFragments(fragment))
+  if (fragment.IsHiddenForPaint() ||
+      (!fragment.IsFirstForNode() && !CanPaintMultipleFragments(fragment))) {
     return;
+  }
 
   // We are about to enter legacy paint code. This means that the node is
   // monolithic. However, that doesn't necessarily mean that it only has one
@@ -384,6 +394,58 @@ void PaintFragment(const PhysicalBoxFragment& fragment,
   } else {
     layout_object->Paint(modified_paint_info);
   }
+}
+
+bool ShouldDelegatePaintingToViewTransition(const PhysicalBoxFragment& fragment,
+                                            PaintPhase paint_phase) {
+  if (!fragment.GetLayoutObject()) {
+    return false;
+  }
+
+  switch (paint_phase) {
+    case PaintPhase::kSelfBlockBackgroundOnly:
+    case PaintPhase::kSelfOutlineOnly:
+      return ViewTransitionUtils::
+          ShouldDelegateEffectsAndBoxDecorationsToViewTransitionGroup(
+              *fragment.GetLayoutObject());
+    case PaintPhase::kBlockBackground:
+    case PaintPhase::kDescendantBlockBackgroundsOnly:
+    case PaintPhase::kForcedColorsModeBackplate:
+    case PaintPhase::kFloat:
+    case PaintPhase::kForeground:
+    case PaintPhase::kOutline:
+    case PaintPhase::kDescendantOutlinesOnly:
+    case PaintPhase::kOverlayOverflowControls:
+    case PaintPhase::kSelectionDragImage:
+    case PaintPhase::kTextClip:
+    case PaintPhase::kMask:
+      return false;
+  }
+}
+
+BoxSide BoxSideFromGridDirection(const ComputedStyle& style,
+                                 GridTrackSizingDirection direction) {
+  BoxSide box_side;
+
+  if (style.IsHorizontalWritingMode()) {
+    if (style.IsLeftToRightDirection()) {
+      box_side = direction == kForColumns ? BoxSide::kLeft : BoxSide::kTop;
+    } else {
+      box_side = direction == kForColumns ? BoxSide::kRight : BoxSide::kBottom;
+    }
+  } else {
+    // Vertical Writing Mode.
+    const auto writing_direction = style.GetWritingDirection();
+    if (writing_direction.InlineEnd() == PhysicalDirection::kDown) {
+      // Top to Bottom.
+      box_side = direction == kForColumns ? BoxSide::kTop : BoxSide::kLeft;
+    } else {
+      // Bottom to Top.
+      box_side = direction == kForColumns ? BoxSide::kBottom : BoxSide::kRight;
+    }
+  }
+
+  return box_side;
 }
 
 }  // anonymous namespace
@@ -443,7 +505,7 @@ void BoxFragmentPainter::PaintInternal(const PaintInfo& paint_info) {
   std::optional<GraphicsContextStateSaver> graphics_context_state_saver;
   const auto* const text_combine =
       DynamicTo<LayoutTextCombine>(box_fragment_.GetLayoutObject());
-  if (UNLIKELY(text_combine)) {
+  if (text_combine) [[unlikely]] {
     if (text_combine->NeedsAffineTransformInPaint()) {
       if (original_phase == PaintPhase::kForeground)
         PaintCaretsIfNeeded(paint_state, paint_info, paint_offset);
@@ -484,12 +546,10 @@ void BoxFragmentPainter::PaintInternal(const PaintInfo& paint_info) {
     PaintObject(info, paint_offset);
     info.SetSkipsBackground(false);
 
-    if ((RuntimeEnabledFeatures::HitTestOpaquenessEnabled() &&
-         // We need to record hit test data for the scrolling contents.
-         box.ScrollsOverflow()) ||
+    // We need to record hit test data for the scrolling contents.
+    if (box.ScrollsOverflow() ||
         (paint_location & kBackgroundPaintInContentsSpace)) {
       if (!(paint_location & kBackgroundPaintInContentsSpace)) {
-        DCHECK(RuntimeEnabledFeatures::HitTestOpaquenessEnabled());
         info.SetSkipsBackground(true);
       }
       // If possible, paint overflow controls before scrolling background to
@@ -526,9 +586,11 @@ void BoxFragmentPainter::PaintInternal(const PaintInfo& paint_info) {
 
   // If the caret's node's fragment's containing block is this block, and
   // the paint action is PaintPhaseForeground, then paint the caret.
-  if (original_phase == PaintPhase::kForeground && LIKELY(!recorder)) {
-    DCHECK(!text_combine || !text_combine->NeedsAffineTransformInPaint());
-    PaintCaretsIfNeeded(paint_state, paint_info, paint_offset);
+  if (original_phase == PaintPhase::kForeground) {
+    if (!recorder) [[likely]] {
+      DCHECK(!text_combine || !text_combine->NeedsAffineTransformInPaint());
+      PaintCaretsIfNeeded(paint_state, paint_info, paint_offset);
+    }
   }
 
   if (ShouldPaintSelfOutline(original_phase)) {
@@ -536,8 +598,8 @@ void BoxFragmentPainter::PaintInternal(const PaintInfo& paint_info) {
     PaintObject(info, paint_offset);
   }
 
-  if (UNLIKELY(text_combine) &&
-      TextCombinePainter::ShouldPaint(*text_combine)) {
+  if (text_combine && TextCombinePainter::ShouldPaint(*text_combine))
+      [[unlikely]] {
     if (recorder) {
       // Paint text decorations and emphasis marks without scaling and share.
       DCHECK(text_combine->NeedsAffineTransformInPaint());
@@ -569,7 +631,7 @@ bool BoxFragmentPainter::PaintOverflowControls(
 
   return ScrollableAreaPainter(
              *GetPhysicalFragment().Layer()->GetScrollableArea())
-      .PaintOverflowControls(paint_info, ToRoundedVector2d(paint_offset),
+      .PaintOverflowControls(paint_info, paint_offset,
                              box_fragment_.GetFragmentData());
 }
 
@@ -595,6 +657,11 @@ void BoxFragmentPainter::PaintObject(const PaintInfo& paint_info,
                                      bool suppress_box_decoration_background) {
   const PaintPhase paint_phase = paint_info.phase;
   const PhysicalBoxFragment& fragment = GetPhysicalFragment();
+
+  if (ShouldDelegatePaintingToViewTransition(fragment, paint_phase)) {
+    return;
+  }
+
   if (fragment.IsFrameSet()) {
     FrameSetPainter(fragment, display_item_client_)
         .PaintObject(paint_info, paint_offset);
@@ -636,12 +703,14 @@ void BoxFragmentPainter::PaintObject(const PaintInfo& paint_info,
       (!fragment.Children().empty() || fragment.HasItems() ||
        inline_box_cursor_) &&
       !paint_info.DescendantPaintingBlocked()) {
-    if (is_visible && UNLIKELY(paint_phase == PaintPhase::kForeground &&
-                               fragment.IsCSSBox() && style.HasColumnRule()))
+    if (paint_phase == PaintPhase::kDescendantBlockBackgroundsOnly &&
+        is_visible && fragment.IsCSSBox() && style.HasColumnRule())
+        [[unlikely]] {
       PaintColumnRules(paint_info, paint_offset);
+    }
 
     if (paint_phase != PaintPhase::kFloat) {
-      if (UNLIKELY(inline_box_cursor_)) {
+      if (inline_box_cursor_) [[unlikely]] {
         // Use the descendants cursor for this painter if it is given.
         // Self-painting inline box paints only parts of the container block.
         // Adjust |paint_offset| because it is the offset of the inline box, but
@@ -656,6 +725,8 @@ void BoxFragmentPainter::PaintObject(const PaintInfo& paint_info,
       } else if (items_) {
         DCHECK(fragment.IsBlockFlow());
         PaintLineBoxes(paint_info, paint_offset);
+      } else if (fragment.IsPaginatedRoot()) {
+        PaintCurrentPageContainer(paint_info);
       } else if (!fragment.IsInlineFormattingContext()) {
         PaintBlockChildren(paint_info, paint_offset);
       }
@@ -729,14 +800,14 @@ void BoxFragmentPainter::PaintLineBoxes(const PaintInfo& paint_info,
   // a fragment with inline children, without a paint fragment. See:
   // http://crbug.com/1022545
   if (!items_ || layout_object->NeedsLayout()) {
-    NOTREACHED_IN_MIGRATION();
     return;
   }
 
   // MathML operators paint text (for example enlarged/stretched) content
   // themselves using MathMLPainter.
-  if (UNLIKELY(box_fragment_.IsMathMLOperator()))
+  if (box_fragment_.IsMathMLOperator()) [[unlikely]] {
     return;
+  }
 
   // Trying to rule out a null GraphicsContext, see: https://crbug.com/1040298
   CHECK(&paint_info.context);
@@ -773,8 +844,8 @@ void BoxFragmentPainter::PaintLineBoxes(const PaintInfo& paint_info,
       child_paint_info.phase != PaintPhase::kMask &&
       child_paint_info.phase != PaintPhase::kDescendantOutlinesOnly &&
       child_paint_info.phase != PaintPhase::kOutline) {
-    if (UNLIKELY(
-            ShouldPaintDescendantBlockBackgrounds(child_paint_info.phase))) {
+    if (ShouldPaintDescendantBlockBackgrounds(child_paint_info.phase))
+        [[unlikely]] {
       // When block-in-inline, block backgrounds need to be painted.
       PaintBoxDecorationBackgroundForBlockInInline(&children, child_paint_info,
                                                    paint_offset);
@@ -814,29 +885,63 @@ void BoxFragmentPainter::PaintLineBoxes(const PaintInfo& paint_info,
   PaintLineBoxChildItems(&children, child_paint_info, paint_offset);
 }
 
+void BoxFragmentPainter::PaintCurrentPageContainer(
+    const PaintInfo& paint_info) {
+  DCHECK(box_fragment_.IsPaginatedRoot());
+
+  PaintInfo paint_info_for_descendants = paint_info.ForDescendants();
+  // The correct page box fragment for the given page has been selected, and
+  // that's all that's going to be painted now. The cull rect used during
+  // printing is for the paginated content only, in the stitched coordinate
+  // system with all the page areas stacked after oneanother. However, no
+  // paginated content will be painted here (that's in separate paint layers),
+  // only page box decorations and margin fragments.
+  paint_info_for_descendants.SetCullRect(CullRect::Infinite());
+
+  PaintInfo paint_info_for_page_container = paint_info_for_descendants;
+  // We only want the page container to paint itself and return (and then handle
+  // its children on our own here, further below).
+  paint_info_for_page_container.SetDescendantPaintingBlocked();
+
+  const PaginationState* pagination_state =
+      box_fragment_.GetDocument().View()->GetPaginationState();
+  wtf_size_t page_index = pagination_state->CurrentPageIndex();
+
+  const auto& page_container =
+      To<PhysicalBoxFragment>(*box_fragment_.Children()[page_index]);
+  BoxFragmentPainter(page_container).Paint(paint_info_for_page_container);
+
+  // Paint children of the page container - that is the page border box
+  // fragment, and any surrounding page margin boxes. Paint sorted by
+  // z-index. We sort a vector of fragment indices, rather than sorting a
+  // temporary list of fragments directly, as that would involve oilpan
+  // allocations and garbage for no reason.
+  //
+  // TODO(crbug.com/363031541) Although the page background and borders (and
+  // outlines, etc) are painted at the correct time, the paginated document
+  // contents (the page areas) will be painted on top of everything, since the
+  // document root element, and anything contained by the initial containing
+  // block, are separate layers.
+  base::span<const PhysicalFragmentLink> children = page_container.Children();
+  std::vector<wtf_size_t> indices;
+  indices.resize(children.size());
+  std::iota(indices.begin(), indices.end(), 0);
+  std::stable_sort(
+      indices.begin(), indices.end(), [&children](wtf_size_t a, wtf_size_t b) {
+        return children[a]->Style().ZIndex() < children[b]->Style().ZIndex();
+      });
+  for (wtf_size_t index : indices) {
+    const PhysicalFragmentLink& child = children[index];
+    const auto& child_fragment = To<PhysicalBoxFragment>(*child);
+    DCHECK(!child_fragment.HasSelfPaintingLayer());
+    BoxFragmentPainter(child_fragment).Paint(paint_info_for_descendants);
+  }
+}
+
 void BoxFragmentPainter::PaintBlockChildren(const PaintInfo& paint_info,
                                             PhysicalOffset paint_offset) {
   DCHECK(!box_fragment_.IsInlineFormattingContext());
   PaintInfo paint_info_for_descendants = paint_info.ForDescendants();
-  if (box_fragment_.IsPaginatedRoot()) {
-    const PaginationState* pagination_state =
-        box_fragment_.GetDocument().View()->GetPaginationState();
-    wtf_size_t page_number = pagination_state->CurrentPageNumber();
-    const auto& page_box = box_fragment_.Children()[page_number];
-
-    // The correct page box fragment for the given page has been selected, and
-    // that's all that's going to be painted now. The cull rect used during
-    // printing is for the paginated content only, in the stitched coordinate
-    // system with all the page areas stacked after oneanother. However, no
-    // paginated content will be painted here (that's in separate paint layers),
-    // only page box decorations and margin fragments.
-    paint_info_for_descendants.SetCullRect(CullRect::Infinite());
-
-    PaintBlockChild(page_box, paint_info, paint_info_for_descendants,
-                    paint_offset);
-    return;
-  }
-
   for (const PhysicalFragmentLink& child : box_fragment_.Children()) {
     const PhysicalFragment& child_fragment = *child;
     DCHECK(child_fragment.IsBox());
@@ -1078,29 +1183,26 @@ void BoxFragmentPainter::PaintBoxDecorationBackground(
     visual_rect = VisualRect(paint_offset);
   }
 
-  if (!suppress_box_decoration_background) {
+  if (!suppress_box_decoration_background &&
+      !(paint_info.IsPaintingBackgroundInContentsSpace() &&
+        paint_info.ShouldSkipBackground())) {
     PaintBoxDecorationBackgroundWithRect(
         contents_paint_state ? contents_paint_state->GetPaintInfo()
                              : paint_info,
         visual_rect, paint_rect, *background_client);
+
+    Element* element = DynamicTo<Element>(layout_object.GetNode());
+    if (element && element->GetRegionCaptureCropId()) {
+      paint_info.context.GetPaintController().RecordRegionCaptureData(
+          *background_client, *(element->GetRegionCaptureCropId()),
+          ToPixelSnappedRect(paint_rect));
+    }
   }
 
   if (ShouldRecordHitTestData(paint_info)) {
     ObjectPainter(layout_object)
         .RecordHitTestData(paint_info, ToPixelSnappedRect(paint_rect),
                            *background_client);
-  }
-
-  Element* element = DynamicTo<Element>(layout_object.GetNode());
-  if (element && element->GetRegionCaptureCropId() &&
-      // TODO(wangxianzhu): This is to avoid the side-effect of
-      // HitTestOpaqueness on region capture data. Verify if the side-effect
-      // really matters.
-      !(paint_info.IsPaintingBackgroundInContentsSpace() &&
-        paint_info.ShouldSkipBackground())) {
-    paint_info.context.GetPaintController().RecordRegionCaptureData(
-        *background_client, *(element->GetRegionCaptureCropId()),
-        ToPixelSnappedRect(paint_rect));
   }
 
   // Record the scroll hit test after the non-scrolling background so
@@ -1227,6 +1329,101 @@ void BoxFragmentPainter::PaintBoxDecorationBackgroundWithDecorationData(
   }
 }
 
+void BoxFragmentPainter::PaintGapDecorations(const PaintInfo& paint_info,
+                                             const PhysicalRect& paint_rect) {
+  // TODO(crbug.com/357648037): This will change when gap decorations for
+  // flexbox are implemented.
+  if (!GetPhysicalFragment().IsGrid()) {
+    return;
+  }
+  const GapFragmentData::GapGeometry* gap_geometry =
+      box_fragment_.GapGeometry();
+  CHECK(gap_geometry);
+
+  PaintGridGaps(kForRows, paint_info, paint_rect, gap_geometry->rows);
+  PaintGridGaps(kForColumns, paint_info, paint_rect, gap_geometry->columns);
+}
+
+void BoxFragmentPainter::PaintGridGaps(
+    GridTrackSizingDirection track_direction,
+    const PaintInfo& paint_info,
+    const PhysicalRect& paint_rect,
+    const GapFragmentData::GapBoundaries& gaps) {
+  const ComputedStyle& style = box_fragment_.Style();
+
+  WritingModeConverter converter(style.GetWritingDirection(),
+                                 box_fragment_.Size());
+  AutoDarkMode auto_dark_mode(
+      PaintAutoDarkMode(style, DarkModeFilter::ElementRole::kBackground));
+  BoxSide box_side = BoxSideFromGridDirection(style, track_direction);
+
+  Color rule_color;
+  EBorderStyle rule_style;
+  LayoutUnit rule_thickness;
+  if (track_direction == kForColumns) {
+    // TODO(crbug.com/357648037): We are currently only painting gaps with a
+    // single color, but we should update this to paint with all values
+    // potentially set by the author.
+    rule_color =
+        LayoutObject::ResolveColor(style, GetCSSPropertyColumnRuleColor());
+    rule_style = ComputedStyle::CollapsedBorderStyle(
+        style.ColumnRuleStyle().GetLegacyValue());
+    rule_thickness = LayoutUnit(style.ColumnRuleWidth().GetLegacyValue());
+  } else {
+    // TODO(crbug.com/357648037): Using hard coded values. These values should
+    // be retrieved from the style engine once row rules are implemented.
+    rule_color = Color(0, 128, 0);
+    rule_style = EBorderStyle::kSolid;
+    rule_thickness = LayoutUnit();
+  }
+
+  const PhysicalRect local_rect = box_fragment_.LocalRect();
+  const LayoutUnit cross_track_offset = track_direction == kForColumns
+                                            ? local_rect.offset.top
+                                            : local_rect.offset.left;
+  const LayoutUnit cross_track_size = track_direction == kForColumns
+                                          ? local_rect.size.height
+                                          : local_rect.size.width;
+
+  for (const auto& gap : gaps) {
+    CHECK(gap.start_offset);
+    CHECK(gap.end_offset);
+
+    LayoutUnit inline_start;
+    LayoutUnit inline_size;
+    LayoutUnit block_start;
+    LayoutUnit block_size;
+
+    if (track_direction == kForColumns) {
+      // For columns, paint a vertical strip at the center of the gap.
+      const LayoutUnit center =
+          (gap.start_offset.value() + gap.end_offset.value()) / 2;
+      inline_start = center - (rule_thickness / 2);
+      inline_size = rule_thickness;
+      block_start = cross_track_offset;
+      block_size = cross_track_size;
+    } else {
+      // TODO(crbug.com/357648037): For rows, paint the "full gap". This paint
+      // logic does not take row fragmentation into account, hence we expect
+      // start and end offset for row gaps to be present. This logic will be
+      // updated once fragmentation bits are implemented.
+      inline_start = cross_track_offset;
+      inline_size = cross_track_size;
+      block_start = gap.start_offset.value();
+      block_size = gap.end_offset.value() - gap.start_offset.value();
+    }
+
+    const LogicalRect gap_logical(inline_start, block_start, inline_size,
+                                  block_size);
+    PhysicalRect gap_rect = converter.ToPhysical(gap_logical);
+    gap_rect.offset += paint_rect.offset;
+
+    BoxBorderPainter::DrawBoxSide(paint_info.context,
+                                  ToPixelSnappedRect(gap_rect), box_side,
+                                  rule_color, rule_style, auto_dark_mode);
+  }
+}
+
 // TODO(kojii): This logic is kept in sync with BoxPainter. Not much efforts to
 // eliminate LayoutObject dependency were done yet.
 void BoxFragmentPainter::PaintBoxDecorationBackgroundWithRectImpl(
@@ -1316,6 +1513,14 @@ void BoxFragmentPainter::PaintBoxDecorationBackgroundWithRectImpl(
     }
   }
 
+  // TODO(crbug.com/357648037): Currently painting gap decorations after
+  // borders. This is likely to change following the resolution of the paint
+  // order issue for gap decorations.
+  if (RuntimeEnabledFeatures::CSSGapDecorationEnabled() &&
+      box_decoration_data.ShouldPaintGapDecorations()) {
+    PaintGapDecorations(paint_info, paint_rect);
+  }
+
   if (needs_end_layer)
     paint_info.context.EndLayer();
 }
@@ -1336,8 +1541,9 @@ void BoxFragmentPainter::PaintBoxDecorationBackgroundForBlockInInline(
         children->MoveToNextSkippingChildren();
         continue;
       }
-      if (fragment->IsBlockInInline())
+      if (fragment->IsBlockInInline() && !fragment->IsHiddenForPaint()) {
         PaintBoxItem(*item, *fragment, *children, paint_info, paint_offset);
+      }
     }
     children->MoveToNext();
   }
@@ -1351,8 +1557,8 @@ void BoxFragmentPainter::PaintColumnRules(const PaintInfo& paint_info,
 
   // https://www.w3.org/TR/css-multicol-1/#propdef-column-rule-style
   // interpret column-rule-style as in the collapsing border model
-  EBorderStyle rule_style =
-      ComputedStyle::CollapsedBorderStyle(style.ColumnRuleStyle());
+  EBorderStyle rule_style = ComputedStyle::CollapsedBorderStyle(
+      style.ColumnRuleStyle().GetLegacyValue());
 
   if (DrawingRecorder::UseCachedDrawingIfPossible(paint_info.context,
                                                   GetDisplayItemClient(),
@@ -1364,7 +1570,7 @@ void BoxFragmentPainter::PaintColumnRules(const PaintInfo& paint_info,
 
   const Color& rule_color =
       LayoutObject::ResolveColor(style, GetCSSPropertyColumnRuleColor());
-  LayoutUnit rule_thickness(style.ColumnRuleWidth());
+  LayoutUnit rule_thickness(style.ColumnRuleWidth().GetLegacyValue());
 
   // Count all the spanners
   int span_count = 0;
@@ -1438,8 +1644,9 @@ void BoxFragmentPainter::PaintColumnRules(const PaintInfo& paint_info,
       rule.size.width = rule_thickness;
     } else {
       // Vertical writing-mode.
+      const auto writing_direction = style.GetWritingDirection();
       LayoutUnit center;
-      if (style.IsLeftToRightDirection()) {
+      if (writing_direction.InlineEnd() == PhysicalDirection::kDown) {
         // Top to bottom.
         center = (previous_column.Y() + current_column.Bottom()) / 2;
         box_side = BoxSide::kTop;
@@ -1452,7 +1659,7 @@ void BoxFragmentPainter::PaintColumnRules(const PaintInfo& paint_info,
       LayoutUnit rule_length;
       LayoutUnit rule_left = previous_column.offset.left;
       if (!span_count) {
-        if (style.GetWritingMode() == WritingMode::kVerticalLr) {
+        if (writing_direction.BlockEnd() == PhysicalDirection::kRight) {
           const LayoutUnit column_box_right = box_fragment_.Size().width -
                                               box_fragment_.Borders().right -
                                               box_fragment_.Padding().right -
@@ -1461,7 +1668,7 @@ void BoxFragmentPainter::PaintColumnRules(const PaintInfo& paint_info,
                                                   .block_end;
           rule_length = column_box_right - previous_column.offset.left;
         } else {
-          // Vertical-rl writing-mode
+          // Vertical-rl or sideways-rl writing-mode
           const LayoutUnit column_box_left = box_fragment_.ContentOffset().left;
           rule_length = previous_column.Width() +
                         (previous_column.offset.left - column_box_left);
@@ -1569,12 +1776,10 @@ void BoxFragmentPainter::PaintInlineItems(const PaintInfo& paint_info,
   while (*cursor) {
     const FragmentItem* item = cursor->CurrentItem();
     DCHECK(item);
-    if (UNLIKELY(item->IsLayoutObjectDestroyedOrMoved())) {
+    if (item->IsLayoutObjectDestroyedOrMoved()) [[unlikely]] {
       // TODO(crbug.com/1099613): This should not happen, as long as it is
       // really layout-clean.
-      NOTREACHED_IN_MIGRATION();
-      cursor->MoveToNextSkippingChildren();
-      continue;
+      NOTREACHED();
     }
     switch (item->Type()) {
       case FragmentItem::kText:
@@ -1588,20 +1793,16 @@ void BoxFragmentPainter::PaintInlineItems(const PaintInfo& paint_info,
           PaintBoxItem(*item, *cursor, paint_info, paint_offset, parent_offset);
         cursor->MoveToNextSkippingChildren();
         break;
-      case FragmentItem::kLine:
+      case FragmentItem::kLine: {
         // Nested kLine items are used for ruby annotations.
-        if (RuntimeEnabledFeatures::RubyLineBreakableEnabled()) {
-          InlineCursor line_box_cursor = cursor->CursorForDescendants();
-          PaintInlineItems(paint_info, paint_offset, parent_offset,
-                           &line_box_cursor);
-          cursor->MoveToNextSkippingChildren();
-        } else {
-          NOTREACHED_IN_MIGRATION();
-          cursor->MoveToNext();
-        }
+        InlineCursor line_box_cursor = cursor->CursorForDescendants();
+        PaintInlineItems(paint_info, paint_offset, parent_offset,
+                         &line_box_cursor);
+        cursor->MoveToNextSkippingChildren();
         break;
+      }
       case FragmentItem::kInvalid:
-        NOTREACHED_NORETURN();
+        NOTREACHED();
     }
   }
 }
@@ -1626,11 +1827,6 @@ inline void BoxFragmentPainter::PaintLineBox(
   DCHECK_GE(line_fragment_id, FragmentItem::kInitialLineFragmentId);
   ScopedDisplayItemFragment display_item_fragment(paint_info.context,
                                                   line_fragment_id);
-  if (ShouldRecordHitTestData(paint_info)) {
-    ObjectPainter(*GetPhysicalFragment().GetLayoutObject())
-        .RecordHitTestData(paint_info, ToPixelSnappedRect(border_box),
-                           display_item_client);
-  }
 
   Element* element = DynamicTo<Element>(line_box_fragment.GetNode());
   if (element && element->GetRegionCaptureCropId()) {
@@ -1700,7 +1896,7 @@ void BoxFragmentPainter::PaintLineBoxChildItems(
       }
     }
 
-    NOTREACHED_IN_MIGRATION();
+    NOTREACHED();
   }
 }
 
@@ -1714,8 +1910,9 @@ void BoxFragmentPainter::PaintBackplate(InlineCursor* line_boxes,
   // element is visible.
   const ComputedStyle& style = GetPhysicalFragment().Style();
   if (style.ForcedColorAdjust() != EForcedColorAdjust::kAuto ||
-      style.Visibility() != EVisibility::kVisible)
+      style.Visibility() != EVisibility::kVisible) {
     return;
+  }
 
   if (DrawingRecorder::UseCachedDrawingIfPossible(
           paint_info.context, GetDisplayItemClient(),
@@ -1922,14 +2119,15 @@ BoxPainterBase::FillLayerInfo BoxFragmentPainter::GetFillLayerInfo(
     const Color& color,
     const FillLayer& bg_layer,
     BackgroundBleedAvoidance bleed_avoidance,
-    bool is_painting_background_in_contents_space) const {
+    bool is_painting_background_in_contents_space,
+    PaintFlags paint_flags) const {
   const PhysicalBoxFragment& fragment = GetPhysicalFragment();
   return BoxPainterBase::FillLayerInfo(
       fragment.GetLayoutObject()->GetDocument(), fragment.Style(),
       fragment.IsScrollContainer(), color, bg_layer, bleed_avoidance,
       box_fragment_.SidesToInclude(),
       fragment.GetLayoutObject()->IsLayoutInline(),
-      is_painting_background_in_contents_space);
+      is_painting_background_in_contents_space, paint_flags);
 }
 
 template <typename T>
@@ -1976,11 +2174,11 @@ bool BoxFragmentPainter::NodeAtPoint(HitTestResult& result,
 bool BoxFragmentPainter::NodeAtPoint(const HitTestContext& hit_test,
                                      const PhysicalOffset& physical_offset) {
   const PhysicalBoxFragment& fragment = GetPhysicalFragment();
-  // TODO(mstensho): Make sure that we never create an BoxFragmentPainter for
-  // a fragment that doesn't intersect, and turn this into a DCHECK.
-  if (!fragment.MayIntersect(*hit_test.result, hit_test.location,
-                             physical_offset))
-    return false;
+  // Creating a BoxFragmentPainter is a significant cost, especially in broad
+  // trees. Should check before getting here, whether the fragment might
+  // intersect or not.
+  DCHECK(fragment.MayIntersect(*hit_test.result, hit_test.location,
+                               physical_offset));
 
   if (!fragment.IsFirstForNode() && !CanPaintMultipleFragments(fragment))
     return false;
@@ -2051,15 +2249,16 @@ bool BoxFragmentPainter::NodeAtPoint(const HitTestContext& hit_test,
 
   // Now hit test ourselves.
   if (hit_test_self) {
-    if (UNLIKELY(!IsVisibleToHitTest(fragment,
-                                     hit_test.result->GetHitTestRequest())))
+    if (!IsVisibleToHitTest(fragment, hit_test.result->GetHitTestRequest()))
+        [[unlikely]] {
       return false;
-    if (UNLIKELY(fragment.IsOpaque()))
+    }
+    if (fragment.IsOpaque()) [[unlikely]] {
       return false;
-  } else if (UNLIKELY(fragment.IsOpaque() &&
-                      hit_test.result->HasListBasedResult() &&
-                      IsVisibleToHitTest(
-                          fragment, hit_test.result->GetHitTestRequest()))) {
+    }
+  } else if (fragment.IsOpaque() && hit_test.result->HasListBasedResult() &&
+             IsVisibleToHitTest(fragment, hit_test.result->GetHitTestRequest()))
+      [[unlikely]] {
     // Opaque fragments should not hit, but they are still ancestors in the DOM
     // tree. They should be added to the list-based result as ancestors if
     // descendants hit.
@@ -2067,8 +2266,8 @@ bool BoxFragmentPainter::NodeAtPoint(const HitTestContext& hit_test,
   }
   if (hit_test_self) {
     PhysicalRect bounds_rect(physical_offset, size);
-    if (UNLIKELY(
-            hit_test.result->GetHitTestRequest().IsHitTestVisualOverflow())) {
+    if (hit_test.result->GetHitTestRequest().IsHitTestVisualOverflow())
+        [[unlikely]] {
       // We'll include overflow from children here (in addition to self-overflow
       // caused by filters), because we want to record a match if we hit the
       // overflow of a child below the stop node. This matches legacy behavior
@@ -2077,7 +2276,7 @@ bool BoxFragmentPainter::NodeAtPoint(const HitTestContext& hit_test,
       bounds_rect = InkOverflowIncludingFilters();
       bounds_rect.Move(physical_offset);
     }
-    if (UNLIKELY(pointer_events_bounding_box)) {
+    if (pointer_events_bounding_box) [[unlikely]] {
       bounds_rect = PhysicalRect::EnclosingRect(
           GetPhysicalFragment().GetLayoutObject()->ObjectBoundingBox());
     }
@@ -2122,7 +2321,7 @@ bool BoxFragmentPainter::UpdateHitTestResultForView(
   if (!element)
     return false;
   const auto children = GetPhysicalFragment().Children();
-  auto it = base::ranges::find(children, element, &PhysicalFragment::GetNode);
+  auto it = std::ranges::find(children, element, &PhysicalFragment::GetNode);
   if (it == children.end())
     return false;
   return hit_test.AddNodeToResultWithContentOffset(
@@ -2133,9 +2332,6 @@ bool BoxFragmentPainter::HitTestAllPhases(
     HitTestResult& result,
     const HitTestLocation& hit_test_location,
     const PhysicalOffset& accumulated_offset) {
-  // TODO(mstensho): Make sure that we never create a BoxFragmentPainter for
-  // a fragment that doesn't intersect, and DCHECK for that here.
-
   // Logic taken from LayoutObject::HitTestAllPhases().
   if (NodeAtPoint(result, hit_test_location, accumulated_offset,
                   HitTestPhase::kForeground)) {
@@ -2161,15 +2357,18 @@ bool BoxFragmentPainter::HitTestTextItem(const HitTestContext& hit_test,
                                          const InlineBackwardCursor& cursor) {
   DCHECK(text_item.IsText());
 
-  if (hit_test.phase != HitTestPhase::kForeground)
+  if (hit_test.phase != HitTestPhase::kForeground) {
     return false;
-  if (!IsVisibleToHitTest(text_item, hit_test.result->GetHitTestRequest()))
+  }
+  if (!IsVisibleToHitTest(text_item, hit_test.result->GetHitTestRequest())) {
     return false;
+  }
 
   if (text_item.IsSvgText() && text_item.HasSvgTransformForBoundingBox()) {
     const gfx::QuadF quad = text_item.SvgUnscaledQuad();
-    if (!hit_test.location.Intersects(quad))
+    if (!hit_test.location.Intersects(quad)) {
       return false;
+    }
     return hit_test.AddNodeToResultWithContentOffset(
         text_item.NodeForHitTest(), cursor.ContainerFragment(), quad,
         hit_test.inline_root_offset);
@@ -2179,13 +2378,15 @@ bool BoxFragmentPainter::HitTestTextItem(const HitTestContext& hit_test,
       DynamicTo<LayoutTextCombine>(box_fragment_.GetLayoutObject());
 
   // TODO(layout-dev): Clip to line-top/bottom.
-  const PhysicalRect rect =
-      UNLIKELY(text_combine)
-          ? text_combine->ComputeTextBoundsRectForHitTest(
-                text_item, hit_test.inline_root_offset)
-          : text_item.ComputeTextBoundsRectForHitTest(
-                hit_test.inline_root_offset,
-                hit_test.result->GetHitTestRequest().IsHitTestVisualOverflow());
+  PhysicalRect rect;
+  if (text_combine) [[unlikely]] {
+    rect = text_combine->ComputeTextBoundsRectForHitTest(
+        text_item, hit_test.inline_root_offset);
+  } else {
+    rect = text_item.ComputeTextBoundsRectForHitTest(
+        hit_test.inline_root_offset,
+        hit_test.result->GetHitTestRequest().IsHitTestVisualOverflow());
+  }
   if (!hit_test.location.Intersects(rect))
     return false;
 
@@ -2354,7 +2555,7 @@ bool BoxFragmentPainter::HitTestChildBoxItem(
 bool BoxFragmentPainter::HitTestChildren(
     const HitTestContext& hit_test,
     const PhysicalOffset& accumulated_offset) {
-  if (UNLIKELY(inline_box_cursor_)) {
+  if (inline_box_cursor_) [[unlikely]] {
     InlineCursor descendants = inline_box_cursor_->CursorForDescendants();
     if (descendants) {
       return HitTestChildren(hit_test, GetPhysicalFragment(), descendants,
@@ -2398,8 +2599,9 @@ bool BoxFragmentPainter::HitTestBlockChildren(
   auto children = box_fragment_.Children();
   for (const PhysicalFragmentLink& child : base::Reversed(children)) {
     const auto& block_child = To<PhysicalBoxFragment>(*child);
-    if (UNLIKELY(block_child.IsLayoutObjectDestroyedOrMoved()))
+    if (block_child.IsLayoutObjectDestroyedOrMoved()) [[unlikely]] {
       continue;
+    }
     if (block_child.HasSelfPaintingLayer() || block_child.IsFloating())
       continue;
 
@@ -2480,12 +2682,10 @@ bool BoxFragmentPainter::HitTestItemsChildren(
   for (InlineBackwardCursor cursor(children); cursor;) {
     const FragmentItem* item = cursor.Current().Item();
     DCHECK(item);
-    if (UNLIKELY(item->IsLayoutObjectDestroyedOrMoved())) {
+    if (item->IsLayoutObjectDestroyedOrMoved()) [[unlikely]] {
       // TODO(crbug.com/1099613): This should not happen, as long as it is
       // really layout-clean.
-      NOTREACHED_IN_MIGRATION();
-      cursor.MoveToPreviousSibling();
-      continue;
+      NOTREACHED();
     }
 
     if (item->HasSelfPaintingLayer()) {
@@ -2506,7 +2706,6 @@ bool BoxFragmentPainter::HitTestItemsChildren(
           return true;
         }
       } else {  // Nested kLine items for ruby annotations.
-        DCHECK(RuntimeEnabledFeatures::RubyLineBreakableEnabled());
         if (HitTestItemsChildren(hit_test, container,
                                  cursor.CursorForDescendants())) {
           return true;
@@ -2516,7 +2715,7 @@ bool BoxFragmentPainter::HitTestItemsChildren(
       if (HitTestChildBoxItem(hit_test, container, *item, cursor))
         return true;
     } else {
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
     }
 
     cursor.MoveToPreviousSibling();
@@ -2558,8 +2757,9 @@ bool BoxFragmentPainter::HitTestFloatingChildren(
   auto children = container.Children();
   for (const PhysicalFragmentLink& child : base::Reversed(children)) {
     const PhysicalFragment& child_fragment = *child.fragment;
-    if (UNLIKELY(child_fragment.IsLayoutObjectDestroyedOrMoved()))
+    if (child_fragment.IsLayoutObjectDestroyedOrMoved()) [[unlikely]] {
       continue;
+    }
     if (child_fragment.HasSelfPaintingLayer())
       continue;
 
@@ -2606,8 +2806,9 @@ bool BoxFragmentPainter::HitTestFloatingChildItems(
        cursor.MoveToPreviousSibling()) {
     const FragmentItem* item = cursor.Current().Item();
     DCHECK(item);
-    if (UNLIKELY(item->IsLayoutObjectDestroyedOrMoved()))
+    if (item->IsLayoutObjectDestroyedOrMoved()) [[unlikely]] {
       continue;
+    }
     if (item->Type() == FragmentItem::kBox) {
       if (const PhysicalBoxFragment* child_box = item->BoxFragment()) {
         if (child_box->HasSelfPaintingLayer())

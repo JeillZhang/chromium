@@ -27,26 +27,41 @@ class DataSharingServiceAndroid : public base::SupportsUserData::Data {
   ~DataSharingServiceAndroid() override;
 
   // DataSharingService Java API methods, implemented by native service:
-  void ReadAllGroups(JNIEnv* env, const JavaParamRef<jobject>& j_callback);
   void ReadGroup(JNIEnv* env,
                  const JavaParamRef<jstring>& group_id,
                  const JavaParamRef<jobject>& j_callback);
   void CreateGroup(JNIEnv* env,
                    const JavaParamRef<jstring>& group_name,
                    const JavaParamRef<jobject>& j_callback);
-  void DeleteGroup(JNIEnv* env,
-                   const JavaParamRef<jstring>& group_id,
-                   const JavaParamRef<jobject>& j_callback);
   void InviteMember(JNIEnv* env,
                     const JavaParamRef<jstring>& group_id,
                     const JavaParamRef<jstring>& invitee_email,
                     const JavaParamRef<jobject>& j_callback);
+  void AddMember(JNIEnv* env,
+                 const JavaParamRef<jstring>& group_id,
+                 const JavaParamRef<jstring>& access_token,
+                 const JavaParamRef<jobject>& j_callback);
   void RemoveMember(JNIEnv* env,
                     const JavaParamRef<jstring>& group_id,
                     const JavaParamRef<jstring>& member_email,
                     const JavaParamRef<jobject>& j_callback);
   bool IsEmptyService(JNIEnv* env, const JavaParamRef<jobject>& j_caller);
   ScopedJavaLocalRef<jobject> GetNetworkLoader(JNIEnv* env);
+  ScopedJavaLocalRef<jobject> GetDataSharingUrl(
+      JNIEnv* env,
+      const JavaParamRef<jstring>& group_id,
+      const JavaParamRef<jstring>& access_token);
+  ScopedJavaLocalRef<jobject> ParseDataSharingUrl(
+      JNIEnv* env,
+      const JavaParamRef<jobject>& j_url);
+  void EnsureGroupVisibility(JNIEnv* env,
+                             const JavaParamRef<jstring>& group_id,
+                             const JavaParamRef<jobject>& j_callback);
+  void GetSharedEntitiesPreview(JNIEnv* env,
+                                const JavaParamRef<jstring>& group_id,
+                                const JavaParamRef<jstring>& access_token,
+                                const JavaParamRef<jobject>& j_callback);
+  ScopedJavaLocalRef<jobject> GetUiDelegate(JNIEnv* env);
 
   // Returns the DataSharingServiceImpl java object.
   ScopedJavaLocalRef<jobject> GetJavaObject();

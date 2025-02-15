@@ -9,11 +9,11 @@
 
 #include "base/profiler/native_unwinder_android.h"
 
-#include <sys/mman.h>
-
 #include <inttypes.h>
 #include <stdio.h>  // For printf address.
 #include <string.h>
+#include <sys/mman.h>
+
 #include <algorithm>
 #include <iterator>
 #include <vector>
@@ -25,6 +25,7 @@
 #include "base/profiler/native_unwinder_android_map_delegate.h"
 #include "base/profiler/native_unwinder_android_memory_regions_map_impl.h"
 #include "base/profiler/register_context.h"
+#include "base/profiler/register_context_registers.h"
 #include "base/profiler/stack_buffer.h"
 #include "base/profiler/stack_copier_signal.h"
 #include "base/profiler/stack_sampler.h"
@@ -152,8 +153,7 @@ TEST(NativeUnwinderAndroidTest, PlainFunction) {
       CreateMemoryRegionsMap());
 
   ModuleCache module_cache;
-  auto unwinder = std::make_unique<NativeUnwinderAndroid>(
-      0, &map_delegate, /*is_java_name_hashing_enabled=*/false);
+  auto unwinder = std::make_unique<NativeUnwinderAndroid>(0, &map_delegate);
 
   unwinder->Initialize(&module_cache);
   std::vector<Frame> sample = CaptureScenario(
@@ -169,8 +169,9 @@ TEST(NativeUnwinderAndroidTest, PlainFunction) {
       }));
 
   // Check that all the modules are valid.
-  for (const auto& frame : sample)
+  for (const auto& frame : sample) {
     EXPECT_NE(nullptr, frame.module);
+  }
 
   // The stack should contain a full unwind.
   ExpectStackContains(sample, {scenario.GetWaitForSampleAddressRange(),
@@ -192,8 +193,7 @@ TEST(NativeUnwinderAndroidTest, Alloca) {
       CreateMemoryRegionsMap());
 
   ModuleCache module_cache;
-  auto unwinder = std::make_unique<NativeUnwinderAndroid>(
-      0, &map_delegate, /*is_java_name_hashing_enabled=*/false);
+  auto unwinder = std::make_unique<NativeUnwinderAndroid>(0, &map_delegate);
 
   unwinder->Initialize(&module_cache);
   std::vector<Frame> sample = CaptureScenario(
@@ -209,8 +209,9 @@ TEST(NativeUnwinderAndroidTest, Alloca) {
       }));
 
   // Check that all the modules are valid.
-  for (const auto& frame : sample)
+  for (const auto& frame : sample) {
     EXPECT_NE(nullptr, frame.module);
+  }
 
   // The stack should contain a full unwind.
   ExpectStackContains(sample, {scenario.GetWaitForSampleAddressRange(),
@@ -233,8 +234,7 @@ TEST(NativeUnwinderAndroidTest, OtherLibrary) {
   NativeUnwinderAndroidMapDelegateForTesting map_delegate(
       CreateMemoryRegionsMap());
   ModuleCache module_cache;
-  auto unwinder = std::make_unique<NativeUnwinderAndroid>(
-      0, &map_delegate, /*is_java_name_hashing_enabled=*/false);
+  auto unwinder = std::make_unique<NativeUnwinderAndroid>(0, &map_delegate);
 
   unwinder->Initialize(&module_cache);
   std::vector<Frame> sample = CaptureScenario(
@@ -271,8 +271,7 @@ TEST(NativeUnwinderAndroidTest, ExcludeOtherLibrary) {
           .get();
   ASSERT_NE(nullptr, other_library_map);
   auto unwinder = std::make_unique<NativeUnwinderAndroid>(
-      other_library_map->start(), &map_delegate,
-      /*is_java_name_hashing_enabled=*/false);
+      other_library_map->start(), &map_delegate);
   unwinder->Initialize(&module_cache);
 
   std::vector<Frame> sample = CaptureScenario(
@@ -309,14 +308,13 @@ TEST(NativeUnwinderAndroidTest, ResumeUnwinding) {
   // NativeUnwinderAndroid work with other unwinders, but doesn't reproduce what
   // happens in production.
   ModuleCache module_cache_for_all;
-  auto unwinder_for_all = std::make_unique<NativeUnwinderAndroid>(
-      0, &map_delegate, /*is_java_name_hashing_enabled=*/false);
+  auto unwinder_for_all =
+      std::make_unique<NativeUnwinderAndroid>(0, &map_delegate);
   unwinder_for_all->Initialize(&module_cache_for_all);
 
   ModuleCache module_cache_for_native;
   auto unwinder_for_native = std::make_unique<NativeUnwinderAndroid>(
-      reinterpret_cast<uintptr_t>(&__executable_start), &map_delegate,
-      /*is_java_name_hashing_enabled=*/false);
+      reinterpret_cast<uintptr_t>(&__executable_start), &map_delegate);
   unwinder_for_native->Initialize(&module_cache_for_native);
 
   ModuleCache module_cache_for_chrome;
@@ -327,8 +325,7 @@ TEST(NativeUnwinderAndroidTest, ResumeUnwinding) {
           .get();
   ASSERT_NE(nullptr, other_library_map);
   auto unwinder_for_chrome = std::make_unique<NativeUnwinderAndroid>(
-      other_library_map->start(), &map_delegate,
-      /*is_java_name_hashing_enabled=*/false);
+      other_library_map->start(), &map_delegate);
   unwinder_for_chrome->Initialize(&module_cache_for_chrome);
 
   std::vector<Frame> sample = CaptureScenario(
@@ -377,7 +374,8 @@ TEST(NativeUnwinderAndroidTest, ResumeUnwinding) {
 }
 
 // Checks that java frames can be unwound through.
-TEST(NativeUnwinderAndroidTest, JavaFunction) {
+// TODO(crbug.com/362210993): Re-enable test.
+TEST(NativeUnwinderAndroidTest, DISABLED_JavaFunction) {
   auto* build_info = base::android::BuildInfo::GetInstance();
   const auto sdk_version = build_info->sdk_int();
 
@@ -393,8 +391,7 @@ TEST(NativeUnwinderAndroidTest, JavaFunction) {
       CreateMemoryRegionsMap());
 
   ModuleCache module_cache;
-  auto unwinder = std::make_unique<NativeUnwinderAndroid>(
-      0, &map_delegate, /*is_java_name_hashing_enabled=*/false);
+  auto unwinder = std::make_unique<NativeUnwinderAndroid>(0, &map_delegate);
 
   unwinder->Initialize(&module_cache);
   std::vector<Frame> sample = CaptureScenario(
@@ -410,8 +407,9 @@ TEST(NativeUnwinderAndroidTest, JavaFunction) {
       }));
 
   // Check that all the modules are valid.
-  for (const auto& frame : sample)
+  for (const auto& frame : sample) {
     EXPECT_NE(nullptr, frame.module);
+  }
 
   // The stack should contain a full unwind.
   ExpectStackContains(sample, {scenario.GetWaitForSampleAddressRange(),
@@ -461,8 +459,7 @@ TEST(NativeUnwinderAndroidTest, ModuleDebugBasenameForNonElf) {
   memory_regions_map->SetMapsForTesting(std::move(maps));
   NativeUnwinderAndroidMapDelegateForTesting map_delegate(
       std::move(memory_regions_map));
-  auto unwinder = std::make_unique<NativeUnwinderAndroid>(
-      0, &map_delegate, /*is_java_name_hashing_enabled=*/false);
+  auto unwinder = std::make_unique<NativeUnwinderAndroid>(0, &map_delegate);
   unwinder->Initialize(&module_cache);
 
   const ModuleCache::Module* module = module_cache.GetModuleForAddress(0x1000u);
@@ -484,8 +481,7 @@ TEST(NativeUnwinderAndroidTest, ModulesCreatedOnlyForExecutableRegions) {
   NativeUnwinderAndroidMapDelegateForTesting map_delegate(
       std::move(memory_regions_map));
   ModuleCache module_cache;
-  auto unwinder = std::make_unique<NativeUnwinderAndroid>(
-      0, &map_delegate, /*is_java_name_hashing_enabled=*/false);
+  auto unwinder = std::make_unique<NativeUnwinderAndroid>(0, &map_delegate);
   unwinder->Initialize(&module_cache);
 
   const ModuleCache::Module* module1 =
@@ -509,8 +505,7 @@ TEST(NativeUnwinderAndroidTest,
 
   {
     ModuleCache module_cache;
-    auto unwinder = std::make_unique<NativeUnwinderAndroid>(
-        0, &map_delegate, /*is_java_name_hashing_enabled=*/false);
+    auto unwinder = std::make_unique<NativeUnwinderAndroid>(0, &map_delegate);
     unwinder->Initialize(&module_cache);
     EXPECT_EQ(1u, map_delegate.acquire_count());
     EXPECT_EQ(0u, map_delegate.release_count());

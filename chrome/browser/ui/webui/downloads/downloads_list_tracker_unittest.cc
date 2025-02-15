@@ -21,6 +21,7 @@
 #include "chrome/browser/ui/webui/downloads/mock_downloads_page.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/download/public/common/download_item.h"
+#include "components/download/public/common/download_item_rename_handler.h"
 #include "components/download/public/common/mock_download_item.h"
 #include "content/public/browser/download_item_utils.h"
 #include "content/public/test/browser_task_environment.h"
@@ -55,6 +56,16 @@ bool ShouldShowItem(const DownloadItem& item) {
   return model.ShouldShowInShelf();
 }
 
+class FakeRenameHandler : public download::DownloadItemRenameHandler {
+ public:
+  explicit FakeRenameHandler(DownloadItem* download_item)
+      : DownloadItemRenameHandler(download_item) {}
+  ~FakeRenameHandler() override = default;
+
+  // DownloadItemRenameHandler interface:
+  bool ShowRenameProgress() override { return true; }
+};
+
 }  // namespace
 
 // A test version of DownloadsListTracker.
@@ -65,10 +76,10 @@ class TestDownloadsListTracker : public DownloadsListTracker {
       : DownloadsListTracker(manager,
                              std::move(page),
                              base::BindRepeating(&ShouldShowItem)) {}
-  ~TestDownloadsListTracker() override {}
+  ~TestDownloadsListTracker() override = default;
 
-  using DownloadsListTracker::IsIncognito;
   using DownloadsListTracker::GetItemForTesting;
+  using DownloadsListTracker::IsIncognito;
   using DownloadsListTracker::SetChunkSizeForTesting;
 
  protected:
@@ -83,18 +94,20 @@ class TestDownloadsListTracker : public DownloadsListTracker {
 // A fixture to test DownloadsListTracker.
 class DownloadsListTrackerTest : public testing::Test {
  public:
-  DownloadsListTrackerTest() {}
+  DownloadsListTrackerTest() = default;
 
   ~DownloadsListTrackerTest() override {
-    for (const auto& mock_item : mock_items_)
+    for (const auto& mock_item : mock_items_) {
       testing::Mock::VerifyAndClear(mock_item.get());
+    }
   }
 
   // testing::Test:
   void SetUp() override {
     ON_CALL(manager_, GetBrowserContext()).WillByDefault(Return(&profile_));
-    ON_CALL(manager_, GetAllDownloads(_)).WillByDefault(
-        testing::Invoke(this, &DownloadsListTrackerTest::GetAllDownloads));
+    ON_CALL(manager_, GetAllDownloads(_))
+        .WillByDefault(
+            testing::Invoke(this, &DownloadsListTrackerTest::GetAllDownloads));
   }
 
   MockDownloadItem* CreateMock(uint64_t id, const base::Time& started) {
@@ -111,6 +124,7 @@ class DownloadsListTrackerTest : public testing::Test {
         .WillByDefault(ReturnRefOfCopy(GURL("https://example.test")));
     ON_CALL(*new_item, GetReferrerUrl())
         .WillByDefault(ReturnRefOfCopy(GURL("https://referrerexample.test")));
+    ON_CALL(*new_item, HasUserGesture()).WillByDefault(Return(true));
 
     content::DownloadItemUtils::AttachInfoForTesting(new_item, profile(),
                                                      nullptr);
@@ -137,8 +151,9 @@ class DownloadsListTrackerTest : public testing::Test {
 
  private:
   void GetAllDownloads(DownloadVector* result) {
-    for (const auto& mock_item : mock_items_)
+    for (const auto& mock_item : mock_items_) {
       result->push_back(mock_item.get());
+    }
   }
 
   // NOTE: The initialization order of these members matters.
@@ -169,12 +184,14 @@ TEST_F(DownloadsListTrackerTest, SetSearchTerms) {
 }
 
 MATCHER_P(MatchIds, expected, "") {
-  if (arg.size() != expected.size())
+  if (arg.size() != expected.size()) {
     return false;
+  }
 
   for (size_t i = 0; i < arg.size(); ++i) {
-    if (arg[i]->id != base::NumberToString(expected[i]))
+    if (arg[i]->id != base::NumberToString(expected[i])) {
       return false;
+    }
   }
   return true;
 }
@@ -259,8 +276,9 @@ TEST_F(DownloadsListTrackerTest, StartExcludesHiddenItems) {
 
 TEST_F(DownloadsListTrackerTest, Incognito) {
   testing::NiceMock<content::MockDownloadManager> incognito_manager;
-  ON_CALL(incognito_manager, GetBrowserContext()).WillByDefault(Return(
-      TestingProfile::Builder().BuildIncognito(profile())));
+  ON_CALL(incognito_manager, GetBrowserContext())
+      .WillByDefault(
+          Return(TestingProfile::Builder().BuildIncognito(profile())));
 
   MockDownloadItem item;
   EXPECT_CALL(item, GetId()).WillRepeatedly(Return(0));
@@ -583,6 +601,21 @@ TEST_F(DownloadsListTrackerTest,
   downloads::mojom::DataPtr data = tracker->CreateDownloadData(item);
   EXPECT_FALSE(data->referrer_url);
   EXPECT_EQ(data->display_referrer_url, expected);
+}
+
+TEST_F(DownloadsListTrackerTest, RenamingProgress) {
+  MockDownloadItem* item = CreateNextItem();
+  FakeRenameHandler renamer(item);
+  ON_CALL(*item, GetRenameHandler()).WillByDefault(Return(&renamer));
+  ON_CALL(*item, GetReceivedBytes()).WillByDefault(Return(10));
+  ON_CALL(*item, GetUploadedBytes()).WillByDefault(Return(4));
+  ON_CALL(*item, GetTotalBytes()).WillByDefault(Return(10));
+
+  auto tracker = std::make_unique<DownloadsListTracker>(
+      manager(), page_.BindAndGetRemote());
+
+  downloads::mojom::DataPtr data = tracker->CreateDownloadData(item);
+  EXPECT_EQ(data->percent, 70);
 }
 
 #if BUILDFLAG(FULL_SAFE_BROWSING)

@@ -27,7 +27,6 @@ public class ActionChipsProcessor {
     private @Nullable OmniboxAction mExecutedAction;
 
     /**
-     * @param context An Android context.
      * @param suggestionHost Component receiving suggestion events.
      */
     public ActionChipsProcessor(@NonNull SuggestionHost suggestionHost) {
@@ -80,6 +79,9 @@ public class ActionChipsProcessor {
                             .with(ChipProperties.CLICK_HANDLER, m -> executeAction(chip, position))
                             .with(ChipProperties.ICON, chip.icon.iconRes)
                             .with(ChipProperties.APPLY_ICON_TINT, chip.icon.tintWithTextColor)
+                            .with(
+                                    ChipProperties.PRIMARY_TEXT_APPEARANCE,
+                                    chip.primaryTextAppearance)
                             .build();
 
             modelList.add(new ListItem(ActionChipsProperties.ViewType.CHIP, chipModel));

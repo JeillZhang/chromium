@@ -4,6 +4,8 @@
 
 #include "chrome/browser/enterprise/reporting/extension_request/extension_request_notification.h"
 
+#include <array>
+
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/notifications/notification_display_service_tester.h"
@@ -26,13 +28,21 @@ constexpr char kFakeExtensionId[] = "fake-extension-id";
 
 // The elements order of array below must match the order in enum
 // ExtensionRequestNotification::NotifyType.
-const char* const kNotificationIds[] = {"extension_approved_notificaiton",
-                                        "extension_rejected_notificaiton",
-                                        "extension_installed_notificaiton"};
-const char* const kNotificationTitleKeywords[] = {"approved", "rejected",
-                                                  "installed"};
-const char* const kNotificationBodyKeywords[] = {"to install", "to view",
-                                                 "to view"};
+const auto kNotificationIds = std::to_array<const char*>({
+    "extension_approved_notificaiton",
+    "extension_rejected_notificaiton",
+    "extension_installed_notificaiton",
+});
+const auto kNotificationTitleKeywords = std::to_array<const char*>({
+    "approved",
+    "rejected",
+    "installed",
+});
+const auto kNotificationBodyKeywords = std::to_array<const char*>({
+    "to install",
+    "to view",
+    "to view",
+});
 
 void OnNotificationClosed(bool expected_by_user, bool by_user) {
   EXPECT_EQ(expected_by_user, by_user);

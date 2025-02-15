@@ -27,6 +27,11 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/platform/fonts/simple_font_data.h"
 
 #include <unicode/utf16.h>
@@ -44,6 +49,7 @@
 #include "third_party/blink/renderer/platform/fonts/opentype/open_type_baseline_metrics.h"
 #include "third_party/blink/renderer/platform/fonts/opentype/open_type_vertical_data.h"
 #include "third_party/blink/renderer/platform/fonts/shaping/harfbuzz_face.h"
+#include "third_party/blink/renderer/platform/fonts/shaping/ng_shape_cache.h"
 #include "third_party/blink/renderer/platform/fonts/skia/skia_text_metrics.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/partitions.h"
 #include "third_party/blink/renderer/platform/wtf/math_extras.h"
@@ -59,7 +65,7 @@
 #include "ui/gfx/geometry/skia_conversions.h"
 #include "v8/include/v8.h"
 
-#if !BUILDFLAG(USE_SYSTEM_FREETYPE)
+#if !BUILDFLAG(USE_SYSTEM_FREETYPE) && BUILDFLAG(ENABLE_FREETYPE)
 #include "third_party/freetype/src/src/autofit/afws-decl.h"
 #endif
 
@@ -68,11 +74,12 @@ namespace blink {
 constexpr float kSmallCapsFontSizeMultiplier = 0.7f;
 constexpr float kEmphasisMarkFontSizeMultiplier = 0.5f;
 
-#if !BUILDFLAG(USE_SYSTEM_FREETYPE)
+#if !BUILDFLAG(USE_SYSTEM_FREETYPE) && BUILDFLAG(ENABLE_FREETYPE)
 constexpr int32_t kFontObjectsMemoryConsumption =
     std::max(sizeof(AF_LatinMetricsRec), sizeof(AF_CJKMetricsRec));
 #else
 // sizeof(AF_LatinMetricsRec) = 2128
+// TODO(drott): Measure a new number for Fontations.
 constexpr int32_t kFontObjectsMemoryConsumption = 2128;
 #endif
 
@@ -81,6 +88,9 @@ SimpleFontData::SimpleFontData(const FontPlatformData* platform_data,
                                bool subpixel_ascent_descent,
                                const FontMetricsOverride& metrics_override)
     : platform_data_(platform_data),
+      shape_cache_(RuntimeEnabledFeatures::LayoutNGShapeCacheEnabled()
+                       ? MakeGarbageCollected<NGShapeCache>(this)
+                       : nullptr),
       font_(platform_data->size() ? platform_data->CreateSkFont()
                                   : skia::DefaultFont()),
       custom_font_data_(custom_data) {
@@ -95,8 +105,7 @@ SimpleFontData::SimpleFontData(const FontPlatformData* platform_data,
   // that we are informing GC about external allocated memory using
   // style_metrics_size as the font memory consumption.
   if (v8::Isolate* isolate = v8::Isolate::TryGetCurrent()) {
-    isolate->AdjustAmountOfExternalAllocatedMemory(
-        kFontObjectsMemoryConsumption);
+    external_memory_accounter_.Increase(isolate, kFontObjectsMemoryConsumption);
   }
   PlatformInit(subpixel_ascent_descent, metrics_override);
   PlatformGlyphInit();
@@ -104,9 +113,17 @@ SimpleFontData::SimpleFontData(const FontPlatformData* platform_data,
 
 SimpleFontData::~SimpleFontData() {
   if (v8::Isolate* isolate = v8::Isolate::TryGetCurrent()) {
-    isolate->AdjustAmountOfExternalAllocatedMemory(
-        -kFontObjectsMemoryConsumption);
+    external_memory_accounter_.Decrease(isolate, kFontObjectsMemoryConsumption);
   }
+}
+
+void SimpleFontData::Trace(Visitor* visitor) const {
+  visitor->Trace(platform_data_);
+  visitor->Trace(shape_cache_);
+  visitor->Trace(small_caps_);
+  visitor->Trace(emphasis_mark_);
+  visitor->Trace(custom_font_data_);
+  FontData::Trace(visitor);
 }
 
 void SimpleFontData::PlatformInit(bool subpixel_ascent_descent,
@@ -339,8 +356,8 @@ static std::pair<int16_t, int16_t> TypoAscenderAndDescender(
                                        sizeof(buffer), buffer);
   if (size == sizeof(buffer)) {
     // The buffer values are in big endian.
-    return std::make_pair(base::numerics::ByteSwap(buffer[0]),
-                          -base::numerics::ByteSwap(buffer[1]));
+    return std::make_pair(base::ByteSwap(buffer[0]),
+                          -base::ByteSwap(buffer[1]));
   }
   return std::make_pair(0, 0);
 }
@@ -402,8 +419,7 @@ LayoutUnit SimpleFontData::VerticalPosition(
     case FontVerticalPositionType::BottomOfEmHeight:
       return -NormalizedTypoDescent(baseline_type);
   }
-  NOTREACHED_IN_MIGRATION();
-  return LayoutUnit();
+  NOTREACHED();
 }
 
 const std::optional<float>& SimpleFontData::IdeographicAdvanceWidth() const {
@@ -423,7 +439,6 @@ const std::optional<float>& SimpleFontData::IdeographicAdvanceHeight() const {
     if (const Glyph cjk_water_glyph = GlyphForCharacter(kCjkWaterCharacter)) {
       const HarfBuzzFace* hb_face = platform_data_->GetHarfBuzzFace();
       const OpenTypeVerticalData& vertical_data = hb_face->VerticalData();
-      has_vertical_metrics_ = vertical_data.HasVerticalMetrics();
       ideographic_advance_height_ =
           vertical_data.AdvanceHeight(cjk_water_glyph);
     }

@@ -11,6 +11,9 @@
 #include "base/no_destructor.h"
 #include "components/embedder_support/android/metrics/features.h"
 #include "components/safe_browsing/core/common/features.h"
+#include "components/sensitive_content/features.h"
+#include "components/viz/common/features.h"
+#include "content/public/common/content_features.h"
 
 // Must come after all headers that specialize FromJniType() / ToJniType().
 #include "android_webview/browser_jni_headers/AwFeatureMap_jni.h"
@@ -23,9 +26,11 @@ namespace {
 // android_webview/common/aw_features.cc or in other locations in the code base
 // (e.g. content/, components/, etc).
 const base::Feature* const kFeaturesExposedToJava[] = {
-    &features::kWebViewDisplayCutout,
-    &features::kWebViewExitReasonMetric,
+    &features::kWebViewBackForwardCache,
+    &features::kWebViewFileSystemAccess,
+    &::features::kWebViewFrameRateHints,
     &features::kWebViewInvokeZoomPickerOnGSU,
+    &features::kWebViewLazyFetchHandWritingIcon,
     &features::kWebViewMixedContentAutoupgrades,
     &features::kWebViewTestFeature,
     &features::kWebViewUseMetricsUploadService,
@@ -33,26 +38,31 @@ const base::Feature* const kFeaturesExposedToJava[] = {
     &features::kWebViewXRequestedWithHeaderControl,
     &features::kWebViewRestrictSensitiveContent,
     &metrics::kAndroidMetricsAsyncMetricLogging,
-    &features::kWebViewZoomKeyboardShortcuts,
-    &features::kWebViewClearFunctorInBackground,
     &safe_browsing::kHashPrefixRealTimeLookups,
-    &features::kWebViewSupervisedUserSiteDetection,
     &features::kWebViewSupervisedUserSiteBlock,
     &base::features::kCollectAndroidFrameTimelineMetrics,
     &features::kWebViewMediaIntegrityApiBlinkExtension,
-    &safe_browsing::kSafeBrowsingNewGmsApiForBrowseUrlDatabaseCheck,
+    &features::kWebViewSeparateResourceContext,
     &features::kWebViewMuteAudio,
     &features::kWebViewUseInitialNetworkStateAtStartup,
     &features::kWebViewReduceUAAndroidVersionDeviceModel,
     &features::kWebViewEnableCrash,
     &features::kWebViewPreloadClasses,
+    &features::kWebViewPrefetchNativeLibrary,
     &features::kWebViewDoNotSendAccessibilityEventsOnGSU,
+    &features::kWebViewHyperlinkContextMenu,
+    &features::kWebViewDisableCHIPS,
+    &base::features::kPostGetMyMemoryStateToBackground,
+    &sensitive_content::features::kSensitiveContent,
+    &features::kWebViewWebauthn,
+    &::features::kPrefetchBrowserInitiatedTriggers,
+    &features::kWebViewPartitionedCookiesExcluded,
 };
 
 // static
 base::android::FeatureMap* GetFeatureMap() {
-  static base::NoDestructor<base::android::FeatureMap> kFeatureMap(std::vector(
-      std::begin(kFeaturesExposedToJava), std::end(kFeaturesExposedToJava)));
+  static base::NoDestructor<base::android::FeatureMap> kFeatureMap(
+      kFeaturesExposedToJava);
   return kFeatureMap.get();
 }
 

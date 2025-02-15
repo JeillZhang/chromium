@@ -23,7 +23,9 @@
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/extensions/extension_install_error_menu_item_id_provider.h"
 #include "chrome/browser/extensions/extension_install_prompt_show_params.h"
+#include "chrome/browser/extensions/extension_management.h"
 #include "chrome/browser/extensions/extension_service.h"
+#include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/extensions/external_install_manager.h"
 #include "chrome/browser/extensions/webstore_data_fetcher.h"
 #include "chrome/browser/profiles/profile.h"
@@ -143,8 +145,7 @@ ExternalInstallMenuAlert::ExternalInstallMenuAlert(ExternalInstallError* error)
     : error_(error) {
 }
 
-ExternalInstallMenuAlert::~ExternalInstallMenuAlert() {
-}
+ExternalInstallMenuAlert::~ExternalInstallMenuAlert() = default;
 
 GlobalError::Severity ExternalInstallMenuAlert::GetSeverity() {
   return SEVERITY_LOW;
@@ -171,12 +172,11 @@ bool ExternalInstallMenuAlert::HasBubbleView() {
 }
 
 bool ExternalInstallMenuAlert::HasShownBubbleView() {
-  NOTREACHED_IN_MIGRATION();
-  return true;
+  NOTREACHED();
 }
 
 void ExternalInstallMenuAlert::ShowBubbleView(Browser* browser) {
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 GlobalErrorBubbleViewBase* ExternalInstallMenuAlert::GetBubbleView() {
@@ -194,8 +194,7 @@ ExternalInstallBubbleAlert::ExternalInstallBubbleAlert(
   DCHECK(prompt_);
 }
 
-ExternalInstallBubbleAlert::~ExternalInstallBubbleAlert() {
-}
+ExternalInstallBubbleAlert::~ExternalInstallBubbleAlert() = default;
 
 GlobalError::Severity ExternalInstallBubbleAlert::GetSeverity() {
   return SEVERITY_LOW;
@@ -223,7 +222,8 @@ void ExternalInstallBubbleAlert::ExecuteMenuItem(Browser* browser) {
 std::u16string ExternalInstallBubbleAlert::GetBubbleViewTitle() {
   return l10n_util::GetStringFUTF16(
       IDS_EXTENSION_EXTERNAL_INSTALL_ALERT_BUBBLE_TITLE,
-      base::UTF8ToUTF16(prompt_->extension()->name()));
+      extensions::util::GetFixupExtensionNameForUIDisplay(
+          prompt_->extension()->name()));
 }
 
 std::vector<std::u16string>
@@ -296,11 +296,21 @@ ExternalInstallError::ExternalInstallError(
   prompt_ = std::make_unique<ExtensionInstallPrompt::Prompt>(
       ExtensionInstallPrompt::EXTERNAL_INSTALL_PROMPT);
 
-  webstore_data_fetcher_ =
-      std::make_unique<WebstoreDataFetcher>(this, GURL(), extension_id_);
-  webstore_data_fetcher_->Start(browser_context_->GetDefaultStoragePartition()
-                                    ->GetURLLoaderFactoryForBrowserProcess()
-                                    .get());
+  const Extension* extension = GetExtension();
+  ExtensionManagement* extension_management =
+      ExtensionManagementFactory::GetForBrowserContext(browser_context_);
+
+  // Only make a call to fetch webstore data if the `extension` updates from the
+  // webstore. Otherwise, show a prompt without webstore data.
+  if (extension && extension_management->UpdatesFromWebstore(*extension)) {
+    webstore_data_fetcher_ =
+        std::make_unique<WebstoreDataFetcher>(this, GURL(), extension_id_);
+    webstore_data_fetcher_->Start(browser_context_->GetDefaultStoragePartition()
+                                      ->GetURLLoaderFactoryForBrowserProcess()
+                                      .get());
+  } else {
+    OnFetchComplete();
+  }
 }
 
 ExternalInstallError::~ExternalInstallError() {
@@ -336,8 +346,7 @@ void ExternalInstallError::OnInstallPromptDone(
     case ExtensionInstallPrompt::Result::ACCEPTED_WITH_WITHHELD_PERMISSIONS:
       // TODO(crbug.com/40636075): Handle `ACCEPTED_WITH_WITHHELD_PERMISSIONS`
       // when it is supported for external installs.
-      NOTREACHED_IN_MIGRATION();
-      break;
+      NOTREACHED();
     case ExtensionInstallPrompt::Result::USER_CANCELED:
       if (extension) {
         ExtensionSystem::Get(browser_context_)

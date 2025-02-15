@@ -4,9 +4,9 @@
 
 #include "components/autofill/core/browser/payments/test_local_card_migration_manager.h"
 
+#include "components/autofill/core/browser/data_manager/payments/test_payments_data_manager.h"
 #include "components/autofill/core/browser/metrics/autofill_metrics.h"
 #include "components/autofill/core/browser/payments/payments_util.h"
-#include "components/autofill/core/browser/test_payments_data_manager.h"
 #include "components/autofill/core/common/autofill_payments_features.h"
 
 namespace autofill {
@@ -14,7 +14,7 @@ namespace autofill {
 TestLocalCardMigrationManager::~TestLocalCardMigrationManager() = default;
 
 bool TestLocalCardMigrationManager::IsCreditCardMigrationEnabled() {
-  return payments::GetBillingCustomerId(&payments_data_manager()) != 0;
+  return payments::HasGooglePaymentsAccount(payments_data_manager());
 }
 
 bool TestLocalCardMigrationManager::LocalCardMigrationWasTriggered() {
@@ -48,11 +48,11 @@ void TestLocalCardMigrationManager::EnablePaymentsWalletSyncInTransportMode() {
 
 void TestLocalCardMigrationManager::OnDidGetUploadDetails(
     bool is_from_settings_page,
-    AutofillClient::PaymentsRpcResult result,
+    payments::PaymentsAutofillClient::PaymentsRpcResult result,
     const std::u16string& context_token,
     std::unique_ptr<base::Value::Dict> legal_message,
     std::vector<std::pair<int, int>> supported_bin_ranges) {
-  if (result == AutofillClient::PaymentsRpcResult::kSuccess) {
+  if (result == payments::PaymentsAutofillClient::PaymentsRpcResult::kSuccess) {
     local_card_migration_was_triggered_ = true;
   }
   LocalCardMigrationManager::OnDidGetUploadDetails(

@@ -37,6 +37,7 @@
 namespace blink {
 
 class Navigator;
+class V8XRSessionMode;
 class XRFrameProvider;
 class XRSession;
 class XRSessionInit;
@@ -88,13 +89,13 @@ class XRSystem final : public EventTarget,
   DEFINE_ATTRIBUTE_EVENT_LISTENER(devicechange, kDevicechange)
 
   ScriptPromise<IDLUndefined> supportsSession(ScriptState*,
-                                              const String&,
+                                              const V8XRSessionMode&,
                                               ExceptionState& exception_state);
   ScriptPromise<IDLBoolean> isSessionSupported(ScriptState*,
-                                               const String&,
+                                               const V8XRSessionMode&,
                                                ExceptionState& exception_state);
   ScriptPromise<XRSession> requestSession(ScriptState*,
-                                          const String&,
+                                          const V8XRSessionMode&,
                                           XRSessionInit*,
                                           ExceptionState& exception_state);
 
@@ -139,7 +140,16 @@ class XRSystem final : public EventTarget,
   void MakeXrCompatibleSync(
       device::mojom::XrCompatibleResult* xr_compatible_result);
 
+  void OnSessionEnded(XRSession* session);
+
+  device::mojom::blink::WebXrInternalsRendererListener*
+  GetWebXrInternalsRendererListener();
+
+  void AddWebXrInternalsMessage(const String& message);
+
  private:
+  void DisableBackForwardCache();
+
   enum SensorRequirement {
     kNone,
     kOptional,
@@ -366,7 +376,7 @@ class XRSystem final : public EventTarget,
                          const String& message);
 
   void InternalIsSessionSupported(ScriptPromiseResolverBase*,
-                                  const String&,
+                                  const V8XRSessionMode&,
                                   ExceptionState& exception_state,
                                   bool throw_on_unsupported);
 
@@ -375,7 +385,7 @@ class XRSystem final : public EventTarget,
       const PendingRequestSessionQuery& query);
 
   RequestedXRSessionFeatureSet ParseRequestedFeatures(
-      const HeapVector<ScriptValue>& features,
+      const Vector<String>& features,
       const device::mojom::blink::XRSessionMode& session_mode,
       XRSessionInit* session_init,
       mojom::ConsoleMessageLevel error_level);
@@ -423,6 +433,7 @@ class XRSystem final : public EventTarget,
           client_receiver,
       device::mojom::blink::XRSessionDeviceConfigPtr device_config,
       XRSessionFeatureSet enabled_features,
+      uint64_t trace_id,
       bool sensorless_session = false);
 
   XRSession* CreateSensorlessInlineSession();
@@ -483,6 +494,9 @@ class XRSystem final : public EventTarget,
 
   bool is_context_destroyed_ = false;
   bool did_service_ever_disconnect_ = false;
+
+  HeapMojoRemote<device::mojom::blink::WebXrInternalsRendererListener>
+      webxr_internals_renderer_listener_;
 };
 
 }  // namespace blink

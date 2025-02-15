@@ -47,7 +47,8 @@ const BasicShape* GetBasicShape(const CSSProperty& property,
       // Path and Ray shapes are handled by PathInterpolationType and
       // RayInterpolationType.
       if (shape.GetType() == BasicShape::kStylePathType ||
-          shape.GetType() == BasicShape::kStyleRayType) {
+          shape.GetType() == BasicShape::kStyleRayType ||
+          shape.GetType() == BasicShape::kStyleShapeType) {
         return nullptr;
       }
 
@@ -61,16 +62,18 @@ const BasicShape* GetBasicShape(const CSSProperty& property,
       auto* shape = clip_path_operation->GetBasicShape();
 
       // Path shape is handled by PathInterpolationType.
-      if (shape->GetType() == BasicShape::kStylePathType)
+      // Shape is handled by ShapeInterpolationType
+      if (shape->GetType() == BasicShape::kStylePathType ||
+          shape->GetType() == BasicShape::kStyleShapeType) {
         return nullptr;
+      }
 
       return shape;
     }
     case CSSPropertyID::kObjectViewBox:
       return style.ObjectViewBox();
     default:
-      NOTREACHED_IN_MIGRATION();
-      return nullptr;
+      NOTREACHED();
   }
 }
 
@@ -135,7 +138,7 @@ InterpolationValue CSSBasicShapeInterpolationType::MaybeConvertInitial(
   return basic_shape_interpolation_functions::MaybeConvertBasicShape(
       GetBasicShape(CssProperty(),
                     state.GetDocument().GetStyleResolver().InitialStyle()),
-      1);
+      CssProperty(), 1);
 }
 
 InterpolationValue CSSBasicShapeInterpolationType::MaybeConvertInherit(
@@ -145,25 +148,27 @@ InterpolationValue CSSBasicShapeInterpolationType::MaybeConvertInherit(
   conversion_checkers.push_back(
       MakeGarbageCollected<InheritedShapeChecker>(CssProperty(), shape));
   return basic_shape_interpolation_functions::MaybeConvertBasicShape(
-      shape, state.ParentStyle()->EffectiveZoom());
+      shape, CssProperty(), state.ParentStyle()->EffectiveZoom());
 }
 
 InterpolationValue CSSBasicShapeInterpolationType::MaybeConvertValue(
     const CSSValue& value,
     const StyleResolverState*,
     ConversionCheckers&) const {
-  if (!value.IsBaseValueList())
-    return basic_shape_interpolation_functions::MaybeConvertCSSValue(value);
+  if (!value.IsBaseValueList()) {
+    return basic_shape_interpolation_functions::MaybeConvertCSSValue(
+        value, CssProperty());
+  }
 
   const auto& list = To<CSSValueList>(value);
-  // Path and Ray shapes are handled by PathInterpolationType and
-  // RayInterpolationType.
+  // Path, Shape and Ray shapes are handled by PathInterpolationType,
+  // ShapeInterpolationType and RayInterpolationType.
   if (!list.First().IsBasicShapeValue() || list.First().IsRayValue() ||
-      list.First().IsPathValue()) {
+      list.First().IsPathValue() || list.First().IsShapeValue()) {
     return nullptr;
   }
   return basic_shape_interpolation_functions::MaybeConvertCSSValue(
-      list.Item(0));
+      list.Item(0), CssProperty());
 }
 
 PairwiseInterpolationValue CSSBasicShapeInterpolationType::MaybeMergeSingles(
@@ -181,7 +186,8 @@ InterpolationValue
 CSSBasicShapeInterpolationType::MaybeConvertStandardPropertyUnderlyingValue(
     const ComputedStyle& style) const {
   return basic_shape_interpolation_functions::MaybeConvertBasicShape(
-      GetBasicShape(CssProperty(), style), style.EffectiveZoom());
+      GetBasicShape(CssProperty(), style), CssProperty(),
+      style.EffectiveZoom());
 }
 
 void CSSBasicShapeInterpolationType::Composite(
@@ -229,8 +235,7 @@ void CSSBasicShapeInterpolationType::ApplyStandardPropertyValue(
       state.StyleBuilder().SetObjectViewBox(std::move(shape));
       break;
     default:
-      NOTREACHED_IN_MIGRATION();
-      break;
+      NOTREACHED();
   }
 }
 

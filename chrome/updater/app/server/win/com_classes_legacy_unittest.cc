@@ -51,10 +51,6 @@ constexpr wchar_t kCmdId2[] = L"command 2";
 
 class LegacyAppCommandWebImplTest : public testing::Test {
  protected:
-  LegacyAppCommandWebImplTest()
-      : cmd_exe_command_line_(base::CommandLine::NO_PROGRAM) {}
-  ~LegacyAppCommandWebImplTest() override = default;
-
   void SetUp() override {
     SetupCmdExe(GetUpdaterScopeForTesting(), cmd_exe_command_line_,
                 temp_programfiles_dir_);
@@ -87,7 +83,7 @@ class LegacyAppCommandWebImplTest : public testing::Test {
   }
 
   base::test::TaskEnvironment environment_;
-  base::CommandLine cmd_exe_command_line_;
+  base::CommandLine cmd_exe_command_line_{base::CommandLine::NO_PROGRAM};
   base::ScopedTempDir temp_programfiles_dir_;
 };
 
@@ -203,7 +199,7 @@ TEST_F(LegacyAppCommandWebImplTest, FailedToLaunchStatus) {
             EXPECT_EQ(command_id, base::WideToASCII(kCmdId1));
             EXPECT_EQ(error_params.error_code,
                       HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND));
-            EXPECT_EQ(error_params.extra_code1, 105);
+            EXPECT_EQ(error_params.extra_code1, kErrorAppCommandLaunchFailed);
           }),
       app_command_web));
 

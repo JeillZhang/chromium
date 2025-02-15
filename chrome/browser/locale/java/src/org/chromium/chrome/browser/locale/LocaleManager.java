@@ -10,13 +10,14 @@ import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 
 import org.jni_zero.CalledByNative;
+import org.jni_zero.JniType;
 
 import org.chromium.base.Callback;
+import org.chromium.base.ServiceLoaderUtil;
 import org.chromium.base.ThreadUtils;
 import org.chromium.chrome.browser.search_engines.DefaultSearchEngineDialogHelper;
 import org.chromium.chrome.browser.search_engines.SearchEnginePromoType;
 import org.chromium.chrome.browser.ui.messages.snackbar.SnackbarManager;
-import org.chromium.components.browser_ui.settings.SettingsLauncher;
 import org.chromium.components.search_engines.TemplateUrl;
 import org.chromium.ui.base.PageTransition;
 
@@ -42,7 +43,12 @@ public class LocaleManager implements DefaultSearchEngineDialogHelper.Delegate {
 
     /** Default constructor. */
     private LocaleManager() {
-        mDelegate = new LocaleManagerDelegateImpl();
+        LocaleManagerDelegate delegate = ServiceLoaderUtil.maybeCreate(LocaleManagerDelegate.class);
+        if (delegate == null) {
+            // Fallback if no @ServiceImpl is found.
+            delegate = new LocaleManagerDelegate();
+        }
+        mDelegate = delegate;
         mDelegate.setDefaulSearchEngineDelegate(this);
     }
 
@@ -88,12 +94,9 @@ public class LocaleManager implements DefaultSearchEngineDialogHelper.Delegate {
         mDelegate.setSnackbarManager(manager);
     }
 
-    /**
-     * Sets the settings launcher for search engines.
-     * @param settingsLauncher Launcher to start search engine settings on the snackbar UI.
-     */
-    public void setSettingsLauncher(SettingsLauncher settingsLauncher) {
-        mDelegate.setSettingsLauncher(settingsLauncher);
+    /** Shows a snackbar notifying the user that the default search engine has changed. */
+    public void showSnackbarForDeviceSearchEngineUpdate() {
+        mDelegate.showSnackbarForDeviceSearchEngineUpdate();
     }
 
     /** Returns whether and which search engine promo should be shown. */
@@ -105,7 +108,7 @@ public class LocaleManager implements DefaultSearchEngineDialogHelper.Delegate {
      * @return The referral ID to be passed when searching with Yandex as the DSE.
      */
     @CalledByNative
-    protected String getYandexReferralId() {
+    protected @JniType("std::string") String getYandexReferralId() {
         return mDelegate.getYandexReferralId();
     }
 
@@ -113,7 +116,7 @@ public class LocaleManager implements DefaultSearchEngineDialogHelper.Delegate {
      * @return The referral ID to be passed when searching with Mail.RU as the DSE.
      */
     @CalledByNative
-    protected String getMailRUReferralId() {
+    protected @JniType("std::string") String getMailRUReferralId() {
         return mDelegate.getMailRUReferralId();
     }
 

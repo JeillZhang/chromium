@@ -19,6 +19,8 @@
 
 namespace blink {
 
+MODULES_EXPORT BASE_DECLARE_FEATURE(kBreakoutBoxInsertVideoCaptureTimestamp);
+
 template <typename NativeFrameType>
 class FrameQueueUnderlyingSource : public UnderlyingSourceBase {
  public:
@@ -39,11 +41,11 @@ class FrameQueueUnderlyingSource : public UnderlyingSourceBase {
       delete;
 
   // UnderlyingSourceBase
-  ScriptPromiseUntyped Pull(ScriptState*, ExceptionState&) override;
-  ScriptPromiseUntyped Start(ScriptState*, ExceptionState&) override;
-  ScriptPromiseUntyped Cancel(ScriptState*,
-                              ScriptValue reason,
-                              ExceptionState&) override;
+  ScriptPromise<IDLUndefined> Pull(ScriptState*, ExceptionState&) override;
+  ScriptPromise<IDLUndefined> Start(ScriptState*) override;
+  ScriptPromise<IDLUndefined> Cancel(ScriptState*,
+                                     ScriptValue reason,
+                                     ExceptionState&) override;
 
   // ExecutionLifecycleObserver
   void ContextDestroyed() override;

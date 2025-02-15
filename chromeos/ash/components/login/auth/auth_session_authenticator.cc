@@ -152,7 +152,7 @@ void AuthSessionAuthenticator::RemoveStaleUserForEphemeral(
     AuthSessionIntent intent,
     StartAuthSessionCallback callback) {
   if (auth_session_id.empty()) {
-    NOTREACHED_IN_MIGRATION() << "Auth session should exist";
+    NOTREACHED() << "Auth session should exist";
   }
   LOGIN_LOG(EVENT) << "Deleting stale ephemeral user";
   user_data_auth::RemoveRequest remove_request;
@@ -320,15 +320,6 @@ void AuthSessionAuthenticator::DoCompleteLogin(
         steps.push_back(base::BindOnce(
             &AuthSessionAuthenticator::RecordFirstAuthFactorAdded,
             weak_factory_.GetWeakPtr()));
-      } else if (!ash::features::AreLocalPasswordsEnabledForConsumers()) {
-        CHECK(has_password)
-            << "Empty passwords are not supported during user creation";
-        steps.push_back(
-            base::BindOnce(&AuthFactorEditor::AddContextKnowledgeKey,
-                           auth_factor_editor_->AsWeakPtr()));
-        steps.push_back(base::BindOnce(
-            &AuthSessionAuthenticator::RecordFirstAuthFactorAdded,
-            weak_factory_.GetWeakPtr()));
       } else if (ephemeral) {
         // Short-terms fix for b/344603210:
         // Ephemeral users don't have active authsession in onboarding
@@ -342,25 +333,19 @@ void AuthSessionAuthenticator::DoCompleteLogin(
         // If Local passwords are enabled, password setup would
         // happen later in OOBE flow.
       }
-    }       // challenge-response
-    // In addition to factors suitable for authentication, fetch a set of
-    // supported factor types for new users.
-    steps.push_back(
-        base::BindOnce(&AuthFactorEditor::GetAuthFactorsConfiguration,
-                       auth_factor_editor_->AsWeakPtr()));
+    }  // challenge-response
   } else {  // existing user
     if (!challenge_response_auth) {
       // Password-based login
-      if (ash::features::AreLocalPasswordsEnabledForConsumers()) {
-        const auto& factors = context->GetAuthFactorsData();
-        if (!factors.FindOnlinePasswordFactor()) {
-          // User has knowledge factor other than online password need
-          // to go through custom flow.
-          NotifyOnlinePasswordUnusable(std::move(context),
-                                       /*online_password_mismatch=*/false);
-          return;
-        }
+      const auto& factors = context->GetAuthFactorsData();
+      if (!factors.FindOnlinePasswordFactor()) {
+        // User has knowledge factor other than online password need
+        // to go through custom flow.
+        NotifyOnlinePasswordUnusable(std::move(context),
+                                     /*online_password_mismatch=*/false);
+        return;
       }
+
       // We are sure that password is correct, so intercept authentication
       // failure events and treat them as password change signals.
       error_callback = base::BindOnce(
@@ -390,6 +375,10 @@ void AuthSessionAuthenticator::DoCompleteLogin(
                          weak_factory_.GetWeakPtr()));
     }
   }
+  // In addition to factors suitable for authentication, fetch a set of
+  // supported factor for users.
+  steps.push_back(base::BindOnce(&AuthFactorEditor::GetAuthFactorsConfiguration,
+                                 auth_factor_editor_->AsWeakPtr()));
   AuthSuccessCallback success_callback = base::BindOnce(
       &AuthSessionAuthenticator::NotifyAuthSuccess, weak_factory_.GetWeakPtr());
 
@@ -446,15 +435,6 @@ void AuthSessionAuthenticator::AuthenticateToUnlock(
   }
 
   AuthSessionIntent intent = AuthSessionIntent::kVerifyOnly;
-
-  // Full authentication is needed to restore keyset. It is only for
-  // non-ephemeral user sessions.
-  if (switches::ShouldRestoreKeyOnLockScreen() && !ephemeral) {
-    LOGIN_LOG(EVENT)
-        << "AuthenticateToUnlock starts AuthSession for restore_key to "
-           "restore filesystem keyset.";
-    intent = AuthSessionIntent::kRestoreKey;
-  }
 
   StartAuthSessionForLoggedIn(
       ephemeral, std::move(user_context), intent,
@@ -571,10 +551,6 @@ void AuthSessionAuthenticator::DoUnlock(
         base::BindOnce(&AuthPerformer::AuthenticateUsingKnowledgeKey,
                        auth_performer_->AsWeakPtr()));
   }
-  if (switches::ShouldRestoreKeyOnLockScreen() && !ephemeral) {
-    steps.push_back(base::BindOnce(&MountPerformer::RestoreEvictedVaultKey,
-                                   mount_performer_->AsWeakPtr()));
-  }
 
   RunOperationChain(std::move(context), std::move(steps),
                     std::move(success_callback), std::move(error_callback));
@@ -674,17 +650,17 @@ void AuthSessionAuthenticator::LoginAsKioskAccount(
                    /*force_dircrypto=*/false, /*ephemeral=*/ephemeral);
 }
 
-void AuthSessionAuthenticator::LoginAsArcKioskAccount(
-    const AccountId& app_account_id,
-    bool ephemeral) {
-  // TODO(b/336756417): Remove this method
-  NOTREACHED_NORETURN();
-}
-
 void AuthSessionAuthenticator::LoginAsWebKioskAccount(
     const AccountId& app_account_id,
     bool ephemeral) {
   LoginAsKioskImpl(app_account_id, user_manager::UserType::kWebKioskApp,
+                   /*force_dircrypto=*/false, /*ephemeral=*/ephemeral);
+}
+
+void AuthSessionAuthenticator::LoginAsIwaKioskAccount(
+    const AccountId& app_account_id,
+    bool ephemeral) {
+  LoginAsKioskImpl(app_account_id, user_manager::UserType::kKioskIWA,
                    /*force_dircrypto=*/false, /*ephemeral=*/ephemeral);
 }
 
@@ -1033,16 +1009,14 @@ bool AuthSessionAuthenticator::ResolveCryptohomeError(
     return true;
   }
 
-      // We need the default case here so that it is possible to add new
-      // CryptohomeErrorCode, because CryptohomeErrorCode is defined in another
-      // repo.
-      // However, we should seek to handle all CryptohomeErrorCode and not let
-      // any of them hit the default block.
-  NOTREACHED_IN_MIGRATION()
-      << "Unhandled CryptohomeError in ProcessCryptohomeError"
-         ": "
-      << error.get_cryptohome_error();
-  return false;
+  // We need the default case here so that it is possible to add new
+  // CryptohomeErrorCode, because CryptohomeErrorCode is defined in another
+  // repo.
+  // However, we should seek to handle all CryptohomeErrorCode and not let
+  // any of them hit the default block.
+  NOTREACHED() << "Unhandled CryptohomeError in ProcessCryptohomeError"
+                  ": "
+               << error.get_cryptohome_error();
 }
 
 void AuthSessionAuthenticator::ProcessCryptohomeError(
@@ -1065,12 +1039,10 @@ void AuthSessionAuthenticator::ProcessCryptohomeError(
   }
   bool handled = ResolveCryptohomeError(default_error, error);
   if (!handled) {
-    NOTREACHED_IN_MIGRATION()
-        << "Unhandled cryptohome error: " << error.get_cryptohome_error();
     SCOPED_CRASH_KEY_NUMBER("Cryptohome", "error_code",
                             error.get_cryptohome_error().code());
-    base::debug::DumpWithoutCrashing();
-    error.ResolveToFailure(default_error);
+    NOTREACHED() << "Unhandled cryptohome error: "
+                 << error.get_cryptohome_error();
   }
 
   NotifyFailure(error.get_resolved_failure(), std::move(context));

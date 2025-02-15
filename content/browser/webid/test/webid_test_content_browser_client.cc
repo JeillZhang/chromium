@@ -24,17 +24,6 @@ void WebIdTestContentBrowserClient::SetIdentityRequestDialogController(
   test_dialog_controller_ = std::move(controller);
 }
 
-ContentBrowserClient::DigitalIdentityInterstitialAbortCallback
-WebIdTestContentBrowserClient::ShowDigitalIdentityInterstitialIfNeeded(
-    content::WebContents& web_contents,
-    const url::Origin& origin,
-    bool is_only_requesting_age,
-    DigitalIdentityInterstitialCallback callback) {
-  std::move(callback).Run(
-      DigitalIdentityProvider::RequestStatusForMetrics::kSuccess);
-  return base::OnceClosure();
-}
-
 std::unique_ptr<DigitalIdentityProvider>
 WebIdTestContentBrowserClient::CreateDigitalIdentityProvider() {
   DCHECK(test_digital_identity_provider_);
@@ -48,7 +37,7 @@ void WebIdTestContentBrowserClient::SetDigitalIdentityProvider(
 
 void WebIdTestContentBrowserClient::SetIdentityRegistry(
     WebContents* web_contents,
-    base::WeakPtr<FederatedIdentityModalDialogViewDelegate> delegate,
+    base::WeakPtr<IdentityRegistryDelegate> delegate,
     const GURL& config_url) {
   IdentityRegistry::CreateForWebContents(web_contents, delegate, config_url);
 }

@@ -68,10 +68,8 @@ class SSLServerContextImpl::SocketImpl : public SSLServerSocket,
 
   // SSLSocket interface.
   int ExportKeyingMaterial(std::string_view label,
-                           bool has_context,
-                           std::string_view context,
-                           unsigned char* out,
-                           unsigned int outlen) override;
+                           std::optional<base::span<const uint8_t>> context,
+                           base::span<uint8_t> out) override;
 
   // Socket interface (via StreamSocket).
   int Read(IOBuffer* buf,
@@ -208,7 +206,7 @@ class SSLServerContextImpl::SocketImpl : public SSLServerSocket,
   State next_handshake_state_ = STATE_NONE;
   bool completed_handshake_ = false;
 
-  NextProto negotiated_protocol_ = kProtoUnknown;
+  NextProto negotiated_protocol_ = NextProto::kProtoUnknown;
 
   base::WeakPtrFactory<SocketImpl> weak_factory_{this};
 };
@@ -282,7 +280,7 @@ SSLServerContextImpl::SocketImpl::PrivateKeySignCallback(uint8_t* out,
   DCHECK(context_->private_key_);
   signature_result_ = ERR_IO_PENDING;
   context_->private_key_->Sign(
-      algorithm, base::make_span(in, in_len),
+      algorithm, base::span(in, in_len),
       base::BindOnce(&SSLServerContextImpl::SocketImpl::OnPrivateKeyComplete,
                      weak_factory_.GetWeakPtr()));
   return ssl_private_key_retry;
@@ -406,19 +404,18 @@ int SSLServerContextImpl::SocketImpl::Handshake(
 
 int SSLServerContextImpl::SocketImpl::ExportKeyingMaterial(
     std::string_view label,
-    bool has_context,
-    std::string_view context,
-    unsigned char* out,
-    unsigned int outlen) {
+    std::optional<base::span<const uint8_t>> context,
+    base::span<uint8_t> out) {
+  DCHECK(base::IsStringASCII(label));
   if (!IsConnected())
     return ERR_SOCKET_NOT_CONNECTED;
 
   crypto::OpenSSLErrStackTracer err_tracer(FROM_HERE);
 
   int rv = SSL_export_keying_material(
-      ssl_.get(), out, outlen, label.data(), label.size(),
-      reinterpret_cast<const unsigned char*>(context.data()), context.length(),
-      context.length() > 0);
+      ssl_.get(), out.data(), out.size(), label.data(), label.size(),
+      context.has_value() ? context->data() : nullptr,
+      context.has_value() ? context->size() : 0, context.has_value());
 
   if (rv != 1) {
     int ssl_error = SSL_get_error(ssl_.get(), rv);
@@ -564,7 +561,7 @@ SSLServerContextImpl::SocketImpl::GetPeerApplicationSettings() const {
 }
 
 bool SSLServerContextImpl::SocketImpl::GetSSLInfo(SSLInfo* ssl_info) {
-  ssl_info->Reset();
+  *ssl_info = SSLInfo();
   if (!completed_handshake_)
     return false;
 
@@ -583,6 +580,8 @@ bool SSLServerContextImpl::SocketImpl::GetSSLInfo(SSLInfo* ssl_info) {
   ssl_info->handshake_type = SSL_session_reused(ssl_.get())
                                  ? SSLInfo::HANDSHAKE_RESUME
                                  : SSLInfo::HANDSHAKE_FULL;
+  ssl_info->peer_signature_algorithm =
+      SSL_get_peer_signature_algorithm(ssl_.get());
 
   return true;
 }
@@ -943,7 +942,6 @@ SSLServerContextImpl::SSLServerContextImpl(
 }
 
 void SSLServerContextImpl::Init() {
-  crypto::EnsureOpenSSLInit();
   ssl_ctx_.reset(SSL_CTX_new(TLS_with_buffers_method()));
   SSL_CTX_set_session_cache_mode(ssl_ctx_.get(), SSL_SESS_CACHE_SERVER);
   uint8_t session_ctx_id = 0;
@@ -1020,14 +1018,23 @@ void SSLServerContextImpl::Init() {
   }
 
   if (ssl_server_config_.client_cert_type !=
-          SSLServerConfig::ClientCertType::NO_CLIENT_CERT &&
-      !ssl_server_config_.cert_authorities.empty()) {
-    bssl::UniquePtr<STACK_OF(CRYPTO_BUFFER)> stack(sk_CRYPTO_BUFFER_new_null());
-    for (const auto& authority : ssl_server_config_.cert_authorities) {
-      sk_CRYPTO_BUFFER_push(stack.get(),
-                            x509_util::CreateCryptoBuffer(authority).release());
+      SSLServerConfig::ClientCertType::NO_CLIENT_CERT) {
+    if (!ssl_server_config_.cert_authorities.empty()) {
+      bssl::UniquePtr<STACK_OF(CRYPTO_BUFFER)> stack(
+          sk_CRYPTO_BUFFER_new_null());
+      for (const auto& authority : ssl_server_config_.cert_authorities) {
+        sk_CRYPTO_BUFFER_push(
+            stack.get(), x509_util::CreateCryptoBuffer(authority).release());
+      }
+      SSL_CTX_set0_client_CAs(ssl_ctx_.get(), stack.release());
     }
-    SSL_CTX_set0_client_CAs(ssl_ctx_.get(), stack.release());
+
+    if (!ssl_server_config_.client_cert_signature_algorithms.empty()) {
+      CHECK(SSL_CTX_set_verify_algorithm_prefs(
+          ssl_ctx_.get(),
+          ssl_server_config_.client_cert_signature_algorithms.data(),
+          ssl_server_config_.client_cert_signature_algorithms.size()));
+    }
   }
 
   SSL_CTX_set_alpn_select_cb(ssl_ctx_.get(), &SocketImpl::ALPNSelectCallback,

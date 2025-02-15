@@ -9,6 +9,7 @@
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/ui/webui/data_sharing_internals/data_sharing_internals.mojom.h"
 #include "components/data_sharing/public/data_sharing_service.h"
+#include "components/data_sharing/public/protocol/group_data.mojom.h"
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
 
@@ -33,11 +34,6 @@ class DataSharingInternalsPageHandlerImpl
   void GetAllGroups(GetAllGroupsCallback callback) override;
 
  private:
-  void OnGetAllGroupsDone(
-      GetAllGroupsCallback callback,
-      const data_sharing::DataSharingService::GroupsDataSetOrFailureOutcome&
-          group_result);
-
   mojo::Receiver<data_sharing_internals::mojom::PageHandler> receiver_;
   mojo::Remote<data_sharing_internals::mojom::Page> page_;
 

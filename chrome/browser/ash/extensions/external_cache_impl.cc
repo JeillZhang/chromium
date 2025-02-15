@@ -231,9 +231,8 @@ void ExternalCacheImpl::UpdateExtensionsList(base::Value::Dict prefs) {
 void ExternalCacheImpl::OnDamagedFileDetected(const base::FilePath& path) {
   for (const auto [key, value] : cached_extensions_) {
     if (!value.is_dict()) {
-      NOTREACHED_IN_MIGRATION()
-          << "ExternalCacheImpl found bad entry with type " << value.type();
-      continue;
+      NOTREACHED() << "ExternalCacheImpl found bad entry with type "
+                   << value.type();
     }
 
     const std::string* external_crx = value.GetDict().FindString(
@@ -293,7 +292,7 @@ void ExternalCacheImpl::PutExternalExtension(
     const std::string& version,
     PutExternalExtensionCallback callback) {
   local_cache_.PutExtension(
-      id, std::string(), crx_file_path, version,
+      id, std::string(), crx_file_path, base::Version(version),
       base::BindOnce(&ExternalCacheImpl::OnPutExternalExtension,
                      weak_ptr_factory_.GetWeakPtr(), id, std::move(callback)));
 }
@@ -346,8 +345,7 @@ void ExternalCacheImpl::OnExtensionDownloadFinished(
   DCHECK(file_ownership_passed);
   DCHECK(file.expected_version.IsValid());
   local_cache_.PutExtension(
-      file.extension_id, file.expected_hash, file.path,
-      file.expected_version.GetString(),
+      file.extension_id, file.expected_hash, file.path, file.expected_version,
       base::BindOnce(&ExternalCacheImpl::OnPutExtension,
                      weak_ptr_factory_.GetWeakPtr(), file.extension_id));
   if (!callback.is_null())

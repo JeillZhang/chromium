@@ -23,10 +23,10 @@
 #import "ios/chrome/browser/feature_engagement/model/tracker_factory.h"
 #import "ios/chrome/browser/safe_browsing/model/safe_browsing_metrics_collector_factory.h"
 #import "ios/chrome/browser/shared/model/application_context/application_context.h"
-#import "ios/chrome/browser/shared/model/browser_state/chrome_browser_state.h"
+#import "ios/chrome/browser/shared/model/profile/profile_ios.h"
 #import "ios/components/security_interstitials/ios_blocking_page_metrics_helper.h"
+#import "ios/components/security_interstitials/safe_browsing/ios_unsafe_resource_util.h"
 #import "ios/components/security_interstitials/safe_browsing/safe_browsing_tab_helper.h"
-#import "ios/components/security_interstitials/safe_browsing/unsafe_resource_util.h"
 #import "ios/web/public/web_state.h"
 #import "ui/base/resource/resource_bundle.h"
 #import "ui/base/webui/web_ui_util.h"
@@ -51,18 +51,18 @@ std::unique_ptr<IOSBlockingPageMetricsHelper> CreateMetricsHelper(
 BaseSafeBrowsingErrorUI::SBErrorDisplayOptions GetDefaultDisplayOptions(
     const UnsafeResource& resource) {
   web::WebState* web_state = resource.weak_web_state.get();
-  ChromeBrowserState* browser_state =
-      ChromeBrowserState::FromBrowserState(web_state->GetBrowserState());
-  PrefService* prefs = browser_state->GetPrefs();
+  ProfileIOS* profile =
+      ProfileIOS::FromBrowserState(web_state->GetBrowserState());
+  PrefService* prefs = profile->GetPrefs();
   safe_browsing::SafeBrowsingMetricsCollector* metrics_collector =
-      SafeBrowsingMetricsCollectorFactory::GetForBrowserState(browser_state);
+      SafeBrowsingMetricsCollectorFactory::GetForProfile(profile);
   if (metrics_collector) {
     metrics_collector->AddSafeBrowsingEventToPref(
         safe_browsing::SafeBrowsingMetricsCollector::
             SECURITY_SENSITIVE_SAFE_BROWSING_INTERSTITIAL);
   }
   return BaseSafeBrowsingErrorUI::SBErrorDisplayOptions(
-      resource.IsMainPageLoadPendingWithSyncCheck(),
+      UnsafeResource::IsMainPageLoadPendingWithSyncCheck(resource.threat_type),
       /*is_extended_reporting_opt_in_allowed=*/false,
       /*is_off_the_record=*/false,
       /*is_extended_reporting=*/false,
@@ -95,10 +95,11 @@ SafeBrowsingBlockingPage::SafeBrowsingBlockingPage(
     : IOSSecurityInterstitialPage(resource.weak_web_state.get(),
                                   GetMainFrameUrl(resource),
                                   client),
-      is_main_page_load_blocked_(resource.IsMainPageLoadPendingWithSyncCheck()),
+      is_main_page_load_blocked_(
+          UnsafeResource::IsMainPageLoadPendingWithSyncCheck(
+              resource.threat_type)),
       error_ui_(std::make_unique<SafeBrowsingLoudErrorUI>(
           resource.url,
-          GetMainFrameUrl(resource),
           GetUnsafeResourceInterstitialReason(resource),
           GetDefaultDisplayOptions(resource),
           client->GetApplicationLocale(),
@@ -147,10 +148,10 @@ void SafeBrowsingBlockingPage::PopulateInterstitialStrings(
 }
 
 void SafeBrowsingBlockingPage::ShowInfobar() {
-  ChromeBrowserState* browser_state =
-      ChromeBrowserState::FromBrowserState(web_state()->GetBrowserState());
+  ProfileIOS* profile =
+      ProfileIOS::FromBrowserState(web_state()->GetBrowserState());
   feature_engagement::Tracker* tracker =
-      feature_engagement::TrackerFactory::GetForBrowserState(browser_state);
+      feature_engagement::TrackerFactory::GetForProfile(profile);
   tracker->NotifyEvent(
       feature_engagement::events::kEnhancedSafeBrowsingPromoCriterionMet);
 
@@ -160,6 +161,11 @@ void SafeBrowsingBlockingPage::ShowInfobar() {
   }
 
   client_->ShowEnhancedSafeBrowsingInfobar();
+}
+
+void SafeBrowsingBlockingPage::WasDismissed() {
+  client_->metrics_helper()->RecordUserDecision(
+      security_interstitials::MetricsHelper::DONT_PROCEED);
 }
 
 #pragma mark - SafeBrowsingBlockingPage::SafeBrowsingControllerClient
@@ -186,10 +192,10 @@ void SafeBrowsingBlockingPage::SafeBrowsingControllerClient::Proceed() {
   if (web_state()) {
     SafeBrowsingUrlAllowList::FromWebState(web_state())
         ->AllowUnsafeNavigations(url_, threat_type_);
-    ChromeBrowserState* browser_state =
-        ChromeBrowserState::FromBrowserState(web_state()->GetBrowserState());
+    ProfileIOS* profile =
+        ProfileIOS::FromBrowserState(web_state()->GetBrowserState());
     safe_browsing::SafeBrowsingMetricsCollector* metrics_collector =
-        SafeBrowsingMetricsCollectorFactory::GetForBrowserState(browser_state);
+        SafeBrowsingMetricsCollectorFactory::GetForProfile(profile);
     if (metrics_collector) {
       metrics_collector->AddBypassEventToPref(threat_source_);
     }
@@ -222,9 +228,9 @@ void SafeBrowsingBlockingPage::SafeBrowsingControllerClient::
 
 void SafeBrowsingBlockingPage::SafeBrowsingControllerClient::
     ShowEnhancedSafeBrowsingInfobar() {
-  ChromeBrowserState* browser_state =
-      ChromeBrowserState::FromBrowserState(web_state()->GetBrowserState());
-  const PrefService* prefs = browser_state->GetPrefs();
+  ProfileIOS* profile =
+      ProfileIOS::FromBrowserState(web_state()->GetBrowserState());
+  const PrefService* prefs = profile->GetPrefs();
   bool is_enterprise_managed =
       safe_browsing::IsSafeBrowsingPolicyManaged(*prefs);
   bool is_standard_safe_browsing_user =

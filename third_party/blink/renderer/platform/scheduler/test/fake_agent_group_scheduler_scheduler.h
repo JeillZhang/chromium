@@ -7,7 +7,7 @@
 
 #include "base/memory/raw_ref.h"
 #include "base/task/single_thread_task_runner.h"
-#include "third_party/blink/public/common/browser_interface_broker_proxy.h"
+#include "third_party/blink/public/platform/browser_interface_broker_proxy.h"
 #include "third_party/blink/public/platform/scheduler/test/renderer_scheduler_test_support.h"
 #include "third_party/blink/public/platform/scheduler/web_thread_scheduler.h"
 #include "third_party/blink/renderer/platform/scheduler/public/agent_group_scheduler.h"
@@ -38,17 +38,7 @@ class FakeAgentGroupScheduler : public AgentGroupScheduler {
     return *web_thread_scheduler_;
   }
 
-  BrowserInterfaceBrokerProxy& GetBrowserInterfaceBroker() override {
-    return GetEmptyBrowserInterfaceBroker();
-  }
-
-  void BindInterfaceBroker(
-      mojo::PendingRemote<blink::mojom::BrowserInterfaceBroker>) override {}
-
-  v8::Isolate* Isolate() override {
-    NOTREACHED_IN_MIGRATION();
-    return nullptr;
-  }
+  v8::Isolate* Isolate() override { NOTREACHED(); }
 
   void AddAgent(Agent* agent) override {}
 

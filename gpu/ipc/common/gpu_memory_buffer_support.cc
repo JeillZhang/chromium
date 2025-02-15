@@ -36,7 +36,6 @@
 
 #if BUILDFLAG(IS_ANDROID)
 #include "base/android/android_hardware_buffer_compat.h"
-#include "gpu/ipc/common/gpu_memory_buffer_impl_android_hardware_buffer.h"
 #endif
 
 namespace gpu {
@@ -100,8 +99,7 @@ bool GpuMemoryBufferSupport::IsNativeGpuMemoryBufferConfigurationSupported(
     case gfx::BufferUsage::VEA_READ_CAMERA_AND_CPU_READ_WRITE:
       return false;
   }
-  NOTREACHED_IN_MIGRATION();
-  return false;
+  NOTREACHED();
 #elif BUILDFLAG(IS_ANDROID)
   if (!base::AndroidHardwareBufferCompat::IsSupportAvailable()) {
     return false;
@@ -124,8 +122,7 @@ bool GpuMemoryBufferSupport::IsNativeGpuMemoryBufferConfigurationSupported(
     case gfx::BufferUsage::SCANOUT_FRONT_RENDERING:
       return false;
   }
-  NOTREACHED_IN_MIGRATION();
-  return false;
+  NOTREACHED();
 #elif BUILDFLAG(IS_OZONE)
   return ui::OzonePlatform::GetInstance()->IsNativePixmapConfigSupported(format,
                                                                          usage);
@@ -149,8 +146,7 @@ bool GpuMemoryBufferSupport::IsNativeGpuMemoryBufferConfigurationSupported(
     case gfx::BufferUsage::SCANOUT_FRONT_RENDERING:
       return false;
   }
-  NOTREACHED_IN_MIGRATION();
-  return false;
+  NOTREACHED();
 #else
   DCHECK_EQ(GetNativeGpuMemoryBufferType(), gfx::EMPTY_BUFFER);
   return false;
@@ -225,8 +221,7 @@ bool GpuMemoryBufferSupport::IsConfigurationSupportedForTest(
                                                                      usage);
   }
 
-  NOTREACHED_IN_MIGRATION();
-  return false;
+  NOTREACHED();
 }
 
 // static
@@ -269,14 +264,12 @@ GpuMemoryBufferSupport::CreateGpuMemoryBufferImplFromHandle(
 #endif
 #if BUILDFLAG(IS_ANDROID)
     case gfx::ANDROID_HARDWARE_BUFFER:
-      return GpuMemoryBufferImplAndroidHardwareBuffer::CreateFromHandle(
-          std::move(handle), size, format, usage, std::move(callback));
+      return nullptr;
 #endif
     default:
       // TODO(dcheng): Remove default case (https://crbug.com/676224).
-      NOTREACHED_IN_MIGRATION() << gfx::BufferFormatToString(format) << ", "
-                                << gfx::BufferUsageToString(usage);
-      return nullptr;
+      NOTREACHED() << gfx::BufferFormatToString(format) << ", "
+                   << gfx::BufferUsageToString(usage);
   }
 }
 
@@ -290,7 +283,7 @@ AllocatedBufferInfo::AllocatedBufferInfo(
   DCHECK_NE(gfx::EMPTY_BUFFER, type_);
 
   if (type_ == gfx::SHARED_MEMORY_BUFFER) {
-    shared_memory_guid_ = handle.region.GetGUID();
+    shared_memory_guid_ = handle.region().GetGUID();
   }
 }
 

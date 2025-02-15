@@ -36,7 +36,6 @@
 
 namespace blink {
 
-class Node;
 class AXObjectCacheImpl;
 
 // Encapsulates an AbstractInlineTextBox and adapts it for use in Blink's
@@ -63,14 +62,12 @@ class AXInlineTextBox final : public AXObject {
                          gfx::Transform& out_container_transform,
                          bool* clips_children = nullptr) const override;
   ax::mojom::blink::WritingDirection GetTextDirection() const override;
-  Node* GetNode() const override;
   Document* GetDocument() const override;
   AXObject* NextOnLine() const override;
   AXObject* PreviousOnLine() const override;
   void SerializeMarkerAttributes(ui::AXNodeData* node_data) const override;
   ax::mojom::blink::Role NativeRoleIgnoringAria() const override {
-    NOTREACHED_IN_MIGRATION();
-    return ax::mojom::blink::Role::kInlineTextBox;
+    NOTREACHED();
   }
   void ClearChildren() override;
   AbstractInlineTextBox* GetInlineTextBox() const override;

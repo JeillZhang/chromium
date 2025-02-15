@@ -16,7 +16,7 @@ namespace web_package {
 namespace {
 
 cbor::Value CreateByteString(std::string_view s) {
-  return cbor::Value(base::as_bytes(base::make_span(s)));
+  return cbor::Value(base::as_byte_span(s));
 }
 
 cbor::Value CreateHeaderMap(const WebBundleBuilder::Headers& headers) {
@@ -143,8 +143,7 @@ std::vector<uint8_t> WebBundleBuilder::CreateTopLevel() {
 
   std::vector<uint8_t> bundle = Encode(cbor::Value(toplevel_array));
   // Overwrite the dummy bytestring with the actual size.
-  base::span(bundle).last(8u).copy_from(
-      base::numerics::U64ToBigEndian(bundle.size()));
+  base::span(bundle).last(8u).copy_from(base::U64ToBigEndian(bundle.size()));
   return bundle;
 }
 

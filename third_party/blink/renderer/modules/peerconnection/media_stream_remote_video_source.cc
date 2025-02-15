@@ -2,14 +2,21 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/modules/peerconnection/media_stream_remote_video_source.h"
 
 #include <stdint.h>
+
 #include <utility>
 
 #include "base/functional/callback_helpers.h"
 #include "base/location.h"
 #include "base/memory/raw_ptr.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
@@ -50,7 +57,7 @@ class WebRtcEncodedVideoFrame : public EncodedVideoFrame {
   }
 
   base::span<const uint8_t> Data() const override {
-    return base::make_span(buffer_->data(), buffer_->size());
+    return base::span(buffer_->data(), buffer_->size());
   }
 
   media::VideoCodec Codec() const override { return codec_; }
@@ -176,7 +183,7 @@ void MediaStreamRemoteVideoSource::RemoteVideoSourceDelegate::OnFrame(
       incoming_frame.video_frame_buffer();
   scoped_refptr<media::VideoFrame> video_frame;
   if (buffer->type() == webrtc::VideoFrameBuffer::Type::kNative) {
-    video_frame = static_cast<WebRtcVideoFrameAdapter*>(buffer.get())
+    video_frame = static_cast<WebRtcVideoFrameAdapterInterface*>(buffer.get())
                       ->getMediaVideoFrame();
     video_frame->set_timestamp(elapsed_timestamp);
   } else {
@@ -252,6 +259,9 @@ void MediaStreamRemoteVideoSource::RemoteVideoSourceDelegate::OnFrame(
             ->receive_time();
     video_frame->metadata().receive_time =
         base::TimeTicks() + base::Microseconds(last_packet_arrival.us());
+    base::UmaHistogramTimes(
+        "WebRTC.Video.TotalReceiveDelay",
+        current_time - *video_frame->metadata().receive_time);
   }
 
   // Use our computed render time as estimated capture time. If timestamp_us()
@@ -378,8 +388,7 @@ void MediaStreamRemoteVideoSource::OnChanged(
       SetReadyState(WebMediaStreamSource::kReadyStateEnded);
       break;
     default:
-      NOTREACHED_IN_MIGRATION();
-      break;
+      NOTREACHED();
   }
 }
 

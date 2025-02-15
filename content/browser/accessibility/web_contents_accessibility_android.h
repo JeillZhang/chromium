@@ -5,23 +5,23 @@
 #ifndef CONTENT_BROWSER_ACCESSIBILITY_WEB_CONTENTS_ACCESSIBILITY_ANDROID_H_
 #define CONTENT_BROWSER_ACCESSIBILITY_WEB_CONTENTS_ACCESSIBILITY_ANDROID_H_
 
-#include "base/memory/raw_ptr.h"
-#include "content/browser/accessibility/web_contents_accessibility.h"
-#include "content/common/content_export.h"
-
 #include <unordered_map>
 
 #include "base/android/jni_string.h"
 #include "base/android/jni_weak_ref.h"
 #include "base/android/scoped_java_ref.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/utf_string_conversions.h"
+#include "content/browser/accessibility/web_contents_accessibility.h"
+#include "content/common/content_export.h"
+#include "ui/accessibility/platform/ax_node_id_delegate.h"
 #include "ui/gfx/geometry/size.h"
 
 namespace ui {
 class MotionEventAndroid;
 struct AXTreeUpdate;
-}
+}  // namespace ui
 
 namespace content {
 
@@ -52,7 +52,8 @@ class WebContentsImpl;
 // Owned by |Connector|, and destroyed together when the associated web contents
 // is destroyed.
 class CONTENT_EXPORT WebContentsAccessibilityAndroid
-    : public WebContentsAccessibility {
+    : public WebContentsAccessibility,
+      public ui::AXNodeIdDelegate {
  public:
   WebContentsAccessibilityAndroid(
       JNIEnv* env,
@@ -78,6 +79,11 @@ class CONTENT_EXPORT WebContentsAccessibilityAndroid
       const WebContentsAccessibilityAndroid&) = delete;
 
   ~WebContentsAccessibilityAndroid() override;
+
+  // ui::AXNodeIdDelegate:
+  ui::AXPlatformNodeId GetOrCreateAXNodeUniqueId(
+      ui::AXNodeID ax_node_id) override;
+  void OnAXNodeDeleted(ui::AXNodeID ax_node_id) override;
 
   // Notify the root BrowserAccessibilityManager that this is the
   // WebContentsAccessibilityAndroid it should talk to.
@@ -126,7 +132,7 @@ class CONTENT_EXPORT WebContentsAccessibilityAndroid
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& jweb_contents);
 
-  base::android::ScopedJavaGlobalRef<jstring> GetSupportedHtmlElementTypes(
+  base::android::ScopedJavaLocalRef<jstring> GetSupportedHtmlElementTypes(
       JNIEnv* env);
 
   void SetAllowImageDescriptions(JNIEnv* env,
@@ -190,7 +196,9 @@ class CONTENT_EXPORT WebContentsAccessibilityAndroid
                        const base::android::JavaParamRef<jstring>& element_type,
                        jboolean forwards,
                        jboolean can_wrap_to_last_element,
-                       jboolean use_default_predicate);
+                       jboolean use_default_predicate,
+                       jboolean is_talkback_enabled,
+                       jboolean is_only_talkback_enabled);
 
   // Respond to a ACTION_[NEXT/PREVIOUS]_AT_MOVEMENT_GRANULARITY action
   // and move the cursor/selection within the given node id. We keep track
@@ -221,6 +229,11 @@ class CONTENT_EXPORT WebContentsAccessibilityAndroid
   void MoveAccessibilityFocus(JNIEnv* env,
                               jint old_unique_id,
                               jint new_unique_id);
+
+  // Sets the sequential focus starting point. This sends a message to the
+  // renderer. The sequential focus starting point sets the node on which
+  // tab/shift tab should continue without actually changing input focus.
+  void SetSequentialFocusStartingPoint(JNIEnv* env, jint unique_id);
 
   // Returns true if the object is a slider.
   bool IsSlider(JNIEnv* env, jint id);
@@ -256,6 +269,7 @@ class CONTENT_EXPORT WebContentsAccessibilityAndroid
 
   // Request loading inline text boxes for a given node.
   void LoadInlineTextBoxes(JNIEnv* env, jint id);
+  void RecordInlineTextBoxMetrics(bool from_focus);
 
   // Get the bounds of each character for a given static text node,
   // starting from index |start| with length |len|. The resulting array
@@ -300,26 +314,23 @@ class CONTENT_EXPORT WebContentsAccessibilityAndroid
   // Note: This cache is only meant for common strings that might be shared
   //       across many nodes (e.g. role or role description), which have a
   //       finite number of possibilities. Do not use it for page content.
-  base::android::ScopedJavaGlobalRef<jstring> GetCanonicalJNIString(
+  const base::android::ScopedJavaGlobalRef<jstring>& GetCanonicalJNIString(
       JNIEnv* env,
       std::string str) {
     return GetCanonicalJNIString(env, base::UTF8ToUTF16(str));
   }
 
-  base::android::ScopedJavaGlobalRef<jstring> GetCanonicalJNIString(
+  const base::android::ScopedJavaGlobalRef<jstring>& GetCanonicalJNIString(
       JNIEnv* env,
       std::u16string str) {
-    // Check if this string has already been added to the cache.
-    auto it = common_string_cache_.find(str);
-    if (it != common_string_cache_.end()) {
-      return it->second;
+    auto& slot = common_string_cache_[str];
+    if (!slot) {
+      // Otherwise, convert the string and add it to the cache, then return.
+      slot = base::android::ConvertUTF16ToJavaString(env, str);
+      DCHECK(common_string_cache_.size() < 500);
     }
 
-    // Otherwise, convert the string and add it to the cache, then return.
-    common_string_cache_[str] =
-        base::android::ConvertUTF16ToJavaString(env, str);
-    DCHECK(common_string_cache_.size() < 500);
-    return common_string_cache_[str];
+    return slot;
   }
 
   void RequestAccessibilityTreeSnapshot(
@@ -332,7 +343,7 @@ class CONTENT_EXPORT WebContentsAccessibilityAndroid
   void ProcessCompletedAccessibilityTreeSnapshot(
       JNIEnv* env,
       const base::android::JavaRef<jobject>& view_structure_root,
-      const ui::AXTreeUpdate& result);
+      ui::AXTreeUpdate& result);
 
   void RecursivelyPopulateViewStructureTree(
       JNIEnv* env,
@@ -366,7 +377,7 @@ class CONTENT_EXPORT WebContentsAccessibilityAndroid
   void HandleClicked(int32_t unique_id);
   void HandleScrollPositionChanged(int32_t unique_id);
   void HandleScrolledToAnchor(int32_t unique_id);
-  void HandleDialogModalOpened(int32_t unique_id);
+  void HandlePaneOpened(int32_t unique_id);
   void AnnounceLiveRegionText(const std::u16string& text);
   void HandleTextContentChanged(int32_t unique_id);
   void HandleTextSelectionChanged(int32_t unique_id);

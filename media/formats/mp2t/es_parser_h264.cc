@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/formats/mp2t/es_parser_h264.h"
 
 #include <limits>
@@ -18,7 +23,7 @@
 #include "media/base/video_frame.h"
 #include "media/formats/common/offset_byte_queue.h"
 #include "media/formats/mp2t/mp2t_common.h"
-#include "media/video/h264_parser.h"
+#include "media/parsers/h264_parser.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
 
@@ -213,7 +218,7 @@ void EsParserH264::Flush() {
   // TODO(crbug.com/40204179): Consider plumbing parse failure for this push
   // failure case, instead of what used to OOM but now instead would fail this
   // CHECK.
-  CHECK(es_queue_->Push(base::make_span(aud, sizeof(aud))));
+  CHECK(es_queue_->Push(base::span(aud)));
 
   ParseFromEsQueue();
   es_adapter_.Flush();
@@ -449,8 +454,7 @@ bool EsParserH264::EmitFrame(int64_t access_unit_pos,
       case EncryptionScheme::kUnencrypted:
         // As |base_decrypt_config| is specified, the stream is encrypted,
         // so this shouldn't happen.
-        NOTREACHED_IN_MIGRATION();
-        break;
+        NOTREACHED();
       case EncryptionScheme::kCenc:
         stream_parser_buffer->set_decrypt_config(
             DecryptConfig::CreateCencConfig(base_decrypt_config->key_id(),

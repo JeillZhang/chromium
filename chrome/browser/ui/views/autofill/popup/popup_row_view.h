@@ -11,6 +11,8 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/raw_ref.h"
 #include "base/memory/weak_ptr.h"
+#include "base/scoped_observation.h"
+#include "chrome/browser/ui/autofill/next_idle_barrier.h"
 #include "chrome/browser/ui/views/autofill/popup/popup_view_utils.h"
 #include "components/input/native_web_keyboard_event.h"
 #include "ui/base/metadata/metadata_header_macros.h"
@@ -91,7 +93,8 @@ class PopupRowView : public views::View, public views::ViewObserver {
   void OnMouseReleased(const ui::MouseEvent& event) override;
   void OnGestureEvent(ui::GestureEvent* event) override;
   void OnPaint(gfx::Canvas* canvas) override;
-  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
+  bool GetNeedsNotificationWhenVisibleBoundsChange() const override;
+  void OnVisibleBoundsChanged() override;
 
   // views::ViewObserver:
   void OnViewFocused(views::View* focused_now) override;
@@ -112,6 +115,9 @@ class PopupRowView : public views::View, public views::ViewObserver {
   // parent no longer needs to handle it).
   virtual bool HandleKeyPressEvent(const input::NativeWebKeyboardEvent& event);
 
+  // Returns if the popup row is available for selection.
+  bool IsSelectable() const;
+
   // Returns the view representing the content area of the row.
   PopupRowContentView& GetContentView() { return *content_view_; }
 
@@ -120,20 +126,22 @@ class PopupRowView : public views::View, public views::ViewObserver {
     return expand_child_suggestions_view_.get();
   }
 
-  views::View* GetExpandChildSuggestionsIconViewForTesting() {
-    return expand_child_suggestions_view_icon_.get();
-  }
-
  protected:
   base::WeakPtr<AutofillPopupController> controller() { return controller_; }
 
   int line_number() const { return line_number_; }
 
- private:
   AccessibilitySelectionDelegate& GetA11ySelectionDelegate() {
     return a11y_selection_delegate_.get();
   }
 
+  // Calls `selection_delegate_` when an event leading to selection is
+  // triggered on the view, e.g. `ui::EventType::kMouseEntered` or the root
+  // view is focused. `type` == `std::nullopt` means deselection.
+  virtual void OnCellSelected(std::optional<CellType> type,
+                              PopupCellSelectionSource source);
+
+ private:
   // Updates all UI parts that may have changed based on the current state,
   // for now they are the background and expand control visibility.
   void UpdateUI();
@@ -141,13 +149,11 @@ class PopupRowView : public views::View, public views::ViewObserver {
   // Updates the background according to the control cell highlighting state.
   void UpdateBackground();
 
-  // Updates the expand control icon visibility: if any cell is selected or
-  // the sub-popup is open it is visible, otherwise - hidden. This is done for
-  // experimentation purposes only. When the corresponding feature param is
-  // disabled, this method is noop.
-  // TODO(crbug.com/40274514): Remove when the field-by-field filling eperiments
-  // are over.
-  void UpdateExpandControlVisibility();
+  // This method is just a getter for the `barrier_for_accepting_` which is
+  // set `true` when the view's visible part is big enough and was present on
+  // the screen long enough, see `OnVisibleBoundsChanged()` implementation for
+  // what these "enough"s mean.
+  bool IsViewVisibleEnough() const;
 
   // The delegate used for accessibility announcements (implemented by the
   // parent view).
@@ -164,9 +170,12 @@ class PopupRowView : public views::View, public views::ViewObserver {
 
   // The view wrapping the content area of the row.
   raw_ptr<PopupRowContentView> content_view_ = nullptr;
+  base::ScopedObservation<PopupRowContentView, views::ViewObserver>
+      content_view_observer_{this};
   // The view wrapping the control area of the row.
   raw_ptr<views::View> expand_child_suggestions_view_ = nullptr;
-  raw_ptr<views::View> expand_child_suggestions_view_icon_ = nullptr;
+  base::ScopedObservation<views::View, views::ViewObserver>
+      expand_child_suggestions_view_observer_{this};
 
   // Overriding event handles for the content and control views.
   std::unique_ptr<ui::EventHandler> content_event_handler_;
@@ -201,10 +210,21 @@ class PopupRowView : public views::View, public views::ViewObserver {
   // displayed in a sub-popup.
   bool child_suggestions_displayed_ = false;
 
+  // This is used to protected users from accepting suggestions too quickly.
+  // This is often used in various attacks against their data when the user is
+  // tricked to press a key combination or click a specific place on the screen
+  // (e.g. in a game). Having a delay gives the user a chance to notice/overview
+  // what they are about to expose to the website.
+  // The timer starts in `OnVisibleBoundsChanged()` only when the view is
+  // visible enough and checked before triggering acceptance on the controller.
+  std::optional<NextIdleBarrier> barrier_for_accepting_;
+
   // Has the same value as `Suggestion::is_acceptable` of the underlying
   // suggestion. If `false` the content part is not highlighted separately,
   // but the whole row is highlighted instead as for the control view.
   const bool suggestion_is_acceptable_;
+
+  const bool highlight_on_select_;
 };
 
 }  // namespace autofill

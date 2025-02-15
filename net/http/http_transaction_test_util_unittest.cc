@@ -28,7 +28,7 @@ const MockTransaction kBasicTransaction = {
                                     IPEndPoint(IPAddress::IPv4Localhost(), 80),
                                     /*accept_ch_frame_arg=*/"",
                                     /*cert_is_issued_by_known_root=*/false,
-                                    kProtoUnknown),
+                                    NextProto::kProtoUnknown),
     .status = "HTTP/1.1 200 OK",
     .response_headers = "Cache-Control: max-age=10000\n",
     .response_time = base::Time(),
@@ -91,7 +91,7 @@ TEST_F(MockNetworkTransactionTest, Basic) {
   EXPECT_TRUE(transaction->GetResponseInfo()->network_accessed);
   EXPECT_EQ(mock_transaction.transport_info.endpoint,
             transaction->GetResponseInfo()->remote_endpoint);
-  EXPECT_FALSE(transaction->GetResponseInfo()->was_fetched_via_proxy);
+  EXPECT_FALSE(transaction->GetResponseInfo()->WasFetchedViaProxy());
 
   scoped_refptr<IOBufferWithSize> buf =
       base::MakeRefCounted<IOBufferWithSize>(kDefaultBufferSize);

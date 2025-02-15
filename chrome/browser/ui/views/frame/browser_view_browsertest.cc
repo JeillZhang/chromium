@@ -6,33 +6,54 @@
 
 #include <memory>
 
+#include "base/callback_list.h"
+#include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/test_future.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/devtools/devtools_window_testing.h"
+#include "chrome/browser/enterprise/data_protection/data_protection_navigation_controller.h"
+#include "chrome/browser/enterprise/watermark/watermark_view.h"
+#include "chrome/browser/policy/dm_token_utils.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/safe_browsing/chrome_enterprise_url_lookup_service_factory.h"
 #include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_navigator.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/tab_modal_confirm_dialog.h"
 #include "chrome/browser/ui/tab_ui_helper.h"
+#include "chrome/browser/ui/tabs/public/tab_features.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/browser/ui/tabs/tab_strip_user_gesture_details.h"
+#include "chrome/browser/ui/test/test_browser_ui.h"
+#include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/views/bookmarks/bookmark_bar_view.h"
 #include "chrome/browser/ui/views/bookmarks/bookmark_bar_view_observer.h"
+#include "chrome/browser/ui/views/frame/browser_view.h"
+#include "chrome/browser/ui/views/frame/scrim_view.h"
 #include "chrome/browser/ui/views/side_panel/side_panel.h"
 #include "chrome/browser/ui/views/side_panel/side_panel_coordinator.h"
 #include "chrome/browser/ui/views/side_panel/side_panel_util.h"
 #include "chrome/browser/ui/views/tabs/tab_strip.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/branded_strings.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/bookmarks/common/bookmark_pref_names.h"
+#include "components/enterprise/connectors/core/common.h"
+#include "components/enterprise/connectors/core/connectors_prefs.h"
+#include "components/enterprise/data_controls/core/browser/features.h"
+#include "components/enterprise/data_controls/core/browser/test_utils.h"
+#include "components/keyed_service/content/browser_context_dependency_manager.h"
+#include "components/policy/core/common/policy_types.h"
 #include "components/prefs/pref_service.h"
+#include "components/safe_browsing/core/browser/realtime/fake_url_lookup_service.h"
 #include "content/public/browser/invalidate_type.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
@@ -41,35 +62,17 @@
 #include "content/public/test/scoped_accessibility_mode_override.h"
 #include "content/public/test/test_navigation_observer.h"
 #include "media/base/media_switches.h"
+#include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "ui/accessibility/platform/ax_platform_node.h"
 #include "ui/accessibility/platform/ax_platform_node_test_helper.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/ui_base_features.h"
+#include "url/url_constants.h"
 
 #if defined(USE_AURA)
 #include "ui/aura/client/focus_client.h"
 #include "ui/views/widget/native_widget_aura.h"
 #endif  // USE_AURA
-
-#if BUILDFLAG(ENTERPRISE_WATERMARK) || \
-    BUILDFLAG(ENTERPRISE_SCREENSHOT_PROTECTION)
-#include "base/callback_list.h"
-#include "base/functional/bind.h"
-#include "chrome/browser/enterprise/watermark/watermark_view.h"
-#include "chrome/browser/policy/dm_token_utils.h"
-#include "chrome/browser/safe_browsing/chrome_enterprise_url_lookup_service_factory.h"
-#include "chrome/browser/ui/browser_navigator.h"
-#include "chrome/browser/ui/tabs/tab_strip_user_gesture_details.h"
-#include "chrome/browser/ui/views/frame/browser_view.h"
-#include "chrome/common/chrome_features.h"
-#include "components/enterprise/data_controls/features.h"
-#include "components/enterprise/data_controls/test_utils.h"
-#include "components/keyed_service/content/browser_context_dependency_manager.h"
-#include "components/policy/core/common/policy_types.h"
-#include "components/safe_browsing/core/browser/realtime/fake_url_lookup_service.h"
-#include "components/safe_browsing/core/common/safe_browsing_prefs.h"
-#include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
-#endif
 
 class BrowserViewTest : public InProcessBrowserTest {
  public:
@@ -121,13 +124,12 @@ class TestWebContentsObserver : public content::WebContentsObserver {
  public:
   TestWebContentsObserver(content::WebContents* source,
                           content::WebContents* other)
-      : content::WebContentsObserver(source),
-        other_(other) {}
+      : content::WebContentsObserver(source), other_(other) {}
 
   TestWebContentsObserver(const TestWebContentsObserver&) = delete;
   TestWebContentsObserver& operator=(const TestWebContentsObserver&) = delete;
 
-  ~TestWebContentsObserver() override {}
+  ~TestWebContentsObserver() override = default;
 
   void WebContentsDestroyed() override {
     other_->NotifyNavigationStateChanged(static_cast<content::InvalidateTypes>(
@@ -183,7 +185,21 @@ IN_PROC_BROWSER_TEST_F(BrowserViewTest, CloseWithTabsStartWithActive) {
   BrowserView::GetBrowserViewForBrowser(browser2)->GetWidget()->CloseNow();
 }
 
-// Verifies that page and devtools WebViews are being correctly layed out
+#if BUILDFLAG(IS_CHROMEOS)
+IN_PROC_BROWSER_TEST_F(BrowserViewTest, OnTaskLockedBrowserView) {
+  browser()->SetLockedForOnTask(true);
+  EXPECT_FALSE(browser_view()->CanMinimize());
+  EXPECT_FALSE(browser_view()->ShouldShowCloseButton());
+}
+
+IN_PROC_BROWSER_TEST_F(BrowserViewTest, OnTaskUnlockedBrowserView) {
+  browser()->SetLockedForOnTask(false);
+  EXPECT_TRUE(browser_view()->CanMinimize());
+  EXPECT_TRUE(browser_view()->ShouldShowCloseButton());
+}
+#endif
+
+// Verifies that page and devtools WebViews are being correctly laid out
 // when DevTools is opened/closed/updated/undocked.
 // TODO(crbug.com/40834238): Re-enable; currently failing on multiple platforms.
 IN_PROC_BROWSER_TEST_F(BrowserViewTest, DISABLED_DevToolsUpdatesBrowserWindow) {
@@ -250,7 +266,7 @@ IN_PROC_BROWSER_TEST_F(BrowserViewTest, DISABLED_DevToolsUpdatesBrowserWindow) {
 // Verifies that the side panel's rounded corner is being correctly layed out.
 IN_PROC_BROWSER_TEST_F(BrowserViewTest, SidePanelRoundedCornerLayout) {
   SidePanelCoordinator* coordinator =
-      SidePanelUtil::GetSidePanelCoordinatorForBrowser((browser()));
+      (browser())->GetFeatures().side_panel_coordinator();
   coordinator->SetNoDelaysForTesting(true);
   coordinator->Show(SidePanelEntry::Id::kBookmarks);
   EXPECT_EQ(side_panel()->bounds().x(),
@@ -261,8 +277,7 @@ IN_PROC_BROWSER_TEST_F(BrowserViewTest, SidePanelRoundedCornerLayout) {
 
 class BookmarkBarViewObserverImpl : public BookmarkBarViewObserver {
  public:
-  BookmarkBarViewObserverImpl() : change_count_(0) {
-  }
+  BookmarkBarViewObserverImpl() = default;
 
   BookmarkBarViewObserverImpl(const BookmarkBarViewObserverImpl&) = delete;
   BookmarkBarViewObserverImpl& operator=(const BookmarkBarViewObserverImpl&) =
@@ -347,17 +362,17 @@ IN_PROC_BROWSER_TEST_F(BrowserViewTest, TitleAndLoadState) {
       base::FilePath(FILE_PATH_LITERAL("title2.html")));
   contents->GetController().LoadURL(test_url, content::Referrer(),
                                     ui::PAGE_TRANSITION_LINK, std::string());
-  EXPECT_TRUE(browser()->tab_strip_model()->TabsAreLoading());
+  EXPECT_TRUE(browser()->tab_strip_model()->TabsNeedLoadingUI());
   EXPECT_EQ(TabNetworkState::kWaiting,
             tab_strip->tab_at(0)->data().network_state);
   EXPECT_EQ(test_title, title_watcher.WaitAndGetTitle());
-  EXPECT_TRUE(browser()->tab_strip_model()->TabsAreLoading());
+  EXPECT_TRUE(browser()->tab_strip_model()->TabsNeedLoadingUI());
   EXPECT_EQ(TabNetworkState::kLoading,
             tab_strip->tab_at(0)->data().network_state);
 
   // Now block for the navigation to complete.
   navigation_watcher.Wait();
-  EXPECT_FALSE(browser()->tab_strip_model()->TabsAreLoading());
+  EXPECT_FALSE(browser()->tab_strip_model()->TabsNeedLoadingUI());
   EXPECT_EQ(TabNetworkState::kNone, tab_strip->tab_at(0)->data().network_state);
 }
 
@@ -390,8 +405,9 @@ IN_PROC_BROWSER_TEST_F(BrowserViewTest, GetAccessibleTabModalDialogTree) {
 #if BUILDFLAG(IS_WIN)
   ASSERT_TRUE(ax_node);
 #else
-  if (!ax_node)
+  if (!ax_node) {
     return;
+  }
 #endif
 
   // There is no dialog, but the browser UI should be visible. So we expect the
@@ -412,8 +428,68 @@ IN_PROC_BROWSER_TEST_F(BrowserViewTest, GetAccessibleTabModalDialogTree) {
   EXPECT_NE(ui::AXPlatformNodeTestHelper::FindChildByName(ax_node, "OK"),
             nullptr);
 }
+#endif  // !BUILDFLAG(IS_MAC)
 
-#if BUILDFLAG(ENTERPRISE_WATERMARK)
+// Tests that a content area scrim is shown when a tab modal dialog is active.
+IN_PROC_BROWSER_TEST_F(BrowserViewTest, ScrimForTabModal) {
+  if (!base::FeatureList::IsEnabled(features::KScrimForTabModal)) {
+    GTEST_SKIP();
+  }
+
+  content::WebContents* contents = browser_view()->GetActiveWebContents();
+  auto delegate = std::make_unique<TestTabModalConfirmDialogDelegate>(contents);
+
+  // Showing a tab modal dialog will enable the content scrim.
+  TabModalConfirmDialog::Create(std::move(delegate), contents);
+  EXPECT_TRUE(browser_view()->contents_scrim_view()->GetVisible());
+
+  // Goes to a second tab will disable the content scrim.
+  ASSERT_TRUE(
+      AddTabAtIndex(1, GURL(url::kAboutBlankURL), ui::PAGE_TRANSITION_LINK));
+  EXPECT_FALSE(browser_view()->contents_scrim_view()->GetVisible());
+
+  // Switch back to the page that has a modal dialog.
+  browser()->tab_strip_model()->ActivateTabAt(
+      0, TabStripUserGestureDetails(
+             TabStripUserGestureDetails::GestureType::kMouse));
+  EXPECT_TRUE(browser_view()->contents_scrim_view()->GetVisible());
+
+  // Closing the tab disables the content scrim.
+  chrome::CloseWebContents(browser(),
+                           browser()->tab_strip_model()->GetActiveWebContents(),
+                           /*add_to_history=*/false);
+}
+
+// MacOS does not need views window scrim. We use sheet to show window modals
+// (-[NSWindow beginSheet:]), which natively draws a scrim since macOS 11.
+#if !BUILDFLAG(IS_MAC)
+IN_PROC_BROWSER_TEST_F(BrowserViewTest, ScrimForBrowserWindowModal) {
+  if (!base::FeatureList::IsEnabled(features::kScrimForBrowserWindowModal)) {
+    GTEST_SKIP();
+  }
+
+  auto child_widget_delegate = std::make_unique<views::WidgetDelegate>();
+  auto child_widget = std::make_unique<views::Widget>();
+  child_widget_delegate->SetModalType(ui::mojom::ModalType::kWindow);
+  views::Widget::InitParams params(
+      views::Widget::InitParams::CLIENT_OWNS_WIDGET,
+      views::Widget::InitParams::TYPE_WINDOW);
+  params.delegate = child_widget_delegate.get();
+  params.parent = browser_view()->GetWidget()->GetNativeView();
+  child_widget->Init(std::move(params));
+
+  child_widget->Show();
+  EXPECT_TRUE(browser_view()->window_scrim_view_for_testing()->GetVisible());
+  child_widget->Hide();
+  EXPECT_FALSE(browser_view()->window_scrim_view_for_testing()->GetVisible());
+  child_widget->Show();
+  EXPECT_TRUE(browser_view()->window_scrim_view_for_testing()->GetVisible());
+  // Destroy the child widget, the parent should be notified about child modal
+  // visibility change.
+  child_widget.reset();
+  EXPECT_FALSE(browser_view()->window_scrim_view_for_testing()->GetVisible());
+}
+#endif  // !BUILDFLAG(IS_MAC)
 
 namespace {
 
@@ -427,7 +503,9 @@ class FakeRealTimeUrlLookupService
       const GURL& url,
       safe_browsing::RTLookupResponseCallback response_callback,
       scoped_refptr<base::SequencedTaskRunner> callback_task_runner,
-      SessionID session_id) override {
+      SessionID session_id,
+      std::optional<safe_browsing::internal::ReferringAppInfo>
+          referring_app_info) override {
     auto response = std::make_unique<safe_browsing::RTLookupResponse>();
     safe_browsing::RTLookupResponse::ThreatInfo* new_threat_info =
         response->add_threat_info();
@@ -459,9 +537,7 @@ class BrowserViewDataProtectionTest : public InProcessBrowserTest {
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
     scoped_feature_list_.InitWithFeatures(
-        {features::kEnableWatermarkView,
-         data_controls::kEnableScreenshotProtection},
-        {});
+        {data_controls::kEnableScreenshotProtection}, {});
 
     // Set a DM token since the enterprise real-time URL service expects one.
     policy::SetDMTokenForTesting(policy::DMToken::CreateValidToken("dm_token"));
@@ -472,10 +548,10 @@ class BrowserViewDataProtectionTest : public InProcessBrowserTest {
 
           // Enable real-time URL checks.
           profile->GetPrefs()->SetInteger(
-              prefs::kSafeBrowsingEnterpriseRealTimeUrlCheckMode,
-              safe_browsing::REAL_TIME_CHECK_FOR_MAINFRAME_ENABLED);
+              enterprise_connectors::kEnterpriseRealTimeUrlCheckMode,
+              enterprise_connectors::REAL_TIME_CHECK_FOR_MAINFRAME_ENABLED);
           profile->GetPrefs()->SetInteger(
-              prefs::kSafeBrowsingEnterpriseRealTimeUrlCheckScope,
+              enterprise_connectors::kEnterpriseRealTimeUrlCheckScope,
               policy::POLICY_SCOPE_MACHINE);
 
           auto testing_factory =
@@ -527,9 +603,11 @@ IN_PROC_BROWSER_TEST_F(BrowserViewDataProtectionTest,
       browser_view->get_watermark_view_for_testing()->has_text_for_testing());
 
   base::test::TestFuture<void> future;
-  browser_view
-      ->set_on_delay_apply_data_protection_settings_if_empty_called_for_testing(
-          future.GetCallback());
+  browser()
+      ->GetActiveTabInterface()
+      ->GetTabFeatures()
+      ->data_protection_controller()
+      ->SetCallbackForTesting(future.GetCallback());
   // Navigate to a page that should show a watermark.  The watermark should
   // show even while the page loads.
   auto* web_contents = NavigateAsync(GURL("https://watermark.com"));
@@ -586,8 +664,93 @@ IN_PROC_BROWSER_TEST_F(BrowserViewDataProtectionTest,
                   ->has_text_for_testing());
 }
 
-// TODO(crbug.com/322519161): Add test for Mac platform once implemented.
-#if BUILDFLAG(IS_WIN)
+IN_PROC_BROWSER_TEST_F(BrowserViewDataProtectionTest,
+                       Apply_SwitchTab_ToWatermark_NoWait) {
+  NavigateToAndWait(GURL("https://watermark.com"));
+
+  // Create a second tab with a page that should not be watermarked. We
+  // intentionally do not wait for the load to finish. The watermark should
+  // not be showing.
+  NavigateParams params(browser(), GURL("chrome://version"),
+                        ui::PAGE_TRANSITION_LINK);
+  params.tabstrip_index = 1;
+  params.disposition = WindowOpenDisposition::NEW_FOREGROUND_TAB;
+  Navigate(&params);
+  EXPECT_FALSE(BrowserView::GetBrowserViewForBrowser(browser())
+                   ->get_watermark_view_for_testing()
+                   ->has_text_for_testing());
+
+  // Switch back to the watermarked tab. The watermark should still be showing.
+  browser()->tab_strip_model()->ActivateTabAt(
+      0, TabStripUserGestureDetails(
+             TabStripUserGestureDetails::GestureType::kMouse));
+  EXPECT_TRUE(BrowserView::GetBrowserViewForBrowser(browser())
+                  ->get_watermark_view_for_testing()
+                  ->has_text_for_testing());
+
+  // Wait for the second (now backgrounded) tab to finish loading. The watermark
+  // should still be showing.
+  content::WaitForLoadStop(params.navigated_or_inserted_contents);
+  EXPECT_TRUE(BrowserView::GetBrowserViewForBrowser(browser())
+                  ->get_watermark_view_for_testing()
+                  ->has_text_for_testing());
+}
+
+IN_PROC_BROWSER_TEST_F(BrowserViewDataProtectionTest,
+                       Apply_SwitchTab_ToWatermark_PartialWait) {
+  // Initial page should be watermarked.
+  NavigateToAndWait(GURL("https://watermark.com"));
+  EXPECT_TRUE(BrowserView::GetBrowserViewForBrowser(browser())
+                  ->get_watermark_view_for_testing()
+                  ->has_text_for_testing());
+
+  // Create a second tab. Navigate to a page that does not have a watermark.
+  // Part way through the navigation, switch to the first tab again.
+  auto* browser_view = BrowserView::GetBrowserViewForBrowser(browser());
+  NavigateParams params(browser(), GURL("https://nowatermark.com"),
+                        ui::PAGE_TRANSITION_LINK);
+  params.tabstrip_index = 1;
+  params.disposition = WindowOpenDisposition::NEW_FOREGROUND_TAB;
+  Navigate(&params);
+  EXPECT_FALSE(BrowserView::GetBrowserViewForBrowser(browser())
+                   ->get_watermark_view_for_testing()
+                   ->has_text_for_testing());
+  // Initial page loaded into the browser view is a chrome:// URL that has no
+  // watermark.
+  EXPECT_FALSE(
+      browser_view->get_watermark_view_for_testing()->has_text_for_testing());
+
+  base::test::TestFuture<void> future;
+  browser()
+      ->GetActiveTabInterface()
+      ->GetTabFeatures()
+      ->data_protection_controller()
+      ->SetCallbackForTesting(future.GetCallback());
+
+  // Wait for the navigation to partially complete. The load is not complete but
+  // DataProtectionNavigationController::ApplyDataProtectionSettings has been
+  // called with the verdict to clear the watermark.
+  EXPECT_TRUE(future.Wait());
+  EXPECT_FALSE(
+      browser_view->get_watermark_view_for_testing()->has_text_for_testing());
+
+  // Switch back to the watermarked tab. The watermark should show immediately.
+  browser()->tab_strip_model()->ActivateTabAt(
+      0, TabStripUserGestureDetails(
+             TabStripUserGestureDetails::GestureType::kMouse));
+  EXPECT_TRUE(BrowserView::GetBrowserViewForBrowser(browser())
+                  ->get_watermark_view_for_testing()
+                  ->has_text_for_testing());
+
+  // Wait for the second (now backgrounded) tab to finish loading. The watermark
+  // should still be showing.
+  content::WaitForLoadStop(params.navigated_or_inserted_contents);
+  EXPECT_TRUE(BrowserView::GetBrowserViewForBrowser(browser())
+                  ->get_watermark_view_for_testing()
+                  ->has_text_for_testing());
+}
+
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
 
 IN_PROC_BROWSER_TEST_F(BrowserViewDataProtectionTest, DC_Screenshot) {
   data_controls::SetDataControls(browser()->profile()->GetPrefs(), {R"(
@@ -609,8 +772,42 @@ IN_PROC_BROWSER_TEST_F(BrowserViewDataProtectionTest, DC_Screenshot) {
   EXPECT_TRUE(widget->AreScreenshotsAllowed());
 }
 
-#endif  // BUILDFLAG(IS_WIN)
+#endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
 
-#endif  // BUILDFLAG(ENTERPRISE_WATERMARK)
+namespace {
 
-#endif  // !BUILDFLAG(IS_MAC)
+// chrome/test/data/simple.html
+const char kSimplePage[] = "/simple.html";
+
+class BrowserViewScrimPixelTest : public UiBrowserTest {
+ public:
+  // UiBrowserTest:
+  void ShowUi(const std::string& name) override {
+    ASSERT_TRUE(embedded_test_server()->Start());
+    GURL url = embedded_test_server()->GetURL(kSimplePage);
+    ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), url));
+    browser()->window()->Show();
+    BrowserView::GetBrowserViewForBrowser(browser())
+        ->contents_scrim_view()
+        ->SetVisible(true);
+  }
+
+  bool VerifyUi() override {
+    const auto* const test_info =
+        testing::UnitTest::GetInstance()->current_test_info();
+    return VerifyPixelUi(BrowserView::GetBrowserViewForBrowser(browser())
+                             ->contents_container(),
+                         test_info->test_suite_name(),
+                         test_info->name()) != ui::test::ActionResult::kFailed;
+  }
+
+  void WaitForUserDismissal() override {
+    ui_test_utils::WaitForBrowserToClose();
+  }
+};
+
+}  // namespace
+
+IN_PROC_BROWSER_TEST_F(BrowserViewScrimPixelTest, InvokeUi_content_scrim) {
+  ShowAndVerifyUi();
+}

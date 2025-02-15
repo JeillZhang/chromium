@@ -15,12 +15,14 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 
+import static org.chromium.base.ThreadUtils.runOnUiThreadBlocking;
 import static org.chromium.base.test.util.CriteriaHelper.pollUiThread;
-import static org.chromium.content_public.browser.test.util.TestThreadUtils.runOnUiThreadBlocking;
 
+import android.content.Context;
 import android.view.View;
 import android.widget.TextView;
 
+import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.test.espresso.Espresso;
 import androidx.test.filters.MediumTest;
@@ -388,8 +390,9 @@ public class FastCheckoutIntegrationTest {
                                         }
 
                                         @Override
-                                        public int getSheetContentDescriptionStringId() {
-                                            return 0;
+                                        public @NonNull String getSheetContentDescription(
+                                                Context context) {
+                                            return "";
                                         }
 
                                         @Override

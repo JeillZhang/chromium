@@ -123,18 +123,6 @@ const char kInfobarSyncErrorModalEventHistogram[] =
 const char kInfobarSyncErrorBadgeTappedHistogram[] =
     "Mobile.Messages.Badge.Tapped.InfobarTypeSyncError";
 
-// Histogram names for the Tabpickup banner.
-const char kInfobarTabPickupBannerEventHistogram[] =
-    "Mobile.Messages.Banner.Event.InfobarTypeTabPickup";
-const char kInfobarTabPickupBannerDismissTypeHistogram[] =
-    "Mobile.Messages.Banner.Dismiss.InfobarTypeTabPickup";
-// Modal.
-const char kInfobarTabPickupModalEventHistogram[] =
-    "Mobile.Messages.Modal.Event.InfobarTypeTabPickup";
-// Badge.
-const char kInfobarTabPickupBadgeTappedHistogram[] =
-    "Mobile.Messages.Badge.Tapped.InfobarTypeTabPickup";
-
 // Histogram names for the Parcel Tracking banner.
 const char kInfobarParcelTrackingBannerEventHistogram[] =
     "Mobile.Messages.Banner.Event.InfobarTypeParcelTracking";
@@ -210,9 +198,6 @@ const char kInfobarEnhancedSafeBrowsingBadgeTappedHistogram[] =
     case InfobarType::kInfobarTypeSyncError:
       UMA_HISTOGRAM_ENUMERATION(kInfobarSyncErrorBannerEventHistogram, event);
       break;
-    case InfobarType::kInfobarTypeTabPickup:
-      UMA_HISTOGRAM_ENUMERATION(kInfobarTabPickupBannerEventHistogram, event);
-      break;
     case InfobarType::kInfobarTypeParcelTracking:
       UMA_HISTOGRAM_ENUMERATION(kInfobarParcelTrackingBannerEventHistogram,
                                 event);
@@ -263,10 +248,6 @@ const char kInfobarEnhancedSafeBrowsingBadgeTappedHistogram[] =
       UMA_HISTOGRAM_ENUMERATION(kInfobarSyncErrorBannerDismissTypeHistogram,
                                 dismissType);
       break;
-    case InfobarType::kInfobarTypeTabPickup:
-      UMA_HISTOGRAM_ENUMERATION(kInfobarTabPickupBannerDismissTypeHistogram,
-                                dismissType);
-      break;
     case InfobarType::kInfobarTypeParcelTracking:
       UMA_HISTOGRAM_ENUMERATION(
           kInfobarParcelTrackingBannerDismissTypeHistogram, dismissType);
@@ -279,7 +260,8 @@ const char kInfobarEnhancedSafeBrowsingBadgeTappedHistogram[] =
 }
 
 - (void)recordBannerOnScreenDuration:(base::TimeDelta)duration {
-  UMA_HISTOGRAM_MEDIUM_TIMES("Mobile.Messages.Banner.OnScreenTime", duration);
+  DEPRECATED_UMA_HISTOGRAM_MEDIUM_TIMES("Mobile.Messages.Banner.OnScreenTime",
+                                        duration);
 }
 
 - (void)recordModalEvent:(MobileMessagesModalEvent)event {
@@ -314,9 +296,6 @@ const char kInfobarEnhancedSafeBrowsingBadgeTappedHistogram[] =
       break;
     case InfobarType::kInfobarTypeSyncError:
       UMA_HISTOGRAM_ENUMERATION(kInfobarSyncErrorModalEventHistogram, event);
-      break;
-    case InfobarType::kInfobarTypeTabPickup:
-      UMA_HISTOGRAM_ENUMERATION(kInfobarTabPickupModalEventHistogram, event);
       break;
     case InfobarType::kInfobarTypeParcelTracking:
       UMA_HISTOGRAM_ENUMERATION(kInfobarParcelTrackingModalEventHistogram,
@@ -358,13 +337,9 @@ const char kInfobarEnhancedSafeBrowsingBadgeTappedHistogram[] =
       break;
     case InfobarType::kInfobarTypeTailoredSecurityService:
       // TailoredSecurityService infobar doesn't have a badge.
-      NOTREACHED_IN_MIGRATION();
-      break;
+      NOTREACHED();
     case InfobarType::kInfobarTypeSyncError:
       UMA_HISTOGRAM_ENUMERATION(kInfobarSyncErrorBadgeTappedHistogram, state);
-      break;
-    case InfobarType::kInfobarTypeTabPickup:
-      UMA_HISTOGRAM_ENUMERATION(kInfobarTabPickupBadgeTappedHistogram, state);
       break;
     case InfobarType::kInfobarTypeParcelTracking:
       UMA_HISTOGRAM_ENUMERATION(kInfobarParcelTrackingBadgeTappedHistogram,

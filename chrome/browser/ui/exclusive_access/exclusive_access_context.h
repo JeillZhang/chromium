@@ -53,7 +53,11 @@ class ExclusiveAccessContext {
   virtual void OnExclusiveAccessUserInput() = 0;
 
   // Returns the currently active WebContents, or nullptr if there is none.
-  virtual content::WebContents* GetActiveWebContents() = 0;
+  virtual content::WebContents* GetWebContentsForExclusiveAccess() = 0;
+
+  // window.setResizable(false) blocks user-initiated fullscreen requests, see:
+  // https://github.com/explainers-by-googlers/additional-windowing-controls/blob/main/README.md
+  virtual bool CanUserEnterFullscreen() const = 0;
 
   // There are special modes where the user isn't allowed to exit fullscreen on
   // their own, and this function allows us to check for that.

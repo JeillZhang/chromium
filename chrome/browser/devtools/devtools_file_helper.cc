@@ -84,14 +84,12 @@ class SelectFileDialog : public ui::SelectFileDialog::Listener {
   }
 
   // ui::SelectFileDialog::Listener implementation.
-  void FileSelected(const ui::SelectedFileInfo& file,
-                    int index,
-                    void* params) override {
+  void FileSelected(const ui::SelectedFileInfo& file, int index) override {
     std::move(selected_callback_).Run(file.path());
     delete this;
   }
 
-  void FileSelectionCanceled(void* params) override {
+  void FileSelectionCanceled() override {
     if (canceled_callback_) {
       std::move(canceled_callback_).Run();
     }
@@ -121,7 +119,7 @@ class SelectFileDialog : public ui::SelectFileDialog::Listener {
     }
     select_file_dialog_->SelectFile(
         type, std::u16string(), default_path, &file_type_info, 0, ext,
-        platform_util::GetTopLevel(web_contents->GetNativeView()), nullptr);
+        platform_util::GetTopLevel(web_contents->GetNativeView()));
   }
 
   scoped_refptr<ui::SelectFileDialog> select_file_dialog_;
@@ -176,7 +174,7 @@ std::string RegisterFileSystem(WebContents* web_contents,
       content::ChildProcessSecurityPolicy::GetInstance();
   RenderViewHost* render_view_host =
       web_contents->GetPrimaryMainFrame()->GetRenderViewHost();
-  int renderer_id = render_view_host->GetProcess()->GetID();
+  int renderer_id = render_view_host->GetProcess()->GetDeprecatedID();
   policy->GrantReadFileSystem(renderer_id, file_system.id());
   policy->GrantWriteFileSystem(renderer_id, file_system.id());
   policy->GrantCreateFileForFileSystem(renderer_id, file_system.id());

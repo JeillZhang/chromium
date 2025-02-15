@@ -13,16 +13,15 @@ import {getDeepActiveElement} from 'chrome://resources/js/util.js';
 import type {CrDialogElement} from 'chrome://resources/cr_elements/cr_dialog/cr_dialog.js';
 import type {CrInputElement} from 'chrome://resources/cr_elements/cr_input/cr_input.js';
 import type {CrTextareaElement} from 'chrome://resources/cr_elements/cr_textarea/cr_textarea.js';
-import {keyDownOn, keyEventOn} from 'chrome://resources/polymer/v3_0/iron-test-helpers/mock-interactions.js';
+import {keyDownOn, keyEventOn} from 'chrome://webui-test/keyboard_mock_interactions.js';
 import {assertEquals, assertFalse, assertNotEquals, assertNotReached, assertNull, assertTrue} from 'chrome://webui-test/chai_assert.js';
-import {eventToPromise, isVisible} from 'chrome://webui-test/test_util.js';
-import {flushTasks} from 'chrome://webui-test/polymer_test_util.js';
+import {eventToPromise, isVisible, microtasksFinished} from 'chrome://webui-test/test_util.js';
 
 // clang-format on
 
 suite('cr-dialog', function() {
   function pressEnter(element: HTMLElement) {
-    keyEventOn(element, 'keypress', 13, undefined, 'Enter');
+    keyEventOn(element, 'keypress', 13, [], 'Enter');
   }
 
   /**
@@ -74,7 +73,7 @@ suite('cr-dialog', function() {
     return whenFired;
   });
 
-  test('close event bubbles', function() {
+  test('close event bubbles', async function() {
     document.body.innerHTML = getTrustedHTML`
       <cr-dialog>
         <div slot="title">title</div>
@@ -85,37 +84,34 @@ suite('cr-dialog', function() {
     dialog.showModal();
     const whenFired = eventToPromise('close', dialog);
     dialog.close();
-    return whenFired.then(() => {
-      assertEquals('success', dialog.getNative().returnValue);
-    });
+    await whenFired;
+    assertEquals('success', dialog.getNative().returnValue);
   });
 
   // cr-dialog has to catch and re-fire 'close' events fired from it's native
   // <dialog> child to force them to bubble in Shadow DOM V1. Ensure that this
   // mechanism does not interfere with nested <cr-dialog> 'close' events.
-  test('close events not fired from <dialog> are not affected', function() {
-    const dialogs = createAndShowNestedDialogs();
-    const outer = dialogs[0];
-    const inner = dialogs[1];
+  test(
+      'close events not fired from <dialog> are not affected',
+      async function() {
+        const dialogs = createAndShowNestedDialogs();
+        const outer = dialogs[0];
+        const inner = dialogs[1];
 
-    let whenFired = eventToPromise('close', window);
-    inner.close();
+        let whenFired = eventToPromise('close', window);
+        inner.close();
 
-    return whenFired
-        .then(e => {
-          // Check that the event's target is the inner dialog.
-          assertEquals(inner, e.target);
-          whenFired = eventToPromise('close', window);
-          outer.close();
-          return whenFired;
-        })
-        .then(e => {
-          // Check that the event's target is the outer dialog.
-          assertEquals(outer, e.target);
-        });
-  });
+        let e = await whenFired;
+        // Check that the event's target is the inner dialog.
+        assertEquals(inner, e.target);
+        whenFired = eventToPromise('close', window);
+        outer.close();
+        e = await whenFired;
+        // Check that the event's target is the outer dialog.
+        assertEquals(outer, e.target);
+      });
 
-  test('cancel and close events bubbles when cancelled', function() {
+  test('cancel and close events bubbles when cancelled', async function() {
     document.body.innerHTML = getTrustedHTML`
       <cr-dialog>
         <div slot="title">title</div>
@@ -127,35 +123,32 @@ suite('cr-dialog', function() {
     const whenCancelFired = eventToPromise('cancel', dialog);
     const whenCloseFired = eventToPromise('close', dialog);
     dialog.cancel();
-    return Promise.all([whenCancelFired, whenCloseFired]).then(() => {
-      assertEquals('', dialog.getNative().returnValue);
-    });
+    await Promise.all([whenCancelFired, whenCloseFired]);
+    assertEquals('', dialog.getNative().returnValue);
   });
 
   // cr-dialog has to catch and re-fire 'cancel' events fired from it's native
   // <dialog> child to force them to bubble in Shadow DOM V1. Ensure that this
   // mechanism does not interfere with nested <cr-dialog> 'cancel' events.
-  test('cancel events not fired from <dialog> are not affected', function() {
-    const dialogs = createAndShowNestedDialogs();
-    const outer = dialogs[0];
-    const inner = dialogs[1];
+  test(
+      'cancel events not fired from <dialog> are not affected',
+      async function() {
+        const dialogs = createAndShowNestedDialogs();
+        const outer = dialogs[0];
+        const inner = dialogs[1];
 
-    let whenFired = eventToPromise('cancel', window);
-    inner.cancel();
+        let whenFired = eventToPromise('cancel', window);
+        inner.cancel();
 
-    return whenFired
-        .then(e => {
-          // Check that the event's target is the inner dialog.
-          assertEquals(inner, e.target);
-          whenFired = eventToPromise('cancel', window);
-          outer.cancel();
-          return whenFired;
-        })
-        .then(e => {
-          // Check that the event's target is the outer dialog.
-          assertEquals(outer, e.target);
-        });
-  });
+        let e = await whenFired;
+        // Check that the event's target is the inner dialog.
+        assertEquals(inner, e.target);
+        whenFired = eventToPromise('cancel', window);
+        outer.cancel();
+        e = await whenFired;
+        // Check that the event's target is the outer dialog.
+        assertEquals(outer, e.target);
+      });
 
   test('focuses title on show', function() {
     document.body.innerHTML = getTrustedHTML`
@@ -217,7 +210,7 @@ suite('cr-dialog', function() {
     assertEquals(0, clickedCounter);
 
     // Enter keys on the close icon in the top-right corner should be ignored.
-    const close = dialog.shadowRoot!.querySelector<HTMLElement>('#close');
+    const close = dialog.shadowRoot.querySelector<HTMLElement>('#close');
     assertTrue(!!close);
     pressEnter(close);
     assertEquals(0, clickedCounter);
@@ -384,7 +377,7 @@ suite('cr-dialog', function() {
       element.showDialog = true;
       await whenOpen;
 
-      const child = element.shadowRoot!.querySelector(
+      const child = element.shadowRoot.querySelector(
           useTextarea ? 'cr-textarea' : 'cr-input')!;
       assertEquals(
           useTextarea ? (child as CrTextareaElement).$.input :
@@ -398,7 +391,7 @@ suite('cr-dialog', function() {
 
   // Ensuring that intersectionObserver does not fire any callbacks before the
   // dialog has been opened.
-  test('body scrollable border not added before modal shown', function() {
+  test('body scrollable border not added before modal shown', async function() {
     document.body.innerHTML = getTrustedHTML`
       <cr-dialog>
         <div slot="title">title</div>
@@ -407,19 +400,18 @@ suite('cr-dialog', function() {
 
     const dialog = document.body.querySelector('cr-dialog')!;
     assertFalse(dialog.open);
-    const bodyContainer = dialog.shadowRoot!.querySelector('.body-container');
+    const bodyContainer = dialog.shadowRoot.querySelector('.body-container');
     assertTrue(!!bodyContainer);
     const topShadow =
-        dialog.shadowRoot!.querySelector('#cr-container-shadow-top');
+        dialog.shadowRoot.querySelector('#cr-container-shadow-top');
     assertTrue(!!topShadow);
     const bottomShadow =
-        dialog.shadowRoot!.querySelector('#cr-container-shadow-bottom');
+        dialog.shadowRoot.querySelector('#cr-container-shadow-bottom');
     assertTrue(!!bottomShadow);
 
-    return flushTasks().then(() => {
-      assertFalse(topShadow!.classList.contains('has-shadow'));
-      assertFalse(bottomShadow!.classList.contains('has-shadow'));
-    });
+    await microtasksFinished();
+    assertFalse(topShadow!.classList.contains('has-shadow'));
+    assertFalse(bottomShadow!.classList.contains('has-shadow'));
   });
 
   test('dialog body scrollable border when appropriate', function(done) {
@@ -433,12 +425,12 @@ suite('cr-dialog', function() {
 
     const dialog = document.body.querySelector('cr-dialog')!;
     const bodyContainer =
-        dialog.shadowRoot!.querySelector<HTMLElement>('.body-container');
+        dialog.shadowRoot.querySelector<HTMLElement>('.body-container');
     assertTrue(!!bodyContainer);
-    const topShadow = dialog.shadowRoot!.querySelector<HTMLElement>(
+    const topShadow = dialog.shadowRoot.querySelector<HTMLElement>(
         '#cr-container-shadow-top');
     assertTrue(!!topShadow);
-    const bottomShadow = dialog.shadowRoot!.querySelector<HTMLElement>(
+    const bottomShadow = dialog.shadowRoot.querySelector<HTMLElement>(
         '#cr-container-shadow-bottom');
     assertTrue(!!bottomShadow);
 
@@ -521,7 +513,7 @@ suite('cr-dialog', function() {
     assertTrue(dialog.noCancel);
     dialog.showModal();
 
-    assertNull(dialog.shadowRoot!.querySelector('#close'));
+    assertNull(dialog.shadowRoot.querySelector('#close'));
 
     // Hitting escape fires a 'cancel' event. Cancelling that event prevents the
     // dialog from closing.
@@ -547,7 +539,7 @@ suite('cr-dialog', function() {
     dialog.showModal();
     assertTrue(dialog.open);
 
-    const close = dialog.shadowRoot!.querySelector<HTMLElement>('#close');
+    const close = dialog.shadowRoot.querySelector<HTMLElement>('#close');
     assertTrue(!!close);
     assertTrue(isVisible(close));
     close.click();
@@ -563,55 +555,56 @@ suite('cr-dialog', function() {
     const dialog = document.body.querySelector('cr-dialog')!;
     dialog.showModal();
 
-    assertNull(dialog.shadowRoot!.querySelector('#close'));
+    assertNull(dialog.shadowRoot.querySelector('#close'));
   });
 
-  test('keydown should be consumed when the property is true', function() {
-    document.body.innerHTML = getTrustedHTML`
+  test(
+      'keydown should be consumed when the property is true', async function() {
+        document.body.innerHTML = getTrustedHTML`
       <cr-dialog consume-keydown-event>
         <div slot="title">title</div>
       </cr-dialog>`;
 
-    const dialog = document.body.querySelector('cr-dialog')!;
-    dialog.showModal();
-    assertTrue(dialog.open);
-    assertTrue(dialog.consumeKeydownEvent);
+        const dialog = document.body.querySelector('cr-dialog')!;
+        dialog.showModal();
+        assertTrue(dialog.open);
+        assertTrue(dialog.consumeKeydownEvent);
 
-    function assertKeydownNotReached() {
-      assertNotReached('keydown event was propagated');
-    }
-    document.addEventListener('keydown', assertKeydownNotReached);
+        function assertKeydownNotReached() {
+          assertNotReached('keydown event was propagated');
+        }
+        document.addEventListener('keydown', assertKeydownNotReached);
 
-    return flushTasks().then(() => {
-      keyDownOn(dialog, 65, undefined, 'a');
-      keyDownOn(document.body, 65, undefined, 'a');
-      document.removeEventListener('keydown', assertKeydownNotReached);
-    });
-  });
+        await microtasksFinished();
+        keyDownOn(dialog, 65, [], 'a');
+        keyDownOn(document.body, 65, [], 'a');
+        document.removeEventListener('keydown', assertKeydownNotReached);
+      });
 
-  test('keydown should be propagated when the property is false', function() {
-    document.body.innerHTML = getTrustedHTML`
+  test(
+      'keydown should be propagated when the property is false',
+      async function() {
+        document.body.innerHTML = getTrustedHTML`
       <cr-dialog>
         <div slot="title">title</div>
       </cr-dialog>`;
 
-    const dialog = document.body.querySelector('cr-dialog')!;
-    dialog.showModal();
-    assertTrue(dialog.open);
-    assertFalse(dialog.consumeKeydownEvent);
+        const dialog = document.body.querySelector('cr-dialog')!;
+        dialog.showModal();
+        assertTrue(dialog.open);
+        assertFalse(dialog.consumeKeydownEvent);
 
-    let keydownCounter = 0;
-    function assertKeydownCount() {
-      keydownCounter++;
-    }
-    document.addEventListener('keydown', assertKeydownCount);
+        let keydownCounter = 0;
+        function assertKeydownCount() {
+          keydownCounter++;
+        }
+        document.addEventListener('keydown', assertKeydownCount);
 
-    return flushTasks().then(() => {
-      keyDownOn(dialog, 65, undefined, 'a');
-      assertEquals(1, keydownCounter);
-      document.removeEventListener('keydown', assertKeydownCount);
-    });
-  });
+        await microtasksFinished();
+        keyDownOn(dialog, 65, [], 'a');
+        assertEquals(1, keydownCounter);
+        document.removeEventListener('keydown', assertKeydownCount);
+      });
 
   test('show-on-attach', () => {
     document.body.innerHTML = getTrustedHTML`
@@ -632,7 +625,7 @@ suite('cr-dialog', function() {
     dialog.showModal();
 
     assertEquals('foo', dialog.closeText);
-    const close = dialog.shadowRoot!.querySelector<HTMLElement>('#close');
+    const close = dialog.shadowRoot.querySelector<HTMLElement>('#close');
     assertTrue(!!close);
     assertEquals('foo', close.ariaLabel);
     assertEquals('foo', close.getAttribute('aria-label'));

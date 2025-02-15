@@ -7,8 +7,9 @@
  */
 
 import {RENDERER_ID_NOT_SET} from '//components/autofill/ios/form_util/resources/fill_constants.js';
+import {getRemoteFrameToken} from '//components/autofill/ios/form_util/resources/fill_util.js';
 import {gCrWeb} from '//ios/web/public/js_messaging/resources/gcrweb.js';
-import {trim} from '//ios/web/public/js_messaging/resources/utils.js';
+import {sendWebKitMessage, trim} from '//ios/web/public/js_messaging/resources/utils.js';
 
 /**
  * Prefix used in references to form elements that have no 'id' or 'name'
@@ -82,25 +83,9 @@ function getFormControlElements(form: HTMLFormElement|null): Element[] {
  * @param root The node under which to search for iframe elements.
  * @return An array of iframe elements.
  */
-function getIframeElements(root: Node|null): HTMLIFrameElement[] {
-  if (!root) {
-    return [];
-  }
-  const iter: NodeIterator =
-      document.createNodeIterator(root, NodeFilter.SHOW_ELEMENT, {
-        acceptNode(node: Node): number {
-          // Safe cast because of NodeFilter.SHOW_ELEMENT
-          const elt: Element = node as Element;
-          return elt.tagName == 'IFRAME' ? NodeFilter.FILTER_ACCEPT :
-                                           NodeFilter.FILTER_SKIP;
-        },
-      });
-  let node: HTMLIFrameElement|null = null;
-  const accumulator: HTMLIFrameElement[] = [];
-  while (node = iter.nextNode() as HTMLIFrameElement) {
-    accumulator.push(node);
-  }
-  return accumulator;
+function getIframeElements(root: Element|null): HTMLIFrameElement[] {
+  return Array.from(root?.querySelectorAll('iframe') ?? []) as
+      HTMLIFrameElement[];
 }
 
 /**
@@ -323,6 +308,42 @@ function fieldWasEditedByUser(element: Element) {
   return wasEditedByUser.get(element);
 }
 
+/**
+ * @param originalURL A string containing a URL (absolute, relative...)
+ * @return A string containing a full URL (absolute with scheme)
+ */
+function getFullyQualifiedUrl(originalURL: string): string {
+  // A dummy anchor (never added to the document) is used to obtain the
+  // fully-qualified URL of `originalURL`.
+  const anchor = document.createElement('a');
+  anchor.href = originalURL;
+  return anchor.href;
+}
+
+// Send the form data to the browser.
+function formSubmitted(
+    form: HTMLFormElement,
+    messageHandler: string,
+    programmaticSubmission: boolean,
+    includeRemoteFrameToken: boolean = false,
+    ): void {
+  // Default URL for action is the document's URL.
+  const action = form.getAttribute('action') || document.URL;
+
+  const message = {
+    command: 'form.submit',
+    frameID: gCrWeb.message.getFrameId(),
+    formName: gCrWeb.form.getFormIdentifier(form),
+    href: getFullyQualifiedUrl(action),
+    formData: gCrWeb.fill.autofillSubmissionData(form),
+    remoteFrameToken: includeRemoteFrameToken ? getRemoteFrameToken() :
+                                                undefined,
+    programmaticSubmission: programmaticSubmission,
+  };
+
+  sendWebKitMessage(messageHandler, message);
+}
+
 gCrWeb.form = {
   wasEditedByUser,
   isFormControlElement,
@@ -334,4 +355,5 @@ gCrWeb.form = {
   getFormElementFromIdentifier,
   getFormElementFromRendererId,
   fieldWasEditedByUser,
+  formSubmitted,
 };

@@ -15,20 +15,6 @@
 
 namespace autofill {
 
-// This class reimplements the ValueForComparison method to apply a
-// country-specific rewriter to the normalized value.
-class AddressComponentWithRewriter : public AddressComponent {
- public:
-  using AddressComponent::AddressComponent;
-
- protected:
-  // Normalizes and then applies a country-specific rewriter to the `value`
-  // provided.
-  std::u16string GetValueForComparison(
-      const std::u16string& value,
-      const AddressComponent& other) const override;
-};
-
 // The name of the street.
 class StreetNameNode : public AddressComponent {
  public:
@@ -60,7 +46,7 @@ class FloorNode : public AddressComponent {
 };
 
 // The number of the apartment.
-class ApartmentNode : public FeatureGuardedAddressComponent {
+class ApartmentNode : public AddressComponent {
  public:
   explicit ApartmentNode(SubcomponentsList children);
   ~ApartmentNode() override;
@@ -74,24 +60,24 @@ class SubPremiseNode : public AddressComponent {
 };
 
 // Stores the landmark of an address profile.
-class LandmarkNode : public FeatureGuardedAddressComponent {
+class LandmarkNode : public AddressComponent {
  public:
   explicit LandmarkNode(SubcomponentsList children);
   ~LandmarkNode() override;
 };
 
 // Stores the streets intersection of an address profile.
-class BetweenStreetsNode : public FeatureGuardedAddressComponent {
+class BetweenStreetsNode : public AddressComponent {
  public:
   explicit BetweenStreetsNode(SubcomponentsList children);
   ~BetweenStreetsNode() override;
 };
-class BetweenStreets1Node : public FeatureGuardedAddressComponent {
+class BetweenStreets1Node : public AddressComponent {
  public:
   explicit BetweenStreets1Node(SubcomponentsList children);
   ~BetweenStreets1Node() override;
 };
-class BetweenStreets2Node : public FeatureGuardedAddressComponent {
+class BetweenStreets2Node : public AddressComponent {
  public:
   explicit BetweenStreets2Node(SubcomponentsList children);
   ~BetweenStreets2Node() override;
@@ -99,7 +85,7 @@ class BetweenStreets2Node : public FeatureGuardedAddressComponent {
 
 // Stores administrative area level 2. A sub-division of a state, e.g. a
 // Municipio in Brazil or Mexico.
-class AdminLevel2Node : public FeatureGuardedAddressComponent {
+class AdminLevel2Node : public AddressComponent {
  public:
   explicit AdminLevel2Node(SubcomponentsList children);
   ~AdminLevel2Node() override;
@@ -109,19 +95,19 @@ class AdminLevel2Node : public FeatureGuardedAddressComponent {
 // overflow fields, meaning that forms follow a consistent structure that is
 // typically identical across domains while also providing an option for an
 // overflow field.
-class AddressOverflowNode : public FeatureGuardedAddressComponent {
+class AddressOverflowNode : public AddressComponent {
  public:
   explicit AddressOverflowNode(SubcomponentsList children);
   ~AddressOverflowNode() override;
 };
 
-class AddressOverflowAndLandmarkNode : public FeatureGuardedAddressComponent {
+class AddressOverflowAndLandmarkNode : public AddressComponent {
  public:
   explicit AddressOverflowAndLandmarkNode(SubcomponentsList children);
   ~AddressOverflowAndLandmarkNode() override;
 };
 
-class BetweenStreetsOrLandmarkNode : public FeatureGuardedAddressComponent {
+class BetweenStreetsOrLandmarkNode : public AddressComponent {
  public:
   explicit BetweenStreetsOrLandmarkNode(SubcomponentsList children);
   ~BetweenStreetsOrLandmarkNode() override;
@@ -129,9 +115,7 @@ class BetweenStreetsOrLandmarkNode : public FeatureGuardedAddressComponent {
 
 // The StreetAddress incorporates all the information specifically related to
 // the street address (e.g. street location. between streets, subpremise, etc).
-// This class inherits from AddressComponentWithRewriter to implement
-// rewriting values for comparison.
-class StreetAddressNode : public AddressComponentWithRewriter {
+class StreetAddressNode : public AddressComponent {
  public:
   explicit StreetAddressNode(SubcomponentsList children);
   ~StreetAddressNode() override;
@@ -141,6 +125,10 @@ class StreetAddressNode : public AddressComponentWithRewriter {
   void SetValue(std::u16string value, VerificationStatus status) override;
 
   void UnsetValue() override;
+
+  std::u16string GetValueForComparison(
+      const std::u16string& value,
+      const AddressComponent& other) const override;
 
  protected:
   // Gives the component with the higher verification status precedence.
@@ -158,7 +146,6 @@ class StreetAddressNode : public AddressComponentWithRewriter {
   // Apply line-wise parsing of the street address as a fallback method.
   void ParseValueAndAssignSubcomponentsByFallbackMethod() override;
 
- protected:
   // Implements support for getting the value of the individual address lines.
   std::u16string GetValueForOtherSupportedType(
       FieldType field_type) const override;
@@ -206,9 +193,7 @@ class CityNode : public AddressComponent {
 };
 
 // Stores the state of an address.
-// This class inherits from AddressComponentWithRewriter to implement
-// rewriting values for comparison.
-class StateNode : public AddressComponentWithRewriter {
+class StateNode : public AddressComponent {
  public:
   explicit StateNode(SubcomponentsList children);
   ~StateNode() override;
@@ -216,20 +201,17 @@ class StateNode : public AddressComponentWithRewriter {
   // For states we use the AlternativeStateNameMap to offer canonicalized state
   // names.
   std::optional<std::u16string> GetCanonicalizedValue() const override;
+
+  std::u16string GetValueForComparison(
+      const std::u16string& value,
+      const AddressComponent& other) const override;
 };
 
 // Stores the postal code of an address.
-// This class inherits from AddressComponentWithRewriter to implement
-// rewriting values for comparison.
-class PostalCodeNode : public AddressComponentWithRewriter {
+class PostalCodeNode : public AddressComponent {
  public:
   explicit PostalCodeNode(SubcomponentsList children);
   ~PostalCodeNode() override;
-
- protected:
-  // In contrast to the base class, the normalization removes all white spaces
-  // from the value.
-  std::u16string GetNormalizedValue() const override;
 
   std::u16string GetValueForComparison(
       const std::u16string& value,

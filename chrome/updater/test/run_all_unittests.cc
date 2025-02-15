@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #include "base/base_paths.h"
 #include "base/check.h"
 #include "base/command_line.h"
@@ -14,6 +19,7 @@
 #include "base/test/test_switches.h"
 #include "build/build_config.h"
 #include "chrome/common/chrome_paths.h"
+#include "chrome/updater/constants.h"
 #include "chrome/updater/test/integration_test_commands.h"
 #include "chrome/updater/test/test_scope.h"
 #include "chrome/updater/test/unit_test_util.h"
@@ -145,18 +151,28 @@ void MaybeIncreaseTestTimeouts(int argc, char** argv) {
 
   // The minimum and the default value when unspecified is 45000.
   if (!command_line->HasSwitch(switches::kTestLauncherTimeout)) {
-    command_line->AppendSwitchASCII(switches::kTestLauncherTimeout, "90000");
+    command_line->AppendSwitchUTF8(switches::kTestLauncherTimeout, "90000");
   }
 
   // The minimum and the default value when unspecified is 30000.
   if (!command_line->HasSwitch(switches::kUiTestActionMaxTimeout)) {
-    command_line->AppendSwitchASCII(switches::kUiTestActionMaxTimeout, "45000");
+    command_line->AppendSwitchUTF8(switches::kUiTestActionMaxTimeout, "45000");
   }
 
   // The minimum and the default value when unspecified is 10000.
   if (!command_line->HasSwitch(switches::kUiTestActionTimeout)) {
-    command_line->AppendSwitchASCII(switches::kUiTestActionTimeout, "40000");
+    command_line->AppendSwitchUTF8(switches::kUiTestActionTimeout, "40000");
   }
+}
+
+// Disable the fallback fetcher for the current process. This is achieved by
+// adding `kNetWorkerSwitch` to the process command line to make it look like
+// a net worker process.
+void SkipFallbackNetworkFetcher() {
+#if BUILDFLAG(IS_MAC)
+  base::CommandLine::ForCurrentProcess()->AppendSwitch(
+      updater::kNetWorkerSwitch);
+#endif  // BUILDFLAG(IS_MAC)
 }
 
 }  // namespace
@@ -169,9 +185,11 @@ int main(int argc, char** argv) {
   // them are not present.
   MaybeIncreaseTestTimeouts(argc, argv);
 
-#if BUILDFLAG(IS_WIN)
-  updater::test::MaybeExcludePathsFromWindowsDefender();
+  // To make setting up network response expectations easier in test, just
+  // disable fallback fetcher altogether within this process.
+  SkipFallbackNetworkFetcher();
 
+#if BUILDFLAG(IS_WIN)
   VLOG(0) << "Process priority: " << base::Process::Current().GetOSPriority();
   VLOG(0) << updater::GetUACState();
 

@@ -30,6 +30,11 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #include "third_party/blink/renderer/bindings/core/v8/script_controller.h"
 
 #include <memory>
@@ -229,6 +234,20 @@ void ScriptController::UpdateDocument() {
   window_proxy_manager_->UpdateDocument();
 }
 
+void ScriptController::DiscardFrame() {
+  DCHECK(window_->GetFrame());
+  auto* previous_document_loader =
+      window_->GetFrame()->Loader().GetDocumentLoader();
+  DCHECK(previous_document_loader);
+  auto params =
+      previous_document_loader->CreateWebNavigationParamsToCloneDocument();
+  WebNavigationParams::FillStaticResponse(params.get(), "text/html", "UTF-8",
+                                          base::span<const char>());
+  params->frame_load_type = WebFrameLoadType::kReplaceCurrentItem;
+  window_->GetFrame()->Loader().CommitNavigation(std::move(params), nullptr,
+                                                 CommitReason::kDiscard);
+}
+
 void ScriptController::ExecuteJavaScriptURL(
     const KURL& url,
     network::mojom::CSPDisposition csp_disposition,
@@ -306,8 +325,7 @@ void ScriptController::ExecuteJavaScriptURL(
   String result = ToCoreString(isolate, v8::Local<v8::String>::Cast(v8_result));
   WebNavigationParams::FillStaticResponse(
       params.get(), "text/html", "UTF-8",
-      StringUTF8Adaptor(
-          result, kStrictUTF8ConversionReplacingUnpairedSurrogatesWithFFFD));
+      StringUTF8Adaptor(result, Utf8ConversionMode::kStrictReplacingErrors));
   params->frame_load_type = WebFrameLoadType::kReplaceCurrentItem;
   window_->GetFrame()->Loader().CommitNavigation(std::move(params), nullptr,
                                                  CommitReason::kJavascriptUrl);

@@ -6,12 +6,18 @@
 
 #include "base/metrics/field_trial_params.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/task/common/task_annotator.h"
 #include "base/trace_event/trace_event.h"
+#include "base/trace_event/trace_id_helper.h"
+#include "base/tracing/protos/chrome_track_event.pbzero.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/renderer/platform/widget/input/prediction/predictor_factory.h"
 #include "ui/base/ui_base_features.h"
+#include "ui/latency/latency_info.h"
 
 namespace blink {
+
+using ::perfetto::protos::pbzero::ChromeLatencyInfo2;
 
 ScrollPredictor::ScrollPredictor()
     : metrics_handler_("Event.InputEventPrediction.Scroll") {
@@ -41,7 +47,7 @@ ScrollPredictor::ScrollPredictor()
         blink::features::kFilteringScrollPrediction, predictor_type,
         filter_type);
 
-    filter_ = filter_factory_->CreateFilter(filter_type, predictor_type);
+    filter_ = filter_factory_->CreateFilter();
   }
 }
 
@@ -63,8 +69,23 @@ std::unique_ptr<EventWithCallback> ScrollPredictor::ResampleScrollEvents(
   if (!should_resample_scroll_events_)
     return event_with_callback;
 
+  int64_t trace_id = event_with_callback->latency_info().trace_id();
   const EventWithCallback::OriginalEventList& original_events =
       event_with_callback->original_events();
+  TRACE_EVENT(
+      "input,benchmark,latencyInfo", "LatencyInfo.Flow",
+      [&](perfetto::EventContext ctx) {
+        base::TaskAnnotator::EmitTaskTimingDetails(ctx);
+        ChromeLatencyInfo2* latency_info = ui::LatencyInfo::FillTraceEvent(
+            ctx, trace_id,
+            ChromeLatencyInfo2::Step::STEP_RESAMPLE_SCROLL_EVENTS);
+        for (const EventWithCallback::OriginalEventWithCallback&
+                 coalesced_event : original_events) {
+          int64_t coalesced_event_trace_id =
+              coalesced_event.event_->latency_info().trace_id();
+          latency_info->add_coalesced_trace_ids(coalesced_event_trace_id);
+        }
+      });
 
   if (event_with_callback->event().GetType() ==
       WebInputEvent::Type::kGestureScrollUpdate) {
@@ -117,31 +138,49 @@ ScrollPredictor::GenerateSyntheticScrollUpdate(
 
   ResampleEvent(frame_time, frame_interval, &gesture_event);
 
-  // TODO(b/329346768): `ui::LatencyInfo` has a Browser-process singleton
-  // counter for `trace_id`. This is not only used for flow-events, but for
-  // event order comparison during metrics calculations. We should update the
-  // comparison to be based on event timestamps. Then we can have build separate
-  // `trace_id` generation here.
-  //
-  // We should also add a new `BEGIN` stage, instead of re-using the one that
-  // is explicitly about the `content::RenderWidgetHost`.
   ui::LatencyInfo latency_info;
-  // TODO(b/329346768): `trace_id` is intended to match that of `latency_info`.
+  latency_info.set_trace_id(base::trace_event::GetNextGlobalTraceId());
+  // TODO(b/329346768): We should also add a new `BEGIN` stage, instead of
+  // re-using the one that is explicitly about the `content::RenderWidgetHost`.
+  latency_info.AddLatencyNumberWithTraceName(
+      ui::INPUT_EVENT_LATENCY_BEGIN_RWH_COMPONENT,
+      "InputLatency::GestureScrollUpdate", frame_time);
+
   std::unique_ptr<cc::ScrollUpdateEventMetrics> metrics =
       cc::ScrollUpdateEventMetrics::Create(
-          ui::ET_GESTURE_SCROLL_UPDATE, gesture_event.GetScrollInputType(),
+          ui::EventType::kGestureScrollUpdate,
+          gesture_event.GetScrollInputType(),
           /*is_inertial=*/false,
           cc::ScrollUpdateEventMetrics::ScrollUpdateType::kContinued,
           /*delta=*/gesture_event.data.scroll_update.delta_y,
           /*timestamp=*/frame_time,
           /*arrived_in_browser_main_timestamp=*/frame_time,
           /*blocking_touch_dispatched_to_renderer=*/frame_time,
-          /*trace_id=*/std::nullopt);
+          /*trace_id=*/
+          base::IdType64<class ui::LatencyInfo>(latency_info.trace_id()));
   metrics->set_predicted_delta(gesture_event.data.scroll_update.delta_y);
   return std::make_unique<EventWithCallback>(
       std::make_unique<WebCoalescedInputEvent>(std::move(gesture_event),
                                                latency_info),
-      base::DoNothing(), std::move(metrics));
+      base::BindOnce([](InputHandlerProxy::EventDisposition event_disposition,
+                        std::unique_ptr<WebCoalescedInputEvent> event,
+                        std::unique_ptr<InputHandlerProxy::DidOverscrollParams>
+                            overscroll_params,
+                        const WebInputEventAttribution& attribution,
+                        std::unique_ptr<cc::EventMetrics> metrics) {
+        int64_t trace_id = event->latency_info().trace_id();
+        TRACE_EVENT(
+            "input,benchmark,latencyInfo", "LatencyInfo.Flow",
+            [&](perfetto::EventContext ctx) {
+              base::TaskAnnotator::EmitTaskTimingDetails(ctx);
+              ui::LatencyInfo::FillTraceEvent(
+                  ctx, trace_id,
+                  ChromeLatencyInfo2::Step::
+                      STEP_DID_HANDLE_INPUT_AND_OVERSCROLL,
+                  ChromeLatencyInfo2::InputType::GESTURE_SCROLL_UPDATE_EVENT);
+            });
+      }),
+      std::move(metrics));
 }
 
 bool ScrollPredictor::HasPrediction() const {
@@ -150,8 +189,9 @@ bool ScrollPredictor::HasPrediction() const {
 
 void ScrollPredictor::Reset() {
   predictor_->Reset();
-  if (filtering_enabled_)
-    filter_->Reset();
+  if (filtering_enabled_) {
+    filter_ = filter_factory_->CreateFilter();
+  }
   current_event_accumulated_delta_ = gfx::PointF();
   last_predicted_accumulated_delta_ = gfx::PointF();
   metrics_handler_.Reset();
@@ -193,7 +233,10 @@ void ScrollPredictor::ResampleEvent(base::TimeTicks frame_time,
                      gfx::PointF(gesture_event->data.scroll_update.delta_x,
                                  gesture_event->data.scroll_update.delta_y)
                          .ToString());
-  gfx::PointF predicted_accumulated_delta = current_event_accumulated_delta_;
+  gfx::PointF predicted_accumulated_delta =
+      last_predicted_accumulated_delta_ +
+      gfx::Vector2dF(gesture_event->data.scroll_update.delta_x,
+                     gesture_event->data.scroll_update.delta_y);
 
   base::TimeDelta prediction_delta = frame_time - gesture_event->TimeStamp();
   bool predicted = false;

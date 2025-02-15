@@ -4,7 +4,8 @@
 
 import 'chrome://os-settings/os_settings.js';
 
-import {CrSliderElement, SettingsSliderV2Element} from 'chrome://os-settings/os_settings.js';
+import type {CrSliderElement} from 'chrome://os-settings/os_settings.js';
+import {SettingsSliderV2Element} from 'chrome://os-settings/os_settings.js';
 import {keyDownOn, keyUpOn} from 'chrome://resources/polymer/v3_0/iron-test-helpers/mock-interactions.js';
 import {flush} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 import {assertEquals, assertFalse, assertNotEquals, assertNull, assertThrows, assertTrue} from 'chrome://webui-test/chai_assert.js';
@@ -115,7 +116,7 @@ suite(SettingsSliderV2Element.is, () => {
       assertEquals('true', internalSlider.ariaDisabled);
     });
 
-    test('markers are shown by default when ticks is set', async () => {
+    test('markers are shown by default when ticks is set', () => {
       slider.ticks = ticks;
       flush();
 
@@ -159,14 +160,41 @@ suite(SettingsSliderV2Element.is, () => {
           internalSlider, slider.shadowRoot!.activeElement);
     });
 
-    test('A11y role description includes minLabel and maxLabel', () => {
-      slider.minLabel = 'Low';
-      slider.maxLabel = 'High';
-      assertEquals('Slider: Low to High', internalSlider.ariaRoleDescription);
-    });
+    suite('for a11y', () => {
+      test('ariaLabel property should apply to internal select', () => {
+        const ariaLabel = 'A11y label';
+        slider.ariaLabel = ariaLabel;
+        assertEquals(ariaLabel, internalSlider.getAttribute('aria-label'));
+      });
 
-    test('A11y role description is blank if no minLabel and maxLabel', () => {
-      assertNull(internalSlider.ariaRoleDescription);
+      test('ariaLabel property does not reflect to attribute', () => {
+        const ariaLabel = 'A11y label';
+        slider.ariaLabel = ariaLabel;
+        assertFalse(slider.hasAttribute('aria-label'));
+      });
+
+      test('ariaDescription property should apply to internal select', () => {
+        const ariaDescription = 'A11y description';
+        slider.ariaDescription = ariaDescription;
+        assertEquals(
+            ariaDescription, internalSlider.getAttribute('aria-description'));
+      });
+
+      test('ariaDescription property does not reflect to attribute', () => {
+        const ariaDescription = 'A11y description';
+        slider.ariaDescription = ariaDescription;
+        assertFalse(slider.hasAttribute('aria-description'));
+      });
+
+      test('A11y role description includes minLabel and maxLabel', () => {
+        slider.minLabel = 'Low';
+        slider.maxLabel = 'High';
+        assertEquals('Slider: Low to High', internalSlider.ariaRoleDescription);
+      });
+
+      test('A11y role description is blank if no minLabel and maxLabel', () => {
+        assertNull(internalSlider.ariaRoleDescription);
+      });
     });
   });
 

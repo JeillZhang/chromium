@@ -11,7 +11,6 @@
 #include "build/buildflag.h"
 #include "chrome/browser/content_settings/one_time_permission_provider.h"
 #include "chrome/browser/permissions/one_time_permissions_tracker_factory.h"
-#include "chrome/browser/profiles/off_the_record_profile_impl.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_key.h"
 #include "chrome/browser/profiles/profiles_state.h"
@@ -29,8 +28,8 @@
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "base/trace_event/trace_event.h"
-#include "extensions/browser/api/content_settings/content_settings_custom_extension_provider.h"
-#include "extensions/browser/api/content_settings/content_settings_service.h"
+#include "extensions/browser/api/content_settings/content_settings_custom_extension_provider.h"  // nogncheck
+#include "extensions/browser/api/content_settings/content_settings_service.h"  // nogncheck
 #endif
 
 #if BUILDFLAG(IS_ANDROID)
@@ -53,6 +52,9 @@ HostContentSettingsMapFactory::HostContentSettingsMapFactory()
               // TODO(crbug.com/40257657): Check if this service is needed in
               // Guest mode.
               .WithGuest(ProfileSelection::kOwnInstance)
+              // TODO(crbug.com/41488885): Check if this service is needed for
+              // Ash Internals.
+              .WithAshInternals(ProfileSelection::kOwnInstance)
               .Build()) {
   DependsOn(SupervisedUserSettingsServiceFactory::GetInstance());
 #if BUILDFLAG(IS_ANDROID)

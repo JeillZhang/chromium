@@ -32,7 +32,7 @@ std::string GetTestFileContents(const base::FilePath& path) {
 }
 
 std::vector<uint8_t> GetStringAsBytes(std::string_view contents) {
-  auto bytes = base::as_bytes(base::make_span(contents));
+  auto bytes = base::as_byte_span(contents);
   return std::vector<uint8_t>(bytes.begin(), bytes.end());
 }
 
@@ -51,7 +51,7 @@ TEST_F(WebBundleBuilderTest, CorrectWebBundleSizeIsWritten) {
   std::vector<uint8_t> bundle = builder.CreateBundle();
   uint8_t written_size[8];
   base::span(written_size).copy_from(base::span(bundle).last<8u>());
-  uint64_t written_size_int = base::numerics::U64FromBigEndian(written_size);
+  uint64_t written_size_int = base::U64FromBigEndian(written_size);
   EXPECT_EQ(bundle.size(), written_size_int);
 }
 

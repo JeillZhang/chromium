@@ -6,6 +6,7 @@
 
 #import <UIKit/UIKit.h>
 
+#import "ios/chrome/browser/authentication/ui_bundled/signin/interruptible_chrome_coordinator.h"
 #import "ios/chrome/browser/signin/model/fake_system_identity.h"
 #import "ios/chrome/browser/signin/model/fake_system_identity_manager.h"
 #import "ios/chrome/browser/signin/model/test_constants.h"
@@ -153,9 +154,7 @@ BOOL gUsingUnknownCapabilities;
   _lastStartAuthActivityUserEmail = userEmail;
   if (userEmail.length) {
     [FakeSystemIdentityInteractionManager
-                    setIdentity:[FakeSystemIdentity identityWithEmail:userEmail
-                                                               gaiaID:@"gaia"
-                                                                 name:@"name"]
+                    setIdentity:[FakeSystemIdentity identityWithEmail:userEmail]
         withUnknownCapabilities:NO];
   }
   _signinCompletion = completion;
@@ -176,6 +175,9 @@ BOOL gUsingUnknownCapabilities;
 
 - (void)cancelAuthActivityAnimated:(BOOL)animated
                         completion:(ProceduralBlock)completion {
+  if (IsInterruptibleCoordinatorStoppedSynchronouslyEnabled()) {
+    CHECK(!completion);
+  }
   NSError* error = ios::provider::CreateUserCancelledSigninError();
   [self dismissAndRunCompletionCallbackWithError:error
                                         identity:nil
@@ -223,13 +225,21 @@ BOOL gUsingUnknownCapabilities;
   }
 
   __weak FakeSystemIdentityInteractionManager* weakSelf = self;
-  [_authActivityViewController.presentingViewController
-      dismissViewControllerAnimated:animated
-                         completion:^{
-                           [weakSelf runCompletionCallbackWithError:error
-                                                           identity:identity
-                                                         completion:completion];
-                         }];
+  auto dismissCompletion = ^{
+    [weakSelf runCompletionCallbackWithError:error
+                                    identity:identity
+                                  completion:completion];
+  };
+  if (IsInterruptibleCoordinatorStoppedSynchronouslyEnabled()) {
+    [_authActivityViewController.presentingViewController
+        dismissViewControllerAnimated:animated
+                           completion:nil];
+    dismissCompletion();
+  } else {
+    [_authActivityViewController.presentingViewController
+        dismissViewControllerAnimated:animated
+                           completion:dismissCompletion];
+  }
 }
 
 - (void)runCompletionCallbackWithError:(NSError*)error

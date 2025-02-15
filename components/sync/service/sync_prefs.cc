@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/auto_reset.h"
 #include "base/base64.h"
 #include "base/check_op.h"
 #include "base/containers/contains.h"
@@ -16,20 +17,23 @@
 #include "base/observer_list.h"
 #include "base/values.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/pref_value_map.h"
 #include "components/prefs/scoped_user_pref_update.h"
+#include "components/saved_tab_groups/public/pref_names.h"
 #include "components/signin/public/base/gaia_id_hash.h"
 #include "components/signin/public/base/signin_pref_names.h"
+#include "components/signin/public/base/signin_switches.h"
+#include "components/sync/base/account_pref_utils.h"
 #include "components/sync/base/features.h"
 #include "components/sync/base/passphrase_enums.h"
 #include "components/sync/base/pref_names.h"
 #include "components/sync/base/user_selectable_type.h"
-#include "components/sync/service/account_pref_utils.h"
+#include "components/sync/protocol/nigori_specifics.pb.h"
 #include "components/sync/service/glue/sync_transport_data_prefs.h"
 #include "components/sync/service/sync_feature_status_for_migrations_recorder.h"
+#include "google_apis/gaia/gaia_id.h"
 
 namespace syncer {
 
@@ -47,23 +51,16 @@ constexpr char kObsoleteAutofillWalletImportEnabled[] =
 constexpr char kObsoleteAutofillWalletImportEnabledMigrated[] =
     "sync.autofill_wallet_import_enabled_migrated";
 
-#if BUILDFLAG(IS_IOS)
-// Pref to record if the one-time MaybeMigratePasswordsToPerAccountPref()
-// migration ran.
-constexpr char kPasswordsPerAccountPrefMigrationDone[] =
-    "sync.passwords_per_account_pref_migration_done";
-#endif  // BUILDFLAG(IS_IOS)
-
-// State of the migration done by
-// MaybeMigratePrefsForSyncToSigninPart1() and
-// MaybeMigratePrefsForSyncToSigninPart2(). Should be cleaned up
-// after those migration methods are gone.
-constexpr char kSyncToSigninMigrationState[] =
-    "sync.sync_to_signin_migration_state";
-
 // State of the migration done by MaybeMigrateCustomPassphrasePref().
 constexpr char kSyncEncryptionBootstrapTokenPerAccountMigrationDone[] =
     "sync.encryption_bootstrap_token_per_account_migration_done";
+
+#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
+// Pref to record if the one-off MaybeMigrateAutofillToPerAccountPref()
+// migration ran.
+constexpr char kAutofillPerAccountPrefMigrationDone[] =
+    "sync.passwords_per_account_pref_migration_done";
+#endif  // !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
 
 constexpr int kNotMigrated = 0;
 constexpr int kMigratedPart1ButNot2 = 1;
@@ -128,30 +125,13 @@ SyncPrefs::SyncPrefs(PrefService* pref_service)
       prefs::internal::kSelectedTypesPerAccount,
       base::BindRepeating(&SyncPrefs::OnSelectedTypesPrefChanged,
                           base::Unretained(this)));
-#if BUILDFLAG(IS_IOS)
-  // On iOS, in some situations, there was a dedicated opt-in for bookmarks and
-  // reading list. It's not used anymore with kReplaceSyncPromosWithSigninPromos
-  // enabled, except for a migration.
-  pref_change_registrar_.Add(
-      prefs::internal::kBookmarksAndReadingListAccountStorageOptIn,
-      base::BindRepeating(&SyncPrefs::OnSelectedTypesPrefChanged,
-                          base::Unretained(this)));
-#endif
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-  // On ChromeOS-Lacros, syncing of apps is determined by a special
-  // Ash-controlled pref.
-  pref_change_registrar_.Add(
-      prefs::internal::kSyncAppsEnabledByOs,
-      base::BindRepeating(&SyncPrefs::OnSelectedTypesPrefChanged,
-                          base::Unretained(this)));
-#endif
 
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_CHROMEOS)
   pref_initial_sync_feature_setup_complete_.Init(
       prefs::internal::kSyncInitialSyncFeatureSetupComplete, pref_service_,
       base::BindRepeating(&SyncPrefs::OnFirstSetupCompletePrefChange,
                           base::Unretained(this)));
-#endif  // !BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // !BUILDFLAG(IS_CHROMEOS)
 }
 
 SyncPrefs::~SyncPrefs() {
@@ -163,15 +143,11 @@ void SyncPrefs::RegisterProfilePrefs(PrefRegistrySimple* registry) {
   // Actual user-controlled preferences.
   registry->RegisterBooleanPref(prefs::internal::kSyncKeepEverythingSynced,
                                 true);
-#if BUILDFLAG(IS_IOS)
-  registry->RegisterBooleanPref(
-      prefs::internal::kBookmarksAndReadingListAccountStorageOptIn, false);
-#endif  // BUILDFLAG(IS_IOS)
   registry->RegisterDictionaryPref(prefs::internal::kSelectedTypesPerAccount);
   for (UserSelectableType type : UserSelectableTypeSet::All()) {
     RegisterTypeSelectedPref(registry, type);
   }
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   registry->RegisterBooleanPref(prefs::internal::kSyncDisabledViaDashboard,
                                 false);
   registry->RegisterBooleanPref(prefs::internal::kSyncAllOsTypes, true);
@@ -179,21 +155,15 @@ void SyncPrefs::RegisterProfilePrefs(PrefRegistrySimple* registry) {
   registry->RegisterBooleanPref(prefs::internal::kSyncOsPreferences, false);
   registry->RegisterBooleanPref(prefs::internal::kSyncWifiConfigurations,
                                 false);
-#else   // BUILDFLAG(IS_CHROMEOS_ASH)
+#else   // BUILDFLAG(IS_CHROMEOS)
   registry->RegisterBooleanPref(
       prefs::internal::kSyncInitialSyncFeatureSetupComplete, false);
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
-
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-  registry->RegisterBooleanPref(prefs::internal::kSyncAppsEnabledByOs, false);
-#endif
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
   registry->RegisterBooleanPref(kObsoleteAutofillWalletImportEnabledMigrated,
                                 false);
-#if BUILDFLAG(IS_IOS)
-  registry->RegisterBooleanPref(kPasswordsPerAccountPrefMigrationDone, false);
-#endif  // BUILDFLAG(IS_IOS)
-  registry->RegisterIntegerPref(kSyncToSigninMigrationState, kNotMigrated);
+  registry->RegisterIntegerPref(prefs::internal::kSyncToSigninMigrationState,
+                                kNotMigrated);
   registry->RegisterBooleanPref(
       prefs::internal::kMigrateReadingListFromLocalToAccount, false);
 
@@ -222,6 +192,16 @@ void SyncPrefs::RegisterProfilePrefs(PrefRegistrySimple* registry) {
       prefs::internal::kSyncPassphrasePromptMutedProductVersion, 0);
   registry->RegisterBooleanPref(prefs::kEnableLocalSyncBackend, false);
   registry->RegisterFilePathPref(prefs::kLocalSyncBackendDir, base::FilePath());
+#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
+  registry->RegisterBooleanPref(kAutofillPerAccountPrefMigrationDone, false);
+#endif  // !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
+  registry->RegisterTimePref(
+      prefs::internal::kFirstTimeTriedToMigrateSyncFeaturePausedToSignin,
+      base::Time());
+#if BUILDFLAG(IS_ANDROID)
+  registry->RegisterBooleanPref(prefs::internal::kWipedWebAPkDataForMigration,
+                                false);
+#endif  // BUILDFLAG(IS_ANDROID)
 
   SyncFeatureStatusForMigrationsRecorder::RegisterProfilePrefs(registry);
 
@@ -241,19 +221,19 @@ void SyncPrefs::RemoveObserver(SyncPrefObserver* sync_pref_observer) {
 
 bool SyncPrefs::IsInitialSyncFeatureSetupComplete() const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   return true;
-#else   // BUILDFLAG(IS_CHROMEOS_ASH)
+#else   // BUILDFLAG(IS_CHROMEOS)
   return pref_service_->GetBoolean(
       prefs::internal::kSyncInitialSyncFeatureSetupComplete);
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 }
 
 bool SyncPrefs::IsExplicitBrowserSignin() const {
   return pref_service_->GetBoolean(::prefs::kExplicitBrowserSignin);
 }
 
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_CHROMEOS)
 void SyncPrefs::SetInitialSyncFeatureSetupComplete() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   pref_service_->SetBoolean(
@@ -265,7 +245,7 @@ void SyncPrefs::ClearInitialSyncFeatureSetupComplete() {
   pref_service_->ClearPref(
       prefs::internal::kSyncInitialSyncFeatureSetupComplete);
 }
-#endif  // !BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // !BUILDFLAG(IS_CHROMEOS)
 
 bool SyncPrefs::HasKeepEverythingSynced() const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
@@ -316,15 +296,27 @@ UserSelectableTypeSet SyncPrefs::GetSelectedTypesForAccount(
       } else if (type == UserSelectableType::kBookmarks ||
                  type == UserSelectableType::kReadingList) {
         type_enabled = true;
-#if !BUILDFLAG(IS_IOS)
         // Consider kBookmarks and kReadingList off by default until
         // `kReplaceSyncPromosWithSignInPromos` is enabled. For existing clients
         // at the time the feature transitions from disabled to enabled, the
         // state at the time is captured as explicit value in
         // `MaybeMigratePrefsForSyncToSigninPart1()`.
-        if (!base::FeatureList::IsEnabled(kReplaceSyncPromosWithSignInPromos)) {
+        if (!base::FeatureList::IsEnabled(kReplaceSyncPromosWithSignInPromos) &&
+            !base::FeatureList::IsEnabled(
+                kEnableBookmarksSelectedTypeOnSigninForTesting)) {
           type_enabled = false;
         }
+      } else if (type == UserSelectableType::kExtensions) {
+        // Extensions require an explicit sign in.
+        type_enabled =
+            pref_service_->GetBoolean(::prefs::kExplicitBrowserSignin);
+      } else if (type == UserSelectableType::kPreferences ||
+                 type == UserSelectableType::kThemes) {
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
+        type_enabled = true;
+#else
+        type_enabled = pref_service_->GetBoolean(
+            ::prefs::kPrefsThemesSearchEnginesAccountStorageEnabled);
 #endif
       } else {
         // All other types are always enabled by default.
@@ -379,6 +371,19 @@ bool SyncPrefs::IsTypeManagedByCustodian(UserSelectableType type) const {
   const char* pref_name = GetPrefNameForType(type);
   CHECK(pref_name);
   return pref_service_->IsPreferenceManagedByCustodian(pref_name);
+}
+
+bool SyncPrefs::DoesTypeHaveDefaultValueForAccount(
+    const UserSelectableType type,
+    const signin::GaiaIdHash& gaia_id_hash) {
+  const char* pref_name = GetPrefNameForType(type);
+  DCHECK(pref_name);
+
+  const base::Value* value = GetAccountKeyedPrefDictEntry(
+      pref_service_, prefs::internal::kSelectedTypesPerAccount, gaia_id_hash,
+      pref_name);
+
+  return !value;
 }
 
 bool SyncPrefs::IsTypeDisabledByUserForAccount(
@@ -461,14 +466,20 @@ void SyncPrefs::KeepAccountSettingsPrefsOnlyForUsers(
       pref_service_, prefs::internal::kSyncEncryptionBootstrapTokenPerAccount,
       available_gaia_ids);
 
-  // TODO(crbug.com/337034860): This is not the right place for clearing
+  // TODO(crbug.com/368409110): This is not the right place for clearing
   // transport-data-related prefs - ideally there'd be an observer API for
   // "accounts on this device".
   SyncTransportDataPrefs::KeepAccountSettingsPrefsOnlyForUsers(
       pref_service_, available_gaia_ids);
+
+  // TODO(crbug.com/368409110): This is *absolutely* not the right place for
+  // clearing not-sync-related prefs. Move this elsewhere once signin code
+  // provides an observer API for "accounts on this device".
+  tab_groups::prefs::KeepAccountSettingsPrefsOnlyForUsers(pref_service_,
+                                                          available_gaia_ids);
 }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 bool SyncPrefs::IsSyncFeatureDisabledViaDashboard() const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   return pref_service_->GetBoolean(prefs::internal::kSyncDisabledViaDashboard);
@@ -496,7 +507,7 @@ UserSelectableOsTypeSet SyncPrefs::GetSelectedOsTypes() const {
   for (UserSelectableOsType type : UserSelectableOsTypeSet::All()) {
     const char* pref_name = GetPrefNameForOsType(type);
     DCHECK(pref_name);
-    // If the type is managed, |sync_all_os_types| is ignored for this type.
+    // If the type is managed, `sync_all_os_types` is ignored for this type.
     if (pref_service_->GetBoolean(pref_name) ||
         (sync_all_os_types && !IsOsTypeManagedByPolicy(type))) {
       selected_types.Put(type);
@@ -549,8 +560,7 @@ const char* SyncPrefs::GetPrefNameForOsType(UserSelectableOsType type) {
     case UserSelectableOsType::kOsWifiConfigurations:
       return prefs::internal::kSyncWifiConfigurations;
   }
-  NOTREACHED_IN_MIGRATION();
-  return nullptr;
+  NOTREACHED();
 }
 
 // static
@@ -560,20 +570,7 @@ void SyncPrefs::SetOsTypeDisabledByPolicy(PrefValueMap* policy_prefs,
   CHECK(pref_name);
   policy_prefs->SetValue(pref_name, base::Value(false));
 }
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
-
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-bool SyncPrefs::IsAppsSyncEnabledByOs() const {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  return pref_service_->GetBoolean(prefs::internal::kSyncAppsEnabledByOs);
-}
-
-void SyncPrefs::SetAppsSyncEnabledByOs(bool apps_sync_enabled) {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  pref_service_->SetBoolean(prefs::internal::kSyncAppsEnabledByOs,
-                            apps_sync_enabled);
-}
-#endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 bool SyncPrefs::IsSyncClientDisabledByPolicy() const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
@@ -703,8 +700,7 @@ const char* SyncPrefs::GetPrefNameForType(UserSelectableType type) {
     case UserSelectableType::kCookies:
       return prefs::internal::kSyncCookies;
   }
-  NOTREACHED_IN_MIGRATION();
-  return nullptr;
+  NOTREACHED();
 }
 
 // static
@@ -731,30 +727,25 @@ bool SyncPrefs::IsTypeSupportedInTransportMode(UserSelectableType type) {
   // Features to be enabled.
   switch (type) {
     case UserSelectableType::kBookmarks:
-#if BUILDFLAG(IS_IOS)
-      return true;
-#else
-      return base::FeatureList::IsEnabled(
-          kEnableBookmarkFoldersForAccountStorage);
-#endif
+      return base::FeatureList::IsEnabled(kSyncEnableBookmarksInTransportMode);
     case UserSelectableType::kReadingList:
       return syncer::IsReadingListAccountStorageEnabled();
     case UserSelectableType::kPreferences:
-      return base::FeatureList::IsEnabled(kReplaceSyncPromosWithSignInPromos) &&
-             base::FeatureList::IsEnabled(kEnablePreferencesAccountStorage);
+      if (!base::FeatureList::IsEnabled(
+              switches::kEnablePreferencesAccountStorage)) {
+        return false;
+      }
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
+      return base::FeatureList::IsEnabled(kReplaceSyncPromosWithSignInPromos);
+#else
+      // Search engines are behind `UserSelectableType::kPreferences`.
+      return base::FeatureList::IsEnabled(
+          kSeparateLocalAndAccountSearchEngines);
+#endif
     case UserSelectableType::kPasswords:
-      // WARNING: This should actually be checking
-      // password_manager::features_util::CanCreateAccountStore() too, otherwise
-      // a crash can happen. But a) it would require a cyclic dependency, and
-      // b) by the time kEnablePasswordsAccountStorageForNonSyncingUsers is
-      // rolled out on Android, CanCreateAccountStore() should always return
-      // true (or at least it can be some trivial GmsCore version check and live
-      // in components/sync/).
-      return base::FeatureList::IsEnabled(
-          kEnablePasswordsAccountStorageForNonSyncingUsers);
+      return true;
     case UserSelectableType::kAutofill:
-      return base::FeatureList::IsEnabled(
-          kSyncEnableContactInfoDataTypeInTransportMode);
+      return true;
     case UserSelectableType::kPayments:
       // Always supported, since AUTOFILL_WALLET_DATA is supported in
       // transport mode everywhere.
@@ -769,12 +760,17 @@ bool SyncPrefs::IsTypeSupportedInTransportMode(UserSelectableType type) {
           kSyncSharedTabGroupDataInTransportMode);
     case UserSelectableType::kSavedTabGroups:
       return base::FeatureList::IsEnabled(kReplaceSyncPromosWithSignInPromos);
-    case UserSelectableType::kApps:
-#if BUILDFLAG(IS_ANDROID)
-      return base::FeatureList::IsEnabled(kWebApkBackupAndRestoreBackend);
-#endif
     case UserSelectableType::kExtensions:
+      return base::FeatureList::IsEnabled(kSyncEnableExtensionsInTransportMode);
     case UserSelectableType::kThemes:
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
+      return false;
+#else
+      return base::FeatureList::IsEnabled(syncer::kMoveThemePrefsToSpecifics) &&
+             base::FeatureList::IsEnabled(
+                 syncer::kSeparateLocalAndAccountThemes);
+#endif
+    case UserSelectableType::kApps:
     case UserSelectableType::kCookies:
       // These types are not supported in transport mode yet.
       return false;
@@ -802,7 +798,7 @@ void SyncPrefs::OnSelectedTypesPrefChanged(const std::string& pref_name) {
   }
 }
 
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_CHROMEOS)
 void SyncPrefs::OnFirstSetupCompletePrefChange() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   for (SyncPrefObserver& observer : sync_pref_observers_) {
@@ -810,7 +806,7 @@ void SyncPrefs::OnFirstSetupCompletePrefChange() {
         *pref_initial_sync_feature_setup_complete_);
   }
 }
-#endif  // !BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // !BUILDFLAG(IS_CHROMEOS)
 
 // static
 void SyncPrefs::RegisterTypeSelectedPref(PrefRegistrySimple* registry,
@@ -839,62 +835,18 @@ void SyncPrefs::ClearPassphrasePromptMutedProductVersion() {
       prefs::internal::kSyncPassphrasePromptMutedProductVersion);
 }
 
-#if BUILDFLAG(IS_IOS)
-void SyncPrefs::MaybeMigratePasswordsToPerAccountPref(
-    SyncAccountState account_state,
-    const signin::GaiaIdHash& gaia_id_hash) {
-  if (pref_service_->GetBoolean(kPasswordsPerAccountPrefMigrationDone)) {
-    return;
-  }
-
-  pref_service_->SetBoolean(kPasswordsPerAccountPrefMigrationDone, true);
-
-  if (pref_service_->GetInteger(kSyncToSigninMigrationState) != kNotMigrated) {
-    // MaybeMigratePrefsForSyncToSigninPart1() used to contain this precise
-    // logic. If that already ran, no need to run again. The new
-    // MaybeMigratePrefsForSyncToSigninPart1() implementation is invoked after
-    // this method (enforced via CHECK), so it's fine to request kNotMigrated
-    // here.
-    return;
-  }
-
-  switch (account_state) {
-    case SyncAccountState::kNotSignedIn:
-    case SyncAccountState::kSyncing:
-      break;
-    case SyncAccountState::kSignedInNotSyncing:
-      CHECK(gaia_id_hash.IsValid());
-      // Read from the user pref store, and not from PrefService::GetBoolean(),
-      // the latter might be affected by enterprise policies.
-      // An unset pref (!old_pref_value) is considered as enabled here, like in
-      // GetSelectedTypes().
-      const base::Value* old_pref_value = pref_service_->GetUserPrefValue(
-          GetPrefNameForType(UserSelectableType::kPasswords));
-      SetAccountKeyedPrefDictEntry(
-          pref_service_, prefs::internal::kSelectedTypesPerAccount,
-          gaia_id_hash, GetPrefNameForType(UserSelectableType::kPasswords),
-          base::Value(!old_pref_value || old_pref_value->GetBool()));
-      break;
-  }
-}
-#endif  // BUILDFLAG(IS_IOS)
-
 bool SyncPrefs::MaybeMigratePrefsForSyncToSigninPart1(
     SyncAccountState account_state,
     const signin::GaiaIdHash& gaia_id_hash) {
-#if BUILDFLAG(IS_IOS)
-  // See comment in MaybeMigratePasswordsToPerAccountPref() as to why.
-  CHECK(pref_service_->GetBoolean(kPasswordsPerAccountPrefMigrationDone));
-#endif
-
   if (!base::FeatureList::IsEnabled(kReplaceSyncPromosWithSignInPromos)) {
     // Ensure that the migration runs again when the feature gets enabled.
-    pref_service_->ClearPref(kSyncToSigninMigrationState);
+    pref_service_->ClearPref(prefs::internal::kSyncToSigninMigrationState);
     return false;
   }
 
   // Don't migrate again if this profile was previously migrated.
-  if (pref_service_->GetInteger(kSyncToSigninMigrationState) != kNotMigrated) {
+  if (pref_service_->GetInteger(prefs::internal::kSyncToSigninMigrationState) !=
+      kNotMigrated) {
     return false;
   }
 
@@ -902,7 +854,7 @@ bool SyncPrefs::MaybeMigratePrefsForSyncToSigninPart1(
     // Special case for local sync: There isn't necessarily a signed-in user
     // (even if the SyncAccountState is kSyncing), so just mark the migration as
     // done.
-    pref_service_->SetInteger(kSyncToSigninMigrationState,
+    pref_service_->SetInteger(prefs::internal::kSyncToSigninMigrationState,
                               kMigratedPart2AndFullyDone);
     return false;
   }
@@ -913,12 +865,12 @@ bool SyncPrefs::MaybeMigratePrefsForSyncToSigninPart1(
       // Nothing to migrate for signed-out or syncing users. Also make sure the
       // second part of the migration does *not* run if a signed-out user does
       // later sign in / turn on sync.
-      pref_service_->SetInteger(kSyncToSigninMigrationState,
+      pref_service_->SetInteger(prefs::internal::kSyncToSigninMigrationState,
                                 kMigratedPart2AndFullyDone);
       return false;
     }
     case SyncAccountState::kSignedInNotSyncing: {
-      pref_service_->SetInteger(kSyncToSigninMigrationState,
+      pref_service_->SetInteger(prefs::internal::kSyncToSigninMigrationState,
                                 kMigratedPart1ButNot2);
       CHECK(gaia_id_hash.IsValid());
       ScopedDictPrefUpdate update_selected_types_dict(
@@ -932,20 +884,10 @@ bool SyncPrefs::MaybeMigratePrefsForSyncToSigninPart1(
           GetPrefNameForType(UserSelectableType::kPreferences), false);
 
       // Bookmarks and reading list remain enabled only if the user previously
-      // explicitly opted in.
-#if BUILDFLAG(IS_IOS)
-      // On iOS, the opt-in state is controlled by a dedicated pref.
-      const bool was_opted_in = pref_service_->GetBoolean(
-          prefs::internal::kBookmarksAndReadingListAccountStorageOptIn);
-      account_settings->Set(GetPrefNameForType(UserSelectableType::kBookmarks),
-                            was_opted_in);
-      account_settings->Set(
-          GetPrefNameForType(UserSelectableType::kReadingList), was_opted_in);
-#else   // BUILDFLAG(IS_IOS)
-      // Outside iOS, the type's opt-in state is represented in the regular
-      // account-keyed prefs. However, the default value for new sign-ins
-      // changes with `kReplaceSyncPromosWithSignInPromos`, so it is important
-      // to grab a snapshot now during migration.
+      // explicitly opted in, which is represented in the regular account-keyed
+      // prefs. However, the default value for new sign-ins changes with
+      // `kReplaceSyncPromosWithSignInPromos`, so it is important to grab a
+      // snapshot now during migration.
       for (UserSelectableType type :
            {UserSelectableType::kBookmarks, UserSelectableType::kReadingList}) {
         const char* pref_name = GetPrefNameForType(type);
@@ -959,7 +901,6 @@ bool SyncPrefs::MaybeMigratePrefsForSyncToSigninPart1(
         // `kReplaceSyncPromosWithSignInPromos`.
         account_settings->Set(pref_name, is_type_on);
       }
-#endif  // BUILDFLAG(IS_IOS)
 
       return true;
     }
@@ -973,17 +914,17 @@ bool SyncPrefs::MaybeMigratePrefsForSyncToSigninPart2(
   // somehow happened, do *not* run the migration, and clear the pref so that
   // the migration will get triggered again once the feature gets enabled again.
   if (!base::FeatureList::IsEnabled(kReplaceSyncPromosWithSignInPromos)) {
-    pref_service_->ClearPref(kSyncToSigninMigrationState);
+    pref_service_->ClearPref(prefs::internal::kSyncToSigninMigrationState);
     return false;
   }
 
   // Only run part 2 of the migration if part 1 has run but part 2 hasn't yet.
   // This ensures that it only runs once.
-  if (pref_service_->GetInteger(kSyncToSigninMigrationState) !=
+  if (pref_service_->GetInteger(prefs::internal::kSyncToSigninMigrationState) !=
       kMigratedPart1ButNot2) {
     return false;
   }
-  pref_service_->SetInteger(kSyncToSigninMigrationState,
+  pref_service_->SetInteger(prefs::internal::kSyncToSigninMigrationState,
                             kMigratedPart2AndFullyDone);
 
   // The actual migration: For explicit-passphrase users, addresses sync gets
@@ -1000,7 +941,6 @@ bool SyncPrefs::MaybeMigratePrefsForSyncToSigninPart2(
 
 void SyncPrefs::MaybeMigrateCustomPassphrasePref(
     const signin::GaiaIdHash& gaia_id_hash) {
-
   if (pref_service_->GetBoolean(
           kSyncEncryptionBootstrapTokenPerAccountMigrationDone)) {
     return;
@@ -1008,7 +948,7 @@ void SyncPrefs::MaybeMigrateCustomPassphrasePref(
   pref_service_->SetBoolean(
       kSyncEncryptionBootstrapTokenPerAccountMigrationDone, true);
 
-  if (gaia_id_hash == signin::GaiaIdHash::FromGaiaId("")) {
+  if (gaia_id_hash == signin::GaiaIdHash::FromGaiaId(GaiaId())) {
     // Do not migrate if gaia_id is empty; no signed in user.
     return;
   }
@@ -1133,9 +1073,52 @@ void SyncPrefs::MigrateGlobalDataTypePrefsToAccount(
   // previously. But just in case it hasn't, make sure it doesn't run in the
   // future - it's not neeced, and in fact it might mess up some of the things
   // that were just migrated here.
-  pref_service->SetInteger(kSyncToSigninMigrationState,
+  pref_service->SetInteger(prefs::internal::kSyncToSigninMigrationState,
                            kMigratedPart2AndFullyDone);
 }
+
+#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
+// static
+void SyncPrefs::MaybeMigrateAutofillToPerAccountPref(
+    PrefService* pref_service) {
+  if (!base::FeatureList::IsEnabled(
+          switches::kExplicitBrowserSigninUIOnDesktop)) {
+    // Ensures the migration happens again if the experiment gets rolled back
+    // then rolled out a second time.
+    pref_service->ClearPref(kAutofillPerAccountPrefMigrationDone);
+    return;
+  }
+
+  if (pref_service->GetBoolean(kAutofillPerAccountPrefMigrationDone)) {
+    return;
+  }
+  pref_service->SetBoolean(kAutofillPerAccountPrefMigrationDone, true);
+
+  const GaiaId last_syncing_gaia_id(
+      pref_service->GetString(::prefs::kGoogleServicesLastSyncingGaiaId));
+  if (last_syncing_gaia_id.empty()) {
+    return;
+  }
+
+  if (pref_service->GetBoolean(prefs::internal::kSyncKeepEverythingSynced)) {
+    return;
+  }
+
+  for (auto user_selectable_type :
+       {UserSelectableType::kPasswords, UserSelectableType::kAutofill}) {
+    const char* const pref_name_for_type =
+        GetPrefNameForType(user_selectable_type);
+    if (pref_service->GetBoolean(pref_name_for_type)) {
+      continue;
+    }
+
+    SetAccountKeyedPrefDictEntry(
+        pref_service, prefs::internal::kSelectedTypesPerAccount,
+        signin::GaiaIdHash::FromGaiaId(last_syncing_gaia_id),
+        pref_name_for_type, base::Value(false));
+  }
+}
+#endif  // !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
 
 void SyncPrefs::MarkPartialSyncToSigninMigrationFullyDone() {
   // If the first part of the migration has run, but the second part has not,
@@ -1143,9 +1126,9 @@ void SyncPrefs::MarkPartialSyncToSigninMigrationFullyDone() {
   // there's no more need for any migration.
   // In all other cases (migration never even started, or completed fully),
   // nothing to be done here.
-  if (pref_service_->GetInteger(kSyncToSigninMigrationState) ==
+  if (pref_service_->GetInteger(prefs::internal::kSyncToSigninMigrationState) ==
       kMigratedPart1ButNot2) {
-    pref_service_->SetInteger(kSyncToSigninMigrationState,
+    pref_service_->SetInteger(prefs::internal::kSyncToSigninMigrationState,
                               kMigratedPart2AndFullyDone);
   }
 }

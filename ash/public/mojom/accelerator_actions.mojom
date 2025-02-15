@@ -137,12 +137,17 @@ enum AcceleratorAction {
   kWindowMinimize,
   kMinimizeTopWindowOnBack,
   kVolumeMuteToggle,
-  kTogglePicker,
+  kToggleQuickInsert,
   kAccessibilityAction,
   kTilingWindowResizeLeft,
   kTilingWindowResizeRight,
   kTilingWindowResizeUp,
   kTilingWindowResizeDown,
+  kToggleMouseKeys,
+  kResizePipWindow,
+  kToggleGeminiApp,
+  kToggleDoNotDisturb,
+  kToggleCameraAllowed,
   // The following are DEBUG actions with an offset. This is to keep the enum
   // in sync with `AcceleratorActions` in ash/public/cpp/accelerator_actions.h.
   kDebugClearUseKMeansPref = 9000,
@@ -173,4 +178,5 @@ enum AcceleratorAction {
   kDevAddRemoveDisplay,
   kDevToggleAppList,
   kDevToggleUnifiedDesktop,
+  kDebugStartSunfishSession,
 };

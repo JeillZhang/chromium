@@ -170,9 +170,6 @@ int HTMLTextAreaElement::scrollHeight() {
 
 void HTMLTextAreaElement::ChildrenChanged(const ChildrenChange& change) {
   HTMLElement::ChildrenChanged(change);
-  if (!RuntimeEnabledFeatures::TextAreaChildrenChangedStillValidatesEnabled()) {
-    SetLastChangeWasNotUserEdit();
-  }
   if (is_dirty_)
     SetInnerEditorValue(Value());
   else
@@ -195,22 +192,22 @@ bool HTMLTextAreaElement::IsPresentationAttribute(
 void HTMLTextAreaElement::CollectStyleForPresentationAttribute(
     const QualifiedName& name,
     const AtomicString& value,
-    MutableCSSPropertyValueSet* style) {
+    HeapVector<CSSPropertyValue, 8>& style) {
   if (name == html_names::kWrapAttr) {
     if (ShouldWrapText()) {
       // Longhands of `white-space: pre-wrap`.
       AddPropertyToPresentationAttributeStyle(
           style, CSSPropertyID::kWhiteSpaceCollapse, CSSValueID::kPreserve);
-      AddPropertyToPresentationAttributeStyle(style, CSSPropertyID::kTextWrap,
-                                              CSSValueID::kWrap);
+      AddPropertyToPresentationAttributeStyle(
+          style, CSSPropertyID::kTextWrapMode, CSSValueID::kWrap);
       AddPropertyToPresentationAttributeStyle(
           style, CSSPropertyID::kOverflowWrap, CSSValueID::kBreakWord);
     } else {
       // Longhands of `white-space: pre`.
       AddPropertyToPresentationAttributeStyle(
           style, CSSPropertyID::kWhiteSpaceCollapse, CSSValueID::kPreserve);
-      AddPropertyToPresentationAttributeStyle(style, CSSPropertyID::kTextWrap,
-                                              CSSValueID::kNowrap);
+      AddPropertyToPresentationAttributeStyle(
+          style, CSSPropertyID::kTextWrapMode, CSSValueID::kNowrap);
       AddPropertyToPresentationAttributeStyle(
           style, CSSPropertyID::kOverflowWrap, CSSValueID::kNormal);
     }
@@ -284,7 +281,11 @@ void HTMLTextAreaElement::ParseAttribute(
   }
 }
 
-LayoutObject* HTMLTextAreaElement::CreateLayoutObject(const ComputedStyle&) {
+LayoutObject* HTMLTextAreaElement::CreateLayoutObject(
+    const ComputedStyle& style) {
+  if (style.IsVerticalWritingMode()) {
+    UseCounter::Count(GetDocument(), WebFeature::kVerticalFormControls);
+  }
   return MakeGarbageCollected<LayoutTextControlMultiLine>(this);
 }
 
@@ -314,7 +315,7 @@ bool HTMLTextAreaElement::HasCustomFocusLogic() const {
   return true;
 }
 
-bool HTMLTextAreaElement::IsKeyboardFocusable(
+bool HTMLTextAreaElement::IsKeyboardFocusableSlow(
     UpdateBehavior update_behavior) const {
   // If a given text area can be focused at all, then it will always be keyboard
   // focusable, unless it has a negative tabindex set.
@@ -377,12 +378,14 @@ void HTMLTextAreaElement::SubtreeHasChanged() {
   SetAutofillState(WebAutofillState::kNotFilled);
   UpdatePlaceholderVisibility();
 
+  if (HasDirectionAuto()) {
+    // When typing in a textarea, childrenChanged is not called, so we need to
+    // force the directionality check.
+    CalculateAndAdjustAutoDirectionality();
+  }
+
   if (!IsFocused())
     return;
-
-  // When typing in a textarea, childrenChanged is not called, so we need to
-  // force the directionality check.
-  CalculateAndAdjustAutoDirectionality();
 
   DCHECK(GetDocument().IsActive());
   if (InnerEditorValue().empty()) {
@@ -713,7 +716,7 @@ void HTMLTextAreaElement::SetPlaceholderVisibility(bool visible) {
 void HTMLTextAreaElement::CreateInnerEditorElementIfNecessary() const {
   // HTMLTextArea immediately creates the inner-editor, so this function should
   // never be called.
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 bool HTMLTextAreaElement::IsInnerEditorValueEmpty() const {

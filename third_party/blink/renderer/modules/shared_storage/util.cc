@@ -7,9 +7,9 @@
 #include "base/feature_list.h"
 #include "base/memory/scoped_refptr.h"
 #include "components/aggregation_service/aggregation_coordinator_utils.h"
+#include "services/network/public/mojom/permissions_policy/permissions_policy_feature.mojom-blink.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/shared_storage/shared_storage_utils.h"
-#include "third_party/blink/public/mojom/permissions_policy/permissions_policy_feature.mojom-blink.h"
 #include "third_party/blink/public/mojom/shared_storage/shared_storage.mojom-blink.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_throw_dom_exception.h"
@@ -30,15 +30,13 @@ bool StringFromV8(v8::Isolate* isolate, v8::Local<v8::Value> val, String* out) {
     return false;
   }
 
-  v8::Local<v8::String> str = v8::Local<v8::String>::Cast(val);
-  wtf_size_t length = str->Utf8Length(isolate);
-  LChar* buffer;
-  *out = String::CreateUninitialized(length, buffer);
-
-  str->WriteUtf8(isolate, reinterpret_cast<char*>(buffer), length, nullptr,
-                 v8::String::NO_NULL_TERMINATION);
-
+  *out = ToBlinkString<String>(isolate, v8::Local<v8::String>::Cast(val),
+                               kDoNotExternalize);
   return true;
+}
+
+bool IsReservedLockName(const String& lock_name) {
+  return lock_name.StartsWith('-');
 }
 
 bool CheckBrowsingContextIsValid(ScriptState& script_state,
@@ -59,9 +57,8 @@ bool CheckBrowsingContextIsValid(ScriptState& script_state,
   return true;
 }
 
-bool CheckSharedStoragePermissionsPolicy(ScriptState& script_state,
-                                         ExecutionContext& execution_context,
-                                         ScriptPromiseResolverBase& resolver) {
+bool CheckSharedStoragePermissionsPolicy(ExecutionContext& execution_context,
+                                         ExceptionState& exception_state) {
   // The worklet scope has to be created from the Window scope, thus the
   // shared-storage permissions policy feature must have been enabled. Besides,
   // the `SharedStorageWorkletGlobalScope` is currently given a null
@@ -75,12 +72,11 @@ bool CheckSharedStoragePermissionsPolicy(ScriptState& script_state,
   }
 
   if (!execution_context.IsFeatureEnabled(
-          mojom::blink::PermissionsPolicyFeature::kSharedStorage)) {
-    resolver.Reject(V8ThrowDOMException::CreateOrEmpty(
-        script_state.GetIsolate(), DOMExceptionCode::kInvalidAccessError,
+          network::mojom::PermissionsPolicyFeature::kSharedStorage)) {
+    exception_state.ThrowDOMException(
+        DOMExceptionCode::kInvalidAccessError,
         "The \"shared-storage\" Permissions Policy denied the method on "
-        "window.sharedStorage."));
-
+        "window.sharedStorage.");
     return false;
   }
 
@@ -106,12 +102,23 @@ bool CheckPrivateAggregationConfig(
     return true;
   }
 
+  bool is_in_fenced_frame =
+      ExecutionContext::From(&script_state)->IsInFencedFrame();
+
   if (options.privateAggregationConfig()->hasContextId()) {
     if (options.privateAggregationConfig()->contextId().length() >
         kPrivateAggregationApiContextIdMaxLength) {
       resolver.Reject(V8ThrowDOMException::CreateOrEmpty(
           script_state.GetIsolate(), DOMExceptionCode::kDataError,
           "contextId length cannot be larger than 64"));
+      return false;
+    }
+    if (is_in_fenced_frame &&
+        base::FeatureList::IsEnabled(
+            features::kFencedFramesLocalUnpartitionedDataAccess)) {
+      resolver.Reject(V8ThrowDOMException::CreateOrEmpty(
+          script_state.GetIsolate(), DOMExceptionCode::kDataError,
+          "contextId cannot be set inside of fenced frames."));
       return false;
     }
     out_context_id = options.privateAggregationConfig()->contextId();
@@ -138,9 +145,7 @@ bool CheckPrivateAggregationConfig(
     out_aggregation_coordinator_origin = parsed_coordinator;
   }
 
-  if (options.privateAggregationConfig()->hasFilteringIdMaxBytes() &&
-      base::FeatureList::IsEnabled(
-          features::kPrivateAggregationApiFilteringIds)) {
+  if (options.privateAggregationConfig()->hasFilteringIdMaxBytes()) {
     if (options.privateAggregationConfig()->filteringIdMaxBytes() < 1) {
       resolver.Reject(V8ThrowDOMException::CreateOrEmpty(
           script_state.GetIsolate(), DOMExceptionCode::kDataError,
@@ -154,8 +159,33 @@ bool CheckPrivateAggregationConfig(
           "filteringIdMaxBytes is too big"));
       return false;
     }
+    if (is_in_fenced_frame &&
+        base::FeatureList::IsEnabled(
+            features::kFencedFramesLocalUnpartitionedDataAccess)) {
+      resolver.Reject(V8ThrowDOMException::CreateOrEmpty(
+          script_state.GetIsolate(), DOMExceptionCode::kDataError,
+          "filteringIdMaxBytes cannot be set inside of fenced frames."));
+      return false;
+    }
     out_filtering_id_max_bytes = static_cast<uint32_t>(
         options.privateAggregationConfig()->filteringIdMaxBytes());
+  }
+
+  if (options.privateAggregationConfig()->hasMaxContributions() &&
+      base::FeatureList::IsEnabled(
+          features::kPrivateAggregationApiMaxContributions)) {
+    const auto requested_max_contributions =
+        options.privateAggregationConfig()->maxContributions();
+    if (requested_max_contributions == 0) {
+      resolver.Reject(V8ThrowDOMException::CreateOrEmpty(
+          script_state.GetIsolate(), DOMExceptionCode::kDataError,
+          "maxContributions must be positive"));
+      return false;
+    }
+    const uint16_t max_contributions_clamped =
+        base::MakeClampedNum(requested_max_contributions);
+    out_private_aggregation_config->max_contributions =
+        max_contributions_clamped;
   }
 
   return true;

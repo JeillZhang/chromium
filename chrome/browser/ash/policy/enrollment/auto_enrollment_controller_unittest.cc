@@ -255,11 +255,6 @@ TEST_F(EnrollmentFwmpHelperTest, DevDisableBoot) {
 
 class AutoEnrollmentControllerBaseTest : public testing::Test {
  protected:
-  ~AutoEnrollmentControllerBaseTest() override {
-    AutoEnrollmentTypeChecker::
-        ClearUnifiedStateDeterminationKillSwitchForTesting();
-  }
-
   AutoEnrollmentControllerForTesting CreateController() {
     return AutoEnrollmentControllerForTesting(
         &mock_device_settings_service_, &fake_dm_service_,
@@ -305,10 +300,6 @@ class AutoEnrollmentControllerBaseTest : public testing::Test {
     command_line_.GetProcessCommandLine()->AppendSwitchASCII(
         ash::switches::kEnterpriseEnableUnifiedStateDetermination,
         switch_value);
-
-    const bool is_killed = !enabled;
-    AutoEnrollmentTypeChecker::SetUnifiedStateDeterminationKillSwitchForTesting(
-        is_killed);
   }
 
   void SetupForcedReenrollmentCheckType() {
@@ -398,6 +389,15 @@ class AutoEnrollmentControllerBaseTest : public testing::Test {
   ScopedFakeClientInitializer<ash::FakeSessionManagerClient>
       scoped_fake_session_manager_client_initializer_;
 };
+
+TEST_F(AutoEnrollmentControllerBaseTest, NoEarlyGuestMode) {
+  auto controller = CreateController();
+
+  // Guest signin should not be allowed before finishing state determination.
+  // In particular, it should not be allowed before even starting state
+  // determination.
+  EXPECT_FALSE(controller.IsGuestSigninAllowed());
+}
 
 class AutoEnrollmentControllerSafeguardTimeoutTest
     : public AutoEnrollmentControllerBaseTest {

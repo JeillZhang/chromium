@@ -138,8 +138,9 @@ void AssistantDialogPlate::OnButtonPressed(AssistantButtonId button_id) {
 
 bool AssistantDialogPlate::HandleKeyEvent(views::Textfield* textfield,
                                           const ui::KeyEvent& key_event) {
-  if (key_event.type() != ui::EventType::ET_KEY_PRESSED)
+  if (key_event.type() != ui::EventType::kKeyPressed) {
     return false;
+  }
 
   switch (key_event.key_code()) {
     case ui::KeyboardCode::VKEY_RETURN: {
@@ -337,8 +338,8 @@ void AssistantDialogPlate::InitLayout() {
   molecule_icon_ = AddChildView(std::make_unique<views::ImageView>());
   molecule_icon_->SetID(AssistantViewID::kModuleIcon);
   molecule_icon_->SetPreferredSize(gfx::Size(kIconSizeDip, kIconSizeDip));
-  molecule_icon_->SetImage(gfx::CreateVectorIcon(
-      chromeos::kAssistantIcon, kIconSizeDip, gfx::kPlaceholderColor));
+  molecule_icon_->SetImage(ui::ImageModel::FromVectorIcon(
+      chromeos::kAssistantIcon, gfx::kPlaceholderColor, kIconSizeDip));
 
   // Input modality layout container.
   input_modality_layout_container_ =

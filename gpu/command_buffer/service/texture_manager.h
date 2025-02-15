@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #ifndef GPU_COMMAND_BUFFER_SERVICE_TEXTURE_MANAGER_H_
 #define GPU_COMMAND_BUFFER_SERVICE_TEXTURE_MANAGER_H_
 
@@ -330,8 +335,6 @@ class GPU_GLES2_EXPORT Texture final : public TextureBase {
 
   // Marks a particular level as cleared or uncleared.
   void SetLevelCleared(GLenum target, GLint level, bool cleared);
-
-  void ApplyClampedBaseLevelAndMaxLevelToDriver();
 
   MemoryTypeTracker* GetMemTracker();
 
@@ -940,8 +943,7 @@ class GPU_GLES2_EXPORT TextureManager
       case GL_TEXTURE_RECTANGLE_ARB:
         return default_textures_[kRectangleARB].get();
       default:
-        NOTREACHED_IN_MIGRATION();
-        return nullptr;
+        NOTREACHED();
     }
   }
 
@@ -1001,7 +1003,7 @@ class GPU_GLES2_EXPORT TextureManager
         return;
       }
     }
-    NOTREACHED_IN_MIGRATION();
+    NOTREACHED();
   }
 
   struct DoTexImageArguments {

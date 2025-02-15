@@ -76,19 +76,21 @@ using mojom::blink::FormControlType;
 namespace {
 
 // This function should match to the user-agent stylesheet.
-ControlPart AutoAppearanceFor(const Element& element) {
+AppearanceValue AutoAppearanceFor(const Element& element) {
   if (IsA<HTMLButtonElement>(element))
-    return kButtonPart;
+    return AppearanceValue::kButton;
   if (IsA<HTMLMeterElement>(element))
-    return kMeterPart;
+    return AppearanceValue::kMeter;
   if (IsA<HTMLProgressElement>(element))
-    return kProgressBarPart;
+    return AppearanceValue::kProgressBar;
   if (IsA<HTMLTextAreaElement>(element))
-    return kTextAreaPart;
+    return AppearanceValue::kTextArea;
   if (IsA<SpinButtonElement>(element))
-    return kInnerSpinButtonPart;
-  if (const auto* select = DynamicTo<HTMLSelectElement>(element))
-    return select->UsesMenuList() ? kMenulistPart : kListboxPart;
+    return AppearanceValue::kInnerSpinButton;
+  if (const auto* select = DynamicTo<HTMLSelectElement>(element)) {
+    return select->UsesMenuList() ? AppearanceValue::kMenulist
+                                  : AppearanceValue::kListbox;
+  }
 
   if (const auto* input = DynamicTo<HTMLInputElement>(element))
     return input->AutoAppearance();
@@ -97,19 +99,19 @@ ControlPart AutoAppearanceFor(const Element& element) {
     const AtomicString& id_value =
         element.FastGetAttribute(html_names::kIdAttr);
     if (id_value == shadow_element_names::kIdSliderThumb)
-      return kSliderThumbHorizontalPart;
+      return AppearanceValue::kSliderThumbHorizontal;
     if (id_value == shadow_element_names::kIdSearchClearButton ||
         id_value == shadow_element_names::kIdClearButton)
-      return kSearchFieldCancelButtonPart;
+      return AppearanceValue::kSearchFieldCancelButton;
 
     // Slider container elements and -webkit-meter-inner-element don't have IDs.
     if (IsSliderContainer(element))
-      return kSliderHorizontalPart;
+      return AppearanceValue::kSliderHorizontal;
     if (element.ShadowPseudoId() ==
         shadow_element_names::kPseudoMeterInnerElement)
-      return kMeterPart;
+      return AppearanceValue::kMeter;
   }
-  return kNoControlPart;
+  return AppearanceValue::kNone;
 }
 
 void ResetBorder(ComputedStyleBuilder& builder) {
@@ -139,6 +141,11 @@ void ResetPadding(ComputedStyleBuilder& builder) {
   builder.ResetPaddingLeft();
 }
 
+bool SystemAccentColorAllowed() {
+  return RuntimeEnabledFeatures::CSSSystemAccentColorEnabled() ||
+         RuntimeEnabledFeatures::CSSAccentColorKeywordEnabled();
+}
+
 }  // namespace
 
 LayoutTheme& LayoutTheme::GetTheme() {
@@ -153,94 +160,112 @@ LayoutTheme& LayoutTheme::GetTheme() {
 LayoutTheme::LayoutTheme() : has_custom_focus_ring_color_(false) {
 }
 
-ControlPart LayoutTheme::AdjustAppearanceWithAuthorStyle(
-    ControlPart part,
+AppearanceValue LayoutTheme::AdjustAppearanceWithAuthorStyle(
+    AppearanceValue appearance,
     const ComputedStyleBuilder& builder) {
-  if (IsControlStyled(part, builder))
-    return part == kMenulistPart ? kMenulistButtonPart : kNoControlPart;
-  return part;
+  if (IsControlStyled(appearance, builder)) {
+    return appearance == AppearanceValue::kMenulist
+               ? AppearanceValue::kMenulistButton
+               : AppearanceValue::kNone;
+  }
+  return appearance;
 }
 
-ControlPart LayoutTheme::AdjustAppearanceWithElementType(
+AppearanceValue LayoutTheme::AdjustAppearanceWithElementType(
     const ComputedStyleBuilder& builder,
     const Element* element) {
-  ControlPart part = builder.EffectiveAppearance();
+  AppearanceValue appearance = builder.EffectiveAppearance();
   if (!element)
-    return kNoControlPart;
+    return AppearanceValue::kNone;
 
-  ControlPart auto_appearance = AutoAppearanceFor(*element);
-  if (part == auto_appearance)
-    return part;
+  AppearanceValue auto_appearance = AutoAppearanceFor(*element);
+  if (appearance == auto_appearance) {
+    return appearance;
+  }
 
-  switch (part) {
+  switch (appearance) {
     // No restrictions.
-    case kNoControlPart:
-    case kMediaSliderPart:
-    case kMediaSliderThumbPart:
-    case kMediaVolumeSliderPart:
-    case kMediaVolumeSliderThumbPart:
-    case kMediaControlPart:
-      return part;
-    case kBaseSelectPart:
-      CHECK(RuntimeEnabledFeatures::StylableSelectEnabled());
-      return part;
+    case AppearanceValue::kNone:
+    case AppearanceValue::kMediaSlider:
+    case AppearanceValue::kMediaSliderThumb:
+    case AppearanceValue::kMediaVolumeSlider:
+    case AppearanceValue::kMediaVolumeSliderThumb:
+    case AppearanceValue::kMediaControl:
+      return appearance;
+    case AppearanceValue::kBaseSelect: {
+      if (!HTMLSelectElement::CustomizableSelectEnabled(element)) {
+        return auto_appearance;
+      }
+      bool base_appearance_allowed = false;
+      if (auto* select = DynamicTo<HTMLSelectElement>(element)) {
+        base_appearance_allowed = !select->IsMultiple();
+      } else if (HTMLSelectElement::IsPopoverForAppearanceBase(element)) {
+        base_appearance_allowed = true;
+      }
+      return base_appearance_allowed ? appearance : auto_appearance;
+    }
 
     // Aliases of 'auto'.
     // https://drafts.csswg.org/css-ui-4/#typedef-appearance-compat-auto
-    case kAutoPart:
-    case kCheckboxPart:
-    case kRadioPart:
-    case kPushButtonPart:
-    case kSquareButtonPart:
-    case kInnerSpinButtonPart:
-    case kListboxPart:
-    case kMenulistPart:
-    case kMeterPart:
-    case kProgressBarPart:
-    case kSliderHorizontalPart:
-    case kSliderThumbHorizontalPart:
-    case kSearchFieldPart:
-    case kSearchFieldCancelButtonPart:
-    case kTextAreaPart:
+    case AppearanceValue::kAuto:
+    case AppearanceValue::kCheckbox:
+    case AppearanceValue::kRadio:
+    case AppearanceValue::kPushButton:
+    case AppearanceValue::kSquareButton:
+    case AppearanceValue::kInnerSpinButton:
+    case AppearanceValue::kListbox:
+    case AppearanceValue::kMenulist:
+    case AppearanceValue::kMeter:
+    case AppearanceValue::kProgressBar:
+    case AppearanceValue::kSliderHorizontal:
+    case AppearanceValue::kSliderThumbHorizontal:
+    case AppearanceValue::kSearchField:
+    case AppearanceValue::kSearchFieldCancelButton:
+    case AppearanceValue::kTextArea:
       return auto_appearance;
 
       // The following keywords should work well for some element types
       // even if their default appearances are different from the keywords.
 
-    case kButtonPart:
-      return (auto_appearance == kPushButtonPart ||
-              auto_appearance == kSquareButtonPart)
-                 ? part
+    case AppearanceValue::kButton:
+      return (auto_appearance == AppearanceValue::kPushButton ||
+              auto_appearance == AppearanceValue::kSquareButton)
+                 ? appearance
                  : auto_appearance;
 
-    case kMenulistButtonPart:
-      return auto_appearance == kMenulistPart ? part : auto_appearance;
-
-    case kSliderVerticalPart:
-      return auto_appearance == kSliderHorizontalPart ? part : auto_appearance;
-
-    case kSliderThumbVerticalPart:
-      return auto_appearance == kSliderThumbHorizontalPart ? part
+    case AppearanceValue::kMenulistButton:
+      return auto_appearance == AppearanceValue::kMenulist ? appearance
                                                            : auto_appearance;
 
-    case kTextFieldPart:
+    case AppearanceValue::kSliderVertical:
+      return auto_appearance == AppearanceValue::kSliderHorizontal
+                 ? appearance
+                 : auto_appearance;
+
+    case AppearanceValue::kSliderThumbVertical:
+      return auto_appearance == AppearanceValue::kSliderThumbHorizontal
+                 ? appearance
+                 : auto_appearance;
+
+    case AppearanceValue::kTextField:
       if (const auto* input_element = DynamicTo<HTMLInputElement>(*element);
           input_element &&
           input_element->FormControlType() == FormControlType::kInputSearch) {
-        return part;
+        return appearance;
       }
       return auto_appearance;
   }
 
-  return part;
+  return appearance;
 }
 
 void LayoutTheme::AdjustStyle(const Element* element,
                               ComputedStyleBuilder& builder) {
-  ControlPart original_part = builder.Appearance();
-  builder.SetEffectiveAppearance(original_part);
-  if (original_part == ControlPart::kNoControlPart)
+  AppearanceValue original_appearance = builder.Appearance();
+  builder.SetEffectiveAppearance(original_appearance);
+  if (original_appearance == AppearanceValue::kNone) {
     return;
+  }
 
   // Force inline and table display styles to be inline-block (except for table-
   // which is block)
@@ -259,29 +284,30 @@ void LayoutTheme::AdjustStyle(const Element* element,
            builder.Display() == EDisplay::kTable)
     builder.SetDisplay(EDisplay::kBlock);
 
-  ControlPart part = AdjustAppearanceWithAuthorStyle(
+  AppearanceValue appearance = AdjustAppearanceWithAuthorStyle(
       AdjustAppearanceWithElementType(builder, element), builder);
-  builder.SetEffectiveAppearance(part);
-  DCHECK_NE(part, kAutoPart);
-  if (part == kNoControlPart)
+  builder.SetEffectiveAppearance(appearance);
+  DCHECK_NE(appearance, AppearanceValue::kAuto);
+  if (appearance == AppearanceValue::kNone) {
     return;
+  }
   DCHECK(element);
   // After this point, a Node must be non-null Element if
-  // EffectiveAppearance() != kNoControlPart.
+  // EffectiveAppearance() != AppearanceValue::kNone.
 
   AdjustControlPartStyle(builder);
 
   // Call the appropriate style adjustment method based off the appearance
   // value.
-  switch (part) {
-    case kMenulistPart:
+  switch (appearance) {
+    case AppearanceValue::kMenulist:
       return AdjustMenuListStyle(builder);
-    case kMenulistButtonPart:
+    case AppearanceValue::kMenulistButton:
       return AdjustMenuListButtonStyle(builder);
-    case kSliderThumbHorizontalPart:
-    case kSliderThumbVerticalPart:
+    case AppearanceValue::kSliderThumbHorizontal:
+    case AppearanceValue::kSliderThumbVertical:
       return AdjustSliderThumbStyle(builder);
-    case kSearchFieldCancelButtonPart:
+    case AppearanceValue::kSearchFieldCancelButton:
       return AdjustSearchFieldCancelButtonStyle(builder);
     default:
       break;
@@ -407,19 +433,22 @@ Color LayoutTheme::PlatformInactiveListBoxSelectionForegroundColor(
   return PlatformInactiveSelectionForegroundColor(color_scheme);
 }
 
-bool LayoutTheme::IsControlStyled(ControlPart part,
+bool LayoutTheme::IsControlStyled(AppearanceValue appearance,
                                   const ComputedStyleBuilder& builder) const {
-  switch (part) {
-    case kPushButtonPart:
-    case kSquareButtonPart:
-    case kButtonPart:
-    case kProgressBarPart:
+  switch (appearance) {
+    case AppearanceValue::kPushButton:
+    case AppearanceValue::kSquareButton:
+    case AppearanceValue::kButton:
+    case AppearanceValue::kProgressBar:
       return builder.HasAuthorBackground() || builder.HasAuthorBorder();
 
-    case kMenulistPart:
-    case kSearchFieldPart:
-    case kTextAreaPart:
-    case kTextFieldPart:
+    case AppearanceValue::kMeter:
+      return builder.HasAuthorBackground() || builder.HasAuthorBorder();
+
+    case AppearanceValue::kMenulist:
+    case AppearanceValue::kSearchField:
+    case AppearanceValue::kTextArea:
+    case AppearanceValue::kTextField:
       return builder.HasAuthorBackground() || builder.HasAuthorBorder() ||
              builder.BoxShadow();
 
@@ -485,28 +514,23 @@ void LayoutTheme::AdjustSliderContainerStyle(
 
   if (!IsHorizontalWritingMode(builder.GetWritingMode())) {
     builder.SetTouchAction(TouchAction::kPanX);
-    // If FormControlsVerticalWritingModeDirectionSupport disabled, then it is
-    // always RTL because the slider value increases up even in LTR.
   } else if (RuntimeEnabledFeatures::
                  NonStandardAppearanceValueSliderVerticalEnabled() &&
-             builder.EffectiveAppearance() == kSliderVerticalPart) {
+             builder.EffectiveAppearance() ==
+                 AppearanceValue::kSliderVertical) {
     builder.SetTouchAction(TouchAction::kPanX);
     builder.SetWritingMode(WritingMode::kVerticalRl);
     // It's always in RTL because the slider value increases up even in LTR.
     builder.SetDirection(TextDirection::kRtl);
-    if (!RuntimeEnabledFeatures::
-            FormControlsVerticalWritingModeDirectionSupportEnabled()) {
-      builder.SetDirection(TextDirection::kRtl);
-    }
   } else {
     builder.SetTouchAction(TouchAction::kPanY);
     builder.SetWritingMode(WritingMode::kHorizontalTb);
-    if (To<HTMLInputElement>(element.OwnerShadowHost())->list()) {
+    if (To<HTMLInputElement>(element.OwnerShadowHost())->DataList()) {
       builder.SetAlignSelf(StyleSelfAlignmentData(ItemPosition::kCenter,
                                                   OverflowAlignment::kUnsafe));
     }
   }
-  builder.SetEffectiveAppearance(kNoControlPart);
+  builder.SetEffectiveAppearance(AppearanceValue::kNone);
 }
 
 void LayoutTheme::AdjustSliderThumbStyle(ComputedStyleBuilder& builder) const {
@@ -539,29 +563,31 @@ base::TimeDelta LayoutTheme::CaretBlinkInterval() const {
 
 Color LayoutTheme::SystemColor(CSSValueID css_value_id,
                                mojom::blink::ColorScheme color_scheme,
-                               const ui::ColorProvider* color_provider) const {
+                               const ui::ColorProvider* color_provider,
+                               bool is_in_web_app_scope) const {
   if (color_provider && !WebTestSupport::IsRunningWebTest()) {
     return SystemColorFromColorProvider(css_value_id, color_scheme,
-                                        color_provider);
+                                        color_provider, is_in_web_app_scope);
   }
-  return DefaultSystemColor(css_value_id, color_scheme, color_provider);
+  return DefaultSystemColor(css_value_id, color_scheme, color_provider,
+                            is_in_web_app_scope);
 }
 
-Color LayoutTheme::DefaultSystemColor(
-    CSSValueID css_value_id,
-    mojom::blink::ColorScheme color_scheme,
-    const ui::ColorProvider* color_provider) const {
+Color LayoutTheme::DefaultSystemColor(CSSValueID css_value_id,
+                                      mojom::blink::ColorScheme color_scheme,
+                                      const ui::ColorProvider* color_provider,
+                                      bool is_in_web_app_scope) const {
   // The source for the deprecations commented on below is
   // https://www.w3.org/TR/css-color-4/#deprecated-system-colors.
 
   switch (css_value_id) {
     case CSSValueID::kAccentcolor:
-      return RuntimeEnabledFeatures::CSSSystemAccentColorEnabled()
-                 ? GetAccentColorOrDefault(color_scheme)
+      return RuntimeEnabledFeatures::CSSAccentColorKeywordEnabled()
+                 ? GetAccentColorOrDefault(color_scheme, is_in_web_app_scope)
                  : Color();
     case CSSValueID::kAccentcolortext:
-      return RuntimeEnabledFeatures::CSSSystemAccentColorEnabled()
-                 ? GetAccentColorText(color_scheme)
+      return RuntimeEnabledFeatures::CSSAccentColorKeywordEnabled()
+                 ? GetAccentColorText(color_scheme, is_in_web_app_scope)
                  : Color();
     case CSSValueID::kActivetext:
       return Color::FromRGBA32(0xFFFF0000);
@@ -661,31 +687,34 @@ Color LayoutTheme::DefaultSystemColor(
     case CSSValueID::kInternalSearchColor:
       return PlatformTextSearchHighlightColor(/* active_match */ false,
                                               /* in_forced_colors */ false,
-                                              color_scheme, color_provider);
+                                              color_scheme, color_provider,
+                                              is_in_web_app_scope);
     case CSSValueID::kInternalSearchTextColor:
       return PlatformTextSearchColor(/* active_match */ false,
                                      /* in_forced_colors */ false, color_scheme,
-                                     color_provider);
+                                     color_provider, is_in_web_app_scope);
     case CSSValueID::kInternalCurrentSearchColor:
       return PlatformTextSearchHighlightColor(/* active_match */ true,
                                               /* in_forced_colors */ false,
-                                              color_scheme, color_provider);
+                                              color_scheme, color_provider,
+                                              is_in_web_app_scope);
     case CSSValueID::kInternalCurrentSearchTextColor:
       return PlatformTextSearchColor(/* active_match */ true,
                                      /* in_forced_colors */ false, color_scheme,
-                                     color_provider);
+                                     color_provider, is_in_web_app_scope);
     default:
       break;
   }
   DUMP_WILL_BE_NOTREACHED()
-      << getValueName(css_value_id) << " is not a recognized system color";
+      << GetCSSValueName(css_value_id) << " is not a recognized system color";
   return Color();
 }
 
 Color LayoutTheme::SystemColorFromColorProvider(
     CSSValueID css_value_id,
     mojom::blink::ColorScheme color_scheme,
-    const ui::ColorProvider* color_provider) const {
+    const ui::ColorProvider* color_provider,
+    bool is_in_web_app_scope) const {
   SkColor system_theme_color;
   switch (css_value_id) {
     case CSSValueID::kActivetext:
@@ -746,7 +775,8 @@ Color LayoutTheme::SystemColorFromColorProvider(
           color_provider->GetColor(ui::kColorCssSystemWindowText);
       break;
     default:
-      return DefaultSystemColor(css_value_id, color_scheme, color_provider);
+      return DefaultSystemColor(css_value_id, color_scheme, color_provider,
+                                is_in_web_app_scope);
   }
 
   return Color::FromSkColor(system_theme_color);
@@ -764,11 +794,12 @@ Color LayoutTheme::PlatformTextSearchHighlightColor(
     bool active_match,
     bool in_forced_colors,
     mojom::blink::ColorScheme color_scheme,
-    const ui::ColorProvider* color_provider) const {
+    const ui::ColorProvider* color_provider,
+    bool is_in_web_app_scope) const {
   if (active_match) {
     if (in_forced_colors) {
       return GetTheme().SystemColor(CSSValueID::kHighlight, color_scheme,
-                                    color_provider);
+                                    color_provider, is_in_web_app_scope);
     }
     return Color(255, 150, 50);  // Orange.
   }
@@ -779,10 +810,11 @@ Color LayoutTheme::PlatformTextSearchColor(
     bool active_match,
     bool in_forced_colors,
     mojom::blink::ColorScheme color_scheme,
-    const ui::ColorProvider* color_provider) const {
+    const ui::ColorProvider* color_provider,
+    bool is_in_web_app_scope) const {
   if (in_forced_colors && active_match) {
     return GetTheme().SystemColor(CSSValueID::kHighlighttext, color_scheme,
-                                  color_provider);
+                                  color_provider, is_in_web_app_scope);
   }
   return Color::kBlack;
 }
@@ -830,15 +862,15 @@ void LayoutTheme::AdjustControlPartStyle(ComputedStyleBuilder& builder) {
   // Call the appropriate style adjustment method based off the appearance
   // value.
   switch (builder.EffectiveAppearance()) {
-    case kCheckboxPart:
+    case AppearanceValue::kCheckbox:
       return AdjustCheckboxStyle(builder);
-    case kRadioPart:
+    case AppearanceValue::kRadio:
       return AdjustRadioStyle(builder);
-    case kPushButtonPart:
-    case kSquareButtonPart:
-    case kButtonPart:
+    case AppearanceValue::kPushButton:
+    case AppearanceValue::kSquareButton:
+    case AppearanceValue::kButton:
       return AdjustButtonStyle(builder);
-    case kInnerSpinButtonPart:
+    case AppearanceValue::kInnerSpinButton:
       return AdjustInnerSpinButtonStyle(builder);
     default:
       break;
@@ -855,7 +887,7 @@ Color LayoutTheme::GetCustomFocusRingColor() const {
 
 bool LayoutTheme::IsAccentColorCustomized(
     mojom::blink::ColorScheme color_scheme) const {
-  if (!RuntimeEnabledFeatures::CSSSystemAccentColorEnabled()) {
+  if (!SystemAccentColorAllowed()) {
     return false;
   }
 
@@ -866,11 +898,11 @@ bool LayoutTheme::IsAccentColorCustomized(
 
 Color LayoutTheme::GetSystemAccentColor(
     mojom::blink::ColorScheme color_scheme) const {
-  if (!RuntimeEnabledFeatures::CSSSystemAccentColorEnabled()) {
+  if (!SystemAccentColorAllowed()) {
     return Color();
   }
 
-  // Currently only plumbed through on ChromeOS.
+  // Currently only plumbed through on ChromeOS and Windows.
   const auto& accent_color =
       WebThemeEngineHelper::GetNativeThemeEngine()->GetAccentColor();
   if (!accent_color.has_value()) {
@@ -880,16 +912,25 @@ Color LayoutTheme::GetSystemAccentColor(
 }
 
 Color LayoutTheme::GetAccentColorOrDefault(
-    mojom::blink::ColorScheme color_scheme) const {
+    mojom::blink::ColorScheme color_scheme,
+    bool is_in_web_app_scope) const {
   // This is from the kAccent color from NativeThemeBase::GetControlColor
   const Color kDefaultAccentColor = Color(0x00, 0x75, 0xFF);
-  Color accent_color = GetSystemAccentColor(color_scheme);
+  Color accent_color = Color();
+  // Currently OS-defined accent color is exposed via System AccentColor keyword
+  // ONLY for installed WebApps where fingerprinting risk is not as large of a
+  // risk.
+  if (RuntimeEnabledFeatures::CSSAccentColorKeywordEnabled() &&
+      is_in_web_app_scope) {
+    accent_color = GetSystemAccentColor(color_scheme);
+  }
   return accent_color == Color() ? kDefaultAccentColor : accent_color;
 }
 
-Color LayoutTheme::GetAccentColorText(
-    mojom::blink::ColorScheme color_scheme) const {
-  Color accent_color = GetAccentColorOrDefault(color_scheme);
+Color LayoutTheme::GetAccentColorText(mojom::blink::ColorScheme color_scheme,
+                                      bool is_in_web_app_scope) const {
+  Color accent_color =
+      GetAccentColorOrDefault(color_scheme, is_in_web_app_scope);
   // This logic matches AccentColorText in Firefox. If the accent color to draw
   // text on is dark, then use white. If it's light, then use dark.
   return color_utils::GetRelativeLuminance4f(accent_color.toSkColor4f()) <= 128

@@ -6,7 +6,7 @@
 #include "ash/public/cpp/shelf_item_delegate.h"
 #include "ash/public/cpp/shelf_model.h"
 #include "base/functional/callback_helpers.h"
-#include "base/memory/raw_ptr_exclusion.h"
+#include "base/memory/stack_allocated.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/bind.h"
@@ -16,18 +16,21 @@
 #include "chrome/browser/apps/app_service/app_service_proxy.h"
 #include "chrome/browser/apps/app_service/app_service_proxy_factory.h"
 #include "chrome/browser/ash/bruschetta/bruschetta_service.h"
+#include "chrome/browser/ash/bruschetta/bruschetta_service_factory.h"
 #include "chrome/browser/ash/bruschetta/bruschetta_util.h"
 #include "chrome/browser/ash/crostini/crostini_manager.h"
 #include "chrome/browser/ash/crostini/crostini_test_helper.h"
 #include "chrome/browser/ash/crostini/crostini_util.h"
 #include "chrome/browser/ash/guest_os/guest_os_registry_service.h"
 #include "chrome/browser/ash/guest_os/guest_os_registry_service_factory.h"
+#include "chrome/browser/ash/guest_os/guest_os_session_tracker_factory.h"
 #include "chrome/browser/ash/guest_os/guest_os_terminal.h"
 #include "chrome/browser/ash/system_web_apps/system_web_app_manager.h"
 #include "chrome/browser/ui/ash/shelf/chrome_shelf_controller_util.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/web_applications/app_browser_controller.h"
 #include "chrome/browser/ui/web_applications/test/web_app_browsertest_util.h"
+#include "chrome/browser/web_applications/mojom/user_display_mode.mojom.h"
 #include "chrome/browser/web_applications/test/web_app_install_test_utils.h"
 #include "chrome/browser/web_applications/web_app_command_manager.h"
 #include "chrome/browser/web_applications/web_app_install_info.h"
@@ -39,8 +42,8 @@
 #include "content/public/common/content_features.h"
 #include "content/public/test/browser_test.h"
 #include "third_party/blink/public/common/features.h"
-#include "ui/base/models/simple_menu_model.h"
 #include "ui/display/display.h"
+#include "ui/menus/simple_menu_model.h"
 #include "ui/views/vector_icons.h"
 
 class AppServiceShelfContextMenuBrowserTest : public InProcessBrowserTest {
@@ -50,10 +53,11 @@ class AppServiceShelfContextMenuBrowserTest : public InProcessBrowserTest {
   ~AppServiceShelfContextMenuBrowserTest() override = default;
 
   struct MenuSection {
+    STACK_ALLOCATED();
+
+   public:
     std::unique_ptr<ui::SimpleMenuModel> menu_model;
-    // This field is not a raw_ptr<> because it was filtered by the rewriter
-    // for: #addr-of, #union
-    RAW_PTR_EXCLUSION ui::MenuModel* sub_model = nullptr;
+    ui::MenuModel* sub_model = nullptr;
     size_t command_index = 0;
   };
 
@@ -94,23 +98,21 @@ class AppServiceShelfContextMenuWebAppBrowserTest
       public testing::WithParamInterface<bool> {
  public:
   AppServiceShelfContextMenuWebAppBrowserTest() {
-    base::flat_map<base::test::FeatureRef, bool> features;
-    features.insert({blink::features::kDesktopPWAsTabStrip, true});
-    features.insert({features::kDesktopPWAsTabStripSettings, true});
-    features.insert(
-        {chromeos::features::kCrosShortstand, IsShortstandEnabled()});
-
-    scoped_feature_list_.InitWithFeatureStates(features);
+    scoped_feature_list_.InitWithFeatures(
+        {blink::features::kDesktopPWAsTabStrip,
+         features::kDesktopPWAsTabStripSettings},
+        {});
   }
   ~AppServiceShelfContextMenuWebAppBrowserTest() override = default;
 
   const gfx::VectorIcon& GetExpectedLaunchNewIcon(int command_id) {
-    if (command_id == ash::USE_LAUNCH_TYPE_REGULAR)
+    if (command_id == ash::USE_LAUNCH_TYPE_REGULAR) {
       return views::kNewTabIcon;
-    else if (command_id == ash::USE_LAUNCH_TYPE_WINDOW)
+    } else if (command_id == ash::USE_LAUNCH_TYPE_WINDOW) {
       return views::kNewWindowIcon;
-    else
+    } else {
       return views::kOpenIcon;
+    }
   }
 
   bool IsShortstandEnabled() { return GetParam(); }
@@ -206,6 +208,8 @@ IN_PROC_BROWSER_TEST_P(AppServiceShelfContextMenuWebAppBrowserTest,
   auto web_app_install_info =
       web_app::WebAppInstallInfo::CreateWithStartUrlForTesting(
           GURL("https://example.org"));
+  web_app_install_info->user_display_mode =
+      web_app::mojom::UserDisplayMode::kStandalone;
   webapps::AppId app_id =
       web_app::test::InstallWebApp(profile, std::move(web_app_install_info));
 
@@ -444,11 +448,11 @@ IN_PROC_BROWSER_TEST_F(AppServiceShelfContextMenuCrostiniAppBrowserTest,
 
   guest_os::GuestId id(guest_os::VmType::BRUSCHETTA,
                        bruschetta::kBruschettaVmName, "");
-  guest_os::GuestOsSessionTracker::GetForProfile(browser()->profile())
+  guest_os::GuestOsSessionTrackerFactory::GetForProfile(browser()->profile())
       ->AddGuestForTesting(id, guest_os::GuestInfo{id, 0, {}, {}, {}, {}});
 
   auto* bruschetta_service =
-      bruschetta::BruschettaService::GetForProfile(browser()->profile());
+      bruschetta::BruschettaServiceFactory::GetForProfile(browser()->profile());
   bruschetta_service->RegisterVmLaunch(bruschetta::kBruschettaVmName,
                                        bruschetta::RunningVmPolicy{false});
   base::RunLoop run_loop;

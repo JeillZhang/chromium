@@ -6,11 +6,13 @@
 #define CHROME_BROWSER_UI_WEBUI_SETTINGS_SETTINGS_UI_H_
 
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/buildflags.h"
+#include "chrome/common/webui_url_constants.h"
 #include "components/user_education/webui/help_bubble_handler.h"
 #include "content/public/browser/web_ui_controller.h"
+#include "content/public/browser/webui_config.h"
+#include "content/public/common/url_constants.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/receiver.h"
@@ -18,15 +20,9 @@
 #include "ui/webui/resources/cr_components/customize_color_scheme_mode/customize_color_scheme_mode.mojom.h"
 #include "ui/webui/resources/cr_components/help_bubble/help_bubble.mojom.h"
 
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
-#include "ui/webui/resources/cr_components/customize_themes/customize_themes.mojom.h"
+#if !BUILDFLAG(IS_CHROMEOS)
 #include "ui/webui/resources/cr_components/theme_color_picker/theme_color_picker.mojom.h"
-#endif  // !BUILDFLAG(IS_CHROMEOS_ASH)
-
-#if BUILDFLAG(CHROME_ROOT_STORE_CERT_MANAGEMENT_UI)
-#include "chrome/browser/ui/webui/settings/certificate_manager_handler.h"
-#include "ui/webui/resources/cr_components/certificate_manager/certificate_manager_v2.mojom.h"
-#endif  // BUILDFLAG(CHROME_ROOT_STORE_CERT_MANAGEMENT_UI)
+#endif  // !BUILDFLAG(IS_CHROMEOS)
 
 namespace content {
 class WebUIMessageHandler;
@@ -36,13 +32,21 @@ namespace user_prefs {
 class PrefRegistrySyncable;
 }
 
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
-class ChromeCustomizeThemesHandler;
+#if !BUILDFLAG(IS_CHROMEOS)
 class ThemeColorPickerHandler;
-#endif  // !BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // !BUILDFLAG(IS_CHROMEOS)
 
 class CustomizeColorSchemeModeHandler;
 namespace settings {
+
+class SettingsUI;
+
+class SettingsUIConfig : public content::DefaultWebUIConfig<SettingsUI> {
+ public:
+  SettingsUIConfig()
+      : DefaultWebUIConfig(content::kChromeUIScheme,
+                           chrome::kChromeUISettingsHost) {}
+};
 
 // The WebUI handler for chrome://settings.
 class SettingsUI
@@ -50,17 +54,12 @@ class SettingsUI
       public help_bubble::mojom::HelpBubbleHandlerFactory,
       public customize_color_scheme_mode::mojom::
           CustomizeColorSchemeModeHandlerFactory
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_CHROMEOS)
     // chrome://settings/manageProfile which only exists on !OS_CHROMEOS
     // requires mojo bindings.
     ,
-      public customize_themes::mojom::CustomizeThemesHandlerFactory,
       public theme_color_picker::mojom::ThemeColorPickerHandlerFactory
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
-#if BUILDFLAG(CHROME_ROOT_STORE_CERT_MANAGEMENT_UI)
-    ,
-      public certificate_manager_v2::mojom::CertificateManagerPageHandlerFactory
-#endif  // BUILDFLAG(CHROME_ROOT_STORE_CERT_MANAGEMENT_UI)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 {
  public:
   static void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry);
@@ -72,27 +71,23 @@ class SettingsUI
 
   ~SettingsUI() override;
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+  DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(
+      kAutofillPredictionImprovementsHeaderElementId);
+
+#if BUILDFLAG(IS_CHROMEOS)
   // Initializes the WebUI message handlers for CrOS-specific settings that are
   // still shown in the browser settings UI.
   void InitBrowserSettingsWebUIHandlers();
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
-  // Instantiates the implementor of the
-  // customize_themes::mojom::CustomizeThemesHandlerFactory mojo interface
-  // passing the pending receiver that will be internally bound.
-  void BindInterface(mojo::PendingReceiver<
-                     customize_themes::mojom::CustomizeThemesHandlerFactory>
-                         pending_receiver);
-
+#if !BUILDFLAG(IS_CHROMEOS)
   // Instantiates the implementor of the
   // theme_color_picker::mojom::ThemeColorPickerHandlerFactory mojo interface
   // passing the pending receiver that will be internally bound.
   void BindInterface(mojo::PendingReceiver<
                      theme_color_picker::mojom::ThemeColorPickerHandlerFactory>
                          pending_receiver);
-#endif  // !BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // !BUILDFLAG(IS_CHROMEOS)
 
   // Implements support for help bubbles (IPH, tutorials, etc.) in settings
   // pages.
@@ -104,12 +99,6 @@ class SettingsUI
       mojo::PendingReceiver<customize_color_scheme_mode::mojom::
                                 CustomizeColorSchemeModeHandlerFactory>
           pending_receiver);
-#if BUILDFLAG(CHROME_ROOT_STORE_CERT_MANAGEMENT_UI)
-  void BindInterface(
-      mojo::PendingReceiver<
-          certificate_manager_v2::mojom::CertificateManagerPageHandlerFactory>
-          pending_receiver);
-#endif  // BUILDFLAG(CHROME_ROOT_STORE_CERT_MANAGEMENT_UI)
 
  private:
   void AddSettingsPageUIHandler(
@@ -118,14 +107,7 @@ class SettingsUI
   // Makes a request to show a HaTS survey.
   void TryShowHatsSurveyWithTimeout();
 
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
-  // customize_themes::mojom::CustomizeThemesHandlerFactory:
-  void CreateCustomizeThemesHandler(
-      mojo::PendingRemote<customize_themes::mojom::CustomizeThemesClient>
-          pending_client,
-      mojo::PendingReceiver<customize_themes::mojom::CustomizeThemesHandler>
-          pending_handler) override;
-
+#if !BUILDFLAG(IS_CHROMEOS)
   // theme_color_picker::mojom::ThemeColorPickerHandlerFactory:
   void CreateThemeColorPickerHandler(
       mojo::PendingReceiver<theme_color_picker::mojom::ThemeColorPickerHandler>
@@ -133,13 +115,10 @@ class SettingsUI
       mojo::PendingRemote<theme_color_picker::mojom::ThemeColorPickerClient>
           client) override;
 
-  std::unique_ptr<ChromeCustomizeThemesHandler> customize_themes_handler_;
-  mojo::Receiver<customize_themes::mojom::CustomizeThemesHandlerFactory>
-      customize_themes_factory_receiver_{this};
   std::unique_ptr<ThemeColorPickerHandler> theme_color_picker_handler_;
   mojo::Receiver<theme_color_picker::mojom::ThemeColorPickerHandlerFactory>
       theme_color_picker_handler_factory_receiver_{this};
-#endif  // !BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // !BUILDFLAG(IS_CHROMEOS)
 
   // help_bubble::mojom::HelpBubbleHandlerFactory:
   void CreateHelpBubbleHandler(
@@ -164,22 +143,6 @@ class SettingsUI
   mojo::Receiver<customize_color_scheme_mode::mojom::
                      CustomizeColorSchemeModeHandlerFactory>
       customize_color_scheme_mode_handler_factory_receiver_{this};
-
-#if BUILDFLAG(CHROME_ROOT_STORE_CERT_MANAGEMENT_UI)
-  // certificate_manager_v2::mojom::CertificateManagerPageHandlerFactory
-  void CreateCertificateManagerPageHandler(
-      mojo::PendingRemote<certificate_manager_v2::mojom::CertificateManagerPage>
-          client,
-      mojo::PendingReceiver<
-          certificate_manager_v2::mojom::CertificateManagerPageHandler> handler)
-      override;
-
-  std::unique_ptr<CertificateManagerPageHandler>
-      certificate_manager_page_handler_;
-  mojo::Receiver<
-      certificate_manager_v2::mojom::CertificateManagerPageHandlerFactory>
-      certificate_manager_handler_factory_receiver_{this};
-#endif  // BUILDFLAG(CHROME_ROOT_STORE_CERT_MANAGEMENT_UI)
 
   WEB_UI_CONTROLLER_TYPE_DECL();
 };

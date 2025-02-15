@@ -8,10 +8,10 @@
 #include <memory>
 
 #include "ash/ash_export.h"
-#include "ash/bluetooth_devices_observer.h"
 #include "ash/login/ui/login_data_dispatcher.h"
 #include "ash/public/cpp/input_device_settings_controller.h"
 #include "ash/public/cpp/login_types.h"
+#include "ash/public/cpp/peripherals_app_delegate.h"
 #include "ash/public/cpp/session/session_observer.h"
 #include "ash/public/mojom/input_device_settings.mojom-forward.h"
 #include "ash/public/mojom/input_device_settings.mojom.h"
@@ -28,11 +28,15 @@
 #include "ash/system/input_device_settings/pref_handlers/pointing_stick_pref_handler.h"
 #include "ash/system/input_device_settings/pref_handlers/touchpad_pref_handler.h"
 #include "base/containers/flat_map.h"
+#include "base/containers/flat_set.h"
 #include "base/memory/raw_ptr.h"
 #include "base/observer_list.h"
+#include "base/scoped_observation.h"
+#include "components/services/app_service/public/cpp/app_registry_cache.h"
 #include "ui/base/ime/ash/input_method_manager.h"
 #include "ui/events/devices/input_device.h"
 #include "ui/events/devices/keyboard_device.h"
+#include "ui/message_center/message_center_observer.h"
 
 class AccountId;
 class PrefChangeRegistrar;
@@ -46,7 +50,9 @@ class ASH_EXPORT InputDeviceSettingsControllerImpl
       public input_method::InputMethodManager::Observer,
       public SessionObserver,
       public device::BluetoothAdapter::Observer,
-      public LoginDataDispatcher::Observer {
+      public LoginDataDispatcher::Observer,
+      public apps::AppRegistryCache::Observer,
+      public message_center::MessageCenterObserver {
  public:
   explicit InputDeviceSettingsControllerImpl(PrefService* local_state);
   InputDeviceSettingsControllerImpl(
@@ -64,6 +70,10 @@ class ASH_EXPORT InputDeviceSettingsControllerImpl
   ~InputDeviceSettingsControllerImpl() override;
 
   static void RegisterProfilePrefs(PrefRegistrySimple* pref_registry);
+
+  // Refreshes keyboard info and settings. To be used when the feature is first
+  // forcibly enabled.
+  void ForceKeyboardSettingRefreshWhenFeatureEnabled();
 
   // InputDeviceSettingsController:
   std::vector<mojom::KeyboardPtr> GetConnectedKeyboards() override;
@@ -103,6 +113,12 @@ class ASH_EXPORT InputDeviceSettingsControllerImpl
                             const mojom::Button& button) override;
   void OnGraphicsTabletButtonPressed(DeviceId device_id,
                                      const mojom::Button& button) override;
+  void GetDeviceImageDataUrl(
+      const std::string& device_key,
+      base::OnceCallback<void(const std::optional<std::string>&)> callback)
+      override;
+  void ResetNotificationDeviceTracking() override;
+
   void AddObserver(InputDeviceSettingsController::Observer* observer) override;
   void RemoveObserver(
       InputDeviceSettingsController::Observer* observer) override;
@@ -126,6 +142,8 @@ class ASH_EXPORT InputDeviceSettingsControllerImpl
   // SessionObserver:
   void OnActiveUserPrefServiceChanged(PrefService* pref_service) override;
 
+  void OnSessionStateChanged(session_manager::SessionState state) override;
+
   // input_method::InputMethodManager::Observer:
   void InputMethodChanged(input_method::InputMethodManager* manager,
                           Profile* profile,
@@ -139,14 +157,27 @@ class ASH_EXPORT InputDeviceSettingsControllerImpl
   // LoginDataDispatcher::Observer:
   void OnOobeDialogStateChanged(OobeDialogState state) override;
 
+  // apps::AppRegistryCache::Observer overrides:
+  void OnAppUpdate(const apps::AppUpdate& update) override;
+  void OnAppRegistryCacheWillBeDestroyed(
+      apps::AppRegistryCache* cache) override;
+
+  // message_center::MessageCenterObserver:
+  void OnNotificationClicked(
+      const std::string& notification_id,
+      const std::optional<int>& button_index,
+      const std::optional<std::u16string>& reply) override;
+
   InputDeviceDuplicateIdFinder& duplicate_id_finder() {
     CHECK(duplicate_id_finder_);
     return *duplicate_id_finder_;
   }
 
-  const base::flat_map<std::string, DeviceId>&
-  GetBluetoothAddressToDeviceIdMapForTesting() {
-    return bluetooth_address_to_device_id_map_;
+  void SetPeripheralsAppDelegate(PeripheralsAppDelegate* delegate);
+
+  void AddWelcomeNotificationDeviceKeyForTesting(
+      const std::string& device_key) {
+    welcome_notification_clicked_device_keys_.insert(device_key);
   }
 
  private:
@@ -242,6 +273,19 @@ class ASH_EXPORT InputDeviceSettingsControllerImpl
   void RefreshCachedKeyboardSettings();
   void RefreshCachedTouchpadSettings();
 
+  // Refreshes all companion app info for connected devices.
+  void RefreshCompanionAppInfoForConnectedDevices();
+  void OnCompanionAppInfoReceived(
+      DeviceId id,
+      const std::string device_key,
+      const std::optional<mojom::CompanionAppInfo>& info);
+
+  void DispatchMouseCompanionAppInfoChanged(const mojom::Mouse& mouse);
+  void DispatchKeyboardCompanionAppInfoChanged(const mojom::Keyboard& keyboard);
+  void DispatchTouchpadCompanionAppInfoChanged(const mojom::Touchpad& touchpad);
+  void DispatchGraphicsTabletCompanionAppInfoChanged(
+      const mojom::GraphicsTablet& graphics_tablet);
+
   // Get the mouse customization restriction based on the mouse metadata. Return
   // kDisableKeyEventRewrites by default if there is no mouse metadata.
   mojom::CustomizationRestriction GetMouseCustomizationRestriction(
@@ -257,9 +301,9 @@ class ASH_EXPORT InputDeviceSettingsControllerImpl
   // current input method.
   void RefreshKeyDisplay();
 
-  // Refresh modifier keys when they potentially changed due to flags being
-  // enabled.
-  void RefreshModifierKeys();
+  // Refresh meta and modifier keys when they potentially changed due to flags
+  // being enabled.
+  void RefreshMetaAndModifierKeys();
 
   // Get the mouse button config based on the mouse metadata. Return
   // kDefault by default if there is no mouse metadata.
@@ -269,10 +313,6 @@ class ASH_EXPORT InputDeviceSettingsControllerImpl
   // kDefault by default if there is no metadata.
   mojom::GraphicsTabletButtonConfig GetGraphicsTabletButtonConfig(
       const ui::InputDevice& graphics_tablet);
-
-  // Used as callback for `bluetooth_devices_observer_` whenever a bluetooth
-  // device state changes.
-  void OnBluetoothAdapterOrDeviceChanged(device::BluetoothDevice* device);
 
   // Determines whether a device image should be fetched.
   // Returns true if the following conditions are met:
@@ -288,7 +328,14 @@ class ASH_EXPORT InputDeviceSettingsControllerImpl
   // Callback function triggered when a device image has been downloaded.
   // The DeviceId is used to identify the type of input device the image is
   // associated with.
-  void OnDeviceImageDownloaded(DeviceId id, const DeviceImage& device_image);
+  void OnDeviceNotificationImageDownloaded(DeviceId id,
+                                           const DeviceImage& device_image);
+
+  // Callback function triggered when a device image to be displayed in the
+  // Settings UI has been downloaded.
+  void OnDeviceImageForSettingsDownloaded(
+      base::OnceCallback<void(const std::optional<std::string>&)> callback,
+      const DeviceImage& device_image);
 
   mojom::Mouse* FindMouse(DeviceId id);
   mojom::Touchpad* FindTouchpad(DeviceId id);
@@ -300,6 +347,7 @@ class ASH_EXPORT InputDeviceSettingsControllerImpl
       scoped_refptr<device::BluetoothAdapter> adapter);
 
   bool IsOobe() const;
+  void RefreshBatteryInfoForConnectedDevices();
 
   base::ObserverList<InputDeviceSettingsController::Observer> observers_;
 
@@ -318,7 +366,20 @@ class ASH_EXPORT InputDeviceSettingsControllerImpl
   base::flat_map<DeviceId, mojom::MousePtr> mice_;
   base::flat_map<DeviceId, mojom::PointingStickPtr> pointing_sticks_;
   base::flat_map<DeviceId, mojom::GraphicsTabletPtr> graphics_tablets_;
-  base::flat_map<std::string, DeviceId> bluetooth_address_to_device_id_map_;
+  // A map that stores associations between package IDs (e.g.,
+  // "com.example.app") and the corresponding device IDs where the package is
+  // installed or used. This map is used to track installations and removals for
+  // devies with companion apps.
+  base::flat_map<std::string, DeviceId> package_id_to_device_id_map_;
+  // A set to track unique device keys of devices where the user clicked on the
+  // welcome notification displayed during initial device connection.
+  // This information is used for recording metrics:
+  // - If a user modifies device settings AFTER clicking the notification,
+  //   the presence of the device key in this set indicates the notification
+  //   was seen before the setting change.
+  // - This helps measure the impact of the welcome notification on user
+  // behavior.
+  base::flat_set<std::string> welcome_notification_clicked_device_keys_;
 
   // Notifiers must be declared after the `flat_map` objects as the notifiers
   // depend on these objects.
@@ -341,11 +402,11 @@ class ASH_EXPORT InputDeviceSettingsControllerImpl
       notification_controller_;
 
   std::unique_ptr<InputDeviceSettingsMetadataManager> metadata_manager_;
-  std::unique_ptr<BluetoothDevicesObserver> bluetooth_devices_observer_;
   // Observe bluetooth device change events.
   scoped_refptr<device::BluetoothAdapter> bluetooth_adapter_;
 
   raw_ptr<PrefService> active_pref_service_ = nullptr;  // Not owned.
+  raw_ptr<PeripheralsAppDelegate> delegate_ = nullptr;  // Not owned.
   std::optional<AccountId> active_account_id_;
   std::unique_ptr<PrefChangeRegistrar> pref_change_registrar_;
 
@@ -353,6 +414,12 @@ class ASH_EXPORT InputDeviceSettingsControllerImpl
   bool settings_refresh_pending_ = false;
 
   OobeDialogState oobe_state_ = OobeDialogState::HIDDEN;
+  base::ScopedObservation<apps::AppRegistryCache,
+                          apps::AppRegistryCache::Observer>
+      app_registry_cache_observer_{this};
+
+  session_manager::SessionState last_session_ =
+      session_manager::SessionState::UNKNOWN;
 
   // Task runner where settings refreshes are scheduled to run.
   scoped_refptr<base::SequencedTaskRunner> sequenced_task_runner_;

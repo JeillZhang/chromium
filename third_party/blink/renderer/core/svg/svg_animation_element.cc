@@ -22,6 +22,11 @@
  * Boston, MA 02110-1301, USA.
  */
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/core/svg/svg_animation_element.h"
 
 #include "third_party/blink/renderer/core/dom/document.h"
@@ -153,10 +158,10 @@ static bool ParseKeySplines(const String& string,
   result.clear();
   if (string.empty())
     return true;
-  bool parsed =
-      WTF::VisitCharacters(string, [&](const auto* chars, unsigned length) {
-        return ParseKeySplinesInternal(chars, chars + length, result);
-      });
+  bool parsed = WTF::VisitCharacters(string, [&](auto chars) {
+    return ParseKeySplinesInternal(chars.data(), chars.data() + chars.size(),
+                                   result);
+  });
   if (!parsed) {
     result.clear();
     return false;
@@ -644,7 +649,7 @@ bool SVGAnimationElement::UpdateAnimationValues() {
     case kPathAnimation:
       break;
     case kNoAnimation:
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
   }
   return true;
 }

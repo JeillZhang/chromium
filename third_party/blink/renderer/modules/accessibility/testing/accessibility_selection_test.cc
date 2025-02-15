@@ -4,12 +4,12 @@
 
 #include "third_party/blink/renderer/modules/accessibility/testing/accessibility_selection_test.h"
 
+#include <algorithm>
 #include <iterator>
 #include <string_view>
 
 #include "base/containers/span.h"
 #include "base/memory/scoped_refptr.h"
-#include "base/ranges/algorithm.h"
 #include "third_party/blink/public/platform/file_path_conversion.h"
 #include "third_party/blink/renderer/core/dom/character_data.h"
 #include "third_party/blink/renderer/core/dom/container_node.h"
@@ -24,7 +24,6 @@
 #include "third_party/blink/renderer/modules/accessibility/ax_position.h"
 #include "third_party/blink/renderer/modules/accessibility/ax_selection.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
-#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
 #include "third_party/blink/renderer/platform/wtf/shared_buffer.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"

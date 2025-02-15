@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/formats/mpeg/mpeg_audio_stream_parser_base.h"
 
 #include <memory>
@@ -296,7 +301,7 @@ int MPEGAudioStreamParserBase::ParseFrame(const uint8_t* data,
 
     std::unique_ptr<MediaTracks> media_tracks(new MediaTracks());
     if (config_.IsValidConfig()) {
-      media_tracks->AddAudioTrack(config_, kMpegAudioTrackId,
+      media_tracks->AddAudioTrack(config_, true, kMpegAudioTrackId,
                                   MediaTrack::Kind("main"), MediaTrack::Label(),
                                   MediaTrack::Language());
     }

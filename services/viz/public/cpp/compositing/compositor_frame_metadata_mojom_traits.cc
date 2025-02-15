@@ -37,6 +37,9 @@ bool StructTraits<viz::mojom::CompositorFrameMetadataDataView,
   out->page_scale_factor = data.page_scale_factor();
   if (!data.ReadScrollableViewportSize(&out->scrollable_viewport_size))
     return false;
+  if (!data.ReadVisibleViewportSize(&out->visible_viewport_size)) {
+    return false;
+  }
 
   if (data.frame_token() == 0u)
     return false;
@@ -51,24 +54,14 @@ bool StructTraits<viz::mojom::CompositorFrameMetadataDataView,
   out->may_contain_video = data.may_contain_video();
   out->may_throttle_if_undrawn_frames = data.may_throttle_if_undrawn_frames();
   out->has_shared_element_resources = data.has_shared_element_resources();
-  out->is_resourceless_software_draw_with_scroll_or_animation =
-      data.is_resourceless_software_draw_with_scroll_or_animation();
   out->is_handling_interaction = data.is_handling_interaction();
+  out->is_handling_animation = data.is_handling_animation();
   out->send_frame_token_to_embedder = data.send_frame_token_to_embedder();
   out->min_page_scale_factor = data.min_page_scale_factor();
   out->is_software = data.is_software();
   if (data.top_controls_visible_height_set()) {
     out->top_controls_visible_height.emplace(
         data.top_controls_visible_height());
-  }
-
-  if (!data.ReadPreferredFrameInterval(&out->preferred_frame_interval))
-    return false;
-
-  // Preferred_frame_interval must be nullopt or non-negative.
-  if (out->preferred_frame_interval &&
-      out->preferred_frame_interval->is_negative()) {
-    return false;
   }
 
   if (!data.ReadScreenshotDestination(&out->screenshot_destination)) {
@@ -85,7 +78,8 @@ bool StructTraits<viz::mojom::CompositorFrameMetadataDataView,
         data.ReadTransitionDirectives(&out->transition_directives) &&
         data.ReadCaptureBounds(&out->capture_bounds) &&
         data.ReadOffsetTagDefinitions(&out->offset_tag_definitions) &&
-        data.ReadOffsetTagValues(&out->offset_tag_values))) {
+        data.ReadOffsetTagValues(&out->offset_tag_values) &&
+        data.ReadFrameIntervalInputs(&out->frame_interval_inputs))) {
     return false;
   }
 

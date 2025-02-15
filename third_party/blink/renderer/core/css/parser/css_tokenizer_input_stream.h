@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_CSS_PARSER_CSS_TOKENIZER_INPUT_STREAM_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_CSS_PARSER_CSS_TOKENIZER_INPUT_STREAM_H_
 
@@ -11,16 +16,9 @@
 namespace blink {
 
 class CSSTokenizerInputStream {
-  USING_FAST_MALLOC(CSSTokenizerInputStream);
-
  public:
-  explicit CSSTokenizerInputStream(const String& input)
-      : string_length_(input.length()),
-        string_ref_(input.Impl()),
-        string_(input) {}
-
   explicit CSSTokenizerInputStream(StringView input)
-      : string_length_(input.length()), string_ref_(nullptr), string_(input) {}
+      : string_length_(input.length()), string_(input) {}
 
   CSSTokenizerInputStream(const CSSTokenizerInputStream&) = delete;
   CSSTokenizerInputStream& operator=(const CSSTokenizerInputStream&) = delete;
@@ -99,10 +97,6 @@ class CSSTokenizerInputStream {
  private:
   wtf_size_t offset_ = 0;
   const wtf_size_t string_length_;
-  // Purely to hold on to the reference. Must be destroyed after the StringView
-  // (i.e., be higher up in the list of members), or the StringView destructor
-  // may DCHECK as it thinks the reference is dangling.
-  const scoped_refptr<StringImpl> string_ref_;
   StringView string_;
 };
 

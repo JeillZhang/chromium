@@ -72,6 +72,7 @@
 #include "ui/gfx/text_constants.h"
 #include "ui/gfx/vector_icon_types.h"
 #include "ui/strings/grit/ui_strings.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/border.h"
 #include "ui/views/controls/button/image_button.h"
 #include "ui/views/controls/button/image_button_factory.h"
@@ -187,10 +188,12 @@ void ConfigureLabelText(views::Label* title) {
   title->SetAllowCharacterBreak(true);
   title->SetProperty(
       views::kFlexBehaviorKey,
-      views::FlexSpecification(views::MinimumFlexSizeRule::kScaleToZero,
-                               views::MaximumFlexSizeRule::kUnbounded,
-                               /*adjust_height_for_width =*/true)
+      views::FlexSpecification(views::LayoutOrientation::kHorizontal,
+                               views::MinimumFlexSizeRule::kScaleToZero,
+                               views::MaximumFlexSizeRule::kUnbounded)
           .WithWeight(1));
+  title->SetProperty(views::kCrossAxisAlignmentKey,
+                     views::LayoutAlignment::kStretch);
   title->SetHorizontalAlignment(gfx::ALIGN_CENTER);
   title->SetEnabledColorId(cros_tokens::kCrosSysOnSurface);
   TypographyProvider::Get()->StyleLabel(ash::TypographyToken::kCrosHeadline1,
@@ -226,12 +229,14 @@ EcheTray::EcheTray(Shelf* shelf)
   // Observers setup
   // Note: `ScreenLayoutObserver` starts observing at its constructor.
   observed_session_.Observe(Shell::Get()->session_controller());
-  icon_->SetTooltipText(GetAccessibleNameForTray());
+  icon_->SetTooltipText(GetAccessibleName());
   UpdateTrayItemColor(is_active());
 
   shelf_observation_.Observe(shelf);
   shell_observer_.Observe(Shell::Get());
   keyboard_observation_.Observe(keyboard::KeyboardUIController::Get());
+
+  GetViewAccessibility().SetName(GetAccessibleName());
 }
 
 EcheTray::~EcheTray() {
@@ -259,14 +264,8 @@ void EcheTray::UpdateTrayItemColor(bool is_active) {
                               : cros_tokens::kCrosSysOnSurface));
 }
 
-std::u16string EcheTray::GetAccessibleNameForTray() {
-  // TODO(nayebi): Change this based on the final model of interaction
-  // between phone hub and Eche.
-  return l10n_util::GetStringUTF16(IDS_ASH_PHONE_HUB_TRAY_ACCESSIBLE_NAME);
-}
-
 void EcheTray::HandleLocaleChange() {
-  icon_->SetTooltipText(GetAccessibleNameForTray());
+  icon_->SetTooltipText(GetAccessibleName());
 }
 
 void EcheTray::HideBubbleWithView(const TrayBubbleView* bubble_view) {
@@ -290,7 +289,7 @@ void EcheTray::Initialize() {
   SetVisiblePreferred(visibility);
 }
 
-void EcheTray::CloseBubble() {
+void EcheTray::CloseBubbleInternal() {
   if (bubble_)
     HideBubble();
 }
@@ -352,7 +351,7 @@ bool EcheTray::CacheBubbleViewForHide() const {
 }
 
 std::u16string EcheTray::GetAccessibleNameForBubble() {
-  return GetAccessibleNameForTray();
+  return GetAccessibleName();
 }
 
 bool EcheTray::ShouldEnableExtraKeyboardAccessibility() {
@@ -693,8 +692,7 @@ void EcheTray::InitBubble(
             eche_app::mojom::StreamStatus::kStreamStatusInitializing);
         break;
       case eche_app::mojom::AppStreamLaunchEntryPoint::UNKNOWN:
-        NOTREACHED_IN_MIGRATION();
-        break;
+        NOTREACHED();
     }
   }
   init_stream_timestamp_ = base::TimeTicks::Now();
@@ -855,6 +853,12 @@ views::ImageButton* EcheTray::GetIcon() {
   return phone_hub_tray->eche_icon_view();
 }
 
+std::u16string EcheTray::GetAccessibleName() {
+  // TODO(nayebi): Change this based on the final model of interaction
+  // between phone hub and Eche.
+  return l10n_util::GetStringUTF16(IDS_ASH_PHONE_HUB_TRAY_ACCESSIBLE_NAME);
+}
+
 void EcheTray::ResizeIcon(int offset_dip) {
   views::ImageButton* icon_view = GetIcon();
   if (icon_view) {
@@ -914,7 +918,7 @@ void EcheTray::UpdateEcheSizeAndBubbleBounds() {
       shelf()->GetSystemTrayAnchorRect());
 }
 
-void EcheTray::OnDisplayConfigurationChanged() {
+void EcheTray::OnDidApplyDisplayChanges() {
   UpdateEcheSizeAndBubbleBounds();
 }
 
@@ -1007,8 +1011,9 @@ bool EcheTray::ProcessAcceleratorKeys(ui::KeyEvent* event) {
   const bool any_modifier_pressed =
       ui::Accelerator::MaskOutKeyEventFlags(event->flags());
 
-  if (event->type() != ui::ET_KEY_PRESSED)
+  if (event->type() != ui::EventType::kKeyPressed) {
     return false;
+  }
 
   switch (key_code) {
     case ui::VKEY_W:

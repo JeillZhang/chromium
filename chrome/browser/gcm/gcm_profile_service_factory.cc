@@ -67,8 +67,8 @@ void RequestProxyResolvingSocketFactory(
 }
 #endif
 
-BrowserContextKeyedServiceFactory::TestingFactory& GetTestingFactory() {
-  static base::NoDestructor<BrowserContextKeyedServiceFactory::TestingFactory>
+GCMProfileServiceFactory::GlobalTestingFactory& GetTestingFactory() {
+  static base::NoDestructor<GCMProfileServiceFactory::GlobalTestingFactory>
       testing_factory;
   return *testing_factory;
 }
@@ -76,14 +76,14 @@ BrowserContextKeyedServiceFactory::TestingFactory& GetTestingFactory() {
 }  // namespace
 
 GCMProfileServiceFactory::ScopedTestingFactoryInstaller::
-    ScopedTestingFactoryInstaller(TestingFactory testing_factory) {
+    ScopedTestingFactoryInstaller(GlobalTestingFactory testing_factory) {
   DCHECK(!GetTestingFactory());
   GetTestingFactory() = std::move(testing_factory);
 }
 
 GCMProfileServiceFactory::ScopedTestingFactoryInstaller::
     ~ScopedTestingFactoryInstaller() {
-  GetTestingFactory() = BrowserContextKeyedServiceFactory::TestingFactory();
+  GetTestingFactory() = GlobalTestingFactory();
 }
 
 // static
@@ -119,14 +119,17 @@ GCMProfileServiceFactory::GCMProfileServiceFactory()
           ProfileSelections::Builder()
               .WithRegular(ProfileSelection::kOwnInstance)
               .WithGuest(ProfileSelection::kOwnInstance)
+              // TODO(crbug.com/41488885): Check if this service is needed for
+              // Ash Internals.
+              .WithAshInternals(ProfileSelection::kOwnInstance)
               .Build()) {
   DependsOn(IdentityManagerFactory::GetInstance());
 }
 
-GCMProfileServiceFactory::~GCMProfileServiceFactory() {
-}
+GCMProfileServiceFactory::~GCMProfileServiceFactory() = default;
 
-KeyedService* GCMProfileServiceFactory::BuildServiceInstanceFor(
+std::unique_ptr<KeyedService>
+GCMProfileServiceFactory::BuildServiceInstanceForBrowserContext(
     content::BrowserContext* context) const {
   Profile* profile = Profile::FromBrowserContext(context);
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
@@ -135,9 +138,9 @@ KeyedService* GCMProfileServiceFactory::BuildServiceInstanceFor(
   DCHECK(!profile->IsOffTheRecord());
 #endif
 
-  TestingFactory& testing_factory = GetTestingFactory();
-  if (testing_factory)
-    return testing_factory.Run(context).release();
+  if (GlobalTestingFactory& testing_factory = GetTestingFactory()) {
+    return testing_factory.Run(context);
+  }
 
   scoped_refptr<base::SequencedTaskRunner> blocking_task_runner(
       base::ThreadPool::CreateSequencedTaskRunner(
@@ -170,7 +173,7 @@ KeyedService* GCMProfileServiceFactory::BuildServiceInstanceFor(
   ImageFetcherServiceFactory::GetForKey(profile->GetProfileKey());
 #endif  // BUILDFLAG(ENABLE_OFFLINE_PAGES)
 
-  return service.release();
+  return service;
 }
 
 }  // namespace gcm

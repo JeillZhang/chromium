@@ -2,10 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
+#include <algorithm>
 #include <memory>
 #include <set>
 
 #include "base/containers/contains.h"
+#include "base/containers/span.h"
 #include "base/files/file.h"
 #include "base/files/file_util.h"
 #include "base/path_service.h"
@@ -14,7 +21,6 @@
 #include "base/test/bind.h"
 #include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/enterprise/connectors/analysis/content_analysis_dialog.h"
 #include "chrome/browser/enterprise/connectors/analysis/content_analysis_features.h"
@@ -182,7 +188,7 @@ class FakeBinaryUploadService : public CloudBinaryUploadService {
         case AnalysisConnector::ANALYSIS_CONNECTOR_UNSPECIFIED:
         case AnalysisConnector::FILE_DOWNLOADED:
         case AnalysisConnector::FILE_TRANSFER:
-          NOTREACHED_IN_MIGRATION();
+          NOTREACHED();
       }
     }
   }
@@ -246,6 +252,12 @@ const std::set<std::string>* ImageMimeTypes() {
   return &set;
 }
 
+ContentMetaData::CopiedTextSource MakeClipboardSource(std::string url) {
+  ContentMetaData::CopiedTextSource source;
+  source.set_url(std::move(url));
+  return source;
+}
+
 // A fake delegate with minimal overrides to obtain behavior that's as close to
 // the real one as possible.
 class MinimalFakeContentAnalysisDelegate : public ContentAnalysisDelegate {
@@ -299,7 +311,7 @@ class ContentAnalysisDelegateBrowserTestBase
   }
 
   void EnableUploadsScanningAndReporting() {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
     SetDMTokenForTesting(policy::DMToken::CreateValidToken(kBrowserDMToken));
 #else
     if (machine_scope_) {
@@ -329,7 +341,7 @@ class ContentAnalysisDelegateBrowserTestBase
                                       /*enabled*/ true,
                                       /*enabled_event_names*/ {},
                                       /*enabled_opt_in_events*/ {},
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
                                       /*machine_scope*/ false);
 #else
                                       machine_scope_);
@@ -337,7 +349,7 @@ class ContentAnalysisDelegateBrowserTestBase
 
     client_ = std::make_unique<policy::MockCloudPolicyClient>();
     client_->SetDMToken(
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
         kBrowserDMToken);
 #else
         machine_scope() ? kBrowserDMToken : kProfileDMToken);
@@ -347,7 +359,7 @@ class ContentAnalysisDelegateBrowserTestBase
           ->SetBrowserCloudPolicyClientForTesting(client_.get());
     } else {
       RealtimeReportingClientFactory::GetForProfile(browser()->profile())
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
           ->SetBrowserCloudPolicyClientForTesting(client_.get());
 #else
           ->SetProfileCloudPolicyClientForTesting(client_.get());
@@ -372,7 +384,7 @@ class ContentAnalysisDelegateBrowserTestBase
   policy::MockCloudPolicyClient* client() { return client_.get(); }
 
   std::string GetProfileIdentifier() const {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
     return browser()->profile()->GetPath().AsUTF8Unsafe();
 #else
     if (machine_scope_) {
@@ -533,7 +545,7 @@ IN_PROC_BROWSER_TEST_P(ContentAnalysisDelegateBrowserTest, Files) {
       /*mimetypes*/ ExeMimeTypes(),
       /*size*/ std::string("bad file content").size(),
       /*result*/
-      safe_browsing::EventResultToString(safe_browsing::EventResult::BLOCKED),
+      EventResultToString(EventResult::BLOCKED),
       /*username*/ kUserName,
       /*profile_identifier*/ GetProfileIdentifier(),
       /*scan_id*/ kScanId2);
@@ -636,7 +648,7 @@ IN_PROC_BROWSER_TEST_P(ContentAnalysisDelegateBrowserTest, ForFiles) {
       /*mimetypes*/ ExeMimeTypes(),
       /*size*/ std::string("bad file content").size(),
       /*result*/
-      safe_browsing::EventResultToString(safe_browsing::EventResult::BLOCKED),
+      EventResultToString(EventResult::BLOCKED),
       /*username*/ kUserName,
       /*profile_identifier*/ GetProfileIdentifier(),
       /*scan_id*/ kScanId2);
@@ -778,7 +790,7 @@ IN_PROC_BROWSER_TEST_P(ContentAnalysisDelegateBrowserTest, Texts) {
       /*mimetype*/ TextMimeTypes(),
       /*size*/ 200,
       /*result*/
-      safe_browsing::EventResultToString(safe_browsing::EventResult::BLOCKED),
+      EventResultToString(EventResult::BLOCKED),
       /*username*/ kUserName,
       /*profile_identifier*/ GetProfileIdentifier(),
       /*scan_id*/ kScanId1,
@@ -793,7 +805,7 @@ IN_PROC_BROWSER_TEST_P(ContentAnalysisDelegateBrowserTest, Texts) {
   data.text.emplace_back(text());
   data.text.emplace_back(text());
   data.reason = ContentAnalysisRequest::CLIPBOARD_PASTE;
-  data.clipboard_source = "https://source.com/";
+  data.clipboard_source = MakeClipboardSource("https://source.com/");
   ASSERT_TRUE(ContentAnalysisDelegate::IsEnabled(
       browser()->profile(), GURL(kTestUrl), &data, BULK_DATA_ENTRY));
 
@@ -881,7 +893,7 @@ IN_PROC_BROWSER_TEST_P(ContentAnalysisDelegateBrowserTest,
       /*mimetype*/ TextMimeTypes(),
       /*size*/ 200,
       /*result*/
-      safe_browsing::EventResultToString(safe_browsing::EventResult::BLOCKED),
+      EventResultToString(EventResult::BLOCKED),
       /*username*/ kUserName,
       /*profile_identifier*/ GetProfileIdentifier(),
       /*scan_id*/ kScanId1,
@@ -970,7 +982,7 @@ IN_PROC_BROWSER_TEST_P(ContentAnalysisDelegateBrowserTest, AllowTextAndImage) {
   data.image = image();
   data.text.emplace_back(text());
   data.reason = ContentAnalysisRequest::CLIPBOARD_PASTE;
-  data.clipboard_source = "https://source.com/";
+  data.clipboard_source = MakeClipboardSource("https://source.com/");
   ASSERT_TRUE(ContentAnalysisDelegate::IsEnabled(
       browser()->profile(), GURL(kTestUrl), &data, BULK_DATA_ENTRY));
 
@@ -1059,7 +1071,7 @@ IN_PROC_BROWSER_TEST_P(ContentAnalysisDelegateBrowserTest,
       /*mimetype*/ TextMimeTypes(),
       /*size*/ 100,
       /*result*/
-      safe_browsing::EventResultToString(safe_browsing::EventResult::BLOCKED),
+      EventResultToString(EventResult::BLOCKED),
       /*username*/ kUserName,
       /*profile_identifier*/ GetProfileIdentifier(),
       /*scan_id*/ kScanId1,
@@ -1074,7 +1086,7 @@ IN_PROC_BROWSER_TEST_P(ContentAnalysisDelegateBrowserTest,
   data.image = image();
   data.text.emplace_back(text());
   data.reason = ContentAnalysisRequest::CLIPBOARD_PASTE;
-  data.clipboard_source = "https://source.com/";
+  data.clipboard_source = MakeClipboardSource("https://source.com/");
   ASSERT_TRUE(ContentAnalysisDelegate::IsEnabled(
       browser()->profile(), GURL(kTestUrl), &data, BULK_DATA_ENTRY));
 
@@ -1166,7 +1178,7 @@ IN_PROC_BROWSER_TEST_P(ContentAnalysisDelegateBrowserTest,
       /*mimetype*/ TextMimeTypes(),
       /*size*/ 100,
       /*result*/
-      safe_browsing::EventResultToString(safe_browsing::EventResult::BLOCKED),
+      EventResultToString(EventResult::BLOCKED),
       /*username*/ kUserName,
       /*profile_identifier*/ GetProfileIdentifier(),
       /*scan_id*/ kScanId1,
@@ -1275,7 +1287,7 @@ IN_PROC_BROWSER_TEST_P(ContentAnalysisDelegateBrowserTest,
       /*mimetype*/ ImageMimeTypes(),
       /*size*/ 50,
       /*result*/
-      safe_browsing::EventResultToString(safe_browsing::EventResult::BLOCKED),
+      EventResultToString(EventResult::BLOCKED),
       /*username*/ kUserName,
       /*profile_identifier*/ GetProfileIdentifier(),
       /*scan_id*/ kScanId2,
@@ -1285,7 +1297,7 @@ IN_PROC_BROWSER_TEST_P(ContentAnalysisDelegateBrowserTest,
   ContentAnalysisDelegate::Data data;
   data.image = image();
   data.text.emplace_back(text());
-  data.clipboard_source = "https://source.com/";
+  data.clipboard_source = MakeClipboardSource("https://source.com/");
   ASSERT_TRUE(ContentAnalysisDelegate::IsEnabled(
       browser()->profile(), GURL(kTestUrl), &data, BULK_DATA_ENTRY));
 
@@ -1381,7 +1393,7 @@ IN_PROC_BROWSER_TEST_P(ContentAnalysisDelegateBrowserTest,
       /*mimetype*/ ImageMimeTypes(),
       /*size*/ 50,
       /*result*/
-      safe_browsing::EventResultToString(safe_browsing::EventResult::BLOCKED),
+      EventResultToString(EventResult::BLOCKED),
       /*username*/ kUserName,
       /*profile_identifier*/ GetProfileIdentifier(),
       /*scan_id*/ kScanId2,
@@ -1473,7 +1485,7 @@ IN_PROC_BROWSER_TEST_P(ContentAnalysisDelegateBrowserTest, Throttled) {
       /*mimetypes*/ ExeMimeTypes(),
       /*size*/ 9,
       /*result*/
-      safe_browsing::EventResultToString(safe_browsing::EventResult::ALLOWED),
+      EventResultToString(EventResult::ALLOWED),
       /*username*/ kUserName,
       /*profile_identifier*/ GetProfileIdentifier(),
       /*content_transfer_reason*/ "CONTENT_TRANSFER_METHOD_FILE_PICKER");
@@ -1527,22 +1539,15 @@ IN_PROC_BROWSER_TEST_P(ContentAnalysisDelegateBrowserTest, Throttled) {
 // - block_large_files
 class ContentAnalysisDelegateBlockingSettingBrowserTest
     : public ContentAnalysisDelegateBrowserTestBase,
-      public testing::WithParamInterface<std::tuple<bool, bool, bool>> {
+      public testing::WithParamInterface<std::tuple<bool, bool>> {
  public:
   ContentAnalysisDelegateBlockingSettingBrowserTest()
       : ContentAnalysisDelegateBrowserTestBase(machine_scope()) {
-    if (is_resumable()) {
-      scoped_feature_list_.InitAndEnableFeature(kResumableUploadEnabled);
-    } else {
-      scoped_feature_list_.InitAndDisableFeature(kResumableUploadEnabled);
-    }
   }
 
   bool machine_scope() const { return std::get<0>(GetParam()); }
 
   bool setting_param() const { return std::get<1>(GetParam()); }
-
-  bool is_resumable() const { return std::get<2>(GetParam()); }
 
   // Use a string since the setting value is inserted into a JSON policy.
   const char* bool_setting_value() const {
@@ -1556,7 +1561,6 @@ class ContentAnalysisDelegateBlockingSettingBrowserTest
 INSTANTIATE_TEST_SUITE_P(,
                          ContentAnalysisDelegateBlockingSettingBrowserTest,
                          testing::Combine(testing::Bool(),
-                                          testing::Bool(),
                                           testing::Bool()));
 
 IN_PROC_BROWSER_TEST_P(ContentAnalysisDelegateBlockingSettingBrowserTest,
@@ -1566,7 +1570,7 @@ IN_PROC_BROWSER_TEST_P(ContentAnalysisDelegateBlockingSettingBrowserTest,
   // policy value. So this specific scenario only applies to multi-part upload.
   //
   // TODO(b/341264970): Add test support when setting_param is on.
-  if (is_resumable() && !setting_param()) {
+  if (!setting_param()) {
     return;
   }
 
@@ -1632,10 +1636,8 @@ IN_PROC_BROWSER_TEST_P(ContentAnalysisDelegateBlockingSettingBrowserTest,
       // du chrome/test/data/safe_browsing/download_protection/encrypted.zip -b
       /*size*/ 20015,
       /*result*/
-      expected_result() ? safe_browsing::EventResultToString(
-                              safe_browsing::EventResult::ALLOWED)
-                        : safe_browsing::EventResultToString(
-                              safe_browsing::EventResult::BLOCKED),
+      expected_result() ? EventResultToString(EventResult::ALLOWED)
+                        : EventResultToString(EventResult::BLOCKED),
       /*username*/ kUserName,
       /*profile_identifier*/ GetProfileIdentifier(),
       /*content_transfer_reason*/ "CONTENT_TRANSFER_METHOD_DRAG_AND_DROP");
@@ -1669,7 +1671,7 @@ IN_PROC_BROWSER_TEST_P(ContentAnalysisDelegateBlockingSettingBrowserTest,
   // value. So this specific testcase only applies to multi-part upload.
   //
   // TODO(b/341264970): Add test support when setting_param is on.
-  if (is_resumable() && !setting_param()) {
+  if (!setting_param()) {
     return;
   }
 
@@ -1711,7 +1713,7 @@ IN_PROC_BROWSER_TEST_P(ContentAnalysisDelegateBlockingSettingBrowserTest,
   std::string chunk = std::string(kLargeSize, 'a');
   base::File file(created_file_paths()[0],
                   base::File::FLAG_OPEN | base::File::FLAG_WRITE);
-  file.WriteAtCurrentPos(chunk.data(), chunk.size());
+  file.WriteAtCurrentPos(base::as_byte_span(chunk));
 
   ASSERT_TRUE(ContentAnalysisDelegate::IsEnabled(
       browser()->profile(), GURL(kTestUrl), &data, FILE_ATTACHED));
@@ -1734,10 +1736,8 @@ IN_PROC_BROWSER_TEST_P(ContentAnalysisDelegateBlockingSettingBrowserTest,
       /*mimetypes*/ DocMimeTypes(),
       /*size*/ kLargeSize,
       /*result*/
-      expected_result() ? safe_browsing::EventResultToString(
-                              safe_browsing::EventResult::ALLOWED)
-                        : safe_browsing::EventResultToString(
-                              safe_browsing::EventResult::BLOCKED),
+      expected_result() ? EventResultToString(EventResult::ALLOWED)
+                        : EventResultToString(EventResult::BLOCKED),
       /*username*/ kUserName,
       /*profile_identifier*/ GetProfileIdentifier(),
       /*content_transfer_method*/ "CONTENT_TRANSFER_METHOD_FILE_PICKER");
@@ -1774,7 +1774,7 @@ IN_PROC_BROWSER_TEST_P(ContentAnalysisDelegateBlockingSettingBrowserTest,
   // value. So this specific testcase only applies to multi-part upload.
   //
   // TODO(b/341264970): Add test support when setting_param is on.
-  if (is_resumable() && !setting_param()) {
+  if (!setting_param()) {
     return;
   }
 
@@ -1810,7 +1810,7 @@ IN_PROC_BROWSER_TEST_P(ContentAnalysisDelegateBlockingSettingBrowserTest,
   constexpr int64_t kLargeSize = 51 * 1024 * 1024;
   base::MappedReadOnlyRegion page =
       base::ReadOnlySharedMemoryRegion::Create(kLargeSize);
-  memset(page.mapping.memory(), 'a', kLargeSize);
+  std::ranges::fill(base::span(page.mapping), 'a');
   data.page = std::move(page.region);
 
   ASSERT_TRUE(ContentAnalysisDelegate::IsEnabled(browser()->profile(),
@@ -1832,10 +1832,8 @@ IN_PROC_BROWSER_TEST_P(ContentAnalysisDelegateBlockingSettingBrowserTest,
       /*mimetypes*/ DocMimeTypes(),
       /*size*/ std::nullopt,
       /*result*/
-      expected_result() ? safe_browsing::EventResultToString(
-                              safe_browsing::EventResult::ALLOWED)
-                        : safe_browsing::EventResultToString(
-                              safe_browsing::EventResult::BLOCKED),
+      expected_result() ? EventResultToString(EventResult::ALLOWED)
+                        : EventResultToString(EventResult::BLOCKED),
       /*username*/ kUserName,
       /*profile_identifier*/ GetProfileIdentifier(),
       /*content_transfer_method*/ std::nullopt);
@@ -1953,9 +1951,8 @@ IN_PROC_BROWSER_TEST_P(ContentAnalysisDelegateBlockingSettingBrowserTest,
       // If the policy allows immediate delivery of the file, then the result is
       // ALLOWED even if the verdict obtained afterwards is BLOCKED.
       /*result*/
-      safe_browsing::EventResultToString(
-          expected_result() ? safe_browsing::EventResult::ALLOWED
-                            : safe_browsing::EventResult::BLOCKED),
+      EventResultToString(expected_result() ? EventResult::ALLOWED
+                                            : EventResult::BLOCKED),
       /*username*/ kUserName,
       /*profile_identifier*/ GetProfileIdentifier(),
       /*scan_id*/ kScanId1,
@@ -2031,7 +2028,7 @@ IN_PROC_BROWSER_TEST_P(ContentAnalysisDelegateBlockingSettingBrowserTest,
   ContentAnalysisDelegate::Data data;
   data.text.emplace_back(text());
   data.reason = ContentAnalysisRequest::CLIPBOARD_PASTE;
-  data.clipboard_source = "about:blank";
+  data.clipboard_source = MakeClipboardSource("about:blank");
   ASSERT_TRUE(ContentAnalysisDelegate::IsEnabled(
       browser()->profile(), GURL(kTestUrl), &data, BULK_DATA_ENTRY));
 
@@ -2070,9 +2067,8 @@ IN_PROC_BROWSER_TEST_P(ContentAnalysisDelegateBlockingSettingBrowserTest,
       // If the policy allows immediate delivery of the file, then the result is
       // ALLOWED even if the verdict obtained afterwards is BLOCKED.
       /*result*/
-      safe_browsing::EventResultToString(
-          expected_result() ? safe_browsing::EventResult::ALLOWED
-                            : safe_browsing::EventResult::BLOCKED),
+      EventResultToString(expected_result() ? EventResult::ALLOWED
+                                            : EventResult::BLOCKED),
       /*username*/ kUserName,
       /*profile_identifier*/ GetProfileIdentifier(),
       /*scan_id*/ kScanId1,
@@ -2151,7 +2147,8 @@ INSTANTIATE_TEST_SUITE_P(
             safe_browsing::BinaryUploadService::Result::TIMEOUT,
             safe_browsing::BinaryUploadService::Result::FAILED_TO_GET_TOKEN,
             safe_browsing::BinaryUploadService::Result::TOO_MANY_REQUESTS,
-            safe_browsing::BinaryUploadService::Result::UNKNOWN),
+            safe_browsing::BinaryUploadService::Result::UNKNOWN,
+            safe_browsing::BinaryUploadService::Result::INCOMPLETE_RESPONSE),
         testing::Bool()));
 
 IN_PROC_BROWSER_TEST_P(ContentAnalysisDelegateDefaultActionSettingBrowserTest,
@@ -2234,7 +2231,7 @@ class ContentAnalysisDelegateUnauthorizedBrowserTest
   }
 
   void SetUpScanning(bool file_scan) {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
     SetDMTokenForTesting(policy::DMToken::CreateValidToken(dm_token()));
 #else
     if (machine_scope()) {
@@ -2306,7 +2303,8 @@ IN_PROC_BROWSER_TEST_P(ContentAnalysisDelegateUnauthorizedBrowserTest, Paste) {
       base::BindRepeating(&MinimalFakeContentAnalysisDelegate::Create,
                           content_analysis_run_loop.QuitClosure()));
 
-  FakeBinaryUploadServiceStorage()->SetAuthForTesting(dm_token(), false);
+  FakeBinaryUploadServiceStorage()->SetAuthForTesting(
+      dm_token(), BinaryUploadService::Result::UNAUTHORIZED);
   FakeBinaryUploadServiceStorage()->SetAuthorized(false);
 
   bool called = false;
@@ -2356,7 +2354,8 @@ IN_PROC_BROWSER_TEST_P(ContentAnalysisDelegateUnauthorizedBrowserTest, Files) {
       base::BindRepeating(&MinimalFakeContentAnalysisDelegate::Create,
                           content_analysis_run_loop.QuitClosure()));
 
-  FakeBinaryUploadServiceStorage()->SetAuthForTesting(dm_token(), false);
+  FakeBinaryUploadServiceStorage()->SetAuthForTesting(
+      dm_token(), BinaryUploadService::Result::UNAUTHORIZED);
   // Make sure all auth retries fail.
   FakeBinaryUploadServiceStorage()->SetAuthorized(false);
   FakeBinaryUploadServiceStorage()->SetShouldAutomaticallyAuthorize(true);

@@ -26,13 +26,14 @@ import org.chromium.chrome.browser.download.home.list.holder.ListItemViewHolder;
 import org.chromium.chrome.browser.download.internal.R;
 import org.chromium.components.browser_ui.widget.displaystyle.HorizontalDisplayStyle;
 import org.chromium.components.browser_ui.widget.displaystyle.UiConfig;
+import org.chromium.ui.display.DisplayUtil;
 import org.chromium.ui.modelutil.ForwardingListObservable;
 import org.chromium.ui.modelutil.PropertyModelChangeProcessor;
 import org.chromium.ui.modelutil.RecyclerViewAdapter;
 
 /**
- * The View component of a DateOrderedList.  This takes the DateOrderedListModel and creates the
- * glue to display it on the screen.
+ * The View component of a DateOrderedList. This takes the DateOrderedListModel and creates the glue
+ * to display it on the screen.
  */
 class DateOrderedListView {
     private final DownloadManagerUiConfig mConfig;
@@ -127,13 +128,10 @@ class DateOrderedListView {
         mUiConfig.addObserver(
                 (newDisplayStyle) -> {
                     int padding =
-                            getPaddingForDisplayStyle(newDisplayStyle, context.getResources());
-                    ViewCompat.setPaddingRelative(
-                            mView,
-                            padding,
-                            mView.getPaddingTop(),
-                            padding,
-                            mView.getPaddingBottom());
+                            getPaddingForDisplayStyle(
+                                    newDisplayStyle, mView, context.getResources());
+                    mView.setPaddingRelative(
+                            padding, mView.getPaddingTop(), padding, mView.getPaddingBottom());
                 });
         mOnConfigurationChangedCallback = onConfigurationChangedCallback;
     }
@@ -147,10 +145,16 @@ class DateOrderedListView {
      * @return The start and end padding of the recycler view for the given display style.
      */
     private static int getPaddingForDisplayStyle(
-            UiConfig.DisplayStyle displayStyle, Resources resources) {
+            UiConfig.DisplayStyle displayStyle, View view, Resources resources) {
         int padding = 0;
         if (displayStyle.horizontal == HorizontalDisplayStyle.WIDE) {
-            int screenWidthDp = resources.getConfiguration().screenWidthDp;
+            float dpToPx = resources.getDisplayMetrics().density;
+            int screenWidthDp = 0;
+            if (DisplayUtil.isUiScaled() && view != null) {
+                screenWidthDp = (int) (view.getMeasuredWidth() / dpToPx);
+            } else {
+                screenWidthDp = resources.getConfiguration().screenWidthDp;
+            }
             padding =
                     (int)
                             (((screenWidthDp - UiConfig.WIDE_DISPLAY_STYLE_MIN_WIDTH_DP) / 2.f)
@@ -280,7 +284,7 @@ class DateOrderedListView {
             // If the current item is the last of its download type in a given section and not
             // displayed in a grid, add padding below. Grid items are handled differently as
             // described in the next section.
-            if (isLastOfDownloadTypeInSection(position) && !(isGridItem(position))) {
+            if (isLastOfDownloadTypeInSection(position) && !isGridItem(position)) {
                 outRect.bottom += mVerticalPaddingPx;
             }
 

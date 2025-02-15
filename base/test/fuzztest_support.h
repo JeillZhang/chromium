@@ -26,7 +26,7 @@ std::optional<std::tuple<T>> Wrap(base::optional_ref<const T> maybe_value) {
 
 auto ArbitraryValueNull() {
   return fuzztest::ReversibleMap(
-      []() { return base::Value(); },
+      [] { return base::Value(); },
       [](const base::Value& value) { return std::optional<std::tuple<>>{}; });
 }
 
@@ -59,7 +59,7 @@ auto ArbitraryValueString() {
       [](const base::Value& value) {
         return Wrap<std::string>(value.GetIfString());
       },
-      fuzztest::String());
+      fuzztest::AsciiString());
 }
 
 auto ArbitraryValueBlob() {
@@ -108,7 +108,7 @@ auto ArbitraryValueDict(fuzztest::Domain<base::Value> value_domain) {
                    : std::nullopt;
       },
       fuzztest::ContainerOf<std::vector<std::pair<std::string, base::Value>>>(
-          fuzztest::PairOf(fuzztest::String(), value_domain)));
+          fuzztest::PairOf(fuzztest::AsciiString(), value_domain)));
 }
 
 fuzztest::Domain<base::Value> ArbitraryValue() {

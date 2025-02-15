@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import {Account, AccountManagerBrowserProxy} from 'chrome://os-settings/lazy_load.js';
+import type {Account, AccountManagerBrowserProxy} from 'chrome://os-settings/lazy_load.js';
 import {TestBrowserProxy} from 'chrome://webui-test/test_browser_proxy.js';
 
 export class TestAccountManagerBrowserProxy extends TestBrowserProxy implements
@@ -66,7 +66,6 @@ export class TestAccountManagerBrowserProxy extends TestBrowserProxy implements
       'reauthenticateAccount',
       'removeAccount',
       'migrateAccount',
-      'changeArcAvailability',
     ]);
   }
 
@@ -95,10 +94,6 @@ export class TestAccountManagerBrowserProxy extends TestBrowserProxy implements
   migrateAccount(accountEmail: string): void {
     this.methodCalled('migrateAccount', accountEmail);
   }
-
-  changeArcAvailability(account: Account, isAvailableInArc: boolean): void {
-    this.methodCalled('changeArcAvailability', [account, isAvailableInArc]);
-  }
 }
 
 export class TestAccountManagerBrowserProxyForUnmanagedAccounts extends
@@ -126,52 +121,5 @@ export class TestAccountManagerBrowserProxyForUnmanagedAccounts extends
         },
       ]);
     });
-  }
-}
-
-export class TestAccountManagerBrowserProxyForAccountsAllowedInArc extends
-    TestAccountManagerBrowserProxy {
-  override getAccounts(): Promise<Account[]> {
-    this.methodCalled('getAccounts');
-
-    return Promise.resolve([
-      {
-        id: '123',
-        accountType: 1,
-        isDeviceAccount: true,
-        isSignedIn: true,
-        unmigrated: false,
-        isManaged: true,
-        fullName: 'Primary Account',
-        pic: 'data:image/png;base64,primaryAccountPicData',
-        email: 'primary@gmail.com',
-        isAvailableInArc: true,
-        organization: 'Family Link',
-      },
-      {
-        id: '456',
-        accountType: 1,
-        isDeviceAccount: false,
-        isSignedIn: true,
-        unmigrated: false,
-        isManaged: true,
-        fullName: 'Secondary Account 1',
-        email: 'user1@example.com',
-        pic: '',
-        isAvailableInArc: true,
-      },
-      {
-        id: '789',
-        accountType: 1,
-        isDeviceAccount: false,
-        isSignedIn: true,
-        unmigrated: false,
-        isManaged: false,
-        fullName: 'Secondary account 2',
-        email: 'user2@example.com',
-        pic: '',
-        isAvailableInArc: true,
-      },
-    ]);
   }
 }

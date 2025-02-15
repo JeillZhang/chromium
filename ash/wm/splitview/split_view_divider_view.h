@@ -59,7 +59,6 @@ class SplitViewDividerView : public views::AccessiblePaneView,
 
   // AccessiblePaneView:
   views::View* GetDefaultFocusableChild() override;
-  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
   void OnFocus() override;
 
   ASH_EXPORT gfx::Rect GetHandlerViewBoundsInScreenForTesting() const;
@@ -80,9 +79,9 @@ class SplitViewDividerView : public views::AccessiblePaneView,
   // Resizes the windows and divider on a key event.
   void ResizeOnKeyEvent(bool left_or_top, bool horizontal);
 
-  // Refreshes the divider handler's bounds and rounded corners  in response to
-  // changes in the divider's dimensions or display properties.
-  void RefreshDividerHandler(bool should_enlarge);
+  // Refreshes the divider handler's bounds and rounded corners in response to
+  // changes in the divider's hover state or display properties.
+  void RefreshDividerHandler();
 
   // The location of the initial mouse event in screen coordinates.
   gfx::Point initial_mouse_event_location_;

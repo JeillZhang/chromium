@@ -29,9 +29,9 @@ autotest.py -C out/foo --line 11 base/strings/strcat_unittest.cc
 """
 
 import argparse
+import json
 import locale
 import os
-import json
 import re
 import shlex
 import subprocess
@@ -39,6 +39,10 @@ import sys
 
 from enum import Enum
 from pathlib import Path
+
+# Don't write pyc files to the src tree, which show up in version control
+# in some environments.
+sys.dont_write_bytecode = True
 
 USE_PYTHON_3 = f'This script will only run under python3.'
 
@@ -295,12 +299,13 @@ def HaveUserPickTarget(paths, targets):
   target_list = '\n'.join(f'{i}. {t}' for i, t in enumerate(targets))
 
   user_input = input(f'Target "{paths}" is used by multiple test targets.\n' +
-                     target_list + '\nPlease pick a target: ')
+                     target_list + '\nPlease pick a target by its numeric index'
+                     'listed below: ')
   try:
     value = int(user_input)
     return targets[value]
   except (ValueError, IndexError):
-    print('Try again')
+    print('Value entered was not a numeric index listed above. Trying again.')
     return HaveUserPickTarget(paths, targets)
 
 

@@ -20,6 +20,7 @@
 #include "content/browser/file_system_access/features.h"
 #include "content/browser/file_system_access/file_system_access_manager_impl.h"
 #include "content/browser/renderer_host/render_frame_host_impl.h"
+#include "content/public/browser/file_system_access_permission_context.h"
 #include "content/public/test/browser_task_environment.h"
 #include "content/public/test/test_renderer_host.h"
 #include "storage/browser/blob/blob_storage_context.h"
@@ -39,13 +40,6 @@ static constexpr char kTestMountPoint[] = "testfs";
 
 class FileSystemAccessLockManagerTest : public RenderViewHostTestHarness {
  public:
-  FileSystemAccessLockManagerTest() {
-    scoped_feature_list_.InitWithFeatures(
-        {features::kFileSystemAccessBFCache,
-         blink::features::kFileSystemAccessLockingScheme},
-        {});
-  }
-
   void SetUp() override {
     RenderViewHostTestHarness::SetUp();
 
@@ -84,8 +78,7 @@ class FileSystemAccessLockManagerTest : public RenderViewHostTestHarness {
   }
 
   storage::FileSystemURL CreateLocalUrl(const base::FilePath& path) {
-    return manager_->CreateFileSystemURLFromPath(
-        FileSystemAccessEntryFactory::PathType::kLocal, path);
+    return manager_->CreateFileSystemURLFromPath(PathInfo(path));
   }
 
   std::unique_ptr<base::test::TestFuture<
@@ -208,8 +201,7 @@ class FileSystemAccessLockManagerTest : public RenderViewHostTestHarness {
 
 TEST_F(FileSystemAccessLockManagerTest, ExclusiveLock) {
   base::FilePath path = dir_.GetPath().AppendASCII("foo");
-  auto url = manager_->CreateFileSystemURLFromPath(
-      FileSystemAccessEntryFactory::PathType::kLocal, path);
+  auto url = manager_->CreateFileSystemURLFromPath(PathInfo(path));
 
   LockType exclusive_lock_type = manager_->GetExclusiveLockType();
   LockType shared_lock_type = manager_->CreateSharedLockTypeForTesting();
@@ -230,8 +222,7 @@ TEST_F(FileSystemAccessLockManagerTest, ExclusiveLock) {
 
 TEST_F(FileSystemAccessLockManagerTest, SharedLock) {
   base::FilePath path = dir_.GetPath().AppendASCII("foo");
-  auto url = manager_->CreateFileSystemURLFromPath(
-      FileSystemAccessEntryFactory::PathType::kLocal, path);
+  auto url = manager_->CreateFileSystemURLFromPath(PathInfo(path));
 
   LockType exclusive_lock_type = manager_->GetExclusiveLockType();
   LockType shared_lock_type_1 = manager_->CreateSharedLockTypeForTesting();
@@ -342,12 +333,11 @@ TEST_F(FileSystemAccessLockManagerTest, DifferentBackends) {
       base::FilePath::FromUTF8Unsafe(kTestMountPoint).AppendASCII("foo");
 
   // File on a local file system.
-  auto local_url = manager_->CreateFileSystemURLFromPath(
-      FileSystemAccessEntryFactory::PathType::kLocal, path);
+  auto local_url = manager_->CreateFileSystemURLFromPath(PathInfo(path));
 
   // File with the same path on an external file system.
   auto external_url = manager_->CreateFileSystemURLFromPath(
-      FileSystemAccessEntryFactory::PathType::kExternal, path);
+      PathInfo(PathType::kExternal, path));
 
   EXPECT_EQ(local_url.path(), external_url.virtual_path());
 
@@ -400,11 +390,10 @@ TEST_F(FileSystemAccessLockManagerTest, LockAcrossSites) {
 
 TEST_F(FileSystemAccessLockManagerTest, AncestorLocks) {
   base::FilePath parent_path = dir_.GetPath().AppendASCII("foo");
-  auto parent_url = manager_->CreateFileSystemURLFromPath(
-      FileSystemAccessEntryFactory::PathType::kLocal, parent_path);
+  auto parent_url =
+      manager_->CreateFileSystemURLFromPath(PathInfo(parent_path));
   auto child_url = manager_->CreateFileSystemURLFromPath(
-      FileSystemAccessEntryFactory::PathType::kLocal,
-      parent_path.Append(FILE_PATH_LITERAL("child")));
+      PathInfo(parent_path.AppendASCII("child")));
 
   AssertAncestorLockBehavior(parent_url, child_url);
 }
@@ -413,10 +402,9 @@ TEST_F(FileSystemAccessLockManagerTest, AncestorLocksExternal) {
   base::FilePath parent_path =
       base::FilePath::FromUTF8Unsafe(kTestMountPoint).AppendASCII("foo");
   auto parent_url = manager_->CreateFileSystemURLFromPath(
-      FileSystemAccessEntryFactory::PathType::kExternal, parent_path);
+      PathInfo(PathType::kExternal, parent_path));
   auto child_url = manager_->CreateFileSystemURLFromPath(
-      FileSystemAccessEntryFactory::PathType::kExternal,
-      parent_path.Append(FILE_PATH_LITERAL("child")));
+      PathInfo(PathType::kExternal, parent_path.AppendASCII("child")));
 
   AssertAncestorLockBehavior(parent_url, child_url);
 }
@@ -428,7 +416,7 @@ TEST_F(FileSystemAccessLockManagerTest, AncestorLocksSandboxed) {
   parent_url.SetBucket(kTestBucketLocator);
   auto child_url = file_system_context_->CreateCrackedFileSystemURL(
       kTestStorageKey, storage::kFileSystemTypeTemporary,
-      parent_path.Append(FILE_PATH_LITERAL("child")));
+      parent_path.AppendASCII("child"));
   child_url.SetBucket(kTestBucketLocator);
 
   AssertAncestorLockBehavior(parent_url, child_url);
@@ -437,11 +425,10 @@ TEST_F(FileSystemAccessLockManagerTest, AncestorLocksSandboxed) {
 TEST_F(FileSystemAccessLockManagerTest, AncestorWithSameName) {
   {
     base::FilePath parent_path = dir_.GetPath().AppendASCII("foo");
-    auto parent_url = manager_->CreateFileSystemURLFromPath(
-        FileSystemAccessEntryFactory::PathType::kLocal, parent_path);
+    auto parent_url =
+        manager_->CreateFileSystemURLFromPath(PathInfo(parent_path));
     auto child_url = manager_->CreateFileSystemURLFromPath(
-        FileSystemAccessEntryFactory::PathType::kLocal,
-        parent_path.Append(FILE_PATH_LITERAL("foo")));
+        PathInfo(parent_path.AppendASCII("foo")));
 
     AssertAncestorLockBehavior(parent_url, child_url);
   }
@@ -450,10 +437,9 @@ TEST_F(FileSystemAccessLockManagerTest, AncestorWithSameName) {
     base::FilePath parent_path =
         base::FilePath::FromUTF8Unsafe(kTestMountPoint).AppendASCII("foo");
     auto parent_url = manager_->CreateFileSystemURLFromPath(
-        FileSystemAccessEntryFactory::PathType::kExternal, parent_path);
+        PathInfo(PathType::kExternal, parent_path));
     auto child_url = manager_->CreateFileSystemURLFromPath(
-        FileSystemAccessEntryFactory::PathType::kExternal,
-        parent_path.Append(FILE_PATH_LITERAL("foo")));
+        PathInfo(PathType::kExternal, parent_path.AppendASCII("foo")));
 
     AssertAncestorLockBehavior(parent_url, child_url);
   }
@@ -465,7 +451,7 @@ TEST_F(FileSystemAccessLockManagerTest, AncestorWithSameName) {
     parent_url.SetBucket(kTestBucketLocator);
     auto child_url = file_system_context_->CreateCrackedFileSystemURL(
         kTestStorageKey, storage::kFileSystemTypeTemporary,
-        parent_path.Append(FILE_PATH_LITERAL("foo")));
+        parent_path.AppendASCII("foo"));
     child_url.SetBucket(kTestBucketLocator);
 
     AssertAncestorLockBehavior(parent_url, child_url);
@@ -479,12 +465,11 @@ TEST_F(FileSystemAccessLockManagerTest, BFCacheExclusive) {
   EXPECT_EQ(rfh->GetLifecycleState(), RenderFrameHost::LifecycleState::kActive);
 
   auto bf_cache_context = FileSystemAccessManagerImpl::BindingContext(
-      kTestStorageKey, kTestURL, rfh->GetAssociatedRenderFrameHostId());
+      kTestStorageKey, kTestURL, rfh->GetGlobalId());
   auto active_context = kBindingContext;
 
   base::FilePath path = dir_.GetPath().AppendASCII("foo");
-  auto url = manager_->CreateFileSystemURLFromPath(
-      FileSystemAccessEntryFactory::PathType::kLocal, path);
+  auto url = manager_->CreateFileSystemURLFromPath(PathInfo(path));
 
   LockType exclusive_lock_type = manager_->GetExclusiveLockType();
   LockType shared_lock_type = manager_->CreateSharedLockTypeForTesting();
@@ -539,12 +524,11 @@ TEST_F(FileSystemAccessLockManagerTest, BFCacheShared) {
   EXPECT_EQ(rfh->GetLifecycleState(), RenderFrameHost::LifecycleState::kActive);
 
   auto bf_cache_context = FileSystemAccessManagerImpl::BindingContext(
-      kTestStorageKey, kTestURL, rfh->GetAssociatedRenderFrameHostId());
+      kTestStorageKey, kTestURL, rfh->GetGlobalId());
   auto active_context = kBindingContext;
 
   base::FilePath path = dir_.GetPath().AppendASCII("foo");
-  auto url = manager_->CreateFileSystemURLFromPath(
-      FileSystemAccessEntryFactory::PathType::kLocal, path);
+  auto url = manager_->CreateFileSystemURLFromPath(PathInfo(path));
 
   LockType exclusive_lock_type = manager_->GetExclusiveLockType();
   LockType shared_lock_type_1 = manager_->CreateSharedLockTypeForTesting();
@@ -616,15 +600,14 @@ TEST_F(FileSystemAccessLockManagerTest, BFCacheTakeChildThenParent) {
   EXPECT_EQ(rfh->GetLifecycleState(), RenderFrameHost::LifecycleState::kActive);
 
   auto bf_cache_context = FileSystemAccessManagerImpl::BindingContext(
-      kTestStorageKey, kTestURL, rfh->GetAssociatedRenderFrameHostId());
+      kTestStorageKey, kTestURL, rfh->GetGlobalId());
   auto active_context = kBindingContext;
 
   base::FilePath parent_path = dir_.GetPath().AppendASCII("foo");
-  auto parent_url = manager_->CreateFileSystemURLFromPath(
-      FileSystemAccessEntryFactory::PathType::kLocal, parent_path);
+  auto parent_url =
+      manager_->CreateFileSystemURLFromPath(PathInfo(parent_path));
   auto child_url = manager_->CreateFileSystemURLFromPath(
-      FileSystemAccessEntryFactory::PathType::kLocal,
-      parent_path.Append(FILE_PATH_LITERAL("child")));
+      PathInfo(parent_path.AppendASCII("child")));
 
   LockType exclusive_lock_type = manager_->GetExclusiveLockType();
   LockType shared_lock_type = manager_->CreateSharedLockTypeForTesting();
@@ -678,18 +661,16 @@ TEST_F(FileSystemAccessLockManagerTest, BFCacheTakeParentThenChild) {
   EXPECT_EQ(rfh->GetLifecycleState(), RenderFrameHost::LifecycleState::kActive);
 
   auto bf_cache_context = FileSystemAccessManagerImpl::BindingContext(
-      kTestStorageKey, kTestURL, rfh->GetAssociatedRenderFrameHostId());
+      kTestStorageKey, kTestURL, rfh->GetGlobalId());
   auto active_context = kBindingContext;
 
   base::FilePath parent_path = dir_.GetPath().AppendASCII("foo");
-  auto parent_url = manager_->CreateFileSystemURLFromPath(
-      FileSystemAccessEntryFactory::PathType::kLocal, parent_path);
+  auto parent_url =
+      manager_->CreateFileSystemURLFromPath(PathInfo(parent_path));
   auto child_url_1 = manager_->CreateFileSystemURLFromPath(
-      FileSystemAccessEntryFactory::PathType::kLocal,
-      parent_path.Append(FILE_PATH_LITERAL("child1")));
+      PathInfo(parent_path.AppendASCII("child1")));
   auto child_url_2 = manager_->CreateFileSystemURLFromPath(
-      FileSystemAccessEntryFactory::PathType::kLocal,
-      parent_path.Append(FILE_PATH_LITERAL("child2")));
+      PathInfo(parent_path.AppendASCII("child2")));
 
   LockType exclusive_lock_type = manager_->GetExclusiveLockType();
   LockType shared_lock_type = manager_->CreateSharedLockTypeForTesting();
@@ -755,12 +736,11 @@ TEST_F(FileSystemAccessLockManagerTest, BFCacheEvictPendingLockRoot) {
   EXPECT_EQ(rfh->GetLifecycleState(), RenderFrameHost::LifecycleState::kActive);
 
   auto bf_cache_context = FileSystemAccessManagerImpl::BindingContext(
-      kTestStorageKey, kTestURL, rfh->GetAssociatedRenderFrameHostId());
+      kTestStorageKey, kTestURL, rfh->GetGlobalId());
   auto active_context = kBindingContext;
 
   base::FilePath path = dir_.GetPath().AppendASCII("foo");
-  auto url = manager_->CreateFileSystemURLFromPath(
-      FileSystemAccessEntryFactory::PathType::kLocal, path);
+  auto url = manager_->CreateFileSystemURLFromPath(PathInfo(path));
 
   LockType exclusive_lock_type = manager_->GetExclusiveLockType();
   LockType shared_lock_type = manager_->CreateSharedLockTypeForTesting();
@@ -817,15 +797,14 @@ TEST_F(FileSystemAccessLockManagerTest, BFCacheEvictDescendantPendingLockRoot) {
   EXPECT_EQ(rfh->GetLifecycleState(), RenderFrameHost::LifecycleState::kActive);
 
   auto bf_cache_context = FileSystemAccessManagerImpl::BindingContext(
-      kTestStorageKey, kTestURL, rfh->GetAssociatedRenderFrameHostId());
+      kTestStorageKey, kTestURL, rfh->GetGlobalId());
   auto active_context = kBindingContext;
 
   base::FilePath parent_path = dir_.GetPath().AppendASCII("foo");
-  auto parent_url = manager_->CreateFileSystemURLFromPath(
-      FileSystemAccessEntryFactory::PathType::kLocal, parent_path);
+  auto parent_url =
+      manager_->CreateFileSystemURLFromPath(PathInfo(parent_path));
   auto child_url = manager_->CreateFileSystemURLFromPath(
-      FileSystemAccessEntryFactory::PathType::kLocal,
-      parent_path.Append(FILE_PATH_LITERAL("child")));
+      PathInfo(parent_path.AppendASCII("child")));
 
   LockType exclusive_lock_type = manager_->GetExclusiveLockType();
 
@@ -883,15 +862,14 @@ TEST_F(FileSystemAccessLockManagerTest, BFCacheEvictAncestorPendingLockRoot) {
   EXPECT_EQ(rfh->GetLifecycleState(), RenderFrameHost::LifecycleState::kActive);
 
   auto bf_cache_context = FileSystemAccessManagerImpl::BindingContext(
-      kTestStorageKey, kTestURL, rfh->GetAssociatedRenderFrameHostId());
+      kTestStorageKey, kTestURL, rfh->GetGlobalId());
   auto active_context = kBindingContext;
 
   base::FilePath parent_path = dir_.GetPath().AppendASCII("foo");
-  auto parent_url = manager_->CreateFileSystemURLFromPath(
-      FileSystemAccessEntryFactory::PathType::kLocal, parent_path);
+  auto parent_url =
+      manager_->CreateFileSystemURLFromPath(PathInfo(parent_path));
   auto child_url = manager_->CreateFileSystemURLFromPath(
-      FileSystemAccessEntryFactory::PathType::kLocal,
-      parent_path.Append(FILE_PATH_LITERAL("child")));
+      PathInfo(parent_path.AppendASCII("child")));
 
   LockType exclusive_lock_type = manager_->GetExclusiveLockType();
   LockType shared_lock_type = manager_->CreateSharedLockTypeForTesting();
@@ -955,18 +933,16 @@ TEST_F(FileSystemAccessLockManagerTest,
   EXPECT_EQ(rfh->GetLifecycleState(), RenderFrameHost::LifecycleState::kActive);
 
   auto bf_cache_context = FileSystemAccessManagerImpl::BindingContext(
-      kTestStorageKey, kTestURL, rfh->GetAssociatedRenderFrameHostId());
+      kTestStorageKey, kTestURL, rfh->GetGlobalId());
   auto active_context = kBindingContext;
 
   base::FilePath parent_path = dir_.GetPath().AppendASCII("foo");
-  auto parent_url = manager_->CreateFileSystemURLFromPath(
-      FileSystemAccessEntryFactory::PathType::kLocal, parent_path);
+  auto parent_url =
+      manager_->CreateFileSystemURLFromPath(PathInfo(parent_path));
   auto child_url_1 = manager_->CreateFileSystemURLFromPath(
-      FileSystemAccessEntryFactory::PathType::kLocal,
-      parent_path.Append(FILE_PATH_LITERAL("child1")));
+      PathInfo(parent_path.AppendASCII("child1")));
   auto child_url_2 = manager_->CreateFileSystemURLFromPath(
-      FileSystemAccessEntryFactory::PathType::kLocal,
-      parent_path.Append(FILE_PATH_LITERAL("child2")));
+      PathInfo(parent_path.AppendASCII("child2")));
 
   LockType exclusive_lock_type = manager_->GetExclusiveLockType();
 
@@ -1042,12 +1018,11 @@ TEST_F(FileSystemAccessLockManagerTest,
   EXPECT_EQ(rfh->GetLifecycleState(), RenderFrameHost::LifecycleState::kActive);
 
   auto bf_cache_context = FileSystemAccessManagerImpl::BindingContext(
-      kTestStorageKey, kTestURL, rfh->GetAssociatedRenderFrameHostId());
+      kTestStorageKey, kTestURL, rfh->GetGlobalId());
   auto active_context = kBindingContext;
 
   base::FilePath path = dir_.GetPath().AppendASCII("foo");
-  auto url = manager_->CreateFileSystemURLFromPath(
-      FileSystemAccessEntryFactory::PathType::kLocal, path);
+  auto url = manager_->CreateFileSystemURLFromPath(PathInfo(path));
 
   LockType exclusive_lock_type = manager_->GetExclusiveLockType();
   LockType shared_lock_type = manager_->CreateSharedLockTypeForTesting();
@@ -1090,7 +1065,7 @@ TEST_F(FileSystemAccessLockManagerTest,
   RenderFrameHostImpl* rfh = static_cast<RenderFrameHostImpl*>(main_rfh());
   auto active_context = kBindingContext;
   auto bf_cache_context = FileSystemAccessManagerImpl::BindingContext(
-      kTestStorageKey, kTestURL, rfh->GetAssociatedRenderFrameHostId());
+      kTestStorageKey, kTestURL, rfh->GetGlobalId());
   rfh->SetLifecycleState(
       RenderFrameHostImpl::LifecycleStateImpl::kInBackForwardCache);
 
@@ -1120,7 +1095,7 @@ TEST_F(FileSystemAccessLockManagerTest,
   RenderFrameHostImpl* rfh = static_cast<RenderFrameHostImpl*>(main_rfh());
   auto active_context = kBindingContext;
   auto bf_cache_context = FileSystemAccessManagerImpl::BindingContext(
-      kTestStorageKey, kTestURL, rfh->GetAssociatedRenderFrameHostId());
+      kTestStorageKey, kTestURL, rfh->GetGlobalId());
   rfh->SetLifecycleState(
       RenderFrameHostImpl::LifecycleStateImpl::kInBackForwardCache);
 
@@ -1157,7 +1132,7 @@ TEST_F(FileSystemAccessLockManagerTest, BFCacheEvictPendingChild) {
   RenderFrameHostImpl* rfh = static_cast<RenderFrameHostImpl*>(main_rfh());
   auto active_context = kBindingContext;
   auto bf_cache_context = FileSystemAccessManagerImpl::BindingContext(
-      kTestStorageKey, kTestURL, rfh->GetAssociatedRenderFrameHostId());
+      kTestStorageKey, kTestURL, rfh->GetGlobalId());
   rfh->SetLifecycleState(
       RenderFrameHostImpl::LifecycleStateImpl::kInBackForwardCache);
 
@@ -1190,7 +1165,7 @@ TEST_F(FileSystemAccessLockManagerTest, BFCacheEvictAncestorOfPendingTree) {
   RenderFrameHostImpl* rfh = static_cast<RenderFrameHostImpl*>(main_rfh());
   auto active_context = kBindingContext;
   auto bf_cache_context = FileSystemAccessManagerImpl::BindingContext(
-      kTestStorageKey, kTestURL, rfh->GetAssociatedRenderFrameHostId());
+      kTestStorageKey, kTestURL, rfh->GetGlobalId());
   rfh->SetLifecycleState(
       RenderFrameHostImpl::LifecycleStateImpl::kInBackForwardCache);
 
@@ -1226,7 +1201,7 @@ TEST_F(FileSystemAccessLockManagerTest,
   RenderFrameHostImpl* rfh = static_cast<RenderFrameHostImpl*>(main_rfh());
   auto active_context = kBindingContext;
   auto bf_cache_context = FileSystemAccessManagerImpl::BindingContext(
-      kTestStorageKey, kTestURL, rfh->GetAssociatedRenderFrameHostId());
+      kTestStorageKey, kTestURL, rfh->GetGlobalId());
   rfh->SetLifecycleState(
       RenderFrameHostImpl::LifecycleStateImpl::kInBackForwardCache);
 
@@ -1268,7 +1243,7 @@ TEST_F(FileSystemAccessLockManagerTest,
   RenderFrameHostImpl* rfh = static_cast<RenderFrameHostImpl*>(main_rfh());
   auto active_context = kBindingContext;
   auto bf_cache_context = FileSystemAccessManagerImpl::BindingContext(
-      kTestStorageKey, kTestURL, rfh->GetAssociatedRenderFrameHostId());
+      kTestStorageKey, kTestURL, rfh->GetGlobalId());
   rfh->SetLifecycleState(
       RenderFrameHostImpl::LifecycleStateImpl::kInBackForwardCache);
 
@@ -1308,7 +1283,7 @@ TEST_F(FileSystemAccessLockManagerTest, BFCacheEvictPendingTree) {
   RenderFrameHostImpl* rfh = static_cast<RenderFrameHostImpl*>(main_rfh());
   auto active_context = kBindingContext;
   auto bf_cache_context = FileSystemAccessManagerImpl::BindingContext(
-      kTestStorageKey, kTestURL, rfh->GetAssociatedRenderFrameHostId());
+      kTestStorageKey, kTestURL, rfh->GetGlobalId());
   rfh->SetLifecycleState(
       RenderFrameHostImpl::LifecycleStateImpl::kInBackForwardCache);
 
@@ -1342,4 +1317,31 @@ TEST_F(FileSystemAccessLockManagerTest, BFCacheEvictPendingTree) {
   ASSERT_FALSE(child_future2->IsReady());
   ASSERT_TRUE(parent_future->IsReady() && parent_future->Take());
 }
+
+TEST_F(FileSystemAccessLockManagerTest,
+       LocksCanExistAfterFileSystemAccessManagerIsDestroyed) {
+  base::FilePath path = dir_.GetPath().AppendASCII("foo");
+  auto url = manager_->CreateFileSystemURLFromPath(PathInfo(path));
+
+  LockType exclusive_lock_type = manager_->GetExclusiveLockType();
+  auto exclusive_lock = TakeLockSync(kBindingContext, url, exclusive_lock_type);
+
+  base::WeakPtr<FileSystemAccessLockManager> lock_manager_weak_ptr =
+      manager_->GetLockManagerWeakPtrForTesting();
+
+  // Destroy the `FileSystemAccessManager` which holds a `scoped_refptr` to the
+  // `FileSystemAccessLockManager`.
+  manager_.reset();
+
+  // The `FileSystemAccessLockManager` stays alive despite the
+  // `FileSystemAccessManager` being destroyed.
+  ASSERT_TRUE(lock_manager_weak_ptr);
+
+  // The `exclusive_lock` is the only thing keeping the
+  // `FileSystemAccessLockManager` alive. So destroying it should destroy the
+  // `FileSystemAccessLockManager`.
+  exclusive_lock.reset();
+  ASSERT_FALSE(lock_manager_weak_ptr);
+}
+
 }  // namespace content

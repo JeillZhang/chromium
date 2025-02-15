@@ -27,18 +27,22 @@ class MockMahiManager : public chromeos::MahiManager {
   MOCK_METHOD(gfx::ImageSkia, GetContentIcon, (), (override));
   MOCK_METHOD(std::u16string, GetContentTitle, (), (override));
   MOCK_METHOD(GURL, GetContentUrl, (), (override));
+  MOCK_METHOD(std::u16string, GetSelectedText, (), (override));
   MOCK_METHOD(void, GetOutlines, (MahiOutlinesCallback), (override));
   MOCK_METHOD(void,
               GetSuggestedQuestion,
               (MahiGetSuggestedQuestionCallback),
               (override));
+  MOCK_METHOD(void, GetContent, (MahiContentCallback), (override));
   MOCK_METHOD(void, GetSummary, (MahiSummaryCallback), (override));
+  MOCK_METHOD(void, GetElucidation, (MahiElucidationCallback), (override));
   MOCK_METHOD(void, GoToOutlineContent, (int), (override));
   MOCK_METHOD(void,
               OnContextMenuClicked,
               (crosapi::mojom::MahiContextMenuRequestPtr),
               (override));
   MOCK_METHOD(void, OpenFeedbackDialog, (), (override));
+  MOCK_METHOD(void, OpenMahiPanel, (int64_t, const gfx::Rect&), (override));
   MOCK_METHOD(void,
               SetCurrentFocusedPageInfo,
               (crosapi::mojom::MahiPageInfoPtr),
@@ -49,6 +53,13 @@ class MockMahiManager : public chromeos::MahiManager {
               GetMediaAppPDFClientId,
               (),
               (const override));
+  MOCK_METHOD(bool, AllowRepeatingAnswers, (), (override));
+  MOCK_METHOD(void,
+              AnswerQuestionRepeating,
+              (const std::u16string&,
+               bool,
+               MahiAnswerQuestionCallbackRepeating),
+              (override));
 };
 
 }  // namespace ash

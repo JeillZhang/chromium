@@ -16,10 +16,10 @@
 
 namespace enterprise_idle {
 
-IdleService::IdleService(ChromeBrowserState* browser_state)
-    : browser_state_(browser_state),
-      action_runner_(std::make_unique<ActionRunnerImpl>(browser_state_)) {
-  pref_change_registrar_.Init(browser_state_->GetPrefs());
+IdleService::IdleService(ProfileIOS* profile)
+    : profile_(profile),
+      action_runner_(std::make_unique<ActionRunnerImpl>(profile_)) {
+  pref_change_registrar_.Init(profile_->GetPrefs());
   pref_change_registrar_.Add(
       enterprise_idle::prefs::kIdleTimeout,
       base::BindRepeating(&IdleService::OnIdleTimeoutPrefChanged,
@@ -42,7 +42,7 @@ void IdleService::RemoveObserver(Observer* observer) {
 }
 
 base::TimeDelta IdleService::GetTimeout() const {
-  return browser_state_->GetPrefs()->GetTimeDelta(
+  return profile_->GetPrefs()->GetTimeDelta(
       enterprise_idle::prefs::kIdleTimeout);
 }
 
@@ -126,8 +126,8 @@ void IdleService::CheckIfIdle() {
 bool IdleService::IsIdleAfterPreviouslyBeingActive() {
   base::TimeDelta idle_threshold = GetTimeout();
   base::Time last_active_time = GetLastActiveTime();
-  base::Time last_idle_time = browser_state_->GetPrefs()->GetTime(
-      enterprise_idle::prefs::kLastIdleTimestamp);
+  base::Time last_idle_time =
+      profile_->GetPrefs()->GetTime(enterprise_idle::prefs::kLastIdleTimestamp);
 
   // Return false when the policy is not set.
   if (!idle_threshold.is_positive()) {
@@ -164,14 +164,14 @@ void IdleService::RunActionsForStateForTesting(LastState last_state) {
 }
 
 void IdleService::MaybeRunActionsForState(LastState last_state) {
+  last_action_set_ =
+      GetActionSet(profile_->GetPrefs(),
+                   AuthenticationServiceFactory::GetForProfile(profile_));
+
   if (!IsAnyActionNeededToRun()) {
     PostCheckIdleTask(GetTimeout());
     return;
   }
-
-  last_action_set_ = GetActionSet(
-      browser_state_->GetPrefs(),
-      AuthenticationServiceFactory::GetForBrowserState(browser_state_));
 
   if (last_state == LastState::kIdleOnBackground) {
     metrics::RecordIdleTimeoutCase(metrics::IdleTimeoutCase::kBackground);
@@ -200,17 +200,12 @@ void IdleService::RunActions() {
 }
 
 bool IdleService::IsAnyActionNeededToRun() {
-  const auto& actions =
-      browser_state_->GetPrefs()->GetList(prefs::kIdleTimeoutActions);
-  AuthenticationService* authentication_service =
-      AuthenticationServiceFactory::GetForBrowserState(browser_state_);
-  // return false if the only idle timeout action that is set is signout, but
+  // Returns true if any action will run. The return can be false if
+  // 1. the only idle timeout action that is set is signout, but
   // the user is not currently signed in.
-  return !(actions.size() == 1 &&
-           static_cast<ActionType>(actions.front().GetInt()) ==
-               ActionType::kSignOut &&
-           !authentication_service->HasPrimaryIdentity(
-               signin::ConsentLevel::kSignin));
+  // 2. the actions set are not known (empty IdleTimeoutActions pref).
+  return last_action_set_.clear || last_action_set_.close ||
+         last_action_set_.signout;
 }
 
 void IdleService::SetLastActiveTime() {
@@ -225,8 +220,8 @@ base::Time IdleService::GetLastActiveTime() {
 
 void IdleService::OnActionsCompleted() {
   idle_timeout_snackbar_pending_ = true;
-  browser_state_->GetPrefs()->SetTime(
-      enterprise_idle::prefs::kLastIdleTimestamp, base::Time::Now());
+  profile_->GetPrefs()->SetTime(enterprise_idle::prefs::kLastIdleTimestamp,
+                                base::Time::Now());
   for (auto& observer : observer_list_) {
     observer.OnIdleTimeoutActionsCompleted();
   }

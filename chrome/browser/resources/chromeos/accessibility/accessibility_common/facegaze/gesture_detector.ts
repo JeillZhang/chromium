@@ -24,7 +24,10 @@ export enum MediapipeFacialGesture {
   EYE_LOOK_UP_RIGHT = 'eyeLookUpRight',
   EYE_SQUINT_LEFT = 'eyeSquintLeft',
   EYE_SQUINT_RIGHT = 'eyeSquintRight',
+  JAW_LEFT = 'jawLeft',
   JAW_OPEN = 'jawOpen',
+  JAW_RIGHT = 'jawRight',
+  MOUTH_FUNNEL = 'mouthFunnel',
   MOUTH_LEFT = 'mouthLeft',
   MOUTH_PUCKER = 'mouthPucker',
   MOUTH_RIGHT = 'mouthRight',
@@ -84,7 +87,10 @@ export const FacialGesturesToMediapipeGestures = new Map([
       MediapipeFacialGesture.EYE_LOOK_UP_RIGHT,
     ],
   ],
+  [FacialGesture.JAW_LEFT, [MediapipeFacialGesture.JAW_LEFT]],
   [FacialGesture.JAW_OPEN, [MediapipeFacialGesture.JAW_OPEN]],
+  [FacialGesture.JAW_RIGHT, [MediapipeFacialGesture.JAW_RIGHT]],
+  [FacialGesture.MOUTH_FUNNEL, [MediapipeFacialGesture.MOUTH_FUNNEL]],
   [FacialGesture.MOUTH_LEFT, [MediapipeFacialGesture.MOUTH_LEFT]],
   [FacialGesture.MOUTH_PUCKER, [MediapipeFacialGesture.MOUTH_PUCKER]],
   [FacialGesture.MOUTH_RIGHT, [MediapipeFacialGesture.MOUTH_RIGHT]],
@@ -104,9 +110,47 @@ export const FacialGesturesToMediapipeGestures = new Map([
   ],
 ]);
 
+/**
+ * Mapping of gestures supported by FaceGaze to mediapipe gestures that should
+ * not be present in order to confidently trigger the supported gesture, so as
+ * to reduce triggering gestures with involuntary facial movement like blinking.
+ */
+const FacialGesturesToExcludedMediapipeGestures = new Map([
+  [
+    FacialGesture.EYE_SQUINT_LEFT,
+    [
+      MediapipeFacialGesture.EYE_BLINK_RIGHT,
+      MediapipeFacialGesture.EYE_SQUINT_RIGHT,
+    ],
+  ],
+  [
+    FacialGesture.EYE_SQUINT_RIGHT,
+    [
+      MediapipeFacialGesture.EYE_BLINK_LEFT,
+      MediapipeFacialGesture.EYE_SQUINT_LEFT,
+    ],
+  ],
+]);
+
+/**
+ * The confidence level at which a detected gesture B should disqualify a
+ * different gesture A from being triggered if A relies on B not being
+ * present. For example, if EYE_SQUINT_LEFT is detected but EYE_SQUINT_RIGHT
+ * is also detected at confidence > EXCLUDED_GESTURE_THRESHOLD, then the
+ * gesture was likely involuntary blinking and EYE_SQUINT_LEFT should not be
+ * triggered. A confidence level of 0.5 seems to be the approximate confidence
+ * that occurs for most involuntary blinking.
+ */
+const EXCLUDED_GESTURE_THRESHOLD = 0.5;
+
 export class GestureDetector {
   private static mediapipeFacialGestureSet_ =
       new Set(Object.values(MediapipeFacialGesture));
+  declare private static shouldSendGestureDetectionInfo_: boolean;
+
+  static toggleSendGestureDetectionInfo(enabled: boolean): void {
+    this.shouldSendGestureDetectionInfo_ = enabled;
+  }
 
   /**
    * Computes which FacialGestures were detected. Note that this will only
@@ -135,11 +179,14 @@ export class GestureDetector {
 
     // Look through the facial gestures to see which were detected by mediapipe.
     const gestures: FacialGesture[] = [];
+    const gestureInfoForSettings:
+        Array<{gesture: FacialGesture, confidence: number}> = [];
     for (const [faceGazeGesture, mediapipeGestures] of
              FacialGesturesToMediapipeGestures) {
       const confidence = confidenceMap.get(faceGazeGesture);
-      if (confidence === undefined) {
-        // This gesture isn't in-use by FaceGaze at the moment.
+      if (!this.shouldSendGestureDetectionInfo_ && !confidence) {
+        // Settings is not requesting gesture detection information and
+        // this gesture is not currently used by FaceGaze.
         continue;
       }
 
@@ -160,17 +207,52 @@ export class GestureDetector {
         continue;
       }
 
-      if (score < confidence) {
+      let hasExcludedGesture = false;
+      const excludedGestures =
+          FacialGesturesToExcludedMediapipeGestures.get(faceGazeGesture);
+
+      // Check for gestures that should not be present in order to confidently
+      // register this gesture.
+      if (excludedGestures) {
+        for (const excludedGesture of excludedGestures) {
+          if (recognizedGestures.has(excludedGesture) &&
+              recognizedGestures.get(excludedGesture) >
+                  EXCLUDED_GESTURE_THRESHOLD) {
+            hasExcludedGesture = true;
+          }
+        }
+      }
+
+      if (hasExcludedGesture) {
+        continue;
+      }
+
+      // For gestures detected with a confidence value over a threshold value of
+      // 1, add the gesture and confidence value to the array of information
+      // that will be sent to settings.
+      if (this.shouldSendGestureDetectionInfo_ && score >= 0.01) {
+        gestureInfoForSettings.push(
+            {gesture: faceGazeGesture, confidence: score * 100});
+      }
+
+      if (confidence && score < confidence) {
         continue;
       }
 
       gestures.push(faceGazeGesture);
     }
+
+    if (this.shouldSendGestureDetectionInfo_ &&
+        gestureInfoForSettings.length > 0) {
+      chrome.accessibilityPrivate.sendGestureInfoToSettings(
+          gestureInfoForSettings);
+    }
+
     return gestures;
   }
 }
 
 TestImportManager.exportForTesting(
-    ['FacialGesture', FacialGesture],
+    GestureDetector, ['FacialGesture', FacialGesture],
     ['MediapipeFacialGesture', MediapipeFacialGesture],
     ['FacialGesturesToMediapipeGestures', FacialGesturesToMediapipeGestures]);

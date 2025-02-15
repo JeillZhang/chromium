@@ -10,17 +10,13 @@ import androidx.test.filters.SmallTest;
 
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.robolectric.annotation.Config;
 
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.base.test.util.Features;
-import org.chromium.base.test.util.JniMocker;
 import org.chromium.chrome.browser.commerce.ShoppingServiceFactory;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.components.commerce.core.ShoppingService;
@@ -29,9 +25,6 @@ import org.chromium.components.commerce.core.ShoppingService;
 @RunWith(BaseRobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
 public class CommerceSubscriptionsServiceFactoryUnitTest {
-    @Rule public TestRule mProcessor = new Features.JUnitProcessor();
-
-    @Rule public JniMocker mMocker = new JniMocker();
 
     @Mock private Profile mProfileOne;
     @Mock private Profile mIncognitoProfileOne;

@@ -135,6 +135,11 @@ class ProofVerifierChromium::Job {
 
   int CheckCTRequirements();
 
+  // Must be before `cert_verifier_request_`, to avoid dangling pointer
+  // warnings, as the Request may be storing a raw pointer to which may have a
+  // raw_ptr to its `cert_verify_result`.
+  std::unique_ptr<ProofVerifyDetailsChromium> verify_details_;
+
   // Proof verifier to notify when this jobs completes.
   raw_ptr<ProofVerifierChromium> proof_verifier_;
 
@@ -156,7 +161,6 @@ class ProofVerifierChromium::Job {
   std::string cert_sct_;
 
   std::unique_ptr<quic::ProofVerifierCallback> callback_;
-  std::unique_ptr<ProofVerifyDetailsChromium> verify_details_;
   std::string error_details_;
 
   // X509Certificate from a chain of DER encoded certificates.
@@ -406,8 +410,7 @@ int ProofVerifierChromium::Job::DoVerifyCertComplete(int result) {
     int ct_result = CheckCTRequirements();
     TransportSecurityState::PKPStatus pin_validity =
         transport_security_state_->CheckPublicKeyPins(
-            HostPortPair(hostname_, port_),
-            cert_verify_result.is_issued_by_known_root,
+            hostname_, cert_verify_result.is_issued_by_known_root,
             cert_verify_result.public_key_hashes);
     switch (pin_validity) {
       case TransportSecurityState::PKPStatus::VIOLATED:
@@ -486,7 +489,7 @@ bool ProofVerifierChromium::Job::VerifySignature(
 
   verifier.VerifyUpdate(base::as_byte_span(quic::kProofSignatureLabel));
   uint32_t len = chlo_hash.length();
-  verifier.VerifyUpdate(base::as_bytes(base::make_span(&len, 1u)));
+  verifier.VerifyUpdate(base::byte_span_from_ref(len));
   verifier.VerifyUpdate(base::as_byte_span(chlo_hash));
   verifier.VerifyUpdate(base::as_byte_span(signed_data));
 
@@ -505,8 +508,7 @@ int ProofVerifierChromium::Job::CheckCTRequirements() {
 
   TransportSecurityState::CTRequirementsStatus ct_requirement_status =
       transport_security_state_->CheckCTRequirements(
-          HostPortPair(hostname_, port_),
-          cert_verify_result.is_issued_by_known_root,
+          hostname_, cert_verify_result.is_issued_by_known_root,
           cert_verify_result.public_key_hashes,
           cert_verify_result.verified_cert.get(),
           cert_verify_result.policy_compliance);

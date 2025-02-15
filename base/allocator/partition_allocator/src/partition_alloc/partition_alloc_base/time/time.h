@@ -73,7 +73,7 @@
 #include "partition_alloc/partition_alloc_base/numerics/clamped_math.h"
 
 #if PA_BUILDFLAG(IS_APPLE)
-#include "partition_alloc/partition_alloc_buildflags.h"
+#include "partition_alloc/buildflags.h"
 #endif  // PA_BUILDFLAG(IS_APPLE)
 
 #if PA_BUILDFLAG(IS_FUCHSIA)
@@ -873,6 +873,14 @@ class PA_COMPONENT_EXPORT(PARTITION_ALLOC_BASE) TimeTicks
   // realtime clock to establish a reference point.  This function will return
   // the same value for the duration of the application, but will be different
   // in future application runs.
+  // DEPRECATED:
+  // Because TimeTicks increments can get suspended on some platforms (e.g. Mac)
+  // and because this function returns a static value, this value will not get
+  // suspension time into account on those platforms.
+  // As TimeTicks is intended to be used to track a process duration and not an
+  // absolute time, if you plan to use this function, please consider using a
+  // Time instead.
+  // TODO(crbug.com/355423207): Remove function.
   static TimeTicks UnixEpoch();
 
   // Returns |this| snapped to the next tick, given a |tick_phase| and

@@ -13,10 +13,10 @@
 #include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
+#include "base/test/gmock_callback_support.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/autofill/autofill_uitest_util.h"
 #include "chrome/browser/autofill/personal_data_manager_factory.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
@@ -52,19 +52,20 @@
 #include "components/autofill/content/browser/content_autofill_client.h"
 #include "components/autofill/content/browser/content_autofill_driver.h"
 #include "components/autofill/content/browser/test_autofill_manager_injector.h"
-#include "components/autofill/core/browser/autofill_test_utils.h"
-#include "components/autofill/core/browser/browser_autofill_manager.h"
-#include "components/autofill/core/browser/form_data_importer.h"
+#include "components/autofill/core/browser/data_manager/payments/payments_data_manager.h"
+#include "components/autofill/core/browser/data_manager/personal_data_manager.h"
+#include "components/autofill/core/browser/data_manager/personal_data_manager_observer.h"
+#include "components/autofill/core/browser/data_manager/personal_data_manager_test_utils.h"
+#include "components/autofill/core/browser/form_import/form_data_importer.h"
+#include "components/autofill/core/browser/foundations/browser_autofill_manager.h"
+#include "components/autofill/core/browser/foundations/test_autofill_manager_waiter.h"
 #include "components/autofill/core/browser/metrics/payments/local_card_migration_metrics.h"
 #include "components/autofill/core/browser/payments/credit_card_save_manager.h"
 #include "components/autofill/core/browser/payments/local_card_migration_manager.h"
+#include "components/autofill/core/browser/payments/payments_network_interface.h"
 #include "components/autofill/core/browser/payments/payments_util.h"
-#include "components/autofill/core/browser/payments_data_manager.h"
-#include "components/autofill/core/browser/personal_data_manager.h"
-#include "components/autofill/core/browser/personal_data_manager_observer.h"
-#include "components/autofill/core/browser/personal_data_manager_test_utils.h"
-#include "components/autofill/core/browser/test_autofill_manager_waiter.h"
-#include "components/autofill/core/browser/test_event_waiter.h"
+#include "components/autofill/core/browser/test_utils/autofill_test_utils.h"
+#include "components/autofill/core/browser/test_utils/test_event_waiter.h"
 #include "components/autofill/core/browser/webdata/payments/payments_autofill_table.h"
 #include "components/autofill/core/common/autofill_features.h"
 #include "components/autofill/core/common/autofill_payments_features.h"
@@ -98,16 +99,12 @@
 #include "ui/views/layout/animating_layout_manager_test_util.h"
 #include "ui/views/test/widget_test.h"
 
-using base::Bucket;
-using testing::ElementsAre;
-
 namespace autofill {
-
 namespace {
 
-ACTION_P(QuitMessageLoop, loop) {
-  loop->Quit();
-}
+using ::base::Bucket;
+using ::base::test::RunClosure;
+using ::testing::ElementsAre;
 
 constexpr char kURLGetUploadDetailsRequest[] =
     "https://payments.google.com/payments/apis/chromepaymentsservice/"
@@ -150,6 +147,8 @@ constexpr double kFakeGeolocationLatitude = 1.23;
 constexpr double kFakeGeolocationLongitude = 4.56;
 
 }  // namespace
+// The anonymous namespace needs to end here because of `friend`ships between
+// the tests and the production code.
 
 class LocalCardMigrationBrowserTest
     : public SyncTest,
@@ -163,7 +162,7 @@ class LocalCardMigrationBrowserTest
   class TestAutofillManager : public BrowserAutofillManager {
    public:
     explicit TestAutofillManager(ContentAutofillDriver* driver)
-        : BrowserAutofillManager(driver, "en-US") {}
+        : BrowserAutofillManager(driver) {}
 
     testing::AssertionResult WaitForFormsSeen(int min_num_awaited_calls) {
       return forms_seen_waiter_.Wait(min_num_awaited_calls);
@@ -183,12 +182,9 @@ class LocalCardMigrationBrowserTest
     RECEIVED_MIGRATE_CARDS_RESPONSE
   };
 
-  LocalCardMigrationBrowserTest() : SyncTest(SINGLE_CLIENT) {
-    feature_list_.InitAndDisableFeature(
-        features::kAutofillEnableNewCardArtAndNetworkImages);
-  }
+  LocalCardMigrationBrowserTest() : SyncTest(SINGLE_CLIENT) {}
 
-  ~LocalCardMigrationBrowserTest() override {}
+  ~LocalCardMigrationBrowserTest() override = default;
 
   void SetUpOnMainThread() override {
     SyncTest::SetUpOnMainThread();
@@ -217,7 +213,8 @@ class LocalCardMigrationBrowserTest
     client->GetFormDataImporter()
         ->local_card_migration_manager()
         ->SetEventObserverForTesting(this);
-    personal_data_ = PersonalDataManagerFactory::GetForProfile(GetProfile(0));
+    personal_data_ =
+        PersonalDataManagerFactory::GetForBrowserContext(GetProfile(0));
 
     // Wait for Personal Data Manager to be fully loaded to prevent that
     // spurious notifications deceive the tests.
@@ -275,7 +272,7 @@ class LocalCardMigrationBrowserTest
 
     base::RunLoop run_loop;
     EXPECT_CALL(personal_data_observer_, OnPersonalDataChanged())
-        .WillRepeatedly(QuitMessageLoop(&run_loop));
+        .WillRepeatedly(RunClosure(run_loop.QuitClosure()));
     run_loop.Run();
     testing::Mock::VerifyAndClearExpectations(&personal_data_observer_);
     personal_data_->RemoveObserver(&personal_data_observer_);
@@ -294,23 +291,27 @@ class LocalCardMigrationBrowserTest
   }
 
   void OnDecideToRequestLocalCardMigration() override {
-    if (event_waiter_)
+    if (event_waiter_) {
       event_waiter_->OnEvent(DialogEvent::REQUESTED_LOCAL_CARD_MIGRATION);
+    }
   }
 
   void OnReceivedGetUploadDetailsResponse() override {
-    if (event_waiter_)
+    if (event_waiter_) {
       event_waiter_->OnEvent(DialogEvent::RECEIVED_GET_UPLOAD_DETAILS_RESPONSE);
+    }
   }
 
   void OnSentMigrateCardsRequest() override {
-    if (event_waiter_)
+    if (event_waiter_) {
       event_waiter_->OnEvent(DialogEvent::SENT_MIGRATE_CARDS_REQUEST);
+    }
   }
 
   void OnReceivedMigrateCardsResponse() override {
-    if (event_waiter_)
+    if (event_waiter_) {
       event_waiter_->OnEvent(DialogEvent::RECEIVED_MIGRATE_CARDS_RESPONSE);
+    }
   }
 
   CreditCard SaveLocalCard(std::string card_number,
@@ -324,8 +325,9 @@ class LocalCardMigrationBrowserTest
                             "1");
     local_card.set_guid("00000000-0000-0000-0000-" + card_number.substr(0, 12));
     local_card.set_record_type(CreditCard::RecordType::kLocalCard);
-    if (set_nickname)
+    if (set_nickname) {
       local_card.SetNickname(u"card nickname");
+    }
 
     AddTestCreditCard(GetProfile(0), local_card);
     return local_card;
@@ -397,14 +399,14 @@ class LocalCardMigrationBrowserTest
 
   void ClickOnView(views::View* view) {
     CHECK(view);
-    ui::MouseEvent pressed(ui::ET_MOUSE_PRESSED, gfx::Point(), gfx::Point(),
-                           ui::EventTimeForNow(), ui::EF_LEFT_MOUSE_BUTTON,
-                           ui::EF_LEFT_MOUSE_BUTTON);
+    ui::MouseEvent pressed(ui::EventType::kMousePressed, gfx::Point(),
+                           gfx::Point(), ui::EventTimeForNow(),
+                           ui::EF_LEFT_MOUSE_BUTTON, ui::EF_LEFT_MOUSE_BUTTON);
     view->OnMousePressed(pressed);
     ui::MouseEvent released_event =
-        ui::MouseEvent(ui::ET_MOUSE_RELEASED, gfx::Point(), gfx::Point(),
-                       ui::EventTimeForNow(), ui::EF_LEFT_MOUSE_BUTTON,
-                       ui::EF_LEFT_MOUSE_BUTTON);
+        ui::MouseEvent(ui::EventType::kMouseReleased, gfx::Point(),
+                       gfx::Point(), ui::EventTimeForNow(),
+                       ui::EF_LEFT_MOUSE_BUTTON, ui::EF_LEFT_MOUSE_BUTTON);
     view->OnMouseReleased(released_event);
   }
 
@@ -460,8 +462,9 @@ class LocalCardMigrationBrowserTest
         local_card_migration_bubble_controller_impl =
             LocalCardMigrationBubbleControllerImpl::FromWebContents(
                 GetActiveWebContents());
-    if (!local_card_migration_bubble_controller_impl)
+    if (!local_card_migration_bubble_controller_impl) {
       return nullptr;
+    }
     return static_cast<LocalCardMigrationBubbleViews*>(
         local_card_migration_bubble_controller_impl
             ->local_card_migration_bubble_view());
@@ -472,8 +475,9 @@ class LocalCardMigrationBrowserTest
         local_card_migration_dialog_controller_impl =
             LocalCardMigrationDialogControllerImpl::FromWebContents(
                 GetActiveWebContents());
-    if (!local_card_migration_dialog_controller_impl)
+    if (!local_card_migration_dialog_controller_impl) {
       return nullptr;
+    }
     return static_cast<LocalCardMigrationDialogView*>(
         local_card_migration_dialog_controller_impl
             ->local_card_migration_dialog_view());

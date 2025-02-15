@@ -77,7 +77,7 @@ std::ostream& operator<<(std::ostream& os,
       os << "kParentPermissionFailed";
       return os;
     default:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }
 
@@ -230,14 +230,21 @@ class ParentPermissionDialogViewTest
           InteractiveBrowserTestT<MixinBasedInProcessBrowserTest>> {
  protected:
   void ShowUi(const std::string& name) override {
-    if (name.find("default") != std::string::npos) {
+    if (name == "LongNameExtension") {
+      const std::string long_name =
+          "This extension name should be longer than our truncation threshold "
+          "to test that the bubble can handle long names";
+      scoped_refptr<const extensions::Extension> extension =
+          AddAndDisableExtensionWithName(long_name);
+      harness_.ShowUi(extension.get(), browser());
+    } else if (name.find("default") != std::string::npos) {
       harness_.ShowUi(std::u16string(u"Test prompt message"), browser());
       return;
     } else if (name.find("extension") != std::string::npos) {
       harness_.ShowUi(test_extension_.get(), browser());
       return;
     } else {
-      NOTREACHED_NORETURN() << "Check the suffix of the test name.";
+      NOTREACHED() << "Check the suffix of the test name.";
     }
   }
 
@@ -253,11 +260,7 @@ class ParentPermissionDialogViewTest
         std::make_unique<extensions::SupervisedUserExtensionsDelegateImpl>(
             browser()->profile());
 
-    test_extension_ = extensions::ExtensionBuilder("test extension").Build();
-    extension_service()->AddExtension(test_extension_.get());
-    extension_service()->DisableExtension(
-        test_extension_->id(),
-        extensions::disable_reason::DISABLE_CUSTODIAN_APPROVAL_REQUIRED);
+    test_extension_ = AddAndDisableExtensionWithName("test extension");
   }
 
   void TearDownOnMainThread() override {
@@ -331,6 +334,17 @@ class ParentPermissionDialogViewTest
   ParentPermissionDialogViewHarness harness_{supervision_mixin_};
 
  private:
+  scoped_refptr<const extensions::Extension> AddAndDisableExtensionWithName(
+      const std::string& extension_name) {
+    scoped_refptr<const extensions::Extension> extension =
+        extensions::ExtensionBuilder(extension_name).Build();
+    extension_service()->AddExtension(extension.get());
+    extension_service()->DisableExtension(
+        extension->id(),
+        extensions::disable_reason::DISABLE_CUSTODIAN_APPROVAL_REQUIRED);
+    return extension;
+  }
+
   base::HistogramTester histogram_tester_;
   base::UserActionTester user_action_tester_;
   scoped_refptr<const extensions::Extension> test_extension_;
@@ -345,6 +359,11 @@ IN_PROC_BROWSER_TEST_F(ParentPermissionDialogViewTest, InvokeUi_default) {
 // Tests that a plain dialog widget is shown using the TestBrowserUi
 // infrastructure.
 IN_PROC_BROWSER_TEST_F(ParentPermissionDialogViewTest, InvokeUi_extension) {
+  ShowAndVerifyUi();
+}
+
+IN_PROC_BROWSER_TEST_F(ParentPermissionDialogViewTest,
+                       InvokeUi_LongNameExtension) {
   ShowAndVerifyUi();
 }
 
@@ -368,11 +387,16 @@ IN_PROC_BROWSER_TEST_F(ParentPermissionDialogViewTest,
       ShowDialog(),
       WaitForShow(ParentPermissionDialog::kDialogViewIdForTesting),
       PressButton(views::DialogClientView::kOkButtonElementId),
-      WaitForHide(ParentPermissionDialog::kDialogViewIdForTesting),
-      CheckResult([this]() { return harness_.InvalidCredentialWasReceived(); },
-                  true),
-      CheckResult([this]() { return harness_.GetResult(); },
-                  ParentPermissionDialog::Result::kParentPermissionFailed))));
+      // Closing the dialog results in the freeing of resources, so checks must
+      // be done together without waiting for a fresh call stack.
+      WithoutDelay(Steps(
+          WaitForHide(ParentPermissionDialog::kDialogViewIdForTesting),
+          CheckResult(
+              [this]() { return harness_.InvalidCredentialWasReceived(); },
+              true),
+          CheckResult(
+              [this]() { return harness_.GetResult(); },
+              ParentPermissionDialog::Result::kParentPermissionFailed))))));
 }
 
 IN_PROC_BROWSER_TEST_F(ParentPermissionDialogViewTest,
@@ -447,43 +471,48 @@ IN_PROC_BROWSER_TEST_F(ParentPermissionDialogViewTest,
       ShowDialog(),
       WaitForShow(ParentPermissionDialog::kDialogViewIdForTesting),
       PressButton(views::DialogClientView::kOkButtonElementId),
-      WaitForHide(ParentPermissionDialog::kDialogViewIdForTesting),
-      CheckResult([this]() { return harness_.InvalidCredentialWasReceived(); },
-                  true),
-      CheckResult([this]() { return harness_.GetResult(); },
-                  ParentPermissionDialog::Result::kParentPermissionFailed),
-      CheckHistogramBucketCount(SupervisedUserExtensionsMetricsRecorder::
-                                    kParentPermissionDialogHistogramName,
-                                SupervisedUserExtensionsMetricsRecorder::
-                                    ParentPermissionDialogState::kOpened,
-                                1),
-      CheckHistogramBucketCount(
-          SupervisedUserExtensionsMetricsRecorder::
-              kParentPermissionDialogHistogramName,
-          SupervisedUserExtensionsMetricsRecorder::ParentPermissionDialogState::
-              kIncorrectParentPasswordProvided,
-          1),
-      CheckHistogramBucketCount(SupervisedUserExtensionsMetricsRecorder::
-                                    kParentPermissionDialogHistogramName,
-                                SupervisedUserExtensionsMetricsRecorder::
-                                    ParentPermissionDialogState::kFailed,
-                                1),
-      // The total histogram count is 3 (one for kOpened, one for
-      // kIncorrectPassword and one for kFailed).
-      CheckHistogramTotalCount(SupervisedUserExtensionsMetricsRecorder::
-                                   kParentPermissionDialogHistogramName,
-                               3),
-      // The provided entry point for the parent approval dialog has been
-      // recorded.
-      CheckHistogramBucketCount(
-          SupervisedUserExtensionsMetricsRecorder::
-              kExtensionParentApprovalEntryPointHistogramName,
-          SupervisedUserExtensionParentApprovalEntryPoint::
-              kOnExtensionManagementSetEnabledOperation,
-          1),
-      CheckResult(GetActionStatus(SupervisedUserExtensionsMetricsRecorder::
-                                      kParentPermissionDialogOpenedActionName),
-                  ActionStatus::kWasPerformed))));
+      // Closing the dialog results in the freeing of resources, so checks must
+      // be done together without waiting for a fresh call stack.
+      WithoutDelay(Steps(
+          WaitForHide(ParentPermissionDialog::kDialogViewIdForTesting),
+          CheckResult(
+              [this]() { return harness_.InvalidCredentialWasReceived(); },
+              true),
+          CheckResult([this]() { return harness_.GetResult(); },
+                      ParentPermissionDialog::Result::kParentPermissionFailed),
+          CheckHistogramBucketCount(SupervisedUserExtensionsMetricsRecorder::
+                                        kParentPermissionDialogHistogramName,
+                                    SupervisedUserExtensionsMetricsRecorder::
+                                        ParentPermissionDialogState::kOpened,
+                                    1),
+          CheckHistogramBucketCount(
+              SupervisedUserExtensionsMetricsRecorder::
+                  kParentPermissionDialogHistogramName,
+              SupervisedUserExtensionsMetricsRecorder::
+                  ParentPermissionDialogState::kIncorrectParentPasswordProvided,
+              1),
+          CheckHistogramBucketCount(SupervisedUserExtensionsMetricsRecorder::
+                                        kParentPermissionDialogHistogramName,
+                                    SupervisedUserExtensionsMetricsRecorder::
+                                        ParentPermissionDialogState::kFailed,
+                                    1),
+          // The total histogram count is 3 (one for kOpened, one for
+          // kIncorrectPassword and one for kFailed).
+          CheckHistogramTotalCount(SupervisedUserExtensionsMetricsRecorder::
+                                       kParentPermissionDialogHistogramName,
+                                   3),
+          // The provided entry point for the parent approval dialog has been
+          // recorded.
+          CheckHistogramBucketCount(
+              SupervisedUserExtensionsMetricsRecorder::
+                  kExtensionParentApprovalEntryPointHistogramName,
+              SupervisedUserExtensionParentApprovalEntryPoint::
+                  kOnExtensionManagementSetEnabledOperation,
+              1),
+          CheckResult(
+              GetActionStatus(SupervisedUserExtensionsMetricsRecorder::
+                                  kParentPermissionDialogOpenedActionName),
+              ActionStatus::kWasPerformed))))));
 }
 
 IN_PROC_BROWSER_TEST_F(ParentPermissionDialogViewTest,
@@ -572,18 +601,22 @@ class ParentPermissionInputSectionLabelTest
  public:
   ParentPermissionInputSectionLabelTest() {
     std::vector<base::test::FeatureRef> enabled_features;
+    std::vector<base::test::FeatureRef> disabled_features;
     if (GetParam() == ExtensionsManagingToggle::kExtensions) {
       enabled_features.push_back(
           supervised_user::
               kEnableSupervisedUserSkipParentApprovalToInstallExtensions);
       enabled_features.push_back(
           supervised_user::kUpdatedSupervisedUserExtensionApprovalStrings);
+    } else {
+      disabled_features.push_back(
+          supervised_user::
+              kEnableSupervisedUserSkipParentApprovalToInstallExtensions);
     }
     enabled_features.push_back(
         supervised_user::
             kEnableExtensionsPermissionsForSupervisedUsersOnDesktop);
-    scoped_feature_list_.InitWithFeatures(enabled_features,
-                                          /*disabled_features=*/{});
+    scoped_feature_list_.InitWithFeatures(enabled_features, disabled_features);
   }
 
  private:

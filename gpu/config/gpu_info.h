@@ -81,9 +81,14 @@ enum class IntelGpuSeriesType {
   kAlchemist = 26,
   kRaptorlake = 27,
   kMeteorlake = 28,
+  kArrowlake = 30,
+  // Intel 13th gen
   kLunarlake = 29,
+  kBattlemage = 31,
+  // Intel 14th gen
+  kPantherlake = 32,
   // Please also update |gpu_series_map| in process_json.py.
-  kMaxValue = kLunarlake,
+  kMaxValue = kPantherlake,
 };
 
 // Video profile.  This *must* match media::VideoCodecProfile.
@@ -295,7 +300,7 @@ struct GPU_EXPORT GPUInfo {
     // unique relative its vendor, not to each other. If there are more than one
     // of the same exact graphics card, they all have the same vendor id and
     // device id but different LUIDs.
-    CHROME_LUID luid;
+    CHROME_LUID luid = {};
 #endif  // BUILDFLAG(IS_WIN)
 
     // The 64-bit ID used for GPU selection by ANGLE_platform_angle_device_id.
@@ -358,6 +363,9 @@ struct GPU_EXPORT GPUInfo {
 
   // Secondary GPUs, for example, the integrated GPU in a dual GPU machine.
   std::vector<GPUDevice> secondary_gpus;
+
+  // NPU adapters.
+  std::vector<GPUDevice> npus;
 
   // The version of the pixel/fragment shader used by the gpu.
   std::string pixel_shader_version;
@@ -454,12 +462,6 @@ struct GPU_EXPORT GPUInfo {
   uint32_t target_cpu_bits = 31;
 #endif
 
-#if BUILDFLAG(IS_MAC)
-  // Enum describing which texture target is used for native GpuMemoryBuffers on
-  // MacOS. Valid values are GL_TEXTURE_2D and GL_TEXTURE_RECTANGLE_ARB.
-  uint32_t macos_specific_texture_target;
-#endif  // BUILDFLAG(IS_MAC)
-
 #if BUILDFLAG(IS_WIN)
   // The supported DirectML feature level in the gpu driver;
   uint32_t directml_feature_level = 0;
@@ -493,6 +495,8 @@ struct GPU_EXPORT GPUInfo {
   uint32_t visibility_callback_call_count = 0;
 
 #if BUILDFLAG(ENABLE_VULKAN)
+  bool hardware_supports_vulkan = false;
+
   std::optional<VulkanInfo> vulkan_info;
 #endif
 

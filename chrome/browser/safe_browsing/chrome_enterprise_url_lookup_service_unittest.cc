@@ -12,11 +12,15 @@
 #include "chrome/browser/policy/dm_token_utils.h"
 #include "chrome/browser/safe_browsing/chrome_user_population_helper.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
+#include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
+#include "chrome/test/base/testing_profile_manager.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
+#include "components/enterprise/connectors/core/connectors_prefs.h"
 #include "components/policy/core/common/cloud/dm_token.h"
 #include "components/policy/core/common/policy_types.h"
 #include "components/safe_browsing/core/browser/referrer_chain_provider.h"
+#include "components/safe_browsing/core/browser/referring_app_info.h"
 #include "components/safe_browsing/core/browser/safe_browsing_token_fetcher.h"
 #include "components/safe_browsing/core/browser/sync/sync_utils.h"
 #include "components/safe_browsing/core/browser/test_safe_browsing_token_fetcher.h"
@@ -98,6 +102,9 @@ bool GetRequestProto(const network::ResourceRequest& request,
 class ChromeEnterpriseRealTimeUrlLookupServiceTest : public PlatformTest {
  public:
   void SetUp() override {
+    profile_manager_ = std::make_unique<TestingProfileManager>(
+        TestingBrowserProcess::GetGlobal());
+    EXPECT_TRUE(profile_manager_->SetUp());
     HostContentSettingsMap::RegisterProfilePrefs(test_pref_service_.registry());
     safe_browsing::RegisterProfilePrefs(test_pref_service_.registry());
     PlatformTest::SetUp();
@@ -116,20 +123,33 @@ class ChromeEnterpriseRealTimeUrlLookupServiceTest : public PlatformTest {
         /*sync_observer=*/nullptr);
     referrer_chain_provider_ = std::make_unique<MockReferrerChainProvider>();
 
-    TestingProfile::Builder builder;
-    test_profile_ = builder.Build();
+    test_profile_ = profile_manager_->CreateTestingProfile("testing_profile");
 
     signin::IdentityManager* identity_manager =
-        IdentityManagerFactory::GetForProfile(test_profile_.get());
+        IdentityManagerFactory::GetForProfile(test_profile_);
     signin::SetPrimaryAccount(identity_manager, "test@example.com",
                               signin::ConsentLevel::kSignin);
 
-    auto token_fetcher = std::make_unique<TestSafeBrowsingTokenFetcher>();
-    raw_token_fetcher_ = token_fetcher.get();
+    enterprise_rt_service_ = CreateServiceAndEnablePolicy(
+        test_profile_, /*set_raw_token_fetcher=*/true);
+  }
 
-    enterprise_rt_service_ = std::make_unique<
+  void TearDown() override {
+    cache_manager_.reset();
+    content_setting_map_->ShutdownOnUIThread();
+  }
+
+  std::unique_ptr<ChromeEnterpriseRealTimeUrlLookupService>
+  CreateServiceAndEnablePolicy(Profile* profile,
+                               bool set_raw_token_fetcher = false) {
+    auto token_fetcher = std::make_unique<TestSafeBrowsingTokenFetcher>();
+    if (set_raw_token_fetcher) {
+      raw_token_fetcher_ = token_fetcher.get();
+    }
+
+    auto enterprise_rt_service = std::make_unique<
         ChromeEnterpriseRealTimeUrlLookupService>(
-        test_shared_loader_factory_, cache_manager_.get(), test_profile_.get(),
+        test_shared_loader_factory_, cache_manager_.get(), profile,
         base::BindRepeating(
             [](Profile* profile, syncer::TestSyncService* test_sync_service) {
               ChromeUserPopulation population =
@@ -142,23 +162,20 @@ class ChromeEnterpriseRealTimeUrlLookupServiceTest : public PlatformTest {
               population.set_is_under_advanced_protection(true);
               return population;
             },
-            test_profile_.get(), &test_sync_service_),
+            profile, &test_sync_service_),
         std::move(token_fetcher),
         enterprise_connectors::ConnectorsServiceFactory::GetForBrowserContext(
-            test_profile_.get()),
-        referrer_chain_provider_.get());
+            profile),
+        referrer_chain_provider_.get(), &test_pref_service_);
 
-    test_profile_->GetPrefs()->SetInteger(
-        prefs::kSafeBrowsingEnterpriseRealTimeUrlCheckMode,
-        REAL_TIME_CHECK_FOR_MAINFRAME_ENABLED);
-    test_profile_->GetPrefs()->SetInteger(
-        prefs::kSafeBrowsingEnterpriseRealTimeUrlCheckScope,
+    profile->GetPrefs()->SetInteger(
+        enterprise_connectors::kEnterpriseRealTimeUrlCheckMode,
+        enterprise_connectors::REAL_TIME_CHECK_FOR_MAINFRAME_ENABLED);
+    profile->GetPrefs()->SetInteger(
+        enterprise_connectors::kEnterpriseRealTimeUrlCheckScope,
         policy::POLICY_SCOPE_MACHINE);
-  }
 
-  void TearDown() override {
-    cache_manager_.reset();
-    content_setting_map_->ShutdownOnUIThread();
+    return enterprise_rt_service;
   }
 
   std::unique_ptr<RTLookupResponse> GetCachedRealTimeUrlVerdict(
@@ -218,6 +235,11 @@ class ChromeEnterpriseRealTimeUrlLookupServiceTest : public PlatformTest {
                                          expected_response_str);
   }
 
+  void EnableLocalIpAddressInEvents() {
+    scoped_feature_list_.InitAndEnableFeature(
+        safe_browsing::kLocalIpAddressInEvents);
+  }
+
   network::TestURLLoaderFactory test_url_loader_factory_;
   scoped_refptr<network::SharedURLLoaderFactory> test_shared_loader_factory_;
   std::unique_ptr<ChromeEnterpriseRealTimeUrlLookupService>
@@ -226,10 +248,12 @@ class ChromeEnterpriseRealTimeUrlLookupServiceTest : public PlatformTest {
   scoped_refptr<HostContentSettingsMap> content_setting_map_;
   content::BrowserTaskEnvironment task_environment_;
   raw_ptr<TestSafeBrowsingTokenFetcher> raw_token_fetcher_ = nullptr;
+  std::unique_ptr<TestingProfileManager> profile_manager_;
   sync_preferences::TestingPrefServiceSyncable test_pref_service_;
-  std::unique_ptr<TestingProfile> test_profile_;
+  raw_ptr<TestingProfile> test_profile_;
   syncer::TestSyncService test_sync_service_;
   std::unique_ptr<MockReferrerChainProvider> referrer_chain_provider_;
+  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 TEST_F(ChromeEnterpriseRealTimeUrlLookupServiceTest,
@@ -244,9 +268,9 @@ TEST_F(ChromeEnterpriseRealTimeUrlLookupServiceTest,
   base::MockCallback<network::TestURLLoaderFactory::Interceptor>
       request_callback;
   base::MockCallback<RTLookupResponseCallback> response_callback;
-  enterprise_rt_service()->StartLookup(url, response_callback.Get(),
-                                       content::GetIOThreadTaskRunner({}),
-                                       SessionID::InvalidValue());
+  enterprise_rt_service()->StartLookup(
+      url, response_callback.Get(), content::GetIOThreadTaskRunner({}),
+      SessionID::InvalidValue(), /*referring_app_info=*/std::nullopt);
 
   test_url_loader_factory_.SetInterceptor(request_callback.Get());
   EXPECT_CALL(request_callback, Run(_)).Times(0);
@@ -258,6 +282,7 @@ TEST_F(ChromeEnterpriseRealTimeUrlLookupServiceTest,
 
 TEST_F(ChromeEnterpriseRealTimeUrlLookupServiceTest,
        TestStartLookup_RequestWithDmTokenAndAccessToken) {
+  EnableLocalIpAddressInEvents();
   GURL url("http://example.test/");
   SetUpRTLookupResponse(RTLookupResponse::ThreatInfo::DANGEROUS,
                         RTLookupResponse::ThreatInfo::SOCIAL_ENGINEERING, 60,
@@ -271,20 +296,25 @@ TEST_F(ChromeEnterpriseRealTimeUrlLookupServiceTest,
                       Return(ReferrerChainProvider::SUCCESS)));
 
   base::MockCallback<RTLookupResponseCallback> response_callback;
-  enterprise_rt_service()->StartLookup(url, response_callback.Get(),
-                                       content::GetIOThreadTaskRunner({}),
-                                       SessionID::InvalidValue());
+  enterprise_rt_service()->StartLookup(
+      url, response_callback.Get(), content::GetIOThreadTaskRunner({}),
+      SessionID::InvalidValue(), /*referring_app_info=*/std::nullopt);
 
   EXPECT_CALL(response_callback, Run(/* is_rt_lookup_successful */ true,
                                      /* is_cached_response */ false, _));
 
-  bool request_validated;
+  bool request_validated = false;
   test_url_loader_factory_.SetInterceptor(
       base::BindLambdaForTesting([&](const network::ResourceRequest& request) {
         RTLookupRequest request_proto;
         ASSERT_TRUE(GetRequestProto(request, &request_proto));
         EXPECT_EQ("http://example.test/", request_proto.url());
         EXPECT_EQ("dm_token", request_proto.dm_token());
+        EXPECT_EQ("test@example.com", request_proto.email());
+        EXPECT_EQ("dm_token", request_proto.browser_dm_token());
+        EXPECT_TRUE(request_proto.has_client_reporting_metadata());
+        EXPECT_EQ("", request_proto.profile_dm_token());
+        EXPECT_FALSE(request_proto.local_ips().empty());
         EXPECT_EQ(ChromeUserPopulation::SAFE_BROWSING,
                   request_proto.population().user_population());
         EXPECT_TRUE(request_proto.population().is_history_sync_enabled());
@@ -292,11 +322,9 @@ TEST_F(ChromeEnterpriseRealTimeUrlLookupServiceTest,
                   request_proto.population().profile_management_status());
         EXPECT_TRUE(request_proto.population().is_under_advanced_protection());
 
-        std::string header_value;
-        bool found_header = request.headers.GetHeader(
-            net::HttpRequestHeaders::kAuthorization, &header_value);
-        EXPECT_TRUE(found_header);
-        EXPECT_EQ(header_value, "Bearer access_token_string");
+        EXPECT_THAT(
+            request.headers.GetHeader(net::HttpRequestHeaders::kAuthorization),
+            testing::Optional(std::string("Bearer access_token_string")));
 
         request_validated = true;
       }));
@@ -313,25 +341,156 @@ TEST_F(ChromeEnterpriseRealTimeUrlLookupServiceTest,
 }
 
 TEST_F(ChromeEnterpriseRealTimeUrlLookupServiceTest,
+       TestStartLookup_EnhancedProtectionRequestWithReferringAppInfo) {
+  GURL url("http://example.test/");
+  SetUpRTLookupResponse(RTLookupResponse::ThreatInfo::DANGEROUS,
+                        RTLookupResponse::ThreatInfo::SOCIAL_ENGINEERING, 60,
+                        "example.test/",
+                        RTLookupResponse::ThreatInfo::COVERING_MATCH);
+  SetDMTokenForTesting(policy::DMToken::CreateValidToken("dm_token"));
+  ReferrerChain returned_referrer_chain;
+  EXPECT_CALL(*referrer_chain_provider_,
+              IdentifyReferrerChainByPendingEventURL(_, _, _))
+      .WillOnce(DoAll(SetArgPointee<2>(returned_referrer_chain),
+                      Return(ReferrerChainProvider::SUCCESS)));
+
+  internal::ReferringAppInfo referring_app_info;
+  referring_app_info.referring_app_name = "foo";
+  referring_app_info.referring_webapk_start_url = GURL("https://webapp.test");
+  referring_app_info.referring_webapk_manifest_id =
+      GURL("https://webapp.test/id");
+
+  SetSafeBrowsingState(&test_pref_service_,
+                       SafeBrowsingState::ENHANCED_PROTECTION);
+  base::MockCallback<RTLookupResponseCallback> response_callback;
+  enterprise_rt_service()->StartLookup(
+      url, response_callback.Get(), content::GetIOThreadTaskRunner({}),
+      SessionID::InvalidValue(), referring_app_info);
+
+  EXPECT_CALL(response_callback, Run(/*is_rt_lookup_successful=*/true,
+                                     /*is_cached_response=*/false, _));
+
+  bool request_validated = false;
+  test_url_loader_factory_.SetInterceptor(
+      base::BindLambdaForTesting([&](const network::ResourceRequest& request) {
+        RTLookupRequest request_proto;
+        ASSERT_TRUE(GetRequestProto(request, &request_proto));
+        EXPECT_EQ("http://example.test/", request_proto.url());
+        // ReferringAppInfo should be populated for ESB.
+        EXPECT_TRUE(request_proto.has_referring_app_info());
+        EXPECT_EQ(request_proto.referring_app_info().referring_app_name(),
+                  "foo");
+        // No WebAPK info for Enterprise RT lookup requests.
+        EXPECT_FALSE(request_proto.referring_app_info().has_referring_webapk());
+        request_validated = true;
+      }));
+
+  EXPECT_TRUE(raw_token_fetcher()->WasStartCalled());
+  FulfillAccessTokenRequest("access_token_string");
+
+  task_environment_.RunUntilIdle();
+  EXPECT_TRUE(request_validated);
+}
+
+TEST_F(ChromeEnterpriseRealTimeUrlLookupServiceTest,
+       TestStartLookup_StandardProtectionRequestWithNoReferringAppInfo) {
+  GURL url("http://example.test/");
+  SetUpRTLookupResponse(RTLookupResponse::ThreatInfo::DANGEROUS,
+                        RTLookupResponse::ThreatInfo::SOCIAL_ENGINEERING, 60,
+                        "example.test/",
+                        RTLookupResponse::ThreatInfo::COVERING_MATCH);
+  SetDMTokenForTesting(policy::DMToken::CreateValidToken("dm_token"));
+  ReferrerChain returned_referrer_chain;
+  EXPECT_CALL(*referrer_chain_provider_,
+              IdentifyReferrerChainByPendingEventURL(_, _, _))
+      .WillOnce(DoAll(SetArgPointee<2>(returned_referrer_chain),
+                      Return(ReferrerChainProvider::SUCCESS)));
+
+  internal::ReferringAppInfo referring_app_info;
+  referring_app_info.referring_app_name = "foo";
+  referring_app_info.referring_webapk_start_url = GURL("https://webapp.test");
+  referring_app_info.referring_webapk_manifest_id =
+      GURL("https://webapp.test/id");
+
+  SetSafeBrowsingState(&test_pref_service_,
+                       SafeBrowsingState::STANDARD_PROTECTION);
+  base::MockCallback<RTLookupResponseCallback> response_callback;
+  enterprise_rt_service()->StartLookup(
+      url, response_callback.Get(), content::GetIOThreadTaskRunner({}),
+      SessionID::InvalidValue(), referring_app_info);
+
+  EXPECT_CALL(response_callback, Run(/*is_rt_lookup_successful=*/true,
+                                     /*is_cached_response=*/false, _));
+
+  bool request_validated = false;
+  test_url_loader_factory_.SetInterceptor(
+      base::BindLambdaForTesting([&](const network::ResourceRequest& request) {
+        RTLookupRequest request_proto;
+        ASSERT_TRUE(GetRequestProto(request, &request_proto));
+        EXPECT_EQ("http://example.test/", request_proto.url());
+        // ReferringAppInfo should not be populated for ESB.
+        EXPECT_FALSE(request_proto.has_referring_app_info());
+        request_validated = true;
+      }));
+
+  EXPECT_TRUE(raw_token_fetcher()->WasStartCalled());
+  FulfillAccessTokenRequest("access_token_string");
+
+  task_environment_.RunUntilIdle();
+  EXPECT_TRUE(request_validated);
+}
+
+TEST_F(ChromeEnterpriseRealTimeUrlLookupServiceTest,
        TestCanCheckSafeBrowsingHighConfidenceAllowlist_BypassAllowlistFeature) {
   test_profile_->GetPrefs()->SetBoolean(prefs::kSafeBrowsingEnabled, true);
   SetDMTokenForTesting(policy::DMToken::CreateValidToken("dm_token"));
 
-  // Can check allowlist if SafeBrowsingEnterpriseRealTimeUrlCheckMode is
-  // disabled.
+  // Can check allowlist if `kEnterpriseRealTimeUrlCheckMode` is disabled.
   test_profile_->GetPrefs()->SetInteger(
-      prefs::kSafeBrowsingEnterpriseRealTimeUrlCheckMode,
-      REAL_TIME_CHECK_DISABLED);
+      enterprise_connectors::kEnterpriseRealTimeUrlCheckMode,
+      enterprise_connectors::REAL_TIME_CHECK_DISABLED);
   EXPECT_TRUE(
       enterprise_rt_service()->CanCheckSafeBrowsingHighConfidenceAllowlist());
 
-  // Bypass allowlist if the SafeBrowsingEnterpriseRealTimeUrlCheckMode pref is
-  // set.
+  // Bypass allowlist if the `kEnterpriseRealTimeUrlCheckMode` pref is set.
   test_profile_->GetPrefs()->SetInteger(
-      prefs::kSafeBrowsingEnterpriseRealTimeUrlCheckMode,
-      REAL_TIME_CHECK_FOR_MAINFRAME_ENABLED);
+      enterprise_connectors::kEnterpriseRealTimeUrlCheckMode,
+      enterprise_connectors::REAL_TIME_CHECK_FOR_MAINFRAME_ENABLED);
   EXPECT_FALSE(
       enterprise_rt_service()->CanCheckSafeBrowsingHighConfidenceAllowlist());
+}
+
+TEST_F(ChromeEnterpriseRealTimeUrlLookupServiceTest, CanPerformFullURLLookup) {
+  SetDMTokenForTesting(policy::DMToken::CreateValidToken("dm_token"));
+  EXPECT_TRUE(enterprise_rt_service()->CanPerformFullURLLookup());
+}
+
+TEST_F(ChromeEnterpriseRealTimeUrlLookupServiceTest,
+       CanPerformFullURLLookup_GuestModeEnabled) {
+  SetDMTokenForTesting(policy::DMToken::CreateValidToken("dm_token"));
+  Profile* guest_profile =
+      profile_manager_->CreateGuestProfile()->GetPrimaryOTRProfile(
+          /*create_if_needed=*/true);
+  auto guest_rt_service = CreateServiceAndEnablePolicy(guest_profile);
+  EXPECT_TRUE(guest_rt_service->CanPerformFullURLLookup());
+}
+
+TEST_F(ChromeEnterpriseRealTimeUrlLookupServiceTest,
+       CanPerformFullURLLookup_OffTheRecordDisabled) {
+  SetDMTokenForTesting(policy::DMToken::CreateValidToken("dm_token"));
+  Profile* off_the_record_profile =
+      TestingProfile::Builder().BuildIncognito(test_profile_);
+  auto off_the_record_rt_service =
+      CreateServiceAndEnablePolicy(off_the_record_profile);
+  EXPECT_FALSE(off_the_record_rt_service->CanPerformFullURLLookup());
+}
+
+TEST_F(ChromeEnterpriseRealTimeUrlLookupServiceTest, CanCheckUrl_IPAddresses) {
+  EXPECT_TRUE(
+      enterprise_rt_service()->CanCheckUrl(GURL("https://google.com/")));
+  EXPECT_TRUE(enterprise_rt_service()->CanCheckUrl(GURL("http://192.168.1.1")));
+  EXPECT_TRUE(enterprise_rt_service()->CanCheckUrl(GURL("http://172.16.2.2")));
+  EXPECT_TRUE(enterprise_rt_service()->CanCheckUrl(GURL("http://127.0.0.1")));
 }
 
 }  // namespace safe_browsing

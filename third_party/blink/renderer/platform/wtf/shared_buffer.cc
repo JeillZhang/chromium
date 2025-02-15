@@ -24,6 +24,11 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/platform/wtf/shared_buffer.h"
 
 #include <cstddef>
@@ -94,20 +99,6 @@ SegmentedBuffer::Iterator SegmentedBuffer::end() const {
   return Iterator(this);
 }
 
-void SegmentedBuffer::MergeSegmentsIntoBuffer() {
-  if (segments_.size() <= 1) {
-    return;
-  }
-
-  Vector<char> data;
-  data.ReserveInitialCapacity(size_);
-  for (const auto& segment : segments_) {
-    data.AppendVector(segment.data());
-  }
-  segments_.clear();
-  segments_.push_back(Segment(/*start_position=*/0, std::move(data)));
-}
-
 SegmentedBuffer::Iterator SegmentedBuffer::GetIteratorAtInternal(
     size_t position) const {
   if (position >= size()) {
@@ -125,19 +116,21 @@ SegmentedBuffer::Iterator SegmentedBuffer::GetIteratorAtInternal(
   return Iterator(it, position - it->start_position(), this);
 }
 
-bool SegmentedBuffer::GetBytesInternal(void* dest, size_t dest_size) const {
-  if (!dest)
+bool SegmentedBuffer::GetBytes(base::span<uint8_t> buffer) const {
+  if (!buffer.data()) {
     return false;
-
-  size_t offset = 0;
-  for (const auto& span : *this) {
-    if (offset >= dest_size)
-      break;
-    size_t to_be_written = std::min(span.size(), dest_size - offset);
-    memcpy(static_cast<char*>(dest) + offset, span.data(), to_be_written);
-    offset += to_be_written;
   }
-  return offset == dest_size;
+
+  for (const auto& span : *this) {
+    if (buffer.empty()) {
+      break;
+    }
+    const size_t to_be_written = std::min(span.size(), buffer.size());
+    auto [buffer_fragment, rest] = buffer.split_at(to_be_written);
+    buffer_fragment.copy_from(base::as_bytes(span.first(to_be_written)));
+    buffer = rest;
+  }
+  return buffer.empty();
 }
 
 void SegmentedBuffer::GetMemoryDumpNameAndSize(String& dump_name,
@@ -180,6 +173,9 @@ SharedBuffer::SharedBuffer(base::span<const char> data) {
 
 SharedBuffer::SharedBuffer(base::span<const unsigned char> data)
     : SharedBuffer(base::as_chars(data)) {}
+
+SharedBuffer::SharedBuffer(SegmentedBuffer&& data)
+    : SegmentedBuffer(std::move(data)) {}
 
 SharedBuffer::~SharedBuffer() = default;
 

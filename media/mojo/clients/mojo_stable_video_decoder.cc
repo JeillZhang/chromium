@@ -7,12 +7,15 @@
 #include <optional>
 
 #include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/types/pass_key.h"
 #include "components/viz/common/resources/shared_image_format.h"
 #include "gpu/command_buffer/client/client_shared_image.h"
 #include "gpu/command_buffer/client/shared_image_interface.h"
 #include "gpu/command_buffer/common/mailbox.h"
 #include "gpu/command_buffer/common/mailbox_holder.h"
+#include "gpu/command_buffer/common/shared_image_capabilities.h"
 #include "gpu/command_buffer/common/shared_image_usage.h"
 #include "gpu/command_buffer/common/sync_token.h"
 #include "media/base/supported_video_decoder_config.h"
@@ -24,7 +27,7 @@
 #include "media/gpu/macros.h"
 #include "media/video/gpu_video_accelerator_factories.h"
 #include "third_party/skia/include/core/SkAlphaType.h"
-#include "third_party/skia/include/gpu/GrTypes.h"
+#include "third_party/skia/include/gpu/ganesh/GrTypes.h"
 #include "ui/gfx/color_space.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/gpu_memory_buffer.h"
@@ -46,7 +49,7 @@ std::optional<viz::SharedImageFormat> GetSharedImageFormat(
     case PIXEL_FORMAT_NV12:
       si_format = viz::MultiPlaneFormat::kNV12;
       break;
-    case PIXEL_FORMAT_P016LE:
+    case PIXEL_FORMAT_P010LE:
       si_format = viz::MultiPlaneFormat::kP010;
       break;
     case PIXEL_FORMAT_YV12:
@@ -76,6 +79,8 @@ std::optional<viz::SharedImageFormat> GetSharedImageFormat(
 class MojoStableVideoDecoder::SharedImageHolder
     : public base::RefCountedThreadSafe<SharedImageHolder> {
  public:
+  REQUIRE_ADOPTION_FOR_REFCOUNTED_TYPE();
+
   static scoped_refptr<SharedImageHolder> CreateFromFrameResource(
       const scoped_refptr<FrameResource>& frame_resource,
       scoped_refptr<gpu::SharedImageInterface> sii) {
@@ -84,7 +89,7 @@ class MojoStableVideoDecoder::SharedImageHolder
       return nullptr;
     }
 
-    uint32_t shared_image_usage =
+    gpu::SharedImageUsageSet shared_image_usage =
         gpu::SHARED_IMAGE_USAGE_DISPLAY_READ | gpu::SHARED_IMAGE_USAGE_SCANOUT;
     if (frame_resource->metadata().is_webgpu_compatible &&
         !sii->GetCapabilities().disable_webgpu_shared_images) {
@@ -119,8 +124,7 @@ class MojoStableVideoDecoder::SharedImageHolder
     const gpu::SharedImageInfo shared_image_info(
         *shared_image_format,
         GetRectSizeFromOrigin(frame_resource->visible_rect()),
-        frame_resource->ColorSpace(), kTopLeft_GrSurfaceOrigin,
-        kPremul_SkAlphaType, shared_image_usage,
+        frame_resource->ColorSpace(), shared_image_usage,
         /*debug_label=*/"MojoStableVideoDecoder");
     scoped_refptr<gpu::ClientSharedImage> new_client_shared_image =
         sii->CreateSharedImage(shared_image_info, std::move(gmb_handle));
@@ -129,18 +133,24 @@ class MojoStableVideoDecoder::SharedImageHolder
       return nullptr;
     }
 
-    return base::WrapRefCounted(new SharedImageHolder(
-        frame_resource->GetSharedMemoryId(), std::move(new_client_shared_image),
-        frame_resource->ColorSpace(), std::move(sii)));
+    return base::MakeRefCounted<SharedImageHolder>(
+        base::PassKey<SharedImageHolder>(), std::move(new_client_shared_image),
+        frame_resource->ColorSpace(), std::move(sii));
   }
+
+  SharedImageHolder(base::PassKey<SharedImageHolder>,
+                    scoped_refptr<gpu::ClientSharedImage> client_shared_image,
+                    const gfx::ColorSpace& color_space,
+                    scoped_refptr<gpu::SharedImageInterface> sii)
+      : color_space_(color_space),
+        sii_(std::move(sii)),
+        client_shared_image_(std::move(client_shared_image)) {}
 
   SharedImageHolder(const SharedImageHolder&) = delete;
   SharedImageHolder& operator=(const SharedImageHolder&) = delete;
 
-  gfx::GenericSharedMemoryId id() const { return id_; }
-
-  const gpu::Mailbox& mailbox() const {
-    return client_shared_image_->mailbox();
+  const scoped_refptr<gpu::ClientSharedImage> client_shared_image() const {
+    return client_shared_image_;
   }
 
   uint32_t texture_target() const {
@@ -158,23 +168,14 @@ class MojoStableVideoDecoder::SharedImageHolder
     return sii_->GenUnverifiedSyncToken();
   }
 
-  void Update() { sii_->UpdateSharedImage(gpu::SyncToken(), mailbox()); }
+  void Update() {
+    sii_->UpdateSharedImage(gpu::SyncToken(), client_shared_image()->mailbox());
+  }
 
  private:
   friend class base::RefCountedThreadSafe<SharedImageHolder>;
-
-  SharedImageHolder(gfx::GenericSharedMemoryId id,
-                    scoped_refptr<gpu::ClientSharedImage> client_shared_image,
-                    const gfx::ColorSpace& color_space,
-                    scoped_refptr<gpu::SharedImageInterface> sii)
-      : id_(id),
-        color_space_(color_space),
-        sii_(std::move(sii)),
-        client_shared_image_(std::move(client_shared_image)) {}
-
   ~SharedImageHolder() { CHECK(client_shared_image_->HasOneRef()); }
 
-  const gfx::GenericSharedMemoryId id_;
   const gfx::ColorSpace color_space_;
   const scoped_refptr<gpu::SharedImageInterface> sii_;
 
@@ -339,13 +340,14 @@ MojoStableVideoDecoder::CreateOrUpdateSharedImageForFrame(
     const scoped_refptr<FrameResource>& frame_resource) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  const gfx::GenericSharedMemoryId frame_id =
-      frame_resource->GetSharedMemoryId();
-  CHECK(frame_id.is_valid());
+  const base::UnguessableToken frame_token = frame_resource->tracking_token();
+  CHECK(!frame_token.is_empty());
 
   // First, let's see if the buffer for this frame already has a SharedImage
   // that can be re-used.
-  SharedImageHolder* shared_image_holder = shared_images_.Lookup(frame_id);
+  const auto iter = shared_images_.find(frame_token);
+  SharedImageHolder* shared_image_holder =
+      iter != shared_images_.end() ? iter->second.get() : nullptr;
   if (shared_image_holder &&
       shared_image_holder->IsCompatibleWith(frame_resource)) {
     shared_image_holder->Update();
@@ -368,31 +370,30 @@ MojoStableVideoDecoder::CreateOrUpdateSharedImageForFrame(
     // SharedImage if the user of the decoded frames still hasn't released all
     // frames that use that SharedImage.
     shared_image_holder = nullptr;
-    shared_images_.Replace(frame_id, new_shared_image);
+    shared_images_.insert_or_assign(frame_token, new_shared_image);
   } else {
     // In this case, the buffer does not have a SharedImage associated with it.
     // Therefore, we need to ask the containing FrameResource to notify us when
     // it's about to be destroyed so that we can release the reference to
     // whatever SharedImage is associated with it.
     FrameResource* original_frame_resource =
-        oop_video_decoder()->GetOriginalFrame(frame_id);
+        oop_video_decoder()->GetOriginalFrame(frame_resource->tracking_token());
     CHECK(original_frame_resource);
-    shared_images_.AddWithID(new_shared_image, frame_id);
+    shared_images_.insert_or_assign(frame_token, new_shared_image);
     original_frame_resource->AddDestructionObserver(
         base::BindPostTaskToCurrentDefault(
             base::BindOnce(&MojoStableVideoDecoder::UnregisterSharedImage,
-                           weak_this_factory_.GetWeakPtr(), frame_id)));
+                           weak_this_factory_.GetWeakPtr(), frame_token)));
   }
 
   return new_shared_image;
 }
 
 void MojoStableVideoDecoder::UnregisterSharedImage(
-    gfx::GenericSharedMemoryId frame_id) {
+    base::UnguessableToken frame_token) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  CHECK(frame_id.is_valid());
-  CHECK(shared_images_.Lookup(frame_id));
-  shared_images_.Remove(frame_id);
+  CHECK(!frame_token.is_empty());
+  CHECK_EQ(1u, shared_images_.erase(frame_token));
 }
 
 void MojoStableVideoDecoder::OnFrameResourceDecoded(
@@ -427,12 +428,11 @@ void MojoStableVideoDecoder::OnFrameResourceDecoded(
   // at least as long as the user of the decoded frame needs it. The latter is
   // to ensure the service gets notified that it may re-use the underlying
   // buffer once the decoded frame is no longer needed.
-  gpu::MailboxHolder mailbox_holders[VideoFrame::kMaxPlanes] = {
-      gpu::MailboxHolder(shared_image->mailbox(),
-                         shared_image->GenUnverifiedSyncToken(),
-                         shared_image->texture_target())};
-  scoped_refptr<VideoFrame> mailbox_frame = VideoFrame::WrapNativeTextures(
-      frame_resource->format(), mailbox_holders,
+  auto client_shared_image = shared_image->client_shared_image();
+  auto sync_token = shared_image->GenUnverifiedSyncToken();
+
+  scoped_refptr<VideoFrame> mailbox_frame = VideoFrame::WrapSharedImage(
+      frame_resource->format(), std::move(client_shared_image), sync_token,
       /*mailbox_holders_release_cb=*/
       base::DoNothingWithBoundArgs(std::move(shared_image), frame_resource),
       /*coded_size=*/GetRectSizeFromOrigin(frame_resource->visible_rect()),
@@ -446,8 +446,6 @@ void MojoStableVideoDecoder::OnFrameResourceDecoded(
   mailbox_frame->set_color_space(frame_resource->ColorSpace());
   mailbox_frame->set_hdr_metadata(frame_resource->hdr_metadata());
   mailbox_frame->set_metadata(frame_resource->metadata());
-  mailbox_frame->set_shared_image_format_type(
-      SharedImageFormatType::kSharedImageFormatExternalSampler);
   mailbox_frame->metadata().read_lock_fences_enabled = true;
   mailbox_frame->metadata().is_webgpu_compatible =
       frame_resource->metadata().is_webgpu_compatible;

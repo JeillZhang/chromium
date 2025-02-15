@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #include "remoting/protocol/webrtc_connection_to_host.h"
 
 #include <memory>
@@ -54,6 +59,11 @@ void WebrtcConnectionToHost::Connect(
 
 void WebrtcConnectionToHost::Disconnect(ErrorCode error) {
   session_->Close(error);
+}
+
+void WebrtcConnectionToHost::ApplyNetworkSettings(
+    const NetworkSettings& settings) {
+  transport_->ApplyNetworkSettings(settings);
 }
 
 const SessionConfig& WebrtcConnectionToHost::config() {

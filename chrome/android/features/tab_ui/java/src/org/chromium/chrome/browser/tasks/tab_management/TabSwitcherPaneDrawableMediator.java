@@ -4,56 +4,46 @@
 
 package org.chromium.chrome.browser.tasks.tab_management;
 
+import static org.chromium.chrome.browser.tasks.tab_management.TabSwitcherPaneDrawableProperties.SHOW_NOTIFICATION_DOT;
 import static org.chromium.chrome.browser.tasks.tab_management.TabSwitcherPaneDrawableProperties.TAB_COUNT;
 
 import androidx.annotation.NonNull;
 
 import org.chromium.base.Callback;
+import org.chromium.base.CallbackController;
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
-import org.chromium.chrome.browser.tabmodel.TabModelSelectorObserver;
+import org.chromium.chrome.browser.tabmodel.TabModelUtils;
 import org.chromium.chrome.browser.toolbar.TabSwitcherDrawable;
 import org.chromium.ui.modelutil.PropertyModel;
 
 /** Mediator for the {@link TabSwitcherDrawable} for the {@link TabSwitcherPane}. */
 public class TabSwitcherPaneDrawableMediator {
+    private final CallbackController mCallbackController = new CallbackController();
+    private final Callback<Boolean> mNotificationDotObserver = this::updateNotificationDot;
+    private final Callback<Integer> mTabCountSupplierObserver = this::updateTabCount;
+    private final ObservableSupplier<Boolean> mNotificationDotSupplier;
     private final PropertyModel mModel;
-    private final Callback<Integer> mTabCountSupplierObserver;
 
-    private TabModelSelector mTabModelSelector;
-    private TabModelSelectorObserver mTabModelSelectorObserver;
     private ObservableSupplier<Integer> mTabCountSupplier;
 
     public TabSwitcherPaneDrawableMediator(
-            @NonNull TabModelSelector tabModelSelector, @NonNull PropertyModel model) {
+            @NonNull TabModelSelector tabModelSelector,
+            @NonNull ObservableSupplier<Boolean> notificationDotSupplier,
+            @NonNull PropertyModel model) {
+        mNotificationDotSupplier = notificationDotSupplier;
         mModel = model;
 
-        mTabCountSupplierObserver =
-                tabCount -> {
-                    mModel.set(TAB_COUNT, tabCount);
-                };
-
-        if (tabModelSelector.isTabStateInitialized()) {
-            onTabStateInitializedInternal(tabModelSelector);
-        } else {
-            mTabModelSelector = tabModelSelector;
-            mTabModelSelectorObserver =
-                    new TabModelSelectorObserver() {
-                        @Override
-                        public void onTabStateInitialized() {
-                            if (mTabModelSelector == null) return;
-
-                            onTabStateInitializedInternal(mTabModelSelector);
-                            cleanupTabModelSelectorObserver();
-                        }
-                    };
-            tabModelSelector.addObserver(mTabModelSelectorObserver);
-        }
+        notificationDotSupplier.addObserver(mNotificationDotObserver);
+        TabModelUtils.runOnTabStateInitialized(
+                tabModelSelector,
+                mCallbackController.makeCancelable(this::onTabStateInitializedInternal));
     }
 
     /** Destroys the mediator, removing observers if present. */
     public void destroy() {
-        cleanupTabModelSelectorObserver();
+        mCallbackController.destroy();
+        mNotificationDotSupplier.removeObserver(mNotificationDotObserver);
         if (mTabCountSupplier != null) {
             mTabCountSupplier.removeObserver(mTabCountSupplierObserver);
             mTabCountSupplier = null;
@@ -65,13 +55,11 @@ public class TabSwitcherPaneDrawableMediator {
         mTabCountSupplier.addObserver(mTabCountSupplierObserver);
     }
 
-    private void cleanupTabModelSelectorObserver() {
-        if (mTabModelSelector != null) {
-            if (mTabModelSelectorObserver != null) {
-                mTabModelSelector.removeObserver(mTabModelSelectorObserver);
-                mTabModelSelectorObserver = null;
-            }
-            mTabModelSelector = null;
-        }
+    private void updateNotificationDot(boolean showDot) {
+        mModel.set(SHOW_NOTIFICATION_DOT, showDot);
+    }
+
+    private void updateTabCount(int tabCount) {
+        mModel.set(TAB_COUNT, tabCount);
     }
 }

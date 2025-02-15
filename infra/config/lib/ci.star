@@ -38,9 +38,7 @@ def ci_builder(
         gardener_rotations = None,
         tree_closing = args.DEFAULT,
         tree_closing_notifiers = None,
-        notifies = None,
         resultdb_bigquery_exports = None,
-        experiments = None,
         **kwargs):
     """Define a CI builder.
 
@@ -79,38 +77,35 @@ def ci_builder(
         specified by the list's elements:
           chrome-luci-data.chromium.ci_test_results
           chrome-luci-data.chromium.gpu_ci_test_results
-      experiments: a dict of experiment name to the percentage chance (0-100)
-        that it will apply to builds generated from this builder.
       **kwargs: Additional keyword arguments that will be forwarded on to
         `builders.builder`.
     """
     if not branches.matches(branch_selector):
         return
 
-    experiments = experiments or {}
-
-    # TODO(crbug.com/40232671): Remove when the experiment is the default.
-    experiments.setdefault("chromium_swarming.expose_merge_script_failures", 100)
-
     try_only_kwargs = [k for k in ("mirrors", "try_settings") if k in kwargs]
     if try_only_kwargs:
         fail("CI builders cannot specify the following try-only arguments: {}".format(try_only_kwargs))
 
+    notifies = kwargs.get("notifies", [])
     tree_closing = defaults.get_value("tree_closing", tree_closing)
     if tree_closing:
         tree_closing_notifiers = defaults.get_value("tree_closing_notifiers", tree_closing_notifiers, merge = args.MERGE_LIST)
         tree_closing_notifiers = args.listify("chromium-tree-closer", "chromium-tree-closer-email", tree_closing_notifiers)
+        if notifies != None:
+            notifies = args.listify(notifies, tree_closing_notifiers)
 
-        notifies = args.listify(notifies, tree_closing_notifiers)
-    if notifies:
-        kwargs["notifies"] = notifies
+    kwargs["notifies"] = notifies
 
+    bq_dataset_name = "chrome"
+    if settings.project.startswith("chromium"):
+        bq_dataset_name = "chromium"
     merged_resultdb_bigquery_exports = [
         resultdb.export_test_results(
-            bq_table = "chrome-luci-data.chromium.ci_test_results",
+            bq_table = "chrome-luci-data.{}.ci_test_results".format(bq_dataset_name),
         ),
         resultdb.export_test_results(
-            bq_table = "chrome-luci-data.chromium.gpu_ci_test_results",
+            bq_table = "chrome-luci-data.{}.gpu_ci_test_results".format(bq_dataset_name),
             predicate = resultdb.test_result_predicate(
                 # Only match the telemetry_gpu_integration_test target and its
                 # Fuchsia and Android variants that have a suffix added to the
@@ -120,11 +115,11 @@ def ci_builder(
             ),
         ),
         resultdb.export_test_results(
-            bq_table = "chrome-luci-data.chromium.blink_web_tests_ci_test_results",
+            bq_table = "chrome-luci-data.{}.blink_web_tests_ci_test_results".format(bq_dataset_name),
             predicate = resultdb.test_result_predicate(
                 # Match the "blink_web_tests" target and all of its
                 # flag-specific versions, e.g. "vulkan_swiftshader_blink_web_tests".
-                test_id_regexp = "(ninja://[^/]*blink_web_tests/.+)|(ninja://[^/]*_wpt_tests/.+)",
+                test_id_regexp = "(ninja://[^/]*blink_web_tests/.+)|(ninja://[^/]*_wpt_tests/.+)|(ninja://[^/]*headless_shell_wpt/.+)",
             ),
         ),
     ]
@@ -145,12 +140,11 @@ def ci_builder(
         console_view_entry = console_view_entry,
         resultdb_bigquery_exports = merged_resultdb_bigquery_exports,
         gardener_rotations = gardener_rotations,
-        experiments = experiments,
-        resultdb_index_by_timestamp = True,
+        resultdb_index_by_timestamp = settings.project.startswith("chromium"),
         **kwargs
     )
 
-    if console_view_entry:
+    if console_view_entry and settings.project.startswith("chromium"):
         # builder didn't fail, we're guaranteed that console_view_entry is
         # either a single console_view_entry or a list of them and that they are valid
         if type(console_view_entry) == type(struct()):

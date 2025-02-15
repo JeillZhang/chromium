@@ -29,7 +29,7 @@ String BuildJustificationText(const String& text_content,
   }
 
   StringBuilder line_text_builder;
-  if (UNLIKELY(may_have_text_combine_or_ruby)) {
+  if (may_have_text_combine_or_ruby) [[unlikely]] {
     for (const InlineItemResult& item_result : results) {
       if (item_result.StartOffset() >= end_offset) {
         break;
@@ -87,7 +87,7 @@ String BuildJustificationText(const String& text_content,
   const InlineItemResult& last_item_result = results.back();
   if (last_item_result.hyphen) {
     line_text_builder.Append(last_item_result.hyphen.Text());
-  } else if (RuntimeEnabledFeatures::TextAlignLastJustifyNewLineEnabled()) {
+  } else {
     // Remove the trailing \n.  See crbug.com/331729346.
     wtf_size_t text_length = line_text_builder.length();
     if (text_length > 0u &&
@@ -136,7 +136,7 @@ float JustifyResults(const String& text_content,
           spacing, item_result.StartOffset() - line_text_start_offset -
                        shape_result->StartIndex());
       item_result.inline_size = shape_result->SnappedWidth();
-      if (UNLIKELY(item_result.is_hyphenated)) {
+      if (item_result.is_hyphenated) [[unlikely]] {
         item_result.inline_size += item_result.hyphen.InlineSize();
       }
       item_result.shape_result = ShapeResultView::Create(shape_result);
@@ -148,7 +148,7 @@ float JustifyResults(const String& text_content,
           item_result.StartOffset() - line_text_start_offset;
       const float spacing_after =
           spacing.ComputeSpacing(line_text_offset, spacing_before);
-      if (UNLIKELY(item_result.item->IsTextCombine())) {
+      if (item_result.item->IsTextCombine()) [[unlikely]] {
         // |spacing_before| is non-zero if this |item_result| is after
         // non-CJK character. See "text-combine-justify.html".
         DCHECK_EQ(kTextCombineItemMarker, line_text[line_text_offset]);
@@ -212,10 +212,10 @@ class ExpandableItemsFinder {
   STACK_ALLOCATED();
 
  public:
-  void Find(LogicalLineItems::iterator begin, LogicalLineItems::iterator end) {
-    for (auto iter = begin; iter != end; ++iter) {
-      LogicalLineItem& item = *iter;
-      if (item.shape_result || item.layout_result) {
+  void Find(base::span<LogicalLineItem> items) {
+    for (auto& item : items) {
+      if ((item.shape_result && item.shape_result->NumGlyphs() > 0) ||
+          item.layout_result) {
         last_item_ = &item;
         if (!first_item_) {
           first_item_ = &item;
@@ -356,13 +356,12 @@ std::optional<LayoutUnit> ComputeRubyBaseInset(LayoutUnit space,
 
 bool ApplyLeftAndRightExpansion(LayoutUnit left_expansion,
                                 LayoutUnit right_expansion,
-                                LogicalLineItems::iterator begin,
-                                LogicalLineItems::iterator end) {
+                                base::span<LogicalLineItem> items) {
   if (!left_expansion && !right_expansion) {
     return true;
   }
   ExpandableItemsFinder finder;
-  finder.Find(begin, end);
+  finder.Find(items);
   LogicalLineItem* first_expandable = finder.FirstExpandable();
   LogicalLineItem* last_expandable = finder.LastExpandable();
   if (first_expandable && last_expandable) {

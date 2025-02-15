@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "fuchsia_web/webengine/renderer/web_engine_audio_renderer.h"
 
 #include <lib/sys/cpp/component_context.h>
@@ -210,7 +215,7 @@ void WebEngineAudioRenderer::UpdateVolume() {
 
 void WebEngineAudioRenderer::OnBuffersAcquired(
     std::vector<media::VmoBuffer> buffers,
-    const fuchsia::sysmem::SingleBufferSettings&) {
+    const fuchsia::sysmem2::SingleBufferSettings&) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
   input_buffers_ = std::move(buffers);
@@ -341,8 +346,9 @@ void WebEngineAudioRenderer::SetPreservesPitch(bool preserves_pitch) {
   NOTIMPLEMENTED();
 }
 
-void WebEngineAudioRenderer::SetWasPlayedWithUserActivation(
-    bool was_played_with_user_activation) {
+void WebEngineAudioRenderer::
+    SetWasPlayedWithUserActivationAndHighMediaEngagement(
+        bool was_played_with_user_activation_and_high_media_engagement) {
   // WebEngine does not use this signal. This is currently only used by the Live
   // Caption feature.
   NOTIMPLEMENTED_LOG_ONCE();
@@ -361,7 +367,7 @@ void WebEngineAudioRenderer::StartTicking() {
     case PlaybackState::kStartPending:
     case PlaybackState::kStarting:
     case PlaybackState::kPlaying:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
 
     case PlaybackState::kPaused: {
       // If the stream was paused then we can unpause it without restarting
@@ -412,8 +418,7 @@ void WebEngineAudioRenderer::StopTicking() {
   switch (GetPlaybackState()) {
     case PlaybackState::kStopped:
     case PlaybackState::kPaused:
-      NOTREACHED_IN_MIGRATION();
-      break;
+      NOTREACHED();
 
     case PlaybackState::kStartPending: {
       base::AutoLock lock(timeline_lock_);
@@ -835,7 +840,7 @@ base::TimeDelta WebEngineAudioRenderer::CurrentMediaTimeLocked() {
 }
 
 void WebEngineAudioRenderer::OnSysmemBufferStreamBufferCollectionToken(
-    fuchsia::sysmem::BufferCollectionTokenPtr token) {
+    fuchsia::sysmem2::BufferCollectionTokenPtr token) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
   // Drop old buffers.
@@ -845,7 +850,7 @@ void WebEngineAudioRenderer::OnSysmemBufferStreamBufferCollectionToken(
   // Acquire buffers for the new buffer collection.
   input_buffer_collection_ =
       sysmem_allocator_.BindSharedCollection(std::move(token));
-  fuchsia::sysmem::BufferCollectionConstraints buffer_constraints =
+  fuchsia::sysmem2::BufferCollectionConstraints buffer_constraints =
       media::VmoBuffer::GetRecommendedConstraints(kNumBuffers, kBufferSize,
                                                   /*writable=*/false);
   input_buffer_collection_->Initialize(std::move(buffer_constraints),

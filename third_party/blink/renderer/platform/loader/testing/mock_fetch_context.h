@@ -74,6 +74,18 @@ class MockFetchContext : public FetchContext {
   std::optional<ResourceRequestBlockedReason> CheckCSPForRequest(
       mojom::blink::RequestContextType,
       network::mojom::RequestDestination request_destination,
+      network::mojom::RequestMode request_mode,
+      const KURL& url,
+      const ResourceLoaderOptions& options,
+      ReportingDisposition reporting_disposition,
+      const KURL& url_before_redirects,
+      ResourceRequest::RedirectStatus redirect_status) const override {
+    return std::nullopt;
+  }
+  std::optional<ResourceRequestBlockedReason> CheckAndEnforceCSPForRequest(
+      mojom::blink::RequestContextType,
+      network::mojom::RequestDestination request_destination,
+      network::mojom::RequestMode request_mode,
       const KURL& url,
       const ResourceLoaderOptions& options,
       ReportingDisposition reporting_disposition,

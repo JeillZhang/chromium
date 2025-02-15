@@ -30,21 +30,16 @@ import './quick_start_entry_point.js';
 import {Authenticator, AuthFlow} from '//oobe/gaia_auth_host/authenticator.js';
 import {assert} from '//resources/js/assert.js';
 import {sendWithPromise} from '//resources/js/cr.js';
-import {PolymerElementProperties} from '//resources/polymer/v3_0/polymer/interfaces.js';
-import {mixinBehaviors, PolymerElement} from '//resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+import type {PolymerElementProperties} from '//resources/polymer/v3_0/polymer/interfaces.js';
+import {PolymerElement} from '//resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
-import {OobeDialogHostBehavior, OobeDialogHostBehaviorInterface} from './behaviors/oobe_dialog_host_behavior.js';
-import {OobeI18nMixin, OobeI18nMixinInterface} from './mixins/oobe_i18n_mixin.js';
 import type {OobeTextButton} from './buttons/oobe_text_button.js';
 import {getTemplate} from './gaia_dialog.html.js';
+import {OobeDialogHostMixin} from './mixins/oobe_dialog_host_mixin.js';
+import {OobeI18nMixin} from './mixins/oobe_i18n_mixin.js';
 import {OobeTypes} from './oobe_types.js';
 
-export const GaiaDialogBase =
-    mixinBehaviors(
-        [OobeDialogHostBehavior], OobeI18nMixin(PolymerElement)) as {
-      new (): PolymerElement & OobeI18nMixinInterface &
-          OobeDialogHostBehaviorInterface,
-    };
+const GaiaDialogBase = OobeDialogHostMixin(OobeI18nMixin(PolymerElement));
 
 const CHROMEOS_GAIA_PASSWORD_METRIC = 'ChromeOS.Gaia.PasswordFlow';
 

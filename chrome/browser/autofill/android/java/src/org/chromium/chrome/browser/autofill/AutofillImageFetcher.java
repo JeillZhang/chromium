@@ -7,14 +7,15 @@ package org.chromium.chrome.browser.autofill;
 import android.content.Context;
 import android.graphics.Bitmap;
 
+import androidx.annotation.Px;
+
 import org.jni_zero.CalledByNative;
 import org.jni_zero.JniType;
 
 import org.chromium.base.ContextUtils;
 import org.chromium.base.metrics.RecordHistogram;
-import org.chromium.chrome.browser.autofill.AutofillUiUtils.CardIconSize;
 import org.chromium.chrome.browser.autofill.AutofillUiUtils.CardIconSpecs;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
+import org.chromium.components.autofill.ImageSize;
 import org.chromium.components.embedder_support.simple_factory_key.SimpleFactoryKeyHandle;
 import org.chromium.components.image_fetcher.ImageFetcher;
 import org.chromium.components.image_fetcher.ImageFetcherConfig;
@@ -44,18 +45,49 @@ public class AutofillImageFetcher {
      * Fetches images for the passed in URLs and stores them in cache.
      *
      * @param urls The URLs to fetch the images.
+     * @param imageSizes The list of image sizes that should be fetched for each of the above URLs.
      */
     @CalledByNative
-    void prefetchImages(@JniType("base::span<const GURL>") GURL[] urls) {
+    void prefetchImages(
+            @JniType("base::span<const GURL>") GURL[] urls, @ImageSize int[] imageSizes) {
         Context context = ContextUtils.getApplicationContext();
 
         for (GURL url : urls) {
-            // Credit card art images are shown in 2 different sizes depending on the surface.
-            // Prefetch and cache images in both sizes.
-            for (@CardIconSize int size = 0; size < CardIconSize.NUM_SIZES; size++) {
+            for (@ImageSize int size : imageSizes) {
                 CardIconSpecs cardIconSpecs = CardIconSpecs.create(context, size);
                 fetchImage(url, cardIconSpecs);
             }
+        }
+    }
+
+    /**
+     * Fetches images for the passed in Pix account image URLs, treats and stores them in cache.
+     *
+     * @param urls The URLs to fetch the images.
+     */
+    @CalledByNative
+    void prefetchPixAccountImages(@JniType("base::span<const GURL>") GURL[] urls) {
+        @Px
+        int logoSize = AutofillImageFetcherUtils.getPixelSize(R.dimen.square_card_icon_side_length);
+
+        for (GURL url : urls) {
+            if (!url.isValid()) {
+                continue;
+            }
+
+            GURL urlWithParams =
+                    AutofillUiUtils.getCreditCardIconUrlWithParams(url, logoSize, logoSize);
+
+            if (mImagesCache.containsKey(urlWithParams.getSpec())) {
+                continue;
+            }
+
+            ImageFetcher.Params params =
+                    ImageFetcher.Params.create(
+                            urlWithParams.getSpec(),
+                            ImageFetcher.AUTOFILL_CARD_ART_UMA_CLIENT_NAME);
+            mImageFetcher.fetchImage(
+                    params, bitmap -> treatAndCachePixAccountImage(bitmap, urlWithParams));
         }
     }
 
@@ -118,17 +150,23 @@ public class AutofillImageFetcher {
         if (bitmap == null) {
             return;
         }
-
         // When adding new sizes for card icons, check if the corner radius needs to be added as
         // a suffix for caching (crbug.com/1431283).
         mImagesCache.put(
                 urlToCache.getSpec(),
                 AutofillUiUtils.resizeAndAddRoundedCornersAndGreyBorder(
-                        bitmap,
-                        cardIconSpecs,
-                        ChromeFeatureList.isEnabled(
-                                ChromeFeatureList
-                                        .AUTOFILL_ENABLE_NEW_CARD_ART_AND_NETWORK_IMAGES)));
+                        bitmap, cardIconSpecs, true));
+    }
+
+    private void treatAndCachePixAccountImage(Bitmap bitmap, GURL urlToCache) {
+        RecordHistogram.recordBooleanHistogram("Autofill.ImageFetcher.Result", bitmap != null);
+
+        if (bitmap == null) {
+            return;
+        }
+
+        mImagesCache.put(
+                urlToCache.getSpec(), AutofillImageFetcherUtils.treatPixAccountImage(bitmap));
     }
 
     /**
@@ -144,6 +182,16 @@ public class AutofillImageFetcher {
                 AutofillUiUtils.getCreditCardIconUrlWithParams(
                         url, cardIconSpecs.getWidth(), cardIconSpecs.getHeight());
         mImagesCache.put(urlToCache.getSpec(), bitmap);
+    }
+
+    /**
+     * Add an image to the in-memory cache of images.
+     *
+     * @param url The URL that should be used as the key for the cache.
+     * @param bitmap The image to be cached.
+     */
+    public void addImageToCacheForTesting(GURL url, Bitmap bitmap) {
+        mImagesCache.put(url.getSpec(), bitmap);
     }
 
     Map<String, Bitmap> getCachedImagesForTesting() {

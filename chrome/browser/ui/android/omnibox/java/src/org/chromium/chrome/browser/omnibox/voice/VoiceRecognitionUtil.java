@@ -8,11 +8,11 @@ import android.Manifest;
 import android.content.Intent;
 import android.speech.RecognizerIntent;
 
-import androidx.annotation.Nullable;
-
 import org.chromium.base.PackageManagerUtils;
 import org.chromium.base.ResettersForTesting;
 import org.chromium.base.ThreadUtils;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.preferences.Pref;
 import org.chromium.chrome.browser.profiles.ProfileManager;
@@ -21,9 +21,10 @@ import org.chromium.components.user_prefs.UserPrefs;
 import org.chromium.ui.permissions.AndroidPermissionDelegate;
 
 /** Utilities related to voice recognition. */
+@NullMarked
 public class VoiceRecognitionUtil {
-    private static Boolean sHasRecognitionIntentHandler;
-    private static Boolean sIsVoiceSearchEnabledForTesting;
+    private static @Nullable Boolean sHasRecognitionIntentHandler;
+    private static @Nullable Boolean sIsVoiceSearchEnabledForTesting;
 
     /**
      * Returns whether voice search is enabled.
@@ -93,8 +94,6 @@ public class VoiceRecognitionUtil {
     /**
      * Set whether voice search is enabled. Should be reset back to null after the test has
      * finished.
-     *
-     * @param isVoiceSearchEnabled
      */
     public static void setIsVoiceSearchEnabledForTesting(@Nullable Boolean isVoiceSearchEnabled) {
         sIsVoiceSearchEnabledForTesting = isVoiceSearchEnabled;

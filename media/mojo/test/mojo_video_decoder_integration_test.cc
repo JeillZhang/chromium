@@ -143,7 +143,7 @@ class MockVideoDecoder : public VideoDecoder {
         scoped_refptr<gpu::ClientSharedImage> shared_image =
             gpu::ClientSharedImage::CreateForTesting();
         scoped_refptr<VideoFrame> frame = VideoFrame::WrapSharedImage(
-            PIXEL_FORMAT_ARGB, shared_image, gpu::SyncToken(), 0,
+            PIXEL_FORMAT_ARGB, shared_image, gpu::SyncToken(),
             GetReleaseMailboxCB(), config_.coded_size(), config_.visible_rect(),
             config_.natural_size(), buffer->timestamp());
         frame->metadata().power_efficient = true;
@@ -318,7 +318,7 @@ class MojoVideoDecoderIntegrationTest : public ::testing::Test {
     auto buffer = CreateKeyframe(timestamp_ms);
 
     const uint8_t kFakeKeyId[] = {0x4b, 0x65, 0x79, 0x20, 0x49, 0x44};
-    const uint8_t kFakeIv[DecryptConfig::kDecryptionKeySize] = {0};
+    const uint8_t kFakeIv[DecryptConfig::kDecryptionKeySize] = {};
     buffer->set_decrypt_config(DecryptConfig::CreateCencConfig(
         std::string(reinterpret_cast<const char*>(kFakeKeyId),
                     std::size(kFakeKeyId)),

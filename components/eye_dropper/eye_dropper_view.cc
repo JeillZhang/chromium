@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #include "components/eye_dropper/eye_dropper_view.h"
 
 #include <utility>
@@ -17,6 +22,7 @@
 #include "content/public/browser/web_contents.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
+#include "ui/base/mojom/ui_base_types.mojom-shared.h"
 #include "ui/display/screen.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/color_palette.h"
@@ -28,7 +34,7 @@
 #include "base/win/windows_version.h"
 #endif
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #include "ui/aura/window_tree_host.h"
 #endif
 
@@ -58,7 +64,7 @@ EyeDropperView::ViewPositionHandler::ViewPositionHandler(EyeDropperView* owner)
 }
 
 EyeDropperView::ViewPositionHandler::~ViewPositionHandler() {
-  timer_.AbandonAndStop();
+  timer_.Stop();
 }
 
 void EyeDropperView::ViewPositionHandler::UpdateViewPosition() {
@@ -195,7 +201,7 @@ EyeDropperView::EyeDropperView(gfx::NativeView parent,
     : listener_(listener),
       view_position_handler_(std::make_unique<ViewPositionHandler>(this)),
       screen_capturer_(std::make_unique<ScreenCapturer>(this)) {
-  SetModalType(ui::MODAL_TYPE_WINDOW);
+  SetModalType(ui::mojom::ModalType::kWindow);
   // This is owned as a unique_ptr<EyeDropper> elsewhere.
   SetOwnedByWidget(false);
   // TODO(pbos): Remove this, perhaps by separating the contents view from the
@@ -233,7 +239,7 @@ EyeDropperView::EyeDropperView(gfx::NativeView parent,
   CaptureInput();
   auto* screen = display::Screen::GetScreen();
   gfx::Point initial_position = screen->GetCursorScreenPoint();
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   if (screen->InTabletMode()) {
     initial_position =
         screen->GetDisplayForNewWindows().work_area().CenterPoint();
@@ -245,7 +251,7 @@ EyeDropperView::EyeDropperView(gfx::NativeView parent,
   // the UI.
   ignore_selection_time_ = base::TimeTicks::Now() + base::Milliseconds(500);
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   // Add an observation so the capture can be updated as the eye dropper window
   // moves between displays.
   window_observation_.Observe(GetWidget()->GetNativeWindow());
@@ -292,7 +298,7 @@ void EyeDropperView::OnPaint(gfx::Canvas* view_canvas) {
   const SkBitmap frame = screen_capturer_->GetBitmap();
   gfx::Point center_position_px;
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   // ChromeOS only captures a single display at a time, and we need to convert
   // the cursor position to display (root window) local pixel coordinates.
   aura::Window* window = GetWidget()->GetNativeWindow();
@@ -383,7 +389,7 @@ void EyeDropperView::OnWidgetMove() {
   SchedulePaint();
 }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 void EyeDropperView::OnWindowAddedToRootWindow(aura::Window* window) {
   display::Display display =
       display::Screen::GetScreen()->GetDisplayNearestWindow(window);

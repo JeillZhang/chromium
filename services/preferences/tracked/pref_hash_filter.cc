@@ -45,6 +45,8 @@ std::vector<const char*>* GetDeprecatedPrefs() {
       // Also delete the now empty dictionaries.
       "software_reporter",
       "settings_reset_prompt",
+      // Added Aug'24. Remove after Aug'25.
+      "google.services.last_account_id",
 #endif
   };
 
@@ -147,8 +149,7 @@ base::Time PrefHashFilter::GetResetTime(PrefService* user_prefs) {
           user_prefs->GetString(user_prefs::kPreferenceResetTime),
           &internal_value)) {
     // Somehow the value stored on disk is not a valid int64_t.
-    NOTREACHED_IN_MIGRATION();
-    return base::Time();
+    NOTREACHED();
   }
   return base::Time::FromInternalValue(internal_value);
 }
@@ -173,7 +174,7 @@ void PrefHashFilter::Initialize(base::Value::Dict& pref_store_contents) {
 
 // Marks |path| has having changed if it is part of |tracked_paths_|. A new hash
 // will be stored for it the next time FilterSerializeData() is invoked.
-void PrefHashFilter::FilterUpdate(const std::string& path) {
+void PrefHashFilter::FilterUpdate(std::string_view path) {
   auto it = tracked_paths_.find(path);
   if (it != tracked_paths_.end())
     changed_paths_.insert(std::make_pair(path, it->second.get()));

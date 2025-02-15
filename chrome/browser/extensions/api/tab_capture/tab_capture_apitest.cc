@@ -54,11 +54,12 @@ class TabCaptureApiTest : public ExtensionApiTest {
     // Specify smallish window size to make testing of tab capture less CPU
     // intensive.
     command_line->AppendSwitchASCII(::switches::kWindowSize, "300,300");
+    // MSan and GL do not get along so avoid using the GPU with MSan.
     // TODO(crbug.com/40260482): Remove this after fixing feature
     // detection in 0c tab capture path as it'll no longer be needed.
-    if constexpr (!BUILDFLAG(IS_CHROMEOS)) {
-      command_line->AppendSwitch(::switches::kUseGpuInTests);
-    }
+#if !BUILDFLAG(IS_CHROMEOS) && !defined(MEMORY_SANITIZER)
+    command_line->AppendSwitch(::switches::kUseGpuInTests);
+#endif
   }
 
   void AddExtensionToCommandLineAllowlist() {
@@ -167,7 +168,7 @@ IN_PROC_BROWSER_TEST_F(TabCaptureApiTest, GetUserMediaTest) {
       web_contents->GetPrimaryMainFrame();
   ASSERT_TRUE(main_frame);
   listener.Reply(base::StringPrintf("web-contents-media-stream://%i:%i",
-                                    main_frame->GetProcess()->GetID(),
+                                    main_frame->GetProcess()->GetDeprecatedID(),
                                     main_frame->GetRoutingID()));
 
   ResultCatcher catcher;
@@ -328,8 +329,7 @@ IN_PROC_BROWSER_TEST_F(TabCaptureApiTest, MAYBE_Constraints) {
 IN_PROC_BROWSER_TEST_F(TabCaptureApiTest, MAYBE_TabIndicator) {
   content::WebContents* const contents =
       browser()->tab_strip_model()->GetActiveWebContents();
-  ASSERT_THAT(chrome::GetTabAlertStatesForContents(contents),
-              ::testing::IsEmpty());
+  ASSERT_THAT(GetTabAlertStatesForContents(contents), ::testing::IsEmpty());
 
   // A TabStripModelObserver that quits the MessageLoop whenever the
   // UI's model is sent an event that might change the indicator status.
@@ -356,8 +356,7 @@ IN_PROC_BROWSER_TEST_F(TabCaptureApiTest, MAYBE_TabIndicator) {
     base::OnceClosure on_tab_changed_;
   };
 
-  ASSERT_THAT(chrome::GetTabAlertStatesForContents(contents),
-              ::testing::IsEmpty());
+  ASSERT_THAT(GetTabAlertStatesForContents(contents), ::testing::IsEmpty());
 
   // Run an extension test that just turns on tab capture, which should cause
   // the indicator to turn on.
@@ -369,11 +368,11 @@ IN_PROC_BROWSER_TEST_F(TabCaptureApiTest, MAYBE_TabIndicator) {
   // Run the browser until the indicator turns on.
   const base::TimeTicks start_time = base::TimeTicks::Now();
   IndicatorChangeObserver observer(browser());
-  while (!base::Contains(chrome::GetTabAlertStatesForContents(contents),
+  while (!base::Contains(GetTabAlertStatesForContents(contents),
                          TabAlertState::TAB_CAPTURING)) {
     if (base::TimeTicks::Now() - start_time >
             TestTimeouts::action_max_timeout()) {
-      EXPECT_THAT(chrome::GetTabAlertStatesForContents(contents),
+      EXPECT_THAT(GetTabAlertStatesForContents(contents),
                   ::testing::Contains(TabAlertState::TAB_CAPTURING));
       return;
     }

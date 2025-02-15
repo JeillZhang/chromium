@@ -49,7 +49,7 @@ SiteDataCountingHelper::SiteDataCountingHelper(
       completion_callback_(std::move(completion_callback)),
       tasks_(0) {}
 
-SiteDataCountingHelper::~SiteDataCountingHelper() {}
+SiteDataCountingHelper::~SiteDataCountingHelper() = default;
 
 void SiteDataCountingHelper::CountAndDestroySelfWhenFinished() {
   content::StoragePartition* partition = profile_->GetDefaultStoragePartition();
@@ -67,10 +67,7 @@ void SiteDataCountingHelper::CountAndDestroySelfWhenFinished() {
   storage::QuotaManager* quota_manager = partition->GetQuotaManager();
   if (quota_manager) {
     // Count storage keys with filesystem, websql, indexeddb, serviceworkers,
-    // cachestorage, and medialicense using quota manager.
-    // TODO(crbug.com/40264778): For now, media licenses are part of the quota
-    // management system, but when dis-integrated, remove media license logic
-    // from quota logic.
+    // and cachestorage using quota manager.
     auto buckets_callback =
         base::BindRepeating(&SiteDataCountingHelper::GetQuotaBucketsCallback,
                             base::Unretained(this));
@@ -98,8 +95,6 @@ void SiteDataCountingHelper::CountAndDestroySelfWhenFinished() {
     // is fixed.
   }
 
-// TODO(crbug.com/40272342): Add CdmStorageManager logic to count origins, and
-// add test to browsing_data_remover_browsertest.cc to test counting logic.
 #if BUILDFLAG(IS_ANDROID)
   // Count origins with media licenses on Android.
   tasks_ += 1;
@@ -108,21 +103,11 @@ void SiteDataCountingHelper::CountAndDestroySelfWhenFinished() {
 #endif  // BUILDFLAG(IS_ANDROID)
 
 #if BUILDFLAG(ENABLE_LIBRARY_CDMS)
-  bool is_cdm_storage_database_enabled =
-      base::FeatureList::IsEnabled(features::kCdmStorageDatabase);
-  // Refer to b/325351177 for more information on why this feature is
-  // disabled.
-  bool is_cdm_migration_disabled =
-      !base::FeatureList::IsEnabled(features::kCdmStorageDatabaseMigration);
-  if (is_cdm_storage_database_enabled && is_cdm_migration_disabled) {
-    tasks_ += 1;
-
-    auto cdm_storage_callback = base::BindOnce(
-        &SiteDataCountingHelper::GetCdmStorageCallback, base::Unretained(this));
-
-    partition->GetCdmStorageDataModel()->GetUsagePerAllStorageKeys(
-        std::move(cdm_storage_callback), begin_, end_);
-  }
+  tasks_ += 1;
+  auto cdm_storage_callback = base::BindOnce(
+      &SiteDataCountingHelper::GetCdmStorageCallback, base::Unretained(this));
+  partition->GetCdmStorageDataModel()->GetUsagePerAllStorageKeys(
+      std::move(cdm_storage_callback), begin_, end_);
 #endif  // BUILDFLAG(ENABLE_LIBRARY_CDMS)
 
   // Counting site usage data and durable permissions.

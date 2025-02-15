@@ -7,6 +7,7 @@
 #include <stddef.h>
 
 #include <memory>
+#include <optional>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -22,6 +23,7 @@
 #include "ash/system/federated/federated_service_controller_impl.h"
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
+#include "base/location.h"
 #include "base/memory/raw_ref.h"
 #include "base/memory/weak_ptr.h"
 #include "base/metrics/histogram_functions.h"
@@ -41,15 +43,11 @@
 #include "chrome/browser/ash/app_list/search/ranking/launch_data.h"
 #include "chrome/browser/ash/app_list/search/search_controller.h"
 #include "chrome/browser/ash/app_list/search/search_controller_factory.h"
-#include "chrome/browser/ash/crosapi/browser_util.h"
-#include "chrome/browser/ash/crosapi/url_handler_ash.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/feature_engagement/tracker_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
-#include "chrome/browser/scalable_iph/scalable_iph_factory.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
-#include "chrome/browser/ui/app_list/app_list_util.h"
 #include "chrome/browser/ui/ash/shelf/app_shortcut_shelf_item_controller.h"
 #include "chrome/browser/ui/ash/shelf/chrome_shelf_controller.h"
 #include "chrome/browser/ui/ash/shelf/chrome_shelf_controller_util.h"
@@ -59,13 +57,14 @@
 #include "chrome/browser/ui/browser_navigator.h"
 #include "chrome/browser/ui/browser_navigator_params.h"
 #include "chrome/browser/ui/browser_window.h"
-#include "chrome/browser/ui/webui/chrome_web_ui_controller_factory.h"
 #include "chromeos/ash/components/browser_context_helper/browser_context_helper.h"
 #include "chromeos/ash/components/scalable_iph/scalable_iph.h"
-#include "chromeos/crosapi/cpp/gurl_os_handler_utils.h"
+#include "chromeos/ash/components/scalable_iph/scalable_iph_factory.h"
+#include "chromeos/ash/services/assistant/public/cpp/assistant_browser_delegate.h"
 #include "components/feature_engagement/public/feature_constants.h"
 #include "components/feature_engagement/public/tracker.h"
 #include "components/session_manager/core/session_manager.h"
+#include "components/user_manager/user_manager.h"
 #include "ui/base/page_transition_types.h"
 #include "ui/base/window_open_disposition.h"
 #include "ui/display/screen.h"
@@ -112,27 +111,6 @@ void RecordDefaultAppsForHistogram(const std::string& histogram_name,
       continue;
     }
     base::UmaHistogramEnumeration(histogram_name, default_app_name.value());
-  }
-}
-
-ash::NewWindowDelegate::Disposition ConvertDisposition(
-    WindowOpenDisposition disposition) {
-  switch (disposition) {
-    case WindowOpenDisposition::NEW_FOREGROUND_TAB:
-    case WindowOpenDisposition::NEW_BACKGROUND_TAB:
-      return ash::NewWindowDelegate::Disposition::kNewForegroundTab;
-    case WindowOpenDisposition::UNKNOWN:
-    case WindowOpenDisposition::NEW_POPUP:
-    case WindowOpenDisposition::NEW_WINDOW:
-    case WindowOpenDisposition::SAVE_TO_DISK:
-    case WindowOpenDisposition::OFF_THE_RECORD:
-    case WindowOpenDisposition::IGNORE_ACTION:
-    case WindowOpenDisposition::NEW_PICTURE_IN_PICTURE:
-      return ash::NewWindowDelegate::Disposition::kNewWindow;
-    case WindowOpenDisposition::CURRENT_TAB:
-    case WindowOpenDisposition::SINGLETON_TAB:
-    case WindowOpenDisposition::SWITCH_TO_TAB:
-      return ash::NewWindowDelegate::Disposition::kSwitchToTab;
   }
 }
 
@@ -362,7 +340,7 @@ void AppListClientImpl::ActivateItem(int profile_id,
                                      int event_flags,
                                      ash::AppListLaunchedFrom launched_from,
                                      bool is_above_the_fold) {
-  auto* requested_model_updater = profile_model_mappings_[profile_id];
+  auto* requested_model_updater = profile_model_mappings_[profile_id].get();
 
   // Pointless to notify the AppListModelUpdater of the activated item if the
   // |requested_model_updater| is not the current one, which means that the
@@ -413,7 +391,7 @@ void AppListClientImpl::GetContextMenuModel(
     const std::string& id,
     ash::AppListItemContext item_context,
     GetContextMenuModelCallback callback) {
-  auto* requested_model_updater = profile_model_mappings_[profile_id];
+  auto* requested_model_updater = profile_model_mappings_[profile_id].get();
   if (requested_model_updater != current_model_updater_ ||
       !requested_model_updater) {
     std::move(callback).Run(nullptr);
@@ -433,6 +411,25 @@ void AppListClientImpl::OnAppListVisibilityWillChange(bool visible) {
   if (search_controller_) {
     search_controller_->AppListViewChanging(visible);
   }
+}
+
+void AppListClientImpl::MaybeRecalculateAppsGridDefaultOrder() {
+  // Do not attempt to calculate the experimental arm if the active
+  // profile is not the primary profile.
+  if (!IsPrimaryProfile(ProfileManager::GetActiveUserProfile())) {
+    return;
+  }
+
+  ash::AppsCollectionsController* apps_collections_controller =
+      ash::AppsCollectionsController::Get();
+  apps_collections_controller->CalculateExperimentalArm();
+  if (apps_collections_controller->GetUserExperimentalArm() !=
+      ash::AppsCollectionsController::ExperimentalArm::kModifiedOrder) {
+    return;
+  }
+  CHECK(current_model_updater_);
+
+  current_model_updater_->RequestDefaultPositionForModifiedOrder();
 }
 
 void AppListClientImpl::OnAppListVisibilityChanged(bool visible) {
@@ -678,27 +675,9 @@ void AppListClientImpl::OpenURL(Profile* profile,
                                 const GURL& url,
                                 ui::PageTransition transition,
                                 WindowOpenDisposition disposition) {
-  if (crosapi::browser_util::IsLacrosEnabled()) {
-    // Handle os:// URLs directly, without involving Lacros.
-    // See comment in OmniboxLacrosProvider::StartWithoutSearchProvider.
-    if (crosapi::gurl_os_handler_utils::HasOsScheme(url)) {
-      const GURL ash_url =
-          crosapi::gurl_os_handler_utils::GetAshUrlFromLacrosUrl(url);
-      if (ChromeWebUIControllerFactory::GetInstance()->CanHandleUrl(ash_url)) {
-        crosapi::UrlHandlerAsh().OpenUrl(ash_url);
-      } else {
-        LOG(WARNING) << "URL not supported: " << url << " (" << ash_url << ")";
-      }
-    } else {
-      ash::NewWindowDelegate::GetPrimary()->OpenUrl(
-          url, ash::NewWindowDelegate::OpenUrlFrom::kUserInteraction,
-          ConvertDisposition(disposition));
-    }
-  } else {
-    NavigateParams params(profile, url, transition);
-    params.disposition = disposition;
-    Navigate(&params);
-  }
+  NavigateParams params(profile, url, transition);
+  params.disposition = disposition;
+  Navigate(&params);
 }
 
 void AppListClientImpl::OnProfileAdded(Profile* profile) {
@@ -719,8 +698,12 @@ void AppListClientImpl::OnProfileAdded(Profile* profile) {
     app_list_syncable_service->OnFirstSync(base::BindOnce(
         [](const base::WeakPtr<AppListClientImpl>& self,
            bool was_first_sync_ever) {
-          if (self) {
-            self->is_primary_profile_new_user_ = was_first_sync_ever;
+          if (!self) {
+            return;
+          }
+          self->is_primary_profile_new_user_ = was_first_sync_ever;
+          if (was_first_sync_ever) {
+            self->MaybeRecalculateAppsGridDefaultOrder();
           }
         },
         weak_ptr_factory_.GetWeakPtr()));
@@ -747,6 +730,41 @@ void AppListClientImpl::RecalculateWouldTriggerLauncherSearchIph() {
   current_model_updater_->RecalculateWouldTriggerLauncherSearchIph();
 }
 
+bool AppListClientImpl::HasReordered() {
+  if (!current_model_updater_) {
+    return false;
+  }
+
+  return current_model_updater_->ModelHasBeenReorderedInThisSession();
+}
+
+void AppListClientImpl::GetAssistantNewEntryPointEligibility(
+    GetAssistantNewEntryPointEligibilityCallback callback) {
+  ash::assistant::AssistantBrowserDelegate* delegate =
+      GetAssistantBrowserDelegateForNewEntryPoint();
+  if (!delegate) {
+    std::move(callback).Run(false);
+    return;
+  }
+
+  CHECK(profile_) << "Profile must be set if the delegate is obtained";
+  delegate->is_new_entry_point_eligible_for_primary_profile_ready().Post(
+      FROM_HERE,
+      base::BindOnce(
+          &AppListClientImpl::OnAssistantNewEntryPointEligibilityReady,
+          weak_ptr_factory_.GetWeakPtr(), profile_, std::move(callback)));
+}
+
+std::optional<std::string> AppListClientImpl::GetAssistantNewEntryPointName() {
+  ash::assistant::AssistantBrowserDelegate* delegate =
+      GetAssistantBrowserDelegateForNewEntryPoint();
+  if (!delegate) {
+    return std::nullopt;
+  }
+
+  return delegate->GetNewEntryPointName();
+}
+
 std::unique_ptr<ash::ScopedIphSession>
 AppListClientImpl::CreateLauncherSearchIphSession() {
   if (profile_ == nullptr) {
@@ -767,7 +785,7 @@ AppListClientImpl::CreateLauncherSearchIphSession() {
 }
 
 void AppListClientImpl::LoadIcon(int profile_id, const std::string& app_id) {
-  auto* requested_model_updater = profile_model_mappings_[profile_id];
+  auto* requested_model_updater = profile_model_mappings_[profile_id].get();
   if (requested_model_updater != current_model_updater_ ||
       !requested_model_updater) {
     return;
@@ -975,12 +993,56 @@ void AppListClientImpl::MaybeRecordActivatedItemVisibility(
       default_app_name.value());
 }
 
+void AppListClientImpl::OnAssistantNewEntryPointEligibilityReady(
+    Profile* profile,
+    GetAssistantNewEntryPointEligibilityCallback callback) {
+  // A profile might have been switched during the async call. Fail-safe if it
+  // has changed.
+  if (profile != profile_) {
+    std::move(callback).Run(false);
+    return;
+  }
+
+  ash::assistant::AssistantBrowserDelegate* delegate =
+      GetAssistantBrowserDelegateForNewEntryPoint();
+  if (!delegate) {
+    std::move(callback).Run(false);
+    return;
+  }
+
+  base::expected<bool, ash::assistant::AssistantBrowserDelegate::Error>
+      eligibility = delegate->IsNewEntryPointEligibleForPrimaryProfile();
+  CHECK(eligibility.has_value())
+      << "AppListClientImpl is reading a value after waiting the ready event. "
+         "There should be no error.";
+
+  std::move(callback).Run(eligibility.value());
+}
+
+ash::assistant::AssistantBrowserDelegate*
+AppListClientImpl::GetAssistantBrowserDelegateForNewEntryPoint() {
+  if (profile_ == nullptr) {
+    return nullptr;
+  }
+
+  // Assistant new entry point is supported only for a primary profile.
+  bool is_primary_profile = user_manager::UserManager::Get()->IsPrimaryUser(
+      ash::BrowserContextHelper::Get()->GetUserByBrowserContext(profile_));
+  if (!is_primary_profile) {
+    return nullptr;
+  }
+
+  return ash::assistant::AssistantBrowserDelegate::Get();
+}
+
 std::optional<bool> AppListClientImpl::IsNewUser(
     const AccountId& account_id) const {
   // NOTE: Apps Collections in Ash is currently only supported for the primary
-  // user profile. This is a self-imposed restriction.
+  // user profile. This is a self-imposed restriction but may happen in tests.
   auto* const profile = GetProfile(account_id);
-  CHECK(IsPrimaryProfile(profile));
+  if (!IsPrimaryProfile(profile)) {
+    return false;
+  }
   return is_primary_profile_new_user_;
 }
 

@@ -28,8 +28,7 @@ std::unique_ptr<CredentialEditBridge> CredentialEditBridge::MaybeCreate(
     std::vector<std::u16string> existing_usernames,
     password_manager::SavedPasswordsPresenter* saved_passwords_presenter,
     base::OnceClosure dismissal_callback,
-    const base::android::JavaRef<jobject>& context,
-    const base::android::JavaRef<jobject>& settings_launcher) {
+    const base::android::JavaRef<jobject>& context) {
   base::android::ScopedJavaGlobalRef<jobject> java_bridge;
   java_bridge.Reset(Java_CredentialEditBridge_maybeCreate(
       base::android::AttachCurrentThread()));
@@ -39,8 +38,7 @@ std::unique_ptr<CredentialEditBridge> CredentialEditBridge::MaybeCreate(
   return base::WrapUnique(new CredentialEditBridge(
       std::move(credential), is_insecure_credential,
       std::move(existing_usernames), saved_passwords_presenter,
-      std::move(dismissal_callback), context, settings_launcher,
-      std::move(java_bridge)));
+      std::move(dismissal_callback), context, std::move(java_bridge)));
 }
 
 CredentialEditBridge::CredentialEditBridge(
@@ -50,7 +48,6 @@ CredentialEditBridge::CredentialEditBridge(
     password_manager::SavedPasswordsPresenter* saved_passwords_presenter,
     base::OnceClosure dismissal_callback,
     const base::android::JavaRef<jobject>& context,
-    const base::android::JavaRef<jobject>& settings_launcher,
     base::android::ScopedJavaGlobalRef<jobject> java_bridge)
     : credential_(std::move(credential)),
       is_insecure_credential_(is_insecure_credential),
@@ -60,8 +57,8 @@ CredentialEditBridge::CredentialEditBridge(
       java_bridge_(java_bridge) {
   Java_CredentialEditBridge_initAndLaunchUi(
       base::android::AttachCurrentThread(), java_bridge_,
-      reinterpret_cast<intptr_t>(this), context, settings_launcher,
-      credential.blocked_by_user, !credential.federation_origin.opaque());
+      reinterpret_cast<intptr_t>(this), context, credential.blocked_by_user,
+      credential.federation_origin.IsValid());
 }
 
 CredentialEditBridge::~CredentialEditBridge() {
@@ -71,12 +68,8 @@ CredentialEditBridge::~CredentialEditBridge() {
 
 void CredentialEditBridge::GetCredential(JNIEnv* env) {
   Java_CredentialEditBridge_setCredential(
-      env, java_bridge_,
-      base::android::ConvertUTF16ToJavaString(env, GetDisplayURLOrAppName()),
-      base::android::ConvertUTF16ToJavaString(env, credential_.username),
-      base::android::ConvertUTF16ToJavaString(env, credential_.password),
-      base::android::ConvertUTF16ToJavaString(env,
-                                              GetDisplayFederationOrigin()),
+      env, java_bridge_, GetDisplayURLOrAppName(), credential_.username,
+      credential_.password, GetDisplayFederationOrigin(),
       is_insecure_credential_.value());
 }
 
@@ -86,15 +79,12 @@ void CredentialEditBridge::GetExistingUsernames(JNIEnv* env) {
       base::android::ToJavaArrayOfStrings(env, existing_usernames_));
 }
 
-void CredentialEditBridge::SaveChanges(
-    JNIEnv* env,
-    const base::android::JavaParamRef<jstring>& username,
-    const base::android::JavaParamRef<jstring>& password) {
+void CredentialEditBridge::SaveChanges(JNIEnv* env,
+                                       std::u16string& username,
+                                       std::u16string& password) {
   password_manager::CredentialUIEntry updated_credential = credential_;
-  updated_credential.username =
-      base::android::ConvertJavaStringToUTF16(username);
-  updated_credential.password =
-      base::android::ConvertJavaStringToUTF16(password);
+  updated_credential.username = username;
+  updated_credential.password = password;
   saved_passwords_presenter_->EditSavedCredentials(credential_,
                                                    updated_credential);
 }
@@ -104,7 +94,7 @@ void CredentialEditBridge::DeleteCredential(JNIEnv* env) {
   std::move(dismissal_callback_).Run();
 }
 
-void CredentialEditBridge::OnUIDismissed(JNIEnv* env) {
+void CredentialEditBridge::OnUiDismissed(JNIEnv* env) {
   std::move(dismissal_callback_).Run();
 }
 
@@ -135,7 +125,7 @@ std::u16string CredentialEditBridge::GetDisplayURLOrAppName() {
 }
 
 std::u16string CredentialEditBridge::GetDisplayFederationOrigin() {
-  return !credential_.federation_origin.opaque()
+  return credential_.federation_origin.IsValid()
              ? url_formatter::FormatUrl(
                    credential_.federation_origin.GetURL(),
                    url_formatter::kFormatUrlOmitDefaults |

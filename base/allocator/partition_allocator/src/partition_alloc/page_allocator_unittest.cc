@@ -13,16 +13,16 @@
 
 #include "partition_alloc/address_space_randomization.h"
 #include "partition_alloc/build_config.h"
+#include "partition_alloc/buildflags.h"
 #include "partition_alloc/page_allocator_constants.h"
 #include "partition_alloc/partition_alloc_base/cpu.h"
 #include "partition_alloc/partition_alloc_base/logging.h"
 #include "partition_alloc/partition_alloc_base/notreached.h"
-#include "partition_alloc/partition_alloc_buildflags.h"
 #include "partition_alloc/partition_alloc_config.h"
 #include "partition_alloc/tagging.h"
 
 #if defined(LINUX_NAME_REGION)
-#include "base/debug/proc_maps_linux.h"
+#include "partition_alloc/partition_alloc_base/debug/proc_maps_linux.h"
 #endif
 
 #include "testing/gtest/include/gtest/gtest.h"
@@ -265,8 +265,9 @@ TEST(PartitionAllocPageAllocatorTest,
       reinterpret_cast<BTITestFunction>(buffer + invalid_offset);
   EXPECT_EQ(bti_enabled_fn(15), 18);
   // Next, attempt to call the function without the entrypoint.
-  EXPECT_EXIT({ bti_invalid_fn(15); }, testing::KilledBySignal(SIGILL),
-              "");  // Should crash with SIGILL.
+  EXPECT_EXIT(
+      { bti_invalid_fn(15); }, testing::KilledBySignal(SIGILL),
+      "");  // Should crash with SIGILL.
   FreePages(buffer, PageAllocationGranularity());
 #else
   PA_NOTREACHED();
@@ -499,9 +500,9 @@ TEST(PartitionAllocPageAllocatorTest, PageTagging) {
 
   auto is_region_named = [](uintptr_t start_address) {
     std::string proc_maps;
-    EXPECT_TRUE(::base::debug::ReadProcMaps(&proc_maps));
-    std::vector<::base::debug::MappedMemoryRegion> regions;
-    EXPECT_TRUE(::base::debug::ParseProcMaps(proc_maps, &regions));
+    EXPECT_TRUE(base::debug::ReadProcMaps(&proc_maps));
+    std::vector<base::debug::MappedMemoryRegion> regions;
+    EXPECT_TRUE(base::debug::ParseProcMaps(proc_maps, &regions));
 
     bool found = false;
     for (const auto& region : regions) {
@@ -633,7 +634,17 @@ TEST(PartitionAllocPageAllocatorTest, MappedPagesAccounting) {
   }
 }
 
-TEST(PartitionAllocPageAllocatorTest, AllocInaccessibleWillJitLater) {
+#if PA_BUILDFLAG(IS_IOS)
+// MAP_JIT is not supported without the com.apple.developer.cs.allow-jit
+// entitlement which unittests do not have. To toggle W^X of pages
+// BrowserEngineKit library is needed which is not supported
+// until the 17.4 SDK.
+#define MAYBE_AllocInaccessibleWillJitLater \
+  DISABLED_AllocInaccessibleWillJitLater
+#else
+#define MAYBE_AllocInaccessibleWillJitLater AllocInaccessibleWillJitLater
+#endif  // PA_BUILDFLAG(IS_IOS)
+TEST(PartitionAllocPageAllocatorTest, MAYBE_AllocInaccessibleWillJitLater) {
   // Verify that kInaccessibleWillJitLater allows read/write, and read/execute
   // permissions to be set.
   uintptr_t buffer =

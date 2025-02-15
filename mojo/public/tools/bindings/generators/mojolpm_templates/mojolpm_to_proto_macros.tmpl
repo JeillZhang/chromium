@@ -268,14 +268,18 @@ bool ToProto(
   mojolpm_result = ToProto(std::move(input), value);
   output.set_value(value);
   return mojolpm_result;
-{%-     elif kind.value_kind|is_move_only_kind %}
-  return ToProto(std::move(input), *output.mutable_value());
 {%-     elif kind.value_kind|is_nullable_kind and not kind.value_kind|nullable_is_same_kind %}
   if (input) {
+{%-       if kind.value_kind|is_move_only_kind %}
+    return ToProto(std::move(*input), *output.mutable_value());
+{%-       else %}
     return ToProto(*input, *output.mutable_value());
+{%-       endif %}
   } else {
     return true;
   }
+{%-     elif kind.value_kind|is_move_only_kind %}
+  return ToProto(std::move(input), *output.mutable_value());
 {%-     else %}
   return ToProto(input, *output.mutable_value());
 {%-     endif %}
@@ -326,8 +330,9 @@ bool ToProto(
     {{proto_type}}& output) {
 {%-   if struct|is_native_only_kind %}
   {{struct_type}}* new_instance = output.mutable_new_();
-  new_instance->mutable_native_bytes()->resize(sizeof({{mojom_type}}), 0);
-  memcpy(&new_instance->mutable_native_bytes()[0], (void*)&input, sizeof({{mojom_type}}));
+  std::string* bytes = new_instance->mutable_native_bytes();
+  bytes->resize(sizeof({{mojom_type}}), 0);
+  memcpy(bytes->data(), (void*)&input, sizeof({{mojom_type}}));
   return true;
 {%-   elif struct|is_typemapped_kind %}
   // TODO(markbrand): ToProto for typemapped struct kind

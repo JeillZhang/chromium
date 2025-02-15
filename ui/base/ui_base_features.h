@@ -9,7 +9,6 @@
 #include "base/feature_list.h"
 #include "base/metrics/field_trial_params.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "ui/base/buildflags.h"
 
 namespace features {
@@ -17,21 +16,23 @@ namespace features {
 COMPONENT_EXPORT(UI_BASE_FEATURES)
 BASE_DECLARE_FEATURE(kExperimentalFlingAnimation);
 COMPONENT_EXPORT(UI_BASE_FEATURES) BASE_DECLARE_FEATURE(kFocusFollowsCursor);
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 COMPONENT_EXPORT(UI_BASE_FEATURES)
 BASE_DECLARE_FEATURE(kSettingsShowsPerKeyboardSettings);
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 COMPONENT_EXPORT(UI_BASE_FEATURES)
 BASE_DECLARE_FEATURE(kInputMethodSettingsUiUpdate);
-COMPONENT_EXPORT(UI_BASE_FEATURES)
-BASE_DECLARE_FEATURE(kWindowsScrollingPersonality);
-COMPONENT_EXPORT(UI_BASE_FEATURES) bool IsPercentBasedScrollingEnabled();
-COMPONENT_EXPORT(UI_BASE_FEATURES) BASE_DECLARE_FEATURE(kSystemCaptionStyle);
 COMPONENT_EXPORT(UI_BASE_FEATURES) BASE_DECLARE_FEATURE(kSystemKeyboardLock);
 COMPONENT_EXPORT(UI_BASE_FEATURES)
 BASE_DECLARE_FEATURE(kUiCompositorScrollWithLayers);
+COMPONENT_EXPORT(UI_BASE_FEATURES)
+BASE_DECLARE_FEATURE(kUiCompositorUsesLayerLists);
 
 COMPONENT_EXPORT(UI_BASE_FEATURES) bool IsUiGpuRasterizationEnabled();
+
+#if BUILDFLAG(IS_ANDROID)
+COMPONENT_EXPORT(UI_BASE_FEATURES) BASE_DECLARE_FEATURE(kDragDropEmpty);
+#endif  // BUILDFLAG(IS_ANDROID)
 
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_ANDROID)
 COMPONENT_EXPORT(UI_BASE_FEATURES) BASE_DECLARE_FEATURE(kElasticOverscroll);
@@ -42,15 +43,7 @@ COMPONENT_EXPORT(UI_BASE_FEATURES)
 BASE_DECLARE_FEATURE(kApplyNativeOccludedRegionToWindowTracker);
 COMPONENT_EXPORT(UI_BASE_FEATURES)
 BASE_DECLARE_FEATURE(kCalculateNativeWinOcclusion);
-COMPONENT_EXPORT(UI_BASE_FEATURES) BASE_DECLARE_FEATURE(kPointerEventsForTouch);
-COMPONENT_EXPORT(UI_BASE_FEATURES)
-BASE_DECLARE_FEATURE(kScreenPowerListenerForNativeWinOcclusion);
 
-// Returns true if the system should use WM_POINTER events for touch events.
-COMPONENT_EXPORT(UI_BASE_FEATURES) bool IsUsingWMPointerForTouch();
-#endif  // BUILDFLAG(IS_WIN)
-
-#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_CHROMEOS_LACROS)
 COMPONENT_EXPORT(UI_BASE_FEATURES)
 BASE_DECLARE_FEATURE(kApplyNativeOcclusionToCompositor);
 COMPONENT_EXPORT(UI_BASE_FEATURES)
@@ -64,11 +57,9 @@ COMPONENT_EXPORT(UI_BASE_FEATURES)
 extern const char kApplyNativeOcclusionToCompositorTypeThrottle[];
 COMPONENT_EXPORT(UI_BASE_FEATURES)
 extern const char kApplyNativeOcclusionToCompositorTypeThrottleAndRelease[];
-#endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_CHROMEOS_LACROS)
+#endif  // BUILDFLAG(IS_WIN)
 
 #if BUILDFLAG(IS_CHROMEOS)
-COMPONENT_EXPORT(UI_BASE_FEATURES)
-BASE_DECLARE_FEATURE(kImprovedKeyboardShortcuts);
 COMPONENT_EXPORT(UI_BASE_FEATURES)
 bool IsImprovedKeyboardShortcutsEnabled();
 #endif  // BUILDFLAG(IS_CHROMEOS)
@@ -84,8 +75,6 @@ COMPONENT_EXPORT(UI_BASE_FEATURES) bool IsForcedColorsEnabled();
 
 // Used to enable the eye-dropper in the refresh color-picker.
 COMPONENT_EXPORT(UI_BASE_FEATURES) BASE_DECLARE_FEATURE(kEyeDropper);
-// TODO(https://crbug.com/329678163): This flag should be removed.
-COMPONENT_EXPORT(UI_BASE_FEATURES) extern const char kEyeDropperNotSupported[];
 COMPONENT_EXPORT(UI_BASE_FEATURES) bool IsEyeDropperEnabled();
 
 COMPONENT_EXPORT(UI_BASE_FEATURES)
@@ -100,7 +89,7 @@ COMPONENT_EXPORT(UI_BASE_FEATURES)
 BASE_DECLARE_FEATURE(kKeyboardAccessibleTooltip);
 COMPONENT_EXPORT(UI_BASE_FEATURES) bool IsKeyboardAccessibleTooltipEnabled();
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 COMPONENT_EXPORT(UI_BASE_FEATURES) BASE_DECLARE_FEATURE(kDeprecateAltClick);
 
 COMPONENT_EXPORT(UI_BASE_FEATURES)
@@ -113,24 +102,32 @@ COMPONENT_EXPORT(UI_BASE_FEATURES)
 bool IsNotificationsIgnoreRequireInteractionEnabled();
 
 COMPONENT_EXPORT(UI_BASE_FEATURES)
-BASE_DECLARE_FEATURE(kShortcutCustomization);
-
-COMPONENT_EXPORT(UI_BASE_FEATURES)
-bool IsShortcutCustomizationEnabled();
-
-COMPONENT_EXPORT(UI_BASE_FEATURES)
-BASE_DECLARE_FEATURE(kLacrosResourcesFileSharing);
-
-COMPONENT_EXPORT(UI_BASE_FEATURES)
 BASE_DECLARE_FEATURE(kSupportF11AndF12KeyShortcuts);
 
 COMPONENT_EXPORT(UI_BASE_FEATURES) bool AreF11AndF12ShortcutsEnabled();
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 #if BUILDFLAG(IS_OZONE)
 COMPONENT_EXPORT(UI_BASE_FEATURES)
 BASE_DECLARE_FEATURE(kOzoneBubblesUsePlatformWidgets);
+
+COMPONENT_EXPORT(UI_BASE_FEATURES)
+BASE_DECLARE_FEATURE(kWaylandLinuxDrmSyncobj);
+
+COMPONENT_EXPORT(UI_BASE_FEATURES)
+BASE_DECLARE_FEATURE(kWaylandPerSurfaceScale);
+
+COMPONENT_EXPORT(UI_BASE_FEATURES)
+BASE_DECLARE_FEATURE(kWaylandTextInputV3);
+
+COMPONENT_EXPORT(UI_BASE_FEATURES)
+BASE_DECLARE_FEATURE(kWaylandUiScale);
 #endif  // BUILDFLAG(IS_OZONE)
+
+#if BUILDFLAG(IS_LINUX)
+COMPONENT_EXPORT(UI_BASE_FEATURES)
+BASE_DECLARE_FEATURE(kOverrideDefaultOzonePlatformHintToAuto);
+#endif  // BUILDFLAG(IS_LINUX)
 
 // Indicates whether DrmOverlayManager should used the synchronous API to
 // perform pageflip tests.
@@ -191,46 +188,23 @@ COMPONENT_EXPORT(UI_BASE_FEATURES) bool IsRawDrawUsingMSAA();
 
 COMPONENT_EXPORT(UI_BASE_FEATURES) BASE_DECLARE_FEATURE(kStylusSpecificTapSlop);
 
-// This feature indicates that this device is approved for utilizing variable
-// refresh rates. This flag is added by cros-config and not exposed in the
-// chrome://flags UI.
-COMPONENT_EXPORT(UI_BASE_FEATURES)
-BASE_DECLARE_FEATURE(kVariableRefreshRateAvailable);
-// Enables the variable refresh rate feature for Borealis gaming only. If this
-// flag is set by Finch, it requires the availability flag to also be true. If
-// this flag is overridden by the user, then the availability flag is ignored.
-COMPONENT_EXPORT(UI_BASE_FEATURES)
-BASE_DECLARE_FEATURE(kEnableVariableRefreshRate);
 // This feature indicates that this device should have variable refresh rates
 // enabled by default if available. This overrides the default value of
-// |kEnableVariableRefreshRate|. This flag is added by USE and not exposed in
-// the chrome://flags UI.
+// |kEnableVariableRefreshRate|. This flag is added by cros-config and not
+// exposed in the chrome://flags UI.
 COMPONENT_EXPORT(UI_BASE_FEATURES)
-BASE_DECLARE_FEATURE(kVariableRefreshRateDefaultEnabled);
+BASE_DECLARE_FEATURE(kVariableRefreshRateAvailable);
+// Enables the variable refresh rate feature for Borealis gaming only.
+COMPONENT_EXPORT(UI_BASE_FEATURES)
+BASE_DECLARE_FEATURE(kEnableVariableRefreshRate);
 COMPONENT_EXPORT(UI_BASE_FEATURES) bool IsVariableRefreshRateEnabled();
 // Enables the variable refresh rate feature at all times.
 COMPONENT_EXPORT(UI_BASE_FEATURES)
 BASE_DECLARE_FEATURE(kEnableVariableRefreshRateAlwaysOn);
 COMPONENT_EXPORT(UI_BASE_FEATURES) bool IsVariableRefreshRateAlwaysOn();
 
-COMPONENT_EXPORT(UI_BASE_FEATURES) BASE_DECLARE_FEATURE(kLacrosColorManagement);
-COMPONENT_EXPORT(UI_BASE_FEATURES)
-bool IsLacrosColorManagementEnabled();
-
-COMPONENT_EXPORT(UI_BASE_FEATURES) bool IsChromeRefresh2023();
-
 COMPONENT_EXPORT(UI_BASE_FEATURES)
 BASE_DECLARE_FEATURE(kBubbleMetricsApi);
-
-#if BUILDFLAG(IS_APPLE)
-// Font Smoothing, a CoreText technique, simulates optical sizes to enhance text
-// readability at smaller scales. In practice, it leads to an increased
-// perception of text weight, creating discrepancies between renderings in UX
-// design tools and actual macOS displays. This feature is only effective when
-// ChromeRefresh2023 is enabled.
-COMPONENT_EXPORT(UI_BASE_FEATURES)
-BASE_DECLARE_FEATURE(kCr2023MacFontSmoothing);
-#endif  // BUILDFLAG(IS_APPLE)
 
 #if BUILDFLAG(IS_WIN)
 // Use font settings for contrast and gamma as specified in system settings.
@@ -244,6 +218,17 @@ BASE_DECLARE_FEATURE(kBubbleFrameViewTitleIsHeading);
 
 COMPONENT_EXPORT(UI_BASE_FEATURES)
 BASE_DECLARE_FEATURE(kEnableGestureBeginEndTypes);
+
+// Use the UTF-8 encoding for SVG images instead of UTF-16.
+COMPONENT_EXPORT(UI_BASE_FEATURES)
+BASE_DECLARE_FEATURE(kUseUtf8EncodingForSvgImage);
+
+// Copy bookmark and write url format to clipboard with empty title.
+COMPONENT_EXPORT(UI_BASE_FEATURES)
+BASE_DECLARE_FEATURE(kWriteBookmarkWithoutTitle);
+
+COMPONENT_EXPORT(UI_BASE_FEATURES)
+BASE_DECLARE_FEATURE(kAsyncFullscreenWindowState);
 
 }  // namespace features
 

@@ -187,7 +187,8 @@ void MessagePumpCFRunLoopBase::ScheduleDelayedWork(
   DCHECK(!next_work_info.is_immediate());
 
   // The tolerance needs to be set before the fire date or it may be ignored.
-  if (g_timer_slack.load(std::memory_order_relaxed) &&
+  if (GetAlignWakeUpsEnabled() &&
+      g_timer_slack.load(std::memory_order_relaxed) &&
       !next_work_info.delayed_run_time.is_max() &&
       delayed_work_leeway_ != next_work_info.leeway) {
     if (!next_work_info.leeway.is_zero()) {
@@ -731,12 +732,11 @@ MessagePumpUIApplication::MessagePumpUIApplication()
 MessagePumpUIApplication::~MessagePumpUIApplication() = default;
 
 void MessagePumpUIApplication::DoRun(Delegate* delegate) {
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 bool MessagePumpUIApplication::DoQuit() {
-  NOTREACHED_IN_MIGRATION();
-  return false;
+  NOTREACHED();
 }
 
 void MessagePumpUIApplication::Attach(Delegate* delegate) {

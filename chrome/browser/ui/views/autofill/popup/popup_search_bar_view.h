@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_UI_VIEWS_AUTOFILL_POPUP_POPUP_SEARCH_BAR_VIEW_H_
 
 #include <string>
+#include <string_view>
 
 #include "base/functional/callback.h"
 #include "base/memory/raw_ref.h"
@@ -40,7 +41,7 @@ class PopupSearchBarView : public views::View,
    public:
     // Called when text in the textfield changes. Calls are throttled with
     // a delay of kInputChangeCallbackDelay to avoid excessive triggering.
-    virtual void SearchBarOnInputChanged(const std::u16string& text) = 0;
+    virtual void SearchBarOnInputChanged(std::u16string_view text) = 0;
 
     // Called when the controls (textfield and clear button) lose focus.
     virtual void SearchBarOnFocusLost() = 0;
@@ -85,8 +86,8 @@ class PopupSearchBarView : public views::View,
   void SetInputTextForTesting(const std::u16string& text);
   gfx::Point GetClearButtonScreenCenterPointForTesting() const;
 
-  // TODO(b/325246516): Add methods to support communication with its hosting
-  // poopup view.
+  // TODO(crbug.com/325246516): Add methods to support communication with its
+  // hosting poopup view.
 
  private:
   void OnInputChanged();

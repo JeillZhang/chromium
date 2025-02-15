@@ -4,6 +4,7 @@
 
 #include "components/autofill/core/browser/geo/alternative_state_name_map_updater.h"
 
+#include <algorithm>
 #include <memory>
 #include <string>
 #include <vector>
@@ -14,13 +15,12 @@
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/logging.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/task_traits.h"
 #include "base/task/thread_pool.h"
-#include "components/autofill/core/browser/address_data_manager.h"
+#include "components/autofill/core/browser/data_manager/addresses/address_data_manager.h"
 #include "components/autofill/core/browser/geo/country_data.h"
 #include "components/autofill/core/common/autofill_features.h"
 #include "components/autofill/core/common/autofill_l10n_util.h"
@@ -69,7 +69,7 @@ bool AlternativeStateNameMapUpdater::ContainsState(
   l10n::CaseInsensitiveCompare compare;
 
   // Returns true if |str1| is same as |str2| in a case-insensitive comparison.
-  return base::ranges::any_of(
+  return std::ranges::any_of(
       stripped_alternative_state_names,
       [&](const AlternativeStateNameMap::StateName& text) {
         return compare.StringsEqual(text.value(),
@@ -94,7 +94,7 @@ void AlternativeStateNameMapUpdater::PopulateAlternativeStateNameMap(
                          address_data_manager_->app_locale())));
 
     const AlternativeStateNameMap::StateName state_name(profile->GetInfo(
-        AutofillType(ADDRESS_HOME_STATE), address_data_manager_->app_locale()));
+        ADDRESS_HOME_STATE, address_data_manager_->app_locale()));
     const AlternativeStateNameMap::StateName normalized_state =
         AlternativeStateNameMap::NormalizeStateName(state_name);
 

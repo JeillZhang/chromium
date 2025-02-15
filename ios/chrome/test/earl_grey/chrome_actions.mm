@@ -46,6 +46,10 @@ id<GREYAction> TapWebElementWithIdInFrame(const std::string& element_id,
                                           inFrameWithIndex:frame_index]];
 }
 
+id<GREYAction> LongPressOnHiddenElement() {
+  return [ChromeActionsAppInterface longPressOnHiddenElement];
+}
+
 id<GREYAction> ScrollToTop() {
   return [ChromeActionsAppInterface scrollToTop];
 }
@@ -63,6 +67,10 @@ id<GREYAction> SwipeToShowDeleteButton() {
 
 id<GREYAction> AccessibilitySwipeRight() {
   return [ChromeActionsAppInterface accessibilitySwipeRight];
+}
+
+id<GREYAction> OverscrollSwipe(GREYDirection direction) {
+  return [ChromeActionsAppInterface overscrollSwipe:direction];
 }
 
 }  // namespace chrome_test_util

@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/installer/util/set_reg_value_work_item.h"
 
 #include "base/debug/alias.h"
@@ -44,7 +49,7 @@ void BinaryDataToString(const std::vector<uint8_t>& binary_data,
 
 }  // namespace
 
-SetRegValueWorkItem::~SetRegValueWorkItem() {}
+SetRegValueWorkItem::~SetRegValueWorkItem() = default;
 
 SetRegValueWorkItem::SetRegValueWorkItem(HKEY predefined_root,
                                          const std::wstring& key_path,
@@ -237,7 +242,7 @@ void SetRegValueWorkItem::RollbackImpl() {
                             previous_type_);
     VLOG(1) << "rollback: restoring " << value_name_ << " error: " << result;
   } else {
-    NOTREACHED_IN_MIGRATION();
+    NOTREACHED();
   }
 
   status_ = VALUE_ROLL_BACK;

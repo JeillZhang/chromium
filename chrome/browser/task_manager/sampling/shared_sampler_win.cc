@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/browser/task_manager/sampling/shared_sampler.h"
 
 #include <windows.h>
@@ -53,7 +58,7 @@ class ByteBuffer {
   ByteBuffer(const ByteBuffer&) = delete;
   ByteBuffer& operator=(const ByteBuffer&) = delete;
 
-  ~ByteBuffer() {}
+  ~ByteBuffer() = default;
 
   BYTE* data() { return data_.get(); }
 
@@ -82,16 +87,14 @@ class ByteBuffer {
 bool QuerySystemProcessInformation(ByteBuffer* buffer) {
   HMODULE ntdll = ::GetModuleHandle(L"ntdll.dll");
   if (!ntdll) {
-    NOTREACHED_IN_MIGRATION();
-    return false;
+    NOTREACHED();
   }
 
   NTQUERYSYSTEMINFORMATION nt_query_system_information_ptr =
       reinterpret_cast<NTQUERYSYSTEMINFORMATION>(
           ::GetProcAddress(ntdll, "NtQuerySystemInformation"));
   if (!nt_query_system_information_ptr) {
-    NOTREACHED_IN_MIGRATION();
-    return false;
+    NOTREACHED();
   }
 
   NTSTATUS result;
@@ -103,8 +106,8 @@ bool QuerySystemProcessInformation(ByteBuffer* buffer) {
     ULONG buffer_size = static_cast<ULONG>(buffer->capacity());
 
     if (g_query_system_information_for_test) {
-      data_size =
-          g_query_system_information_for_test(buffer->data(), buffer_size);
+      data_size = g_query_system_information_for_test(  // IN-TEST
+          base::span(buffer->data(), buffer_size));
       result =
           (data_size > buffer_size) ? STATUS_BUFFER_TOO_SMALL : STATUS_SUCCESS;
     } else {
@@ -135,7 +138,9 @@ bool QuerySystemProcessInformation(ByteBuffer* buffer) {
 // Per-thread data extracted from SYSTEM_THREAD_INFORMATION and stored in a
 // snapshot. This structure is accessed only on the worker thread.
 struct ThreadData {
-  base::PlatformThreadId thread_id;
+  // Don't use base::PlatformThreadId for thread id, because
+  // SYSTEM_THREAD_INFORMATION uses a HANDLE for the utid.
+  HANDLE thread_id;
   ULONG context_switches;
 };
 
@@ -248,7 +253,7 @@ SharedSampler::SharedSampler(
   DETACH_FROM_SEQUENCE(worker_pool_sequenced_checker_);
 }
 
-SharedSampler::~SharedSampler() {}
+SharedSampler::~SharedSampler() = default;
 
 int64_t SharedSampler::GetSupportedFlags() const {
   return REFRESH_TYPE_IDLE_WAKEUPS | REFRESH_TYPE_START_TIME |
@@ -353,7 +358,7 @@ std::vector<base::FilePath> SharedSampler::GetSupportedImageNames() {
 }
 
 bool SharedSampler::IsSupportedImageName(
-    base::FilePath::StringPieceType image_name) const {
+    base::FilePath::StringViewType image_name) const {
   for (const base::FilePath& supported_name : supported_image_names_) {
     if (base::FilePath::CompareEqualIgnoreCase(image_name,
                                                supported_name.value()))
@@ -427,8 +432,7 @@ std::unique_ptr<ProcessDataSnapshot> SharedSampler::CaptureSnapshot() {
             continue;
 
           ThreadData thread_data;
-          thread_data.thread_id = static_cast<base::PlatformThreadId>(
-              reinterpret_cast<uintptr_t>(ti->ClientId.UniqueThread));
+          thread_data.thread_id = ti->ClientId.UniqueThread;
           thread_data.context_switches = ti->ContextSwitchCount;
           process_data.threads.push_back(thread_data);
         }

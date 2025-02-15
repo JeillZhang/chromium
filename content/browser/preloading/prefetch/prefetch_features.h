@@ -11,9 +11,10 @@
 
 namespace features {
 
-// If enabled, then prefetch requests from speculation rules should use the code
-// in content/browser/preloading/prefetch/ instead of
-// chrome/browser/preloadingprefetch/prefetch_proxy/.
+// This feature was used to launch the prefetch migration from embedder layer to
+// content/, and this work has finished and the old implemnetation was deleted.
+// Now this flag is just for injecting parameters through field trials as an
+// umberella feature.
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kPrefetchUseContentRefactor);
 
 // If enabled, PrefetchContainer can be used for more than one navigation.
@@ -25,14 +26,13 @@ CONTENT_EXPORT BASE_DECLARE_FEATURE(kPrefetchReusable);
 CONTENT_EXPORT extern const base::FeatureParam<int>
     kPrefetchReusableBodySizeLimit;
 
+CONTENT_EXPORT BASE_DECLARE_FEATURE_PARAM(bool,
+                                          kPrefetchReusableUseNewWaitLoop);
+
 // If enabled, navigational prefetch is scoped to the referring document's
 // network isolation key instead of the old behavior of the referring document
 // itself. See crbug.com/1502326
 BASE_DECLARE_FEATURE(kPrefetchNIKScope);
-
-// If enabled, a will retrieve and store responses from/to the HTTP cache
-// whenever possible.
-CONTENT_EXPORT BASE_DECLARE_FEATURE(kPrefetchUsesHTTPCache);
 
 // If enabled, prefetches may include client hints request headers.
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kPrefetchClientHints);
@@ -54,9 +54,6 @@ CONTENT_EXPORT extern const base::FeatureParam<
     PrefetchClientHintsCrossSiteBehavior>
     kPrefetchClientHintsCrossSiteBehavior;
 
-// If enabled, prefetches may occur in off-the-record browser contexts.
-CONTENT_EXPORT BASE_DECLARE_FEATURE(kPrefetchOffTheRecord);
-
 // If enabled, then prefetch serving will apply mitigations if it may have been
 // contaminated by cross-partition state.
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kPrefetchStateContaminationMitigation);
@@ -69,14 +66,22 @@ CONTENT_EXPORT extern const base::FeatureParam<bool>
 // If explicitly disabled, prefetch proxy is not used.
 BASE_DECLARE_FEATURE(kPrefetchProxy);
 
-// Stops waiting for response head when a prefetch is cancelled.
-// TOOD(https://crbug.com/342197918): This should be inlined fairly briskly;
-// it's only here to make shipping aggressively safer.
-CONTENT_EXPORT BASE_DECLARE_FEATURE(kPrefetchUnblockOnCancel);
-
 // If enabled, responses with an operative Cookie-Indices will not be used
 // if the relevant cookie values have changed.
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kPrefetchCookieIndices);
+
+// Does not enable any new behaviour; is only used to parameterize prefetch
+// limit values (see content/browser/preloading/prefetch/prefetch_params.cc).
+CONTENT_EXPORT BASE_DECLARE_FEATURE(kPrefetchNewLimits);
+
+// If enabled, use the new wait loop, which is driven by
+// `PrefetchMatchResolver2` instead of `PrefetchService`.
+CONTENT_EXPORT BASE_DECLARE_FEATURE(kPrefetchNewWaitLoop);
+
+// Fix for prefetching a URL controlled by a ServiceWorker without fetch
+// handler. Currently this stops prefetching for such cases
+// (https://crbug.com/379076354).
+CONTENT_EXPORT BASE_DECLARE_FEATURE(kPrefetchServiceWorkerNoFetchHandlerFix);
 
 }  // namespace features
 

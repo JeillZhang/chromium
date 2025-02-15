@@ -4,7 +4,7 @@
 
 import '//resources/ash/common/cr_elements/cros_color_overrides.css.js';
 
-import {PolymerElementProperties} from '//resources/polymer/v3_0/polymer/interfaces.js';
+import type {PolymerElementProperties} from '//resources/polymer/v3_0/polymer/interfaces.js';
 import {PolymerElement} from '//resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {getTemplate} from './oobe_personalized_apps_list.html.js';
@@ -130,6 +130,17 @@ export class OobePersonalizedAppsList extends OobePersonalizedAppsListBase {
     this.loadedIconsCount = 0;
     this.categoriesItemRendered = [];
     this.appsList = [];
+    this.resetScroll();
+  }
+
+  /**
+   * Reset scroll position to the top between screen's data changes.
+   */
+  private resetScroll(): void {
+    const appsList = this.shadowRoot?.querySelector('#personalizedApps');
+    if (appsList) {
+      appsList.scrollTop = 0;
+    }
   }
 
   itemRenderedChanged(_itemRendered: CategoriesItemList): void {
@@ -211,7 +222,7 @@ export class OobePersonalizedAppsList extends OobePersonalizedAppsListBase {
   }
 
   private getAppId(appId: string): string {
-    return 'cr-button-' + appId;
+    return 'cr-checkbox-' + appId;
   }
 
   private getWebViewId(appId: string): string {

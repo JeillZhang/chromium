@@ -16,7 +16,7 @@ import org.jni_zero.JNINamespace;
 public class DataSharingSDKDelegateAndroidTestSupport {
 
     @CalledByNative
-    private static void setUpBridge(DataSharingSDKDelegateBridge bridge) {
-        bridge.overrideDelegateForTesting(new DataSharingSDKDelegateTestImpl());
+    private static DataSharingSDKDelegate createDelegateTestImpl() {
+        return new DataSharingSDKDelegateTestImpl();
     }
 }

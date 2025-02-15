@@ -17,10 +17,10 @@ import static org.chromium.chrome.browser.notifications.channels.ChromeChannelDe
 import android.app.NotificationChannel;
 import android.os.Build;
 
+import org.junit.After;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.Mockito;
@@ -29,7 +29,6 @@ import org.robolectric.annotation.Config;
 
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Feature;
-import org.chromium.base.test.util.Features;
 import org.chromium.chrome.browser.browserservices.intents.BrowserServicesIntentDataProvider;
 import org.chromium.chrome.browser.browserservices.intents.BrowserServicesIntentDataProvider.TwaDisclosureUi;
 import org.chromium.chrome.browser.browserservices.ui.view.DisclosureInfobar;
@@ -37,13 +36,14 @@ import org.chromium.chrome.browser.browserservices.ui.view.DisclosureNotificatio
 import org.chromium.chrome.browser.browserservices.ui.view.DisclosureSnackbar;
 import org.chromium.chrome.browser.lifecycle.ActivityLifecycleDispatcher;
 import org.chromium.chrome.test.AutomotiveContextWrapperTestRule;
+import org.chromium.components.browser_ui.notifications.BaseNotificationManagerProxyFactory;
 import org.chromium.components.browser_ui.notifications.NotificationManagerProxy;
+import org.chromium.components.browser_ui.notifications.NotificationProxyUtils;
 
 /** Tests for {@link DisclosureUiPicker}. */
 @RunWith(BaseRobolectricTestRunner.class)
 @Config(manifest = Config.NONE, sdk = Build.VERSION_CODES.O)
 public class DisclosureUiPickerTest {
-    @Rule public TestRule mProcessor = new Features.JUnitProcessor();
 
     @Mock public DisclosureInfobar mInfobar;
     @Mock public DisclosureSnackbar mSnackbar;
@@ -64,15 +64,19 @@ public class DisclosureUiPickerTest {
         MockitoAnnotations.initMocks(this);
 
         when(mIntentDataProvider.getTwaDisclosureUi()).thenReturn(TwaDisclosureUi.DEFAULT);
-
+        BaseNotificationManagerProxyFactory.setInstanceForTesting(mNotificationManager);
         mPicker =
                 new DisclosureUiPicker(
-                        new FilledLazy<>(mInfobar),
-                        new FilledLazy<>(mSnackbar),
-                        new FilledLazy<>(mNotification),
+                        () -> mInfobar,
+                        () -> mSnackbar,
+                        () -> mNotification,
                         mIntentDataProvider,
-                        mNotificationManager,
                         mLifecycleDispatcher);
+    }
+
+    @After
+    public void tearDown() {
+        NotificationProxyUtils.setNotificationEnabledForTest(null);
     }
 
     @Test
@@ -138,7 +142,7 @@ public class DisclosureUiPickerTest {
     }
 
     private void setNotificationsEnabled(boolean enabled) {
-        when(mNotificationManager.areNotificationsEnabled()).thenReturn(enabled);
+        NotificationProxyUtils.setNotificationEnabledForTest(enabled);
     }
 
     private void setChannelEnabled(String channelId, boolean enabled) {

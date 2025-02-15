@@ -17,6 +17,17 @@
 
 namespace blink {
 class Document;
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
+//
+// LINT.IfChange(FirstCookieRequest)
+enum class FirstCookieRequest {
+  kFirstOperationWasSet = 0,
+  kFirstOperationWasGet = 1,
+  kFirstOperationWasCookiesEnabled = 2,
+  kMaxValue = kFirstOperationWasCookiesEnabled,
+};
+// LINT.ThenChange(//tools/metrics/histograms/metadata/blink/enums.xml:FirstCookieRequest)
 
 class CORE_EXPORT CookieJar : public GarbageCollected<CookieJar> {
  public:
@@ -46,7 +57,7 @@ class CORE_EXPORT CookieJar : public GarbageCollected<CookieJar> {
 
   // Returns true if last_cookies_ is not guaranteed to be up to date and an IPC
   // is needed to get the current cookie string.
-  bool IPCNeeded();
+  bool IPCNeeded(bool should_apply_devtools_overrides);
 
   // Updates the fake cookie cache after a
   // RestrictedCookieManager::GetCookiesString request returns.
@@ -58,6 +69,19 @@ class CORE_EXPORT CookieJar : public GarbageCollected<CookieJar> {
   void UpdateCacheAfterGetRequest(const KURL& cookie_url,
                                   const String& cookie_string,
                                   uint64_t new_version);
+
+  // This mechanism is designed to capture and isolate only the very first
+  // request to cookie. We specifically focus on whether this initial action is
+  // a GET or a SET operation or check to CookiesEnabled.
+
+  // We want to evaluate the possible performance gain of returning the local
+  // cache version and/or cookie string on SET. Especially, if SET is the first
+  // request.
+  void LogFirstCookieRequest(FirstCookieRequest first_cookie_request);
+
+  // Checks with probe function if devtools is active. If so, devtools overrides
+  // are applied to the cookie operation.
+  bool ShouldApplyDevtoolsOverrides() const;
 
   HeapMojoRemote<network::mojom::blink::RestrictedCookieManager> backend_;
   Member<blink::Document> document_;
@@ -81,9 +105,14 @@ class CORE_EXPORT CookieJar : public GarbageCollected<CookieJar> {
   std::optional<mojo::SharedMemoryVersionClient> shared_memory_version_client_;
   uint64_t last_version_ = mojo::shared_memory_version::kInvalidVersion;
 
+  // Last decision of if devtools overrides needed to be applied. If the
+  // decision changes, IPC is needed to get cookie with new devtools overrides
+  bool last_devtools_overrides_were_applied = false;
+
   // Last received cookie string. Null if there is no last cached-version. Can
   // be empty since that is a valid cookie string.
   String last_cookies_;
+  bool is_first_operation_ = true;
 };
 
 }  // namespace blink

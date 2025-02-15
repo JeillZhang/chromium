@@ -7,9 +7,11 @@
 
 #include <stddef.h>
 
+#include <array>
 #include <map>
 #include <memory>
 #include <optional>
+#include <ranges>
 #include <string>
 #include <utility>
 #include <vector>
@@ -17,7 +19,6 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
-#include "base/ranges/ranges.h"
 #include "base/strings/utf_offset_string_conversions.h"
 #include "build/build_config.h"
 #include "components/omnibox/browser/actions/omnibox_action_concepts.h"
@@ -25,10 +26,11 @@
 #include "components/omnibox/browser/autocomplete_match_type.h"
 #include "components/omnibox/browser/buildflags.h"
 #include "components/omnibox/browser/suggestion_answer.h"
-#include "components/query_tiles/tile.h"
 #include "components/search_engines/template_url.h"
 #include "components/url_formatter/url_formatter.h"
 #include "third_party/metrics_proto/omnibox_event.pb.h"
+#include "third_party/metrics_proto/omnibox_scoring_signals.pb.h"
+#include "third_party/omnibox_proto/answer_type.pb.h"
 #include "third_party/omnibox_proto/groups.pb.h"
 #include "third_party/omnibox_proto/navigational_intent.pb.h"
 #include "third_party/omnibox_proto/rich_answer_template.pb.h"
@@ -45,7 +47,6 @@
 
 class AutocompleteProvider;
 class OmniboxAction;
-class SuggestionAnswer;
 class TemplateURL;
 class TemplateURLService;
 
@@ -64,7 +65,7 @@ const char kACMatchPropertyContentsStartIndex[] = "match contents start index";
 // scoring non-default match.
 const char kACMatchPropertyScoreBoostedFrom[] = "score_boosted_from";
 
-// RichAutocompletionParams ---------------------------------------------------
+// Util structs/enums ----------------------------------------------------------
 
 // `RichAutocompletionParams` is a cache for the params used by
 // `TryRichAutocompletion()`. `TryRichAutocompletion()` is called about 80 times
@@ -88,6 +89,29 @@ struct RichAutocompletionParams {
   bool autocomplete_prefer_urls_over_prefixes;
 };
 
+enum class IphType {
+  kNone,
+  // '@gemini' promo; shown in zero state.
+  kGemini,
+  // Featured search promo; shown in zero state.
+  kFeaturedEnterpriseSearch,
+  // Embeddings' setting promo when embeddings are disabled; shown in '@history'
+  // scope.
+  kHistoryEmbeddingsSettingsPromo,
+  // Disclaimer when embeddings are enabled; shown in '@history' scope.
+  kHistoryEmbeddingsDisclaimer,
+  // '@history' promo when embeddings are disabled; shown in zero state.
+  kHistoryScopePromo,
+  // '@history' promo when embeddings are enabled; shown in zero state.
+  kHistoryEmbeddingsScopePromo,
+};
+
+enum class FeedbackType {
+  kNone,
+  kThumbsUp,
+  kThumbsDown,
+};
+
 // AutocompleteMatch ----------------------------------------------------------
 
 // A single result line with classified spans.  The autocomplete popup displays
@@ -98,8 +122,7 @@ struct RichAutocompletionParams {
 // example, a search result may say "Search for asdf" as the description, but
 // "asdf" should appear in the box.
 struct AutocompleteMatch {
-  using ScoringSignals =
-      ::metrics::OmniboxEventProto::Suggestion::ScoringSignals;
+  using ScoringSignals = ::metrics::OmniboxScoringSignals;
 
   // Autocomplete matches contain strings that are classified according to a
   // separate vector of styles.  This vector associates flags with particular
@@ -199,7 +222,15 @@ struct AutocompleteMatch {
     kMaxValue = kShortcutTextPrefix,
   };
 
-  static const char* const kDocumentTypeStrings[];
+  static constexpr auto kDocumentTypeStrings = std::to_array<const char*>(
+      {"none", "drive_docs", "drive_forms", "drive_sheets", "drive_slides",
+       "drive_image", "drive_pdf", "drive_video", "drive_folder",
+       "drive_other"});
+
+  static_assert(kDocumentTypeStrings.size() ==
+                    static_cast<int>(DocumentType::DOCUMENT_TYPE_SIZE),
+                "Sizes of AutocompleteMatch::kDocumentTypeStrings and "
+                "AutocompleteMatch::DocumentType don't match.");
 
   // Return a string version of the core type values. Only used for
   // `RecordAdditionalInfo()`.
@@ -265,14 +296,9 @@ struct AutocompleteMatch {
 #endif
 
 #if (!BUILDFLAG(IS_ANDROID) || BUILDFLAG(ENABLE_VR)) && !BUILDFLAG(IS_IOS)
-  // TODO(b/327497146) Migrate SuggestionAnswer::AnswerType to
-  // omnibox::RichAnswerTemplate::AnswerType and remove function.
-  // Converts SuggestionAnswer::AnswerType to an answer vector icon.
-  static const gfx::VectorIcon& AnswerTypeToAnswerIconDeprecated(int type);
-
-  // Converts omnibox::RichAnswerTemplate::AnswerType to an answer vector icon.
+  // Converts omnibox::AnswerType to an answer vector icon.
   static const gfx::VectorIcon& AnswerTypeToAnswerIcon(
-      omnibox::RichAnswerTemplate::AnswerType type);
+      omnibox::AnswerType type);
 
   // Gets the vector icon identifier for the icon to be shown for this match. If
   // `is_bookmark` is true, returns a bookmark icon rather than what the type
@@ -406,15 +432,11 @@ struct AutocompleteMatch {
   // - If the match's keyword is known, it can be provided in `keyword`.
   //   Otherwise, it can be left empty and the template URL (if any) is
   //   determined from the destination's hostname.
-  // - If `normalize_search_terms` is true, the search terms in the final URL
-  //   will be converted to lowercase with extra whitespace characters
-  //   collapsed.
   static GURL GURLToStrippedGURL(const GURL& url,
                                  const AutocompleteInput& input,
                                  const TemplateURLService* template_url_service,
                                  const std::u16string& keyword,
-                                 const bool keep_search_intent_params,
-                                 const bool normalize_search_terms);
+                                 const bool keep_search_intent_params);
 
   // Sets the |match_in_scheme| and |match_in_subdomain| flags based on the
   // provided |url| and list of substring |match_positions|. |match_positions|
@@ -470,19 +492,24 @@ struct AutocompleteMatch {
   bool HasInstantKeyword(TemplateURLService* template_url_service) const;
 
   // Gets data relevant to whether there should be any special keyword-related
-  // UI shown for this match.  If this match represents a selected keyword, i.e.
-  // the UI should be "in keyword mode", |keyword_out| will be set to the
-  // keyword and |is_keyword_hint| will be set to false.  If this match has a
-  // non-null |associated_keyword|, i.e. we should show a "Press [tab] to search
-  // ___" hint and allow the user to toggle into keyword mode, |keyword_out|
-  // will be set to the associated keyword and |is_keyword_hint| will be set to
-  // true.  Note that only one of these states can be in effect at once.  In all
-  // other cases, |keyword_out| will be cleared, even when our member variable
-  // |keyword| is non-empty -- such as with non-substituting keywords or matches
-  // that represent searches using the default search engine.  See also
-  // GetSubstitutingExplicitlyInvokedKeyword().
+  // UI shown for this match. If this match represents a selected keyword, i.e.
+  // the UI should be "in keyword mode", `keyword_out` will be set to the
+  // keyword and `is_keyword_hint` will be set to false. If this match has a
+  // non-null `associated_keyword`, i.e. we should show a "Press [tab] to search
+  // ___" hint and allow the user to toggle into keyword mode, `keyword_out`
+  // will be set to the associated keyword and `is_keyword_hint` will be set to
+  // true. Note that only one of these states can be in effect at once. In all
+  // other cases, `keyword_out` will be cleared, even when our member variable
+  // `keyword` is non-empty -- such as with non-substituting keywords or matches
+  // that represent searches using the default search engine. See also
+  // `GetSubstitutingExplicitlyInvokedKeyword()`. `keyword_placeholder_out` will
+  // be set to any placeholder text the keyword wants to display. Set for both
+  // hint and non-hint keyword modes. `is_history_embeddings_enabled` will
+  // affect the placeholder text for the @history keyword.
   void GetKeywordUIState(TemplateURLService* template_url_service,
+                         bool is_history_embeddings_enabled,
                          std::u16string* keyword_out,
+                         std::u16string* keyword_placeholder_out,
                          bool* is_keyword_hint) const;
 
   // Returns |keyword|, but only if it represents a substituting keyword that
@@ -493,6 +520,12 @@ struct AutocompleteMatch {
   // should show up as being "in keyword mode".
   std::u16string GetSubstitutingExplicitlyInvokedKeyword(
       TemplateURLService* template_url_service) const;
+
+  // Returns the placeholder text to display for the currently selected keyword
+  // match, returned for both hint and non-hint keyword modes.
+  std::u16string GetKeywordPlaceholder(
+      TemplateURLService* template_url_service,
+      bool is_history_embeddings_enabled) const;
 
   // Returns the TemplateURL associated with this match.  This may be NULL if
   // the match has no keyword OR if the keyword no longer corresponds to a valid
@@ -517,8 +550,12 @@ struct AutocompleteMatch {
   void RecordAdditionalInfo(const std::string& property, base::Time value);
 
   // Returns the value recorded for |property| in the |additional_info|
-  // dictionary.  Returns the empty string if no such value exists.
-  std::string GetAdditionalInfo(const std::string& property) const;
+  // dictionary. Returns the empty string if no such value exists. This is for
+  // debugging in chrome://omnibox only. It should only be called by
+  // `OmniboxPageHandler` and tests. For match info that's used for
+  // non-debugging, use class fields. Unfortunately, There are existing
+  // non-debug callsites; those should be cleaned up, not added to.
+  std::string GetAdditionalInfoForDebugging(const std::string& property) const;
 
   // Returns the provider type selected from this match, which is by default
   // taken from the match `provider` type but may be a (pseudo-)provider
@@ -543,6 +580,9 @@ struct AutocompleteMatch {
   // shown.
   bool IsVerbatimType() const;
 
+  // Returns whether this match is a "verbatim URL" suggestion.
+  bool IsVerbatimUrlSuggestion() const;
+
   // Returns whether this match is a search suggestion provided by search
   // provider.
   bool IsSearchProviderSearchSuggestion() const;
@@ -556,8 +596,11 @@ struct AutocompleteMatch {
   // next.
   int GetSortingOrder() const;
 
-  // Returns true if the match is eligible to be re-scored by ML Url scoring.
-  bool IsUrlScoringEligible() const;
+  // Returns true if the match is eligible for ML scoring signal logging.
+  bool IsMlSignalLoggingEligible() const;
+
+  // Returns true if the match is eligible to be re-scored by ML scoring.
+  bool IsMlScoringEligible() const;
 
   // Filter OmniboxActions based on the supplied qualifiers.
   // The order of the supplied qualifiers determines the preference.
@@ -569,6 +612,9 @@ struct AutocompleteMatch {
   // Unlike FilterOmniboxActions(), this method specifically targets
   // ActionsInSuggest.
   void FilterAndSortActionsInSuggest();
+
+  // Remove all Answer Actions.
+  void RemoveAnswerActions();
 
   // Returns whether the autocompletion is trivial enough that we consider it
   // an autocompletion for which the omnibox autocompletion code did not add
@@ -646,7 +692,7 @@ struct AutocompleteMatch {
   template <typename UnaryPredicate>
   bool MatchOrDuplicateMeets(UnaryPredicate predicate) const {
     return predicate(*this) ||
-           base::ranges::any_of(duplicate_matches, std::move(predicate));
+           std::ranges::any_of(duplicate_matches, std::move(predicate));
   }
 
   // Finds first action where `predicate` returns true. This is a special use
@@ -654,7 +700,7 @@ struct AutocompleteMatch {
   // need to be selected. If no such action is found, returns nullptr.
   template <typename UnaryPredicate>
   OmniboxAction* GetActionWhere(UnaryPredicate predicate) const {
-    auto it = base::ranges::find_if(actions, std::move(predicate));
+    auto it = std::ranges::find_if(actions, std::move(predicate));
     return it != actions.end() ? it->get() : nullptr;
   }
 
@@ -669,9 +715,9 @@ struct AutocompleteMatch {
   // no provider (or memory of the user's selection).
   raw_ptr<AutocompleteProvider> provider = nullptr;
 
-  // The relevance of this match. See table in autocomplete.h for scores
-  // returned by various providers. This is used to rank matches among all
-  // responding providers, so different providers must be carefully tuned to
+  // The relevance of this match. See table in autocomplete_provider.h for
+  // scores returned by various providers. This is used to rank matches among
+  // all responding providers, so different providers must be carefully tuned to
   // supply matches with appropriate relevance.
   int relevance = 0;
 
@@ -801,10 +847,10 @@ struct AutocompleteMatch {
   // before displaying.
   bool swap_contents_and_description = false;
 
-  // A rich-format version of the display for the dropdown.
-  std::optional<SuggestionAnswer> answer;
-
   std::optional<omnibox::RichAnswerTemplate> answer_template;
+
+  // AnswerType for answer verticals, including rich answers.
+  omnibox::AnswerType answer_type{omnibox::ANSWER_TYPE_UNSPECIFIED};
 
   // The transition type to use when the user opens this match.  By default,
   // this is TYPED.  Providers whose matches do not look like URLs should set
@@ -868,7 +914,14 @@ struct AutocompleteMatch {
   // it!
   std::u16string keyword;
 
-  // Set in matches originating from keyword results.
+  // Set in matches originating in keyword mode. `from_keyword` can be true even
+  // if `keyword` is empty and vice versa. `from_keyword` basically means the
+  // user input is in keyword mode. `!keyword.empty()` basically means the match
+  // was generated using a template URL.
+  //
+  // CAUTION: Not consistently set by all providers. That's fine-ish since this
+  // field isn't used much. But code relying on this feature to be correctly set
+  // should take care.
   bool from_keyword = false;
 
   // The visible actions relevant to this match.
@@ -906,21 +959,12 @@ struct AutocompleteMatch {
   // Entity vs. plain Search suggestions.
   std::vector<AutocompleteMatch> duplicate_matches;
 
-  // A list of query tiles to be shown as part of this match.
-  std::vector<query_tiles::Tile> query_tiles;
-
   // A list of navsuggest tiles to be shown as part of this match.
   // This object is only populated for TILE_NAVSUGGEST AutocompleteMatches.
   std::vector<SuggestTile> suggest_tiles;
 
   // Signals for ML scoring.
   std::optional<ScoringSignals> scoring_signals;
-
-  // A flag that's set during the de-duplication process in order to forcibly
-  // exclude this match from ML scoring (e.g. this match is ML-eligible, but one
-  // of the matches in `duplicate_matches` is not). Furthermore, when this flag
-  // is set, ML scoring signals will NOT be logged for this particular match.
-  bool force_skip_ml_scoring = false;
 
   // A flag to mark whether this would've been excluded from the "original" list
   // of matches. Traditionally, providers limit the number of suggestions they
@@ -937,6 +981,24 @@ struct AutocompleteMatch {
   //   launches. In the meantime, shortcut grouping won't work for users in the
   //   grouping experiments.
   bool shortcut_boosted = false;
+
+  // E.g. the gemini IPH match shown at the bottom of the popup.
+  IphType iph_type = IphType::kNone;
+
+  // IPH matches aren't clickable like other matches, but may have a next-action
+  // or learn-more type of link. This link is always appended to the end of
+  // their contents/description text.
+  std::u16string iph_link_text;
+  GURL iph_link_url;
+
+  // The text to show above the match contents & description for
+  // `HISTORY_EMBEDDINGS_ANSWER` matches.
+  std::u16string history_embeddings_answer_header_text;
+  // Whether the answer is still loading and should therefore show a throbber.
+  bool history_embeddings_answer_header_loading = false;
+
+  // The user feedback on the match.
+  FeedbackType feedback_type = FeedbackType::kNone;
 
   // So users of AutocompleteMatch can use the same ellipsis that it uses.
   static const char16_t kEllipsis[];
@@ -978,14 +1040,14 @@ typedef std::vector<ACMatchClassification> ACMatchClassifications;
 typedef std::vector<AutocompleteMatch> ACMatches;
 
 // Can be used as the key for grouping AutocompleteMatches in a map based on a
-// std::pair of fields. This can be generalized to a std::tuple if ever needed.
+// std::tuple of fields.
 // The accompanying hash function makes the key usable in an std::unordered_map.
-template <typename S, typename T>
-using ACMatchKey = std::pair<S, T>;
+template <typename... Args>
+using ACMatchKey = std::tuple<Args...>;
 
-template <typename S, typename T>
+template <typename... Args>
 struct ACMatchKeyHash {
-  size_t operator()(const ACMatchKey<S, T>& key) const;
+  size_t operator()(const ACMatchKey<Args...>& key) const;
 };
 
 #endif  // COMPONENTS_OMNIBOX_BROWSER_AUTOCOMPLETE_MATCH_H_

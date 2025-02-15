@@ -14,6 +14,8 @@
 //
 // - void SetUpCommandLine(base::CommandLine* command_line), e.g. to add
 //   command-line flags to enable / configure the feature being tested.
+//   NOTE: There is no need to call ContentBrowserTest::SetUpCommandLine() from
+//   the override method, as ContentBrowserTest::SetUpCommandLine() is empty.
 //
 // - void SetUpOnMainThread(), to run test set-up steps on the browser main
 //   thread, e.g. installing hooks in the browser process for testing. Note that
@@ -89,10 +91,16 @@ class ContentBrowserTest : public BrowserTestBase {
   // After starting the server, you can get a working HTTPS URL for any of
   // those hostnames. For example:
   //
-  //   ```
-  //   ASSERT_TRUE(embedded_https_test_server().Start());
+  // ```
+  //   void SetUpOnMainThread() override {
+  //     host_resolver()->AddRule("*", "127.0.0.1");
+  //     ASSERT_TRUE(embedded_https_test_server().Start());
+  //     InProcessBrowserTest::SetUpOnMainThread();
+  //   }
+  //   ...
+  //   (later in the test logic):
   //   embedded_https_test_server().GetURL("foo.com", "/simple.html");
-  //   ```
+  // ```
   //
   // Tests can override the set of valid hostnames by calling
   // `net::EmbeddedTestServer::SetCertHostnames()` before starting the test

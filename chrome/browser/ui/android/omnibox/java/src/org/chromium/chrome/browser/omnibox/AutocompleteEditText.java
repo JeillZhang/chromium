@@ -23,6 +23,7 @@ import androidx.annotation.VisibleForTesting;
 
 import org.chromium.base.Log;
 import org.chromium.components.browser_ui.widget.text.VerticallyFixedEditText;
+import org.chromium.components.omnibox.OmniboxFeatures;
 import org.chromium.ui.text.EmptyTextWatcher;
 
 import java.util.Optional;
@@ -31,8 +32,7 @@ import java.util.Optional;
 public class AutocompleteEditText extends VerticallyFixedEditText
         implements AutocompleteEditTextModelBase.Delegate {
     private static final String TAG = "AutocompleteEdit";
-
-    private static final boolean DEBUG = false;
+    private static final boolean DEBUG = OmniboxFeatures.sDiagInputConnection.getValue();
 
     private AutocompleteEditTextModelBase mModel;
     private boolean mIgnoreTextChangesForAutocomplete = true;
@@ -97,7 +97,6 @@ public class AutocompleteEditText extends VerticallyFixedEditText
 
         mModel = new SpannableAutocompleteEditTextModel(this, getContext());
         mModel.setIgnoreTextChangeFromAutocomplete(true);
-        mModel.setLayoutDirectionIsLtr(getLayoutDirection() != LAYOUT_DIRECTION_RTL);
         mModel.onFocusChanged(hasFocus());
         mModel.onSetText(getText());
         mModel.onTextChanged(getText(), 0, 0, getText().length());
@@ -349,14 +348,6 @@ public class AutocompleteEditText extends VerticallyFixedEditText
 
     @Override
     public void onUpdateSelectionForTesting(int selStart, int selEnd) {}
-
-    @Override
-    public void onRtlPropertiesChanged(int layoutDirection) {
-        super.onRtlPropertiesChanged(layoutDirection);
-        if (mModel != null) {
-            mModel.setLayoutDirectionIsLtr(layoutDirection != LAYOUT_DIRECTION_RTL);
-        }
-    }
 
     @Override
     public String getKeyboardPackageName() {

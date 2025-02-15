@@ -124,6 +124,7 @@ void OverlayStrategySingleOnTop::Propose(
     }
 
     OverlayCandidate candidate;
+    candidate.overlay_type = gfx::OverlayType::kSingleOnTop;
     if (candidate_factory.FromDrawQuad(*quad_it, candidate) !=
         OverlayCandidate::CandidateStatus::kSuccess) {
       // Quads with display masks should always be valid overlay candidates.
@@ -140,12 +141,12 @@ void OverlayStrategySingleOnTop::Propose(
 
       // Candidates with rounded-display masks should not overlap with any other
       // quad with rounded-display masks.
-      DCHECK(!candidate_factory.IsOccluded(candidate, quad_list->begin(),
-                                           quad_it));
+      DCHECK(!OverlayCandidateFactory::IsOccluded(**quad_it, quad_list->begin(),
+                                                  quad_it));
 
       candidates_with_masks.emplace_back(quad_it, candidate, this);
-    } else if (!candidate_factory.IsOccluded(candidate, first_non_mask_quad_it,
-                                             quad_it)) {
+    } else if (!OverlayCandidateFactory::IsOccluded(
+                   **quad_it, first_non_mask_quad_it, quad_it)) {
       // We exclude quads with rounded-display masks from the occlusion
       // calculation as they will be promoted to overlays if they occlude any
       // SingleOnTop candidate. In case these quads are not promoted, the

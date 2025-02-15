@@ -4,8 +4,13 @@
 
 #include "chrome/browser/ui/safety_hub/abusive_notification_permissions_manager.h"
 
+#include <utility>
+
+#include "base/metrics/histogram_functions.h"
 #include "base/time/default_clock.h"
+#include "chrome/browser/ui/safety_hub/safety_hub_constants.h"
 #include "chrome/browser/ui/safety_hub/safety_hub_util.h"
+#include "components/content_settings/core/browser/content_settings_uma_util.h"
 #include "components/content_settings/core/common/features.h"
 #include "components/safe_browsing/core/browser/db/v4_protocol_manager_util.h"
 #include "content/public/browser/browser_thread.h"
@@ -42,6 +47,8 @@ void AbusiveNotificationPermissionsManager::
     return;
   }
   ResetSafeBrowsingCheckHelpers();
+  // Keep track of blocklist check count for logging histogram below.
+  int blocklist_check_counter = 0;
   auto notification_permission_settings =
       hcsm_->GetSettingsForOneType(ContentSettingsType::NOTIFICATIONS);
   for (const auto& setting : notification_permission_settings) {
@@ -54,8 +61,11 @@ void AbusiveNotificationPermissionsManager::
       // ContentSettingsPattern, string, and URL types.
       GURL setting_url = GURL(setting.primary_pattern.ToString());
       PerformSafeBrowsingChecks(setting_url);
+      blocklist_check_counter += 1;
     }
   }
+  base::UmaHistogramCounts100(safety_hub::kBlocklistCheckCountHistogramName,
+                              blocklist_check_counter);
 }
 
 void AbusiveNotificationPermissionsManager::
@@ -133,6 +143,8 @@ bool AbusiveNotificationPermissionsManager::IsRevocationRunning() {
 
 AbusiveNotificationPermissionsManager::SafeBrowsingCheckClient::
     SafeBrowsingCheckClient(
+        base::PassKey<safe_browsing::SafeBrowsingDatabaseManager::Client>
+            pass_key,
         safe_browsing::SafeBrowsingDatabaseManager* database_manager,
         raw_ptr<std::map<SafeBrowsingCheckClient*,
                          std::unique_ptr<SafeBrowsingCheckClient>>>
@@ -141,7 +153,8 @@ AbusiveNotificationPermissionsManager::SafeBrowsingCheckClient::
         GURL url,
         int safe_browsing_check_delay,
         const base::Clock* clock)
-    : database_manager_(database_manager),
+    : safe_browsing::SafeBrowsingDatabaseManager::Client(std::move(pass_key)),
+      database_manager_(database_manager),
       safe_browsing_request_clients_(safe_browsing_request_clients),
       hcsm_(hcsm),
       url_(url),
@@ -206,6 +219,9 @@ void AbusiveNotificationPermissionsManager::SafeBrowsingCheckClient::
     default_constraint.set_lifetime(safety_hub_util::GetCleanUpThreshold());
     safety_hub_util::SetRevokedAbusiveNotificationPermission(
         hcsm_.get(), url, /*is_ignored=*/false, default_constraint);
+    content_settings_uma_util::RecordContentSettingsHistogram(
+        "Settings.SafetyHub.UnusedSitePermissionsModule.AutoRevoked2",
+        ContentSettingsType::NOTIFICATIONS);
   }
   safe_browsing_request_clients_->erase(this);
   // The previous line results in deleting this object.
@@ -227,6 +243,7 @@ void AbusiveNotificationPermissionsManager::PerformSafeBrowsingChecks(
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   DCHECK(database_manager_);
   auto new_sb_check = std::make_unique<SafeBrowsingCheckClient>(
+      safe_browsing::SafeBrowsingDatabaseManager::Client::GetPassKey(),
       database_manager_.get(), &safe_browsing_request_clients_, hcsm_.get(),
       url, safe_browsing_check_delay_, GetClock());
   auto new_sb_check_ptr = new_sb_check.get();

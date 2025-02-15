@@ -4,6 +4,7 @@
 
 #include "chrome/browser/apps/app_preload_service/app_preload_service.h"
 
+#include <algorithm>
 #include <memory>
 #include <vector>
 
@@ -15,10 +16,8 @@
 #include "base/functional/callback_helpers.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_functions.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/strcat.h"
 #include "base/time/time.h"
-#include "chrome/browser/apps/almanac_api_client/device_info_manager.h"
 #include "chrome/browser/apps/app_preload_service/app_preload_almanac_endpoint.h"
 #include "chrome/browser/apps/app_preload_service/app_preload_service_factory.h"
 #include "chrome/browser/apps/app_preload_service/preload_app_definition.h"
@@ -86,9 +85,15 @@ BASE_FEATURE(kAppPreloadServiceEnableShelfPin,
              "AppPreloadServiceEnableShelfPin",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
-AppPreloadService::AppPreloadService(Profile* profile)
-    : profile_(profile),
-      device_info_manager_(std::make_unique<DeviceInfoManager>(profile)) {
+BASE_FEATURE(kAppPreloadServiceEnableLauncherOrder,
+             "AppPreloadServiceEnableLauncherOrder",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+BASE_FEATURE(kAppPreloadServiceAllUserTypes,
+             "AppPreloadServiceAllUserTypes",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+AppPreloadService::AppPreloadService(Profile* profile) : profile_(profile) {
   if (g_disable_preloads_on_startup_for_testing_) {
     return;
   }
@@ -129,6 +134,15 @@ void AppPreloadService::GetPinApps(GetPinAppsCallback callback) {
   }
 }
 
+void AppPreloadService::GetLauncherOrdering(
+    base::OnceCallback<void(const LauncherOrdering&)> callback) {
+  if (data_ready_) {
+    std::move(callback).Run(launcher_ordering_);
+  } else {
+    get_launcher_ordering_callbacks_.push_back(std::move(callback));
+  }
+}
+
 void AppPreloadService::StartFirstLoginFlow() {
   auto start_time = base::TimeTicks::Now();
 
@@ -147,17 +161,14 @@ void AppPreloadService::StartFirstLoginFlow() {
 
   if ((first_run_started && !first_run_complete) ||
       base::FeatureList::IsEnabled(kAppPreloadServiceForceRun)) {
-    device_info_manager_->GetDeviceInfo(
-        base::BindOnce(&AppPreloadService::StartAppInstallationForFirstLogin,
-                       weak_ptr_factory_.GetWeakPtr(), start_time));
+    StartAppInstallationForFirstLogin(start_time);
   } else {
     data_ready_ = true;
   }
 }
 
 void AppPreloadService::StartAppInstallationForFirstLogin(
-    base::TimeTicks start_time,
-    DeviceInfo device_info) {
+    base::TimeTicks start_time) {
   scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory =
       profile_->GetURLLoaderFactory();
   if (!url_loader_factory.get()) {
@@ -169,7 +180,7 @@ void AppPreloadService::StartAppInstallationForFirstLogin(
     return;
   }
   app_preload_almanac_endpoint::GetAppsForFirstLogin(
-      device_info, *url_loader_factory,
+      profile_,
       base::BindOnce(&AppPreloadService::OnGetAppsForFirstLoginCompleted,
                      weak_ptr_factory_.GetWeakPtr(), start_time));
 }
@@ -203,19 +214,25 @@ void AppPreloadService::OnGetAppsForFirstLoginCompleted(
       }
     }
     // Sort shelf pin ordering.
-    for (auto const& [key, val] : shelf_pin_ordering) {
-      pin_order_.push_back(key);
-    }
-    std::sort(pin_order_.begin(), pin_order_.end(),
-              [&shelf_pin_ordering](apps::PackageId const& lhs,
-                                    apps::PackageId const& rhs) {
-                return shelf_pin_ordering[lhs] < shelf_pin_ordering[rhs];
-              });
+    std::vector<std::pair<apps::PackageId, uint32_t>> pins(
+        shelf_pin_ordering.begin(), shelf_pin_ordering.end());
+    std::ranges::sort(pins, {}, &std::pair<apps::PackageId, uint32_t>::second);
+    std::ranges::transform(pins, std::back_inserter(pin_order_),
+                           &std::pair<apps::PackageId, uint32_t>::first);
   }
   for (auto& callback : get_pin_apps_callbacks_) {
     std::move(callback).Run(pin_apps_, pin_order_);
   }
   get_pin_apps_callbacks_.clear();
+
+  if (base::FeatureList::IsEnabled(
+          apps::kAppPreloadServiceEnableLauncherOrder)) {
+    launcher_ordering_ = launcher_ordering;
+  }
+  for (auto& callback : get_launcher_ordering_callbacks_) {
+    std::move(callback).Run(launcher_ordering_);
+  }
+  get_launcher_ordering_callbacks_.clear();
 
   const auto install_barrier_callback = base::BarrierCallback<bool>(
       apps_to_install.size(),
@@ -235,7 +252,7 @@ void AppPreloadService::OnAppInstallationsCompleted(
     base::TimeTicks start_time,
     const std::vector<bool>& results) {
   OnFirstLoginFlowComplete(start_time,
-                           base::ranges::all_of(results, std::identity{}));
+                           std::ranges::all_of(results, std::identity{}));
 }
 
 void AppPreloadService::OnFirstLoginFlowComplete(base::TimeTicks start_time,

@@ -49,6 +49,7 @@ constexpr base::TimeDelta kInactivityTimeout = base::Seconds(5);
 constexpr int64_t kDefaultMaxTimestampError = 2000;
 // Max absolute value for timestamp errors, to avoid overflow/underflow.
 constexpr int64_t kTimestampErrorLimit = 1000000;
+constexpr int kMaxChannels = 32;
 
 constexpr int kAudioMessageHeaderSize =
     mixer_service::MixerSocket::kAudioMessageHeaderSize;
@@ -538,7 +539,7 @@ bool MixerInputConnection::HandleAudioData(char* data,
       memcpy(dest, data, size);
       break;
     default:
-      NOTREACHED_IN_MIGRATION() << "Unhandled sample format " << sample_format_;
+      NOTREACHED() << "Unhandled sample format " << sample_format_;
   }
 
   WritePcm(std::move(buffer));
@@ -1066,7 +1067,8 @@ int MixerInputConnection::FillAudioPlaybackFrames(
       remaining_silence_frames_ = 0;
     }
 
-    float* channels[num_channels_];
+    CHECK_LE(num_channels_, kMaxChannels);
+    float* channels[kMaxChannels];
     for (int c = 0; c < num_channels_; ++c) {
       channels[c] = buffer->channel(c) + write_offset;
     }

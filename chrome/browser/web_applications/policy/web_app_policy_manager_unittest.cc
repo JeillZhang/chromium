@@ -41,6 +41,7 @@
 #include "chrome/browser/web_applications/web_app_command_manager.h"
 #include "chrome/browser/web_applications/web_app_helpers.h"
 #include "chrome/browser/web_applications/web_app_install_utils.h"
+#include "chrome/browser/web_applications/web_app_management_type.h"
 #include "chrome/browser/web_applications/web_app_provider.h"
 #include "chrome/browser/web_applications/web_app_registrar.h"
 #include "chrome/browser/web_applications/web_app_registrar_observer.h"
@@ -52,7 +53,6 @@
 #include "chrome/test/base/scoped_testing_local_state.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
-#include "components/crx_file/id_util.h"
 #include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "components/webapps/browser/install_result_code.h"
 #include "components/webapps/common/web_app_id.h"
@@ -63,11 +63,12 @@
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
 #include "ash/constants/ash_features.h"
-#include "chrome/browser/ash/crosapi/browser_util.h"
+#include "ash/constants/ash_pref_names.h"
+#include "ash/constants/ash_switches.h"
+#include "base/test/scoped_command_line.h"
 #include "chrome/browser/ash/login/users/fake_chrome_user_manager.h"
 #include "chrome/browser/ash/profiles/profile_helper.h"
 #include "chrome/browser/ash/system_web_apps/test_support/test_system_web_app_manager.h"
-#include "chromeos/ash/components/standalone_browser/feature_refs.h"
 #include "components/user_manager/scoped_user_manager.h"
 #include "components/user_manager/user_names.h"
 #endif  // BUILDFLAG(IS_CHROMEOS_ASH)
@@ -246,7 +247,8 @@ class MockAppRegistrarObserver : public WebAppRegistrarObserver {
     return on_policy_changed_call_count;
   }
 
-  void OnAppRegistrarDestroyed() override { NOTREACHED_IN_MIGRATION(); }
+  void OnAppRegistrarDestroyed() override { NOTREACHED(); }
+  MOCK_METHOD(void, OnWebAppsDisabledModeChanged, (), (override));
 
  private:
   int on_policy_changed_call_count = 0;
@@ -323,7 +325,7 @@ ExternalInstallOptions GetCustomAppIconInstallOptions(
   return options;
 }
 
-void SetWebAppSettingsListPref(Profile* profile, const std::string_view pref) {
+void SetWebAppSettingsListPref(Profile* profile, std::string_view pref) {
   ASSERT_OK_AND_ASSIGN(
       auto result,
       base::JSONReader::ReadAndReturnValueWithError(
@@ -332,8 +334,7 @@ void SetWebAppSettingsListPref(Profile* profile, const std::string_view pref) {
   profile->GetPrefs()->Set(prefs::kWebAppSettings, std::move(result));
 }
 
-void SetWebAppInstallForceListPref(Profile* profile,
-                                   const std::string_view pref) {
+void SetWebAppInstallForceListPref(Profile* profile, std::string_view pref) {
   ASSERT_OK_AND_ASSIGN(
       auto result,
       base::JSONReader::ReadAndReturnValueWithError(
@@ -425,7 +426,7 @@ class WebAppPolicyManagerTestBase : public ChromeRenderViewHostTestHarness {
               if (app_id) {
                 UnregisterApp(*app_id);
               }
-              return webapps::UninstallResultCode::kSuccess;
+              return webapps::UninstallResultCode::kAppRemoved;
             }));
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
@@ -553,64 +554,16 @@ class WebAppPolicyManagerTest : public WebAppPolicyManagerTestBase,
   WebAppPolicyManagerTest(const WebAppPolicyManagerTest&) = delete;
   WebAppPolicyManagerTest& operator=(const WebAppPolicyManagerTest&) = delete;
   ~WebAppPolicyManagerTest() override = default;
-
-  void SetUp() override {
-    BuildAndInitFeatureList();
-    WebAppPolicyManagerTestBase::SetUp();
-
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-    ASSERT_EQ(LacrosEnabledParam(), crosapi::browser_util::IsLacrosEnabled());
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
-  }
-
-  bool ShouldSkipPWASpecificTest() {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-    if (LacrosEnabledParam()) {
-      return true;
-    }
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
-    return false;
-  }
-
-  bool LacrosEnabledParam() const { return GetParam(); }
-
- private:
-  void BuildAndInitFeatureList() {
-    std::vector<base::test::FeatureRef> enabled_features;
-    std::vector<base::test::FeatureRef> disabled_features;
-
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-    std::vector<base::test::FeatureRef> lacros_flags =
-        ash::standalone_browser::GetFeatureRefs();
-
-    if (LacrosEnabledParam()) {
-      base::Extend(enabled_features, std::move(lacros_flags));
-    } else {
-      base::Extend(disabled_features, std::move(lacros_flags));
-    }
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
-
-    scoped_feature_list_.InitWithFeatures(enabled_features, disabled_features);
-  }
-
-  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
-TEST_P(WebAppPolicyManagerTest, NoPrefValues) {
-  if (ShouldSkipPWASpecificTest()) {
-    return;
-  }
-
+TEST_F(WebAppPolicyManagerTest, NoPrefValues) {
   const auto& install_requests =
       externally_managed_app_manager().install_requests();
   EXPECT_TRUE(install_requests.empty());
   ValidateEmptyWebAppSettingsPolicy();
 }
 
-TEST_P(WebAppPolicyManagerTest, NoForceInstalledApps) {
-  if (ShouldSkipPWASpecificTest()) {
-    return;
-  }
+TEST_F(WebAppPolicyManagerTest, NoForceInstalledApps) {
   profile()->GetPrefs()->SetList(prefs::kWebAppInstallForceList,
                                  base::Value::List());
 
@@ -621,11 +574,7 @@ TEST_P(WebAppPolicyManagerTest, NoForceInstalledApps) {
   EXPECT_TRUE(install_requests.empty());
 }
 
-TEST_P(WebAppPolicyManagerTest, NoWebAppSettings) {
-  if (ShouldSkipPWASpecificTest()) {
-    return;
-  }
-
+TEST_F(WebAppPolicyManagerTest, NoWebAppSettings) {
   base::RunLoop loop;
   policy_manager().SetRefreshPolicySettingsCompletedCallbackForTesting(
       loop.QuitClosure());
@@ -635,10 +584,7 @@ TEST_P(WebAppPolicyManagerTest, NoWebAppSettings) {
   ValidateEmptyWebAppSettingsPolicy();
 }
 
-TEST_P(WebAppPolicyManagerTest, WebAppSettingsInvalidDefaultConfiguration) {
-  if (ShouldSkipPWASpecificTest()) {
-    return;
-  }
+TEST_F(WebAppPolicyManagerTest, WebAppSettingsInvalidDefaultConfiguration) {
   const char kWebAppSettingInvalidDefaultConfiguration[] = R"([
     {
       "manifest_id": "*",
@@ -656,11 +602,8 @@ TEST_P(WebAppPolicyManagerTest, WebAppSettingsInvalidDefaultConfiguration) {
   ValidateEmptyWebAppSettingsPolicy();
 }
 
-TEST_P(WebAppPolicyManagerTest,
+TEST_F(WebAppPolicyManagerTest,
        WebAppSettingsInvalidDefaultConfigurationWithValidAppPolicy) {
-  if (ShouldSkipPWASpecificTest()) {
-    return;
-  }
   const char kWebAppSettingInvalidDefaultConfiguration[] = R"([
     {
       "manifest_id": "https://windowed.example/",
@@ -688,10 +631,7 @@ TEST_P(WebAppPolicyManagerTest,
             RunOnOsLoginPolicy::kAllowed);
 }
 
-TEST_P(WebAppPolicyManagerTest, WebAppSettingsNoDefaultConfiguration) {
-  if (ShouldSkipPWASpecificTest()) {
-    return;
-  }
+TEST_F(WebAppPolicyManagerTest, WebAppSettingsNoDefaultConfiguration) {
   const char kWebAppSettingNoDefaultConfiguration[] = R"([
     {
       "manifest_id": "https://windowed.example/",
@@ -726,11 +666,7 @@ TEST_P(WebAppPolicyManagerTest, WebAppSettingsNoDefaultConfiguration) {
             RunOnOsLoginPolicy::kAllowed);
 }
 
-TEST_P(WebAppPolicyManagerTest, WebAppSettingsWithDefaultConfiguration) {
-  if (ShouldSkipPWASpecificTest()) {
-    return;
-  }
-
+TEST_F(WebAppPolicyManagerTest, WebAppSettingsWithDefaultConfiguration) {
   base::RunLoop loop;
   policy_manager().SetRefreshPolicySettingsCompletedCallbackForTesting(
       loop.QuitClosure());
@@ -746,10 +682,7 @@ TEST_P(WebAppPolicyManagerTest, WebAppSettingsWithDefaultConfiguration) {
             RunOnOsLoginPolicy::kBlocked);
 }
 
-TEST_P(WebAppPolicyManagerTest, TwoForceInstalledApps) {
-  if (ShouldSkipPWASpecificTest()) {
-    return;
-  }
+TEST_F(WebAppPolicyManagerTest, TwoForceInstalledApps) {
   // Add two sites, one that opens in a window and one that opens in a tab.
   base::Value::List list;
   list.Append(GetWindowedItem());
@@ -769,10 +702,7 @@ TEST_P(WebAppPolicyManagerTest, TwoForceInstalledApps) {
   EXPECT_EQ(install_requests, expected_install_options_list);
 }
 
-TEST_P(WebAppPolicyManagerTest, ForceInstallAppWithNoDefaultLaunchContainer) {
-  if (ShouldSkipPWASpecificTest()) {
-    return;
-  }
+TEST_F(WebAppPolicyManagerTest, ForceInstallAppWithNoDefaultLaunchContainer) {
   base::Value::List list;
   list.Append(GetNoContainerItem());
   profile()->GetPrefs()->SetList(prefs::kWebAppInstallForceList,
@@ -789,11 +719,8 @@ TEST_P(WebAppPolicyManagerTest, ForceInstallAppWithNoDefaultLaunchContainer) {
   EXPECT_EQ(install_requests, expected_install_options_list);
 }
 
-TEST_P(WebAppPolicyManagerTest,
+TEST_F(WebAppPolicyManagerTest,
        ForceInstallAppWithDefaultCreateDesktopShortcut) {
-  if (ShouldSkipPWASpecificTest()) {
-    return;
-  }
   base::Value::List list;
   list.Append(GetCreateDesktopShortcutDefaultItem());
   profile()->GetPrefs()->SetList(prefs::kWebAppInstallForceList,
@@ -811,10 +738,7 @@ TEST_P(WebAppPolicyManagerTest,
   EXPECT_EQ(install_requests, expected_install_options_list);
 }
 
-TEST_P(WebAppPolicyManagerTest, ForceInstallAppWithCreateDesktopShortcut) {
-  if (ShouldSkipPWASpecificTest()) {
-    return;
-  }
+TEST_F(WebAppPolicyManagerTest, ForceInstallAppWithCreateDesktopShortcut) {
   base::Value::List list;
   list.Append(GetCreateDesktopShortcutFalseItem());
   list.Append(GetCreateDesktopShortcutTrueItem());
@@ -835,10 +759,7 @@ TEST_P(WebAppPolicyManagerTest, ForceInstallAppWithCreateDesktopShortcut) {
   EXPECT_EQ(install_requests, expected_install_options_list);
 }
 
-TEST_P(WebAppPolicyManagerTest, ForceInstallAppWithFallbackAppName) {
-  if (ShouldSkipPWASpecificTest()) {
-    return;
-  }
+TEST_F(WebAppPolicyManagerTest, ForceInstallAppWithFallbackAppName) {
   base::Value::List list;
   list.Append(GetFallbackAppNameItem());
   profile()->GetPrefs()->SetList(prefs::kWebAppInstallForceList,
@@ -855,10 +776,7 @@ TEST_P(WebAppPolicyManagerTest, ForceInstallAppWithFallbackAppName) {
   EXPECT_EQ(install_requests, expected_install_options_list);
 }
 
-TEST_P(WebAppPolicyManagerTest, ForceInstallAppWithCustomAppIcon) {
-  if (ShouldSkipPWASpecificTest()) {
-    return;
-  }
+TEST_F(WebAppPolicyManagerTest, ForceInstallAppWithCustomAppIcon) {
   base::Value::List list;
   list.Append(GetCustomAppIconItem());
   profile()->GetPrefs()->SetList(prefs::kWebAppInstallForceList,
@@ -876,10 +794,7 @@ TEST_P(WebAppPolicyManagerTest, ForceInstallAppWithCustomAppIcon) {
 }
 
 // If the custom icon URL is not https, the icon should be ignored.
-TEST_P(WebAppPolicyManagerTest, ForceInstallAppWithUnsecureCustomAppIcon) {
-  if (ShouldSkipPWASpecificTest()) {
-    return;
-  }
+TEST_F(WebAppPolicyManagerTest, ForceInstallAppWithUnsecureCustomAppIcon) {
   base::Value::List list;
   list.Append(GetCustomAppIconItem(/*secure=*/false));
   profile()->GetPrefs()->SetList(prefs::kWebAppInstallForceList,
@@ -897,10 +812,7 @@ TEST_P(WebAppPolicyManagerTest, ForceInstallAppWithUnsecureCustomAppIcon) {
   EXPECT_FALSE(install_requests[0].override_icon_url);
 }
 
-TEST_P(WebAppPolicyManagerTest, ForceInstallAppWithCustomAppName) {
-  if (ShouldSkipPWASpecificTest()) {
-    return;
-  }
+TEST_F(WebAppPolicyManagerTest, ForceInstallAppWithCustomAppName) {
   base::Value::List list;
   list.Append(GetCustomAppNameItem(kDefaultCustomAppName));
   profile()->GetPrefs()->SetList(prefs::kWebAppInstallForceList,
@@ -918,11 +830,7 @@ TEST_P(WebAppPolicyManagerTest, ForceInstallAppWithCustomAppName) {
   EXPECT_EQ(install_requests, expected_install_options_list);
 }
 
-TEST_P(WebAppPolicyManagerTest, ForceInstallAppWithCustomAppNameRefresh) {
-  if (ShouldSkipPWASpecificTest()) {
-    return;
-  }
-
+TEST_F(WebAppPolicyManagerTest, ForceInstallAppWithCustomAppNameRefresh) {
   std::string kPrefix = "Modified ";
 
   // Add app
@@ -964,10 +872,7 @@ TEST_P(WebAppPolicyManagerTest, ForceInstallAppWithCustomAppNameRefresh) {
             app_registrar().GetAppShortName(apps.begin()->first));
 }
 
-TEST_P(WebAppPolicyManagerTest, DynamicRefresh) {
-  if (ShouldSkipPWASpecificTest()) {
-    return;
-  }
+TEST_F(WebAppPolicyManagerTest, DynamicRefresh) {
   base::Value::List first_list;
   first_list.Append(GetWindowedItem());
   profile()->GetPrefs()->SetList(prefs::kWebAppInstallForceList,
@@ -995,11 +900,7 @@ TEST_P(WebAppPolicyManagerTest, DynamicRefresh) {
   EXPECT_EQ(install_requests, expected_install_options_list);
 }
 
-TEST_P(WebAppPolicyManagerTest, UninstallAppInstalledInPreviousSession) {
-  if (ShouldSkipPWASpecificTest()) {
-    return;
-  }
-
+TEST_F(WebAppPolicyManagerTest, UninstallAppInstalledInPreviousSession) {
   // Simulate two policy apps and a regular app that were installed in the
   // previous session.
   SimulatePreviouslyInstalledApp(GURL(kWindowedUrl),
@@ -1030,11 +931,7 @@ TEST_P(WebAppPolicyManagerTest, UninstallAppInstalledInPreviousSession) {
 
 // Tests that we correctly uninstall an app that we installed in the same
 // session.
-TEST_P(WebAppPolicyManagerTest, UninstallAppInstalledInCurrentSession) {
-  if (ShouldSkipPWASpecificTest()) {
-    return;
-  }
-
+TEST_F(WebAppPolicyManagerTest, UninstallAppInstalledInCurrentSession) {
   // Add two sites, one that opens in a window and one that opens in a tab.
   base::Value::List first_list;
   first_list.Append(GetWindowedItem());
@@ -1070,10 +967,7 @@ TEST_P(WebAppPolicyManagerTest, UninstallAppInstalledInCurrentSession) {
 }
 
 // Tests that we correctly reinstall a placeholder app.
-TEST_P(WebAppPolicyManagerTest, ReinstallPlaceholderAppSuccess) {
-  if (ShouldSkipPWASpecificTest()) {
-    return;
-  }
+TEST_F(WebAppPolicyManagerTest, ReinstallPlaceholderAppSuccess) {
   base::Value::List list;
   list.Append(GetWindowedItem());
   profile()->GetPrefs()->SetList(prefs::kWebAppInstallForceList,
@@ -1106,10 +1000,7 @@ TEST_P(WebAppPolicyManagerTest, ReinstallPlaceholderAppSuccess) {
   EXPECT_EQ(expected_options_list, install_options_list);
 }
 
-TEST_P(WebAppPolicyManagerTest, DoNotReinstallIfNotPlaceholder) {
-  if (ShouldSkipPWASpecificTest()) {
-    return;
-  }
+TEST_F(WebAppPolicyManagerTest, DoNotReinstallIfNotPlaceholder) {
   base::Value::List list;
   list.Append(GetWindowedItem());
   profile()->GetPrefs()->SetList(prefs::kWebAppInstallForceList,
@@ -1140,10 +1031,7 @@ TEST_P(WebAppPolicyManagerTest, DoNotReinstallIfNotPlaceholder) {
 
 // Tests that we correctly reinstall a placeholder app when the placeholder
 // is using a fallback name.
-TEST_P(WebAppPolicyManagerTest, ReinstallPlaceholderAppWithFallbackAppName) {
-  if (ShouldSkipPWASpecificTest()) {
-    return;
-  }
+TEST_F(WebAppPolicyManagerTest, ReinstallPlaceholderAppWithFallbackAppName) {
   base::Value::List list;
   list.Append(GetFallbackAppNameItem());
   profile()->GetPrefs()->SetList(prefs::kWebAppInstallForceList,
@@ -1175,10 +1063,7 @@ TEST_P(WebAppPolicyManagerTest, ReinstallPlaceholderAppWithFallbackAppName) {
   EXPECT_EQ(expected_options_list, install_options_list);
 }
 
-TEST_P(WebAppPolicyManagerTest, TryToInexistentPlaceholderApp) {
-  if (ShouldSkipPWASpecificTest()) {
-    return;
-  }
+TEST_F(WebAppPolicyManagerTest, TryToInexistentPlaceholderApp) {
   base::Value::List list;
   list.Append(GetWindowedItem());
   profile()->GetPrefs()->SetList(prefs::kWebAppInstallForceList,
@@ -1205,10 +1090,7 @@ TEST_P(WebAppPolicyManagerTest, TryToInexistentPlaceholderApp) {
   EXPECT_EQ(expected_options_list, install_options_list);
 }
 
-TEST_P(WebAppPolicyManagerTest, SayRefreshTwoTimesQuickly) {
-  if (ShouldSkipPWASpecificTest()) {
-    return;
-  }
+TEST_F(WebAppPolicyManagerTest, SayRefreshTwoTimesQuickly) {
   // Add an app.
   {
     base::Value::List list;
@@ -1249,10 +1131,7 @@ TEST_P(WebAppPolicyManagerTest, SayRefreshTwoTimesQuickly) {
   }
 }
 
-TEST_P(WebAppPolicyManagerTest, InstallResultHistogram) {
-  if (ShouldSkipPWASpecificTest()) {
-    return;
-  }
+TEST_F(WebAppPolicyManagerTest, InstallResultHistogram) {
   base::HistogramTester histograms;
   {
     base::Value::List list;
@@ -1291,8 +1170,25 @@ TEST_P(WebAppPolicyManagerTest, InstallResultHistogram) {
   }
 }
 
+TEST_F(WebAppPolicyManagerTest, InvalidUrlParsingSkipped) {
+  base::Value::Dict invalid_url_policy =
+      base::Value::Dict()
+          .Set(kUrlKey, "abcdef")
+          .Set(kDefaultLaunchContainerKey, kDefaultLaunchContainerWindowValue);
+  base::Value::List policy_list;
+  policy_list.Append(std::move(invalid_url_policy));
+  profile()->GetPrefs()->SetList(prefs::kWebAppInstallForceList,
+                                 std::move(policy_list));
+
+  WaitForAppsToSynchronize();
+
+  const auto& install_requests =
+      externally_managed_app_manager().install_requests();
+  EXPECT_EQ(0u, install_requests.size());
+}
+
 #if BUILDFLAG(IS_CHROMEOS_ASH)
-TEST_P(WebAppPolicyManagerTest, DisableSystemWebApps) {
+TEST_F(WebAppPolicyManagerTest, DisableSystemWebApps) {
   auto disabled_apps = policy_manager().GetDisabledSystemWebApps();
   EXPECT_TRUE(disabled_apps.empty());
 
@@ -1306,14 +1202,24 @@ TEST_P(WebAppPolicyManagerTest, DisableSystemWebApps) {
           .Append(static_cast<int>(policy::SystemFeature::kExplore))
           .Append(static_cast<int>(policy::SystemFeature::kCrosh))
           .Append(static_cast<int>(policy::SystemFeature::kTerminal))
-          .Append(static_cast<int>(policy::SystemFeature::kGallery)));
+          .Append(static_cast<int>(policy::SystemFeature::kGallery))
+          .Append(static_cast<int>(policy::SystemFeature::kPrintJobs))
+          .Append(static_cast<int>(policy::SystemFeature::kKeyShortcuts))
+          .Append(static_cast<int>(policy::SystemFeature::kRecorder)));
   base::RunLoop().RunUntilIdle();
 
   const std::set<ash::SystemWebAppType> expected_disabled_apps{
-      ash::SystemWebAppType::CAMERA,   ash::SystemWebAppType::SETTINGS,
-      ash::SystemWebAppType::SCANNING, ash::SystemWebAppType::HELP,
-      ash::SystemWebAppType::CROSH,    ash::SystemWebAppType::TERMINAL,
-      ash::SystemWebAppType::MEDIA};
+      ash::SystemWebAppType::CAMERA,
+      ash::SystemWebAppType::SETTINGS,
+      ash::SystemWebAppType::SCANNING,
+      ash::SystemWebAppType::HELP,
+      ash::SystemWebAppType::CROSH,
+      ash::SystemWebAppType::TERMINAL,
+      ash::SystemWebAppType::MEDIA,
+      ash::SystemWebAppType::PRINT_MANAGEMENT,
+      ash::SystemWebAppType::SHORTCUT_CUSTOMIZATION,
+      ash::SystemWebAppType::RECORDER,
+      ash::SystemWebAppType::GRADUATION};
 
   disabled_apps = policy_manager().GetDisabledSystemWebApps();
   EXPECT_EQ(disabled_apps, expected_disabled_apps);
@@ -1329,10 +1235,7 @@ TEST_P(WebAppPolicyManagerTest, DisableSystemWebApps) {
 }
 #endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
-TEST_P(WebAppPolicyManagerTest, WebAppSettingsDynamicRefresh) {
-  if (ShouldSkipPWASpecificTest()) {
-    return;
-  }
+TEST_F(WebAppPolicyManagerTest, WebAppSettingsDynamicRefresh) {
   const char kWebAppSettingInitialConfiguration[] = R"([
     {
       "manifest_id": "https://windowed.example/",
@@ -1377,11 +1280,8 @@ TEST_P(WebAppPolicyManagerTest, WebAppSettingsDynamicRefresh) {
   app_registrar().RemoveObserver(&mock_observer);
 }
 
-TEST_P(WebAppPolicyManagerTest,
+TEST_F(WebAppPolicyManagerTest,
        WebAppSettingsApplyToExistingForceInstalledApp) {
-  if (ShouldSkipPWASpecificTest()) {
-    return;
-  }
   // Add two sites, one that opens in a window and one that opens in a tab.
   base::Value::List list;
   list.Append(GetWindowedItem());
@@ -1417,10 +1317,7 @@ TEST_P(WebAppPolicyManagerTest,
             RunOnOsLoginPolicy::kBlocked);
 }
 
-TEST_P(WebAppPolicyManagerTest, WebAppSettingsForceInstallNewApps) {
-  if (ShouldSkipPWASpecificTest()) {
-    return;
-  }
+TEST_F(WebAppPolicyManagerTest, WebAppSettingsForceInstallNewApps) {
   // Apply WebAppSettings Policy
   MockAppRegistrarObserver mock_observer;
   app_registrar().AddObserver(&mock_observer);
@@ -1470,24 +1367,84 @@ TEST_P(WebAppPolicyManagerTest, WebAppSettingsForceInstallNewApps) {
   app_registrar().RemoveObserver(&mock_observer);
 }
 
-INSTANTIATE_TEST_SUITE_P(WebAppPolicyManagerTestWithParams,
-                         WebAppPolicyManagerTest,
-                         testing::Values(
 #if BUILDFLAG(IS_CHROMEOS_ASH)
-                             false,
+class WebAppPolicyManagerWithGraduationTest
+    : public WebAppPolicyManagerTestBase {
+ public:
+  WebAppPolicyManagerWithGraduationTest() {
+    scoped_feature_list_.InitAndEnableFeature(ash::features::kGraduation);
+  }
+
+  ~WebAppPolicyManagerWithGraduationTest() override = default;
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+  std::unique_ptr<TestingProfile> managed_profile_;
+};
+
+TEST_F(WebAppPolicyManagerWithGraduationTest,
+       GraduationNotDisabledWhenAllowed) {
+  auto disabled_apps = policy_manager().GetDisabledSystemWebApps();
+  EXPECT_TRUE(disabled_apps.empty());
+
+  testing_local_state_.Get()->SetUserPref(
+      policy::policy_prefs::kSystemFeaturesDisableList,
+      base::Value::List()
+          .Append(static_cast<int>(policy::SystemFeature::kCamera))
+          .Append(static_cast<int>(policy::SystemFeature::kOsSettings))
+          .Append(static_cast<int>(policy::SystemFeature::kKeyShortcuts)));
+  base::Value::Dict graduation_status;
+  graduation_status.Set("is_enabled", true);
+  profile()->GetPrefs()->SetDict(ash::prefs::kGraduationEnablementStatus,
+                                 graduation_status.Clone());
+
+  disabled_apps = policy_manager().GetDisabledSystemWebApps();
+  EXPECT_FALSE(disabled_apps.contains(ash::SystemWebAppType::GRADUATION));
+}
+
+TEST_F(WebAppPolicyManagerWithGraduationTest, GraduationDisabledWhenBlocked) {
+  auto disabled_apps = policy_manager().GetDisabledSystemWebApps();
+  EXPECT_TRUE(disabled_apps.empty());
+
+  // Add supported system web apps to system features disable list policy.
+  testing_local_state_.Get()->SetUserPref(
+      policy::policy_prefs::kSystemFeaturesDisableList,
+      base::Value::List()
+          .Append(static_cast<int>(policy::SystemFeature::kCamera))
+          .Append(static_cast<int>(policy::SystemFeature::kOsSettings))
+          .Append(static_cast<int>(policy::SystemFeature::kKeyShortcuts)));
+  base::Value::Dict graduation_status;
+  graduation_status.Set("is_enabled", false);
+  profile()->GetPrefs()->SetDict(ash::prefs::kGraduationEnablementStatus,
+                                 graduation_status.Clone());
+
+  disabled_apps = policy_manager().GetDisabledSystemWebApps();
+  EXPECT_TRUE(disabled_apps.contains(ash::SystemWebAppType::GRADUATION));
+}
+
+class WebAppPolicyManagerWithBocaTest : public WebAppPolicyManagerTestBase {
+ public:
+  WebAppPolicyManagerWithBocaTest() = default;
+  ~WebAppPolicyManagerWithBocaTest() override = default;
+};
+
+TEST_F(WebAppPolicyManagerWithBocaTest,
+       BocaAppStatusRefreshedWhenPolicyUpdate) {
+  MockAppRegistrarObserver mock_observer;
+  app_registrar().AddObserver(&mock_observer);
+  EXPECT_CALL(mock_observer, OnWebAppsDisabledModeChanged()).Times(1);
+  // Policy update only serve as a trigger, the real enablement checks user
+  // affiliation status, which is hard to emulate in unit test.
+  profile()->GetPrefs()->SetString(
+      ash::prefs::kClassManagementToolsAvailabilitySetting, "teacher");
+
+  EXPECT_CALL(mock_observer, OnWebAppsDisabledModeChanged()).Times(1);
+  profile()->GetPrefs()->SetString(
+      ash::prefs::kClassManagementToolsAvailabilitySetting, "disabled");
+  app_registrar().RemoveObserver(&mock_observer);
+}
+
 #endif  // BUILDFLAG(IS_CHROMEOS_ASH)
-                             true),
-                         [](const ::testing::TestParamInfo<bool>& info) {
-                           std::string test_name = "Test_";
-
-                           if (info.param) {
-                             test_name.append("LacrosDisabled");
-                           } else {
-                             test_name.append("LacrosEnabled");
-                           }
-
-                           return test_name;
-                         });
 
 class WebAppPolicyManagerPreventCloseTest
     : public WebAppPolicyManagerTestBase,

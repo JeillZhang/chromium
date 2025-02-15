@@ -26,7 +26,6 @@ import org.chromium.chrome.browser.tab.state.ShoppingPersistedTabData;
 import org.chromium.chrome.browser.tab.state.ShoppingPersistedTabDataService;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.tabmodel.TabModelSelectorObserver;
-import org.chromium.chrome.browser.tabmodel.TabModelUtils;
 import org.chromium.chrome.browser.ui.favicon.FaviconHelper;
 import org.chromium.components.embedder_support.util.UrlUtilities;
 import org.chromium.components.image_fetcher.ImageFetcher;
@@ -78,7 +77,7 @@ public class PriceChangeModuleMediator implements TabModelSelectorObserver {
                     if (!PriceTrackingUtilities.TRACK_PRICES_ON_TABS.equals(key)) return;
                     if (!sharedPrefs.getBoolean(
                             PriceTrackingUtilities.TRACK_PRICES_ON_TABS,
-                            PriceTrackingFeatures.isPriceTrackingEnabled(profile))) {
+                            PriceTrackingFeatures.isPriceAnnotationsEnabled(profile))) {
                         mModuleDelegate.removeModule(getModuleType());
                     }
                 };
@@ -98,8 +97,7 @@ public class PriceChangeModuleMediator implements TabModelSelectorObserver {
             for (String tabIdString :
                     manager.readStringSet(PRICE_TRACKING_IDS_FOR_TABS_WITH_PRICE_DROP)) {
                 tabList.add(
-                        TabModelUtils.getTabById(
-                                mTabModelSelector.getModel(false), Integer.valueOf(tabIdString)));
+                        mTabModelSelector.getModel(false).getTabById(Integer.valueOf(tabIdString)));
             }
 
             mShoppingPersistedTabDataService.initialize(tabList);
@@ -114,9 +112,7 @@ public class PriceChangeModuleMediator implements TabModelSelectorObserver {
                     Tab tab = res.get(0).getTab();
                     // Check if tab is in the current tab model for multi-window case.
                     if (tab == null
-                            || TabModelUtils.getTabById(
-                                            mTabModelSelector.getModel(false), tab.getId())
-                                    == null) {
+                            || mTabModelSelector.getModel(false).getTabById(tab.getId()) == null) {
                         mModuleDelegate.onDataFetchFailed(mModuleType);
                         return;
                     }
@@ -201,6 +197,7 @@ public class PriceChangeModuleMediator implements TabModelSelectorObserver {
         mSharedPreferences.unregisterOnSharedPreferenceChangeListener(
                 mPriceAnnotationsPrefListener);
         mTabModelSelector.removeObserver(this);
+        mFaviconHelper.destroy();
     }
 
     int getModuleType() {

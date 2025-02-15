@@ -6,8 +6,12 @@
 
 #include "base/command_line.h"
 #include "base/logging.h"
+#include "base/strings/stringprintf.h"
+#include "base/trace_event/memory_dump_manager.h"
+#include "base/trace_event/process_memory_dump.h"
 #include "build/build_config.h"
 #include "gpu/command_buffer/service/feature_info.h"
+#include "gpu/command_buffer/service/graphite_image_provider.h"
 #include "gpu/command_buffer/service/shared_context_state.h"
 #include "gpu/config/gpu_finch_features.h"
 #include "gpu/config/gpu_switches.h"
@@ -16,14 +20,14 @@
 #include "third_party/skia/include/core/SkRefCnt.h"
 #include "third_party/skia/include/core/SkSurface.h"
 #include "third_party/skia/include/core/SkTextureCompressionType.h"
-#include "third_party/skia/include/gpu/GrBackendSurface.h"
-#include "third_party/skia/include/gpu/GrContextThreadSafeProxy.h"
-#include "third_party/skia/include/gpu/GrDirectContext.h"
+#include "third_party/skia/include/gpu/ganesh/GrBackendSurface.h"
+#include "third_party/skia/include/gpu/ganesh/GrContextThreadSafeProxy.h"
+#include "third_party/skia/include/gpu/ganesh/GrDirectContext.h"
 #include "third_party/skia/include/gpu/ganesh/gl/GrGLBackendSurface.h"
-#include "third_party/skia/include/gpu/ganesh/vk/GrVkBackendSurface.h"
-#include "third_party/skia/include/gpu/gl/GrGLTypes.h"
+#include "third_party/skia/include/gpu/ganesh/gl/GrGLTypes.h"
+#include "third_party/skia/include/gpu/graphite/Context.h"
 #include "third_party/skia/include/gpu/graphite/GraphiteTypes.h"
-#include "third_party/skia/include/gpu/vk/VulkanTypes.h"
+#include "third_party/skia/include/gpu/graphite/Recorder.h"
 #include "ui/base/ui_base_features.h"
 #include "ui/gfx/color_space.h"
 #include "ui/gfx/geometry/size.h"
@@ -38,6 +42,8 @@
 #include "gpu/vulkan/vulkan_fence_helper.h"
 #include "gpu/vulkan/vulkan_function_pointers.h"
 #include "gpu/vulkan/vulkan_image.h"
+#include "third_party/skia/include/gpu/ganesh/vk/GrVkBackendSurface.h"
+#include "third_party/skia/include/gpu/vk/VulkanTypes.h"
 #endif
 
 namespace gpu {
@@ -121,11 +127,16 @@ GrContextOptions GetDefaultGrContextOptions() {
 
 skgpu::graphite::ContextOptions GetDefaultGraphiteContextOptions(
     const GpuDriverBugWorkarounds& workarounds) {
-  skgpu::graphite::ContextOptions options;
+  // Use the default resource cache limits used for Ganesh which is 96 MB for
+  // the resource cache and 8 MB for the glyph cache. These same values also get
+  // used for the GPU main and Viz compositor recorders later and the resource
+  // caches are not shared so don't use the large default value of 256 MB.
   size_t max_resource_cache_bytes;
   size_t glyph_cache_max_texture_bytes;
   DetermineGrCacheLimitsFromAvailableMemory(&max_resource_cache_bytes,
                                             &glyph_cache_max_texture_bytes);
+  skgpu::graphite::ContextOptions options;
+  options.fGpuBudgetInBytes = max_resource_cache_bytes;
   options.fGlyphCacheTextureMaximumBytes = glyph_cache_max_texture_bytes;
 
   // msaa_is_slow_2 excludes new Intel >= Gen 11 GPUs. We're unconditionally
@@ -137,13 +148,65 @@ skgpu::graphite::ContextOptions GetDefaultGraphiteContextOptions(
     options.fInternalMultisampleCount = 1;
   }
 
-  // Disable use of cached text uploads in Recordings to improve performance.
-  // NOTE: Currently Recordings are played back in the order they were
-  // created so use of this option is safe. Once Recordings are replayed or
-  // are played out of sequence this option should no longer be used.
-  options.fDisableCachedGlyphUploads = true;
+  // State that Recordings will be played in-order. If Graphite can assume
+  // this, then optimizations can be taken that will improve performance.
+  // NOTE: Currently as Recordings *are* played back in the order they were
+  // created, use of this option is safe. Once Recordings are replayed or
+  // are played out of sequence this option should no longer be used as it
+  // will lead to playback of out-of-order Recordings being skipped and an
+  // error flagged.
+  options.fRequireOrderedRecordings = true;
+
+  // Always emit labels in Skia. For Dawn, we have a toggle that controls
+  // whether labels are emitted to the underlying backend, which is currently
+  // only enabled on Windows or DCHECK builds on other platforms. For Metal,
+  // the labels are only emitted under the SK_ENABLE_MTL_DEBUG_INFO define.
+  options.fSetBackendLabels = true;
 
   return options;
+}
+
+void DumpBackgroundGraphiteMemoryStatistics(
+    const skgpu::graphite::Context* context,
+    const skgpu::graphite::Recorder* recorder,
+    base::trace_event::ProcessMemoryDump* pmd) {
+  using base::trace_event::MemoryAllocatorDump;
+  static constexpr char kNamePurgeableSize[] = "purgeable_size";
+
+  std::string context_dump_name =
+      base::StringPrintf("skia/gpu_resources/graphite_context_0x%" PRIXPTR,
+                         reinterpret_cast<uintptr_t>(context));
+  MemoryAllocatorDump* context_dump =
+      pmd->CreateAllocatorDump(context_dump_name);
+  context_dump->AddScalar(MemoryAllocatorDump::kNameSize,
+                          MemoryAllocatorDump::kUnitsBytes,
+                          context->currentBudgetedBytes());
+  context_dump->AddScalar(kNamePurgeableSize, MemoryAllocatorDump::kUnitsBytes,
+                          context->currentPurgeableBytes());
+
+  std::string recorder_dump_name = base::StringPrintf(
+      "skia/gpu_resources/gpu_main_graphite_recorder_0x%" PRIXPTR,
+      reinterpret_cast<uintptr_t>(recorder));
+  MemoryAllocatorDump* recorder_dump =
+      pmd->CreateAllocatorDump(recorder_dump_name);
+  recorder_dump->AddScalar(MemoryAllocatorDump::kNameSize,
+                           MemoryAllocatorDump::kUnitsBytes,
+                           recorder->currentBudgetedBytes());
+  recorder_dump->AddScalar(kNamePurgeableSize, MemoryAllocatorDump::kUnitsBytes,
+                           recorder->currentPurgeableBytes());
+
+  // The ImageProvider's bytes are not included in the recorder's budgeted
+  // bytes as they are owned by Chrome, so dump them separately.
+  const auto* image_provider = static_cast<const gpu::GraphiteImageProvider*>(
+      recorder->clientImageProvider());
+  std::string image_provider_dump_name = base::StringPrintf(
+      "skia/gpu_resources/gpu_main_graphite_image_provider_0x%" PRIXPTR,
+      reinterpret_cast<uintptr_t>(image_provider));
+  MemoryAllocatorDump* image_provider_dump =
+      pmd->CreateAllocatorDump(image_provider_dump_name);
+  image_provider_dump->AddScalar(MemoryAllocatorDump::kNameSize,
+                                 MemoryAllocatorDump::kUnitsBytes,
+                                 image_provider->CurrentSizeInBytes());
 }
 
 GLuint GetGrGLBackendTextureFormat(
@@ -367,41 +430,10 @@ CreateVulkanYcbcrConversionInfo(
     }
 
     // YCbCr sampler is required.
-#if BUILDFLAG(IS_CHROMEOS)
-    // TODO(b/233667677): AllowColorSpaceCombination() in
-    // overlay_processor_ozone.cc ensures that the only NV12/YV12/P010 quads
-    // that we allow to be promoted to overlays are those that don't use
-    // the BT.2020 matrix and that don't use full range. Furthermore, since
-    // https://crrev.com/c/2336347, we force the DRM/KMS driver to use BT.601
-    // with limited range. Therefore, for compositing purposes, we need to
-    //
-    // a) Use VK_SAMPLER_YCBCR_MODEL_CONVERSION_YCBCR_601 for any YUV quads that
-    //    might be promoted to overlays - we shouldn't use
-    //    VK_SAMPLER_YCBCR_MODEL_CONVERSION_YCBCR_709 because we might then see
-    //    a slight difference in compositing vs. overlays (note that the BT.601
-    //    and BT.709 primaries are close to each other, so this shouldn't be a
-    //    huge correctness issue, though we'll need to address this at some
-    //    point);
-    //
-    //    and
-    //
-    // b) Use VK_SAMPLER_YCBCR_MODEL_CONVERSION_YCBCR_2020 for BT.2020 quads in
-    //    order to composite them correctly (and we won't need to worry about a
-    //    difference in compositing vs. overlays in this case since those frames
-    //    won't be promoted to overlays).
-    //
-    // We'll need to revisit this once we plumb the color space and range to
-    // DRM/KMS.
-    VkSamplerYcbcrModelConversion ycbcr_model =
-        (color_space.GetMatrixID() == gfx::ColorSpace::MatrixID::BT2020_NCL)
-            ? VK_SAMPLER_YCBCR_MODEL_CONVERSION_YCBCR_2020
-            : VK_SAMPLER_YCBCR_MODEL_CONVERSION_YCBCR_601;
-#else
     VkSamplerYcbcrModelConversion ycbcr_model =
         (color_space.GetMatrixID() == gfx::ColorSpace::MatrixID::BT709)
             ? VK_SAMPLER_YCBCR_MODEL_CONVERSION_YCBCR_709
             : VK_SAMPLER_YCBCR_MODEL_CONVERSION_YCBCR_601;
-#endif  // BUILDFLAG(IS_CHROMEOS)
     VkSamplerYcbcrRange ycbcr_range =
         (color_space.GetRangeID() == gfx::ColorSpace::RangeID::FULL)
             ? VK_SAMPLER_YCBCR_RANGE_ITU_FULL
@@ -458,10 +490,9 @@ CreateVulkanYcbcrConversionInfo(
   gr_ycbcr_info.fFormatFeatures = format_features;
 
   if (!gr_ycbcr_info.fExternalFormat &&
-      (si_format == viz::LegacyMultiPlaneFormat::kYV12 ||
-       (si_format.is_multi_plane() &&
-        si_format.plane_config() ==
-            viz::SharedImageFormat::PlaneConfig::kY_V_U))) {
+      (si_format.is_multi_plane() &&
+       si_format.plane_config() ==
+           viz::SharedImageFormat::PlaneConfig::kY_V_U)) {
     switch (vk_format) {
       case VK_FORMAT_G8_B8_R8_3PLANE_420_UNORM:
       case VK_FORMAT_G10X6_B10X6_R10X6_3PLANE_420_UNORM_3PACK16:

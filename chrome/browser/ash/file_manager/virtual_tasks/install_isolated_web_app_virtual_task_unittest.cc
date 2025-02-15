@@ -2,22 +2,23 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/ash/file_manager/virtual_tasks/install_isolated_web_app_virtual_task.h"
+
+#include <algorithm>
 #include <memory>
 #include <vector>
 
 #include "base/memory/raw_ptr.h"
-#include "base/ranges/algorithm.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
-#include "chrome/browser/ash/file_manager/app_id.h"
 #include "chrome/browser/ash/file_manager/file_tasks.h"
 #include "chrome/browser/ash/file_manager/virtual_file_tasks.h"
-#include "chrome/browser/ash/file_manager/virtual_tasks/install_isolated_web_app_virtual_task.h"
 #include "chrome/browser/web_applications/test/fake_web_app_provider.h"
 #include "chrome/browser/web_applications/test/fake_web_app_ui_manager.h"
 #include "chrome/browser/web_applications/test/web_app_install_test_utils.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/test/base/testing_profile.h"
+#include "chromeos/ash/components/file_manager/app_id.h"
 #include "content/public/common/content_features.h"
 #include "content/public/test/browser_task_environment.h"
 #include "extensions/browser/entry_info.h"
@@ -65,7 +66,7 @@ class InstallIsolatedWebAppVirtualTaskTest : public testing::Test {
 
   bool Matches(const std::vector<GURL>& file_urls) {
     std::vector<extensions::EntryInfo> entries;
-    base::ranges::transform(
+    std::ranges::transform(
         file_urls, std::back_inserter(entries), [](const GURL& file_url) {
           return extensions::EntryInfo(base::FilePath(file_url.path()),
                                        "application/octet-stream",
@@ -84,12 +85,12 @@ class InstallIsolatedWebAppVirtualTaskTest : public testing::Test {
     std::vector<FileSystemURL> file_system_urls;
     auto storage_key =
         blink::StorageKey::CreateFromStringForTesting("https://example.com/");
-    base::ranges::transform(file_urls, std::back_inserter(file_system_urls),
-                            [&](const GURL& url) {
-                              return storage::FileSystemURL::CreateForTest(
-                                  storage_key, storage::kFileSystemTypeLocal,
-                                  base::FilePath::FromUTF8Unsafe(url.path()));
-                            });
+    std::ranges::transform(file_urls, std::back_inserter(file_system_urls),
+                           [&](const GURL& url) {
+                             return storage::FileSystemURL::CreateForTest(
+                                 storage_key, storage::kFileSystemTypeLocal,
+                                 base::FilePath::FromUTF8Unsafe(url.path()));
+                           });
 
     return ExecuteVirtualTask(
         &profile_, {kFileManagerSwaAppId, TASK_TYPE_WEB_APP, task_.id()},

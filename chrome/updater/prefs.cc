@@ -14,6 +14,7 @@
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
+#include "base/functional/function_ref.h"
 #include "base/logging.h"
 #include "base/memory/ref_counted.h"
 #include "base/synchronization/waitable_event.h"
@@ -37,6 +38,7 @@ namespace updater {
 namespace {
 
 const char kPrefQualified[] = "qualified";
+const char kPrefEnableCecaExperiment[] = "enable_ceca_experiment";
 const char kPrefSwapping[] = "swapping";
 const char kPrefMigratedLegacyUpdaters[] = "converted_legacy_updaters";
 const char kPrefActiveVersion[] = "active_version";
@@ -53,7 +55,7 @@ constexpr base::TimeDelta kCreatePrefsWait(base::Minutes(2));
 std::unique_ptr<PrefService> CreatePrefService(
     const base::FilePath& prefs_dir,
     scoped_refptr<PrefRegistrySimple> pref_registry,
-    const base::TimeDelta& wait_period) {
+    base::TimeDelta wait_period) {
   const auto deadline(base::TimeTicks::Now() + wait_period);
   do {
     PrefServiceFactory pref_service_factory;
@@ -81,67 +83,11 @@ std::unique_ptr<PrefService> CreatePrefService(
   return nullptr;
 }
 
-}  // namespace
-
-UpdaterPrefsImpl::UpdaterPrefsImpl(const base::FilePath& prefs_dir,
-                                   std::unique_ptr<ScopedLock> lock,
-                                   std::unique_ptr<PrefService> prefs)
-    : prefs_dir_(prefs_dir), lock_(std::move(lock)), prefs_(std::move(prefs)) {
-  VLOG(1) << __func__ << (lock_.get() ? " (global): " : " (local): ")
-          << prefs_dir_;
-}
-
-UpdaterPrefsImpl::~UpdaterPrefsImpl() {
-  VLOG(1) << __func__ << ": " << prefs_dir_;
-}
-
-PrefService* UpdaterPrefsImpl::GetPrefService() const {
-  return prefs_.get();
-}
-
-bool UpdaterPrefsImpl::GetQualified() const {
-  return prefs_->GetBoolean(kPrefQualified);
-}
-
-void UpdaterPrefsImpl::SetQualified(bool value) {
-  prefs_->SetBoolean(kPrefQualified, value);
-}
-
-std::string UpdaterPrefsImpl::GetActiveVersion() const {
-  return prefs_->GetString(kPrefActiveVersion);
-}
-
-void UpdaterPrefsImpl::SetActiveVersion(const std::string& value) {
-  prefs_->SetString(kPrefActiveVersion, value);
-}
-
-bool UpdaterPrefsImpl::GetSwapping() const {
-  return prefs_->GetBoolean(kPrefSwapping);
-}
-
-void UpdaterPrefsImpl::SetSwapping(bool value) {
-  prefs_->SetBoolean(kPrefSwapping, value);
-}
-
-bool UpdaterPrefsImpl::GetMigratedLegacyUpdaters() const {
-  return prefs_->GetBoolean(kPrefMigratedLegacyUpdaters);
-}
-
-void UpdaterPrefsImpl::SetMigratedLegacyUpdaters() {
-  prefs_->SetBoolean(kPrefMigratedLegacyUpdaters, true);
-}
-
-int UpdaterPrefsImpl::CountServerStarts() {
-  int starts = prefs_->GetInteger(kPrefServerStarts);
-  if (starts <= kMaxServerStartsBeforeFirstReg) {
-    prefs_->SetInteger(kPrefServerStarts, ++starts);
-  }
-  return starts;
-}
-
-scoped_refptr<GlobalPrefs> CreateGlobalPrefs(UpdaterScope scope) {
+scoped_refptr<GlobalPrefs> CreateGlobalPrefsInternal(
+    UpdaterScope scope,
+    base::FunctionRef<bool(UpdaterScope)> check_wrong_user = &WrongUser) {
   VLOG(2) << __func__;
-  if (WrongUser(scope)) {
+  if (check_wrong_user(scope)) {
     VLOG(0) << "Current user is incompatible with scope " << scope
             << "; GlobalPrefs will not be created.";
     return nullptr;
@@ -180,6 +126,84 @@ scoped_refptr<GlobalPrefs> CreateGlobalPrefs(UpdaterScope scope) {
       *global_prefs_dir, std::move(lock), std::move(pref_service));
 }
 
+}  // namespace
+
+UpdaterPrefsImpl::UpdaterPrefsImpl(const base::FilePath& prefs_dir,
+                                   std::unique_ptr<ScopedLock> lock,
+                                   std::unique_ptr<PrefService> prefs)
+    : prefs_dir_(prefs_dir), lock_(std::move(lock)), prefs_(std::move(prefs)) {
+  VLOG(1) << __func__ << (lock_.get() ? " (global): " : " (local): ")
+          << prefs_dir_;
+}
+
+UpdaterPrefsImpl::~UpdaterPrefsImpl() {
+  VLOG(1) << __func__ << ": " << prefs_dir_;
+}
+
+PrefService* UpdaterPrefsImpl::GetPrefService() const {
+  return prefs_.get();
+}
+
+bool UpdaterPrefsImpl::GetQualified() const {
+  return prefs_->GetBoolean(kPrefQualified);
+}
+
+void UpdaterPrefsImpl::SetQualified(bool value) {
+  prefs_->SetBoolean(kPrefQualified, value);
+}
+
+bool UpdaterPrefsImpl::GetCecaExperimentEnabled() {
+  return prefs_->GetBoolean(kPrefEnableCecaExperiment);
+}
+void UpdaterPrefsImpl::SetCecaExperimentEnabled(bool value) {
+  prefs_->SetBoolean(kPrefEnableCecaExperiment, value);
+}
+
+std::string UpdaterPrefsImpl::GetActiveVersion() const {
+  return prefs_->GetString(kPrefActiveVersion);
+}
+
+void UpdaterPrefsImpl::SetActiveVersion(const std::string& value) {
+  prefs_->SetString(kPrefActiveVersion, value);
+}
+
+bool UpdaterPrefsImpl::GetSwapping() const {
+  return prefs_->GetBoolean(kPrefSwapping);
+}
+
+void UpdaterPrefsImpl::SetSwapping(bool value) {
+  prefs_->SetBoolean(kPrefSwapping, value);
+}
+
+bool UpdaterPrefsImpl::GetMigratedLegacyUpdaters() const {
+  return prefs_->GetBoolean(kPrefMigratedLegacyUpdaters);
+}
+
+void UpdaterPrefsImpl::SetMigratedLegacyUpdaters() {
+  prefs_->SetBoolean(kPrefMigratedLegacyUpdaters, true);
+}
+
+int UpdaterPrefsImpl::CountServerStarts() {
+  int starts = prefs_->GetInteger(kPrefServerStarts);
+  if (starts <= kMaxServerStartsBeforeFirstReg) {
+    prefs_->SetInteger(kPrefServerStarts, ++starts);
+  }
+  return starts;
+}
+
+scoped_refptr<GlobalPrefs> CreateGlobalPrefs(UpdaterScope scope) {
+  return CreateGlobalPrefsInternal(scope, &WrongUser);
+}
+
+// Overrides `check_wrong_user` to always return `false` when calling
+// `CreateGlobalPrefsInternal`. This allows the test driver to allow creating
+// the global prefs even if running at high integrity, such as in the
+// `IntegrationTestUserInSystem.ElevatedInstallOfUserUpdaterAndApp` test.
+scoped_refptr<GlobalPrefs> CreateGlobalPrefsForTesting(UpdaterScope scope) {
+  return CreateGlobalPrefsInternal(
+      scope, /*check_wrong_user=*/[](UpdaterScope /*scope*/) { return false; });
+}
+
 scoped_refptr<LocalPrefs> CreateLocalPrefs(UpdaterScope scope) {
   VLOG(2) << __func__;
   const std::optional<base::FilePath> local_prefs_dir =
@@ -191,6 +215,7 @@ scoped_refptr<LocalPrefs> CreateLocalPrefs(UpdaterScope scope) {
   auto pref_registry = base::MakeRefCounted<PrefRegistrySimple>();
   update_client::RegisterPrefs(pref_registry.get());
   pref_registry->RegisterBooleanPref(kPrefQualified, false);
+  pref_registry->RegisterBooleanPref(kPrefEnableCecaExperiment, false);
   RegisterPersistedDataPrefs(pref_registry);
 
   std::unique_ptr<PrefService> pref_service(

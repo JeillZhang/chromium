@@ -6,14 +6,14 @@
 
 #import "base/functional/bind.h"
 #import "base/logging.h"
+#import "base/metrics/user_metrics.h"
 #import "base/strings/sys_string_conversions.h"
 #import "base/time/time.h"
 #import "base/types/expected.h"
 #import "build/branding_buildflags.h"
 #import "components/grit/components_resources.h"
-#import "components/plus_addresses/features.h"
+#import "components/plus_addresses/grit/plus_addresses_strings.h"
 #import "components/plus_addresses/metrics/plus_address_metrics.h"
-#import "components/strings/grit/components_strings.h"
 #import "ios/chrome/browser/plus_addresses/ui/plus_address_bottom_sheet_constants.h"
 #import "ios/chrome/browser/plus_addresses/ui/plus_address_bottom_sheet_delegate.h"
 #import "ios/chrome/browser/shared/public/commands/browser_coordinator_commands.h"
@@ -24,6 +24,7 @@
 #import "ios/chrome/common/ui/colors/semantic_color_names.h"
 #import "ios/chrome/common/ui/confirmation_alert/confirmation_alert_action_handler.h"
 #import "ios/chrome/common/ui/confirmation_alert/confirmation_alert_view_controller.h"
+#import "ios/chrome/common/ui/util/button_util.h"
 #import "ios/chrome/common/ui/util/constraints_ui_util.h"
 #import "ios/chrome/common/ui/util/dynamic_type_util.h"
 #import "ios/chrome/common/ui/util/text_view_util.h"
@@ -32,9 +33,41 @@
 
 namespace {
 
-// Generates the description to be displayed in the modal, which includes an
-// attributed string that links to the user's myaccount page.
-NSAttributedString* DescriptionMessage() {
+using PlusAddressModalCompletionStatus =
+    plus_addresses::metrics::PlusAddressModalCompletionStatus;
+using PlusAddressCreationBottomSheetErrorType =
+    plus_addresses::PlusAddressCreationBottomSheetErrorType;
+
+// Generates the notice to be displayed in the bottomsheet, which includes an
+// attributed string.
+NSAttributedString* NoticeMessage(NSString* primaryEmailAddress) {
+  // Create and format the text.
+  NSDictionary* text_attributes = @{
+    NSForegroundColorAttributeName : [UIColor colorNamed:kTextSecondaryColor],
+    NSFontAttributeName :
+        [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline]
+  };
+
+  NSString* message =
+      l10n_util::GetNSStringF(IDS_PLUS_ADDRESS_BOTTOMSHEET_NOTICE_IOS,
+                              base::SysNSStringToUTF16(primaryEmailAddress));
+
+  NSDictionary* link_attributes = @{
+    NSForegroundColorAttributeName : [UIColor colorNamed:kBlueColor],
+    NSFontAttributeName :
+        [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline],
+    NSUnderlineStyleAttributeName : @(NSUnderlineStyleSingle),
+    // Opening notice page is handled by the delegate.
+    NSLinkAttributeName : @"",
+  };
+
+  return AttributedStringFromStringWithLink(message, text_attributes,
+                                            link_attributes);
+}
+
+// Generates the description to be displayed in the bottomsheet when the notice
+// is presented.
+NSAttributedString* DescriptionMessageOnNoticeDisplayed() {
   // Create and format the text.
   NSDictionary* text_attributes = @{
     NSForegroundColorAttributeName : [UIColor colorNamed:kTextSecondaryColor],
@@ -43,43 +76,28 @@ NSAttributedString* DescriptionMessage() {
   };
 
   NSString* message = l10n_util::GetNSString(
-      IDS_PLUS_ADDRESS_MODAL_PLUS_ADDRESS_DESCRIPTION_IOS);
+      IDS_PLUS_ADDRESS_BOTTOMSHEET_DESCRIPTION_NOTICE_SCREEN);
 
-  NSDictionary* link_attributes = @{
-    NSForegroundColorAttributeName : [UIColor colorNamed:kBlueColor],
-    NSFontAttributeName :
-        [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline],
-    // Opening management page is handled by the delegate.
-    NSLinkAttributeName : @"",
-  };
-
-  return AttributedStringFromStringWithLink(message, text_attributes,
-                                            link_attributes);
+  return [[NSMutableAttributedString alloc] initWithString:message
+                                                attributes:text_attributes];
 }
 
-// Generate the error message with link to report error for displaying on the
-// bottom sheet.
-NSAttributedString* ErrorMessage() {
+// Generates the description to be displayed in the bottomsheet that contains
+// the email.
+NSAttributedString* DescriptionMessageWithEmail(NSString* primaryEmailAddress) {
+  // Create and format the text.
   NSDictionary* text_attributes = @{
     NSForegroundColorAttributeName : [UIColor colorNamed:kTextSecondaryColor],
     NSFontAttributeName :
-        [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote]
-  };
-  NSString* message = l10n_util::GetNSString(
-      base::FeatureList::IsEnabled(
-          plus_addresses::features::kPlusAddressUIRedesign)
-          ? IDS_PLUS_ADDRESS_BOTTOMSHEET_REPORT_ERROR_INSTRUCTION_IOS
-          : IDS_PLUS_ADDRESS_MODAL_REPORT_ERROR_INSTRUCTION_IOS);
-  NSDictionary* link_attributes = @{
-    NSForegroundColorAttributeName : [UIColor colorNamed:kBlueColor],
-    NSFontAttributeName :
-        [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote],
-    // Opening error report page is handled by the delegate.
-    NSLinkAttributeName : @"",
+        [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline]
   };
 
-  return AttributedStringFromStringWithLink(message, text_attributes,
-                                            link_attributes);
+  NSString* message =
+      l10n_util::GetNSStringF(IDS_PLUS_ADDRESS_BOTTOMSHEET_DESCRIPTION_IOS,
+                              base::SysNSStringToUTF16(primaryEmailAddress));
+
+  return [[NSMutableAttributedString alloc] initWithString:message
+                                                attributes:text_attributes];
 }
 
 // Returns the image view with the branding image.
@@ -94,25 +112,6 @@ UIImageView* BrandingImageView() {
       initWithImage:DefaultSymbolTemplateWithPointSize(
                         kMailFillSymbol, kPlusAddressSheetBrandingIconSize)];
 #endif  // BUILDFLAG(IOS_USE_BRANDED_SYMBOLS)
-}
-
-// Returns the image that should be used for the PlusAddress logo.
-UIImage* PlusAddressesLogo() {
-  // IDR_PLUS_ADDRESS_LOGO only exists in official builds.
-#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
-  UIImage* icon = NativeImage(IDR_PLUS_ADDRESS_LOGO);
-  // Scale down image size to prevent content overflow.
-  if (icon && (icon.size.width > kPlusAddressSheetBrandedImageWidth)) {
-    CGFloat ratio = icon.size.width / kPlusAddressSheetBrandedImageWidth;
-    return [UIImage imageWithCGImage:[icon CGImage]
-                               scale:icon.scale * ratio
-                         orientation:icon.imageOrientation];
-  }
-  return icon;
-#else
-  return DefaultSymbolTemplateWithPointSize(kMailFillSymbol,
-                                            kPlusAddressSheetImageSize);
-#endif
 }
 
 }  // namespace
@@ -131,29 +130,27 @@ UIImage* PlusAddressesLogo() {
   __weak id<PlusAddressBottomSheetDelegate> _delegate;
   // A commands handler that allows dismissing the bottom sheet.
   __weak id<BrowserCoordinatorCommands> _browserCoordinatorHandler;
-  // The label that will display the reserved plus address, once it is ready.
-  UILabel* _reservedPlusAddressLabel;
   // The reserved plus address label, once it is ready.
   NSString* _reservedPlusAddress;
   // The table view that displays the reserved plus address for confirmation.
   UITableView* _reservedPlusAddressTableView;
   // The description of plus address that will be displayed on the bottom sheet.
   UITextView* _description;
-  // The error message with error report instruction that will be shown when
-  // error occurs.
-  UITextView* _errorMessage;
-  // A loading spinner to indicate to the user that an action is in progress.
-  UIActivityIndicatorView* _activityIndicator;
   // Record of the time the bottom sheet is shown.
   base::Time _bottomSheetShownTime;
   // Error that occurred while bottom sheet is showing.
-  std::optional<plus_addresses::metrics::PlusAddressModalCompletionStatus>
-      _bottomSheetErrorStatus;
-  // TODO(crbug.com/343153116): Cleanup once feature is enabled.
-  // Yes, if the feature flag `kPlusAddressUIRedesign` is enabled.
-  BOOL _plusAddressUIRedesignEnabled;
+  std::optional<PlusAddressModalCompletionStatus>
+      _bottomSheetModalCompletionErrorStatus;
+  // Stores the error state info for failed creation requests.
+  std::optional<PlusAddressCreationBottomSheetErrorType>
+      _bottomSheetCreationErrorType;
   // Keeps track of the number of times the refresh button was hit.
   NSInteger _refreshCount;
+  // The notice message if it will be shown.
+  UITextView* _noticeMessage;
+  // A boolean that is set to `YES` when generating a plus address either in the
+  // initial state or during the refresh state.
+  BOOL _isGenerating;
 }
 
 - (instancetype)initWithDelegate:(id<PlusAddressBottomSheetDelegate>)delegate
@@ -163,10 +160,10 @@ UIImage* PlusAddressesLogo() {
   if (self) {
     _delegate = delegate;
     _browserCoordinatorHandler = browserCoordinatorHandler;
-    _reservedPlusAddress = @"";
-    _plusAddressUIRedesignEnabled = base::FeatureList::IsEnabled(
-        plus_addresses::features::kPlusAddressUIRedesign);
+    _reservedPlusAddress = l10n_util::GetNSString(
+        IDS_PLUS_ADDRESS_BOTTOMSHEET_LOADING_TEMPORARY_LABEL_CONTENT_IOS);
     _refreshCount = 0;
+    _isGenerating = YES;
   }
   return self;
 }
@@ -174,30 +171,18 @@ UIImage* PlusAddressesLogo() {
 #pragma mark - UIViewController
 
 - (void)viewDidLoad {
-  // Set the properties read by the super when constructing the
-  // views in `-[ConfirmationAlertViewController viewDidLoad]`.
-  [self setupAboveTitleView];
-
-  if (_plusAddressUIRedesignEnabled) {
-    self.aboveTitleView = [self brandingIconView];
-  } else {
-    self.image = PlusAddressesLogo();
-    self.imageHasFixedSize = YES;
-  }
-
-  self.customScrollViewBottomInsets =
-      _plusAddressUIRedesignEnabled ? 0
-                                    : kPlusAddressSheetScrollViewBottomInsets;
-  self.titleString = l10n_util::GetNSString(
-      _plusAddressUIRedesignEnabled ? IDS_PLUS_ADDRESS_BOTTOMSHEET_TITLE_IOS
-                                    : IDS_PLUS_ADDRESS_MODAL_TITLE);
-  self.primaryActionString = l10n_util::GetNSString(
-      _plusAddressUIRedesignEnabled ? IDS_PLUS_ADDRESS_BOTTOMSHEET_OK_TEXT_IOS
-                                    : IDS_PLUS_ADDRESS_MODAL_OK_TEXT);
+  self.aboveTitleView = [self brandingIconView];
+  self.titleString =
+      l10n_util::GetNSString([_delegate shouldShowNotice]
+                                 ? IDS_PLUS_ADDRESS_BOTTOMSHEET_TITLE_NOTICE_IOS
+                                 : IDS_PLUS_ADDRESS_BOTTOMSHEET_TITLE_IOS);
+  self.titleTextStyle = UIFontTextStyleTitle2;
+  self.primaryActionString =
+      l10n_util::GetNSString(IDS_PLUS_ADDRESS_BOTTOMSHEET_OK_TEXT_IOS);
   self.secondaryActionString =
-      l10n_util::GetNSString(_plusAddressUIRedesignEnabled
-                                 ? IDS_PLUS_ADDRESS_BOTTOMSHEET_CANCEL_TEXT_IOS
-                                 : IDS_PLUS_ADDRESS_MODAL_CANCEL_TEXT);
+      l10n_util::GetNSString(IDS_PLUS_ADDRESS_BOTTOMSHEET_CANCEL_TEXT_IOS);
+  self.customScrollViewBottomInsets = 0;
+
   // Don't show the dismiss bar button (with the secondary button used for
   // canceling), and ensure there is still sufficient space between the top of
   // the bottom sheet content and the top of the sheet. This is especially
@@ -207,37 +192,8 @@ UIImage* PlusAddressesLogo() {
   self.customSpacingBeforeImageIfNoNavigationBar =
       kPlusAddressSheetBeforeImageTopMargin;
   self.customSpacingAfterImage = kPlusAddressSheetAfterImageMargin;
-  if (_plusAddressUIRedesignEnabled) {
-    // Set up the view that will indicate the reserved plus address to the user
-    // for confirmation.
-    _reservedPlusAddressTableView = [self reservedPlusAddressView];
-  } else {
-    // Set up the label that will indicate the reserved plus address to the
-    // user.
-    _reservedPlusAddressLabel = [self reservedPlusAddressView:@""];
-  }
 
-  NSString* primaryEmailAddress = [_delegate primaryEmailAddress];
-  UILabel* primaryAddressLabel =
-      [self primaryEmailAddressView:primaryEmailAddress];
-  _description = [self descriptionView:DescriptionMessage()];
-  _errorMessage = [self errorMessageViewWithMessage:ErrorMessage()];
-  UIStackView* verticalStack = [[UIStackView alloc] initWithArrangedSubviews:@[
-    _description, primaryAddressLabel,
-    (_plusAddressUIRedesignEnabled ? _reservedPlusAddressTableView
-                                   : _reservedPlusAddressLabel),
-    _errorMessage
-  ]];
-  _errorMessage.hidden = YES;
-  verticalStack.axis = UILayoutConstraintAxisVertical;
-  verticalStack.spacing = 0;
-  verticalStack.distribution = UIStackViewDistributionFill;
-  verticalStack.layoutMarginsRelativeArrangement = YES;
-  verticalStack.layoutMargins = UIEdgeInsetsMake(0, 0, 0, 0);
-  verticalStack.translatesAutoresizingMaskIntoConstraints = NO;
-  [verticalStack setCustomSpacing:kPlusAddressSheetPrimaryAddressBottomMargin
-                        afterView:primaryAddressLabel];
-  self.underTitleView = verticalStack;
+  self.underTitleView = [self setUpUnderTitleView];
   [super viewDidLoad];
   [self setUpBottomSheetDetents];
   self.actionHandler = self;
@@ -245,27 +201,23 @@ UIImage* PlusAddressesLogo() {
   // Disable the primary button until such time as the reservation is complete.
   // If reserving an address fails, we should inform the user and not attempt to
   // fill any fields on the page.
-  self.primaryActionButton.enabled = NO;
-  [_delegate reservePlusAddress];
-  plus_addresses::metrics::RecordModalEvent(
-      plus_addresses::metrics::PlusAddressModalEvent::kModalShown);
+  [self enablePrimaryActionButton:NO];
   _bottomSheetShownTime = base::Time::Now();
 }
 
 #pragma mark - ConfirmationAlertActionHandler
 
 - (void)confirmationAlertPrimaryAction {
-  self.primaryActionButton.enabled = NO;
-  // Make sure the user perceives that something is happening via a spinner.
-  [_activityIndicator startAnimating];
-  [_delegate confirmPlusAddress];
-  plus_addresses::metrics::RecordModalEvent(
-      plus_addresses::metrics::PlusAddressModalEvent::kModalConfirmed);
+  base::RecordAction(
+      base::UserMetricsAction("PlusAddresses.OfferedPlusAddressAccepted"));
+  [self willConfirmPlusAddress];
 }
 
 - (void)confirmationAlertSecondaryAction {
   // The cancel button was tapped, which dismisses the bottom sheet.
   // Call out to the command handler to hide the view and stop the coordinator.
+  base::RecordAction(
+      base::UserMetricsAction("PlusAddresses.OfferedPlusAddressDeclined"));
   [self dismiss];
   [_browserCoordinatorHandler dismissPlusAddressBottomSheet];
 }
@@ -273,46 +225,48 @@ UIImage* PlusAddressesLogo() {
 #pragma mark - PlusAddressBottomSheetConsumer
 
 - (void)didReservePlusAddress:(NSString*)plusAddress {
-  self.primaryActionButton.enabled = YES;
-  if (_plusAddressUIRedesignEnabled) {
-    _reservedPlusAddress = plusAddress;
-    [_reservedPlusAddressTableView reloadData];
-  } else {
-    _reservedPlusAddressLabel.text = plusAddress;
+  [self enablePrimaryActionButton:YES];
+  _isGenerating = NO;
+  if (!_refreshCount) {
+    plus_addresses::metrics::RecordModalEvent(
+        plus_addresses::metrics::PlusAddressModalEvent::kModalShown,
+        [_delegate shouldShowNotice]);
   }
+  _reservedPlusAddress = plusAddress;
+  _bottomSheetModalCompletionErrorStatus.reset();
+  _bottomSheetCreationErrorType.reset();
+  [_reservedPlusAddressTableView reloadData];
 }
 
 - (void)didConfirmPlusAddress {
   plus_addresses::metrics::RecordModalShownOutcome(
-      plus_addresses::metrics::PlusAddressModalCompletionStatus::
-          kModalConfirmed,
+      PlusAddressModalCompletionStatus::kModalConfirmed,
       base::Time::Now() - _bottomSheetShownTime,
-      /*refresh_count=*/(int)_refreshCount);
-  [_activityIndicator stopAnimating];
+      /*refresh_count=*/(int)_refreshCount, [_delegate shouldShowNotice]);
+  _bottomSheetModalCompletionErrorStatus.reset();
+  _bottomSheetCreationErrorType.reset();
+  self.isLoading = NO;
   [_browserCoordinatorHandler dismissPlusAddressBottomSheet];
 }
 
-- (void)notifyError:
-    (plus_addresses::metrics::PlusAddressModalCompletionStatus)status {
-  // With any error, whether during the reservation step or the confirmation
-  // step, disable submission of the modal.
-  _bottomSheetErrorStatus = status;
-  self.primaryActionButton.enabled = NO;
+- (void)notifyError:(PlusAddressModalCompletionStatus)completionStatus
+    withCreateErrorType:(PlusAddressCreationBottomSheetErrorType)errorType {
+  _bottomSheetModalCompletionErrorStatus = completionStatus;
+  _bottomSheetCreationErrorType = errorType;
+  self.isLoading = NO;
+}
 
-  if (_plusAddressUIRedesignEnabled) {
-    _reservedPlusAddressTableView.hidden = YES;
-    [_reservedPlusAddressTableView reloadData];
-  } else {
-    _reservedPlusAddressLabel.hidden = YES;
-  }
-  _errorMessage.hidden = NO;
-  [_activityIndicator stopAnimating];
-  // Resize to accommodate error message.
-  [self expandBottomSheet];
+- (void)dismissBottomSheet {
+  [self dismiss];
+}
+
+- (void)didSelectTryAgainToConfirm {
+  [self willConfirmPlusAddress];
 }
 
 #pragma mark - UITextViewDelegate
 
+#if __IPHONE_OS_VERSION_MIN_REQUIRED < __IPHONE_17_0
 // Handle click on URLs on the bottomsheet.
 // TODO(crbug.com/40276862) Add primaryActionForTextItem: when this method is
 // deprecated after ios 17 (detail on UITextItem.h).
@@ -320,15 +274,33 @@ UIImage* PlusAddressesLogo() {
     shouldInteractWithURL:(NSURL*)URL
                   inRange:(NSRange)characterRange
               interaction:(UITextItemInteraction)interaction {
-  CHECK(textView == _errorMessage || textView == _description);
-  if (textView == _errorMessage) {
-    [_delegate openNewTab:PlusAddressURLType::kErrorReport];
+  CHECK(textView == _description);
+  if (textView == _noticeMessage) {
+    [_delegate openNewTab:PlusAddressURLType::kLearnMore];
   } else {
     [_delegate openNewTab:PlusAddressURLType::kManagement];
   }
   [_browserCoordinatorHandler dismissPlusAddressBottomSheet];
   // Returns NO as the app is handling the opening of the URL.
   return NO;
+}
+#endif
+
+- (UIAction*)textView:(UITextView*)textView
+    primaryActionForTextItem:(UITextItem*)textItem
+               defaultAction:(UIAction*)defaultAction API_AVAILABLE(ios(17.0)) {
+  CHECK(textView == _description);
+  PlusAddressURLType type;
+  if (textView == _noticeMessage) {
+    type = PlusAddressURLType::kLearnMore;
+  } else {
+    type = PlusAddressURLType::kManagement;
+  }
+
+  __weak __typeof(self) weakSelf = self;
+  return [UIAction actionWithHandler:^(UIAction* action) {
+    [weakSelf onURLTapForType:type];
+  }];
 }
 
 #pragma mark - UIAdaptivePresentationControllerDelegate
@@ -344,11 +316,11 @@ UIImage* PlusAddressesLogo() {
 
 - (NSInteger)tableView:(UITableView*)tableView
     numberOfRowsInSection:(NSInteger)section {
-  return _plusAddressUIRedesignEnabled && _errorMessage.hidden ? 1 : 0;
+  return 1;
 }
 
 - (NSInteger)numberOfSectionsInTableView:(UITableView*)tableView {
-  return _plusAddressUIRedesignEnabled && _errorMessage.hidden ? 1 : 0;
+  return 1;
 }
 
 - (UITableViewCell*)tableView:(UITableView*)tableView
@@ -358,16 +330,39 @@ UIImage* PlusAddressesLogo() {
 
   cell.selectionStyle = UITableViewCellSelectionStyleNone;
   cell.backgroundColor = [UIColor colorNamed:kSecondaryBackgroundColor];
-  [cell setLeadingIconImage:DefaultSymbolTemplateWithPointSize(
+
+  BOOL shouldShowRefresh = [_delegate isRefreshEnabled];
+
+  if (_isGenerating) {
+    shouldShowRefresh = NO;
+    [cell showActivityIndicator];
+  } else {
+#if BUILDFLAG(IOS_USE_BRANDED_SYMBOLS)
+    [cell setLeadingIconImage:CustomSymbolTemplateWithPointSize(
+                                  kGooglePlusAddressSymbol,
+                                  kPlusAddressSheetCellImageSize)
+                withTintColor:[UIColor colorNamed:kTextSecondaryColor]];
+#else
+    [cell
+        setLeadingIconImage:DefaultSymbolTemplateWithPointSize(
                                 kMailFillSymbol, kPlusAddressSheetCellImageSize)
               withTintColor:[UIColor colorNamed:kTextSecondaryColor]];
-  if ([_delegate isRefreshEnabled]) {
+#endif
+    [cell hideActivityIndicator];
+  }
+
+  if (shouldShowRefresh) {
     [cell setTrailingButtonImage:CustomSymbolTemplateWithPointSize(
                                      kArrowClockWiseSymbol,
                                      kPlusAddressSheetCellImageSize)
-                   withTintColor:[UIColor colorNamed:kBlueColor]];
+                   withTintColor:[UIColor colorNamed:kBlueColor]
+         accessibilityIdentifier:
+             kPlusAddressRefreshButtonAccessibilityIdentifier];
   }
+
   cell.textLabel.text = _reservedPlusAddress;
+  cell.textLabel.accessibilityIdentifier =
+      kPlusAddressLabelAccessibilityIdentifier;
   cell.delegate = self;
 
   return cell;
@@ -377,37 +372,19 @@ UIImage* PlusAddressesLogo() {
 
 - (void)didTapTrailingButton {
   _refreshCount++;
-  [_delegate didTapRefreshButton];
-  self.primaryActionButton.enabled = NO;
-  // TODO(crbug.com/343153116): Disable the refresh button when it's loading.
+  [self enablePrimaryActionButton:NO];
+  _isGenerating = YES;
   _reservedPlusAddress = l10n_util::GetNSString(
-      IDS_PLUS_ADDRESS_BOTTOMSHEET_REFRESH_TEMPORARY_LABEL_CONTENT_IOS);
+      IDS_PLUS_ADDRESS_BOTTOMSHEET_LOADING_TEMPORARY_LABEL_CONTENT_IOS);
   [_reservedPlusAddressTableView reloadData];
+  base::RecordAction(base::UserMetricsAction("PlusAddresses.Refreshed"));
+  [_delegate didTapRefreshButton];
 }
 
 #pragma mark - Private
-
-// Configures the reserved address view, which allows the user to understand the
-// plus address they can confirm use of (or not).
-- (UILabel*)reservedPlusAddressView:(NSString*)text {
-  CHECK(!_plusAddressUIRedesignEnabled);
-  UILabel* reservedPlusAddressLabel = [[UILabel alloc] init];
-  reservedPlusAddressLabel.text = text;
-
-  // Limit the size of text to avoid truncation.
-  reservedPlusAddressLabel.font = PreferredFontForTextStyleWithMaxCategory(
-      UIFontTextStyleTitle2, self.traitCollection.preferredContentSizeCategory,
-      UIContentSizeCategoryExtraExtraExtraLarge);
-
-  reservedPlusAddressLabel.numberOfLines = 0;
-  reservedPlusAddressLabel.textAlignment = NSTextAlignmentCenter;
-  return reservedPlusAddressLabel;
-}
-
 // Configures the reserved address view, which allows the user to understand the
 // plus address they can confirm use of (or not).
 - (UITableView*)reservedPlusAddressView {
-  CHECK(_plusAddressUIRedesignEnabled);
   UITableView* tableViewContainer =
       [[UITableView alloc] initWithFrame:CGRectZero];
   tableViewContainer.rowHeight = kPlusAddressSheetTableViewCellHeight;
@@ -421,26 +398,6 @@ UIImage* PlusAddressesLogo() {
       constraintEqualToConstant:kPlusAddressSheetTableViewCellHeight]
       .active = YES;
   return tableViewContainer;
-}
-
-// The primary email address is displayed in a separate view with slightly
-// different formatting.
-- (UILabel*)primaryEmailAddressView:(NSString*)primaryEmailAddress {
-  UILabel* primaryEmailAddressLabel = [[UILabel alloc] init];
-  primaryEmailAddressLabel.text = primaryEmailAddress;
-
-  UIFontDescriptor* descriptor = [UIFontDescriptor
-      preferredFontDescriptorWithTextStyle:UIFontTextStyleSubheadline];
-  // Use a bold font for the primary address.
-  UIFont* font = [UIFont systemFontOfSize:descriptor.pointSize
-                                   weight:UIFontWeightBold];
-  UIFontMetrics* fontMetrics =
-      [UIFontMetrics metricsForTextStyle:UIFontTextStyleSubheadline];
-  primaryEmailAddressLabel.font = [fontMetrics scaledFontForFont:font];
-
-  primaryEmailAddressLabel.numberOfLines = 0;
-  primaryEmailAddressLabel.textAlignment = NSTextAlignmentCenter;
-  return primaryEmailAddressLabel;
 }
 
 // Create a description UITextView, which will describe the function of the
@@ -461,51 +418,86 @@ UIImage* PlusAddressesLogo() {
   return descriptionView;
 }
 
-- (UITextView*)errorMessageViewWithMessage:(NSAttributedString*)message {
-  UITextView* errorMessageView = CreateUITextViewWithTextKit1();
-  errorMessageView.accessibilityIdentifier =
-      kPlusAddressSheetErrorMessageAccessibilityIdentifier;
-  errorMessageView.scrollEnabled = NO;
-  errorMessageView.editable = NO;
-  errorMessageView.delegate = self;
-  errorMessageView.backgroundColor = [UIColor clearColor];
-  errorMessageView.adjustsFontForContentSizeCategory = YES;
-  errorMessageView.translatesAutoresizingMaskIntoConstraints = NO;
-  errorMessageView.textContainerInset = UIEdgeInsetsZero;
-  errorMessageView.attributedText = message;
-  errorMessageView.textAlignment = NSTextAlignmentCenter;
-  return errorMessageView;
+- (UITextView*)noticeMessageViewWithMessage:(NSAttributedString*)message {
+  UITextView* noticeMessageView = CreateUITextViewWithTextKit1();
+  noticeMessageView.accessibilityIdentifier =
+      kPlusAddressSheetNoticeMessageAccessibilityIdentifier;
+  noticeMessageView.scrollEnabled = NO;
+  noticeMessageView.editable = NO;
+  noticeMessageView.delegate = self;
+  noticeMessageView.backgroundColor = [UIColor clearColor];
+  noticeMessageView.adjustsFontForContentSizeCategory = YES;
+  noticeMessageView.translatesAutoresizingMaskIntoConstraints = NO;
+  noticeMessageView.textContainerInset = UIEdgeInsetsZero;
+  noticeMessageView.attributedText = message;
+  noticeMessageView.textAlignment = NSTextAlignmentCenter;
+  return noticeMessageView;
 }
 
-- (void)setupAboveTitleView {
-  _activityIndicator = [[UIActivityIndicatorView alloc]
-      initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
+- (UIView*)setUpUnderTitleView {
+  // Set up the view that will indicate the reserved plus address to the user
+  // for confirmation.
+  NSString* email = [_delegate primaryEmailAddress];
+  BOOL showNotice = [_delegate shouldShowNotice];
+  _reservedPlusAddressTableView = [self reservedPlusAddressView];
+  _description =
+      [self descriptionView:(showNotice ? DescriptionMessageOnNoticeDisplayed()
+                                        : DescriptionMessageWithEmail(email))];
+  _noticeMessage =
+      [self noticeMessageViewWithMessage:NoticeMessage(
+                                             [_delegate primaryEmailAddress])];
 
-  // Create a container view such that the activity indicator showing doesn't
-  // cause the layout to jump.
-  UIView* container = [[UIView alloc] initWithFrame:CGRectZero];
-  [container addSubview:_activityIndicator];
-  _activityIndicator.translatesAutoresizingMaskIntoConstraints = NO;
-  container.translatesAutoresizingMaskIntoConstraints = NO;
-  AddSameConstraints(container, _activityIndicator);
-  self.aboveTitleView = container;
+  UIStackView* verticalStack = [[UIStackView alloc] initWithArrangedSubviews:@[
+    _description, _reservedPlusAddressTableView, _noticeMessage
+  ]];
+  _noticeMessage.hidden = !showNotice;
+  verticalStack.axis = UILayoutConstraintAxisVertical;
+  verticalStack.spacing = 0;
+  verticalStack.distribution = UIStackViewDistributionFill;
+  verticalStack.layoutMarginsRelativeArrangement = YES;
+  verticalStack.layoutMargins = UIEdgeInsetsMake(0, 0, 0, 0);
+  verticalStack.translatesAutoresizingMaskIntoConstraints = NO;
+  [verticalStack setCustomSpacing:kPlusAddressSheetPrimaryAddressBottomMargin
+                        afterView:_description];
+  if (showNotice) {
+    [verticalStack setCustomSpacing:kPlusAddressSheetPrimaryAddressBottomMargin
+                          afterView:_reservedPlusAddressTableView];
+  }
+  return verticalStack;
 }
 
 - (void)dismiss {
+  const bool was_notice_shown = [_delegate shouldShowNotice];
   plus_addresses::metrics::RecordModalEvent(
-      plus_addresses::metrics::PlusAddressModalEvent::kModalCanceled);
-  if (_bottomSheetErrorStatus.has_value()) {
-    plus_addresses::metrics::RecordModalShownOutcome(
-        _bottomSheetErrorStatus.value(),
-        base::Time::Now() - _bottomSheetShownTime,
-        /*refresh_count=*/(int)_refreshCount);
-  } else {
-    plus_addresses::metrics::RecordModalShownOutcome(
-        plus_addresses::metrics::PlusAddressModalCompletionStatus::
-            kModalCanceled,
-        base::Time::Now() - _bottomSheetShownTime,
-        /*refresh_count=*/(int)_refreshCount);
+      plus_addresses::metrics::PlusAddressModalEvent::kModalCanceled,
+      was_notice_shown);
+  plus_addresses::metrics::RecordModalShownOutcome(
+      _bottomSheetModalCompletionErrorStatus.value_or(
+          PlusAddressModalCompletionStatus::kModalCanceled),
+      base::Time::Now() - _bottomSheetShownTime,
+      /*refresh_count=*/(int)_refreshCount, was_notice_shown);
+  if (_bottomSheetModalCompletionErrorStatus) {
+    if (_bottomSheetCreationErrorType &&
+        _bottomSheetCreationErrorType.value() ==
+            PlusAddressCreationBottomSheetErrorType::kCreateAffiliation) {
+      base::RecordAction(
+          base::UserMetricsAction("PlusAddresses.AffiliationErrorCanceled"));
+    } else if (_bottomSheetCreationErrorType &&
+               _bottomSheetCreationErrorType.value() ==
+                   PlusAddressCreationBottomSheetErrorType::kCreateQuota) {
+      base::RecordAction(
+          base::UserMetricsAction("PlusAddresses.QuotaErrorAccepted"));
+    } else if (*_bottomSheetModalCompletionErrorStatus ==
+               PlusAddressModalCompletionStatus::kReservePlusAddressError) {
+      base::RecordAction(
+          base::UserMetricsAction("PlusAddresses.ReserveErrorCanceled"));
+    } else if (*_bottomSheetModalCompletionErrorStatus ==
+               PlusAddressModalCompletionStatus::kConfirmPlusAddressError) {
+      base::RecordAction(
+          base::UserMetricsAction("PlusAddresses.CreateErrorCanceled"));
+    }
   }
+
   [_browserCoordinatorHandler dismissPlusAddressBottomSheet];
 }
 
@@ -517,8 +509,10 @@ UIImage* PlusAddressesLogo() {
   iconContainerView.translatesAutoresizingMaskIntoConstraints = NO;
   iconContainerView.layer.cornerRadius =
       kPlusAddressSheetBrandingIconContainerViewCornerRadius;
-  // TODO(crbug.com/343153116): Fix the shadow.
-  iconContainerView.layer.shadowOpacity = 0.3;
+  iconContainerView.layer.shadowRadius =
+      kPlusAddressSheetBrandingIconContainerViewShadowRadius;
+  iconContainerView.layer.shadowOpacity =
+      kPlusAddressSheetBrandingIconContainerViewShadowOpacity;
   iconContainerView.backgroundColor = [UIColor colorNamed:kSolidWhiteColor];
 
   UIImageView* icon = BrandingImageView();
@@ -547,6 +541,28 @@ UIImage* PlusAddressesLogo() {
           kPlusAddressSheetBrandingIconContainerViewBottomPadding, 0));
 
   return outerView;
+}
+
+// Called when the user chose to confirm the plus address.
+- (void)willConfirmPlusAddress {
+  [self enablePrimaryActionButton:NO];
+  self.isLoading = YES;
+
+  [_delegate confirmPlusAddress];
+  plus_addresses::metrics::RecordModalEvent(
+      plus_addresses::metrics::PlusAddressModalEvent::kModalConfirmed,
+      [_delegate shouldShowNotice]);
+}
+
+// Enables/Disables the primary action button.
+- (void)enablePrimaryActionButton:(BOOL)enabled {
+  self.primaryActionButton.enabled = enabled;
+  UpdateButtonColorOnEnableDisable(self.primaryActionButton);
+}
+
+- (void)onURLTapForType:(PlusAddressURLType)type {
+  [_delegate openNewTab:type];
+  [_browserCoordinatorHandler dismissPlusAddressBottomSheet];
 }
 
 @end

@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include <memory>
 
 #include "base/memory/raw_ptr.h"
@@ -447,8 +452,8 @@ IN_PROC_BROWSER_TEST_F(IdleServiceTest, MAYBE_MultiProfile) {
   EXPECT_TRUE(ProfilePicker::IsOpen());
 }
 
-// TODO(crbug.com/40064501): Flaky on MacOS
-#if BUILDFLAG(IS_MAC)
+// TODO(crbug.com/40064501): Flaky on MacOS and Linux
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
 #define MAYBE_MultiProfileWithDifferentThresholds \
   DISABLED_MultiProfileWithDifferentThresholds
 #else

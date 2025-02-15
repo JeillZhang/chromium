@@ -149,11 +149,6 @@ void WebSettingsImpl::SetRequireTransientActivationForShowFileOrDirectoryPicker(
       required);
 }
 
-void WebSettingsImpl::SetRequireTransientActivationForHtmlFullscreen(
-    bool required) {
-  settings_->SetRequireTransientActivationForHtmlFullscreen(required);
-}
-
 void WebSettingsImpl::SetAutoZoomFocusedEditableToLegibleScale(
     bool auto_zoom_focused_editable_to_legible_scale) {
   auto_zoom_focused_editable_to_legible_scale_ =
@@ -352,6 +347,10 @@ void WebSettingsImpl::SetDoubleTapToZoomEnabled(
 
 void WebSettingsImpl::SetDownloadableBinaryFontsEnabled(bool enabled) {
   settings_->SetDownloadableBinaryFontsEnabled(enabled);
+}
+
+void WebSettingsImpl::SetDynamicSafeAreaInsetsEnabled(bool enabled) {
+  settings_->SetDynamicSafeAreaInsetsEnabled(enabled);
 }
 
 void WebSettingsImpl::SetJavaScriptCanAccessClipboard(bool enabled) {
@@ -755,6 +754,11 @@ void WebSettingsImpl::SetForceDarkModeEnabled(bool enabled) {
 
 void WebSettingsImpl::SetInForcedColors(bool in_forced_colors) {
   settings_->SetInForcedColors(in_forced_colors);
+}
+
+void WebSettingsImpl::SetIsForcedColorsDisabled(
+    bool is_forced_colors_disabled) {
+  settings_->SetIsForcedColorsDisabled(is_forced_colors_disabled);
 }
 
 void WebSettingsImpl::SetPreferredRootScrollbarColorScheme(

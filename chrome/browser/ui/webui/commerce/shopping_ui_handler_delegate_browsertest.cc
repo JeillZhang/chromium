@@ -4,16 +4,24 @@
 
 #include "chrome/browser/ui/webui/commerce/shopping_ui_handler_delegate.h"
 
+#include "base/json/json_reader.h"
+#include "base/uuid.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_list.h"
+#include "chrome/browser/ui/webui/feedback/feedback_dialog.h"
 #include "chrome/test/base/chrome_test_utils.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/bookmarks/browser/bookmark_model.h"
+#include "components/commerce/core/commerce_utils.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/test_navigation_observer.h"
+
+namespace {
+const char kExampleUrl[] = "https://example.com/";
+}  // namespace
 
 // Tests ShoppingUiHandlerDelegate.
 class ShoppingUiHandlerDelegateBrowserTest : public InProcessBrowserTest {
@@ -53,8 +61,8 @@ class ShoppingUiHandlerDelegateBrowserTest : public InProcessBrowserTest {
 IN_PROC_BROWSER_TEST_F(ShoppingUiHandlerDelegateBrowserTest,
                        TestGetCurrentUrl) {
   auto delegate =
-      std::make_unique<commerce::ShoppingUiHandlerDelegate>(nullptr, profile_);
-  const GURL url = GURL("https://www.example.com");
+      std::make_unique<commerce::ShoppingUiHandlerDelegate>(profile_);
+  const GURL url = GURL(kExampleUrl);
   NavigateToURL(url);
 
   ASSERT_TRUE(delegate->GetCurrentTabUrl().has_value());
@@ -64,8 +72,8 @@ IN_PROC_BROWSER_TEST_F(ShoppingUiHandlerDelegateBrowserTest,
 IN_PROC_BROWSER_TEST_F(ShoppingUiHandlerDelegateBrowserTest,
                        TestGetBookmarkForCurrentUrl) {
   auto delegate =
-      std::make_unique<commerce::ShoppingUiHandlerDelegate>(nullptr, profile_);
-  const GURL url = GURL("https://www.example.com");
+      std::make_unique<commerce::ShoppingUiHandlerDelegate>(profile_);
+  const GURL url = GURL(kExampleUrl);
   NavigateToURL(url);
 
   const bookmarks::BookmarkNode* other_node = bookmark_model_->other_node();
@@ -81,8 +89,8 @@ IN_PROC_BROWSER_TEST_F(ShoppingUiHandlerDelegateBrowserTest,
 IN_PROC_BROWSER_TEST_F(ShoppingUiHandlerDelegateBrowserTest,
                        TestAddBookmarkForCurrentUrl) {
   auto delegate =
-      std::make_unique<commerce::ShoppingUiHandlerDelegate>(nullptr, profile_);
-  const GURL url = GURL("https://www.example.com");
+      std::make_unique<commerce::ShoppingUiHandlerDelegate>(profile_);
+  const GURL url = GURL(kExampleUrl);
   NavigateToURL(url);
 
   const bookmarks::BookmarkNode* other_node = bookmark_model_->other_node();
@@ -97,8 +105,8 @@ IN_PROC_BROWSER_TEST_F(ShoppingUiHandlerDelegateBrowserTest,
 IN_PROC_BROWSER_TEST_F(ShoppingUiHandlerDelegateBrowserTest,
                        TestSwitchToOrOpenTab_SwitchToExistingTab) {
   auto delegate =
-      std::make_unique<commerce::ShoppingUiHandlerDelegate>(nullptr, profile_);
-  const GURL url_1 = GURL("https://www.example.com");
+      std::make_unique<commerce::ShoppingUiHandlerDelegate>(profile_);
+  const GURL url_1 = GURL(kExampleUrl);
   NavigateToURL(url_1);
   const auto* web_contents_1 = web_contents();
   const GURL url_2 = GURL("https://www.google.com");
@@ -117,8 +125,8 @@ IN_PROC_BROWSER_TEST_F(ShoppingUiHandlerDelegateBrowserTest,
 IN_PROC_BROWSER_TEST_F(ShoppingUiHandlerDelegateBrowserTest,
                        TestSwitchToOrOpenTab_OpenNewTab) {
   auto delegate =
-      std::make_unique<commerce::ShoppingUiHandlerDelegate>(nullptr, profile_);
-  const GURL url = GURL("https://www.example.com");
+      std::make_unique<commerce::ShoppingUiHandlerDelegate>(profile_);
+  const GURL url = GURL(kExampleUrl);
   NavigateToURL(url);
   const GURL url_2 = GURL("https://www.google.com");
   content::TestNavigationObserver observer(url_2);
@@ -136,12 +144,12 @@ IN_PROC_BROWSER_TEST_F(ShoppingUiHandlerDelegateBrowserTest,
 IN_PROC_BROWSER_TEST_F(ShoppingUiHandlerDelegateBrowserTest,
                        TestSwitchToOrOpenTab_InvalidUrls) {
   auto delegate =
-      std::make_unique<commerce::ShoppingUiHandlerDelegate>(nullptr, profile_);
+      std::make_unique<commerce::ShoppingUiHandlerDelegate>(profile_);
   const GURL invalid_url_1 = GURL("chrome://newtab");
   NavigateToURL(invalid_url_1);
   const GURL invalid_url_2 = GURL("file://foo");
   OpenURLInNewTab(invalid_url_2);
-  const GURL valid_url = GURL("https://www.example.com");
+  const GURL valid_url = GURL(kExampleUrl);
   OpenURLInNewTab(valid_url);
   const auto* valid_web_contents = web_contents();
 
@@ -162,3 +170,31 @@ IN_PROC_BROWSER_TEST_F(ShoppingUiHandlerDelegateBrowserTest,
   EXPECT_EQ(valid_web_contents, web_contents());
   EXPECT_EQ(valid_url, web_contents()->GetLastCommittedURL());
 }
+
+// The feedback dialog on CrOS & LaCrOS happens at the system level,
+// which cannot be easily tested here. LaCrOS has a separate feedback
+// browser test which gives us some coverage.
+#if !BUILDFLAG(IS_CHROMEOS)
+IN_PROC_BROWSER_TEST_F(ShoppingUiHandlerDelegateBrowserTest,
+                       TestShowFeedbackForProductSpecifications) {
+  const std::string log_id = "test_id";
+  ASSERT_EQ(nullptr, FeedbackDialog::GetInstanceForTest());
+
+  auto delegate =
+      std::make_unique<commerce::ShoppingUiHandlerDelegate>(profile_);
+  delegate->ShowFeedbackForProductSpecifications(log_id);
+
+  // Feedback dialog should be non-null with correct meta data.
+  CHECK(FeedbackDialog::GetInstanceForTest());
+  EXPECT_EQ(chrome::kChromeUIFeedbackURL,
+            FeedbackDialog::GetInstanceForTest()->GetDialogContentURL());
+  std::optional<base::Value::Dict> meta_data = base::JSONReader::ReadDict(
+      FeedbackDialog::GetInstanceForTest()->GetDialogArgs());
+  ASSERT_TRUE(meta_data.has_value());
+  ASSERT_EQ(*meta_data->FindString("categoryTag"), "compare");
+  std::optional<base::Value::Dict> ai_meta_data =
+      base::JSONReader::ReadDict(*meta_data->FindString("aiMetadata"));
+  ASSERT_TRUE(ai_meta_data.has_value());
+  ASSERT_EQ(*ai_meta_data->FindString("log_id"), log_id);
+}
+#endif  // !BUILDFLAG(IS_CHROMEOS)

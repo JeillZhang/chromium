@@ -11,8 +11,8 @@
 #import "base/check_op.h"
 #import "base/containers/adapters.h"
 #import "base/containers/contains.h"
-#import "base/debug/alias.h"
 #import "base/memory/raw_ptr.h"
+#import "components/tab_groups/tab_group_id.h"
 #import "ios/chrome/browser/shared/model/web_state_list/order_controller.h"
 #import "ios/chrome/browser/shared/model/web_state_list/order_controller_source_from_web_state_list.h"
 #import "ios/chrome/browser/shared/model/web_state_list/removing_indexes.h"
@@ -58,14 +58,19 @@ WebStateList::ScopedBatchOperation::~ScopedBatchOperation() {
 // 1. a WebState is detached.
 // 2. a WebState is detached and closed.
 // 3. a WebState is detached and closed due to an user action.
+// 4. a WebState is detached and closed in a tabs clean-up.
 // The static helper method helps construct a object that represents
 // a valid state.
 struct WebStateList::DetachParams {
   static DetachParams Detaching();
-  static DetachParams Closing(bool is_user_action);
+  // TODO(crbug.com/365701685): Refactor DetachParams::Closing to use an enum
+  // for the reason why a WebState is being closed.
+  static DetachParams Closing(bool is_user_action,
+                              bool by_browsing_data_remover);
 
   const bool is_closing;
   const bool is_user_action;
+  const bool by_browsing_data_remover;
 };
 
 WebStateList::DetachParams WebStateList::DetachParams::Detaching() {
@@ -73,8 +78,11 @@ WebStateList::DetachParams WebStateList::DetachParams::Detaching() {
 }
 
 WebStateList::DetachParams WebStateList::DetachParams::Closing(
-    bool is_user_action) {
-  return {.is_closing = true, .is_user_action = is_user_action};
+    bool is_user_action,
+    bool by_browsing_data_remover) {
+  return {.is_closing = true,
+          .is_user_action = is_user_action,
+          .by_browsing_data_remover = by_browsing_data_remover};
 }
 
 // Wrapper around a WebState stored in a WebStateList.
@@ -329,7 +337,8 @@ void WebStateList::CloseWebStateAt(int index, int close_flags) {
       order_controller.DetermineNewActiveIndex(active_index_, {index});
 
   const DetachParams detach_params =
-      DetachParams::Closing(IsClosingFlagSet(close_flags, CLOSE_USER_ACTION));
+      DetachParams::Closing(IsClosingFlagSet(close_flags, CLOSE_USER_ACTION),
+                            IsClosingFlagSet(close_flags, CLOSE_TABS_CLEANUP));
 
   std::unique_ptr<web::WebState> detached_web_state =
       DetachWebStateAtImpl(index, new_active_index, detach_params);
@@ -350,7 +359,8 @@ void WebStateList::CloseWebStatesAtIndices(int close_flags,
   auto lock = LockForMutation();
 
   const DetachParams detach_params =
-      DetachParams::Closing(IsClosingFlagSet(close_flags, CLOSE_USER_ACTION));
+      DetachParams::Closing(IsClosingFlagSet(close_flags, CLOSE_USER_ACTION),
+                            IsClosingFlagSet(close_flags, CLOSE_TABS_CLEANUP));
 
   // Detach all web states in a first pass, before destroying them at once
   // later. This avoids odd side effects as a result of WebStateImpl's
@@ -358,10 +368,6 @@ void WebStateList::CloseWebStatesAtIndices(int close_flags,
   // quadratic behavior if observers iterate the WebStateList.
   std::vector<std::unique_ptr<web::WebState>> detached_web_states =
       DetachWebStatesAtIndicesImpl(removing_indexes, detach_params);
-
-  // Added to debug reported slowness in https://crbug.com/41483250.
-  const int remaining_count = count();
-  base::debug::Alias(&remaining_count);
 
   detached_web_states.clear();
 }
@@ -385,10 +391,11 @@ std::set<const TabGroup*> WebStateList::GetGroups() const {
 
 const TabGroup* WebStateList::CreateGroup(
     const std::set<int>& indices,
-    const tab_groups::TabGroupVisualData& visual_data) {
+    const tab_groups::TabGroupVisualData& visual_data,
+    tab_groups::TabGroupId tab_group_id) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   auto lock = LockForMutation();
-  return CreateGroupImpl(indices, visual_data);
+  return CreateGroupImpl(indices, visual_data, tab_group_id);
 }
 
 bool WebStateList::ContainsGroup(const TabGroup* group) const {
@@ -646,7 +653,8 @@ std::unique_ptr<web::WebState> WebStateList::DetachWebStateAtImpl(
   web::WebState* web_state = web_state_wrappers_[index]->web_state();
   const TabGroup* group = web_state_wrappers_[index]->group();
   const WebStateListChangeDetach detach_change(
-      web_state, index, params.is_closing, params.is_user_action, group);
+      web_state, index, params.is_closing, params.is_user_action,
+      params.by_browsing_data_remover, group);
 
   // `new_active_index` may be invalid e.g. when closing all the WebStates,
   // so use `ContainsIndex(...)` to avoid crashing in `GetWebStateAt(...)`.
@@ -802,7 +810,8 @@ int WebStateList::SetWebStatePinnedAtImpl(int index, bool pinned) {
 
 const TabGroup* WebStateList::CreateGroupImpl(
     const std::set<int>& indices,
-    const tab_groups::TabGroupVisualData& visual_data) {
+    const tab_groups::TabGroupVisualData& visual_data,
+    tab_groups::TabGroupId tab_group_id) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(locked_);
   DCHECK(!indices.empty());
@@ -828,8 +837,8 @@ const TabGroup* WebStateList::CreateGroupImpl(
   DCHECK_NE(pivot_index, kInvalidIndex);
 
   // Create the group.
-  auto group =
-      std::make_unique<TabGroup>(visual_data, TabGroupRange(pivot_index, 0));
+  auto group = std::make_unique<TabGroup>(tab_group_id, visual_data,
+                                          TabGroupRange(pivot_index, 0));
   const TabGroup* new_group = group.get();
   groups_.insert(std::move(group));
 
@@ -1234,8 +1243,7 @@ void WebStateList::OnActiveWebStateChanged() {
 
 void CloseAllWebStates(WebStateList& web_state_list, int close_flags) {
   const int count = web_state_list.count();
-  // Added to debug reported slowness in https://crbug.com/41483250.
-  base::debug::Alias(&count);
+
   const WebStateList::ScopedBatchOperation batch =
       web_state_list.StartBatchOperation();
   web_state_list.CloseWebStatesAtIndices(close_flags, RemovingIndexes({

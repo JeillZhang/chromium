@@ -17,6 +17,8 @@
 #include "content/browser/preloading/prefetch/prefetch_service.h"
 #include "content/browser/preloading/prefetch/prefetch_serving_page_metrics_container.h"
 #include "content/browser/preloading/prefetch/prefetch_url_loader_helper.h"
+#include "content/browser/preloading/prerender/prerender_host.h"
+#include "content/browser/preloading/prerender/prerender_host_registry.h"
 #include "content/browser/renderer_host/frame_tree_node.h"
 #include "content/browser/renderer_host/navigation_request.h"
 #include "content/public/browser/web_contents.h"
@@ -26,7 +28,8 @@
 namespace content {
 namespace {
 
-BrowserContext* BrowserContextFromFrameTreeNodeId(int frame_tree_node_id) {
+BrowserContext* BrowserContextFromFrameTreeNodeId(
+    FrameTreeNodeId frame_tree_node_id) {
   WebContents* web_content =
       WebContents::FromFrameTreeNodeId(frame_tree_node_id);
   if (!web_content)
@@ -55,7 +58,7 @@ void PrefetchURLLoaderInterceptor::SetPrefetchCompleteCallbackForTesting(
 }
 
 PrefetchURLLoaderInterceptor::PrefetchURLLoaderInterceptor(
-    int frame_tree_node_id,
+    FrameTreeNodeId frame_tree_node_id,
     std::optional<blink::DocumentToken> initiator_document_token,
     base::WeakPtr<PrefetchServingPageMetricsContainer>
         serving_page_metrics_container)
@@ -71,6 +74,7 @@ void PrefetchURLLoaderInterceptor::MaybeCreateLoader(
     BrowserContext* browser_context,
     NavigationLoaderInterceptor::LoaderCallback callback,
     NavigationLoaderInterceptor::FallbackCallback fallback_callback) {
+  TRACE_EVENT0("loading", "PrefetchURLLoaderInterceptor::MaybeCreateLoader");
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   CHECK(!loader_callback_);
@@ -84,22 +88,31 @@ void PrefetchURLLoaderInterceptor::MaybeCreateLoader(
       PrefetchContainer* prefetch_container =
           redirect_reader_.GetPrefetchContainer();
       CHECK(prefetch_container);
-      // Note: This method can only be called once per PrefetchContainer (we
-      // have a CHECK in the method). This is guaranteed to be the first time
-      // we call this method for |prefetch_container|, as the other callsite
-      // (in PrefetchService::ReturnPrefetchToServe) would have prevented the
-      // prefetch from being used to serve the navigation (making this
-      // unreachable as |redirect_reader_| would never have been set to
-      // |prefetch_container|). This will also never be called for
-      // |prefetch_container| again as we don't use it to serve any subsequent
-      // redirect hops for this navigation (we unset |redirect_reader_| below),
-      // and |PrefetchService::FindPrefetchContainerToServe| ignores any
-      // prefetches with the status kPrefetchNotUsedCookiesChanged (which is
-      // set in |PrefetchContainer::OnCookiesChanged|).
-      prefetch_container->OnCookiesChanged();
+      if (UseNewWaitLoop()) {
+        // Use `std::nullopt` as we need to record the crash key to identify
+        // which case in `PrefetchMatchResolver2` is the cause.
+        prefetch_container->OnDetectedCookiesChange2(
+            /*is_unblock_for_cookies_changed_triggered_by_this_prefetch_container*/
+            std::nullopt);
+      } else {
+        // Note: This method can only be called once per PrefetchContainer (we
+        // have a CHECK in the method). This is guaranteed to be the first time
+        // we call this method for |prefetch_container|, as the other callsite
+        // (in PrefetchService::ReturnPrefetchToServe) would have prevented the
+        // prefetch from being used to serve the navigation (making this
+        // unreachable as |redirect_reader_| would never have been set to
+        // |prefetch_container|). This will also never be called for
+        // |prefetch_container| again as we don't use it to serve any subsequent
+        // redirect hops for this navigation (we unset |redirect_reader_|
+        // below), and
+        // |PrefetchService::CollectMatchCandidates|
+        // ignores any prefetches with the status kPrefetchNotUsedCookiesChanged
+        // (which is set in |PrefetchContainer::OnDetectedCookiesChange|).
+        prefetch_container->OnDetectedCookiesChange();
+      }
     } else {
       OnGotPrefetchToServe(
-          frame_tree_node_id_, tentative_resource_request,
+          frame_tree_node_id_, tentative_resource_request.url,
           base::BindOnce(&PrefetchURLLoaderInterceptor::OnGetPrefetchComplete,
                          weak_factory_.GetWeakPtr()),
           std::move(redirect_reader_));
@@ -151,6 +164,7 @@ void PrefetchURLLoaderInterceptor::GetPrefetch(
     PrefetchMatchResolver& prefetch_match_resolver,
     base::OnceCallback<void(PrefetchContainer::Reader)> get_prefetch_callback)
     const {
+  TRACE_EVENT0("loading", "PrefetchURLLoaderInterceptor::GetPrefetch");
   PrefetchService* prefetch_service =
       PrefetchService::GetFromFrameTreeNodeId(frame_tree_node_id_);
   if (!prefetch_service) {
@@ -170,17 +184,40 @@ void PrefetchURLLoaderInterceptor::GetPrefetch(
     CHECK(!serving_page_metrics_container_);
   }
 
-  prefetch_match_resolver.SetOnPrefetchToServeReadyCallback(base::BindOnce(
-      &OnGotPrefetchToServe, frame_tree_node_id_, tentative_resource_request,
-      std::move(get_prefetch_callback)));
-  prefetch_service->GetPrefetchToServe(
-      PrefetchContainer::Key(initiator_document_token_,
-                             tentative_resource_request.url),
-      serving_page_metrics_container_, prefetch_match_resolver);
+  const GURL tentative_resource_request_url = tentative_resource_request.url;
+  auto callback = base::BindOnce(&OnGotPrefetchToServe, frame_tree_node_id_,
+                                 tentative_resource_request_url,
+                                 std::move(get_prefetch_callback));
+  auto key = PrefetchContainer::Key(initiator_document_token_,
+                                    tentative_resource_request_url);
+
+  if (UseNewWaitLoop()) {
+    const bool is_nav_prerender = [&]() -> bool {
+      auto* frame_tree_node =
+          FrameTreeNode::GloballyFindByID(frame_tree_node_id_);
+      if (!frame_tree_node) {
+        return false;
+      }
+
+      return frame_tree_node->frame_tree().is_prerendering();
+    }();
+
+    PrefetchMatchResolver2::FindPrefetch(
+        std::move(key), is_nav_prerender, *prefetch_service,
+        serving_page_metrics_container_, std::move(callback));
+  } else {
+    prefetch_match_resolver.SetOnPrefetchToServeReadyCallback(
+        std::move(callback));
+    prefetch_service->GetPrefetchToServe(std::move(key),
+                                         serving_page_metrics_container_,
+                                         prefetch_match_resolver);
+  }
 }
 
 void PrefetchURLLoaderInterceptor::OnGetPrefetchComplete(
     PrefetchContainer::Reader reader) {
+  TRACE_EVENT0("loading",
+               "PrefetchURLLoaderInterceptor::OnGetPrefetchComplete");
   PrefetchRequestHandler request_handler;
   if (!reader || !(request_handler = reader.CreateRequestHandler())) {
     // Do not intercept the request.
@@ -228,7 +265,8 @@ void PrefetchURLLoaderInterceptor::OnGetPrefetchComplete(
                   network::mojom::kBrowserProcessId),
               url_loader_factory::ContentClientParams(
                   BrowserContextFromFrameTreeNodeId(frame_tree_node_id_),
-                  render_frame_host, render_frame_host->GetProcess()->GetID(),
+                  render_frame_host,
+                  render_frame_host->GetProcess()->GetDeprecatedID(),
                   url::Origin(), net::IsolationInfo(),
                   ukm::SourceIdObj::FromInt64(
                       navigation_request->GetNextPageUkmSourceId()),

@@ -49,13 +49,14 @@ VideoDecoderConfig CreateVideoConfig(VideoCodec codec, int w, int h) {
 }
 
 void AddAudioTrack(std::unique_ptr<MediaTracks>& t, AudioCodec codec, int id) {
-  t->AddAudioTrack(CreateAudioConfig(codec), id, MediaTrack::Kind(),
+  t->AddAudioTrack(CreateAudioConfig(codec), true, id, MediaTrack::Kind(),
                    MediaTrack::Label(), MediaTrack::Language());
 }
 
 void AddVideoTrack(std::unique_ptr<MediaTracks>& t, VideoCodec codec, int id) {
-  t->AddVideoTrack(CreateVideoConfig(codec, 16, 16), id, MediaTrack::Kind(),
-                   MediaTrack::Label(), MediaTrack::Language());
+  t->AddVideoTrack(CreateVideoConfig(codec, 16, 16), true, id,
+                   MediaTrack::Kind(), MediaTrack::Label(),
+                   MediaTrack::Language());
 }
 
 }  // namespace
@@ -113,7 +114,7 @@ class SourceBufferStateTest : public ::testing::Test {
   bool AppendDataAndReportTracks(const std::unique_ptr<SourceBufferState>& sbs,
                                  std::unique_ptr<MediaTracks> tracks) {
     const uint8_t kStreamData[] = "stream_data";
-    base::span<const uint8_t> stream_data = base::make_span(kStreamData);
+    base::span<const uint8_t> stream_data = base::span(kStreamData);
     base::TimeDelta t;
 
     // Ensure `stream_data` fits within one StreamParser::Parse() call.
@@ -270,7 +271,7 @@ TEST_F(SourceBufferStateTest, MissingExpectedVideoStream) {
   std::unique_ptr<SourceBufferState> sbs =
       CreateAndInitSourceBufferState("opus,vp9");
   std::unique_ptr<MediaTracks> tracks(new MediaTracks());
-  tracks->AddAudioTrack(CreateAudioConfig(AudioCodec::kOpus), 1,
+  tracks->AddAudioTrack(CreateAudioConfig(AudioCodec::kOpus), true, 1,
                         MediaTrack::Kind(), MediaTrack::Label(),
                         MediaTrack::Language());
   EXPECT_FOUND_CODEC_NAME(Audio, "opus");

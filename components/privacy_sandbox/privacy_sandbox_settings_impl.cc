@@ -4,6 +4,7 @@
 
 #include "components/privacy_sandbox/privacy_sandbox_settings_impl.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <vector>
 
@@ -13,7 +14,6 @@
 #include "base/metrics/field_trial_params.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/observer_list.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
@@ -49,6 +49,8 @@ namespace privacy_sandbox {
 
 namespace {
 
+using ::content_settings::CookieControlsMode;
+
 constexpr char kBlockedTopicsTopicKey[] = "topic";
 constexpr char kBlockedTopicsBlockTimeKey[] = "blockedOn";
 
@@ -71,12 +73,16 @@ constexpr char kIsFledgeSellAllowedHistogram[] =
     "PrivacySandbox.IsFledgeSellAllowed";
 constexpr char kIsFledgeBuyAllowedHistogram[] =
     "PrivacySandbox.IsFledgeBuyAllowed";
+constexpr char kIsFledgeReadAllowedHistogram[] =
+    "PrivacySandbox.IsFledgeReadAllowed";
 constexpr char kIsPrivacySandboxReportingDestinationAttestedHistogram[] =
     "PrivacySandbox.IsPrivacySandboxReportingDestinationAttested";
 constexpr char kIsSharedStorageAllowedHistogram[] =
     "PrivacySandbox.IsSharedStorageAllowed";
 constexpr char kIsSharedStorageSelectURLAllowedHistogram[] =
     "PrivacySandbox.IsSharedStorageSelectURLAllowed";
+constexpr char kIsFencedStorageReadAllowedHistogram[] =
+    "PrivacySandbox.IsFencedStorageReadAllowed";
 constexpr char kIsPrivateAggregationAllowedHistogram[] =
     "PrivacySandbox.IsPrivateAggregationAllowed";
 
@@ -154,6 +160,9 @@ void PrivacySandboxSettingsImpl::JoinFledgeHistogram(
     case content::InterestGroupApiOperation::kBuy:
       JoinHistogram(kIsFledgeBuyAllowedHistogram, status);
       break;
+    case content::InterestGroupApiOperation::kRead:
+      JoinHistogram(kIsFledgeReadAllowedHistogram, status);
+      break;
   }
 }
 
@@ -188,6 +197,11 @@ PrivacySandboxSettingsImpl::PrivacySandboxSettingsImpl(
       prefs::kPrivacySandboxRelatedWebsiteSetsEnabled,
       base::BindRepeating(
           &PrivacySandboxSettingsImpl::OnRelatedWebsiteSetsEnabledPrefChanged,
+          base::Unretained(this)));
+  pref_change_registrar_.Add(
+      prefs::kCookieControlsMode,
+      base::BindRepeating(
+          &PrivacySandboxSettingsImpl::OnCookieControlsModePrefChanged,
           base::Unretained(this)));
 }
 
@@ -428,7 +442,8 @@ bool PrivacySandboxSettingsImpl::MaySendAttributionReport(
   Status attestation_status =
       PrivacySandboxAttestations::GetInstance()->IsSiteAttested(
           net::SchemefulSite(reporting_origin),
-          PrivacySandboxAttestationsGatedAPI::kAttributionReporting);
+          PrivacySandboxAttestationsGatedAPI::kAttributionReporting,
+          AttestationsDefaultBehavior::kAllow);
   if (!IsAllowed(attestation_status)) {
     JoinHistogram(kMaySendAttributionReportHistogram, attestation_status);
     if (console_frame) {
@@ -503,9 +518,7 @@ void PrivacySandboxSettingsImpl::SetFledgeJoiningAllowed(
   // case where the eTLD+1 was not even a host, as GURL will have canonicalised
   // it to empty.
   if (effective_top_frame_etld_plus1.length() == 0) {
-    NOTREACHED_IN_MIGRATION()
-        << "Cannot control FLEDGE joining for empty eTLD+1";
-    return;
+    NOTREACHED() << "Cannot control FLEDGE joining for empty eTLD+1";
   }
 
   if (allowed) {
@@ -555,11 +568,10 @@ bool PrivacySandboxSettingsImpl::IsFledgeJoiningAllowed(
       pref_service_, prefs::kPrivacySandboxFledgeJoinBlocked);
   auto& pref_data = scoped_pref_update.Get();
   for (auto entry : pref_data) {
-    if (base::ranges::any_of(FledgeBlockToContentSettingsPatterns(entry.first),
-                             [&](const auto& pattern) {
-                               return pattern.Matches(
-                                   top_frame_origin.GetURL());
-                             })) {
+    if (std::ranges::any_of(FledgeBlockToContentSettingsPatterns(entry.first),
+                            [&](const auto& pattern) {
+                              return pattern.Matches(top_frame_origin.GetURL());
+                            })) {
       return false;
     }
   }
@@ -577,6 +589,18 @@ PrivacySandboxSettingsImpl::GetM1FledgeAllowedStatus(
   }
 
   return GetSiteAccessAllowedStatus(top_frame_origin, auction_party.GetURL());
+}
+
+PrivacySandboxSettingsImpl::Status
+PrivacySandboxSettingsImpl::GetFencedStorageReadEnabledStatus() const {
+  // User has turned on the setting to block all third party cookies.
+  if (cookie_settings_->ShouldBlockThirdPartyCookies() &&
+      !cookie_settings_->AreThirdPartyCookiesLimited()) {
+    return Status::kApisDisabled;
+  }
+
+  // This feature is default enabled when 3PCs are not blocked.
+  return Status::kAllowed;
 }
 
 bool PrivacySandboxSettingsImpl::IsEventReportingDestinationAttested(
@@ -712,6 +736,46 @@ bool PrivacySandboxSettingsImpl::IsSharedStorageSelectURLAllowed(
   return IsAllowed(status);
 }
 
+bool PrivacySandboxSettingsImpl::IsFencedStorageReadAllowed(
+    const url::Origin& top_frame_origin,
+    const url::Origin& accessing_origin,
+    content::RenderFrameHost* console_frame) const {
+  if (Status status = GetFencedStorageReadEnabledStatus(); !IsAllowed(status)) {
+    JoinHistogram(kIsFencedStorageReadAllowedHistogram, status);
+    if (console_frame) {
+      console_frame->AddMessageToConsole(
+          blink::mojom::ConsoleMessageLevel::kError,
+          "Fenced storage read is disabled because all third-party cookies are "
+          "blocked.");
+    }
+    return false;
+  }
+
+  Status attestation_status =
+      PrivacySandboxAttestations::GetInstance()->IsSiteAttested(
+          net::SchemefulSite(accessing_origin),
+          PrivacySandboxAttestationsGatedAPI::kFencedStorageRead);
+  if (!IsAllowed(attestation_status)) {
+    JoinHistogram(kIsFencedStorageReadAllowedHistogram, attestation_status);
+    if (console_frame) {
+      console_frame->AddMessageToConsole(
+          blink::mojom::ConsoleMessageLevel::kError,
+          base::StrCat({"Attestation check for fenced storage read on ",
+                        accessing_origin.Serialize(), " failed."}));
+    }
+    return false;
+  }
+
+  Status status = GetPrivacySandboxAllowedStatus();
+  if (IsAllowed(status)) {
+    status =
+        GetSiteAccessAllowedStatus(top_frame_origin, accessing_origin.GetURL());
+  }
+  JoinHistogram(kIsFencedStorageReadAllowedHistogram, status);
+
+  return IsAllowed(status);
+}
+
 bool PrivacySandboxSettingsImpl::IsPrivateAggregationAllowed(
     const url::Origin& top_frame_origin,
     const url::Origin& reporting_origin,
@@ -745,13 +809,24 @@ bool PrivacySandboxSettingsImpl::IsPrivateAggregationDebugModeAllowed(
     return false;
   }
 
+  // If this feature is disabled, provide a top-frame origin anyway to match
+  // previous behavior.
+  std::optional<url::Origin> top_frame_origin_to_query;
+  if (!base::FeatureList::IsEnabled(
+          kPrivateAggregationDebugReportingIgnoreSiteExceptions)) {
+    top_frame_origin_to_query = top_frame_origin;
+  }
+
   // Third party cookies must also be available for this context. An empty site
-  // for cookies is provided so the context is always treated as a third party.
+  // for cookies and empty top-frame origin is provided so the context is always
+  // treated as a third party. That is, we ignore any top-level site cookie
+  // exceptions (see crbug.com/364318217).
   content_settings::CookieSettingsBase::CookieSettingWithMetadata
       cookie_setting_with_metadata;
   if (cookie_settings_->IsFullCookieAccessAllowed(
-          reporting_origin.GetURL(), net::SiteForCookies(), top_frame_origin,
-          net::CookieSettingOverrides(), &cookie_setting_with_metadata)) {
+          reporting_origin.GetURL(), net::SiteForCookies(),
+          top_frame_origin_to_query, net::CookieSettingOverrides(),
+          &cookie_setting_with_metadata)) {
     return true;
   }
 
@@ -796,7 +871,24 @@ void PrivacySandboxSettingsImpl::OnCookiesCleared() {
 
 void PrivacySandboxSettingsImpl::OnRelatedWebsiteSetsEnabledPrefChanged() {
   for (auto& observer : observers_) {
-    observer.OnFirstPartySetsEnabledChanged(AreRelatedWebsiteSetsEnabled());
+    observer.OnRelatedWebsiteSetsEnabledChanged(AreRelatedWebsiteSetsEnabled());
+  }
+}
+
+void PrivacySandboxSettingsImpl::OnCookieControlsModePrefChanged() {
+  if (!base::FeatureList::IsEnabled(privacy_sandbox::kAddLimit3pcsSetting)) {
+    return;
+  }
+
+  CookieControlsMode mode = static_cast<CookieControlsMode>(
+      pref_change_registrar_.prefs()->GetInteger(prefs::kCookieControlsMode));
+  if (mode == CookieControlsMode::kOff ||
+      mode == CookieControlsMode::kIncognitoOnly) {
+    return;
+  }
+
+  for (Observer& obs : observers_) {
+    obs.OnRelatedWebsiteSetsEnabledChanged(AreRelatedWebsiteSetsEnabled());
   }
 }
 
@@ -907,15 +999,16 @@ bool PrivacySandboxSettingsImpl::IsCookieDeprecationLabelAllowedForContext(
 
 void PrivacySandboxSettingsImpl::OnBlockAllThirdPartyCookiesChanged() {
   for (auto& observer : observers_) {
-    observer.OnFirstPartySetsEnabledChanged(AreRelatedWebsiteSetsEnabled());
+    observer.OnRelatedWebsiteSetsEnabledChanged(AreRelatedWebsiteSetsEnabled());
   }
 }
 
 bool PrivacySandboxSettingsImpl::AreRelatedWebsiteSetsEnabled() const {
-  // FPS should be on in the 3PCD experiment unless all 3PC are blocked.
-  if (tracking_protection_settings_->IsTrackingProtection3pcdEnabled()) {
-    return !tracking_protection_settings_->AreAllThirdPartyCookiesBlocked();
+  if (tracking_protection_settings_->IsTrackingProtection3pcdEnabled() ||
+      base::FeatureList::IsEnabled(privacy_sandbox::kAddLimit3pcsSetting)) {
+    return cookie_settings_->AreThirdPartyCookiesLimited();
   }
+
   return pref_service_->GetBoolean(
       prefs::kPrivacySandboxRelatedWebsiteSetsEnabled);
 }

@@ -14,7 +14,9 @@
 
 #include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
+#include "content/public/browser/browser_context.h"
 #include "content/public/browser/content_browser_client.h"
+#include "content/public/browser/prefetch_service_delegate.h"
 #include "content/public/browser/web_contents.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
@@ -102,6 +104,7 @@ class AwContentBrowserClient : public content::ContentBrowserClient {
       override;
   base::OnceClosure SelectClientCertificate(
       content::BrowserContext* browser_context,
+      int process_id,
       content::WebContents* web_contents,
       net::SSLCertRequestInfo* cert_request_info,
       net::ClientCertIdentityList client_certs,
@@ -135,11 +138,16 @@ class AwContentBrowserClient : public content::ContentBrowserClient {
       const base::CommandLine& command_line,
       int child_process_id,
       content::PosixFileDescriptorInfo* mappings) override;
-  void OverrideWebkitPrefs(content::WebContents* web_contents,
-                           blink::web_pref::WebPreferences* web_prefs) override;
+  void OverrideWebPreferences(
+      content::WebContents* web_contents,
+      content::SiteInstance& main_frame_site,
+      blink::web_pref::WebPreferences* web_prefs) override;
   std::vector<std::unique_ptr<content::NavigationThrottle>>
   CreateThrottlesForNavigation(
       content::NavigationHandle* navigation_handle) override;
+  std::unique_ptr<content::PrefetchServiceDelegate>
+  CreatePrefetchServiceDelegate(
+      content::BrowserContext* browser_context) override;
   std::unique_ptr<content::DevToolsManagerDelegate>
   CreateDevToolsManagerDelegate() override;
   void RegisterAssociatedInterfaceBindersForRenderFrameHost(
@@ -162,15 +170,15 @@ class AwContentBrowserClient : public content::ContentBrowserClient {
       content::BrowserContext* browser_context,
       const base::RepeatingCallback<content::WebContents*()>& wc_getter,
       content::NavigationUIData* navigation_ui_data,
-      int frame_tree_node_id,
+      content::FrameTreeNodeId frame_tree_node_id,
       std::optional<int64_t> navigation_id) override;
   std::vector<std::unique_ptr<blink::URLLoaderThrottle>>
   CreateURLLoaderThrottlesForKeepAlive(
       const network::ResourceRequest& request,
       content::BrowserContext* browser_context,
       const base::RepeatingCallback<content::WebContents*()>& wc_getter,
-      int frame_tree_node_id) override;
-  bool ShouldOverrideUrlLoading(int frame_tree_node_id,
+      content::FrameTreeNodeId frame_tree_node_id) override;
+  bool ShouldOverrideUrlLoading(content::FrameTreeNodeId frame_tree_node_id,
                                 bool browser_initiated,
                                 const GURL& gurl,
                                 const std::string& request_method,
@@ -180,20 +188,24 @@ class AwContentBrowserClient : public content::ContentBrowserClient {
                                 bool is_prerendering,
                                 ui::PageTransition transition,
                                 bool* ignore_navigation) override;
+  bool ShouldAllowSameSiteRenderFrameHostChange(
+      const content::RenderFrameHost& rfh) override;
   std::unique_ptr<content::LoginDelegate> CreateLoginDelegate(
       const net::AuthChallengeInfo& auth_info,
       content::WebContents* web_contents,
       content::BrowserContext* browser_context,
       const content::GlobalRequestID& request_id,
-      bool is_request_for_primary_main_frame,
+      bool is_request_for_primary_main_frame_navigation,
+      bool is_request_for_navigation,
       const GURL& url,
       scoped_refptr<net::HttpResponseHeaders> response_headers,
       bool first_auth_attempt,
+      content::GuestPageHolder* guest,
       LoginAuthRequiredCallback auth_required_callback) override;
   bool HandleExternalProtocol(
       const GURL& url,
       content::WebContents::Getter web_contents_getter,
-      int frame_tree_node_id,
+      content::FrameTreeNodeId frame_tree_node_id,
       content::NavigationUIData* navigation_data,
       bool is_primary_main_frame,
       bool is_in_fenced_frame_tree,
@@ -202,6 +214,7 @@ class AwContentBrowserClient : public content::ContentBrowserClient {
       bool has_user_gesture,
       const std::optional<url::Origin>& initiating_origin,
       content::RenderFrameHost* initiator_document,
+      const net::IsolationInfo& isolation_info,
       mojo::PendingRemote<network::mojom::URLLoaderFactory>* out_factory)
       override;
   void RegisterNonNetworkSubresourceURLLoaderFactories(
@@ -214,6 +227,7 @@ class AwContentBrowserClient : public content::ContentBrowserClient {
   bool ShouldEnableStrictSiteIsolation() override;
   bool ShouldDisableSiteIsolation(
       content::SiteIsolationMode site_isolation_mode) override;
+  bool ShouldDisableOriginIsolation() override;
   bool ShouldLockProcessToSite(content::BrowserContext* browser_context,
                                const GURL& effective_url) override;
   bool ShouldEnforceNewCanCommitUrlChecks() override;
@@ -258,6 +272,9 @@ class AwContentBrowserClient : public content::ContentBrowserClient {
       override;
   void LogWebFeatureForCurrentPage(content::RenderFrameHost* render_frame_host,
                                    blink::mojom::WebFeature feature) override;
+  void LogWebDXFeatureForCurrentPage(
+      content::RenderFrameHost* render_frame_host,
+      blink::mojom::WebDXFeature feature) override;
   PrivateNetworkRequestPolicyOverride ShouldOverridePrivateNetworkRequestPolicy(
       content::BrowserContext* browser_context,
       const url::Origin& origin) override;
@@ -293,6 +310,7 @@ class AwContentBrowserClient : public content::ContentBrowserClient {
                                  content::WebContents* web_contents,
                                  const GURL& url,
                                  const blink::StorageKey& storage_key) override;
+  bool AllowNonActivatedCrossOriginPaintHolding() override;
 
   AwFeatureListCreator* aw_feature_list_creator() {
     return aw_feature_list_creator_;

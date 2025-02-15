@@ -32,7 +32,6 @@
 <translation id="2175927920773552910">QR kôd</translation>
 <translation id="2244252133441425811">Omogući birač broja kadrova u sekundi za video</translation>
 <translation id="2271433936731426666">Omogući pregled videa pune veličine</translation>
-<translation id="2281736597583450397">Dobijajte oštrije detalje uz poboljšano zumiranje</translation>
 <translation id="2320741269052147773">Pomeranje ulevo</translation>
 <translation id="2360840973209616515">Aplikacijom kamere upravlja administrator.
         Obratite se administratoru za detalje.</translation>
@@ -51,6 +50,7 @@
 <translation id="2879583609344924966">Kamera <ph name="CAMERA" /> je priključena.</translation>
 <translation id="3067436040345934772">Pomeranje udesno</translation>
 <translation id="3081586908890909590">Pređi na režim za snimanje videa</translation>
+<translation id="3091480460059548935">Otkrivanje teksta u pregledu</translation>
 <translation id="313467653172006084">30 kadr/s</translation>
 <translation id="3157038259444425153">Sada možete direktno da kopirate tekst sa slike</translation>
 <translation id="3158534262962737808">Pridruži me mreži „<ph name="WIFINAME" />“</translation>
@@ -111,7 +111,6 @@
 <translation id="5975083100439434680">Umanjivanje</translation>
 <translation id="5976160379964388480">Drugi</translation>
 <translation id="6073451960410192870">Zaustavi snimanje</translation>
-<translation id="6165508094623778733">Saznajte više</translation>
 <translation id="6197807149213783179">Sačuvaj metapodatke</translation>
 <translation id="6233780560267770709">3 sa 3</translation>
 <translation id="6243827288366940320">Zlatni presek</translation>
@@ -121,7 +120,6 @@
 Ako su povratne informacije u vezi sa kvalitetom slike ili videa, priložite uzorak slike ili videa i opišite šta nije u redu. (Na primer, slika je previše tamna ili subjekat nije u fokusu.)</translation>
 <translation id="6519884562954018934">Pridruži me mreži <ph name="WIFINAME" /></translation>
 <translation id="6527303717912515753">Deli</translation>
-<translation id="6586509689874700895">Prvo pritisnite <ph name="BUTTON_NAME" /> da biste uvećali prikaz. Kada zatim snimite sliku, videćete poboljšane detalje.</translation>
 <translation id="659539649712855529">Kopirano je: <ph name="CONTENT" /></translation>
 <translation id="6617916774429601017">Pokaži sve rezolucije</translation>
 <translation id="6631515515009660915">Preslikavanje je isključeno</translation>
@@ -141,6 +139,7 @@ Ako su povratne informacije u vezi sa kvalitetom slike ili videa, priložite uzo
 <translation id="7337660886763914220">Greške sistema datoteka.</translation>
 <translation id="7450541714075000668">Tekst je kopiran</translation>
 <translation id="7488619942230388918">Snimite GIF video</translation>
+<translation id="7527714402753141485">Prikazuje tekst i dugme za kopiranje</translation>
 <translation id="7557677699350329807">Pređi na sledeću kameru</translation>
 <translation id="7607002721634913082">Pauzirano</translation>
 <translation id="7608223098072244877">4 sa 4</translation>
@@ -160,13 +159,12 @@ Ako su povratne informacije u vezi sa kvalitetom slike ili videa, priložite uzo
 <translation id="8131740175452115882">Potvrdi</translation>
 <translation id="8145038249676204903">Pređi na režim za snimanje slika</translation>
 <translation id="8167081290930651932">Sačuvaj kao sliku</translation>
-<translation id="8239780215768881278">Napravite video-snimak</translation>
+<translation id="8239780215768881278">Napravi snimak videa</translation>
 <translation id="8425673304802773841">Naginjanje nadole</translation>
 <translation id="8428213095426709021">Podešavanja</translation>
 <translation id="8609951387004618906">Otvori <ph name="URL" /></translation>
 <translation id="8629662593426079630">360p</translation>
 <translation id="8711011893539266636">Uključite zvuk mikrofona. Dugme za isključivanje zvuka je uključeno</translation>
-<translation id="8712637175834984815">Važi</translation>
 <translation id="8730621377337864115">Gotovo</translation>
 <translation id="8732462232047530626">Prikaži metapodatke</translation>
 <translation id="874854738381978209">Otkrivena je WiFi mreža.</translation>

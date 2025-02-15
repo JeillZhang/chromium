@@ -1,23 +1,16 @@
-<style>
-  h2 {
-    font: var(--cros-title-1-font);
-  }
-
-  code {
-    background-color: var(--cros-sys-app_base_shaded);
-    border-radius: 10px;
-    display: block;
-    margin-top: 10px;
-    padding: 10px;
-  }
+<style include="storybook-styles">
 </style>
 
 <h2>With ticks</h2>
 <settings-slider-v2
     value="[[sliderValueWithTicks_]]"
     ticks="[[ticks_]]"
-    on-change="onTicksSliderChange_">
+    on-change="onTicksSliderChange_"
+    disabled="[[disabled_]]"
+    aria-label="A11y label"
+    aria-description="A11y description">
 </settings-slider-v2>
+<cr-checkbox checked="{{disabled_}}">Disabled</cr-checkbox>
 <code>
   <div>Value: [[sliderValueWithTicks_]]</div>
 </code>
@@ -48,13 +41,6 @@
 <code>
   <div>Value: [[sliderValueWithScale_]]</div>
 </code>
-
-<h2>Disabled</h2>
-<settings-slider-v2
-    value="[[sliderValueWithTicks_]]"
-    ticks="[[ticks_]]"
-    disabled>
-</settings-slider-v2>
 
 <h2>Managed (via pref)</h2>
 <settings-slider-v2

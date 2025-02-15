@@ -4,6 +4,8 @@
 
 package org.chromium.chrome.browser.hub;
 
+import android.view.ViewGroup;
+
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.ui.modelutil.PropertyModelChangeProcessor;
@@ -28,5 +30,10 @@ public class HubPaneHostCoordinator {
     /** Cleans up observers and resources. */
     public void destroy() {
         mMediator.destroy();
+    }
+
+    /** Returns the view group to contain the snackbar. */
+    public ViewGroup getSnackbarContainer() {
+        return mMediator.getSnackbarContainer();
     }
 }

@@ -4,9 +4,11 @@
 
 #import "ios/chrome/browser/infobars/model/infobar_badge_tab_helper.h"
 
+#import <algorithm>
+
 #import "base/containers/contains.h"
-#import "base/ranges/algorithm.h"
 #import "ios/chrome/browser/infobars/model/infobar_badge_tab_helper_delegate.h"
+#import "ios/chrome/browser/infobars/model/infobar_badge_tab_helper_observer.h"
 #import "ios/chrome/browser/infobars/model/infobar_manager_impl.h"
 
 namespace {
@@ -28,6 +30,16 @@ InfobarBadgeTabHelper::InfobarBadgeTabHelper(web::WebState* web_state)
 InfobarBadgeTabHelper::~InfobarBadgeTabHelper() = default;
 
 #pragma mark Public
+
+void InfobarBadgeTabHelper::AddObserver(
+    InfobarBadgeTabHelperObserver* observer) {
+  badge_updates_observers_.AddObserver(observer);
+}
+
+void InfobarBadgeTabHelper::RemoveObserver(
+    InfobarBadgeTabHelperObserver* observer) {
+  badge_updates_observers_.RemoveObserver(observer);
+}
 
 void InfobarBadgeTabHelper::SetDelegate(
     id<InfobarBadgeTabHelperDelegate> delegate) {
@@ -85,6 +97,10 @@ std::map<InfobarType, BadgeState> InfobarBadgeTabHelper::GetInfobarBadgeStates()
   return infobar_badge_states_;
 }
 
+size_t InfobarBadgeTabHelper::GetInfobarBadgesCount() {
+  return infobar_badge_states_.size();
+}
+
 #pragma mark Private
 
 void InfobarBadgeTabHelper::RegisterInfobar(infobars::InfoBar* infobar) {
@@ -105,9 +121,10 @@ void InfobarBadgeTabHelper::RegisterInfobar(infobars::InfoBar* infobar) {
 void InfobarBadgeTabHelper::UnregisterInfobar(infobars::InfoBar* infobar) {
   // Handling the case where an infobar is removed during prerendering.
   if (!delegate_) {
-    auto pos = base::ranges::find(infobars_added_when_prerendering_, infobar);
-    if (pos != infobars_added_when_prerendering_.end())
+    auto pos = std::ranges::find(infobars_added_when_prerendering_, infobar);
+    if (pos != infobars_added_when_prerendering_.end()) {
       infobars_added_when_prerendering_.erase(pos);
+    }
     return;
   }
   // All other cases.
@@ -146,6 +163,11 @@ void InfobarBadgeTabHelper::OnInfobarAcceptanceStateChanged(
 
 void InfobarBadgeTabHelper::UpdateBadgesShown() {
   [delegate_ updateBadgesShownForWebState:web_state_];
+
+  // Notify all badge update observers.
+  for (auto& observer : badge_updates_observers_) {
+    observer.InfobarBadgesUpdated(this);
+  }
 }
 
 #pragma mark - InfobarBadgeTabHelper::InfobarAcceptanceObserver

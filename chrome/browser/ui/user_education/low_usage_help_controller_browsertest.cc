@@ -12,15 +12,15 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
 #include "chrome/browser/ui/browser_window.h"
-#include "chrome/browser/user_education/browser_feature_promo_storage_service.h"
+#include "chrome/browser/user_education/browser_user_education_storage_service.h"
 #include "chrome/browser/user_education/user_education_service.h"
 #include "chrome/browser/user_education/user_education_service_factory.h"
 #include "chrome/test/user_education/interactive_feature_promo_test.h"
 #include "components/feature_engagement/test/mock_tracker.h"
-#include "components/user_education/common/feature_promo_controller.h"
-#include "components/user_education/common/feature_promo_data.h"
-#include "components/user_education/common/feature_promo_session_manager.h"
-#include "components/user_education/common/feature_promo_storage_service.h"
+#include "components/user_education/common/feature_promo/feature_promo_controller.h"
+#include "components/user_education/common/session/user_education_session_manager.h"
+#include "components/user_education/common/user_education_data.h"
+#include "components/user_education/common/user_education_storage_service.h"
 #include "components/user_education/views/help_bubble_view.h"
 #include "content/public/test/browser_test.h"
 #include "ui/base/interaction/element_tracker.h"
@@ -44,8 +44,10 @@ class LowUsageHelpControllerBrowsertest : public InteractiveFeaturePromoTest {
   }
 
   user_education::FeaturePromoStatus GetFeaturePromoStatus() const {
-    return browser()->window()->GetFeaturePromoController()->GetPromoStatus(
-        feature_engagement::kIPHDesktopReEngagementFeature);
+    return browser()
+        ->window()
+        ->GetFeaturePromoControllerForTesting()
+        ->GetPromoStatus(feature_engagement::kIPHDesktopReEngagementFeature);
   }
 
   auto WaitForStartupSession() {
@@ -53,8 +55,8 @@ class LowUsageHelpControllerBrowsertest : public InteractiveFeaturePromoTest {
         // Send an event when there is a new session, then wait for the event.
         Do([this]() {
           auto& session_manager =
-              GetUserEducationService().feature_promo_session_manager();
-          if (session_manager.new_session_since_startup()) {
+              GetUserEducationService().user_education_session_manager();
+          if (session_manager.GetNewSessionSinceStartup()) {
             SendSessionEvent();
           } else {
             session_subscription_ =
@@ -63,16 +65,14 @@ class LowUsageHelpControllerBrowsertest : public InteractiveFeaturePromoTest {
                     base::Unretained(this)));
           }
         }),
-        WaitForEvent(kBrowserViewElementId, kStartupSessionEvent),
-        // Wait for everything to settle.
-        FlushEvents());
+        WaitForEvent(kBrowserViewElementId, kStartupSessionEvent));
   }
 
   auto VerifyPromoShown() {
     return Steps(
         WaitForShow(
             user_education::HelpBubbleView::kHelpBubbleElementIdForTesting),
-        FlushEvents(),
+
         CheckResult([this]() { return GetFeaturePromoStatus(); },
                     user_education::FeaturePromoStatus::kBubbleShowing));
   }
@@ -99,7 +99,7 @@ IN_PROC_BROWSER_TEST_F(LowUsageHelpControllerBrowsertest,
   RunTestSequence(
       // Processing new sessions happens on a one-frame delay, so clear the call
       // stack and let an IPH trigger.
-      FlushEvents(),
+
       // Verify that the IPH has not been requested.
       CheckResult([this]() { return GetFeaturePromoStatus(); },
                   user_education::FeaturePromoStatus::kNotRunning));
@@ -119,8 +119,8 @@ IN_PROC_BROWSER_TEST_F(LowUsageHelpControllerBrowsertest, PromoOnNewSession) {
 }
 
 IN_PROC_BROWSER_TEST_F(LowUsageHelpControllerBrowsertest, PRE_PromoAtStartup) {
-  auto& storage_service = static_cast<BrowserFeaturePromoStorageService&>(
-      GetUserEducationService().feature_promo_storage_service());
+  auto& storage_service = static_cast<BrowserUserEducationStorageService&>(
+      GetUserEducationService().user_education_storage_service());
 
   const auto now = base::Time::Now();
 
@@ -128,14 +128,11 @@ IN_PROC_BROWSER_TEST_F(LowUsageHelpControllerBrowsertest, PRE_PromoAtStartup) {
   // a day ago.
   RecentSessionData recent_session_data;
   recent_session_data.enabled_time = now - base::Days(120);
-  recent_session_data.recent_session_start_times = {
-      now - base::Days(1),
-      now - base::Days(19),
-  };
+  recent_session_data.recent_session_start_times = {now - base::Days(19)};
 
   // Mirror similar information in the recent session data so that a new
   // session will be triggered on browser startup.
-  user_education::FeaturePromoSessionData session_data;
+  user_education::UserEducationSessionData session_data;
   session_data.start_time = now - base::Days(1);
   session_data.most_recent_active_time = now - base::Hours(23);
 

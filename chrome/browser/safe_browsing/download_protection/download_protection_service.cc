@@ -11,6 +11,7 @@
 #include "base/command_line.h"
 #include "base/functional/bind.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/not_fatal_until.h"
 #include "base/strings/string_split.h"
 #include "base/task/task_traits.h"
 #include "base/task/thread_pool.h"
@@ -101,8 +102,7 @@ bool IsDownloadSecuritySensitive(safe_browsing::DownloadCheckResult result) {
     case Result::IMMEDIATE_DEEP_SCAN:
       return false;
   }
-  NOTREACHED_IN_MIGRATION();
-  return false;
+  NOTREACHED();
 }
 
 void MaybeLogSecuritySensitiveDownloadEvent(
@@ -126,7 +126,7 @@ const void* const DownloadProtectionService::kDownloadProtectionDataKey =
     &kDownloadProtectionDataKey;
 
 DownloadProtectionService::DownloadProtectionService(
-    SafeBrowsingService* sb_service)
+    SafeBrowsingServiceImpl* sb_service)
     : sb_service_(sb_service),
       enabled_(false),
       binary_feature_extractor_(new BinaryFeatureExtractor()),
@@ -398,7 +398,7 @@ void DownloadProtectionService::PPAPIDownloadCheckRequestFinished(
     PPAPIDownloadRequest* request) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   auto it = ppapi_download_requests_.find(request);
-  DCHECK(it != ppapi_download_requests_.end());
+  CHECK(it != ppapi_download_requests_.end(), base::NotFatalUntil::M130);
   ppapi_download_requests_.erase(it);
 }
 
@@ -487,39 +487,6 @@ DownloadProtectionService::GetDownloadProtectionTailoredVerdict(
     return ClientDownloadResponse::TailoredVerdict();
 }
 
-// static
-bool DownloadProtectionService::ShouldSendDangerousDownloadReport(
-    download::DownloadItem* item) {
-  DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  content::BrowserContext* browser_context =
-      content::DownloadItemUtils::GetBrowserContext(item);
-  Profile* profile = Profile::FromBrowserContext(browser_context);
-  if (!profile || !IsExtendedReportingEnabled(*profile->GetPrefs())) {
-    return false;
-  }
-
-  // When users are in incognito mode, no report will be sent and no
-  // |onDangerousDownloadOpened| extension API will be called.
-  if (browser_context->IsOffTheRecord()) {
-    return false;
-  }
-
-  // Only report downloads that are known to be dangerous or was dangerous but
-  // was validated by the user.
-  if (!item->IsDangerous() &&
-      item->GetDangerType() != download::DOWNLOAD_DANGER_TYPE_USER_VALIDATED) {
-    return false;
-  }
-
-  std::string token = GetDownloadPingToken(item);
-  // Only dangerous downloads have token stored.
-  if (token.empty()) {
-    return false;
-  }
-
-  return true;
-}
-
 void DownloadProtectionService::MaybeSendDangerousDownloadOpenedReport(
     download::DownloadItem* item,
     bool show_download_in_folder) {
@@ -543,13 +510,12 @@ void DownloadProtectionService::MaybeSendDangerousDownloadOpenedReport(
 
   OnDangerousDownloadOpened(item, profile);
 
-  if (sb_service_ && ShouldSendDangerousDownloadReport(item)) {
+  if (sb_service_) {
     // If the download is opened, it indicates the user has bypassed the warning
     // and decided to proceed, so setting did_proceed to true.
-    bool is_successful = sb_service_->SendDownloadReport(
+    sb_service_->SendDownloadReport(
         item, ClientSafeBrowsingReportRequest::DANGEROUS_DOWNLOAD_OPENED,
         /*did_proceed=*/true, show_download_in_folder);
-    DCHECK(is_successful);
   }
 }
 
@@ -641,23 +607,19 @@ void DownloadProtectionService::OnDangerousDownloadOpened(
 }
 
 base::TimeDelta DownloadProtectionService::GetDownloadRequestTimeout() const {
-  if (base::FeatureList::IsEnabled(kStrictDownloadTimeout)) {
-    return base::Milliseconds(kStrictDownloadTimeoutMilliseconds.Get());
-  }
-
   return base::Milliseconds(download_request_timeout_ms_);
 }
 
 bool DownloadProtectionService::MaybeBeginFeedbackForDownload(
     Profile* profile,
     download::DownloadItem* download,
-    DownloadCommands::Command download_command) {
+    const std::string& ping_request,
+    const std::string& ping_response) {
   PrefService* prefs = profile->GetPrefs();
-  bool is_extended_reporting =
-      ExtendedReportingPrefExists(*prefs) && IsExtendedReportingEnabled(*prefs);
+  bool is_extended_reporting = IsExtendedReportingEnabled(*prefs);
   if (!profile->IsOffTheRecord() && is_extended_reporting) {
-    feedback_service_->BeginFeedbackForDownload(profile, download,
-                                                download_command);
+    feedback_service_->BeginFeedbackForDownload(profile, download, ping_request,
+                                                ping_response);
     return true;
   }
   return false;
@@ -688,12 +650,6 @@ void DownloadProtectionService::UploadForDeepScanning(
     metrics_collector->AddSafeBrowsingEventToPref(
         safe_browsing::SafeBrowsingMetricsCollector::EventType::
             DOWNLOAD_DEEP_SCAN);
-  }
-
-  if (trigger ==
-      DownloadItemWarningData::DeepScanTrigger::TRIGGER_IMMEDIATE_DEEP_SCAN) {
-    profile->GetPrefs()->SetBoolean(
-        prefs::kSafeBrowsingAutomaticDeepScanPerformed, true);
   }
 }
 
@@ -840,7 +796,7 @@ int DownloadProtectionService::GetDownloadAttributionUserGestureLimit(
 
 void DownloadProtectionService::RequestFinished(DeepScanningRequest* request) {
   auto it = deep_scanning_requests_.find(request);
-  DCHECK(it != deep_scanning_requests_.end());
+  CHECK(it != deep_scanning_requests_.end(), base::NotFatalUntil::M130);
   deep_scanning_requests_.erase(it);
 }
 

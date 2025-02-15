@@ -12,9 +12,7 @@
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/notreached.h"
-#include "base/time/time.h"
 #include "components/webapps/browser/webapps_client.h"
-#include "content/public/browser/service_worker_context.h"
 
 namespace webapps {
 
@@ -92,6 +90,10 @@ std::ostream& operator<<(std::ostream& os, WebappInstallSource source) {
       return os << "webapk restore";
     case WebappInstallSource::OOBE_APP_RECOMMENDATIONS:
       return os << "oobe app recommendations";
+    case WebappInstallSource::WEB_INSTALL:
+      return os << "web install";
+    case WebappInstallSource::CHROMEOS_HELP_APP:
+      return os << "chromeos help app";
     case WebappInstallSource::COUNT:
       return os << "count";
   }
@@ -219,6 +221,8 @@ bool InstallableMetrics::IsReportableInstallSource(WebappInstallSource source) {
     case WebappInstallSource::ALMANAC_INSTALL_APP_URI:
     case WebappInstallSource::WEBAPK_RESTORE:
     case WebappInstallSource::OOBE_APP_RECOMMENDATIONS:
+    case WebappInstallSource::WEB_INSTALL:
+    case WebappInstallSource::CHROMEOS_HELP_APP:
       return true;
     case WebappInstallSource::IWA_GRAPHICAL_INSTALLER:
     case WebappInstallSource::IWA_DEV_UI:
@@ -230,8 +234,7 @@ bool InstallableMetrics::IsReportableInstallSource(WebappInstallSource source) {
     case WebappInstallSource::SYNC:
       return false;
     case WebappInstallSource::COUNT:
-      NOTREACHED_IN_MIGRATION();
-      return false;
+      NOTREACHED();
   }
 }
 
@@ -243,50 +246,18 @@ WebappInstallSource InstallableMetrics::GetInstallSource(
 }
 
 // static
-void InstallableMetrics::RecordCheckServiceWorkerTime(base::TimeDelta time) {
-  UMA_HISTOGRAM_MEDIUM_TIMES("Webapp.CheckServiceWorker.Time", time);
-}
-
-// static
-void InstallableMetrics::RecordCheckServiceWorkerStatus(
-    ServiceWorkerOfflineCapability status) {
-  UMA_HISTOGRAM_ENUMERATION("Webapp.CheckServiceWorker.Status", status);
-}
-
-// static
-ServiceWorkerOfflineCapability
-InstallableMetrics::ConvertFromServiceWorkerCapability(
-    content::ServiceWorkerCapability capability) {
-  switch (capability) {
-    case content::ServiceWorkerCapability::SERVICE_WORKER_WITH_FETCH_HANDLER:
-      return ServiceWorkerOfflineCapability::kServiceWorkerWithOfflineSupport;
-    case content::ServiceWorkerCapability::SERVICE_WORKER_NO_FETCH_HANDLER:
-      return ServiceWorkerOfflineCapability::kServiceWorkerNoFetchHandler;
-    case content::ServiceWorkerCapability::NO_SERVICE_WORKER:
-      return ServiceWorkerOfflineCapability::kNoServiceWorker;
-  }
-  NOTREACHED_IN_MIGRATION();
-}
-
-// static
-ServiceWorkerOfflineCapability InstallableMetrics::ConvertFromOfflineCapability(
-    content::OfflineCapability capability) {
-  switch (capability) {
-    case content::OfflineCapability::kSupported:
-      return ServiceWorkerOfflineCapability::kServiceWorkerWithOfflineSupport;
-    case content::OfflineCapability::kUnsupported:
-      return ServiceWorkerOfflineCapability::kServiceWorkerNoOfflineSupport;
-  }
-  NOTREACHED_IN_MIGRATION();
-}
-
-// static
 void InstallableMetrics::TrackUninstallEvent(WebappUninstallSource source) {
   base::UmaHistogramEnumeration("Webapp.Install.UninstallEvent", source);
 }
 
 // static
-void InstallableMetrics::TrackInstallResult(bool result) {
+void InstallableMetrics::TrackInstallResult(bool result,
+                                            WebappInstallSource source) {
   base::UmaHistogramBoolean("WebApp.Install.Result", result);
+  if (IsReportableInstallSource(source)) {
+    base::UmaHistogramEnumeration(result ? "WebApp.Install.Source.Success"
+                                         : "WebApp.Install.Source.Failure",
+                                  source, WebappInstallSource::COUNT);
+  }
 }
 }  // namespace webapps

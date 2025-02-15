@@ -7,9 +7,9 @@
 #include <utility>
 
 #include "base/location.h"
+#include "services/network/public/mojom/permissions_policy/permissions_policy_feature.mojom-blink.h"
 #include "third_party/blink/public/common/permissions_policy/permissions_policy.h"
 #include "third_party/blink/public/mojom/manifest/manifest.mojom-blink.h"
-#include "third_party/blink/public/mojom/permissions_policy/permissions_policy.mojom-blink.h"
 #include "third_party/blink/public/mojom/use_counter/metrics/web_feature.mojom-blink.h"
 #include "third_party/blink/public/platform/task_type.h"
 #include "third_party/blink/public/platform/web_icon_sizes_parser.h"
@@ -80,7 +80,7 @@ bool AllowedToUsePaymentFeatures(ScriptState* script_state) {
   return ExecutionContext::From(script_state)
       ->GetSecurityContext()
       .GetPermissionsPolicy()
-      ->IsFeatureEnabled(mojom::blink::PermissionsPolicyFeature::kPayment);
+      ->IsFeatureEnabled(network::mojom::PermissionsPolicyFeature::kPayment);
 }
 
 void ThrowNotAllowedToUsePaymentFeatures(ExceptionState& exception_state) {
@@ -128,9 +128,10 @@ ScriptPromise<IDLBoolean> PaymentInstruments::deleteInstrument(
   return promise;
 }
 
-ScriptPromise<IDLAny> PaymentInstruments::get(ScriptState* script_state,
-                                              const String& instrument_key,
-                                              ExceptionState& exception_state) {
+ScriptPromise<PaymentInstrument> PaymentInstruments::get(
+    ScriptState* script_state,
+    const String& instrument_key,
+    ExceptionState& exception_state) {
   if (!AllowedToUsePaymentFeatures(script_state)) {
     ThrowNotAllowedToUsePaymentFeatures(exception_state);
     return EmptyPromise();
@@ -142,15 +143,15 @@ ScriptPromise<IDLAny> PaymentInstruments::get(ScriptState* script_state,
     return EmptyPromise();
   }
 
-  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver<IDLAny>>(
-      script_state, exception_state.GetContext());
-  auto promise = resolver->Promise();
+  auto* resolver =
+      MakeGarbageCollected<ScriptPromiseResolver<PaymentInstrument>>(
+          script_state, exception_state.GetContext());
 
   payment_manager_->manager()->GetPaymentInstrument(
       instrument_key,
       WTF::BindOnce(&PaymentInstruments::onGetPaymentInstrument,
                     WrapPersistent(this), WrapPersistent(resolver)));
-  return promise;
+  return resolver->Promise();
 }
 
 ScriptPromise<IDLSequence<IDLString>> PaymentInstruments::keys(
@@ -321,7 +322,7 @@ void PaymentInstruments::OnRequestPermission(
       // is a MIME type, but the browser side will do that anyway.
       icon->type = image_object->getTypeOr("").Left(kMaxTypeLength);
       icon->purpose.push_back(blink::mojom::ManifestImageResource_Purpose::ANY);
-      WebVector<gfx::Size> web_sizes =
+      std::vector<gfx::Size> web_sizes =
           WebIconSizesParser::ParseIconSizes(image_object->getSizesOr(""));
       for (const auto& web_size : web_sizes) {
         icon->sizes.push_back(web_size);
@@ -353,7 +354,7 @@ void PaymentInstruments::onDeletePaymentInstrument(
 }
 
 void PaymentInstruments::onGetPaymentInstrument(
-    ScriptPromiseResolver<IDLAny>* resolver,
+    ScriptPromiseResolver<PaymentInstrument>* resolver,
     payments::mojom::blink::PaymentInstrumentPtr stored_instrument,
     payments::mojom::blink::PaymentHandlerStatus status) {
   DCHECK(resolver);
@@ -383,8 +384,7 @@ void PaymentInstruments::onGetPaymentInstrument(
   instrument->setIcons(icons);
   instrument->setMethod(stored_instrument->method);
 
-  resolver->Resolve(ToV8Traits<PaymentInstrument>::ToV8(
-      resolver->GetScriptState(), instrument));
+  resolver->Resolve(instrument);
 }
 
 void PaymentInstruments::onKeysOfPaymentInstruments(

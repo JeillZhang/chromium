@@ -6,6 +6,7 @@
 
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "base/containers/flat_map.h"
 #include "base/functional/bind.h"
@@ -27,10 +28,12 @@
 using ::dlcservice::DlcState;
 using ::testing::_;
 using ::testing::AllOf;
+using ::testing::Each;
 using ::testing::Field;
 using ::testing::FieldsAre;
 using ::testing::Invoke;
 using ::testing::Property;
+using ::testing::ResultOf;
 using ::testing::Return;
 using ::testing::StartsWith;
 using ::testing::WithArg;
@@ -96,7 +99,13 @@ DlcState CreateInstalledState() {
 DlcState CreateTtsInstalledState(const std::string& locale) {
   DlcState output;
   output.set_state(dlcservice::DlcState_State_INSTALLED);
-  output.set_id(base::StrCat({"tts-", locale, "-c"}));
+  if (locale == "en-us") {
+    // Note that en-US has ID ending in "-d" while all other TTS DLCs have
+    // ID ending in "-c".
+    output.set_id("tts-en-us-d");
+  } else {
+    output.set_id(base::StrCat({"tts-", locale, "-c"}));
+  }
   output.set_root_path("/path");
   return output;
 }
@@ -504,6 +513,15 @@ TEST_F(LanguagePackManagerTest, CheckAllLocalesAvailable) {
   for (const auto& locale : tts) {
     EXPECT_TRUE(LanguagePackManager::IsPackAvailable(kTtsFeatureId, locale));
   }
+
+  const std::vector<std::string> fonts = {"ja", "ko"};
+  EXPECT_THAT(fonts, Each(ResultOf(
+                         "Font pack availability",
+                         [](const std::string& locale) {
+                           return LanguagePackManager::IsPackAvailable(
+                               kFontsFeatureId, locale);
+                         },
+                         true)));
 }
 
 TEST_F(LanguagePackManagerTest, IsPackAvailableFalseTest) {

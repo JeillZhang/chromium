@@ -6,39 +6,39 @@
 #define CHROME_BROWSER_SIGNIN_SIGNIN_PROMO_UTIL_H_
 
 #include "components/signin/public/base/signin_buildflags.h"
-#include "components/signin/public/identity_manager/identity_manager.h"
 
 class Profile;
 
+namespace signin_metrics {
+enum class AccessPoint;
+}
+
+namespace autofill {
+class AutofillProfile;
+}
+
 namespace signin {
-
-// Enumeration of sign in promo types for the autofill bubble.
-enum class SignInAutofillBubblePromoType { Passwords, Addresses, Payments };
-
-#if BUILDFLAG(ENABLE_DICE_SUPPORT)
-// Enumeration of possible versions of the autofill sign in promo bubble.
-enum class SignInAutofillBubbleVersion {
-  kNoPromo,
-  kNoAccount,
-  kWebSignedIn,
-  kSignInPending
-};
-#endif  // BUILDFLAG(ENABLE_DICE_SUPPORT)
 
 // Whether we should show the sync promo.
 bool ShouldShowSyncPromo(Profile& profile);
 
-// Whether we should show the sign in promo after data of the type
-// |signin_promo_type| was saved.
-bool ShouldShowSignInPromo(Profile& profile,
-                           SignInAutofillBubblePromoType signin_promo_type);
+// Whether we should show the sign in promo after a password was saved.
+bool ShouldShowPasswordSignInPromo(Profile& profile);
+
+// Whether we should show the sign in promo after `address` was saved.
+bool ShouldShowAddressSignInPromo(Profile& profile,
+                                  const autofill::AutofillProfile& address);
+
+// Returns whether `access_point` has an equivalent autofill signin promo.
+bool IsAutofillSigninPromo(signin_metrics::AccessPoint access_point);
 
 #if BUILDFLAG(ENABLE_DICE_SUPPORT)
-// Returns the version of the autofill bubble that should be displayed.
-// TODO(crbug.com/342118992): Move this to `signin_utils.h`.
-SignInAutofillBubbleVersion GetSignInPromoVersion(
-    IdentityManager* identity_manager);
+// Records that the sign in promo was shown, either for the account used for the
+// promo, or for the profile if there is no account available.
+void RecordSignInPromoShown(signin_metrics::AccessPoint access_point,
+                            Profile* profile);
 #endif  // BUILDFLAG(ENABLE_DICE_SUPPORT)
+
 }  // namespace signin
 
 #endif  // CHROME_BROWSER_SIGNIN_SIGNIN_PROMO_UTIL_H_

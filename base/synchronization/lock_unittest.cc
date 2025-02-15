@@ -4,15 +4,22 @@
 
 #include "base/synchronization/lock.h"
 
-#include <stdlib.h>
+#include <stdint.h>
 
-#include <cstdint>
+#include <memory>
+#include <utility>
 
+#include "base/check.h"
 #include "base/compiler_specific.h"
 #include "base/dcheck_is_on.h"
+#include "base/functional/function_ref.h"
+#include "base/location.h"
 #include "base/memory/raw_ptr.h"
+#include "base/memory/raw_ref.h"
+#include "base/rand_util.h"
 #include "base/synchronization/lock_subtle.h"
 #include "base/test/gtest_util.h"
+#include "base/thread_annotations.h"
 #include "base/threading/platform_thread.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -26,7 +33,7 @@ namespace base {
 
 class BasicLockTestThread : public PlatformThread::Delegate {
  public:
-  explicit BasicLockTestThread(Lock* lock) : lock_(lock), acquired_(0) {}
+  explicit BasicLockTestThread(Lock* lock) : lock_(lock) {}
 
   BasicLockTestThread(const BasicLockTestThread&) = delete;
   BasicLockTestThread& operator=(const BasicLockTestThread&) = delete;
@@ -40,13 +47,13 @@ class BasicLockTestThread : public PlatformThread::Delegate {
     for (int i = 0; i < 10; i++) {
       lock_->Acquire();
       acquired_++;
-      PlatformThread::Sleep(Milliseconds(rand() % 20));
+      PlatformThread::Sleep(RandTimeDeltaUpTo(Milliseconds(20)));
       lock_->Release();
     }
     for (int i = 0; i < 10; i++) {
       if (lock_->Try()) {
         acquired_++;
-        PlatformThread::Sleep(Milliseconds(rand() % 20));
+        PlatformThread::Sleep(RandTimeDeltaUpTo(Milliseconds(20)));
         lock_->Release();
       }
     }
@@ -56,7 +63,7 @@ class BasicLockTestThread : public PlatformThread::Delegate {
 
  private:
   raw_ptr<Lock> lock_;
-  int acquired_;
+  int acquired_ = 0;
 };
 
 TEST(LockTest, Basic) {
@@ -75,20 +82,20 @@ TEST(LockTest, Basic) {
   for (int i = 0; i < 10; i++) {
     lock.Acquire();
     acquired++;
-    PlatformThread::Sleep(Milliseconds(rand() % 20));
+    PlatformThread::Sleep(RandTimeDeltaUpTo(Milliseconds(20)));
     lock.Release();
   }
   for (int i = 0; i < 10; i++) {
     if (lock.Try()) {
       acquired++;
-      PlatformThread::Sleep(Milliseconds(rand() % 20));
+      PlatformThread::Sleep(RandTimeDeltaUpTo(Milliseconds(20)));
       lock.Release();
     }
   }
   for (int i = 0; i < 5; i++) {
     lock.Acquire();
     acquired++;
-    PlatformThread::Sleep(Milliseconds(rand() % 20));
+    PlatformThread::Sleep(RandTimeDeltaUpTo(Milliseconds(20)));
     lock.Release();
   }
 
@@ -102,7 +109,7 @@ TEST(LockTest, Basic) {
 
 class TryLockTestThread : public PlatformThread::Delegate {
  public:
-  explicit TryLockTestThread(Lock* lock) : lock_(lock), got_lock_(false) {}
+  explicit TryLockTestThread(Lock* lock) : lock_(lock) {}
 
   TryLockTestThread(const TryLockTestThread&) = delete;
   TryLockTestThread& operator=(const TryLockTestThread&) = delete;
@@ -112,15 +119,16 @@ class TryLockTestThread : public PlatformThread::Delegate {
     // lock is properly released.
     bool got_lock = lock_->Try();
     got_lock_ = got_lock;
-    if (got_lock)
+    if (got_lock) {
       lock_->Release();
+    }
   }
 
   bool got_lock() const { return got_lock_; }
 
  private:
   raw_ptr<Lock> lock_;
-  bool got_lock_;
+  bool got_lock_ = false;
 };
 
 TEST(LockTest, TryLock) {
@@ -175,7 +183,7 @@ class MutexLockTestThread : public PlatformThread::Delegate {
     for (int i = 0; i < 40; i++) {
       lock->Acquire();
       int v = *value;
-      PlatformThread::Sleep(Milliseconds(rand() % 10));
+      PlatformThread::Sleep(RandTimeDeltaUpTo(Milliseconds(10)));
       *value = v + 1;
       lock->Release();
     }
@@ -228,6 +236,49 @@ TEST(LockTest, MutexFourThreads) {
   EXPECT_EQ(4 * 40, value);
 }
 
+// Test invariant checking -----------------------------------------------------
+
+TEST(LockTest, InvariantIsCalled) {
+  // This test should compile and execute safely regardless of invariant
+  // checking, but if `kInvariantsActive` is false, we don't expect the
+  // invariant to be checked when the lock state changes.
+  constexpr bool kInvariantsActive = DCHECK_IS_ON();
+
+  class InvariantChecker {
+   public:
+    explicit InvariantChecker(const Lock& lock LIFETIME_BOUND) : lock(lock) {}
+    void Check() ASSERT_EXCLUSIVE_LOCK(lock) {
+      lock->AssertAcquired();
+      invariant_called = true;
+    }
+    bool TestAndReset() { return std::exchange(invariant_called, false); }
+
+   private:
+    const raw_ref<const Lock> lock;
+    bool invariant_called = false;
+  };
+
+  // Awkward construction order here allows `checker` to refer to `lock`, which
+  // refers to `check_ref`, which refers to `check`, which refers to `checker`.
+  std::unique_ptr<InvariantChecker> checker;
+  auto check = [&] { checker->Check(); };
+  auto check_ref = base::FunctionRef<void()>(check);
+  Lock lock([&] {
+    checker = std::make_unique<InvariantChecker>(lock);
+    return check_ref;
+  }());
+
+  EXPECT_FALSE(checker->TestAndReset());
+
+  lock.Acquire();
+  EXPECT_EQ(kInvariantsActive, checker->TestAndReset());
+
+  lock.Release();
+  EXPECT_EQ(kInvariantsActive, checker->TestAndReset());
+}
+
+// AutoLock tests --------------------------------------------------------------
+
 TEST(LockTest, AutoLockMaybe) {
   Lock lock;
   {
@@ -278,7 +329,7 @@ TEST_F(TryLockTest, CorrectlyCheckIsAcquired) {
 
 #if DCHECK_IS_ON()
 
-TEST(LockTest, GetLocksHeldByCurrentThread) {
+TEST(LockTest, GetTrackedLocksHeldByCurrentThread) {
   Lock lock_a;
   Lock lock_b;
   Lock lock_c;
@@ -286,38 +337,72 @@ TEST(LockTest, GetLocksHeldByCurrentThread) {
   const uintptr_t lock_b_ptr = reinterpret_cast<uintptr_t>(&lock_b);
   const uintptr_t lock_c_ptr = reinterpret_cast<uintptr_t>(&lock_c);
 
-  EXPECT_THAT(subtle::GetLocksHeldByCurrentThread(), UnorderedElementsAre());
-  ReleasableAutoLock auto_lock_a(&lock_a);
-  EXPECT_THAT(subtle::GetLocksHeldByCurrentThread(),
+  EXPECT_THAT(subtle::GetTrackedLocksHeldByCurrentThread(),
+              UnorderedElementsAre());
+  ReleasableAutoLock auto_lock_a(&lock_a, subtle::LockTracking::kEnabled);
+  EXPECT_THAT(subtle::GetTrackedLocksHeldByCurrentThread(),
               UnorderedElementsAre(lock_a_ptr));
-  ReleasableAutoLock auto_lock_b(&lock_b);
-  EXPECT_THAT(subtle::GetLocksHeldByCurrentThread(),
+  ReleasableAutoLock auto_lock_b(&lock_b, subtle::LockTracking::kEnabled);
+  EXPECT_THAT(subtle::GetTrackedLocksHeldByCurrentThread(),
               UnorderedElementsAre(lock_a_ptr, lock_b_ptr));
   auto_lock_a.Release();
-  EXPECT_THAT(subtle::GetLocksHeldByCurrentThread(),
+  EXPECT_THAT(subtle::GetTrackedLocksHeldByCurrentThread(),
               UnorderedElementsAre(lock_b_ptr));
-  ReleasableAutoLock auto_lock_c(&lock_c);
-  EXPECT_THAT(subtle::GetLocksHeldByCurrentThread(),
+  ReleasableAutoLock auto_lock_c(&lock_c, subtle::LockTracking::kEnabled);
+  EXPECT_THAT(subtle::GetTrackedLocksHeldByCurrentThread(),
               UnorderedElementsAre(lock_b_ptr, lock_c_ptr));
   auto_lock_c.Release();
-  EXPECT_THAT(subtle::GetLocksHeldByCurrentThread(),
+  EXPECT_THAT(subtle::GetTrackedLocksHeldByCurrentThread(),
               UnorderedElementsAre(lock_b_ptr));
   auto_lock_b.Release();
-  EXPECT_THAT(subtle::GetLocksHeldByCurrentThread(), UnorderedElementsAre());
+  EXPECT_THAT(subtle::GetTrackedLocksHeldByCurrentThread(),
+              UnorderedElementsAre());
 }
 
-TEST(LockTest, GetLocksHeldByCurrentThreadOverCapacity)
+TEST(LockTest, GetTrackedLocksHeldByCurrentThread_AutoLock) {
+  Lock lock;
+  const uintptr_t lock_ptr = reinterpret_cast<uintptr_t>(&lock);
+  AutoLock auto_lock(lock, subtle::LockTracking::kEnabled);
+  EXPECT_THAT(subtle::GetTrackedLocksHeldByCurrentThread(),
+              UnorderedElementsAre(lock_ptr));
+}
+
+TEST(LockTest, GetTrackedLocksHeldByCurrentThread_MovableAutoLock) {
+  Lock lock;
+  const uintptr_t lock_ptr = reinterpret_cast<uintptr_t>(&lock);
+  MovableAutoLock auto_lock(lock, subtle::LockTracking::kEnabled);
+  EXPECT_THAT(subtle::GetTrackedLocksHeldByCurrentThread(),
+              UnorderedElementsAre(lock_ptr));
+}
+
+TEST(LockTest, GetTrackedLocksHeldByCurrentThread_AutoTryLock) {
+  Lock lock;
+  const uintptr_t lock_ptr = reinterpret_cast<uintptr_t>(&lock);
+  AutoTryLock auto_lock(lock, subtle::LockTracking::kEnabled);
+  EXPECT_THAT(subtle::GetTrackedLocksHeldByCurrentThread(),
+              UnorderedElementsAre(lock_ptr));
+}
+
+TEST(LockTest, GetTrackedLocksHeldByCurrentThread_AutoLockMaybe) {
+  Lock lock;
+  const uintptr_t lock_ptr = reinterpret_cast<uintptr_t>(&lock);
+  AutoLockMaybe auto_lock(&lock, subtle::LockTracking::kEnabled);
+  EXPECT_THAT(subtle::GetTrackedLocksHeldByCurrentThread(),
+              UnorderedElementsAre(lock_ptr));
+}
+
+TEST(LockTest, GetTrackedLocksHeldByCurrentThreadOverCapacity)
 // Thread-safety analysis doesn't handle the array of locks properly.
 NO_THREAD_SAFETY_ANALYSIS {
   constexpr size_t kHeldLocksCapacity = 10;
   std::array<Lock, kHeldLocksCapacity + 1> locks;
 
   for (size_t i = 0; i < kHeldLocksCapacity; ++i) {
-    locks[i].Acquire();
+    locks[i].Acquire(subtle::LockTracking::kEnabled);
   }
 
   EXPECT_DCHECK_DEATH({
-    locks[kHeldLocksCapacity].Acquire();
+    locks[kHeldLocksCapacity].Acquire(subtle::LockTracking::kEnabled);
     locks[kHeldLocksCapacity].Release();
   });
 
@@ -329,16 +414,15 @@ NO_THREAD_SAFETY_ANALYSIS {
       expected_locks.push_back(reinterpret_cast<uintptr_t>(&locks[j]));
     }
 
-    EXPECT_THAT(subtle::GetLocksHeldByCurrentThread(),
+    EXPECT_THAT(subtle::GetTrackedLocksHeldByCurrentThread(),
                 UnorderedElementsAreArray(expected_locks));
   }
 }
 
-TEST(LockTest, DoNotTrackLocks) {
+TEST(LockTest, TrackingDisabled) {
   Lock lock;
-  subtle::DoNotTrackLocks do_not_track_locks;
-  AutoLock auto_lock(lock);
-  EXPECT_TRUE(subtle::GetLocksHeldByCurrentThread().empty());
+  AutoLock auto_lock(lock, subtle::LockTracking::kDisabled);
+  EXPECT_TRUE(subtle::GetTrackedLocksHeldByCurrentThread().empty());
 }
 
 #endif  // DCHECK_IS_ON()

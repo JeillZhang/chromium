@@ -4,6 +4,7 @@
 
 #include "content/browser/first_party_sets/first_party_set_parser.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <iterator>
 #include <optional>
@@ -19,7 +20,6 @@
 #include "base/json/json_reader.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_functions.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/string_util.h"
 #include "base/types/expected.h"
 #include "base/types/expected_macros.h"
@@ -325,14 +325,10 @@ class ParseContext {
   // The given set and aliases must be disjoint from everything previously added
   // to the context.
   void AddSet(const SetsAndAliases& set_and_aliases) {
-    for (const std::pair<net::SchemefulSite, net::FirstPartySetEntry>&
-             site_and_entry : set_and_aliases.first) {
-      const net::SchemefulSite& site = site_and_entry.first;
+    for (const auto& [site, unused_entry] : set_and_aliases.first) {
       CHECK(elements_.insert(site).second);
     }
-    for (const std::pair<net::SchemefulSite, net::SchemefulSite>&
-             alias_and_canonical : set_and_aliases.second) {
-      const net::SchemefulSite& alias = alias_and_canonical.first;
+    for (const auto& [alias, unused_canonical] : set_and_aliases.second) {
       CHECK(elements_.insert(alias).second);
     }
   }
@@ -369,10 +365,7 @@ class ParseContext {
 
     // Since we just removed some keys, we have to double-check that there are
     // no singleton sets.
-    for (const std::pair<net::SchemefulSite, net::FirstPartySetEntry>& pair :
-         sets) {
-      const net::SchemefulSite& site = pair.first;
-      const net::FirstPartySetEntry& entry = pair.second;
+    for (const auto& [site, entry] : sets) {
       if (site == entry.primary()) {
         // Skip primaries, they don't count as their own members.
         continue;
@@ -382,9 +375,8 @@ class ParseContext {
       possible_singletons.erase(entry.primary());
     }
     // Any canonical site that has at least one alias is not a singleton.
-    for (const std::pair<net::SchemefulSite, net::SchemefulSite>& pair :
-         aliases) {
-      possible_singletons.erase(pair.second);
+    for (const auto& [unused_alias, canonical] : aliases) {
+      possible_singletons.erase(canonical);
     }
 
     if (possible_singletons.empty()) {
@@ -608,7 +600,7 @@ class ParseContext {
       base::flat_set<net::SchemefulSite>* possible_singletons) {
     const net::SchemefulSite& key = pair.first;
     const net::FirstPartySetEntry& entry = pair.second;
-    return base::ranges::any_of(
+    return std::ranges::any_of(
         invalid_keys_, [&](const net::SchemefulSite& invalid_key) -> bool {
           if (invalid_key == entry.primary()) {
             // The primary is invalid, so we have to kill the whole set. So this
@@ -638,7 +630,7 @@ class ParseContext {
       const std::vector<SetsMap::value_type>& sets) const {
     const net::SchemefulSite& alias = pair.first;
     const net::SchemefulSite& canonical = pair.second;
-    return base::ranges::any_of(
+    return std::ranges::any_of(
         invalid_keys_, [&](const net::SchemefulSite& invalid_key) -> bool {
           const bool alias_matches = invalid_key == alias;
           const bool canonical_matches = invalid_key == canonical;
@@ -713,8 +705,8 @@ SetsAndAliases ParseSetsFromStreamInternal(std::istream& input,
 
     context.AddSet(parsed.value());
 
-    base::ranges::move(parsed.value().first, std::back_inserter(sets));
-    base::ranges::move(parsed.value().second, std::back_inserter(aliases));
+    std::ranges::move(parsed.value().first, std::back_inserter(sets));
+    std::ranges::move(parsed.value().second, std::back_inserter(aliases));
     successfully_parsed_sets++;
   }
 
@@ -737,7 +729,7 @@ SetsAndAliases ParseSetsFromStreamInternal(std::istream& input,
 
 std::optional<net::SchemefulSite>
 FirstPartySetParser::CanonicalizeRegisteredDomain(
-    const std::string_view origin_string,
+    std::string_view origin_string,
     bool emit_errors) {
   ValidateSiteResult result =
       ParseContext(emit_errors, /*exempt_from_limits=*/false)
@@ -799,23 +791,9 @@ net::LocalSetDeclaration FirstPartySetParser::ParseFromCommandLine(
   SetsMap entries = std::move(parsed.first);
   Aliases aliases = std::move(parsed.second);
 
-  if (entries.empty()) {
-    return net::LocalSetDeclaration();
-  }
-
-  const net::SchemefulSite& primary = entries.begin()->second.primary();
-
-  if (base::ranges::any_of(entries,
-                           [&primary](const SetsMap::value_type& pair) {
-                             return pair.second.primary() != primary;
-                           })) {
-    // More than one set was provided. That is (currently) unsupported.
-    LOG(ERROR) << "Ignoring use-related-website-set switch due to multiple set "
-                  "declarations.";
-    return net::LocalSetDeclaration();
-  }
-
-  return net::LocalSetDeclaration(std::move(entries), std::move(aliases));
+  return net::LocalSetDeclaration::Create(
+             std::move(entries), std::move(aliases), /*emit_errors=*/true)
+      .value_or(net::LocalSetDeclaration());
 }
 
 }  // namespace content

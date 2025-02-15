@@ -31,6 +31,7 @@
 #include "media/base/media_util.h"
 #include "media/base/overlay_info.h"
 #include "media/base/platform_features.h"
+#include "media/base/supported_types.h"
 #include "media/base/video_decoder.h"
 #include "media/base/video_types.h"
 #include "media/video/gpu_video_accelerator_factories.h"
@@ -108,7 +109,11 @@ bool HasSoftwareFallback(media::VideoCodec video_codec) {
   if (video_codec == media::VideoCodec::kHEVC) {
     return false;
   }
-#if BUILDFLAG(IS_ANDROID) && !BUILDFLAG(ENABLE_FFMPEG_VIDEO_DECODERS)
+// TODO(crbug.com/355256378): OpenH264 for encoding and FFmpeg for H264 decoding
+// should be detangled such that software decoding can be enabled without
+// software encoding.
+#if BUILDFLAG(IS_ANDROID) && \
+    (!BUILDFLAG(ENABLE_FFMPEG_VIDEO_DECODERS) || !BUILDFLAG(ENABLE_OPENH264))
   return video_codec != media::VideoCodec::kH264;
 #else
   return true;
@@ -120,10 +125,21 @@ struct EncodedImageExternalMemory
  public:
   explicit EncodedImageExternalMemory(
       rtc::scoped_refptr<webrtc::EncodedImageBufferInterface> buffer_interface)
-      : ExternalMemory(base::make_span(buffer_interface->data(),
-                                       buffer_interface->size())),
-        buffer_interface_(std::move(buffer_interface)) {}
-  ~EncodedImageExternalMemory() override = default;
+      : buffer_interface_(std::move(buffer_interface)) {
+    DCHECK(buffer_interface_);
+  }
+
+  const base::span<const uint8_t> Span() const override {
+    // This cast forces span's implicit constructor to treat the provided type
+    // as reference-to-const instead of reference-to-non-const, which is
+    // necessary for `std::contiguous_range<>` to be true, since this type
+    // exposes both const and non-const `data()` methods and only the former
+    // will match the span element type.
+    // TODO(bugs.webrtc.org/9378): When the non-const `data()` method is
+    // eliminated, this cast can be removed.
+    return static_cast<const webrtc::EncodedImageBufferInterface&>(
+        *buffer_interface_);
+  }
 
  private:
   rtc::scoped_refptr<webrtc::EncodedImageBufferInterface> buffer_interface_;
@@ -171,7 +187,7 @@ std::optional<RTCVideoDecoderFallbackReason> NeedSoftwareFallback(
   // Fall back to software decoding if there's no support for VP9 spatial
   // layers. See https://crbug.com/webrtc/9304.
   const bool is_spatial_layer_buffer =
-      buffer.has_side_data() && !buffer.side_data()->spatial_layers.empty();
+      buffer.side_data() && !buffer.side_data()->spatial_layers.empty();
   if (codec == media::VideoCodec::kVP9 && is_spatial_layer_buffer &&
       !media::IsVp9kSVCHWDecodingEnabled()) {
     return RTCVideoDecoderFallbackReason::kSpatialLayers;
@@ -194,6 +210,9 @@ class RTCVideoDecoderAdapter::Impl {
        WTF::CrossThreadRepeatingFunction<void(Status)> change_status_callback,
        base::WeakPtr<Impl>& weak_this_for_client)
       : gpu_factories_(gpu_factories),
+        frame_adapter_shared_resources_(
+            base::MakeRefCounted<WebRtcVideoFrameAdapter::SharedResources>(
+                gpu_factories_)),
         change_status_callback_(std::move(change_status_callback)) {
     // This is called on webrtc decoder sequence.
     DETACH_FROM_SEQUENCE(media_sequence_checker_);
@@ -229,6 +248,8 @@ class RTCVideoDecoderAdapter::Impl {
   void OnOutput(scoped_refptr<media::VideoFrame> frame);
 
   const raw_ptr<media::GpuVideoAcceleratorFactories> gpu_factories_;
+  const scoped_refptr<WebRtcVideoFrameAdapter::SharedResources>
+      frame_adapter_shared_resources_;
 
   // Set on Initialize().
   std::unique_ptr<media::MediaLog> media_log_;
@@ -466,7 +487,7 @@ void RTCVideoDecoderAdapter::Impl::OnOutput(
       webrtc::VideoFrame::Builder()
           .set_video_frame_buffer(rtc::scoped_refptr<WebRtcVideoFrameAdapter>(
               new rtc::RefCountedObject<WebRtcVideoFrameAdapter>(
-                  std::move(frame))))
+                  std::move(frame), frame_adapter_shared_resources_)))
           .set_rtp_timestamp(static_cast<uint32_t>(timestamp.InMicroseconds()))
           .set_timestamp_us(0)
           .set_rotation(webrtc::kVideoRotation_0)
@@ -516,7 +537,6 @@ std::unique_ptr<RTCVideoDecoderAdapter> RTCVideoDecoderAdapter::Create(
       media::kNoTransformation, kDefaultSize, gfx::Rect(kDefaultSize),
       kDefaultSize, media::EmptyExtraData(),
       media::EncryptionScheme::kUnencrypted);
-  config.set_is_rtc(true);
 
   // HEVC does not have SW fallback, so resolution monitor is not needed.
   if (!resolution_monitor && HasSoftwareFallback(config.codec())) {

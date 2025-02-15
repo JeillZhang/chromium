@@ -4,18 +4,19 @@
 
 import 'chrome://personalization/strings.m.js';
 
-import {AlbumsSubpageElement, AmbientActionName, AmbientModeAlbum, AmbientObserver, AmbientSubpageElement, AmbientTheme, AmbientThemeItemElement, AmbientUiVisibility, emptyState, Paths, PersonalizationRouterElement, QueryParams, ScrollableTarget, SetAlbumsAction, SetAmbientModeEnabledAction, SetAmbientThemeAction, SetGeolocationPermissionEnabledActionForAmbient, SetScreenSaverDurationAction, SetTemperatureUnitAction, SetTopicSourceAction, TemperatureUnit, TopicSource, TopicSourceItemElement, WallpaperGridItemElement} from 'chrome://personalization/js/personalization_app.js';
-import {CrRadioButtonElement} from 'chrome://resources/ash/common/cr_elements/cr_radio_button/cr_radio_button.js';
+import type {AmbientModeAlbum, AmbientThemeItemElement, QueryParams, SetAlbumsAction, SetAmbientModeEnabledAction, SetAmbientThemeAction, SetGeolocationPermissionEnabledActionForAmbient, SetScreenSaverDurationAction, SetTemperatureUnitAction, SetTopicSourceAction, TopicSourceItemElement, WallpaperGridItemElement} from 'chrome://personalization/js/personalization_app.js';
+import {AlbumsSubpageElement, AmbientActionName, AmbientObserver, AmbientSubpageElement, AmbientTheme, AmbientUiVisibility, emptyState, Paths, PersonalizationRouterElement, ScrollableTarget, TemperatureUnit, TopicSource} from 'chrome://personalization/js/personalization_app.js';
+import type {CrRadioButtonElement} from 'chrome://resources/ash/common/cr_elements/cr_radio_button/cr_radio_button.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
-import {Url} from 'chrome://resources/mojo/url/mojom/url.mojom-webui.js';
+import type {Url} from 'chrome://resources/mojo/url/mojom/url.mojom-webui.js';
 import {flush} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 import {assertDeepEquals, assertEquals, assertFalse, assertNotEquals, assertTrue} from 'chrome://webui-test/chai_assert.js';
 import {waitAfterNextRender} from 'chrome://webui-test/polymer_test_util.js';
 import {TestMock} from 'chrome://webui-test/test_mock.js';
 
 import {baseSetup, initElement, teardownElement} from './personalization_app_test_utils.js';
-import {TestAmbientProvider} from './test_ambient_interface_provider.js';
-import {TestPersonalizationStore} from './test_personalization_store.js';
+import type {TestAmbientProvider} from './test_ambient_interface_provider.js';
+import type {TestPersonalizationStore} from './test_personalization_store.js';
 
 
 export function getSelectedAlbums(
@@ -485,6 +486,8 @@ suite('AmbientSubpageElementTest', function() {
       });
 
   test('show Geolocation dialog and click allow', async () => {
+    personalizationStore.setReducersEnabled(true);
+
     ambientSubpageElement = await displayMainSettings(
         TopicSource.kArtGallery, TemperatureUnit.kFahrenheit,
         /*ambientModeEnabled=*/ true);
@@ -496,8 +499,7 @@ suite('AmbientSubpageElementTest', function() {
     // Enable Privacy Hub feature flag.
     loadTimeData.overrideValues({isCrosPrivacyHubLocationEnabled: true});
 
-    // Disable geolocation and select Auto Schedule; This should show the
-    // warning message.
+    // Disable geolocation; this should show the warning message.
     personalizationStore.data.ambient.geolocationPermissionEnabled = false;
     personalizationStore.notifyObservers();
     await waitAfterNextRender(ambientSubpageElement);
@@ -526,7 +528,6 @@ suite('AmbientSubpageElementTest', function() {
 
     // Confirm the dialog; this should enable the geolocation permission,
     // resulting in both the dialog and warning text disappearing.
-    personalizationStore.setReducersEnabled(true);
     personalizationStore.expectAction(
         AmbientActionName.SET_GEOLOCATION_PERMISSION_ENABLED);
     confirmButton.click();
@@ -546,6 +547,49 @@ suite('AmbientSubpageElementTest', function() {
         weatherUnit.shadowRoot!.getElementById('geolocationDialog');
     assertFalse(!!warningElement);
     assertFalse(!!geolocationDialog);
+  });
+
+  test('show Geolocation warning text when location is managed', async () => {
+    // Enable Privacy Hub feature flag.
+    loadTimeData.overrideValues({isCrosPrivacyHubLocationEnabled: true});
+
+    personalizationStore.setReducersEnabled(true);
+
+    ambientSubpageElement = await displayMainSettings(
+        TopicSource.kArtGallery, TemperatureUnit.kFahrenheit,
+        /*ambientModeEnabled=*/ true);
+
+    const weatherUnit =
+        ambientSubpageElement.shadowRoot!.querySelector('ambient-weather-unit');
+    assertTrue(!!weatherUnit);
+    // Check no warning is shown by default.
+    let warningElement =
+        weatherUnit!.shadowRoot!.getElementById('geolocationWarningDiv');
+    assertFalse(!!warningElement);
+
+
+    // Disable geolocation and mark as unmodifiable by the user. This happens
+    // when the respective setting is policy-set.
+    personalizationStore.data.ambient.geolocationPermissionEnabled = false;
+    personalizationStore.data.ambient.geolocationIsUserModifiable = false;
+    personalizationStore.notifyObservers();
+    await waitAfterNextRender(ambientSubpageElement);
+
+    // Check warning message is present.
+    warningElement =
+        weatherUnit!.shadowRoot!.getElementById('geolocationWarningDiv');
+    assertTrue(!!warningElement);
+
+    // Check that managed icon is present.
+    assertTrue(!!warningElement.querySelector('cr-policy-indicator'));
+
+    // Check that users are not prompted to change location.
+    assertFalse(!!warningElement.querySelector('localized-link'));
+
+    // Check the displayed string.
+    assertEquals(
+        ambientSubpageElement.i18n('geolocationWarningManagedTextForWeather'),
+        warningElement.innerText);
   });
 
   test('duration is default to ten minutes', async () => {

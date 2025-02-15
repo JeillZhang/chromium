@@ -18,12 +18,17 @@ import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 
 import org.chromium.base.Callback;
+import org.chromium.base.CancelableRunnable;
 import org.chromium.base.TimeUtils;
 import org.chromium.base.metrics.RecordHistogram;
+import org.chromium.base.task.PostTask;
+import org.chromium.base.task.TaskTraits;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.native_page.ContextMenuManager;
 import org.chromium.chrome.browser.native_page.ContextMenuManager.ContextMenuItemId;
 import org.chromium.chrome.browser.offlinepages.OfflinePageBridge;
 import org.chromium.chrome.browser.offlinepages.OfflinePageItem;
+import org.chromium.chrome.browser.preloading.AndroidPrerenderManager;
 import org.chromium.chrome.browser.suggestions.SiteSuggestion;
 import org.chromium.chrome.browser.suggestions.SuggestionsMetrics;
 import org.chromium.chrome.browser.suggestions.SuggestionsOfflineModelObserver;
@@ -37,6 +42,7 @@ import java.lang.annotation.RetentionPolicy;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.Objects;
 
 /** The model and controller for a group of site suggestion tiles. */
 public class TileGroup implements MostVisitedSites.Observer {
@@ -65,9 +71,13 @@ public class TileGroup implements MostVisitedSites.Observer {
         /**
          * Called when the tile group has completely finished loading (all views will be inflated
          * and any dependent resources will have been loaded).
+         *
          * @param tiles The tiles owned by the {@link TileGroup}. Used to record metrics.
          */
         void onLoadingComplete(List<Tile> tiles);
+
+        /** Initialize AndroidPrerenderManager JNI interface. */
+        void initAndroidPrerenderManager(AndroidPrerenderManager androidPrerenderManager);
 
         /**
          * To be called before this instance is abandoned to the garbage collector so it can do any
@@ -118,10 +128,12 @@ public class TileGroup implements MostVisitedSites.Observer {
     }
 
     /** Delegate for handling interactions with tiles. */
-    public interface TileInteractionDelegate extends OnClickListener, OnCreateContextMenuListener {
+    public interface TileInteractionDelegate
+            extends OnClickListener, OnCreateContextMenuListener, View.OnLongClickListener {
         /**
          * Set a runnable for click events on the tile. This is primarily used to track interaction
          * with the tile used by feature engagement purposes.
+         *
          * @param clickRunnable The {@link Runnable} to be executed when tile is clicked.
          */
         void setOnClickRunnable(Runnable clickRunnable);
@@ -168,11 +180,13 @@ public class TileGroup implements MostVisitedSites.Observer {
     private final Delegate mTileGroupDelegate;
     private final Observer mObserver;
     private final TileRenderer mTileRenderer;
+    // Used in TileInteractionDelegateImpl.
+    private final int mPrerenderDelay;
 
     /**
      * Tracks the tasks currently in flight.
      *
-     * We only care about which ones are pending, not their order, and we can have multiple tasks
+     * <p>We only care about which ones are pending, not their order, and we can have multiple tasks
      * pending of the same type. Hence exposing the type as Collection rather than List or Set.
      */
     private final Collection<Integer> mPendingTasks = new ArrayList<>();
@@ -252,6 +266,12 @@ public class TileGroup implements MostVisitedSites.Observer {
         mTileRenderer = tileRenderer;
         mOfflineModelObserver = new OfflineModelObserver(offlinePageBridge);
         mUiDelegate.addDestructionObserver(mOfflineModelObserver);
+
+        mPrerenderDelay =
+                ChromeFeatureList.getFieldTrialParamByFeatureAsInt(
+                        ChromeFeatureList.NEW_TAB_PAGE_ANDROID_TRIGGER_FOR_PRERENDER2,
+                        "prerender_new_tab_page_on_touch_trigger",
+                        0);
     }
 
     @Override
@@ -399,7 +419,7 @@ public class TileGroup implements MostVisitedSites.Observer {
         if (isInitialLoad) removeTask(TileTask.FETCH_DATA);
     }
 
-    private @Nullable Tile findTile(SiteSuggestion suggestion) {
+    protected @Nullable Tile findTile(SiteSuggestion suggestion) {
         if (mTileSections.get(suggestion.sectionType) == null) return null;
         for (Tile tile : mTileSections.get(suggestion.sectionType)) {
             if (tile.getData().equals(suggestion)) return tile;
@@ -499,6 +519,10 @@ public class TileGroup implements MostVisitedSites.Observer {
         private Runnable mOnClickRunnable;
         private Runnable mOnRemoveRunnable;
         private Long mTouchTimer;
+        private AndroidPrerenderManager mAndroidPrerenderManager;
+        private @Nullable CancelableRunnable mPrerenderRunnable;
+        private GURL mPrerenderedUrl;
+        private GURL mScheduldedPrerenderingUrl;
 
         private void maybeRecordTouchDuration(boolean taken) {
             if (mTouchTimer == null) return;
@@ -515,6 +539,8 @@ public class TileGroup implements MostVisitedSites.Observer {
         public TileInteractionDelegateImpl(SiteSuggestion suggestion, View view) {
             mSuggestion = suggestion;
             view.setOnTouchListener(TileInteractionDelegateImpl.this);
+            mAndroidPrerenderManager = AndroidPrerenderManager.getAndroidPrerenderManager();
+            mTileGroupDelegate.initAndroidPrerenderManager(mAndroidPrerenderManager);
         }
 
         @Override
@@ -530,14 +556,66 @@ public class TileGroup implements MostVisitedSites.Observer {
             mTileGroupDelegate.openMostVisitedItem(WindowOpenDisposition.CURRENT_TAB, tile);
         }
 
+        private void maybePrerender(GURL url) {
+            if (!ChromeFeatureList.isEnabled(
+                    ChromeFeatureList.NEW_TAB_PAGE_ANDROID_TRIGGER_FOR_PRERENDER2)) {
+                return;
+            }
+
+            // Avoid resetting the delayed task if witness several MotionEvent.ACTION_DOWN in a
+            // row. If the URL has been scheduled to be prerendered or already prerendered, it
+            // should skipped.
+            if (Objects.equals(mScheduldedPrerenderingUrl, url)
+                    || Objects.equals(mPrerenderedUrl, url)) return;
+
+            assert mScheduldedPrerenderingUrl == null;
+            mScheduldedPrerenderingUrl = url;
+            mPrerenderRunnable =
+                    new CancelableRunnable(
+                            () -> {
+                                if (mAndroidPrerenderManager.startPrerendering(url)) {
+                                    mPrerenderedUrl = url;
+                                }
+                                mScheduldedPrerenderingUrl = null;
+                            });
+            PostTask.postDelayedTask(TaskTraits.UI_DEFAULT, mPrerenderRunnable, mPrerenderDelay);
+        }
+
+        // This function cancels scheduled prerendering or calls stopPrerendering to stop stale
+        // prerendering.
+        private void cancelPrerender() {
+            if (!ChromeFeatureList.isEnabled(
+                    ChromeFeatureList.NEW_TAB_PAGE_ANDROID_TRIGGER_FOR_PRERENDER2)) {
+                return;
+            }
+
+            if (mPrerenderRunnable != null) {
+                mPrerenderRunnable.cancel();
+                mPrerenderRunnable = null;
+            }
+
+            if (mPrerenderedUrl != null) {
+                mAndroidPrerenderManager.stopPrerendering();
+            }
+
+            mPrerenderedUrl = null;
+            mScheduldedPrerenderingUrl = null;
+        }
+
         @Override
         @SuppressLint("ClickableViewAccessibility")
         public boolean onTouch(View view, MotionEvent event) {
             if (event.getAction() == MotionEvent.ACTION_DOWN) {
                 mTouchTimer = TimeUtils.elapsedRealtimeMillis();
+
+                if (mSuggestion == null) return false;
+                Tile tile = findTile(mSuggestion);
+                if (tile == null) return false;
+                maybePrerender(tile.getUrl());
             }
             if (event.getAction() == MotionEvent.ACTION_CANCEL) {
                 maybeRecordTouchDuration(false);
+                cancelPrerender();
             }
 
             return false;
@@ -599,7 +677,17 @@ public class TileGroup implements MostVisitedSites.Observer {
         @Override
         public void onCreateContextMenu(
                 ContextMenu contextMenu, View view, ContextMenuInfo contextMenuInfo) {
+            if (ChromeFeatureList.isEnabled(ChromeFeatureList.TILE_CONTEXT_MENU_REFACTOR)) return;
+
             mContextMenuManager.createContextMenu(contextMenu, view, this);
+        }
+
+        @Override
+        public boolean onLongClick(View view) {
+            if (!ChromeFeatureList.isEnabled(ChromeFeatureList.TILE_CONTEXT_MENU_REFACTOR)) {
+                return false;
+            }
+            return mContextMenuManager.showListContextMenu(view, this);
         }
 
         @Override

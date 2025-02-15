@@ -4,7 +4,6 @@
 
 #include "media/gpu/test/video_frame_helpers.h"
 
-#include <sys/mman.h>
 #include <utility>
 #include <vector>
 
@@ -23,8 +22,11 @@
 #include "ui/gfx/buffer_format_util.h"
 #include "ui/gfx/gpu_memory_buffer.h"
 
+#if BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_LINUX)
+#include <sys/mman.h>
+#endif  // BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_LINUX)
+
 #if BUILDFLAG(USE_CHROMEOS_MEDIA_ACCELERATION)
-#include "media/gpu/chromeos/chromeos_compressed_gpu_memory_buffer_video_frame_utils.h"
 #include "media/gpu/chromeos/platform_video_frame_utils.h"
 #include "media/gpu/video_frame_mapper.h"
 #include "media/gpu/video_frame_mapper_factory.h"
@@ -98,16 +100,16 @@ bool ConvertVideoFrameToI420(const VideoFrame* src_frame,
 
 bool ConvertVideoFrameToYUV420P10(const VideoFrame* src_frame,
                                   VideoFrame* dst_frame) {
-  if (src_frame->format() != PIXEL_FORMAT_P016LE) {
+  if (src_frame->format() != PIXEL_FORMAT_P010LE) {
     LOG(ERROR) << "Unsupported input format: "
                << VideoPixelFormatToString(src_frame->format());
     return false;
   }
-  // Both P016LE and I010 store 10 bit pixels unpacked as 16-bit little endian
-  // values. In P016LE the pixel data is stored in the MSB. It is a bi-planar
+  // Both P010LE and I010 store 10 bit pixels unpacked as 16-bit little endian
+  // values. In P010LE the pixel data is stored in the MSB. It is a bi-planar
   // format with the same Y U/V layout as NV12. I010 is a tri-planar format with
   // the same layout as YUV420.
-  // P010 is P016LE with the lower 6 bits zeroed out.
+  // P010 is P010LE with the lower 6 bits zeroed out.
   // |15|14|13|12|11|10| 9| 8| 7| 6| 5| 4| 3| 2| 1| 0|
   // |          valid data         | 0| 0| 0| 0| 0| 0|
   //
@@ -179,7 +181,7 @@ bool ConvertVideoFrameToARGB(const VideoFrame* src_frame,
                                 src_frame->visible_data(VideoFrame::Plane::kU),
                                 src_frame->stride(VideoFrame::Plane::kU),
                                 dst_argb, dst_stride, width, height) == 0;
-    case PIXEL_FORMAT_P016LE: {
+    case PIXEL_FORMAT_P010LE: {
       auto i010_frame = VideoFrame::CreateFrame(
           PIXEL_FORMAT_YUV420AP10, src_frame->coded_size(),
           src_frame->visible_rect(), src_frame->natural_size(),
@@ -220,15 +222,9 @@ bool CopyVideoFrame(const VideoFrame* src_frame,
   // buffer into memory. We use a VideoFrameMapper to create a memory-based
   // VideoFrame that refers to the |dst_frame|'s buffer.
   if (dst_frame->storage_type() == VideoFrame::STORAGE_DMABUFS) {
-    // We should never get Intel media compressed VideoFrames backed by
-    // STORAGE_DMABUFS, so we don't need that capability from the
-    // VideoFrameMapper.
-    ASSERT_TRUE_OR_RETURN(
-        !IsIntelMediaCompressedModifier(dst_frame->layout().modifier()), false);
     auto video_frame_mapper = VideoFrameMapperFactory::CreateMapper(
         dst_frame->format(), VideoFrame::STORAGE_DMABUFS,
-        /*force_linear_buffer_mapper=*/true,
-        /*must_support_intel_media_compressed_buffers=*/false);
+        /*force_linear_buffer_mapper=*/true);
     ASSERT_TRUE_OR_RETURN(video_frame_mapper, false);
     dst_frame =
         video_frame_mapper->Map(std::move(dst_frame), PROT_READ | PROT_WRITE);
@@ -401,9 +397,13 @@ scoped_refptr<VideoFrame> CreateDmabufVideoFrame(
     planes.emplace_back(plane.stride, plane.offset, plane.size);
     dmabuf_fds.emplace_back(plane.fd.release());
   }
-  return VideoFrame::WrapExternalDmabufs(
+  scoped_refptr<VideoFrame> video_frame = VideoFrame::WrapExternalDmabufs(
       frame->layout(), frame->visible_rect(), frame->natural_size(),
       std::move(dmabuf_fds), frame->timestamp());
+
+  video_frame->set_metadata(frame->metadata());
+
+  return video_frame;
 #else
   return nullptr;
 #endif  // BUILDFLAG(USE_CHROMEOS_MEDIA_ACCELERATION)}
@@ -439,11 +439,14 @@ scoped_refptr<VideoFrame> CreateGpuMemoryBufferVideoFrame(
     return nullptr;
   }
 
-  scoped_refptr<gpu::ClientSharedImage> dummy_shared_image;
-  return media::VideoFrame::WrapExternalGpuMemoryBuffer(
-      frame->visible_rect(), frame->natural_size(),
-      std::move(gpu_memory_buffer), dummy_shared_image, gpu::SyncToken(), 0,
-      base::NullCallback(), frame->timestamp());
+  scoped_refptr<VideoFrame> video_frame =
+      media::VideoFrame::WrapExternalGpuMemoryBuffer(
+          frame->visible_rect(), frame->natural_size(),
+          std::move(gpu_memory_buffer), frame->timestamp());
+
+  video_frame->metadata().tracking_token = base::UnguessableToken::Create();
+
+  return video_frame;
 }
 
 scoped_refptr<const VideoFrame> CreateVideoFrameFromImage(const Image& image) {
@@ -462,7 +465,7 @@ scoped_refptr<const VideoFrame> CreateVideoFrameFromImage(const Image& image) {
     return nullptr;
   }
 
-  scoped_refptr<const VideoFrame> video_frame =
+  scoped_refptr<VideoFrame> video_frame =
       VideoFrame::WrapExternalDataWithLayout(
           *layout, image.VisibleRect(), image.VisibleRect().size(),
           image.Data(), image.DataSize(), base::TimeDelta());
@@ -470,6 +473,8 @@ scoped_refptr<const VideoFrame> CreateVideoFrameFromImage(const Image& image) {
     LOG(ERROR) << "Failed to create VideoFrame";
     return nullptr;
   }
+
+  video_frame->metadata().tracking_token = base::UnguessableToken::Create();
 
   return video_frame;
 }

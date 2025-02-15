@@ -4,6 +4,7 @@
 
 #include "content/browser/devtools/browser_devtools_agent_host.h"
 
+#include "base/auto_reset.h"
 #include "base/clang_profiling_buildflags.h"
 #include "base/functional/bind.h"
 #include "base/json/json_reader.h"
@@ -29,6 +30,10 @@
 #include "content/browser/devtools/service_worker_devtools_agent_host.h"
 #include "content/browser/renderer_host/frame_tree_node.h"
 #include "content/browser/web_contents/web_contents_impl.h"
+
+#ifdef ENABLE_BLUETOOTH_EMULATION
+#include "content/browser/devtools/protocol/bluetooth_emulation_handler.h"
+#endif
 
 #if BUILDFLAG(USE_VIZ_DEBUGGER)
 #include "content/browser/devtools/protocol/visual_debugger_handler.h"
@@ -180,8 +185,7 @@ BrowserDevToolsAgentHost::~BrowserDevToolsAgentHost() {
   BrowserDevToolsAgentHostInstances().erase(this);
 }
 
-bool BrowserDevToolsAgentHost::AttachSession(DevToolsSession* session,
-                                             bool acquire_wake_lock) {
+bool BrowserDevToolsAgentHost::AttachSession(DevToolsSession* session) {
   if (!session->GetClient()->IsTrusted())
     return false;
 
@@ -192,6 +196,9 @@ bool BrowserDevToolsAgentHost::AttachSession(DevToolsSession* session,
   if (only_discovery_)
     return true;
 
+#ifdef ENABLE_BLUETOOTH_EMULATION
+  session->CreateAndAddHandler<protocol::BluetoothEmulationHandler>();
+#endif
   session->CreateAndAddHandler<protocol::BrowserHandler>(
       session->GetClient()->MayWriteLocalFiles());
 #if BUILDFLAG(USE_VIZ_DEBUGGER)

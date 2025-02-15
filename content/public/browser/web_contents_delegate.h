@@ -15,13 +15,16 @@
 #include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/types/expected.h"
 #include "build/build_config.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/eye_dropper.h"
 #include "content/public/browser/fullscreen_types.h"
 #include "content/public/browser/invalidate_type.h"
 #include "content/public/browser/media_stream_request.h"
+#include "content/public/browser/preloading_trigger_type.h"
 #include "content/public/browser/preview_cancel_reason.h"
+#include "content/public/browser/select_audio_output_request.h"
 #include "content/public/browser/serial_chooser.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/window_container_type.mojom-forward.h"
@@ -33,6 +36,7 @@
 #include "third_party/blink/public/mojom/manifest/display_mode.mojom.h"
 #include "third_party/blink/public/mojom/page/draggable_region.mojom-forward.h"
 #include "third_party/skia/include/core/SkColor.h"
+#include "ui/base/mojom/window_show_state.mojom-forward.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/base/window_open_disposition.h"
 #include "ui/gfx/geometry/rect_f.h"
@@ -40,6 +44,7 @@
 
 #if BUILDFLAG(IS_ANDROID)
 #include "base/android/scoped_java_ref.h"
+#include "content/public/browser/back_forward_transition_animation_manager.h"
 #endif
 
 class GURL;
@@ -54,23 +59,6 @@ class FileChooserParams;
 class WindowFeatures;
 }
 }  // namespace blink
-
-namespace content {
-#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_APPLE)
-class ColorChooser;
-#endif
-class EyeDropperListener;
-class FileSelectListener;
-class JavaScriptDialogManager;
-class RenderFrameHost;
-class RenderWidgetHost;
-class SessionStorageNamespace;
-class SiteInstance;
-struct ContextMenuParams;
-struct DropData;
-struct MediaPlayerWatchTime;
-struct Referrer;
-}  // namespace content
 
 namespace device {
 namespace mojom {
@@ -103,7 +91,21 @@ enum class ProtocolHandlerSecurityLevel;
 namespace content {
 
 class AudioStreamBrokerFactory;
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_APPLE)
+class ColorChooser;
+#endif
+class EyeDropperListener;
+class FileSelectListener;
+class JavaScriptDialogManager;
+class RenderFrameHost;
+class RenderWidgetHost;
+class SessionStorageNamespace;
+class SiteInstance;
+struct ContextMenuParams;
+struct DropData;
+struct MediaPlayerWatchTime;
 struct OpenURLParams;
+struct Referrer;
 
 enum class KeyboardEventProcessingResult;
 
@@ -169,14 +171,20 @@ class CONTENT_EXPORT WebContentsDelegate {
   // properties of the window. If `was_blocked` is non-nullptr, then
   // `*was_blocked` will be set to true if the popup gets blocked, and left
   // unchanged otherwise.
-  virtual void AddNewContents(
+  //
+  // Returns a web contents instance where navigation will happen. If the
+  // navigation has been captured by a different web contents that will be
+  // returned. Otherwise, this function may return `new_contents` or `nullptr`.
+  // TODO: crbug.com/361717755: Always return the web contents instance
+  // navigation will happen in, or nullptr otherwise.
+  virtual WebContents* AddNewContents(
       WebContents* source,
       std::unique_ptr<WebContents> new_contents,
       const GURL& target_url,
       WindowOpenDisposition disposition,
       const blink::mojom::WindowFeatures& window_features,
       bool user_gesture,
-      bool* was_blocked) {}
+      bool* was_blocked);
 
   // Selects the specified contents, bringing its container to the front.
   virtual void ActivateContents(WebContents* contents) {}
@@ -434,6 +442,11 @@ class CONTENT_EXPORT WebContentsDelegate {
                               scoped_refptr<FileSelectListener> listener,
                               const blink::mojom::FileChooserParams& params);
 
+#if BUILDFLAG(IS_ANDROID)
+  // Set to true if RunFileChooser() should be used for FileSystemAccess APIs.
+  virtual bool UseFileChooserForFileSystemAccess() const;
+#endif
+
   // Request to enumerate a directory.  This is equivalent to running the file
   // chooser in directory-enumeration mode and having the user select the given
   // directory.
@@ -451,7 +464,7 @@ class CONTENT_EXPORT WebContentsDelegate {
                                base::OnceCallback<void()> on_cancel);
 
   // Returns whether the RFH can use Additional Windowing Controls (AWC) APIs.
-  // https://github.com/ivansandrk/additional-windowing-controls/blob/main/awc-explainer.md
+  // https://github.com/explainers-by-googlers/additional-windowing-controls/blob/main/README.md
   virtual bool CanUseWindowingControls(RenderFrameHost* requesting_frame);
 
   // Notifies `BrowserView` about the resizable boolean having been set vith
@@ -469,7 +482,7 @@ class CONTENT_EXPORT WebContentsDelegate {
 
   // This returns the current state of the window, mappable to display-state
   // values: normal/minimized/maximized/fullscreen.
-  virtual ui::WindowShowState GetWindowShowState() const;
+  virtual ui::mojom::WindowShowState GetWindowShowState() const;
 
   // Returns whether entering fullscreen with |EnterFullscreenModeForTab()| is
   // allowed.
@@ -561,6 +574,10 @@ class CONTENT_EXPORT WebContentsDelegate {
   // Notification that the page has lost the pointer lock.
   virtual void LostPointerLock() {}
 
+  // Returns true if we are waiting for the user to make a selection on the
+  // pointer lock permission request dialog.
+  virtual bool IsWaitingForPointerLockPrompt(WebContents* web_contents);
+
   // Requests keyboard lock. Once the request is approved or rejected,
   // GotResponseToKeyboardLockRequest() will be called on |web_contents|.
   virtual void RequestKeyboardLock(WebContents* web_contents,
@@ -577,6 +594,13 @@ class CONTENT_EXPORT WebContentsDelegate {
   virtual void RequestMediaAccessPermission(WebContents* web_contents,
                                             const MediaStreamRequest& request,
                                             MediaResponseCallback callback);
+
+  // Handles a request to select an audio output device.
+  // If permission is granted, a call should be made to the provided |callback|
+  // with the result. If the operation is not supported, the callback should
+  // be invoked with an appropriate error.
+  virtual void ProcessSelectAudioOutput(const SelectAudioOutputRequest& request,
+                                        SelectAudioOutputCallback callback);
 
   // Checks if we have permission to access the microphone or camera. Note that
   // this does not query the user. |type| must be MEDIA_DEVICE_AUDIO_CAPTURE
@@ -633,13 +657,11 @@ class CONTENT_EXPORT WebContentsDelegate {
   // Called when a suspicious navigation of the main frame has been blocked.
   // Allows the delegate to provide some UI to let the user know about the
   // blocked navigation and give them the option to recover from it.
-  // |blocked_url| is the blocked navigation target, |initiator_url| is the URL
-  // of the frame initiating the navigation, |reason| specifies why the
-  // navigation was blocked.
+  // |blocked_url| is the blocked navigation target, and |reason| specifies why
+  // the navigation was blocked.
   virtual void OnDidBlockNavigation(
       WebContents* web_contents,
       const GURL& blocked_url,
-      const GURL& initiator_url,
       blink::mojom::NavigationBlockedReason reason) {}
 
   // Reports that passive mixed content was found at the specified url.
@@ -729,7 +751,12 @@ class CONTENT_EXPORT WebContentsDelegate {
   // content/browser/preloading/prerender/README.md for details) is supported.
   // If it is not supported, returns the reason.
   virtual PreloadingEligibility IsPrerender2Supported(
-      WebContents& web_contents);
+      WebContents& web_contents,
+      PreloadingTriggerType trigger_type);
+
+  // Returns how many prerendering can be triggered by
+  // WebContents::StartPrerendering().
+  virtual int AllowedPrerenderingCount(WebContents& web_contents);
 
   // Returns whether to override user agent for prerendering navigation.
   virtual NavigationController::UserAgentOverrideOption
@@ -744,18 +771,6 @@ class CONTENT_EXPORT WebContentsDelegate {
   // contents.
   virtual bool ShouldAllowPartialParamMismatchOfPrerender2(
       NavigationHandle& navigation_handle);
-
-  // If |old_contents| is being inspected by a DevTools window, it updates the
-  // window to inspect |new_contents| instead and calls |callback| after it
-  // finishes asynchronously. If no window is present, or no update is
-  // necessary, |callback| is run synchronously (immediately on the same stack).
-  //
-  // TODO(crbug.com/40287334): This has no remaining call sites and can be
-  // removed.
-  virtual void UpdateInspectedWebContentsIfNecessary(
-      WebContents* old_contents,
-      WebContents* new_contents,
-      base::OnceCallback<void()> callback);
 
   // Returns true if the widget's frame content needs to be stored before
   // eviction and displayed until a new frame is generated. If false, a white
@@ -819,10 +834,24 @@ class CONTENT_EXPORT WebContentsDelegate {
       base::OnceCallback<void(const SkBitmap&)> callback);
 
 #if BUILDFLAG(IS_ANDROID)
+  // Synchronous version of |MaybeCopyContentAreaAsBitmap|. Return an
+  // empty bitmap if embedder is not showing any custom view.
+  virtual SkBitmap MaybeCopyContentAreaAsBitmapSync();
+
+  // Return an icon to use for privileged internal pages, if no screenshot of
+  // the page is available during back forward transition animations. An empty
+  // bitmap can be returned if the embedder wants to leave the preview empty.
+  virtual SkBitmap GetBackForwardTransitionFallbackUXInternalPageIcon();
+
   // Notifies the delegate that the back forward transition animation state
   // has changed. If necessary, the delegate should use this notification to
   // hold on its animation until the back forward transition has completed.
   virtual void DidBackForwardTransitionAnimationChange() {}
+
+  // Asks the embedder for the configuration used to compose a fallback UX, for
+  // navigation transitions.
+  virtual BackForwardTransitionAnimationManager::FallbackUXConfig
+  GetBackForwardTransitionFallbackUXConfig();
 #endif  // BUILDFLAG(IS_ANDROID)
 
  protected:

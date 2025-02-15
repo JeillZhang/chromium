@@ -10,6 +10,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -19,9 +20,9 @@
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
-#include "base/functional/callback_helpers.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
+#include "base/metrics/field_trial_params.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/metrics_hashes.h"
 #include "base/notreached.h"
@@ -30,6 +31,7 @@
 #include "base/profiler/metadata_recorder.h"
 #include "base/profiler/module_cache.h"
 #include "base/rand_util.h"
+#include "base/sampling_heap_profiler/poisson_allocation_sampler.h"
 #include "base/sampling_heap_profiler/sampling_heap_profiler.h"
 #include "base/sequence_checker.h"
 #include "base/strings/strcat.h"
@@ -42,20 +44,17 @@
 #include "components/heap_profiling/in_process/heap_profiler_parameters.h"
 #include "components/heap_profiling/in_process/switches.h"
 #include "components/metrics/call_stacks/call_stack_profile_builder.h"
-#include "components/metrics/call_stacks/call_stack_profile_params.h"
+#include "components/sampling_profiler/process_type.h"
 #include "components/services/heap_profiling/public/cpp/merge_samples.h"
+#include "components/variations/variations_switches.h"
 #include "components/version_info/channel.h"
 #include "third_party/abseil-cpp/absl/cleanup/cleanup.h"
 
 namespace heap_profiling {
 
-BASE_FEATURE(kHeapProfilerCentralControl,
-             "HeapProfilerCentralControl",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-
 namespace {
 
-using ProcessType = metrics::CallStackProfileParams::Process;
+using ProcessType = sampling_profiler::ProfilerProcessType;
 
 // The heap profiler for this process. HeapProfilerController will set this on
 // creation, and reset it to nullptr on destruction, so that it's always unset
@@ -108,58 +107,63 @@ std::string ProcessHistogramName(std::string_view base_name,
     case ProcessType::kUnknown:
     default:
       // Profiler should not be enabled for these process types.
-      NOTREACHED_IN_MIGRATION();
-      return std::string();
+      NOTREACHED();
   }
 }
 
-double GetChannelProbability(version_info::Channel channel,
-                             const HeapProfilerParameters& params) {
+double GetChannelProbability(version_info::Channel channel) {
   switch (channel) {
     case version_info::Channel::STABLE:
     case version_info::Channel::UNKNOWN:
       // If the channel can't be determined, treat it as `stable` for safety.
       // Don't disable heap profiling completely so that developers can still
       // enable it with --enable-feature flags.
-      return params.stable_probability;
+      return kStableProbability.Get();
     case version_info::Channel::BETA:
     case version_info::Channel::DEV:
     case version_info::Channel::CANARY:
-      return params.nonstable_probability;
+      return kNonStableProbability.Get();
   }
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
-bool DecideIfCollectionIsEnabled(version_info::Channel channel,
-                                 ProcessType process_type) {
+// Returns true iff heap profiles should be collected for this process, along
+// with a name for a synthetic field trial group based on the decision or
+// nullopt if no group applies.
+std::pair<bool, std::optional<std::string>> DecideIfCollectionIsEnabled(
+    version_info::Channel channel,
+    ProcessType process_type) {
   // Check the feature before the process type so that users are assigned to
   // groups in the browser process.
-  if (base::FeatureList::IsEnabled(kHeapProfilerCentralControl) &&
-      process_type != ProcessType::kBrowser) {
+  if (process_type != ProcessType::kBrowser) {
     // The browser process decided whether profiling is enabled and used
     // AppendCommandLineSwitchForChildProcess() to pass on the decision.
     const bool is_enabled = base::CommandLine::ForCurrentProcess()->HasSwitch(
         switches::kSubprocessHeapProfiling);
+    return {is_enabled, std::nullopt};
+  }
 
-    // If this check fails, some code path that launches a child process hasn't
-    // set the appropriate switch.
-    // TODO(https://crbug.com/40840943): Remove kNoSubprocessHeapProfiling after
-    // validating that this check never fails.
-    CHECK(is_enabled || base::CommandLine::ForCurrentProcess()->HasSwitch(
-                            switches::kNoSubprocessHeapProfiling));
-    return is_enabled;
+  // Never profile during benchmarking.
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+          variations::switches::kEnableBenchmarking)) {
+    return {false, std::nullopt};
+  }
+
+  if (!base::FeatureList::IsEnabled(kHeapProfilerReporting)) {
+    return {false, std::nullopt};
   }
 
   // Randomly determine whether profiling is enabled.
-  HeapProfilerParameters params =
-      GetHeapProfilerParametersForProcess(process_type);
-  if (!params.is_supported) {
-    return false;
+  const double seed = base::RandDouble();
+  const double probability = GetChannelProbability(channel);
+  if (seed < probability) {
+    return {true, "Enabled"};
   }
-  if (base::RandDouble() >= GetChannelProbability(channel, params)) {
-    return false;
+  if (seed < 2 * probability && 2 * probability <= 1.0) {
+    // Only register a Control group if it can be the same size as Enabled.
+    return {false, "Control"};
   }
-  return true;
+  return {false, "Default"};
 }
 
 }  // namespace
@@ -209,7 +213,6 @@ HeapProfilerController* HeapProfilerController::GetInstance() {
 HeapProfilerController::HeapProfilerController(version_info::Channel channel,
                                                ProcessType process_type)
     : process_type_(process_type),
-      profiling_enabled_(DecideIfCollectionIsEnabled(channel, process_type)),
       stopped_(base::MakeRefCounted<StoppedFlag>()),
       snapshot_task_runner_(base::ThreadPool::CreateSequencedTaskRunner(
           {base::TaskPriority::BEST_EFFORT})) {
@@ -218,13 +221,15 @@ HeapProfilerController::HeapProfilerController(version_info::Channel channel,
   CHECK(!g_instance);
   g_instance = this;
 
+  std::tie(profiling_enabled_, synthetic_field_trial_group_) =
+      DecideIfCollectionIsEnabled(channel, process_type);
+
   // Before starting the profiler, record the ReentryGuard's TLS slot to a crash
   // key to debug reentry into the profiler.
   // TODO(crbug.com/40062835): Remove this after diagnosing reentry crashes.
   base::allocator::dispatcher::ReentryGuard::RecordTLSSlotToCrashKey();
 
-  if (profiling_enabled_ && process_type_ == ProcessType::kBrowser &&
-      base::FeatureList::IsEnabled(kHeapProfilerCentralControl)) {
+  if (profiling_enabled_ && process_type_ == ProcessType::kBrowser) {
     browser_process_snapshot_controller_ =
         std::make_unique<BrowserProcessSnapshotController>(
             snapshot_task_runner_);
@@ -259,37 +264,41 @@ bool HeapProfilerController::StartIfEnabled() {
   if (!profiling_enabled_) {
     return false;
   }
-  HeapProfilerParameters profiler_params =
-      GetHeapProfilerParametersForProcess(process_type_);
-  // DecideIfCollectionIsEnabled() should return false if not supported.
-  DCHECK(profiler_params.is_supported);
-  if (profiler_params.sampling_rate_bytes > 0) {
-    base::SamplingHeapProfiler::Get()->SetSamplingInterval(
-        profiler_params.sampling_rate_bytes);
+  const size_t sampling_rate_bytes = GetSamplingRateForProcess(process_type_);
+  if (sampling_rate_bytes > 0) {
+    base::SamplingHeapProfiler::Get()->SetSamplingInterval(sampling_rate_bytes);
   }
   base::SamplingHeapProfiler::Get()->Start();
 
-  if (process_type_ != ProcessType::kBrowser &&
-      base::FeatureList::IsEnabled(kHeapProfilerCentralControl)) {
+  if (process_type_ != ProcessType::kBrowser) {
     // ChildProcessSnapshotController will trigger snapshots.
     return true;
   }
 
-  DCHECK(profiler_params.collection_interval.is_positive());
+  const base::TimeDelta collection_interval = kCollectionInterval.Get();
+  CHECK(collection_interval.is_positive());
   SnapshotParams params(
-      profiler_params.collection_interval,
+      collection_interval,
       /*use_random_interval=*/!suppress_randomness_for_testing_, stopped_,
       process_type_, creation_time_, std::move(on_first_snapshot_callback_));
-  if (base::FeatureList::IsEnabled(kHeapProfilerCentralControl)) {
-    params.trigger_child_process_snapshot_closure = base::BindRepeating(
-        &BrowserProcessSnapshotController::TakeSnapshotsOnSnapshotSequence,
-        browser_process_snapshot_controller_->GetWeakPtr());
-  } else {
-    params.trigger_child_process_snapshot_closure = base::DoNothing();
-  }
+  params.trigger_child_process_snapshot_closure = base::BindRepeating(
+      &BrowserProcessSnapshotController::TakeSnapshotsOnSnapshotSequence,
+      browser_process_snapshot_controller_->GetWeakPtr());
   snapshot_task_runner_->PostTask(
       FROM_HERE, base::BindOnce(&HeapProfilerController::ScheduleNextSnapshot,
                                 std::move(params)));
+  return true;
+}
+
+bool HeapProfilerController::GetSyntheticFieldTrial(
+    std::string& trial_name,
+    std::string& group_name) const {
+  CHECK_EQ(process_type_, ProcessType::kBrowser);
+  if (!synthetic_field_trial_group_.has_value()) {
+    return false;
+  }
+  trial_name = "SyntheticHeapProfilingConfiguration";
+  group_name = synthetic_field_trial_group_.value();
   return true;
 }
 
@@ -310,13 +319,10 @@ void HeapProfilerController::SetFirstSnapshotCallbackForTesting(
 
 void HeapProfilerController::AppendCommandLineSwitchForChildProcess(
     base::CommandLine* command_line,
-    metrics::CallStackProfileParams::Process child_process_type,
+    ProcessType child_process_type,
     int child_process_id) const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   CHECK_EQ(process_type_, ProcessType::kBrowser);
-  if (!base::FeatureList::IsEnabled(kHeapProfilerCentralControl)) {
-    return;
-  }
   // If profiling is disabled in the browser process, pass a null
   // BrowserProcessSnapshotController to disable it in the child process too.
   BrowserProcessSnapshotController* snapshot_controller = nullptr;
@@ -340,7 +346,6 @@ void HeapProfilerController::TakeSnapshotInChildProcess(
     size_t process_index) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   CHECK_NE(process_type_, ProcessType::kBrowser);
-  CHECK(base::FeatureList::IsEnabled(kHeapProfilerCentralControl));
   snapshot_task_runner_->PostTask(
       FROM_HERE,
       base::BindOnce(&TakeSnapshot,
@@ -352,7 +357,7 @@ void HeapProfilerController::TakeSnapshotInChildProcess(
 // static
 void HeapProfilerController::AppendCommandLineSwitchForTesting(
     base::CommandLine* command_line,
-    metrics::CallStackProfileParams::Process child_process_type,
+    ProcessType child_process_type,
     int child_process_id,
     BrowserProcessSnapshotController* snapshot_controller) {
   AppendCommandLineSwitchInternal(command_line, child_process_type,
@@ -362,23 +367,16 @@ void HeapProfilerController::AppendCommandLineSwitchForTesting(
 // static
 void HeapProfilerController::AppendCommandLineSwitchInternal(
     base::CommandLine* command_line,
-    metrics::CallStackProfileParams::Process child_process_type,
+    ProcessType child_process_type,
     int child_process_id,
     BrowserProcessSnapshotController* snapshot_controller) {
   CHECK_NE(child_process_type, ProcessType::kBrowser);
-  CHECK(base::FeatureList::IsEnabled(kHeapProfilerCentralControl));
   if (snapshot_controller &&
-      GetHeapProfilerParametersForProcess(child_process_type).is_supported) {
+      GetSnapshotProbabilityForProcess(child_process_type) > 0) {
     command_line->AppendSwitch(switches::kSubprocessHeapProfiling);
     snapshot_controller->BindRemoteForChildProcess(child_process_id,
                                                    child_process_type);
-    return;
   }
-  // Record that HeapProfilerController had a chance to update the child's
-  // command line.
-  // TODO(https://crbug.com/40840943): Remove this after verifying that the
-  // CHECK in DecideIfCollectionIsEnabled() never fails.
-  command_line->AppendSwitch(switches::kNoSubprocessHeapProfiling);
 }
 
 // static
@@ -437,26 +435,79 @@ void HeapProfilerController::RetrieveAndSendSnapshot(
     // Scale this processes' memory by the inverse of the probability that it
     // was chosen to get its estimated contribution to the total memory.
     constexpr int kBytesPerMB = 1024 * 1024;
+    const int scaled_sampled_memory =
+        total_sampled_bytes / kBytesPerMB * (100.0 / process_probability_pct);
     base::UmaHistogramMemoryLargeMB(
         ProcessHistogramName("HeapProfiling.InProcess.TotalSampledMemory",
                              process_type),
-        total_sampled_bytes / kBytesPerMB * (100.0 / process_probability_pct));
+        scaled_sampled_memory);
+    // Also summarize over all process types.
+    base::UmaHistogramMemoryLargeMB(
+        "HeapProfiling.InProcess.TotalSampledMemory", scaled_sampled_memory);
   };
 
   std::vector<Sample> samples =
       base::SamplingHeapProfiler::Get()->GetSamples(0);
+
+  // Log statistics about the sampling profiler.
+  const base::PoissonAllocationSamplerStats profiler_stats =
+      base::PoissonAllocationSampler::Get()->GetAndResetStats();
+  const double hit_rate =
+      static_cast<double>(profiler_stats.address_cache_hits) /
+      (profiler_stats.address_cache_hits + profiler_stats.address_cache_misses);
   base::UmaHistogramCounts100000(
       ProcessHistogramName("HeapProfiling.InProcess.SamplesPerSnapshot",
                            process_type),
       samples.size());
+  base::UmaHistogramCounts1M(
+      ProcessHistogramName(
+          "HeapProfiling.InProcess.SampledAddressCacheHitCount", process_type),
+      profiler_stats.address_cache_hits);
+  base::UmaHistogramCounts10000(
+      ProcessHistogramName("HeapProfiling.InProcess.SampledAddressCacheHitRate",
+                           process_type),
+      hit_rate * 10000);
+  base::UmaHistogramCounts1M(
+      ProcessHistogramName("HeapProfiling.InProcess.SampledAddressCacheMaxSize",
+                           process_type),
+      profiler_stats.address_cache_max_size);
+  base::UmaHistogramPercentage(
+      ProcessHistogramName(
+          "HeapProfiling.InProcess.SampledAddressCacheMaxLoadFactor",
+          process_type),
+      100 * profiler_stats.address_cache_max_load_factor);
+  for (size_t bucket_length : profiler_stats.address_cache_bucket_lengths) {
+    base::UmaHistogramCounts100(
+        ProcessHistogramName(
+            "HeapProfiling.InProcess.SampledAddressCacheBucketLengths",
+            process_type),
+        bucket_length);
+  }
   // Also summarize over all process types.
   base::UmaHistogramCounts100000("HeapProfiling.InProcess.SamplesPerSnapshot",
                                  samples.size());
+  base::UmaHistogramCounts1M(
+      "HeapProfiling.InProcess.SampledAddressCacheHitCount",
+      profiler_stats.address_cache_hits);
+  base::UmaHistogramCounts10000(
+      "HeapProfiling.InProcess.SampledAddressCacheHitRate", hit_rate * 10000);
+  base::UmaHistogramCounts1M(
+      "HeapProfiling.InProcess.SampledAddressCacheMaxSize",
+      profiler_stats.address_cache_max_size);
+  base::UmaHistogramPercentage(
+      "HeapProfiling.InProcess.SampledAddressCacheMaxLoadFactor",
+      100 * profiler_stats.address_cache_max_load_factor);
+  for (size_t bucket_length : profiler_stats.address_cache_bucket_lengths) {
+    base::UmaHistogramCounts100(
+        "HeapProfiling.InProcess.SampledAddressCacheBucketLengths",
+        bucket_length);
+  }
 
   base::ModuleCache module_cache;
-  metrics::CallStackProfileParams params(
-      process_type, metrics::CallStackProfileParams::Thread::kUnknown,
-      metrics::CallStackProfileParams::Trigger::kPeriodicHeapCollection,
+  sampling_profiler::CallStackProfileParams params(
+      process_type, sampling_profiler::ProfilerThreadType::kUnknown,
+      sampling_profiler::CallStackProfileParams::Trigger::
+          kPeriodicHeapCollection,
       time_since_profiler_creation);
   metrics::CallStackProfileBuilder profile_builder(params);
 

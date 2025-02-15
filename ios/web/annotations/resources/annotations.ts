@@ -168,7 +168,7 @@ function hasNoTranslate(): boolean {
 function getMetaContentByHttpEquiv(httpEquiv: string) {
   const metaTags = document.getElementsByTagName('meta');
   for (let metaTag of metaTags) {
-    if (metaTag.httpEquiv.toLowerCase() === httpEquiv) {
+    if (metaTag.httpEquiv && metaTag.httpEquiv.toLowerCase() === httpEquiv) {
       return metaTag.content;
     }
   }
@@ -226,6 +226,7 @@ function extractText(maxChars: number, seqId: number): void {
       wkNoEmail: disabledTypes.has('email'),
       wkNoAddress: disabledTypes.has('address'),
       wkNoDate: disabledTypes.has('date'),
+      wkNoUnit: disabledTypes.has('unit'),
     },
   });
 }

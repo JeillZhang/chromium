@@ -180,13 +180,20 @@ void DCOMPTextureWrapperImpl::CreateVideoFrame(
     // |usage| passed to NotifyMailboxAdded() here and the |usage| that
     // DCOMPTextureBacking's constructor uses to initialize
     // ClearTrackingSharedImageBacking.
-    scoped_refptr<gpu::ClientSharedImage> shared_image =
+    scoped_refptr<gpu::ClientSharedImage> shared_image;
+
+    // Ensure that the ClientSI holds the correct texture target (which is *not*
+    // the texture target that ClientSharedImage would compute internally for
+    // these parameters).
+    shared_image =
         sii->NotifyMailboxAdded(mailbox_, viz::SinglePlaneFormat::kBGRA_8888,
                                 natural_size_, gfx::ColorSpace::CreateSRGB(),
                                 kTopLeft_GrSurfaceOrigin, kPremul_SkAlphaType,
                                 gpu::SHARED_IMAGE_USAGE_DISPLAY_READ |
                                     gpu::SHARED_IMAGE_USAGE_GLES2_READ |
-                                    gpu::SHARED_IMAGE_USAGE_RASTER_READ);
+                                    gpu::SHARED_IMAGE_USAGE_RASTER_READ,
+                                GL_TEXTURE_EXTERNAL_OES);
+
     CHECK(shared_image);
     dcomp_texture_resources_ =
         base::MakeRefCounted<DCOMPTextureMailboxResources>(
@@ -198,7 +205,6 @@ void DCOMPTextureWrapperImpl::CreateVideoFrame(
 
   auto frame = media::VideoFrame::WrapSharedImage(
       media::PIXEL_FORMAT_BGRA, shared_image, gpu::SyncToken(),
-      GL_TEXTURE_EXTERNAL_OES,
       base::BindPostTask(
           media_task_runner_,
           base::BindOnce(&OnReleaseVideoFrame, dcomp_texture_resources_)),
@@ -218,34 +224,25 @@ void DCOMPTextureWrapperImpl::CreateVideoFrame(
   DCHECK(media_task_runner_->RunsTasksInCurrentSequence());
   gpu::SharedImageInterface* sii = factory_->SharedImageInterface();
 
-  uint32_t usage = gpu::SHARED_IMAGE_USAGE_RASTER_READ |
-                   gpu::SHARED_IMAGE_USAGE_RASTER_WRITE |
-                   gpu::SHARED_IMAGE_USAGE_OOP_RASTERIZATION |
-                   gpu::SHARED_IMAGE_USAGE_DISPLAY_READ |
-                   gpu::SHARED_IMAGE_USAGE_SCANOUT;
+  gpu::SharedImageUsageSet usage = gpu::SHARED_IMAGE_USAGE_RASTER_READ |
+                                   gpu::SHARED_IMAGE_USAGE_RASTER_WRITE |
+                                   gpu::SHARED_IMAGE_USAGE_OOP_RASTERIZATION |
+                                   gpu::SHARED_IMAGE_USAGE_DISPLAY_READ |
+                                   gpu::SHARED_IMAGE_USAGE_SCANOUT;
 
-  std::unique_ptr<gfx::GpuMemoryBuffer> gmb =
-      gpu::GpuMemoryBufferImplDXGI::CreateFromHandle(
-          std::move(dx_handle), natural_size, gfx::BufferFormat::BGRA_8888,
-          gfx::BufferUsage::GPU_READ, base::NullCallback(), nullptr, nullptr);
-
-  // The VideoFrame object requires an array of 4 shared images because some
-  // formats can have 4 separate planes that can have 4 different GPU
-  // memories and even though in our case we are using only the first plane we
-  // still need to provide the video frame creation with a 4 array.
-  scoped_refptr<gpu::ClientSharedImage> shared_image = sii->CreateSharedImage(
+  auto shared_image = sii->CreateSharedImage(
       {viz::SinglePlaneFormat::kBGRA_8888, natural_size, gfx::ColorSpace(),
        usage, "DCOMPTextureWrapperImpl"},
-      gmb->CloneHandle());
+      gpu::kNullSurfaceHandle, gfx::BufferUsage::GPU_READ,
+      std::move(dx_handle));
   CHECK(shared_image);
+
   gpu::Mailbox mailbox = shared_image->mailbox();
   gpu::SyncToken sync_token = sii->GenVerifiedSyncToken();
 
-  scoped_refptr<media::VideoFrame> video_frame_texture =
-      media::VideoFrame::WrapExternalGpuMemoryBuffer(
-          gfx::Rect(natural_size), natural_size, std::move(gmb), shared_image,
-          sync_token, GL_TEXTURE_2D, base::NullCallback(),
-          base::TimeDelta::Min());
+  auto video_frame_texture = media::VideoFrame::WrapMappableSharedImage(
+      shared_image, sync_token, base::NullCallback(), gfx::Rect(natural_size),
+      natural_size, base::TimeDelta::Min());
   video_frame_texture->metadata().wants_promotion_hint = true;
   video_frame_texture->metadata().allow_overlay = true;
 

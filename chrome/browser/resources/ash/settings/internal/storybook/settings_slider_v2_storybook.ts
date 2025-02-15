@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import {SliderTick} from 'chrome://resources/ash/common/cr_elements/cr_slider/cr_slider.js';
+import type {SliderTick} from 'chrome://resources/ash/common/cr_elements/cr_slider/cr_slider.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {getTemplate} from './settings_slider_v2_storybook.html.js';
@@ -44,6 +44,11 @@ export class SettingsSliderV2Storybook extends PolymerElement {
         },
       },
 
+      disabled_: {
+        type: Boolean,
+        value: false,
+      },
+
       ticks_: {
         type: Array,
         value: () => {
@@ -64,6 +69,7 @@ export class SettingsSliderV2Storybook extends PolymerElement {
   private hideLabel_: boolean;
   private virtualManagedPref_: chrome.settingsPrivate.PrefObject<number>;
   private ticks_: SliderTick[];
+  private disabled_: boolean;
 
   private onTicksSliderChange_(event: CustomEvent<number>): void {
     this.sliderValueWithTicks_ = event.detail;

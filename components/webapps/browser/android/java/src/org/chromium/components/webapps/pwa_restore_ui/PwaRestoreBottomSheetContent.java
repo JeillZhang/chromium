@@ -4,8 +4,10 @@
 
 package org.chromium.components.webapps.pwa_restore_ui;
 
+import android.content.Context;
 import android.view.View;
 
+import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import org.chromium.base.supplier.ObservableSupplierImpl;
@@ -49,20 +51,22 @@ public class PwaRestoreBottomSheetContent implements BottomSheetContent {
     @Nullable
     @Override
     public View getToolbarView() {
-        return mView.getPreviewView();
+        return null;
     }
 
     @Override
-    public float getFullHeightRatio() {
-        return 1f;
+    public int getPeekHeight() {
+        return BottomSheetContent.HeightMode.DISABLED;
     }
 
     @Override
     public float getHalfHeightRatio() {
-        // By default `expandSheet` will result in the sheet expanding only to half-full height.
-        // This disables that functionality so we can go straight to full screen (minus the top
-        // system toolbar).
         return BottomSheetContent.HeightMode.DISABLED;
+    }
+
+    @Override
+    public float getFullHeightRatio() {
+        return BottomSheetContent.HeightMode.WRAP_CONTENT;
     }
 
     @Override
@@ -94,8 +98,8 @@ public class PwaRestoreBottomSheetContent implements BottomSheetContent {
     }
 
     @Override
-    public int getSheetContentDescriptionStringId() {
-        return R.string.pwa_restore_bottom_sheet_accessibility;
+    public @NonNull String getSheetContentDescription(Context context) {
+        return context.getString(R.string.pwa_restore_bottom_sheet_accessibility);
     }
 
     @Override

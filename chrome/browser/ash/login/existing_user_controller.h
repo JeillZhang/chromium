@@ -18,11 +18,11 @@
 #include "base/scoped_observation.h"
 #include "base/timer/timer.h"
 #include "chrome/browser/ash/app_mode/kiosk_chrome_app_manager.h"
-#include "chrome/browser/ash/http_auth_dialog.h"
 #include "chrome/browser/ash/login/saml/password_sync_token_checkers_collection.h"
 #include "chrome/browser/ash/login/screens/encryption_migration_mode.h"
 #include "chrome/browser/ash/login/session/user_session_manager.h"
 #include "chrome/browser/ash/login/signin_specifics.h"
+#include "chromeos/ash/components/http_auth_dialog/http_auth_dialog.h"
 #include "chromeos/ash/components/login/auth/login_performer.h"
 #include "chromeos/ash/components/login/auth/public/auth_failure.h"
 #include "chromeos/ash/components/login/auth/public/user_context.h"
@@ -42,6 +42,7 @@ namespace ash {
 class CrosSettings;
 class KioskAppId;
 class OAuth2TokenInitializer;
+class DemoLoginController;
 enum class SigninError;
 
 namespace login {
@@ -96,7 +97,6 @@ class ExistingUserController : public HttpAuthDialog::Observer,
   // This is virtual for mocking in the unit tests.
   virtual void Login(const UserContext& user_context,
                      const SigninSpecifics& specifics);
-  void OnStartKioskEnableScreen();
 
   // ui::UserActivityObserver:
   void OnUserActivity(const ui::Event* event) override;
@@ -147,6 +147,12 @@ class ExistingUserController : public HttpAuthDialog::Observer,
   // Calls login() on previously-used `login_performer_`.
   void LoginAuthenticated(std::unique_ptr<UserContext> user_context);
 
+  // Retrieve public session auto-login policy and update the
+  // timer.
+  void ConfigureAutoLogin();
+
+  DemoLoginController* GetDemoLoginControllerForTest();
+
  private:
   friend class ExistingUserControllerTest;
   friend class ExistingUserControllerAutoLoginTest;
@@ -161,9 +167,6 @@ class ExistingUserController : public HttpAuthDialog::Observer,
   void LoginAsGuest();
   void LoginAsPublicSession(const UserContext& user_context);
   void LoginAsKioskApp(KioskAppId kiosk_app_id);
-  // Retrieve public session auto-login policy and update the
-  // timer.
-  void ConfigureAutoLogin();
 
   // Trigger public session auto-login.
   void OnPublicSessionAutoLoginTimerFire();
@@ -197,16 +200,8 @@ class ExistingUserController : public HttpAuthDialog::Observer,
   // not localized.
   void ShowError(SigninError error, const std::string& details);
 
-  // Handles result of consumer kiosk configurability check and starts
-  // enable kiosk screen if applicable.
-  void OnConsumerKioskAutoLaunchCheckCompleted(
-      KioskChromeAppManager::ConsumerKioskAutoLaunchStatus status);
-
   // Shows privacy notification in case of auto lunch managed guest session.
   void ShowAutoLaunchManagedGuestSessionNotification();
-
-  // Shows kiosk feature enable screen.
-  void ShowKioskEnableScreen();
 
   // Shows "filesystem encryption migration" screen.
   void ShowEncryptionMigrationScreen(std::unique_ptr<UserContext> user_context,
@@ -370,6 +365,9 @@ class ExistingUserController : public HttpAuthDialog::Observer,
 
   // The source of PIN salts. Used to retrieve PIN during TransformPinKey.
   std::unique_ptr<quick_unlock::PinSaltStorage> pin_salt_storage_;
+
+  // Manage auto login for demo mode.
+  std::unique_ptr<ash::DemoLoginController> demo_login_controller_;
 
   base::ScopedObservation<user_manager::UserManager,
                           user_manager::UserManager::Observer>

@@ -8,7 +8,7 @@
 #include "base/feature_list.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/trace_event/trace_event.h"
-#include "content/common/features.h"
+#include "content/public/common/content_features.h"
 #include "services/network/public/mojom/service_worker_router_info.mojom-shared.h"
 
 namespace content {
@@ -24,7 +24,7 @@ void ServiceWorkerResourceLoader::SetCommitResponsibility(
       fetch_response_from);
   switch (fetch_response_from) {
     case FetchResponseFrom::kNoResponseYet:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
     case FetchResponseFrom::kSubresourceLoaderIsHandlingRedirect:
       // kSubresourceLoaderIsHandlingRedirect is called only from subresources.
       CHECK(!IsMainResourceLoader());

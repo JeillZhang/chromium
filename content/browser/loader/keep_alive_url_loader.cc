@@ -12,6 +12,7 @@
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_forward.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/strings/strcat.h"
 #include "base/trace_event/trace_event.h"
@@ -29,6 +30,7 @@
 #include "content/public/common/url_utils.h"
 #include "net/base/load_flags.h"
 #include "net/http/http_request_headers.h"
+#include "net/http/http_response_headers.h"
 #include "services/network/public/cpp/content_security_policy/content_security_policy.h"
 #include "services/network/public/cpp/content_security_policy/csp_context.h"
 #include "services/network/public/cpp/devtools_observer_util.h"
@@ -112,10 +114,9 @@ bool IsRedirectAllowedByCSP(
   // When reaching here, renderer should have be gone, or at least
   // `KeepAliveURLLoader::forwarding_client_` is disconnected.
   return KeepAliveURLLoaderCSPContext()
-      .IsAllowedByCsp(
-          policies, directive, url, url_before_redirects, has_followed_redirect,
-          /*is_response_check=*/false, empty_source_location, disposition,
-          /*is_form_submission=*/false)
+      .IsAllowedByCsp(policies, directive, url, url_before_redirects,
+                      has_followed_redirect, empty_source_location, disposition,
+                      /*is_form_submission=*/false)
       .IsAllowed();
 }
 
@@ -430,45 +431,6 @@ void KeepAliveURLLoader::SetPriority(net::RequestPriority priority,
   url_loader_->SetPriority(priority, intra_priority_value);
 }
 
-void KeepAliveURLLoader::PauseReadingBodyFromNet() {
-  DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  TRACE_EVENT("loading", "KeepAliveURLLoader::PauseReadingBodyFromNet",
-              "request_id", request_id_);
-  if (HasReceivedResponse()) {
-    // This may come from a renderer that tries to process a redirect which has
-    // been previously handled in this loader.
-    return;
-  }
-
-  // Let `url_loader_` handles how to forward the action to the network service.
-  url_loader_->PauseReadingBodyFromNet();
-
-  if (observer_for_testing_) {
-    CHECK_IS_TEST();
-    observer_for_testing_->PauseReadingBodyFromNetProcessed(this);
-  }
-}
-
-// TODO(crbug.com/40236167): Add test coverage.
-void KeepAliveURLLoader::ResumeReadingBodyFromNet() {
-  DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  TRACE_EVENT("loading", "KeepAliveURLLoader::ResumeReadingBodyFromNet",
-              "request_id", request_id_);
-  if (HasReceivedResponse()) {
-    // This may come from a renderer that tries to process a redirect which has
-    // been previously handled in this loader.
-    return;
-  }
-
-  // Let `url_loader_` handles how to forward the action to the network service.
-  url_loader_->ResumeReadingBodyFromNet();
-
-  if (observer_for_testing_) {
-    CHECK_IS_TEST();
-    observer_for_testing_->ResumeReadingBodyFromNetProcessed(this);
-  }
-}
-
 void KeepAliveURLLoader::EndReceiveRedirect(
     const net::RedirectInfo& redirect_info,
     network::mojom::URLResponseHeadPtr head) {
@@ -492,11 +454,7 @@ void KeepAliveURLLoader::EndReceiveRedirect(
     }
   }
 
-  if (attribution_request_helper_) {
-    attribution_request_helper_->OnReceiveRedirect(head->headers.get(),
-                                                   head->trigger_verifications,
-                                                   redirect_info.new_url);
-  }
+  scoped_refptr<net::HttpResponseHeaders> headers = head->headers;
 
   // Stores the redirect data for later use by renderer.
   stored_url_load_->redirects.emplace(
@@ -507,6 +465,11 @@ void KeepAliveURLLoader::EndReceiveRedirect(
   if (net::Error err = WillFollowRedirect(redirect_info); err != net::OK) {
     OnComplete(network::URLLoaderCompletionStatus(err));
     return;
+  }
+
+  if (attribution_request_helper_) {
+    attribution_request_helper_->OnReceiveRedirect(headers.get(),
+                                                   redirect_info.new_url);
   }
 
   // TODO(crbug.com/40236167): Figure out how to deal with lost
@@ -560,8 +523,7 @@ void KeepAliveURLLoader::OnReceiveResponse(
   }
 
   if (attribution_request_helper_) {
-    attribution_request_helper_->OnReceiveResponse(
-        response->headers.get(), response->trigger_verifications);
+    attribution_request_helper_->OnReceiveResponse(response->headers.get());
     attribution_request_helper_.reset();
   }
 
@@ -620,6 +582,11 @@ void KeepAliveURLLoader::OnComplete(
   if (completion_status.error_code != net::OK) {
     // If the request succeeds, it should've been logged in `OnReceiveResponse`.
     LogFetchKeepAliveRequestMetric("Failed");
+
+    if (attribution_request_helper_) {
+      attribution_request_helper_->OnError();
+      attribution_request_helper_.reset();
+    }
   }
 
   if (observer_for_testing_) {
@@ -869,6 +836,8 @@ void KeepAliveURLLoader::OnDisconnectedLoaderTimerFired() {
 }
 
 void KeepAliveURLLoader::Shutdown() {
+  base::UmaHistogramBoolean(
+      "FetchKeepAlive.Requests2.Shutdown.IsStarted.Browser", IsStarted());
   if (!IsStarted()) {
     CHECK(IsFetchLater());
     LogFetchLaterMetric(FetchLaterBrowserMetricType::kStartedWhenShutdown);
@@ -955,7 +924,7 @@ void KeepAliveURLLoader::LogFetchKeepAliveRequestMetric(
     case blink::mojom::ResourceType::kNavigationPreloadMainFrame:
     case blink::mojom::ResourceType::kNavigationPreloadSubFrame:
     case blink::mojom::ResourceType::kJson:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 
   CHECK(request_state_name == "Total" || request_state_name == "Started" ||
@@ -964,6 +933,13 @@ void KeepAliveURLLoader::LogFetchKeepAliveRequestMetric(
   base::UmaHistogramEnumeration(base::StrCat({"FetchKeepAlive.Requests2.",
                                               request_state_name, ".Browser"}),
                                 sample_type);
+  if (bool is_context_detached = !GetInitiator();
+      request_state_name == "Started" || request_state_name == "Succeeded") {
+    base::UmaHistogramBoolean(
+        base::StrCat({"FetchKeepAlive.Requests2.", request_state_name,
+                      ".IsContextDetached.Browser"}),
+        is_context_detached);
+  }
 }
 
 }  // namespace content

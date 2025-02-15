@@ -7,6 +7,7 @@
 #include <memory>
 
 #include "base/functional/bind.h"
+#include "base/notreached.h"
 #include "base/path_service.h"
 #include "base/strings/string_util.h"
 #include "base/time/default_clock.h"
@@ -16,6 +17,7 @@
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/browser_process_impl.h"
 #include "chrome/browser/download/download_request_limiter.h"
+#include "chrome/browser/global_features.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
 #include "chrome/browser/media/webrtc/webrtc_log_uploader.h"
 #include "chrome/browser/notifications/notification_platform_bridge.h"
@@ -27,6 +29,7 @@
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/resource_coordinator/resource_coordinator_parts.h"
 #include "chrome/browser/safe_browsing/safe_browsing_service.h"
+#include "chrome/browser/serial/serial_policy_allowed_ports.h"
 #include "chrome/browser/status_icons/status_tray.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/test/base/testing_browser_process_platform_part.h"
@@ -39,7 +42,6 @@
 #include "components/prefs/pref_service.h"
 #include "components/subresource_filter/content/shared/browser/ruleset_service.h"
 #include "content/public/browser/network_service_instance.h"
-#include "content/public/browser/notification_service.h"
 #include "extensions/buildflags/buildflags.h"
 #include "media/media_buildflags.h"
 #include "printing/buildflags/buildflags.h"
@@ -50,6 +52,7 @@
 #include "testing/gtest/include/gtest/gtest.h"
 
 #if BUILDFLAG(OS_LEVEL_GEOLOCATION_PERMISSION_SUPPORTED)
+#include "services/device/public/cpp/device_features.h"
 #include "services/device/public/cpp/geolocation/geolocation_system_permission_manager.h"
 #include "services/device/public/cpp/test/fake_geolocation_system_permission_manager.h"
 #endif
@@ -67,6 +70,10 @@
 #include "components/storage_monitor/test_storage_monitor.h"
 #endif
 
+#if BUILDFLAG(ENABLE_DESKTOP_ANDROID_EXTENSIONS)
+#include "chrome/browser/extensions/desktop_android/desktop_android_extensions_browser_client.h"
+#endif
+
 #if BUILDFLAG(ENABLE_PRINT_PREVIEW)
 #include "chrome/browser/printing/background_printing_manager.h"
 #include "chrome/browser/printing/print_preview_dialog_controller.h"
@@ -80,7 +87,7 @@
 #include "chrome/browser/hid/hid_status_icon.h"
 #include "chrome/browser/usb/usb_status_icon.h"
 #endif  // BUILDFLAG(IS_CHROMEOS)
-#include "chrome/browser/serial/serial_policy_allowed_ports.h"
+#include "components/component_updater/component_updater_service.h"
 #include "components/keep_alive_registry/keep_alive_registry.h"
 #if !BUILDFLAG(IS_CHROMEOS_ASH)
 #include "components/enterprise/browser/controller/chrome_browser_cloud_management_controller.h"
@@ -111,12 +118,14 @@ void TestingBrowserProcess::CreateInstance() {
   process->Init();
 
 #if BUILDFLAG(OS_LEVEL_GEOLOCATION_PERMISSION_SUPPORTED)
-  auto fake_geolocation_system_permission_manager =
-      std::make_unique<device::FakeGeolocationSystemPermissionManager>();
-  fake_geolocation_system_permission_manager->SetSystemPermission(
-      device::LocationSystemPermissionStatus::kAllowed);
-  device::GeolocationSystemPermissionManager::SetInstance(
-      std::move(fake_geolocation_system_permission_manager));
+  if (features::IsOsLevelGeolocationPermissionSupportEnabled()) {
+    auto fake_geolocation_system_permission_manager =
+        std::make_unique<device::FakeGeolocationSystemPermissionManager>();
+    fake_geolocation_system_permission_manager->SetSystemPermission(
+        device::LocationSystemPermissionStatus::kAllowed);
+    device::GeolocationSystemPermissionManager::SetInstance(
+        std::move(fake_geolocation_system_permission_manager));
+  }
 #endif  // BUILDFLAG(OS_LEVEL_GEOLOCATION_PERMISSION_SUPPORTED)
 }
 
@@ -146,11 +155,6 @@ TestingBrowserProcess::TestingBrowserProcess()
     : app_locale_("en"),
       platform_part_(std::make_unique<TestingBrowserProcessPlatformPart>()),
       os_crypt_async_(os_crypt_async::GetTestOSCryptAsyncForTesting()) {
-  // TestingBrowserProcess is used in unit_tests which sets this up through
-  // content::UnitTestTestSuite but also through other test binaries which don't
-  // use that test suite in which case we have to set it up.
-  if (!content::NotificationService::current())
-    notification_service_.reset(content::NotificationService::Create());
 }
 
 TestingBrowserProcess::~TestingBrowserProcess() {
@@ -177,7 +181,11 @@ void TestingBrowserProcess::Init() {
         test_network_connection_tracker_.get());
   }
 
-#if BUILDFLAG(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_DESKTOP_ANDROID_EXTENSIONS)
+  extensions_browser_client_ =
+      std::make_unique<extensions::DesktopAndroidExtensionsBrowserClient>();
+  extensions::ExtensionsBrowserClient::Set(extensions_browser_client_.get());
+#elif BUILDFLAG(ENABLE_EXTENSIONS)
   extensions_browser_client_ =
       std::make_unique<extensions::ChromeExtensionsBrowserClient>();
   extensions_browser_client_->AddAPIProvider(
@@ -205,7 +213,7 @@ void TestingBrowserProcess::FlushLocalStateAndReply(base::OnceClosure reply) {
   // This could be implemented the same way as in BrowserProcessImpl but it's
   // not currently expected to be used by TestingBrowserProcess users so we
   // don't bother.
-  CHECK(false);
+  NOTREACHED();
 }
 
 void TestingBrowserProcess::EndSession() {
@@ -269,12 +277,22 @@ void TestingBrowserProcess::SetProfileManager(
   profile_manager_ = std::move(profile_manager);
 }
 
+void TestingBrowserProcess::SetVariationsService(
+    variations::VariationsService* variations_service) {
+  variations_service_ = variations_service;
+}
+
 PrefService* TestingBrowserProcess::local_state() {
   return local_state_;
 }
 
-variations::VariationsService* TestingBrowserProcess::variations_service() {
+signin::ActivePrimaryAccountsMetricsRecorder*
+TestingBrowserProcess::active_primary_accounts_metrics_recorder() {
   return nullptr;
+}
+
+variations::VariationsService* TestingBrowserProcess::variations_service() {
+  return variations_service_;
 }
 
 StartupData* TestingBrowserProcess::startup_data() {
@@ -329,14 +347,14 @@ GpuModeManager* TestingBrowserProcess::gpu_mode_manager() {
   return nullptr;
 }
 
+#if BUILDFLAG(ENABLE_BACKGROUND_MODE)
 BackgroundModeManager* TestingBrowserProcess::background_mode_manager() {
   return nullptr;
 }
 
-#if BUILDFLAG(ENABLE_BACKGROUND_MODE)
 void TestingBrowserProcess::set_background_mode_manager_for_test(
     std::unique_ptr<BackgroundModeManager> manager) {
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 #endif
 
@@ -365,11 +383,6 @@ TestingBrowserProcess::fingerprinting_protection_ruleset_service() {
 
 BrowserProcessPlatformPart* TestingBrowserProcess::platform_part() {
   return platform_part_.get();
-}
-
-extensions::EventRouterForwarder*
-TestingBrowserProcess::extension_event_router_forwarder() {
-  return nullptr;
 }
 
 NotificationUIManager* TestingBrowserProcess::notification_ui_manager() {
@@ -466,7 +479,11 @@ DownloadRequestLimiter* TestingBrowserProcess::download_request_limiter() {
 
 component_updater::ComponentUpdateService*
 TestingBrowserProcess::component_updater() {
+#if !BUILDFLAG(IS_ANDROID)
+  return component_updater_.get();
+#else
   return nullptr;
+#endif
 }
 
 MediaFileSystemRegistry* TestingBrowserProcess::media_file_system_registry() {
@@ -509,7 +526,6 @@ TestingBrowserProcess::resource_coordinator_parts() {
   return resource_coordinator_parts_.get();
 }
 
-#if !BUILDFLAG(IS_ANDROID)
 SerialPolicyAllowedPorts* TestingBrowserProcess::serial_policy_allowed_ports() {
   if (!serial_policy_allowed_ports_) {
     serial_policy_allowed_ports_ =
@@ -518,6 +534,7 @@ SerialPolicyAllowedPorts* TestingBrowserProcess::serial_policy_allowed_ports() {
   return serial_policy_allowed_ports_.get();
 }
 
+#if !BUILDFLAG(IS_ANDROID)
 HidSystemTrayIcon* TestingBrowserProcess::hid_system_tray_icon() {
   return hid_system_tray_icon_.get();
 }
@@ -535,7 +552,7 @@ void TestingBrowserProcess::set_additional_os_crypt_async_provider_for_test(
     size_t precedence,
     std::unique_ptr<os_crypt_async::KeyProvider> provider) {
   // Not implemented.
-  CHECK(false);
+  NOTREACHED();
 }
 
 BuildState* TestingBrowserProcess::GetBuildState() {
@@ -544,6 +561,15 @@ BuildState* TestingBrowserProcess::GetBuildState() {
 #else
   return nullptr;
 #endif
+}
+
+GlobalFeatures* TestingBrowserProcess::GetFeatures() {
+  return features_.get();
+}
+
+void TestingBrowserProcess::CreateGlobalFeaturesForTesting() {
+  features_ = GlobalFeatures::CreateGlobalFeatures();
+  features_->Init();
 }
 
 resource_coordinator::TabManager* TestingBrowserProcess::GetTabManager() {
@@ -582,9 +608,7 @@ void TestingBrowserProcess::SetLocalState(PrefService* local_state) {
 #if BUILDFLAG(ENABLE_CHROME_NOTIFICATIONS)
     notification_ui_manager_.reset();
 #endif
-#if !BUILDFLAG(IS_ANDROID)
     serial_policy_allowed_ports_.reset();
-#endif
     ShutdownBrowserPolicyConnector();
     created_browser_policy_connector_ = false;
   }
@@ -644,6 +668,12 @@ void TestingBrowserProcess::SetStatusTray(
 }
 
 #if !BUILDFLAG(IS_ANDROID)
+void TestingBrowserProcess::SetComponentUpdater(
+    std::unique_ptr<component_updater::ComponentUpdateService>
+        component_updater) {
+  component_updater_ = std::move(component_updater);
+}
+
 void TestingBrowserProcess::SetHidSystemTrayIcon(
     std::unique_ptr<HidSystemTrayIcon> hid_system_tray_icon) {
   hid_system_tray_icon_ = std::move(hid_system_tray_icon);

@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #include "chrome/browser/diagnostics/diagnostics_writer.h"
 
 #include <stdint.h>
@@ -36,7 +41,7 @@ class SimpleConsole {
     GREEN,
   };
 
-  virtual ~SimpleConsole() {}
+  virtual ~SimpleConsole() = default;
 
   // Init must be called before using any other method. If it returns
   // false there will be no console output.
@@ -108,7 +113,7 @@ class WinConsole : public SimpleConsole {
       case DEFAULT:
         break;
       default:
-        NOTREACHED_IN_MIGRATION();
+        NOTREACHED();
     }
     return (TRUE == ::SetConsoleTextAttribute(std_out_, color_combo));
   }
@@ -174,7 +179,7 @@ class PosixConsole : public SimpleConsole {
       case DEFAULT:
         break;
       default:
-        NOTREACHED_IN_MIGRATION();
+        NOTREACHED();
     }
     printf("%s", code);
     return true;

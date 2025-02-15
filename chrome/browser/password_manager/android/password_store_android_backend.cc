@@ -6,6 +6,7 @@
 
 #include <jni.h>
 
+#include <algorithm>
 #include <cmath>
 #include <list>
 #include <memory>
@@ -21,7 +22,6 @@
 #include "base/metrics/histogram_functions.h"
 #include "base/no_destructor.h"
 #include "base/notreached.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/strcat.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/sequenced_task_runner.h"
@@ -45,7 +45,7 @@
 #include "components/password_manager/core/browser/password_sync_util.h"
 #include "components/password_manager/core/common/password_manager_pref_names.h"
 #include "components/prefs/pref_service.h"
-#include "components/sync/model/proxy_model_type_controller_delegate.h"
+#include "components/sync/model/proxy_data_type_controller_delegate.h"
 #include "components/sync/service/sync_service.h"
 
 namespace password_manager {
@@ -218,8 +218,7 @@ SuccessStatus GetSuccessStatusFromError(
     case AndroidBackendErrorType::kFailedToCreateFacetId:
       return SuccessStatus::kError;
   }
-  NOTREACHED_IN_MIGRATION();
-  return SuccessStatus::kError;
+  NOTREACHED();
 }
 
 std::string GetOperationName(PasswordStoreOperation operation) {
@@ -236,8 +235,6 @@ std::string GetOperationName(PasswordStoreOperation operation) {
       return "UpdateLoginAsync";
     case PasswordStoreOperation::kRemoveLoginAsync:
       return "RemoveLoginAsync";
-    case PasswordStoreOperation::kRemoveLoginsByURLAndTimeAsync:
-      return "RemoveLoginsByURLAndTimeAsync";
     case PasswordStoreOperation::kRemoveLoginsCreatedBetweenAsync:
       return "RemoveLoginsCreatedBetweenAsync";
     case PasswordStoreOperation::kDisableAutoSignInForOriginsAsync:
@@ -247,8 +244,7 @@ std::string GetOperationName(PasswordStoreOperation operation) {
     case PasswordStoreOperation::kGetAllLoginsWithBrandingInfoAsync:
       return "GetAllLoginsWithBrandingInfoAsync";
   }
-  NOTREACHED_IN_MIGRATION() << "Operation code not handled";
-  return "";
+  NOTREACHED() << "Operation code not handled";
 }
 
 int GetRetryAttemptFromDelay(base::TimeDelta delay) {
@@ -333,6 +329,10 @@ PasswordStoreBackendErrorType APIErrorCodeToErrorType(
       return PasswordStoreBackendErrorType::kAuthErrorUnresolvable;
     case AndroidBackendAPIErrorCode::kKeyRetrievalRequired:
       return PasswordStoreBackendErrorType::kKeyRetrievalRequired;
+    case AndroidBackendAPIErrorCode::kEmptySecurityDomain:
+      return PasswordStoreBackendErrorType::kEmptySecurityDomain;
+    case AndroidBackendAPIErrorCode::kIrretrievableSecurityDomain:
+      return PasswordStoreBackendErrorType::kIrretrievableSecurityDomain;
     case AndroidBackendAPIErrorCode::kNetworkError:
     case AndroidBackendAPIErrorCode::kInternalError:
     case AndroidBackendAPIErrorCode::kDeveloperError:
@@ -385,13 +385,11 @@ void PasswordStoreAndroidBackend::Init(
   lifecycle_helper_->RegisterObserver(base::BindRepeating(
       &PasswordStoreAndroidBackend::OnForegroundSessionStart,
       base::Unretained(this)));
-  // TODO(crbug.com/40778507): Create subscription before completion.
 }
 
 void PasswordStoreAndroidBackend::Shutdown(
     base::OnceClosure shutdown_completed) {
   lifecycle_helper_->UnregisterObserver();
-  // TODO(crbug.com/40190023): Implement (e.g. unsubscribe from GMS).
   std::move(shutdown_completed).Run();
 }
 
@@ -531,27 +529,6 @@ void PasswordStoreAndroidBackend::GetGroupedMatchingLoginsInternal(
               MethodName("GetGroupedMatchingLoginsAsync"),
               PasswordStoreOperation::kGetGroupedMatchingLoginsAsync,
               /*delay=*/base::Seconds(0));
-}
-
-void PasswordStoreAndroidBackend::RemoveLoginsByURLAndTimeInternal(
-    std::string account,
-    const base::RepeatingCallback<bool(const GURL&)>& url_filter,
-    base::Time delete_begin,
-    base::Time delete_end,
-    PasswordChangesOrErrorReply callback) {
-  // Record metrics prior to invoking |callback|.
-  PasswordChangesOrErrorReply record_metrics_and_reply =
-      ReportMetricsAndInvokeCallbackForStoreModifications(
-          MethodName("RemoveLoginsByURLAndTimeAsync"), std::move(callback),
-          GetStorageType());
-
-  GetAllLoginsInternal(
-      account,
-      base::BindOnce(&PasswordStoreAndroidBackend::FilterAndRemoveLogins,
-                     weak_ptr_factory_.GetWeakPtr(), account,
-                     std::move(url_filter), delete_begin, delete_end,
-                     std::move(record_metrics_and_reply)),
-      PasswordStoreOperation::kRemoveLoginsByURLAndTimeAsync);
 }
 
 void PasswordStoreAndroidBackend::RemoveLoginsCreatedBetweenInternal(
@@ -736,12 +713,11 @@ PasswordStoreAndroidBackend::GetRetryCallbackForOperation(
     case PasswordStoreOperation::kAddLoginAsync:
     case PasswordStoreOperation::kUpdateLoginAsync:
     case PasswordStoreOperation::kRemoveLoginAsync:
-    case PasswordStoreOperation::kRemoveLoginsByURLAndTimeAsync:
     case PasswordStoreOperation::kRemoveLoginsCreatedBetweenAsync:
     case PasswordStoreOperation::kDisableAutoSignInForOriginsAsync:
     case PasswordStoreOperation::kGetGroupedMatchingLoginsAsync:
     case PasswordStoreOperation::kGetAllLoginsWithBrandingInfoAsync:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }
 
@@ -821,8 +797,6 @@ void PasswordStoreAndroidBackend::OnError(JobId job_id,
   if (!reply.has_value()) {
     return;  // Task cleaned up after returning from background.
   }
-  // Set pref to track users who received GMSCore error.
-  prefs_->SetBoolean(prefs::kUserReceivedGMSCoreError, true);
 
   PasswordStoreOperation operation = reply->GetOperation();
 
@@ -831,15 +805,14 @@ void PasswordStoreAndroidBackend::OnError(JobId job_id,
   // the error.
   base::TimeDelta delay = reply->GetDelay();
   PasswordStoreBackendError reported_error(
-      PasswordStoreBackendErrorType::kUncategorized,
-      PasswordStoreBackendErrorRecoveryType::kUnrecoverable);
+      PasswordStoreBackendErrorType::kUncategorized);
 
   if (error.api_error_code.has_value()) {
     // TODO(crbug.com/40839365): DCHECK_EQ(api_error_code,
     // AndroidBackendAPIErrorCode::kDeveloperError) to catch dev errors.
     DCHECK_EQ(AndroidBackendErrorType::kExternalError, error.type);
-
     int api_error = error.api_error_code.value();
+    reported_error.android_backend_api_error = api_error;
     auto api_error_code = static_cast<AndroidBackendAPIErrorCode>(api_error);
 
     // Retry the call if the performed operation in combination with the error
@@ -850,16 +823,9 @@ void PasswordStoreAndroidBackend::OnError(JobId job_id,
       return;
     }
 
-    if (delay >= kTaskRetryTimeout) {
-      // Maximum delay is reached, meaning there are no more retries. Do nothing
-      // but ensure the error is marked as recoverable.
-      reported_error.recovery_type =
-          PasswordStoreBackendErrorRecoveryType::kRecoverable;
-    } else {
-      // Either operation or error is not retriable. Decide recoverability based
-      // on error.
-      reported_error.recovery_type =
-          RecoverOnErrorAndReturnResult(api_error_code);
+    if (delay < kTaskRetryTimeout) {
+      // Either the operation or error is not retriable.
+      RecoverOnError(api_error_code);
       reported_error.type = APIErrorCodeToErrorType(api_error_code);
     }
   }
@@ -1067,7 +1033,7 @@ void PasswordStoreAndroidBackend::ClearZombieTasks() {
     }
   }
   // Erase each timed out job and record that it was cleaned up.
-  base::ranges::for_each(timed_out_job_ids, [&](const JobId& job_id) {
+  std::ranges::for_each(timed_out_job_ids, [&](const JobId& job_id) {
     GetAndEraseJob(job_id)->RecordMetrics(AndroidBackendError{
         .type = AndroidBackendErrorType::kCleanedUpWithoutResponse});
   });

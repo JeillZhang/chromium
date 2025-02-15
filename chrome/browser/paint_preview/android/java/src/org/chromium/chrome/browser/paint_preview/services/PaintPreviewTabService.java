@@ -8,6 +8,7 @@ import androidx.annotation.VisibleForTesting;
 
 import org.jni_zero.CalledByNative;
 import org.jni_zero.JNINamespace;
+import org.jni_zero.JniType;
 import org.jni_zero.NativeMethods;
 
 import org.chromium.base.ApplicationState;
@@ -197,8 +198,7 @@ public class PaintPreviewTabService implements NativePaintPreviewServiceProvider
         assert rootPath != null;
         assert !rootPath.isEmpty();
 
-        File zipPath =
-                new File(rootPath, (new StringBuilder()).append(tabId).append(".zip").toString());
+        File zipPath = new File(rootPath, tabId + ".zip");
         return zipPath.exists();
     }
 
@@ -264,6 +264,7 @@ public class PaintPreviewTabService implements NativePaintPreviewServiceProvider
 
         boolean isCacheInitializedAndroid(long nativePaintPreviewTabService);
 
+        @JniType("std::string")
         String getPathAndroid(long nativePaintPreviewTabService);
     }
 }

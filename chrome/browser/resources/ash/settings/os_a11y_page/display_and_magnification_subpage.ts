@@ -26,7 +26,8 @@ import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bu
 import {DeepLinkingMixin} from '../common/deep_linking_mixin.js';
 import {RouteOriginMixin} from '../common/route_origin_mixin.js';
 import {Setting} from '../mojom-webui/setting.mojom-webui.js';
-import {Route, Router, routes} from '../router.js';
+import type {Route} from '../router.js';
+import {Router, routes} from '../router.js';
 
 import {getTemplate} from './display_and_magnification_subpage.html.js';
 
@@ -91,18 +92,30 @@ export class SettingsDisplayAndMagnificationSubpageElement extends
         type: Boolean,
         value() {
           return loadTimeData.getBoolean(
-              'isAccessibilityReducedAnimationsEnabled');
+            'isAccessibilityReducedAnimationsEnabled');
         },
       },
+
       /**
-       * Whether the magnifier following select to speak words feature is
-       * enabled.
+       * Whether the always show scrollbars feature is enabled.
        */
-      isAccessibilityMagnifierFollowsStsEnabled_: {
+      isAccessibilityAlwaysShowScrollbarsEnabled_: {
         type: Boolean,
         value() {
           return loadTimeData.getBoolean(
-              'isAccessibilityMagnifierFollowsStsEnabled');
+            'isAccessibilityAlwaysShowScrollbarsEnabled');
+        },
+      },
+
+      /**
+       * Whether the magnifier following ChromeVox focus feature is
+       * enabled.
+       */
+      isAccessibilityMagnifierFollowsChromeVoxEnabled_: {
+        type: Boolean,
+        value() {
+          return loadTimeData.getBoolean(
+              'isAccessibilityMagnifierFollowsChromeVoxEnabled');
         },
       },
 
@@ -139,15 +152,17 @@ export class SettingsDisplayAndMagnificationSubpageElement extends
       supportedSettingIds: {
         type: Object,
         value: () => new Set<Setting>([
+          Setting.kAccessibilityMagnifierFollowsSts,
           Setting.kColorCorrectionEnabled,
           Setting.kColorCorrectionFilterType,
           Setting.kColorCorrectionFilterAmount,
-          Setting.kReducedAnimationsEnabled,
+          Setting.kDockedMagnifier,
           Setting.kFullscreenMagnifier,
           Setting.kFullscreenMagnifierMouseFollowingMode,
           Setting.kFullscreenMagnifierFocusFollowing,
-          Setting.kAccessibilityMagnifierFollowsSts,
-          Setting.kDockedMagnifier,
+          Setting.kMagnifierFollowsChromeVox,
+          Setting.kReducedAnimationsEnabled,
+          Setting.kAlwaysShowScrollbarsEnabled,
         ]),
       },
     };
@@ -157,7 +172,8 @@ export class SettingsDisplayAndMagnificationSubpageElement extends
   private screenMagnifierMouseFollowingModePrefValues_: {[key: string]: number};
   private screenMagnifierZoomOptions_: Array<{value: number, name: string}>;
   private isAccessibilityReducedAnimationsEnabled_: boolean;
-  private isAccessibilityMagnifierFollowsStsEnabled_: boolean;
+  private isAccessibilityAlwaysShowScrollbarsEnabled_: boolean;
+  private isAccessibilityMagnifierFollowsChromeVoxEnabled_: boolean;
 
 
   constructor() {

@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "base/memory/raw_ptr.h"
+#include "base/memory/safe_ref.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/supports_user_data.h"
@@ -17,6 +18,7 @@
 #include "base/unguessable_token.h"
 #include "content/browser/loader/keep_alive_url_loader_service.h"
 #include "third_party/blink/public/common/tokens/tokens.h"
+#include "third_party/blink/public/mojom/confidence_level.mojom.h"
 #include "url/gurl.h"
 
 namespace content {
@@ -50,14 +52,6 @@ class DocumentAssociatedData : public base::SupportsUserData {
   DocumentAssociatedData(const DocumentAssociatedData&) = delete;
   DocumentAssociatedData& operator=(const DocumentAssociatedData&) = delete;
 
-  // Removes all services. We do that on the destructor of
-  // DocumentAssociatedData, but also before resetting
-  // `document_associated_data_` in RenderFrameHostImpl. This is because
-  // otherwise, when services in DocumentAssociatedData try to remove
-  // themselves from DocumentAssociatedData through the RenderFrameHostImpl
-  // optional, it will not be valid anymore.
-  void RemoveAllServices();
-
   // An opaque token that uniquely identifies the document currently
   // associated with this RenderFrameHost. Note that in the case of
   // speculative RenderFrameHost that has not yet committed, the renderer side
@@ -75,6 +69,11 @@ class DocumentAssociatedData : public base::SupportsUserData {
   bool dom_content_loaded() const { return dom_content_loaded_; }
   void MarkDomContentLoaded() { dom_content_loaded_ = true; }
 
+  // Indicates whether a discard request has been dispatched for the current
+  // document.
+  bool is_discarded() const { return is_discarded_; }
+  void MarkDiscarded() { is_discarded_ = true; }
+
   // Prerender2:
   //
   // The URL that `blink.mojom.LocalFrameHost::DidFinishLoad()` passed to
@@ -90,6 +89,16 @@ class DocumentAssociatedData : public base::SupportsUserData {
   }
   void reset_pending_did_finish_load_url_for_prerendering() {
     pending_did_finish_load_url_for_prerendering_.reset();
+  }
+
+  // Indicates whether `RenderFrameHostImpl::DidStopLoading` was called for this
+  // document while it's prerendering. This is used to defer and dispatch
+  // `WebContentsObserver::DidStopLoading` notification on prerender activation.
+  bool pending_did_stop_loading_for_prerendering() const {
+    return pending_did_stop_loading_for_prerendering_;
+  }
+  void set_pending_did_stop_loading_for_prerendering() {
+    pending_did_stop_loading_for_prerendering_ = true;
   }
 
   // Reporting API:
@@ -129,6 +138,14 @@ class DocumentAssociatedData : public base::SupportsUserData {
     devtools_navigation_token_ = devtools_navigation_token;
   }
 
+  blink::mojom::ConfidenceLevel navigation_confidence() const {
+    return confidence_level_;
+  }
+  void set_navigation_confidence(
+      blink::mojom::ConfidenceLevel confidence_level) {
+    confidence_level_ = confidence_level;
+  }
+
   // fetch keepalive handing:
   //
   // Contains the weak pointer to the FactoryContext of the in-browser
@@ -147,19 +164,32 @@ class DocumentAssociatedData : public base::SupportsUserData {
   // Produces weak pointers to the hosting RenderFrameHostImpl. This is
   // invalidated whenever DocumentAssociatedData is destroyed, due to
   // RenderFrameHost deletion or cross-document navigation.
-  base::WeakPtrFactory<RenderFrameHostImpl>& weak_factory() {
-    return weak_factory_;
+  base::SafeRef<RenderFrameHostImpl> GetSafeRef() {
+    return weak_factory_.GetSafeRef();
   }
+
+  base::WeakPtr<RenderFrameHostImpl> GetWeakPtr() {
+    return weak_factory_.GetWeakPtr();
+  }
+
+  void AddService(internal::DocumentServiceBase* service,
+                  base::PassKey<internal::DocumentServiceBase>);
+  void RemoveService(internal::DocumentServiceBase* service,
+                     base::PassKey<internal::DocumentServiceBase>);
 
  private:
   const blink::DocumentToken token_;
   std::unique_ptr<PageImpl> owned_page_;
   bool dom_content_loaded_ = false;
+  bool is_discarded_ = false;
   std::optional<GURL> pending_did_finish_load_url_for_prerendering_;
+  bool pending_did_stop_loading_for_prerendering_ = false;
   std::vector<raw_ptr<internal::DocumentServiceBase, VectorExperimental>>
       services_;
   scoped_refptr<NavigationOrDocumentHandle> navigation_or_document_handle_;
   std::optional<base::UnguessableToken> devtools_navigation_token_;
+  blink::mojom::ConfidenceLevel confidence_level_ =
+      blink::mojom::ConfidenceLevel::kHigh;
   base::WeakPtr<KeepAliveURLLoaderService::FactoryContext>
       keep_alive_url_loader_factory_context_;
 

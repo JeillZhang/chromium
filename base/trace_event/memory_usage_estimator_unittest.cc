@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/341324165): Fix and remove.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "base/trace_event/memory_usage_estimator.h"
 
 #include <stdlib.h>
@@ -23,34 +18,24 @@
 #define EXPECT_EQ_32_64(e, _, a) EXPECT_EQ(e, a)
 #endif
 
-namespace base {
-namespace trace_event {
+namespace base::trace_event {
 
 namespace {
 
 // Test class with predictable memory usage.
 class Data {
  public:
-  explicit Data(size_t size = 17): size_(size) {
-  }
+  explicit Data(size_t size = 17) : size_(size) {}
 
   size_t size() const { return size_; }
 
-  size_t EstimateMemoryUsage() const {
-    return size_;
-  }
+  size_t EstimateMemoryUsage() const { return size_; }
 
-  bool operator < (const Data& other) const {
-    return size_ < other.size_;
-  }
-  bool operator == (const Data& other) const {
-    return size_ == other.size_;
-  }
+  bool operator<(const Data& other) const { return size_ < other.size_; }
+  bool operator==(const Data& other) const { return size_ == other.size_; }
 
   struct Hasher {
-    size_t operator () (const Data& data) const {
-      return data.size();
-    }
+    size_t operator()(const Data& data) const { return data.size(); }
   };
 
  private:
@@ -97,14 +82,22 @@ TEST(EstimateMemoryUsageTest, Arrays) {
     EXPECT_EQ(170u, EstimateMemoryUsage(array));
   }
 
-  // C array
+  // HeapArray
   {
     struct Item {
       char payload[10];
     };
-    Item* array = new Item[7];
-    EXPECT_EQ(70u, EstimateMemoryUsage(base::span<const Item>(array, 7u)));
-    delete[] array;
+    auto array = base::HeapArray<Item>::WithSize(7u);
+    EXPECT_EQ(70u, EstimateMemoryUsage(array));
+  }
+
+  // Owning span
+  {
+    struct Item {
+      char payload[10];
+    };
+    auto array = base::HeapArray<Item>::WithSize(7u);
+    EXPECT_EQ(70u, EstimateMemoryUsage(array.as_span()));
   }
 }
 
@@ -140,7 +133,7 @@ TEST(EstimateMemoryUsageTest, Vector) {
   // If vector is not empty, its size should also include memory usages
   // of all elements.
   for (size_t i = 0; i != capacity / 2; ++i) {
-    vector.push_back(Data(i));
+    vector.emplace_back(i);
     expected_size += EstimateMemoryUsage(vector.back());
   }
   EXPECT_EQ(expected_size, EstimateMemoryUsage(vector));
@@ -176,7 +169,7 @@ TEST(EstimateMemoryUsageTest, List) {
   };
   std::list<POD> list;
   for (int i = 0; i != 1000; ++i) {
-    list.push_back(POD());
+    list.emplace_back();
   }
   EXPECT_EQ_32_64(12000u, 24000u, EstimateMemoryUsage(list));
 }
@@ -253,7 +246,7 @@ TEST(EstimateMemoryUsageTest, Deque) {
   // for deque's blocks is small compared to usage of all items.
   constexpr size_t kDataSize = 100000;
   for (int i = 0; i != 1500; ++i) {
-    deque.push_back(Data(kDataSize));
+    deque.emplace_back(kDataSize);
   }
 
   // Compare against a reasonable minimum (i.e. no overhead).
@@ -281,5 +274,4 @@ TEST(EstimateMemoryUsageTest, IsStandardContainerComplexIteratorTest) {
   static_assert(!internal::IsIteratorOfStandardContainer<abstract*>, "");
 }
 
-}  // namespace trace_event
-}  // namespace base
+}  // namespace base::trace_event

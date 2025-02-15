@@ -17,15 +17,8 @@ struct COMPONENT_EXPORT(ON_DEVICE_MODEL_ASSETS_CPP) ModelAssetPaths {
   ModelAssetPaths(const ModelAssetPaths&);
   ~ModelAssetPaths();
 
-  // Returns whether the required models to determine text safety are set.
-  bool HasSafetyFiles() const {
-    return !ts_data.empty() && !ts_sp_model.empty();
-  }
-
   base::FilePath weights;
-  base::FilePath ts_data;
-  base::FilePath ts_sp_model;
-  base::FilePath language_detection_model;
+  base::FilePath sp_model;
 };
 
 // A bundle of opened file assets comprising model description to use for
@@ -37,9 +30,8 @@ struct COMPONENT_EXPORT(ON_DEVICE_MODEL_ASSETS_CPP) ModelAssets {
   ~ModelAssets();
 
   base::File weights;
-  base::File ts_data;
-  base::File ts_sp_model;
-  base::File language_detection_model;
+  base::FilePath weights_path;
+  base::FilePath sp_model_path;
 };
 
 // Helper to open files for ModelAssets given their containing paths.
@@ -64,6 +56,7 @@ struct COMPONENT_EXPORT(ON_DEVICE_MODEL_ASSETS_CPP) AdaptationAssets {
   ~AdaptationAssets();
 
   base::File weights;
+  base::FilePath weights_path;
 };
 
 // Helper to open files for AdaptationAssets given their containing paths.
@@ -72,4 +65,4 @@ AdaptationAssets LoadAdaptationAssets(const AdaptationAssetPaths& paths);
 
 }  // namespace on_device_model
 
-#endif  //  SERVICES_ON_DEVICE_MODEL_PUBLIC_CPP_MODEL_ASSETS_H_
+#endif  // SERVICES_ON_DEVICE_MODEL_PUBLIC_CPP_MODEL_ASSETS_H_

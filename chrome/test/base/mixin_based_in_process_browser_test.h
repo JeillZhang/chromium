@@ -75,11 +75,13 @@ class InProcessBrowserTestMixin {
   //   SetUpDefaultCommandLine
   //   SetUpUserDataDirectory
   //   SetUpInProcessBrowserTestFixture
+  //   SetUpLocalStatePrefService
   //   CreatedBrowserMainParts
   //   SetUpOnMainThread
   //   TearDownOnMainThread
+  //   PostRunTestOnMainThread
   //   TearDownInProcessBrowserTestFixture
-  // TearDown
+  //   TearDown
   //
   // SetUp is the function which calls SetUpCommandLine,
   // SetUpDefaultCommandLine, etc.
@@ -88,10 +90,12 @@ class InProcessBrowserTestMixin {
   virtual void SetUpDefaultCommandLine(base::CommandLine* command_line);
   virtual bool SetUpUserDataDirectory();
   virtual void SetUpInProcessBrowserTestFixture();
+  virtual void SetUpLocalStatePrefService(PrefService* local_state);
   virtual void CreatedBrowserMainParts(
       content::BrowserMainParts* browser_main_parts);
   virtual void SetUpOnMainThread();
   virtual void TearDownOnMainThread();
+  virtual void PostRunTestOnMainThread();
   virtual void TearDownInProcessBrowserTestFixture();
   virtual void TearDown();
 };
@@ -110,9 +114,11 @@ class InProcessBrowserTestMixinHost final {
   void SetUpDefaultCommandLine(base::CommandLine* command_line);
   bool SetUpUserDataDirectory();
   void SetUpInProcessBrowserTestFixture();
+  void SetUpLocalStatePrefService(PrefService* local_state);
   void CreatedBrowserMainParts(content::BrowserMainParts* browser_main_parts);
   void SetUpOnMainThread();
   void TearDownOnMainThread();
+  void PostRunTestOnMainThread();
   void TearDownInProcessBrowserTestFixture();
   void TearDown();
 
@@ -141,10 +147,12 @@ class MixinBasedInProcessBrowserTest : public InProcessBrowserTest {
   void SetUpDefaultCommandLine(base::CommandLine* command_line) override;
   bool SetUpUserDataDirectory() override;
   void SetUpInProcessBrowserTestFixture() override;
+  void SetUpLocalStatePrefService(PrefService* local_state) override;
   void CreatedBrowserMainParts(
       content::BrowserMainParts* browser_main_parts) override;
   void SetUpOnMainThread() override;
   void TearDownOnMainThread() override;
+  void PostRunTestOnMainThread() override;
   void TearDownInProcessBrowserTestFixture() override;
   void TearDown() override;
 

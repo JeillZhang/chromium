@@ -9,22 +9,30 @@
  */
 
 import 'chrome://resources/ash/common/cr_elements/cr_link_row/cr_link_row.js';
+import './magic_boost_review_terms_banner.js';
 import '../os_settings_page/settings_card.js';
 import '../settings_shared.css.js';
 import './search_engine.js';
+// <if expr="_google_chrome" >
+import 'chrome://resources/ash/common/internal/ash_internal_icons.html.js';
+
+// </if>
 
 import {I18nMixin} from 'chrome://resources/ash/common/cr_elements/i18n_mixin.js';
 import {assert} from 'chrome://resources/js/assert.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {DeepLinkingMixin} from '../common/deep_linking_mixin.js';
-import {isAssistantAllowed, isMahiEnabled, isQuickAnswersSupported, isRevampWayfindingEnabled} from '../common/load_time_booleans.js';
+import {isAssistantAllowed, isLobsterSettingsToggleVisible, isMagicBoostFeatureEnabled, isMagicBoostNoticeBannerVisible, isQuickAnswersSupported, isScannerSettingsToggleVisible, isSunfishSettingsToggleVisible} from '../common/load_time_booleans.js';
 import {RouteOriginMixin} from '../common/route_origin_mixin.js';
-import {PrefsState} from '../common/types.js';
+import type {PrefsState} from '../common/types.js';
 import {Setting} from '../mojom-webui/setting.mojom-webui.js';
-import {Route, Router, routes} from '../router.js';
+import type {Route} from '../router.js';
+import {Router, routes} from '../router.js';
 
 import {getTemplate} from './search_and_assistant_settings_card.html.js';
+
+const ENTERPRISE_POLICY_DISALLOWED = 2;
 
 const SearchAndAssistantSettingsCardElementBase =
     DeepLinkingMixin(RouteOriginMixin(I18nMixin(PolymerElement)));
@@ -53,11 +61,53 @@ export class SearchAndAssistantSettingsCardElement extends
         },
       },
 
-      isMahiEnabled_: {
+      isMagicBoostFeatureEnabled_: {
         type: Boolean,
         value: () => {
-          return isMahiEnabled();
+          return isMagicBoostFeatureEnabled();
         },
+      },
+
+      isMagicBoostNoticeBannerVisible_: {
+        type: Boolean,
+        value: () => {
+          return isMagicBoostNoticeBannerVisible();
+        },
+      },
+
+      isLobsterSettingsToggleVisible_: {
+        type: Boolean,
+        value: () => {
+          return isLobsterSettingsToggleVisible();
+        },
+      },
+
+      isSunfishSettingsToggleVisible_: {
+        type: Boolean,
+        readOnly: true,
+        value: () => {
+          return isSunfishSettingsToggleVisible();
+        },
+      },
+
+      isScannerSettingsToggleVisible_: {
+        type: Boolean,
+        readOnly: true,
+        value: () => {
+          return isScannerSettingsToggleVisible();
+        },
+      },
+
+      isScannerAllowedByEnterprisePolicy_: {
+        type: Boolean,
+        computed: 'isEnterprisePolicyAllowed_(' +
+            'prefs.ash.scanner.enterprise_policy_allowed.value)',
+      },
+
+      enterprisePolicyToggleUncheckedValues_: {
+        type: Array,
+        readOnly: true,
+        value: () => [ENTERPRISE_POLICY_DISALLOWED],
       },
 
       /** Can be disallowed due to flag, policy, locale, etc. */
@@ -73,54 +123,31 @@ export class SearchAndAssistantSettingsCardElement extends
        */
       supportedSettingIds: {
         type: Object,
-        value: () => new Set<Setting>(
-            [Setting.kPreferredSearchEngine, Setting.kMahiOnOff]),
-      },
-
-      isRevampWayfindingEnabled_: {
-        type: Boolean,
-        value() {
-          return isRevampWayfindingEnabled();
-        },
-        readOnly: true,
-      },
-
-      rowIcons_: {
-        type: Object,
-        value() {
-          if (isRevampWayfindingEnabled()) {
-            return {
-              searchEngine: 'os-settings:explore',
-              assistant: 'os-settings:assistant',
-              contentRecommendations: 'os-settings:content-recommend',
-              mahi: 'os-settings:mahi',
-            };
-          }
-
-          return {
-            searchEngine: '',
-            assistant: '',
-            contentRecommendations: '',
-            mahi: '',
-          };
-        },
+        value: () => new Set<Setting>([
+          Setting.kPreferredSearchEngine,
+          Setting.kMagicBoostOnOff,
+          Setting.kMahiOnOff,
+          Setting.kShowOrca,
+          Setting.kLobsterOnOff,
+          Setting.kSunfishOnOff,
+          Setting.kScannerOnOff,
+        ]),
       },
     };
   }
 
   prefs: PrefsState;
   private isAssistantAllowed_: boolean;
-  private readonly isRevampWayfindingEnabled_: boolean;
-  private rowIcons_: Record<string, string>;
   private isQuickAnswersSupported_: boolean;
-  private isMahiEnabled_: boolean;
+  private isMagicBoostFeatureEnabled_: boolean;
+  private readonly isSunfishSettingsToggleVisible_: boolean;
+  private readonly isScannerSettingsToggleVisible_: boolean;
 
   constructor() {
     super();
 
     /** RouteOriginMixin overrde */
-    this.route = this.isRevampWayfindingEnabled_ ? routes.SYSTEM_PREFERENCES :
-                                                   routes.OS_SEARCH;
+    this.route = routes.SYSTEM_PREFERENCES;
   }
 
   override ready(): void {
@@ -156,6 +183,10 @@ export class SearchAndAssistantSettingsCardElement extends
     return this.i18n(
         isAssistantEnabled ? 'searchGoogleAssistantEnabled' :
                              'searchGoogleAssistantDisabled');
+  }
+
+  private isEnterprisePolicyAllowed_(value: number): boolean {
+    return value !== ENTERPRISE_POLICY_DISALLOWED;
   }
 }
 

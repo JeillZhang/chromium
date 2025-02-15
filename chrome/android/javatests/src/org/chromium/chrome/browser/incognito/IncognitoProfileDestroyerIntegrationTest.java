@@ -20,16 +20,17 @@ import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Feature;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.profiles.ProfileManager;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.tabmodel.TabClosureParams;
 import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
 
 import java.util.concurrent.ExecutionException;
 
@@ -48,7 +49,7 @@ public class IncognitoProfileDestroyerIntegrationTest {
     public void setUp() throws InterruptedException {
         MockitoAnnotations.initMocks(this);
         mActivityTestRule.startMainActivityOnBlankPage();
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     ProfileManager.addObserver(mMockProfileManagerObserver);
                     mIncognitoTabModel =
@@ -61,7 +62,7 @@ public class IncognitoProfileDestroyerIntegrationTest {
     @Feature({"OffTheRecord"})
     public void test_switchToRegularModeWithoutAnyTab_profileDestroyed() throws ExecutionException {
         // Switch to incognito mode while there is no incognito tab.
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> mActivityTestRule.getActivity().getTabModelSelector().selectModel(true));
 
         // Verify the profile is created when switched to incognito and the TabModel now has an
@@ -69,7 +70,7 @@ public class IncognitoProfileDestroyerIntegrationTest {
         assertIncognitoProfileStillAlive();
 
         // Switch back to regular mode.
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> mActivityTestRule.getActivity().getTabModelSelector().selectModel(false));
 
         // Verify the incognito Profile was destroyed
@@ -88,7 +89,13 @@ public class IncognitoProfileDestroyerIntegrationTest {
         assertIncognitoProfileStillAlive();
 
         // Close the incognito tab
-        TestThreadUtils.runOnUiThreadBlocking(() -> mIncognitoTabModel.closeTab(onlyTab));
+        ThreadUtils.runOnUiThreadBlocking(
+                () ->
+                        mIncognitoTabModel
+                                .getTabRemover()
+                                .closeTabs(
+                                        TabClosureParams.closeTab(onlyTab).allowUndo(false).build(),
+                                        /* allowDialog= */ false));
 
         // Verify the incognito Profile was destroyed.
         assertIncognitoProfileDestroyed();
@@ -107,7 +114,15 @@ public class IncognitoProfileDestroyerIntegrationTest {
         assertIncognitoProfileStillAlive();
 
         // Close one incognito tab
-        TestThreadUtils.runOnUiThreadBlocking(() -> mIncognitoTabModel.closeTab(firstTab));
+        ThreadUtils.runOnUiThreadBlocking(
+                () ->
+                        mIncognitoTabModel
+                                .getTabRemover()
+                                .closeTabs(
+                                        TabClosureParams.closeTab(firstTab)
+                                                .allowUndo(false)
+                                                .build(),
+                                        /* allowDialog= */ false));
 
         // Verify the incognito Profile was not destroyed
         assertIncognitoProfileStillAlive();
@@ -125,7 +140,7 @@ public class IncognitoProfileDestroyerIntegrationTest {
         assertIncognitoProfileStillAlive();
 
         // Switch to regular mode.
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> mActivityTestRule.getActivity().getTabModelSelector().selectModel(false));
 
         // Verify the incognito Profile was not destroyed.
@@ -144,11 +159,19 @@ public class IncognitoProfileDestroyerIntegrationTest {
         assertIncognitoProfileStillAlive();
 
         // Switch to regular mode.
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> mActivityTestRule.getActivity().getTabModelSelector().selectModel(false));
 
         // Close the incognito tab.
-        TestThreadUtils.runOnUiThreadBlocking(() -> mIncognitoTabModel.closeTab(firstTab));
+        ThreadUtils.runOnUiThreadBlocking(
+                () ->
+                        mIncognitoTabModel
+                                .getTabRemover()
+                                .closeTabs(
+                                        TabClosureParams.closeTab(firstTab)
+                                                .allowUndo(false)
+                                                .build(),
+                                        /* allowDialog= */ false));
 
         // Verify the incognito Profile was destroyed.
         assertIncognitoProfileDestroyed();
@@ -156,7 +179,7 @@ public class IncognitoProfileDestroyerIntegrationTest {
 
     private void assertIncognitoProfileStillAlive() throws ExecutionException {
         Profile incognitoProfile =
-                TestThreadUtils.runOnUiThreadBlocking(() -> mIncognitoTabModel.getProfile());
+                ThreadUtils.runOnUiThreadBlocking(() -> mIncognitoTabModel.getProfile());
         assertNotNull(incognitoProfile);
         verify(mMockProfileManagerObserver, never()).onProfileDestroyed(any());
     }
@@ -164,7 +187,7 @@ public class IncognitoProfileDestroyerIntegrationTest {
     private void assertIncognitoProfileDestroyed() throws ExecutionException {
         verify(mMockProfileManagerObserver).onProfileDestroyed(any());
         Profile incognitoProfile =
-                TestThreadUtils.runOnUiThreadBlocking(() -> mIncognitoTabModel.getProfile());
+                ThreadUtils.runOnUiThreadBlocking(() -> mIncognitoTabModel.getProfile());
         assertNull(incognitoProfile);
     }
 }

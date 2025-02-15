@@ -4,16 +4,20 @@
 
 package org.chromium.chrome.browser.autofill.iban;
 
+import androidx.annotation.VisibleForTesting;
+
+import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.chrome.browser.layouts.LayoutStateProvider;
 import org.chromium.chrome.browser.layouts.LayoutStateProvider.LayoutStateObserver;
 import org.chromium.chrome.browser.layouts.LayoutType;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.chrome.browser.tabmodel.TabModelObserver;
+import org.chromium.components.autofill.SaveIbanPromptOffer;
+import org.chromium.components.autofill.SaveIbanPromptResult;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController;
+import org.chromium.components.browser_ui.bottomsheet.BottomSheetController.StateChangeReason;
 import org.chromium.components.browser_ui.bottomsheet.EmptyBottomSheetObserver;
-
-import java.util.function.Consumer;
 
 /**
  * Mediator class for the autofill IBAN save UI.
@@ -28,17 +32,24 @@ import java.util.function.Consumer;
  */
 /*package*/ class AutofillSaveIbanBottomSheetMediator extends EmptyBottomSheetObserver
         implements TabModelObserver, LayoutStateObserver {
-    private final AutofillSaveIbanBottomSheetBridge mBridge;
+    @VisibleForTesting
+    static final String SAVE_IBAN_PROMPT_OFFER_HISTOGRAM = "Autofill.SaveIbanPromptOffer";
+
+    @VisibleForTesting
+    static final String SAVE_IBAN_PROMPT_RESULT_HISTOGRAM = "Autofill.SaveIbanPromptResult";
+
+    private final AutofillSaveIbanBottomSheetCoordinator.NativeDelegate mDelegate;
     private final AutofillSaveIbanBottomSheetContent mBottomSheetContent;
-    private boolean mFinished;
     private final BottomSheetController mBottomSheetController;
     private final LayoutStateProvider mLayoutStateProvider;
     private final TabModel mTabModel;
+    private boolean mIsServerSave;
+    private boolean mFinished;
 
     /**
      * Creates the mediator.
      *
-     * @param bridge The bridge to signal UI flow events (OnUiCanceled, OnUiAccepted, etc.).
+     * @param delegate The delegate to signal UI flow events (OnUiCanceled, OnUiAccepted, etc.).
      * @param bottomSheetContent The bottom sheet content to be shown.
      * @param bottomSheetController The bottom sheet controller where this bottom sheet will be
      *     shown.
@@ -46,46 +57,85 @@ import java.util.function.Consumer;
      *     to be hidden after a change of layout (e.g. to the tab switcher).
      * @param tabModel The TabModel used to detect when the bottom sheet needs to be hidden after a
      *     tab change.
+     * @param isServerSave Whether or not the bottom sheet is for a server IBAN save.
      */
     AutofillSaveIbanBottomSheetMediator(
-            AutofillSaveIbanBottomSheetBridge bridge,
+            AutofillSaveIbanBottomSheetCoordinator.NativeDelegate delegate,
             AutofillSaveIbanBottomSheetContent bottomSheetContent,
             BottomSheetController bottomSheetController,
             LayoutStateProvider layoutStateProvider,
-            TabModel tabModel) {
-        mBridge = bridge;
+            TabModel tabModel,
+            boolean isServerSave) {
+        mDelegate = delegate;
         mBottomSheetContent = bottomSheetContent;
         mBottomSheetController = bottomSheetController;
         mLayoutStateProvider = layoutStateProvider;
         mTabModel = tabModel;
+        mIsServerSave = isServerSave;
 
         mBottomSheetController.addObserver(this);
         mLayoutStateProvider.addObserver(this);
         mTabModel.addObserver(this);
     }
 
-    /**
-     * Requests to show the bottom sheet content.
-     *
-     * @param ibanLabel Label for the IBAN being saved, e.g. CH56 **** **** **** *800 9.
-     */
-    void requestShowContent(String ibanLabel) {
-        // TODO(b/309163431): Use ibanLabel parameter to display IBAN label.
-        if (mBottomSheetController.requestShowContent(mBottomSheetContent, /* animate= */ true)) {}
+    /** Requests to show the bottom sheet content. */
+    void requestShowContent() {
+        if (mBottomSheetController.requestShowContent(mBottomSheetContent, /* animate= */ true)) {
+            logSaveIbanPromptOffer(SaveIbanPromptOffer.SHOWN, mIsServerSave);
+        } else {
+            mDelegate.onUiIgnored();
+            logSaveIbanPromptResult(SaveIbanPromptResult.UNKNOWN, mIsServerSave);
+        }
     }
 
-    public void destroy() {
-        mBottomSheetController.hideContent(mBottomSheetContent, /* animate= */ true);
+    public void onAccepted(String userProvidedNickname) {
+        hide(StateChangeReason.INTERACTION_COMPLETE);
+        mDelegate.onUiAccepted(userProvidedNickname);
+
+        RecordHistogram.recordBooleanHistogram(
+                SAVE_IBAN_PROMPT_RESULT_HISTOGRAM
+                        + (mIsServerSave ? ".Upload" : ".Local")
+                        + ".SavedWithNickname",
+                !userProvidedNickname.isEmpty());
+        logSaveIbanPromptResult(SaveIbanPromptResult.ACCEPTED, mIsServerSave);
+    }
+
+    public void onCanceled() {
+        hide(StateChangeReason.INTERACTION_COMPLETE);
+        mDelegate.onUiCanceled();
+
+        logSaveIbanPromptResult(SaveIbanPromptResult.CANCELLED, mIsServerSave);
+    }
+
+    public void onIgnored() {
+        hide(StateChangeReason.INTERACTION_COMPLETE);
+        mDelegate.onUiIgnored();
+    }
+
+    void hide(@StateChangeReason int hideReason) {
+        mBottomSheetController.hideContent(mBottomSheetContent, /* animate= */ true, hideReason);
         mBottomSheetController.removeObserver(this);
         mLayoutStateProvider.removeObserver(this);
         mTabModel.removeObserver(this);
-        finish(AutofillSaveIbanBottomSheetBridge::onUiIgnored);
     }
 
-    private void finish(Consumer<AutofillSaveIbanBottomSheetBridge> bridgeCallback) {
-        if (!mFinished) {
-            mFinished = true;
-            bridgeCallback.accept(mBridge);
+    // Overrides EmptyBottomSheetObserver onSheetClosed method for BottomSheetController.
+    @Override
+    public void onSheetClosed(@StateChangeReason int reason) {
+        switch (reason) {
+            case StateChangeReason.BACK_PRESS:
+            case StateChangeReason.SWIPE:
+            case StateChangeReason.TAP_SCRIM:
+                finish(this::onCanceled);
+                break;
+            case StateChangeReason.INTERACTION_COMPLETE:
+                // Expecting AutofillSaveIbanBottomSheetCoordinator to set up the appropriate
+                // callbacks to native on button presses in this case.
+                mFinished = true;
+                break;
+            default:
+                finish(this::onIgnored);
+                break;
         }
     }
 
@@ -108,5 +158,42 @@ import java.util.function.Consumer;
         if (layoutType != LayoutType.BROWSING) {
             mBottomSheetController.hideContent(mBottomSheetContent, /* animate= */ true);
         }
+    }
+
+    void finish(Runnable callback) {
+        if (!mFinished) {
+            mFinished = true;
+            callback.run();
+        }
+    }
+
+    /**
+     * Helper function to log SaveIbanPromptOffer histogram.
+     *
+     * @param offer The offer bucket to log.
+     * @param isServerSave Whether it's a server save.
+     */
+    private void logSaveIbanPromptOffer(@SaveIbanPromptOffer int offer, boolean isServerSave) {
+        RecordHistogram.recordEnumeratedHistogram(
+                SAVE_IBAN_PROMPT_OFFER_HISTOGRAM
+                        + (isServerSave ? ".Upload" : ".Local")
+                        + ".FirstShow",
+                offer,
+                SaveIbanPromptOffer.MAX_VALUE);
+    }
+
+    /**
+     * Helper function to log SaveIbanPromptResult histogram.
+     *
+     * @param result The result bucket to log.
+     * @param isServerSave Whether it's a server save.
+     */
+    private void logSaveIbanPromptResult(@SaveIbanPromptResult int result, boolean isServerSave) {
+        RecordHistogram.recordEnumeratedHistogram(
+                SAVE_IBAN_PROMPT_RESULT_HISTOGRAM
+                        + (isServerSave ? ".Upload" : ".Local")
+                        + ".FirstShow",
+                result,
+                SaveIbanPromptResult.MAX_VALUE);
     }
 }

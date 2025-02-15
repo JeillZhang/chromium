@@ -14,6 +14,7 @@
 #include "chrome/browser/web_applications/web_app_helpers.h"
 #include "chrome/browser/web_applications/web_app_install_info.h"
 #include "chrome/browser/web_applications/web_app_provider.h"
+#include "chromeos/ash/components/growth/campaigns_logger.h"
 #include "components/services/app_service/public/cpp/icon_info.h"
 #include "components/webapps/browser/install_result_code.h"
 #include "components/webapps/browser/installable/installable_metrics.h"
@@ -64,7 +65,7 @@ std::unique_ptr<web_app::WebAppInstallInfo> GetAppInstallInfo(
 std::unique_ptr<web_app::WebAppInstallInfo>
 ParseInstallWebAppActionPerformerParams(const base::Value::Dict* params) {
   if (!params) {
-    LOG(ERROR) << "Empty parameter to InstallWebAction.";
+    CAMPAIGNS_LOG(ERROR) << "Empty parameter to InstallWebAction.";
     return nullptr;
   }
 
@@ -125,6 +126,7 @@ InstallWebAppActionPerformer::~InstallWebAppActionPerformer() = default;
 
 void InstallWebAppActionPerformer::Run(
     int campaign_id,
+    std::optional<int> group_id,
     const base::Value::Dict* params,
     growth::ActionPerformer::Callback callback) {
   if (!GetWebAppProvider()) {

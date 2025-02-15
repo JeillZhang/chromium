@@ -6,12 +6,14 @@
 
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
+#include "third_party/blink/renderer/core/frame/viewport_data.h"
 #include "third_party/blink/renderer/core/frame/web_local_frame_impl.h"
 #include "third_party/blink/renderer/core/layout/layout_object.h"
 #include "third_party/blink/renderer/core/loader/empty_clients.h"
 #include "third_party/blink/renderer/core/testing/core_unit_test_helper.h"
 #include "third_party/blink/renderer/core/testing/sim/sim_request.h"
 #include "third_party/blink/renderer/core/testing/sim/sim_test.h"
+#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
 #include "ui/gfx/geometry/rect.h"
 
@@ -34,13 +36,10 @@ class TextAutosizerClient : public RenderingTestChromeClient {
   float device_scale_factor_;
 };
 
-class TextAutosizerTest : public RenderingTest,
-                          public testing::WithParamInterface<bool>,
-                          private ScopedTextSizeAdjustImprovementsForTest {
+class TextAutosizerTest : public RenderingTest {
  public:
   TextAutosizerTest()
-      : RenderingTest(MakeGarbageCollected<SingleChildLocalFrameClient>()),
-        ScopedTextSizeAdjustImprovementsForTest(GetParam()) {}
+      : RenderingTest(MakeGarbageCollected<SingleChildLocalFrameClient>()) {}
 
   RenderingTestChromeClient& GetChromeClient() const override {
     return GetTextAutosizerClient();
@@ -55,7 +54,7 @@ class TextAutosizerTest : public RenderingTest,
 
     // This fake ChromeClient cannot update device scale factor (DSF). We apply
     // DSF to the zoom factor manually.
-    GetDocument().GetFrame()->SetPageZoomFactor(device_scale_factor);
+    GetDocument().GetFrame()->SetLayoutZoomFactor(device_scale_factor);
   }
 
  private:
@@ -68,9 +67,7 @@ class TextAutosizerTest : public RenderingTest,
   }
 };
 
-INSTANTIATE_TEST_SUITE_P(All, TextAutosizerTest, testing::Bool());
-
-TEST_P(TextAutosizerTest, SimpleParagraph) {
+TEST_F(TextAutosizerTest, SimpleParagraph) {
   SetBodyInnerHTML(R"HTML(
     <style>
       html { font-size: 16px; }
@@ -95,7 +92,7 @@ TEST_P(TextAutosizerTest, SimpleParagraph) {
                   autosized->GetLayoutObject()->StyleRef().ComputedFontSize());
 }
 
-TEST_P(TextAutosizerTest, TextSizeAdjustDisablesAutosizing) {
+TEST_F(TextAutosizerTest, TextSizeAdjustDisablesAutosizing) {
   SetBodyInnerHTML(R"HTML(
     <style>
       html { font-size: 16px; }
@@ -143,7 +140,7 @@ TEST_P(TextAutosizerTest, TextSizeAdjustDisablesAutosizing) {
   EXPECT_FLOAT_EQ(16.f, text_size_adjust100->StyleRef().ComputedFontSize());
 }
 
-TEST_P(TextAutosizerTest, ParagraphWithChangingTextSizeAdjustment) {
+TEST_F(TextAutosizerTest, ParagraphWithChangingTextSizeAdjustment) {
   SetBodyInnerHTML(R"HTML(
     <style>
       html { font-size: 16px; }
@@ -197,7 +194,7 @@ TEST_P(TextAutosizerTest, ParagraphWithChangingTextSizeAdjustment) {
       40.f, autosized_div->GetLayoutObject()->StyleRef().ComputedFontSize());
 }
 
-TEST_P(TextAutosizerTest, ZeroTextSizeAdjustment) {
+TEST_F(TextAutosizerTest, ZeroTextSizeAdjustment) {
   SetBodyInnerHTML(R"HTML(
     <style>
       html { font-size: 16px; }
@@ -219,7 +216,7 @@ TEST_P(TextAutosizerTest, ZeroTextSizeAdjustment) {
   EXPECT_FLOAT_EQ(0.f, text_size_adjust_zero->StyleRef().ComputedFontSize());
 }
 
-TEST_P(TextAutosizerTest, NegativeTextSizeAdjustment) {
+TEST_F(TextAutosizerTest, NegativeTextSizeAdjustment) {
   SetBodyInnerHTML(
       "<style>"
       "  html { font-size: 16px; }"
@@ -243,7 +240,7 @@ TEST_P(TextAutosizerTest, NegativeTextSizeAdjustment) {
                   text_size_adjust_negative->StyleRef().ComputedFontSize());
 }
 
-TEST_P(TextAutosizerTest, TextSizeAdjustmentPixelUnits) {
+TEST_F(TextAutosizerTest, TextSizeAdjustmentPixelUnits) {
   SetBodyInnerHTML(
       "<style>"
       "  html { font-size: 16px; }"
@@ -266,7 +263,7 @@ TEST_P(TextAutosizerTest, TextSizeAdjustmentPixelUnits) {
   EXPECT_FLOAT_EQ(40.f, text_size_adjust_pixels->StyleRef().ComputedFontSize());
 }
 
-TEST_P(TextAutosizerTest, NestedTextSizeAdjust) {
+TEST_F(TextAutosizerTest, NestedTextSizeAdjust) {
   SetBodyInnerHTML(R"HTML(
     <style>
       html { font-size: 16px; }
@@ -303,7 +300,7 @@ TEST_P(TextAutosizerTest, NestedTextSizeAdjust) {
   EXPECT_FLOAT_EQ(8.48f, text_size_adjust_b->StyleRef().ComputedFontSize());
 }
 
-TEST_P(TextAutosizerTest, PrefixedTextSizeAdjustIsAlias) {
+TEST_F(TextAutosizerTest, PrefixedTextSizeAdjustIsAlias) {
   SetBodyInnerHTML(R"HTML(
     <style>
       html { font-size: 16px; }
@@ -326,7 +323,7 @@ TEST_P(TextAutosizerTest, PrefixedTextSizeAdjustIsAlias) {
       .5f, text_size_adjust->StyleRef().GetTextSizeAdjust().Multiplier());
 }
 
-TEST_P(TextAutosizerTest, AccessibilityFontScaleFactor) {
+TEST_F(TextAutosizerTest, AccessibilityFontScaleFactor) {
   GetDocument().GetSettings()->SetAccessibilityFontScaleFactor(1.5);
   SetBodyInnerHTML(R"HTML(
     <style>
@@ -352,58 +349,7 @@ TEST_P(TextAutosizerTest, AccessibilityFontScaleFactor) {
                   autosized->GetLayoutObject()->StyleRef().ComputedFontSize());
 }
 
-TEST_P(TextAutosizerTest, AccessibilityFontScaleFactorWithTextSizeAdjustNone) {
-  if (RuntimeEnabledFeatures::TextSizeAdjustImprovementsEnabled()) {
-    // Non-auto values of text-size-adjust should disable all automatic font
-    // scale adjustment.
-    return;
-  }
-
-  GetDocument().GetSettings()->SetAccessibilityFontScaleFactor(1.5);
-  SetBodyInnerHTML(R"HTML(
-    <style>
-      html { font-size: 16px; }
-      body { width: 800px; margin: 0; overflow-y: hidden; }
-      #autosized { width: 400px; text-size-adjust: 100%; }
-      #notAutosized { width: 100px; text-size-adjust: 100%; }
-    </style>
-    <div id='autosized'>
-      Lorem ipsum dolor sit amet, consectetur adipisicing elit, sed do
-      eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim
-      ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut
-      aliquip ex ea commodo consequat. Duis aute irure dolor in
-      reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla
-      pariatur. Excepteur sint occaecat cupidatat non proident, sunt in
-      culpa qui officia deserunt mollit anim id est laborum.
-    </div>
-    <div id='notAutosized'>
-      Lorem ipsum dolor sit amet, consectetur adipisicing elit, sed do
-      eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim
-      ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut
-      aliquip ex ea commodo consequat. Duis aute irure dolor in
-      reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla
-      pariatur. Excepteur sint occaecat cupidatat non proident, sunt in
-      culpa qui officia deserunt mollit anim id est laborum.
-    </div>
-  )HTML");
-  Element* autosized = GetElementById("autosized");
-  EXPECT_FLOAT_EQ(16.f,
-                  autosized->GetLayoutObject()->StyleRef().SpecifiedFontSize());
-  // 1.5 * (specified font-size = 16px) = 24px.
-  EXPECT_FLOAT_EQ(24.f,
-                  autosized->GetLayoutObject()->StyleRef().ComputedFontSize());
-
-  // Because this does not autosize (due to the width), no accessibility font
-  // scale factor should be applied.
-  Element* not_autosized = GetElementById("notAutosized");
-  EXPECT_FLOAT_EQ(
-      16.f, not_autosized->GetLayoutObject()->StyleRef().SpecifiedFontSize());
-  // specified font-size = 16px.
-  EXPECT_FLOAT_EQ(
-      16.f, not_autosized->GetLayoutObject()->StyleRef().ComputedFontSize());
-}
-
-TEST_P(TextAutosizerTest, ChangingAccessibilityFontScaleFactor) {
+TEST_F(TextAutosizerTest, ChangingAccessibilityFontScaleFactor) {
   GetDocument().GetSettings()->SetAccessibilityFontScaleFactor(1);
   SetBodyInnerHTML(R"HTML(
     <style>
@@ -439,80 +385,8 @@ TEST_P(TextAutosizerTest, ChangingAccessibilityFontScaleFactor) {
                   autosized->GetLayoutObject()->StyleRef().ComputedFontSize());
 }
 
-TEST_P(TextAutosizerTest, TextSizeAdjustDoesNotDisableAccessibility) {
-  if (RuntimeEnabledFeatures::TextSizeAdjustImprovementsEnabled()) {
-    // Non-auto values of text-size-adjust should disable all automatic font
-    // scale adjustment.
-    return;
-  }
-
-  GetDocument().GetSettings()->SetAccessibilityFontScaleFactor(1.5);
-  SetBodyInnerHTML(R"HTML(
-    <style>
-      html { font-size: 16px; }
-      body { width: 800px; margin: 0; overflow-y: hidden; }
-    </style>
-    <div id='textSizeAdjustNone' style='text-size-adjust: none;'>
-      Lorem ipsum dolor sit amet, consectetur adipisicing elit, sed do
-      eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim
-      ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut
-      aliquip ex ea commodo consequat. Duis aute irure dolor in
-      reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla
-      pariatur. Excepteur sint occaecat cupidatat non proident, sunt in
-      culpa qui officia deserunt mollit anim id est laborum.
-    </div>
-    <div id='textSizeAdjustDouble' style='text-size-adjust: 200%;'>
-      Lorem ipsum dolor sit amet, consectetur adipisicing elit, sed do
-      eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim
-      ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut
-      aliquip ex ea commodo consequat. Duis aute irure dolor in
-      reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla
-      pariatur. Excepteur sint occaecat cupidatat non proident, sunt in
-      culpa qui officia deserunt mollit anim id est laborum.
-    </div>
-  )HTML");
-  Element* text_size_adjust_none = GetElementById("textSizeAdjustNone");
-  EXPECT_FLOAT_EQ(
-      16.f,
-      text_size_adjust_none->GetLayoutObject()->StyleRef().SpecifiedFontSize());
-  // 1.5 * (specified font-size = 16px) = 24px.
-  EXPECT_FLOAT_EQ(
-      24.f,
-      text_size_adjust_none->GetLayoutObject()->StyleRef().ComputedFontSize());
-
-  Element* text_size_adjust_double = GetElementById("textSizeAdjustDouble");
-  EXPECT_FLOAT_EQ(16.f, text_size_adjust_double->GetLayoutObject()
-                            ->StyleRef()
-                            .SpecifiedFontSize());
-  // 1.5 * (specified font-size = 16px) * (text size adjustment = 2) = 48px.
-  EXPECT_FLOAT_EQ(48.f, text_size_adjust_double->GetLayoutObject()
-                            ->StyleRef()
-                            .ComputedFontSize());
-
-  // Changing the accessibility font scale factor should change the adjusted
-  // size.
-  GetDocument().GetSettings()->SetAccessibilityFontScaleFactor(2);
-  UpdateAllLifecyclePhasesForTest();
-
-  EXPECT_FLOAT_EQ(
-      16.f,
-      text_size_adjust_none->GetLayoutObject()->StyleRef().SpecifiedFontSize());
-  // 2.0 * (specified font-size = 16px) = 32px.
-  EXPECT_FLOAT_EQ(
-      32.f,
-      text_size_adjust_none->GetLayoutObject()->StyleRef().ComputedFontSize());
-
-  EXPECT_FLOAT_EQ(16.f, text_size_adjust_double->GetLayoutObject()
-                            ->StyleRef()
-                            .SpecifiedFontSize());
-  // 2.0 * (specified font-size = 16px) * (text size adjustment = 2) = 64px.
-  EXPECT_FLOAT_EQ(64.f, text_size_adjust_double->GetLayoutObject()
-                            ->StyleRef()
-                            .ComputedFontSize());
-}
-
 // https://crbug.com/646237
-TEST_P(TextAutosizerTest, DISABLED_TextSizeAdjustWithoutNeedingAutosizing) {
+TEST_F(TextAutosizerTest, DISABLED_TextSizeAdjustWithoutNeedingAutosizing) {
   GetDocument().GetSettings()->SetTextAutosizingWindowSizeOverride(
       gfx::Size(800, 600));
   SetBodyInnerHTML(R"HTML(
@@ -532,7 +406,7 @@ TEST_P(TextAutosizerTest, DISABLED_TextSizeAdjustWithoutNeedingAutosizing) {
       1.5f, text_size_adjust->StyleRef().GetTextSizeAdjust().Multiplier());
 }
 
-TEST_P(TextAutosizerTest, DeviceScaleAdjustmentWithViewport) {
+TEST_F(TextAutosizerTest, DeviceScaleAdjustmentWithViewport) {
   SetBodyInnerHTML(R"HTML(
     <meta name='viewport' content='width=800'>
     <style>
@@ -575,7 +449,7 @@ TEST_P(TextAutosizerTest, DeviceScaleAdjustmentWithViewport) {
                   autosized->GetLayoutObject()->StyleRef().ComputedFontSize());
 }
 
-TEST_P(TextAutosizerTest, ChangingSuperClusterFirstText) {
+TEST_F(TextAutosizerTest, ChangingSuperClusterFirstText) {
   SetBodyInnerHTML(R"HTML(
     <meta name='viewport' content='width=800'>
     <style>
@@ -618,7 +492,7 @@ TEST_P(TextAutosizerTest, ChangingSuperClusterFirstText) {
   EXPECT_FLOAT_EQ(28.f, short_text->StyleRef().ComputedFontSize());
 }
 
-TEST_P(TextAutosizerTest, ChangingSuperClusterSecondText) {
+TEST_F(TextAutosizerTest, ChangingSuperClusterSecondText) {
   SetBodyInnerHTML(R"HTML(
     <meta name='viewport' content='width=800'>
     <style>
@@ -661,7 +535,7 @@ TEST_P(TextAutosizerTest, ChangingSuperClusterSecondText) {
   EXPECT_FLOAT_EQ(28.f, short_text->StyleRef().ComputedFontSize());
 }
 
-TEST_P(TextAutosizerTest, AddingSuperCluster) {
+TEST_F(TextAutosizerTest, AddingSuperCluster) {
   SetBodyInnerHTML(R"HTML(
     <meta name='viewport' content='width=800'>
     <style>
@@ -706,7 +580,7 @@ TEST_P(TextAutosizerTest, AddingSuperCluster) {
   EXPECT_FLOAT_EQ(28.f, short_text->StyleRef().ComputedFontSize());
 }
 
-TEST_P(TextAutosizerTest, ChangingInheritedClusterTextInsideSuperCluster) {
+TEST_F(TextAutosizerTest, ChangingInheritedClusterTextInsideSuperCluster) {
   SetBodyInnerHTML(R"HTML(
     <meta name='viewport' content='width=800'>
     <style>
@@ -751,7 +625,7 @@ TEST_P(TextAutosizerTest, ChangingInheritedClusterTextInsideSuperCluster) {
   EXPECT_FLOAT_EQ(28.f, short_text->StyleRef().ComputedFontSize());
 }
 
-TEST_P(TextAutosizerTest, AutosizeInnerContentOfRuby) {
+TEST_F(TextAutosizerTest, AutosizeInnerContentOfRuby) {
   SetBodyInnerHTML(R"HTML(
     <meta name='viewport' content='width=800'>
     <style>
@@ -806,7 +680,7 @@ TEST_P(TextAutosizerTest, AutosizeInnerContentOfRuby) {
                   ruby_block->GetLayoutObject()->StyleRef().ComputedFontSize());
 }
 
-TEST_P(TextAutosizerTest, ResizeAndGlyphOverflowChanged) {
+TEST_F(TextAutosizerTest, ResizeAndGlyphOverflowChanged) {
   GetDocument().GetSettings()->SetTextAutosizingWindowSizeOverride(
       gfx::Size(360, 640));
   Element* html = GetDocument().body()->parentElement();
@@ -848,7 +722,7 @@ TEST_P(TextAutosizerTest, ResizeAndGlyphOverflowChanged) {
   UpdateAllLifecyclePhasesForTest();
 }
 
-TEST_P(TextAutosizerTest, narrowContentInsideNestedWideBlock) {
+TEST_F(TextAutosizerTest, narrowContentInsideNestedWideBlock) {
   Element* html = GetDocument().body()->parentElement();
   html->setInnerHTML(
       "<head>"
@@ -884,7 +758,7 @@ TEST_P(TextAutosizerTest, narrowContentInsideNestedWideBlock) {
                   content->GetLayoutObject()->StyleRef().ComputedFontSize());
 }
 
-TEST_P(TextAutosizerTest, LayoutViewWidthProvider) {
+TEST_F(TextAutosizerTest, LayoutViewWidthProvider) {
   Element* html = GetDocument().body()->parentElement();
   html->setInnerHTML(
       "<head>"
@@ -925,7 +799,7 @@ TEST_P(TextAutosizerTest, LayoutViewWidthProvider) {
                   content->GetLayoutObject()->StyleRef().ComputedFontSize());
 }
 
-TEST_P(TextAutosizerTest, MultiColumns) {
+TEST_F(TextAutosizerTest, MultiColumns) {
   Element* html = GetDocument().body()->parentElement();
   html->setInnerHTML(
       "<head>"
@@ -959,7 +833,7 @@ TEST_P(TextAutosizerTest, MultiColumns) {
                   target->GetLayoutObject()->StyleRef().ComputedFontSize());
 }
 
-TEST_P(TextAutosizerTest, MultiColumns2) {
+TEST_F(TextAutosizerTest, MultiColumns2) {
   Element* html = GetDocument().body()->parentElement();
   html->setInnerHTML(
       "<head>"
@@ -1005,7 +879,7 @@ TEST_P(TextAutosizerTest, MultiColumns2) {
                   target2->GetLayoutObject()->StyleRef().ComputedFontSize());
 }
 
-TEST_P(TextAutosizerTest, ScaledbyDSF) {
+TEST_F(TextAutosizerTest, ScaledbyDSF) {
   const float device_scale = 3;
   set_device_scale_factor(device_scale);
   SetBodyInnerHTML(R"HTML(
@@ -1033,7 +907,7 @@ TEST_P(TextAutosizerTest, ScaledbyDSF) {
                   target->GetLayoutObject()->StyleRef().ComputedFontSize());
 }
 
-TEST_P(TextAutosizerTest, ClusterHasNotEnoughTextToAutosizeForZoomDSF) {
+TEST_F(TextAutosizerTest, ClusterHasNotEnoughTextToAutosizeForZoomDSF) {
   SetBodyInnerHTML(R"HTML(
     <style>
       html { font-size: 8px; }
@@ -1068,7 +942,7 @@ TEST_P(TextAutosizerTest, ClusterHasNotEnoughTextToAutosizeForZoomDSF) {
 // value change of TextAutosizer::ClusterHasEnoughTextToAutosize() depending on
 // the length of text even when DSF is not 1 (e.g., letting DummyPageHolder
 // update the view size according to the change of DSF).
-TEST_P(TextAutosizerTest, ClusterHasEnoughTextToAutosizeForZoomDSF) {
+TEST_F(TextAutosizerTest, ClusterHasEnoughTextToAutosizeForZoomDSF) {
   const float device_scale = 3;
   set_device_scale_factor(device_scale);
   SetBodyInnerHTML(R"HTML(
@@ -1093,7 +967,7 @@ TEST_P(TextAutosizerTest, ClusterHasEnoughTextToAutosizeForZoomDSF) {
                   target->GetLayoutObject()->StyleRef().ComputedFontSize());
 }
 
-TEST_P(TextAutosizerTest, AfterPrint) {
+TEST_F(TextAutosizerTest, AfterPrint) {
   const float device_scale = 3;
   gfx::SizeF print_size(160, 240);
   set_device_scale_factor(device_scale);
@@ -1121,7 +995,7 @@ TEST_P(TextAutosizerTest, AfterPrint) {
                   target->GetLayoutObject()->StyleRef().ComputedFontSize());
 }
 
-TEST_P(TextAutosizerTest, FingerprintWidth) {
+TEST_F(TextAutosizerTest, FingerprintWidth) {
   SetBodyInnerHTML(R"HTML(
     <style>
       html { font-size: 8px; }
@@ -1141,7 +1015,7 @@ TEST_P(TextAutosizerTest, FingerprintWidth) {
 
 // Test that `kUsedDeviceScaleAdjustment` is not recorded when a user-specified
 // meta viewport is present on the outermost main frame.
-TEST_P(TextAutosizerTest, UsedDeviceScaleAdjustmentUseCounterWithViewport) {
+TEST_F(TextAutosizerTest, UsedDeviceScaleAdjustmentUseCounterWithViewport) {
   SetBodyInnerHTML(R"HTML(
     <meta name="viewport" content="width=device-width">
     <div style="font-size: 20px">
@@ -1178,7 +1052,7 @@ TEST_P(TextAutosizerTest, UsedDeviceScaleAdjustmentUseCounterWithViewport) {
 
 // Test that `kUsedDeviceScaleAdjustment` is recorded when a user-specified meta
 // viewport is not specified on the outermost main frame.
-TEST_P(TextAutosizerTest, UsedDeviceScaleAdjustmentUseCounterWithoutViewport) {
+TEST_F(TextAutosizerTest, UsedDeviceScaleAdjustmentUseCounterWithoutViewport) {
   SetBodyInnerHTML(R"HTML(
     <div style="font-size: 20px">
       Lorem ipsum dolor sit amet, consectetur adipisicing elit, sed do eiusmod
@@ -1216,12 +1090,9 @@ TEST_P(TextAutosizerTest, UsedDeviceScaleAdjustmentUseCounterWithoutViewport) {
       ChildDocument().IsUseCounted(WebFeature::kUsedDeviceScaleAdjustment));
 }
 
-class TextAutosizerSimTest : public SimTest,
-                             public testing::WithParamInterface<bool>,
-                             private ScopedTextSizeAdjustImprovementsForTest {
+class TextAutosizerSimTest : public SimTest {
  public:
-  TextAutosizerSimTest()
-      : ScopedTextSizeAdjustImprovementsForTest(GetParam()) {}
+  TextAutosizerSimTest() {}
 
  private:
   void SetUp() override {
@@ -1234,12 +1105,11 @@ class TextAutosizerSimTest : public SimTest,
     Settings& settings = WebView().GetPage()->GetSettings();
     settings.SetTextAutosizingEnabled(true);
     settings.SetTextAutosizingWindowSizeOverride(gfx::Size(400, 400));
+    settings.SetDeviceScaleAdjustment(1.5f);
   }
 };
 
-INSTANTIATE_TEST_SUITE_P(All, TextAutosizerSimTest, testing::Bool());
-
-TEST_P(TextAutosizerSimTest, CrossSiteUseCounter) {
+TEST_F(TextAutosizerSimTest, CrossSiteUseCounter) {
   WebView().MainFrameViewWidget()->Resize(gfx::Size(800, 800));
 
   SimRequest main_resource("https://example.com/", "text/html");
@@ -1269,6 +1139,54 @@ TEST_P(TextAutosizerSimTest, CrossSiteUseCounter) {
 
   EXPECT_TRUE(
       child_doc->IsUseCounted(WebFeature::kTextAutosizedCrossSiteIframe));
+}
+
+TEST_F(TextAutosizerSimTest, ViewportChangesUpdateAutosizing) {
+  if (!RuntimeEnabledFeatures::ViewportChangesUpdateTextAutosizingEnabled()) {
+    GTEST_SKIP();
+  }
+
+  SimRequest main_resource("https://example.com/", "text/html");
+  LoadURL("https://example.com/");
+  main_resource.Complete(R"HTML(
+    <meta>
+    <style>
+      html { font-size: 16px; }
+      body { width: 320px; margin: 0; overflow-y: hidden; }
+    </style>
+    <div>
+      Lorem ipsum dolor sit amet, consectetur adipisicing elit, sed do
+      eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim
+      ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut
+      aliquip ex ea commodo consequat. Duis aute irure dolor in
+      reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla
+      pariatur. Excepteur sint occaecat cupidatat non proident, sunt in
+      culpa qui officia deserunt mollit anim id est laborum.
+    </div>
+  )HTML");
+
+  Compositor().BeginFrame();
+  test::RunPendingTasks();
+
+  EXPECT_FALSE(GetDocument()
+                   .GetViewportData()
+                   .GetViewportDescription()
+                   .IsSpecifiedByAuthor());
+
+  // The page should autosize because a meta viewport is not specified.
+  auto* div = GetDocument().QuerySelector(AtomicString("div"));
+  EXPECT_FLOAT_EQ(18.f, div->GetLayoutObject()->StyleRef().ComputedFontSize());
+
+  Element* meta = GetDocument().QuerySelector(AtomicString("meta"));
+  meta->setAttribute(html_names::kNameAttr, AtomicString("viewport"));
+  meta->setAttribute(html_names::kContentAttr,
+                     AtomicString("width=device-width"));
+
+  Compositor().BeginFrame();
+  test::RunPendingTasks();
+
+  // The page should no longer autosize because a meta viewport is specified.
+  EXPECT_FLOAT_EQ(16.f, div->GetLayoutObject()->StyleRef().ComputedFontSize());
 }
 
 }  // namespace blink

@@ -1,7 +1,6 @@
-# Copyright 2021 The Chromium Authors
+# Copyright 2025 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
-
 """Rewrite incompatible default symbols in glibc.
 """
 
@@ -11,7 +10,7 @@ import subprocess
 # This constant comes from the oldest glibc version in
 # //chrome/installer/linux/debian/dist_package_versions.json and
 # //chrome/installer/linux/rpm/dist_package_provides.json
-MAX_ALLOWED_GLIBC_VERSION = [2, 28]
+MAX_ALLOWED_GLIBC_VERSION = [2, 26]
 
 VERSION_PATTERN = re.compile("GLIBC_([0-9\.]+)")
 SECTION_PATTERN = re.compile(r"^ *\[ *[0-9]+\] +(\S+) +\S+ + ([0-9a-f]+) .*$")

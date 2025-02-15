@@ -35,8 +35,6 @@ const verboseDebugReportsUrl =
 const aggregatableDebugReportsUrl =
     '/.well-known/attribution-reporting/debug/report-aggregate-debug';
 
-const attributionDebugCookie = 'ar_debug=1;Secure;HttpOnly;SameSite=None;Path=/';
-
 const pipeHeaderPattern = /[,)]/g;
 
 // , and ) in pipe values must be escaped with \
@@ -65,6 +63,23 @@ const resetRegisteredSources = () => {
   return fetch(`${blankURL()}?clear-stash=true`);
 }
 
+function prepareAnchorOrArea(tag, referrerPolicy, eligible, url) {
+  const el = document.createElement(tag);
+  el.referrerPolicy = referrerPolicy;
+  el.target = '_blank';
+  el.textContent = 'link';
+  if (eligible === null) {
+    el.attributionSrc = url;
+    el.href = blankURL();
+  } else {
+    el.attributionSrc = '';
+    el.href = url;
+  }
+  return el;
+}
+
+let nextMapId = 0;
+
 /**
  * Method to clear the stash. Takes the URL as parameter. This could be for
  * event-level or aggregatable reports.
@@ -86,7 +101,7 @@ const redirectReportsTo = origin => {
     ]);
 };
 
-const getFetchParams = (origin, cookie) => {
+const getFetchParams = (origin) => {
   let credentials;
   const headers = [];
 
@@ -95,25 +110,10 @@ const getFetchParams = (origin, cookie) => {
   }
 
   // https://fetch.spec.whatwg.org/#http-cors-protocol
-
-  const allowOriginHeader = 'Access-Control-Allow-Origin';
-
-  if (cookie) {
-    credentials = 'include';
-    headers.push({
-      name: 'Access-Control-Allow-Credentials',
-      value: 'true',
-    });
-    headers.push({
-      name: allowOriginHeader,
-      value: `${location.origin}`,
-    });
-  } else {
-    headers.push({
-      name: allowOriginHeader,
-      value: '*',
-    });
-  }
+  headers.push({
+    name: 'Access-Control-Allow-Origin',
+    value: '*',
+  });
   return {credentials, headers};
 };
 
@@ -127,7 +127,7 @@ const createRedirectChain = (redirects) => {
   let redirectTo;
 
   for (let i = redirects.length - 1; i >= 0; i--) {
-    const {source, trigger, cookie, reportingOrigin} = redirects[i];
+    const {source, trigger, reportingOrigin} = redirects[i];
     const headers = [];
 
     if (source) {
@@ -142,10 +142,6 @@ const createRedirectChain = (redirects) => {
         name: 'Attribution-Reporting-Register-Trigger',
         value: JSON.stringify(trigger),
       });
-    }
-
-    if (cookie) {
-      headers.push({name: 'Set-Cookie', value: cookie});
     }
 
     let status;
@@ -166,10 +162,9 @@ const registerAttributionSrcByImg = (attributionSrc) => {
   element.attributionSrc = attributionSrc;
 };
 
-const registerAttributionSrc = async ({
+const registerAttributionSrc = ({
   source,
   trigger,
-  cookie,
   method = 'img',
   extraQueryParams = {},
   reportingOrigin,
@@ -200,14 +195,9 @@ const registerAttributionSrc = async ({
     });
   }
 
-  if (cookie) {
-    const name = 'Set-Cookie';
-    headers.push({name, value: cookie});
-  }
-
   let credentials;
   if (method === 'fetch') {
-    const params = getFetchParams(reportingOrigin, cookie);
+    const params = getFetchParams(reportingOrigin);
     credentials = params.credentials;
     headers = headers.concat(params.headers);
   }
@@ -220,55 +210,51 @@ const registerAttributionSrc = async ({
       .forEach(([key, value]) => url.searchParams.set(key, value));
 
   switch (method) {
-    case 'img':
+    case 'img': {
       const img = document.createElement('img');
       img.referrerPolicy = referrerPolicy;
       if (eligible === null) {
         img.attributionSrc = url;
       } else {
-        await new Promise(resolve => {
-          img.onload = resolve;
-          // Since the resource being fetched isn't a valid image, onerror will
-          // be fired, but the browser will still process the
-          // attribution-related headers, so resolve the promise instead of
-          // rejecting.
-          img.onerror = resolve;
-          img.attributionSrc = '';
-          img.src = url;
-        });
+        img.attributionSrc = '';
+        img.src = url;
       }
       return 'event';
+    }
     case 'script':
       const script = document.createElement('script');
       script.referrerPolicy = referrerPolicy;
       if (eligible === null) {
         script.attributionSrc = url;
       } else {
-        await new Promise(resolve => {
-          script.onload = resolve;
-          script.attributionSrc = '';
-          script.src = url;
-          document.body.appendChild(script);
-        });
+        script.attributionSrc = '';
+        script.src = url;
+        document.body.appendChild(script);
       }
       return 'event';
     case 'a':
-      const a = document.createElement('a');
-      a.referrerPolicy = referrerPolicy;
-      a.target = '_blank';
-      a.textContent = 'link';
-      if (eligible === null) {
-        a.attributionSrc = url;
-        a.href = blankURL();
-      } else {
-        a.attributionSrc = '';
-        a.href = url;
-      }
+      const a = prepareAnchorOrArea('a', referrerPolicy, eligible, url);
       document.body.appendChild(a);
-      await test_driver.click(a);
+      test_driver.click(a);
       return 'navigation';
+    case 'area': {
+      const area = prepareAnchorOrArea('area', referrerPolicy, eligible, url);
+      const size = 100;
+      area.coords = `0,0,${size},${size}`;
+      area.shape = 'rect';
+      const map = document.createElement('map');
+      map.name = `map-${nextMapId++}`;
+      map.append(area);
+      const img = document.createElement('img');
+      img.width = size;
+      img.height = size;
+      img.useMap = `#${map.name}`;
+      document.body.append(map, img);
+      test_driver.click(area);
+      return 'navigation';
+    }
     case 'open':
-      await test_driver.bless('open window', () => {
+      test_driver.bless('open window', () => {
         const feature = referrerPolicy === 'no-referrer' ? 'noreferrer' : '';
         if (eligible === null) {
           open(
@@ -284,20 +270,16 @@ const registerAttributionSrc = async ({
       if (eligible !== null) {
         attributionReporting = JSON.parse(eligible);
       }
-      await fetch(url, {credentials, attributionReporting, referrerPolicy});
+      fetch(url, {credentials, attributionReporting, referrerPolicy});
       return 'event';
     }
     case 'xhr':
-      await new Promise((resolve, reject) => {
-        const req = new XMLHttpRequest();
-        req.open('GET', url);
-        if (eligible !== null) {
-          req.setAttributionReporting(JSON.parse(eligible));
-        }
-        req.onload = resolve;
-        req.onerror = () => reject(req.statusText);
-        req.send();
-      });
+      const req = new XMLHttpRequest();
+      req.open('GET', url);
+      if (eligible !== null) {
+        req.setAttributionReporting(JSON.parse(eligible));
+      }
+      req.send();
       return 'event';
     default:
       throw `unknown method "${method}"`;

@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/354829279): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "ui/gfx/geometry/transform_operation.h"
 
 #include <algorithm>
@@ -168,8 +173,7 @@ bool TransformOperation::ApproximatelyEqual(const TransformOperation& other,
     case TransformOperation::TRANSFORM_OPERATION_IDENTITY:
       return other.matrix.IsIdentity();
   }
-  NOTREACHED_IN_MIGRATION();
-  return false;
+  NOTREACHED();
 }
 
 bool TransformOperation::BlendTransformOperations(
@@ -517,8 +521,7 @@ bool TransformOperation::BlendedBoundsForBox(const gfx::BoxF& box,
     case TransformOperation::TRANSFORM_OPERATION_MATRIX:
       return false;
   }
-  NOTREACHED_IN_MIGRATION();
-  return false;
+  NOTREACHED();
 }
 
 }  // namespace gfx

@@ -56,8 +56,7 @@ ChromeExtensionsClient::ChromeExtensionsClient() {
   AddAPIProvider(std::make_unique<CoreExtensionsAPIProvider>());
 }
 
-ChromeExtensionsClient::~ChromeExtensionsClient() {
-}
+ChromeExtensionsClient::~ChromeExtensionsClient() = default;
 
 void ChromeExtensionsClient::Initialize() {
   // Set up the scripting allowlist.
@@ -74,6 +73,8 @@ void ChromeExtensionsClient::InitializeWebStoreUrls(
     base::CommandLine* command_line) {
   if (command_line->HasSwitch(switches::kAppsGalleryURL)) {
     webstore_base_url_ =
+        GURL(command_line->GetSwitchValueASCII(switches::kAppsGalleryURL));
+    new_webstore_base_url_ =
         GURL(command_line->GetSwitchValueASCII(switches::kAppsGalleryURL));
   } else {
     webstore_base_url_ = GURL(extension_urls::kChromeWebstoreBaseURL);

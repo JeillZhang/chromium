@@ -6,10 +6,13 @@
 
 #include <string>
 
+#include "base/base64url.h"
 #include "base/check.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/important_file_writer.h"
+#include "base/hash/sha1.h"
+#include "base/logging.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/strings/string_util.h"
 #include "chrome/updater/updater_branding.h"
@@ -23,13 +26,28 @@ constexpr char kEnrollmentTokenFilePath[] =
 constexpr char kDmTokenFilePath[] =
     "/opt/" COMPANY_SHORTNAME_STRING "/" PRODUCT_FULLNAME_STRING
     "/CloudManagement";
+constexpr int kExpectedMachineIdSize = 32;
 
-std::string GetMachineId() {
+// Determines the CBE DeviceID derived from /etc/machine-id as implemented by
+// |BrowserDMTokenStorageLinux::InitClientId|.
+std::string DetermineDeviceID() {
   std::string machine_id;
   if (!base::ReadFileToString(base::FilePath("/etc/machine-id"), &machine_id)) {
     return std::string();
   }
-  return machine_id;
+
+  std::string_view trimmed_machine_id =
+      base::TrimWhitespaceASCII(machine_id, base::TRIM_TRAILING);
+  if (trimmed_machine_id.size() != kExpectedMachineIdSize) {
+    VLOG(1) << "Error: /etc/machine-id contains " << trimmed_machine_id.size()
+            << " characters (" << kExpectedMachineIdSize << " were expected).";
+    return std::string();
+  }
+
+  std::string device_id;
+  base::Base64UrlEncode(base::SHA1HashString(trimmed_machine_id),
+                        base::Base64UrlEncodePolicy::OMIT_PADDING, &device_id);
+  return device_id;
 }
 
 // Reads a token from the given file. Returns the empty string if the file could
@@ -55,7 +73,6 @@ class TokenService : public TokenServiceInterface {
                                              : dm_token_path),
         enrollment_token_(LoadTokenFromFile(enrollment_token_path_)),
         dm_token_(LoadTokenFromFile(dm_token_path_)) {}
-  ~TokenService() override = default;
 
   // Overrides for TokenServiceInterface.
   std::string GetDeviceID() const override { return device_id_; }
@@ -80,7 +97,10 @@ class TokenService : public TokenServiceInterface {
     return true;
   }
 
-  std::string GetEnrollmentToken() const override { return enrollment_token_; }
+  std::string GetEnrollmentToken() const override {
+    enrollment_token_ = LoadTokenFromFile(enrollment_token_path_);
+    return enrollment_token_;
+  }
 
   bool StoreDmToken(const std::string& dm_token) override {
     if (!WriteContentToGlobalReadableFile(dm_token_path_, dm_token)) {
@@ -98,30 +118,34 @@ class TokenService : public TokenServiceInterface {
     return true;
   }
 
-  std::string GetDmToken() const override { return dm_token_; }
+  std::string GetDmToken() const override {
+    dm_token_ = LoadTokenFromFile(dm_token_path_);
+    return dm_token_;
+  }
 
  private:
   // Cached values in memory.
-  const std::string device_id_ = GetMachineId();
+  const std::string device_id_ = DetermineDeviceID();
   const base::FilePath enrollment_token_path_;
   const base::FilePath dm_token_path_;
-  std::string enrollment_token_;
-  std::string dm_token_;
+  mutable std::string enrollment_token_;
+  mutable std::string dm_token_;
 };
 
-DMStorage::DMStorage(const base::FilePath& policy_cache_root,
-                     const base::FilePath& enrollment_token_path,
-                     const base::FilePath& dm_token_path)
-    : DMStorage(policy_cache_root,
-                std::make_unique<TokenService>(enrollment_token_path,
-                                               dm_token_path)) {}
+scoped_refptr<DMStorage> CreateDMStorage(
+    const base::FilePath& policy_cache_root,
+    const base::FilePath& enrollment_token_path,
+    const base::FilePath& dm_token_path) {
+  return CreateDMStorage(
+      policy_cache_root,
+      std::make_unique<TokenService>(enrollment_token_path, dm_token_path));
+}
 
 scoped_refptr<DMStorage> GetDefaultDMStorage() {
-  return base::MakeRefCounted<DMStorage>(
-      base::FilePath("/opt")
-          .AppendASCII(COMPANY_SHORTNAME_STRING)
-          .AppendASCII(PRODUCT_FULLNAME_STRING)
-          .AppendASCII("DeviceManagement"));
+  return CreateDMStorage(base::FilePath("/opt")
+                             .AppendASCII(COMPANY_SHORTNAME_STRING)
+                             .AppendASCII(PRODUCT_FULLNAME_STRING)
+                             .AppendASCII("DeviceManagement"));
 }
 
 }  // namespace device_management_storage

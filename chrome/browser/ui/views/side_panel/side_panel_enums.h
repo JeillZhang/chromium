@@ -12,7 +12,6 @@
 enum class SidePanelOpenTrigger {
   kToolbarButton = 0,
   kMinValue = kToolbarButton,
-  kLensContextMenu = 1,
   kSideSearchPageAction = 2,
   kNotesInPageContextMenu = 3,
   kComboboxSelected = 4,
@@ -30,7 +29,9 @@ enum class SidePanelOpenTrigger {
   kReadAnythingNavigationThrottle = 16,
   kOverflowMenu = 17,
   kExtension = 18,
-  kMaxValue = kExtension,
+  kNewTabPage = 19,
+  kReadingListToast = 20,
+  kMaxValue = kReadingListToast,
 };
 
 enum class SidePanelContentState {
@@ -45,6 +46,14 @@ enum class SidePanelContentState {
   kShowImmediately = 2,
   // Side panel content should be hidden immediately with no animations.
   kHideImmediately = 3,
+};
+
+enum class SidePanelEntryHideReason {
+  // Side panel entry was hidden because the side panel was closed.
+  kSidePanelClosed = 0,
+  // Side panel entry was hidden because another entry was loaded into the
+  // side panel.
+  kReplaced = 1,
 };
 
 #endif  // CHROME_BROWSER_UI_VIEWS_SIDE_PANEL_SIDE_PANEL_ENUMS_H_

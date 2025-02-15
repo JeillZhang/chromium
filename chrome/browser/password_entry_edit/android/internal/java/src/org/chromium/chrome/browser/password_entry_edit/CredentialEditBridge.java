@@ -9,15 +9,17 @@ import android.content.Context;
 import androidx.annotation.Nullable;
 
 import org.jni_zero.CalledByNative;
+import org.jni_zero.JniType;
 import org.jni_zero.NativeMethods;
 
 import org.chromium.chrome.browser.password_entry_edit.CredentialEditCoordinator.CredentialActionDelegate;
 import org.chromium.chrome.browser.password_entry_edit.CredentialEditCoordinator.UiDismissalHandler;
-import org.chromium.components.browser_ui.settings.SettingsLauncher;
+import org.chromium.chrome.browser.settings.SettingsNavigationFactory;
+import org.chromium.components.browser_ui.settings.SettingsNavigation;
 
 /**
- * Class mediating the communication between the credential edit UI and the C++ part responsible
- * for saving the changes.
+ * Class mediating the communication between the credential edit UI and the C++ part responsible for
+ * saving the changes.
  */
 class CredentialEditBridge implements UiDismissalHandler, CredentialActionDelegate {
     private static CredentialEditBridge sCredentialEditBridge;
@@ -28,8 +30,6 @@ class CredentialEditBridge implements UiDismissalHandler, CredentialActionDelega
     static @Nullable CredentialEditBridge get() {
         return sCredentialEditBridge;
     }
-
-    private CredentialEditBridge(long nativeCredentialEditBridge) {}
 
     private CredentialEditBridge() {}
 
@@ -45,19 +45,20 @@ class CredentialEditBridge implements UiDismissalHandler, CredentialActionDelega
     void initAndLaunchUi(
             long nativeCredentialEditBridge,
             Context context,
-            SettingsLauncher settingsLauncher,
             boolean isBlockedCredential,
             boolean isFederatedCredential) {
         mNativeCredentialEditBridge = nativeCredentialEditBridge;
+        SettingsNavigation settingsNavigation =
+                SettingsNavigationFactory.createSettingsNavigation();
         if (isBlockedCredential) {
-            settingsLauncher.launchSettingsActivity(context, BlockedCredentialFragmentView.class);
+            settingsNavigation.startSettings(context, BlockedCredentialFragmentView.class);
             return;
         }
         if (isFederatedCredential) {
-            settingsLauncher.launchSettingsActivity(context, FederatedCredentialFragmentView.class);
+            settingsNavigation.startSettings(context, FederatedCredentialFragmentView.class);
             return;
         }
-        settingsLauncher.launchSettingsActivity(context, CredentialEditFragmentView.class);
+        settingsNavigation.startSettings(context, CredentialEditFragmentView.class);
     }
 
     public void initialize(CredentialEditCoordinator coordinator) {
@@ -71,10 +72,10 @@ class CredentialEditBridge implements UiDismissalHandler, CredentialActionDelega
 
     @CalledByNative
     void setCredential(
-            String displayUrlOrAppName,
-            String username,
-            String password,
-            String displayFederationOrigin,
+            @JniType("std::u16string") String displayUrlOrAppName,
+            @JniType("std::u16string") String username,
+            @JniType("std::u16string") String password,
+            @JniType("std::u16string") String displayFederationOrigin,
             boolean isInsecureCredential) {
         mCoordinator.setCredential(
                 displayUrlOrAppName,
@@ -94,7 +95,7 @@ class CredentialEditBridge implements UiDismissalHandler, CredentialActionDelega
     @Override
     public void onUiDismissed() {
         if (mNativeCredentialEditBridge != 0) {
-            CredentialEditBridgeJni.get().onUIDismissed(mNativeCredentialEditBridge);
+            CredentialEditBridgeJni.get().onUiDismissed(mNativeCredentialEditBridge);
         }
         mNativeCredentialEditBridge = 0;
         sCredentialEditBridge = null;
@@ -124,10 +125,13 @@ class CredentialEditBridge implements UiDismissalHandler, CredentialActionDelega
 
         void getExistingUsernames(long nativeCredentialEditBridge);
 
-        void saveChanges(long nativeCredentialEditBridge, String username, String password);
+        void saveChanges(
+                long nativeCredentialEditBridge,
+                @JniType("std::u16string") String username,
+                @JniType("std::u16string") String password);
 
         void deleteCredential(long nativeCredentialEditBridge);
 
-        void onUIDismissed(long nativeCredentialEditBridge);
+        void onUiDismissed(long nativeCredentialEditBridge);
     }
 }

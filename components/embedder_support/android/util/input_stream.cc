@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "components/embedder_support/android/util/input_stream.h"
 
 #include "base/android/jni_android.h"
@@ -49,7 +54,7 @@ int InputStream::GetIntermediateBufferSize() {
 // TODO: Use unsafe version for all Java_InputStream methods in this file
 // once BUG 157880 is fixed and implement graceful exception handling.
 
-InputStream::InputStream() {}
+InputStream::InputStream() = default;
 
 InputStream::InputStream(const JavaRef<jobject>& stream) : jobject_(stream) {
   DCHECK(stream);

@@ -13,7 +13,7 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/dawn/include/dawn/dawn_proc.h"
-#include "third_party/skia/include/gpu/GrBackendSurface.h"
+#include "third_party/skia/include/gpu/ganesh/GrBackendSurface.h"
 
 namespace gpu {
 
@@ -27,9 +27,11 @@ class SharedImageRepresentationTest : public ::testing::Test {
     auto color_space = gfx::ColorSpace::CreateSRGB();
     auto surface_origin = kTopLeft_GrSurfaceOrigin;
     auto alpha_type = kPremul_SkAlphaType;
-    uint32_t usage =
-        SHARED_IMAGE_USAGE_GLES2_READ | SHARED_IMAGE_USAGE_GLES2_WRITE;
-
+    // Add the usages that the tests in this file require.
+    SharedImageUsageSet usage = {
+        SHARED_IMAGE_USAGE_GLES2_READ,   SHARED_IMAGE_USAGE_GLES2_WRITE,
+        SHARED_IMAGE_USAGE_RASTER_READ,  SHARED_IMAGE_USAGE_RASTER_WRITE,
+        SHARED_IMAGE_USAGE_WEBGPU_WRITE, SHARED_IMAGE_USAGE_SCANOUT};
     auto backing = std::make_unique<TestImageBacking>(
         mailbox_, format, size, color_space, surface_origin, alpha_type, usage,
         /*estimated_size=*/0);

@@ -31,6 +31,7 @@ enum class PromoCardType {
   kRelauchChrome = 4,
   // Move passwords stored only on this device to the account.
   kMovePasswords = 5,
+  // kScreenlockReauth = 6, Obsolete
   kMaxValue = kMovePasswords,
 };
 

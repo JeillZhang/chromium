@@ -15,7 +15,6 @@
 #include "base/containers/span.h"
 #include "base/memory/raw_ptr.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "components/sync/protocol/webauthn_credential_specifics.pb.h"
 #include "device/fido/cable/cable_discovery_data.h"
 #include "device/fido/cable/v2_constants.h"
@@ -68,14 +67,6 @@ class COMPONENT_EXPORT(DEVICE_FIDO) FidoDiscoveryFactory {
       std::vector<CableDiscoveryData> cable_data,
       const std::optional<std::array<uint8_t, cablev2::kQRKeySize>>&
           qr_generator_key);
-
-  // set_android_accessory_params configures values necessary for discovering
-  // Android AOA devices. The |aoa_request_description| is a string that is sent
-  // to the device to describe the type of request and may appears in
-  // permissions UI on the device.
-  virtual void set_android_accessory_params(
-      mojo::Remote<device::mojom::UsbDeviceManager>,
-      std::string aoa_request_description);
 
   void set_network_context_factory(
       NetworkContextFactory network_context_factory) {
@@ -146,13 +137,6 @@ class COMPONENT_EXPORT(DEVICE_FIDO) FidoDiscoveryFactory {
       CtapGetAssertionRequest request);
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
-  // no_cable_linking requests that QR-linked and pre-linked phones be ignored
-  // for this discovery.
-  //
-  // TODO(crbug.com/40274309): remove this and everything else from the CL that
-  // added it if this is unused by June 2024.
-  bool no_cable_linking = false;
-
  protected:
   static std::vector<std::unique_ptr<FidoDiscoveryBase>> SingleDiscovery(
       std::unique_ptr<FidoDiscoveryBase> discovery);
@@ -167,9 +151,6 @@ class COMPONENT_EXPORT(DEVICE_FIDO) FidoDiscoveryFactory {
   std::optional<fido::mac::AuthenticatorConfig> mac_touch_id_config_;
   uintptr_t nswindow_ = 0;
 #endif  // BUILDFLAG(IS_MAC)
-  std::optional<mojo::Remote<device::mojom::UsbDeviceManager>>
-      usb_device_manager_;
-  std::string aoa_request_description_;
   NetworkContextFactory network_context_factory_;
   std::optional<std::vector<CableDiscoveryData>> cable_data_;
   std::optional<std::array<uint8_t, cablev2::kQRKeySize>> qr_generator_key_;
@@ -185,6 +166,7 @@ class COMPONENT_EXPORT(DEVICE_FIDO) FidoDiscoveryFactory {
       cable_invalidated_pairing_callback_;
   std::optional<base::RepeatingCallback<void(cablev2::Event)>>
       cable_event_callback_;
+  bool cable_must_support_ctap_ = true;
 #if BUILDFLAG(IS_CHROMEOS)
   base::RepeatingCallback<std::string()> generate_request_id_callback_;
   bool require_legacy_cros_authenticator_ = false;

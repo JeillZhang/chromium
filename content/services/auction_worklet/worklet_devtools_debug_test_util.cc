@@ -69,11 +69,10 @@ void TestDevToolsAgentClient::RunCommand(Channel channel,
     crdtp::Status status =
         crdtp::json::ConvertJSONToCBOR(ToSpan(payload), &cbor);
     CHECK(status.ok()) << status.Message();
-    message = base::span<const uint8_t>(cbor.data(), cbor.size());
+    message = base::as_byte_span(cbor);
   } else {
     // Keep it JSON.
-    message = base::span<const uint8_t>(
-        reinterpret_cast<const uint8_t*>(payload.data()), payload.size());
+    message = base::as_byte_span(payload);
   }
 
   if (channel == Channel::kMain)

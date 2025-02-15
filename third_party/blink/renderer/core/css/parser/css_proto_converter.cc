@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/core/css/parser/css_proto_converter.h"
 #include <string>
 
@@ -45,7 +50,7 @@ const std::string Converter::kPseudoLookupTable[] = {
     "-internal-media-controls-overlay-cast-button",
     "-internal-multi-select-focus",
     "-internal-popover-in-top-layer",
-    "-internal-shadow-host-has-appearance",
+    "-internal-shadow-host-has-non-auto-appearance",
     "-internal-spatial-navigation-focus",
     "-internal-video-persistent",
     "-internal-video-persistent-ancestor",
@@ -90,6 +95,8 @@ const std::string Converter::kPseudoLookupTable[] = {
     "focus-within",
     "fullscreen",
     "future",
+    "has-interest",
+    "has-slotted",
     "horizontal",
     "host",
     "hover",
@@ -369,7 +376,7 @@ void Converter::Visit(const Length& length) {
   } else if (length.unit() == Length::PC) {
     string_ += "pc";
   } else {
-    NOTREACHED_IN_MIGRATION();
+    NOTREACHED();
   }
 }
 
@@ -382,7 +389,7 @@ void Converter::Visit(const Angle& angle) {
   } else if (angle.unit() == Angle::GRAD) {
     string_ += "grad";
   } else {
-    NOTREACHED_IN_MIGRATION();
+    NOTREACHED();
   }
 }
 
@@ -393,7 +400,7 @@ void Converter::Visit(const Time& time) {
   } else if (time.unit() == Time::S) {
     string_ += "s";
   } else {
-    NOTREACHED_IN_MIGRATION();
+    NOTREACHED();
   }
 }
 
@@ -405,7 +412,7 @@ void Converter::Visit(const Freq& freq) {
   } else if (freq.unit() == Freq::KHZ) {
     string_ += "kHz";
   } else {
-    NOTREACHED_IN_MIGRATION();
+    NOTREACHED();
   }
 }
 

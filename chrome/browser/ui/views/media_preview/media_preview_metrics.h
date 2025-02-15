@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_UI_VIEWS_MEDIA_PREVIEW_MEDIA_PREVIEW_METRICS_H_
 
 #include "base/time/time.h"
+#include "media/capture/video_capture_types.h"
 
 namespace media_preview_metrics {
 
@@ -45,7 +46,17 @@ void RecordPreviewVideoExpectedFPS(const Context& context, int expected_fps);
 void RecordPreviewVideoActualFPS(const Context& context, int actual_fps);
 void RecordPreviewVideoFramesRenderedPercent(const Context& context,
                                              float percent);
+void RecordTotalVisiblePreviewDuration(const Context& context,
+                                       const base::TimeDelta& delta);
+void RecordTimeToActionWithoutPreview(const Context& context,
+                                      const base::TimeDelta& delta);
+void RecordPreviewDelayTime(const Context& context,
+                            const base::TimeDelta& delta);
+
 void RecordOriginTrialAllowed(UiLocation location, bool allowed);
+
+void RecordVideoCaptureError(const Context& context,
+                             media::VideoCaptureError received_error);
 
 }  // namespace media_preview_metrics
 

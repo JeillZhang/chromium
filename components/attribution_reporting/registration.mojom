@@ -87,6 +87,10 @@ struct TriggerSpecs {
 
   // Keys are trigger data. Values are indices into `specs`.
   map<uint32, uint8> trigger_data_indices;
+
+  // Specifies how many event-level reports can be generated across all trigger
+  // specs for the source.
+  int32 max_event_level_reports;
 };
 
 // Aggregatable contribution for aggregatable debug types.
@@ -109,6 +113,30 @@ struct SourceAggregatableDebugReportingConfig {
   AggregatableDebugReportingConfig config;
 };
 
+// Target identifiers used for pre-attribution filtering.
+struct AttributionScopesSet {
+  array<string> scopes;
+};
+
+// Configuration for attribution scopes.
+struct AttributionScopesData {
+  AttributionScopesSet attribution_scopes_set;
+
+  // Represents the number of distinct attribution scopes allowed per
+  // destination for a source's reporting origin.
+  uint32 attribution_scope_limit;
+
+  // Represents the maximum number of trigger states for an event source type
+  // sources per destination for a source's reporting origin.
+  uint32 max_event_states;
+};
+
+// Defines aggregatable names and their associated budget for a trigger to
+// selectively contribute to.
+struct AggregatableNamedBudgetDefs {
+  map<string, int32> budgets;
+};
+
 struct SourceRegistration {
   DestinationSet destinations;
 
@@ -123,9 +151,6 @@ struct SourceRegistration {
   // Specifies how long after source registration an aggregatable
   // report can be generated with this source.
   mojo_base.mojom.TimeDelta aggregatable_report_window;
-
-  // Specifies how many event-level reports can be generated with this source.
-  int32 max_event_level_reports;
 
   // Priority for this source.
   int64 priority = 0;
@@ -151,6 +176,19 @@ struct SourceRegistration {
 
   // Specifies aggregatable debug reporting configuration.
   SourceAggregatableDebugReportingConfig aggregatable_debug_reporting_config;
+
+  // Specifies the priority of the destination in regards to source destination
+  // limit.
+  int64 destination_limit_priority;
+
+  // Controls the scopes the source can be attributed to along with the amount
+  // limit of scopes and the max number of event states. Logic pertaining to
+  // scopes are ignored if this field is null.
+  AttributionScopesData? attribution_scopes_data;
+
+  // Specifies how the aggregatable budget should be allocated across specified
+  // names for triggers to selectively contribute to.
+  AggregatableNamedBudgetDefs aggregatable_named_budget_defs;
 };
 
 // Mojo representation of the trigger configuration provided by a reporting
@@ -181,9 +219,24 @@ struct AggregatableDedupKey {
   FilterPair filters;
 };
 
+struct AggregatableValuesValue {
+  uint32 value;
+  uint64 filtering_id;
+};
+
 struct AggregatableValues {
-  // A map of aggregation key identifier and the corresponding value.
-  map<string, uint32> values;
+  // A map of aggregation key identifier and the corresponding aggregatable
+  // values value.
+  map<string, AggregatableValuesValue> values;
+
+  FilterPair filters;
+};
+
+struct AggregatableNamedBudgetCandidate {
+  // Name to allocate budget towards as specified by the source registration. If
+  // no name is provided the trigger's contribution will subtract from the total
+  // budget.
+  string? name;
 
   FilterPair filters;
 };
@@ -229,8 +282,18 @@ struct TriggerRegistration {
   // cannot be empty or longer than 64 bytes.
   string? trigger_context_id;
 
+  // Specifies the maximum size of filtering ids within `aggregatable_values`.
+  uint8 aggregatable_filtering_id_max_bytes;
+
   // Specifies the aggregatable debug reporting configuration.
   AggregatableDebugReportingConfig aggregatable_debug_reporting_config;
+
+  // Specifies the scopes that this trigger can attribute to.
+  AttributionScopesSet attribution_scopes;
+
+  // List of all aggregatable named budgets for matching with source side
+  // budgets to contribute to.
+  array<AggregatableNamedBudgetCandidate> aggregatable_named_budget_candidates;
 };
 
 // Represents a source or trigger registration item that will be passed to the OS, if supported.

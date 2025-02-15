@@ -13,6 +13,7 @@
 #include "base/functional/bind.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/not_fatal_until.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/test_file_util.h"
@@ -42,10 +43,22 @@
 #include "chrome/browser/lacros/account_manager/account_profile_mapper.h"
 #endif
 
-const char kGuestProfileName[] = "Guest";
+constexpr char kGuestProfileName[] = "$guest";
 #if !BUILDFLAG(IS_CHROMEOS_ASH) && !BUILDFLAG(IS_ANDROID)
-const char kSystemProfileName[] = "System";
+constexpr char kSystemProfileName[] = "System";
 #endif  // !BUILDFLAG(IS_CHROMEOS_ASH) && !BUILDFLAG(IS_ANDROID)
+
+namespace {
+
+// Adaptor to build TestingProfile in CreateAndInitializeProfile().
+std::unique_ptr<Profile> BuildTestingProfile(
+    TestingProfile::Builder builder,
+    const base::FilePath& profile_dir) {
+  CHECK_EQ(builder.GetPath(), profile_dir);
+  return builder.Build();
+}
+
+}  // namespace
 
 TestingProfileManager::TestingProfileManager(TestingBrowserProcess* process)
     : called_set_up_(false),
@@ -99,6 +112,7 @@ TestingProfile* TestingProfileManager::CreateTestingProfile(
 
   // Create the profile and register it.
   TestingProfile::Builder builder;
+  builder.SetDelegate(profile_manager_.get());
   builder.SetPath(profile_path);
   builder.SetPrefService(std::move(prefs));
   if (is_supervised_profile)
@@ -111,14 +125,14 @@ TestingProfile* TestingProfileManager::CreateTestingProfile(
   builder.SetIsMainProfile(is_main_profile);
 #endif
 
-  builder.AddTestingFactories(testing_factories);
-  testing_factories.clear();
+  builder.AddTestingFactories(std::move(testing_factories));
 
   builder.SetSharedURLLoaderFactory(shared_url_loader_factory);
 
-  std::unique_ptr<TestingProfile> profile = builder.Build();
-  TestingProfile* profile_ptr = profile.get();
-  profile_manager_->AddProfile(std::move(profile));
+  auto* profile_ptr =
+      static_cast<TestingProfile*>(profile_manager_->CreateAndInitializeProfile(
+          profile_path,
+          base::BindOnce(&BuildTestingProfile, std::move(builder))));
 
   // Update the user metadata.
   ProfileAttributesEntry* entry =
@@ -134,6 +148,11 @@ TestingProfile* TestingProfileManager::CreateTestingProfile(
   testing_profiles_.insert(std::make_pair(profile_name, profile_ptr));
   profile_observations_.AddObservation(profile_ptr);
 
+#if BUILDFLAG(IS_CHROMEOS)
+  if (!callback_.is_null()) {
+    callback_.Run(profile_name, profile_ptr);
+  }
+#endif
   return profile_ptr;
 }
 
@@ -160,31 +179,37 @@ TestingProfile* TestingProfileManager::CreateTestingProfile(
       shared_url_loader_factory);
 }
 
-TestingProfile* TestingProfileManager::CreateGuestProfile() {
+TestingProfile* TestingProfileManager::CreateGuestProfile(
+    std::optional<TestingProfile::Builder> builder) {
   DCHECK(called_set_up_);
-
-  // Create the profile and register it.
-  TestingProfile::Builder builder;
-  builder.SetGuestSession();
-  builder.SetPath(ProfileManager::GetGuestProfilePath());
+  if (!builder) {
+    builder = TestingProfile::Builder();
+  }
+  builder->SetGuestSession();
+  builder->SetPath(ProfileManager::GetGuestProfilePath());
+  builder->SetProfileName(kGuestProfileName);
+  builder->SetDelegate(profile_manager_.get());
 
   // Add the guest profile to the profile manager, but not to the attributes
   // storage.
-  std::unique_ptr<TestingProfile> profile = builder.Build();
-  TestingProfile* profile_ptr = profile.get();
-  profile_ptr->set_profile_name(kGuestProfileName);
+  auto* profile_ptr =
+      static_cast<TestingProfile*>(profile_manager_->CreateAndInitializeProfile(
+          ProfileManager::GetGuestProfilePath(),
+          base::BindOnce(&BuildTestingProfile, std::move(*builder))));
 
   // Set up a profile with an off the record profile.
   TestingProfile::Builder off_the_record_builder;
   off_the_record_builder.SetGuestSession();
   off_the_record_builder.BuildIncognito(profile_ptr);
 
-  profile_manager_->AddProfile(std::move(profile));
-  profile_manager_->SetNonPersonalProfilePrefs(profile_ptr);
-
   testing_profiles_.insert(std::make_pair(kGuestProfileName, profile_ptr));
   profile_observations_.AddObservation(profile_ptr);
 
+#if BUILDFLAG(IS_CHROMEOS)
+  if (!callback_.is_null()) {
+    callback_.Run(kGuestProfileName, profile_ptr);
+  }
+#endif
   return profile_ptr;
 }
 
@@ -194,17 +219,19 @@ TestingProfile* TestingProfileManager::CreateSystemProfile() {
 
   // Create the profile and register it.
   TestingProfile::Builder builder;
+  builder.SetDelegate(profile_manager_.get());
   builder.SetPath(ProfileManager::GetSystemProfilePath());
+  builder.SetProfileName(kSystemProfileName);
 
   // Add the system profile to the profile manager, but not to the attributes
   // storage.
-  std::unique_ptr<TestingProfile> profile = builder.Build();
-  TestingProfile* profile_ptr = profile.get();
-  profile_ptr->set_profile_name(kSystemProfileName);
-
-  profile_manager_->AddProfile(std::move(profile));
+  auto* profile_ptr =
+      static_cast<TestingProfile*>(profile_manager_->CreateAndInitializeProfile(
+          ProfileManager::GetSystemProfilePath(),
+          base::BindOnce(&BuildTestingProfile, std::move(builder))));
 
   testing_profiles_.insert(std::make_pair(kSystemProfileName, profile_ptr));
+  profile_observations_.AddObservation(profile_ptr);
 
   return profile_ptr;
 }
@@ -250,7 +277,7 @@ void TestingProfileManager::DeleteGuestProfile() {
   DCHECK(called_set_up_);
 
   auto it = testing_profiles_.find(kGuestProfileName);
-  DCHECK(it != testing_profiles_.end());
+  CHECK(it != testing_profiles_.end(), base::NotFatalUntil::M130);
 
   profile_manager_->profiles_info_.erase(ProfileManager::GetGuestProfilePath());
 }
@@ -260,7 +287,7 @@ void TestingProfileManager::DeleteSystemProfile() {
   DCHECK(called_set_up_);
 
   auto it = testing_profiles_.find(kSystemProfileName);
-  DCHECK(it != testing_profiles_.end());
+  CHECK(it != testing_profiles_.end(), base::NotFatalUntil::M130);
 
   profile_manager_->profiles_info_.erase(
       ProfileManager::GetSystemProfilePath());
@@ -269,12 +296,6 @@ void TestingProfileManager::DeleteSystemProfile() {
 
 void TestingProfileManager::DeleteProfileAttributesStorage() {
   profile_manager_->profile_attributes_storage_.reset(nullptr);
-}
-
-void TestingProfileManager::UpdateLastUser(Profile* last_active) {
-#if !BUILDFLAG(IS_ANDROID)
-  profile_manager_->UpdateLastUser(last_active);
-#endif
 }
 
 base::FilePath TestingProfileManager::GetProfilePath(

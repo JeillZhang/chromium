@@ -2,15 +2,22 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #include "extensions/renderer/native_extension_bindings_system.h"
 
 #include <string_view>
 #include <utility>
 
 #include "base/command_line.h"
+#include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/not_fatal_until.h"
 #include "base/strings/stringprintf.h"
 #include "base/trace_event/typed_macros.h"
 #include "base/tracing/protos/chrome_track_event.pbzero.h"
@@ -26,9 +33,12 @@
 #include "extensions/common/manifest_constants.h"
 #include "extensions/common/manifest_handlers/content_capabilities_handler.h"
 #include "extensions/common/manifest_handlers/externally_connectable.h"
+#include "extensions/common/mojom/api_permission_id.mojom.h"
 #include "extensions/common/mojom/context_type.mojom.h"
 #include "extensions/common/mojom/event_dispatcher.mojom.h"
 #include "extensions/common/mojom/frame.mojom.h"
+#include "extensions/common/permissions/permissions_data.h"
+#include "extensions/common/switches.h"
 #include "extensions/common/utils/extension_utils.h"
 #include "extensions/renderer/api_activity_logger.h"
 #include "extensions/renderer/bindings/api_binding_bridge.h"
@@ -52,10 +62,15 @@
 #include "gin/data_object_builder.h"
 #include "gin/handle.h"
 #include "gin/per_context_data.h"
+#include "third_party/blink/public/common/features_generated.h"
 #include "third_party/blink/public/mojom/devtools/console_message.mojom.h"
 #include "third_party/blink/public/mojom/service_worker/service_worker_registration.mojom.h"
+#include "third_party/blink/public/platform/web_runtime_features.h"
+#include "third_party/blink/public/web/modules/ai/web_ai_features.h"
+#include "third_party/blink/public/web/modules/ai/web_ai_language_model.h"
 #include "third_party/blink/public/web/web_document.h"
 #include "third_party/blink/public/web/web_local_frame.h"
+#include "third_party/blink/public/web/web_origin_trials.h"
 #include "v8/include/v8-context.h"
 #include "v8/include/v8-isolate.h"
 #include "v8/include/v8-object.h"
@@ -68,7 +83,10 @@ namespace extensions {
 
 namespace {
 
-const char kBindingsSystemPerContextKey[] = "extension_bindings_system";
+constexpr char kBindingsSystemPerContextKey[] = "extension_bindings_system";
+
+constexpr char kStringNameAIOriginTrial[] = "aiOriginTrial";
+constexpr char kStringNameLanguageModel[] = "languageModel";
 
 // Returns true if the given |api| is a "prefixed" api of the |root_api|; that
 // is, if the api begins with the root.
@@ -166,8 +184,7 @@ BindingsSystemPerContextData* GetBindingsDataFromContext(
       per_context_data->GetUserData(kBindingsSystemPerContextKey));
   CHECK(data);
   if (!data->bindings_system) {
-    NOTREACHED_IN_MIGRATION() << "Context outlived bindings system.";
-    return nullptr;
+    NOTREACHED() << "Context outlived bindings system.";
   }
 
   return data;
@@ -220,7 +237,6 @@ bool ArePromisesAllowed(v8::Local<v8::Context> context) {
     case mojom::ContextType::kUnspecified:
     case mojom::ContextType::kPrivilegedWebPage:
     case mojom::ContextType::kPrivilegedExtension:
-    case mojom::ContextType::kLockscreenExtension:
     case mojom::ContextType::kOffscreenExtension:
     case mojom::ContextType::kUnprivilegedExtension:
     case mojom::ContextType::kUserScript:
@@ -273,7 +289,7 @@ v8::Local<v8::Object> CreateFullBinding(
     const std::string& root_name) {
   const FeatureMap& features = api_feature_provider->GetAllFeatures();
   auto lower = features.lower_bound(root_name);
-  DCHECK(lower != features.end());
+  CHECK(lower != features.end(), base::NotFatalUntil::M130);
 
   // Some bindings have a prefixed name, like app.runtime, where 'app' and
   // 'app.runtime' are, in fact, separate APIs. It's also possible for a
@@ -384,11 +400,11 @@ std::string GetContextOwner(v8::Local<v8::Context> context) {
              : url::Origin::Create(script_context->url()).GetURL().spec();
 }
 
-// Returns true if any portion of the runtime API is available to the given
-// |context|. This is different than just checking features because runtime's
-// availability depends on the installed extensions and the active URL (in the
-// case of extensions communicating with external websites).
-bool IsRuntimeAvailableToContext(ScriptContext* context) {
+// Returns true if the specified `context` needs runtime for messaging APIs.
+// This is different than just checking features because runtime's availability
+// depends on the installed extensions and the active URL (in the case of
+// extensions communicating with external websites).
+bool DoesContextNeedMessagingApis(ScriptContext* context) {
   // TODO(devlin): This doesn't seem thread-safe with ServiceWorkers?
   for (const auto& extension :
        *RendererExtensionRegistry::Get()->GetMainThreadExtensionSet()) {
@@ -404,10 +420,10 @@ bool IsRuntimeAvailableToContext(ScriptContext* context) {
 // The APIs that could potentially be available to webpage-like contexts.
 // This is the list of possible features; most web pages will not have access
 // to these APIs.
-// Note: `runtime` is not included here, since it's handled specially above.
+// Note: `runtime` and `test` may also be available, but are handled specially
+// in UpdateBindingsForContext.
 const char* const kWebAvailableFeatures[] = {
     "app",
-    "dashboardPrivate",
     "webstorePrivate",
     "management",
 };
@@ -430,6 +446,12 @@ bool ShouldCollectJSStackTrace(const APIRequestHandler::Request& request) {
     return false;
   }
   return true;
+}
+
+bool IsPromptAPIEnabledForExtension(v8::Local<v8::Context> v8_context) {
+  return blink::WebAIFeatures::IsPromptAPIEnabledForExtension(v8_context) &&
+         base::FeatureList::IsEnabled(
+             blink::features::kAIPromptAPIForExtension);
 }
 
 }  // namespace
@@ -501,6 +523,12 @@ void NativeExtensionBindingsSystem::DidCreateScriptContext(
   if (context->context_type() == mojom::ContextType::kContentScript) {
     SetScriptingParams(context);
   }
+
+  if (context->context_type() == mojom::ContextType::kPrivilegedExtension) {
+    if (IsPromptAPIEnabledForExtension(v8_context)) {
+      UpdateBindingsForPromptAPI(context);
+    }
+  }
 }
 
 void NativeExtensionBindingsSystem::WillReleaseScriptContext(
@@ -551,7 +579,6 @@ void NativeExtensionBindingsSystem::UpdateBindingsForContext(
       is_webpage = true;
       break;
     case mojom::ContextType::kPrivilegedExtension:
-    case mojom::ContextType::kLockscreenExtension:
     case mojom::ContextType::kOffscreenExtension:
     case mojom::ContextType::kUnprivilegedExtension:
     case mojom::ContextType::kUserScript:
@@ -569,17 +596,44 @@ void NativeExtensionBindingsSystem::UpdateBindingsForContext(
     // TODO(devlin): It could be interesting to apply this same logic to all
     // context types, especially on a given platform. Something to think about
     // for when we generate features.
+    bool is_any_feature_available_to_page = false;
     for (const char* feature_name : kWebAvailableFeatures) {
-      if (context->GetAvailability(feature_name).is_available() &&
-          !set_accessor(feature_name)) {
-        LOG(ERROR) << "Failed to create API on Chrome object.";
-        return;
+      if (context->GetAvailability(feature_name).is_available()) {
+        // chrome.app is exposed to all webpages, we ignore it for this check.
+        if (strcmp(feature_name, "app") != 0) {
+          is_any_feature_available_to_page = true;
+        }
+        if (!set_accessor(feature_name)) {
+          LOG(ERROR) << "Failed to create API on Chrome object.";
+          return;
+        }
       }
     }
 
-    // Runtime is special (see IsRuntimeAvailableToContext()).
-    if (IsRuntimeAvailableToContext(context) && !set_accessor("runtime"))
-      LOG(ERROR) << "Failed to create API on Chrome object.";
+    // The chrome.test API has a special case for web page contexts, where it is
+    // available if the "--ExtensionTestApiOnWebPages" command line flag has
+    // been used.
+    if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+            switches::kExtensionTestApiOnWebPages) &&
+        context->GetAvailability("test").is_available()) {
+      is_any_feature_available_to_page = true;
+      if (!set_accessor("test")) {
+        LOG(ERROR) << "Failed to create API on Chrome object.";
+      }
+    }
+
+    // Runtime is special and needs to be provided in two cases:
+    //  - If any extensions have specified themselves as externally connectable
+    //  from this web page's URL.
+    //  - If any features (other than app) were made available from the above
+    //  checks. We need do do this in order to have runtime.lastError provided
+    //  for reporting errors to API callbacks.
+    if (DoesContextNeedMessagingApis(context) ||
+        is_any_feature_available_to_page) {
+      if (!set_accessor("runtime")) {
+        LOG(ERROR) << "Failed to create API on Chrome object.";
+      }
+    }
 
     UpdateContentCapabilities(context);
     return;
@@ -837,8 +891,7 @@ void NativeExtensionBindingsSystem::GetInternalAPI(
   ScriptContext* script_context = GetScriptContextFromV8ContextChecked(context);
   if (!feature || !script_context->IsAnyFeatureAvailableToContext(
                       *feature, CheckAliasStatus::NOT_ALLOWED)) {
-    NOTREACHED_IN_MIGRATION();
-    return;
+    NOTREACHED();
   }
 
   CHECK(feature->IsInternal());
@@ -1046,6 +1099,43 @@ void NativeExtensionBindingsSystem::SetScriptingParams(ScriptContext* context) {
           gin::StringToSymbol(context->isolate(), "globalParams"),
           gin::DataObjectBuilder(context->isolate()).Build())
       .Check();
+}
+
+void NativeExtensionBindingsSystem::UpdateBindingsForPromptAPI(
+    ScriptContext* context) {
+  v8::Isolate* isolate = context->isolate();
+  v8::HandleScope handle_scope(isolate);
+  v8::Local<v8::Context> v8_context = context->v8_context();
+
+  // If the extension has requested for `kAILanguageModelOriginTrial`
+  // permission, we will set the `chrome.aiOriginTrial.languageModel` as a
+  // mirror of `self.ai.languageModel`.
+  if (!context->extension() ||
+      !context->extension()
+           ->permissions_data()
+           ->active_permissions()
+           .HasAPIPermission(
+               mojom::APIPermissionID::kAILanguageModelOriginTrial)) {
+    return;
+  }
+
+  v8::Local<v8::Object> chrome = GetOrCreateChrome(v8_context);
+
+  // Creates `chrome.aiOriginTrial`.
+  v8::Local<v8::Object> chrome_ai_object = v8::Object::New(isolate);
+  v8::Maybe<bool> success = chrome->CreateDataProperty(
+      v8_context, gin::StringToSymbol(isolate, kStringNameAIOriginTrial),
+      chrome_ai_object);
+  CHECK(success.IsJust() && success.FromJust());
+
+  // Set `chrome.aiOriginTrial.languageModel`.
+  v8::Local<v8::String> language_model_name =
+      gin::StringToSymbol(isolate, kStringNameLanguageModel);
+  v8::Local<v8::Value> language_model_value =
+      blink::WebAILanguageModel::GetAILanguageModelFactory(v8_context, isolate);
+  success = chrome_ai_object->CreateDataProperty(
+      v8_context, language_model_name, language_model_value);
+  CHECK(success.IsJust() && success.FromJust());
 }
 
 }  // namespace extensions

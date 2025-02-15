@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chromeos/components/onc/onc_signature.h"
 
 #include "base/memory/raw_ptr_exclusion.h"
@@ -231,6 +236,7 @@ const OncFieldSignature ipconfig_fields[] = {
     {::onc::ipconfig::kType, &kStringSignature,
      []() { return base::Value(::onc::ipconfig::kIPv4); }},
     {::onc::ipconfig::kWebProxyAutoDiscoveryUrl, &kStringSignature},
+    {::onc::ipconfig::kMTU, &kIntegerSignature},
     {nullptr}};
 
 const OncFieldSignature proxy_location_fields[] = {
@@ -583,8 +589,8 @@ const OncFieldSignature* GetFieldSignature(const OncValueSignature& signature,
 namespace {
 
 struct CredentialEntry {
-  // This field is not a raw_ptr<> because it was filtered by the rewriter
-  // for: #global-scope
+  // This field is not a raw_ptr<> because it only ever points to statically-
+  // allocated data which is never freed, and thus can never dangle.
   RAW_PTR_EXCLUSION const OncValueSignature* value_signature;
   const char* field_name;
 };

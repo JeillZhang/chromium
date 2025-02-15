@@ -22,14 +22,14 @@
 #include "chrome/browser/sync/test/integration/sync_datatype_helper.h"
 #include "chrome/browser/sync/test/integration/sync_test.h"
 #include "chrome/browser/webdata_services/web_data_service_factory.h"
-#include "components/autofill/core/browser/address_data_manager.h"
-#include "components/autofill/core/browser/autofill_test_utils.h"
 #include "components/autofill/core/browser/autofill_type.h"
 #include "components/autofill/core/browser/country_type.h"
+#include "components/autofill/core/browser/data_manager/addresses/address_data_manager.h"
+#include "components/autofill/core/browser/data_manager/payments/payments_data_manager.h"
+#include "components/autofill/core/browser/data_manager/personal_data_manager.h"
+#include "components/autofill/core/browser/data_manager/personal_data_manager_test_utils.h"
 #include "components/autofill/core/browser/data_model/autofill_profile.h"
-#include "components/autofill/core/browser/payments_data_manager.h"
-#include "components/autofill/core/browser/personal_data_manager.h"
-#include "components/autofill/core/browser/personal_data_manager_test_utils.h"
+#include "components/autofill/core/browser/test_utils/autofill_test_utils.h"
 #include "components/autofill/core/browser/webdata/autocomplete/autocomplete_entry.h"
 #include "components/autofill/core/browser/webdata/autocomplete/autocomplete_table.h"
 #include "components/autofill/core/browser/webdata/autofill_webdata_service.h"
@@ -40,7 +40,6 @@ using autofill::AutocompleteChangeList;
 using autofill::AutocompleteEntry;
 using autofill::AutocompleteKey;
 using autofill::AutofillProfile;
-using autofill::AutofillType;
 using autofill::AutofillWebDataService;
 using autofill::AutofillWebDataServiceObserverOnDBSequence;
 using autofill::CreditCard;
@@ -69,7 +68,8 @@ scoped_refptr<AutofillWebDataService> GetWebDataService(int index) {
       test()->GetProfile(index), ServiceAccessType::EXPLICIT_ACCESS);
 }
 
-void WaitForCurrentTasksToComplete(base::SequencedTaskRunner* task_runner) {
+void WaitForCurrentTasksToComplete(
+    scoped_refptr<base::SequencedTaskRunner> task_runner) {
   base::WaitableEvent event(base::WaitableEvent::ResetPolicy::MANUAL,
                             base::WaitableEvent::InitialState::NOT_SIGNALED);
   task_runner->PostTask(FROM_HERE, base::BindOnce(&base::WaitableEvent::Signal,
@@ -141,7 +141,7 @@ bool ProfilesMatchImpl(
   }
 
   // This seems to be a transient state that will eventually be rectified by
-  // model type logic. We don't need to check b for duplicates directly because
+  // data type logic. We don't need to check b for duplicates directly because
   // after the first is erased from |autofill_profiles_a_map| the second will
   // not be found.
   if (autofill_profiles_a.size() != autofill_profiles_a_map.size()) {
@@ -227,7 +227,7 @@ AutofillProfile CreateUniqueAutofillProfile() {
 }
 
 PersonalDataManager* GetPersonalDataManager(int index) {
-  return autofill::PersonalDataManagerFactory::GetForProfile(
+  return autofill::PersonalDataManagerFactory::GetForBrowserContext(
       test()->GetProfile(index));
 }
 
@@ -305,13 +305,13 @@ void AddProfile(int profile, const AutofillProfile& autofill_profile) {
 void RemoveProfile(int profile, const std::string& guid) {
   PersonalDataManager* pdm = GetPersonalDataManager(profile);
   autofill::PersonalDataChangedWaiter waiter(*pdm);
-  pdm->RemoveByGUID(guid);
+  pdm->address_data_manager().RemoveProfile(guid);
   std::move(waiter).Wait();
 }
 
 void UpdateProfile(int profile,
                    const std::string& guid,
-                   const AutofillType& type,
+                   autofill::FieldType type,
                    const std::u16string& value,
                    autofill::VerificationStatus status) {
   PersonalDataManager* pdm = GetPersonalDataManager(profile);
@@ -319,8 +319,7 @@ void UpdateProfile(int profile,
       pdm->address_data_manager().GetProfileByGUID(guid);
   ASSERT_TRUE(pdm_profile);
   AutofillProfile updated_profile = *pdm_profile;
-  updated_profile.SetRawInfoWithVerificationStatus(type.GetStorableType(),
-                                                   value, status);
+  updated_profile.SetRawInfoWithVerificationStatus(type, value, status);
   autofill::PersonalDataChangedWaiter waiter(*pdm);
   pdm->address_data_manager().UpdateProfile(updated_profile);
   std::move(waiter).Wait();

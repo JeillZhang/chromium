@@ -89,10 +89,10 @@ class ContextLostIntegrationTest(gpu_integration_test.GpuIntegrationTest):
         'ContextLost_MacWebGLCopyTexSubImage2DHighPowerSwitchDoesNotCrash',
         'ContextLost_MacWebGLPreserveDBHighPowerSwitchLosesContext',
     }
-    if host_information.IsMac():
+    if host_information.IsMac() or host_information.IsWindows():
       serial_tests |= {
-          # crbug.com/338574390, flaky on Mac/ASan.
-          'ContextLost_WebGLContextRestoredInHiddenTab',
+          # Flaky timeout http://crbug.com/352077583
+          'GpuNormalTermination_WebGPUNotBlocked',
       }
     return serial_tests
 
@@ -123,6 +123,8 @@ class ContextLostIntegrationTest(gpu_integration_test.GpuIntegrationTest):
     # yapf: disable
     tests: Tuple[Tuple[str, str], ...] = (
              ('GpuCrash_GPUProcessCrashesExactlyOncePerVisitToAboutGpuCrash',
+              'gpu_process_crash.html'),
+             ('GpuCrash_GPUProcessCrashesExactlyOnce_SurfaceControlDisabled',
               'gpu_process_crash.html'),
              ('ContextLost_WebGPUContextLostFromGPUProcessExit',
               'webgpu-context-lost.html?query=kill_after_notification'),
@@ -202,7 +204,7 @@ class ContextLostIntegrationTest(gpu_integration_test.GpuIntegrationTest):
   @functools.lru_cache(maxsize=None)
   def _GetWaitTimeout(self):
     timeout = 60
-    if self._is_asan:
+    if self._is_asan or self.browser.browser_type == 'debug':
       timeout *= 2
     return timeout
 
@@ -339,6 +341,21 @@ class ContextLostIntegrationTest(gpu_integration_test.GpuIntegrationTest):
         [cba.DISABLE_DOMAIN_BLOCKING_FOR_3D_APIS])
     self._NavigateAndWaitForLoad(test_path)
     self._KillGPUProcess(2, True)
+    self._RestartBrowser('must restart after tests that kill the GPU process')
+
+  def _GpuCrash_GPUProcessCrashesExactlyOnce_SurfaceControlDisabled(
+      self, test_path: str) -> None:
+    os_name = self.browser.platform.GetOSName()
+    if os_name != 'android':
+      logging.info('Skipping test because not running on Android')
+      return
+
+    self.RestartBrowserIfNecessaryWithArgs([
+        cba.DISABLE_DOMAIN_BLOCKING_FOR_3D_APIS,
+        '--disable-features=AndroidSurfaceControl'
+    ])
+    self._NavigateAndWaitForLoad(test_path)
+    self._KillGPUProcess(1, True)
     self._RestartBrowser('must restart after tests that kill the GPU process')
 
   def _ContextLost_WebGLContextLostFromGPUProcessExit(self,
@@ -556,8 +573,7 @@ class ContextLostIntegrationTest(gpu_integration_test.GpuIntegrationTest):
     self._RestartBrowser('must restart after tests that kill the GPU process')
 
   def _ContextLost_WebGL2Blocked(self, test_path: str) -> None:
-    self.RestartBrowserIfNecessaryWithArgs(
-        ['--gpu-driver-bug-list-test-group=3'])
+    self.RestartBrowserIfNecessaryWithArgs(['--disable_es3_gl_context=1'])
     self._NavigateAndWaitForLoad(test_path)
     tab = self.tab
     tab.EvaluateJavaScript('runTest()')
@@ -700,8 +716,9 @@ class ContextLostIntegrationTest(gpu_integration_test.GpuIntegrationTest):
     if not self.IsDualGPUMacLaptop():
       logging.info('Skipping test because not running on dual-GPU Mac laptop')
       self.skipTest('Not running on dual-GPU Mac laptop')
-    self.RestartBrowserIfNecessaryWithArgs(
-        [cba.DISABLE_DOMAIN_BLOCKING_FOR_3D_APIS])
+    self.RestartBrowserIfNecessaryWithArgs([
+        cba.DISABLE_DOMAIN_BLOCKING_FOR_3D_APIS, '--enable-unsafe-swiftshader'
+    ])
     active_vendor_id = self._GetActiveVendorId(False)
     # Load WebGL content and switch to discrete GPU.
     self._NavigateAndWaitForLoad(test_path)

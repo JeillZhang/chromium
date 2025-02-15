@@ -8,11 +8,12 @@
 #include <limits>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
-#include "base/check.h"
 #include "base/check_op.h"
+#include "base/containers/span.h"
 #include "base/files/file.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
@@ -22,7 +23,6 @@
 #include "base/numerics/safe_math.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions_win.h"
-#include "base/strings/string_piece.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
@@ -238,7 +238,7 @@ void NetworkFetcher::ContinueFetch(
       return HRESULTFromLastError();
     }
 
-    SetProxyForRequest(request_handle_.get(), winhttp_proxy_info);
+    SetProxyForRequest(request_handle_.get(), std::move(winhttp_proxy_info));
 
     const auto winhttp_callback = ::WinHttpSetStatusCallback(
         request_handle_.get(), &NetworkFetcher::WinHttpStatusCallback,
@@ -267,9 +267,9 @@ void NetworkFetcher::ContinueFetch(
       additional_headers.insert({"Content-Type", content_type_});
     }
 
-    for (const auto& header : additional_headers) {
-      const auto raw_header = base::SysUTF8ToWide(
-          base::StrCat({header.first, ": ", header.second, "\r\n"}));
+    for (const auto& [name, value] : additional_headers) {
+      const std::wstring raw_header =
+          base::SysUTF8ToWide(base::StrCat({name, ": ", value, "\r\n"}));
       if (!::WinHttpAddRequestHeaders(
               request_handle_.get(), raw_header.c_str(), raw_header.size(),
               WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE)) {
@@ -454,8 +454,7 @@ bool NetworkFetcher::WriteDataToFileBlocking() {
     }
   }
 
-  if (file_.WriteAtCurrentPos(&read_buffer_.front(), read_buffer_.size()) ==
-      -1) {
+  if (!file_.WriteAtCurrentPosAndCheck(base::as_byte_span(read_buffer_))) {
     net_error_ = HRESULTFromLastError();
     file_.Close();
     base::DeleteFile(file_path_);
@@ -511,7 +510,7 @@ void __stdcall NetworkFetcher::WinHttpStatusCallback(HINTERNET handle,
   CHECK(handle);
   CHECK(context);
 
-  base::StringPiece status_string;
+  std::string_view status_string;
   std::wstring info_string;
   switch (status) {
     case WINHTTP_CALLBACK_STATUS_HANDLE_CREATED:

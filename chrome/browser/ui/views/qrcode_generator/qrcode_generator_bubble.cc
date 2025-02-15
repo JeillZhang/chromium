@@ -10,9 +10,10 @@
 #include "base/strings/strcat.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/sharing/features.h"
 #include "chrome/browser/themes/theme_properties.h"
+#include "chrome/browser/ui/actions/chrome_action_id.h"
 #include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_actions.h"
 #include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/color/chrome_color_id.h"
@@ -25,6 +26,7 @@
 #include "chrome/browser/ui/views/sharing_hub/sharing_hub_bubble_util.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/qr_code_generator/bitmap_generator.h"
+#include "components/sharing_message/features.h"
 #include "components/url_formatter/url_formatter.h"
 #include "content/public/browser/download_manager.h"
 #include "content/public/browser/download_request_utils.h"
@@ -33,6 +35,7 @@
 #include "ui/base/clipboard/scoped_clipboard_writer.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
+#include "ui/base/mojom/dialog_button.mojom.h"
 #include "ui/base/theme_provider.h"
 #include "ui/base/webui/web_ui_util.h"
 #include "ui/events/event.h"
@@ -91,25 +94,42 @@ QRCodeGeneratorBubble::QRCodeGeneratorBubble(
       web_contents_(web_contents) {
   DCHECK(on_closing_);
 
-  SetButtons(ui::DIALOG_BUTTON_NONE);
+  SetButtons(static_cast<int>(ui::mojom::DialogButton::kNone));
   SetTitle(IDS_BROWSER_SHARING_QR_CODE_DIALOG_TITLE);
 
   base::RecordAction(base::UserMetricsAction("SharingQRCode.DialogLaunched"));
 }
 
-QRCodeGeneratorBubble::~QRCodeGeneratorBubble() = default;
+QRCodeGeneratorBubble::~QRCodeGeneratorBubble() {
+  if (qrcode_action_item_.get()) {
+    qrcode_action_item_.get()->SetIsShowingBubble(false);
+  }
+}
 
 void QRCodeGeneratorBubble::Show() {
   textfield_url_->SetText(base::UTF8ToUTF16(url_.possibly_invalid_spec()));
   textfield_url_->SelectAll(false);
   UpdateQRContent();
   ShowForReason(USER_GESTURE);
+  Browser* browser = chrome::FindLastActive();
+  if (browser && base::FeatureList::IsEnabled(features::kToolbarPinning)) {
+    qrcode_action_item_ =
+        actions::ActionManager::Get()
+            .FindAction(kActionQrCodeGenerator,
+                        browser->browser_actions()->root_action_item())
+            ->GetAsWeakPtr();
+    qrcode_action_item_.get()->SetIsShowingBubble(true);
+  }
 }
 
 void QRCodeGeneratorBubble::Hide() {
-  if (on_closing_)
+  if (on_closing_) {
     std::move(on_closing_).Run();
+  }
   CloseBubble();
+  if (qrcode_action_item_.get()) {
+    qrcode_action_item_.get()->SetIsShowingBubble(false);
+  }
 }
 
 void QRCodeGeneratorBubble::OnThemeChanged() {
@@ -211,8 +231,9 @@ bool QRCodeGeneratorBubble::ShouldShowCloseButton() const {
 }
 
 void QRCodeGeneratorBubble::WindowClosing() {
-  if (on_closing_)
+  if (on_closing_) {
     std::move(on_closing_).Run();
+  }
 }
 
 void QRCodeGeneratorBubble::Init() {
@@ -345,8 +366,9 @@ void QRCodeGeneratorBubble::Init() {
 }
 
 void QRCodeGeneratorBubble::AddedToWidget() {
-  if (!on_back_button_pressed_)
+  if (!on_back_button_pressed_) {
     return;
+  }
 
   // Adding a title view will replace the default title.
   GetBubbleFrameView()->SetTitleView(
@@ -387,8 +409,9 @@ bool QRCodeGeneratorBubble::HandleMouseEvent(
 /*static*/
 const std::u16string QRCodeGeneratorBubble::GetQRCodeFilenameForURL(
     const GURL& url) {
-  if (!url.has_host() || url.HostIsIPAddress())
+  if (!url.has_host() || url.HostIsIPAddress()) {
     return u"qrcode_chrome.png";
+  }
 
   return base::UTF8ToUTF16(base::StrCat({"qrcode_", url.host(), ".png"}));
 }

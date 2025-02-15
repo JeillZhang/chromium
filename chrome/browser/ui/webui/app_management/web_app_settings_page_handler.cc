@@ -6,14 +6,14 @@
 
 #include "base/notimplemented.h"
 #include "base/strings/utf_string_conversions.h"
-#include "chrome/browser/apps/app_service/app_service_proxy.h"
-#include "chrome/browser/apps/app_service/app_service_proxy_factory.h"
-#include "chrome/browser/apps/link_capturing/link_capturing_features.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/webui/app_management/app_management_page_handler_base.h"
 #include "chrome/browser/web_applications/app_service/web_app_publisher_helper.h"
+#include "chrome/browser/web_applications/link_capturing_features.h"
+#include "chrome/browser/web_applications/mojom/user_display_mode.mojom-shared.h"
 #include "chrome/browser/web_applications/web_app_command_scheduler.h"
 #include "chrome/browser/web_applications/web_app_provider.h"
+#include "chrome/browser/web_applications/web_app_ui_manager.h"
 #include "chrome/browser/web_applications/web_app_utils.h"
 #include "chrome/common/chrome_features.h"
 #include "components/url_formatter/elide_url.h"
@@ -27,7 +27,7 @@
 
 #if BUILDFLAG(IS_MAC)
 #include "base/mac/mac_util.h"
-#include "chrome/browser/web_applications/os_integration/web_app_shortcut_mac.h"
+#include "chrome/browser/web_applications/os_integration/mac/web_app_shortcut_mac.h"
 #endif
 
 namespace {
@@ -99,6 +99,20 @@ web_app::RunOnOsLoginMode ConvertOsLoginModeToWebAppConstants(
       break;
   }
   return web_app_constant_login_mode;
+}
+
+web_app::mojom::UserDisplayMode ConvertWindowModeToUserDisplayMode(
+    apps::WindowMode window_mode) {
+  switch (window_mode) {
+    case apps::WindowMode::kBrowser:
+      return web_app::mojom::UserDisplayMode::kBrowser;
+    case apps::WindowMode::kTabbedWindow:
+      return web_app::mojom::UserDisplayMode::kTabbed;
+    case apps::WindowMode::kWindow:
+      return web_app::mojom::UserDisplayMode::kStandalone;
+    case apps::WindowMode::kUnknown:
+      NOTREACHED();
+  }
 }
 
 }  // namespace
@@ -196,8 +210,9 @@ void WebAppSettingsPageHandler::SetWindowMode(const std::string& app_id,
     return;
   }
 
-  apps::AppServiceProxyFactory::GetForProfile(profile())->SetWindowMode(
-      app_id, window_mode);
+  provider->scheduler().SetUserDisplayMode(
+      app_id, ConvertWindowModeToUserDisplayMode(window_mode),
+      base::DoNothing());
 }
 
 void WebAppSettingsPageHandler::SetRunOnOsLoginMode(
@@ -292,6 +307,10 @@ app_management::mojom::AppPtr WebAppSettingsPageHandler::CreateApp(
             mac_notifications::mojom::PermissionStatus::kNotDetermined;
   }
 #endif
+
+  // On non-ChromeOS platforms, navigation capturing is allowed even if PWAs
+  // open in a new browser tab.
+  app->disable_user_choice_navigation_capturing = false;
 
   return app;
 }

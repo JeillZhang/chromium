@@ -4,12 +4,18 @@
 
 #include "net/http/http_cache_writers.h"
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #include <algorithm>
 #include <utility>
 
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/logging.h"
+#include "base/not_fatal_until.h"
 #include "base/task/single_thread_task_runner.h"
 #include "net/base/net_errors.h"
 #include "net/disk_cache/disk_cache.h"
@@ -191,7 +197,7 @@ void HttpCache::Writers::EraseTransaction(Transaction* transaction,
                                           int result) {
   // The transaction should be part of all_writers.
   auto it = all_writers_.find(transaction);
-  DCHECK(it != all_writers_.end());
+  CHECK(it != all_writers_.end(), base::NotFatalUntil::M130);
   EraseTransaction(it, result);
 }
 
@@ -363,9 +369,7 @@ int HttpCache::Writers::DoLoop(int result) {
         rv = DoCacheWriteDataComplete(rv);
         break;
       case State::UNSET:
-        NOTREACHED_IN_MIGRATION() << "bad state";
-        rv = ERR_FAILED;
-        break;
+        NOTREACHED() << "bad state";
       case State::NONE:
         // Do Nothing.
         break;

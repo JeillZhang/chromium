@@ -73,7 +73,8 @@
           "builder": "Mac FYI Retina Release (NVIDIA)",
           "project": "chromium"
         }
-      ]
+      ],
+      "targets_spec_directory": "src/infra/config/generated/builders/try/gpu-fyi-try-mac-nvidia-retina-rel/targets"
     }
   },
   "$build/reclient": {
@@ -88,7 +89,8 @@
     "enable_cloud_profiler": true,
     "enable_cloud_trace": true,
     "experiments": [],
-    "project": "rbe-chromium-untrusted"
+    "project": "rbe-chromium-untrusted",
+    "remote_jobs": 150
   },
   "$recipe_engine/resultdb/test_presentation": {
     "column_keys": [],

@@ -31,8 +31,7 @@ const WrapperTypeInfo kWrapperTypeInfoBody{
     WrapperTypeInfo::kWrapperTypeNoPrototype,
     // v8::Proxy (without an internal field) is used as a (pseudo) wrapper.
     WrapperTypeInfo::kNoInternalFieldClassId,
-    WrapperTypeInfo::kNotInheritFromActiveScriptWrappable,
-    WrapperTypeInfo::kIdlObservableArray,
+    WrapperTypeInfo::kIdlOtherType,
 };
 
 }  // namespace
@@ -40,7 +39,7 @@ const WrapperTypeInfo kWrapperTypeInfoBody{
 namespace bindings {
 
 ObservableArrayBase::ObservableArrayBase(
-    ScriptWrappable* platform_object,
+    GarbageCollectedMixin* platform_object,
     ObservableArrayExoticObject* observable_array_exotic_object)
     : platform_object_(platform_object),
       observable_array_exotic_object_(observable_array_exotic_object) {
@@ -149,8 +148,7 @@ v8::Local<v8::Object> ObservableArrayExoticObject::AssociateWithWrapper(
     v8::Local<v8::Object> wrapper) {
   // The proxy object does not have an internal field and cannot be associated
   // with a Blink object directly.
-  NOTREACHED_IN_MIGRATION();
-  return {};
+  NOTREACHED();
 }
 
 }  // namespace blink

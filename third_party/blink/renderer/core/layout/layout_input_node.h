@@ -84,9 +84,10 @@ class CORE_EXPORT LayoutInputNode {
   bool IsBody() const { return IsBlock() && box_->IsBody(); }
   bool IsView() const { return IsBlock() && box_->IsLayoutView(); }
   bool IsDocumentElement() const { return box_->IsDocumentElement(); }
-  bool IsFlexItem() const { return IsBlock() && box_->IsFlexItemIncludingNG(); }
+  bool IsFlexItem() const { return IsBlock() && box_->IsFlexItem(); }
   bool IsFlexibleBox() const { return IsBlock() && box_->IsFlexibleBox(); }
   bool IsGrid() const { return IsBlock() && box_->IsLayoutGrid(); }
+  bool IsMasonry() const { return IsBlock() && box_->IsLayoutMasonry(); }
   bool ShouldBeConsideredAsReplaced() const {
     return box_->ShouldBeConsideredAsReplaced();
   }
@@ -101,15 +102,13 @@ class CORE_EXPORT LayoutInputNode {
     DCHECK(IsListMarker());
     return To<LayoutOutsideListMarker>(box_.Get())->NeedsOccupyWholeLine();
   }
-  bool IsButton() const { return IsBlock() && box_->IsButton(); }
   bool IsButtonOrInputButton() const {
     return IsBlock() && box_->IsButtonOrInputButton();
   }
   bool IsFieldsetContainer() const { return IsBlock() && box_->IsFieldset(); }
   bool IsInitialLetterBox() const { return box_->IsInitialLetterBox(); }
   bool IsMedia() const { return box_->IsMedia(); }
-  bool IsRubyColumn() const { return IsBlock() && box_->IsRubyColumn(); }
-  bool IsRubyText() const { return box_->IsRubyText(); }
+  bool IsCanvas() const { return box_->IsCanvas(); }
 
   // Return true if this is the legend child of a fieldset that gets special
   // treatment (i.e. placed over the block-start border).
@@ -126,6 +125,7 @@ class CORE_EXPORT LayoutInputNode {
 
   bool IsTableCaption() const { return IsBlock() && box_->IsTableCaption(); }
   bool IsTableSection() const { return IsBlock() && box_->IsTableSection(); }
+  bool IsTableRow() const { return IsBlock() && box_->IsTableRow(); }
   bool IsTableCell() const { return IsBlock() && box_->IsTableCell(); }
 
   // Section with empty rows is considered empty.
@@ -164,6 +164,13 @@ class CORE_EXPORT LayoutInputNode {
            (box_->IsBody() || box_->IsTableCell());
   }
 
+  bool IsHorizontalWritingMode() const {
+    return box_->IsHorizontalWritingMode();
+  }
+  bool IsHorizontalTypographicMode() const {
+    return box_->IsHorizontalTypographicMode();
+  }
+
   // Return true if this node is monolithic for block fragmentation.
   bool IsMonolithic() const {
     // Lines are always monolithic. We cannot block-fragment inside them.
@@ -190,15 +197,7 @@ class CORE_EXPORT LayoutInputNode {
 
   // Returns true if this node should pass its percentage resolution block-size
   // to its children. Typically only quirks-mode, auto block-size, block nodes.
-  bool UseParentPercentageResolutionBlockSizeForChildren() const {
-    auto* layout_block = DynamicTo<LayoutBlock>(box_.Get());
-    if (IsBlock() && layout_block) {
-      return LayoutBoxUtils::SkipContainingBlockForPercentHeightCalculation(
-          layout_block);
-    }
-
-    return false;
-  }
+  bool UseParentPercentageResolutionBlockSizeForChildren() const;
 
   // Returns intrinsic sizing information for replaced elements.
   // ComputeReplacedSize can use it to compute actual replaced size.
@@ -213,6 +212,12 @@ class CORE_EXPORT LayoutInputNode {
   Document& GetDocument() const { return box_->GetDocument(); }
 
   Node* GetDOMNode() const { return box_->GetNode(); }
+
+  // Return the DOM node of this, or, if none, that of the nearest ancestor that
+  // has one.
+  //
+  // Anonymous objects have no DOM node.
+  Node* EnclosingDOMNode() const { return box_->EnclosingNode(); }
 
   PhysicalSize InitialContainingBlockSize() const;
 
@@ -252,15 +257,10 @@ class CORE_EXPORT LayoutInputNode {
   // https://drafts.csswg.org/css-sizing-4/#intrinsic-size-override
   // Note that this returns kIndefiniteSize if the override was not specified.
   LayoutUnit OverrideIntrinsicContentInlineSize() const {
-    if (box_->HasOverrideIntrinsicContentLogicalWidth())
-      return box_->OverrideIntrinsicContentLogicalWidth();
-    return kIndefiniteSize;
+    return box_->OverrideIntrinsicContentInlineSize();
   }
-  // Note that this returns kIndefiniteSize if the override was not specified.
   LayoutUnit OverrideIntrinsicContentBlockSize() const {
-    if (box_->HasOverrideIntrinsicContentLogicalHeight())
-      return box_->OverrideIntrinsicContentLogicalHeight();
-    return kIndefiniteSize;
+    return box_->OverrideIntrinsicContentBlockSize();
   }
 
   LayoutUnit DefaultIntrinsicContentInlineSize() const {

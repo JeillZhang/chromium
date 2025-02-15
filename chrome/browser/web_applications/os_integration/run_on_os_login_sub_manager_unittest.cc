@@ -26,6 +26,7 @@
 #include "chrome/browser/web_applications/web_app_install_info.h"
 #include "chrome/browser/web_applications/web_app_install_params.h"
 #include "chrome/browser/web_applications/web_app_provider.h"
+#include "chrome/browser/web_applications/web_app_registrar.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/pref_names.h"
 #include "components/prefs/pref_service.h"
@@ -88,7 +89,7 @@ class RunOnOsLoginSubManagerTestBase : public WebAppTest {
     return result.Get<webapps::AppId>();
   }
 
-  void SetWebAppSettingsListPref(const std::string_view pref) {
+  void SetWebAppSettingsListPref(std::string_view pref) {
     ASSERT_OK_AND_ASSIGN(
         auto result,
         base::JSONReader::ReadAndReturnValueWithError(
@@ -436,7 +437,7 @@ TEST_F(RunOnOsLoginSubManagerExecuteTest, ForceUnregisterAppNotInRegistry) {
     EXPECT_FALSE(OsIntegrationTestOverrideImpl::Get()->IsRunOnOsLoginEnabled(
         profile(), app_id, app_name));
   }
-  EXPECT_FALSE(provider().registrar_unsafe().IsInstalled(app_id));
+  EXPECT_FALSE(provider().registrar_unsafe().IsInRegistrar(app_id));
 
   // This should have no affect.
   SynchronizeOsOptions options;

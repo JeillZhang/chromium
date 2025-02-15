@@ -12,7 +12,6 @@ import static org.junit.Assert.assertNotEquals;
 import android.annotation.SuppressLint;
 import android.content.ComponentName;
 import android.content.Intent;
-import android.net.Uri;
 
 import androidx.test.core.app.ApplicationProvider;
 import androidx.test.filters.MediumTest;
@@ -25,6 +24,7 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.shared_preferences.SharedPreferencesManager;
 import org.chromium.base.test.util.CommandLineFlags;
@@ -46,8 +46,7 @@ import org.chromium.chrome.test.R;
 import org.chromium.chrome.test.util.ActivityTestUtils;
 import org.chromium.chrome.test.util.MenuUtils;
 import org.chromium.components.browser_ui.settings.PlaceholderSettingsForTest;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
-import org.chromium.ui.test.util.UiDisableIf;
+import org.chromium.ui.base.DeviceFormFactor;
 
 /** Tests the metrics recording for main intent behaviours. */
 @RunWith(ChromeJUnit4ClassRunner.class)
@@ -153,7 +152,7 @@ public class MainIntentBehaviorMetricsIntegrationTest {
 
     @MediumTest
     @Test
-    @DisableIf.Device(type = {UiDisableIf.TABLET}) // https://crbug.com/338974184
+    @DisableIf.Device(DeviceFormFactor.TABLET) // https://crbug.com/338974184
     public void testLaunch_From_InAppActivities() {
         try {
             MainIntentBehaviorMetrics.setTimeoutDurationMsForTesting(0);
@@ -214,7 +213,7 @@ public class MainIntentBehaviorMetricsIntegrationTest {
     private void assertBackgroundDurationLogged(long duration, String expectedMetric) {
         startActivity(false);
         mActionTester = new UserActionTester();
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mActivityTestRule
                             .getActivity()
@@ -224,7 +223,7 @@ public class MainIntentBehaviorMetricsIntegrationTest {
 
         Intent intent = new Intent(Intent.ACTION_MAIN);
         intent.addCategory(Intent.CATEGORY_LAUNCHER);
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mActivityTestRule.getActivity().onNewIntent(intent);
                 });
@@ -239,19 +238,6 @@ public class MainIntentBehaviorMetricsIntegrationTest {
                     mActionTester.getActions(),
                     Matchers.hasItem(expectedMetric));
         }
-    }
-
-    private void startActivityWithAboutBlank(boolean addLauncherCategory) {
-        Intent intent = new Intent(Intent.ACTION_MAIN);
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        intent.setData(Uri.parse("about:blank"));
-        if (addLauncherCategory) intent.addCategory(Intent.CATEGORY_LAUNCHER);
-        intent.setComponent(
-                new ComponentName(
-                        ApplicationProvider.getApplicationContext(), ChromeTabbedActivity.class));
-
-        mActivityTestRule.startActivityCompletely(intent);
-        mActivityTestRule.waitForActivityNativeInitializationComplete();
     }
 
     private void startActivity(boolean addLauncherCategory) {

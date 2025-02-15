@@ -102,8 +102,7 @@ enum class NavigationRequestSecurityLevel {
   // due to HSTS.
   kHstsUpgraded = 3,
 
-  // Request was for localhost, and thus no network
-  // due to HSTS.
+  // Request was for localhost, and thus nothing is exposed to the network.
   kLocalhost = 4,
 
   // Request was for an insecure (HTTP) resource, but was internally redirected
@@ -118,7 +117,7 @@ enum class NavigationRequestSecurityLevel {
   kAllowlisted = 7,
 
   // Request was insecure (HTTP), but was to a hostname that isn't globally
-  // unique (e.g. a bare RFC1918 IP address, single-label or .local hostname).
+  // unique (e.g. a bare RFC1918 IP address, or .test or .local hostname).
   // This bucket is recorded IN ADDITION to kInsecure/kAllowlisted.
   kNonUniqueHostname = 8,
 
@@ -126,7 +125,21 @@ enum class NavigationRequestSecurityLevel {
   // opposed to autocompleted) that included an explicit http scheme.
   kExplicitHttpScheme = 9,
 
-  kMaxValue = kExplicitHttpScheme,
+  // Request was for a captive portal login page.
+  kCaptivePortalLogin = 10,
+
+  // Request was for a single-label hostname.
+  kSingleLabelHostname = 11,
+
+  // Request was for a URL with non-default ports.
+  kNonDefaultPorts = 12,
+
+  // The hostname was in the HTTPS-enforcement list because of the HFM+SE
+  // heuristic. Recorded regardless of whether there was a fallback navigation
+  // or an interstitial. Not recorded if the hostname is allowlisted.
+  kHttpsEnforcedOnHostname = 13,
+
+  kMaxValue = kHttpsEnforcedOnHostname,
 };
 
 // Recorded by the Site Engagement Heuristic logic, recording whether HFM should
@@ -171,6 +184,11 @@ struct HttpInterstitialState {
   // Whether HTTPS-First Mode is enabled because the user's browsing pattern
   // is typically secure, i.e. they mainly visit HTTPS sites.
   bool enabled_by_typically_secure_browsing = false;
+
+  // Whether HTTPS-First Mode is enabled in a balanced mode, which attempts to
+  // warn when HTTPS can be expected to succeed, but not when it will likely
+  // fail (e.g. to non-unique hostnames).
+  bool enabled_in_balanced_mode = false;
 };
 
 // Helper to record an HTTPS-First Mode navigation event.
@@ -216,8 +234,10 @@ enum class InterstitialReason {
   kTypicallySecureUserHeuristic = 4,
   // The interstitial was shown because of HTTPS-First Mode in Incognito.
   kIncognito = 5,
+  // The interstitial was shown because of HTTPS-First Balance Mode.
+  kBalanced = 6,
 
-  kMaxValue = kIncognito,
+  kMaxValue = kBalanced,
 };
 
 void RecordInterstitialReason(const HttpInterstitialState& interstitial_state);

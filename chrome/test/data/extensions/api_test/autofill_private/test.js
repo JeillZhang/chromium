@@ -7,7 +7,11 @@
 // and failures are detected.
 
 // Constants for the tests.
-var NAME = 'Name';
+var FIRST_NAME = 'Firstname';
+var LAST_NAME = 'Lastname';
+var NAME = FIRST_NAME + ' ' + LAST_NAME;
+var ALTERNATIVE_FULL_NAME = 'NameAlternative';
+var ALTERNATIVE_FULL_NAME_SEPARATOR = 'Name Alternative';
 var COMPANY_NAME = 'Company name';
 var ADDRESS_LEVEL1 = 'Address level 1';
 var ADDRESS_LEVEL2 = 'Address level 2';
@@ -198,7 +202,8 @@ var availableTests = [
       chrome.test.succeed();
     };
 
-    chrome.autofillPrivate.getCountryList(handler);
+    chrome.autofillPrivate.getCountryList(
+        /*forAccountAddressProfile=*/ false, handler);
   },
 
   function getAddressComponents() {
@@ -241,6 +246,8 @@ var availableTests = [
                 chrome.test.assertEq(1, addressList.length);
                 const expectedAddress = {
                   NAME_FULL: NAME,
+                  NAME_FIRST: FIRST_NAME,
+                  NAME_LAST: LAST_NAME,
                   ADDRESS_HOME_STATE: ADDRESS_LEVEL1,
                   ADDRESS_HOME_CITY: ADDRESS_LEVEL2,
                   ADDRESS_HOME_DEPENDENT_LOCALITY: ADDRESS_LEVEL3,
@@ -307,7 +314,9 @@ var availableTests = [
   function updateExistingAddress() {
     // The information that will be updated. It should be different than the
     // information in the addNewAddress function.
-    var UPDATED_NAME = 'UpdatedName';
+    var UPDATED_NAME = 'UpdatedFirst UpdatedLast';
+    var UPDATED_FIRST_NAME = 'UpdatedFirst';
+    var UPDATED_LAST_NAME = 'UpdatedLast';
     var UPDATED_PHONE = '1 987-987-9876'
 
     function filterAddressProperties(address) {
@@ -320,55 +329,125 @@ var availableTests = [
       return filteredAddress;
     }
 
+    chrome.autofillPrivate.getAddressList(chrome.test.callbackPass(function(
+        addressList) {
+      // The address from the addNewAddress function should still be there.
+      chrome.test.assertEq(1, addressList.length);
+      var addressGuid = addressList[0].guid;
+
+      // Setup the callback that verifies that the address was correctly
+      // updated.
+      chrome.test.listenOnce(
+          chrome.autofillPrivate.onPersonalDataChanged,
+          chrome.test.callbackPass(function(addressList, cardList) {
+            chrome.test.assertEq(1, addressList.length);
+            const expectedAddress = {
+              guid: addressGuid,
+              NAME_FULL: UPDATED_NAME,
+              NAME_FIRST: UPDATED_FIRST_NAME,
+              NAME_LAST: UPDATED_LAST_NAME,
+              ADDRESS_HOME_STATE: ADDRESS_LEVEL1,
+              ADDRESS_HOME_CITY: ADDRESS_LEVEL2,
+              ADDRESS_HOME_DEPENDENT_LOCALITY: ADDRESS_LEVEL3,
+              ADDRESS_HOME_ZIP: POSTAL_CODE,
+              ADDRESS_HOME_SORTING_CODE: SORTING_CODE,
+              ADDRESS_HOME_COUNTRY: COUNTRY_CODE,
+              PHONE_HOME_WHOLE_NUMBER: UPDATED_PHONE,
+              EMAIL_ADDRESS: EMAIL,
+            };
+            const actualAddress = filterAddressProperties(addressList[0]);
+            Object.keys(expectedAddress).forEach(prop => {
+              chrome.test.assertEq(expectedAddress[prop], actualAddress[prop]);
+            })
+          }));
+
+      // Update the address by saving an address with the same guid and
+      // using some different information.
+      chrome.autofillPrivate.saveAddress({
+        guid: addressGuid,
+        fields: [
+          {
+            type: chrome.autofillPrivate.FieldType.NAME_FULL,
+            value: UPDATED_NAME
+          },
+          {
+            type: chrome.autofillPrivate.FieldType.PHONE_HOME_WHOLE_NUMBER,
+            value: UPDATED_PHONE
+          },
+        ],
+      });
+    }));
+  },
+
+  function addAddressWithAlternativeNameForSeparatorMetric() {
     chrome.autofillPrivate.getAddressList(
         chrome.test.callbackPass(function(addressList) {
-          // The address from the addNewAddress function should still be there.
-          chrome.test.assertEq(1, addressList.length);
-          var addressGuid = addressList[0].guid;
+          chrome.test.assertEq([], addressList);
 
-          // Setup the callback that verifies that the address was correctly
-          // updated.
-          chrome.test.listenOnce(
-              chrome.autofillPrivate.onPersonalDataChanged,
-              chrome.test.callbackPass(function(addressList, cardList) {
-                chrome.test.assertEq(1, addressList.length);
-                const expectedAddress = {
-                  guid: addressGuid,
-                  NAME_FULL: UPDATED_NAME,
-                  ADDRESS_HOME_STATE: ADDRESS_LEVEL1,
-                  ADDRESS_HOME_CITY: ADDRESS_LEVEL2,
-                  ADDRESS_HOME_DEPENDENT_LOCALITY: ADDRESS_LEVEL3,
-                  ADDRESS_HOME_ZIP: POSTAL_CODE,
-                  ADDRESS_HOME_SORTING_CODE: SORTING_CODE,
-                  ADDRESS_HOME_COUNTRY: COUNTRY_CODE,
-                  PHONE_HOME_WHOLE_NUMBER: UPDATED_PHONE,
-                  EMAIL_ADDRESS: EMAIL,
-                };
-                const actualAddress = filterAddressProperties(addressList[0]);
-                Object.keys(expectedAddress).forEach(prop => {
-                  chrome.test.assertEq(
-                      expectedAddress[prop], actualAddress[prop]);
-                })
-              }));
-
-          // Update the address by saving an address with the same guid and
-          // using some different information.
+          // Alternative name set with no separator. Metric is emitted.
           chrome.autofillPrivate.saveAddress({
-            guid: addressGuid,
             fields: [
+              {type: chrome.autofillPrivate.FieldType.NAME_FULL, value: NAME},
               {
-                type: chrome.autofillPrivate.FieldType.NAME_FULL,
-                value: UPDATED_NAME
+                type: chrome.autofillPrivate.FieldType.ALTERNATIVE_FULL_NAME,
+                value: ALTERNATIVE_FULL_NAME
               },
+            ],
+          });
+          // Alternative name set with a separator. Metric is emitted.
+          chrome.autofillPrivate.saveAddress({
+            fields: [
+              {type: chrome.autofillPrivate.FieldType.NAME_FULL, value: NAME},
               {
-                type: chrome.autofillPrivate.FieldType
-                          .PHONE_HOME_WHOLE_NUMBER,
-                value: UPDATED_PHONE
+                type: chrome.autofillPrivate.FieldType.ALTERNATIVE_FULL_NAME,
+                value: ALTERNATIVE_FULL_NAME_SEPARATOR
               },
             ],
           });
         }));
   },
+
+  function updateExistingAddressWithAlternativeNameForSeparatorMetric() {
+    chrome.autofillPrivate.getAddressList(
+        chrome.test.callbackPass(function(addressList) {
+          chrome.test.assertEq(2, addressList.length);
+          var addressGuid0 = addressList[0].guid;
+          var addressGuid1 = addressList[1].guid;
+
+          // Address updated with the same information.
+          // Separator is preserved, but no metric is emitted.
+          chrome.autofillPrivate.saveAddress({
+            guid: addressGuid0,
+            fields: [
+              {type: chrome.autofillPrivate.FieldType.NAME_FULL, value: NAME},
+              {
+                type: chrome.autofillPrivate.FieldType.ALTERNATIVE_FULL_NAME,
+                value: ALTERNATIVE_FULL_NAME_SEPARATOR
+              },
+            ],
+          });
+          // Address updated without an alternative name.
+          // Separator is preserved and no metric is emitted.
+          chrome.autofillPrivate.saveAddress({
+            guid: addressGuid0,
+            fields: [
+              {type: chrome.autofillPrivate.FieldType.NAME_FULL, value: NAME},
+            ],
+          });
+          // Alternative name updated with new separator. Metric is emitted.
+          chrome.autofillPrivate.saveAddress({
+            guid: addressGuid1,
+            fields: [
+              {type: chrome.autofillPrivate.FieldType.NAME_FULL, value: NAME},
+              {
+                type: chrome.autofillPrivate.FieldType.ALTERNATIVE_FULL_NAME,
+                value: ALTERNATIVE_FULL_NAME_SEPARATOR
+              },
+            ],
+          });
+        }));
+  },
+
 
   function addNewCreditCard() {
     function filterCardProperties(cards) {
@@ -614,7 +693,7 @@ var availableTests = [
           }));
 
       // Remove the IBAN with the given guid.
-      chrome.autofillPrivate.removeEntry(ibanGuid);
+      chrome.autofillPrivate.removePaymentsEntity(ibanGuid);
     }));
   },
 
@@ -634,11 +713,11 @@ var availableTests = [
           }));
 
       // Remove the card with the given guid.
-      chrome.autofillPrivate.removeEntry(cardGuid);
+      chrome.autofillPrivate.removePaymentsEntity(cardGuid);
     }));
   },
 
-  function removeEntry() {
+  function removePaymentsEntity() {
     var guid;
 
     var numCalls = 0;
@@ -656,7 +735,7 @@ var availableTests = [
         chrome.test.assertEq(creditCard.name, NAME);
 
         guid = creditCard.guid;
-        chrome.autofillPrivate.removeEntry(guid);
+        chrome.autofillPrivate.removePaymentsEntity(guid);
       } else if (numCalls == 3) {
         chrome.test.assertEq(creditCardList.length, 0);
         chrome.test.succeed();
@@ -728,11 +807,101 @@ var availableTests = [
     chrome.test.assertNoLastError();
     chrome.test.succeed();
   },
+
+  function deleteAllUserAnnotationsEntries() {
+    chrome.autofillPrivate.deleteAllUserAnnotationsEntries();
+    chrome.test.assertNoLastError();
+    chrome.test.succeed();
+  },
+
+
+  function deleteUserAnnotationsEntry() {
+    chrome.autofillPrivate.deleteUserAnnotationsEntry(123);
+    chrome.test.assertNoLastError();
+    chrome.test.succeed();
+  },
+
+  function getUserAnnotationsEntries() {
+    chrome.autofillPrivate.getUserAnnotationsEntries();
+    chrome.test.assertNoLastError();
+    chrome.test.succeed();
+  },
+
+  function hasUserAnnotationsEntries_NoEntries() {
+    chrome.autofillPrivate.hasUserAnnotationsEntries(function(hasEntries) {
+      chrome.test.assertFalse(hasEntries, 'Expected no entries');
+      chrome.test.succeed();
+    });
+  },
+
+  function hasUserAnnotationsEntries_WithEntries() {
+    chrome.autofillPrivate.hasUserAnnotationsEntries(function(hasEntries) {
+      chrome.test.assertTrue(hasEntries, 'Expected entries to exist');
+      chrome.test.succeed();
+    });
+  },
+
+  function isUserEligibleForAutofillImprovements() {
+    chrome.autofillPrivate.isUserEligibleForAutofillImprovements(function(
+        isEligible) {
+      // TODO(crbug.com/373609897): Override account info status in the test
+      // setup to verify this properly.
+      chrome.test.assertFalse(isEligible, "Expected not eligible");
+      chrome.test.succeed();
+    });
+  },
+
+  function predictionImprovementsIphFeatureUsed() {
+    chrome.autofillPrivate.predictionImprovementsIphFeatureUsed();
+    chrome.test.assertNoLastError();
+    chrome.test.succeed();
+  },
+
+  function migrateCreditCards() {
+    chrome.autofillPrivate.migrateCreditCards();
+    chrome.test.assertNoLastError();
+    chrome.test.succeed();
+  },
+
+  function logServerCardLinkClicked() {
+    chrome.autofillPrivate.logServerCardLinkClicked();
+    chrome.test.assertNoLastError();
+    chrome.test.succeed();
+  },
+
+  function addVirtualCard() {
+    chrome.autofillPrivate.addVirtualCard(/*card_id=*/"a123");
+    chrome.test.assertNoLastError();
+    chrome.test.succeed();
+  },
+
+  function removeVirtualCard() {
+    chrome.autofillPrivate.removeVirtualCard(/*card_id=*/"a123");
+    chrome.test.assertNoLastError();
+    chrome.test.succeed();
+  },
+
+  function setAutofillSyncToggleEnabled() {
+    chrome.autofillPrivate.setAutofillSyncToggleEnabled(true);
+    chrome.test.assertNoLastError();
+    chrome.test.succeed();
+  },
+
+  function logServerIbanLinkClicked() {
+    chrome.autofillPrivate.logServerIbanLinkClicked();
+    chrome.test.assertNoLastError();
+    chrome.test.succeed();
+  }
+
 ];
 
 /** @const */
 var TESTS_FOR_CONFIG = {
   'addAndUpdateAddress': ['addNewAddress', 'updateExistingAddress'],
+  'addAndUpdateAddressWithAlternativeName': [
+    'addAddressWithAlternativeNameForSeparatorMetric',
+    'updateExistingAddressWithAlternativeNameForSeparatorMetric'
+  ],
   'addAndUpdateCreditCard': [
     'addNewCreditCardWithoutCvc', 'noChangesToExistingCreditCard',
     'updateExistingCreditCard'
@@ -762,6 +931,23 @@ var TESTS_FOR_CONFIG = {
       ['authenticateUserAndFlipMandatoryAuthToggle'],
   'getLocalCard': ['addNewCreditCard', 'getLocalCard'],
   'bulkDeleteAllCvcs': ['bulkDeleteAllCvcs'],
+  'deleteAllUserAnnotationsEntries': ['deleteAllUserAnnotationsEntries'],
+  'deleteUserAnnotationsEntries': ['deleteUserAnnotationsEntries'],
+  'getUserAnnotationsEntries': ['getUserAnnotationsEntries'],
+  'hasUserAnnotationsEntries_NoEntries':
+      ['hasUserAnnotationsEntries_NoEntries'],
+  'hasUserAnnotationsEntries_WithEntries':
+      ['hasUserAnnotationsEntries_WithEntries'],
+  'isUserEligibleForAutofillImprovements':
+      ['isUserEligibleForAutofillImprovements'],
+  'predictionImprovementsIphFeatureUsed':
+      ['predictionImprovementsIphFeatureUsed'],
+  'migrateCreditCards': ['migrateCreditCards'],
+  'logServerCardLinkClicked': ['logServerCardLinkClicked'],
+  'addVirtualCard': ['addVirtualCard'],
+  'removeVirtualCard': ['removeVirtualCard'],
+  'setAutofillSyncToggleEnabled': ['setAutofillSyncToggleEnabled'],
+  'logServerIbanLinkClicked': ['logServerIbanLinkClicked'],
 };
 
 var testConfig = window.location.search.substring(1);

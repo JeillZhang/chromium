@@ -12,19 +12,26 @@ enum class GlanceablesViewId {
   kDefaultIdZero,
 
   // `GlanceablesListFooterView`.
-  kListFooterItemsCountLabel,
+  kListFooterTitleLabel,
   kListFooterSeeAllButton,
 
   // `GlanceablesProgressBarView`.
   kProgressBar,
 
-  // `ClassroomBubbleBaseView`.
-  kClassroomBubbleHeaderIcon,
-  kClassroomBubbleComboBox,
-  kClassroomBubbleExpandButton,
-  kClassroomBubbleListContainer,
+  // `GlanceablesTimeManagementBubbleView`.
+  kTimeManagementBubbleHeaderView,
+  kTimeManagementBubbleHeaderIcon,
+  kTimeManagementBubbleComboBox,
+  kTimeManagementBubbleExpandButton,
+  kTimeManagementBubbleListContainer,
+  kTimeManagementBubbleListFooter,
+  kTimeManagementErrorMessageToast,
+
+  // `GlanceablesClassroomStudentView`.
   kClassroomBubbleEmptyListLabel,
-  kClassroomBubbleListFooter,
+
+  // `GlanceablesTasksView`.
+  kTasksBubbleAddNewButton,
 
   // `GlanceablesClassroomItemView`.
   kClassroomItemIcon,
@@ -32,15 +39,6 @@ enum class GlanceablesViewId {
   kClassroomItemCourseTitleLabel,
   kClassroomItemDueDateLabel,
   kClassroomItemDueTimeLabel,
-
-  // `GlanceablesTasksView`.
-  kTasksBubbleComboBox,
-  kTasksBubbleExpandButton,
-  kTasksBubbleListContainer,
-  kTasksBubbleAddNewButton,
-  kTasksBubbleListFooter,
-  kTasksBubbleHeaderView,
-  kTasksBubbleHeaderIcon,
 
   // `GlanceablesTaskView`.
   kTaskItemTitleLabel,
@@ -52,11 +50,6 @@ enum class GlanceablesViewId {
 
   // `GlanceablesContentsScrollView`.
   kContentsScrollView,
-
-  // `GlanceablesErrorMessageView`
-  kGlanceablesErrorMessageLabel,
-  kGlanceablesErrorMessageButton,
-  kGlanceablesErrorMessageView,
 };
 
 }  // namespace ash

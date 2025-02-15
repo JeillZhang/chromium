@@ -2,10 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/browser/ash/input_method/input_method_manager_impl.h"
 
 #include <stdint.h>
 
+#include <algorithm>
 #include <memory>
 #include <set>
 #include <sstream>
@@ -20,7 +26,6 @@
 #include "base/location.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
@@ -30,17 +35,16 @@
 #include "base/trace_event/trace_event.h"
 #include "chrome/browser/ash/input_method/assistive_window_controller.h"
 #include "chrome/browser/ash/input_method/candidate_window_controller.h"
-#include "chrome/browser/ash/input_method/ui/assistive_delegate.h"
-#include "chrome/browser/ash/input_method/ui/input_method_menu_item.h"
-#include "chrome/browser/ash/input_method/ui/input_method_menu_manager.h"
-#include "chrome/browser/ash/language_preferences.h"
-#include "chrome/browser/ash/login/session/user_session_manager.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/browser_process_platform_part_ash.h"
 #include "chrome/browser/lifetime/termination_notification.h"
+#include "chrome/browser/ui/ash/input_method/assistive_delegate.h"
+#include "chrome/browser/ui/ash/input_method/input_method_menu_item.h"
+#include "chrome/browser/ui/ash/input_method/input_method_menu_manager.h"
 #include "chrome/browser/ui/ash/keyboard/chrome_keyboard_controller_client.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/pref_names.h"
+#include "chromeos/ash/components/language_preferences/language_preferences.h"
 #include "components/prefs/pref_service.h"
 #include "components/user_manager/user_manager.h"
 #include "third_party/icu/source/common/unicode/uloc.h"
@@ -328,8 +332,7 @@ void InputMethodManagerImpl::StateImpl::DisableNonLockScreenLayouts() {
     // Skip if it's not a keyboard layout. Drop input methods including
     // extension ones. We need to keep all IMEs to support inputting on inline
     // reply on a notification if notifications on lock screen is enabled.
-    if ((!ash::features::IsLockScreenInlineReplyEnabled() &&
-         !manager_->IsLoginKeyboard(input_method_id)) ||
+    if (!manager_->IsLoginKeyboard(input_method_id) ||
         added_ids.count(input_method_id)) {
       continue;
     }
@@ -668,7 +671,7 @@ void InputMethodManagerImpl::StateImpl::SetEnabledExtensionImes(
     }
 
     const auto currently_enabled_iter =
-        base::ranges::find(enabled_input_method_ids_, entry.first);
+        std::ranges::find(enabled_input_method_ids_, entry.first);
 
     bool currently_enabled =
         currently_enabled_iter != enabled_input_method_ids_.end();
@@ -784,8 +787,8 @@ void InputMethodManagerImpl::StateImpl::SwitchToNextInputMethod() {
       GetEnabledInputMethodsSortedByLocalizedDisplayNames();
 
   auto iter =
-      base::ranges::find(sorted_enabled_input_methods, current_input_method_id,
-                         &InputMethodDescriptor::id);
+      std::ranges::find(sorted_enabled_input_methods, current_input_method_id,
+                        &InputMethodDescriptor::id);
 
   if (iter != sorted_enabled_input_methods.end()) {
     ++iter;
@@ -810,7 +813,7 @@ void InputMethodManagerImpl::StateImpl::SwitchToLastUsedInputMethod() {
   }
 
   const auto iter =
-      base::ranges::find(enabled_input_method_ids_, last_used_input_method_id_);
+      std::ranges::find(enabled_input_method_ids_, last_used_input_method_id_);
   if (iter == enabled_input_method_ids_.end()) {
     // last_used_input_method_id_ is not supported.
     SwitchToNextInputMethod();

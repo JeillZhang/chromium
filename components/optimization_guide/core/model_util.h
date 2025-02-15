@@ -5,8 +5,12 @@
 #ifndef COMPONENTS_OPTIMIZATION_GUIDE_CORE_MODEL_UTIL_H_
 #define COMPONENTS_OPTIMIZATION_GUIDE_CORE_MODEL_UTIL_H_
 
+#include <map>
 #include <optional>
+#include <set>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "base/files/file_path.h"
 #include "components/optimization_guide/core/model_enums.h"
@@ -36,17 +40,6 @@ base::FilePath GetBaseFileNameForModels();
 // Returns the base file name to use for storing the model info that holds the
 // metadata.
 base::FilePath GetBaseFileNameForModelInfo();
-
-// Returns the separator used in the model override switch below, which differs
-// between platforms.
-std::string ModelOverrideSeparator();
-
-// Returns the file path string and metadata for the model provided via
-// command-line for |optimization_target|, if applicable.
-std::optional<
-    std::pair<std::string, std::optional<optimization_guide::proto::Any>>>
-GetModelOverrideForOptimizationTarget(
-    optimization_guide::proto::OptimizationTarget optimization_target);
 
 // Checks all the files in |file_paths_to_check| exists.
 bool CheckAllPathsExist(const std::vector<base::FilePath>& file_paths_to_check);

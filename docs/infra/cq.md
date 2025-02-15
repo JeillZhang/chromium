@@ -52,11 +52,19 @@ in it the trybot mirrors of all CI builders gardened by the main Chromium
 gardening rotations. It also unconditionally applies
 `Include-Ci-Only-Tests: true` to its builds (see [below](#options)).
 
+If you find that the Mega CQ isn't covering a build or test config that it
+should, please file a general [trooper bug](https://g.co/bugatrooper) for the
+missing coverage.
+
 ### Mega-CQ Full-Run
 
 Runs all the same tests as the Mega-CQ dry-run. Will submit the CL if
 everything passes. Triggered via the `Mega CQ: Submit` button under the
-three-dot menu in Gerrit.
+three-dot menu in Gerrit. The amount of builds and tests the Mega CQ runs makes
+a passing run much more unlikely than a normal CQ run. Consequently, when
+running the Mega CQ, you'll likely want to spot-check the failures listed on
+Gerrit for anything that looks particularly relevant to your CL. Then you can use
+the normal `SUBMIT TO CQ` button to land once all failures look unrelated.
 
 ## Options
 
@@ -123,6 +131,22 @@ The Chromium CQ supports a variety of options that can change what it checks.
   This should only be used for reverts to green the tree, since it skips try
   bots and might therefore break the tree. You shouldn't use this otherwise.
 
+* `Validate-Test-Flakiness: skip`
+
+  This will disable the `test new tests for flakiness.*` steps in CQ builds that
+  check new tests for flakiness.
+
+* `Skip-Clang-Tidy-Checks: <check_1>,<check_2>,...`
+
+  This will skip the specified clang-tidy checks. The checks can be specified
+  as check name (e.g. `modernize-use-equals-default`) or glob to skip a set of
+  checks (e.g. `modernize-*` to skip checks that advocate usage of modern
+  language constructs). This option can span across multiple lines, for example:
+  ```
+  Skip-Clang-Tidy-Checks: google-explicit-constructor
+  Skip-Clang-Tidy-Checks: modernize-*,readability-*
+  ```
+
 ## FAQ
 
 ### What exactly does the CQ run?
@@ -176,6 +200,14 @@ Please follow these general guidelines:
 In both cases, when filing bugs, please include links to the build and/or CL
 (including relevant patchset information) in question.
 
+### How do I stop the CQ?
+
+There are a few ways to do this. Here are 3:
+
+1. Change the Commit-Queue value from +1 to 0 in Gerrit UI.
+2. Upload a new patchset which triggers a new dry run (Ex: git cl upload -d).
+3. Code-Review -1. This prevents a CL from landing.
+
 ### How do I add a new builder to the CQ?
 
 There are several requirements for a builder to be added to the Commit Queue.
@@ -188,7 +220,7 @@ There are several requirements for a builder to be added to the Commit Queue.
   familiar with existing configurations.
 * Tests should use existing test harnesses i.e.
   [gtest](../../third_party/googletest).
-* It should be possible for any committer to replicate any testing run; i.e.
+* It should be possible for any committer to replicate any testing run, i.e.
   tests and their data must be in the public repository.
 * Median cycle time needs to be under 40 minutes for trybots. 90th percentile
   should be around an hour (preferably shorter).

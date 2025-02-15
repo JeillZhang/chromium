@@ -13,6 +13,7 @@
 #include "base/check_op.h"
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
+#include "base/json/values_util.h"
 #include "base/lazy_instance.h"
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/field_trial_params.h"
@@ -26,23 +27,26 @@
 #include "chrome/browser/download/android/dangerous_download_infobar_delegate.h"
 #include "chrome/browser/download/android/download_manager_service.h"
 #include "chrome/browser/download/android/download_utils.h"
+#include "chrome/browser/download/android/new_navigation_observer.h"
 #include "chrome/browser/download/download_offline_content_provider.h"
 #include "chrome/browser/download/download_offline_content_provider_factory.h"
 #include "chrome/browser/download/download_stats.h"
+#include "chrome/browser/download/insecure_download_blocking.h"
 #include "chrome/browser/flags/android/chrome_feature_list.h"
 #include "chrome/browser/offline_pages/android/offline_page_bridge.h"
 #include "chrome/browser/permissions/permission_update_message_controller_android.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/android/tab_model/tab_model.h"
 #include "chrome/browser/ui/android/tab_model/tab_model_list.h"
+#include "chrome/common/pref_names.h"
 #include "chrome/grit/branded_strings.h"
 #include "components/download/content/public/context_menu_download.h"
 #include "components/download/public/common/android/auto_resumption_handler.h"
 #include "components/download/public/common/download_item.h"
 #include "components/infobars/content/content_infobar_manager.h"
 #include "components/pdf/common/constants.h"
-#include "components/safe_browsing/android/safe_browsing_api_handler_bridge.h"
-#include "components/safe_browsing/android/safe_browsing_api_handler_util.h"
+#include "components/prefs/pref_service.h"
+#include "components/prefs/scoped_user_pref_update.h"
 #include "components/safe_browsing/core/common/features.h"
 #include "components/strings/grit/components_strings.h"
 #include "content/public/browser/browser_context.h"
@@ -51,6 +55,7 @@
 #include "content/public/browser/download_item_utils.h"
 #include "content/public/browser/download_manager.h"
 #include "content/public/browser/download_manager_delegate.h"
+#include "content/public/browser/download_request_utils.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/common/content_features.h"
@@ -131,6 +136,16 @@ void RemoveDownloadItem(std::unique_ptr<DownloadManagerGetter> getter,
     item->Remove();
 }
 
+void ScheduleRemoveDownloadItem(download::DownloadItem* download) {
+  auto download_manager_getter = std::make_unique<DownloadManagerGetter>(
+      content::DownloadItemUtils::GetBrowserContext(download)
+          ->GetDownloadManager());
+  content::GetUIThreadTaskRunner({})->PostTask(
+      FROM_HERE,
+      base::BindOnce(&RemoveDownloadItem, std::move(download_manager_getter),
+                     download->GetGuid()));
+}
+
 void OnRequestFileAccessResult(
     const content::WebContents::Getter& web_contents_getter,
     DownloadControllerBase::AcquireFileAccessPermissionCallback cb,
@@ -170,6 +185,49 @@ bool ShouldOpenPdfInline(DownloadItem* item) {
          !item->IsMustDownload() && item->IsTransient();
 }
 
+void CleanupAppVerificationTimestamps(download::DownloadItem* item) {
+  Profile* profile = Profile::FromBrowserContext(
+      content::DownloadItemUtils::GetBrowserContext(item));
+  if (!profile || !profile->GetPrefs()) {
+    return;
+  }
+  ScopedListPrefUpdate update(profile->GetPrefs(),
+                              prefs::kDownloadAppVerificationPromptTimestamps);
+  update->EraseIf([](const base::Value& timestamp) {
+    constexpr base::TimeDelta kImpressionWindow = base::Days(90);
+
+    std::optional<base::Time> parsed_timestamp = base::ValueToTime(timestamp);
+    if (!parsed_timestamp.has_value()) {
+      return true;
+    }
+
+    return base::Time::Now() - parsed_timestamp.value() > kImpressionWindow;
+  });
+}
+
+bool HasSeenTooManyAppVerificationPrompts(download::DownloadItem* item) {
+  constexpr size_t kMaxImpressions = 3;
+  Profile* profile = Profile::FromBrowserContext(
+      content::DownloadItemUtils::GetBrowserContext(item));
+  if (!profile || !profile->GetPrefs()) {
+    return false;
+  }
+  return profile->GetPrefs()
+             ->GetList(prefs::kDownloadAppVerificationPromptTimestamps)
+             .size() >= kMaxImpressions;
+}
+
+void LogAppVerificationPromptToPrefs(download::DownloadItem* item) {
+  Profile* profile = Profile::FromBrowserContext(
+      content::DownloadItemUtils::GetBrowserContext(item));
+  if (!profile || !profile->GetPrefs()) {
+    return;
+  }
+  ScopedListPrefUpdate update(profile->GetPrefs(),
+                              prefs::kDownloadAppVerificationPromptTimestamps);
+  update->Append(base::TimeToValue(base::Time::Now()));
+}
+
 }  // namespace
 
 static void JNI_DownloadController_OnAcquirePermissionResult(
@@ -207,16 +265,25 @@ static void JNI_DownloadController_CancelDownload(JNIEnv* env,
   }
 }
 
-static void JNI_DownloadController_DownloadUrl(JNIEnv* env,
-                                               std::string& url,
-                                               Profile* profile) {
+static void JNI_DownloadController_DownloadUrl(
+    JNIEnv* env,
+    std::string& url,
+    const base::android::JavaParamRef<jobject>& jweb_contents) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
-  DownloadManager* download_manager = profile->GetDownloadManager();
+  content::WebContents* web_contents =
+      content::WebContents::FromJavaWebContents(jweb_contents);
+  if (!web_contents) {
+    return;
+  }
+
+  DownloadManager* download_manager =
+      web_contents->GetBrowserContext()->GetDownloadManager();
   if (download_manager) {
-    auto dl_params = std::make_unique<download::DownloadUrlParameters>(
-        GURL(url),
-        TRAFFIC_ANNOTATION_WITHOUT_PROTO("Download via toolbar menu"));
+    std::unique_ptr<download::DownloadUrlParameters> dl_params =
+        content::DownloadRequestUtils::CreateDownloadForWebContentsMainFrame(
+            web_contents, GURL(url),
+            TRAFFIC_ANNOTATION_WITHOUT_PROTO("Download via toolbar menu"));
     dl_params->set_content_initiated(false);
     dl_params->set_download_source(download::DownloadSource::TOOLBAR_MENU);
     download_manager->DownloadUrl(std::move(dl_params));
@@ -357,18 +424,11 @@ void DownloadController::StartAndroidDownloadInternal(
                                 info.original_mime_type, default_file_name_);
   ScopedJavaLocalRef<jobject> jurl =
       url::GURLAndroid::FromNativeGURL(env, info.url);
-  ScopedJavaLocalRef<jstring> juser_agent =
-      ConvertUTF8ToJavaString(env, info.user_agent);
-  ScopedJavaLocalRef<jstring> jmime_type =
-      ConvertUTF8ToJavaString(env, info.original_mime_type);
-  ScopedJavaLocalRef<jstring> jcookie =
-      ConvertUTF8ToJavaString(env, info.cookie);
   ScopedJavaLocalRef<jobject> jreferer =
       url::GURLAndroid::FromNativeGURL(env, info.referer);
-  ScopedJavaLocalRef<jstring> jfile_name =
-      base::android::ConvertUTF16ToJavaString(env, file_name);
   Java_DownloadController_enqueueAndroidDownloadManagerRequest(
-      env, jurl, juser_agent, jfile_name, jmime_type, jcookie, jreferer);
+      env, jurl, info.user_agent, file_name, info.original_mime_type,
+      info.cookie, jreferer);
 
   WebContents* web_contents = wc_getter.Run();
   CloseTabIfEmpty(web_contents, nullptr);
@@ -382,8 +442,9 @@ void DownloadController::OnDownloadStarted(DownloadItem* download_item) {
       ShouldOpenPdfInline(download_item)) {
     content::WebContents* web_contents =
         content::DownloadItemUtils::GetWebContents(download_item);
-    bool has_tab = false;
-    if (web_contents) {
+    bool should_cancel_download = true;
+    if (web_contents &&
+        !NewNavigationObserver::GetInstance()->HasNewNavigation(web_contents)) {
       TabAndroid* tab = TabAndroid::FromWebContents(web_contents);
       if (tab) {
         JNIEnv* env = base::android::AttachCurrentThread();
@@ -391,11 +452,14 @@ void DownloadController::OnDownloadStarted(DownloadItem* download_item) {
             DownloadManagerService::CreateJavaDownloadInfo(env, download_item);
         Java_DownloadController_onPdfDownloadStarted(env, tab->GetJavaObject(),
                                                      j_item);
-        has_tab = true;
+        should_cancel_download = false;
       }
     }
-    if (!has_tab) {
-      download_item->Cancel(/*user_cancel=*/false);
+    NewNavigationObserver::GetInstance()->StopObserving(web_contents);
+    if (should_cancel_download) {
+      ScheduleRemoveDownloadItem(download_item);
+      download_item->RemoveObserver(this);
+      return;
     }
   }
 
@@ -433,55 +497,31 @@ void DownloadController::OnDownloadUpdated(DownloadItem* item) {
   }
 
   if (item->GetState() == DownloadItem::COMPLETE) {
-    JNIEnv* env = base::android::AttachCurrentThread();
-    ScopedJavaLocalRef<jobject> j_item =
-        DownloadManagerService::CreateJavaDownloadInfo(env, item);
-    // Multiple OnDownloadUpdated() notifications may be issued while the
-    // download is in the COMPLETE state. Only handle one.
-    item->RemoveObserver(this);
-    // Call onDownloadCompleted
-    TabAndroid* tab = nullptr;
-    if (base::FeatureList::IsEnabled(features::kAndroidOpenPdfInline)) {
-      content::WebContents* web_contents =
-          content::DownloadItemUtils::GetWebContents(item);
-      if (web_contents) {
-        tab = TabAndroid::FromWebContents(web_contents);
-      }
+    if (ShouldShowAppVerificationPrompt(item)) {
+      LogAppVerificationPromptToPrefs(item);
+      app_verification_prompt_download_ = item;
+      safe_browsing::SafeBrowsingApiHandlerBridge::GetInstance()
+          .StartEnableVerifyApps(base::BindOnce(
+              &DownloadController::EnableVerifyAppsDone,
+              // base::Unretained is safe because `this` is a singleton.
+              base::Unretained(this), item));
+    } else if (app_verification_prompt_download_ != item) {
+      OnDownloadComplete(item);
     }
-    Java_DownloadController_onDownloadCompleted(
-        env, tab ? tab->GetJavaObject() : nullptr, j_item);
+  }
+}
+
+void DownloadController::OnDownloadDestroyed(download::DownloadItem* item) {
+  item->RemoveObserver(this);
+  if (app_verification_prompt_download_ == item) {
+    app_verification_prompt_download_ = nullptr;
   }
 }
 
 void DownloadController::OnDangerousDownload(download::DownloadItem* item) {
-  if (has_seen_app_verification_dialog_ ||
-      !base::FeatureList::IsEnabled(safe_browsing::kGooglePlayProtectPrompt)) {
-    ShowDangerousDownloadDialog(item);
-    return;
-  }
-
-  if (base::Contains(app_verification_requests_, item)) {
-    return;
-  }
-
-  app_verification_requests_[item] =
-      std::make_unique<DownloadAppVerificationRequest>(
-          item, base::BindOnce(&DownloadController::OnAppVerificationComplete,
-                               // Unretained is safe because this is a singleton
-                               base::Unretained(this)));
-}
-
-void DownloadController::ShowDangerousDownloadDialog(
-    download::DownloadItem* item) {
   WebContents* web_contents = content::DownloadItemUtils::GetWebContents(item);
   if (!web_contents) {
-    auto download_manager_getter = std::make_unique<DownloadManagerGetter>(
-        content::DownloadItemUtils::GetBrowserContext(item)
-            ->GetDownloadManager());
-    content::GetUIThreadTaskRunner({})->PostTask(
-        FROM_HERE,
-        base::BindOnce(&RemoveDownloadItem, std::move(download_manager_getter),
-                       item->GetGuid()));
+    ScheduleRemoveDownloadItem(item);
     item->RemoveObserver(this);
     return;
   }
@@ -497,11 +537,55 @@ void DownloadController::ShowDangerousDownloadDialog(
   dangerous_download_bridge_->Show(item, window_android);
 }
 
+void DownloadController::EnableVerifyAppsDone(
+    download::DownloadItem* item,
+    safe_browsing::VerifyAppsEnabledResult result) {
+  base::UmaHistogramEnumeration(
+      "SBClientDownload.AndroidAppVerificationPromptResult2", result);
+
+  if (app_verification_prompt_download_ != nullptr) {
+    app_verification_prompt_download_ = nullptr;
+    OnDownloadComplete(item);
+  }
+}
+
+void DownloadController::OnDownloadComplete(download::DownloadItem* item) {
+  JNIEnv* env = base::android::AttachCurrentThread();
+  ScopedJavaLocalRef<jobject> j_item =
+      DownloadManagerService::CreateJavaDownloadInfo(env, item);
+  // Multiple OnDownloadUpdated() notifications may be issued while the
+  // download is in the COMPLETE state. Only handle one.
+  item->RemoveObserver(this);
+  bool is_download_safe = true;
+  // Call onDownloadCompleted
+  TabAndroid* tab = nullptr;
+  // Primary page of the WebContents have changed when showing the native
+  // page, need to call GetOriginalWebContents() instead.
+  content::WebContents* web_contents =
+      content::DownloadItemUtils::GetOriginalWebContents(item);
+  if (web_contents) {
+    tab = TabAndroid::FromWebContents(web_contents);
+  }
+  if (tab) {
+    download::DownloadItem::InsecureDownloadStatus status =
+        GetInsecureDownloadStatusForDownload(
+            Profile::FromBrowserContext(
+                content::DownloadItemUtils::GetBrowserContext(item)),
+            item->GetTargetFilePath(), item);
+    is_download_safe =
+        (status == download::DownloadItem::InsecureDownloadStatus::SAFE ||
+         status == download::DownloadItem::InsecureDownloadStatus::VALIDATED);
+  }
+  Java_DownloadController_onDownloadCompleted(
+      env, tab ? tab->GetJavaObject() : nullptr, j_item, is_download_safe);
+}
+
 void DownloadController::StartContextMenuDownload(
     const ContextMenuParams& params,
     WebContents* web_contents,
     bool is_link) {
-  int process_id = web_contents->GetRenderViewHost()->GetProcess()->GetID();
+  int process_id =
+      web_contents->GetRenderViewHost()->GetProcess()->GetDeprecatedID();
   int routing_id = web_contents->GetRenderViewHost()->GetRoutingID();
 
   const content::WebContents::Getter& wc_getter(
@@ -525,73 +609,20 @@ ProfileKey* DownloadController::GetProfileKey(DownloadItem* download_item) {
   return profile_key;
 }
 
-void DownloadController::OnAppVerificationComplete(
-    bool showed_app_verification_dialog,
+bool DownloadController::ShouldShowAppVerificationPrompt(
     download::DownloadItem* item) {
-  const auto it = app_verification_requests_.find(item);
-  CHECK(it != app_verification_requests_.end());
-  app_verification_requests_.erase(it);
+  if (item->GetDangerType() != download::DOWNLOAD_DANGER_TYPE_USER_VALIDATED) {
+    return false;
+  }
 
-  has_seen_app_verification_dialog_ |= showed_app_verification_dialog;
+  if (app_verification_prompt_download_ != nullptr) {
+    return false;
+  }
 
-  ShowDangerousDownloadDialog(item);
+  CleanupAppVerificationTimestamps(item);
+  if (HasSeenTooManyAppVerificationPrompts(item)) {
+    return false;
+  }
+
+  return true;
 }
-
-// Encapsulates the process of checking whether app verification is
-// enabled and possibly prompting the user to enable app verification.
-class DownloadAppVerificationRequest : public download::DownloadItem::Observer {
- public:
-  // On request completion, this class calls back with:
-  // - Whether a prompt was shown to the user
-  // - The associated `DownloadItem`
-  using AppVerificationCallback =
-      base::OnceCallback<void(bool, download::DownloadItem*)>;
-  DownloadAppVerificationRequest(download::DownloadItem* item,
-                                 AppVerificationCallback callback)
-      : item_(item), callback_(std::move(callback)) {
-    item_->AddObserver(this);
-    safe_browsing::SafeBrowsingApiHandlerBridge::GetInstance()
-        .StartIsVerifyAppsEnabled(
-            base::BindOnce(&DownloadAppVerificationRequest::IsVerifyAppsEnabled,
-                           weak_factory_.GetWeakPtr()));
-  }
-
-  ~DownloadAppVerificationRequest() override { item_->RemoveObserver(this); }
-
- private:
-  // DownloadItem::Observer
-  void OnDownloadDestroyed(download::DownloadItem* item) override {
-    // It's safe to pass `item` in the callback because the callback
-    // immediately deletes `this`.
-    std::move(callback_).Run(false, item);
-    // Do not add code after this. Callback may delete `this`.
-  }
-
-  void IsVerifyAppsEnabled(safe_browsing::VerifyAppsEnabledResult result) {
-    base::UmaHistogramEnumeration(
-        "SBClientDownload.AndroidAppVerificationResult", result);
-
-    if (result != safe_browsing::VerifyAppsEnabledResult::SUCCESS_NOT_ENABLED) {
-      std::move(callback_).Run(false, item_);
-      // Do not add code after this. Callback may delete `this`.
-      return;
-    }
-
-    safe_browsing::SafeBrowsingApiHandlerBridge::GetInstance()
-        .StartEnableVerifyApps(base::BindOnce(
-            &DownloadAppVerificationRequest::EnableVerifyAppsDone,
-            weak_factory_.GetWeakPtr()));
-  }
-
-  void EnableVerifyAppsDone(safe_browsing::VerifyAppsEnabledResult result) {
-    base::UmaHistogramEnumeration(
-        "SBClientDownload.AndroidAppVerificationPromptResult", result);
-
-    std::move(callback_).Run(true, item_);
-    // Do not add code after this. Callback may delete `this`.
-  }
-
-  raw_ptr<download::DownloadItem> item_;
-  AppVerificationCallback callback_;
-  base::WeakPtrFactory<DownloadAppVerificationRequest> weak_factory_{this};
-};

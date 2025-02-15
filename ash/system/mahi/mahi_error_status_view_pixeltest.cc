@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "ash/system/mahi/mahi_constants.h"
+#include "ash/system/mahi/mahi_panel_view.h"
 #include "ash/system/mahi/mahi_panel_widget.h"
 #include "ash/system/mahi/mahi_ui_controller.h"
 #include "ash/system/mahi/test/mock_mahi_manager.h"
@@ -54,7 +55,7 @@ std::string GetScreenShotNameForErrorStatus(MahiResponseStatus status) {
       return "UnsupportedLanguage";
     case chromeos::MahiResponseStatus::kLowQuota:
     case chromeos::MahiResponseStatus::kSuccess:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }
 
@@ -81,11 +82,20 @@ class MahiErrorStatusViewPixelTestBase : public AshTestBase {
   }
 
   void SetUp() override {
-    scoped_feature_list_.InitAndEnableFeature(chromeos::features::kMahi);
+    scoped_feature_list_.InitWithFeatures(
+        /*enabled_features=*/{chromeos::features::kMahi,
+                              chromeos::features::kFeatureManagementMahi},
+        /*disabled_features=*/{});
     AshTestBase::SetUp();
 
     ON_CALL(mock_mahi_manager_, GetContentTitle)
         .WillByDefault(Return(u"content title"));
+  }
+
+  void TearDown() override {
+    mahi_panel_widget_.reset();
+
+    AshTestBase::TearDown();
   }
 
   base::test::ScopedFeatureList scoped_feature_list_;
@@ -126,22 +136,18 @@ TEST_P(MahiErrorStatusViewPixelTest, Basics) {
           mahi_constants::ViewId::kErrorStatusView);
   ASSERT_TRUE(error_status_view);
   EXPECT_TRUE(GetPixelDiffer()->CompareUiComponentsOnPrimaryScreen(
-      GetScreenShotNameForErrorStatus(GetParam()), /*revision_number=*/0,
+      GetScreenShotNameForErrorStatus(GetParam()), /*revision_number=*/8,
       error_status_view));
 }
 
-// MahiInappropriateQuestionPixelTest ------------------------------------------
-
-using MahiInappropriateQuestionPixelTest = MahiErrorStatusViewPixelTestBase;
-
-// Verifies the Mahi panel scroll view when asking an inappropriate question.
-TEST_F(MahiInappropriateQuestionPixelTest, InappropriateError) {
+// Verifies the error status on the Mahi panel scroll view when asking a
+// question.
+TEST_P(MahiErrorStatusViewPixelTest, QuestionAnswerView) {
   ON_CALL(mock_mahi_manager(), AnswerQuestion)
       .WillByDefault(
           [](const std::u16string& question, bool current_panel_content,
              chromeos::MahiManager::MahiAnswerQuestionCallback callback) {
-            std::move(callback).Run(u"answer",
-                                    MahiResponseStatus::kInappropriate);
+            std::move(callback).Run(u"answer", GetParam());
           });
 
   ShowMahiPanel();
@@ -159,7 +165,7 @@ TEST_F(MahiInappropriateQuestionPixelTest, InappropriateError) {
   LeftClickOn(send_button);
 
   EXPECT_TRUE(GetPixelDiffer()->CompareUiComponentsOnPrimaryScreen(
-      "basics", /*revision_number=*/2,
+      GetScreenShotNameForErrorStatus(GetParam()), /*revision_number=*/5,
       mahi_contents_view->GetViewByID(mahi_constants::ViewId::kScrollView)));
 }
 

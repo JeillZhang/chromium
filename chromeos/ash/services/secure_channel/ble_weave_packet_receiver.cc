@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chromeos/ash/services/secure_channel/ble_weave_packet_receiver.h"
 
 #include "build/build_config.h"
@@ -102,7 +107,7 @@ BluetoothLowEnergyWeavePacketReceiver::ReceivePacket(const Packet& packet) {
         // Counter not verified.
         break;
       default:
-        NOTREACHED_IN_MIGRATION();
+        NOTREACHED();
     }
   }
   return state_;
@@ -204,7 +209,7 @@ void BluetoothLowEnergyWeavePacketReceiver::ReceiveNonFirstPacket(
       }
       break;
     default:
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
   }
 }
 

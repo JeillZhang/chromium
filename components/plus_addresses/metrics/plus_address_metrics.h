@@ -8,7 +8,7 @@
 #include <string>
 
 #include "base/time/time.h"
-#include "components/autofill/core/browser/autofill_plus_address_delegate.h"
+#include "components/autofill/core/browser/integrators/autofill_plus_address_delegate.h"
 #include "components/plus_addresses/plus_address_types.h"
 
 class GoogleServiceAuthError;
@@ -43,19 +43,27 @@ enum class PlusAddressModalCompletionStatus {
   kMaxValue = kConfirmPlusAddressError,
 };
 
-// Logs plus address creation modal events triggered by user.
-void RecordModalEvent(PlusAddressModalEvent plus_address_modal_event);
+// Logs plus address creation modal events triggered by user. `is_notice_screen`
+// indicates whether the modal included the legal notice.
+void RecordModalEvent(PlusAddressModalEvent plus_address_modal_event,
+                      bool is_notice_screen);
 
 // Logs plus address creation modal/bottom sheet shown duration for each
-// closing `status`.
+// closing `status`. `is_notice_screen` indicates whether the modal included the
+// legal notice.
 void RecordModalShownOutcome(PlusAddressModalCompletionStatus status,
                              base::TimeDelta modal_shown_duration,
-                             int refresh_count);
+                             int refresh_count,
+                             bool is_notice_screen);
 
 // Logs plus address autofill suggestion events.
 void RecordAutofillSuggestionEvent(
     autofill::AutofillPlusAddressDelegate::SuggestionEvent
         plus_address_autofill_suggestion_event);
+
+// Logs the `net_error` code of the URL loader at the conclusion of a network
+// request.
+void RecordNetErrorCode(PlusAddressNetworkRequestType type, int net_error);
 
 // Logs latency of a `type` of network request.
 void RecordNetworkRequestLatency(PlusAddressNetworkRequestType type,

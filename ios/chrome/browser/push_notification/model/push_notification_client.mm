@@ -3,11 +3,12 @@
 // found in the LICENSE file.
 
 #import "ios/chrome/browser/push_notification/model/push_notification_client.h"
+
 #import "ios/chrome/browser/shared/coordinator/scene/scene_state.h"
 #import "ios/chrome/browser/shared/model/application_context/application_context.h"
 #import "ios/chrome/browser/shared/model/browser/browser_list.h"
 #import "ios/chrome/browser/shared/model/browser/browser_list_factory.h"
-#import "ios/chrome/browser/shared/model/browser_state/chrome_browser_state_manager.h"
+#import "ios/chrome/browser/shared/model/profile/profile_manager_ios.h"
 #import "ios/chrome/browser/shared/public/commands/application_commands.h"
 #import "ios/chrome/browser/shared/public/commands/command_dispatcher.h"
 #import "ios/chrome/browser/url_loading/model/url_loading_browser_agent.h"
@@ -28,9 +29,13 @@ void PushNotificationClient::OnSceneActiveForegroundBrowserReady() {
   if (!urls_delayed_for_loading_.size() && !feedback_presentation_delayed_) {
     return;
   }
-  CHECK(!urls_delayed_for_loading_.size() || !feedback_presentation_delayed_);
+
+  // TODO(crbug.com/41497027): The notifications should probbaly be linked
+  // to a specific profile, and thus this should check that the code here
+  // use the correct profile.
   Browser* browser = GetSceneLevelForegroundActiveBrowser();
   CHECK(browser);
+
   if (feedback_presentation_delayed_) {
     id<ApplicationCommands> handler =
         static_cast<id<ApplicationCommands>>(browser->GetCommandDispatcher());
@@ -47,56 +52,71 @@ void PushNotificationClient::OnSceneActiveForegroundBrowserReady() {
         break;
       case PushNotificationClientId::kTips:
       case PushNotificationClientId::kCommerce:
+      case PushNotificationClientId::kSendTab:
+      case PushNotificationClientId::kSafetyCheck:
+      case PushNotificationClientId::kReminders:
         // Features do not support feedback.
-        NOTREACHED_IN_MIGRATION();
-        break;
-      default:
-        break;
+        NOTREACHED();
     }
   }
+
   if (urls_delayed_for_loading_.size()) {
-    for (const GURL& url : urls_delayed_for_loading_) {
-      loadUrlInNewTab(url, browser);
+    for (auto& url : urls_delayed_for_loading_) {
+      LoadUrlInNewTab(url.first, browser, std::move(url.second));
     }
     urls_delayed_for_loading_.clear();
   }
 }
 
-// TODO(crbug.com/41497027): Make functionality that relies on this
-// multi-profile and multi-window safe. That might mean removing this method and
-// finding a different way to determine which window should be used to present
-// UI.
+// TODO(crbug.com/41497027): Current implementation returns any Scene. Instead
+// the notification should includes some way to identify the associated profile
+// to use (maybe by including the gaia id of the associated profile).
 Browser* PushNotificationClient::GetSceneLevelForegroundActiveBrowser() {
-  BrowserList* browser_list =
-      BrowserListFactory::GetForBrowserState(GetLastUsedBrowserState());
-  for (Browser* browser : browser_list->AllRegularBrowsers()) {
-    if (!browser->IsInactive()) {
-      if (browser->GetSceneState().activationLevel ==
-          SceneActivationLevelForegroundActive) {
-        return browser;
-      }
+  ProfileIOS* profile = GetAnyProfile();
+  if (!profile) {
+    return nullptr;
+  }
+
+  std::set<Browser*> browsers =
+      BrowserListFactory::GetForProfile(profile)->BrowsersOfType(
+          BrowserList::BrowserType::kRegular);
+
+  for (Browser* browser : browsers) {
+    if (browser->GetSceneState().activationLevel ==
+        SceneActivationLevelForegroundActive) {
+      return browser;
     }
   }
   return nullptr;
 }
 
-void PushNotificationClient::loadUrlInNewTab(const GURL& url) {
+void PushNotificationClient::LoadUrlInNewTab(const GURL& url) {
+  LoadUrlInNewTab(url, base::DoNothing());
+}
+
+void PushNotificationClient::LoadUrlInNewTab(
+    const GURL& url,
+    base::OnceCallback<void(Browser*)> callback) {
   Browser* browser = GetSceneLevelForegroundActiveBrowser();
   if (!browser) {
-    urls_delayed_for_loading_.push_back(url);
+    urls_delayed_for_loading_.emplace_back(url, std::move(callback));
     return;
   }
 
-  loadUrlInNewTab(url, browser);
+  LoadUrlInNewTab(url, browser, std::move(callback));
 }
 
-void PushNotificationClient::loadUrlInNewTab(const GURL& url,
-                                             Browser* browser) {
-  UrlLoadParams params = UrlLoadParams::InNewTab(url);
-  UrlLoadingBrowserAgent::FromBrowser(browser)->Load(params);
+void PushNotificationClient::LoadUrlInNewTab(
+    const GURL& url,
+    Browser* browser,
+    base::OnceCallback<void(Browser*)> callback) {
+  id<ApplicationCommands> handler =
+      static_cast<id<ApplicationCommands>>(browser->GetCommandDispatcher());
+  [handler openURLInNewTab:[OpenNewTabCommand commandWithURLFromChrome:url]];
+  std::move(callback).Run(browser);
 }
 
-void PushNotificationClient::loadFeedbackWithPayloadAndClientId(
+void PushNotificationClient::LoadFeedbackWithPayloadAndClientId(
     NSDictionary<NSString*, NSString*>* data,
     PushNotificationClientId client) {
   Browser* browser = GetSceneLevelForegroundActiveBrowser();
@@ -108,11 +128,13 @@ void PushNotificationClient::loadFeedbackWithPayloadAndClientId(
   }
 }
 
-ChromeBrowserState* PushNotificationClient::GetLastUsedBrowserState() {
-  if (last_used_browser_state_for_testing_) {
-    return last_used_browser_state_for_testing_;
+ProfileIOS* PushNotificationClient::GetAnyProfile() {
+  std::vector<ProfileIOS*> loaded_profiles =
+      GetApplicationContext()->GetProfileManager()->GetLoadedProfiles();
+
+  if (loaded_profiles.empty()) {
+    return nullptr;
   }
-  return GetApplicationContext()
-      ->GetChromeBrowserStateManager()
-      ->GetLastUsedBrowserStateDeprecatedDoNotUse();
+
+  return loaded_profiles.back();
 }

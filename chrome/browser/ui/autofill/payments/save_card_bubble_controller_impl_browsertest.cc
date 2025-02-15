@@ -18,8 +18,9 @@
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/interactive_test_utils.h"
 #include "chrome/test/base/ui_test_utils.h"
-#include "components/autofill/core/browser/autofill_test_utils.h"
 #include "components/autofill/core/browser/payments/legal_message_line.h"
+#include "components/autofill/core/browser/payments/payments_autofill_client.h"
+#include "components/autofill/core/browser/test_utils/autofill_test_utils.h"
 #include "content/public/test/browser_test.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -32,10 +33,6 @@ class SaveCardBubbleControllerImplTest : public DialogBrowserTest {
       delete;
   SaveCardBubbleControllerImplTest& operator=(
       const SaveCardBubbleControllerImplTest&) = delete;
-
-  void SetUpCommandLine(base::CommandLine* command_line) override {
-    DialogBrowserTest::SetUpCommandLine(command_line);
-  }
 
   LegalMessageLines GetTestLegalMessage() {
     std::optional<base::Value> value(base::JSONReader::Read(
@@ -72,17 +69,18 @@ class SaveCardBubbleControllerImplTest : public DialogBrowserTest {
     controller_ = SaveCardBubbleControllerImpl::FromWebContents(web_contents);
     CHECK(controller_);
 
-    AutofillClient::SaveCreditCardOptions options =
-        AutofillClient::SaveCreditCardOptions()
+    payments::PaymentsAutofillClient::SaveCreditCardOptions options =
+        payments::PaymentsAutofillClient::SaveCreditCardOptions()
             .with_should_request_name_from_user(
                 name.find("WithCardholderNameTextfield") != std::string::npos)
             .with_should_request_expiration_date_from_user(
                 name.find("WithCardExpirationDateDropDownBox") !=
                 std::string::npos)
-            .with_card_save_type(
-                name.find("CvcSave") != std::string::npos
-                    ? AutofillClient::CardSaveType::kCvcSaveOnly
-                    : AutofillClient::CardSaveType::kCardSaveOnly)
+            .with_card_save_type(name.find("CvcSave") != std::string::npos
+                                     ? payments::PaymentsAutofillClient::
+                                           CardSaveType::kCvcSaveOnly
+                                     : payments::PaymentsAutofillClient::
+                                           CardSaveType::kCardSaveOnly)
             .with_show_prompt(true);
 
     BubbleType bubble_type = BubbleType::INACTIVE;

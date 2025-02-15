@@ -16,6 +16,7 @@
 #include "components/strings/grit/components_strings.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
+#include "ui/base/mojom/dialog_button.mojom.h"
 #include "ui/views/window/dialog_client_view.h"
 
 namespace {
@@ -44,15 +45,17 @@ PermissionPromptBaseView::PermissionPromptBaseView(
   // To prevent permissions being accepted accidentally, and as a security
   // measure against crbug.com/619429, permission prompts should not be accepted
   // as the default action.
-  SetDefaultButton(ui::DIALOG_BUTTON_NONE);
+  SetDefaultButton(static_cast<int>(ui::mojom::DialogButton::kNone));
 }
+
+PermissionPromptBaseView::~PermissionPromptBaseView() = default;
 
 void PermissionPromptBaseView::AddedToWidget() {
   if (url_identity_.type == UrlIdentity::Type::kDefault) {
     // There is a risk of URL spoofing from origins that are too wide to fit in
     // the bubble; elide origins from the front to prevent this.
     GetBubbleFrameView()->SetTitleView(
-        CreateTitleOriginLabel(GetWindowTitle()));
+        CreateTitleOriginLabel(GetWindowTitle(), GetTitleBoldedRanges()));
   }
 
   StartTrackingPictureInPictureOcclusion();
@@ -87,6 +90,10 @@ bool PermissionPromptBaseView::ShouldIgnoreButtonPressedEventHandling(
 }
 
 void PermissionPromptBaseView::OnOcclusionStateChanged(bool occluded) {
+  // Protect from immediate input if the dialog has just become unoccluded.
+  if (occluded_by_picture_in_picture_ && !occluded) {
+    TriggerInputProtection();
+  }
   occluded_by_picture_in_picture_ = occluded;
 }
 
@@ -159,6 +166,15 @@ void PermissionPromptBaseView::StartTrackingPictureInPictureOcclusion() {
   // Either way, we want to know if we're ever occluded by an always-on-top
   // window.
   occlusion_observation_.Observe(GetWidget());
+}
+
+std::vector<std::pair<size_t, size_t>>
+PermissionPromptBaseView::GetTitleBoldedRanges() {
+  return title_bolded_ranges_;
+}
+void PermissionPromptBaseView::SetTitleBoldedRanges(
+    std::vector<std::pair<size_t, size_t>> bolded_ranges) {
+  title_bolded_ranges_ = bolded_ranges;
 }
 
 BEGIN_METADATA(PermissionPromptBaseView)

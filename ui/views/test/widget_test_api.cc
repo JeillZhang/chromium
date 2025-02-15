@@ -4,9 +4,11 @@
 
 #include "ui/views/test/widget_test_api.h"
 
+#include "base/notimplemented.h"
 #include "ui/views/widget/widget.h"
 
-#if BUILDFLAG(IS_CHROMEOS_LACROS) || BUILDFLAG(IS_LINUX)
+#if BUILDFLAG(IS_LINUX)
+
 #include <utility>
 
 #include "base/test/run_until.h"
@@ -14,7 +16,8 @@
 #include "ui/aura/window_tree_host_platform.h"
 #include "ui/ozone/public/ozone_platform.h"
 #include "ui/platform_window/extensions/wayland_extension.h"
-#endif
+
+#endif  // BUILDFLAG(IS_LINUX)
 
 namespace views {
 
@@ -25,7 +28,7 @@ void DisableActivationChangeHandlingForTests() {
 
 AsyncWidgetRequestWaiter::AsyncWidgetRequestWaiter(Widget& widget)
     : widget_(widget) {
-#if BUILDFLAG(IS_CHROMEOS_LACROS) || BUILDFLAG(IS_LINUX)
+#if BUILDFLAG(IS_LINUX)
   if (ui::OzonePlatform::GetPlatformNameForTest() == "wayland") {
     // Wait for a Wayland roundtrip to ensure all side effects have been
     // processed.
@@ -34,7 +37,7 @@ AsyncWidgetRequestWaiter::AsyncWidgetRequestWaiter(Widget& widget)
     auto* wayland_extension = ui::GetWaylandExtension(*host->platform_window());
     wayland_extension->SetLatchImmediately(false);
   }
-#endif
+#endif  // BUILDFLAG(IS_LINUX)
 }
 
 AsyncWidgetRequestWaiter::~AsyncWidgetRequestWaiter() {
@@ -44,7 +47,7 @@ AsyncWidgetRequestWaiter::~AsyncWidgetRequestWaiter() {
 
 void AsyncWidgetRequestWaiter::Wait() {
   CHECK(!waited_) << "`Wait` may only be called once.";
-#if BUILDFLAG(IS_CHROMEOS_LACROS) || BUILDFLAG(IS_LINUX)
+#if BUILDFLAG(IS_LINUX)
   if (ui::OzonePlatform::GetPlatformNameForTest() == "wayland") {
     // Wait for a Wayland roundtrip to ensure all side effects have been
     // processed.
@@ -69,7 +72,11 @@ void AsyncWidgetRequestWaiter::Wait() {
     // to be processed on the server side.
     wayland_extension->RoundTripQueue();
     wayland_extension->SetLatchImmediately(true);
+  } else {
+    NOTIMPLEMENTED_LOG_ONCE();
   }
+#else  // BUILDFLAG(IS_LINUX)
+  NOTIMPLEMENTED_LOG_ONCE();
 #endif
   waited_ = true;
 }

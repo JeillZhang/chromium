@@ -8,7 +8,6 @@ import static org.chromium.android_webview.test.AwActivityTestRule.WAIT_TIMEOUT_
 
 import android.content.Context;
 import android.util.Base64;
-import android.util.Pair;
 import android.view.ViewGroup;
 
 import androidx.test.InstrumentationRegistry;
@@ -36,13 +35,13 @@ import org.chromium.android_webview.WebviewErrorCode;
 import org.chromium.android_webview.common.AwFeatures;
 import org.chromium.android_webview.test.util.CommonResources;
 import org.chromium.android_webview.test.util.JSUtils;
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Feature;
 import org.chromium.content_public.browser.test.util.HistoryUtils;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.net.test.util.TestWebServer;
 
 import java.io.UnsupportedEncodingException;
@@ -213,7 +212,7 @@ public class LoadUrlTest extends AwParameterizedTest {
         }
 
         public void waitForFullLoad() throws TimeoutException {
-            mCallbackHelper.waitForFirst();
+            mCallbackHelper.waitForOnly();
         }
 
         private CallbackHelper mCallbackHelper = new CallbackHelper();
@@ -276,14 +275,6 @@ public class LoadUrlTest extends AwParameterizedTest {
                 .runOnMainSync(() -> awContents.loadUrl(url, extraHeaders));
         onPageFinishedHelper.waitForCallback(
                 currentCallCount, 1, WAIT_TIMEOUT_MS, TimeUnit.MILLISECONDS);
-    }
-
-    private static List<Pair<String, String>> createHeadersList(String[] namesAndValues) {
-        List<Pair<String, String>> result = new ArrayList<Pair<String, String>>();
-        for (int i = 0; i < namesAndValues.length; i += 2) {
-            result.add(Pair.create(namesAndValues[i], namesAndValues[i + 1]));
-        }
-        return result;
     }
 
     private static Map<String, String> createHeadersMap(String[] namesAndValues) {
@@ -351,7 +342,7 @@ public class LoadUrlTest extends AwParameterizedTest {
     private void loadWithInvalidHeaders(AwContents awContents, Map<String, String> extraHeaders)
             throws Exception {
         Assert.assertTrue(
-                TestThreadUtils.runOnUiThreadBlocking(
+                ThreadUtils.runOnUiThreadBlocking(
                         () -> {
                             try {
                                 awContents.loadUrl("about:blank", extraHeaders);
@@ -911,7 +902,7 @@ public class LoadUrlTest extends AwParameterizedTest {
         }
     }
 
-    class TestAwContentsClientTestDependencyFactory
+    static class TestAwContentsClientTestDependencyFactory
             extends AwActivityTestRule.TestDependencyFactory {
         @Override
         public AwContents createAwContents(

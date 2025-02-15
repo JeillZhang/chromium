@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <random>
+#include <variant>
 #include <vector>
 
 #include "base/check_is_test.h"
@@ -13,20 +14,20 @@
 #include "base/containers/to_vector.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/not_fatal_until.h"
 #include "base/rand_util.h"
-#include "base/ranges/algorithm.h"
 #include "build/build_config.h"
 #include "components/country_codes/country_codes.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/pref_service.h"
-#include "components/search_engines/eea_countries_ids.h"
-#include "components/search_engines/prepopulated_engines.h"
+#include "components/regional_capabilities/eea_countries_ids.h"
+#include "components/regional_capabilities/regional_capabilities_utils.h"
 #include "components/search_engines/search_engine_choice/search_engine_choice_service.h"
-#include "components/search_engines/search_engine_choice/search_engine_choice_utils.h"
 #include "components/search_engines/search_engines_pref_names.h"
 #include "components/search_engines/template_url_data.h"
 #include "components/search_engines/template_url_data_util.h"
 #include "components/version_info/version_info.h"
+#include "third_party/search_engines_data/resources/definitions/prepopulated_engines.h"
 
 namespace TemplateURLPrepopulateData {
 
@@ -39,9 +40,7 @@ namespace {
 std::vector<std::unique_ptr<TemplateURLData>>
 GetPrepopulatedEnginesForEeaRegionCountries(int country_id,
                                             PrefService* prefs) {
-  CHECK(search_engines::IsEeaChoiceCountry(country_id) &&
-        search_engines::IsChoiceScreenFlagEnabled(
-            search_engines::ChoicePromo::kAny));
+  CHECK(search_engines::IsEeaChoiceCountry(country_id));
 
   uint64_t profile_seed;
   if (prefs) {
@@ -86,30 +85,26 @@ GetPrepopulatedEnginesForEeaRegionCountries(int country_id,
 std::vector<std::unique_ptr<TemplateURLData>> GetPrepopulatedTemplateURLData(
     int country_id,
     PrefService* prefs) {
-  std::vector<std::unique_ptr<TemplateURLData>> t_urls;
+  CHECK(prefs);
 
-  if (!prefs) {
-    // Possible only in tests.
-    // TODO(crbug.com/40287734): Update tests and remove associated branches.
-    CHECK_IS_TEST();
-  } else if (search_engines::IsEeaChoiceCountry(country_id) &&
-             search_engines::IsChoiceScreenFlagEnabled(
-                 search_engines::ChoicePromo::kAny)) {
-    if (search_engines::HasSearchEngineCountryListOverride()) {
-      auto country_override =
-          absl::get<search_engines::SearchEngineCountryListOverride>(
-              search_engines::GetSearchEngineCountryOverride().value());
+  if (regional_capabilities::HasSearchEngineCountryListOverride()) {
+    auto country_override =
+        std::get<regional_capabilities::SearchEngineCountryListOverride>(
+            regional_capabilities::GetSearchEngineCountryOverride().value());
 
-      switch (country_override) {
-        case search_engines::SearchEngineCountryListOverride::kEeaAll:
-          return GetAllEeaRegionPrepopulatedEngines();
-        case search_engines::SearchEngineCountryListOverride::kEeaDefault:
-          return GetDefaultPrepopulatedEngines();
-      }
+    switch (country_override) {
+      case regional_capabilities::SearchEngineCountryListOverride::kEeaAll:
+        return GetAllEeaRegionPrepopulatedEngines();
+      case regional_capabilities::SearchEngineCountryListOverride::kEeaDefault:
+        return GetDefaultPrepopulatedEngines();
     }
+  }
+
+  if (search_engines::IsEeaChoiceCountry(country_id)) {
     return GetPrepopulatedEnginesForEeaRegionCountries(country_id, prefs);
   }
 
+  std::vector<std::unique_ptr<TemplateURLData>> t_urls;
   std::vector<EngineAndTier> engines =
       GetPrepopulationSetFromCountryID(country_id);
   for (const EngineAndTier& engine : engines) {
@@ -166,6 +161,35 @@ std::vector<std::unique_ptr<TemplateURLData>> GetOverriddenTemplateURLData(
   return t_urls;
 }
 
+std::unique_ptr<TemplateURLData> FindPrepopulatedEngineInternal(
+    PrefService* prefs,
+    search_engines::SearchEngineChoiceService* search_engine_choice_service,
+    int prepopulated_id,
+    bool use_first_as_fallback) {
+  // This could be more efficient. We load all URLs but keep only one.
+  std::vector<std::unique_ptr<TemplateURLData>> prepopulated_engines =
+      TemplateURLPrepopulateData::GetPrepopulatedEngines(
+          prefs, search_engine_choice_service);
+  if (prepopulated_engines.empty()) {
+    // Not expected to be a real possibility, branch to be removed when this is
+    // verified.
+    NOTREACHED(base::NotFatalUntil::M132);
+    return nullptr;
+  }
+
+  for (auto& engine : prepopulated_engines) {
+    if (engine->prepopulate_id == prepopulated_id) {
+      return std::move(engine);
+    }
+  }
+
+  if (use_first_as_fallback) {
+    return std::move(prepopulated_engines[0]);
+  }
+
+  return nullptr;
+}
+
 }  // namespace
 
 // Global functions -----------------------------------------------------------
@@ -180,8 +204,6 @@ void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry) {
       prefs::kDefaultSearchProviderChoiceScreenShuffleMilestone, 0);
   registry->RegisterBooleanPref(
       prefs::kDefaultSearchProviderKeywordsUseExtendedList, false);
-  registry->RegisterBooleanPref(prefs::kDefaultSearchProviderChoicePending,
-                                false);
 }
 
 int GetDataVersion(PrefService* prefs) {
@@ -193,41 +215,28 @@ int GetDataVersion(PrefService* prefs) {
 
 std::vector<std::unique_ptr<TemplateURLData>> GetPrepopulatedEngines(
     PrefService* prefs,
-    search_engines::SearchEngineChoiceService* search_engine_choice_service,
-    size_t* default_search_provider_index) {
+    search_engines::SearchEngineChoiceService* search_engine_choice_service) {
+  CHECK(search_engine_choice_service);
+
   // If there is a set of search engines in the preferences file, it overrides
   // the built-in set.
   std::vector<std::unique_ptr<TemplateURLData>> t_urls =
       GetOverriddenTemplateURLData(prefs);
-  if (t_urls.empty()) {
-    // `search_engine_choice_service` (and `prefs`) can be null in tests.
-    // TODO(b/318801987): Make sure `prefs` and `search_engine_choice_service`
-    //                    are always not null.
-    int country_id = search_engine_choice_service
-                         ? search_engine_choice_service->GetCountryId()
-                         : country_codes::GetCurrentCountryID();
-    t_urls = GetPrepopulatedTemplateURLData(country_id, prefs);
+  if (!t_urls.empty()) {
+    return t_urls;
   }
-  if (default_search_provider_index) {
-    const auto itr =
-        base::ranges::find(t_urls, google.id, &TemplateURLData::prepopulate_id);
-    *default_search_provider_index =
-        itr == t_urls.end() ? 0 : std::distance(t_urls.begin(), itr);
-  }
-  return t_urls;
+
+  return GetPrepopulatedTemplateURLData(
+      search_engine_choice_service->GetCountryId(), prefs);
 }
 
 std::unique_ptr<TemplateURLData> GetPrepopulatedEngine(
     PrefService* prefs,
     search_engines::SearchEngineChoiceService* search_engine_choice_service,
     int prepopulated_id) {
-  auto engines = TemplateURLPrepopulateData::GetPrepopulatedEngines(
-      prefs, search_engine_choice_service, nullptr);
-  for (auto& engine : engines) {
-    if (engine->prepopulate_id == prepopulated_id)
-      return std::move(engine);
-  }
-  return nullptr;
+  return FindPrepopulatedEngineInternal(prefs, search_engine_choice_service,
+                                        prepopulated_id,
+                                        /*use_first_as_fallback=*/false);
 }
 
 #if BUILDFLAG(IS_ANDROID)
@@ -278,8 +287,7 @@ std::unique_ptr<TemplateURLData> GetPrepopulatedEngineFromFullList(
   // case of IDs shared across multiple entries, we might be returning the
   // wrong one for the profile country. We can look into better heuristics in
   // future work.
-  for (size_t i = 0; i < kAllEnginesLength; ++i) {
-    const PrepopulatedEngine* engine = kAllEngines[i];
+  for (const PrepopulatedEngine* engine : kAllEngines) {
     if (engine->id == prepopulated_id) {
       return TemplateURLDataFromPrepopulatedEngine(*engine);
     }
@@ -296,23 +304,16 @@ void ClearPrepopulatedEnginesInPrefs(PrefService* prefs) {
   prefs->ClearPref(prefs::kSearchProviderOverridesVersion);
 }
 
-std::unique_ptr<TemplateURLData> GetPrepopulatedDefaultSearch(
+std::unique_ptr<TemplateURLData> GetPrepopulatedFallbackSearch(
     PrefService* prefs,
     search_engines::SearchEngineChoiceService* search_engine_choice_service) {
-  size_t default_search_index;
-  // This could be more efficient.  We load all URLs but keep only the default.
-  std::vector<std::unique_ptr<TemplateURLData>> loaded_urls =
-      GetPrepopulatedEngines(prefs, search_engine_choice_service,
-                             &default_search_index);
-
-  return (default_search_index < loaded_urls.size())
-             ? std::move(loaded_urls[default_search_index])
-             : nullptr;
+  return FindPrepopulatedEngineInternal(prefs, search_engine_choice_service,
+                                        google.id,
+                                        /*use_first_as_fallback=*/true);
 }
 
-std::vector<const PrepopulatedEngine*> GetAllPrepopulatedEngines() {
-  return std::vector<const PrepopulatedEngine*>(
-      &kAllEngines[0], &kAllEngines[0] + kAllEnginesLength);
+const base::span<const PrepopulatedEngine* const> GetAllPrepopulatedEngines() {
+  return kAllEngines;
 }
 
 std::vector<std::unique_ptr<TemplateURLData>>
@@ -324,7 +325,7 @@ GetAllEeaRegionPrepopulatedEngines() {
   // because they point to the same search engine so we only want to record one
   // instance.
   base::flat_set<int> used_engines;
-  for (int eea_country_id : search_engines::kEeaChoiceCountriesIds) {
+  for (int eea_country_id : regional_capabilities::kEeaChoiceCountriesIds) {
     std::vector<EngineAndTier> country_engines =
         GetPrepopulationSetFromCountryID(eea_country_id);
     for (const EngineAndTier& engine : country_engines) {

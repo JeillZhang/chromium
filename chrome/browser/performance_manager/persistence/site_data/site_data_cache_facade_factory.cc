@@ -4,6 +4,7 @@
 
 #include "chrome/browser/performance_manager/persistence/site_data/site_data_cache_facade_factory.h"
 
+#include "base/auto_reset.h"
 #include "base/memory/ptr_util.h"
 #include "base/no_destructor.h"
 #include "base/run_loop.h"
@@ -56,6 +57,9 @@ SiteDataCacheFacadeFactory::SiteDataCacheFacadeFactory()
           ProfileSelections::Builder()
               .WithRegular(ProfileSelection::kOwnInstance)
               .WithGuest(ProfileSelection::kOwnInstance)
+              // TODO(crbug.com/41488885): Check if this service is needed for
+              // Ash Internals.
+              .WithAshInternals(ProfileSelection::kOwnInstance)
               .Build()) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   DependsOn(HistoryServiceFactory::GetInstance());

@@ -11,7 +11,6 @@
 #include "base/memory/raw_ptr.h"
 #include "base/strings/string_split.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "ui/accessibility/ax_enums.mojom.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/client/screen_position_client.h"
@@ -27,16 +26,19 @@
 #include "ui/display/screen.h"
 #include "ui/gfx/color_utils.h"
 #include "ui/gfx/text_utils.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/widget/widget.h"
 #include "ui/wm/public/tooltip_observer.h"
 
 namespace {
 
+// Max visual tooltip width. If a tooltip is greater than this width, it will
+// be wrapped.
+static constexpr int kTooltipMaxWidth = 800;
+
 // TODO(varkha): Update if native widget can be transparent on Linux.
 bool CanUseTranslucentTooltipWidget() {
-// TODO(crbug.com/40118868): Revisit the macro expression once build flag switch
-// of lacros-chrome is complete.
-#if (BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS)) || BUILDFLAG(IS_WIN)
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_WIN)
   return false;
 #else
   return true;
@@ -56,7 +58,8 @@ TooltipAura::TooltipAura()
 
 TooltipAura::TooltipAura(
     const TooltipAura::TooltipViewFactory& tooltip_view_factory)
-    : tooltip_view_factory_(tooltip_view_factory) {}
+    : tooltip_view_factory_(tooltip_view_factory),
+      max_width_(kTooltipMaxWidth) {}
 
 TooltipAura::~TooltipAura() {
   DestroyWidget();
@@ -103,7 +106,8 @@ const gfx::RenderText* TooltipAura::GetRenderTextForTest() const {
 
 void TooltipAura::GetAccessibleNodeDataForTest(ui::AXNodeData* node_data) {
   DCHECK(widget_);
-  widget_->GetTooltipView()->GetAccessibleNodeData(node_data);
+  widget_->GetTooltipView()->GetViewAccessibility().GetAccessibleNodeData(
+      node_data);
 }
 
 gfx::Rect TooltipAura::GetTooltipBounds(const gfx::Size& tooltip_size,
@@ -155,8 +159,9 @@ gfx::Rect TooltipAura::GetTooltipBounds(const gfx::Size& tooltip_size,
 
   // If tooltip is out of bounds on the y axis, we flip it to appear above the
   // mouse cursor instead of below.
-  if (tooltip_rect.bottom() > display_bounds.bottom())
+  if (tooltip_rect.bottom() > display_bounds.bottom()) {
     tooltip_rect.set_y(anchor_point.y() - tooltip_size.height());
+  }
 
   tooltip_rect.AdjustToFit(display_bounds);
   return tooltip_rect;
@@ -166,9 +171,9 @@ void TooltipAura::CreateTooltipWidget(const gfx::Rect& bounds,
                                       const ui::OwnedWindowAnchor& anchor) {
   DCHECK(!widget_);
   DCHECK(tooltip_window_);
-  widget_ = new TooltipWidget;
+  widget_ = std::make_unique<TooltipWidget>();
   views::Widget::InitParams params(
-      views::Widget::InitParams::NATIVE_WIDGET_OWNS_WIDGET,
+      views::Widget::InitParams::CLIENT_OWNS_WIDGET,
       views::Widget::InitParams::TYPE_TOOLTIP);
   // For aura, since we set the type to TYPE_TOOLTIP, the widget will get
   // auto-parented to the right container.
@@ -177,8 +182,9 @@ void TooltipAura::CreateTooltipWidget(const gfx::Rect& bounds,
   params.z_order = ui::ZOrderLevel::kFloatingUIElement;
   params.accept_events = false;
   params.bounds = bounds;
-  if (CanUseTranslucentTooltipWidget())
+  if (CanUseTranslucentTooltipWidget()) {
     params.opacity = views::Widget::InitParams::WindowOpacity::kTranslucent;
+  }
   params.shadow_type = views::Widget::InitParams::ShadowType::kNone;
   // Use software compositing to avoid using unnecessary hardware resources
   // which just amount to overkill for this UI.
@@ -193,9 +199,8 @@ void TooltipAura::CreateTooltipWidget(const gfx::Rect& bounds,
 
 void TooltipAura::DestroyWidget() {
   if (widget_) {
-    widget_->RemoveObserver(this);
     widget_->Close();
-    widget_ = nullptr;
+    widget_.reset();
   }
 }
 
@@ -231,14 +236,13 @@ void TooltipAura::Update(aura::Window* window,
                                  anchor_point, trigger, &anchor);
   CreateTooltipWidget(bounds, anchor);
   widget_->SetTooltipView(std::move(new_tooltip_view));
-  widget_->AddObserver(this);
 }
 
 void TooltipAura::Show() {
   if (widget_) {
     widget_->Show();
 
-    widget_->GetTooltipView()->NotifyAccessibilityEvent(
+    widget_->GetTooltipView()->NotifyAccessibilityEventDeprecated(
         ax::mojom::Event::kTooltipOpened, true);
 
     // Add distance between `tooltip_window_` and its toplevel window to bounds
@@ -252,11 +256,9 @@ void TooltipAura::Show() {
       gfx::Rect bounds = widget_->GetWindowBoundsInScreen();
       aura::Window::ConvertRectToTarget(tooltip_window_, toplevel_window,
                                         &bounds);
-      for (auto& observer : observers_) {
-        observer.OnTooltipShown(
-            toplevel_window, widget_->GetTooltipView()->render_text()->text(),
-            bounds);
-      }
+      observers_.Notify(&wm::TooltipObserver::OnTooltipShown, toplevel_window,
+                        widget_->GetTooltipView()->render_text()->text(),
+                        bounds);
     }
   }
 }
@@ -270,7 +272,7 @@ void TooltipAura::Hide() {
     // guarantees we never show outdated information.
     // TODO(http://crbug.com/998280): Figure out why the old content is
     // displayed despite the size change.
-    widget_->GetTooltipView()->NotifyAccessibilityEvent(
+    widget_->GetTooltipView()->NotifyAccessibilityEventDeprecated(
         ax::mojom::Event::kTooltipClosed, true);
 
     // TODO(crbug.com/40246673): Use `tooltip_window_` instead of its toplevel
@@ -278,8 +280,7 @@ void TooltipAura::Hide() {
     aura::Window* toplevel_window = tooltip_window_->GetToplevelWindow();
     // `tooltip_window_`'s toplevel window may be null for testing.
     if (toplevel_window) {
-      for (auto& observer : observers_)
-        observer.OnTooltipHidden(toplevel_window);
+      observers_.Notify(&wm::TooltipObserver::OnTooltipHidden, toplevel_window);
     }
     DestroyWidget();
   }
@@ -288,14 +289,6 @@ void TooltipAura::Hide() {
 
 bool TooltipAura::IsVisible() {
   return widget_ && widget_->IsVisible();
-}
-
-void TooltipAura::OnWidgetDestroying(views::Widget* widget) {
-  DCHECK_EQ(widget_, widget);
-  if (widget_)
-    widget_->RemoveObserver(this);
-  widget_ = nullptr;
-  tooltip_window_ = nullptr;
 }
 
 }  // namespace views::corewm

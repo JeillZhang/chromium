@@ -10,18 +10,19 @@
 
 #include "base/no_destructor.h"
 #include "base/strings/utf_string_conversions.h"
-#include "chrome/browser/enterprise/connectors/analysis/content_analysis_delegate.h"
 #include "chrome/browser/enterprise/data_controls/chrome_rules_service.h"
-#include "chrome/browser/enterprise/data_controls/data_controls_dialog.h"
-#include "chrome/browser/enterprise/data_controls/reporting_service.h"
 #include "chrome/browser/enterprise/data_protection/paste_allowed_request.h"
 #include "components/enterprise/common/files_scan_data.h"
-#include "components/enterprise/connectors/connectors_prefs.h"
+#include "components/enterprise/connectors/core/connectors_prefs.h"
 #include "components/enterprise/content/clipboard_restriction_service.h"
-#include "components/enterprise/data_controls/prefs.h"
+#include "components/enterprise/data_controls/content/browser/last_replaced_clipboard_data.h"
+#include "components/enterprise/data_controls/core/browser/data_controls_dialog_factory.h"
+#include "components/enterprise/data_controls/core/browser/prefs.h"
 #include "components/policy/core/common/policy_types.h"
+#include "components/safe_browsing/buildflags.h"
 #include "components/strings/grit/components_strings.h"
 #include "content/public/browser/clipboard_types.h"
+#include "content/public/browser/web_contents.h"
 #include "ui/base/clipboard/clipboard.h"
 #include "ui/base/clipboard/clipboard_monitor.h"
 #include "ui/base/clipboard/clipboard_observer.h"
@@ -30,70 +31,51 @@
 #include "ui/base/data_transfer_policy/data_transfer_policy_controller.h"
 #include "ui/base/l10n/l10n_util.h"
 
+#if BUILDFLAG(ENTERPRISE_CONTENT_ANALYSIS)
+#include "chrome/browser/enterprise/connectors/analysis/content_analysis_delegate.h"
+#endif  // BUILDFLAG(ENTERPRISE_CONTENT_ANALYSIS)
+
+#if BUILDFLAG(ENTERPRISE_DATA_CONTROLS)
+#include "chrome/browser/enterprise/data_controls/desktop_data_controls_dialog_factory.h"
+#endif  // BUILDFLAG(ENTERPRISE_DATA_PROTECTION)
+
+#if BUILDFLAG(IS_ANDROID)
+#include "chrome/browser/enterprise/data_controls/android_data_controls_dialog.h"
+#include "chrome/browser/enterprise/data_controls/android_data_controls_dialog_factory.h"
+#include "components/enterprise/data_controls/core/browser/features.h"
+#endif  // BUILDFLAG(IS_ANDROID)
+
+#if BUILDFLAG(SAFE_BROWSING_AVAILABLE)
+#include "chrome/browser/enterprise/data_controls/reporting_service.h"
+#endif  // BUILDFLAG(SAFE_BROWSING_AVAILABLE)
+
 namespace enterprise_data_protection {
 
 namespace {
 
-// Struct that holds information on the last data to have been replaced in the
-// OS clipboard by a Data Controls rule.
-struct LastReplacedClipboardData {
-  ui::ClipboardSequenceNumberToken seqno;
-  content::ClipboardPasteData clipboard_paste_data;
-};
-
-LastReplacedClipboardData& GetLastReplacedClipboardData() {
-  static base::NoDestructor<LastReplacedClipboardData> data;
-  return *data.get();
+// Returns an empty URL if `endpoint` doesn't hold a DTE, or a non-URL DTE.
+GURL GetUrlFromEndpoint(const content::ClipboardEndpoint& endpoint) {
+  if (!endpoint.data_transfer_endpoint() ||
+      !endpoint.data_transfer_endpoint()->IsUrlType() ||
+      !endpoint.data_transfer_endpoint()->GetURL()) {
+    return GURL();
+  }
+  return *endpoint.data_transfer_endpoint()->GetURL();
 }
 
-// Clipboard change observer used to observe seqno changes and update the data
-// in `GetLastReplacedClipboardData`.
-class ClipboardObserver : public ui::ClipboardObserver {
- public:
-  static ClipboardObserver* GetInstance() {
-    static base::NoDestructor<ClipboardObserver> observer;
-    return observer.get();
+bool SkipDataControlOrContentAnalysisChecks(
+    const content::ClipboardEndpoint& main_endpoint) {
+  // Data Controls and content analysis copy/paste checks require an active tab
+  // to be meaningful, so if it's gone they can be skipped.
+  auto* web_contents = main_endpoint.web_contents();
+  if (!web_contents) {
+    return true;
   }
 
-  // This can be called multiple times with different data types (text, html,
-  // png, etc.) before `OnClipboardDataChanged()` is called, so `data` is merged
-  // into `pending_seqno_data_` instead of replacing it entirely.
-  void AddDataToNextSeqno(content::ClipboardPasteData data) {
-    // Bitmap isn't used directly by pasting code, so it must first be converted
-    // to PNG before being stored in `GetLastReplacedClipboardData()`.
-    if (!data.bitmap.empty()) {
-      data.png = ui::clipboard_util::EncodeBitmapToPngAcceptJank(
-          std::move(data.bitmap));
-      data.bitmap = SkBitmap();
-    }
+  return false;
+}
 
-    if (pending_seqno_data_.empty()) {
-      ui::ClipboardMonitor::GetInstance()->AddObserver(this);
-    }
-    pending_seqno_data_.Merge(std::move(data));
-  }
-
-  // ui::ClipboardObserver:
-  void OnClipboardDataChanged() override {
-    GetLastReplacedClipboardData() = {
-        .seqno = ui::Clipboard::GetForCurrentThread()->GetSequenceNumber(
-            ui::ClipboardBuffer::kCopyPaste),
-        // `LastReplacedClipboardData::clipboard_paste_data` is reassigned to
-        // clear previous data corresponding to an older seqno.
-        .clipboard_paste_data = std::move(pending_seqno_data_),
-    };
-
-    // Explicitly clear `pending_seqno_data_` in case it eventually holds a data
-    // member that doesn't clear itself cleanly after moving.
-    pending_seqno_data_ = content::ClipboardPasteData();
-
-    ui::ClipboardMonitor::GetInstance()->RemoveObserver(this);
-  }
-
- private:
-  content::ClipboardPasteData pending_seqno_data_;
-};
-
+#if BUILDFLAG(ENTERPRISE_CONTENT_ANALYSIS)
 void HandleFileData(
     content::WebContents* web_contents,
     enterprise_connectors::ContentAnalysisDelegate::Data dialog_data,
@@ -166,26 +148,6 @@ void HandleStringData(
       safe_browsing::DeepScanAccessPoint::PASTE);
 }
 
-bool SkipDataControlOrContentAnalysisChecks(
-    const content::ClipboardEndpoint& main_endpoint) {
-  // Data Controls and content analysis copy/paste checks require an active tab
-  // to be meaningful, so if it's gone they can be skipped.
-  auto* web_contents = main_endpoint.web_contents();
-  if (!web_contents) {
-    return true;
-  }
-
-  // Data Controls and content analysis copy/paste checks are only meaningful in
-  // Chrome tabs, so they should always be skipped for source-only checks (ex.
-  // copy prevention checks).
-  if (!main_endpoint.data_transfer_endpoint().has_value() ||
-      !main_endpoint.data_transfer_endpoint()->IsUrlType()) {
-    return true;
-  }
-
-  return false;
-}
-
 void PasteIfAllowedByContentAnalysis(
     content::WebContents* web_contents,
     const content::ClipboardEndpoint& source,
@@ -195,6 +157,15 @@ void PasteIfAllowedByContentAnalysis(
     content::ContentBrowserClient::IsClipboardPasteAllowedCallback callback) {
   DCHECK(web_contents);
   DCHECK(!SkipDataControlOrContentAnalysisChecks(destination));
+
+  // Always allow if the source of the last clipboard commit was this host.
+  if (destination.web_contents()->GetPrimaryMainFrame()->IsClipboardOwner(
+          metadata.seqno)) {
+    ReplaceSameTabClipboardDataIfRequiredByPolicy(metadata.seqno,
+                                                  clipboard_paste_data);
+    std::move(callback).Run(std::move(clipboard_paste_data));
+    return;
+  }
 
   Profile* profile = Profile::FromBrowserContext(destination.browser_context());
   if (!profile) {
@@ -210,8 +181,7 @@ void PasteIfAllowedByContentAnalysis(
   enterprise_connectors::ContentAnalysisDelegate::Data dialog_data;
 
   if (!enterprise_connectors::ContentAnalysisDelegate::IsEnabled(
-          profile, *destination.data_transfer_endpoint()->GetURL(),
-          &dialog_data, connector)) {
+          profile, GetUrlFromEndpoint(destination), &dialog_data, connector)) {
     std::move(callback).Run(std::move(clipboard_paste_data));
     return;
   }
@@ -219,7 +189,7 @@ void PasteIfAllowedByContentAnalysis(
   dialog_data.reason =
       enterprise_connectors::ContentAnalysisRequest::CLIPBOARD_PASTE;
   dialog_data.clipboard_source =
-      data_controls::ReportingService::GetClipboardSourceString(
+      data_controls::ReportingService::GetClipboardSource(
           source, destination,
           enterprise_connectors::kOnBulkDataEntryScopePref);
 
@@ -232,15 +202,27 @@ void PasteIfAllowedByContentAnalysis(
                      std::move(dialog_data), std::move(callback));
   }
 }
+#endif  // BUILDFLAG(ENTERPRISE_CONTENT_ANALYSIS)
+
+data_controls::DataControlsDialogFactory* GetDialogFactory() {
+#if BUILDFLAG(IS_ANDROID)
+  return data_controls::AndroidDataControlsDialogFactory::GetInstance();
+#elif BUILDFLAG(ENTERPRISE_DATA_CONTROLS)
+  return data_controls::DesktopDataControlsDialogFactory::GetInstance();
+#else
+  return nullptr;
+#endif
+}
 
 void MaybeReportDataControlsPaste(const content::ClipboardEndpoint& source,
                                   const content::ClipboardEndpoint& destination,
                                   const content::ClipboardMetadata& metadata,
                                   const data_controls::Verdict& verdict,
                                   bool bypassed = false) {
+#if !BUILDFLAG(IS_ANDROID) && BUILDFLAG(SAFE_BROWSING_AVAILABLE)
   auto* reporting_service =
-      data_controls::ReportingServiceFactory::GetForBrowserContext(
-          destination.browser_context());
+      data_controls::ReportingServiceFactory::GetInstance()
+          ->GetForBrowserContext(destination.browser_context());
 
   // `reporting_service` can be null for incognito browser contexts, so since
   // there's no reporting in that case we just return early.
@@ -254,15 +236,17 @@ void MaybeReportDataControlsPaste(const content::ClipboardEndpoint& source,
   } else {
     reporting_service->ReportPaste(source, destination, metadata, verdict);
   }
+#endif  // !BUILDFLAG(IS_ANDROID)
 }
 
 void MaybeReportDataControlsCopy(const content::ClipboardEndpoint& source,
                                  const content::ClipboardMetadata& metadata,
                                  const data_controls::Verdict& verdict,
                                  bool bypassed = false) {
+#if !BUILDFLAG(IS_ANDROID) && BUILDFLAG(SAFE_BROWSING_AVAILABLE)
   auto* reporting_service =
-      data_controls::ReportingServiceFactory::GetForBrowserContext(
-          source.browser_context());
+      data_controls::ReportingServiceFactory::GetInstance()
+          ->GetForBrowserContext(source.browser_context());
 
   // `reporting_service` can be null for incognito browser contexts, so since
   // there's no reporting in that case we just return early.
@@ -275,6 +259,7 @@ void MaybeReportDataControlsCopy(const content::ClipboardEndpoint& source,
   } else {
     reporting_service->ReportCopy(source, metadata, verdict);
   }
+#endif  // !BUILDFLAG(IS_ANDROID)
 }
 
 void OnDataControlsPasteWarning(
@@ -295,9 +280,13 @@ void OnDataControlsPasteWarning(
                                  /*bypassed=*/true);
   }
 
+#if BUILDFLAG(IS_ANDROID) || !BUILDFLAG(ENTERPRISE_CONTENT_ANALYSIS)
+  std::move(callback).Run(std::move(clipboard_paste_data));
+#else
   PasteIfAllowedByContentAnalysis(
       destination.web_contents(), source, destination, metadata,
       std::move(clipboard_paste_data), std::move(callback));
+#endif  // BUILDFLAG(IS_ANDROID) || !BUILDFLAG(ENTERPRISE_CONTENT_ANALYSIS)
 }
 
 void PasteIfAllowedByDataControls(
@@ -308,33 +297,40 @@ void PasteIfAllowedByDataControls(
     content::ContentBrowserClient::IsClipboardPasteAllowedCallback callback) {
   DCHECK(!SkipDataControlOrContentAnalysisChecks(destination));
 
-  auto verdict = data_controls::ChromeRulesServiceFactory::GetForBrowserContext(
-                     destination.browser_context())
+  auto verdict = data_controls::ChromeRulesServiceFactory::GetInstance()
+                     ->GetForBrowserContext(destination.browser_context())
                      ->GetPasteVerdict(source, destination, metadata);
   if (source.browser_context() &&
       source.browser_context() != destination.browser_context()) {
     verdict = data_controls::Verdict::MergePasteVerdicts(
-        data_controls::ChromeRulesServiceFactory::GetForBrowserContext(
-            source.browser_context())
+        data_controls::ChromeRulesServiceFactory::GetInstance()
+            ->GetForBrowserContext(source.browser_context())
             ->GetPasteVerdict(source, destination, metadata),
         std::move(verdict));
   }
 
+  auto* factory = GetDialogFactory();
   if (verdict.level() == data_controls::Rule::Level::kBlock) {
     MaybeReportDataControlsPaste(source, destination, metadata, verdict);
-    data_controls::DataControlsDialog::Show(
-        destination.web_contents(),
-        data_controls::DataControlsDialog::Type::kClipboardPasteBlock);
+    if (factory) {
+      factory->ShowDialogIfNeeded(
+          destination.web_contents(),
+          data_controls::DataControlsDialog::Type::kClipboardPasteBlock);
+    }
     std::move(callback).Run(std::nullopt);
     return;
   } else if (verdict.level() == data_controls::Rule::Level::kWarn) {
     MaybeReportDataControlsPaste(source, destination, metadata, verdict);
-    data_controls::DataControlsDialog::Show(
-        destination.web_contents(),
-        data_controls::DataControlsDialog::Type::kClipboardPasteWarn,
-        base::BindOnce(&OnDataControlsPasteWarning, source, destination,
-                       metadata, std::move(verdict),
-                       std::move(clipboard_paste_data), std::move(callback)));
+    if (factory) {
+      factory->ShowDialogIfNeeded(
+          destination.web_contents(),
+          data_controls::DataControlsDialog::Type::kClipboardPasteWarn,
+          base::BindOnce(&OnDataControlsPasteWarning, source, destination,
+                         metadata, std::move(verdict),
+                         std::move(clipboard_paste_data), std::move(callback)));
+    } else {
+      std::move(callback).Run(std::nullopt);
+    }
     return;
   } else if (verdict.level() == data_controls::Rule::Level::kReport) {
     MaybeReportDataControlsPaste(source, destination, metadata, verdict);
@@ -346,15 +342,21 @@ void PasteIfAllowedByDataControls(
   // context to ensure we're not letting through data that was replaced by
   // policies that are no longer applicable due to the profile being closed.
   if (source.browser_context() &&
-      metadata.seqno == GetLastReplacedClipboardData().seqno) {
-    clipboard_paste_data = GetLastReplacedClipboardData().clipboard_paste_data;
+      metadata.seqno == data_controls::GetLastReplacedClipboardData().seqno) {
+    clipboard_paste_data =
+        data_controls::GetLastReplacedClipboardData().clipboard_paste_data;
   }
 
+#if BUILDFLAG(IS_ANDROID) || !BUILDFLAG(ENTERPRISE_CONTENT_ANALYSIS)
+  std::move(callback).Run(std::move(clipboard_paste_data));
+#else
   PasteIfAllowedByContentAnalysis(
       destination.web_contents(), source, destination, metadata,
       std::move(clipboard_paste_data), std::move(callback));
+#endif  // BUILDFLAG(IS_ANDROID) || !BUILDFLAG(ENTERPRISE_CONTENT_ANALYSIS)
 }
 
+#if !BUILDFLAG(IS_ANDROID)
 void OnDlpRulesCheckDone(
     const content::ClipboardEndpoint& source,
     const content::ClipboardEndpoint& destination,
@@ -374,6 +376,7 @@ void OnDlpRulesCheckDone(
                                std::move(clipboard_paste_data),
                                std::move(callback));
 }
+#endif  // !BUILDFLAG(IS_ANDROID)
 
 void IsCopyToOSClipboardRestricted(
     const content::ClipboardEndpoint& source,
@@ -385,16 +388,16 @@ void IsCopyToOSClipboardRestricted(
     return;
   }
 
-  auto verdict = data_controls::ChromeRulesServiceFactory::GetForBrowserContext(
-                     source.browser_context())
-                     ->GetCopyToOSClipboardVerdict(
-                         *source.data_transfer_endpoint()->GetURL());
+  auto verdict = data_controls::ChromeRulesServiceFactory::GetInstance()
+                     ->GetForBrowserContext(source.browser_context())
+                     ->GetCopyToOSClipboardVerdict(GetUrlFromEndpoint(source));
 
   if (verdict.level() == data_controls::Rule::Level::kBlock) {
     // Before calling `callback`, we remember `data` will correspond to the next
     // clipboard sequence number so that it can be potentially replaced again at
     // paste time.
-    ClipboardObserver::GetInstance()->AddDataToNextSeqno(data);
+    data_controls::LastReplacedClipboardDataObserver::GetInstance()
+        ->AddDataToNextSeqno(data);
     std::move(callback).Run(
         metadata.format_type, data, /*replacement_data=*/
         l10n_util::GetStringUTF16(
@@ -418,6 +421,13 @@ void OnDataControlsCopyWarning(
     IsCopyToOSClipboardRestricted(source, metadata, data, std::move(callback));
     return;
   }
+
+  // Once a pending write has been initiated, something must be written to the
+  // clipboard to avoid being stuck in a pending write state, which would
+  // prevent future writes to the clipboard. Since copying was not allowed,
+  // the callback should be run with empty data instead.
+  std::move(callback).Run(metadata.format_type, content::ClipboardPasteData(),
+                          /*replacement_data=*/std::nullopt);
 }
 
 void IsCopyRestrictedByDialog(
@@ -431,37 +441,40 @@ void IsCopyRestrictedByDialog(
   }
 
   auto source_only_verdict =
-      data_controls::ChromeRulesServiceFactory::GetForBrowserContext(
-          source.browser_context())
-          ->GetCopyRestrictedBySourceVerdict(
-              *source.data_transfer_endpoint()->GetURL());
+      data_controls::ChromeRulesServiceFactory::GetInstance()
+          ->GetForBrowserContext(source.browser_context())
+          ->GetCopyRestrictedBySourceVerdict(GetUrlFromEndpoint(source));
 
+  auto* factory = GetDialogFactory();
   if (source_only_verdict.level() == data_controls::Rule::Level::kBlock) {
     MaybeReportDataControlsCopy(source, metadata, source_only_verdict);
-    data_controls::DataControlsDialog::Show(
-        source.web_contents(),
-        data_controls::DataControlsDialog::Type::kClipboardCopyBlock);
+    if (factory) {
+      factory->ShowDialogIfNeeded(
+          source.web_contents(),
+          data_controls::DataControlsDialog::Type::kClipboardCopyBlock);
+    }
     return;
   }
 
   // The "warn" level of copying to the OS clipboard is to show a warning
   // dialog, not to do a string replacement.
   auto os_clipboard_verdict =
-      data_controls::ChromeRulesServiceFactory::GetForBrowserContext(
-          source.browser_context())
-          ->GetCopyToOSClipboardVerdict(
-              *source.data_transfer_endpoint()->GetURL());
+      data_controls::ChromeRulesServiceFactory::GetInstance()
+          ->GetForBrowserContext(source.browser_context())
+          ->GetCopyToOSClipboardVerdict(GetUrlFromEndpoint(source));
 
   if (source_only_verdict.level() == data_controls::Rule::Level::kWarn ||
       os_clipboard_verdict.level() == data_controls::Rule::Level::kWarn) {
     auto verdict = data_controls::Verdict::MergeCopyWarningVerdicts(
         std::move(source_only_verdict), std::move(os_clipboard_verdict));
     MaybeReportDataControlsCopy(source, metadata, verdict);
-    data_controls::DataControlsDialog::Show(
-        source.web_contents(),
-        data_controls::DataControlsDialog::Type::kClipboardCopyWarn,
-        base::BindOnce(&OnDataControlsCopyWarning, source, metadata, data,
-                       std::move(verdict), std::move(callback)));
+    if (factory) {
+      factory->ShowDialogIfNeeded(
+          source.web_contents(),
+          data_controls::DataControlsDialog::Type::kClipboardCopyWarn,
+          base::BindOnce(&OnDataControlsCopyWarning, source, metadata, data,
+                         std::move(verdict), std::move(callback)));
+    }
     return;
   }
 
@@ -480,6 +493,24 @@ void PasteIfAllowedByPolicy(
     const content::ClipboardMetadata& metadata,
     content::ClipboardPasteData clipboard_paste_data,
     content::ContentBrowserClient::IsClipboardPasteAllowedCallback callback) {
+#if BUILDFLAG(IS_ANDROID)
+  if (SkipDataControlOrContentAnalysisChecks(destination)) {
+    std::move(callback).Run(std::nullopt);
+    return;
+  } else if (base::FeatureList::IsEnabled(
+                 data_controls::kEnableClipboardDataControlsAndroid)) {
+    // Call PasteIfAllowedByDataControls directly as
+    // DataTransferPolicyController::PasteIfAllowed contains logic that isn't
+    // relevant to Clank.
+    PasteIfAllowedByDataControls(source, destination, metadata,
+                                 std::move(clipboard_paste_data),
+                                 std::move(callback));
+    return;
+  } else {
+    std::move(callback).Run(std::move(clipboard_paste_data));
+    return;
+  }
+#else
   if (ui::DataTransferPolicyController::HasInstance()) {
     absl::variant<size_t, std::vector<base::FilePath>> pasted_content;
     if (clipboard_paste_data.file_paths.empty()) {
@@ -509,6 +540,7 @@ void PasteIfAllowedByPolicy(
   OnDlpRulesCheckDone(source, destination, metadata,
                       std::move(clipboard_paste_data), std::move(callback),
                       /*allowed=*/true);
+#endif  // BUILDFLAG(IS_ANDROID)
 }
 
 void IsClipboardCopyAllowedByPolicy(
@@ -516,22 +548,37 @@ void IsClipboardCopyAllowedByPolicy(
     const content::ClipboardMetadata& metadata,
     const content::ClipboardPasteData& data,
     content::ContentBrowserClient::IsClipboardCopyAllowedCallback callback) {
+#if BUILDFLAG(IS_ANDROID)
+  if (!base::FeatureList::IsEnabled(
+          data_controls::kEnableClipboardDataControlsAndroid)) {
+    std::move(callback).Run(metadata.format_type, data, std::nullopt);
+    return;
+  }
+#endif  // BUILDFLAG(IS_ANDROID)
+
+  if (SkipDataControlOrContentAnalysisChecks(source)) {
+    std::move(callback).Run(metadata.format_type, data, std::nullopt);
+    return;
+  }
+
   DCHECK(source.web_contents());
   DCHECK(source.browser_context());
-  DCHECK(source.data_transfer_endpoint());
-  DCHECK(source.data_transfer_endpoint()->IsUrlType());
-  const GURL& url = *source.data_transfer_endpoint()->GetURL();
 
+#if !BUILDFLAG(IS_ANDROID)
+  // IsUrlAllowedToCopy checks a deprecated CopyPreventionSettings that isn't
+  // applicable on Clank.
   std::u16string replacement_data;
   ClipboardRestrictionService* service =
       ClipboardRestrictionServiceFactory::GetInstance()->GetForBrowserContext(
           source.browser_context());
-  if (!service->IsUrlAllowedToCopy(url, metadata.size.value_or(0),
+  if (!service->IsUrlAllowedToCopy(GetUrlFromEndpoint(source),
+                                   metadata.size.value_or(0),
                                    &replacement_data)) {
     std::move(callback).Run(metadata.format_type, data,
                             std::move(replacement_data));
     return;
   }
+#endif  // !BUILDFLAG(IS_ANDROID)
 
   IsCopyRestrictedByDialog(source, metadata, data, std::move(callback));
 }
@@ -539,8 +586,8 @@ void IsClipboardCopyAllowedByPolicy(
 void ReplaceSameTabClipboardDataIfRequiredByPolicy(
     ui::ClipboardSequenceNumberToken seqno,
     content::ClipboardPasteData& data) {
-  if (seqno == GetLastReplacedClipboardData().seqno) {
-    data = GetLastReplacedClipboardData().clipboard_paste_data;
+  if (seqno == data_controls::GetLastReplacedClipboardData().seqno) {
+    data = data_controls::GetLastReplacedClipboardData().clipboard_paste_data;
   }
 }
 

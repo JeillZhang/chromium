@@ -2,10 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/modules/indexeddb/idb_request_loader.h"
 
 #include <algorithm>
 
+#include "base/metrics/histogram_functions.h"
 #include "third_party/blink/public/platform/task_type.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
@@ -67,7 +73,7 @@ void IDBRequestLoader::StartNextValue() {
 
   while (true) {
     if (current_value_ == values_.end()) {
-      OnLoadComplete(/*error=*/false);
+      OnLoadComplete(FileErrorCode::kOK);
       return;
     }
     if (unwrapper.Parse(current_value_->get())) {
@@ -93,6 +99,7 @@ void IDBRequestLoader::StartNextValue() {
 #endif  // DCHECK_IS_ON()
   loader_ = MakeGarbageCollected<FileReaderLoader>(
       this, execution_context_->GetTaskRunner(TaskType::kDatabaseAccess));
+  start_loading_time_ = base::TimeTicks::Now();
   loader_->Start(unwrapper.WrapperBlobHandle());
 }
 
@@ -100,12 +107,11 @@ FileErrorCode IDBRequestLoader::DidStartLoading(uint64_t) {
   return FileErrorCode::kOK;
 }
 
-FileErrorCode IDBRequestLoader::DidReceiveData(const char* data,
-                                               unsigned data_length) {
-  DCHECK_LE(wrapped_data_.size() + data_length, wrapped_data_.capacity())
+FileErrorCode IDBRequestLoader::DidReceiveData(base::span<const uint8_t> data) {
+  DCHECK_LE(wrapped_data_.size() + data.size(), wrapped_data_.capacity())
       << "The reader returned more data than we were prepared for";
 
-  wrapped_data_.Append(data, data_length);
+  wrapped_data_.AppendSpan(base::as_chars(data));
   return FileErrorCode::kOK;
 }
 
@@ -120,13 +126,15 @@ void IDBRequestLoader::DidFinishLoading() {
   file_reader_loading_ = false;
 #endif  // DCHECK_IS_ON()
 
-  IDBValueUnwrapper::Unwrap(std::move(wrapped_data_), current_value_->get());
+  base::UmaHistogramTimes("IndexedDB.WrappedBlobLoadTime",
+                          base::TimeTicks::Now() - start_loading_time_);
+  IDBValueUnwrapper::Unwrap(std::move(wrapped_data_), **current_value_);
   ++current_value_;
 
   StartNextValue();
 }
 
-void IDBRequestLoader::DidFail(FileErrorCode) {
+void IDBRequestLoader::DidFail(FileErrorCode error_code) {
 #if DCHECK_IS_ON()
   DCHECK(started_)
       << "FileReaderLoader called DidFail() before it was Start()ed";
@@ -136,20 +144,38 @@ void IDBRequestLoader::DidFail(FileErrorCode) {
   DCHECK(file_reader_loading_);
   file_reader_loading_ = false;
 #endif  // DCHECK_IS_ON()
-  OnLoadComplete(/*error=*/true);
+  base::UmaHistogramEnumeration("IndexedDB.LargeValueReadError", error_code);
+  OnLoadComplete(error_code);
 }
 
-void IDBRequestLoader::OnLoadComplete(bool error) {
+void IDBRequestLoader::OnLoadComplete(FileErrorCode error_code) {
 #if DCHECK_IS_ON()
   DCHECK(started_);
   DCHECK(!canceled_);
 #endif  // DCHECK_IS_ON()
-  std::move(load_complete_callback_)
-      .Run(std::move(values_), error
-                                   ? MakeGarbageCollected<DOMException>(
-                                         DOMExceptionCode::kDataError,
-                                         "Failed to read large IndexedDB value")
-                                   : nullptr);
+  DOMException* exception = nullptr;
+  // Translate the error code from the internal file read operation to an
+  // appropriate `DOMException` for the IndexedDB operation.
+  switch (error_code) {
+    case FileErrorCode::kOK:
+      break;
+    case FileErrorCode::kNotFoundErr:
+      // A file containing IndexedDB data is now missing from the disk. Report
+      // this as a `NotReadableError` per the spec.
+      exception = MakeGarbageCollected<DOMException>(
+          DOMExceptionCode::kNotReadableError,
+          "Data lost due to missing file. Affected record should be considered "
+          "irrecoverable");
+      break;
+    default:
+      // Report all other errors, including `FileErrorCode::kNotReadableErr`, as
+      // `UnknownError` since these are internal, likely transient, errors.
+      exception = MakeGarbageCollected<DOMException>(
+          DOMExceptionCode::kUnknownError,
+          "Failed to read large IndexedDB value");
+      break;
+  }
+  std::move(load_complete_callback_).Run(std::move(values_), exception);
 }
 
 }  // namespace blink

@@ -5,9 +5,8 @@
 #ifndef IOS_CHROME_BROWSER_UI_CONTENT_SUGGESTIONS_CONTENT_SUGGESTIONS_METRICS_RECORDER_H_
 #define IOS_CHROME_BROWSER_UI_CONTENT_SUGGESTIONS_CONTENT_SUGGESTIONS_METRICS_RECORDER_H_
 
-#import "ios/chrome/browser/ui/content_suggestions/ntp_home_constant.h"
-
 #import "ios/chrome/browser/metrics/model/new_tab_page_uma.h"
+#import "ios/chrome/browser/ui/content_suggestions/ntp_home_constant.h"
 
 class PrefService;
 
@@ -39,9 +38,6 @@ enum class SetUpListItemType;
 
 // Logs a metric for a shortcut tile being tapped.
 - (void)recordShortcutTileTapped:(NTPCollectionShortcutType)shortcutType;
-
-// Logs a trending query opened at `index` in the module.
-- (void)recordTrendingQueryTappedAtIndex:(int)index;
 
 // Logs a tab resumption tab opened.
 - (void)recordTabResumptionTabOpened;

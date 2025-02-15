@@ -8,12 +8,14 @@
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/task_environment.h"
-#include "components/autofill/core/browser/autofill_test_utils.h"
+#include "components/autofill/core/browser/test_utils/autofill_test_utils.h"
+#include "components/autofill/core/common/autocomplete_parsing_util.h"
 #include "components/autofill/core/common/autofill_clock.h"
 #include "components/autofill/core/common/autofill_constants.h"
 #include "components/autofill/core/common/form_data.h"
 #include "components/autofill/core/common/form_field_data.h"
 #include "components/autofill/core/common/html_field_types.h"
+#include "components/autofill/core/common/mojom/autofill_types.mojom.h"
 #include "components/autofill/core/common/mojom/test_autofill_types.mojom.h"
 #include "components/autofill/core/common/password_form_fill_data.h"
 #include "components/autofill/core/common/password_generation_util.h"
@@ -22,6 +24,7 @@
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/receiver_set.h"
 #include "mojo/public/cpp/bindings/remote.h"
+#include "mojo/public/cpp/test_support/test_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace autofill {
@@ -33,9 +36,10 @@ bool operator==(const PasswordAndMetadata& lhs,
          lhs.uses_account_store == rhs.uses_account_store;
 }
 
+namespace {
+
 const std::vector<const char*> kOptions = {"Option1", "Option2", "Option3",
                                            "Option4"};
-namespace {
 
 void CreateTestFieldDataPredictions(const std::string& signature,
                                     FormFieldDataPredictions* field_predict) {
@@ -122,16 +126,16 @@ void CheckEqualPassPasswordGenerationUIData(
   EXPECT_EQ(expected.is_generation_element_password_type,
             actual.is_generation_element_password_type);
   EXPECT_EQ(expected.text_direction, actual.text_direction);
-  EXPECT_TRUE(test::WithoutUnserializedData(expected.form_data)
-                  .SameFormAs(actual.form_data));
+  EXPECT_TRUE(FormData::DeepEqual(
+      test::WithoutUnserializedData(expected.form_data), actual.form_data));
 }
 
 void CheckEqualPasswordSuggestionRequest(
     const PasswordSuggestionRequest& expected,
     const PasswordSuggestionRequest& actual) {
   EXPECT_EQ(expected.element_id, actual.element_id);
-  EXPECT_TRUE(test::WithoutUnserializedData(expected.form_data)
-                  .SameFormAs(actual.form_data));
+  EXPECT_TRUE(FormData::DeepEqual(
+      test::WithoutUnserializedData(expected.form_data), actual.form_data));
   EXPECT_EQ(expected.trigger_source, actual.trigger_source);
   EXPECT_EQ(expected.username_field_index, actual.username_field_index);
   EXPECT_EQ(expected.password_field_index, actual.password_field_index);
@@ -141,8 +145,6 @@ void CheckEqualPasswordSuggestionRequest(
             actual.show_webauthn_credentials);
   EXPECT_EQ(expected.bounds, actual.bounds);
 }
-
-}  // namespace
 
 class AutofillTypeTraitsTestImpl : public testing::Test,
                                    public mojom::TypeTraitsTest {
@@ -346,6 +348,7 @@ TEST_F(AutofillTypeTraitsTestImpl, PassFormFieldData) {
       AutocompleteParsingResult{.section = "autocomplete_section",
                                 .mode = HtmlFieldMode::kShipping,
                                 .field_type = HtmlFieldType::kAddressLine1});
+  input.set_pattern(u"a pattern");
   input.set_placeholder(u"placeholder");
   input.set_css_classes(u"class1");
   input.set_aria_label(u"aria label");
@@ -385,6 +388,7 @@ TEST_F(AutofillTypeTraitsTestImpl, PassDataListFormFieldData) {
   input.set_name_attribute(u"name");
   input.set_autocomplete_attribute("on");
   input.set_parsed_autocomplete(std::nullopt);
+  input.set_pattern(u"a pattern");
   input.set_placeholder(u"placeholder");
   input.set_css_classes(u"class1");
   input.set_aria_label(u"aria label");
@@ -508,4 +512,18 @@ TEST_F(AutofillTypeTraitsTestImpl, PassPasswordSuggestionRequest) {
   loop.Run();
 }
 
+TEST(AutofillTypesMojomTraitsTest, AutocompleteParsingResult) {
+  // Simulate a parsed "name webauthn" attribute.
+  autofill::AutocompleteParsingResult original;
+  original.mode = HtmlFieldMode::kNone;
+  original.field_type = HtmlFieldType::kName;
+  original.webauthn = true;
+
+  autofill::AutocompleteParsingResult copy;
+  EXPECT_TRUE(mojo::test::SerializeAndDeserialize<
+              autofill::mojom::AutocompleteParsingResult>(original, copy));
+  EXPECT_EQ(original, copy);
+}
+
+}  // namespace
 }  // namespace autofill

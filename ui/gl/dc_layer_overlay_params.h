@@ -27,6 +27,9 @@ struct GL_EXPORT DCLayerOverlayParams {
   DCLayerOverlayParams();
   ~DCLayerOverlayParams();
 
+  DCLayerOverlayParams(DCLayerOverlayParams&&);
+  DCLayerOverlayParams& operator=(DCLayerOverlayParams&&);
+
   // Image to display in overlay - could be hardware or software video frame,
   // swap chain, or dcomp surface. If null and |background_color| is present,
   // then this overlay will represents a solid color quad. If both this and
@@ -63,6 +66,9 @@ struct GL_EXPORT DCLayerOverlayParams {
   // blended behind |overlay_image|.
   std::optional<SkColor4f> background_color;
 
+  // Used to detect when multiple overlays are part of the same tile layer.
+  uint64_t aggregated_layer_id = 0;
+
   // Parameters for video overlays, only used by |SwapChainPresenter|.
   struct VideoParams {
     VideoParams();
@@ -74,6 +80,10 @@ struct GL_EXPORT DCLayerOverlayParams {
     gfx::ColorSpace color_space;
 
     gfx::HDRMetadata hdr_metadata;
+
+    // P010 pixel format is used for 10-bit YUV video frames, either HDR or
+    // SDR.
+    bool is_p010_content = false;
 
     // Indication of the overlay to be detected as possible full screen
     // letterboxing.

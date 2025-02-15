@@ -8,13 +8,13 @@
 #include "base/functional/callback_forward.h"
 #include "base/i18n/base_i18n_switches.h"
 #include "base/strings/stringprintf.h"
+#include "base/strings/to_string.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/bind.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
-#include "chrome/browser/ui/side_search/side_search_config.h"
 #include "chrome/browser/ui/toolbar/app_menu_model.h"
 #include "chrome/browser/ui/toolbar/bookmark_sub_menu_model.h"
 #include "chrome/browser/ui/toolbar/reading_list_sub_menu_model.h"
@@ -24,14 +24,14 @@
 #include "chrome/browser/ui/views/side_panel/side_panel_entry.h"
 #include "chrome/browser/ui/views/side_panel/side_panel_util.h"
 #include "chrome/browser/ui/views/toolbar/toolbar_view.h"
-#include "chrome/browser/ui/views/user_education/browser_feature_promo_controller.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/interaction/interaction_test_util_browser.h"
 #include "chrome/test/interaction/interactive_browser_test.h"
-#include "components/user_education/common/events.h"
-#include "components/user_education/common/help_bubble.h"
-#include "components/user_education/common/help_bubble_factory_registry.h"
-#include "components/user_education/common/help_bubble_params.h"
+#include "components/user_education/common/feature_promo/feature_promo_controller.h"
+#include "components/user_education/common/help_bubble/help_bubble.h"
+#include "components/user_education/common/help_bubble/help_bubble_factory_registry.h"
+#include "components/user_education/common/help_bubble/help_bubble_params.h"
+#include "components/user_education/common/user_education_events.h"
 #include "components/user_education/views/help_bubble_view.h"
 #include "components/user_education/webui/help_bubble_handler.h"
 #include "components/user_education/webui/tracked_element_webui.h"
@@ -77,8 +77,7 @@ DEFINE_LOCAL_STATE_IDENTIFIER_VALUE(ViewSizeObserver, kSidePanelSize);
 
 class HelpBubbleFactoryWebUIInteractiveUiTest : public InteractiveBrowserTest {
  public:
-  HelpBubbleFactoryWebUIInteractiveUiTest() {
-  }
+  HelpBubbleFactoryWebUIInteractiveUiTest() = default;
   ~HelpBubbleFactoryWebUIInteractiveUiTest() override = default;
 
   // Opens the side panel and instruments the Read Later WebContents as
@@ -94,20 +93,20 @@ class HelpBubbleFactoryWebUIInteractiveUiTest : public InteractiveBrowserTest {
                     side_panel_ = AsView(el);
                     ASSERT_TRUE(side_panel_);
                   }),
-        WaitForShow(kReadLaterSidePanelWebViewElementId), FlushEvents(),
+        WaitForShow(kReadLaterSidePanelWebViewElementId),
         // Ensure that the Reading List side panel loads properly.
         InstrumentNonTabWebView(kReadLaterWebContentsElementId,
                                 kReadLaterSidePanelWebViewElementId),
         ObserveState(kSidePanelSize, std::ref(side_panel_)),
-        WaitForState(kSidePanelSize, testing::Ne(gfx::Size())), FlushEvents());
+        WaitForState(kSidePanelSize, testing::Ne(gfx::Size())));
   }
 
   auto OpenBookmarksSidePanel() {
-      return Steps(
-          PressButton(kToolbarAppMenuButtonElementId),
-          SelectMenuItem(AppMenuModel::kBookmarksMenuItem),
-          SelectMenuItem(BookmarkSubMenuModel::kShowBookmarkSidePanelItem),
-          WaitForShow(kSidePanelElementId), FlushEvents());
+    return Steps(
+        PressButton(kToolbarAppMenuButtonElementId),
+        SelectMenuItem(AppMenuModel::kBookmarksMenuItem),
+        SelectMenuItem(BookmarkSubMenuModel::kShowBookmarkSidePanelItem),
+        WaitForShow(kSidePanelElementId));
   }
 
   auto ShowHelpBubble(ElementSpecifier element) {
@@ -143,7 +142,7 @@ class HelpBubbleFactoryWebUIInteractiveUiTest : public InteractiveBrowserTest {
                       has_help_bubble)
                       .SetDescription(base::StringPrintf(
                           "CheckHandlerHasHelpBubble(%s)",
-                          has_help_bubble ? "true" : "false"))));
+                          base::ToString(has_help_bubble)))));
   }
 
   auto Cleanup() {
@@ -170,8 +169,10 @@ class HelpBubbleFactoryWebUIInteractiveUiTest : public InteractiveBrowserTest {
   }
 
   user_education::HelpBubbleFactoryRegistry* GetHelpBubbleFactory() {
-    auto* const controller = browser()->window()->GetFeaturePromoController();
-    return static_cast<BrowserFeaturePromoController*>(controller)
+    auto* const controller =
+        browser()->window()->GetFeaturePromoControllerForTesting();
+    return static_cast<user_education::FeaturePromoControllerCommon*>(
+               controller)
         ->bubble_factory_registry();
   }
 
@@ -235,7 +236,7 @@ IN_PROC_BROWSER_TEST_F(HelpBubbleFactoryWebUIInteractiveUiTest,
   RunTestSequence(
       InstrumentTab(kBrowserTabId),
       NavigateWebContents(kBrowserTabId,
-                          GURL("chrome://internals/user-education")),
+                          GURL(chrome::kChromeUIUserEducationInternalsURL)),
       ShowHelpBubble(kWebUIIPHDemoElementIdentifier),
 
       // Verify that the handler believes that the anchor has a help bubble.
@@ -267,12 +268,12 @@ IN_PROC_BROWSER_TEST_F(HelpBubbleFactoryWebUIInteractiveUiTest,
   RunTestSequence(
       InstrumentTab(kBrowserTabId),
       NavigateWebContents(kBrowserTabId,
-                          GURL("chrome://internals/user-education")),
+                          GURL(chrome::kChromeUIUserEducationInternalsURL)),
       ShowHelpBubble(kWebUIIPHDemoElementIdentifier),
 
       ExecuteJsAt(kBrowserTabId, kPathToHelpBubbleCloseButton,
                   "el => el.click()"),
-      WaitForStateChange(kBrowserTabId, bubble_hidden), FlushEvents(),
+      WaitForStateChange(kBrowserTabId, bubble_hidden),
 
       // Verify that the handler no longer believes that the anchor has a help
       // bubble.
@@ -325,7 +326,7 @@ IN_PROC_BROWSER_TEST_F(HelpBubbleFactoryRtlWebUIInteractiveUiTest,
                     [](ui::InteractionSequence* seq, ui::TrackedElement* el) {
                       seq->NameElement(el, kSidePanelElementName);
                     })),
-      ShowHelpBubble(kSidePanelElementName), FlushEvents(),
+      ShowHelpBubble(kSidePanelElementName),
       WithView(kSidePanelElementId,
                [](SidePanel* side_panel) {
                  side_panel->OnResize(-50, true);

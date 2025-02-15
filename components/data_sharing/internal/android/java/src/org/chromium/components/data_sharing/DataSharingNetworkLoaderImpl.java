@@ -10,7 +10,6 @@ import org.jni_zero.NativeMethods;
 
 import org.chromium.base.Callback;
 import org.chromium.base.ThreadUtils;
-import org.chromium.net.NetworkTrafficAnnotationTag;
 import org.chromium.url.GURL;
 
 /**
@@ -42,15 +41,10 @@ public class DataSharingNetworkLoaderImpl implements DataSharingNetworkLoader {
             String[] scopes,
             byte[] postData,
             @DataSharingRequestType int requestType,
-            Callback<String> callback) {
+            Callback<DataSharingNetworkResult> callback) {
         ThreadUtils.postOnUiThread(
                 () -> {
-                    loadUrlOnUiThread(
-                            url,
-                            scopes,
-                            postData,
-                            DataSharingNetworkUtils.getNetworkTrafficAnnotationTag(requestType),
-                            callback);
+                    loadUrlOnUiThread(url, scopes, postData, requestType, callback);
                 });
     }
 
@@ -58,17 +52,11 @@ public class DataSharingNetworkLoaderImpl implements DataSharingNetworkLoader {
             GURL url,
             String[] scopes,
             byte[] postData,
-            NetworkTrafficAnnotationTag networkAnnotationTag,
-            Callback<String> callback) {
+            @DataSharingRequestType int dataSharingRequestType,
+            Callback<DataSharingNetworkResult> callback) {
         if (mNativePtr != 0) {
             DataSharingNetworkLoaderImplJni.get()
-                    .loadUrl(
-                            mNativePtr,
-                            url,
-                            scopes,
-                            postData,
-                            networkAnnotationTag.getHashCode(),
-                            callback);
+                    .loadUrl(mNativePtr, url, scopes, postData, dataSharingRequestType, callback);
         }
     }
 
@@ -79,7 +67,7 @@ public class DataSharingNetworkLoaderImpl implements DataSharingNetworkLoader {
                 GURL url,
                 String[] scopes,
                 byte[] postData,
-                int annotationHashCode,
-                Callback<String> callback);
+                int dataSharingRequestType,
+                Callback<DataSharingNetworkResult> callback);
     }
 }

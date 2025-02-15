@@ -17,10 +17,10 @@
 #include "base/memory/raw_ref.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
-#include "components/autofill/core/browser/autofill_client.h"
-#include "components/autofill/core/browser/autofill_driver.h"
-#include "components/autofill/core/browser/autofill_manager.h"
+#include "components/autofill/core/browser/data_manager/personal_data_manager.h"
 #include "components/autofill/core/browser/data_model/credit_card.h"
+#include "components/autofill/core/browser/foundations/autofill_driver.h"
+#include "components/autofill/core/browser/foundations/autofill_manager.h"
 #include "components/autofill/core/browser/metrics/form_events/credit_card_form_event_logger.h"
 #include "components/autofill/core/browser/payments/credit_card_cvc_authenticator.h"
 #include "components/autofill/core/browser/payments/credit_card_otp_authenticator.h"
@@ -29,7 +29,6 @@
 #include "components/autofill/core/browser/payments/payments_autofill_client.h"
 #include "components/autofill/core/browser/payments/payments_window_manager.h"
 #include "components/autofill/core/browser/payments/wait_for_signal_or_timeout.h"
-#include "components/autofill/core/browser/personal_data_manager.h"
 
 #if !BUILDFLAG(IS_IOS)
 #include "components/autofill/core/browser/payments/credit_card_fido_authenticator.h"
@@ -37,6 +36,7 @@
 
 namespace autofill {
 
+class AutofillClient;
 enum class WebauthnDialogCallbackType;
 
 // Flow type denotes which card unmask authentication method was used.
@@ -64,19 +64,6 @@ enum class UnmaskAuthFlowType {
   kMaxValue = kThreeDomainSecureConsentAlreadyGiven,
 };
 
-// TODO(crbug.com/40197696): Remove this. This was added and never used.
-// The result of the attempt to fetch full information for a credit card.
-enum class CreditCardFetchResult {
-  kNone = 0,
-  // The attempt succeeded retrieving the full information of a credit card.
-  kSuccess = 1,
-  // The attempt failed due to a transient error.
-  kTransientError = 2,
-  // The attempt failed due to a permanent error.
-  kPermanentError = 3,
-  kMaxValue = kPermanentError,
-};
-
 // TODO(crbug.com/40927041): Remove CVC from CachedServerCardInfo.
 struct CachedServerCardInfo {
  public:
@@ -100,7 +87,7 @@ class CreditCardAccessManager
       public CreditCardRiskBasedAuthenticator::Requester {
  public:
   using OnCreditCardFetchedCallback =
-      base::OnceCallback<void(CreditCardFetchResult, const CreditCard*)>;
+      base::OnceCallback<void(const CreditCard&)>;
   using OtpAuthenticationResponse =
       CreditCardOtpAuthenticator::OtpAuthenticationResponse;
 
@@ -122,7 +109,8 @@ class CreditCardAccessManager
   // Makes a call to Google Payments to retrieve authentication details.
   virtual void PrepareToFetchCreditCard();
 
-  // `on_credit_card_fetched` is run once `card` is fetched.
+  // `on_credit_card_fetched` is run once `card` is fetched, if fetching is
+  // successful.
   virtual void FetchCreditCard(
       const CreditCard* card,
       OnCreditCardFetchedCallback on_credit_card_fetched);
@@ -174,10 +162,6 @@ class CreditCardAccessManager
   void OnRiskBasedAuthenticationResponseReceived(
       const CreditCardRiskBasedAuthenticator::RiskBasedAuthenticationResponse&
           response) override;
-  void OnVirtualCardRiskBasedAuthenticationResponseReceived(
-      AutofillClient::PaymentsRpcResult result,
-      const payments::PaymentsNetworkInterface::UnmaskResponseDetails&
-          response_details) override;
 
  private:
   friend class CreditCardAccessManagerTestApi;
@@ -188,12 +172,8 @@ class CreditCardAccessManager
     return *autofill_client().GetPaymentsAutofillClient();
   }
 
-  PersonalDataManager& personal_data_manager() {
-    return *autofill_client().GetPersonalDataManager();
-  }
-
   PaymentsDataManager& payments_data_manager() {
-    return personal_data_manager().payments_data_manager();
+    return autofill_client().GetPersonalDataManager().payments_data_manager();
   }
 
   base::WeakPtr<CreditCardAccessManager> GetWeakPtr() {
@@ -219,8 +199,8 @@ class CreditCardAccessManager
   // Sets |unmask_details_|. May be ignored if response is too late and user is
   // not opted-in for FIDO auth, or if user does not select a card.
   void OnDidGetUnmaskDetails(
-      AutofillClient::PaymentsRpcResult result,
-      payments::PaymentsNetworkInterface::UnmaskDetails& unmask_details);
+      payments::PaymentsAutofillClient::PaymentsRpcResult result,
+      payments::UnmaskDetails& unmask_details);
 
   // Determines what type of authentication is required. `fido_auth_enabled`
   // suggests whether the server has offered FIDO auth as an option.
@@ -308,8 +288,8 @@ class CreditCardAccessManager
   // Helper function to fetch virtual cards.
   void FetchVirtualCard();
 
-  // Helper function to fetch local or full server cards.
-  void FetchLocalOrFullServerCard();
+  // Helper function to fetch local cards.
+  void FetchLocalCard();
 
   // Checks if Mandatory Re-auth is needed after the card has been returned. If
   // needed, starts the device authentication flow before filling the form.
@@ -418,14 +398,7 @@ class CreditCardAccessManager
   // Struct to store necessary information to start an authentication. It is
   // populated before an authentication is offered. It includes suggested
   // authentication methods and other information to facilitate card unmasking.
-  payments::PaymentsNetworkInterface::UnmaskDetails unmask_details_;
-
-  // Structs to store information passed to and fetched from the server for
-  // virtual card unmasking.
-  payments::PaymentsNetworkInterface::UnmaskRequestDetails
-      virtual_card_unmask_request_details_;
-  payments::PaymentsNetworkInterface::UnmaskResponseDetails
-      virtual_card_unmask_response_details_;
+  payments::UnmaskDetails unmask_details_;
 
   // Struct to store response returned by CreditCardRiskBasedAuthenticator.
   CreditCardRiskBasedAuthenticator::RiskBasedAuthenticationResponse

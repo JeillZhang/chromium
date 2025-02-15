@@ -4,9 +4,11 @@
 
 #include "chrome/browser/ash/policy/reporting/metrics_reporting/kiosk_vision/kiosk_vision_telemetry_sampler.h"
 
+#include <memory>
 #include <optional>
 
 #include "base/test/task_environment.h"
+#include "chrome/browser/ash/app_mode/fake_kiosk_controller.h"
 #include "components/reporting/proto/synced/metric_data.pb.h"
 #include "components/reporting/util/test_support_callbacks.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -17,9 +19,21 @@ class KioskVisionTelemetrySamplerTest : public testing::Test {
  protected:
   base::test::TaskEnvironment task_environment_;
   KioskVisionTelemetrySampler sampler_;
+  ::ash::FakeKioskController fake_kiosk_controller_;
 };
 
-TEST_F(KioskVisionTelemetrySamplerTest, MaybeCollect) {
+// TODO(crbug.com/367691581) Remove kiosk vision.
+TEST_F(KioskVisionTelemetrySamplerTest,
+       DISABLED_NoTelemetryProcessorDoesntReport) {
+  test::TestEvent<std::optional<MetricData>> test_event;
+  sampler_.MaybeCollect(test_event.cb());
+  std::optional<MetricData> result = test_event.result();
+
+  ASSERT_FALSE(result.has_value());
+}
+
+// TODO(crbug.com/367691581) Remove kiosk vision.
+TEST_F(KioskVisionTelemetrySamplerTest, DISABLED_MaybeCollect) {
   test::TestEvent<std::optional<MetricData>> test_event;
   sampler_.MaybeCollect(test_event.cb());
   std::optional<MetricData> result = test_event.result();

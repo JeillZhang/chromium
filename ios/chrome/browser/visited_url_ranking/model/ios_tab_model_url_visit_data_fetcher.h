@@ -5,19 +5,21 @@
 #ifndef IOS_CHROME_BROWSER_VISITED_URL_RANKING_MODEL_IOS_TAB_MODEL_URL_VISIT_DATA_FETCHER_H_
 #define IOS_CHROME_BROWSER_VISITED_URL_RANKING_MODEL_IOS_TAB_MODEL_URL_VISIT_DATA_FETCHER_H_
 
-#include "base/memory/raw_ptr.h"
-#include "components/visited_url_ranking/public/fetch_result.h"
-#include "components/visited_url_ranking/public/url_visit_data_fetcher.h"
+#import "base/memory/raw_ptr.h"
+#import "components/visited_url_ranking/public/fetch_result.h"
+#import "components/visited_url_ranking/public/url_visit_data_fetcher.h"
 
-class ChromeBrowserState;
+class ProfileIOS;
 
 namespace visited_url_ranking {
+
+struct FetcherConfig;
 
 // The IOS implementation of URLVisitDataFetcher that gather the currently
 // opened normal tabs.
 class IOSTabModelURLVisitDataFetcher : public URLVisitDataFetcher {
  public:
-  explicit IOSTabModelURLVisitDataFetcher(ChromeBrowserState* profile);
+  explicit IOSTabModelURLVisitDataFetcher(ProfileIOS* profile);
   ~IOSTabModelURLVisitDataFetcher() override;
 
   // Disallow copy.
@@ -26,10 +28,11 @@ class IOSTabModelURLVisitDataFetcher : public URLVisitDataFetcher {
 
   // URLVisitDataFetcher::
   void FetchURLVisitData(const FetchOptions& options,
+                         const FetcherConfig& config,
                          FetchResultCallback callback) override;
 
  private:
-  const raw_ptr<ChromeBrowserState> browser_state_;
+  const raw_ptr<ProfileIOS> profile_;
 };
 
 }  // namespace visited_url_ranking

@@ -11,6 +11,7 @@
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
+#include "base/numerics/safe_conversions.h"
 #include "base/task/bind_post_task.h"
 #include "build/build_config.h"
 #include "content/browser/media/media_devices_util.h"
@@ -114,7 +115,6 @@ bool MayApplySubCaptureTarget(GlobalRenderFrameHostId capturing_id,
 
   // * target.is_zero() = uncrop-request.
   // * !target.is_zero() = crop-request.
-  // TODO(crbug.com/1418194): Extend to support other types.
   return target.is_zero() || helper->IsAssociatedWith(target, type);
 }
 
@@ -164,8 +164,9 @@ bool AllowedStreamTypeCombination(
     case blink::mojom::MediaStreamType::DISPLAY_AUDIO_CAPTURE:
       return video_stream_type ==
                  blink::mojom::MediaStreamType::DISPLAY_VIDEO_CAPTURE ||
-             video_stream_type ==
-                 blink::mojom::MediaStreamType::DISPLAY_VIDEO_CAPTURE_THIS_TAB;
+             video_stream_type == blink::mojom::MediaStreamType::
+                                      DISPLAY_VIDEO_CAPTURE_THIS_TAB ||
+             video_stream_type == blink::mojom::MediaStreamType::NO_SERVICE;
     case blink::mojom::MediaStreamType::DEVICE_VIDEO_CAPTURE:
     case blink::mojom::MediaStreamType::GUM_TAB_VIDEO_CAPTURE:
     case blink::mojom::MediaStreamType::GUM_DESKTOP_VIDEO_CAPTURE:
@@ -180,18 +181,18 @@ bool AllowedStreamTypeCombination(
 
 #if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
 bool IsValidZoomLevel(int zoom_level) {
-  if (blink::kPresetZoomFactors.size() == 0u) {
+  if (blink::kPresetBrowserZoomFactors.empty()) {
     return false;
   }
 
   if (zoom_level ==
-      static_cast<int>(std::ceil(100 * blink::kPresetZoomFactors[0]))) {
+      base::ClampCeil(100 * blink::kPresetBrowserZoomFactors[0])) {
     return true;
   }
 
-  for (size_t i = 1; i < blink::kPresetZoomFactors.size(); ++i) {
+  for (size_t i = 1; i < blink::kPresetBrowserZoomFactors.size(); ++i) {
     if (zoom_level ==
-        static_cast<int>(std::floor(100 * blink::kPresetZoomFactors[i]))) {
+        base::ClampFloor(100 * blink::kPresetBrowserZoomFactors[i])) {
       return true;
     }
   }
@@ -764,8 +765,23 @@ void MediaStreamDispatcherHost::SetZoomLevel(
                                       zoom_level, std::move(callback));
 }
 
+void MediaStreamDispatcherHost::RequestCapturedSurfaceControlPermission(
+    const base::UnguessableToken& session_id,
+    RequestCapturedSurfaceControlPermissionCallback callback) {
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+
+  if (!base::FeatureList::IsEnabled(
+          features::kCapturedSurfaceControlKillswitch)) {
+    std::move(callback).Run(CapturedSurfaceControlResult::kUnknownError);
+    return;
+  }
+
+  media_stream_manager_->RequestCapturedSurfaceControlPermission(
+      render_frame_host_id_, session_id, std::move(callback));
+}
+
 void MediaStreamDispatcherHost::OnSubCaptureTargetValidationComplete(
-    const base::UnguessableToken& device_id,
+    const base::UnguessableToken& session_id,
     media::mojom::SubCaptureTargetType type,
     const base::Token& target,
     uint32_t sub_capture_target_version,
@@ -782,7 +798,8 @@ void MediaStreamDispatcherHost::OnSubCaptureTargetValidationComplete(
   }
 
   media_stream_manager_->video_capture_manager()->ApplySubCaptureTarget(
-      device_id, type, target, sub_capture_target_version, std::move(callback));
+      session_id, type, target, sub_capture_target_version,
+      std::move(callback));
 }
 #endif
 

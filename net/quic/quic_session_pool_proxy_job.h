@@ -10,9 +10,10 @@
 #include "net/base/http_user_agent_settings.h"
 #include "net/base/request_priority.h"
 #include "net/log/net_log_with_source.h"
+#include "net/quic/quic_session_attempt.h"
 #include "net/quic/quic_session_pool.h"
 #include "net/quic/quic_session_pool_job.h"
-#include "net/quic/quic_session_pool_session_attempt.h"
+#include "net/spdy/multiplexed_session_creation_initiator.h"
 #include "net/third_party/quiche/src/quiche/quic/core/quic_versions.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 
@@ -26,6 +27,7 @@ class QuicSessionPool::ProxyJob : public QuicSessionPool::Job {
            quic::ParsedQuicVersion target_quic_version,
            QuicSessionAliasKey key,
            NetworkTrafficAnnotationTag proxy_annotation_tag,
+           MultiplexedSessionCreationInitiator session_creation_initiator,
            const HttpUserAgentSettings* http_user_agent_settings,
            std::unique_ptr<CryptoClientConfigHandle> client_config_handle,
            RequestPriority priority,
@@ -73,10 +75,11 @@ class QuicSessionPool::ProxyJob : public QuicSessionPool::Job {
   quic::ParsedQuicVersion target_quic_version_;
 
   NetworkTrafficAnnotationTag proxy_annotation_tag_;
+  MultiplexedSessionCreationInitiator session_creation_initiator_;
   const int cert_verify_flags_;
   raw_ptr<const HttpUserAgentSettings> http_user_agent_settings_;
   CompletionOnceCallback callback_;
-  std::unique_ptr<SessionAttempt> session_attempt_;
+  std::unique_ptr<QuicSessionAttempt> session_attempt_;
   base::WeakPtrFactory<ProxyJob> weak_factory_{this};
 };
 

@@ -26,7 +26,6 @@
 #include "ui/gfx/text_utils.h"
 
 #if BUILDFLAG(IS_WIN)
-#include "third_party/skia/include/core/SkFontMgr.h"
 #include "ui/gfx/system_fonts_win.h"
 #endif
 
@@ -194,7 +193,7 @@ void PlatformFontSkia::EnsuresDefaultFontIsInitialized() {
     style = query.style;
     weight = query.weight;
 #else
-        NOTREACHED_IN_MIGRATION();
+        NOTREACHED();
 #endif
   } else {
     params = gfx::GetFontRenderParams(FontRenderParamsQuery(), nullptr);
@@ -345,14 +344,6 @@ PlatformFontSkia::PlatformFontSkia(sk_sp<SkTypeface> typeface,
 }
 
 PlatformFontSkia::~PlatformFontSkia() {}
-
-#if BUILDFLAG(IS_WIN)
-bool PlatformFont::Exists(const std::string& family_name) {
-  sk_sp<SkFontMgr> font_manager = skia::DefaultFontMgr();
-  sk_sp<SkFontStyleSet> sset = font_manager->matchFamily(family_name.c_str());
-  return sset->count() > 0;
-}
-#endif
 
 void PlatformFontSkia::InitFromDetails(sk_sp<SkTypeface> typeface,
                                        const std::string& font_family,

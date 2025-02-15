@@ -23,15 +23,29 @@ struct ASH_EXPORT InformedRestoreContentsData {
   InformedRestoreContentsData& operator=(const InformedRestoreContentsData&) = delete;
   ~InformedRestoreContentsData();
 
+  // The dialog will display a different description string based on the type.
+  enum class DialogType {
+    kNormal,
+    kCrash,
+    kUpdate,
+  };
+
+  struct TabInfo {
+    TabInfo();
+    TabInfo(const GURL& url, const std::string& title = std::string());
+    GURL url;
+    std::string title;
+  };
+
   struct AppInfo {
-    explicit AppInfo(const std::string& id, const std::string& title);
+    AppInfo(const std::string& id, const std::string& title, int window_id);
     AppInfo(const std::string& app_id,
             const std::string& title,
-            const std::vector<GURL>& tab_urls,
-            const size_t tab_count,
-            uint64_t lacros_profile_id);
+            int window_id,
+            std::vector<TabInfo> tab_infos);
     AppInfo(const AppInfo&);
     ~AppInfo();
+
     // App id. Used to retrieve the app name and app icon from the app registry
     // cache.
     std::string app_id;
@@ -42,17 +56,12 @@ struct ASH_EXPORT InformedRestoreContentsData {
     // once we can fetch titles from the app service using `app_id`.
     std::string title;
 
-    // Used by browser only. Urls of up to 5 tabs including the active tab. Used
-    // to retrieve favicons.
-    std::vector<GURL> tab_urls;
+    // Window id. Used to identify the restore content item when the
+    // corresponding content data gets updated.
+    int window_id;
 
-    // Used by browser only. The total number of tabs, including ones not listed
-    // in `tab_urls`.
-    size_t tab_count = 0u;
-
-    // Used by lacros-browser only. Used to fetch the favicon from the favicon
-    // service associated with this id.
-    uint64_t lacros_profile_id = 0;
+    // Used by browser only. Urls of the browser's tabs and their titles.
+    std::vector<TabInfo> tab_infos;
   };
 
   using AppsInfos = std::vector<AppInfo>;
@@ -68,6 +77,9 @@ struct ASH_EXPORT InformedRestoreContentsData {
   // True if the previous session crashed. The dialog will have slightly
   // different strings in this case.
   bool last_session_crashed = false;
+
+  // The dialog will have slightly different strings depending on its type.
+  DialogType dialog_type = DialogType::kNormal;
 
   // Callbacks for the restore and cancel buttons.
   base::OnceClosure restore_callback;

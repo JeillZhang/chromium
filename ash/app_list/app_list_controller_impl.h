@@ -18,7 +18,6 @@
 #include "ash/app_list/quick_app_access_model.h"
 #include "ash/ash_export.h"
 #include "ash/assistant/model/assistant_ui_model_observer.h"
-#include "ash/display/window_tree_host_manager.h"
 #include "ash/public/cpp/app_list/app_list_client.h"
 #include "ash/public/cpp/app_list/app_list_controller.h"
 #include "ash/public/cpp/app_list/app_list_model_delegate.h"
@@ -40,9 +39,12 @@
 #include "base/scoped_observation.h"
 #include "base/time/time.h"
 #include "chromeos/ash/services/assistant/public/cpp/assistant_enums.h"
+#include "components/prefs/pref_member.h"
 #include "ui/aura/window_observer.h"
-#include "ui/compositor/throughput_tracker.h"
+#include "ui/base/mojom/menu_source_type.mojom-forward.h"
+#include "ui/compositor/compositor_metrics_tracker.h"
 #include "ui/display/display_observer.h"
+#include "ui/display/manager/display_manager_observer.h"
 #include "ui/display/types/display_constants.h"
 
 class PrefRegistrySimple;
@@ -78,7 +80,7 @@ class ASH_EXPORT AppListControllerImpl
       public KeyboardControllerObserver,
       public WallpaperControllerObserver,
       public AssistantStateObserver,
-      public WindowTreeHostManager::Observer,
+      public display::DisplayManagerObserver,
       public aura::WindowObserver,
       public AssistantControllerObserver,
       public AssistantUiModelObserver,
@@ -96,6 +98,10 @@ class ASH_EXPORT AppListControllerImpl
   };
 
   static void RegisterProfilePrefs(PrefRegistrySimple* registry);
+
+  // Set the value of global variable `g_sunfish_nudge_disabled_for_test` to
+  // disable showing the nudge.
+  static void SetSunfishNudgeDisabledForTest(bool is_disabled);
 
   AppListPresenterImpl* fullscreen_presenter() {
     return fullscreen_presenter_.get();
@@ -186,7 +192,7 @@ class ASH_EXPORT AppListControllerImpl
                            AppListItemContext item_context,
                            GetContextMenuModelCallback callback) override;
   void ShowWallpaperContextMenu(const gfx::Point& onscreen_location,
-                                ui::MenuSourceType source_type) override;
+                                ui::mojom::MenuSourceType source_type) override;
   bool KeyboardTraversalEngaged() override;
   bool CanProcessEventsOnApplistViews() override;
   bool ShouldDismissImmediately() override;
@@ -256,8 +262,8 @@ class ASH_EXPORT AppListControllerImpl
   void OnAssistantFeatureAllowedChanged(
       assistant::AssistantAllowedState state) override;
 
-  // WindowTreeHostManager::Observer:
-  void OnDisplayConfigurationChanged() override;
+  // display::DisplayManagerObserver:
+  void OnDidApplyDisplayChanges() override;
 
   // aura::WindowObserver:
   void OnWindowVisibilityChanging(aura::Window* window, bool visible) override;
@@ -370,6 +376,9 @@ class ASH_EXPORT AppListControllerImpl
   // using an empty `app_id`.
   bool SetHomeButtonQuickApp(const std::string& app_id);
 
+  // May show the Sunfish education nudge, anchored to the `launcher_button`.
+  void MaybeShowSunfishLauncherNudge(views::View* launcher_button);
+
  private:
   // Convenience methods for getting models from `model_provider_`.
   AppListModel* GetModel();
@@ -428,6 +437,10 @@ class ASH_EXPORT AppListControllerImpl
   // Gets the container which should contain the fullscreen launcher.
   int GetFullscreenLauncherContainerId() const;
 
+  // Called when eligibility of Assistant new entry point is read. The read is
+  // done as an async operation.
+  void OnAssistantNewEntryPointEligibilityReady(bool eligible);
+
   // Whether the home launcher is
   // * being shown (either through an animation or a drag)
   // * being hidden (either through an animation or a drag)
@@ -449,9 +462,17 @@ class ASH_EXPORT AppListControllerImpl
   // `AppListModelController::Get()`.
   std::unique_ptr<AppListModelProvider> model_provider_;
 
-  // Manages the tablet mode home launcher.
-  // |fullscreen_presenter_| should be put below |client_| and |model_| to
-  // prevent a crash in destruction.
+  // A callback that can be registered by a test to wait for the app list state
+  // transition animation to finish.
+  StateTransitionAnimationCallback state_transition_animation_callback_;
+
+  // Used for closing the Assistant ui in the asynchronous way.
+  base::ScopedClosureRunner close_assistant_ui_runner_;
+
+  // Manages the tablet mode home launcher. Destroying `AppListPresenterImpl`
+  // can reentrantly call back into `this` and use `model_provider_`,
+  // `state_transition_animation_callback_`, and `close_assistant_ui_runner_`,
+  // so `fullscreen_presenter_` must be ordered after all those fields.
   std::unique_ptr<AppListPresenterImpl> fullscreen_presenter_;
 
   // Manages the clamshell launcher bubble.
@@ -496,10 +517,6 @@ class ASH_EXPORT AppListControllerImpl
   // This window changing it's visibility to false is used as a signal that the
   // home launcher visibility should be recalculated.
   raw_ptr<aura::Window> tracked_app_window_ = nullptr;
-
-  // A callback that can be registered by a test to wait for the app list state
-  // transition animation to finish.
-  StateTransitionAnimationCallback state_transition_animation_callback_;
 
   // A callback that can be registered by a test to wait for the home launcher
   // visibility animation to finish. Should only be used in tablet mode.
@@ -547,8 +564,9 @@ class ASH_EXPORT AppListControllerImpl
   // Sub-controller to handle app collections page.
   std::unique_ptr<AppsCollectionsController> apps_collections_controller_;
 
-  // Used for closing the Assistant ui in the asynchronous way.
-  base::ScopedClosureRunner close_assistant_ui_runner_;
+  // Responsible for calling `UpdateSearchBoxUiVisibilities` when the Sunfish
+  // enabled pref changes.
+  std::unique_ptr<BooleanPrefMember> sunfish_enabled_;
 
   base::ScopedObservation<SplitViewController, SplitViewObserver>
       split_view_observation_{this};

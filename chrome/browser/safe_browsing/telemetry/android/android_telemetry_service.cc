@@ -24,6 +24,8 @@
 #include "chrome/browser/safe_browsing/safe_browsing_navigation_observer_manager_factory.h"
 #include "components/keyed_service/core/service_access_type.h"
 #include "components/prefs/pref_service.h"
+#include "components/safe_browsing/android/safe_browsing_api_handler_bridge.h"
+#include "components/safe_browsing/android/safe_browsing_api_handler_util.h"
 #include "components/safe_browsing/content/browser/web_ui/safe_browsing_ui.h"
 #include "components/safe_browsing/core/browser/db/database_manager.h"
 #include "components/safe_browsing/core/browser/ping_manager.h"
@@ -98,12 +100,8 @@ void AndroidTelemetryService::OnDownloadUpdated(download::DownloadItem* item) {
 
   if (item->GetState() == download::DownloadItem::COMPLETE) {
     // Download completed. Send report.
-    std::unique_ptr<ClientSafeBrowsingReportRequest> report = GetReport(item);
-    MaybeSendApkDownloadReport(
-        content::DownloadItemUtils::GetBrowserContext(item), std::move(report));
-    // No longer interested in this |DownloadItem| since the report has been
-    // sent so remove the observer.
-    item->RemoveObserver(this);
+    GetReport(item, base::BindOnce(&AndroidTelemetryService::OnGetReportDone,
+                                   weak_ptr_factory_.GetWeakPtr(), item));
   } else if (item->GetState() == download::DownloadItem::CANCELLED) {
     RecordApkDownloadTelemetryOutcome(
         ApkDownloadTelemetryOutcome::NOT_SENT_DOWNLOAD_CANCELLED);
@@ -113,8 +111,22 @@ void AndroidTelemetryService::OnDownloadUpdated(download::DownloadItem* item) {
   }
 }
 
+void AndroidTelemetryService::OnGetReportDone(
+    download::DownloadItem* item,
+    std::unique_ptr<ClientSafeBrowsingReportRequest> report) {
+  if (reports_in_progress_.contains(item)) {
+    reports_in_progress_.erase(item);
+    MaybeSendApkDownloadReport(
+        content::DownloadItemUtils::GetBrowserContext(item), std::move(report));
+    // No longer interested in this |DownloadItem| since the report has been
+    // sent so remove the observer.
+    item->RemoveObserver(this);
+  }
+}
+
 void AndroidTelemetryService::OnDownloadRemoved(download::DownloadItem* item) {
   referrer_chain_result_.erase(item);
+  reports_in_progress_.erase(item);
 }
 
 bool AndroidTelemetryService::CanSendPing(download::DownloadItem* item) {
@@ -174,7 +186,8 @@ void AndroidTelemetryService::FillReferrerChain(download::DownloadItem* item) {
           : nullptr;
 
   if (web_contents) {
-    GURL intent_url = GetReferringAppInfo(web_contents).target_url;
+    GURL intent_url =
+        GetReferringAppInfo(web_contents, /*get_webapk_info=*/false).target_url;
     referrer_chain_result_[item].triggered_by_intent =
         intent_url == item->GetOriginalUrl();
   }
@@ -206,16 +219,21 @@ void AndroidTelemetryService::FillReferrerChain(download::DownloadItem* item) {
                     std::move(data));
 }
 
-std::unique_ptr<ClientSafeBrowsingReportRequest>
-AndroidTelemetryService::GetReport(download::DownloadItem* item) {
+void AndroidTelemetryService::GetReport(
+    download::DownloadItem* item,
+    base::OnceCallback<void(std::unique_ptr<ClientSafeBrowsingReportRequest>)>
+        callback) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   DCHECK(item->IsDone());
+
+  reports_in_progress_.insert(item);
 
   std::unique_ptr<ClientSafeBrowsingReportRequest> report(
       new ClientSafeBrowsingReportRequest());
   report->set_type(ClientSafeBrowsingReportRequest::APK_DOWNLOAD);
   report->set_url(item->GetOriginalUrl().spec());
   report->set_page_url(item->GetTabUrl().spec());
+  report->set_locale(g_browser_process->GetApplicationLocale());
 
   auto* referrer_chain_data = static_cast<ReferrerChainData*>(
       item->GetUserData(ReferrerChainData::kDownloadReferrerChainDataKey));
@@ -245,9 +263,34 @@ AndroidTelemetryService::GetReport(download::DownloadItem* item) {
   mutable_download_item_info->mutable_digests()->set_sha256(item->GetHash());
   mutable_download_item_info->set_length(item->GetReceivedBytes());
   mutable_download_item_info->set_file_basename(
-      item->GetTargetFilePath().BaseName().value());
+      item->GetFileNameToReportUser().value());
 
-  return report;
+  if (base::FeatureList::IsEnabled(kGooglePlayProtectInApkTelemetry)) {
+    SafeBrowsingApiHandlerBridge::GetInstance().StartIsVerifyAppsEnabled(
+        base::BindOnce(&AndroidTelemetryService::IsVerifyAppsEnabled,
+                       weak_ptr_factory_.GetWeakPtr(), std::move(report),
+                       std::move(callback)));
+  } else {
+    IsVerifyAppsEnabled(std::move(report), std::move(callback),
+                        VerifyAppsEnabledResult::FAILED);
+  }
+}
+
+void AndroidTelemetryService::IsVerifyAppsEnabled(
+    std::unique_ptr<ClientSafeBrowsingReportRequest> report,
+    base::OnceCallback<void(std::unique_ptr<ClientSafeBrowsingReportRequest>)>
+        callback,
+    VerifyAppsEnabledResult result) {
+  base::UmaHistogramEnumeration(
+      "SBClientDownload.AndroidTelemetry.AppVerificationResult", result);
+
+  if (result == VerifyAppsEnabledResult::SUCCESS_ENABLED) {
+    report->mutable_client_properties()->set_app_verification_enabled(true);
+  } else if (result == VerifyAppsEnabledResult::SUCCESS_NOT_ENABLED) {
+    report->mutable_client_properties()->set_app_verification_enabled(false);
+  }
+
+  std::move(callback).Run(std::move(report));
 }
 
 void AndroidTelemetryService::MaybeSendApkDownloadReport(
@@ -264,8 +307,7 @@ void AndroidTelemetryService::MaybeSendApkDownloadReport(
     RecordApkDownloadTelemetryOutcome(
         ApkDownloadTelemetryOutcome::NOT_SENT_FAILED_TO_SERIALIZE);
   } else {
-    NOTREACHED_IN_MIGRATION()
-        << "Unhandled PingManager::ReportThreatDetailsResult type";
+    NOTREACHED() << "Unhandled PingManager::ReportThreatDetailsResult type";
   }
 }
 

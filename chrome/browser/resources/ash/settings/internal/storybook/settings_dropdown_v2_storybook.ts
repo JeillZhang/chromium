@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import '../../settings_shared.css.js';
 import '../../controls/v2/settings_dropdown_v2.js';
+import 'chrome://resources/ash/common/cr_elements/cr_checkbox/cr_checkbox.js';
 
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
@@ -27,15 +27,9 @@ export class SettingsDropdownV2Storybook extends PolymerElement {
         value: 2,
       },
 
-      virtualManagedPref_: {
-        type: Object,
-        value: {
-          key: 'virtual_managed_pref',
-          type: chrome.settingsPrivate.PrefType.NUMBER,
-          value: 2,
-          enforcement: chrome.settingsPrivate.Enforcement.ENFORCED,
-          controlledBy: chrome.settingsPrivate.ControlledBy.DEVICE_POLICY,
-        },
+      basicDropdownDisabled_: {
+        type: Boolean,
+        value: false,
       },
 
       dropdownOptions_: {
@@ -49,9 +43,21 @@ export class SettingsDropdownV2Storybook extends PolymerElement {
           ];
         },
       },
+
+      virtualManagedPref_: {
+        type: Object,
+        value: {
+          key: 'virtual_managed_pref',
+          type: chrome.settingsPrivate.PrefType.NUMBER,
+          value: 2,
+          enforcement: chrome.settingsPrivate.Enforcement.ENFORCED,
+          controlledBy: chrome.settingsPrivate.ControlledBy.DEVICE_POLICY,
+        },
+      },
     };
   }
 
+  private basicDropdownDisabled_: boolean;
   private basicDropdownValue_: number;
   private dropdownOptions_: DropdownOptionList;
   private virtualManagedPref_: chrome.settingsPrivate.PrefObject<number>;

@@ -42,12 +42,12 @@ TooltipIcon::TooltipIcon(const std::u16string& tooltip, int tooltip_icon_size)
   // altering the bubble's layout when shown. As such, have it behave like
   // static text for screenreader users, since that's the role it serves here
   // anyway.
-  GetViewAccessibility().SetProperties(ax::mojom::Role::kStaticText, tooltip_);
+  GetViewAccessibility().SetRole(ax::mojom::Role::kStaticText);
+  GetViewAccessibility().SetName(tooltip_);
 }
 
 TooltipIcon::~TooltipIcon() {
-  for (auto& observer : observers_)
-    observer.OnTooltipIconDestroying(this);
+  observers_.Notify(&Observer::OnTooltipIconDestroying, this);
   HideBubble();
 }
 
@@ -88,7 +88,7 @@ void TooltipIcon::OnFocus() {
   ShowBubble();
 #if BUILDFLAG(IS_WIN)
   // Tooltip text does not announce on Windows; crbug.com/1245470
-  NotifyAccessibilityEvent(ax::mojom::Event::kFocus, true);
+  NotifyAccessibilityEventDeprecated(ax::mojom::Event::kFocus, true);
 #endif
 }
 
@@ -97,7 +97,7 @@ void TooltipIcon::OnBlur() {
 }
 
 void TooltipIcon::OnGestureEvent(ui::GestureEvent* event) {
-  if (event->type() == ui::ET_GESTURE_TAP) {
+  if (event->type() == ui::EventType::kGestureTap) {
     ShowBubble();
     event->SetHandled();
   }
@@ -135,8 +135,9 @@ void TooltipIcon::SetDrawAsHovered(bool hovered) {
 }
 
 void TooltipIcon::ShowBubble() {
-  if (bubble_)
+  if (bubble_) {
     return;
+  }
 
   SetDrawAsHovered(true);
 
@@ -156,13 +157,13 @@ void TooltipIcon::ShowBubble() {
     mouse_watcher_->Start(GetWidget()->GetNativeWindow());
   }
 
-  for (auto& observer : observers_)
-    observer.OnTooltipBubbleShown(this);
+  observers_.Notify(&Observer::OnTooltipBubbleShown, this);
 }
 
 void TooltipIcon::HideBubble() {
-  if (bubble_)
+  if (bubble_) {
     bubble_->Hide();
+  }
 }
 
 void TooltipIcon::OnWidgetDestroyed(Widget* widget) {

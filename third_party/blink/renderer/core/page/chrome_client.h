@@ -29,7 +29,7 @@
 #include "base/time/time.h"
 #include "cc/input/event_listener_properties.h"
 #include "cc/input/overscroll_behavior.h"
-#include "cc/paint/paint_image.h"
+#include "cc/paint/draw_image.h"
 #include "cc/trees/paint_holding_commit_trigger.h"
 #include "cc/trees/paint_holding_reason.h"
 #include "components/viz/common/surfaces/frame_sink_id.h"
@@ -269,15 +269,6 @@ class CORE_EXPORT ChromeClient : public GarbageCollected<ChromeClient> {
                     LocalFrame& opener_frame,
                     NavigationPolicy navigation_policy,
                     bool consumed_user_gesture) = 0;
-
-  // All the parameters should be in viewport space. That is, if an event
-  // scrolls by 10 px, but due to a 2X page scale we apply a 5px scroll to the
-  // root frame, all of which is handled as overscroll, we should return 10px
-  // as the |overscroll_delta|.
-  virtual void DidOverscroll(const gfx::Vector2dF& overscroll_delta,
-                             const gfx::Vector2dF& accumulated_overscroll,
-                             const gfx::PointF& position_in_viewport,
-                             const gfx::Vector2dF& velocity_in_viewport) = 0;
 
   // For a scrollbar scroll action, injects a gesture event of |injected_type|
   // to be dispatched at a later point in time. |injected_type| is required to
@@ -525,7 +516,7 @@ class CORE_EXPORT ChromeClient : public GarbageCollected<ChromeClient> {
   // https://html.spec.whatwg.org/multipage/interaction.html#tracking-user-activation
   virtual void DidChangeSelectionInSelectControl(HTMLFormControlElement&) {}
 
-  virtual void SelectOrSelectListFieldOptionsChanged(HTMLFormControlElement&) {}
+  virtual void SelectFieldOptionsChanged(HTMLFormControlElement&) {}
   virtual void AjaxSucceeded(LocalFrame*) {}
   // Called when the value of `element` has been changed by JavaScript.
   // `old_value` contains the value before being changed.
@@ -547,6 +538,9 @@ class CORE_EXPORT ChromeClient : public GarbageCollected<ChromeClient> {
 
   virtual void DidUpdateBrowserControls() const {}
 
+  virtual void DidUpdateMaxSafeAreaInsets(
+      const gfx::InsetsF& max_safe_area_insets) const {}
+
   virtual void RegisterPopupOpeningObserver(PopupOpeningObserver*) = 0;
   virtual void UnregisterPopupOpeningObserver(PopupOpeningObserver*) = 0;
   virtual void NotifyPopupOpeningObservers() const = 0;
@@ -560,7 +554,7 @@ class CORE_EXPORT ChromeClient : public GarbageCollected<ChromeClient> {
   }
 
   virtual void RequestDecode(LocalFrame*,
-                             const cc::PaintImage& image,
+                             const cc::DrawImage& image,
                              base::OnceCallback<void(bool)> callback) {
     std::move(callback).Run(false);
   }
@@ -570,7 +564,7 @@ class CORE_EXPORT ChromeClient : public GarbageCollected<ChromeClient> {
   // the frame to be presented, the `callback` will run with the time of the
   // failure.
   using ReportTimeCallback =
-      WTF::CrossThreadOnceFunction<void(const viz::FrameTimingDetails&)>;
+      base::OnceCallback<void(const viz::FrameTimingDetails&)>;
   virtual void NotifyPresentationTime(LocalFrame& frame,
                                       ReportTimeCallback callback) {}
 
@@ -592,7 +586,7 @@ class CORE_EXPORT ChromeClient : public GarbageCollected<ChromeClient> {
   virtual void DocumentDetached(Document&) {}
 
   // Return the user's zoom factor which is different from the typical usage
-  // of "zoom factor" in blink (e.g., |LocalFrame::PageZoomFactor()|) which
+  // of "zoom factor" in blink (e.g., |LocalFrame::LayoutZoomFactor()|) which
   // includes CSS zoom and the device scale factor (if use-zoom-for-dsf is
   // enabled). This only includes the zoom initiated by the user (ctrl +/-).
   virtual double UserZoomFactor(LocalFrame* frame) const { return 1; }
@@ -606,6 +600,8 @@ class CORE_EXPORT ChromeClient : public GarbageCollected<ChromeClient> {
   virtual void PasswordFieldReset(HTMLInputElement& element) {}
 
   virtual float ZoomFactorForViewportLayout() { return 1; }
+
+  virtual void OnFirstContentfulPaint() {}
 
  protected:
   ChromeClient() = default;

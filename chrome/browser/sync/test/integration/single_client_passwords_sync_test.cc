@@ -3,7 +3,6 @@
 // found in the LICENSE file.
 
 #include "base/base64.h"
-#include "base/feature_list.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
@@ -25,7 +24,7 @@
 #include "components/signin/public/base/signin_switches.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
 #include "components/signin/public/identity_manager/identity_test_utils.h"
-#include "components/sync/base/model_type.h"
+#include "components/sync/base/data_type.h"
 #include "components/sync/engine/cycle/entity_change_metric_recording.h"
 #include "components/sync/nigori/cryptographer_impl.h"
 #include "components/sync/service/sync_service_impl.h"
@@ -40,7 +39,6 @@
 
 namespace {
 
-using password_manager::features_util::OptInToAccountStorage;
 using passwords_helper::CreateTestPasswordForm;
 using passwords_helper::GetPasswordCount;
 using passwords_helper::GetProfilePasswordStoreInterface;
@@ -132,7 +130,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientPasswordsSyncTestWithVerifier,
   ASSERT_TRUE(UpdatedProgressMarkerChecker(GetSyncService(0)).Wait());
 
   const std::vector<sync_pb::SyncEntity> entities =
-      fake_server_->GetSyncEntitiesByModelType(syncer::PASSWORDS);
+      fake_server_->GetSyncEntitiesByDataType(syncer::PASSWORDS);
   ASSERT_EQ(1U, entities.size());
   EXPECT_EQ("", entities[0].non_unique_name());
   EXPECT_TRUE(entities[0].specifics().password().has_encrypted());
@@ -163,7 +161,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientPasswordsSyncTestWithVerifier,
   ASSERT_TRUE(UpdatedProgressMarkerChecker(GetSyncService(0)).Wait());
 
   const std::vector<sync_pb::SyncEntity> entities =
-      fake_server_->GetSyncEntitiesByModelType(syncer::PASSWORDS);
+      fake_server_->GetSyncEntitiesByDataType(syncer::PASSWORDS);
   ASSERT_EQ(1U, entities.size());
   EXPECT_EQ("", entities[0].non_unique_name());
   EXPECT_TRUE(entities[0].specifics().password().has_encrypted());
@@ -191,7 +189,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientPasswordsSyncTestWithVerifier,
   std::string prior_encryption_key_name;
   {
     const std::vector<sync_pb::SyncEntity> entities =
-        fake_server_->GetSyncEntitiesByModelType(syncer::PASSWORDS);
+        fake_server_->GetSyncEntitiesByDataType(syncer::PASSWORDS);
     ASSERT_EQ(1U, entities.size());
     ASSERT_EQ("", entities[0].non_unique_name());
     ASSERT_TRUE(entities[0].specifics().password().has_encrypted());
@@ -211,7 +209,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientPasswordsSyncTestWithVerifier,
   ASSERT_TRUE(UpdatedProgressMarkerChecker(GetSyncService(0)).Wait());
 
   const std::vector<sync_pb::SyncEntity> entities =
-      fake_server_->GetSyncEntitiesByModelType(syncer::PASSWORDS);
+      fake_server_->GetSyncEntitiesByDataType(syncer::PASSWORDS);
   ASSERT_EQ(1U, entities.size());
   EXPECT_EQ("", entities[0].non_unique_name());
   EXPECT_TRUE(entities[0].specifics().password().has_encrypted());
@@ -238,8 +236,8 @@ IN_PROC_BROWSER_TEST_F(SingleClientPasswordsSyncTest,
   // Upon a local creation, the received update will be seen as reflection and
   // get counted as incremental update.
   EXPECT_EQ(1, histogram_tester.GetBucketCount(
-                   "Sync.ModelTypeEntityChange3.PASSWORD",
-                   syncer::ModelTypeEntityChange::kRemoteNonInitialUpdate));
+                   "Sync.DataTypeEntityChange.PASSWORD",
+                   syncer::DataTypeEntityChange::kRemoteNonInitialUpdate));
 }
 
 IN_PROC_BROWSER_TEST_F(SingleClientPasswordsSyncTest,
@@ -262,11 +260,11 @@ IN_PROC_BROWSER_TEST_F(SingleClientPasswordsSyncTest,
   // server will be received at the client as an initial update or an
   // incremental once.
   EXPECT_EQ(0, histogram_tester.GetBucketCount(
-                   "Sync.ModelTypeEntityChange3.PASSWORD",
-                   syncer::ModelTypeEntityChange::kRemoteInitialUpdate));
+                   "Sync.DataTypeEntityChange.PASSWORD",
+                   syncer::DataTypeEntityChange::kRemoteInitialUpdate));
   EXPECT_EQ(0, histogram_tester.GetBucketCount(
-                   "Sync.ModelTypeEntityChange3.PASSWORD",
-                   syncer::ModelTypeEntityChange::kRemoteNonInitialUpdate));
+                   "Sync.DataTypeEntityChange.PASSWORD",
+                   syncer::DataTypeEntityChange::kRemoteNonInitialUpdate));
 }
 
 class SingleClientPasswordsWithAccountStorageSyncTest : public SyncTest {
@@ -311,8 +309,6 @@ class SingleClientPasswordsWithAccountStorageSyncTest : public SyncTest {
   }
 
  private:
-  base::test::ScopedFeatureList feature_list_;
-
   base::CallbackListSubscription test_signin_client_subscription_;
 };
 
@@ -352,10 +348,6 @@ IN_PROC_BROWSER_TEST_F(SingleClientPasswordsWithAccountStorageSyncTest,
   ASSERT_TRUE(GetClient(0)->SignInPrimaryAccount());
   ASSERT_TRUE(GetClient(0)->AwaitSyncTransportActive());
   ASSERT_FALSE(GetSyncService(0)->IsSyncFeatureEnabled());
-
-  // Let the user opt in to the account-scoped password storage, and wait for it
-  // to become active.
-  OptInToAccountStorage(GetProfile(0)->GetPrefs(), GetSyncService(0));
   PasswordSyncActiveChecker(GetSyncService(0)).Wait();
   ASSERT_TRUE(GetSyncService(0)->GetActiveDataTypes().Has(syncer::PASSWORDS));
 
@@ -384,10 +376,6 @@ IN_PROC_BROWSER_TEST_F(SingleClientPasswordsWithAccountStorageSyncTest,
       GetProfile(0), &test_url_loader_factory_, "user@email.com");
   ASSERT_TRUE(GetClient(0)->AwaitSyncTransportActive());
   ASSERT_FALSE(GetSyncService(0)->IsSyncFeatureEnabled());
-
-  // Let the user opt in to the account-scoped password storage, and wait for it
-  // to become active.
-  OptInToAccountStorage(GetProfile(0)->GetPrefs(), GetSyncService(0));
   PasswordSyncActiveChecker(GetSyncService(0)).Wait();
   ASSERT_TRUE(GetSyncService(0)->GetActiveDataTypes().Has(syncer::PASSWORDS));
 
@@ -444,10 +432,6 @@ IN_PROC_BROWSER_TEST_F(SingleClientPasswordsWithAccountStorageSyncTest,
       GetProfile(0), &test_url_loader_factory_, "user@email.com");
   ASSERT_TRUE(GetClient(0)->AwaitSyncTransportActive());
   ASSERT_FALSE(GetSyncService(0)->IsSyncFeatureEnabled());
-
-  // Let the user opt in to the account-scoped password storage, and wait for it
-  // to become active.
-  OptInToAccountStorage(GetProfile(0)->GetPrefs(), GetSyncService(0));
   PasswordSyncActiveChecker(GetSyncService(0)).Wait();
 
   // Make sure the password showed up in the account store.
@@ -477,10 +461,6 @@ IN_PROC_BROWSER_TEST_F(SingleClientPasswordsWithAccountStorageSyncTest,
       GetProfile(0), &test_url_loader_factory_, "user@email.com");
   ASSERT_TRUE(GetClient(0)->AwaitSyncTransportActive());
   ASSERT_FALSE(GetSyncService(0)->IsSyncFeatureEnabled());
-
-  // Let the user opt in to the account-scoped password storage, and wait for it
-  // to become active.
-  OptInToAccountStorage(GetProfile(0)->GetPrefs(), GetSyncService(0));
   PasswordSyncActiveChecker(GetSyncService(0)).Wait();
 
   // Make sure the password showed up in the account store.
@@ -552,17 +532,9 @@ IN_PROC_BROWSER_TEST_F(SingleClientPasswordsWithAccountStorageSyncTest,
   EXPECT_TRUE(GetSyncService(0)->GetActiveDataTypes().Has(syncer::PASSWORDS));
 }
 
-class SingleClientPasswordsWithAccountStorageExplicitSigninSyncTest
-    : public SingleClientPasswordsWithAccountStorageSyncTest {
- private:
-  base::test::ScopedFeatureList scoped_feature_list_{
-      switches::kExplicitBrowserSigninUIOnDesktop};
-};
-
 // In pending state, account storage is deleted and re-downloaded on reauth.
-IN_PROC_BROWSER_TEST_F(
-    SingleClientPasswordsWithAccountStorageExplicitSigninSyncTest,
-    PendingState) {
+IN_PROC_BROWSER_TEST_F(SingleClientPasswordsWithAccountStorageSyncTest,
+                       PendingState) {
   AddTestPasswordToFakeServer();
 
   ASSERT_TRUE(SetupClients()) << "SetupClients() failed.";
@@ -607,9 +579,8 @@ IN_PROC_BROWSER_TEST_F(
   ASSERT_EQ(passwords_helper::GetAllLogins(account_store).size(), 1u);
 }
 
-IN_PROC_BROWSER_TEST_F(
-    SingleClientPasswordsWithAccountStorageExplicitSigninSyncTest,
-    SyncPaused) {
+IN_PROC_BROWSER_TEST_F(SingleClientPasswordsWithAccountStorageSyncTest,
+                       SyncPaused) {
   // Setup Sync with 2 passwords.
   ASSERT_TRUE(SetupClients());
   PasswordForm form0 = CreateTestPasswordForm(0);
@@ -618,13 +589,13 @@ IN_PROC_BROWSER_TEST_F(
   ASSERT_TRUE(SetupSync());
   ASSERT_TRUE(ServerCountMatchStatusChecker(syncer::PASSWORDS, 1).Wait());
   std::vector<sync_pb::SyncEntity> server_passwords =
-      GetFakeServer()->GetSyncEntitiesByModelType(syncer::PASSWORDS);
+      GetFakeServer()->GetSyncEntitiesByDataType(syncer::PASSWORDS);
   ASSERT_EQ(1ul, server_passwords.size());
   sync_pb::SyncEntity entity0 = server_passwords[0];
   GetProfilePasswordStoreInterface(0)->AddLogin(form1);
   ASSERT_TRUE(ServerCountMatchStatusChecker(syncer::PASSWORDS, 2).Wait());
   server_passwords =
-      GetFakeServer()->GetSyncEntitiesByModelType(syncer::PASSWORDS);
+      GetFakeServer()->GetSyncEntitiesByDataType(syncer::PASSWORDS);
   ASSERT_EQ(2ul, server_passwords.size());
   ASSERT_TRUE(CommittedAllNudgedChangesChecker(GetSyncService(0)).Wait());
 
@@ -715,7 +686,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientPasswordsSyncTest,
           syncer::KeyDerivationParams::CreateForPbkdf2());
 
   const std::vector<sync_pb::SyncEntity> entities =
-      fake_server_->GetSyncEntitiesByModelType(syncer::PASSWORDS);
+      fake_server_->GetSyncEntitiesByDataType(syncer::PASSWORDS);
   EXPECT_THAT(entities,
               Contains(HasPasswordValueAndUnsupportedFields(
                   cryptographer.get(), "new_password", kUnsupportedField)));
@@ -782,7 +753,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientPasswordsSyncTest,
           syncer::KeyDerivationParams::CreateForPbkdf2());
 
   const std::vector<sync_pb::SyncEntity> entities =
-      fake_server_->GetSyncEntitiesByModelType(syncer::PASSWORDS);
+      fake_server_->GetSyncEntitiesByDataType(syncer::PASSWORDS);
   for (const sync_pb::SyncEntity& entity : entities) {
     // Find the password with the notes.
     sync_pb::PasswordSpecificsData decrypted;
@@ -820,7 +791,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientPasswordsSyncTest,
   // server upon a commit from a legacy client that didn't set the notes field
   // in the password specifics data.
   std::vector<sync_pb::SyncEntity> server_passwords =
-      GetFakeServer()->GetSyncEntitiesByModelType(syncer::PASSWORDS);
+      GetFakeServer()->GetSyncEntitiesByDataType(syncer::PASSWORDS);
   ASSERT_EQ(1ul, server_passwords.size());
   std::string entity_id = server_passwords[0].id_string();
   sync_pb::EntitySpecifics specifics = server_passwords[0].specifics();
@@ -837,7 +808,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientPasswordsSyncTest,
   GetFakeServer()->ModifyEntitySpecifics(entity_id, specifics);
 
   // The server now should have one password entity.
-  ASSERT_THAT(fake_server_->GetSyncEntitiesByModelType(syncer::PASSWORDS),
+  ASSERT_THAT(fake_server_->GetSyncEntitiesByDataType(syncer::PASSWORDS),
               testing::SizeIs(1));
 
   // Enable sync to download the passwords on the server.
@@ -870,7 +841,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientPasswordsSyncTest, Delete) {
   ASSERT_TRUE(SetupSync());
   ASSERT_EQ(
       1ul,
-      GetFakeServer()->GetSyncEntitiesByModelType(syncer::PASSWORDS).size());
+      GetFakeServer()->GetSyncEntitiesByDataType(syncer::PASSWORDS).size());
 
   const base::Location kDeletionLocation = FROM_HERE;
   GetProfilePasswordStoreInterface(0)->RemoveLogin(kDeletionLocation, form0);
@@ -880,10 +851,10 @@ IN_PROC_BROWSER_TEST_F(SingleClientPasswordsSyncTest, Delete) {
                   {}, "", syncer::KeyDerivationParams::CreateForPbkdf2())
                   .Wait());
 
-  EXPECT_THAT(GetFakeServer()->GetCommittedDeletionOrigins(
-                  syncer::ModelType::PASSWORDS),
-              ElementsAre(syncer::MatchesDeletionOrigin(
-                  version_info::GetVersionNumber(), kDeletionLocation)));
+  EXPECT_THAT(
+      GetFakeServer()->GetCommittedDeletionOrigins(syncer::DataType::PASSWORDS),
+      ElementsAre(syncer::MatchesDeletionOrigin(
+          version_info::GetVersionNumber(), kDeletionLocation)));
 }
 
 }  // namespace

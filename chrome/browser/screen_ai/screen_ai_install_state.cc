@@ -9,7 +9,6 @@
 #include "base/check_is_test.h"
 #include "base/files/file_path.h"
 #include "base/logging.h"
-#include "base/metrics/histogram_functions.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "chrome/browser/screen_ai/pref_names.h"
@@ -23,8 +22,9 @@
 #endif
 
 namespace {
+// See crbug.com/393349281 and crbug.com/359853518
+const char kMinExpectedVersion[] = "127.15";
 const int kScreenAICleanUpDelayInDays = 30;
-const char kMinExpectedVersion[] = "124.2";
 
 bool IsDeviceCompatible() {
 #if BUILDFLAG(IS_LINUX)
@@ -110,18 +110,6 @@ bool ScreenAIInstallState::ShouldInstall(PrefService* local_state) {
   }
 
   return true;
-}
-
-// static
-void ScreenAIInstallState::RecordComponentInstallationResult(bool install,
-                                                             bool successful) {
-  if (install) {
-    base::UmaHistogramBoolean("Accessibility.ScreenAI.Component.Install",
-                              successful);
-  } else {
-    base::UmaHistogramBoolean("Accessibility.ScreenAI.Component.Uninstall",
-                              successful);
-  }
 }
 
 void ScreenAIInstallState::AddObserver(

@@ -42,7 +42,7 @@ ActionTypeButtonGroup::~ActionTypeButtonGroup() = default;
 
 bool ActionTypeButtonGroup::HandleArrowKeyPressed(ActionTypeButton* button,
                                                   const ui::KeyEvent& event) {
-  DCHECK(event.type() == ui::ET_KEY_PRESSED);
+  DCHECK(event.type() == ui::EventType::kKeyPressed);
 
   const size_t selected_index = std::distance(
       buttons_.begin(), std::find(buttons_.begin(), buttons_.end(), button));
@@ -97,10 +97,10 @@ void ActionTypeButtonGroup::Init() {
       move_button->SetSelected(true);
       break;
     default:
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
   }
 
-  SetAccessibilityProperties(ax::mojom::Role::kRadioGroup);
+  GetViewAccessibility().SetRole(ax::mojom::Role::kRadioGroup);
   GetViewAccessibility().SetName(
       l10n_util::GetStringUTF16(IDS_INPUT_OVERLAY_BUTTON_OPTIONS_BUTTON_TYPE));
 }

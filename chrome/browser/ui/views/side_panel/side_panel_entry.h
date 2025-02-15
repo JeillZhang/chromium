@@ -19,30 +19,36 @@
 #include "extensions/common/extension_id.h"
 #include "ui/base/class_property.h"
 #include "ui/base/models/image_model.h"
+#include "ui/base/models/menu_model.h"
 #include "ui/views/view.h"
 
+class SidePanelEntryScope;
 class SidePanelEntryObserver;
+enum class SidePanelEntryHideReason;
 
 // This class represents an entry inside the side panel. These are owned by
 // a SidePanelRegistry (either a per-tab or a per-window registry).
 class SidePanelEntry final : public ui::PropertyHandler {
  public:
+  using CreateContentCallback =
+      base::RepeatingCallback<std::unique_ptr<views::View>(
+          SidePanelEntryScope&)>;
   using Id = SidePanelEntryId;
   using Key = SidePanelEntryKey;
 
   // If adding a callback to provide a URL to the 'Open in New Tab' button, you
   // must also add a relevant entry in actions.xml because a user action is
   // logged on button click.
-  SidePanelEntry(Id id,
-                 base::RepeatingCallback<std::unique_ptr<views::View>()>
-                     create_content_callback,
-                 base::RepeatingCallback<GURL()> open_in_new_tab_url_callback =
-                     base::NullCallbackAs<GURL()>());
+  SidePanelEntry(
+      Id id,
+      CreateContentCallback create_content_callback,
+      std::optional<base::RepeatingCallback<GURL()>>
+          open_in_new_tab_url_callback = std::nullopt,
+      std::optional<base::RepeatingCallback<std::unique_ptr<ui::MenuModel>()>>
+          more_info_callback = std::nullopt);
   // Constructor used for extensions. Extensions don't have 'Open in New Tab'
   // functionality.
-  SidePanelEntry(Key key,
-                 base::RepeatingCallback<std::unique_ptr<views::View>()>
-                     create_content_callback);
+  SidePanelEntry(Key key, CreateContentCallback create_content_callback);
   SidePanelEntry(const SidePanelEntry&) = delete;
   SidePanelEntry& operator=(const SidePanelEntry&) = delete;
   ~SidePanelEntry() override;
@@ -58,6 +64,7 @@ class SidePanelEntry final : public ui::PropertyHandler {
 
   // Called when the entry has been shown/hidden in the side panel.
   void OnEntryShown();
+  void OnEntryWillHide(SidePanelEntryHideReason reason);
   void OnEntryHidden();
 
   const Key& key() const { return key_; }
@@ -69,13 +76,23 @@ class SidePanelEntry final : public ui::PropertyHandler {
   // unavailable for the current side panel entry.
   GURL GetOpenInNewTabURL() const;
 
+  // Gets the menu model for the more info menu if the current side panel entry
+  // has one, otherwise null.
+  std::unique_ptr<ui::MenuModel> GetMoreInfoMenuModel() const;
+
   // Returns whether the side panel entry has a defined callback for getting the
   // open new tab button URL.
   bool SupportsNewTabButton();
 
+  // Returns whether the side panel entry has a defined callback for the more
+  // info button.
+  bool SupportsMoreInfoButton();
+
   // Resets the `entry_show_triggered_timestamp_` so we don't track metrics
   // incorrectly.
   void ResetLoadTimestamp();
+
+  void set_scope(SidePanelEntryScope* scope) { scope_ = scope; }
 
   base::WeakPtr<SidePanelEntry> GetWeakPtr() {
     return weak_factory_.GetWeakPtr();
@@ -85,11 +102,16 @@ class SidePanelEntry final : public ui::PropertyHandler {
   const Key key_;
   std::unique_ptr<views::View> content_view_;
 
-  base::RepeatingCallback<std::unique_ptr<views::View>()>
-      create_content_callback_;
+  // Scope of this entry, will outlive the entry and its content.
+  raw_ptr<SidePanelEntryScope> scope_ = nullptr;
+
+  CreateContentCallback create_content_callback_;
 
   // If this returns an empty GURL, the 'Open in New Tab' button is hidden.
   base::RepeatingCallback<GURL()> open_in_new_tab_url_callback_;
+
+  // If this returns null, the more info button is hidden.
+  base::RepeatingCallback<std::unique_ptr<ui::MenuModel>()> more_info_callback_;
 
   // Timestamp of when the side panel was triggered to be shown.
   base::TimeTicks entry_show_triggered_timestamp_;

@@ -9,7 +9,9 @@ import android.view.View;
 import android.view.View.OnDragListener;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
+import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.base.supplier.Supplier;
 import org.chromium.chrome.browser.layouts.LayoutStateProvider;
 import org.chromium.chrome.browser.layouts.LayoutType;
@@ -17,6 +19,8 @@ import org.chromium.chrome.browser.multiwindow.MultiInstanceManager;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.tabmodel.TabModelUtils;
+import org.chromium.chrome.browser.ui.desktop_windowing.AppHeaderUtils;
+import org.chromium.components.browser_ui.desktop_windowing.DesktopWindowStateManager;
 import org.chromium.ui.base.MimeTypeUtils;
 import org.chromium.ui.base.WindowAndroid;
 import org.chromium.ui.dragdrop.DragDropGlobalState;
@@ -34,6 +38,7 @@ public class ChromeTabbedOnDragListener implements OnDragListener {
     private final TabModelSelector mTabModelSelector;
     private final WindowAndroid mWindowAndroid;
     private final Supplier<LayoutStateProvider> mLayoutStateProviderSupplier;
+    private final DesktopWindowStateManager mDesktopWindowStateManager;
 
     /**
      * Drag and Drop listener defines the default behavior {@link ChromeTabbedActivity} receive drag
@@ -42,20 +47,25 @@ public class ChromeTabbedOnDragListener implements OnDragListener {
      * @param multiInstanceManager The current {@link MultiInstanceManager}.
      * @param tabModelSelector Contains tab model info {@link TabModelSelector}.
      * @param windowAndroid The current {@link WindowAndroid}.
+     * @param desktopWindowStateManager The {@link DesktopWindowStateManager} to determine desktop
+     *     windowing mode state.
      */
     public ChromeTabbedOnDragListener(
             MultiInstanceManager multiInstanceManager,
             TabModelSelector tabModelSelector,
             WindowAndroid windowAndroid,
-            Supplier<LayoutStateProvider> layoutStateProviderSupplier) {
+            Supplier<LayoutStateProvider> layoutStateProviderSupplier,
+            @Nullable DesktopWindowStateManager desktopWindowStateManager) {
         mMultiInstanceManager = multiInstanceManager;
         mTabModelSelector = tabModelSelector;
         mWindowAndroid = windowAndroid;
         mLayoutStateProviderSupplier = layoutStateProviderSupplier;
+        mDesktopWindowStateManager = desktopWindowStateManager;
     }
 
     @Override
     public boolean onDrag(View view, DragEvent dragEvent) {
+        boolean isInDesktopWindow = AppHeaderUtils.isAppInDesktopWindow(mDesktopWindowStateManager);
         switch (dragEvent.getAction()) {
             case DragEvent.ACTION_DRAG_STARTED:
                 // Only proceed with the dragged tab; otherwise, skip the operations.
@@ -76,7 +86,7 @@ public class ChromeTabbedOnDragListener implements OnDragListener {
                                 .get()
                                 .isLayoutVisible(LayoutType.TAB_SWITCHER)) {
                     DragDropMetricUtils.recordTabDragDropResult(
-                            DragDropTabResult.IGNORED_TAB_SWITCHER);
+                            DragDropTabResult.IGNORED_TAB_SWITCHER, isInDesktopWindow);
                     return false;
                 }
 
@@ -84,14 +94,19 @@ public class ChromeTabbedOnDragListener implements OnDragListener {
                 Tab draggedTab = getTabFromGlobalState(globalState);
                 if (globalState == null || draggedTab == null) {
                     DragDropMetricUtils.recordTabDragDropResult(
-                            DragDropTabResult.ERROR_TAB_NOT_FOUND);
+                            DragDropTabResult.ERROR_TAB_NOT_FOUND, isInDesktopWindow);
                     return false;
                 }
                 if (globalState.isDragSourceInstance(
                         mMultiInstanceManager.getCurrentInstanceId())) {
                     DragDropMetricUtils.recordTabDragDropResult(
-                            DragDropTabResult.IGNORED_SAME_INSTANCE);
+                            DragDropTabResult.IGNORED_SAME_INSTANCE, isInDesktopWindow);
                     return false;
+                }
+
+                // Record user action if a grouped tab is going to be re-parented.
+                if (isTabInGroupFromGlobalState(globalState)) {
+                    RecordUserAction.record("MobileToolbarReorderTab.TabRemovedFromGroup");
                 }
 
                 // Reparent the dragged tab to the position immediately following the selected
@@ -104,7 +119,8 @@ public class ChromeTabbedOnDragListener implements OnDragListener {
                                         mTabModelSelector.getModel(currentTab.isIncognito()),
                                         currentTab.getId())
                                 + 1);
-                DragDropMetricUtils.recordTabDragDropType(DragDropType.TAB_STRIP_TO_CONTENT);
+                DragDropMetricUtils.recordTabDragDropType(
+                        DragDropType.TAB_STRIP_TO_CONTENT, isInDesktopWindow);
                 return true;
         }
         return false;
@@ -117,6 +133,16 @@ public class ChromeTabbedOnDragListener implements OnDragListener {
             return ((ChromeDropDataAndroid) globalState.getData()).tab;
         } else {
             return null;
+        }
+    }
+
+    private boolean isTabInGroupFromGlobalState(@NonNull DragDropGlobalState globalState) {
+        // We should only attempt to access this while we know there's an active drag.
+        assert globalState != null : "Attempting to access dragged tab with invalid drag state.";
+        if (globalState.getData() instanceof ChromeDropDataAndroid) {
+            return ((ChromeDropDataAndroid) globalState.getData()).isTabInGroup;
+        } else {
+            return false;
         }
     }
 }

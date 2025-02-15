@@ -7,7 +7,9 @@
 #include <memory>
 #include <utility>
 
+#include "ash/ash_element_identifiers.h"
 #include "ash/bubble/bubble_utils.h"
+#include "ash/public/cpp/resources/grit/ash_public_unscaled_resources.h"
 #include "ash/public/cpp/system_tray_client.h"
 #include "ash/resources/vector_icons/vector_icons.h"
 #include "ash/shell.h"
@@ -67,6 +69,13 @@ BluetoothDetailedViewImpl::BluetoothDetailedViewImpl(
   CreateScrollableList();
   CreateTopContainer();
   CreateMainContainer();
+  if (chromeos::features::IsBluetoothWifiQSPodRefreshEnabled()) {
+    CreateZeroStateView(std::make_unique<ZeroStateView>(
+        /*image_id=*/IDR_TRAY_BLUETOOTH_UNAVAILABLE_STATE_IMAGE,
+        /*title_id=*/IDS_ASH_STATUS_TRAY_BLUETOOTH_UNAVAILABLE_STATE_TITLE,
+        /*subtitle_id=*/
+        IDS_ASH_STATUS_TRAY_BLUETOOTH_UNAVAILABLE_STATE_SUBTITLE));
+  }
   UpdateBluetoothEnabledState(BluetoothSystemState::kDisabled);
   device::RecordUiSurfaceDisplayed(
       device::BluetoothUiSurface::kBluetoothQuickSettings);
@@ -80,6 +89,15 @@ views::View* BluetoothDetailedViewImpl::GetAsView() {
 
 void BluetoothDetailedViewImpl::UpdateBluetoothEnabledState(
     const BluetoothSystemState system_state) {
+  if (chromeos::features::IsBluetoothWifiQSPodRefreshEnabled() &&
+      system_state == BluetoothSystemState::kUnavailable) {
+    SetZeroStateViewVisibility(true);
+    return;
+  }
+  if (chromeos::features::IsBluetoothWifiQSPodRefreshEnabled()) {
+    SetZeroStateViewVisibility(false);
+  }
+
   bool is_enabled_or_enabling = IsBluetoothEnabledOrEnabling(system_state);
 
   // Use square corners on the bottom edge when Bluetooth is enabled.
@@ -211,6 +229,8 @@ void BluetoothDetailedViewImpl::CreateTopContainer() {
   auto toggle = std::make_unique<Switch>(base::BindRepeating(
       &BluetoothDetailedViewImpl::OnToggleClicked, weak_factory_.GetWeakPtr()));
   toggle_button_ = toggle.get();
+  toggle_button_->SetProperty(views::kElementIdentifierKey,
+                              kBluetoothDetailedViewToggleElementId);
   toggle_row_->AddRightView(toggle.release());
 
   // Allow the row to be taller than a typical tray menu item.
@@ -234,6 +254,9 @@ void BluetoothDetailedViewImpl::CreateMainContainer() {
   // Add a row for "pair new device".
   pair_new_device_view_ = main_container_->AddChildView(
       std::make_unique<HoverHighlightView>(/*listener=*/this));
+  pair_new_device_view_->SetProperty(
+      views::kElementIdentifierKey,
+      kBluetoothDetailedViewPairNewDeviceElementId);
 
   // Create the "+" icon.
   auto icon = std::make_unique<views::ImageView>();

@@ -24,6 +24,7 @@
 #include "build/build_config.h"
 #include "ui/base/dragdrop/drag_drop_types.h"
 #include "ui/base/dragdrop/mojom/drag_drop_types.mojom-forward.h"
+#include "ui/base/mojom/menu_source_type.mojom-shared.h"
 #include "ui/events/event.h"
 #include "ui/events/event_constants.h"
 #include "ui/events/platform/platform_event_dispatcher.h"
@@ -130,14 +131,16 @@ class VIEWS_EXPORT MenuController final : public gfx::AnimationDelegate,
   MenuController& operator=(const MenuController&) = delete;
 
   // Runs the menu at the specified location.
-  void Run(Widget* parent,
-           MenuButtonController* button_controller,
-           MenuItemView* root,
-           const gfx::Rect& anchor_bounds,
-           MenuAnchorPosition position,
-           bool context_menu,
-           bool is_nested_drag,
-           gfx::NativeView native_view_for_gestures = gfx::NativeView());
+  void Run(
+      Widget* parent,
+      MenuButtonController* button_controller,
+      MenuItemView* root,
+      const gfx::Rect& anchor_bounds,
+      MenuAnchorPosition position,
+      ui::mojom::MenuSourceType source_type = ui::mojom::MenuSourceType::kNone,
+      bool context_menu = false,
+      bool is_nested_drag = false,
+      gfx::NativeView native_view_for_gestures = gfx::NativeView());
 
   bool for_drop() const { return for_drop_; }
 
@@ -145,10 +148,6 @@ class VIEWS_EXPORT MenuController final : public gfx::AnimationDelegate,
 
   // Whether or not drag operation is in progress.
   bool drag_in_progress() const { return drag_in_progress_; }
-
-  // Whether the MenuController initiated the drag in progress. False if there
-  // is no drag in progress.
-  bool did_initiate_drag() const { return did_initiate_drag_; }
 
   bool send_gesture_events_to_owner() const {
     return send_gesture_events_to_owner_;
@@ -269,6 +268,9 @@ class VIEWS_EXPORT MenuController final : public gfx::AnimationDelegate,
   std::optional<gfx::RoundedCornersF> rounded_corners() const {
     return rounded_corners_;
   }
+
+  // Returns the separator color ID according to the menu layout type.
+  ui::ColorId GetSeparatorColorId() const;
 
   // Notifies |this| that |menu_item| is being destroyed.
   void OnMenuItemDestroying(MenuItemView* menu_item);
@@ -425,7 +427,7 @@ class VIEWS_EXPORT MenuController final : public gfx::AnimationDelegate,
   // Returns whether a context menu was shown.
   bool ShowContextMenu(MenuItemView* menu_item,
                        const gfx::Point& screen_location,
-                       ui::MenuSourceType source_type);
+                       ui::mojom::MenuSourceType source_type);
 
   // Closes all menus, including any menus of nested invocations of Run.
   void CloseAllNestedMenus();
@@ -744,11 +746,6 @@ class VIEWS_EXPORT MenuController final : public gfx::AnimationDelegate,
   // True when drag operation is in progress.
   bool drag_in_progress_ = false;
 
-  // True when the drag operation in progress was initiated by the
-  // MenuController for a child MenuItemView (as opposed to initiated separately
-  // by a child View).
-  bool did_initiate_drag_ = false;
-
   // Location the mouse was pressed at. Used to detect d&d.
   gfx::Point press_pt_;
 
@@ -799,8 +796,8 @@ class VIEWS_EXPORT MenuController final : public gfx::AnimationDelegate,
 
   // Whether the menu |owner_| needs gesture events. When set to true, the menu
   // will preserve the gesture events of the |owner_| and MenuController will
-  // forward the gesture events to |owner_| until no |ET_GESTURE_END| event is
-  // captured.
+  // forward the gesture events to |owner_| until no |EventType::kGestureEnd|
+  // event is captured.
   bool send_gesture_events_to_owner_ = false;
 
   // Set to true if the menu item was selected by touch.

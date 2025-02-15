@@ -10,15 +10,39 @@
 #include "base/functional/callback.h"
 #include "base/logging.h"
 #include "base/sequence_checker.h"
+#include "build/build_config.h"
 #include "chrome/enterprise_companion/enterprise_companion_service.h"
+#include "chrome/enterprise_companion/enterprise_companion_status.h"
+#include "chrome/enterprise_companion/global_constants.h"
 #include "chrome/enterprise_companion/mojom/enterprise_companion.mojom.h"
 #include "components/named_mojo_ipc_server/connection_info.h"
 #include "components/named_mojo_ipc_server/endpoint_options.h"
 #include "components/named_mojo_ipc_server/named_mojo_ipc_server.h"
+#include "components/policy/core/common/policy_types.h"
+#include "mojo/public/cpp/bindings/message.h"
 #include "mojo/public/cpp/platform/named_platform_channel.h"
 
 namespace enterprise_companion {
 namespace {
+
+class UntrustedCallerStub final : public mojom::EnterpriseCompanion {
+ public:
+  UntrustedCallerStub() = default;
+
+  // Overrides for mojom::EnterpriseCompanion.
+  void Shutdown(ShutdownCallback callback) override {
+    std::move(callback).Run(
+        EnterpriseCompanionStatus(ApplicationError::kIpcCallerNotAllowed)
+            .ToMojomStatus());
+  }
+
+  void FetchPolicies(policy::PolicyFetchReason reason,
+                     FetchPoliciesCallback callback) override {
+    std::move(callback).Run(
+        EnterpriseCompanionStatus(ApplicationError::kIpcCallerNotAllowed)
+            .ToMojomStatus());
+  }
+};
 
 // Manages the NamedMojoIpcServer and forwards calls to the underlying service.
 class Stub final : public mojom::EnterpriseCompanion {
@@ -32,13 +56,16 @@ class Stub final : public mojom::EnterpriseCompanion {
                 base::BindRepeating(
                     [](IpcTrustDecider trust_decider,
                        mojom::EnterpriseCompanion* stub,
-                       std::unique_ptr<named_mojo_ipc_server::ConnectionInfo>
+                       mojom::EnterpriseCompanion* untrusted_stub,
+                       const named_mojo_ipc_server::ConnectionInfo&
                            connection_info) {
-                      return trust_decider.Run(*connection_info) ? stub
-                                                                 : nullptr;
+                      return trust_decider.Run(connection_info)
+                                 ? stub
+                                 : untrusted_stub;
                     },
                     trust_decider,
-                    base::Unretained(this))) {
+                    base::Unretained(this),
+                    base::Unretained(untrusted_stub_.get()))) {
     server_.set_disconnect_handler(base::BindRepeating(
         [] { VLOG(1) << "EnterpriseCompanion client disconnected"; }));
     if (endpoint_created_listener_for_testing) {
@@ -47,42 +74,45 @@ class Stub final : public mojom::EnterpriseCompanion {
     }
     server_.StartServer();
   }
-  ~Stub() override = default;
 
+  // Overrides for mjom::EnterpriseCompanion.
   void Shutdown(ShutdownCallback callback) override {
     DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-    service_->Shutdown(base::BindOnce(std::move(callback), Result::kSuccess));
+    service_->Shutdown(
+        base::BindOnce(std::move(callback),
+                       EnterpriseCompanionStatus::Success().ToMojomStatus()));
+  }
+
+  void FetchPolicies(policy::PolicyFetchReason reason,
+                     FetchPoliciesCallback callback) override {
+    DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+    service_->FetchPolicies(
+        reason, base::BindOnce([](const EnterpriseCompanionStatus& status) {
+                  return status.ToMojomStatus();
+                }).Then(std::move(callback)));
   }
 
  private:
   SEQUENCE_CHECKER(sequence_checker_);
 
+  std::unique_ptr<UntrustedCallerStub> untrusted_stub_ =
+      std::make_unique<UntrustedCallerStub>();
   std::unique_ptr<EnterpriseCompanionService> service_;
   named_mojo_ipc_server::NamedMojoIpcServer<mojom::EnterpriseCompanion> server_;
 };
 
 }  // namespace
 
-IpcTrustDecider CreateIpcTrustDecider() {
-  return base::BindRepeating(
-      [](const named_mojo_ipc_server::ConnectionInfo& info) {
-        // TODO(342180612): Implement in the style of
-        // updater::IsConnectionTrusted.
-        return false;
-      });
-}
-
 named_mojo_ipc_server::EndpointOptions CreateServerEndpointOptions(
     const mojo::NamedPlatformChannel::ServerName& server_name) {
-  return {
-      .server_name = server_name,
-      .message_pipe_id =
-          named_mojo_ipc_server::EndpointOptions::kUseIsolatedConnection,
+  named_mojo_ipc_server::EndpointOptions options{
+      server_name,
+      named_mojo_ipc_server::EndpointOptions::kUseIsolatedConnection};
 #if BUILDFLAG(IS_WIN)
-      // Allow read access from local system account only.
-      .security_descriptor = L"D:(A;;0x1200a9;;;SY)",
+  options.security_descriptor =
+      GetGlobalConstants()->NamedPipeSecurityDescriptor();
 #endif
-  };
+  return options;
 }
 
 // Creates a stub that receives RPC calls from the client and delegates them to

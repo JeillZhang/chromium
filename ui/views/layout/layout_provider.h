@@ -72,6 +72,8 @@ enum DistanceMetric {
   DISTANCE_CLOSE_BUTTON_MARGIN,
   // The vertical padding applied to text in a control.
   DISTANCE_CONTROL_VERTICAL_TEXT_PADDING,
+  // The vertical padding applied to text in a table.
+  DISTANCE_TABLE_VERTICAL_TEXT_PADDING,
   // The default minimum width of a dialog button.
   DISTANCE_DIALOG_BUTTON_MINIMUM_WIDTH,
   // The distance between the bottom of a dialog's content, when the final
@@ -86,6 +88,14 @@ enum DistanceMetric {
   // The distance between the bottom of a dialog's title and the top of the
   // dialog's content, when the first content element is text.
   DISTANCE_DIALOG_CONTENT_MARGIN_TOP_TEXT,
+  // Width of the space in a dropdown button between its label and down arrow.
+  DISTANCE_DROPDOWN_BUTTON_LABEL_ARROW_SPACING,
+  // Width of the horizontal padding in a dropdown button between the down arrow
+  // and the button's border.
+  DISTANCE_DROPDOWN_BUTTON_RIGHT_MARGIN,
+  // Width of the horizontal padding in a dropdown button between the button's
+  // left border and the label.
+  DISTANCE_DROPDOWN_BUTTON_LEFT_MARGIN,
   // Width of modal dialogs unless the content is too wide to make that
   // feasible.
   DISTANCE_MODAL_DIALOG_PREFERRED_WIDTH,
@@ -103,6 +113,9 @@ enum DistanceMetric {
   // Height to stop at when expanding a scrollable area in a dialog to
   // accommodate its content.
   DISTANCE_DIALOG_SCROLLABLE_AREA_MAX_HEIGHT,
+  // Height to stop at when expanding a scrollable area in a modal dialog to
+  // accomodate its content.
+  DISTANCE_MODAL_DIALOG_SCROLLABLE_AREA_MAX_HEIGHT,
   // Horizontal margin between a table cell and its contents.
   DISTANCE_TABLE_CELL_HORIZONTAL_MARGIN,
   // Horizontal padding applied to text in a textfield.
@@ -148,6 +161,7 @@ enum class ShapeContextTokens {
   kButtonRadius,
   kComboboxRadius,
   kDialogRadius,
+  kExtensionsMenuButtonRadius,
   kFindBarViewRadius,
   kMenuRadius,
   kMenuAuxRadius,
@@ -220,7 +234,10 @@ class VIEWS_EXPORT LayoutProvider {
 
   // Returns the corner radius specific to the given emphasis.
   virtual int GetCornerRadiusMetric(Emphasis emphasis,
-                                    const gfx::Size& size = gfx::Size()) const;
+                                    const gfx::Size& size) const;
+  int GetCornerRadiusMetric(Emphasis emphasis) const {
+    return GetCornerRadiusMetric(emphasis, gfx::Size());
+  }
 
   // Returns the shadow elevation metric for the given emphasis.
   virtual int GetShadowElevationMetric(Emphasis emphasis) const;

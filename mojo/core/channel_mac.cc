@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "mojo/core/channel.h"
 
 #include <mach/mach.h>
@@ -20,6 +25,7 @@
 #include "base/containers/buffer_iterator.h"
 #include "base/containers/circular_deque.h"
 #include "base/containers/span.h"
+#include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/mac/scoped_mach_msg_destroy.h"
@@ -29,6 +35,7 @@
 #include "base/task/single_thread_task_runner.h"
 #include "base/thread_annotations.h"
 #include "base/trace_event/typed_macros.h"
+#include "mojo/core/ipcz_driver/envelope.h"
 
 extern "C" {
 kern_return_t fileport_makeport(int fd, mach_port_t*);
@@ -40,13 +47,28 @@ namespace core {
 
 namespace {
 
+// Kill switch.
+BASE_FEATURE(kUseMachVouchers,
+             "UseMachVouchers",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+
+bool ShouldUseVouchers() {
+  static bool enabled = base::FeatureList::IsEnabled(kUseMachVouchers);
+  return enabled;
+}
+
 constexpr mach_msg_id_t kChannelMacHandshakeMsgId = 'mjhs';
 constexpr mach_msg_id_t kChannelMacInlineMsgId = 'MOJO';
 constexpr mach_msg_id_t kChannelMacOOLMsgId = 'MOJ+';
 
 class ChannelMac : public Channel,
                    public base::CurrentThread::DestructionObserver,
-                   public base::MessagePumpKqueue::MachPortWatcher {
+#if BUILDFLAG(IS_IOS) && BUILDFLAG(USE_BLINK)
+                   public base::MessagePumpIOSForIOLibdispatch::MachPortWatcher
+#else
+                   public base::MessagePumpKqueue::MachPortWatcher
+#endif
+{
  public:
   ChannelMac(Delegate* delegate,
              ConnectionParams connection_params,
@@ -63,7 +85,7 @@ class ChannelMac : public Channel,
     } else if (channel_handle.is_mach_receive()) {
       receive_port_ = channel_handle.TakeMachReceiveRight();
     } else {
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
     }
   }
 
@@ -81,8 +103,9 @@ class ChannelMac : public Channel,
   }
 
   void Write(MessagePtr message) override {
-    base::AutoLock lock(write_lock_);
+    RecordSentMessageMetrics(message->data_num_bytes());
 
+    base::AutoLock lock(write_lock_);
     if (reject_writes_) {
       return;
     }
@@ -213,7 +236,14 @@ class ChannelMac : public Channel,
       DCHECK(send_port_ == MACH_PORT_NULL);
       // Wait for the received message via the MessageLoop.
     } else {
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
+    }
+
+    if (ShouldUseVouchers()) {
+      kr = mach_port_set_attributes(mach_task_self(), receive_port_.get(),
+                                    MACH_PORT_IMPORTANCE_RECEIVER, nullptr, 0);
+      MACH_LOG_IF(ERROR, kr != KERN_SUCCESS, kr)
+          << "mach_port_set_attributes MACH_PORT_IMPORTANCE_RECEIVER";
     }
 
     base::CurrentThread::Get()->AddDestructionObserver(this);
@@ -429,9 +459,8 @@ class ChannelMac : public Channel,
           break;
         }
         default:
-          NOTREACHED_IN_MIGRATION()
-              << "Unsupported handle type " << static_cast<int>(handle.type());
-          OnWriteErrorLocked(Error::kDisconnected);
+          NOTREACHED() << "Unsupported handle type "
+                       << static_cast<int>(handle.type());
       }
     }
 
@@ -532,7 +561,8 @@ class ChannelMac : public Channel,
     const mach_msg_option_t rcv_options =
         MACH_RCV_MSG | MACH_RCV_TIMEOUT |
         MACH_RCV_TRAILER_TYPE(MACH_MSG_TRAILER_FORMAT_0) |
-        MACH_RCV_TRAILER_ELEMENTS(MACH_RCV_TRAILER_AUDIT);
+        MACH_RCV_TRAILER_ELEMENTS(MACH_RCV_TRAILER_AUDIT) |
+        (ShouldUseVouchers() ? MACH_RCV_VOUCHER : 0);
     kern_return_t kr =
         mach_msg(header, rcv_options, 0, header->msgh_size, receive_port_.get(),
                  /*timeout=*/0, MACH_PORT_NULL);
@@ -542,6 +572,14 @@ class ChannelMac : public Channel,
       MACH_LOG(ERROR, kr) << "mach_msg receive";
       OnError(Error::kDisconnected);
       return;
+    }
+
+    scoped_refptr<ipcz_driver::Envelope> envelope;
+    if (ShouldUseVouchers()) {
+      envelope = base::MakeRefCounted<ipcz_driver::Envelope>(
+          base::apple::ScopedMachSendRight(header->msgh_voucher_port));
+      header->msgh_voucher_port = MACH_PORT_NULL;
+      header->msgh_bits &= ~MACH_MSGH_BITS_VOUCHER_MASK;
     }
 
     base::ScopedMachMsgDestroy scoped_message(header);
@@ -691,7 +729,9 @@ class ChannelMac : public Channel,
     scoped_message.Disarm();
 
     size_t ignored;
-    DispatchResult result = TryDispatchMessage(payload, &ignored);
+    // The envelope wrapping the voucher is attached to the message.
+    DispatchResult result = TryDispatchMessage(payload, std::nullopt,
+                                               std::move(envelope), &ignored);
     if (result != DispatchResult::kOK) {
       OnError(Error::kReceivedMalformedData);
       return;

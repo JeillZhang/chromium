@@ -34,6 +34,7 @@
 #include "chrome/browser/background/background_mode_optimizer.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/extensions/extension_service.h"
+#include "chrome/browser/glic/glic_enabling.h"
 #include "chrome/browser/lifetime/application_lifetime_desktop.h"
 #include "chrome/browser/lifetime/browser_shutdown.h"
 #include "chrome/browser/lifetime/termination_notification.h"
@@ -637,6 +638,16 @@ void BackgroundModeManager::ExecuteCommand(int command_id, int event_flags) {
       service->SetBoolean(prefs::kBackgroundModeEnabled, false);
       break;
     }
+    case IDC_STATUS_TRAY_KEEP_CHROME_RUNNING_IN_BACKGROUND_SETTING: {
+      // Background mode must already be enabled (as otherwise this menu would
+      // not be visible).
+      DCHECK(IsBackgroundModePrefEnabled());
+      DCHECK(KeepAliveRegistry::GetInstance()->IsKeepingAlive());
+
+      chrome::ShowSettingsSubPage(bmd->GetBrowserWindow(),
+                                  chrome::kChromeUISystemInfoHost);
+      break;
+    }
     default:
       if (bmd) {
         bmd->ExecuteCommand(command_id, event_flags);
@@ -879,8 +890,7 @@ gfx::ImageSkia GetStatusTrayIcon() {
   return *ui::ResourceBundle::GetSharedInstance().GetImageSkiaNamed(
       IDR_STATUS_TRAY_ICON);
 #else
-  NOTREACHED_IN_MIGRATION();
-  return gfx::ImageSkia();
+  NOTREACHED();
 #endif
 }
 
@@ -969,11 +979,21 @@ void BackgroundModeManager::UpdateStatusTrayIconContextMenu() {
   }
 
   menu->AddSeparator(ui::NORMAL_SEPARATOR);
-  menu->AddCheckItemWithStringId(
-      IDC_STATUS_TRAY_KEEP_CHROME_RUNNING_IN_BACKGROUND,
-      IDS_STATUS_TRAY_KEEP_CHROME_RUNNING_IN_BACKGROUND);
-  menu->SetCommandIdChecked(IDC_STATUS_TRAY_KEEP_CHROME_RUNNING_IN_BACKGROUND,
-                            true);
+  bool use_background_setting = false;
+#if BUILDFLAG(ENABLE_GLIC)
+  use_background_setting = GlicEnabling::IsEnabledByFlags();
+#endif
+  if (use_background_setting) {
+    menu->AddCheckItemWithStringId(
+        IDC_STATUS_TRAY_KEEP_CHROME_RUNNING_IN_BACKGROUND_SETTING,
+        IDS_STATUS_TRAY_KEEP_CHROME_RUNNING_IN_BACKGROUND_SETTING);
+  } else {
+    menu->AddCheckItemWithStringId(
+        IDC_STATUS_TRAY_KEEP_CHROME_RUNNING_IN_BACKGROUND,
+        IDS_STATUS_TRAY_KEEP_CHROME_RUNNING_IN_BACKGROUND);
+    menu->SetCommandIdChecked(IDC_STATUS_TRAY_KEEP_CHROME_RUNNING_IN_BACKGROUND,
+                              true);
+  }
 
   PrefService* service = g_browser_process->local_state();
   DCHECK(service);
@@ -989,10 +1009,14 @@ void BackgroundModeManager::UpdateStatusTrayIconContextMenu() {
 }
 
 void BackgroundModeManager::RemoveStatusTrayIcon() {
-  if (status_icon_)
-    status_tray_->RemoveStatusIcon(status_icon_);
-  status_icon_ = nullptr;
-  context_menu_ = nullptr;
+  if (status_icon_) {
+    std::unique_ptr<StatusIcon> removed_icon =
+        status_tray_->RemoveStatusIcon(status_icon_);
+    context_menu_ = nullptr;
+    status_icon_ = nullptr;
+    removed_icon.reset();
+  }
+  status_tray_ = nullptr;
 }
 
 BackgroundModeManager::BackgroundModeData*

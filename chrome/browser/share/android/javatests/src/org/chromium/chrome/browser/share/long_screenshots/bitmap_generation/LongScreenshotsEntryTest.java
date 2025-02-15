@@ -42,7 +42,7 @@ public class LongScreenshotsEntryTest {
 
     private Bitmap mTestBitmap = Bitmap.createBitmap(512, 1024, Bitmap.Config.ARGB_8888);
 
-    class TestEntryListener implements LongScreenshotsEntry.EntryListener {
+    static class TestEntryListener implements LongScreenshotsEntry.EntryListener {
         @EntryStatus int mReturnedStatus;
 
         @Override
@@ -97,7 +97,7 @@ public class LongScreenshotsEntryTest {
                         new Callback<Integer>() {
                             @Override
                             public void onResult(Integer result) {
-                                assertEquals((int) result, 2097152);
+                                assertEquals(2097152, (int) result);
                             }
                         });
         TestEntryListener entryListener = new TestEntryListener();

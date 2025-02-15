@@ -31,7 +31,7 @@ base::Time ConvertStudyDateToBaseTime(int64_t date_time) {
 template <typename Collection>
 bool ContainsStringIgnoreCaseASCII(const Collection& collection,
                                    const std::string& value) {
-  return base::ranges::any_of(collection, [&value](const std::string& s) {
+  return std::ranges::any_of(collection, [&value](const std::string& s) {
     return base::EqualsCaseInsensitiveASCII(s, value);
   });
 }
@@ -301,8 +301,7 @@ bool ShouldAddStudy(const ProcessedStudy& processed_study,
   }
 
   if (study.has_layer()) {
-    if (!layers.IsLayerMemberActive(study.layer().layer_id(),
-                                    study.layer().layer_member_id())) {
+    if (!layers.IsLayerMemberActive(study.layer())) {
       DVLOG(1) << "Filtered out study " << study.name()
                << " due to layer member not being active.";
       return false;

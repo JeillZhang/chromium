@@ -2,10 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/ui/aura/accessibility/automation_manager_aura.h"
+
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/sequenced_task_runner.h"
 #include "build/build_config.h"
-#include "chrome/browser/ui/aura/accessibility/automation_manager_aura.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
@@ -22,8 +23,10 @@
 #include "ui/accessibility/ax_action_data.h"
 #include "ui/accessibility/ax_mode.h"
 #include "ui/accessibility/ax_node_data.h"
+#include "ui/accessibility/ax_tree.h"
 #include "ui/views/accessibility/ax_aura_obj_wrapper.h"
 #include "ui/views/accessibility/ax_tree_source_views.h"
+#include "ui/views/accessibility/ax_virtual_view.h"
 #include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/controls/button/label_button.h"
 #include "ui/views/controls/button/radio_button.h"
@@ -68,7 +71,7 @@ void FindAllHostsOfWebContentsWithAXTreeID(
 ui::AXTreeID GetAXTreeIDFromRenderFrameHost(content::RenderFrameHost* rfh) {
   auto* registry = ui::AXActionHandlerRegistry::GetInstance();
   return registry->GetAXTreeID(ui::AXActionHandlerRegistry::FrameID(
-      rfh->GetProcess()->GetID(), rfh->GetRoutingID()));
+      rfh->GetProcess()->GetDeprecatedID(), rfh->GetRoutingID()));
 }
 
 // A class that installs itself as the sink to handle automation event bundles
@@ -96,8 +99,9 @@ class AutomationEventWaiter
   // has ever been focused, otherwise spins a loop until that node is
   // focused.
   void WaitForNodeIdToBeFocused(ui::AXNodeID node_id) {
-    if (WasNodeIdFocused(node_id))
+    if (WasNodeIdFocused(node_id)) {
       return;
+    }
 
     node_id_to_wait_for_ = node_id;
     run_loop_->Run();
@@ -115,9 +119,11 @@ class AutomationEventWaiter
   }
 
   bool WasNodeIdFocused(int node_id) {
-    for (size_t i = 0; i < focused_node_ids_.size(); i++)
-      if (node_id == focused_node_ids_[i])
+    for (int focused_node_id : focused_node_ids_) {
+      if (node_id == focused_node_id) {
         return true;
+      }
+    }
     return false;
   }
 
@@ -146,8 +152,9 @@ class AutomationEventWaiter
       }
     }
 
-    if (event_type_to_wait_for_ == ax::mojom::Event::kNone)
+    if (event_type_to_wait_for_ == ax::mojom::Event::kNone) {
       return;
+    }
 
     for (const ui::AXEvent& event : events) {
       if (event.event_type == event_type_to_wait_for_ &&
@@ -160,12 +167,16 @@ class AutomationEventWaiter
     }
   }
   void DispatchAccessibilityLocationChange(
-      const ui::AXLocationChanges& details) override {}
+      const ui::AXTreeID& tree_id,
+      const ui::AXLocationChange& details) override {}
+  void DispatchAccessibilityScrollChange(
+      const ui::AXTreeID& tree_id,
+      const ui::AXScrollChange& details) override {}
   void DispatchTreeDestroyedEvent(ui::AXTreeID tree_id) override {}
-  void DispatchActionResult(
-      const ui::AXActionData& data,
-      bool result,
-      content::BrowserContext* browser_context = nullptr) override {}
+  void DispatchActionResult(const ui::AXActionData& data,
+                            bool result,
+                            content::BrowserContext* browser_context) override {
+  }
   void DispatchGetTextLocationDataResult(
       const ui::AXActionData& data,
       const std::optional<gfx::Rect>& rect) override {}
@@ -201,7 +212,7 @@ IN_PROC_BROWSER_TEST_F(AutomationManagerAuraBrowserTest, WebAppearsOnce) {
 
   AutomationManagerAura* manager = AutomationManagerAura::GetInstance();
   manager->Enable();
-  auto* tree = manager->tree_.get();
+  auto* tree = manager->GetTreeSource();
 
   ASSERT_TRUE(ui_test_utils::NavigateToURL(
       browser(),
@@ -226,9 +237,9 @@ IN_PROC_BROWSER_TEST_F(AutomationManagerAuraBrowserTest, WebAppearsOnce) {
     tree->SerializeNode(web_hosts[0], &node_data);
     EXPECT_EQ(ax::mojom::Role::kWebView, node_data.role);
   } else {
-    for (size_t i = 0; i < web_hosts.size(); i++) {
+    for (auto& web_host : web_hosts) {
       ui::AXNodeData node_data;
-      tree->SerializeNode(web_hosts[i], &node_data);
+      tree->SerializeNode(web_host, &node_data);
     }
   }
 }
@@ -314,7 +325,7 @@ IN_PROC_BROWSER_TEST_F(AutomationManagerAuraBrowserTest, MAYBE_ScrollView) {
   manager->send_window_state_on_enable_ = false;
   manager->Enable();
   AutomationEventWaiter waiter;
-  auto* tree = manager->tree_.get();
+  auto* tree = manager->GetTreeSource();
 
   // Create a widget with size 200, 200.
   views::Widget* widget = new views::Widget;
@@ -487,13 +498,14 @@ IN_PROC_BROWSER_TEST_F(AutomationManagerAuraBrowserTest, MAYBE_TableView) {
     ui::AXNode* cell =
         waiter.ax_tree()->GetFromId(ax_cell_0_0_wrapper->GetUniqueId());
     ASSERT_TRUE(cell);
-    EXPECT_EQ(ax::mojom::Role::kCell, cell->GetRole());
+    EXPECT_EQ(ax::mojom::Role::kGridCell, cell->GetRole());
     gfx::RectF cell_bounds = waiter.ax_tree()->GetTreeBounds(cell);
     SCOPED_TRACE("Cell: " + cell_bounds.ToString());
 
     ui::AXNode* window = cell->parent();
-    while (window && window->GetRole() != ax::mojom::Role::kWindow)
+    while (window && window->GetRole() != ax::mojom::Role::kWindow) {
       window = window->parent();
+    }
     ASSERT_TRUE(window);
 
     gfx::RectF window_bounds = waiter.ax_tree()->GetTreeBounds(window);
@@ -562,7 +574,7 @@ IN_PROC_BROWSER_TEST_F(AutomationManagerAuraBrowserTest, EventFromAction) {
   // accessibility event that shows this view is focused.
   ui::AXActionData action_data;
   action_data.action = ax::mojom::Action::kFocus;
-  action_data.target_tree_id = manager->tree_.get()->tree_id();
+  action_data.target_tree_id = manager->GetTreeSource()->tree_id();
   action_data.target_node_id = wrapper2->GetUniqueId();
 
   manager->PerformAction(action_data);
@@ -646,7 +658,7 @@ IN_PROC_BROWSER_TEST_F(AutomationManagerAuraBrowserTest, GetFocusOnChildTree) {
   EXPECT_EQ(cache.GetOrCreate(widget->GetRootView()), cache.GetFocus());
 
   // Now, there's a tree id.
-  child->GetViewAccessibility().OverrideChildTreeID(
+  child->GetViewAccessibility().SetChildTreeID(
       ui::AXTreeID::CreateNewAXTreeID());
   EXPECT_EQ(cache.GetOrCreate(child), cache.GetFocus());
 

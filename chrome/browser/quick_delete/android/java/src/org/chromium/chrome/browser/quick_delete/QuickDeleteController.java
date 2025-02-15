@@ -20,13 +20,11 @@ import org.chromium.chrome.browser.browsing_data.TimePeriodUtils;
 import org.chromium.chrome.browser.feature_engagement.TrackerFactory;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.layouts.LayoutManager;
-import org.chromium.chrome.browser.layouts.LayoutStateProvider.LayoutStateObserver;
-import org.chromium.chrome.browser.layouts.LayoutType;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.tab_ui.TabSwitcherUtils;
 import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
-import org.chromium.chrome.browser.tasks.tab_groups.TabGroupModelFilter;
 import org.chromium.chrome.browser.ui.messages.snackbar.Snackbar;
 import org.chromium.chrome.browser.ui.messages.snackbar.SnackbarManager;
 import org.chromium.components.feature_engagement.Tracker;
@@ -42,7 +40,9 @@ public class QuickDeleteController {
 
     private final @NonNull Context mContext;
     private final @NonNull QuickDeleteDelegate mDelegate;
-    private final @NonNull QuickDeleteTabsFilter mDeleteTabsFilter;
+    private final @NonNull QuickDeleteTabsFilter mDeleteRegularTabsFilter;
+    // Null when declutter is disabled.
+    private final @Nullable QuickDeleteTabsFilter mDeleteArchivedTabsFilter;
     private final @NonNull SnackbarManager mSnackbarManager;
     private final @NonNull LayoutManager mLayoutManager;
     private final @NonNull Profile mProfile;
@@ -60,8 +60,8 @@ public class QuickDeleteController {
      * @param modalDialogManager A {@link ModalDialogManager} to show the quick delete modal dialog.
      * @param snackbarManager A {@link SnackbarManager} to show the quick delete snackbar.
      * @param layoutManager {@link LayoutManager} to use for showing the regular overview mode.
-     * @param tabModelSelector {@link TabModelSelector} to use for opening the links in search
-     *     history disambiguation notice.
+     * @param tabModelSelector {@link TabModelSelector} for regular tabs.
+     * @param archivedTabModelSelector The {@link TabModelSelector} for archived tabs.
      */
     public QuickDeleteController(
             @NonNull Context context,
@@ -69,19 +69,28 @@ public class QuickDeleteController {
             @NonNull ModalDialogManager modalDialogManager,
             @NonNull SnackbarManager snackbarManager,
             @NonNull LayoutManager layoutManager,
-            @NonNull TabModelSelector tabModelSelector) {
+            @NonNull TabModelSelector tabModelSelector,
+            @Nullable TabModelSelector archivedTabModelSelector) {
         mContext = context;
         mDelegate = delegate;
         mSnackbarManager = snackbarManager;
         mLayoutManager = layoutManager;
 
         mTabModel = tabModelSelector.getModel(/* incognito= */ false);
-        mDeleteTabsFilter =
+        mDeleteRegularTabsFilter =
                 new QuickDeleteTabsFilter(
-                        (TabGroupModelFilter)
-                                tabModelSelector
-                                        .getTabModelFilterProvider()
-                                        .getTabModelFilter(/* incognito= */ false));
+                        tabModelSelector
+                                .getTabGroupModelFilterProvider()
+                                .getTabGroupModelFilter(/* isIncognito= */ false));
+        if (archivedTabModelSelector != null) {
+            mDeleteArchivedTabsFilter =
+                    new QuickDeleteTabsFilter(
+                            archivedTabModelSelector
+                                    .getTabGroupModelFilterProvider()
+                                    .getTabGroupModelFilter(/* isIncognito= */ false));
+        } else {
+            mDeleteArchivedTabsFilter = null;
+        }
         mProfile = tabModelSelector.getCurrentModel().getProfile();
         mQuickDeleteBridge = new QuickDeleteBridge(mProfile);
 
@@ -100,7 +109,11 @@ public class QuickDeleteController {
                         mPropertyModel, quickDeleteView, QuickDeleteViewBinder::bind);
         mQuickDeleteMediator =
                 new QuickDeleteMediator(
-                        mPropertyModel, mProfile, mQuickDeleteBridge, mDeleteTabsFilter);
+                        mPropertyModel,
+                        mProfile,
+                        mQuickDeleteBridge,
+                        mDeleteRegularTabsFilter,
+                        mDeleteArchivedTabsFilter);
 
         QuickDeleteDialogDelegate dialogDelegate =
                 new QuickDeleteDialogDelegate(
@@ -109,27 +122,20 @@ public class QuickDeleteController {
                         modalDialogManager,
                         this::onDialogDismissed,
                         tabModelSelector,
-                        mDelegate.getSettingsLauncher(),
                         mQuickDeleteMediator);
         dialogDelegate.showDialog();
     }
 
     void destroy() {
         mPropertyModelChangeProcessor.destroy();
+        mQuickDeleteBridge.destroy();
     }
 
     /**
-     * @return True, if quick delete feature flag is enabled, false otherwise
+     * @return True, if quick delete survey is enabled, false otherwise
      */
-    public static boolean isQuickDeleteEnabled() {
-        return ChromeFeatureList.sQuickDeleteForAndroid.isEnabled();
-    }
-
-    /**
-     * @return True, if quick delete follow up is enabled, false otherwise
-     */
-    public static boolean isQuickDeleteFollowupEnabled() {
-        return isQuickDeleteEnabled() && ChromeFeatureList.sQuickDeleteAndroidFollowup.isEnabled();
+    public static boolean isQuickDeleteSurveyEnabled() {
+        return ChromeFeatureList.sQuickDeleteAndroidSurvey.isEnabled();
     }
 
     /** A method called when the user confirms or cancels the dialog. */
@@ -149,13 +155,14 @@ public class QuickDeleteController {
             case DialogDismissalCause.NEGATIVE_BUTTON_CLICKED:
                 QuickDeleteMetricsDelegate.recordHistogram(
                         QuickDeleteMetricsDelegate.QuickDeleteAction.CANCEL_CLICKED);
+                destroy();
                 break;
             default:
                 QuickDeleteMetricsDelegate.recordHistogram(
                         QuickDeleteMetricsDelegate.QuickDeleteAction.DIALOG_DISMISSED_IMPLICITLY);
+                destroy();
                 break;
         }
-        destroy();
     }
 
     private void onBrowsingDataDeletionFinished(
@@ -171,17 +178,24 @@ public class QuickDeleteController {
         if (isTabClosureDisabled) {
             showPostDeleteFeedback(timePeriod, trackerLock);
         } else {
-            navigateToTabSwitcher(() -> maybeShowQuickDeleteAnimation(timePeriod, trackerLock));
+            TabSwitcherUtils.navigateToTabSwitcher(
+                    mLayoutManager,
+                    /* animate= */ true,
+                    () -> maybeShowQuickDeleteAnimation(timePeriod, trackerLock));
         }
     }
 
     private void maybeShowQuickDeleteAnimation(
             @TimePeriod int timePeriod, @Nullable Tracker.DisplayLockHandle trackerLock) {
-        mDeleteTabsFilter.prepareListOfTabsToBeClosed(timePeriod);
+        mDeleteRegularTabsFilter.prepareListOfTabsToBeClosed(timePeriod);
+        if (mDeleteArchivedTabsFilter != null) {
+            mDeleteArchivedTabsFilter.prepareListOfTabsToBeClosed(timePeriod);
+        }
         boolean isTabModelEmpty = mTabModel.getCount() == 0;
-
-        if (isQuickDeleteFollowupEnabled() && !isTabModelEmpty) {
-            List<Tab> tabs = mDeleteTabsFilter.getListOfTabsFilteredToBeClosed();
+        if (!isTabModelEmpty) {
+            List<Tab> tabs =
+                    mDeleteRegularTabsFilter
+                            .getListOfTabsFilteredToBeClosedExcludingPlaceholderTabGroups();
             mDelegate.showQuickDeleteAnimation(
                     () -> closeTabsAndShowPostDeleteFeedback(timePeriod, trackerLock), tabs);
         } else {
@@ -191,7 +205,10 @@ public class QuickDeleteController {
 
     private void closeTabsAndShowPostDeleteFeedback(
             @TimePeriod int timePeriod, @Nullable Tracker.DisplayLockHandle trackerLock) {
-        mDeleteTabsFilter.closeTabsFilteredForQuickDelete();
+        mDeleteRegularTabsFilter.closeTabsFilteredForQuickDelete();
+        if (mDeleteArchivedTabsFilter != null) {
+            mDeleteArchivedTabsFilter.closeTabsFilteredForQuickDelete();
+        }
         showPostDeleteFeedback(timePeriod, trackerLock);
     }
 
@@ -202,27 +219,11 @@ public class QuickDeleteController {
 
         if (trackerLock == null) return;
         trackerLock.release();
-    }
 
-    /** A method to navigate to tab switcher. */
-    private void navigateToTabSwitcher(Runnable onNavigationFinished) {
-        if (mLayoutManager.isLayoutVisible(LayoutType.TAB_SWITCHER)) {
-            onNavigationFinished.run();
-            return;
+        if (isQuickDeleteSurveyEnabled()) {
+            mDelegate.triggerHatsSurvey();
         }
-
-        mLayoutManager.addObserver(
-                new LayoutStateObserver() {
-                    @Override
-                    public void onFinishedShowing(int layoutType) {
-                        if (layoutType == LayoutType.TAB_SWITCHER) {
-                            mLayoutManager.removeObserver(this);
-                            onNavigationFinished.run();
-                        }
-                    }
-                });
-
-        mLayoutManager.showLayout(LayoutType.TAB_SWITCHER, /* animate= */ true);
+        destroy();
     }
 
     private void triggerHapticFeedback() {

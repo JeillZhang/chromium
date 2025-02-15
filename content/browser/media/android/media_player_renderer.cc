@@ -26,7 +26,6 @@ namespace content {
 
 namespace {
 
-media::MediaUrlInterceptor* g_media_url_interceptor = nullptr;
 const float kDefaultVolume = 1.0;
 
 }  // namespace
@@ -115,7 +114,8 @@ void MediaPlayerRenderer::CreateMediaPlayer(
 
   media_player_ = std::make_unique<media::MediaPlayerBridge>(
       url_params.media_url, url_params.site_for_cookies,
-      url_params.top_frame_origin, url_params.has_storage_access, user_agent,
+      url_params.top_frame_origin, url_params.storage_access_api_status,
+      user_agent,
       false,  // hide_url_log
       this,   // MediaPlayerBridge::Client
       url_params.allow_credentials, url_params.is_hls, url_params.headers);
@@ -228,10 +228,6 @@ media::MediaResourceGetter* MediaPlayerRenderer::GetMediaResourceGetter() {
   return media_resource_getter_.get();
 }
 
-media::MediaUrlInterceptor* MediaPlayerRenderer::GetMediaUrlInterceptor() {
-  return g_media_url_interceptor;
-}
-
 void MediaPlayerRenderer::OnMediaDurationChanged(base::TimeDelta duration) {
   // For HLS streams, the reported duration may be zero for infinite streams.
   // See http://crbug.com/501213.
@@ -283,12 +279,6 @@ void MediaPlayerRenderer::OnUpdateAudioMutingState(bool muted) {
 
 void MediaPlayerRenderer::OnWebContentsDestroyed() {
   web_contents_observer_ = nullptr;
-}
-
-// static
-void MediaPlayerRenderer::RegisterMediaUrlInterceptor(
-    media::MediaUrlInterceptor* media_url_interceptor) {
-  g_media_url_interceptor = media_url_interceptor;
 }
 
 void MediaPlayerRenderer::CancelScopedSurfaceRequest() {

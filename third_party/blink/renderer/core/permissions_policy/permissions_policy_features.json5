@@ -2,7 +2,7 @@
   // All permissions policy (https://github.com/w3c/webappsec-permissions-policy)
   // features are defined here.
   // For more details on adding a new permissions policy, see:
-  // https://chromium.googlesource.com/chromium/src/+/main/third_party/blink/common/permissions_policy/README.md
+  // https://chromium.googlesource.com/chromium/src/+/main/services/network/public/cpp/permissions_policy/README.md
   // TODO(yashard): Add all permissions policy features here.
 
   parameters: {
@@ -72,6 +72,12 @@
       permissions_policy_name: "accelerometer",
     },
     {
+      name: "AllScreensCapture",
+      permissions_policy_name: "all-screens-capture",
+      depends_on: ["GetAllScreensMedia"],
+      visibility: "IsolatedContext",
+    },
+    {
       name: "AmbientLightSensor",
       permissions_policy_name: "ambient-light-sensor",
       depends_on: ["SensorExtraClasses"],
@@ -80,7 +86,7 @@
       name: "AttributionReporting",
       permissions_policy_name: "attribution-reporting",
       feature_default: "EnableForAll",
-      depends_on: ["AttributionReporting", "AttributionReportingCrossAppWeb"],
+      depends_on: ["AttributionReporting"],
     },
     {
       name: "Autoplay",
@@ -167,6 +173,12 @@
       permissions_policy_name: "ch-ua-form-factors",
     },
     {
+      name: "ClientHintUAHighEntropyValues",
+      permissions_policy_name: "ch-ua-high-entropy-values",
+      feature_default: "EnableForAll",
+      depends_on: ["ClientHintUAHighEntropyValuesPermissionPolicy"],
+    },
+    {
       name: "ClientHintUAPlatform",
       permissions_policy_name: "ch-ua-platform",
       feature_default: "EnableForAll",
@@ -223,17 +235,41 @@
       depends_on: ["ComputePressure"],
     },
     {
+      name: "ControlledFrame",
+      permissions_policy_name: "controlled-frame",
+      depends_on: ["ControlledFrame"],
+      visibility: "IsolatedContext",
+    },
+    {
       name: "CrossOriginIsolated",
       permissions_policy_name: "cross-origin-isolated",
     },
     {
       name: "DeferredFetch",
       permissions_policy_name: "deferred-fetch",
+      feature_default: "EnableForSelf",
       depends_on: ["FetchLaterAPI"],
+    },
+    {
+      name: "DeferredFetchMinimal",
+      permissions_policy_name: "deferred-fetch-minimal",
+      feature_default: "EnableForAll",
+      depends_on: ["FetchLaterAPI"],
+    },
+    {
+      name: "DigitalCredentialsGet",
+      permissions_policy_name: "digital-credentials-get",
+      depends_on: ["WebIdentityDigitalCredentials"],
     },
     {
       name: "DirectSockets",
       permissions_policy_name: "direct-sockets",
+      depends_on: ["DirectSockets"],
+      visibility: "IsolatedContext",
+    },
+    {
+      name: "DirectSocketsPrivate",
+      permissions_policy_name: "direct-sockets-private",
       depends_on: ["DirectSockets"],
       visibility: "IsolatedContext",
     },
@@ -258,9 +294,15 @@
       depends_on: ["FreezeFramesOnVisibility"],
     },
     {
+      name: "FencedUnpartitionedStorageRead",
+      permissions_policy_name: "fenced-unpartitioned-storage-read",
+      feature_default: "EnableForAll",
+      depends_on: ["FencedFramesLocalUnpartitionedDataAccess"],
+    },
+    {
       name: "FocusWithoutUserActivation",
       permissions_policy_name: "focus-without-user-activation",
-      feature_default: "EnableForAll",
+      feature_default: "EnableForSelf",
       depends_on: ["BlockingFocusWithoutUserActivation"],
     },
     {
@@ -321,6 +363,12 @@
       permissions_policy_name: "magnetometer",
     },
     {
+      name: "MediaPlaybackWhileNotVisible",
+      permissions_policy_name: "media-playback-while-not-visible",
+      feature_default: "EnableForAll",
+      depends_on: ["MediaPlaybackWhileNotVisiblePermissionPolicy"],
+    },
+    {
       name: "Microphone",
       permissions_policy_name: "microphone",
     },
@@ -332,6 +380,12 @@
       name: "OTPCredentials",
       permissions_policy_name: "otp-credentials",
       depends_on: ["WebOTPAssertionFeaturePolicy"],
+    },
+    {
+      name: "PartitionedPopins",
+      permissions_policy_name: "popins",
+      feature_default: "EnableForSelf",
+      depends_on: ["PartitionedPopins"],
     },
     {
       name: "Payment",
@@ -352,6 +406,7 @@
     {
       name: "PrivateStateTokenIssuance",
       permissions_policy_name: "private-state-token-issuance",
+      feature_default: "EnableForAll",
       depends_on: ["PrivateStateTokens"],
     },
     {
@@ -428,6 +483,7 @@
     {
       name: "TrustTokenRedemption",
       permissions_policy_name: "private-state-token-redemption",
+      feature_default: "EnableForAll",
       depends_on: ["PrivateStateTokens"],
     },
     {
@@ -439,6 +495,7 @@
       name: "UsbUnrestricted",
       permissions_policy_name: "usb-unrestricted",
       depends_on: ["UnrestrictedUsb"],
+      visibility: "IsolatedContext",
     },
     {
       // Unload is special and can default to being disabled by default based
@@ -452,6 +509,11 @@
       permissions_policy_name: "vertical-scroll",
       feature_default: "EnableForAll",
       depends_on: ["ExperimentalPolicies"],
+    },
+    {
+      name: "WebAppInstallation",
+      permissions_policy_name: "web-app-installation",
+      depends_on: ["WebAppInstallation"],
     },
     {
       name: "WebPrinting",

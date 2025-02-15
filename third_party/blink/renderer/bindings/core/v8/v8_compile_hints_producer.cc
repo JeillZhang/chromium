@@ -141,7 +141,7 @@ void V8CrowdsourcedCompileHintsProducer::ScheduleDataDeletionTask(
   constexpr int kDeletionDelaySeconds = 30;
   auto delay = base::Seconds(kDeletionDelaySeconds);
 
-  execution_context->GetTaskRunner(TaskType::kIdleTask)
+  execution_context->GetTaskRunner(TaskType::kInternalDefault)
       ->PostDelayedTask(FROM_HERE,
                         WTF::BindOnce(&ClearDataTask, WrapWeakPersistent(this)),
                         delay);
@@ -208,7 +208,7 @@ bool V8CrowdsourcedCompileHintsProducer::SendDataToUkm() {
   }
 
   static_assert(sizeof(unsigned) == sizeof(int32_t));
-  unsigned* raw_data = (bloom.GetRawData());
+  auto raw_data = bloom.GetRawData();
 
   // Add noise to the data.
   for (int i = 0; i < kBloomFilterInt32Count; ++i) {

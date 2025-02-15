@@ -8,15 +8,11 @@
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/dom/dom_high_res_time_stamp.h"
 #include "third_party/blink/renderer/platform/geometry/length.h"
+#include "third_party/blink/renderer/platform/graphics/dom_node_id.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_vector.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 #include "ui/gfx/geometry/transform.h"
 #include "ui/gfx/geometry/vector2d_f.h"
-
-#define CHECK_SKIPPED_UPDATE_ON_SCROLL() DCHECK_IS_ON()
-#if CHECK_SKIPPED_UPDATE_ON_SCROLL()
-#include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
-#endif
 
 namespace blink {
 
@@ -58,6 +54,9 @@ class CORE_EXPORT IntersectionGeometry {
     kRootIsImplicit = 1 << 9,
     kDidComputeGeometry = 1 << 10,
     kIsVisible = 1 << 11,
+
+    // These flags to expose extra information of occluded state
+    kShouldExposeOccluderNodeId = 1 << 12,
   };
 
   struct RootGeometry {
@@ -94,25 +93,6 @@ class CORE_EXPORT IntersectionGeometry {
     bool pre_margin_target_rect_is_empty = false;
     // Invalidation flag
     bool valid = false;
-
-#if CHECK_SKIPPED_UPDATE_ON_SCROLL()
-    // These are here just for debugging crbug.com/1519303.
-    gfx::Vector2dF computed_min_scroll_delta_to_update;
-    gfx::RectF local_root_rect;
-    gfx::RectF root_rect;
-    gfx::RectF target_rect;
-    gfx::RectF intersection_rect;
-    gfx::RectF unclipped_intersection_rect;
-    gfx::Transform target_to_view_transform;
-    gfx::Transform root_to_view_transform;
-    int relationship = 0;
-    bool root_scrolls_target = false;
-    String clip_tree;
-    String transform_tree;
-    String scroll_tree;
-
-    String ToString() const;
-#endif
   };
 
   static const LayoutObject* GetTargetLayoutObject(
@@ -162,6 +142,7 @@ class CORE_EXPORT IntersectionGeometry {
   bool DidComputeGeometry() const { return flags_ & kDidComputeGeometry; }
   bool IsIntersecting() const { return threshold_index_ > 0; }
   bool IsVisible() const { return flags_ & kIsVisible; }
+  DOMNodeId occluder_node_id() const { return occluder_node_id_; }
 
   bool CanUseCachedRectsForTesting() const { return ShouldUseCachedRects(); }
 
@@ -263,6 +244,7 @@ class CORE_EXPORT IntersectionGeometry {
   unsigned flags_;
   double intersection_ratio_ = 0;
   wtf_size_t threshold_index_ = 0;
+  DOMNodeId occluder_node_id_ = kInvalidDOMNodeId;
 };
 
 }  // namespace blink

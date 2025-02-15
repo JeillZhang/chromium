@@ -9,13 +9,16 @@
 #include <vector>
 
 #include "ash/birch/birch_item.h"
-#include "ash/constants/ash_features.h"
 #include "ash/public/cpp/shelf_config.h"
 #include "ash/public/cpp/shelf_types.h"
 #include "ash/public/cpp/window_properties.h"
 #include "ash/root_window_settings.h"
 #include "ash/shelf/shelf.h"
+#include "ash/shell.h"
 #include "ash/wm/overview/birch/birch_chip_loader_view.h"
+#include "ash/wm/overview/birch/birch_privacy_nudge_controller.h"
+#include "ash/wm/overview/birch/coral_chip_button.h"
+#include "ash/wm/overview/overview_controller.h"
 #include "ash/wm/window_properties.h"
 #include "base/containers/contains.h"
 #include "base/containers/fixed_flat_set.h"
@@ -26,9 +29,11 @@
 #include "ui/compositor/layer.h"
 #include "ui/display/display.h"
 #include "ui/display/screen.h"
+#include "ui/gfx/geometry/transform_util.h"
 #include "ui/views/animation/animation_builder.h"
 #include "ui/views/metadata/view_factory_internal.h"
 #include "ui/views/view_class_properties.h"
+#include "ui/views/view_utils.h"
 
 namespace ash {
 
@@ -70,7 +75,7 @@ constexpr base::TimeDelta kFadeInDelayAfterLoadingByUser =
 constexpr base::TimeDelta kFadeInDurationAfterLoading = base::Milliseconds(150);
 constexpr base::TimeDelta kFadeInDurationAfterLoadingByUser =
     base::Milliseconds(200);
-constexpr base::TimeDelta kFadeInDurationAfterLoadingInPine =
+constexpr base::TimeDelta kFadeInDurationAfterLoadingForInformedRestore =
     base::Milliseconds(400);
 constexpr base::TimeDelta kFadeInDurationAfterReloading =
     base::Milliseconds(200);
@@ -78,6 +83,19 @@ constexpr base::TimeDelta kFadeOutChipsDurationBeforeReloading =
     base::Milliseconds(200);
 constexpr base::TimeDelta kFadeOutChipsDurationOnHidingByUser =
     base::Milliseconds(100);
+constexpr base::TimeDelta kFadeOutChipDurationOnRemoving =
+    base::Milliseconds(100);
+constexpr base::TimeDelta kSlidingChipsDelayOnRemoving = base::Milliseconds(50);
+constexpr base::TimeDelta kSlidingChipsDurationOnRemoving =
+    base::Milliseconds(300);
+constexpr base::TimeDelta kSlidingChipDelayOnAttachment =
+    base::Milliseconds(50);
+constexpr base::TimeDelta kSlidingChipDurationOnAttachment =
+    base::Milliseconds(300);
+constexpr base::TimeDelta kFadeInChipDelayOnAttachment =
+    base::Milliseconds(200);
+constexpr base::TimeDelta kFadeInChipDurationOnAttachment =
+    base::Milliseconds(150);
 
 // Calculates the space for each chip according to the available space and
 // number of chips.
@@ -101,7 +119,8 @@ using State = BirchBarView::State;
 // Checks if the given state is a loading state.
 bool IsLoadingState(State state) {
   return state == State::kLoading || state == State::kLoadingByUser ||
-         state == State::kLoadingInPine || state == State::kReloading;
+         state == State::kLoadingForInformedRestore ||
+         state == State::kReloading;
 }
 
 #if DCHECK_IS_ON()
@@ -110,8 +129,8 @@ std::ostream& operator<<(std::ostream& stream, State state) {
   switch (state) {
     case State::kLoading:
       return stream << "loading";
-    case State::kLoadingInPine:
-      return stream << "loading in pine";
+    case State::kLoadingForInformedRestore:
+      return stream << "loading for informed restore";
     case State::kLoadingByUser:
       return stream << "loading by user";
     case State::kReloading:
@@ -131,11 +150,11 @@ bool IsValidStateTransition(State current_state, State new_state) {
           {State::kLoading, State::kReloading},
           {State::kLoading, State::kShuttingDown},
           {State::kLoading, State::kNormal},
-          // From loading in pine state to reloading state and other non-loading
-          // states.
-          {State::kLoadingInPine, State::kReloading},
-          {State::kLoadingInPine, State::kShuttingDown},
-          {State::kLoadingInPine, State::kNormal},
+          // From loading for informed restore to reloading state and other
+          // non-loading states.
+          {State::kLoadingForInformedRestore, State::kReloading},
+          {State::kLoadingForInformedRestore, State::kShuttingDown},
+          {State::kLoadingForInformedRestore, State::kNormal},
           // From loading by user state to reloading state and other non-loading
           // states.
           {State::kLoadingByUser, State::kReloading},
@@ -146,7 +165,7 @@ bool IsValidStateTransition(State current_state, State new_state) {
           {State::kReloading, State::kNormal},
           // From normal state to all the other states.
           {State::kNormal, State::kLoading},
-          {State::kNormal, State::kLoadingInPine},
+          {State::kNormal, State::kLoadingForInformedRestore},
           {State::kNormal, State::kLoadingByUser},
           {State::kNormal, State::kReloading},
           {State::kNormal, State::kShuttingDown},
@@ -159,7 +178,7 @@ bool IsValidStateTransition(State current_state, State new_state) {
 }  // namespace
 
 BirchBarView::BirchBarView(aura::Window* root_window)
-    : root_window_(root_window), chip_size_(GetChipSize()) {
+    : chip_size_(GetChipSize(root_window)) {
   // Build up a 2 levels nested box layout hierarchy.
   using MainAxisAlignment = views::BoxLayout::MainAxisAlignment;
   using CrossAxisAlignment = views::BoxLayout::CrossAxisAlignment;
@@ -188,9 +207,7 @@ std::unique_ptr<views::Widget> BirchBarView::CreateBirchBarWidget(
       views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET,
       views::Widget::InitParams::TYPE_WINDOW_FRAMELESS);
   params.accept_events = true;
-  params.activatable = features::IsOverviewNewFocusEnabled()
-                           ? views::Widget::InitParams::Activatable::kYes
-                           : views::Widget::InitParams::Activatable::kNo;
+  params.activatable = views::Widget::InitParams::Activatable::kYes;
   params.opacity = views::Widget::InitParams::WindowOpacity::kTranslucent;
   params.context = root_window;
   params.name = "BirchBarWidget";
@@ -199,7 +216,7 @@ std::unique_ptr<views::Widget> BirchBarView::CreateBirchBarWidget(
 
   auto widget = std::make_unique<views::Widget>(std::move(params));
   widget->SetContentsView(std::make_unique<BirchBarView>(root_window));
-  widget->Show();
+  widget->ShowInactive();
   return widget;
 }
 
@@ -210,15 +227,15 @@ void BirchBarView::SetState(State state) {
 
 #if DCHECK_IS_ON()
   if (!IsValidStateTransition(state_, state)) {
-    NOTREACHED_NORETURN() << "Transition from state " << state_ << " to state "
-                          << state << " is invalid.";
+    NOTREACHED() << "Transition from state " << state_ << " to state " << state
+                 << " is invalid.";
   }
 #endif
 
   const State current_state = state_;
   state_ = state;
   switch (state_) {
-    case State::kLoadingInPine:
+    case State::kLoadingForInformedRestore:
       AddLoadingChips();
       break;
     case State::kReloading:
@@ -245,6 +262,10 @@ void BirchBarView::SetState(State state) {
 void BirchBarView::ShutdownChips() {
   for (BirchChipButtonBase* chip : chips_) {
     chip->Shutdown();
+  }
+
+  for (auto& chip_to_attach : chips_to_attach_) {
+    chip_to_attach->Shutdown();
   }
 }
 
@@ -282,11 +303,7 @@ void BirchBarView::SetupChips(const std::vector<raw_ptr<BirchItem>>& items) {
   Clear();
 
   for (auto item : items) {
-    chips_.emplace_back(
-        primary_row_->AddChildView(views::Builder<BirchChipButton>()
-                                       .Init(item)
-                                       .SetPreferredSize(chip_size_)
-                                       .Build()));
+    chips_.emplace_back(primary_row_->AddChildView(CreateChipForItem(item)));
   }
 
   RelayoutReason reason = RelayoutReason::kAddRemoveChip;
@@ -298,13 +315,13 @@ void BirchBarView::SetupChips(const std::vector<raw_ptr<BirchItem>>& items) {
     case State::kLoadingByUser:
       reason = RelayoutReason::kSetupByUser;
       break;
-    // When loading in pine or reloading, directly perform fading in animation
-    // since the bar was filled by chip loaders.
-    case State::kLoadingInPine:
+    // When loading for informed restore or reloading, directly perform fading
+    // in animation since the bar was filled by chip loaders.
+    case State::kLoadingForInformedRestore:
     case State::kReloading:
       break;
     case State::kShuttingDown:
-      NOTREACHED_NORETURN() << "Birch bar cannot be setup while shutting down.";
+      NOTREACHED() << "Birch bar cannot be setup while shutting down.";
   }
 
   // Change relayout reason to setup if new chips are filled in the empty bar.
@@ -316,56 +333,59 @@ void BirchBarView::SetupChips(const std::vector<raw_ptr<BirchItem>>& items) {
 
 void BirchBarView::AddChip(BirchItem* item) {
   if (static_cast<int>(chips_.size()) == kMaxChipsNum) {
-    NOTREACHED_IN_MIGRATION()
-        << "The number of birch chips reaches the limit of 4";
-    return;
+    NOTREACHED() << "The number of birch chips reaches the limit of 4";
   }
 
-  auto chip = views::Builder<BirchChipButton>()
-                  .Init(item)
-                  .SetPreferredSize(chip_size_)
-                  .Build();
-
-  // Attach the chip to the secondary row if it is not empty, otherwise, to the
-  // primary row.
-  chips_.emplace_back((secondary_row_ ? secondary_row_ : primary_row_)
-                          ->AddChildView(std::move(chip)));
-  Relayout(RelayoutReason::kAddRemoveChip);
+  AttachChip(CreateChipForItem(item));
 }
 
-void BirchBarView::RemoveChip(BirchItem* item) {
-  auto iter = std::find_if(
-      chips_.begin(), chips_.end(),
-      [item](BirchChipButtonBase* chip) { return chip->GetItem() == item; });
+void BirchBarView::RemoveChip(BirchItem* removed_item,
+                              BirchItem* attached_item) {
+  auto iter = std::find_if(chips_.begin(), chips_.end(),
+                           [removed_item](BirchChipButtonBase* chip) {
+                             return chip->GetItem() == removed_item;
+                           });
 
   if (iter == chips_.end()) {
     return;
   }
 
-  BirchChipButtonBase* chip = *iter;
+  BirchChipButtonBase* removing_chip = *iter;
   chips_.erase(iter);
 
-  // Remove the chip from its owner.
-  if (primary_row_->Contains(chip)) {
-    primary_row_->RemoveChildViewT(chip);
-  } else {
-    CHECK(secondary_row_);
-    secondary_row_->RemoveChildViewT(chip);
+  // Shut down the chip to avoid dangling ptr.
+  removing_chip->Shutdown();
+
+  // The removing chip should stop processing events and not be focusable.
+  removing_chip->SetCanProcessEventsWithinSubtree(false);
+  removing_chip->SetFocusBehavior(views::View::FocusBehavior::NEVER);
+
+  // Create a new chip for the attached item.
+  if (attached_item) {
+    chips_to_attach_.push_back(CreateChipForItem(attached_item));
   }
 
-  Relayout(RelayoutReason::kAddRemoveChip);
+  // Apply fading-out animation to the chip being removed.
+  views::AnimationBuilder fade_out_animation;
+  fade_out_animation
+      .SetPreemptionStrategy(
+          ui::LayerAnimator::IMMEDIATELY_ANIMATE_TO_NEW_TARGET)
+      .OnEnded(base::BindOnce(&BirchBarView::OnRemovingChipFadeOutEnded,
+                              base::Unretained(this), removing_chip))
+      .Once()
+      .SetDuration(kFadeOutChipDurationOnRemoving)
+      .SetOpacity(removing_chip->layer(), 0.0f);
 }
 
-void BirchBarView::Clear() {
-  chips_.clear();
-  primary_row_->RemoveAllChildViews();
-  if (secondary_row_) {
-    auto secondary_row = RemoveChildViewT(secondary_row_);
-    secondary_row_ = nullptr;
+void BirchBarView::UpdateChip(BirchItem* item) {
+  auto iter = std::find_if(
+      chips_.begin(), chips_.end(),
+      [item](BirchChipButtonBase* chip) { return chip->GetItem() == item; });
+  if (iter == chips_.end()) {
+    return;
   }
 
-  Relayout(state_ == State::kShuttingDown ? RelayoutReason::kClearOnDisabled
-                                          : RelayoutReason::kAddRemoveChip);
+  (*iter)->Init(item);
 }
 
 int BirchBarView::GetMaximumHeight() const {
@@ -374,9 +394,87 @@ int BirchBarView::GetMaximumHeight() const {
              : 2 * kChipHeight + kChipSpacing;
 }
 
-gfx::Size BirchBarView::GetChipSize() const {
+bool BirchBarView::IsAnimating() {
+  // Check if there are any layer animations in queue.
+  if (layer()->GetAnimator()->is_animating()) {
+    return true;
+  }
+
+  for (const auto& chip : chips_) {
+    if (chip->layer()->GetAnimator()->is_animating()) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+std::unique_ptr<BirchChipButtonBase> BirchBarView::CreateChipForItem(
+    BirchItem* item) {
+  CHECK(!!item);
+  std::unique_ptr<BirchChipButtonBase> chip =
+      item->GetType() == BirchItemType::kCoral
+          ? std::make_unique<CoralChipButton>()
+          : std::make_unique<BirchChipButton>();
+
+  // Setting preferred size ahead since the preferred size may be needed during
+  // initialization.
+  chip->SetPreferredSize(chip_size_);
+  chip->Init(item);
+  return chip;
+}
+
+void BirchBarView::AttachChip(std::unique_ptr<BirchChipButtonBase> chip) {
+  auto* chip_layer = chip->layer();
+  chip_layer->SetOpacity(0.0f);
+
+  // Attach the chip to the secondary row if it is not empty, otherwise, to the
+  // primary row.
+  const bool attach_to_primary = !secondary_row_;
+  chips_.emplace_back((attach_to_primary ? primary_row_ : secondary_row_)
+                          ->AddChildView(std::move(chip)));
+  Relayout(RelayoutReason::kAddRemoveChip);
+
+  if (attach_to_primary) {
+    // Perform sliding-in and fading-in animation if the chip was originally
+    // attached to the primary row.
+    chip_layer->SetTransform(
+        gfx::Transform::MakeTranslation(kChipSpacing + chip_size_.width(), 0));
+    views::AnimationBuilder sliding_fading_in_animation;
+    sliding_fading_in_animation
+        .SetPreemptionStrategy(
+            ui::LayerAnimator::IMMEDIATELY_ANIMATE_TO_NEW_TARGET)
+        .Once()
+        .At(kSlidingChipDelayOnAttachment)
+        .SetDuration(kSlidingChipDurationOnAttachment)
+        .SetTransform(chip_layer, gfx::Transform(),
+                      gfx::Tween::ACCEL_LIN_DECEL_100_3)
+        .At(kFadeInChipDelayOnAttachment)
+        .SetDuration(kFadeInChipDurationOnAttachment)
+        .SetOpacity(chip_layer, 1.0f);
+  } else {
+    // TODO(zxdan): implement the animation when the motion spec is ready.
+    chip_layer->SetOpacity(1.0f);
+  }
+}
+
+void BirchBarView::Clear() {
+  chips_.clear();
+  primary_row_->RemoveAllChildViews();
+  if (secondary_row_) {
+    RemoveChildViewT(std::exchange(secondary_row_, nullptr));
+  }
+
+  chips_to_attach_.clear();
+
+  if (state_ == State::kShuttingDown) {
+    Relayout(RelayoutReason::kClearOnDisabled);
+  }
+}
+
+gfx::Size BirchBarView::GetChipSize(aura::Window* root_window) const {
   const gfx::Rect display_bounds = display::Screen::GetScreen()
-                                       ->GetDisplayNearestWindow(root_window_)
+                                       ->GetDisplayNearestWindow(root_window)
                                        .bounds();
   // Always use the longest side of the display to calculate the chip width.
   const int max_display_dim =
@@ -390,7 +488,7 @@ gfx::Size BirchBarView::GetChipSize() const {
   // Otherwise, the bar tends to fill the longest side of the display with 4
   // chips.
   const ShelfAlignment shelf_alignment =
-      Shelf::ForWindow(root_window_)->alignment();
+      Shelf::ForWindow(root_window)->alignment();
 
   const int left_inset = shelf_alignment == ShelfAlignment::kLeft
                              ? kContainerHorizontalPaddingWithShelf
@@ -448,8 +546,7 @@ void BirchBarView::Relayout(RelayoutReason reason) {
 
   // Remove the secondary row if it is empty.
   if (chips_in_secondary.empty()) {
-    auto secondary_row = RemoveChildViewT(secondary_row_);
-    secondary_row_ = nullptr;
+    RemoveChildViewT(std::exchange(secondary_row_, nullptr));
   }
 }
 
@@ -491,6 +588,9 @@ void BirchBarView::AddReloadingChips() {
   // Clear the old chips and add the loader chips.
   Clear();
 
+  // The bar may just fade out.
+  layer()->SetOpacity(1.0f);
+
   views::AnimationBuilder reloading_animation;
 
   for (size_t i = 0; i < chip_num; i++) {
@@ -518,8 +618,8 @@ void BirchBarView::FadeInChips() {
   base::TimeDelta animation_delay;
   base::TimeDelta animation_duration;
   switch (state_) {
-    case State::kLoadingInPine:
-      animation_duration = kFadeInDurationAfterLoadingInPine;
+    case State::kLoadingForInformedRestore:
+      animation_duration = kFadeInDurationAfterLoadingForInformedRestore;
       break;
     case State::kLoadingByUser:
       animation_delay = kFadeInDelayAfterLoadingByUser;
@@ -534,7 +634,7 @@ void BirchBarView::FadeInChips() {
       animation_duration = kFadeInDurationAfterReloading;
       break;
     case State::kShuttingDown:
-      NOTREACHED_NORETURN() << "Birch bar cannot fade in while shutting down.";
+      NOTREACHED() << "Birch bar cannot fade in while shutting down.";
   }
 
   views::AnimationBuilder animation_builder;
@@ -563,12 +663,11 @@ void BirchBarView::FadeOutChips() {
       animation_callback =
           base::BindOnce(&BirchBarView::Clear, base::Unretained(this));
       break;
-    case State::kLoadingInPine:
+    case State::kLoadingForInformedRestore:
     case State::kLoadingByUser:
     case State::kLoading:
     case State::kNormal:
-      NOTREACHED_NORETURN()
-          << "Birch bar only fades out on shutting down and reloading";
+      NOTREACHED() << "Birch bar only fades out on shutting down and reloading";
   }
 
   if (!chips_.size()) {
@@ -594,7 +693,92 @@ void BirchBarView::OnFadeOutAborted() {
 }
 
 void BirchBarView::OnSetupEnded() {
+  if (state_ == State::kLoading ||
+      state_ == State::kLoadingForInformedRestore) {
+    // Loading is finished, so possibly show a privacy nudge.
+    MaybeShowPrivacyNudge();
+  }
   SetState(State::kNormal);
+}
+
+void BirchBarView::OnRemovingChipFadeOutEnded(
+    BirchChipButtonBase* removing_chip) {
+  const LayoutType previous_layout_type =
+      secondary_row_ ? LayoutType::kTwoByTwo : LayoutType::kOneByFour;
+
+  switch (previous_layout_type) {
+    case LayoutType::kOneByFour:
+      RemoveChipFromOneRowBar(removing_chip);
+      break;
+    case LayoutType::kTwoByTwo:
+      RemoveChipFromTwoRowsBar(removing_chip);
+      break;
+  }
+}
+
+void BirchBarView::RemoveChipFromOneRowBar(BirchChipButtonBase* removing_chip) {
+  // Cache the old chips' bounds for animation.
+  base::flat_map<BirchChipButtonBase*, gfx::Rect> old_chip_bounds;
+  for (const auto& chip : chips_) {
+    old_chip_bounds[chip] = chip->GetBoundsInScreen();
+  }
+
+  // Remove the chip from its owner.
+  removing_chip->parent()->RemoveChildViewT(removing_chip);
+
+  if (!chips_to_attach_.empty()) {
+    AttachChip(std::move(chips_to_attach_.front()));
+    chips_to_attach_.pop_front();
+    // Attaching a chip after removing will not change the bar widget bounds
+    // such that chips bounds will not get updated immediately. However, to
+    // perform sliding animation, we need to get the chips target bounds to
+    // calculate the transform. Here, we manually set bounds to the bar view to
+    // trigger layout.
+    SizeToPreferredSize();
+  } else {
+    Relayout(RelayoutReason::kAddRemoveChip);
+  }
+
+  // Apply sliding animations to the remaining chips.
+  for (auto& chip_bounds : old_chip_bounds) {
+    auto* chip = chip_bounds.first;
+    chip->layer()->SetTransform(gfx::TransformBetweenRects(
+        gfx::RectF(chip->GetBoundsInScreen()), gfx::RectF(chip_bounds.second)));
+  }
+
+  views::AnimationBuilder sliding_animations;
+  sliding_animations.SetPreemptionStrategy(
+      ui::LayerAnimator::IMMEDIATELY_ANIMATE_TO_NEW_TARGET);
+
+  for (auto& chip : chips_) {
+    sliding_animations.Once()
+        .At(kSlidingChipsDelayOnRemoving)
+        .SetDuration(kSlidingChipsDurationOnRemoving)
+        .SetTransform(chip->layer(), gfx::Transform(),
+                      gfx::Tween::Type::ACCEL_LIN_DECEL_100_3);
+  }
+}
+
+void BirchBarView::RemoveChipFromTwoRowsBar(
+    BirchChipButtonBase* removing_chip) {
+  // TODO(zxdan): implement the animation when the motion spec is ready.
+  removing_chip->parent()->RemoveChildViewT(removing_chip);
+  if (!chips_to_attach_.empty()) {
+    AttachChip(std::move(chips_to_attach_.front()));
+    chips_to_attach_.erase(chips_to_attach_.begin());
+  } else {
+    Relayout(RelayoutReason::kAddRemoveChip);
+  }
+}
+
+void BirchBarView::MaybeShowPrivacyNudge() {
+  // Don't show nudge when exiting Overview.
+  if (chips_.empty() || !OverviewController::Get()->InOverviewSession()) {
+    return;
+  }
+  // The nudge is anchored on the first suggestion chip.
+  views::View* anchor_view = chips_[0];
+  Shell::Get()->birch_privacy_nudge_controller()->MaybeShowNudge(anchor_view);
 }
 
 BEGIN_METADATA(BirchBarView)

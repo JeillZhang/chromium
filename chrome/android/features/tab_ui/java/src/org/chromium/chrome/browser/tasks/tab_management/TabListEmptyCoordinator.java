@@ -10,6 +10,12 @@ import android.view.ViewGroup;
 import android.widget.ImageView;
 import android.widget.TextView;
 
+import androidx.annotation.DrawableRes;
+import androidx.annotation.Nullable;
+import androidx.annotation.StringRes;
+
+import org.chromium.base.Callback;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.tab_ui.R;
 import org.chromium.ui.modelutil.ListObservable;
 import org.chromium.ui.modelutil.ListObservable.ListObserver;
@@ -20,6 +26,7 @@ import org.chromium.ui.modelutil.ListObservable.ListObserver;
  */
 // @TODO(crbug.com/40910476) Add instrumentation test for TabListEmptyCoordinator class.
 class TabListEmptyCoordinator {
+    public final long ILLUSTRATION_ANIMATION_DURATION_MS = 700L;
     private ViewGroup mRootView;
     private View mEmptyView;
     private TextView mEmptyStateHeading;
@@ -28,12 +35,16 @@ class TabListEmptyCoordinator {
     private Context mContext;
     private TabListModel mModel;
     private ListObserver<Void> mListObserver;
+    private Callback<Runnable> mRunOnItemAnimatorFinished;
     private boolean mIsTabSwitcherShowing;
     private boolean mIsListObserverAttached;
+    private @Nullable TabListEmptyIllustrationAnimationManager mIllustrationAnimationManager;
 
-    public TabListEmptyCoordinator(ViewGroup rootView, TabListModel model) {
+    public TabListEmptyCoordinator(
+            ViewGroup rootView, TabListModel model, Callback<Runnable> runOnItemAnimatorFinished) {
         mRootView = rootView;
         mContext = rootView.getContext();
+        mRunOnItemAnimatorFinished = runOnItemAnimatorFinished;
 
         // Observe TabListModel to determine when to add / remove empty state view.
         mModel = model;
@@ -52,7 +63,9 @@ class TabListEmptyCoordinator {
     }
 
     public void initializeEmptyStateView(
-            int imageResId, int emptyHeadingStringResId, int emptySubheadingStringResId) {
+            @DrawableRes int imageResId,
+            @StringRes int emptyHeadingStringResId,
+            @StringRes int emptySubheadingStringResId) {
         if (mEmptyView != null) {
             return;
         }
@@ -68,6 +81,19 @@ class TabListEmptyCoordinator {
         // Set empty state properties.
         setEmptyStateImageRes(imageResId);
         setEmptyStateViewText(emptyHeadingStringResId, emptySubheadingStringResId);
+
+        mIllustrationAnimationManager = tryGetAnimationManager(imageResId);
+        transformIllustrationIfPresent();
+    }
+
+    @Nullable
+    private TabListEmptyIllustrationAnimationManager tryGetAnimationManager(
+            @DrawableRes int imageResId) {
+        return isDrawableForPhones(imageResId)
+                        && ChromeFeatureList.sEmptyTabListAnimationKillSwitch.isEnabled()
+                ? new PhoneTabListEmptyIllustrationAnimationManager(
+                        mImageView, mEmptyStateHeading, mEmptyStateSubheading)
+                : null;
     }
 
     private void setEmptyStateViewText(
@@ -80,16 +106,38 @@ class TabListEmptyCoordinator {
         mImageView.setImageResource(imageResId);
     }
 
-    private void updateEmptyView() {
-        boolean isInEmptyState = mModel.size() == 0 && mIsTabSwitcherShowing;
-        boolean isEmptyViewAttached = mEmptyView != null && mEmptyView.getParent() != null;
+    private boolean isEmptyViewAttached() {
+        return mEmptyView != null && mEmptyView.getParent() != null;
+    }
 
-        if (isEmptyViewAttached) {
-            if (isInEmptyState) {
-                setEmptyViewVisibility(View.VISIBLE);
+    private boolean isInEmptyState() {
+        return mModel.size() == 0 && mIsTabSwitcherShowing;
+    }
+
+    private void updateEmptyView() {
+        if (isEmptyViewAttached()) {
+            if (isInEmptyState()) {
+                mRunOnItemAnimatorFinished.onResult(
+                        () -> {
+                            // Re-check requirements since this is now async.
+                            if (isEmptyViewAttached() && isInEmptyState()) {
+                                if (mIllustrationAnimationManager != null) {
+                                    mIllustrationAnimationManager.animate(
+                                            ILLUSTRATION_ANIMATION_DURATION_MS);
+                                }
+                                setEmptyViewVisibility(View.VISIBLE);
+                            }
+                        });
             } else {
                 setEmptyViewVisibility(View.GONE);
+                transformIllustrationIfPresent();
             }
+        }
+    }
+
+    private void transformIllustrationIfPresent() {
+        if (mIllustrationAnimationManager != null) {
+            mIllustrationAnimationManager.initialTransformation();
         }
     }
 
@@ -138,5 +186,9 @@ class TabListEmptyCoordinator {
 
     private boolean getIsListObserverAttached() {
         return mIsListObserverAttached;
+    }
+
+    private boolean isDrawableForPhones(@DrawableRes int drawableResId) {
+        return drawableResId == R.drawable.phone_tab_switcher_empty_state_illustration;
     }
 }

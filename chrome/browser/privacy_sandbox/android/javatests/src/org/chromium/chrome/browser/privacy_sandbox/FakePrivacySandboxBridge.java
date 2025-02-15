@@ -28,7 +28,10 @@ public class FakePrivacySandboxBridge implements PrivacySandboxBridge.Natives {
     private final Set<String> mBlockedFledgeSites = new LinkedHashSet<>();
     private @PromptType int mPromptType = PromptType.NONE;
     private Integer mLastPromptAction;
+    private Integer mLastSurfaceType;
     private boolean mLastTopicsToggleValue;
+    private final String mGoogleEmbeddedPrivacyPolicyURL =
+            "https://policies.google.com/privacy/embedded";
 
     public void setCurrentTopTopics(String... topics) {
         mCurrentTopTopics.clear();
@@ -88,25 +91,25 @@ public class FakePrivacySandboxBridge implements PrivacySandboxBridge.Natives {
     }
 
     @Override
-    public boolean isFirstPartySetsDataAccessEnabled(Profile profile) {
+    public boolean isRelatedWebsiteSetsDataAccessEnabled(Profile profile) {
         return false;
     }
 
     @Override
-    public boolean isFirstPartySetsDataAccessManaged(Profile profile) {
+    public boolean isRelatedWebsiteSetsDataAccessManaged(Profile profile) {
         return false;
     }
 
     @Override
-    public boolean isPartOfManagedFirstPartySet(Profile profile, String origin) {
+    public boolean isPartOfManagedRelatedWebsiteSet(Profile profile, String origin) {
         return false;
     }
 
     @Override
-    public void setFirstPartySetsDataAccessEnabled(Profile profile, boolean enabled) {}
+    public void setRelatedWebsiteSetsDataAccessEnabled(Profile profile, boolean enabled) {}
 
     @Override
-    public String getFirstPartySetOwner(Profile profile, String memberOrigin) {
+    public String getRelatedWebsiteSetOwner(Profile profile, String memberOrigin) {
         return null;
     }
 
@@ -188,22 +191,28 @@ public class FakePrivacySandboxBridge implements PrivacySandboxBridge.Natives {
         mPromptType = type;
     }
 
-    public int getRequiredPromptType() {
+    public int getRequiredPromptType(@SurfaceType int surfaceType) {
         return mPromptType;
     }
 
     @Override
-    public int getRequiredPromptType(Profile profile) {
-        return getRequiredPromptType();
+    public int getRequiredPromptType(Profile profile, @SurfaceType int surfaceType) {
+        return getRequiredPromptType(surfaceType);
     }
 
     @Override
-    public void promptActionOccurred(Profile profile, @PromptAction int action) {
+    public void promptActionOccurred(
+            Profile profile, @PromptAction int action, @SurfaceType int surfaceType) {
         mLastPromptAction = action;
+        mLastSurfaceType = surfaceType;
     }
 
     public Integer getLastPromptAction() {
         return mLastPromptAction;
+    }
+
+    public Integer getLastSurfaceType() {
+        return mLastSurfaceType;
     }
 
     public void resetLastPromptAction() {
@@ -221,4 +230,25 @@ public class FakePrivacySandboxBridge implements PrivacySandboxBridge.Natives {
 
     @Override
     public void setAllPrivacySandboxAllowedForTesting(Profile profile) {}
+
+    @Override
+    public void recordActivityType(Profile profile, int activityType) {}
+
+    @Override
+    public boolean privacySandboxPrivacyGuideShouldShowAdTopicsCard(Profile profile) {
+        return false;
+    }
+
+    @Override
+    public boolean shouldUsePrivacyPolicyChinaDomain(Profile profile) {
+        return false;
+    }
+
+    @Override
+    public String getEmbeddedPrivacyPolicyURL(
+            @PrivacyPolicyDomainType int domainType,
+            @PrivacyPolicyColorScheme int colorScheme,
+            String locale) {
+        return mGoogleEmbeddedPrivacyPolicyURL;
+    }
 }

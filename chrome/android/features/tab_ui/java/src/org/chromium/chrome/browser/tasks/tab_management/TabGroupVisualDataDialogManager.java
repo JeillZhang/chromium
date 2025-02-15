@@ -9,6 +9,7 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.WindowManager;
 import android.widget.LinearLayout;
+import android.widget.TextView;
 
 import androidx.activity.ComponentDialog;
 import androidx.annotation.IntDef;
@@ -17,9 +18,21 @@ import androidx.annotation.StringRes;
 import androidx.appcompat.widget.AppCompatEditText;
 import androidx.appcompat.widget.DialogTitle;
 
-import org.chromium.chrome.browser.tasks.tab_groups.TabGroupModelFilter;
+import org.chromium.chrome.browser.feature_engagement.TrackerFactory;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
+import org.chromium.chrome.browser.profiles.Profile;
+import org.chromium.chrome.browser.sync.SyncServiceFactory;
+import org.chromium.chrome.browser.tab_group_sync.TabGroupSyncFeatures;
+import org.chromium.chrome.browser.tabmodel.TabGroupColorUtils;
+import org.chromium.chrome.browser.tabmodel.TabGroupModelFilter;
+import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.chrome.browser.tasks.tab_management.ColorPickerCoordinator.ColorPickerLayoutType;
 import org.chromium.chrome.tab_ui.R;
+import org.chromium.components.feature_engagement.EventConstants;
+import org.chromium.components.feature_engagement.FeatureConstants;
+import org.chromium.components.feature_engagement.Tracker;
+import org.chromium.components.sync.DataType;
+import org.chromium.components.sync.SyncService;
 import org.chromium.components.tab_groups.TabGroupColorId;
 import org.chromium.ui.modaldialog.ModalDialogManager;
 import org.chromium.ui.modaldialog.ModalDialogManager.ModalDialogManagerObserver;
@@ -103,13 +116,15 @@ public class TabGroupVisualDataDialogManager {
 
         DialogTitle dialogTitle = mCustomView.findViewById(R.id.visual_data_dialog_title);
         dialogTitle.setText(mDialogTitleRes);
+        // Set the description text to be displayed on the dialog underneath the title.
+        setDescriptionText(filter);
 
         // Create the default group title to be displayed in the edit text box.
         createDefaultGroupTitle(rootId, filter);
         AppCompatEditText editTextView = mCustomView.findViewById(R.id.title_input_text);
         editTextView.setText(mDefaultGroupTitle);
 
-        List<Integer> colors = ColorPickerUtils.getTabGroupColorIdList();
+        List<Integer> colors = TabGroupColorUtils.getTabGroupColorIdList();
         // TODO(b/330597857): Allow a dynamic incognito setting for the color picker.
         // Force a false incognito value for the color picker as this modal dialog does not
         // support incognito color themes and should just follow the system theme.
@@ -117,12 +132,15 @@ public class TabGroupVisualDataDialogManager {
                 new ColorPickerCoordinator(
                         mContext,
                         colors,
-                        R.layout.tab_group_color_picker_container,
+                        LayoutInflater.from(mContext)
+                                .inflate(
+                                        R.layout.tab_group_color_picker_container,
+                                        /* root= */ null),
                         ColorPickerType.TAB_GROUP,
                         /* isIncognito= */ false,
                         ColorPickerLayoutType.DYNAMIC,
                         null);
-        mDefaultColorId = filter.getOrCreateTabGroupColor(rootId);
+        mDefaultColorId = filter.getTabGroupColorWithFallback(rootId);
         mColorPickerCoordinator.setSelectedColorItem(mDefaultColorId);
 
         LinearLayout linearLayout = mCustomView.findViewById(R.id.visual_data_dialog_layout);
@@ -206,6 +224,40 @@ public class TabGroupVisualDataDialogManager {
         }
     }
 
+    private void setDescriptionText(TabGroupModelFilter filter) {
+        if (mDialogType == DialogType.TAB_GROUP_CREATION) {
+            TabModel tabModel = filter.getTabModel();
+            Profile profile = tabModel.getProfile();
+            TextView descriptionView =
+                    mCustomView.findViewById(R.id.visual_data_dialog_description);
+            Tracker tracker = TrackerFactory.getTrackerForProfile(profile);
+            // Only set text if the current model is not incognito, and both the TabGroupSync and
+            // TabGroupPane flags are enabled.
+            if (!tabModel.isIncognitoBranded()
+                    && TabGroupSyncFeatures.isTabGroupSyncEnabled(profile)
+                    && ChromeFeatureList.sTabGroupPaneAndroid.isEnabled()
+                    && tracker.shouldTriggerHelpUi(
+                            FeatureConstants.TAB_GROUP_CREATION_DIALOG_SYNC_TEXT_FEATURE)) {
+                descriptionView.setVisibility(View.VISIBLE);
+                SyncService syncService = SyncServiceFactory.getForProfile(profile);
+                boolean syncingTabGroups =
+                        syncService.getActiveDataTypes().contains(DataType.SAVED_TAB_GROUP);
+
+                // Set description text based on if sync is enabled.
+                final @StringRes int descriptionId =
+                        syncingTabGroups
+                                ? R.string.tab_group_creation_dialog_description_text_sync_on
+                                : R.string.tab_group_creation_dialog_description_text_sync_off;
+                String descriptionText = mContext.getString(descriptionId);
+                descriptionView.setText(descriptionText);
+
+                tracker.notifyEvent(EventConstants.TAB_GROUP_CREATION_DIALOG_SHOWN);
+            } else {
+                descriptionView.setVisibility(View.GONE);
+            }
+        }
+    }
+
     private void setModel(ModalDialogProperties.Controller dialogController) {
         PropertyModel.Builder builder =
                 new PropertyModel.Builder(ModalDialogProperties.ALL_KEYS)
@@ -216,20 +268,17 @@ public class TabGroupVisualDataDialogManager {
         if (mDialogType == DialogType.TAB_GROUP_CREATION) {
             builder.with(
                             ModalDialogProperties.POSITIVE_BUTTON_TEXT,
-                            mContext.getResources()
-                                    .getString(R.string.tab_group_creation_positive_button_text))
+                            mContext.getString(R.string.tab_group_creation_positive_button_text))
                     .with(
                             ModalDialogProperties.BUTTON_STYLES,
                             ModalDialogProperties.ButtonStyles.PRIMARY_FILLED_NO_NEGATIVE);
         } else if (mDialogType == DialogType.TAB_GROUP_EDIT) {
             builder.with(
                             ModalDialogProperties.POSITIVE_BUTTON_TEXT,
-                            mContext.getResources()
-                                    .getString(R.string.tab_group_rename_positive_button_text))
+                            mContext.getString(R.string.tab_group_rename_positive_button_text))
                     .with(
                             ModalDialogProperties.NEGATIVE_BUTTON_TEXT,
-                            mContext.getResources()
-                                    .getString(R.string.tab_group_rename_negative_button_text))
+                            mContext.getString(R.string.tab_group_rename_negative_button_text))
                     .with(
                             ModalDialogProperties.BUTTON_STYLES,
                             ModalDialogProperties.ButtonStyles.PRIMARY_FILLED_NEGATIVE_OUTLINE);

@@ -10,14 +10,13 @@ import 'chrome://resources/cr_elements/cr_toast/cr_toast_manager.js';
 import 'chrome://resources/cr_elements/cr_splitter/cr_splitter.js';
 import './folder_node.js';
 import './list.js';
-import './router.js';
 import './shared_vars.css.js';
-import './strings.m.js';
+import '/strings.m.js';
 import './command_manager.js';
 import './toolbar.js';
 
 import type {CrSplitterElement} from 'chrome://resources/cr_elements/cr_splitter/cr_splitter.js';
-import type {FindShortcutMixinInterface} from 'chrome://resources/cr_elements/find_shortcut_mixin.js';
+import type {FindShortcutListener} from 'chrome://resources/cr_elements/find_shortcut_manager.js';
 import {FindShortcutMixin} from 'chrome://resources/cr_elements/find_shortcut_mixin.js';
 import {EventTracker} from 'chrome://resources/js/event_tracker.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
@@ -32,6 +31,7 @@ import {LOCAL_STORAGE_FOLDER_STATE_KEY, LOCAL_STORAGE_TREE_WIDTH_KEY, ROOT_NODE_
 import {DndManager} from './dnd_manager.js';
 import type {MouseFocusMixinInterface} from './mouse_focus_behavior.js';
 import {MouseFocusMixin} from './mouse_focus_behavior.js';
+import {BookmarksRouter} from './router.js';
 import {Store} from './store.js';
 import type {StoreClientMixinInterface} from './store_client_mixin.js';
 import {StoreClientMixin} from './store_client_mixin.js';
@@ -45,14 +45,14 @@ const BookmarksAppElementBase =
         StoreClientMixin(MouseFocusMixin(FindShortcutMixin(PolymerElement)))) as
     {
       new (): PolymerElement & StoreClientMixinInterface &
-          FindShortcutMixinInterface & IronScrollTargetBehavior &
+          FindShortcutListener & IronScrollTargetBehavior &
           MouseFocusMixinInterface,
     };
 
 export interface BookmarksAppElement {
   $: {
     splitter: CrSplitterElement,
-    sidebar: HTMLDivElement,
+    sidebar: HTMLElement,
   };
 }
 
@@ -89,6 +89,7 @@ export class BookmarksAppElement extends BookmarksAppElementBase {
   private eventTracker_: EventTracker = new EventTracker();
   private dndManager_: DndManager|null = null;
   private folderOpenState_: FolderOpenState;
+  private router_: BookmarksRouter = new BookmarksRouter();
   private searchTerm_: string;
   private sidebarWidth_: string;
   private toolbarShadow_: boolean;
@@ -110,6 +111,8 @@ export class BookmarksAppElement extends BookmarksAppElementBase {
 
     document.documentElement.classList.remove('loading');
 
+    this.router_.initialize();
+
     this.watch('searchTerm_', function(state: BookmarksPageState) {
       return state.search.term;
     });
@@ -119,10 +122,10 @@ export class BookmarksAppElement extends BookmarksAppElementBase {
     });
 
     BookmarksApiProxyImpl.getInstance().getTree().then((results) => {
-      const nodeMap = normalizeNodes(results[0]!);
+      const nodeMap = normalizeNodes(results[0]);
       const initialState = createEmptyState();
       initialState.nodes = nodeMap;
-      initialState.selectedFolder = nodeMap[ROOT_NODE_ID]!.children![0]!;
+      initialState.selectedFolder = nodeMap[ROOT_NODE_ID].children![0]!;
       const folderStateString =
           window.localStorage[LOCAL_STORAGE_FOLDER_STATE_KEY];
       initialState.folderOpenState = folderStateString ?
@@ -150,6 +153,7 @@ export class BookmarksAppElement extends BookmarksAppElementBase {
   override disconnectedCallback() {
     super.disconnectedCallback();
 
+    this.router_.teardown();
     this.eventTracker_.remove(window, 'resize');
     this.dndManager_!.destroy();
     destroyApiListener();

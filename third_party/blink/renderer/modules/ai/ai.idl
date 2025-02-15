@@ -2,59 +2,44 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// TODO(crbug.com/343126579): Add link to spec/explainer.
-enum AIModelAvailability {
-  "readily",
-  "after-download",
-  "no"
-};
+// https://github.com/webmachinelearning/prompt-api
 
 [
-  Exposed=Window,
-  RuntimeEnabled=ModelExecutionAPI
+  Exposed=(Window,Worker),
+  SecureContext,
+  RuntimeEnabled=BuiltInAIAPI
 ]
 interface AI {
   [
     Measure,
-    CallWith=ScriptState,
-    RaisesException
+    RuntimeEnabled=AIPromptAPI
   ]
-  Promise<AIModelAvailability> canCreateTextSession();
+  readonly attribute AILanguageModelFactory languageModel;
   [
     Measure,
-    ImplementedAs=canCreateTextSession,
-    CallWith=ScriptState,
-    RaisesException
+    RuntimeEnabled=AISummarizationAPI
   ]
-  Promise<AIModelAvailability> canCreateGenericSession();
+  readonly attribute AISummarizerFactory summarizer;
+
   [
     Measure,
-    CallWith=ScriptState,
-    RaisesException
+    RuntimeEnabled=AIWriterAPI
   ]
-  Promise<AITextSession> createTextSession(
-    optional AITextSessionOptions options = {}
-  );
+  readonly attribute AIWriterFactory writer;
+
   [
     Measure,
-    ImplementedAs=createTextSession,
-    CallWith=ScriptState,
-    RaisesException
+    RuntimeEnabled=AIRewriterAPI
   ]
-  Promise<AITextSession> createGenericSession(
-    optional AITextSessionOptions options = {}
-  );
+  readonly attribute AIRewriterFactory rewriter;
+
   [
-    Measure,
-    CallWith=ScriptState,
-    RaisesException
+    RuntimeEnabled=LanguageDetectionAPI
   ]
-  Promise<AITextSessionOptions> defaultTextSessionOptions();
+  readonly attribute AILanguageDetectorFactory languageDetector;
+
   [
-    Measure,
-    ImplementedAs=defaultTextSessionOptions,
-    CallWith=ScriptState,
-    RaisesException
+    RuntimeEnabled=TranslationAPI
   ]
-  Promise<AITextSessionOptions> defaultGenericSessionOptions();
+  readonly attribute AITranslatorFactory translator;
 };

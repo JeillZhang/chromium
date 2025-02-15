@@ -13,10 +13,14 @@ import org.jni_zero.NativeMethods;
 import org.chromium.base.ResettersForTesting;
 import org.chromium.base.task.PostTask;
 import org.chromium.base.task.TaskTraits;
+import org.chromium.components.data_sharing.DataSharingSDKDelegateProtoResponseCallback.Status;
+import org.chromium.components.data_sharing.protocol.AddAccessTokenParams;
+import org.chromium.components.data_sharing.protocol.AddAccessTokenResult;
 import org.chromium.components.data_sharing.protocol.AddMemberParams;
 import org.chromium.components.data_sharing.protocol.CreateGroupParams;
 import org.chromium.components.data_sharing.protocol.CreateGroupResult;
 import org.chromium.components.data_sharing.protocol.DeleteGroupParams;
+import org.chromium.components.data_sharing.protocol.LeaveGroupParams;
 import org.chromium.components.data_sharing.protocol.LookupGaiaIdByEmailParams;
 import org.chromium.components.data_sharing.protocol.LookupGaiaIdByEmailResult;
 import org.chromium.components.data_sharing.protocol.ReadGroupsParams;
@@ -28,21 +32,23 @@ import org.chromium.components.data_sharing.protocol.RemoveMemberParams;
 public class DataSharingSDKDelegateBridge {
 
     private DataSharingSDKDelegate mSDKDelegateImpl;
-    private long mNativePtr;
 
     @CalledByNative
-    private static DataSharingSDKDelegateBridge create(long nativePtr) {
-        return new DataSharingSDKDelegateBridge(nativePtr);
+    private static DataSharingSDKDelegateBridge create(
+            long unused_nativePtr, DataSharingSDKDelegate delegate) {
+        return new DataSharingSDKDelegateBridge(delegate);
     }
 
-    private DataSharingSDKDelegateBridge(long nativePtr) {
-        mNativePtr = nativePtr;
-        mSDKDelegateImpl = new DataSharingSDKDelegateImpl();
+    private DataSharingSDKDelegateBridge(DataSharingSDKDelegate delegate) {
+        mSDKDelegateImpl = delegate;
     }
 
     @CalledByNative
-    private void clearNativePtr() {
-        mNativePtr = 0;
+    private void clearNativePtr() {}
+
+    @CalledByNative
+    public void initialize(DataSharingNetworkLoader networkLoader) {
+        mSDKDelegateImpl.initialize(networkLoader);
     }
 
     @CalledByNative
@@ -58,7 +64,7 @@ public class DataSharingSDKDelegateBridge {
                                 .runCreateGroupCallback(
                                         nativeCallbackPtr,
                                         CreateGroupResult.newBuilder().build().toByteArray(),
-                                        /* status= */ 1);
+                                        Status.FAILURE);
                     });
             return;
         }
@@ -83,7 +89,7 @@ public class DataSharingSDKDelegateBridge {
                                 .runReadGroupsCallback(
                                         nativeCallbackPtr,
                                         ReadGroupsResult.newBuilder().build().toByteArray(),
-                                        /* status= */ 1);
+                                        Status.FAILURE);
                     });
             return;
         }
@@ -105,7 +111,7 @@ public class DataSharingSDKDelegateBridge {
                     TaskTraits.USER_VISIBLE,
                     () -> {
                         DataSharingSDKDelegateBridgeJni.get()
-                                .runGetStatusCallback(nativeCallbackPtr, /* status= */ 1);
+                                .runGetStatusCallback(nativeCallbackPtr, Status.FAILURE);
                     });
             return;
         }
@@ -126,11 +132,32 @@ public class DataSharingSDKDelegateBridge {
                     TaskTraits.USER_VISIBLE,
                     () -> {
                         DataSharingSDKDelegateBridgeJni.get()
-                                .runGetStatusCallback(nativeCallbackPtr, /* status= */ 1);
+                                .runGetStatusCallback(nativeCallbackPtr, Status.FAILURE);
                     });
             return;
         }
         mSDKDelegateImpl.removeMember(
+                params,
+                (Integer status) ->
+                        DataSharingSDKDelegateBridgeJni.get()
+                                .runGetStatusCallback(nativeCallbackPtr, status));
+    }
+
+    @CalledByNative
+    public void leaveGroup(String protoParams, long nativeCallbackPtr) {
+        LeaveGroupParams params;
+        try {
+            params = LeaveGroupParams.parseFrom(protoParams.getBytes());
+        } catch (InvalidProtocolBufferException e) {
+            PostTask.postTask(
+                    TaskTraits.USER_VISIBLE,
+                    () -> {
+                        DataSharingSDKDelegateBridgeJni.get()
+                                .runGetStatusCallback(nativeCallbackPtr, Status.FAILURE);
+                    });
+            return;
+        }
+        mSDKDelegateImpl.leaveGroup(
                 params,
                 (Integer status) ->
                         DataSharingSDKDelegateBridgeJni.get()
@@ -147,7 +174,7 @@ public class DataSharingSDKDelegateBridge {
                     TaskTraits.USER_VISIBLE,
                     () -> {
                         DataSharingSDKDelegateBridgeJni.get()
-                                .runGetStatusCallback(nativeCallbackPtr, /* status= */ 1);
+                                .runGetStatusCallback(nativeCallbackPtr, Status.FAILURE);
                     });
             return;
         }
@@ -173,7 +200,7 @@ public class DataSharingSDKDelegateBridge {
                                         LookupGaiaIdByEmailResult.newBuilder()
                                                 .build()
                                                 .toByteArray(),
-                                        /* status= */ 1);
+                                        Status.FAILURE);
                     });
             return;
         }
@@ -184,6 +211,31 @@ public class DataSharingSDKDelegateBridge {
                     DataSharingSDKDelegateBridgeJni.get()
                             .runLookupGaiaIdByEmailCallback(
                                     nativeCallbackPtr, serializedProto, status);
+                });
+    }
+
+    @CalledByNative
+    public void addAccessToken(String protoParams, long nativeCallbackPtr) {
+        AddAccessTokenParams params;
+        try {
+            params = AddAccessTokenParams.parseFrom(protoParams.getBytes());
+        } catch (InvalidProtocolBufferException e) {
+            PostTask.postTask(
+                    TaskTraits.USER_VISIBLE,
+                    () -> {
+                        DataSharingSDKDelegateBridgeJni.get()
+                                .runAddAccessTokenCallback(
+                                        nativeCallbackPtr,
+                                        AddAccessTokenResult.newBuilder().build().toByteArray(),
+                                        Status.FAILURE);
+                    });
+            return;
+        }
+        mSDKDelegateImpl.addAccessToken(
+                params,
+                (byte[] serializedProto, int status) -> {
+                    DataSharingSDKDelegateBridgeJni.get()
+                            .runAddAccessTokenCallback(nativeCallbackPtr, serializedProto, status);
                 });
     }
 
@@ -206,5 +258,7 @@ public class DataSharingSDKDelegateBridge {
         void runGetStatusCallback(long callback, int status);
 
         void runLookupGaiaIdByEmailCallback(long callback, byte[] serializedProto, int status);
+
+        void runAddAccessTokenCallback(long callback, byte[] serializedProto, int status);
     }
 }

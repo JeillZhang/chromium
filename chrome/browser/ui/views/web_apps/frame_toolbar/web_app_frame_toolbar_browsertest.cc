@@ -16,12 +16,13 @@
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/bind.h"
+#include "base/test/gmock_expected_support.h"
 #include "base/test/icu_test_util.h"
 #include "base/test/run_until.h"
 #include "base/test/test_future.h"
 #include "base/test/test_timeouts.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
+#include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/download/bubble/download_bubble_ui_controller.h"
 #include "chrome/browser/download/bubble/download_display_controller.h"
 #include "chrome/browser/extensions/chrome_test_extension_loader.h"
@@ -32,6 +33,7 @@
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/download/download_display.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/view_ids.h"
 #include "chrome/browser/ui/views/extensions/extensions_menu_view.h"
 #include "chrome/browser/ui/views/extensions/extensions_toolbar_button.h"
@@ -45,6 +47,8 @@
 #include "chrome/browser/ui/views/infobars/infobar_container_view.h"
 #include "chrome/browser/ui/views/infobars/infobar_view.h"
 #include "chrome/browser/ui/views/page_action/page_action_icon_controller.h"
+#include "chrome/browser/ui/views/page_action/page_action_view.h"
+#include "chrome/browser/ui/views/toolbar/pinned_toolbar_actions_container.h"
 #include "chrome/browser/ui/views/web_apps/frame_toolbar/web_app_frame_toolbar_test_helper.h"
 #include "chrome/browser/ui/views/web_apps/frame_toolbar/web_app_frame_toolbar_view.h"
 #include "chrome/browser/ui/views/web_apps/frame_toolbar/web_app_navigation_button_container.h"
@@ -57,6 +61,7 @@
 #include "chrome/browser/ui/web_applications/web_app_browsertest_base.h"
 #include "chrome/browser/ui/web_applications/web_app_menu_model.h"
 #include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_url_info.h"
+#include "chrome/browser/web_applications/isolated_web_apps/test/isolated_web_app_builder.h"
 #include "chrome/browser/web_applications/mojom/user_display_mode.mojom.h"
 #include "chrome/browser/web_applications/scope_extension_info.h"
 #include "chrome/browser/web_applications/test/web_app_install_test_utils.h"
@@ -68,7 +73,9 @@
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/test/base/in_process_browser_test.h"
+#include "chrome/test/base/interactive_test_utils.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "chromeos/constants/chromeos_features.h"
 #include "chromeos/ui/frame/caption_buttons/frame_caption_button_container_view.h"
 #include "components/infobars/content/content_infobar_manager.h"
 #include "components/permissions/permission_request_manager.h"
@@ -159,16 +166,10 @@ SkColor GetFrameColor(Browser* browser) {
 
 class WebAppFrameToolbarBrowserTest : public web_app::WebAppBrowserTestBase {
  public:
-  WebAppFrameToolbarBrowserTest()
-      : https_server_(net::EmbeddedTestServer::TYPE_HTTPS) {}
-
-  net::EmbeddedTestServer* https_server() { return &https_server_; }
-
-  // WebAppBrowserTestBase:
-  void SetUp() override {
-    https_server_.AddDefaultHandlers(GetChromeTestDataDir());
-
-    WebAppBrowserTestBase::SetUp();
+  WebAppFrameToolbarBrowserTest() {
+    scoped_feature_list_.InitWithFeatures(
+        {features::kPinnableDownloadsButton, features::kPageActionsMigration},
+        {});
   }
 
   WebAppFrameToolbarTestHelper* helper() {
@@ -187,7 +188,7 @@ class WebAppFrameToolbarBrowserTest : public web_app::WebAppBrowserTestBase {
   }
 
  private:
-  net::EmbeddedTestServer https_server_;
+  base::test::ScopedFeatureList scoped_feature_list_;
   WebAppFrameToolbarTestHelper web_app_frame_toolbar_helper_;
 };
 
@@ -213,13 +214,25 @@ IN_PROC_BROWSER_TEST_F(WebAppFrameToolbarBrowserTest, SpaceConstrained) {
   EXPECT_EQ(toolbar_right_container->parent(),
             helper()->web_app_frame_toolbar());
 
-  std::vector<const PageActionIconView*> page_actions =
-      helper()
-          ->web_app_frame_toolbar()
-          ->GetPageActionIconControllerForTesting()
-          ->GetPageActionIconViewsForTesting();
-  for (const PageActionIconView* action : page_actions) {
+  std::vector<const views::View*> page_action_views = {};
+  for (auto action_id : helper()
+                            ->app_browser()
+                            ->GetAppBrowserController()
+                            ->GetTitleBarPageActions()) {
+    auto* page_action_view =
+        helper()->web_app_frame_toolbar()->GetPageActionView(action_id);
+    ASSERT_NE(nullptr, page_action_view);
+    EXPECT_EQ(page_action_view->parent(),
+              toolbar_right_container->page_action_container());
+    page_action_views.push_back(page_action_view);
+  }
+  for (const PageActionIconView* action :
+       helper()
+           ->web_app_frame_toolbar()
+           ->GetPageActionIconControllerForTesting()
+           ->GetPageActionIconViewsForTesting()) {
     EXPECT_EQ(action->parent(), toolbar_right_container);
+    page_action_views.emplace_back(action);
   }
 
   views::View* const menu_button =
@@ -240,7 +253,7 @@ IN_PROC_BROWSER_TEST_F(WebAppFrameToolbarBrowserTest, SpaceConstrained) {
 #endif
 
   // Initially the page action icons are not visible.
-  EXPECT_EQ(GetLastVisible(page_actions), nullptr);
+  EXPECT_EQ(GetLastVisible(page_action_views), nullptr);
   const int original_menu_button_width = menu_button->width();
   EXPECT_GT(original_menu_button_width, 0);
 
@@ -263,14 +276,15 @@ IN_PROC_BROWSER_TEST_F(WebAppFrameToolbarBrowserTest, SpaceConstrained) {
   EXPECT_LT(window_title->width(), original_window_title_width);
 #endif
 
-  EXPECT_NE(GetLastVisible(page_actions), nullptr);
+  EXPECT_NE(GetLastVisible(page_action_views), nullptr);
   EXPECT_EQ(menu_button->width(), original_menu_button_width);
 
   // Resize the WebAppFrameToolbarView just enough to clip out the page action
   // icons (and toolbar contents left of them).
   const int original_toolbar_width = helper()->web_app_frame_toolbar()->width();
-  const int new_toolbar_width = toolbar_right_container->width() -
-                                GetLastVisible(page_actions)->bounds().right();
+  const int new_toolbar_width =
+      toolbar_right_container->width() -
+      GetLastVisible(page_action_views)->bounds().right();
   const int new_frame_width = helper()->frame_view()->width() -
                               original_toolbar_width + new_toolbar_width;
 
@@ -290,18 +304,12 @@ IN_PROC_BROWSER_TEST_F(WebAppFrameToolbarBrowserTest, SpaceConstrained) {
 
   // The page action icons should be hidden while the app menu button retains
   // its full width.
-  EXPECT_EQ(GetLastVisible(page_actions), nullptr);
+  EXPECT_EQ(GetLastVisible(page_action_views), nullptr);
   EXPECT_EQ(menu_button->width(), original_menu_button_width);
 }
 
-// TODO(crbug.com/40940526): Re-enable this test
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-#define MAYBE_ThemeChange DISABLED_ThemeChange
-#else
-#define MAYBE_ThemeChange ThemeChange
-#endif
-IN_PROC_BROWSER_TEST_F(WebAppFrameToolbarBrowserTest, MAYBE_ThemeChange) {
-  ASSERT_TRUE(https_server()->Start());
+IN_PROC_BROWSER_TEST_F(WebAppFrameToolbarBrowserTest, ThemeChange) {
+  ASSERT_TRUE(https_server()->Started());
   const GURL app_url = https_server()->GetURL("/banners/theme-color.html");
   helper()->InstallAndLaunchWebApp(browser(), app_url);
 
@@ -346,6 +354,25 @@ IN_PROC_BROWSER_TEST_F(WebAppFrameToolbarBrowserTest, MAYBE_ThemeChange) {
     EXPECT_EQ(get_ink_drop_color(), original_ink_drop_color);
   }
 #endif
+}
+
+// Test that there are no buttons in the PinnedToolbarActionsContainer by
+// default.
+IN_PROC_BROWSER_TEST_F(WebAppFrameToolbarBrowserTest,
+                       NoPinnedActionsByDefault) {
+  const GURL app_url("https://test.org");
+  helper()->InstallAndLaunchWebApp(browser(), app_url);
+
+  int button_count = 0;
+  for (views::View* child : helper()
+                                ->web_app_frame_toolbar()
+                                ->GetPinnedToolbarActionsContainer()
+                                ->children()) {
+    if (views::Button::AsButton(child)) {
+      button_count++;
+    }
+  }
+  EXPECT_EQ(button_count, 0);
 }
 
 // Test that a tooltip is shown when hovering over a truncated title.
@@ -413,7 +440,7 @@ IN_PROC_BROWSER_TEST_F(WebAppFrameToolbarBrowserTest,
 
   EXPECT_EQ(menu_button->GetViewAccessibility().GetCachedName(),
             u"Customize and control A minimal-ui app");
-  EXPECT_EQ(menu_button->GetTooltipText(gfx::Point()),
+  EXPECT_EQ(menu_button->GetRenderedTooltipText(gfx::Point()),
             u"Customize and control A minimal-ui app");
 }
 
@@ -500,17 +527,32 @@ IN_PROC_BROWSER_TEST_F(WebAppFrameToolbarBrowserTest_NoElidedExtensionsMenu,
 class BorderlessIsolatedWebAppBrowserTest
     : public web_app::IsolatedWebAppBrowserTestHarness {
  public:
-  BorderlessIsolatedWebAppBrowserTest() {
-    scoped_feature_list_.InitAndEnableFeature(
-        blink::features::kWebAppBorderless);
+  BorderlessIsolatedWebAppBrowserTest() = default;
+
+  void SetUp() override {
+    SetupBorderlessFeatureFlag();
+    IsolatedWebAppBrowserTestHarness::SetUp();
   }
 
   void InstallAndLaunchIsolatedWebApp(bool uses_borderless) {
-    isolated_web_app_dev_server_ = CreateAndStartServer(
-        FILE_PATH_LITERAL(uses_borderless ? "web_apps/borderless_isolated_app"
-                                          : "web_apps/simple_isolated_app"));
-    web_app::IsolatedWebAppUrlInfo url_info = InstallDevModeProxyIsolatedWebApp(
-        isolated_web_app_dev_server().GetOrigin());
+    std::unique_ptr<web_app::ScopedBundledIsolatedWebApp> app =
+        uses_borderless
+            ? web_app::IsolatedWebAppBuilder(
+                  web_app::ManifestBuilder()
+                      .SetDisplayModeOverride(
+                          {blink::mojom::DisplayMode::kBorderless})
+                      .AddPermissionsPolicy(
+                          network::mojom::PermissionsPolicyFeature::
+                              kWindowManagement,
+                          true, {})
+                      .SetStartUrl("/index.html"))
+                  .AddFolderFromDisk("/", "web_apps/borderless_isolated_app")
+                  .BuildBundle()
+            : web_app::IsolatedWebAppBuilder(web_app::ManifestBuilder())
+                  .BuildBundle();
+
+    web_app::IsolatedWebAppUrlInfo url_info = app->InstallChecked(profile());
+
     browser_ = GetBrowserFromFrame(OpenApp(url_info.app_id()));
     browser_view_ = BrowserView::GetBrowserViewForBrowser(browser_);
 
@@ -522,7 +564,6 @@ class BorderlessIsolatedWebAppBrowserTest
           browser_view()->GetActiveWebContents(), kBorderlessAppOnloadTitle);
       EXPECT_EQ(title_watcher.WaitAndGetTitle(), kBorderlessAppOnloadTitle);
     }
-    EXPECT_EQ(uses_borderless, browser_view()->AppUsesBorderlessMode());
 
     views::NonClientFrameView* frame_view =
         browser_view()->GetWidget()->non_client_view()->frame_view();
@@ -559,10 +600,6 @@ class BorderlessIsolatedWebAppBrowserTest
   }
 
   BrowserNonClientFrameView* frame_view() { return frame_view_; }
-
-  const net::EmbeddedTestServer& isolated_web_app_dev_server() {
-    return *isolated_web_app_dev_server_.get();
-  }
 
   // Opens a new popup window from `browser_` by running
   // `window_open_script` and returns the `BrowserView` of the popup it opened.
@@ -615,9 +652,13 @@ class BorderlessIsolatedWebAppBrowserTest
     }
   }
 
- private:
+  virtual void SetupBorderlessFeatureFlag() {
+    scoped_feature_list_.InitAndEnableFeature(
+        blink::features::kWebAppBorderless);
+  }
   base::test::ScopedFeatureList scoped_feature_list_;
-  std::unique_ptr<net::EmbeddedTestServer> isolated_web_app_dev_server_;
+
+ private:
   raw_ptr<Browser, AcrossTasksDanglingUntriaged> browser_;
   raw_ptr<BrowserView, AcrossTasksDanglingUntriaged> browser_view_;
   raw_ptr<BrowserNonClientFrameView, AcrossTasksDanglingUntriaged> frame_view_;
@@ -626,6 +667,8 @@ class BorderlessIsolatedWebAppBrowserTest
 IN_PROC_BROWSER_TEST_F(BorderlessIsolatedWebAppBrowserTest,
                        AppUsesBorderlessModeAndHasWindowManagementPermission) {
   InstallAndLaunchIsolatedWebApp(/*uses_borderless=*/true);
+  EXPECT_TRUE(browser_view()->AppUsesBorderlessMode());
+
   GrantWindowManagementPermission();
 
   ASSERT_TRUE(
@@ -637,6 +680,7 @@ IN_PROC_BROWSER_TEST_F(BorderlessIsolatedWebAppBrowserTest,
 IN_PROC_BROWSER_TEST_F(BorderlessIsolatedWebAppBrowserTest,
                        BorderlessModeHidesTitlebarAndWindowingControls) {
   InstallAndLaunchIsolatedWebApp(/*uses_borderless=*/true);
+  EXPECT_TRUE(browser_view()->AppUsesBorderlessMode());
 
 #if BUILDFLAG(IS_CHROMEOS)
   // `chromeos::FrameCaptionButtonContainerView` is ChromeOS only thing.
@@ -660,6 +704,7 @@ IN_PROC_BROWSER_TEST_F(BorderlessIsolatedWebAppBrowserTest,
 IN_PROC_BROWSER_TEST_F(BorderlessIsolatedWebAppBrowserTest,
                        DisplayModeMediaCSS) {
   InstallAndLaunchIsolatedWebApp(/*uses_borderless=*/true);
+  EXPECT_TRUE(browser_view()->AppUsesBorderlessMode());
   auto* web_contents = browser_view()->GetActiveWebContents();
 
   std::string get_background_color = R"(
@@ -691,6 +736,7 @@ IN_PROC_BROWSER_TEST_F(
     BorderlessIsolatedWebAppBrowserTest,
     AppUsesBorderlessModeAndDoesNotHaveWindowManagementPermission) {
   InstallAndLaunchIsolatedWebApp(/*uses_borderless=*/true);
+  EXPECT_TRUE(browser_view()->AppUsesBorderlessMode());
   ASSERT_TRUE(browser_view()->borderless_mode_enabled_for_testing());
   ASSERT_FALSE(
       browser_view()->window_management_permission_granted_for_testing());
@@ -700,6 +746,7 @@ IN_PROC_BROWSER_TEST_F(
 IN_PROC_BROWSER_TEST_F(BorderlessIsolatedWebAppBrowserTest,
                        AppDoesntUseBorderlessMode) {
   InstallAndLaunchIsolatedWebApp(/*uses_borderless=*/false);
+  EXPECT_FALSE(browser_view()->AppUsesBorderlessMode());
   ASSERT_FALSE(browser_view()->borderless_mode_enabled_for_testing());
   ASSERT_FALSE(
       browser_view()->window_management_permission_granted_for_testing());
@@ -709,6 +756,7 @@ IN_PROC_BROWSER_TEST_F(BorderlessIsolatedWebAppBrowserTest,
 IN_PROC_BROWSER_TEST_F(BorderlessIsolatedWebAppBrowserTest,
                        PopupToItselfIsBorderless) {
   InstallAndLaunchIsolatedWebApp(/*uses_borderless=*/true);
+  EXPECT_TRUE(browser_view()->AppUsesBorderlessMode());
   GrantWindowManagementPermission();
   ASSERT_TRUE(browser_view()->IsBorderlessModeEnabled());
 
@@ -724,6 +772,7 @@ IN_PROC_BROWSER_TEST_F(BorderlessIsolatedWebAppBrowserTest,
 IN_PROC_BROWSER_TEST_F(BorderlessIsolatedWebAppBrowserTest,
                        PopupToAnyOtherOriginIsNotBorderless) {
   InstallAndLaunchIsolatedWebApp(/*uses_borderless=*/true);
+  EXPECT_TRUE(browser_view()->AppUsesBorderlessMode());
   GrantWindowManagementPermission();
   ASSERT_TRUE(browser_view()->IsBorderlessModeEnabled());
 
@@ -737,6 +786,7 @@ IN_PROC_BROWSER_TEST_F(
     BorderlessIsolatedWebAppBrowserTest,
     PopupSize_CanSubceedMinimumWindowSize_And_InnerAndOuterSizesAreCorrect) {
   InstallAndLaunchIsolatedWebApp(/*uses_borderless=*/true);
+  EXPECT_TRUE(browser_view()->AppUsesBorderlessMode());
   GrantWindowManagementPermission();
   ASSERT_TRUE(browser_view()->IsBorderlessModeEnabled());
 
@@ -786,6 +836,7 @@ IN_PROC_BROWSER_TEST_F(
     BorderlessIsolatedWebAppBrowserTest,
     PopupResize_CanSubceedMinimumWindowSize_And_InnerAndOuterSizesAreCorrect) {
   InstallAndLaunchIsolatedWebApp(/*uses_borderless=*/true);
+  EXPECT_TRUE(browser_view()->AppUsesBorderlessMode());
   GrantWindowManagementPermission();
   ASSERT_TRUE(browser_view()->IsBorderlessModeEnabled());
 
@@ -853,6 +904,7 @@ IN_PROC_BROWSER_TEST_F(
 // possible. To test the fix for b/265935069.
 IN_PROC_BROWSER_TEST_F(BorderlessIsolatedWebAppBrowserTest, FrameMinimumSize) {
   InstallAndLaunchIsolatedWebApp(/*uses_borderless=*/true);
+  EXPECT_TRUE(browser_view()->AppUsesBorderlessMode());
   GrantWindowManagementPermission();
 
   ASSERT_TRUE(browser_view()->borderless_mode_enabled_for_testing());
@@ -869,6 +921,25 @@ IN_PROC_BROWSER_TEST_F(BorderlessIsolatedWebAppBrowserTest, FrameMinimumSize) {
 #elif BUILDFLAG(IS_LINUX)
   EXPECT_EQ(frame_view()->GetMinimumSize(), gfx::Size(1, 1));
 #endif
+}
+
+class BorderlessIsolatedWebAppBrowserTestDisabledFlag
+    : public BorderlessIsolatedWebAppBrowserTest {
+ protected:
+  void SetupBorderlessFeatureFlag() override {
+    scoped_feature_list_.InitAndDisableFeature(
+        blink::features::kWebAppBorderless);
+  }
+};
+
+IN_PROC_BROWSER_TEST_F(BorderlessIsolatedWebAppBrowserTestDisabledFlag,
+                       AppCannotUseFeatureWhenBorderlessFlagIsDisabled) {
+  InstallAndLaunchIsolatedWebApp(/*uses_borderless=*/true);
+
+  EXPECT_FALSE(browser_view()->AppUsesBorderlessMode());
+  EXPECT_FALSE(
+      browser_view()->window_management_permission_granted_for_testing());
+  EXPECT_FALSE(browser_view()->IsBorderlessModeEnabled());
 }
 #endif  // (BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS))
 
@@ -921,7 +992,7 @@ class WebAppFrameToolbarBrowserTest_WindowControlsOverlay
   }
 
   webapps::AppId InstallAndLaunchWebApp() {
-    EXPECT_TRUE(https_server()->Start());
+    EXPECT_TRUE(https_server()->Started());
     return InstallAndLaunchWCOWebApp(
         helper()->LoadWindowControlsOverlayTestPageWithDataAndGetURL(
             embedded_test_server(), &temp_dir_),
@@ -929,7 +1000,7 @@ class WebAppFrameToolbarBrowserTest_WindowControlsOverlay
   }
 
   webapps::AppId InstallAndLaunchFullyDraggableWebApp() {
-    EXPECT_TRUE(https_server()->Start());
+    EXPECT_TRUE(https_server()->Started());
     return InstallAndLaunchWCOWebApp(
         helper()->LoadWholeAppIsDraggableTestPageWithDataAndGetURL(
             embedded_test_server(), &temp_dir_),
@@ -1227,7 +1298,12 @@ IN_PROC_BROWSER_TEST_F(WebAppFrameToolbarBrowserTest_WindowControlsOverlay,
   int client_view_height =
       frame_view_cros->frame()->client_view()->GetMinimumSize().height();
 
-  EXPECT_EQ(frame_view_height, caption_container_height + client_view_height);
+  // Frame view minimum height also includes radius of window to ensure correct
+  // rounding of window. See b/294588040.
+  int window_radius = chromeos::features::RoundedWindowsRadius();
+
+  EXPECT_EQ(frame_view_height,
+            caption_container_height + client_view_height + window_radius);
 }
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
@@ -1346,8 +1422,8 @@ IN_PROC_BROWSER_TEST_F(WebAppFrameToolbarBrowserTest_WindowControlsOverlay,
 // Regression test for https://crbug.com/1448878.
 IN_PROC_BROWSER_TEST_F(WebAppFrameToolbarBrowserTest_WindowControlsOverlay,
                        DraggableRegionsIgnoredForOwnedWidgets) {
-  // TODO(https://crbug.com/329235190): Lacros using accelerated widget for
-  // bubble, so the point within browser_view is still draggable and returns
+  // TODO(https://crbug.com/329235190): In case accelerated widget is used for
+  // bubble, the point within browser_view is still draggable and returns
   // `HTCAPTION`.
   if (views::test::IsOzoneBubblesUsingPlatformWidgets()) {
     GTEST_SKIP();
@@ -1636,7 +1712,7 @@ IN_PROC_BROWSER_TEST_F(WebAppFrameToolbarBrowserTest_WindowControlsOverlay,
 }
 #endif  // !BUILDFLAG(IS_CHROMEOS)
 
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_CHROMEOS)
 // Test that a download by a web app browser only shows the download UI in that
 // app's window.
 IN_PROC_BROWSER_TEST_F(WebAppFrameToolbarBrowserTest_WindowControlsOverlay,
@@ -1650,7 +1726,7 @@ IN_PROC_BROWSER_TEST_F(WebAppFrameToolbarBrowserTest_WindowControlsOverlay,
   // the app browser or the non-app browser.
   WebAppToolbarButtonContainer* toolbar_button_container =
       helper()->web_app_frame_toolbar()->get_right_container_for_testing();
-  EXPECT_FALSE(toolbar_button_container->download_button()->GetVisible());
+  EXPECT_EQ(toolbar_button_container->GetDownloadButton(), nullptr);
   EXPECT_FALSE(non_app_browser->window()
                    ->GetDownloadBubbleUIController()
                    ->GetDownloadDisplayController()
@@ -1665,7 +1741,7 @@ IN_PROC_BROWSER_TEST_F(WebAppFrameToolbarBrowserTest_WindowControlsOverlay,
           base::FilePath().AppendASCII("a_zip_file.zip")));
 
   // The download button is visible in the app browser.
-  EXPECT_TRUE(toolbar_button_container->download_button()->GetVisible());
+  EXPECT_TRUE(toolbar_button_container->GetDownloadButton()->GetVisible());
 
   // The download button is not visible in the non-app browser.
   EXPECT_FALSE(non_app_browser->window()
@@ -1688,7 +1764,7 @@ IN_PROC_BROWSER_TEST_F(WebAppFrameToolbarBrowserTest_WindowControlsOverlay,
   // the app browser or the non-app browser.
   WebAppToolbarButtonContainer* toolbar_button_container =
       helper()->web_app_frame_toolbar()->get_right_container_for_testing();
-  EXPECT_FALSE(toolbar_button_container->download_button()->GetVisible());
+  EXPECT_EQ(toolbar_button_container->GetDownloadButton(), nullptr);
   EXPECT_FALSE(non_app_browser->window()
                    ->GetDownloadBubbleUIController()
                    ->GetDownloadDisplayController()
@@ -1702,7 +1778,7 @@ IN_PROC_BROWSER_TEST_F(WebAppFrameToolbarBrowserTest_WindowControlsOverlay,
                            base::FilePath().AppendASCII("a_zip_file.zip")));
 
   // The download button is not visible in the app browser.
-  EXPECT_FALSE(toolbar_button_container->download_button()->GetVisible());
+  EXPECT_EQ(toolbar_button_container->GetDownloadButton(), nullptr);
 
   // The download button is visible in the non-app browser.
   EXPECT_TRUE(non_app_browser->window()
@@ -1711,7 +1787,7 @@ IN_PROC_BROWSER_TEST_F(WebAppFrameToolbarBrowserTest_WindowControlsOverlay,
                   ->download_display_for_testing()
                   ->IsShowing());
 }
-#endif  // !BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // !BUILDFLAG(IS_CHROMEOS)
 
 IN_PROC_BROWSER_TEST_F(WebAppFrameToolbarBrowserTest_WindowControlsOverlay,
                        DisplayModeMediaCSS) {
@@ -1783,6 +1859,9 @@ IN_PROC_BROWSER_TEST_F(WebAppFrameToolbarBrowserTest_WindowControlsOverlay,
   EXPECT_FALSE(draggable_region.value().isEmpty());
 }
 
+// Tests for Additional Windowing Controls on web app windows.
+// https://chromestatus.com/feature/5201832664629248
+// For popup tests see PopupTest_AdditionalWindowingControls
 #if !BUILDFLAG(IS_ANDROID)
 class WebAppFrameToolbarBrowserTest_AdditionalWindowingControls
     : public WebAppFrameToolbarBrowserTest {
@@ -1800,7 +1879,7 @@ class WebAppFrameToolbarBrowserTest_AdditionalWindowingControls
   }
 
   webapps::AppId InstallAndLaunchWebApp() {
-    DCHECK(https_server()->Start());
+    DCHECK(https_server()->Started());
 
     const GURL start_url = helper()->LoadTestPageWithDataAndGetURL(
         embedded_test_server(), &temp_dir_, "");
@@ -1869,6 +1948,32 @@ class WebAppFrameToolbarBrowserTest_AdditionalWindowingControls
                   aura::client::kResizeBehaviorCanResize,
               browser_view_can_resize_expected);
 #endif
+  }
+
+  void EnterTabFullscreenThroughWebAPI() {
+    ui_test_utils::FullscreenWaiter waiter(helper()->app_browser(),
+                                           {.tab_fullscreen = true});
+    EXPECT_TRUE(ExecJs(helper()->browser_view()->GetActiveWebContents(),
+                       "document.documentElement.requestFullscreen();"));
+    waiter.Wait();
+  }
+
+  void ExitTabFullscreenThroughWebAPI() {
+    ui_test_utils::FullscreenWaiter waiter(helper()->app_browser(),
+                                           {.tab_fullscreen = false});
+    EXPECT_TRUE(ExecJs(helper()->browser_view()->GetActiveWebContents(),
+                       "document.exitFullscreen();"));
+    waiter.Wait();
+  }
+
+  void ToggleBrowserFullscreen(bool user_initiated) {
+    bool was_fullscreen = helper()->browser_view()->IsFullscreen();
+    ui_test_utils::FullscreenWaiter waiter(
+        helper()->app_browser(),
+        {.browser_fullscreen = !was_fullscreen, .tab_fullscreen = false});
+    chrome::ToggleFullscreenMode(helper()->app_browser(), user_initiated);
+    waiter.Wait();
+    EXPECT_EQ(helper()->browser_view()->IsFullscreen(), !was_fullscreen);
   }
 
   GURL second_page_url() { return second_page_url_; }
@@ -2004,106 +2109,6 @@ IN_PROC_BROWSER_TEST_F(
   }
 }
 
-// TODO(crbug.com/333641972): Re-enable this test on Mac.
-#if BUILDFLAG(IS_MAC)
-#define MAYBE_WindowSetResizableBlocksResizeToAndResizeByApis \
-  DISABLED_WindowSetResizableBlocksResizeToAndResizeByApis
-#else
-#define MAYBE_WindowSetResizableBlocksResizeToAndResizeByApis WindowSetResizableBlocksResizeToAndResizeByApis
-#endif
-IN_PROC_BROWSER_TEST_F(
-    WebAppFrameToolbarBrowserTest_AdditionalWindowingControls,
-    MAYBE_WindowSetResizableBlocksResizeToAndResizeByApis) {
-  InstallAndLaunchWebApp();
-  helper()->GrantWindowManagementPermission();
-
-  auto* browser_view = helper()->browser_view();
-  browser_view->SetCanResize(true);
-  auto* web_contents = browser_view->GetActiveWebContents();
-
-  auto CheckAreSameSize = [](const gfx::Size& s1, const gfx::Size& s2) {
-    return s1 == s2;
-  };
-
-  // Set the initial window size to something != 1000x1000.
-  EXPECT_TRUE(ExecJs(web_contents, "window.resizeTo(800,800);"));
-  EXPECT_TRUE(RunUntil([&]() {
-    return EvalJs(web_contents, "window.outerWidth").ExtractInt() == 800;
-  }));
-
-  gfx::Size client_view_size_before =
-      browser_view->frame()->client_view()->size();
-
-  SetResizableAndWait(web_contents, /*resizable=*/false, /*expected=*/false);
-  CheckCanResize(false, false);
-
-  // window.resizeTo API no longer takes action.
-  EXPECT_TRUE(ExecJs(web_contents, "window.resizeTo(1000,1000);"));
-  base::RunLoop().RunUntilIdle();
-  EXPECT_TRUE(CheckAreSameSize(client_view_size_before,
-                               browser_view->frame()->client_view()->size()));
-
-  // window.resizeBy API no longer takes action.
-  EXPECT_TRUE(ExecJs(web_contents, "window.resizeBy(10,10);"));
-  base::RunLoop().RunUntilIdle();
-  EXPECT_TRUE(CheckAreSameSize(client_view_size_before,
-                               browser_view->frame()->client_view()->size()));
-}
-
-// Test to ensure crbug.com/1513330 won't reproduce.
-// TODO(b/41492287, b/336264927): Flaky on Linux, Mac, and Lacros.
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_CHROMEOS_LACROS)
-#define MAYBE_WindowSetResizableDoesntBlockMoveToAndMoveByApis \
-  DISABLED_WindowSetResizableDoesntBlockMoveToAndMoveByApis
-#else
-#define MAYBE_WindowSetResizableDoesntBlockMoveToAndMoveByApis \
-  WindowSetResizableDoesntBlockMoveToAndMoveByApis
-#endif
-IN_PROC_BROWSER_TEST_F(
-    WebAppFrameToolbarBrowserTest_AdditionalWindowingControls,
-    MAYBE_WindowSetResizableDoesntBlockMoveToAndMoveByApis) {
-  InstallAndLaunchWebApp();
-  helper()->GrantWindowManagementPermission();
-
-  auto* browser_view = helper()->browser_view();
-  browser_view->SetCanResize(true);
-  auto* web_contents = browser_view->GetActiveWebContents();
-
-  auto ScreenXYMatches = [&web_contents](const gfx::Point point) {
-    return EvalJs(web_contents, "window.screenX").ExtractInt() == point.x() &&
-           EvalJs(web_contents, "window.screenY").ExtractInt() == point.y();
-  };
-
-  // Set the initial window size to something small and close to the origin of
-  // the screen.
-  EXPECT_TRUE(ExecJs(web_contents, "window.resizeTo(100,100);"));
-  EXPECT_TRUE(ExecJs(web_contents, "window.moveTo(50,50);"));
-  gfx::Point initial_pos(50, 50);
-  EXPECT_TRUE(RunUntil([&]() { return ScreenXYMatches(initial_pos); }));
-
-  int initial_pos_x = EvalJs(web_contents, "window.screenX").ExtractInt();
-  int initial_pos_y = EvalJs(web_contents, "window.screenY").ExtractInt();
-
-  SetResizableAndWait(web_contents, /*resizable=*/false, /*expected=*/false);
-  CheckCanResize(false, false);
-
-  // window.moveBy API still takes action.
-  EXPECT_TRUE(ExecJs(web_contents, "window.moveBy(10,10);"));
-  EXPECT_TRUE(RunUntil([&]() {
-    return ScreenXYMatches(
-        gfx::Point(initial_pos.x() + 10, initial_pos.y() + 10));
-  }));
-
-  EXPECT_EQ(EvalJs(web_contents, "window.screenX").ExtractInt(),
-            initial_pos_x + 10);
-  EXPECT_EQ(EvalJs(web_contents, "window.screenY").ExtractInt(),
-            initial_pos_y + 10);
-
-  // window.moveTo API still takes action.
-  EXPECT_TRUE(ExecJs(web_contents, "window.moveTo(50,50);"));
-  EXPECT_TRUE(RunUntil([&]() { return ScreenXYMatches(initial_pos); }));
-}
-
 IN_PROC_BROWSER_TEST_F(
     WebAppFrameToolbarBrowserTest_AdditionalWindowingControls,
     MinimizeWindowWithApi) {
@@ -2164,48 +2169,58 @@ IN_PROC_BROWSER_TEST_F(
   }));
 }
 
-#if !BUILDFLAG(IS_MAC)
+// windows.setResizable API should block only user-initiated requests
 IN_PROC_BROWSER_TEST_F(
     WebAppFrameToolbarBrowserTest_AdditionalWindowingControls,
-    WindowSetResizableBlocksMaximizingNormalWindow) {
+    WindowSetResizableDoNotBlockResizingWebApis) {
   InstallAndLaunchWebApp();
   helper()->GrantWindowManagementPermission();
 
   auto* browser_view = helper()->browser_view();
-  browser_view->SetCanResize(true);
-  browser_view->SetCanMaximize(true);
   auto* web_contents = browser_view->GetActiveWebContents();
+  auto* client_view = browser_view->frame()->client_view();
 
-  // Restore window to make sure we start from the normal state.
-  EXPECT_TRUE(ExecJs(web_contents, "window.restore()"));
-  EXPECT_TRUE(
-      RunUntil([&]() { return !helper()->browser_view()->IsMaximized(); }));
+  browser_view->SetCanResize(true);
+
+  // Set the initial window size and position.
+  // Accept some error margin - systems can manage border size differently
+  EXPECT_TRUE(ExecJs(web_contents, "window.moveTo(0,0);"));
+  EXPECT_TRUE(ExecJs(web_contents, "window.resizeTo(800,800);"));
   EXPECT_TRUE(RunUntil([&]() {
-    return MatchMediaMatches(
-        web_contents, "window.matchMedia('(display-state: normal)').matches");
+    return std::abs(EvalJs(web_contents, "window.outerWidth").ExtractInt() -
+                    800) < 20;
+  }));
+  EXPECT_TRUE(RunUntil([&]() {
+    return EvalJs(web_contents, "window.screenX").ExtractInt() < 50;
   }));
 
-  // Block resizing
   SetResizableAndWait(web_contents, /*resizable=*/false, /*expected=*/false);
   CheckCanResize(false, false);
 
-  // window.maximize() API no longer takes action
-  EXPECT_TRUE(ExecJs(web_contents, "window.maximize()"));
-  base::RunLoop().RunUntilIdle();
-  EXPECT_FALSE(browser_view->IsMaximized());
-}
+  // Checking exact size may be flaky, so just test if was changed
+  gfx::Size client_view_size = client_view->size();
+  EXPECT_TRUE(ExecJs(web_contents, "window.resizeTo(1000,1000);"));
+  EXPECT_TRUE(
+      RunUntil([&]() { return client_view_size != client_view->size(); }));
 
-IN_PROC_BROWSER_TEST_F(
-    WebAppFrameToolbarBrowserTest_AdditionalWindowingControls,
-    WindowSetResizableBlocksRestoringMaximizedWindow) {
-  InstallAndLaunchWebApp();
-  helper()->GrantWindowManagementPermission();
+  client_view_size = client_view->size();
+  EXPECT_TRUE(ExecJs(web_contents, "window.resizeBy(10,10);"));
+  EXPECT_TRUE(
+      RunUntil([&]() { return client_view_size != client_view->size(); }));
 
-  auto* browser_view = helper()->browser_view();
-  browser_view->SetCanResize(true);
-  browser_view->SetCanMaximize(true);
-  auto* web_contents = browser_view->GetActiveWebContents();
+  // Moving should also be not blocked
+  gfx::Point client_view_pos = browser_view->GetBounds().origin();
+  EXPECT_TRUE(ExecJs(web_contents, "window.moveTo(100,100);"));
+  EXPECT_TRUE(RunUntil(
+      [&]() { return client_view_pos != browser_view->GetBounds().origin(); }));
 
+  client_view_pos = browser_view->GetBounds().origin();
+  EXPECT_TRUE(ExecJs(web_contents, "window.moveBy(-50,-50);"));
+  EXPECT_TRUE(RunUntil(
+      [&]() { return client_view_pos != browser_view->GetBounds().origin(); }));
+
+// TODO(crbug.com/38332688): Allow API resizing for MacOS
+#if !BUILDFLAG(IS_MAC)
   // Maximize window
   EXPECT_TRUE(ExecJs(web_contents, "window.maximize()"));
   EXPECT_TRUE(
@@ -2216,16 +2231,126 @@ IN_PROC_BROWSER_TEST_F(
         "window.matchMedia('(display-state: maximized)').matches");
   }));
 
-  // Block resizing
-  SetResizableAndWait(web_contents, /*resizable=*/false, /*expected=*/false);
-  CheckCanResize(false, false);
-
-  // window.restore() API no longer takes action
+  // Restore window
   EXPECT_TRUE(ExecJs(web_contents, "window.restore()"));
-  base::RunLoop().RunUntilIdle();
-  EXPECT_TRUE(browser_view->IsMaximized());
+  EXPECT_TRUE(
+      RunUntil([&]() { return !helper()->browser_view()->IsMaximized(); }));
+  EXPECT_TRUE(RunUntil([&]() {
+    return MatchMediaMatches(
+        web_contents, "window.matchMedia('(display-state: normal)').matches");
+  }));
+#endif
 }
-#endif  // !BUILDFLAG(IS_MAC)
+
+IN_PROC_BROWSER_TEST_F(
+    WebAppFrameToolbarBrowserTest_AdditionalWindowingControls,
+    WindowSetResizableDoNotBlockFullscreenWebAPI) {
+  InstallAndLaunchWebApp();
+  helper()->GrantWindowManagementPermission();
+  auto* browser_view = helper()->browser_view();
+  auto* web_contents = browser_view->GetActiveWebContents();
+
+  SetResizableAndWait(web_contents, /*resizable=*/false, /*expected=*/false);
+  EXPECT_FALSE(browser_view->IsFullscreen());
+
+  EnterTabFullscreenThroughWebAPI();
+  EXPECT_TRUE(browser_view->IsFullscreen());
+
+  ExitTabFullscreenThroughWebAPI();
+  EXPECT_FALSE(browser_view->IsFullscreen());
+}
+
+// Ensure user is not trapped in the fullscreen mode
+IN_PROC_BROWSER_TEST_F(
+    WebAppFrameToolbarBrowserTest_AdditionalWindowingControls,
+    WindowSetResizableDoNotBlockExitingFullscreen) {
+  InstallAndLaunchWebApp();
+  helper()->GrantWindowManagementPermission();
+  auto* browser_view = helper()->browser_view();
+  auto* web_contents = browser_view->GetActiveWebContents();
+  SetResizableAndWait(web_contents, /*resizable=*/false, /*expected=*/false);
+
+  // User can escape not user-initiated browser fullscreen
+  ToggleBrowserFullscreen(/*user_initiated=*/false);
+  EXPECT_TRUE(browser_view->IsFullscreen());
+  ToggleBrowserFullscreen(/*user_initiated=*/true);
+  EXPECT_FALSE(browser_view->IsFullscreen());
+
+  // User can escape not user-initiated tab fullscreen
+  EnterTabFullscreenThroughWebAPI();
+  EXPECT_TRUE(browser_view->IsFullscreen());
+  ToggleBrowserFullscreen(/*user_initiated=*/true);
+  EXPECT_FALSE(browser_view->IsFullscreen());
+}
+
+IN_PROC_BROWSER_TEST_F(
+    WebAppFrameToolbarBrowserTest_AdditionalWindowingControls,
+    WindowSetResizableBlocksUserInitiatedFullscreen) {
+  InstallAndLaunchWebApp();
+  helper()->GrantWindowManagementPermission();
+  auto* browser_view = helper()->browser_view();
+  auto* web_contents = browser_view->GetActiveWebContents();
+
+  SetResizableAndWait(web_contents, false, false);
+  EXPECT_FALSE(helper()->browser_view()->IsFullscreen());
+
+  // Most accelerators (e.g., F11, ⛶, Fn+F) maps to IDC_FULLSCREEN command
+  ASSERT_TRUE(chrome::ExecuteCommand(helper()->app_browser(), IDC_FULLSCREEN));
+  base::RunLoop().RunUntilIdle();
+  EXPECT_FALSE(helper()->browser_view()->IsFullscreen());
+
+  // Exception: VKEY_ZOOM maps to ash::AcceleratorAction::kToggleFullscreen
+#if BUILDFLAG(IS_CHROMEOS)
+  ASSERT_TRUE(ui_test_utils::SendKeyPressSync(
+      helper()->app_browser(), ui::VKEY_ZOOM, false, false, false, false));
+  base::RunLoop().RunUntilIdle();
+  EXPECT_FALSE(helper()->browser_view()->IsFullscreen());
+#endif
+}
+
+IN_PROC_BROWSER_TEST_F(
+    WebAppFrameToolbarBrowserTest_AdditionalWindowingControls,
+    MoveCallFiresMoveEvent) {
+  InstallAndLaunchWebApp();
+  helper()->browser_view()->SetCanResize(true);
+  auto* web_contents = helper()->browser_view()->GetActiveWebContents();
+
+  // Ensure the window is small enough to be moved within the screen boundaries.
+  const char resize_script[] =
+      R"(new Promise((resolve, reject) => {
+        addEventListener('resize', e => resolve('resized'));
+        setTimeout(() => reject('The window failed to resize.'), 1000);
+        resizeTo(100, 100);
+      }); )";
+  EXPECT_EQ(content::EvalJs(web_contents, resize_script), "resized");
+
+  const char script_template[] =
+      R"(var command = "%s";
+      var coordString = (x, y) => `(X: ${x}, Y: ${y})`;
+      moveTest = new Promise((resolve, reject) => {
+        const coord_before = coordString(screenX, screenY);
+        addEventListener('move', e => resolve(`move fired`));
+        setTimeout(() => {
+          const coord_after = coordString(screenX, screenY);
+          reject(`move not fired by ${command}; window position: `
+               + `${coord_before} -> ${coord_after}`); }, 1000);
+        %s;});
+      )";
+
+  for (const char* const move_command : {"moveBy(10,10)", "moveTo(50,50)"}) {
+    std::string script =
+        base::StringPrintf(script_template, move_command, move_command);
+
+    gfx::Rect bounds_before = helper()->app_browser()->window()->GetBounds();
+    SCOPED_TRACE(testing::Message()
+                 << " move-command: " << move_command
+                 << " popup-before: " << bounds_before.ToString());
+    EXPECT_EQ(content::EvalJs(web_contents, script), "move fired");
+    gfx::Rect bounds_after = helper()->app_browser()->window()->GetBounds();
+    EXPECT_NE(bounds_before.ToString(), bounds_after.ToString());
+  }
+}
+
 #endif  // !BUILDFLAG(IS_ANDROID)
 
 class OriginTextVisibilityWaiter : public views::ViewObserver {
@@ -2350,9 +2475,15 @@ class WebAppFrameToolbarBrowserTest_OriginText
       ui::ScopedAnimationDurationScaleMode::NON_ZERO_DURATION};
 };
 
+// TODO(crbug.com/381106937): Re-enable this test on linux and ChromeOS.
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
+#define MAYBE_InScopeNavigation DISABLED_InScopeNavigation
+#else
+#define MAYBE_InScopeNavigation InScopeNavigation
+#endif
 IN_PROC_BROWSER_TEST_P(WebAppFrameToolbarBrowserTest_OriginText,
-                       InScopeNavigation) {
-  ASSERT_TRUE(https_server()->Start());
+                       MAYBE_InScopeNavigation) {
+  ASSERT_TRUE(https_server()->Started());
   InstallAndLaunchWebApp();
   // Origin text should not show if navigating to a URL in scope and with the
   // same theme color.
@@ -2366,9 +2497,15 @@ IN_PROC_BROWSER_TEST_P(WebAppFrameToolbarBrowserTest_OriginText,
   ExpectLastCommittedUrl(nav_url);
 }
 
+// TODO(https://crbug.com/361839153): This test fails on ChromeOS builds.
+#if BUILDFLAG(IS_CHROMEOS)
+#define MAYBE_OutOfScopeBarShown DISABLED_OutOfScopeBarShown
+#else
+#define MAYBE_OutOfScopeBarShown OutOfScopeBarShown
+#endif
 IN_PROC_BROWSER_TEST_P(WebAppFrameToolbarBrowserTest_OriginText,
-                       OutOfScopeBarShown) {
-  ASSERT_TRUE(https_server()->Start());
+                       MAYBE_OutOfScopeBarShown) {
+  ASSERT_TRUE(https_server()->Started());
   InstallAndLaunchWebApp();
   // Origin text should not show if out-of-scope bar is shown after navigation.
   const GURL nav_url =
@@ -2389,9 +2526,15 @@ IN_PROC_BROWSER_TEST_P(WebAppFrameToolbarBrowserTest_OriginText,
   ExpectLastCommittedUrl(app_url());
 }
 
+// TODO(crbug.com/376592844): Re-enable this test
+#if BUILDFLAG(IS_CHROMEOS)
+#define MAYBE_ThemeColorChange DISABLED_ThemeColorChange
+#else
+#define MAYBE_ThemeColorChange ThemeColorChange
+#endif
 IN_PROC_BROWSER_TEST_P(WebAppFrameToolbarBrowserTest_OriginText,
-                       ThemeColorChange) {
-  ASSERT_TRUE(https_server()->Start());
+                       MAYBE_ThemeColorChange) {
+  ASSERT_TRUE(https_server()->Started());
   InstallAndLaunchWebApp();
   content::WebContents* web_contents =
       helper()->app_browser()->tab_strip_model()->GetActiveWebContents();
@@ -2412,9 +2555,17 @@ IN_PROC_BROWSER_TEST_P(WebAppFrameToolbarBrowserTest_OriginText,
   ExpectLastCommittedUrl(nav_url);
 }
 
+// TODO(https://crbug.com/361839153): This test fails on ChromeOS builds.
+#if BUILDFLAG(IS_CHROMEOS)
+#define MAYBE_OutOfScopeBarWithThemeColorChange \
+  DISABLED_OutOfScopeBarWithThemeColorChange
+#else
+#define MAYBE_OutOfScopeBarWithThemeColorChange \
+  OutOfScopeBarWithThemeColorChange
+#endif
 IN_PROC_BROWSER_TEST_P(WebAppFrameToolbarBrowserTest_OriginText,
-                       OutOfScopeBarWithThemeColorChange) {
-  ASSERT_TRUE(https_server()->Start());
+                       MAYBE_OutOfScopeBarWithThemeColorChange) {
+  ASSERT_TRUE(https_server()->Started());
   InstallAndLaunchWebApp();
   content::WebContents* web_contents =
       helper()->app_browser()->tab_strip_model()->GetActiveWebContents();
@@ -2449,6 +2600,39 @@ IN_PROC_BROWSER_TEST_P(WebAppFrameToolbarBrowserTest_OriginText,
       helper()->app_browser()->app_controller()->ShouldShowCustomTabBar());
   ExpectLastCommittedUrl(app_url());
 }
+
+// TODO(https://crbug.com/361839153): This test fails on ChromeOS builds.
+#if BUILDFLAG(IS_CHROMEOS)
+#define MAYBE_WebAppOriginTextAccessibleProperties \
+  DISABLED_WebAppOriginTextAccessibleProperties
+#else
+#define MAYBE_WebAppOriginTextAccessibleProperties \
+  WebAppOriginTextAccessibleProperties
+#endif
+IN_PROC_BROWSER_TEST_P(WebAppFrameToolbarBrowserTest_OriginText,
+                       MAYBE_WebAppOriginTextAccessibleProperties) {
+  InstallAndLaunchWebApp();
+  auto* origin_text = helper()->origin_text_view();
+  ui::AXNodeData data;
+
+  ASSERT_TRUE(origin_text);
+  origin_text->GetViewAccessibility().GetAccessibleNodeData(&data);
+  EXPECT_EQ(data.role, ax::mojom::Role::kApplication);
+  EXPECT_EQ(data.GetString16Attribute(ax::mojom::StringAttribute::kName),
+            origin_text->GetLabelTextForTesting());
+  EXPECT_EQ(origin_text->GetViewAccessibility().GetCachedName(),
+            origin_text->GetLabelTextForTesting());
+
+  helper()->SetOriginTextLabelForTesting(u"Sample Accessible Text");
+
+  data = ui::AXNodeData();
+  origin_text->GetViewAccessibility().GetAccessibleNodeData(&data);
+  EXPECT_EQ(data.GetString16Attribute(ax::mojom::StringAttribute::kName),
+            origin_text->GetLabelTextForTesting());
+  EXPECT_EQ(origin_text->GetViewAccessibility().GetCachedName(),
+            origin_text->GetLabelTextForTesting());
+}
+
 INSTANTIATE_TEST_SUITE_P(
     /* no prefix */,
     WebAppFrameToolbarBrowserTest_OriginText,
@@ -2544,9 +2728,9 @@ class WebAppFrameToolbarBrowserTest_ScopeExtensionsOriginText
     web_app_info->display_mode = web_app::DisplayMode::kStandalone;
     web_app_info->user_display_mode =
         web_app::mojom::UserDisplayMode::kStandalone;
-    web_app::ScopeExtensionInfo scope_extension;
-    scope_extension.origin = url::Origin::Create(extension_url());
-    scope_extension.has_origin_wildcard = false;
+    auto scope_extension = web_app::ScopeExtensionInfo::CreateForOrigin(
+        url::Origin::Create(extension_url()),
+        /*has_origin_wildcard*/ false);
     web_app_info->scope_extensions = {std::move(scope_extension)};
     helper()->InstallAndLaunchCustomWebApp(browser(), std::move(web_app_info),
                                            app_url());
@@ -2566,9 +2750,11 @@ class WebAppFrameToolbarBrowserTest_ScopeExtensionsOriginText
       ui::ScopedAnimationDurationScaleMode::NON_ZERO_DURATION};
 };
 
+// TODO(crbug.com/371923523): Reenable ExtendedScope* tests when they are more
+// stable.
 IN_PROC_BROWSER_TEST_F(WebAppFrameToolbarBrowserTest_ScopeExtensionsOriginText,
-                       ExtendedScope) {
-  ASSERT_TRUE(https_server()->Start());
+                       DISABLED_ExtendedScope) {
+  ASSERT_TRUE(https_server()->Started());
   InstallAndLaunchWebApp();
   content::WebContents* web_contents =
       helper()->app_browser()->tab_strip_model()->GetActiveWebContents();
@@ -2602,8 +2788,8 @@ IN_PROC_BROWSER_TEST_F(WebAppFrameToolbarBrowserTest_ScopeExtensionsOriginText,
 }
 
 IN_PROC_BROWSER_TEST_F(WebAppFrameToolbarBrowserTest_ScopeExtensionsOriginText,
-                       ExtendedScopeToOutOfScope) {
-  ASSERT_TRUE(https_server()->Start());
+                       DISABLED_ExtendedScopeToOutOfScope) {
+  ASSERT_TRUE(https_server()->Started());
   InstallAndLaunchWebApp();
   content::WebContents* web_contents =
       helper()->app_browser()->tab_strip_model()->GetActiveWebContents();
@@ -2634,8 +2820,8 @@ IN_PROC_BROWSER_TEST_F(WebAppFrameToolbarBrowserTest_ScopeExtensionsOriginText,
 }
 
 IN_PROC_BROWSER_TEST_F(WebAppFrameToolbarBrowserTest_ScopeExtensionsOriginText,
-                       ExtendedScopeThemeColorChange) {
-  ASSERT_TRUE(https_server()->Start());
+                       DISABLED_ExtendedScopeThemeColorChange) {
+  ASSERT_TRUE(https_server()->Started());
   InstallAndLaunchWebApp();
   content::WebContents* web_contents =
       helper()->app_browser()->tab_strip_model()->GetActiveWebContents();

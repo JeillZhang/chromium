@@ -4,12 +4,12 @@
 
 #include "components/affiliations/core/browser/affiliation_utils.h"
 
+#include <algorithm>
 #include <map>
 #include <ostream>
 #include <string_view>
 
 #include "base/base64.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/escape.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
@@ -28,10 +28,11 @@ const char kAndroidAppScheme[] = "android";
 // Returns a std::string_view corresponding to |component| in |uri|, or the empty
 // string in case there is no such component.
 std::string_view ComponentString(const std::string& uri,
-                                  const url::Component& component) {
-  if (!component.is_valid())
+                                 const url::Component& component) {
+  if (!component.is_valid()) {
     return std::string_view();
-  return std::string_view(uri.c_str() + component.begin, component.len);
+  }
+  return std::string_view(uri).substr(component.begin, component.len);
 }
 
 // Returns true if the passed ASCII |input| string contains nothing else than
@@ -191,7 +192,7 @@ bool ParseAndCanonicalizeFacetURI(const std::string& input_uri,
 std::vector<FacetURI> ExtractAndSortFacetURIs(const AffiliatedFacets& facets) {
   std::vector<FacetURI> uris;
   uris.reserve(facets.size());
-  base::ranges::transform(facets, std::back_inserter(uris), &Facet::uri);
+  std::ranges::transform(facets, std::back_inserter(uris), &Facet::uri);
   std::sort(uris.begin(), uris.end());
   return uris;
 }
@@ -466,7 +467,7 @@ bool operator!=(const Facet& lhs, const Facet& rhs) {
 }
 
 bool operator==(const GroupedFacets& lhs, const GroupedFacets& rhs) {
-  if (!base::ranges::is_permutation(lhs.facets, rhs.facets)) {
+  if (!std::ranges::is_permutation(lhs.facets, rhs.facets)) {
     return false;
   }
   return lhs.branding_info == rhs.branding_info;

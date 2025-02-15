@@ -8,14 +8,13 @@ import static org.chromium.chrome.browser.tasks.tab_management.MessageCardViewPr
 import static org.chromium.chrome.browser.tasks.tab_management.TabListModel.CardProperties.CARD_ALPHA;
 import static org.chromium.chrome.browser.tasks.tab_management.TabListModel.CardProperties.CARD_TYPE;
 import static org.chromium.chrome.browser.tasks.tab_management.TabListModel.CardProperties.ModelType.MESSAGE;
-import static org.chromium.chrome.browser.tasks.tab_management.TabListModel.CardProperties.ModelType.NEW_TAB_TILE_DEPRECATED;
-import static org.chromium.chrome.browser.tasks.tab_management.TabListModel.CardProperties.ModelType.OTHERS;
 import static org.chromium.chrome.browser.tasks.tab_management.TabListModel.CardProperties.ModelType.TAB;
 import static org.chromium.chrome.browser.tasks.tab_management.TabProperties.TAB_ID;
 
 import android.util.Pair;
 
 import androidx.annotation.IntDef;
+import androidx.annotation.Nullable;
 
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tabmodel.TabModel;
@@ -39,13 +38,11 @@ class TabListModel extends ModelList {
     /** Required properties for each {@link PropertyModel} managed by this {@link ModelList}. */
     static class CardProperties {
         /** Supported Model type within this ModelList. */
-        @IntDef({TAB, MESSAGE, NEW_TAB_TILE_DEPRECATED, OTHERS})
+        @IntDef({TAB, MESSAGE})
         @Retention(RetentionPolicy.SOURCE)
         public @interface ModelType {
             int TAB = 0;
             int MESSAGE = 1;
-            int NEW_TAB_TILE_DEPRECATED = 2;
-            int OTHERS = 3;
         }
 
         /** This corresponds to {@link CardProperties.ModelType}*/
@@ -69,8 +66,39 @@ class TabListModel extends ModelList {
         return TabModel.INVALID_TAB_INDEX;
     }
 
+    /** Returns the property model of the first tab card or null if one does not exist. */
+    public @Nullable PropertyModel getFirstTabPropertyModel() {
+        for (int i = 0; i < size(); i++) {
+            PropertyModel model = get(i).model;
+            if (model.get(CARD_TYPE) == TAB) {
+                return model;
+            }
+        }
+        return null;
+    }
+
     /**
      * Find the Nth TAB card in the {@link TabListModel}.
+     *
+     * @param n N of the Nth TAB card.
+     * @return The index of Nth TAB card in the {@link TabListModel} or TabModel.INVALID_TAB_INDEX
+     *     if not enough tabs exist.
+     */
+    public int indexOfNthTabCardOrInvalid(int n) {
+        if (n < 0) return TabModel.INVALID_TAB_INDEX;
+        int tabCount = 0;
+        for (int i = 0; i < size(); i++) {
+            PropertyModel model = get(i).model;
+            if (model.get(CARD_TYPE) == TAB) {
+                if (tabCount++ == n) return i;
+            }
+        }
+        return TabModel.INVALID_TAB_INDEX;
+    }
+
+    /**
+     * Find the Nth TAB card in the {@link TabListModel}.
+     *
      * @param n N of the Nth TAB card.
      * @return The index of Nth TAB card in the {@link TabListModel}.
      */
@@ -90,8 +118,26 @@ class TabListModel extends ModelList {
         return lastTabIndex + 1;
     }
 
+    /** Returns the filter index of a tab from its view index. */
+    public int indexOfTabCardsOrInvalid(int viewIndex) {
+        if (viewIndex < 0) return TabModel.INVALID_TAB_INDEX;
+        int tabCount = 0;
+        for (int i = 0; i < size(); i++) {
+            PropertyModel model = get(i).model;
+            boolean isTab = model.get(CARD_TYPE) == TAB;
+            if (viewIndex == i) {
+                return isTab ? tabCount : TabModel.INVALID_TAB_INDEX;
+            }
+            if (isTab) {
+                tabCount++;
+            }
+        }
+        return TabModel.INVALID_TAB_INDEX;
+    }
+
     /**
      * Get the number of TAB cards before the given index in TabListModel.
+     *
      * @param index The given index in TabListModel.
      * @return The number of TAB cards before the given index.
      */
@@ -178,6 +224,8 @@ class TabListModel extends ModelList {
      * @param index         The index of the item in {@link TabListModel} that needs to be updated.
      */
     void updateTabListModelIdForGroup(Tab selectedTab, int index) {
+        if (index < 0 || index >= size()) return;
+
         if (get(index).model.get(CARD_TYPE) != TAB) return;
         get(index).model.set(TabProperties.TAB_ID, selectedTab.getId());
     }

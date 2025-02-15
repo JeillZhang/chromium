@@ -16,6 +16,7 @@
 #import "components/enterprise/browser/reporting/report_request.h"
 #import "components/policy/core/common/cloud/mock_cloud_policy_client.h"
 #import "ios/chrome/browser/policy/model/reporting/reporting_delegate_factory_ios.h"
+#import "ios/chrome/browser/shared/model/application_context/application_context.h"
 #import "ios/chrome/test/ios_chrome_scoped_testing_local_state.h"
 #import "ios/web/public/test/web_task_environment.h"
 #import "testing/gmock/include/gmock/gmock.h"
@@ -42,8 +43,9 @@ constexpr base::TimeDelta kNewUploadFrequency = base::Hours(10);
 
 ACTION_P(ScheduleGeneratorCallback, request_number) {
   ReportRequestQueue requests;
-  for (int i = 0; i < request_number; i++)
+  for (int i = 0; i < request_number; i++) {
     requests.push(std::make_unique<ReportRequest>(ReportType::kFull));
+  }
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE, base::BindOnce(std::move(arg0), std::move(requests)));
 }
@@ -111,24 +113,23 @@ class ReportSchedulerIOSTest : public PlatformTest {
 
   void SetLastUploadInHour(base::TimeDelta gap) {
     previous_set_last_upload_timestamp_ = base::Time::Now() - gap;
-    local_state_.Get()->SetTime(kLastUploadTimestamp,
-                                previous_set_last_upload_timestamp_);
+    local_state()->SetTime(kLastUploadTimestamp,
+                           previous_set_last_upload_timestamp_);
   }
 
   void SetReportFrequency(base::TimeDelta frequency) {
-    local_state_.Get()->SetTimeDelta(kCloudReportingUploadFrequency, frequency);
+    local_state()->SetTimeDelta(kCloudReportingUploadFrequency, frequency);
   }
 
   void ToggleCloudReport(bool enabled) {
-    local_state_.Get()->SetManagedPref(kCloudReportingEnabled,
-                                       std::make_unique<base::Value>(enabled));
+    local_state()->SetBoolean(kCloudReportingEnabled, enabled);
   }
 
   // If lastUploadTimestamp is updated recently, it should be updated as Now().
   // Otherwise, it should be same as previous set timestamp.
   void ExpectLastUploadTimestampUpdated(bool is_updated) {
     auto current_last_upload_timestamp =
-        local_state_.Get()->GetTime(kLastUploadTimestamp);
+        local_state()->GetTime(kLastUploadTimestamp);
     if (is_updated) {
       EXPECT_EQ(base::Time::Now(), current_last_upload_timestamp);
     } else {
@@ -139,8 +140,9 @@ class ReportSchedulerIOSTest : public PlatformTest {
 
   ReportRequestQueue CreateRequests(int number) {
     ReportRequestQueue requests;
-    for (int i = 0; i < number; i++)
+    for (int i = 0; i < number; i++) {
       requests.push(std::make_unique<ReportRequest>(ReportType::kFull));
+    }
     return requests;
   }
 
@@ -154,10 +156,14 @@ class ReportSchedulerIOSTest : public PlatformTest {
             Invoke(client_.get(), &policy::MockCloudPolicyClient::SetDMToken)));
   }
 
+  PrefService* local_state() {
+    return GetApplicationContext()->GetLocalState();
+  }
+
   base::test::ScopedFeatureList scoped_feature_list_;
   web::WebTaskEnvironment task_environment_{
       base::test::TaskEnvironment::TimeSource::MOCK_TIME};
-  IOSChromeScopedTestingLocalState local_state_;
+  IOSChromeScopedTestingLocalState scoped_testing_local_state_;
 
   ReportingDelegateFactoryIOS report_delegate_factory_;
   std::unique_ptr<ReportScheduler> scheduler_;

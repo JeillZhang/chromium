@@ -85,11 +85,14 @@ class TabModel {
     // Opened a non-restored tab during the startup process
     FROM_STARTUP,
     // Opened from the start surface.
+    // This is deprecated.
     FROM_START_SURFACE,
     // Opened from Tab group UI.
     // Tab group UI include:
     // - "+" button in the bottom tab strip
     // - "+" button in the tab grid dialog
+    // - "New tab in group" option in the tab strip group context menu
+    // - "Reopen" action in shared tab group messages.
     FROM_TAB_GROUP_UI,
     // Open from the long press context menu item 'Open in new tab in group'.
     // Will not be brought to the foreground.
@@ -118,6 +121,11 @@ class TabModel {
     UNSET,
     // Used when creating a tab to keep synced tab groups up to date.
     FROM_SYNC_BACKGROUND,
+    // Open most recent tab in foregroud, used by ctrl-shift-t to restore
+    // most recently closed tab or tabs.
+    FROM_RECENT_TABS_FOREGROUND,
+    // Open a new tab to prevent collaborations from having 0 tabs.
+    FROM_COLLABORATION_BACKGROUND_IN_GROUP,
     // Must be last.
     SIZE
   };
@@ -179,11 +187,13 @@ class TabModel {
   virtual base::android::ScopedJavaLocalRef<jobject> GetJavaObject() const = 0;
 
   virtual void SetActiveIndex(int index) = 0;
+  virtual void ForceCloseAllTabs() = 0;
   virtual void CloseTabAt(int index) = 0;
 
   // Used for restoring tabs from synced foreign sessions.
   virtual void CreateTab(TabAndroid* parent,
-                         content::WebContents* web_contents) = 0;
+                         content::WebContents* web_contents,
+                         bool select) = 0;
 
   virtual void HandlePopupNavigation(TabAndroid* parent,
                                      NavigateParams* params) = 0;

@@ -268,11 +268,11 @@ pub fn build_rule_from_dep(
 
     let unexpected_features: Vec<&str> = {
         let banned_features =
-            extra_config.get_combined_set(&*dep.package_name, |cfg| &cfg.ban_features);
+            extra_config.get_combined_set(&dep.package_name, |cfg| &cfg.ban_features);
         let mut actual_features = HashSet::new();
         actual_features.extend(requested_features_for_normal.iter().map(Deref::deref));
         actual_features.extend(requested_features_for_build.iter().map(Deref::deref));
-        banned_features.intersection(&actual_features).map(|s| *s).sorted_unstable().collect()
+        banned_features.intersection(&actual_features).copied().sorted_unstable().collect()
     };
     if !unexpected_features.is_empty() {
         bail!(
@@ -348,7 +348,7 @@ pub fn build_rule_from_dep(
         // Generate the rules for each dependency kind. We use a stable
         // order instead of the hashmap iteration order.
         for dep_kind in [Normal, Build] {
-            if dep.dependency_kinds.get(&dep_kind).is_none() {
+            if !dep.dependency_kinds.contains_key(&dep_kind) {
                 continue;
             }
 
@@ -369,7 +369,11 @@ pub fn build_rule_from_dep(
             let crate_type = {
                 // The stdlib is a "dylib" crate but we only want rlibs.
                 let t = lib_target.lib_type.to_string();
-                if t == "dylib" { "rlib".to_string() } else { t }
+                if t == "dylib" {
+                    "rlib".to_string()
+                } else {
+                    t
+                }
             };
 
             let mut lib_detail = detail_template.clone();
@@ -405,10 +409,7 @@ pub fn build_rule_from_dep(
 /// If the returned list is non-empty, it will always have a group without a
 /// condition, even if that group is empty. If there are no dependencies, then
 /// the returned list is empty.
-fn group_deps<F: Fn(&DepOfDep) -> PackageId>(deps: &[&DepOfDep], target_name: F) -> Vec<DepGroup>
-where
-    F: Fn(&DepOfDep) -> PackageId,
-{
+fn group_deps(deps: &[&DepOfDep], target_name: impl Fn(&DepOfDep) -> PackageId) -> Vec<DepGroup> {
     let mut groups = HashMap::<Option<Condition>, Vec<_>>::new();
     for dep in deps {
         let cond = dep.platform.as_ref().map(platform_to_condition);
@@ -507,22 +508,22 @@ pub fn cfg_to_condition(cfg: &cargo_platform::Cfg) -> String {
 
 fn triple_to_condition(triple: &str) -> &'static str {
     for (t, c) in &[
-        ("i686-linux-android", "is_android && target_cpu == \"x86\""),
-        ("x86_64-linux-android", "is_android && target_cpu == \"x64\""),
-        ("armv7-linux-android", "is_android && target_cpu == \"arm\""),
-        ("aarch64-linux-android", "is_android && target_cpu == \"arm64\""),
-        ("aarch64-fuchsia", "is_fuchsia && target_cpu == \"arm64\""),
-        ("x86_64-fuchsia", "is_fuchsia && target_cpu == \"x64\""),
-        ("aarch64-apple-ios", "is_ios && target_cpu == \"arm64\""),
-        ("armv7-apple-ios", "is_ios && target_cpu == \"arm\""),
-        ("x86_64-apple-ios", "is_ios && target_cpu == \"x64\""),
-        ("i386-apple-ios", "is_ios && target_cpu == \"x86\""),
-        ("i686-pc-windows-msvc", "is_win && target_cpu == \"x86\""),
-        ("x86_64-pc-windows-msvc", "is_win && target_cpu == \"x64\""),
-        ("i686-unknown-linux-gnu", "(is_linux || is_chromeos) && target_cpu == \"x86\""),
-        ("x86_64-unknown-linux-gnu", "(is_linux || is_chromeos) && target_cpu == \"x64\""),
-        ("x86_64-apple-darwin", "is_mac && target_cpu == \"x64\""),
-        ("aarch64-apple-darwin", "is_mac && target_cpu == \"arm64\""),
+        ("i686-linux-android", "is_android && current_cpu == \"x86\""),
+        ("x86_64-linux-android", "is_android && current_cpu == \"x64\""),
+        ("armv7-linux-android", "is_android && current_cpu == \"arm\""),
+        ("aarch64-linux-android", "is_android && current_cpu == \"arm64\""),
+        ("aarch64-fuchsia", "is_fuchsia && current_cpu == \"arm64\""),
+        ("x86_64-fuchsia", "is_fuchsia && current_cpu == \"x64\""),
+        ("aarch64-apple-ios", "is_ios && current_cpu == \"arm64\""),
+        ("armv7-apple-ios", "is_ios && current_cpu == \"arm\""),
+        ("x86_64-apple-ios", "is_ios && current_cpu == \"x64\""),
+        ("i386-apple-ios", "is_ios && current_cpu == \"x86\""),
+        ("i686-pc-windows-msvc", "is_win && current_cpu == \"x86\""),
+        ("x86_64-pc-windows-msvc", "is_win && current_cpu == \"x64\""),
+        ("i686-unknown-linux-gnu", "(is_linux || is_chromeos) && current_cpu == \"x86\""),
+        ("x86_64-unknown-linux-gnu", "(is_linux || is_chromeos) && current_cpu == \"x64\""),
+        ("x86_64-apple-darwin", "is_mac && current_cpu == \"x64\""),
+        ("aarch64-apple-darwin", "is_mac && current_cpu == \"arm64\""),
     ] {
         if *t == triple {
             return c;
@@ -551,10 +552,10 @@ fn target_os_to_condition(target_os: &str) -> &'static str {
 
 fn target_arch_to_condition(target_arch: &str) -> &'static str {
     for (t, c) in &[
-        ("aarch64", "target_cpu == \"arm64\""),
-        ("arm", "target_cpu == \"arm\""),
-        ("x86", "target_cpu == \"x86\""),
-        ("x86_64", "target_cpu == \"x64\""),
+        ("aarch64", "current_cpu == \"arm64\""),
+        ("arm", "current_cpu == \"arm\""),
+        ("x86", "current_cpu == \"x86\""),
+        ("x86_64", "current_cpu == \"x64\""),
     ] {
         if *t == target_arch {
             return c;
@@ -584,7 +585,7 @@ mod tests {
             ))))
             .unwrap()
             .0,
-            "(is_win && target_cpu == \"x64\")"
+            "(is_win && current_cpu == \"x64\")"
         );
 
         // Try a cfg expression.
@@ -613,7 +614,7 @@ mod tests {
         platform_set.add(Some(Platform::Cfg(CfgExpr::from_str("windows").unwrap())));
         assert_eq!(
             Condition::from_platform_set(platform_set).unwrap().0,
-            "(is_android && target_cpu == \"arm\") || (is_win)"
+            "(is_android && current_cpu == \"arm\") || (is_win)"
         );
 
         // A cfg expression on arch only.
@@ -623,7 +624,7 @@ mod tests {
             ))))
             .unwrap()
             .0,
-            "(target_cpu == \"arm64\")"
+            "(current_cpu == \"arm64\")"
         );
 
         // A cfg expression on arch and OS (but not via the target triple string).
@@ -633,7 +634,7 @@ mod tests {
             ))))
             .unwrap()
             .0,
-            "((!is_win) && (target_cpu == \"arm64\"))"
+            "((!is_win) && (current_cpu == \"arm64\"))"
         );
     }
 }

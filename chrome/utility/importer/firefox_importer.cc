@@ -34,6 +34,8 @@
 
 namespace {
 
+inline constexpr sql::Database::Tag kDatabaseTag{"FirefoxImporter"};
+
 // Original definition is in:
 //   toolkit/components/places/nsINavBookmarksService.idl
 enum BookmarkItemType {
@@ -87,13 +89,22 @@ bool SetFaviconData(const std::string& icon_url,
   usage_data->favicon_url = GURL(icon_url);
 
   // Don't bother importing favicons with invalid URLs.
-  if (!usage_data->favicon_url.is_valid())
+  if (!usage_data->favicon_url.is_valid()) {
     return false;
+  }
 
   // Data must be valid.
-  return !icon_data.empty() &&
-         importer::ReencodeFavicon(&icon_data[0], icon_data.size(),
-                                   &usage_data->png_data);
+  if (icon_data.empty()) {
+    return false;
+  }
+
+  std::optional<std::vector<uint8_t>> png_data =
+      importer::ReencodeFavicon(base::as_byte_span(icon_data));
+  if (png_data) {
+    usage_data->png_data = std::move(png_data).value();
+    return true;
+  }
+  return false;
 }
 
 }  // namespace
@@ -171,7 +182,7 @@ void FirefoxImporter::ImportHistory() {
   if (!base::PathExists(file))
     return;
 
-  sql::Database db;
+  sql::Database db(kDatabaseTag);
   if (!db.Open(file))
     return;
 
@@ -216,7 +227,7 @@ void FirefoxImporter::ImportBookmarks() {
   if (!base::PathExists(file))
     return;
 
-  sql::Database db;
+  sql::Database db(kDatabaseTag);
   if (!db.Open(file))
     return;
 
@@ -416,7 +427,7 @@ void FirefoxImporter::ImportAutofillFormData() {
   if (!base::PathExists(file))
     return;
 
-  sql::Database db;
+  sql::Database db(kDatabaseTag);
   if (!db.Open(file))
     return;
 
@@ -506,8 +517,7 @@ void FirefoxImporter::GetWholeBookmarkFolder(sql::Database* db,
                                              FaviconsLocation favicons_location,
                                              bool* empty_folder) {
   if (position >= list->size()) {
-    NOTREACHED_IN_MIGRATION();
-    return;
+    NOTREACHED();
   }
 
   std::string query =
@@ -521,7 +531,7 @@ void FirefoxImporter::GetWholeBookmarkFolder(sql::Database* db,
       "LEFT JOIN moz_keywords k ON k.id = b.keyword_id "
       "WHERE b.type IN (1,2) AND b.parent = ? "
       "ORDER BY b.position";
-  sql::Statement s(db->GetUniqueStatement(query.c_str()));
+  sql::Statement s(db->GetUniqueStatement(query));
   s.BindInt(0, (*list)[position]->id);
 
   BookmarkList temp_list;
@@ -590,7 +600,7 @@ void FirefoxImporter::LoadFavicons(
   if (!base::PathExists(file))
     return;
 
-  sql::Database db;
+  sql::Database db(kDatabaseTag);
   if (!db.Open(file))
     return;
 

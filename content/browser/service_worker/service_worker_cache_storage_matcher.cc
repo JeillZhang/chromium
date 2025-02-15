@@ -79,17 +79,20 @@ void ServiceWorkerCacheStorageMatcher::Run() {
     return;
   }
   // Since this is offloading the cache storage API access in ServiceWorker,
-  // we need to follow COEP used there.
+  // we need to follow COEP and DIP used there.
   // The reason why COEP is enforced to the cache storage API can be seen in:
   // crbug.com/991428.
   const network::CrossOriginEmbedderPolicy* coep =
       version_->cross_origin_embedder_policy();
-  if (!coep) {
+  const network::DocumentIsolationPolicy* dip =
+      version_->document_isolation_policy();
+  if (!coep || !dip) {
     FailFallback();
     return;
   }
   control->AddReceiver(
-      *coep, version_->embedded_worker()->GetCoepReporter(),
+      *coep, version_->embedded_worker()->GetCoepReporter(), *dip,
+      version_->embedded_worker()->GetDipReporter(),
       storage::BucketLocator::ForDefaultBucket(version_->key()),
       storage::mojom::CacheStorageOwner::kCacheAPI,
       remote_.BindNewPipeAndPassReceiver());
@@ -115,6 +118,10 @@ void ServiceWorkerCacheStorageMatcher::DidMatch(
                          "ServiceWorkerCacheStorageMatcher::DidMatch",
                          TRACE_ID_LOCAL(this),
                          TRACE_EVENT_FLAG_FLOW_IN | TRACE_EVENT_FLAG_FLOW_OUT);
+  cache_lookup_duration_ = base::TimeTicks::Now() - cache_lookup_start_;
+  base::UmaHistogramTimes(
+      "ServiceWorker.StaticRouter.MainResource.CacheLookupDuration",
+      cache_lookup_duration_);
 
   auto timing = blink::mojom::ServiceWorkerFetchEventTiming::New();
   switch (result->which()) {
@@ -148,7 +155,7 @@ void ServiceWorkerCacheStorageMatcher::DidMatch(
     case blink::mojom::MatchResult::Tag::kEagerResponse:
       // EagerResponse, which should be used only if `in_related_fetch_event`
       // is set.
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }
 

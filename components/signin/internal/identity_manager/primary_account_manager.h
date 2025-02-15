@@ -27,7 +27,8 @@
 #include "base/memory/raw_ptr.h"
 #include "base/observer_list.h"
 #include "base/observer_list_types.h"
-#include "build/chromeos_buildflags.h"
+#include "base/scoped_observation.h"
+#include "components/prefs/pref_member.h"
 #include "components/signin/internal/identity_manager/profile_oauth2_token_service_observer.h"
 #include "components/signin/public/base/consent_level.h"
 #include "components/signin/public/base/signin_client.h"
@@ -90,10 +91,6 @@ class PrimaryAccountManager : public ProfileOAuth2TokenServiceObserver {
   // Registers per-install prefs.
   static void RegisterPrefs(PrefRegistrySimple* registry);
 
-  // If user was signed in, load the primary account and then load credentials
-  // in the token service.
-  void Initialize();
-
   // Returns whether the user's primary account is available. If consent is
   // |ConsentLevel::kSync| then true implies that the user has blessed this
   // account for sync.
@@ -130,7 +127,7 @@ class PrimaryAccountManager : public ProfileOAuth2TokenServiceObserver {
 
   // Signout API surfaces (not supported on ChromeOS, where signout is not
   // permitted).
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_CHROMEOS)
   // Clears the primary account, erasing all keys associated with the primary
   // account (also cancels all auth in progress).
   // It removes all accounts from the identity manager by revoking all refresh
@@ -143,7 +140,7 @@ class PrimaryAccountManager : public ProfileOAuth2TokenServiceObserver {
   void RemovePrimaryAccountButKeepTokens(
       signin_metrics::ProfileSignout signout_source_metric);
 
-#endif  // !BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // !BUILDFLAG(IS_CHROMEOS)
 
   // Rovokes the sync consent but leaves the primary account and the rest of
   // the accounts untouched.
@@ -226,6 +223,13 @@ class PrimaryAccountManager : public ProfileOAuth2TokenServiceObserver {
   // account was initialized.
   const PrimaryAccount& GetPrimaryAccount() const;
 
+  // Callback to changes of `prefs::kSigninAllowed` pref.
+  void OnSigninAllowedPrefChanged();
+
+  // Returns true if the `prefs::kSigninAllowed` pref should modify the primary
+  // account, based on the current state.
+  bool ShouldSigninAllowedPrefAffectPrimaryAccount(bool is_sync_consent);
+
   // The SigninClient instance associated with this object. Must outlive this
   // object.
   raw_ptr<SigninClient> client_;
@@ -244,7 +248,12 @@ class PrimaryAccountManager : public ProfileOAuth2TokenServiceObserver {
   // this field.
   std::optional<PrimaryAccount> primary_account_;
 
+  BooleanPrefMember signin_allowed_;
+
   base::ObserverList<Observer> observers_;
+  base::ScopedObservation<ProfileOAuth2TokenService,
+                          ProfileOAuth2TokenServiceObserver>
+      token_service_observation_{this};
 };
 
 // Internal feature - exposed only unit testing.

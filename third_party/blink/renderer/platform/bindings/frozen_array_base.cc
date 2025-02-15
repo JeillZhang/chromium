@@ -25,8 +25,7 @@ const WrapperTypeInfo frozen_array_wrapper_type_info_{
     kDOMWrappersTag,
     WrapperTypeInfo::kWrapperTypeNoPrototype,
     WrapperTypeInfo::kNoInternalFieldClassId,
-    WrapperTypeInfo::kNotInheritFromActiveScriptWrappable,
-    WrapperTypeInfo::kCustomWrappableKind,
+    WrapperTypeInfo::kIdlOtherType,
 };
 
 }  // namespace
@@ -42,8 +41,8 @@ v8::Local<v8::Value> FrozenArrayBase::ToV8(ScriptState* script_state) const {
 
 v8::Local<v8::Value> FrozenArrayBase::ToV8(ScriptState* script_state) {
   v8::Local<v8::Object> wrapper;
-  if (LIKELY(DOMDataStore::GetWrapper(script_state->GetIsolate(), this)
-                 .ToLocal(&wrapper))) {
+  if (DOMDataStore::GetWrapper(script_state, this).ToLocal(&wrapper))
+      [[likely]] {
     return wrapper;
   }
 

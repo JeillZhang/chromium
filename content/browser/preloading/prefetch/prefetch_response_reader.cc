@@ -4,11 +4,14 @@
 
 #include "content/browser/preloading/prefetch/prefetch_response_reader.h"
 
+#include <algorithm>
+
 #include "base/metrics/histogram_functions.h"
-#include "base/ranges/algorithm.h"
+#include "base/notreached.h"
 #include "base/strings/string_util.h"
 #include "base/task/sequenced_task_runner.h"
 #include "content/browser/preloading/prefetch/prefetch_features.h"
+#include "content/browser/preloading/prefetch/prefetch_params.h"
 #include "content/browser/preloading/prefetch/prefetch_streaming_url_loader.h"
 #include "net/http/http_cookie_indices.h"
 #include "services/network/public/mojom/early_hints.mojom.h"
@@ -39,27 +42,31 @@ GetStatusForRecordingFromErrorOnResponseReceived(
 
 bool PrefetchResponseReader::Servable(
     base::TimeDelta cacheable_duration) const {
-  bool servable = false;
   switch (load_state_) {
     case LoadState::kResponseReceived:
+      // If the response hasn't been completed yet, we can still serve the
+      // prefetch (depending on |head_|).
+      CHECK(!response_complete_time_);
+      return true;
+
     case LoadState::kCompleted:
-      servable = true;
-      break;
+      // Prefetch is servable as long as it is fresh.
+      CHECK(response_complete_time_);
+      return base::TimeTicks::Now() <
+             response_complete_time_.value() + cacheable_duration;
 
     case LoadState::kStarted:
     case LoadState::kRedirectHandled:
     case LoadState::kFailedResponseReceived:
-    case LoadState::kFailed:
     case LoadState::kFailedRedirect:
-      servable = false;
-      break;
-  }
+      CHECK(!response_complete_time_)
+          << "LoadState: " << static_cast<int>(load_state_);
+      return false;
 
-  // If the response hasn't been completed yet (meaning response_complete_time_
-  // is std::nullopt), we can still serve the prefetch (depending on |head_|).
-  return servable && (!response_complete_time_.has_value() ||
-                      base::TimeTicks::Now() <
-                          response_complete_time_.value() + cacheable_duration);
+    case LoadState::kFailed:
+      CHECK(response_complete_time_);
+      return false;
+  }
 }
 
 bool PrefetchResponseReader::IsWaitingForResponse() const {
@@ -89,11 +96,16 @@ bool PrefetchResponseReader::MatchesCookieIndices(
   return hash == cookie_indices_->expected_hash;
 }
 
-PrefetchResponseReader::PrefetchResponseReader() {
+PrefetchResponseReader::PrefetchResponseReader(bool is_reusable)
+    : is_reusable_(is_reusable) {
   serving_url_loader_receivers_.set_disconnect_handler(base::BindRepeating(
       &PrefetchResponseReader::OnServingURLLoaderMojoDisconnect,
       weak_ptr_factory_.GetWeakPtr()));
 }
+
+PrefetchResponseReader::PrefetchResponseReader()
+    : PrefetchResponseReader(
+          base::FeatureList::IsEnabled(features::kPrefetchReusable)) {}
 
 PrefetchResponseReader::~PrefetchResponseReader() {
   if (should_record_metrics_) {
@@ -143,7 +155,7 @@ PrefetchRequestHandler PrefetchResponseReader::CreateRequestHandler() {
     case LoadState::kResponseReceived:
     case LoadState::kCompleted:
     case LoadState::kFailed:
-      if (base::FeatureList::IsEnabled(features::kPrefetchReusable)) {
+      if (is_reusable_) {
         if (body_tee_) {
           body = body_tee_->Clone();
         }
@@ -153,6 +165,10 @@ PrefetchRequestHandler PrefetchResponseReader::CreateRequestHandler() {
       if (!body) {
         // This might be because `CreateRequestHandler()` is called for the
         // second time.
+        base::UmaHistogramBoolean(
+            "Preloading.Prefetch."
+            "PrefetchResponseReaderCreateRequestHandlerInvalidBody",
+            true);
         return {};
       }
       break;
@@ -181,7 +197,7 @@ void PrefetchResponseReader::BindAndStart(
     const network::ResourceRequest& resource_request,
     mojo::PendingReceiver<network::mojom::URLLoader> receiver,
     mojo::PendingRemote<network::mojom::URLLoaderClient> client) {
-  if (!base::FeatureList::IsEnabled(features::kPrefetchReusable)) {
+  if (!is_reusable_) {
     // Only one client is allowed if the feature is disabled.
     CHECK(serving_url_loader_clients_.empty());
   }
@@ -243,8 +259,7 @@ void PrefetchResponseReader::BindAndStart(
     case LoadState::kFailedRedirect:
       // `CreateRequestHandler()` shouldn't be called for these non-servable
       // states.
-      NOTREACHED_IN_MIGRATION();
-      break;
+      NOTREACHED();
   }
 
   RunEventQueue(client_id);
@@ -333,17 +348,13 @@ void PrefetchResponseReader::OnComplete(
       load_state_ = LoadState::kFailed;
       break;
     case LoadState::kRedirectHandled:
-      CHECK(false);
-      break;
+      NOTREACHED();
     case LoadState::kCompleted:
-      CHECK(false);
-      break;
+      NOTREACHED();
     case LoadState::kFailed:
-      CHECK(false);
-      break;
+      NOTREACHED();
     case LoadState::kFailedRedirect:
-      CHECK(false);
-      break;
+      NOTREACHED();
   }
 
   CHECK(!response_complete_time_);
@@ -441,9 +452,9 @@ void PrefetchResponseReader::OnReceiveResponse(
   head->request_cookies.clear();
 
   head_ = std::move(head);
-  if (base::FeatureList::IsEnabled(features::kPrefetchReusable)) {
+  if (is_reusable_) {
     body_tee_ = base::MakeRefCounted<PrefetchDataPipeTee>(
-        std::move(body), features::kPrefetchReusableBodySizeLimit.Get());
+        std::move(body), GetPrefetchDataPipeTeeBodySizeLimit());
   } else {
     body_ = std::move(body);
   }
@@ -508,7 +519,7 @@ void PrefetchResponseReader::FollowRedirect(
   // a redirect, then it will be interrupted before |FollowRedirect| is called,
   // and instead interceptors are given a chance to intercept the navigation to
   // the redirect.
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 void PrefetchResponseReader::SetPriority(net::RequestPriority priority,
@@ -516,20 +527,6 @@ void PrefetchResponseReader::SetPriority(net::RequestPriority priority,
   // Forward calls from the serving URL loader to the prefetch URL loader.
   if (streaming_url_loader_) {
     streaming_url_loader_->SetPriority(priority, intra_priority_value);
-  }
-}
-
-void PrefetchResponseReader::PauseReadingBodyFromNet() {
-  // Forward calls from the serving URL loader to the prefetch URL loader.
-  if (streaming_url_loader_) {
-    streaming_url_loader_->PauseReadingBodyFromNet();
-  }
-}
-
-void PrefetchResponseReader::ResumeReadingBodyFromNet() {
-  // Forward calls from the serving URL loader to the prefetch URL loader.
-  if (streaming_url_loader_) {
-    streaming_url_loader_->ResumeReadingBodyFromNet();
   }
 }
 
@@ -600,9 +597,9 @@ void PrefetchResponseReader::StoreInfoFromResponseHead(
   if (vary_on_cookie && head.parsed_headers->cookie_indices.has_value()) {
     auto& indices = cookie_indices_.emplace();
     indices.cookie_names = *head.parsed_headers->cookie_indices;
-    base::ranges::sort(indices.cookie_names);
-    indices.cookie_names.erase(base::ranges::unique(indices.cookie_names),
-                               indices.cookie_names.end());
+    std::ranges::sort(indices.cookie_names);
+    auto repeated = std::ranges::unique(indices.cookie_names);
+    indices.cookie_names.erase(repeated.begin(), repeated.end());
     indices.cookie_names.shrink_to_fit();
     indices.expected_hash =
         net::HashCookieIndices(indices.cookie_names, head.request_cookies);

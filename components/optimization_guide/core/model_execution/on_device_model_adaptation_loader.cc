@@ -17,7 +17,10 @@
 #include "components/optimization_guide/core/optimization_guide_model_provider.h"
 #include "components/optimization_guide/core/optimization_guide_switches.h"
 #include "components/optimization_guide/proto/common_types.pb.h"
+#include "components/optimization_guide/proto/models.pb.h"
 #include "components/optimization_guide/proto/on_device_base_model_metadata.pb.h"
+#include "components/optimization_guide/proto/on_device_model_execution_config.pb.h"
+#include "components/prefs/pref_service.h"
 #include "services/on_device_model/public/cpp/model_assets.h"
 
 namespace optimization_guide {
@@ -39,6 +42,7 @@ base::expected<std::unique_ptr<OnDeviceModelAdaptationMetadata>,
 CreateAdaptatonMetadataFromModelExecutionConfig(
     ModelBasedCapabilityKey feature,
     std::unique_ptr<on_device_model::AdaptationAssetPaths> asset_paths,
+    int64_t version,
     std::unique_ptr<proto::OnDeviceModelExecutionConfig> execution_config) {
   if (!execution_config) {
     return base::unexpected(OnDeviceModelAdaptationAvailability::
@@ -53,8 +57,14 @@ CreateAdaptatonMetadataFromModelExecutionConfig(
     return base::unexpected(OnDeviceModelAdaptationAvailability::
                                 kAdaptationModelExecutionConfigInvalid);
   }
+  if (config.output_config().has_redact_rules() &&
+      config.output_config().response_streaming_mode() ==
+          proto::ResponseStreamingMode::STREAMING_MODE_CHUNK_BY_CHUNK) {
+    return base::unexpected(OnDeviceModelAdaptationAvailability::
+                                kAdaptationModelExecutionConfigInvalid);
+  }
   return base::ok(OnDeviceModelAdaptationMetadata::New(
-      *asset_paths,
+      asset_paths.get(), version,
       base::MakeRefCounted<OnDeviceModelFeatureAdapter>(std::move(config))));
 }
 
@@ -77,16 +87,20 @@ OnDeviceModelAdaptationMetadataCreated(
 // static
 std::unique_ptr<OnDeviceModelAdaptationMetadata>
 OnDeviceModelAdaptationMetadata::New(
-    const on_device_model::AdaptationAssetPaths& asset_paths,
+    on_device_model::AdaptationAssetPaths* asset_paths,
+    int64_t version,
     scoped_refptr<OnDeviceModelFeatureAdapter> adapter) {
-  return base::WrapUnique(
-      new OnDeviceModelAdaptationMetadata(asset_paths, std::move(adapter)));
+  return base::WrapUnique(new OnDeviceModelAdaptationMetadata(
+      asset_paths, version, std::move(adapter)));
 }
 
 OnDeviceModelAdaptationMetadata::OnDeviceModelAdaptationMetadata(
-    const on_device_model::AdaptationAssetPaths& asset_paths,
+    on_device_model::AdaptationAssetPaths* asset_paths,
+    int64_t version,
     scoped_refptr<OnDeviceModelFeatureAdapter> adapter)
-    : asset_paths_(std::move(asset_paths)), adapter_(std::move(adapter)) {}
+    : asset_paths_(base::OptionalFromPtr(asset_paths)),
+      version_(version),
+      adapter_(std::move(adapter)) {}
 
 OnDeviceModelAdaptationMetadata::OnDeviceModelAdaptationMetadata(
     const OnDeviceModelAdaptationMetadata&) = default;
@@ -97,13 +111,21 @@ OnDeviceModelAdaptationLoader::OnDeviceModelAdaptationLoader(
     OptimizationGuideModelProvider* model_provider,
     base::WeakPtr<OnDeviceModelComponentStateManager>
         on_device_component_state_manager,
+    PrefService* local_state,
     OnLoadFn on_load_fn)
     : feature_(feature),
+      target_(
+          *features::internal::GetOptimizationTargetForCapability(feature_)),
       on_load_fn_(on_load_fn),
+      on_device_component_state_manager_(on_device_component_state_manager),
+      local_state_(local_state),
       model_provider_(model_provider),
       background_task_runner_(base::ThreadPool::CreateSequencedTaskRunner(
           {base::MayBlock(), base::TaskPriority::BEST_EFFORT})) {
-  CHECK(features::internal::IsOnDeviceModelAdaptationEnabled(feature_));
+  if (!on_device_component_state_manager) {
+    return;
+  }
+
   component_state_manager_observation_.Observe(
       on_device_component_state_manager.get());
   if (auto* state = on_device_component_state_manager->GetState()) {
@@ -113,19 +135,22 @@ OnDeviceModelAdaptationLoader::OnDeviceModelAdaptationLoader(
 
 OnDeviceModelAdaptationLoader::~OnDeviceModelAdaptationLoader() {
   if (registered_with_model_provider_) {
-    model_provider_->RemoveObserverForOptimizationTargetModel(
-        features::internal::GetOptimizationTargetForModelAdaptation(feature_),
-        this);
+    model_provider_->RemoveObserverForOptimizationTargetModel(target_, this);
   }
 }
 
 void OnDeviceModelAdaptationLoader::StateChanged(
     const OnDeviceModelComponentState* state) {
+  MaybeRegisterModelDownload(
+      state, WasOnDeviceEligibleFeatureRecentlyUsed(feature_, *local_state_));
+}
+
+void OnDeviceModelAdaptationLoader::MaybeRegisterModelDownload(
+    const OnDeviceModelComponentState* state,
+    bool was_feature_recently_used) {
   CHECK(model_provider_);
   if (registered_with_model_provider_) {
-    model_provider_->RemoveObserverForOptimizationTargetModel(
-        features::internal::GetOptimizationTargetForModelAdaptation(feature_),
-        this);
+    model_provider_->RemoveObserverForOptimizationTargetModel(target_, this);
     registered_with_model_provider_ = false;
   }
   base_model_spec_ = std::nullopt;
@@ -136,10 +161,18 @@ void OnDeviceModelAdaptationLoader::StateChanged(
     return;
   }
   base_model_spec_ = state->GetBaseModelSpec();
-  if (!switches::GetOnDeviceModelExecutionOverride() && !base_model_spec_) {
-    RecordAdaptationModelAvailability(
-        feature_, OnDeviceModelAdaptationAvailability::kBaseModelSpecInvalid);
-    return;
+  if (!switches::GetOnDeviceModelExecutionOverride()) {
+    if (!base_model_spec_) {
+      RecordAdaptationModelAvailability(
+          feature_, OnDeviceModelAdaptationAvailability::kBaseModelSpecInvalid);
+      return;
+    }
+    if (!was_feature_recently_used) {
+      RecordAdaptationModelAvailability(
+          feature_,
+          OnDeviceModelAdaptationAvailability::kFeatureNotRecentlyUsed);
+      return;
+    }
   }
 
   proto::Any any_metadata;
@@ -150,21 +183,34 @@ void OnDeviceModelAdaptationLoader::StateChanged(
   if (base_model_spec_) {
     model_metadata.set_base_model_version(base_model_spec_->model_version);
     model_metadata.set_base_model_name(base_model_spec_->model_name);
+    *model_metadata.mutable_supported_performance_hints() = {
+        base_model_spec_->supported_performance_hints.begin(),
+        base_model_spec_->supported_performance_hints.end()};
   }
   model_metadata.SerializeToString(any_metadata.mutable_value());
 
-  model_provider_->AddObserverForOptimizationTargetModel(
-      features::internal::GetOptimizationTargetForModelAdaptation(feature_),
-      any_metadata, this);
+  model_provider_->AddObserverForOptimizationTargetModel(target_, any_metadata,
+                                                         this);
   registered_with_model_provider_ = true;
+}
+
+void OnDeviceModelAdaptationLoader::OnDeviceEligibleFeatureFirstUsed(
+    ModelBasedCapabilityKey feature) {
+  if (feature != feature_) {
+    return;
+  }
+  if (!on_device_component_state_manager_) {
+    return;
+  }
+  MaybeRegisterModelDownload(
+      on_device_component_state_manager_->GetState(),
+      WasOnDeviceEligibleFeatureRecentlyUsed(feature_, *local_state_));
 }
 
 void OnDeviceModelAdaptationLoader::OnModelUpdated(
     proto::OptimizationTarget optimization_target,
     base::optional_ref<const ModelInfo> model_info) {
-  CHECK_EQ(
-      optimization_target,
-      features::internal::GetOptimizationTargetForModelAdaptation(feature_));
+  CHECK_EQ(optimization_target, target_);
   on_load_fn_.Run(nullptr);
   auto result = ProcessModelUpdate(model_info);
   if (!result.has_value()) {
@@ -185,7 +231,7 @@ void OnDeviceModelAdaptationLoader::OnModelUpdated(
       FROM_HERE,
       base::BindOnce(&ReadOnDeviceModelExecutionConfig, *execution_config_file),
       base::BindOnce(&CreateAdaptatonMetadataFromModelExecutionConfig, feature_,
-                     std::move(result.value()))
+                     std::move(result.value()), model_info->GetVersion())
           .Then(
               base::BindOnce(&OnDeviceModelAdaptationMetadataCreated, feature_))
           .Then(on_load_fn_));
@@ -228,8 +274,8 @@ OnDeviceModelAdaptationLoader::ProcessModelUpdate(
   auto weights_file = model_info->GetAdditionalFileWithBaseName(
       kOnDeviceModelAdaptationWeightsFile);
   if (!weights_file) {
-    return base::unexpected(
-        OnDeviceModelAdaptationAvailability::kAdaptationModelInvalid);
+    // Return that the weights file was not provided.
+    return base::ok(nullptr);
   }
   auto adaptations_assets =
       std::make_unique<on_device_model::AdaptationAssetPaths>();

@@ -8,8 +8,6 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.reset;
@@ -17,9 +15,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
@@ -28,7 +24,6 @@ import org.robolectric.annotation.Config;
 
 import org.chromium.base.Promise;
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.base.test.util.Features;
 import org.chromium.chrome.browser.browserservices.verification.ChromeOriginVerifier;
 import org.chromium.chrome.browser.browserservices.verification.ChromeOriginVerifierFactory;
 import org.chromium.chrome.browser.customtabs.CustomTabIntentDataProvider;
@@ -36,9 +31,9 @@ import org.chromium.chrome.browser.customtabs.content.CustomTabActivityTabProvid
 import org.chromium.chrome.browser.lifecycle.ActivityLifecycleDispatcher;
 import org.chromium.components.content_relationship_verification.OriginVerifier.OriginVerificationListener;
 import org.chromium.components.embedder_support.util.Origin;
-import org.chromium.components.externalauth.ExternalAuthUtils;
 
 import java.util.Collections;
+import java.util.HashSet;
 
 /** Tests for {@link TwaVerifier}. */
 @RunWith(BaseRobolectricTestRunner.class)
@@ -48,15 +43,11 @@ public class TwaVerifierTest {
     private static final String ADDITIONAL_ORIGIN = "https://www.otherverifiedorigin.com";
     private static final String OTHER_URL = "https://www.notverifiedurl.com/page2.html";
 
-    @Rule public TestRule mFeaturesProcessor = new Features.JUnitProcessor();
-
     @Mock ActivityLifecycleDispatcher mLifecycleDispatcher;
     @Mock CustomTabIntentDataProvider mIntentDataProvider;
-    @Mock ChromeOriginVerifierFactory mOriginVerifierFactory;
     @Mock ChromeOriginVerifier mOriginVerifier;
     @Mock CustomTabActivityTabProvider mActivityTabProvider;
     @Mock ClientPackageNameProvider mClientPackageNameProvider;
-    @Mock ExternalAuthUtils mExternalAuthUtils;
 
     private TwaVerifier mDelegate;
 
@@ -65,11 +56,11 @@ public class TwaVerifierTest {
         MockitoAnnotations.initMocks(this);
 
         when(mIntentDataProvider.getUrlToLoad()).thenReturn(INITIAL_URL);
-        when(mIntentDataProvider.getTrustedWebActivityAdditionalOrigins())
-                .thenReturn(Collections.singletonList(ADDITIONAL_ORIGIN));
-
-        when(mOriginVerifierFactory.create(anyString(), anyInt(), any(), any()))
-                .thenReturn(mOriginVerifier);
+        HashSet<Origin> trustedOrigins = new HashSet<Origin>();
+        Collections.addAll(
+                trustedOrigins, Origin.create(INITIAL_URL), Origin.create(ADDITIONAL_ORIGIN));
+        when(mIntentDataProvider.getAllTrustedWebActivityOrigins()).thenReturn(trustedOrigins);
+        ChromeOriginVerifierFactory.setInstanceForTesting(mOriginVerifier);
 
         when(mClientPackageNameProvider.get()).thenReturn("some.package.name");
 
@@ -77,10 +68,8 @@ public class TwaVerifierTest {
                 new TwaVerifier(
                         mLifecycleDispatcher,
                         mIntentDataProvider,
-                        mOriginVerifierFactory,
-                        mActivityTabProvider,
                         mClientPackageNameProvider,
-                        mExternalAuthUtils);
+                        mActivityTabProvider);
     }
 
     @Test

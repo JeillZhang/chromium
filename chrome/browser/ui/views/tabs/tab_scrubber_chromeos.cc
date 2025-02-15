@@ -8,6 +8,7 @@
 
 #include <algorithm>
 
+#include "ash/shell.h"
 #include "base/functional/bind.h"
 #include "base/metrics/histogram_macros.h"
 #include "chrome/browser/ui/browser.h"
@@ -26,17 +27,12 @@
 #include "ui/views/widget/widget.h"
 #include "ui/wm/public/activation_client.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-#include "ash/shell.h"
-#include "chrome/browser/ash/crosapi/browser_manager.h"
-#include "chrome/browser/ash/crosapi/browser_util.h"
-#endif
-
 // static
 TabScrubberChromeOS* TabScrubberChromeOS::GetInstance() {
   static TabScrubberChromeOS* instance = nullptr;
-  if (!instance)
+  if (!instance) {
     instance = new TabScrubberChromeOS();
+  }
   return instance;
 }
 
@@ -56,8 +52,9 @@ gfx::Point TabScrubberChromeOS::GetStartPoint(
 
   // The contents insets are logical rather than physical, so reverse them for
   // RTL.
-  if (base::i18n::IsRTL())
+  if (base::i18n::IsRTL()) {
     std::swap(left, right);
+  }
 
   // For very narrow tabs, the contents insets may be too large.  Clamp to the
   // opposite edges of the tab, which should be at (overlap / 2).
@@ -82,13 +79,14 @@ void TabScrubberChromeOS::SetEnabled(bool enabled) {
 
 void TabScrubberChromeOS::SynthesizedScrollEvent(float x_offset,
                                                  bool is_fling_scroll_event) {
-  // ET_SCROLL_FLING_START and ET_SCROLL_FLING_CANCEL are both handled in the
-  // same way inside OnScrollEvent(), so we can set ET_SCROLL_FLING_START if
-  // `is_fling_scroll_event` is true.
+  // EventType::kScrollFlingStart and EventType::kScrollFlingCancel are both
+  // handled in the same way inside OnScrollEvent(), so we can set
+  // EventType::kScrollFlingStart if `is_fling_scroll_event` is true.
   // TODO(crbug.com/40207972): Instead of generating event here, use the real
   // event passed from wayland.
-  ui::EventType event_type =
-      is_fling_scroll_event ? ui::ET_SCROLL_FLING_START : ui::ET_SCROLL;
+  ui::EventType event_type = is_fling_scroll_event
+                                 ? ui::EventType::kScrollFlingStart
+                                 : ui::EventType::kScroll;
   // Set `y_offset` as zero so that its absolute value is always not larger than
   // that of `x_offset` to represent the horizontal scroll.
   constexpr float y_offset = 0.f;
@@ -101,9 +99,7 @@ void TabScrubberChromeOS::SynthesizedScrollEvent(float x_offset,
 }
 
 TabScrubberChromeOS::TabScrubberChromeOS() {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
   ash::Shell::Get()->AddPreTargetHandler(this);
-#endif
   BrowserList::AddObserver(this);
 }
 
@@ -112,15 +108,6 @@ TabScrubberChromeOS::~TabScrubberChromeOS() {
 }
 
 void TabScrubberChromeOS::OnScrollEvent(ui::ScrollEvent* event) {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  // TODO(crbug.com/40207972): Generalize the interception/handling of
-  // 3-finger swipes in Ash/ChromeOS.
-  bool delegated = MaybeDelegateHandlingToLacros(event);
-  if (delegated) {
-    return;
-  }
-#endif
-
   if (!enabled_) {
     return;
   }
@@ -176,15 +163,17 @@ void TabScrubberChromeOS::OnScrollEvent(ui::ScrollEvent* event) {
   } else if (highlighted_tab_ == -1) {
     // Has the direction of the swipe changed while scrubbing?
     Direction direction = (x_offset < 0) ? LEFT : RIGHT;
-    if (direction != swipe_direction_)
+    if (direction != swipe_direction_) {
       ScrubDirectionChanged(direction);
+    }
   }
 
   UpdateSwipeX(x_offset);
 
   Tab* new_tab = tab_strip_->GetTabAt(gfx::Point(swipe_x_, swipe_y_));
-  if (!new_tab)
+  if (!new_tab) {
     return;
+  }
 
   int new_index = tab_strip_->GetModelIndexOf(new_tab).value();
   if (highlighted_tab_ == -1 &&
@@ -193,10 +182,11 @@ void TabScrubberChromeOS::OnScrollEvent(ui::ScrollEvent* event) {
   }
 
   if (new_index != highlighted_tab_) {
-    if (activate_timer_.IsRunning())
+    if (activate_timer_.IsRunning()) {
       activate_timer_.Reset();
-    else
+    } else {
       ScheduleFinishScrubIfNeeded();
+    }
   }
 
   UpdateHighlightedTab(new_tab, new_index);
@@ -209,16 +199,15 @@ void TabScrubberChromeOS::OnScrollEvent(ui::ScrollEvent* event) {
 }
 
 void TabScrubberChromeOS::OnBrowserRemoved(Browser* browser) {
-  if (browser != browser_)
+  if (browser != browser_) {
     return;
+  }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
   if (browser_) {
     BrowserView::GetBrowserViewForBrowser(browser_)
         ->GetWidget()
         ->ReleaseCapture();
   }
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
   activate_timer_.Stop();
   swipe_x_ = -1;
@@ -230,34 +219,40 @@ void TabScrubberChromeOS::OnBrowserRemoved(Browser* browser) {
 }
 
 void TabScrubberChromeOS::OnTabAdded(int index) {
-  if (highlighted_tab_ == -1)
+  if (highlighted_tab_ == -1) {
     return;
+  }
 
-  if (index < highlighted_tab_)
+  if (index < highlighted_tab_) {
     ++highlighted_tab_;
+  }
 }
 
 void TabScrubberChromeOS::OnTabMoved(int from_index, int to_index) {
-  if (highlighted_tab_ == -1)
+  if (highlighted_tab_ == -1) {
     return;
+  }
 
-  if (from_index == highlighted_tab_)
+  if (from_index == highlighted_tab_) {
     highlighted_tab_ = to_index;
-  else if (from_index < highlighted_tab_ && highlighted_tab_ <= to_index)
+  } else if (from_index < highlighted_tab_ && highlighted_tab_ <= to_index) {
     --highlighted_tab_;
-  else if (from_index > highlighted_tab_ && highlighted_tab_ >= to_index)
+  } else if (from_index > highlighted_tab_ && highlighted_tab_ >= to_index) {
     ++highlighted_tab_;
+  }
 }
 
 void TabScrubberChromeOS::OnTabRemoved(int index) {
-  if (highlighted_tab_ == -1)
+  if (highlighted_tab_ == -1) {
     return;
+  }
   if (index == highlighted_tab_) {
     FinishScrub(false);
     return;
   }
-  if (index < highlighted_tab_)
+  if (index < highlighted_tab_) {
     --highlighted_tab_;
+  }
 }
 
 Browser* TabScrubberChromeOS::GetActiveBrowser() {
@@ -290,14 +285,11 @@ void TabScrubberChromeOS::BeginScrub(BrowserView* browser_view,
         ImmersiveModeController::ANIMATE_REVEAL_YES);
   }
 
-  tab_strip_->AddObserver(this);
+  tab_strip_->SetTabStripObserver(this);
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
   // Capture the event so that the scroll event will not be handled by other
-  // clients. This is required to work well with overview mode gesture, and not
-  // needed for Lacros since the overview mode handling is done on Ash.
+  // clients. This is required to work well with overview mode gesture.
   browser_view->GetWidget()->SetCapture(/*view=*/nullptr);
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 }
 
 bool TabScrubberChromeOS::FinishScrub(bool activate) {
@@ -307,9 +299,7 @@ bool TabScrubberChromeOS::FinishScrub(bool activate) {
   if (browser_ && browser_->window()) {
     BrowserView* browser_view = BrowserView::GetBrowserViewForBrowser(browser_);
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
     browser_view->GetWidget()->ReleaseCapture();
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
     TabStrip* tab_strip = browser_view->tabstrip();
     if (activate && highlighted_tab_ != -1) {
@@ -325,7 +315,7 @@ bool TabScrubberChromeOS::FinishScrub(bool activate) {
           TabStripUserGestureDetails(
               TabStripUserGestureDetails::GestureType::kOther));
     }
-    tab_strip->RemoveObserver(this);
+    tab_strip->SetTabStripObserver(nullptr);
   }
 
   browser_ = nullptr;
@@ -373,8 +363,9 @@ void TabScrubberChromeOS::UpdateSwipeX(float x_offset) {
   // that minimum reduction). Please note, x_offset might be negative.
   float min = 0.25 * x_offset;
   float max = x_offset;
-  if (x_offset < 0)
+  if (x_offset < 0) {
     std::swap(min, max);
+  }
   swipe_x_ += std::clamp(
       x_offset - (tab_strip_->GetTabCount() * 0.02f * x_offset), min, max);
 
@@ -389,18 +380,21 @@ void TabScrubberChromeOS::UpdateSwipeX(float x_offset) {
   Tab* last_tab = tab_strip_->tab_at(last_tab_index);
   int last_tab_center = last_tab->GetMirroredBounds().CenterPoint().x();
 
-  if (swipe_x_ < first_tab_center)
+  if (swipe_x_ < first_tab_center) {
     swipe_x_ = first_tab_center;
-  if (swipe_x_ > last_tab_center)
+  }
+  if (swipe_x_ > last_tab_center) {
     swipe_x_ = last_tab_center;
+  }
 }
 
 void TabScrubberChromeOS::UpdateHighlightedTab(Tab* new_tab, int new_index) {
   DCHECK(scrubbing_);
   DCHECK(new_tab);
 
-  if (new_index == highlighted_tab_)
+  if (new_index == highlighted_tab_) {
     return;
+  }
 
   if (highlighted_tab_ != -1) {
     Tab* tab = tab_strip_->tab_at(highlighted_tab_);
@@ -415,35 +409,3 @@ void TabScrubberChromeOS::UpdateHighlightedTab(Tab* new_tab, int new_index) {
     highlighted_tab_ = -1;
   }
 }
-
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-// static
-bool TabScrubberChromeOS::MaybeDelegateHandlingToLacros(
-    ui::ScrollEvent* event) {
-  auto* active_window =
-      ash::Shell::Get()->activation_client()->GetActiveWindow();
-  if (!active_window) {
-    return false;
-  }
-
-  if (!crosapi::browser_util::IsLacrosWindow(active_window)) {
-    return false;
-  }
-
-  if (event->IsFlingScrollEvent()) {
-    // Do NOT stop propagation for fling scroll event since it may be consumed
-    // elsewhere.
-    crosapi::BrowserManager::Get()->HandleTabScrubbing(
-        event->x_offset(), /*is_fling_scroll_event=*/true);
-    return true;
-  } else if (event->finger_count() == kFingerCount) {
-    crosapi::BrowserManager::Get()->HandleTabScrubbing(
-        event->x_offset(),
-        /*is_fling_scroll_event=*/false);
-    event->SetHandled();
-    return true;
-  }
-
-  return false;
-}
-#endif

@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "ui/ozone/platform/drm/common/drm_util.h"
 
 #include <drm_fourcc.h>
@@ -12,7 +17,9 @@
 #include <xf86drm.h>
 #include <xf86drmMode.h>
 
+#include <algorithm>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -22,7 +29,7 @@
 #include "base/containers/flat_map.h"
 #include "base/files/file_util.h"
 #include "base/metrics/histogram_functions.h"
-#include "base/ranges/algorithm.h"
+#include "base/not_fatal_until.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
@@ -32,6 +39,7 @@
 #include "ui/display/types/display_mode.h"
 #include "ui/display/util/display_util.h"
 #include "ui/display/util/edid_parser.h"
+#include "ui/ozone/platform/drm/common/hardware_display_controller_info.h"
 #include "ui/ozone/platform/drm/common/scoped_drm_types.h"
 #include "ui/ozone/platform/drm/common/tile_property.h"
 
@@ -85,8 +93,8 @@ std::pair<uint32_t /* best_crtc */, uint32_t /* connected_crtc */> GetCrtcs(
           IsCrtcInUse(resources->crtcs[j], displays))
         continue;
 
-      int supported_planes = base::ranges::count_if(
-          planes, [crtc_bit](const ScopedDrmPlanePtr& p) {
+      int supported_planes =
+          std::ranges::count_if(planes, [crtc_bit](const ScopedDrmPlanePtr& p) {
             return p->possible_crtcs & crtc_bit;
           });
       if (supported_planes > most_crtc_planes ||
@@ -310,11 +318,24 @@ std::optional<std::string> ReadFileAndTrim(const base::FilePath& path) {
       base::TrimWhitespaceASCII(data, base::TrimPositions::TRIM_ALL));
 }
 
+// Sort modes in |modes_in_out| from largest to smallest as defined by
+// DisplayMode::operator>().
+void SortDisplayModeListDesc(
+    display::DisplaySnapshot::DisplayModeList& modes_in_out) {
+  std::stable_sort(
+      modes_in_out.begin(), modes_in_out.end(),
+      [](const std::unique_ptr<const display::DisplayMode>& left,
+         const std::unique_ptr<const display::DisplayMode>& right) {
+        return *left > *right;
+      });
+}
+
 // Given all |tiled_infos| belonging to the same display, select the "primary"
 // tile that will represent all the tiles. Primary tile is the only active tile
 // if the display is configured with a non-tile mode.
 const HardwareDisplayControllerInfo* GetPrimaryTileInfo(
-    const HardwareDisplayControllerInfoList& tiled_infos) {
+    const std::vector<std::unique_ptr<HardwareDisplayControllerInfo>>&
+        tiled_infos) {
   if (tiled_infos.empty()) {
     return nullptr;
   }
@@ -378,6 +399,143 @@ const HardwareDisplayControllerInfo* GetPrimaryTileInfo(
 
   return tile_closest_to_origin;
 }
+bool ContainsModePtr(const display::DisplaySnapshot::DisplayModeList& modes,
+                     const display::DisplayMode* target_mode) {
+  for (const auto& mode : modes) {
+    if (mode.get() == target_mode) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool ContainsModeEq(const display::DisplaySnapshot::DisplayModeList& modes,
+                    const display::DisplayMode& target_mode) {
+  for (const auto& mode : modes) {
+    if (*mode == target_mode) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Prune all tile modes in |primary_tile_modes_in_out| that doesn't show up in
+// all other tiles in the tiled display.
+void PruneTileModesNotPresentInAllTiles(
+    const HardwareDisplayControllerInfo& primary_tile_info,
+    display::DisplaySnapshot::DisplayModeList& primary_tile_modes_in_out) {
+  const std::optional<TileProperty>& primary_tile_property =
+      primary_tile_info.tile_property();
+  if (!primary_tile_property.has_value()) {
+    return;
+  }
+
+  const gfx::Size& tile_size = primary_tile_property->tile_size;
+  for (auto primary_tile_mode_it = primary_tile_modes_in_out.begin();
+       primary_tile_mode_it != primary_tile_modes_in_out.end();) {
+    // Skip non-tile modes.
+    if (!(*primary_tile_mode_it) ||
+        (*primary_tile_mode_it)->size() != tile_size) {
+      ++primary_tile_mode_it;
+      continue;
+    }
+
+    bool mode_found_in_all_tiles = true;
+    for (const auto& nonprimary_tile_info :
+         primary_tile_info.nonprimary_tile_infos()) {
+      const display::DisplaySnapshot::DisplayModeList nonprimary_tile_modes =
+          nonprimary_tile_info->GetModesOfSize(tile_size);
+      if (!ContainsModeEq(nonprimary_tile_modes, **primary_tile_mode_it)) {
+        mode_found_in_all_tiles = false;
+        break;
+      }
+    }
+
+    if (mode_found_in_all_tiles) {
+      ++primary_tile_mode_it;
+    } else {
+      primary_tile_mode_it =
+          primary_tile_modes_in_out.erase(primary_tile_mode_it);
+    }
+  }
+}
+
+// Prune all tile modes in |modes_in_out| if all tiles in a display are not
+// connected to prevent the display from having blank tiles.
+void PruneTileModesForIncompleteGroup(
+    const HardwareDisplayControllerInfo& tiled_display_info,
+    display::DisplaySnapshot::DisplayModeList& modes_in_out) {
+  const std::optional<TileProperty>& tile_property =
+      tiled_display_info.tile_property();
+  if (!tile_property.has_value()) {
+    return;
+  }
+
+  const std::vector<std::unique_ptr<HardwareDisplayControllerInfo>>&
+      nonprimary_tiles = tiled_display_info.nonprimary_tile_infos();
+  // Prune all tile modes if not all tiles in the display are connected yet.
+  if (tile_property->tile_layout.GetArea() !=
+      static_cast<int>(nonprimary_tiles.size()) + 1) {
+    modes_in_out.erase(
+        std::remove_if(
+            modes_in_out.begin(), modes_in_out.end(),
+            [&tile_property](
+                const std::unique_ptr<const display::DisplayMode>& mode) {
+              return mode->size() == tile_property->tile_size;
+            }),
+        modes_in_out.end());
+    return;
+  }
+}
+
+// Replaces all tile modes with the full tile composited mode.
+// Note that individual tiles in a tiled display advertise modes with size of
+// the tile instead of the full display.
+void ConvertTileModesToCompositedModes(
+    const HardwareDisplayControllerInfo& tiled_display_info,
+    display::DisplaySnapshot::DisplayModeList& modes_in_out,
+    const display::DisplayMode*& current_mode_out,
+    const display::DisplayMode*& native_mode_out) {
+  const std::optional<TileProperty>& tile_property =
+      tiled_display_info.tile_property();
+  if (!tile_property.has_value()) {
+    return;
+  }
+  // For every mode with same resolution as the tile size, replace with a a new,
+  // equivalent mode with the full tile-composited display resolution.
+  for (auto& mode : modes_in_out) {
+    if (mode->size() != tile_property->tile_size) {
+      continue;
+    }
+
+    std::unique_ptr<display::DisplayMode> tile_mode =
+        mode->CopyWithSize(GetTotalTileDisplaySize(*tile_property));
+    if (current_mode_out == mode.get()) {
+      current_mode_out = tile_mode.get();
+    }
+    if (native_mode_out == mode.get()) {
+      native_mode_out = tile_mode.get();
+    }
+
+    mode = std::move(tile_mode);
+  }
+
+  SortDisplayModeListDesc(modes_in_out);
+}
+
+std::unique_ptr<HardwareDisplayControllerInfo> PopPrimaryTileInfo(
+    const HardwareDisplayControllerInfo* primary_tile_info_ptr,
+    std::vector<std::unique_ptr<HardwareDisplayControllerInfo>>& infos) {
+  std::unique_ptr<HardwareDisplayControllerInfo> primary_tile_info;
+  for (auto tile_info = infos.begin(); tile_info != infos.end(); tile_info++) {
+    if (tile_info->get() == primary_tile_info_ptr) {
+      primary_tile_info = std::move(*tile_info);
+      infos.erase(tile_info);
+      break;
+    }
+  }
+  return primary_tile_info;
+}
 }  // namespace
 
 ScopedDrmPropertyPtr FindDrmProperty(const DrmWrapper& drm,
@@ -389,6 +547,18 @@ ScopedDrmPropertyPtr FindDrmProperty(const DrmWrapper& drm,
       return property;
   }
   return nullptr;
+}
+
+bool GetConnectorPropertyValue(const drmModeConnector* const connector,
+                               const uint32_t prop_id,
+                               uint64_t* const prop_value) {
+  for (int i = 0; i < connector->count_props; i++) {
+    if (connector->props[i] == prop_id) {
+      *prop_value = connector->prop_values[i];
+      return true;
+    }
+  }
+  return false;
 }
 
 bool HasColorCorrectionMatrix(const DrmWrapper& drm, drmModeCrtc* crtc) {
@@ -407,6 +577,28 @@ float ModeRefreshRate(const drmModeModeInfo& mode) {
 
 bool ModeIsInterlaced(const drmModeModeInfo& mode) {
   return mode.flags & DRM_MODE_FLAG_INTERLACE;
+}
+
+const std::optional<float> ModeVSyncRateMin(
+    const drmModeModeInfo& mode,
+    const std::optional<uint16_t>& vsync_rate_min_from_edid) {
+  if (!vsync_rate_min_from_edid.has_value() ||
+      vsync_rate_min_from_edid.value() == 0) {
+    return std::nullopt;
+  }
+
+  if (!mode.htotal) {
+    return vsync_rate_min_from_edid;
+  }
+
+  float clock_hz = mode.clock * 1000.0f;
+  float htotal = mode.htotal;
+
+  // Calculate the vtotal from the imprecise min vsync rate.
+  float vtotal_extended =
+      clock_hz / (htotal * vsync_rate_min_from_edid.value());
+  // Clamp the calculated vtotal and determine the precise min vsync rate.
+  return clock_hz / (htotal * std::floor(vtotal_extended));
 }
 
 gfx::Size GetMaximumCursorSize(const DrmWrapper& drm) {
@@ -440,31 +632,22 @@ display::VariableRefreshRateState GetVariableRefreshRateState(
     const DrmWrapper& drm,
     HardwareDisplayControllerInfo* info) {
   if (!IsVrrCapable(drm, info->connector())) {
-    return display::kVrrNotCapable;
+    return display::VariableRefreshRateState::kVrrNotCapable;
+  }
+  if (!info->edid_parser()->vsync_rate_min().has_value() ||
+      info->edid_parser()->vsync_rate_min().value() == 0) {
+    return display::VariableRefreshRateState::kVrrNotCapable;
   }
 
   if (IsVrrEnabled(drm, info->crtc())) {
-    return display::kVrrEnabled;
+    return display::VariableRefreshRateState::kVrrEnabled;
   }
 
-  return display::kVrrDisabled;
+  return display::VariableRefreshRateState::kVrrDisabled;
 }
 
-HardwareDisplayControllerInfo::HardwareDisplayControllerInfo(
-    ScopedDrmConnectorPtr connector,
-    ScopedDrmCrtcPtr crtc,
-    uint8_t index,
-    std::optional<display::EdidParser> edid_parser,
-    std::optional<TileProperty> tile_property)
-    : connector_(std::move(connector)),
-      crtc_(std::move(crtc)),
-      index_(index),
-      edid_parser_(std::move(edid_parser)),
-      tile_property_(std::move(tile_property)) {}
-
-HardwareDisplayControllerInfo::~HardwareDisplayControllerInfo() = default;
-
-std::pair<HardwareDisplayControllerInfoList, std::vector<uint32_t>>
+std::pair<std::vector<std::unique_ptr<HardwareDisplayControllerInfo>>,
+          std::vector<uint32_t>>
 GetDisplayInfosAndInvalidCrtcs(const DrmWrapper& drm) {
   ScopedDrmResourcesPtr resources = drm.GetResources();
   DCHECK(resources) << "Failed to get DRM resources";
@@ -545,8 +728,8 @@ GetDisplayInfosAndInvalidCrtcs(const DrmWrapper& drm) {
 
     ScopedDrmCrtcPtr crtc = drm.GetCrtc(best_crtc);
     auto connector_iter =
-        base::ranges::find(connectors, c, &ScopedDrmConnectorPtr::get);
-    DCHECK(connector_iter != connectors.end());
+        std::ranges::find(connectors, c, &ScopedDrmConnectorPtr::get);
+    CHECK(connector_iter != connectors.end(), base::NotFatalUntil::M130);
     // |connectors.size()| <= 256, so |index| should be between 0-255.
     const uint8_t index = connector_iter - connectors.begin();
     DCHECK_LT(index, connectors.size());
@@ -580,8 +763,8 @@ GetDisplayInfosAndInvalidCrtcs(const DrmWrapper& drm) {
   return std::make_pair(std::move(displays), std::move(invalid_crtcs));
 }
 
-HardwareDisplayControllerInfoList GetAvailableDisplayControllerInfos(
-    const DrmWrapper& drm) {
+std::vector<std::unique_ptr<HardwareDisplayControllerInfo>>
+GetAvailableDisplayControllerInfos(const DrmWrapper& drm) {
   return GetDisplayInfosAndInvalidCrtcs(drm).first;
 }
 
@@ -628,11 +811,37 @@ bool SameMode(const drmModeModeInfo& lhs, const drmModeModeInfo& rhs) {
 }
 
 std::unique_ptr<display::DisplayMode> CreateDisplayMode(
-    const drmModeModeInfo& mode) {
+    const drmModeModeInfo& mode,
+    const std::optional<uint16_t>& vsync_rate_min_from_edid) {
   return std::make_unique<display::DisplayMode>(
       gfx::Size{mode.hdisplay, mode.vdisplay},
-      mode.flags & DRM_MODE_FLAG_INTERLACE, GetRefreshRate(mode), mode.htotal,
-      mode.vtotal, mode.clock);
+      mode.flags & DRM_MODE_FLAG_INTERLACE, GetRefreshRate(mode),
+      ModeVSyncRateMin(mode, vsync_rate_min_from_edid));
+}
+
+std::unique_ptr<drmModeModeInfo> CreateVirtualMode(
+    const drmModeModeInfo& base_mode,
+    float virtual_refresh_rate) {
+  if (!base_mode.htotal) {
+    return nullptr;
+  }
+
+  float clock_hz = base_mode.clock * 1000.0f;
+  float htotal = base_mode.htotal;
+
+  uint16_t virtual_vtotal =
+      std::round(clock_hz / (htotal * virtual_refresh_rate));
+  // Vtotal can only be increased from the base mode because virtual modes rely
+  // on VRR capabilities (i.e. the back porch can be extended but not
+  // diminished).
+  if (virtual_vtotal < base_mode.vtotal) {
+    return nullptr;
+  }
+
+  auto out_mode = std::make_unique<drmModeModeInfo>();
+  *out_mode = base_mode;
+  out_mode->vtotal = virtual_vtotal;
+  return out_mode;
 }
 
 display::DisplaySnapshot::DisplayModeList ExtractDisplayModes(
@@ -648,7 +857,9 @@ display::DisplaySnapshot::DisplayModeList ExtractDisplayModes(
   display::DisplaySnapshot::DisplayModeList modes;
   for (int i = 0; i < info->connector()->count_modes; ++i) {
     const drmModeModeInfo& mode = info->connector()->modes[i];
-    modes.push_back(CreateDisplayMode(mode));
+    modes.push_back(CreateDisplayMode(
+        mode, info->edid_parser() ? info->edid_parser()->vsync_rate_min()
+                                  : std::nullopt));
 
     if (info->crtc()->mode_valid && SameMode(info->crtc()->mode, mode))
       *out_current_mode = modes.back().get();
@@ -725,7 +936,6 @@ std::unique_ptr<display::DisplaySnapshot> CreateDisplaySnapshot(
   color_info.bits_per_channel = 8u;
   // Active pixels size from the first detailed timing descriptor in the EDID.
   gfx::Size active_pixel_size;
-  std::optional<uint16_t> vsync_rate_min;
 
   const std::optional<display::EdidParser>& edid_parser = info->edid_parser();
   base::UmaHistogramBoolean("DrmUtil.CreateDisplaySnapshot.HasEdidBlob",
@@ -760,7 +970,6 @@ std::unique_ptr<display::DisplaySnapshot> CreateDisplaySnapshot(
     base::UmaHistogramCounts100("DrmUtil.CreateDisplaySnapshot.BitsPerChannel",
                                 color_info.bits_per_channel);
     color_info.hdr_static_metadata = edid_parser->hdr_static_metadata();
-    vsync_rate_min = edid_parser->vsync_rate_min();
   }
 
   const display::DisplayMode* current_mode = nullptr;
@@ -771,6 +980,22 @@ std::unique_ptr<display::DisplaySnapshot> CreateDisplaySnapshot(
   const display::DrmFormatsAndModifiers drm_formats_and_modifiers =
       drm.GetFormatsAndModifiersForCrtc(info->crtc()->crtc_id);
 
+  if (info->tile_property().has_value()) {
+    PruneTileModesForIncompleteGroup(*info, modes);
+    PruneTileModesNotPresentInAllTiles(*info, modes);
+    ConvertTileModesToCompositedModes(*info, modes, current_mode, native_mode);
+
+    if (!ContainsModePtr(modes, native_mode)) {
+      // Fall back to first mode in |modes|.
+      native_mode = modes.front().get();
+    }
+
+    if (!ContainsModePtr(modes, current_mode)) {
+      // Fall back to using |native_mode|.
+      current_mode = native_mode;
+    }
+  }
+
   return std::make_unique<display::DisplaySnapshot>(
       port_display_id, port_display_id, edid_display_id, connector_index,
       gfx::Point(), physical_size, type, base_connector_id, path_topology,
@@ -778,7 +1003,7 @@ std::unique_ptr<display::DisplaySnapshot> CreateDisplaySnapshot(
       has_content_protection_key, color_info, display_name, drm.device_path(),
       std::move(modes), panel_orientation, edid, current_mode, native_mode,
       product_code, year_of_manufacture, maximum_cursor_size,
-      variable_refresh_rate_state, vsync_rate_min, drm_formats_and_modifiers);
+      variable_refresh_rate_state, drm_formats_and_modifiers);
 }
 
 int GetFourCCFormatForOpaqueFramebuffer(gfx::BufferFormat format) {
@@ -805,8 +1030,7 @@ int GetFourCCFormatForOpaqueFramebuffer(gfx::BufferFormat format) {
     case gfx::BufferFormat::P010:
       return DRM_FORMAT_P010;
     default:
-      NOTREACHED_IN_MIGRATION();
-      return 0;
+      NOTREACHED();
   }
 }
 
@@ -826,8 +1050,17 @@ uint64_t GetEnumValueForName(const DrmWrapper& drm,
       return res->enums[i].value;
     }
   }
-  NOTREACHED_IN_MIGRATION();
-  return 0;
+  NOTREACHED();
+}
+
+bool IsTileMode(const gfx::Size mode_size, const TileProperty& tile_property) {
+  return mode_size == tile_property.tile_size;
+}
+
+const gfx::Point GetTileCrtcOffset(const TileProperty& tiled_property) {
+  return gfx::Point(
+      tiled_property.location.x() * tiled_property.tile_size.width(),
+      tiled_property.location.y() * tiled_property.tile_size.height());
 }
 
 // Returns a vector that holds the path topology of the display. Returns an
@@ -857,8 +1090,7 @@ std::vector<uint64_t> ParsePathBlob(const drmModePropertyBlobRes& path_blob) {
                                        base::TRIM_TRAILING);
 
   const std::string prefix("mst:");
-  if (!base::StartsWith(path_string_piece, prefix,
-                        base::CompareCase::SENSITIVE)) {
+  if (!path_string_piece.starts_with(prefix)) {
     LOG(ERROR) << "Invalid PATH string prefix. Does not contain '" << prefix
                << "'. Input: '" << path_str << "'";
     return {};
@@ -909,11 +1141,11 @@ std::optional<TileProperty> ParseTileBlob(
   const std::string tile_str(
       static_cast<char*>(tile_blob.data),
       base::strict_cast<std::string::size_type>(tile_blob.length));
-  base::StringPiece tile_string_piece(tile_str);
+  std::string_view tile_string_piece(tile_str);
   tile_string_piece = base::TrimString(tile_string_piece, std::string("\0", 1u),
                                        base::TRIM_TRAILING);
 
-  std::vector<base::StringPiece> tile_properties = base::SplitStringPiece(
+  std::vector<std::string_view> tile_properties = base::SplitStringPiece(
       tile_string_piece, ":", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
 
   if (tile_properties.size() != 8) {
@@ -973,8 +1205,7 @@ std::string GetEnumNameForProperty(
     }
   }
 
-  NOTREACHED_IN_MIGRATION();
-  return std::string();
+  NOTREACHED();
 }
 
 std::optional<std::string> GetDrmDriverNameFromFd(int fd) {
@@ -1007,19 +1238,25 @@ std::vector<const char*> GetPreferredDrmDrivers() {
   // The iMac 12.1 and 12.2 have an integrated Intel GPU that isn't connected
   // to any real outputs. Prefer the Radeon card instead.
   if (sys_vendor == "Apple Inc." &&
-      (product_name == "iMac12,1" || product_name == "iMac12,2"))
+      (product_name == "iMac12,1" || product_name == "iMac12,2")) {
     return {"radeon"};
+  }
 
   // Default order.
   return {"i915", "amdgpu", "virtio_gpu"};
 }
 
 void ConsolidateTiledDisplayInfo(
-    HardwareDisplayControllerInfoList& display_infos) {
+    std::vector<std::unique_ptr<HardwareDisplayControllerInfo>>&
+        display_infos) {
   // Ignore all non-tiled displays, group all tile displays into |tile_groups|
   // by tile group IDs.
-  HardwareDisplayControllerInfoList nontiled_display_infos;
-  std::unordered_map<int /*tile_group_id*/, HardwareDisplayControllerInfoList>
+  std::vector<std::unique_ptr<HardwareDisplayControllerInfo>> new_display_infos;
+  std::vector<std::unique_ptr<HardwareDisplayControllerInfo>>
+      nontiled_display_infos;
+  std::unordered_map<
+      int /*tile_group_id*/,
+      std::vector<std::unique_ptr<HardwareDisplayControllerInfo>>>
       tile_groups;
   for (auto& info : display_infos) {
     const std::optional<TileProperty>& tile_property = info->tile_property();
@@ -1029,19 +1266,32 @@ void ConsolidateTiledDisplayInfo(
       nontiled_display_infos.push_back(std::move(info));
     }
   }
-  display_infos = std::move(nontiled_display_infos);
+  new_display_infos = std::move(nontiled_display_infos);
 
   // For each tile display group, determine the primary tile and drop others in
   // the group.
-  for (auto& tile_group : tile_groups) {
-    const HardwareDisplayControllerInfo* primary_tiled_info_ptr =
-        GetPrimaryTileInfo(tile_group.second);
-    for (auto& tiled_info : tile_group.second) {
-      if (tiled_info.get() == primary_tiled_info_ptr) {
-        display_infos.push_back(std::move(tiled_info));
-        break;
-      }
+  for (auto& [_, tile_infos] : tile_groups) {
+    const HardwareDisplayControllerInfo* primary_tile_info_ptr =
+        GetPrimaryTileInfo(tile_infos);
+    std::unique_ptr<HardwareDisplayControllerInfo> primary_tile_info =
+        PopPrimaryTileInfo(primary_tile_info_ptr, tile_infos);
+
+    for (auto& nonprimary_tile_info : tile_infos) {
+      primary_tile_info->AcquireNonprimaryTileInfo(
+          std::move(nonprimary_tile_info));
     }
+
+    new_display_infos.push_back(std::move(primary_tile_info));
   }
+
+  display_infos = std::move(new_display_infos);
 }
+
+gfx::Size GetTotalTileDisplaySize(const TileProperty& tile_property) {
+  const gfx::Size& layout = tile_property.tile_layout;
+  const gfx::Size& tile_size = tile_property.tile_size;
+  return gfx::Size(tile_size.width() * layout.width(),
+                   tile_size.height() * layout.height());
+}
+
 }  // namespace ui

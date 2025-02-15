@@ -21,6 +21,7 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.task.PostTask;
 import org.chromium.base.task.TaskTraits;
 import org.chromium.base.test.util.Batch;
@@ -49,10 +50,9 @@ import org.chromium.chrome.test.batch.BlankCTATabInitialStateRule;
 import org.chromium.chrome.test.util.ChromeTabUtils;
 import org.chromium.components.browser_ui.widget.gesture.SwipeGestureListener.ScrollDirection;
 import org.chromium.components.browser_ui.widget.gesture.SwipeGestureListener.SwipeHandler;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.content_public.browser.test.util.TouchCommon;
 import org.chromium.content_public.browser.test.util.UiUtils;
-import org.chromium.ui.test.util.UiRestriction;
+import org.chromium.ui.base.DeviceFormFactor;
 
 import java.util.concurrent.TimeoutException;
 
@@ -215,7 +215,7 @@ public class ToolbarSwipeTest {
         final ChromeTabbedActivity activity = sActivityTestRule.getActivity();
         final int id = activity.getCurrentTabModel().getTabAt(finalIndex).getId();
         final TabModelSelectorTabModelObserver observer =
-                TestThreadUtils.runOnUiThreadBlockingNoException(
+                ThreadUtils.runOnUiThreadBlocking(
                         () -> {
                             return new TabModelSelectorTabModelObserver(
                                     activity.getTabModelSelector()) {
@@ -231,7 +231,7 @@ public class ToolbarSwipeTest {
 
         // Listen for changes in the layout to indicate the swipe has completed.
         final CallbackHelper staticLayoutCallbackHelper = new CallbackHelper();
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     activity.getCompositorViewHolderForTesting()
                             .getLayoutManager()
@@ -251,7 +251,7 @@ public class ToolbarSwipeTest {
         staticLayoutCallbackHelper.waitForCallback(callLayoutChangeCount, 1);
 
         if (expectsSelection) selectCallback.waitForCallback(tabSelectedCallCount, 1);
-        TestThreadUtils.runOnUiThreadBlocking(() -> observer.destroy());
+        ThreadUtils.runOnUiThreadBlocking(() -> observer.destroy());
 
         Assert.assertEquals(
                 "Index after toolbar side swipe is incorrect",
@@ -288,7 +288,7 @@ public class ToolbarSwipeTest {
     /** Test that swipes and tab transitions are not causing URL bar to be focused. */
     @Test
     @MediumTest
-    @Restriction({UiRestriction.RESTRICTION_TYPE_PHONE, RESTRICTION_TYPE_NON_LOW_END_DEVICE})
+    @Restriction({DeviceFormFactor.PHONE, RESTRICTION_TYPE_NON_LOW_END_DEVICE})
     @Feature({"Android-TabSwitcher"})
     public void testOSKIsNotShownDuringSwipe() throws InterruptedException {
         final View urlBar = sActivityTestRule.getActivity().findViewById(R.id.url_bar);

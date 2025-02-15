@@ -2,9 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #include "content/public/browser/service_process_host.h"
 
 #include <string.h>
+
+#include <array>
 
 #include "base/memory/shared_memory_mapping.h"
 #include "base/memory/unsafe_shared_memory_region.h"
@@ -148,11 +155,12 @@ IN_PROC_BROWSER_TEST_F(ServiceProcessHostBrowserTest, AllMessagesReceived) {
   auto echo_service = ServiceProcessHost::Launch<echo::mojom::EchoService>();
 
   const size_t kBufferSize = 256;
-  const std::string kMessages[] = {
+  const auto kMessages = std::to_array<std::string>({
       "I thought we were having steamed clams.",
       "D'oh, no! I said steamed hams. That's what I call hamburgers.",
       "You call hamburgers, \"steamed hams?\"",
-      "Yes. It's a regional dialect."};
+      "Yes. It's a regional dialect.",
+  });
   auto region = base::UnsafeSharedMemoryRegion::Create(kBufferSize);
   base::WritableSharedMemoryMapping mapping = region.Map();
   memset(mapping.memory(), 0, kBufferSize);

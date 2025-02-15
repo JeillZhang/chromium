@@ -5,45 +5,30 @@
 #ifndef IOS_CHROME_BROWSER_UI_CONTENT_SUGGESTIONS_CONTENT_SUGGESTIONS_VIEW_CONTROLLER_AUDIENCE_H_
 #define IOS_CHROME_BROWSER_UI_CONTENT_SUGGESTIONS_CONTENT_SUGGESTIONS_VIEW_CONTROLLER_AUDIENCE_H_
 
+#import "ios/chrome/browser/ui/content_suggestions/magic_stack/magic_stack_module_container_delegate.h"
+
 enum class ContentSuggestionsModuleType;
 enum class SafetyCheckItemType;
 @class SetUpListItemView;
+namespace segmentation_platform {
+enum class TipIdentifier;
+}  // namespace segmentation_platform
 
 // Audience for the ContentSuggestions, getting information from it.
-@protocol ContentSuggestionsViewControllerAudience
+@protocol
+    ContentSuggestionsViewControllerAudience <MagicStackModuleContainerDelegate>
 
 // Notifies the audience of the UIKit viewWillDisappear: callback.
 - (void)viewWillDisappear;
-
-// Notifies the audience to present the Set Up List Show More Menu.
-- (void)showSetUpListSeeMoreMenu;
-
-// Notifies the audience that the module of `type` should be never shown
-// anymore.
-- (void)neverShowModuleType:(ContentSuggestionsModuleType)type;
-
-// Indicates that the user has tapped the context menu item to enable
-// notifications for a module.
-- (void)enableNotifications:(ContentSuggestionsModuleType)type;
-
-// Indicates that the user has tapped the context menu item to disable
-// notifications.
-- (void)disableNotifications:(ContentSuggestionsModuleType)type;
-
-// Notifies the audience that the Magic Stack edit button was tapped.
-- (void)didTapMagicStackEditButton;
-
-// Notifies the audience to show the list of parcels.
-- (void)showMagicStackParcelList;
-
-// Notifies the audience to show the recent tabs panel.
-- (void)showMagicStackRecentTabs;
 
 // Called when a Safety Check item is selected by the user.
 - (void)didSelectSafetyCheckItem:(SafetyCheckItemType)type;
 
 // Indicates that the user has tapped the given `view`.
 - (void)didTapSetUpListItemView:(SetUpListItemView*)view;
+
+// Indicates that the user has tapped the given `tip`.
+- (void)didSelectTip:(segmentation_platform::TipIdentifier)tip;
 
 @end
 

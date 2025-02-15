@@ -8,6 +8,7 @@
 #include "ash/constants/ash_pref_names.h"
 #include "ash/public/cpp/system/toast_data.h"
 #include "ash/public/cpp/system/toast_manager.h"
+#include "base/json/values_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/strings/strcat.h"
@@ -15,10 +16,12 @@
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "base/trace_event/trace_event.h"
+#include "base/types/expected.h"
 #include "chrome/browser/ui/webui/ash/emoji/emoji_ui.h"
 #include "chrome/browser/ui/webui/ash/emoji/seal_utils.h"
 #include "chrome/grit/generated_resources.h"
 #include "chromeos/ash/components/emoji/emoji_search.h"
+#include "chromeos/ash/components/emoji/gif_tenor_api_fetcher.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/scoped_user_pref_update.h"
 #include "content/public/browser/storage_partition.h"
@@ -33,6 +36,7 @@ namespace {
 
 constexpr char kEmojiPickerToastId[] = "emoji_picker_toast";
 constexpr char kPrefsHistoryTextFieldName[] = "text";
+constexpr char kPrefsHistoryTimestampFieldName[] = "timestamp";
 constexpr char kPrefsPreferredVariantsFieldName[] = "preferred_variants";
 
 // Keep in sync with entry in enums.xml.
@@ -56,9 +60,9 @@ void LogInsertEmoji(bool is_variant, int16_t search_length) {
 }
 
 void LogInsertGif(bool is_inserted) {
-  EmojiVariantType insert_value = is_inserted
-                                      ? EmojiVariantType::kEmojiPickerGifInserted
-                                      : EmojiVariantType::kEmojiPickerGifCopied;
+  EmojiVariantType insert_value =
+      is_inserted ? EmojiVariantType::kEmojiPickerGifInserted
+                  : EmojiVariantType::kEmojiPickerGifCopied;
   base::UmaHistogramEnumeration("InputMethod.SystemEmojiPicker.TriggerType",
                                 insert_value);
 }
@@ -75,14 +79,6 @@ void LogLoadTime(base::TimeDelta delay) {
 void LogInsertionLatency(base::TimeDelta delay) {
   base::UmaHistogramTimes("InputMethod.SystemEmojiPicker.InsertionLatency",
                           delay);
-}
-
-void CopyEmojiToClipboard(const std::string& emoji_to_copy) {
-  if (base::FeatureList::IsEnabled(features::kImeSystemEmojiPickerClipboard)) {
-    auto clipboard = std::make_unique<ui::ScopedClipboardWriter>(
-        ui::ClipboardBuffer::kCopyPaste, nullptr);
-    clipboard->WriteText(base::UTF8ToUTF16(emoji_to_copy));
-  }
 }
 
 std::string BuildGifHTML(const GURL& gif) {
@@ -120,6 +116,15 @@ std::string ConvertCategoryToPrefString(
       return "emoticon";
     case emoji_picker::mojom::Category::kGifs:
       return "gif";
+  }
+}
+
+tenor::mojom::Status ConvertErrorToStatus(GifTenorApiFetcher::Error error) {
+  switch (error) {
+    case GifTenorApiFetcher::Error::kNetError:
+      return tenor::mojom::Status::kNetError;
+    case GifTenorApiFetcher::Error::kHttpError:
+      return tenor::mojom::Status::kHttpError;
   }
 }
 
@@ -228,7 +233,7 @@ class EmojiObserver : public InsertObserver {
     MarkInserted();
   }
 
-  void PerformCopy() override { CopyEmojiToClipboard(emoji_to_insert_); }
+  void PerformCopy() override {}
 
  private:
   std::string emoji_to_insert_;
@@ -288,7 +293,7 @@ EmojiPageHandler::EmojiPageHandler(
                             ->GetURLLoaderFactoryForBrowserProcess();
 }
 
-EmojiPageHandler::~EmojiPageHandler() {}
+EmojiPageHandler::~EmojiPageHandler() = default;
 
 void EmojiPageHandler::ShowUI() {
   auto embedder = webui_controller_->embedder();
@@ -308,11 +313,6 @@ void EmojiPageHandler::IsIncognitoTextField(
 
 void EmojiPageHandler::GetFeatureList(GetFeatureListCallback callback) {
   std::vector<emoji_picker::mojom::Feature> enabled_features;
-  if (base::FeatureList::IsEnabled(
-          features::kImeSystemEmojiPickerSearchExtension)) {
-    enabled_features.push_back(
-        emoji_picker::mojom::Feature::EMOJI_PICKER_SEARCH_EXTENSION);
-  }
   if (gif_support_enabled_) {
     enabled_features.push_back(
         emoji_picker::mojom::Feature::EMOJI_PICKER_GIF_SUPPORT);
@@ -337,27 +337,84 @@ void EmojiPageHandler::GetFeatureList(GetFeatureListCallback callback) {
 }
 
 void EmojiPageHandler::GetCategories(GetCategoriesCallback callback) {
-  gif_tenor_api_fetcher_.FetchCategories(std::move(callback),
-                                         url_loader_factory_);
+  GifTenorApiFetcher::FetchCategories(
+      url_loader_factory_,
+      base::BindOnce(
+          [](GetCategoriesCallback callback,
+             base::expected<std::vector<std::string>, GifTenorApiFetcher::Error>
+                 response) {
+            if (response.has_value()) {
+              std::move(callback).Run(tenor::mojom::Status::kHttpOk,
+                                      std::move(*response));
+            } else {
+              std::move(callback).Run(ConvertErrorToStatus(response.error()),
+                                      {});
+            }
+          },
+          std::move(callback)));
 }
 
 void EmojiPageHandler::GetFeaturedGifs(const std::optional<std::string>& pos,
                                        GetFeaturedGifsCallback callback) {
-  gif_tenor_api_fetcher_.FetchFeaturedGifs(std::move(callback),
-                                           url_loader_factory_, pos);
+  GifTenorApiFetcher::FetchFeaturedGifs(
+      url_loader_factory_, pos,
+      base::BindOnce(
+          [](GetFeaturedGifsCallback callback,
+             base::expected<tenor::mojom::PaginatedGifResponsesPtr,
+                            GifTenorApiFetcher::Error> response) {
+            if (response.has_value()) {
+              std::move(callback).Run(tenor::mojom::Status::kHttpOk,
+                                      std::move(*response));
+            } else {
+              std::move(callback).Run(
+                  ConvertErrorToStatus(response.error()),
+                  tenor::mojom::PaginatedGifResponses::New(
+                      "", std::vector<tenor::mojom::GifResponsePtr>{}));
+            }
+          },
+          std::move(callback)));
 }
 
 void EmojiPageHandler::SearchGifs(const std::string& query,
                                   const std::optional<std::string>& pos,
                                   SearchGifsCallback callback) {
-  gif_tenor_api_fetcher_.FetchGifSearch(std::move(callback),
-                                        url_loader_factory_, query, pos);
+  GifTenorApiFetcher::FetchGifSearch(
+      url_loader_factory_, query, pos,
+      /*limit=*/std::nullopt,
+      base::BindOnce(
+          [](SearchGifsCallback callback,
+             base::expected<tenor::mojom::PaginatedGifResponsesPtr,
+                            GifTenorApiFetcher::Error> response) {
+            if (response.has_value()) {
+              std::move(callback).Run(tenor::mojom::Status::kHttpOk,
+                                      std::move(*response));
+            } else {
+              std::move(callback).Run(
+                  ConvertErrorToStatus(response.error()),
+                  tenor::mojom::PaginatedGifResponses::New(
+                      "", std::vector<tenor::mojom::GifResponsePtr>{}));
+            }
+          },
+          std::move(callback)));
 }
 
 void EmojiPageHandler::GetGifsByIds(const std::vector<std::string>& ids,
                                     GetGifsByIdsCallback callback) {
-  gif_tenor_api_fetcher_.FetchGifsByIds(std::move(callback),
-                                        url_loader_factory_, ids);
+  GifTenorApiFetcher::FetchGifsByIds(
+      url_loader_factory_, ids,
+      base::BindOnce(
+          [](GetGifsByIdsCallback callback,
+             base::expected<std::vector<tenor::mojom::GifResponsePtr>,
+                            GifTenorApiFetcher::Error> response) {
+            if (response.has_value()) {
+              std::move(callback).Run(tenor::mojom::Status::kHttpOk,
+                                      std::move(*response));
+            } else {
+              std::move(callback).Run(ConvertErrorToStatus(response.error()),
+                                      {});
+            }
+          },
+          std::move(callback)));
 }
 
 void EmojiPageHandler::InsertEmoji(const std::string& emoji_to_insert,
@@ -373,11 +430,9 @@ void EmojiPageHandler::InsertEmoji(const std::string& emoji_to_insert,
       IMEBridge::Get()->GetInputContextHandler()->GetInputMethod();
   if (!input_method) {
     DLOG(WARNING) << "no input_method found";
-    CopyEmojiToClipboard(emoji_to_insert);
     return;
   }
   if (no_text_field_) {
-    CopyEmojiToClipboard(emoji_to_insert);
     return;
   }
 
@@ -439,11 +494,13 @@ void EmojiPageHandler::GetInitialQuery(GetInitialQueryCallback callback) {
 
 void EmojiPageHandler::UpdateHistoryInPrefs(
     emoji_picker::mojom::Category category,
-    const std::vector<std::string>& history) {
+    std::vector<emoji_picker::mojom::HistoryItemPtr> history) {
   base::Value::List history_value;
-  for (const std::string& text : history) {
-    history_value.Append(
-        base::Value::Dict().Set(kPrefsHistoryTextFieldName, text));
+  for (const auto& item : history) {
+    history_value.Append(base::Value::Dict()
+                             .Set(kPrefsHistoryTextFieldName, item->emoji)
+                             .Set(kPrefsHistoryTimestampFieldName,
+                                  base::TimeToValue(item->timestamp)));
   }
   ScopedDictPrefUpdate update(profile_->GetPrefs(), prefs::kEmojiPickerHistory);
   update->Set(ConvertCategoryToPrefString(category), std::move(history_value));
@@ -475,7 +532,7 @@ void EmojiPageHandler::GetHistoryFromPrefs(
     std::move(callback).Run({});
     return;
   }
-  std::vector<std::string> results;
+  std::vector<emoji_picker::mojom::HistoryItemPtr> results;
   for (const auto& it : *history) {
     const base::Value::Dict* value_dict = it.GetIfDict();
     if (value_dict == nullptr) {
@@ -483,11 +540,15 @@ void EmojiPageHandler::GetHistoryFromPrefs(
     }
     const std::string* text =
         value_dict->FindString(kPrefsHistoryTextFieldName);
+    std::optional<base::Time> timestamp =
+        base::ValueToTime(value_dict->Find(kPrefsHistoryTimestampFieldName));
+
     if (text != nullptr) {
-      results.push_back(*text);
+      results.push_back(emoji_picker::mojom::HistoryItem::New(
+          *text, timestamp.has_value() ? *timestamp : base::Time::UnixEpoch()));
     }
   }
-  std::move(callback).Run(results);
+  std::move(callback).Run(std::move(results));
 }
 
 }  // namespace ash

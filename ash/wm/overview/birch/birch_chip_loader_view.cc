@@ -26,8 +26,6 @@ constexpr base::TimeDelta kReloadFadeInDuration1_5 = base::Milliseconds(400);
 }  // namespace
 
 BirchChipLoaderView::BirchChipLoaderView() {
-  SetPaintToLayer();
-  layer()->SetFillsBoundsOpaquely(false);
   GetViewAccessibility().SetName(u"Birch Chip Loader View");
 }
 
@@ -91,9 +89,11 @@ void BirchChipLoaderView::AddAnimationToBuilder(
           .SetOpacity(loader_layer, 0.0f);
       return;
     case Type::kNone:
-      NOTREACHED_NORETURN() << "Please set a loading type for birch bar loader";
+      NOTREACHED() << "Please set a loading type for birch bar loader";
   }
 }
+
+void BirchChipLoaderView::Init(BirchItem* item) {}
 
 const BirchItem* BirchChipLoaderView::GetItem() const {
   return nullptr;

@@ -4,11 +4,13 @@
 
 package org.chromium.components.content_settings;
 
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.components.content_settings.CookieControlsBridge.TrackingProtectionFeature;
 
 import java.util.List;
 
 /** Interface for a class that wants to receive cookie updates from CookieControlsBridge. */
+@NullMarked
 public interface CookieControlsObserver {
     /**
      * Called when the cookie blocking status for the current site changes.
@@ -42,4 +44,10 @@ public interface CookieControlsObserver {
 
     /** Called when we should surface a visual indicator due to potential site breakage. */
     default void onHighlightCookieControl(boolean shouldHighlight) {}
+
+    /**
+     * Called when we should surface a visual indicator for PWA surface due to potential site
+     * breakage.
+     */
+    default void onHighlightPwaCookieControl() {}
 }

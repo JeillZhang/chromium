@@ -8,17 +8,22 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_set>
 #include <utility>
 
 #include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
+#include "base/memory/raw_span.h"
 #include "base/memory/weak_ptr.h"
 #include "build/build_config.h"
 #include "ui/accessibility/ax_enums.mojom-forward.h"
 #include "ui/base/class_property.h"
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/base/metadata/metadata_utils.h"
+#include "ui/base/mojom/dialog_button.mojom.h"
+#include "ui/base/mojom/ui_base_types.mojom-shared.h"
+#include "ui/color/color_variant.h"
 #include "ui/views/bubble/bubble_border.h"
 #include "ui/views/bubble/bubble_frame_view.h"
 #include "ui/views/metadata/view_factory.h"
@@ -59,8 +64,14 @@ class VIEWS_EXPORT BubbleDialogDelegate : public DialogDelegate {
   ax::mojom::Role GetAccessibleWindowRole() final;
 
   // Create and initialize the bubble Widget with proper bounds.
+  // The default ownership for now is NATIVE_WIDGET_OWNS_WIDGET. If any other
+  // ownership mode is used, the returned Widget's lifetime must be managed by
+  // the caller. This is usually done by wrapping the pointer as a unique_ptr
+  // using base::WrapUnique().
   static Widget* CreateBubble(
-      std::unique_ptr<BubbleDialogDelegate> bubble_delegate);
+      std::unique_ptr<BubbleDialogDelegate> bubble_delegate,
+      Widget::InitParams::Ownership ownership =
+          Widget::InitParams::NATIVE_WIDGET_OWNS_WIDGET);
 
   //////////////////////////////////////////////////////////////////////////////
   // The anchor view and rectangle:
@@ -260,17 +271,8 @@ class VIEWS_EXPORT BubbleDialogDelegate : public DialogDelegate {
   // look and feel does not work for your use case, BubbleDialogDelegate may not
   // be a good fit for the UI you are building.
 
-  // Ensures the bubble's background color is up-to-date, then returns it.
-  SkColor GetBackgroundColor();
-
-  // Direct access to the background color. Only use the getter when you know
-  // you don't need to worry about the color being out-of-date due to a recent
-  // theme update.
-  SkColor color() const { return color_; }
-  void set_color(SkColor color) {
-    color_ = color;
-    color_explicitly_set_ = true;
-  }
+  ui::ColorVariant background_color() const { return color_; }
+  void set_background_color(ui::ColorVariant color) { color_ = color; }
 
   void set_force_create_contents_background(
       bool force_create_contents_background) {
@@ -343,7 +345,7 @@ class VIEWS_EXPORT BubbleDialogDelegate : public DialogDelegate {
     void set_bubble_view(views::View* view) { bubble_view_ = view; }
 
     void set_allowed_class_names_for_testing(
-        const base::span<const char*>& value) {
+        const base::span<const char* const>& value) {
       allowed_class_names_for_testing_ = value;
     }
 
@@ -356,14 +358,15 @@ class VIEWS_EXPORT BubbleDialogDelegate : public DialogDelegate {
     // - "Bubble.{bubble_name}.{histogram_name}" for a specific bubble
     //   subclass, if `bubble_name` is set.
     template <typename Value>
-    void LogMetric(void (*uma_func)(const std::string&, Value),
-                   const std::string& histogram_name,
+    void LogMetric(void (*uma_func)(std::string_view, Value),
+                   std::string_view histogram_name,
                    Value value) const;
 
    private:
     std::optional<raw_ptr<views::View>> bubble_view_;
     std::optional<raw_ptr<views::BubbleDialogDelegate>> delegate_;
-    std::optional<base::span<const char*>> allowed_class_names_for_testing_;
+    std::optional<base::raw_span<const char* const>>
+        allowed_class_names_for_testing_;
     base::WeakPtrFactory<BubbleUmaLogger> weak_factory_{this};
   };
 
@@ -375,12 +378,6 @@ class VIEWS_EXPORT BubbleDialogDelegate : public DialogDelegate {
   // before it is shown.
   // TODO(pbos): Turn this into a (Once?)Callback and add set_init(cb).
   virtual void Init() {}
-
-  // TODO(ellyjones): Replace uses of this with uses of set_color(), and/or
-  // otherwise get rid of this function.
-  void set_color_internal(SkColor color) { color_ = color; }
-
-  bool color_explicitly_set() const { return color_explicitly_set_; }
 
   BubbleUmaLogger& bubble_uma_logger() { return bubble_uma_logger_; }
 
@@ -458,8 +455,7 @@ class VIEWS_EXPORT BubbleDialogDelegate : public DialogDelegate {
   gfx::Insets footnote_margins_;
   BubbleBorder::Arrow arrow_ = BubbleBorder::NONE;
   BubbleBorder::Shadow shadow_;
-  SkColor color_ = gfx::kPlaceholderColor;
-  bool color_explicitly_set_ = false;
+  ui::ColorVariant color_ = ui::kColorBubbleBackground;
   raw_ptr<Widget> anchor_widget_ = nullptr;
   std::unique_ptr<AnchorViewObserver> anchor_view_observer_;
   std::unique_ptr<AnchorWidgetObserver> anchor_widget_observer_;
@@ -518,7 +514,7 @@ class VIEWS_EXPORT BubbleDialogDelegate : public DialogDelegate {
 #endif
 
   // Used to ensure the button remains anchored while this dialog is open.
-  std::optional<Button::ScopedAnchorHighlight> button_anchor_higlight_;
+  std::optional<Button::ScopedAnchorHighlight> button_anchor_highlight_;
 
   // The helper class that logs common bubble metrics.
   BubbleUmaLogger bubble_uma_logger_;
@@ -548,12 +544,22 @@ class VIEWS_EXPORT BubbleDialogDelegateView : public View,
   }
 
   // Create and initialize the bubble Widget(s) with proper bounds.
+  // Like BubbleDialogDelegate::CreateBubble, the default ownership for now is
+  // NATIVE_WIDGET_OWNS_WIDGET. If any other ownership mode is used, the
+  // returned Widget's lifetime must be managed by the caller. This is usually
+  // done by wrapping the pointer as a unique_ptr using base::WrapUnique().
   template <typename T>
-  static Widget* CreateBubble(std::unique_ptr<T> delegate) {
+  static Widget* CreateBubble(
+      std::unique_ptr<T> delegate,
+      Widget::InitParams::Ownership ownership =
+          Widget::InitParams::NATIVE_WIDGET_OWNS_WIDGET) {
     CHECK(IsBubbleDialogDelegateView<T>(delegate.get()));
-    return BubbleDialogDelegate::CreateBubble(std::move(delegate));
+    return BubbleDialogDelegate::CreateBubble(std::move(delegate), ownership);
   }
-  static Widget* CreateBubble(BubbleDialogDelegateView* bubble_delegate);
+  static Widget* CreateBubble(
+      BubbleDialogDelegateView* bubble_delegate,
+      Widget::InitParams::Ownership ownership =
+          Widget::InitParams::NATIVE_WIDGET_OWNS_WIDGET);
 
   BubbleDialogDelegateView();
   // |shadow| usually doesn't need to be explicitly set, just uses the default
@@ -602,7 +608,7 @@ VIEW_BUILDER_PROPERTY(bool, EnableArrowKeyTraversal)
 VIEW_BUILDER_PROPERTY(ui::ImageModel, Icon)
 VIEW_BUILDER_PROPERTY(ui::ImageModel, AppIcon)
 VIEW_BUILDER_PROPERTY(ui::ImageModel, MainImage)
-VIEW_BUILDER_PROPERTY(ui::ModalType, ModalType)
+VIEW_BUILDER_PROPERTY(ui::mojom::ModalType, ModalType)
 VIEW_BUILDER_PROPERTY(bool, OwnedByWidget)
 VIEW_BUILDER_PROPERTY(bool, ShowCloseButton)
 VIEW_BUILDER_PROPERTY(bool, ShowIcon)
@@ -616,8 +622,8 @@ VIEW_BUILDER_PROPERTY(bool, CenterTitle)
 #endif
 VIEW_BUILDER_PROPERTY(int, Buttons)
 VIEW_BUILDER_PROPERTY(int, DefaultButton)
-VIEW_BUILDER_METHOD(SetButtonLabel, ui::DialogButton, std::u16string)
-VIEW_BUILDER_METHOD(SetButtonEnabled, ui::DialogButton, bool)
+VIEW_BUILDER_METHOD(SetButtonLabel, ui::mojom::DialogButton, std::u16string)
+VIEW_BUILDER_METHOD(SetButtonEnabled, ui::mojom::DialogButton, bool)
 VIEW_BUILDER_METHOD(set_margins, gfx::Insets)
 VIEW_BUILDER_METHOD(set_use_round_corners, bool)
 VIEW_BUILDER_METHOD(set_corner_radius, int)

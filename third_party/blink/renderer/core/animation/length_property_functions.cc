@@ -54,32 +54,34 @@ bool LengthPropertyFunctions::IsZoomedLength(const CSSProperty& property) {
 bool LengthPropertyFunctions::CanAnimateKeyword(const CSSProperty& property,
                                                 CSSValueID value_id) {
   bool is_max_size = false;
-  switch (property.PropertyID()) {
+  switch (CSSPropertyID property_id = property.PropertyID()) {
     case CSSPropertyID::kMaxWidth:
     case CSSPropertyID::kMaxHeight:
       is_max_size = true;
       [[fallthrough]];
+    case CSSPropertyID::kFlexBasis:
     case CSSPropertyID::kWidth:
     case CSSPropertyID::kHeight:
     case CSSPropertyID::kMinWidth:
     case CSSPropertyID::kMinHeight:
-      if (RuntimeEnabledFeatures::CSSCalcSizeFunctionEnabled()) {
-        switch (value_id) {
-          case CSSValueID::kAuto:
-            return !is_max_size;
-          case CSSValueID::kMinContent:
-          case CSSValueID::kWebkitMinContent:
-          case CSSValueID::kMaxContent:
-          case CSSValueID::kWebkitMaxContent:
-          case CSSValueID::kFitContent:
-          case CSSValueID::kWebkitFitContent:
-          case CSSValueID::kWebkitFillAvailable:
-            return true;
-          default:
-            return false;
-        }
+      switch (value_id) {
+        case CSSValueID::kContent:
+          return property_id == CSSPropertyID::kFlexBasis;
+        case CSSValueID::kAuto:
+          return !is_max_size;
+        case CSSValueID::kMinContent:
+        case CSSValueID::kMaxContent:
+        case CSSValueID::kFitContent:
+        case CSSValueID::kStretch:
+          return true;
+        case CSSValueID::kWebkitMinContent:
+        case CSSValueID::kWebkitMaxContent:
+        case CSSValueID::kWebkitFitContent:
+        case CSSValueID::kWebkitFillAvailable:
+          return property_id != CSSPropertyID::kFlexBasis;
+        default:
+          return false;
       }
-      return false;
     default:
       return false;
   }
@@ -152,7 +154,8 @@ bool LengthPropertyFunctions::GetInitialLength(
       return true;
     case CSSPropertyID::kColumnRuleWidth:
       result =
-          Length::Fixed(ComputedStyleInitialValues::InitialColumnRuleWidth());
+          Length::Fixed(ComputedStyleInitialValues::InitialColumnRuleWidth()
+                            .GetLegacyValue());
       return true;
 
     default:
@@ -356,7 +359,7 @@ bool LengthPropertyFunctions::GetLength(const CSSProperty& property,
       }
       break;
     case CSSPropertyID::kColumnRuleWidth:
-      result = Length::Fixed(style.ColumnRuleWidth());
+      result = Length::Fixed(style.ColumnRuleWidth().GetLegacyValue());
       success = true;
       break;
     case CSSPropertyID::kWebkitTransformOriginZ:

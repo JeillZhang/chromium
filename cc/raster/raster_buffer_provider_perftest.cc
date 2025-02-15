@@ -2,8 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
+#include "cc/raster/raster_buffer_provider.h"
+
 #include <stddef.h>
 #include <stdint.h>
+
+#include <array>
 
 #include "base/containers/contains.h"
 #include "base/memory/raw_ptr.h"
@@ -14,7 +23,6 @@
 #include "cc/raster/bitmap_raster_buffer_provider.h"
 #include "cc/raster/gpu_raster_buffer_provider.h"
 #include "cc/raster/one_copy_raster_buffer_provider.h"
-#include "cc/raster/raster_buffer_provider.h"
 #include "cc/raster/raster_query_queue.h"
 #include "cc/raster/synchronous_task_graph_runner.h"
 #include "cc/raster/zero_copy_raster_buffer_provider.h"
@@ -35,7 +43,7 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/perf/perf_result_reporter.h"
 #include "third_party/khronos/GLES2/gl2.h"
-#include "third_party/skia/include/gpu/GrDirectContext.h"
+#include "third_party/skia/include/gpu/ganesh/GrDirectContext.h"
 
 namespace cc {
 namespace {
@@ -395,7 +403,8 @@ class RasterBufferProviderPerfTest
     resource_pool_ = std::make_unique<ResourcePool>(
         resource_provider_.get(), compositor_context_provider_.get(),
         task_runner_, ResourcePool::kDefaultExpirationDelay, false);
-    tile_task_manager_ = TileTaskManagerImpl::Create(task_graph_runner_.get());
+    tile_task_manager_ = TileTaskManagerImpl::Create(task_graph_runner_.get(),
+                                                     base::DoNothing());
   }
   void TearDown() override {
     tile_task_manager_->Shutdown();
@@ -458,8 +467,8 @@ class RasterBufferProviderPerfTest
                                      unsigned num_raster_tasks,
                                      unsigned num_image_decode_tasks) {
     const size_t kNumVersions = 2;
-    TileTask::Vector image_decode_tasks[kNumVersions];
-    RasterTaskVector raster_tasks[kNumVersions];
+    std::array<TileTask::Vector, kNumVersions> image_decode_tasks;
+    std::array<RasterTaskVector, kNumVersions> raster_tasks;
     for (size_t i = 0; i < kNumVersions; ++i) {
       CreateImageDecodeTasks(num_image_decode_tasks, &image_decode_tasks[i]);
       CreateRasterTasks(this, num_raster_tasks, image_decode_tasks[i],
@@ -554,8 +563,7 @@ class RasterBufferProviderPerfTest
       case RASTER_BUFFER_PROVIDER_TYPE_BITMAP:
         return std::string("_bitmap_raster_buffer_provider");
     }
-    NOTREACHED_IN_MIGRATION();
-    return std::string();
+    NOTREACHED();
   }
 
   std::unique_ptr<TileTaskManager> tile_task_manager_;

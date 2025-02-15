@@ -82,7 +82,6 @@ struct PreconnectRequest {
 
 struct PrefetchRequest {
   PrefetchRequest(const GURL& url,
-                  const net::NetworkAnonymizationKey& network_anonymization_key,
                   network::mojom::RequestDestination destination);
 
   PrefetchRequest(const PrefetchRequest&) = default;
@@ -91,7 +90,6 @@ struct PrefetchRequest {
   PrefetchRequest& operator=(PrefetchRequest&&) = default;
 
   GURL url;
-  net::NetworkAnonymizationKey network_anonymization_key;
   network::mojom::RequestDestination destination;
 };
 
@@ -201,13 +199,22 @@ class ResourcePrefetchPredictor : public history::HistoryServiceObserver {
 
   // Record LCP element locators after a page has finished loading and LCP has
   // been determined.
-  void LearnLcpp(const GURL& url, const LcppDataInputs& inputs);
+  void LearnLcpp(const std::optional<url::Origin>& initiator_origin,
+                 const GURL& url,
+                 const LcppDataInputs& inputs);
 
   // Deletes all URLs from the predictor database and caches.
   void DeleteAllUrls();
 
   // Returns LcppStat for the `url`, or std::nullopt on failure.
-  std::optional<LcppStat> GetLcppStat(const GURL& url) const;
+  std::optional<LcppStat> GetLcppStat(
+      const std::optional<url::Origin>& initiator_origin,
+      const GURL& url) const;
+
+  void GetPreconnectAndPrefetchRequest(
+      const std::optional<url::Origin>& initiator_origin,
+      const GURL& url,
+      PreconnectPrediction& prediction);
 
  private:
   friend class LoadingPredictor;
@@ -320,18 +327,11 @@ class ResourcePrefetchPredictor : public history::HistoryServiceObserver {
   void ConnectToHistoryService();
 
   // Used for testing to inject mock tables.
-  void set_mock_tables(scoped_refptr<ResourcePrefetchPredictorTables> tables) {
+  void set_mock_tables_for_testing(
+      scoped_refptr<ResourcePrefetchPredictorTables> tables) {
     tables_ = tables;
+    use_lcpp_mock_table_for_testing_ = true;
   }
-
-  // LCPP histogram recording functions.
-  bool RecordLcpElementLocatorHistogram(LcppData& data,
-                                        const std::string& host,
-                                        const std::string& lcp_element_locator);
-  bool RecordLcpInfluencerScriptUrlsHistogram(
-      LcppData& data,
-      const std::string& host,
-      const std::vector<GURL>& lcp_influencer_scripts);
 
   const raw_ptr<Profile, DanglingUntriaged> profile_;
   raw_ptr<TestObserver> observer_;
@@ -343,6 +343,7 @@ class ResourcePrefetchPredictor : public history::HistoryServiceObserver {
   std::unique_ptr<RedirectDataMap> host_redirect_data_;
   std::unique_ptr<OriginDataMap> origin_data_;
   std::unique_ptr<LcppDataMap> lcpp_data_;
+  bool use_lcpp_mock_table_for_testing_ = false;
 
   base::ScopedObservation<history::HistoryService,
                           history::HistoryServiceObserver>

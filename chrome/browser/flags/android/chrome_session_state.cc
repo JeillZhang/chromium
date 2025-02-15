@@ -40,12 +40,12 @@ CustomTabsVisibilityHistogram GetCustomTabsVisibleValue(
       return VISIBLE_CHROME_TAB;
     case ActivityType::kCustomTab:
     case ActivityType::kTrustedWebActivity:
+    case ActivityType::kAuthTab:
       return VISIBLE_CUSTOM_TAB;
     case ActivityType::kPreFirstTab:
       return NO_VISIBLE_TAB;
   }
-  NOTREACHED_IN_MIGRATION();
-  return VISIBLE_CHROME_TAB;
+  NOTREACHED();
 }
 
 ActivityType GetInitialActivityTypeForTesting() {

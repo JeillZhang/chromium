@@ -7,9 +7,8 @@
 
 #include "base/functional/callback_forward.h"
 #include "base/memory/raw_ptr.h"
-#include "chrome/browser/ui/lens/lens_untrusted_ui.h"
+#include "chrome/browser/ui/lens/lens_side_panel_untrusted_ui.h"
 #include "chrome/browser/ui/views/side_panel/side_panel_web_ui_view.h"
-#include "chrome/browser/ui/webui/top_chrome/webui_contents_wrapper.h"
 #include "content/public/browser/file_select_listener.h"
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/views/controls/webview/unhandled_keyboard_event_handler.h"
@@ -19,22 +18,25 @@ namespace lens {
 class LensOverlaySidePanelCoordinator;
 }  // namespace lens
 
-class Profile;
+namespace content {
+class BrowserContext;
+}  // namespace content
 
 // LensOverlaySidePanelWebView holds custom behavior needed for the lens overlay
 // that separates it from other views. This includes context menu support and
 // opening urls in a new tab.
 class LensOverlaySidePanelWebView
-    : public SidePanelWebUIViewT<lens::LensUntrustedUI> {
-  using SidePanelWebUIViewT_LensUntrustedUI =
-      SidePanelWebUIViewT<lens::LensUntrustedUI>;
+    : public SidePanelWebUIViewT<lens::LensSidePanelUntrustedUI> {
+  using SidePanelWebUIViewT_LensSidePanelUntrustedUI =
+      SidePanelWebUIViewT<lens::LensSidePanelUntrustedUI>;
   METADATA_HEADER(LensOverlaySidePanelWebView,
-                  SidePanelWebUIViewT_LensUntrustedUI)
+                  SidePanelWebUIViewT_LensSidePanelUntrustedUI)
 
  public:
   LensOverlaySidePanelWebView(
-      Profile* profile,
-      lens::LensOverlaySidePanelCoordinator* coordinator);
+      content::BrowserContext* browser_context,
+      lens::LensOverlaySidePanelCoordinator* coordinator,
+      SidePanelEntryScope& scope);
   LensOverlaySidePanelWebView(const LensOverlaySidePanelWebView&) = delete;
   LensOverlaySidePanelWebView& operator=(const LensOverlaySidePanelWebView&) =
       delete;
@@ -52,12 +54,12 @@ class LensOverlaySidePanelWebView
                          const content::ContextMenuParams& params) override;
   bool HandleKeyboardEvent(content::WebContents* source,
                            const input::NativeWebKeyboardEvent& event) override;
+  void RequestMediaAccessPermission(
+      content::WebContents* web_contents,
+      const content::MediaStreamRequest& request,
+      content::MediaResponseCallback callback) override;
 
  private:
-  // A handler to handle unhandled keyboard messages coming back from the
-  // renderer process.
-  views::UnhandledKeyboardEventHandler unhandled_keyboard_event_handler_;
-
   // Indirectly owns this.
   raw_ptr<lens::LensOverlaySidePanelCoordinator> coordinator_;
   base::WeakPtrFactory<LensOverlaySidePanelWebView> weak_factory_{this};

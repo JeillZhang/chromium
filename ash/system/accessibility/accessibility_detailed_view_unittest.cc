@@ -27,6 +27,7 @@
 #include "ui/accessibility/accessibility_features.h"
 #include "ui/accessibility/ax_enums.mojom-shared.h"
 #include "ui/accessibility/ax_node_data.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/view.h"
 #include "ui/views/view_utils.h"
@@ -139,7 +140,7 @@ speech::LanguageCode fr_fr() {
 // Returns true if `view` is marked checked for accessibility.
 bool IsCheckedForAccessibility(views::View* view) {
   ui::AXNodeData node_data;
-  view->GetAccessibleNodeData(&node_data);
+  view->GetViewAccessibility().GetAccessibleNodeData(&node_data);
   return node_data.GetCheckedState() == ax::mojom::CheckedState::kTrue;
 }
 
@@ -159,7 +160,7 @@ class AccessibilityDetailedViewTest : public AshTestBase,
  public:
   AccessibilityDetailedViewTest() {
     scoped_feature_list_.InitWithFeatures(
-        {media::kLiveCaption, ash::features::kOnDeviceSpeechRecognition,
+        {ash::features::kOnDeviceSpeechRecognition,
          ::features::kAccessibilityFaceGaze,
          ::features::kAccessibilityReducedAnimationsInKiosk},
         {});
@@ -488,10 +489,6 @@ class AccessibilityDetailedViewTest : public AshTestBase,
   bool IsColorCorrectionEnabledOnDetailMenu() const {
     return IsEnabledOnDetailMenu(controller_->color_correction().enabled(),
                                  detailed_menu_->color_correction_view_);
-  }
-
-  const char* GetDetailedViewClassName() {
-    return detailed_menu_->GetClassName();
   }
 
   void SetUpKioskSession() {
@@ -1462,7 +1459,7 @@ class AccessibilityDetailedViewSodaTest
     }
   }
 
-  std::u16string GetFeatureViewSubtitleText() {
+  std::u16string_view GetFeatureViewSubtitleText() {
     switch (GetParam()) {
       case SodaFeature::kDictation:
         return detailed_menu()->dictation_view_->sub_text_label()->GetText();

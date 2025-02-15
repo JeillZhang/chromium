@@ -125,7 +125,8 @@ bool StyleableMarkerPainter::ShouldPaintUnderline(
   if (marker.HasThicknessNone() ||
       (marker.UnderlineColor() == Color::kTransparent &&
        !marker.UseTextColor()) ||
-      marker.UnderlineStyle() == ui::mojom::blink::ImeTextSpanUnderlineStyle::kNone) {
+      marker.UnderlineStyle() ==
+          ui::mojom::blink::ImeTextSpanUnderlineStyle::kNone) {
     return false;
   }
   return true;
@@ -155,7 +156,7 @@ void StyleableMarkerPainter::PaintUnderline(const StyleableMarker& marker,
   // underline will touch or overlap characters. Line thickness should change
   // with zoom.
   int line_thickness = 1 * style.EffectiveZoom();
-  const SimpleFontData* font_data = style.GetFont().PrimaryFont();
+  const SimpleFontData* font_data = style.GetFont()->PrimaryFont();
   DCHECK(font_data);
   int baseline = font_data ? font_data->GetFontMetrics().Ascent() : 0;
   if (marker.HasThicknessThick()) {
@@ -189,8 +190,7 @@ void StyleableMarkerPainter::PaintUnderline(const StyleableMarker& marker,
         // it specially in the else condition below only for composition
         // markers.
       case UnderlineStyle::kNone:
-        NOTREACHED_IN_MIGRATION();
-        break;
+        NOTREACHED();
     }
     context.SetStrokeColor(marker_color);
 

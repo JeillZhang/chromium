@@ -10,7 +10,7 @@
 #include "base/metrics/field_trial_params.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/time/time.h"
-#include "chrome/browser/user_education/browser_feature_promo_storage_service.h"
+#include "chrome/browser/user_education/browser_user_education_storage_service.h"
 #include "chrome/browser/user_education/user_education_service.h"
 
 namespace {
@@ -176,13 +176,13 @@ RecentSessionPolicyImpl::GetDefaultConstraints() {
   static constexpr int kLongTermWeeks = 4;
   static constexpr int kLongTermDays = kLongTermWeeks * 7;
   const int max_active_weeks = base::GetFieldTrialParamByFeatureAsInt(
-      kAllowRecentSessionTracking, "max_active_weeks", 2);
+      kAllowRecentSessionTracking, "max_active_weeks", 0);
   const int max_active_days = base::GetFieldTrialParamByFeatureAsInt(
-      kAllowRecentSessionTracking, "max_active_days", 3);
+      kAllowRecentSessionTracking, "max_active_days", 0);
   const int super_active_days = base::GetFieldTrialParamByFeatureAsInt(
       kAllowRecentSessionTracking, "super_active_days", 4);
   const int max_monthly_active_days = base::GetFieldTrialParamByFeatureAsInt(
-      kAllowRecentSessionTracking, "max_monthly_active_days", 0);
+      kAllowRecentSessionTracking, "max_monthly_active_days", 2);
   const int max_super_active_weeks = base::GetFieldTrialParamByFeatureAsInt(
       kAllowRecentSessionTracking, "max_super_active_weeks", 0);
   const int max_weekly_sessions = base::GetFieldTrialParamByFeatureAsInt(

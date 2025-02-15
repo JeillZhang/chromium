@@ -4,6 +4,10 @@
         display: block;
       }
 
+      :host([is-empty]) {
+        padding-block: 80px;
+      }
+
       .history-cards {
         margin-block-start: var(--first-card-padding-top);
       }
@@ -39,11 +43,6 @@
         </history-item>
       </template>
     </iron-list>
-
-    <iron-scroll-threshold id="scroll-threshold"
-        lower-threshold="500" on-lower-threshold="onScrollToBottom_"
-        scroll-target="[[scrollTarget]]">
-    </iron-scroll-threshold>
 
     <cr-lazy-render id="dialog">
       <template>

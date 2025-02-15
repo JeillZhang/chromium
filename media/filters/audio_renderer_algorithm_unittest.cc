@@ -8,6 +8,11 @@
 // correct rate.  We always pass in a very large destination buffer with the
 // expectation that FillBuffer() will fill as much as it can but no more.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/filters/audio_renderer_algorithm.h"
 
 #include <stddef.h>
@@ -171,7 +176,7 @@ class AudioRendererAlgorithmTest : public testing::Test {
             1, 1, frame_size, kFrameSize, kNoTimestamp);
         break;
       default:
-        NOTREACHED_IN_MIGRATION() << "Unrecognized format " << sample_format_;
+        NOTREACHED() << "Unrecognized format " << sample_format_;
     }
     return buffer;
   }
@@ -197,8 +202,9 @@ class AudioRendererAlgorithmTest : public testing::Test {
   bool VerifyAudioData(AudioBus* bus, int offset, int frames, float value) {
     for (int ch = 0; ch < bus->channels(); ++ch) {
       for (int i = offset; i < offset + frames; ++i) {
-        if (bus->channel(ch)[i] != value)
+        if (bus->channel(ch)[i] != value) {
           return false;
+        }
       }
     }
     return true;
@@ -269,7 +275,10 @@ class AudioRendererAlgorithmTest : public testing::Test {
       // if at very first buffer-fill only one frame is written, that is zero
       // which might cause exception in CheckFakeData().
       if (!first_fill_buffer || frames_written > 1)
-        ASSERT_FALSE(AudioDataIsMuted(bus.get(), frames_written, dest_offset));
+        if (!bus->is_bitstream_format()) {
+          ASSERT_FALSE(
+              AudioDataIsMuted(bus.get(), frames_written, dest_offset));
+        }
       first_fill_buffer = false;
       frames_remaining -= frames_written;
 

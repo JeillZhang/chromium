@@ -58,7 +58,7 @@
 #include "net/test/key_util.h"
 #include "net/test/revocation_builder.h"
 #include "net/test/test_data_directory.h"
-#include "net/third_party/quiche/src/quiche/spdy/core/spdy_frame_builder.h"
+#include "net/third_party/quiche/src/quiche/http2/core/spdy_frame_builder.h"
 #include "third_party/boringssl/src/pki/extended_key_usage.h"
 #include "url/origin.h"
 
@@ -221,6 +221,13 @@ bool MaybeCreateOCSPResponse(CertBuilder* target,
   return true;
 }
 
+void DispatchResponseToDelegate(std::unique_ptr<HttpResponse> response,
+                                base::WeakPtr<HttpResponseDelegate> delegate) {
+  HttpResponse* const response_ptr = response.get();
+  delegate->AddResponse(std::move(response));
+  response_ptr->SendResponse(delegate);
+}
+
 }  // namespace
 
 EmbeddedTestServerHandle::EmbeddedTestServerHandle(
@@ -340,8 +347,8 @@ bool EmbeddedTestServer::InitializeAndListen(int port,
 
   do {
     if (++num_tries > max_tries) {
-      LOG(ERROR) << "Failed to listen on a valid port after " << max_tries
-                 << " attempts.";
+      DVLOG(1) << "Failed to listen on a valid port after " << max_tries
+               << " attempts.";
       listen_socket_.reset();
       return false;
     }
@@ -351,14 +358,14 @@ bool EmbeddedTestServer::InitializeAndListen(int port,
     int result =
         listen_socket_->ListenWithAddressAndPort(address.data(), port, 10);
     if (result) {
-      LOG(ERROR) << "Listen failed: " << ErrorToString(result);
+      DVLOG(1) << "Listen failed: " << ErrorToString(result);
       listen_socket_.reset();
       return false;
     }
 
     result = listen_socket_->GetLocalAddress(&local_endpoint_);
     if (result != OK) {
-      LOG(ERROR) << "GetLocalAddress failed: " << ErrorToString(result);
+      DVLOG(1) << "GetLocalAddress failed: " << ErrorToString(result);
       listen_socket_.reset();
       return false;
     }
@@ -380,8 +387,10 @@ bool EmbeddedTestServer::InitializeAndListen(int port,
 
   listen_socket_->DetachFromThread();
 
-  if (is_using_ssl_ && !InitializeSSLServerContext())
+  if (is_using_ssl_ && !InitializeSSLServerContext()) {
+    DVLOG(1) << "Unable to initialize SSL";
     return false;
+  }
 
   return true;
 }
@@ -430,6 +439,9 @@ bool EmbeddedTestServer::GenerateCertAndKey() {
       root->SetBasicConstraints(/*is_ca=*/true, /*path_len=*/-1);
       root->SetKeyUsages(
           {bssl::KEY_USAGE_BIT_KEY_CERT_SIGN, bssl::KEY_USAGE_BIT_CRL_SIGN});
+      if (!cert_config_.root_dns_names.empty()) {
+        root->SetSubjectAltNames(cert_config_.root_dns_names, {});
+      }
       break;
   }
 
@@ -452,7 +464,7 @@ bool EmbeddedTestServer::GenerateCertAndKey() {
   std::vector<GURL> leaf_ocsp_urls;
 
   leaf->SetValidity(now - base::Days(1), now + base::Days(20));
-  leaf->SetBasicConstraints(/*is_ca=*/false, /*path_len=*/-1);
+  leaf->SetBasicConstraints(/*is_ca=*/cert_config_.leaf_is_ca, /*path_len=*/-1);
   leaf->SetExtendedKeyUsages({bssl::der::Input(bssl::kServerAuth)});
 
   if (!cert_config_.policy_oids.empty()) {
@@ -564,11 +576,15 @@ bool EmbeddedTestServer::GenerateCertAndKey() {
 
 bool EmbeddedTestServer::InitializeSSLServerContext() {
   if (UsingStaticCert()) {
-    if (!InitializeCertAndKeyFromFile())
+    if (!InitializeCertAndKeyFromFile()) {
+      DVLOG(1) << "Unable to initialize cert and key from file";
       return false;
+    }
   } else {
-    if (!GenerateCertAndKey())
+    if (!GenerateCertAndKey()) {
+      DVLOG(1) << "Unable to generate cert and key";
       return false;
+    }
   }
 
   if (protocol_ == HttpConnection::Protocol::kHttp2) {
@@ -687,18 +703,54 @@ base::FilePath EmbeddedTestServer::GetRootCertPemPath() {
 void EmbeddedTestServer::ShutdownOnIOThread() {
   DCHECK(io_thread_->task_runner()->BelongsToCurrentThread());
   weak_factory_.InvalidateWeakPtrs();
+  shutdown_closures_.Notify();
   listen_socket_.reset();
   connections_.clear();
 }
 
+HttpConnection* EmbeddedTestServer::GetConnectionForSocket(
+    const StreamSocket* socket) {
+  auto it = connections_.find(socket);
+  if (it != connections_.end()) {
+    return it->second.get();
+  }
+  return nullptr;
+}
+
 void EmbeddedTestServer::HandleRequest(
     base::WeakPtr<HttpResponseDelegate> delegate,
-    std::unique_ptr<HttpRequest> request) {
+    std::unique_ptr<HttpRequest> request,
+    const StreamSocket* socket) {
   DCHECK(io_thread_->task_runner()->BelongsToCurrentThread());
   request->base_url = base_url_;
 
   for (const auto& monitor : request_monitors_)
     monitor.Run(*request);
+
+  HttpConnection* connection = GetConnectionForSocket(socket);
+  CHECK(connection);
+
+  if (auth_handler_) {
+    auto auth_result = auth_handler_.Run(*request);
+    if (auth_result) {
+      DispatchResponseToDelegate(std::move(auth_result), delegate);
+      return;
+    }
+  }
+
+  for (const auto& upgrade_request_handler : upgrade_request_handlers_) {
+    auto upgrade_response = upgrade_request_handler.Run(*request, connection);
+    if (upgrade_response.has_value()) {
+      if (upgrade_response.value() == UpgradeResult::kUpgraded) {
+        connections_.erase(socket);
+        return;
+      }
+    } else {
+      CHECK(upgrade_response.error());
+      DispatchResponseToDelegate(std::move(upgrade_response.error()), delegate);
+      return;
+    }
+  }
 
   std::unique_ptr<HttpResponse> response;
 
@@ -717,16 +769,13 @@ void EmbeddedTestServer::HandleRequest(
   }
 
   if (!response) {
-    LOG(WARNING) << "Request not handled. Returning 404: "
-                 << request->relative_url;
+    DVLOG(2) << "Request not handled. Returning 404: " << request->relative_url;
     auto not_found_response = std::make_unique<BasicHttpResponse>();
     not_found_response->set_code(HTTP_NOT_FOUND);
     response = std::move(not_found_response);
   }
 
-  HttpResponse* const response_ptr = response.get();
-  delegate->AddResponse(std::move(response));
-  response_ptr->SendResponse(delegate);
+  DispatchResponseToDelegate(std::move(response), delegate);
 }
 
 GURL EmbeddedTestServer::GetURL(std::string_view relative_url) const {
@@ -911,6 +960,26 @@ base::FilePath EmbeddedTestServer::GetFullPathFromSourceDirectory(
   return test_data_dir.Append(relative);
 }
 
+void EmbeddedTestServer::RegisterAuthHandler(
+    const HandleRequestCallback& callback) {
+  CHECK(!io_thread_)
+      << "Handlers must be registered before starting the server.";
+  if (auth_handler_) {
+    DVLOG(2) << "Overwriting existing Auth handler.";
+  }
+  auth_handler_ = callback;
+}
+
+void EmbeddedTestServer::RegisterUpgradeRequestHandler(
+    const HandleUpgradeRequestCallback& callback) {
+  CHECK_NE(protocol_, HttpConnection::Protocol::kHttp2)
+      << "RegisterUpgradeRequestHandler() is not supported for HTTP/2 "
+         "connections";
+  CHECK(!io_thread_)
+      << "Handlers must be registered before starting the server.";
+  upgrade_request_handlers_.push_back(callback);
+}
+
 void EmbeddedTestServer::RegisterRequestHandler(
     const HandleRequestCallback& callback) {
   DCHECK(!io_thread_)
@@ -965,6 +1034,11 @@ void EmbeddedTestServer::FlushAllSocketsAndConnections() {
 void EmbeddedTestServer::SetAlpsAcceptCH(std::string hostname,
                                          std::string accept_ch) {
   alps_accept_ch_.insert_or_assign(std::move(hostname), std::move(accept_ch));
+}
+
+base::CallbackListSubscription EmbeddedTestServer::RegisterShutdownClosure(
+    base::OnceClosure closure) {
+  return shutdown_closures_.Add(std::move(closure));
 }
 
 void EmbeddedTestServer::OnAcceptCompleted(int rv) {

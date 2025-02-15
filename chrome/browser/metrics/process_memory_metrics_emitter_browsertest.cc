@@ -6,7 +6,6 @@
 
 #include <set>
 
-#include "base/allocator/partition_allocator/src/partition_alloc/partition_alloc_buildflags.h"
 #include "base/feature_list.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
@@ -33,6 +32,7 @@
 #include "content/public/test/test_utils.h"
 #include "extensions/buildflags/buildflags.h"
 #include "net/dns/mock_host_resolver.h"
+#include "partition_alloc/buildflags.h"
 #include "services/metrics/public/cpp/ukm_builders.h"
 #include "services/metrics/public/cpp/ukm_source.h"
 #include "services/network/public/cpp/features.h"
@@ -111,7 +111,7 @@ class ProcessMemoryMetricsEmitterFake : public ProcessMemoryMetricsEmitter {
       const ProcessMemoryMetricsEmitterFake&) = delete;
 
  private:
-  ~ProcessMemoryMetricsEmitterFake() override {}
+  ~ProcessMemoryMetricsEmitterFake() override = default;
 
   void ReceivedMemoryDump(bool success,
                           std::unique_ptr<GlobalMemoryDump> ptr) override {
@@ -350,7 +350,7 @@ class ProcessMemoryMetricsEmitterTest
   ProcessMemoryMetricsEmitterTest& operator=(
       const ProcessMemoryMetricsEmitterTest&) = delete;
 
-  ~ProcessMemoryMetricsEmitterTest() override {}
+  ~ProcessMemoryMetricsEmitterTest() override = default;
 
   void SetUpOnMainThread() override {
     extensions::ExtensionBrowserTest::SetUpOnMainThread();
@@ -866,8 +866,8 @@ IN_PROC_BROWSER_TEST_F(ProcessMemoryMetricsEmitterTest, MAYBE_RendererBuildId) {
     // To match with the memory maps, need to convert it to absolute path,
     // which may hit ScopedBlockingCall.
     base::ScopedAllowBlockingForTesting allow_blocking;
-    auto maps =
-        memory_instrumentation::OSMetrics::GetProcessMemoryMaps(process.Pid());
+    auto maps = memory_instrumentation::OSMetrics::GetProcessMemoryMaps(
+        process.Handle());
     bool found = false;
     for (const memory_instrumentation::mojom::VmRegionPtr& region : maps) {
       if (region->module_debugid.empty())

@@ -2,12 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "gpu/command_buffer/service/shared_image/d3d_image_backing_factory.h"
 
 #include <dawn/dawn_proc.h>
+#include <dawn/native/D3D12Backend.h>
 #include <dawn/native/DawnNative.h>
 #include <dawn/webgpu_cpp.h>
 
+#include <algorithm>
 #include <memory>
 #include <utility>
 
@@ -15,11 +22,11 @@
 #include "base/functional/callback_helpers.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/unsafe_shared_memory_region.h"
-#include "base/ranges/algorithm.h"
 #include "base/run_loop.h"
 #include "base/test/bind.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/test_timeouts.h"
+#include "base/win/scoped_handle.h"
 #include "cc/test/pixel_comparator.h"
 #include "cc/test/pixel_test_utils.h"
 #include "components/viz/common/resources/shared_image_format.h"
@@ -49,6 +56,7 @@
 #include "ui/gfx/gpu_memory_buffer.h"
 #include "ui/gfx/win/d3d_shared_fence.h"
 #include "ui/gl/buildflags.h"
+#include "ui/gl/direct_composition_support.h"
 #include "ui/gl/gl_angle_util_win.h"
 #include "ui/gl/gl_context.h"
 #include "ui/gl/gl_surface.h"
@@ -187,7 +195,7 @@ TEST_F(D3DImageBackingFactoryTestSwapChain, InvalidFormat) {
   auto color_space = gfx::ColorSpace::CreateSRGB();
   auto surface_origin = kTopLeft_GrSurfaceOrigin;
   auto alpha_type = kPremul_SkAlphaType;
-  uint32_t usage = gpu::SHARED_IMAGE_USAGE_SCANOUT;
+  gpu::SharedImageUsageSet usage = gpu::SHARED_IMAGE_USAGE_SCANOUT;
   {
     auto valid_format = viz::SinglePlaneFormat::kRGBA_8888;
     auto backings = shared_image_factory_->CreateSwapChain(
@@ -230,7 +238,7 @@ TEST_F(D3DImageBackingFactoryTestSwapChain, CreateAndPresentSwapChain) {
   auto color_space = gfx::ColorSpace::CreateSRGB();
   auto surface_origin = kTopLeft_GrSurfaceOrigin;
   auto alpha_type = kPremul_SkAlphaType;
-  uint32_t usage =
+  gpu::SharedImageUsageSet usage =
       // This test both reads from and writes to the created SharedImages via
       // GL.
       gpu::SHARED_IMAGE_USAGE_GLES2_READ | SHARED_IMAGE_USAGE_GLES2_WRITE |
@@ -253,20 +261,20 @@ TEST_F(D3DImageBackingFactoryTestSwapChain, CreateAndPresentSwapChain) {
   ASSERT_TRUE(back_buffer_d3d_backing);
   ASSERT_TRUE(front_buffer_d3d_backing);
 
-  EXPECT_EQ(S_OK, back_buffer_d3d_backing->GetSwapChainForTesting()->GetBuffer(
+  EXPECT_EQ(S_OK, back_buffer_d3d_backing->swap_chain_for_testing()->GetBuffer(
                       /*buffer_index=*/0, IID_PPV_ARGS(&d3d11_texture)));
   EXPECT_TRUE(d3d11_texture);
   EXPECT_EQ(d3d11_texture,
-            back_buffer_d3d_backing->GetD3D11TextureForTesting());
+            back_buffer_d3d_backing->d3d11_texture_for_testing());
   d3d11_texture.Reset();
 
-  EXPECT_EQ(back_buffer_d3d_backing->GetSwapChainForTesting(),
-            front_buffer_d3d_backing->GetSwapChainForTesting());
-  EXPECT_EQ(S_OK, front_buffer_d3d_backing->GetSwapChainForTesting()->GetBuffer(
+  EXPECT_EQ(back_buffer_d3d_backing->swap_chain_for_testing(),
+            front_buffer_d3d_backing->swap_chain_for_testing());
+  EXPECT_EQ(S_OK, front_buffer_d3d_backing->swap_chain_for_testing()->GetBuffer(
                       /*buffer_index=*/1, IID_PPV_ARGS(&d3d11_texture)));
   EXPECT_TRUE(d3d11_texture);
   EXPECT_EQ(d3d11_texture,
-            front_buffer_d3d_backing->GetD3D11TextureForTesting());
+            front_buffer_d3d_backing->d3d11_texture_for_testing());
   d3d11_texture.Reset();
 
   std::unique_ptr<SharedImageRepresentationFactoryRef> back_factory_ref =
@@ -536,6 +544,7 @@ class D3DImageBackingFactoryTest : public D3DImageBackingFactoryTestBase {
 
   void CheckDawnPixels(
       DawnImageRepresentation::ScopedAccess* scoped_read_access,
+      const wgpu::Instance& instance,
       const wgpu::Device& device,
       const gfx::Size& size,
       const std::vector<uint8_t>& expected_color) const;
@@ -543,6 +552,7 @@ class D3DImageBackingFactoryTest : public D3DImageBackingFactoryTestBase {
   // Helper for opening multiple Dawn and Skia scoped access on given mailbox,
   // and checking for the expected color using both APIs concurrently.
   void DawnConcurrentReadTestHelper(const Mailbox& mailbox,
+                                    const wgpu::Instance& instance,
                                     const wgpu::Device& device,
                                     const gfx::Size& size,
                                     const std::vector<uint8_t>& expected_color);
@@ -582,7 +592,7 @@ TEST_F(D3DImageBackingFactoryTest, GL_SkiaGL) {
   const auto format = viz::SinglePlaneFormat::kRGBA_8888;
   const gfx::Size size(1, 1);
   const auto color_space = gfx::ColorSpace::CreateSRGB();
-  const uint32_t usage =
+  const gpu::SharedImageUsageSet usage =
       SHARED_IMAGE_USAGE_GLES2_WRITE | SHARED_IMAGE_USAGE_DISPLAY_READ;
   const gpu::SurfaceHandle surface_handle = gpu::kNullSurfaceHandle;
   auto backing = shared_image_factory_->CreateSharedImage(
@@ -657,7 +667,7 @@ TEST_F(D3DImageBackingFactoryTest, Dawn_SkiaGL) {
   const gfx::Size size(1, 1);
   const auto color_space = gfx::ColorSpace::CreateSRGB();
   const gpu::SurfaceHandle surface_handle = gpu::kNullSurfaceHandle;
-  const uint32_t usage =
+  const gpu::SharedImageUsageSet usage =
       SHARED_IMAGE_USAGE_WEBGPU_WRITE | SHARED_IMAGE_USAGE_DISPLAY_READ;
   auto backing = shared_image_factory_->CreateSharedImage(
       mailbox, format, surface_handle, size, color_space,
@@ -711,6 +721,7 @@ TEST_F(D3DImageBackingFactoryTest, Dawn_SkiaGL) {
 
 void D3DImageBackingFactoryTest::CheckDawnPixels(
     DawnImageRepresentation::ScopedAccess* scoped_read_access,
+    const wgpu::Instance& instance,
     const wgpu::Device& device,
     const gfx::Size& size,
     const std::vector<uint8_t>& expected_color) const {
@@ -725,9 +736,10 @@ void D3DImageBackingFactoryTest::CheckDawnPixels(
   wgpu::Buffer buffer = device.CreateBuffer(&buffer_desc);
 
   wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
-  auto src = wgpu::ImageCopyTexture{.texture = texture, .origin = {0, 0, 0}};
-  auto dst = wgpu::ImageCopyBuffer{.layout = {.bytesPerRow = buffer_stride},
-                                   .buffer = buffer};
+  auto src =
+      wgpu::TexelCopyTextureInfo{.texture = texture, .origin = {0, 0, 0}};
+  auto dst = wgpu::TexelCopyBufferInfo{.layout = {.bytesPerRow = buffer_stride},
+                                       .buffer = buffer};
   auto copy_size = wgpu::Extent3D{static_cast<uint32_t>(size.width()),
                                   static_cast<uint32_t>(size.height(), 1)};
   encoder.CopyTextureToBuffer(&src, &dst, &copy_size);
@@ -736,18 +748,14 @@ void D3DImageBackingFactoryTest::CheckDawnPixels(
   wgpu::Queue queue = device.GetQueue();
   queue.Submit(1, &commands);
 
-  WGPUBufferMapAsyncStatus map_status = WGPUBufferMapAsyncStatus_Unknown;
-  auto map_callback = [](WGPUBufferMapAsyncStatus status, void* userdata) {
-    WGPUBufferMapAsyncStatus* status_out =
-        reinterpret_cast<WGPUBufferMapAsyncStatus*>(userdata);
-    *status_out = status;
-  };
-  buffer.MapAsync(wgpu::MapMode::Read, 0, buffer_desc.size, map_callback,
-                  &map_status);
-  // Tick device until async map operation completes.
-  while (dawn::native::DeviceTick(device.Get())) {
-    base::PlatformThread::Sleep(TestTimeouts::tiny_timeout());
-  }
+  wgpu::FutureWaitInfo wait_info{buffer.MapAsync(
+      wgpu::MapMode::Read, 0, buffer_desc.size, wgpu::CallbackMode::WaitAnyOnly,
+      [&](wgpu::MapAsyncStatus status, wgpu::StringView) {
+        ASSERT_EQ(status, wgpu::MapAsyncStatus::Success);
+      })};
+  wgpu::WaitStatus status =
+      instance.WaitAny(1, &wait_info, std::numeric_limits<uint64_t>::max());
+  DCHECK(status == wgpu::WaitStatus::Success);
 
   const uint8_t* dst_pixels =
       reinterpret_cast<const uint8_t*>(buffer.GetConstMappedRange());
@@ -767,6 +775,7 @@ void D3DImageBackingFactoryTest::CheckDawnPixels(
 // using both APIs.
 void D3DImageBackingFactoryTest::DawnConcurrentReadTestHelper(
     const Mailbox& mailbox,
+    const wgpu::Instance& instance,
     const wgpu::Device& device,
     const gfx::Size& size,
     const std::vector<uint8_t>& expected_color) {
@@ -804,8 +813,8 @@ void D3DImageBackingFactoryTest::DawnConcurrentReadTestHelper(
       skia_representation2->BeginScopedReadAccess(nullptr, nullptr);
   EXPECT_TRUE(skia_access2);
 
-  CheckDawnPixels(dawn_access1.get(), device, size, expected_color);
-  CheckDawnPixels(dawn_access2.get(), device, size, expected_color);
+  CheckDawnPixels(dawn_access1.get(), instance, device, size, expected_color);
+  CheckDawnPixels(dawn_access2.get(), instance, device, size, expected_color);
   CheckSkiaPixels(skia_access1.get(), size, expected_color);
   CheckSkiaPixels(skia_access2.get(), size, expected_color);
 }
@@ -818,7 +827,13 @@ TEST_F(D3DImageBackingFactoryTest, Dawn_ConcurrentReads) {
   }
 
   // Find a Dawn D3D12 adapter
-  dawn::native::Instance instance;
+  wgpu::InstanceDescriptor instance_desc = {
+      .capabilities =
+          {
+              .timedWaitAnyEnable = true,
+          },
+  };
+  dawn::native::Instance instance(&instance_desc);
   wgpu::RequestAdapterOptions adapter_options;
   adapter_options.backendType = wgpu::BackendType::D3D12;
   std::vector<dawn::native::Adapter> adapters =
@@ -838,7 +853,7 @@ TEST_F(D3DImageBackingFactoryTest, Dawn_ConcurrentReads) {
   const gfx::Size size(1, 1);
   const auto color_space = gfx::ColorSpace::CreateSRGB();
   const gpu::SurfaceHandle surface_handle = gpu::kNullSurfaceHandle;
-  const uint32_t usage =
+  const gpu::SharedImageUsageSet usage =
       SHARED_IMAGE_USAGE_WEBGPU_READ | SHARED_IMAGE_USAGE_WEBGPU_WRITE |
       SHARED_IMAGE_USAGE_DISPLAY_READ | SHARED_IMAGE_USAGE_DISPLAY_WRITE;
   auto backing = shared_image_factory_->CreateSharedImage(
@@ -871,7 +886,8 @@ TEST_F(D3DImageBackingFactoryTest, Dawn_ConcurrentReads) {
   }
 
   // Check if pixels are red using concurrent reads.
-  DawnConcurrentReadTestHelper(mailbox, device, size, {255, 0, 0, 255});
+  DawnConcurrentReadTestHelper(mailbox, instance.Get(), device, size,
+                               {255, 0, 0, 255});
 
   // Clear the shared image to green using Dawn.
   {
@@ -909,7 +925,8 @@ TEST_F(D3DImageBackingFactoryTest, Dawn_ConcurrentReads) {
   }
 
   // Check if pixels are green using concurrent reads.
-  DawnConcurrentReadTestHelper(mailbox, device, size, {0, 255, 0, 255});
+  DawnConcurrentReadTestHelper(mailbox, instance.Get(), device, size,
+                               {0, 255, 0, 255});
 }
 
 // 1. Draw a color to texture through GL
@@ -922,9 +939,9 @@ TEST_F(D3DImageBackingFactoryTest, GL_Dawn_Skia_UnclearTexture) {
   const auto format = viz::SinglePlaneFormat::kRGBA_8888;
   const gfx::Size size(1, 1);
   const auto color_space = gfx::ColorSpace::CreateSRGB();
-  const uint32_t usage = SHARED_IMAGE_USAGE_GLES2_WRITE |
-                         SHARED_IMAGE_USAGE_DISPLAY_READ |
-                         SHARED_IMAGE_USAGE_WEBGPU_WRITE;
+  const gpu::SharedImageUsageSet usage = SHARED_IMAGE_USAGE_GLES2_WRITE |
+                                         SHARED_IMAGE_USAGE_DISPLAY_READ |
+                                         SHARED_IMAGE_USAGE_WEBGPU_WRITE;
   const gpu::SurfaceHandle surface_handle = gpu::kNullSurfaceHandle;
   auto backing = shared_image_factory_->CreateSharedImage(
       mailbox, format, surface_handle, size, color_space,
@@ -1034,8 +1051,8 @@ TEST_F(D3DImageBackingFactoryTest, UnclearDawn_SkiaFails) {
   const auto format = viz::SinglePlaneFormat::kRGBA_8888;
   const gfx::Size size(1, 1);
   const auto color_space = gfx::ColorSpace::CreateSRGB();
-  const uint32_t usage = SHARED_IMAGE_USAGE_DISPLAY_READ |
-                         SHARED_IMAGE_USAGE_WEBGPU_WRITE;
+  const gpu::SharedImageUsageSet usage =
+      SHARED_IMAGE_USAGE_DISPLAY_READ | SHARED_IMAGE_USAGE_WEBGPU_WRITE;
   const gpu::SurfaceHandle surface_handle = gpu::kNullSurfaceHandle;
   auto backing = shared_image_factory_->CreateSharedImage(
       mailbox, format, surface_handle, size, color_space,
@@ -1115,7 +1132,7 @@ TEST_F(D3DImageBackingFactoryTest, SkiaAccessFirstFails) {
   const auto format = viz::SinglePlaneFormat::kRGBA_8888;
   const gfx::Size size(1, 1);
   const auto color_space = gfx::ColorSpace::CreateSRGB();
-  const uint32_t usage = SHARED_IMAGE_USAGE_DISPLAY_READ;
+  const gpu::SharedImageUsageSet usage = SHARED_IMAGE_USAGE_DISPLAY_READ;
   const gpu::SurfaceHandle surface_handle = gpu::kNullSurfaceHandle;
   auto backing = shared_image_factory_->CreateSharedImage(
       mailbox, format, surface_handle, size, color_space,
@@ -1145,7 +1162,7 @@ TEST_F(D3DImageBackingFactoryTest, CreateFromPixelData) {
   const auto format = viz::SinglePlaneFormat::kRGBA_8888;
   const gfx::Size size(1, 1);
   const auto color_space = gfx::ColorSpace::CreateSRGB();
-  const uint32_t usage = SHARED_IMAGE_USAGE_DISPLAY_READ;
+  const gpu::SharedImageUsageSet usage = SHARED_IMAGE_USAGE_DISPLAY_READ;
   const std::vector<uint8_t> pixel_data = {0x01, 0x02, 0x03, 0x04};
   auto backing = shared_image_factory_->CreateSharedImage(
       mailbox, format, size, color_space, kTopLeft_GrSurfaceOrigin,
@@ -1163,15 +1180,13 @@ TEST_F(D3DImageBackingFactoryTest, CreateFromPixelData) {
 void D3DImageBackingFactoryTest::RunCreateSharedImageFromHandleTest(
     DXGI_FORMAT dxgi_format) {
   auto mailbox = Mailbox::Generate();
-  const auto buffer_format = gfx::BufferFormat::RGBA_8888;
-  const auto format = viz::GetSinglePlaneSharedImageFormat(buffer_format);
+  const auto format = viz::SinglePlaneFormat::kRGBA_8888;
   const gfx::Size size(1, 1);
-  const auto plane = gfx::BufferPlane::DEFAULT;
   const auto color_space = gfx::ColorSpace::CreateSRGB();
   // This function tests concurrent GL reads of two SharedImages created from
   // the underlying handle.
-  const uint32_t usage = SHARED_IMAGE_USAGE_GLES2_READ |
-                         SHARED_IMAGE_USAGE_DISPLAY_READ;
+  const gpu::SharedImageUsageSet usage =
+      SHARED_IMAGE_USAGE_GLES2_READ | SHARED_IMAGE_USAGE_DISPLAY_READ;
   const GrSurfaceOrigin surface_origin = kTopLeft_GrSurfaceOrigin;
   const SkAlphaType alpha_type = kPremul_SkAlphaType;
 
@@ -1210,16 +1225,16 @@ void D3DImageBackingFactoryTest::RunCreateSharedImageFromHandleTest(
   ASSERT_EQ(hr, S_OK);
 
   gfx::GpuMemoryBufferHandle gpu_memory_buffer_handle;
-  gpu_memory_buffer_handle.dxgi_handle.Set(shared_handle);
-  gpu_memory_buffer_handle.dxgi_token = gfx::DXGIHandleToken();
   gpu_memory_buffer_handle.type = gfx::DXGI_SHARED_HANDLE;
+  gpu_memory_buffer_handle.set_dxgi_handle(
+      gfx::DXGIHandle(base::win::ScopedHandle(shared_handle)));
 
   // Clone before moving the handle in CreateSharedImage.
   auto dup_handle = gpu_memory_buffer_handle.Clone();
 
   auto backing = shared_image_factory_->CreateSharedImage(
-      mailbox, std::move(gpu_memory_buffer_handle), buffer_format, plane, size,
-      color_space, surface_origin, alpha_type, usage, "TestLabel");
+      mailbox, format, size, color_space, surface_origin, alpha_type, usage,
+      "TestLabel", std::move(gpu_memory_buffer_handle));
   ASSERT_NE(backing, nullptr);
 
   EXPECT_EQ(backing->format(), format);
@@ -1239,8 +1254,8 @@ void D3DImageBackingFactoryTest::RunCreateSharedImageFromHandleTest(
   // shared handle state and texture with the first backing.
   auto dup_mailbox = Mailbox::Generate();
   auto dup_backing = shared_image_factory_->CreateSharedImage(
-      dup_mailbox, std::move(dup_handle), buffer_format, plane, size,
-      color_space, surface_origin, alpha_type, usage, "TestLabel");
+      dup_mailbox, format, size, color_space, surface_origin, alpha_type, usage,
+      "TestLabel", std::move(dup_handle));
   ASSERT_NE(dup_backing, nullptr);
 
   EXPECT_EQ(dup_backing->format(), format);
@@ -1305,8 +1320,8 @@ TEST_F(D3DImageBackingFactoryTest, Dawn_ReuseExternalImage) {
   const auto format = viz::SinglePlaneFormat::kRGBA_8888;
   const gfx::Size size(1, 1);
   const auto color_space = gfx::ColorSpace::CreateSRGB();
-  const uint32_t usage = SHARED_IMAGE_USAGE_DISPLAY_READ |
-                         SHARED_IMAGE_USAGE_WEBGPU_WRITE;
+  const gpu::SharedImageUsageSet usage =
+      SHARED_IMAGE_USAGE_DISPLAY_READ | SHARED_IMAGE_USAGE_WEBGPU_WRITE;
   const gpu::SurfaceHandle surface_handle = gpu::kNullSurfaceHandle;
   auto backing = shared_image_factory_->CreateSharedImage(
       mailbox, format, surface_handle, size, color_space,
@@ -1420,7 +1435,7 @@ TEST_F(D3DImageBackingFactoryTest, Dawn_HasLastRef) {
   const auto format = viz::SinglePlaneFormat::kRGBA_8888;
   const gfx::Size size(1, 1);
   const auto color_space = gfx::ColorSpace::CreateSRGB();
-  const uint32_t usage =
+  const gpu::SharedImageUsageSet usage =
       SHARED_IMAGE_USAGE_DISPLAY_READ | SHARED_IMAGE_USAGE_WEBGPU_READ;
   const gpu::SurfaceHandle surface_handle = gpu::kNullSurfaceHandle;
   auto backing = shared_image_factory_->CreateSharedImage(
@@ -1503,7 +1518,7 @@ D3DImageBackingFactoryTest::CreateVideoImage(const gfx::Size& size,
     return {};
 
   // The video tests read from the created SharedImages via GL.
-  uint32_t usage =
+  gpu::SharedImageUsageSet usage =
       gpu::SHARED_IMAGE_USAGE_VIDEO_DECODE |
       gpu::SHARED_IMAGE_USAGE_GLES2_READ | gpu::SHARED_IMAGE_USAGE_RASTER_READ |
       gpu::SHARED_IMAGE_USAGE_DISPLAY_READ | gpu::SHARED_IMAGE_USAGE_SCANOUT;
@@ -1534,9 +1549,8 @@ D3DImageBackingFactoryTest::CreateVideoImage(const gfx::Size& size,
   if (use_factory) {
     gfx::GpuMemoryBufferHandle gmb_handle;
     gmb_handle.type = gfx::DXGI_SHARED_HANDLE;
-    gmb_handle.dxgi_handle = std::move(shared_handle);
-    DCHECK(gmb_handle.dxgi_handle.IsValid());
-    gmb_handle.dxgi_token = gfx::DXGIHandleToken();
+    gmb_handle.set_dxgi_handle(gfx::DXGIHandle(std::move(shared_handle)));
+    DCHECK(gmb_handle.dxgi_handle().IsValid());
 
     shared_image_backing = shared_image_factory_->CreateSharedImage(
         mailbox, viz::MultiPlaneFormat::kNV12, size, gfx::ColorSpace(),
@@ -1556,8 +1570,9 @@ D3DImageBackingFactoryTest::CreateVideoImage(const gfx::Size& size,
     shared_image_backing = D3DImageBacking::Create(
         mailbox, viz::MultiPlaneFormat::kNV12, size, gfx::ColorSpace(),
         kTopLeft_GrSurfaceOrigin, kPremul_SkAlphaType, usage, "TestLabel",
-        d3d11_texture, std::move(dxgi_shared_handle_state),
-        context_state_->GetGLFormatCaps(), GL_TEXTURE_EXTERNAL_OES,
+        d3d11_texture, /*dcomp_texture=*/nullptr,
+        std::move(dxgi_shared_handle_state), context_state_->GetGLFormatCaps(),
+        GL_TEXTURE_EXTERNAL_OES,
         /*array_slice=*/0, /*plane_index=*/0u);
     // Need to clear the backing created with shared handle.
     shared_image_backing->SetCleared();
@@ -1777,7 +1792,7 @@ void D3DImageBackingFactoryTest::RunOverlayTest(bool use_shared_handle,
   std::optional<gl::DCLayerOverlayImage> overlay_image =
       scoped_read_access->GetDCLayerOverlayImage();
   ASSERT_TRUE(overlay_image);
-  EXPECT_EQ(overlay_image->type(), gl::DCLayerOverlayType::kNV12Texture);
+  EXPECT_EQ(overlay_image->type(), gl::DCLayerOverlayType::kD3D11Texture);
 
   Microsoft::WRL::ComPtr<ID3D11Device> d3d11_device =
       shared_image_factory_->GetDeviceForTesting();
@@ -1795,7 +1810,7 @@ void D3DImageBackingFactoryTest::RunOverlayTest(bool use_shared_handle,
   d3d11_device->GetImmediateContext(&device_context);
 
   device_context->CopyResource(staging_texture.Get(),
-                               overlay_image->nv12_texture());
+                               overlay_image->d3d11_video_texture());
   D3D11_MAPPED_SUBRESOURCE mapped_resource = {};
   hr = device_context->Map(staging_texture.Get(), 0, D3D11_MAP_READ, 0,
                            &mapped_resource);
@@ -1822,181 +1837,6 @@ TEST_F(D3DImageBackingFactoryTest,
                  /*use_factory=*/true);
 }
 
-TEST_F(D3DImageBackingFactoryTest, CreateFromSharedMemory) {
-  constexpr gfx::Size size(32, 32);
-  constexpr size_t kDataSize = size.width() * size.height() * 3 / 2;
-
-  base::UnsafeSharedMemoryRegion shm_region =
-      base::UnsafeSharedMemoryRegion::Create(kDataSize);
-  {
-    base::WritableSharedMemoryMapping shm_mapping = shm_region.Map();
-    FillNV12(shm_mapping.GetMemoryAs<uint8_t>(), size, 255, 255, 255);
-  }
-
-  constexpr size_t kNumPlanes = 2;
-  const gpu::Mailbox mailboxes[kNumPlanes] = {gpu::Mailbox::Generate(),
-                                              gpu::Mailbox::Generate()};
-  const gfx::BufferPlane planes[kNumPlanes] = {gfx::BufferPlane::Y,
-                                               gfx::BufferPlane::UV};
-  // This test writes to the created SharedImages via GL and then reads back
-  // those contents via GL for verification.
-  constexpr uint32_t usage =
-      gpu::SHARED_IMAGE_USAGE_VIDEO_DECODE |
-      gpu::SHARED_IMAGE_USAGE_GLES2_READ | SHARED_IMAGE_USAGE_GLES2_WRITE |
-      gpu::SHARED_IMAGE_USAGE_DISPLAY_READ | gpu::SHARED_IMAGE_USAGE_SCANOUT;
-  std::vector<std::unique_ptr<SharedImageBacking>> shared_image_backings;
-  for (size_t i = 0; i < kNumPlanes; i++) {
-    gfx::GpuMemoryBufferHandle shm_gmb_handle;
-    shm_gmb_handle.type = gfx::SHARED_MEMORY_BUFFER;
-    shm_gmb_handle.region = shm_region.Duplicate();
-    DCHECK(shm_gmb_handle.region.IsValid());
-    shm_gmb_handle.stride = size.width();
-
-    // CompoundImageBacking wrapping D3DImageBacking is required for shared
-    // memory support.
-    auto backing = CompoundImageBacking::CreateSharedMemory(
-        shared_image_factory_.get(), /*allow_shm_overlays=*/true, mailboxes[i],
-        std::move(shm_gmb_handle), gfx::BufferFormat::YUV_420_BIPLANAR,
-        planes[i], size, gfx::ColorSpace(), kTopLeft_GrSurfaceOrigin,
-        kPremul_SkAlphaType, usage, "TestLabel");
-    EXPECT_NE(backing, nullptr);
-
-    shared_image_backings.push_back(std::move(backing));
-  }
-  EXPECT_EQ(shared_image_backings.size(), kNumPlanes);
-
-  const gfx::Size plane_sizes[kNumPlanes] = {
-      size, gfx::Size(size.width() / 2, size.height() / 2)};
-  const viz::SharedImageFormat plane_formats[kNumPlanes] = {
-      viz::SinglePlaneFormat::kR_8, viz::SinglePlaneFormat::kRG_88};
-
-  std::vector<std::unique_ptr<SharedImageRepresentationFactoryRef>>
-      shared_image_refs;
-  for (size_t i = 0; i < shared_image_backings.size(); i++) {
-    auto& backing = shared_image_backings[i];
-
-    EXPECT_EQ(backing->mailbox(), mailboxes[i]);
-    EXPECT_EQ(backing->size(), plane_sizes[i]);
-    EXPECT_EQ(backing->format(), plane_formats[i]);
-    EXPECT_EQ(backing->color_space(), gfx::ColorSpace());
-    EXPECT_EQ(backing->surface_origin(), kTopLeft_GrSurfaceOrigin);
-    EXPECT_EQ(backing->alpha_type(), kPremul_SkAlphaType);
-    EXPECT_EQ(backing->usage(), usage);
-    EXPECT_TRUE(backing->IsCleared());
-
-    shared_image_refs.push_back(shared_image_manager_.Register(
-        std::move(backing), memory_type_tracker_.get()));
-  }
-  ASSERT_EQ(shared_image_refs.size(), 2u);
-
-  constexpr uint8_t kYClearValue = 0x12;
-  constexpr uint8_t kUClearValue = 0x23;
-  constexpr uint8_t kVClearValue = 0x34;
-
-  gl::GLApi* api = gl::g_current_gl_context;
-
-  GLuint fbo;
-  api->glGenFramebuffersEXTFn(1, &fbo);
-  ASSERT_NE(fbo, 0u);
-  SCOPED_GL_CLEANUP_PTR(api, DeleteFramebuffersEXT, 1, fbo);
-  api->glBindFramebufferEXTFn(GL_FRAMEBUFFER, fbo);
-
-  auto y_texture =
-      shared_image_representation_factory_->ProduceGLTexturePassthrough(
-          shared_image_refs[0]->mailbox());
-  ASSERT_NE(y_texture, nullptr);
-
-  auto y_access = y_texture->BeginScopedAccess(
-      GL_SHARED_IMAGE_ACCESS_MODE_READWRITE_CHROMIUM,
-      SharedImageRepresentation::AllowUnclearedAccess::kNo);
-  ASSERT_NE(y_access, nullptr);
-
-  GLuint y_texture_id = y_texture->GetTexturePassthrough()->service_id();
-  api->glBindTextureFn(GL_TEXTURE_2D, y_texture_id);
-  api->glFramebufferTexture2DEXTFn(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                                   GL_TEXTURE_2D, y_texture_id, 0);
-  ASSERT_EQ(api->glCheckFramebufferStatusEXTFn(GL_FRAMEBUFFER),
-            static_cast<unsigned>(GL_FRAMEBUFFER_COMPLETE));
-  ASSERT_EQ(api->glGetErrorFn(), static_cast<GLenum>(GL_NO_ERROR));
-
-  GLubyte y_value;
-  api->glReadPixelsFn(size.width() / 2, size.height() / 2, 1, 1, GL_RED,
-                      GL_UNSIGNED_BYTE, &y_value);
-  EXPECT_EQ(255, y_value);
-
-  api->glViewportFn(0, 0, size.width(), size.height());
-  api->glClearColorFn(kYClearValue / 255.0f, 0, 0, 0);
-  api->glClearFn(GL_COLOR_BUFFER_BIT);
-
-  api->glReadPixelsFn(size.width() / 2, size.height() / 2, 1, 1, GL_RED,
-                      GL_UNSIGNED_BYTE, &y_value);
-  EXPECT_EQ(kYClearValue, y_value);
-
-  y_access.reset();
-  y_texture.reset();
-  EXPECT_TRUE(shared_image_refs[0]->CopyToGpuMemoryBuffer());
-
-  auto uv_texture =
-      shared_image_representation_factory_->ProduceGLTexturePassthrough(
-          shared_image_refs[1]->mailbox());
-  ASSERT_NE(uv_texture, nullptr);
-
-  auto uv_access = uv_texture->BeginScopedAccess(
-      GL_SHARED_IMAGE_ACCESS_MODE_READWRITE_CHROMIUM,
-      SharedImageRepresentation::AllowUnclearedAccess::kNo);
-  ASSERT_NE(uv_access, nullptr);
-
-  GLuint uv_texture_id = uv_texture->GetTexturePassthrough()->service_id();
-  api->glBindTextureFn(GL_TEXTURE_2D, uv_texture_id);
-  api->glFramebufferTexture2DEXTFn(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                                   GL_TEXTURE_2D, uv_texture_id, 0);
-  ASSERT_EQ(api->glCheckFramebufferStatusEXTFn(GL_FRAMEBUFFER),
-            static_cast<unsigned>(GL_FRAMEBUFFER_COMPLETE));
-  ASSERT_EQ(api->glGetErrorFn(), static_cast<GLenum>(GL_NO_ERROR));
-
-  GLubyte uv_value[2];
-  api->glReadPixelsFn(size.width() / 4, size.height() / 4, 1, 1, GL_RG,
-                      GL_UNSIGNED_BYTE, uv_value);
-  EXPECT_EQ(255, uv_value[0]);
-  EXPECT_EQ(255, uv_value[1]);
-
-  api->glViewportFn(0, 0, size.width(), size.height());
-  api->glClearColorFn(kUClearValue / 255.0f, kVClearValue / 255.0f, 0, 0);
-  api->glClearFn(GL_COLOR_BUFFER_BIT);
-
-  api->glReadPixelsFn(size.width() / 4, size.height() / 4, 1, 1, GL_RG,
-                      GL_UNSIGNED_BYTE, uv_value);
-  EXPECT_EQ(kUClearValue, uv_value[0]);
-  EXPECT_EQ(kVClearValue, uv_value[1]);
-
-  uv_access.reset();
-  uv_texture.reset();
-  EXPECT_TRUE(shared_image_refs[1]->CopyToGpuMemoryBuffer());
-
-  {
-    base::WritableSharedMemoryMapping shm_mapping = shm_region.Map();
-    CheckNV12(shm_mapping.GetMemoryAs<uint8_t>(), size.width(), size,
-              kYClearValue, kUClearValue, kVClearValue);
-  }
-
-  {
-    auto overlay_representation =
-        shared_image_representation_factory_->ProduceOverlay(
-            shared_image_refs[0]->mailbox());
-
-    auto scoped_read_access = overlay_representation->BeginScopedReadAccess();
-    ASSERT_TRUE(scoped_read_access);
-
-    std::optional<gl::DCLayerOverlayImage> overlay_image =
-        scoped_read_access->GetDCLayerOverlayImage();
-    ASSERT_TRUE(overlay_image);
-    EXPECT_EQ(overlay_image->type(), gl::DCLayerOverlayType::kNV12Pixmap);
-
-    CheckNV12(overlay_image->nv12_pixmap(), overlay_image->pixmap_stride(),
-              size, kYClearValue, kUClearValue, kVClearValue);
-  }
-}
-
 void D3DImageBackingFactoryTest::RunCreateFromSharedMemoryMultiplanarTest(
     bool use_async_copy) {
   constexpr gfx::Size size(32, 32);
@@ -2006,7 +1846,7 @@ void D3DImageBackingFactoryTest::RunCreateFromSharedMemoryMultiplanarTest(
 
   // This test writes to the created SharedImages via GL and then reads back
   // those contents via GL for verification.
-  constexpr uint32_t usage =
+  constexpr gpu::SharedImageUsageSet usage =
       gpu::SHARED_IMAGE_USAGE_VIDEO_DECODE |
       gpu::SHARED_IMAGE_USAGE_GLES2_READ | SHARED_IMAGE_USAGE_GLES2_WRITE |
       gpu::SHARED_IMAGE_USAGE_DISPLAY_READ | gpu::SHARED_IMAGE_USAGE_SCANOUT;
@@ -2019,17 +1859,16 @@ void D3DImageBackingFactoryTest::RunCreateFromSharedMemoryMultiplanarTest(
 
   gfx::GpuMemoryBufferHandle shm_gmb_handle;
   shm_gmb_handle.type = gfx::SHARED_MEMORY_BUFFER;
-  shm_gmb_handle.region = shm_region.Duplicate();
-  DCHECK(shm_gmb_handle.region.IsValid());
+  shm_gmb_handle.set_region(shm_region.Duplicate());
+  DCHECK(shm_gmb_handle.region().IsValid());
   shm_gmb_handle.stride = size.width();
 
   // CompoundImageBacking wrapping D3DImageBacking is required for shared
   // memory support.
   auto backing = CompoundImageBacking::CreateSharedMemory(
-      shared_image_factory_.get(), /*allow_shm_overlays=*/true, mailbox,
-      std::move(shm_gmb_handle), viz::MultiPlaneFormat::kNV12, size,
-      gfx::ColorSpace(), kTopLeft_GrSurfaceOrigin, kPremul_SkAlphaType, usage,
-      "TestLabel");
+      shared_image_factory_.get(), mailbox, std::move(shm_gmb_handle),
+      viz::MultiPlaneFormat::kNV12, size, gfx::ColorSpace(),
+      kTopLeft_GrSurfaceOrigin, kPremul_SkAlphaType, usage, "TestLabel");
   EXPECT_NE(backing, nullptr);
 
   EXPECT_EQ(backing->mailbox(), mailbox);
@@ -2143,9 +1982,9 @@ void D3DImageBackingFactoryTest::RunCreateFromSharedMemoryMultiplanarTest(
     std::optional<gl::DCLayerOverlayImage> overlay_image =
         scoped_read_access->GetDCLayerOverlayImage();
     ASSERT_TRUE(overlay_image);
-    EXPECT_EQ(overlay_image->type(), gl::DCLayerOverlayType::kNV12Pixmap);
+    EXPECT_EQ(overlay_image->type(), gl::DCLayerOverlayType::kShMemPixmap);
 
-    CheckNV12(overlay_image->nv12_pixmap(), overlay_image->pixmap_stride(),
+    CheckNV12(overlay_image->shm_video_pixmap(), overlay_image->pixmap_stride(),
               size, kYClearValue, kUClearValue, kVClearValue);
   }
 }
@@ -2181,10 +2020,9 @@ void D3DImageBackingFactoryTest::RunMultiplanarUploadAndReadback(
   constexpr size_t kDataSize = size.width() * size.height() * 3 / 2;
   constexpr SkAlphaType alpha_type = kPremul_SkAlphaType;
   constexpr gfx::ColorSpace color_space;
-  constexpr uint32_t usage = gpu::SHARED_IMAGE_USAGE_RASTER_READ |
-                             gpu::SHARED_IMAGE_USAGE_DISPLAY_READ |
-                             gpu::SHARED_IMAGE_USAGE_SCANOUT |
-                             gpu::SHARED_IMAGE_USAGE_CPU_UPLOAD;
+  constexpr gpu::SharedImageUsageSet usage =
+      gpu::SHARED_IMAGE_USAGE_RASTER_READ |
+      gpu::SHARED_IMAGE_USAGE_DISPLAY_READ | gpu::SHARED_IMAGE_USAGE_CPU_UPLOAD;
   constexpr auto format = viz::MultiPlaneFormat::kNV12;
   const gpu::Mailbox mailbox = gpu::Mailbox::Generate();
 
@@ -2213,11 +2051,9 @@ void D3DImageBackingFactoryTest::RunMultiplanarUploadAndReadback(
     size_t plane_offset = 0;
     for (int plane = 0; plane < format.NumberOfPlanes(); ++plane) {
       gfx::Size plane_size = format.GetPlaneSize(plane, size);
-      auto info =
-          SkImageInfo::Make(gfx::SizeToSkISize(plane_size),
-                            viz::ToClosestSkColorType(
-                                /*gpu_compositing=*/true, format, plane),
-                            alpha_type, color_space.ToSkColorSpace());
+      auto info = SkImageInfo::Make(gfx::SizeToSkISize(plane_size),
+                                    viz::ToClosestSkColorType(format, plane),
+                                    alpha_type, color_space.ToSkColorSpace());
       DCHECK_LE(info.computeMinByteSize() + plane_offset, kDataSize);
       pixmaps.emplace_back(info, buffer.data() + plane_offset,
                            info.minRowBytes());
@@ -2230,8 +2066,9 @@ void D3DImageBackingFactoryTest::RunMultiplanarUploadAndReadback(
   backing->SetCleared();
 
   // If UpdateSubresource() is used, the staging texture shouldn't be created.
-  EXPECT_EQ(!static_cast<D3DImageBacking*>(backing)->has_staging_texture(),
-            use_update_subresource);
+  EXPECT_EQ(
+      !static_cast<D3DImageBacking*>(backing)->HasStagingTextureForTesting(),
+      use_update_subresource);
 
   auto skia_representation = shared_image_representation_factory_->ProduceSkia(
       mailbox, context_state_);
@@ -2307,6 +2144,257 @@ TEST_F(D3DImageBackingFactoryTest, MultiplanarUploadAndReadback) {
 TEST_F(D3DImageBackingFactoryTest,
        MultiplanarUploadAndReadbackWithUpdateSubresource) {
   RunMultiplanarUploadAndReadback(/*use_update_subresource=*/true);
+}
+
+TEST_F(D3DImageBackingFactoryTest, CanCreateScanoutBacking) {
+  const gfx::Size arbitrary_size = gfx::Size(4, 4);
+
+  // E.g. a hardware decoded video frame
+  EXPECT_TRUE(shared_image_factory_->CanCreateSharedImage(
+      gpu::SHARED_IMAGE_USAGE_VIDEO_DECODE | gpu::SHARED_IMAGE_USAGE_SCANOUT,
+      viz::MultiPlaneFormat::kNV12, arbitrary_size, /*thread_safe=*/false,
+      gfx::GpuMemoryBufferType::DXGI_SHARED_HANDLE, GrContextType ::kGL, {}));
+
+  // E.g. getDisplayMedia content, like a shared window
+  EXPECT_TRUE(shared_image_factory_->CanCreateSharedImage(
+      gpu::SHARED_IMAGE_USAGE_SCANOUT, viz::MultiPlaneFormat::kNV12,
+      arbitrary_size, /*thread_safe=*/false,
+      gfx::GpuMemoryBufferType::DXGI_SHARED_HANDLE, GrContextType ::kGL, {}));
+
+  // E.g. delegated compositing draw quad resources
+  EXPECT_EQ(
+      gl::DirectCompositionTextureSupported(),
+      shared_image_factory_->CanCreateSharedImage(
+          gpu::SHARED_IMAGE_USAGE_SCANOUT, viz::SinglePlaneFormat::kBGRA_8888,
+          arbitrary_size, /*thread_safe=*/false,
+          gfx::GpuMemoryBufferType::EMPTY_BUFFER, GrContextType ::kGL, {}));
+}
+
+TEST_F(D3DImageBackingFactoryTest, CanProduceDCompTextureOverlay) {
+  if (!gl::DirectCompositionTextureSupported()) {
+    GTEST_SKIP() << "IDCompositionTexture not supported";
+  }
+
+  constexpr gfx::Size size(32, 32);
+  constexpr SkAlphaType alpha_type = kPremul_SkAlphaType;
+  constexpr gfx::ColorSpace color_space;
+  constexpr gpu::SharedImageUsageSet usage =
+      gpu::SHARED_IMAGE_USAGE_RASTER_READ |
+      gpu::SHARED_IMAGE_USAGE_DISPLAY_READ | gpu::SHARED_IMAGE_USAGE_SCANOUT;
+  constexpr auto format = viz::SinglePlaneFormat::kBGRA_8888;
+  const gpu::Mailbox mailbox = gpu::Mailbox::Generate();
+
+  auto owned_backing = shared_image_factory_->CreateSharedImage(
+      mailbox, format, kNullSurfaceHandle, size, color_space,
+      kTopLeft_GrSurfaceOrigin, alpha_type, usage, "TestLabel",
+      /*is_thread_safe=*/false);
+  ASSERT_NE(owned_backing, nullptr);
+  SharedImageBacking* backing = owned_backing.get();
+
+  std::unique_ptr<SharedImageRepresentationFactoryRef> shared_image_ref =
+      shared_image_manager_.Register(std::move(owned_backing),
+                                     memory_type_tracker_.get());
+  ASSERT_TRUE(shared_image_ref);
+
+  // Mark it as initialized-- we won't be reading the actual pixels.
+  backing->SetCleared();
+
+  auto overlay_representation =
+      shared_image_representation_factory_->ProduceOverlay(mailbox);
+
+  auto scoped_read_access = overlay_representation->BeginScopedReadAccess();
+  ASSERT_TRUE(scoped_read_access) << "Can begin overlay read access";
+  auto overlay_image = scoped_read_access->GetDCLayerOverlayImage();
+  ASSERT_TRUE(overlay_image);
+  ASSERT_TRUE(overlay_image->dcomp_visual_content())
+      << "Overlay image is visual content";
+  Microsoft::WRL::ComPtr<IUnknown> visual_content =
+      overlay_image->dcomp_visual_content();
+  Microsoft::WRL::ComPtr<IDCompositionTexture> dcomp_texture;
+  ASSERT_HRESULT_SUCCEEDED(visual_content.As(&dcomp_texture))
+      << "Overlay image visual content is a DComp texture";
+  ASSERT_TRUE(dcomp_texture);
+}
+
+TEST_F(D3DImageBackingFactoryTest, CanProduceVideoForExternalDevice) {
+  constexpr gfx::Size size(32, 32);
+  constexpr SkAlphaType alpha_type = kPremul_SkAlphaType;
+  constexpr gfx::ColorSpace color_space;
+  constexpr gpu::SharedImageUsageSet usage =
+      gpu::SHARED_IMAGE_USAGE_RASTER_READ |
+      gpu::SHARED_IMAGE_USAGE_DISPLAY_READ;
+  constexpr auto format = viz::SinglePlaneFormat::kBGRA_8888;
+  const gpu::Mailbox mailbox = gpu::Mailbox::Generate();
+
+  auto owned_backing = shared_image_factory_->CreateSharedImage(
+      mailbox, format, kNullSurfaceHandle, size, color_space,
+      kTopLeft_GrSurfaceOrigin, alpha_type, usage, "TestLabel",
+      /*is_thread_safe=*/false);
+  ASSERT_NE(owned_backing, nullptr);
+
+  std::unique_ptr<SharedImageRepresentationFactoryRef> shared_image_ref =
+      shared_image_manager_.Register(std::move(owned_backing),
+                                     memory_type_tracker_.get());
+  ASSERT_TRUE(shared_image_ref);
+
+  Microsoft::WRL::ComPtr<ID3D11Device> d3d11_device;
+  UINT creation_flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
+  static const D3D_FEATURE_LEVEL feature_levels[] = {
+      D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_1,
+      D3D_FEATURE_LEVEL_10_0, D3D_FEATURE_LEVEL_9_3,  D3D_FEATURE_LEVEL_9_2,
+      D3D_FEATURE_LEVEL_9_1};
+  HRESULT hr =
+      D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, 0, creation_flags,
+                        feature_levels, std::size(feature_levels),
+                        D3D11_SDK_VERSION, &d3d11_device, nullptr, nullptr);
+  if (FAILED(hr)) {
+    hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, 0, creation_flags,
+                           feature_levels, std::size(feature_levels),
+                           D3D11_SDK_VERSION, &d3d11_device, nullptr, nullptr);
+  }
+  if (FAILED(hr)) {
+    GTEST_SKIP()
+        << " cannot produce a d3d video representation on this platform";
+  }
+
+  auto representation = shared_image_manager_.ProduceVideo(
+      d3d11_device, mailbox, memory_type_tracker_.get());
+  EXPECT_NE(representation, nullptr);
+  auto read_access = representation->BeginScopedReadAccess();
+  EXPECT_NE(read_access->GetD3D11Texture(), nullptr);
+}
+
+class D3DImageBackingFactoryBufferTest : public D3DImageBackingFactoryTestBase {
+ public:
+  void SetUp() override {
+    D3DImageBackingFactoryTestBase::SetUp();
+  }
+
+ protected:
+  static constexpr wgpu::FeatureName kRequiredFeatures[] = {
+      // Required for Dawn interop.
+      wgpu::FeatureName::SharedFenceDXGISharedHandle,
+      wgpu::FeatureName::SharedBufferMemoryD3D12Resource,
+  };
+
+  void CheckDawnBuffer(wgpu::Buffer src_buffer,
+                       const wgpu::Instance& instance,
+                       const wgpu::Device& device,
+                       const uint32_t size,
+                       const uint32_t expected_value) const {
+    wgpu::BufferDescriptor buffer_desc{
+        .usage = wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::MapRead,
+        .size = size};
+    wgpu::Buffer dst_buffer = device.CreateBuffer(&buffer_desc);
+
+    wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
+    encoder.CopyBufferToBuffer(src_buffer, 0, dst_buffer, 0, size);
+    wgpu::CommandBuffer commands = encoder.Finish();
+
+    wgpu::Queue queue = device.GetQueue();
+    queue.Submit(1, &commands);
+
+    wgpu::FutureWaitInfo wait_info{
+        dst_buffer.MapAsync(wgpu::MapMode::Read, 0, buffer_desc.size,
+                            wgpu::CallbackMode::WaitAnyOnly,
+                            [&](wgpu::MapAsyncStatus status, wgpu::StringView) {
+                              ASSERT_EQ(status, wgpu::MapAsyncStatus::Success);
+                            })};
+    wgpu::WaitStatus status =
+        instance.WaitAny(1, &wait_info, std::numeric_limits<uint64_t>::max());
+    EXPECT_EQ(status, wgpu::WaitStatus::Success);
+
+    const uint32_t* dst_value =
+        reinterpret_cast<const uint32_t*>(dst_buffer.GetConstMappedRange());
+
+    EXPECT_EQ(expected_value, *dst_value);
+  }
+};
+
+// Verifies that creating a shared image backed by a D3D12 buffer works and can
+// be imported into Dawn.
+TEST_F(D3DImageBackingFactoryBufferTest, CreateSharedImageImportToDawn) {
+  wgpu::InstanceDescriptor instance_desc = {
+      .capabilities =
+          {
+              .timedWaitAnyEnable = true,
+          },
+  };
+  dawn::native::Instance instance(&instance_desc);
+  wgpu::RequestAdapterOptions adapter_options;
+  adapter_options.backendType = wgpu::BackendType::D3D12;
+
+  // allow_unsafe_apis is required to use Dawn's SharedBufferMemory feature.
+  std::array<const char*, 1> adapter_enabled_toggles;
+  adapter_enabled_toggles[0] = "allow_unsafe_apis";
+
+  wgpu::DawnTogglesDescriptor adapter_toggles_desc;
+  adapter_toggles_desc.enabledToggles = adapter_enabled_toggles.data();
+  adapter_toggles_desc.enabledToggleCount = adapter_enabled_toggles.size();
+  adapter_options.nextInChain = &adapter_toggles_desc;
+
+  std::vector<dawn::native::Adapter> adapters =
+      instance.EnumerateAdapters(&adapter_options);
+  ASSERT_GT(adapters.size(), 0u);
+
+  wgpu::DeviceDescriptor device_descriptor;
+  device_descriptor.requiredFeatureCount = std::size(kRequiredFeatures);
+  device_descriptor.requiredFeatures = kRequiredFeatures;
+
+  wgpu::Device device =
+      wgpu::Device::Acquire(adapters[0].CreateDevice(&device_descriptor));
+
+  constexpr uint32_t kBufferSize = 4;
+  const gpu::Mailbox mailbox = gpu::Mailbox::Generate();
+  auto backing = shared_image_factory_->CreateSharedImage(
+      mailbox, viz::SharedImageFormat(), gpu::kNullSurfaceHandle,
+      gfx::Size(kBufferSize, 1), gfx::ColorSpace(), kTopLeft_GrSurfaceOrigin,
+      kUnknown_SkAlphaType,
+      gpu::SHARED_IMAGE_USAGE_WEBGPU_READ |
+          gpu::SHARED_IMAGE_USAGE_WEBGPU_WRITE |
+          gpu::SHARED_IMAGE_USAGE_WEBGPU_SHARED_BUFFER,
+      "TestLabel", false);
+
+  // Register the backing and create a wgpu::Buffer from it.
+  std::unique_ptr<SharedImageRepresentationFactoryRef> factory_ref =
+      shared_image_manager_.Register(std::move(backing),
+                                     memory_type_tracker_.get());
+
+  auto dawn_representation =
+      shared_image_representation_factory_->ProduceDawnBuffer(
+          mailbox, device, wgpu::BackendType::D3D12);
+  ASSERT_NE(dawn_representation, nullptr);
+
+  auto scoped_access = dawn_representation->BeginScopedAccess(
+      wgpu::BufferUsage::CopySrc | wgpu::BufferUsage::CopyDst);
+  ASSERT_TRUE(scoped_access);
+
+  wgpu::Buffer buffer(scoped_access->buffer());
+
+  // Create and upload data to a mappable buffer.
+  wgpu::BufferDescriptor buffer_desc{
+      .usage = wgpu::BufferUsage::CopySrc | wgpu::BufferUsage::MapWrite,
+      .size = kBufferSize,
+      .mappedAtCreation = true};
+  wgpu::Buffer src_buffer = device.CreateBuffer(&buffer_desc);
+
+  constexpr uint32_t kBufferData = 0x12345678;
+  uint32_t* mapped_range = static_cast<uint32_t*>(src_buffer.GetMappedRange());
+  std::memcpy(mapped_range, &kBufferData, kBufferSize);
+  src_buffer.Unmap();
+
+  // Copy data from the mappable buffer to the imported buffer.
+  wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
+  encoder.CopyBufferToBuffer(src_buffer, 0, buffer, 0, kBufferSize);
+  wgpu::CommandBuffer commands = encoder.Finish();
+
+  wgpu::Queue queue = device.GetQueue();
+  queue.Submit(1, &commands);
+
+  // Check that the contents of the imported D3D12 resource within Dawn.
+  CheckDawnBuffer(buffer, instance.Get(), device, kBufferSize, kBufferData);
+
+  factory_ref.reset();
 }
 
 }  // namespace gpu

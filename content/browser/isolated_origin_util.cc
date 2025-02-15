@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #include "content/browser/isolated_origin_util.h"
 
 #include <string>
@@ -69,7 +74,7 @@ bool IsolatedOriginPattern::Parse(const std::string_view& unparsed_pattern) {
   // Ports are ignored when matching isolated origins (see also
   // https://crbug.com/914511).
   const std::string& scheme = origin_.scheme();
-  int default_port = url::DefaultPortForScheme(scheme.data(), scheme.length());
+  int default_port = url::DefaultPortForScheme(scheme);
   if (origin_.port() != default_port) {
     LOG(ERROR) << "Ignoring port number in isolated origin: " << origin_;
     origin_ = url::Origin::Create(GURL(

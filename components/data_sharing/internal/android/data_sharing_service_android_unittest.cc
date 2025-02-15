@@ -5,15 +5,16 @@
 #include "components/data_sharing/internal/android/data_sharing_service_android.h"
 
 #include "base/android/jni_android.h"
+#include "base/files/scoped_temp_dir.h"
 #include "base/functional/callback_forward.h"
 #include "base/run_loop.h"
 #include "base/test/task_environment.h"
 #include "components/data_sharing/internal/data_sharing_service_impl.h"
-#include "components/data_sharing/internal/fake_data_sharing_sdk_delegate.h"
 #include "components/data_sharing/public/data_sharing_service.h"
+#include "components/data_sharing/public/group_data.h"
+#include "components/data_sharing/test_support/fake_data_sharing_sdk_delegate.h"
 #include "components/signin/public/identity_manager/identity_test_environment.h"
-#include "components/sync/protocol/model_type_state.pb.h"
-#include "components/sync/test/model_type_store_test_util.h"
+#include "components/sync/test/data_type_store_test_util.h"
 #include "services/network/public/cpp/weak_wrapper_shared_url_loader_factory.h"
 #include "services/network/test/test_url_loader_factory.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -77,11 +78,15 @@ void JNI_TestServiceObserver_OnObserverNotify(JNIEnv* env, jlong observer_ptr) {
 namespace {
 
 sync_pb::CollaborationGroupSpecifics MakeCollaborationGroupSpecifics(
-    const std::string& id) {
+    const GroupId& id) {
   sync_pb::CollaborationGroupSpecifics result;
-  result.set_collaboration_id(id);
-  result.set_last_updated_timestamp_millis_since_unix_epoch(
-      base::Time::Now().InMillisecondsSinceUnixEpoch());
+  result.set_collaboration_id(id.value());
+
+  base::Time now = base::Time::Now();
+  result.set_changed_at_timestamp_millis_since_unix_epoch(
+      now.InMillisecondsSinceUnixEpoch());
+  result.set_consistency_token(
+      base::NumberToString(now.InMillisecondsSinceUnixEpoch()));
   return result;
 }
 
@@ -107,7 +112,8 @@ std::unique_ptr<syncer::EntityChange> EntityChangeUpdateFromSpecifics(
 
 std::unique_ptr<syncer::EntityChange> EntityChangeDeleteFromSpecifics(
     const sync_pb::CollaborationGroupSpecifics& specifics) {
-  return syncer::EntityChange::CreateDelete(specifics.collaboration_id());
+  return syncer::EntityChange::CreateDelete(specifics.collaboration_id(),
+                                            syncer::EntityData());
 }
 
 }  // namespace
@@ -120,6 +126,8 @@ class DataSharingServiceAndroidTest : public testing::Test {
 
   void SetUp() override {
     Test::SetUp();
+    EXPECT_TRUE(profile_dir_.CreateUniqueTempDir());
+
     scoped_refptr<network::SharedURLLoaderFactory> test_url_loader_factory =
         base::MakeRefCounted<network::WeakWrapperSharedURLLoaderFactory>(
             &test_url_loader_factory_);
@@ -129,9 +137,9 @@ class DataSharingServiceAndroidTest : public testing::Test {
     not_owned_sdk_delegate_ = sdk_delegate.get();
 
     data_sharing_service_ = std::make_unique<DataSharingServiceImpl>(
-        std::move(test_url_loader_factory),
+        profile_dir_.GetPath(), std::move(test_url_loader_factory),
         identity_test_env_.identity_manager(),
-        syncer::ModelTypeStoreTestUtil::FactoryForInMemoryStoreForTest(),
+        syncer::DataTypeStoreTestUtil::FactoryForInMemoryStoreForTest(),
         version_info::Channel::UNKNOWN, std::move(sdk_delegate),
         /*ui_delegate=*/nullptr);
     data_sharing_service_android_ = std::make_unique<DataSharingServiceAndroid>(
@@ -147,9 +155,9 @@ class DataSharingServiceAndroidTest : public testing::Test {
   // Creates group and returns ID.
   // Mimics initial sync for collaboration group datatype, this should trigger
   // OnGroupAdded() notification.
-  std::string CreateGroup() {
+  GroupId CreateGroup() {
     const std::string display_name = "display_name";
-    const std::string group_id =
+    const GroupId group_id =
         not_owned_sdk_delegate_->AddGroupAndReturnId(display_name);
 
     auto* collaboration_group_bridge =
@@ -167,7 +175,7 @@ class DataSharingServiceAndroidTest : public testing::Test {
 
   // Removes the group with `group_id`, which would trigger the OnGroupRemoved()
   // notification.
-  void RemoveGroup(const std::string& group_id) {
+  void RemoveGroup(const GroupId& group_id) {
     auto* collaboration_group_bridge =
         data_sharing_service_->GetCollaborationGroupSyncBridgeForTesting();
     not_owned_sdk_delegate_->RemoveGroup(group_id);
@@ -182,7 +190,7 @@ class DataSharingServiceAndroidTest : public testing::Test {
 
   // Updates the group with `group_id` with a different name, which wuld trigger
   // the OnGroupUpdated() notification.
-  void UpdateGroup(const std::string& group_id) {
+  void UpdateGroup(const GroupId& group_id) {
     const std::string new_display_name = "new_display_name";
     auto* collaboration_group_bridge =
         data_sharing_service_->GetCollaborationGroupSyncBridgeForTesting();
@@ -198,6 +206,7 @@ class DataSharingServiceAndroidTest : public testing::Test {
 
  protected:
   base::test::TaskEnvironment task_environment_;
+  base::ScopedTempDir profile_dir_;
   signin::IdentityTestEnvironment identity_test_env_;
   network::TestURLLoaderFactory test_url_loader_factory_;
   std::unique_ptr<DataSharingServiceImpl> data_sharing_service_;
@@ -231,7 +240,7 @@ TEST_F(DataSharingServiceAndroidTest, GroupRemovedObservation) {
   EXPECT_EQ(observer.GetGroupAddedCount(), 0);
   EXPECT_EQ(observer.GetGroupRemovedCount(), 0);
 
-  std::string group_id = CreateGroup();
+  GroupId group_id = CreateGroup();
 
   run_loop.Run();
   EXPECT_EQ(observer.GetGroupChangeCount(), 0);
@@ -257,7 +266,7 @@ TEST_F(DataSharingServiceAndroidTest, GroupChangeObservation) {
   EXPECT_EQ(observer.GetGroupAddedCount(), 0);
   EXPECT_EQ(observer.GetGroupRemovedCount(), 0);
 
-  std::string group_id = CreateGroup();
+  GroupId group_id = CreateGroup();
 
   run_loop.Run();
   EXPECT_EQ(observer.GetGroupChangeCount(), 0);

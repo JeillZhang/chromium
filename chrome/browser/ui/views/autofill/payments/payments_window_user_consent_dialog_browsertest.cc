@@ -5,7 +5,7 @@
 #include "base/functional/callback_helpers.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/mock_callback.h"
-#include "chrome/browser/ui/autofill/payments/view_factory.h"
+#include "chrome/browser/ui/autofill/payments/payments_view_factory.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/views/autofill/payments/payments_window_user_consent_dialog_view.h"
@@ -137,7 +137,7 @@ IN_PROC_BROWSER_TEST_F(PaymentsWindowUserConsentDialogBrowserTest,
       InSameContext(Steps(
           PressButton(views::DialogClientView::kOkButtonElementId),
           WaitForHide(PaymentsWindowUserConsentDialogView::kTopViewId),
-          FlushEvents(), Check([this]() {
+          Check([this]() {
             return histogram_tester_.GetBucketCount(
                        /*name=*/
                        kPaymentsWindowUserConsentDialogResultVcn3dsHistogramName, /*sample=*/
@@ -176,7 +176,7 @@ IN_PROC_BROWSER_TEST_F(PaymentsWindowUserConsentDialogBrowserTest,
       InSameContext(Steps(
           PressButton(views::DialogClientView::kCancelButtonElementId),
           WaitForHide(PaymentsWindowUserConsentDialogView::kTopViewId),
-          FlushEvents(), Check([this]() {
+          Check([this]() {
             return histogram_tester_.GetBucketCount(
                        /*name=*/
                        kPaymentsWindowUserConsentDialogResultVcn3dsHistogramName, /*sample=*/
@@ -219,7 +219,7 @@ IN_PROC_BROWSER_TEST_F(PaymentsWindowUserConsentDialogBrowserTest,
                          views::Widget::ClosedReason::kEscKeyPressed);
                    }),
           WaitForHide(PaymentsWindowUserConsentDialogView::kTopViewId),
-          FlushEvents(), Check([this]() {
+          Check([this]() {
             return histogram_tester_.GetBucketCount(
                        /*name=*/
                        kPaymentsWindowUserConsentDialogResultVcn3dsHistogramName, /*sample=*/
@@ -255,7 +255,7 @@ IN_PROC_BROWSER_TEST_F(PaymentsWindowUserConsentDialogBrowserTest,
           Do([this]() {
             browser()->tab_strip_model()->GetActiveWebContents()->Close();
           }),
-          FlushEvents(), Check([this]() {
+          Check([this]() {
             return histogram_tester_.GetBucketCount(
                        /*name=*/
                        kPaymentsWindowUserConsentDialogResultVcn3dsHistogramName, /*sample=*/
@@ -287,8 +287,7 @@ IN_PROC_BROWSER_TEST_F(
       // TriggerDialogAndWaitForShow() changes the context, so the same context
       // must be used.
       InSameContext(Steps(
-          Do([this]() { browser()->window()->Close(); }), FlushEvents(),
-          Check([this]() {
+          Do([this]() { browser()->window()->Close(); }), Check([this]() {
             return histogram_tester_.GetBucketCount(
                        /*name=*/
                        kPaymentsWindowUserConsentDialogResultVcn3dsHistogramName, /*sample=*/

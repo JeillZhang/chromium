@@ -12,6 +12,7 @@
 #include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/signin/identity_test_environment_profile_adaptor.h"
 #include "chrome/browser/supervised_user/supervised_user_service_factory.h"
+#include "chrome/browser/supervised_user/supervised_user_test_util.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/base/testing_profile_manager.h"
@@ -71,6 +72,8 @@ class FamilyLinkUserMetricsProviderTest : public testing::Test {
         IdentityManagerFactory::GetForProfile(profile), test_email,
         signin::ConsentLevel::kSignin);
     AccountCapabilitiesTestMutator mutator(&account.capabilities);
+    // Tests assume that this account is in Family Link.
+    mutator.set_can_fetch_family_member_info(true);
     mutator.set_is_subject_to_parental_controls(
         is_subject_to_parental_controls);
     mutator.set_is_opted_in_to_parental_supervision(
@@ -80,8 +83,20 @@ class FamilyLinkUserMetricsProviderTest : public testing::Test {
 
     if (is_subject_to_parental_controls) {
       supervised_user::EnableParentalControls(*profile->GetPrefs());
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+      // Set Family Link `Permissions` switch (and its dependencies) to the default value.
+      // Mimics the assignment by the `SupervisedUserPrefStore`.
+      supervised_user_test_util::
+          SetSupervisedUserExtensionsMayRequestPermissionsPref(profile, true);
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
     }
     return profile;
+  }
+
+  void SetFamilyRole(Profile* profile, kidsmanagement::FamilyRole family_role) {
+    profile->GetPrefs()->SetString(
+        prefs::kFamilyLinkUserMemberRole,
+        supervised_user::FamilyRoleToString(family_role));
   }
 
   void RestrictAllSitesForSupervisedUser(Profile* profile) {
@@ -96,16 +111,8 @@ class FamilyLinkUserMetricsProviderTest : public testing::Test {
   }
 
   void SetPermissionsToggleForSupervisedUser(Profile* profile, bool enabled) {
-    auto supervised_content_provider =
-        std::make_unique<content_settings::MockProvider>();
-    content_settings::TestUtils::OverrideProvider(
-        HostContentSettingsMapFactory::GetForProfile(profile),
-        std::move(supervised_content_provider),
-        content_settings::ProviderType::kSupervisedProvider);
-    HostContentSettingsMapFactory::GetForProfile(profile)
-        ->SetDefaultContentSetting(
-            ContentSettingsType::GEOLOCATION,
-            enabled ? CONTENT_SETTING_ALLOW : CONTENT_SETTING_BLOCK);
+    supervised_user_test_util::
+        SetSupervisedUserGeolocationEnabledContentSetting(profile, enabled);
   }
 
  private:
@@ -321,8 +328,8 @@ class FamilyLinkUserMetricsProviderTestWithExtensionsPermissionsEnabled
 
   void SetExtensionToggleStateForSupervisedUser(Profile* profile,
                                                 bool toggle_state) {
-    profile->GetPrefs()->SetBoolean(
-        prefs::kSkipParentApprovalToInstallExtensions, toggle_state);
+    supervised_user_test_util::SetSkipParentApprovalToInstallExtensionsPref(
+        profile, toggle_state);
   }
 
   base::test::ScopedFeatureList feature_list_;
@@ -419,5 +426,101 @@ TEST_F(FamilyLinkUserMetricsProviderTest,
   histogram_tester.ExpectBucketCount(
       supervised_user::kFamilyLinkUserLogSegmentHistogramName,
       supervised_user::FamilyLinkUserLogRecord::Segment::kUnsupervised,
+      /*expected_count=*/1);
+}
+
+TEST_F(FamilyLinkUserMetricsProviderTest, ParentProfileLoggedAsParent) {
+  Profile* profile =
+      CreateTestingProfile(kTestEmail1, kTestProfile1,
+                           /*is_subject_to_parental_controls=*/false,
+                           /*is_opted_in_to_parental_supervision=*/false);
+  SetFamilyRole(profile, kidsmanagement::PARENT);
+
+  base::HistogramTester histogram_tester;
+  metrics_provider()->OnDidCreateMetricsLog();
+  histogram_tester.ExpectBucketCount(
+      supervised_user::kFamilyLinkUserLogSegmentHistogramName,
+      supervised_user::FamilyLinkUserLogRecord::Segment::kParent,
+      /*expected_count=*/1);
+}
+
+TEST_F(FamilyLinkUserMetricsProviderTest, FamilyManagerProfileLoggedAsParent) {
+  Profile* profile =
+      CreateTestingProfile(kTestEmail1, kTestProfile1,
+                           /*is_subject_to_parental_controls=*/false,
+                           /*is_opted_in_to_parental_supervision=*/false);
+  SetFamilyRole(profile, kidsmanagement::HEAD_OF_HOUSEHOLD);
+
+  base::HistogramTester histogram_tester;
+  metrics_provider()->OnDidCreateMetricsLog();
+  histogram_tester.ExpectBucketCount(
+      supervised_user::kFamilyLinkUserLogSegmentHistogramName,
+      supervised_user::FamilyLinkUserLogRecord::Segment::kParent,
+      /*expected_count=*/1);
+}
+
+TEST_F(FamilyLinkUserMetricsProviderTest, ParentAndChildProfileLoggedAsMixed) {
+  Profile* profile1 =
+      CreateTestingProfile(kTestEmail1, kTestProfile1,
+                           /*is_subject_to_parental_controls=*/false,
+                           /*is_opted_in_to_parental_supervision=*/false);
+  SetFamilyRole(profile1, kidsmanagement::HEAD_OF_HOUSEHOLD);
+
+  CreateTestingProfile(kTestEmail2, kTestProfile2,
+                       /*is_subject_to_parental_controls=*/true,
+                       /*is_opted_in_to_parental_supervision=*/false);
+
+  base::HistogramTester histogram_tester;
+  metrics_provider()->OnDidCreateMetricsLog();
+  histogram_tester.ExpectBucketCount(
+      supervised_user::kFamilyLinkUserLogSegmentHistogramName,
+      supervised_user::FamilyLinkUserLogRecord::Segment::kMixedProfile,
+      /*expected_count=*/1);
+}
+
+TEST_F(FamilyLinkUserMetricsProviderTest, TwoParentProfilesLoggedAsParent) {
+  Profile* profile1 =
+      CreateTestingProfile(kTestEmail1, kTestProfile1,
+                           /*is_subject_to_parental_controls=*/false,
+                           /*is_opted_in_to_parental_supervision=*/false);
+  SetFamilyRole(profile1, kidsmanagement::HEAD_OF_HOUSEHOLD);
+
+  Profile* profile2 =
+      CreateTestingProfile(kTestEmail2, kTestProfile2,
+                           /*is_subject_to_parental_controls=*/false,
+                           /*is_opted_in_to_parental_supervision=*/false);
+  SetFamilyRole(profile2, kidsmanagement::PARENT);
+
+  base::HistogramTester histogram_tester;
+  metrics_provider()->OnDidCreateMetricsLog();
+  histogram_tester.ExpectBucketCount(
+      supervised_user::kFamilyLinkUserLogSegmentHistogramName,
+      supervised_user::FamilyLinkUserLogRecord::Segment::kParent,
+      /*expected_count=*/1);
+}
+
+TEST_F(FamilyLinkUserMetricsProviderTest,
+       ParentAndSignedOutProfilesLoggedAsParent) {
+  test_profile_manager()->CreateTestingProfile(
+      kTestProfile, IdentityTestEnvironmentProfileAdaptor::
+                        GetIdentityTestEnvironmentFactories());
+
+  Profile* profile1 =
+      CreateTestingProfile(kTestEmail1, kTestProfile1,
+                           /*is_subject_to_parental_controls=*/false,
+                           /*is_opted_in_to_parental_supervision=*/false);
+  SetFamilyRole(profile1, kidsmanagement::HEAD_OF_HOUSEHOLD);
+
+  Profile* profile2 =
+      CreateTestingProfile(kTestEmail2, kTestProfile2,
+                           /*is_subject_to_parental_controls=*/false,
+                           /*is_opted_in_to_parental_supervision=*/false);
+  SetFamilyRole(profile2, kidsmanagement::PARENT);
+
+  base::HistogramTester histogram_tester;
+  metrics_provider()->OnDidCreateMetricsLog();
+  histogram_tester.ExpectBucketCount(
+      supervised_user::kFamilyLinkUserLogSegmentHistogramName,
+      supervised_user::FamilyLinkUserLogRecord::Segment::kParent,
       /*expected_count=*/1);
 }

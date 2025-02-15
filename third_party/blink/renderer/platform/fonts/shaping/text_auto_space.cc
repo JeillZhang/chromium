@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/platform/fonts/shaping/text_auto_space.h"
 
 #include <unicode/uchar.h>
@@ -20,17 +25,14 @@ float TextAutoSpace::GetSpacingWidth(const Font* font) {
                font_data->PlatformData().size()) /
            8;
   }
-  NOTREACHED_IN_MIGRATION();
-  return 0;
+  NOTREACHED();
 }
 
 // static
 TextAutoSpace::CharType TextAutoSpace::GetTypeAndNext(const String& text,
                                                       wtf_size_t& offset) {
   CHECK(!text.Is8Bit());
-  UChar32 ch;
-  U16_NEXT(text.Characters16(), offset, text.length(), ch);
-  return GetType(ch);
+  return GetType(CodePointAtAndNext(text.Span16(), offset));
 }
 
 // static

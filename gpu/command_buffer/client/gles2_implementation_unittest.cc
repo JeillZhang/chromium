@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 // Tests for GLES2Implementation.
 
 #include "gpu/command_buffer/client/gles2_implementation.h"
@@ -220,6 +225,7 @@ class GLES2ImplementationTest : public testing::Test {
       gl_capabilities_.max_renderbuffer_size = kMaxRenderbufferSize;
       gl_capabilities_.max_texture_image_units = kMaxTextureImageUnits;
       capabilities_.max_texture_size = kMaxTextureSize;
+      gl_capabilities_.max_texture_size = kMaxTextureSize;
       gl_capabilities_.max_varying_vectors = kMaxVaryingVectors;
       gl_capabilities_.max_vertex_attribs = kMaxVertexAttribs;
       gl_capabilities_.max_vertex_texture_image_units =
@@ -236,10 +242,11 @@ class GLES2ImplementationTest : public testing::Test {
       gl_capabilities_.bind_generates_resource_chromium =
           bind_generates_resource_service ? 1 : 0;
       capabilities_.sync_query = sync_query;
+      gl_capabilities_.sync_query = sync_query;
       gl_capabilities_.occlusion_query_boolean = occlusion_query_boolean;
       gl_capabilities_.timer_queries = timer_queries;
-      capabilities_.major_version = major_version;
-      capabilities_.minor_version = minor_version;
+      gl_capabilities_.major_version = major_version;
+      gl_capabilities_.minor_version = minor_version;
       EXPECT_CALL(*gpu_control_, GetCapabilities())
           .WillOnce(ReturnRef(capabilities_));
       EXPECT_CALL(*gpu_control_, GetGLCapabilities())
@@ -1433,7 +1440,7 @@ TEST_F(GLES2ImplementationTest, GetVertexAttrib) {
   GLint stride = 0;
   GLint type = 0;
   GLint normalized = 1;
-  float current[4] = { 0.0f, };
+  float current[4] = {};
 
   gl_->GetVertexAttribiv(
       kAttribIndex2, GL_VERTEX_ATTRIB_ARRAY_BUFFER_BINDING, &buffer_id);
@@ -3089,8 +3096,8 @@ TEST_F(GLES2ImplementationTest, MultiDrawArraysWEBGLLargerThanTransferBuffer) {
   const unsigned kDrawCount = kUsableSize / sizeof(int);
   const unsigned kChunkDrawCount = kDrawCount / 2;
   const unsigned kCountsOffset = kChunkDrawCount * sizeof(int);
-  GLint firsts[kDrawCount] = {0};
-  GLsizei counts[kDrawCount] = {0};
+  GLint firsts[kDrawCount] = {};
+  GLsizei counts[kDrawCount] = {};
 
   ExpectedMemoryInfo mem1 = GetExpectedMemory(kUsableSize);
   ExpectedMemoryInfo mem2 = GetExpectedMemory(kUsableSize);

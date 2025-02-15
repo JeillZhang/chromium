@@ -23,6 +23,8 @@
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/base/models/image_model.h"
+#include "ui/base/mojom/dialog_button.mojom.h"
+#include "ui/base/mojom/ui_base_types.mojom-shared.h"
 #include "ui/color/color_id.h"
 #include "ui/gfx/geometry/insets.h"
 #include "ui/gfx/paint_vector_icon.h"
@@ -51,7 +53,7 @@ CardUnmaskPromptViews::CardUnmaskPromptViews(
     : controller_(controller), web_contents_(web_contents->GetWeakPtr()) {
   UpdateButtons();
 
-  SetModalType(ui::MODAL_TYPE_CHILD);
+  SetModalType(ui::mojom::ModalType::kChild);
   set_fixed_width(views::LayoutProvider::Get()->GetDistanceMetric(
       views::DISTANCE_MODAL_DIALOG_PREFERRED_WIDTH));
 }
@@ -205,8 +207,9 @@ views::View* CardUnmaskPromptViews::GetContentsView() {
 }
 
 void CardUnmaskPromptViews::AddedToWidget() {
-  GetBubbleFrameView()->SetTitleView(CreateTitleView(
-      GetWindowTitle(), TitleWithIconAndSeparatorView::Icon::GOOGLE_PAY));
+  GetBubbleFrameView()->SetTitleView(
+      std::make_unique<TitleWithIconAfterLabelView>(
+          GetWindowTitle(), TitleWithIconAfterLabelView::Icon::GOOGLE_PAY));
 }
 
 std::u16string CardUnmaskPromptViews::GetWindowTitle() const {
@@ -214,12 +217,12 @@ std::u16string CardUnmaskPromptViews::GetWindowTitle() const {
 }
 
 bool CardUnmaskPromptViews::IsDialogButtonEnabled(
-    ui::DialogButton button) const {
-  if (button == ui::DIALOG_BUTTON_CANCEL) {
+    ui::mojom::DialogButton button) const {
+  if (button == ui::mojom::DialogButton::kCancel) {
     return true;
   }
 
-  DCHECK_EQ(ui::DIALOG_BUTTON_OK, button);
+  DCHECK_EQ(ui::mojom::DialogButton::kOk, button);
 
   return cvc_input_->GetEnabled() &&
          controller_->InputCvcIsValid(cvc_input_->GetText()) &&
@@ -414,7 +417,7 @@ void CardUnmaskPromptViews::InitIfNecessary() {
                   &progress_throbber_),
               views::Builder<views::Label>()
                   .CopyAddressTo(&overlay_label_)
-                  .SetBackgroundColorId(ui::kColorDialogBackground)
+                  .SetBackgroundColor(ui::kColorDialogBackground)
                   .SetEnabledColorId(ui::kColorThrobber)
                   .SetText(l10n_util::GetStringUTF16(
                       IDS_AUTOFILL_CARD_UNMASK_VERIFICATION_IN_PROGRESS)))
@@ -437,18 +440,17 @@ void CardUnmaskPromptViews::ClosePrompt() {
 
 void CardUnmaskPromptViews::UpdateButtons() {
   // In permanent error state, only the "close" button is shown.
-  AutofillClient::PaymentsRpcResult result =
-      controller_->GetVerificationResult();
-  bool has_ok =
-      result != AutofillClient::PaymentsRpcResult::kPermanentFailure &&
-      result != AutofillClient::PaymentsRpcResult::kNetworkError &&
-      result !=
-          AutofillClient::PaymentsRpcResult::kVcnRetrievalPermanentFailure &&
-      result != AutofillClient::PaymentsRpcResult::kVcnRetrievalTryAgainFailure;
+  using PaymentsRpcResult = payments::PaymentsAutofillClient::PaymentsRpcResult;
+  PaymentsRpcResult result = controller_->GetVerificationResult();
+  bool has_ok = result != PaymentsRpcResult::kPermanentFailure &&
+                result != PaymentsRpcResult::kNetworkError &&
+                result != PaymentsRpcResult::kVcnRetrievalPermanentFailure &&
+                result != PaymentsRpcResult::kVcnRetrievalTryAgainFailure;
 
-  SetButtons(has_ok ? ui::DIALOG_BUTTON_OK | ui::DIALOG_BUTTON_CANCEL
-                    : ui::DIALOG_BUTTON_CANCEL);
-  SetButtonLabel(ui::DIALOG_BUTTON_OK, controller_->GetOkButtonLabel());
+  SetButtons(has_ok ? static_cast<int>(ui::mojom::DialogButton::kOk) |
+                          static_cast<int>(ui::mojom::DialogButton::kCancel)
+                    : static_cast<int>(ui::mojom::DialogButton::kCancel));
+  SetButtonLabel(ui::mojom::DialogButton::kOk, controller_->GetOkButtonLabel());
 }
 
 void CardUnmaskPromptViews::LinkClicked() {

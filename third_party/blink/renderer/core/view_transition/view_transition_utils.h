@@ -11,9 +11,11 @@
 #include "third_party/blink/renderer/core/dom/pseudo_element.h"
 #include "third_party/blink/renderer/core/style/computed_style_constants.h"
 #include "third_party/blink/renderer/core/view_transition/view_transition_request_forward.h"
+#include "third_party/blink/renderer/core/view_transition/view_transition_transition_element.h"
 
 namespace blink {
 
+class ComputedStyle;
 class DOMViewTransition;
 class ViewTransition;
 
@@ -34,8 +36,9 @@ class CORE_EXPORT ViewTransitionUtils {
 
     for (const auto& view_transition_name :
          document.GetStyleEngine().ViewTransitionTags()) {
-      auto* container_pseudo = transition_pseudo->GetPseudoElement(
-          kPseudoIdViewTransitionGroup, view_transition_name);
+      auto* container_pseudo =
+          To<ViewTransitionTransitionElement>(transition_pseudo)
+              ->FindViewTransitionGroupPseudoElement(view_transition_name);
       if (!container_pseudo)
         continue;
 
@@ -78,8 +81,9 @@ class CORE_EXPORT ViewTransitionUtils {
 
     for (const auto& view_transition_name :
          document.GetStyleEngine().ViewTransitionTags()) {
-      auto* container_pseudo = transition_pseudo->GetPseudoElement(
-          kPseudoIdViewTransitionGroup, view_transition_name);
+      auto* container_pseudo =
+          To<ViewTransitionTransitionElement>(transition_pseudo)
+              ->FindViewTransitionGroupPseudoElement(view_transition_name);
       if (!container_pseudo) {
         continue;
       }
@@ -156,7 +160,7 @@ class CORE_EXPORT ViewTransitionUtils {
       case kPseudoIdViewTransitionNew:
         break;
       default:
-        NOTREACHED_IN_MIGRATION();
+        NOTREACHED();
     }
   }
 
@@ -201,6 +205,9 @@ class CORE_EXPORT ViewTransitionUtils {
   // elements in the ViewTransitionStyleTracker.
   static bool IsViewTransitionParticipantFromSupplement(
       const LayoutObject& object);
+  static bool UseLayeredCapture(const ComputedStyle& style);
+  static bool ShouldDelegateEffectsAndBoxDecorationsToViewTransitionGroup(
+      const LayoutObject&);
 };
 
 }  // namespace blink

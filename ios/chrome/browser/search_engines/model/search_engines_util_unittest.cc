@@ -6,7 +6,7 @@
 
 #include "components/country_codes/country_codes.h"
 #include "components/prefs/pref_service.h"
-#include "ios/chrome/browser/shared/model/browser_state/test_chrome_browser_state.h"
+#include "ios/chrome/browser/shared/model/profile/test/test_profile_ios.h"
 #include "ios/web/public/test/web_task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/platform_test.h"
@@ -21,13 +21,13 @@ class SearchEngineUtilTest : public PlatformTest {
 
   void SetUp() override {
     PlatformTest::SetUp();
-    browser_state_ = TestChromeBrowserState::Builder().Build();
-    pref_service_ = browser_state_.get()->GetPrefs();
+    profile_ = TestProfileIOS::Builder().Build();
+    pref_service_ = profile_.get()->GetPrefs();
   }
 
  protected:
   web::WebTaskEnvironment task_environment_;
-  std::unique_ptr<TestChromeBrowserState> browser_state_;
+  std::unique_ptr<TestProfileIOS> profile_;
   raw_ptr<PrefService> pref_service_;
 };
 

@@ -6,10 +6,12 @@ import 'chrome://os-print/js/summary_panel.js';
 
 import {CapabilitiesManager} from 'chrome://os-print/js/data/capabilities_manager.js';
 import {PreviewTicketManager} from 'chrome://os-print/js/data/preview_ticket_manager.js';
+import type {PrintPreviewPageHandlerComposite} from 'chrome://os-print/js/data/print_preview_page_handler_composite.js';
 import {PrintTicketManager} from 'chrome://os-print/js/data/print_ticket_manager.js';
-import {FAKE_PRINT_SESSION_CONTEXT_SUCCESSFUL, FakePrintPreviewPageHandler} from 'chrome://os-print/js/fakes/fake_print_preview_page_handler.js';
+import {FAKE_PRINT_SESSION_CONTEXT_SUCCESSFUL, type FakePrintPreviewPageHandler} from 'chrome://os-print/js/fakes/fake_print_preview_page_handler.js';
 import {SummaryPanelElement} from 'chrome://os-print/js/summary_panel.js';
-import {PRINT_BUTTON_DISABLED_CHANGED_EVENT, SHEETS_USED_CHANGED_EVENT, SummaryPanelController} from 'chrome://os-print/js/summary_panel_controller.js';
+import type {SummaryPanelController} from 'chrome://os-print/js/summary_panel_controller.js';
+import {PRINT_BUTTON_DISABLED_CHANGED_EVENT, SHEETS_USED_CHANGED_EVENT} from 'chrome://os-print/js/summary_panel_controller.js';
 import {createCustomEvent} from 'chrome://os-print/js/utils/event_utils.js';
 import {getPrintPreviewPageHandler} from 'chrome://os-print/js/utils/mojo_data_providers.js';
 import {strictQuery} from 'chrome://resources/ash/common/typescript_utils/strict_query.js';
@@ -42,7 +44,8 @@ suite('SummaryPanel', () => {
     mockTimer.install();
     resetDataManagersAndProviders();
     printPreviewPageHandler =
-        getPrintPreviewPageHandler() as FakePrintPreviewPageHandler;
+        (getPrintPreviewPageHandler() as PrintPreviewPageHandlerComposite)
+            .fakePageHandler;
     element =
         document.createElement(SummaryPanelElement.is) as SummaryPanelElement;
     assertTrue(!!element);
@@ -98,7 +101,7 @@ suite('SummaryPanel', () => {
 
   // Verify the summary-panel element can be rendered, contains print, cancel,
   // and sheets used elements.
-  test('element renders', async () => {
+  test('element renders', () => {
     assert(element);
     assertTrue(isVisible(element));
 
@@ -114,7 +117,7 @@ suite('SummaryPanel', () => {
   });
 
   // Verify summary-panel element has a controller configured.
-  test('has element controller', async () => {
+  test('has element controller', () => {
     assertTrue(
         !!controller,
         `${SummaryPanelElement.is} should have controller configured`);
@@ -122,7 +125,7 @@ suite('SummaryPanel', () => {
 
   // Verify #sheetsUsed updates to the string defined by SummaryPanelController
   // when a `sheets_used_changed` event occurs.
-  test('sheets used matches controller getSheetsUsed', async () => {
+  test('sheets used matches controller getSheetsUsed', () => {
     assert(element);
     assert(controller);
     const sheetsUsed = strictQuery<HTMLSpanElement>(

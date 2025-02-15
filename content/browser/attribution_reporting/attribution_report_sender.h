@@ -7,14 +7,13 @@
 
 #include "base/functional/callback_forward.h"
 #include "base/values.h"
+#include "content/browser/attribution_reporting/send_result.h"
 
 namespace content {
 
 class AggregatableDebugReport;
 class AttributionDebugReport;
 class AttributionReport;
-
-struct SendResult;
 
 // This class is responsible for sending attribution reports to their
 // configured endpoints.
@@ -24,7 +23,7 @@ class AttributionReportSender {
 
   // Callback used to notify caller that the requested report has been sent.
   using ReportSentCallback =
-      base::OnceCallback<void(const AttributionReport&, SendResult)>;
+      base::OnceCallback<void(const AttributionReport&, SendResult::Sent)>;
 
   // If `status` is positive, it is the HTTP response code. Otherwise, it is the
   // network error.
@@ -35,6 +34,8 @@ class AttributionReportSender {
   // network error.
   using AggregatableDebugReportSentCallback = base::OnceCallback<
       void(const AggregatableDebugReport&, base::ValueView, int status)>;
+
+  virtual void SetInFirstBatch(bool in_first_batch) = 0;
 
   // Sends `report` and runs `sent_callback` when done.
   virtual void SendReport(AttributionReport report,

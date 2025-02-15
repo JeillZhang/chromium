@@ -9,10 +9,14 @@
 
 class Browser;
 @class ContentSuggestionsMetricsRecorder;
-@protocol NewTabPageMetricsDelegate;
+@protocol NewTabPageActionsDelegate;
 class PrefService;
 @protocol TabResumptionHelperDelegate;
 @class TabResumptionItem;
+
+namespace commerce {
+class ShoppingService;
+}
 
 namespace signin {
 class IdentityManager;
@@ -27,9 +31,8 @@ class IdentityManager;
 // The delegate for this helper class.
 @property(nonatomic, weak) id<TabResumptionHelperDelegate> delegate;
 
-// Delegate for reporting content suggestions actions to the NTP metrics
-// recorder.
-@property(nonatomic, weak) id<NewTabPageMetricsDelegate> NTPMetricsDelegate;
+// Delegate for reporting content suggestions actions to the NTP.
+@property(nonatomic, weak) id<NewTabPageActionsDelegate> NTPActionsDelegate;
 
 // Recorder for content suggestions metrics.
 @property(nonatomic, weak)
@@ -39,7 +42,9 @@ class IdentityManager;
 - (instancetype)initWithLocalState:(PrefService*)localState
                        prefService:(PrefService*)prefService
                    identityManager:(signin::IdentityManager*)identityManager
-                           browser:(Browser*)browser NS_DESIGNATED_INITIALIZER;
+                           browser:(Browser*)browser
+                   shoppingService:(commerce::ShoppingService*)shoppingService
+    NS_DESIGNATED_INITIALIZER;
 
 - (instancetype)init NS_UNAVAILABLE;
 

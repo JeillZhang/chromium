@@ -131,11 +131,13 @@ IN_PROC_BROWSER_TEST_F(BrowserTabRestoreTest,
       browser(), navigations, /* tab_index=*/1, /* selected_navigation=*/0,
       /* extension_app_id=*/std::string(), /* group=*/std::nullopt,
       /* select=*/true, /* pin=*/false,
-      /* last_active_time=*/base::TimeTicks::Now(),
+      /* last_active_time_ticks=*/base::TimeTicks::Now(),
+      /* last_active_time=*/base::Time::Now(),
       /* storage_namespace=*/nullptr,
       /* user_agent_override=*/sessions::SerializedUserAgentOverride(),
       /* extra_data*/ std::map<std::string, std::string>(),
-      /* from_session_restore=*/true);
+      /* from_session_restore=*/true,
+      /* is_active_browser=*/true);
 
   EXPECT_TRUE(web_contents->GetController().GetPendingEntry());
 }
@@ -154,11 +156,13 @@ IN_PROC_BROWSER_TEST_F(BrowserTabRestoreTest,
       browser(), navigations, /* tab_index=*/1, /* selected_navigation=*/0,
       /* extension_app_id=*/std::string(), /* group=*/std::nullopt,
       /* select=*/false, /* pin=*/false,
-      /* last_active_time=*/base::TimeTicks::Now(),
+      /* last_active_time_ticks=*/base::TimeTicks::Now(),
+      /* last_active_time=*/base::Time::Now(),
       /* storage_namespace=*/nullptr,
       /* user_agent_override=*/sessions::SerializedUserAgentOverride(),
       /* extra_data*/ std::map<std::string, std::string>(),
-      /* from_session_restore=*/true);
+      /* from_session_restore=*/true,
+      /* is_active_browser=*/true);
 
   EXPECT_FALSE(web_contents->GetController().GetPendingEntry());
 }

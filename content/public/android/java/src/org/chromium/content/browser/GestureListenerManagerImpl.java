@@ -4,6 +4,7 @@
 
 package org.chromium.content.browser;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
 import static org.chromium.cc.mojom.RootScrollOffsetUpdateFrequency.NONE;
 
 import android.view.HapticFeedbackConstants;
@@ -21,6 +22,8 @@ import org.chromium.base.ResettersForTesting;
 import org.chromium.base.TraceEvent;
 import org.chromium.base.UserData;
 import org.chromium.blink.mojom.EventType;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.cc.mojom.RootScrollOffsetUpdateFrequency;
 import org.chromium.content.browser.input.ImeAdapterImpl;
 import org.chromium.content.browser.selection.SelectionPopupControllerImpl;
@@ -45,6 +48,7 @@ import java.util.HashMap;
  * Instantiated object is held inside {@link UserDataHost} that is managed by {@link WebContents}.
  */
 @JNINamespace("content")
+@NullMarked
 public class GestureListenerManagerImpl
         implements GestureListenerManager,
                 WindowEventObserver,
@@ -55,16 +59,17 @@ public class GestureListenerManagerImpl
                 GestureListenerManagerImpl::new;
     }
 
-    private static GestureListenerManagerImpl sInstanceForTesting;
+    private static @Nullable GestureListenerManagerImpl sInstanceForTesting;
 
     private final WebContentsImpl mWebContents;
     private final ObserverList<GestureStateListener> mListeners;
     private final RewindableIterator<GestureStateListener> mIterator;
     private final HashMap<GestureStateListener, Integer> mListenerFrequency;
-    private SelectionPopupControllerImpl mSelectionPopupController;
+    private @Nullable SelectionPopupControllerImpl mSelectionPopupController;
     private ViewAndroidDelegate mViewDelegate;
-    private InternalAccessDelegate mScrollDelegate;
+    private @Nullable InternalAccessDelegate mScrollDelegate;
     private final boolean mHidePastePopupOnGSB;
+    private final boolean mResetGestureDetectionOnLosingFocus;
 
     private long mNativeGestureListenerManager;
 
@@ -80,14 +85,15 @@ public class GestureListenerManagerImpl
     /** Whether a fling scroll is currently active. */
     private boolean mHasActiveFlingScroll;
 
-    private @RootScrollOffsetUpdateFrequency.EnumType Integer mRootScrollOffsetUpdateFrequency;
+    private @RootScrollOffsetUpdateFrequency.EnumType @Nullable Integer
+            mRootScrollOffsetUpdateFrequency;
 
     /**
      * @param webContents {@link WebContents} object.
      * @return {@link GestureListenerManager} object used for the give WebContents.
      *         Creates one if not present.
      */
-    public static GestureListenerManagerImpl fromWebContents(WebContents webContents) {
+    public static @Nullable GestureListenerManagerImpl fromWebContents(WebContents webContents) {
         if (sInstanceForTesting != null) return sInstanceForTesting;
         return ((WebContentsImpl) webContents)
                 .getOrSetUserData(
@@ -106,7 +112,7 @@ public class GestureListenerManagerImpl
         mListeners = new ObserverList<GestureStateListener>();
         mIterator = mListeners.rewindableIterator();
         mListenerFrequency = new HashMap<>();
-        mViewDelegate = mWebContents.getViewAndroidDelegate();
+        mViewDelegate = assumeNonNull(mWebContents.getViewAndroidDelegate());
         mViewDelegate.addVerticalScrollDirectionChangeListener(this);
         WindowEventObserverManager.from(mWebContents).addObserver(this);
         mNativeGestureListenerManager =
@@ -114,6 +120,8 @@ public class GestureListenerManagerImpl
                         .init(GestureListenerManagerImpl.this, mWebContents);
         mHidePastePopupOnGSB =
                 ContentFeatureMap.isEnabled(ContentFeatureList.HIDE_PASTE_POPUP_ON_GSB);
+        mResetGestureDetectionOnLosingFocus =
+                !ContentFeatureMap.isEnabled(ContentFeatureList.CONTINUE_GESTURE_ON_LOSING_FOCUS);
     }
 
     public void resetGestureDetection() {
@@ -230,7 +238,9 @@ public class GestureListenerManagerImpl
 
     @Override
     public void onWindowFocusChanged(boolean gainFocus) {
-        if (!gainFocus) resetGestureDetection();
+        if (mResetGestureDetectionOnLosingFocus) {
+            if (!gainFocus) resetGestureDetection();
+        }
         for (mIterator.rewind(); mIterator.hasNext(); ) {
             mIterator.next().onWindowFocusChanged(gainFocus);
         }
@@ -335,6 +345,16 @@ public class GestureListenerManagerImpl
                         .getContainerView()
                         .performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
                 break;
+            case EventType.GESTURE_BEGIN:
+                for (mIterator.rewind(); mIterator.hasNext(); ) {
+                    mIterator.next().onGestureBegin();
+                }
+                break;
+            case EventType.GESTURE_END:
+                for (mIterator.rewind(); mIterator.hasNext(); ) {
+                    mIterator.next().onGestureEnd();
+                }
+                break;
             default:
                 break;
         }
@@ -374,8 +394,9 @@ public class GestureListenerManagerImpl
             mSelectionPopupController =
                     SelectionPopupControllerImpl.fromWebContentsNoCreate(mWebContents);
         }
-        if (mSelectionPopupController != null) {
-            mSelectionPopupController.destroyPastePopup();
+        if (mSelectionPopupController != null
+                && mSelectionPopupController.isPasteActionModeValid()) {
+            mSelectionPopupController.destroyActionModeAndKeepSelection();
         }
     }
 
@@ -491,6 +512,7 @@ public class GestureListenerManagerImpl
     }
 
     private void notifyDelegateOfScrollChange(float scrollOffsetX, float scrollOffsetY) {
+        assumeNonNull(mScrollDelegate);
         RenderCoordinatesImpl rc = mWebContents.getRenderCoordinates();
         mScrollDelegate.onScrollChanged(
                 (int) rc.fromLocalCssToPix(scrollOffsetX),
@@ -510,6 +532,7 @@ public class GestureListenerManagerImpl
 
         if (mSelectionPopupController == null) {
             mSelectionPopupController = SelectionPopupControllerImpl.fromWebContents(mWebContents);
+            assumeNonNull(mSelectionPopupController);
         }
         // Use the active scroll signal for hiding. The animation movement by
         // fling will naturally hide the ActionMode by invalidating its content

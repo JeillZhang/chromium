@@ -71,7 +71,6 @@ class PaintController;
 class Path;
 class StrokeData;
 class StyledStrokeData;
-struct TextRunPaintInfo;
 
 // Tiling parameters for the DrawImageTiled() method.
 struct ImageTilingInfo {
@@ -253,9 +252,6 @@ class PLATFORM_EXPORT GraphicsContext {
   void SetTextPaintOrder(const TextPaintOrder& order) {
     MutableState()->SetTextPaintOrder(order);
   }
-  TextPaintOrder GetTextPaintOrder() const {
-    return ImmutableState()->GetTextPaintOrder();
-  }
 
   void SetImageInterpolationQuality(InterpolationQuality quality) {
     MutableState()->SetInterpolationQuality(quality);
@@ -326,10 +322,6 @@ class PLATFORM_EXPORT GraphicsContext {
                   const AutoDarkMode& auto_dark_mode);
 
   void DrawRecord(PaintRecord);
-  void CompositeRecord(PaintRecord,
-                       const gfx::RectF& dest,
-                       const gfx::RectF& src,
-                       SkBlendMode);
   void DrawImage(Image&,
                  Image::ImageDecodingMode,
                  const ImageAutoDarkMode& auto_dark_mode,
@@ -389,7 +381,6 @@ class PLATFORM_EXPORT GraphicsContext {
   void ClipOut(const gfx::RectF& rect) {
     ClipRect(gfx::RectFToSkRect(rect), kNotAntiAliased, SkClipOp::kDifference);
   }
-  void ClipOut(const Path&);
   void ClipOutRoundedRect(const FloatRoundedRect&);
   void ClipPath(const SkPath&,
                 AntiAliasingMode = kNotAntiAliased,
@@ -411,7 +402,7 @@ class PLATFORM_EXPORT GraphicsContext {
                 const AutoDarkMode& auto_dark_mode);
 
   void DrawEmphasisMarks(const Font&,
-                         const TextRunPaintInfo&,
+                         const TextRun&,
                          const AtomicString& mark,
                          const gfx::PointF&,
                          const AutoDarkMode& auto_dark_mode);
@@ -421,12 +412,10 @@ class PLATFORM_EXPORT GraphicsContext {
                          const gfx::PointF&,
                          const AutoDarkMode& auto_dark_mode);
 
-  void DrawBidiText(
-      const Font&,
-      const TextRunPaintInfo&,
-      const gfx::PointF&,
-      const AutoDarkMode& auto_dark_mode,
-      Font::CustomFontNotReadyAction = Font::kDoNotPaintIfFontNotReady);
+  void DrawBidiText(const Font&,
+                    const TextRun&,
+                    const gfx::PointF&,
+                    const AutoDarkMode& auto_dark_mode);
 
   // BeginLayer()/EndLayer() behave like Save()/Restore() for CTM and clip
   // states. Apply opacity, blend mode, filter when the layer is composited on
@@ -470,7 +459,6 @@ class PLATFORM_EXPORT GraphicsContext {
   void ConcatCTM(const AffineTransform&);
 
   void Scale(float x, float y);
-  void Rotate(float angle_in_radians);
   void Translate(float x, float y);
   // ---------- End transformation methods -----------------
 
@@ -482,8 +470,12 @@ class PLATFORM_EXPORT GraphicsContext {
   SkSamplingOptions ComputeSamplingOptions(Image& image,
                                            const gfx::RectF& dest,
                                            const gfx::RectF& src) const {
+    cc::PaintFlags::ScalingOperation scale =
+        (dest.width() > src.width() && dest.height() > src.height())
+            ? cc::PaintFlags::ScalingOperation::kUpscale
+            : cc::PaintFlags::ScalingOperation::kUnknown;
     return cc::PaintFlags::FilterQualityToSkSamplingOptions(
-        ComputeFilterQuality(image, dest, src));
+        ComputeFilterQuality(image, dest, src), scale);
   }
 
   // Sets target URL of a clickable area.

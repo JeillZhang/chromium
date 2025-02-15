@@ -43,8 +43,7 @@ const BorderImageLengthBox& GetBorderImageLengthBox(
     case CSSPropertyID::kWebkitMaskBoxImageWidth:
       return style.MaskBoxImageWidth();
     default:
-      NOTREACHED_IN_MIGRATION();
-      return style.BorderImageOutset();
+      NOTREACHED();
   }
 }
 
@@ -65,8 +64,7 @@ void SetBorderImageLengthBox(const CSSProperty& property,
       builder.SetMaskBoxImageWidth(box);
       break;
     default:
-      NOTREACHED_IN_MIGRATION();
-      break;
+      NOTREACHED();
   }
 }
 
@@ -182,7 +180,7 @@ struct SideTypes {
   }
   bool operator!=(const SideTypes& other) const { return !(*this == other); }
 
-  SideType type[kSideIndexCount];
+  std::array<SideType, kSideIndexCount> type;
 };
 
 class UnderlyingSideTypesChecker
@@ -233,24 +231,25 @@ InterpolationValue ConvertBorderImageAutoSide() {
 }
 
 InterpolationValue ConvertBorderImageLengthBox(const BorderImageLengthBox& box,
+                                               const CSSProperty& property,
                                                double zoom) {
   Vector<scoped_refptr<const NonInterpolableValue>> non_interpolable_values(
       kSideIndexCount);
-  const BorderImageLength* sides[kSideIndexCount] = {};
+  std::array<const BorderImageLength*, kSideIndexCount> sides{};
   sides[kSideTop] = &box.Top();
   sides[kSideRight] = &box.Right();
   sides[kSideBottom] = &box.Bottom();
   sides[kSideLeft] = &box.Left();
 
   return ListInterpolationFunctions::CreateList(
-      kSideIndexCount, [&sides, zoom](wtf_size_t index) {
+      kSideIndexCount, [&sides, &property, zoom](wtf_size_t index) {
         const BorderImageLength& side = *sides[index];
         if (side.IsNumber())
           return ConvertBorderImageNumberSide(side.Number());
         if (side.length().IsAuto())
           return ConvertBorderImageAutoSide();
-        return InterpolationValue(
-            InterpolableLength::MaybeConvertLength(side.length(), zoom));
+        return InterpolationValue(InterpolableLength::MaybeConvertLength(
+            side.length(), property, zoom, /*interpolate_size=*/std::nullopt));
       });
 }
 
@@ -267,8 +266,7 @@ void CompositeSide(UnderlyingValue& underlying_value,
     case SideType::kAuto:
       break;
     default:
-      NOTREACHED_IN_MIGRATION();
-      break;
+      NOTREACHED();
   }
 }
 
@@ -297,7 +295,7 @@ CSSBorderImageLengthBoxInterpolationType::MaybeConvertInitial(
   return ConvertBorderImageLengthBox(
       GetBorderImageLengthBox(
           CssProperty(), state.GetDocument().GetStyleResolver().InitialStyle()),
-      1);
+      CssProperty(), 1);
 }
 
 InterpolationValue
@@ -308,7 +306,7 @@ CSSBorderImageLengthBoxInterpolationType::MaybeConvertInherit(
       GetBorderImageLengthBox(CssProperty(), *state.ParentStyle());
   conversion_checkers.push_back(MakeGarbageCollected<InheritedSideTypesChecker>(
       CssProperty(), SideTypes(inherited)));
-  return ConvertBorderImageLengthBox(inherited,
+  return ConvertBorderImageLengthBox(inherited, CssProperty(),
                                      state.ParentStyle()->EffectiveZoom());
 }
 
@@ -322,7 +320,7 @@ InterpolationValue CSSBorderImageLengthBoxInterpolationType::MaybeConvertValue(
 
   Vector<scoped_refptr<const NonInterpolableValue>> non_interpolable_values(
       kSideIndexCount);
-  const CSSValue* sides[kSideIndexCount] = {};
+  std::array<const CSSValue*, kSideIndexCount> sides{};
   sides[kSideTop] = quad->Top();
   sides[kSideRight] = quad->Right();
   sides[kSideBottom] = quad->Bottom();
@@ -363,7 +361,8 @@ InterpolationValue CSSBorderImageLengthBoxInterpolationType::
     MaybeConvertStandardPropertyUnderlyingValue(
         const ComputedStyle& style) const {
   return ConvertBorderImageLengthBox(
-      GetBorderImageLengthBox(CssProperty(), style), style.EffectiveZoom());
+      GetBorderImageLengthBox(CssProperty(), style), CssProperty(),
+      style.EffectiveZoom());
 }
 
 PairwiseInterpolationValue
@@ -411,8 +410,7 @@ void CSSBorderImageLengthBoxInterpolationType::ApplyStandardPropertyValue(
             .CreateLength(state.CssToLengthConversionData(),
                           Length::ValueRange::kNonNegative);
       default:
-        NOTREACHED_IN_MIGRATION();
-        return Length::Auto();
+        NOTREACHED();
     }
   };
   BorderImageLengthBox box(convert_side(kSideTop), convert_side(kSideRight),

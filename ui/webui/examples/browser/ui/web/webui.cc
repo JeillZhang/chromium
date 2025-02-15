@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "ui/webui/examples/browser/ui/web/webui.h"
 
 #include "chrome/grit/webui_gallery_resources.h"
@@ -60,8 +65,7 @@ WebUI::WebUI(content::WebUI* web_ui) : content::WebUIController(web_ui) {
   content::WebUIDataSource* source = content::WebUIDataSource::CreateAndAdd(
       web_ui->GetWebContents()->GetBrowserContext(), kHost);
   SetupWebUIDataSource(
-      source,
-      base::make_span(kWebuiGalleryResources, kWebuiGalleryResourcesSize),
+      source, base::span(kWebuiGalleryResources, kWebuiGalleryResourcesSize),
       IDR_WEBUI_GALLERY_WEBUI_GALLERY_HTML);
 }
 

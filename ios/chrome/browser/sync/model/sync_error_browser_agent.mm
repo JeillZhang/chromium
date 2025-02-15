@@ -4,14 +4,19 @@
 
 #import "ios/chrome/browser/sync/model/sync_error_browser_agent.h"
 
+#import "ios/chrome/app/profile/profile_init_stage.h"
+#import "ios/chrome/app/profile/profile_state.h"
+#import "ios/chrome/browser/authentication/ui_bundled/re_signin_infobar_delegate.h"
+#import "ios/chrome/browser/authentication/ui_bundled/signin_presenter.h"
 #import "ios/chrome/browser/infobars/model/infobar_manager_impl.h"
 #import "ios/chrome/browser/infobars/model/infobar_utils.h"
 #import "ios/chrome/browser/settings/model/sync/utils/sync_util.h"
-#import "ios/chrome/browser/shared/model/browser_state/chrome_browser_state.h"
+#import "ios/chrome/browser/shared/coordinator/scene/scene_state.h"
+#import "ios/chrome/browser/shared/model/profile/profile_ios.h"
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_list.h"
 #import "ios/chrome/browser/signin/model/authentication_service_factory.h"
-#import "ios/chrome/browser/ui/authentication/re_signin_infobar_delegate.h"
-#import "ios/chrome/browser/ui/authentication/signin_presenter.h"
+#import "ios/chrome/browser/signin/model/identity_manager_factory.h"
+#import "ios/chrome/browser/sync/model/sync_error_browser_agent_profile_state_observer.h"
 
 BROWSER_USER_DATA_KEY_IMPL(SyncErrorBrowserAgent)
 
@@ -20,6 +25,10 @@ SyncErrorBrowserAgent::SyncErrorBrowserAgent(Browser* browser)
   DCHECK(browser_);
   browser->AddObserver(this);
   browser->GetWebStateList()->AddObserver(this);
+  profile_state_observer_ = [[SyncErrorBrowserAgentProfileStateObserver alloc]
+       initWithProfileState:browser_->GetSceneState().profileState
+      syncErrorBrowserAgent:this];
+  [profile_state_observer_ start];
 }
 
 SyncErrorBrowserAgent::~SyncErrorBrowserAgent() {
@@ -35,12 +44,7 @@ void SyncErrorBrowserAgent::SetUIProviders(
   sync_presenter_provider_ = sync_presenter_provider;
 
   // Re-evaluate all web states.
-  web_state_observations_.RemoveAllObservations();
-  WebStateList* web_state_list = browser_->GetWebStateList();
-  for (int i = 0; i < web_state_list->count(); i++) {
-    web::WebState* web_state = web_state_list->GetWebStateAt(i);
-    CreateReSignInInfoBarDelegate(web_state);
-  }
+  TriggerInfobarOnAllWebStatesIfNeeded();
 }
 
 void SyncErrorBrowserAgent::ClearUIProviders() {
@@ -48,10 +52,18 @@ void SyncErrorBrowserAgent::ClearUIProviders() {
   sync_presenter_provider_ = nil;
 }
 
+void SyncErrorBrowserAgent::ProfileStateDidUpdateToFinalStage() {
+  TriggerInfobarOnAllWebStatesIfNeeded();
+  [profile_state_observer_ disconnect];
+  profile_state_observer_ = nil;
+}
+
 #pragma mark - BrowserObserver
 
 void SyncErrorBrowserAgent::BrowserDestroyed(Browser* browser) {
   DCHECK_EQ(browser, browser_);
+  [profile_state_observer_ disconnect];
+  profile_state_observer_ = nil;
   browser->GetWebStateList()->RemoveObserver(this);
   browser->RemoveObserver(this);
   browser_ = nullptr;
@@ -119,6 +131,15 @@ void SyncErrorBrowserAgent::WebStateRealized(web::WebState* web_state) {
   CreateReSignInInfoBarDelegate(web_state);
 }
 
+void SyncErrorBrowserAgent::TriggerInfobarOnAllWebStatesIfNeeded() {
+  web_state_observations_.RemoveAllObservations();
+  WebStateList* web_state_list = browser_->GetWebStateList();
+  for (int i = 0; i < web_state_list->count(); i++) {
+    web::WebState* web_state = web_state_list->GetWebStateAt(i);
+    CreateReSignInInfoBarDelegate(web_state);
+  }
+}
+
 void SyncErrorBrowserAgent::CreateReSignInInfoBarDelegate(
     web::WebState* web_state) {
   if (!web_state->IsRealized()) {
@@ -130,16 +151,21 @@ void SyncErrorBrowserAgent::CreateReSignInInfoBarDelegate(
     return;
   }
 
-  ChromeBrowserState* browser_state = browser_->GetBrowserState();
+  ProfileState* profile_state = browser_->GetSceneState().profileState;
+  if (profile_state.initStage != ProfileInitStage::kFinal) {
+    return;
+  }
 
+  ProfileIOS* profile = browser_->GetProfile();
   std::unique_ptr<ReSignInInfoBarDelegate> delegate =
       ReSignInInfoBarDelegate::Create(
-          AuthenticationServiceFactory::GetForBrowserState(browser_state),
+          AuthenticationServiceFactory::GetForProfile(profile),
+          IdentityManagerFactory::GetForProfile(profile),
           signin_presenter_provider_);
   if (delegate) {
     InfoBarManagerImpl::FromWebState(web_state)->AddInfoBar(
         CreateConfirmInfoBar(std::move(delegate)));
     return;
   }
-  DisplaySyncErrors(browser_state, web_state, sync_presenter_provider_);
+  DisplaySyncErrors(profile, web_state, sync_presenter_provider_);
 }

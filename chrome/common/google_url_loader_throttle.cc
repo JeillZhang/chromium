@@ -39,14 +39,8 @@ const char kCCTClientDataHeader[] = "X-CCT-Client-Data";
 #endif
 
 #if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
-// Elements of these enum are ordered in such a way that two independent
-// statuses can be merged together using `std::max()` function to get an
-// aggregate status.
-enum class RequestBoundSessionStatus {
-  kNotCovered = 0,
-  kCoveredWithFreshCookie = 1,
-  kCoveredWithMissingCookie = 2
-};
+using RequestBoundSessionStatus =
+    GoogleURLLoaderThrottle::RequestBoundSessionStatus;
 
 RequestBoundSessionStatus GetRequestSingleBoundSessionStatus(
     const GURL& request_url,
@@ -76,20 +70,6 @@ RequestBoundSessionStatus GetRequestSingleBoundSessionStatus(
   return RequestBoundSessionStatus::kCoveredWithMissingCookie;
 }
 
-RequestBoundSessionStatus GetRequestBoundSessionStatus(
-    const GURL& request_url,
-    const std::vector<chrome::mojom::BoundSessionThrottlerParamsPtr>&
-        bound_session_throttler_params) {
-  RequestBoundSessionStatus status = RequestBoundSessionStatus::kNotCovered;
-
-  for (const auto& throttler_params : bound_session_throttler_params) {
-    status = std::max(status, GetRequestSingleBoundSessionStatus(
-                                  request_url, throttler_params.get()));
-  }
-
-  return status;
-}
-
 bool IsCoveredRequestBoundSessionStatus(RequestBoundSessionStatus status) {
   switch (status) {
     case RequestBoundSessionStatus::kNotCovered:
@@ -101,13 +81,35 @@ bool IsCoveredRequestBoundSessionStatus(RequestBoundSessionStatus status) {
 }
 
 void RecordBoundSessionStatusMetrics(bool was_deferred,
-                                     bool is_main_frame_navigation) {
+                                     bool is_main_frame_navigation,
+                                     bool is_request_succeeded) {
   UMA_HISTOGRAM_BOOLEAN(
       "Signin.BoundSessionCredentials.CoveredRequestWasDeferred", was_deferred);
+  if (is_request_succeeded) {
+    UMA_HISTOGRAM_BOOLEAN(
+        "Signin.BoundSessionCredentials.CoveredRequestWasDeferred.Success",
+        was_deferred);
+  } else {
+    UMA_HISTOGRAM_BOOLEAN(
+        "Signin.BoundSessionCredentials.CoveredRequestWasDeferred.Failure",
+        was_deferred);
+  }
+
   if (is_main_frame_navigation) {
     UMA_HISTOGRAM_BOOLEAN(
         "Signin.BoundSessionCredentials.CoveredNavigationRequestWasDeferred",
         was_deferred);
+    if (is_request_succeeded) {
+      UMA_HISTOGRAM_BOOLEAN(
+          "Signin.BoundSessionCredentials.CoveredNavigationRequestWasDeferred."
+          "Success",
+          was_deferred);
+    } else {
+      UMA_HISTOGRAM_BOOLEAN(
+          "Signin.BoundSessionCredentials.CoveredNavigationRequestWasDeferred."
+          "Failure",
+          was_deferred);
+    }
   }
 }
 #endif  // BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
@@ -149,13 +151,18 @@ GoogleURLLoaderThrottle::~GoogleURLLoaderThrottle() = default;
 
 #if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
 // static
-bool GoogleURLLoaderThrottle::ShouldDeferRequestForBoundSession(
+RequestBoundSessionStatus GoogleURLLoaderThrottle::GetRequestBoundSessionStatus(
     const GURL& request_url,
     const std::vector<chrome::mojom::BoundSessionThrottlerParamsPtr>&
         bound_session_throttler_params) {
-  RequestBoundSessionStatus status =
-      GetRequestBoundSessionStatus(request_url, bound_session_throttler_params);
-  return status == RequestBoundSessionStatus::kCoveredWithMissingCookie;
+  RequestBoundSessionStatus status = RequestBoundSessionStatus::kNotCovered;
+
+  for (const auto& throttler_params : bound_session_throttler_params) {
+    status = std::max(status, GetRequestSingleBoundSessionStatus(
+                                  request_url, throttler_params.get()));
+  }
+
+  return status;
 }
 #endif  // BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
 
@@ -204,7 +211,11 @@ void GoogleURLLoaderThrottle::WillStartRequest(
   is_main_frame_navigation_ =
       request->is_outermost_main_frame &&
       request->destination == network::mojom::RequestDestination::kDocument;
-  sends_cookies_ = request->SendsCookies();
+  // TODO(crbug.com/372169462): `request->SendsCookies()` cannot be used for now
+  // because it excludes `kSameOrigin` requests.
+  sends_cookies_ =
+      request->credentials_mode == network::mojom::CredentialsMode::kInclude ||
+      request->credentials_mode == network::mojom::CredentialsMode::kSameOrigin;
   if (sends_cookies_) {
     RequestBoundSessionStatus status = GetRequestBoundSessionStatus(
         request->url, dynamic_params_->bound_session_throttler_params);
@@ -296,7 +307,8 @@ void GoogleURLLoaderThrottle::WillProcessResponse(
 #if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
   if (is_covered_by_bound_session_) {
     RecordBoundSessionStatusMetrics(is_deferred_for_bound_session_,
-                                    is_main_frame_navigation_);
+                                    is_main_frame_navigation_,
+                                    /*is_request_succeeded=*/true);
   }
   if (deferred_request_resume_trigger_) {
     UMA_HISTOGRAM_ENUMERATION(
@@ -331,7 +343,8 @@ void GoogleURLLoaderThrottle::WillOnCompleteWithError(
     const network::URLLoaderCompletionStatus& status) {
   if (is_covered_by_bound_session_) {
     RecordBoundSessionStatusMetrics(is_deferred_for_bound_session_,
-                                    is_main_frame_navigation_);
+                                    is_main_frame_navigation_,
+                                    /*is_request_succeeded=*/false);
   }
   if (deferred_request_resume_trigger_) {
     UMA_HISTOGRAM_ENUMERATION(
@@ -360,10 +373,10 @@ void GoogleURLLoaderThrottle::ResumeOrCancelRequest(
   CHECK(bound_session_request_throttled_start_time_.has_value());
   base::TimeDelta duration =
       base::TimeTicks::Now() - *bound_session_request_throttled_start_time_;
-  UMA_HISTOGRAM_MEDIUM_TIMES(
+  DEPRECATED_UMA_HISTOGRAM_MEDIUM_TIMES(
       "Signin.BoundSessionCredentials.DeferredRequestDelay", duration);
   if (is_main_frame_navigation_) {
-    UMA_HISTOGRAM_MEDIUM_TIMES(
+    DEPRECATED_UMA_HISTOGRAM_MEDIUM_TIMES(
         "Signin.BoundSessionCredentials.DeferredNavigationRequestDelay",
         duration);
   }

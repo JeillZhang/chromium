@@ -40,8 +40,6 @@ target(link_target_type, "renderer") {
     "accessibility/annotations/ax_image_annotator.h",
     "accessibility/annotations/ax_image_stopwords.cc",
     "accessibility/annotations/ax_image_stopwords.h",
-    "accessibility/aom_content_ax_tree.cc",
-    "accessibility/aom_content_ax_tree.h",
     "accessibility/ax_action_target_factory.cc",
     "accessibility/ax_action_target_factory.h",
     "accessibility/ax_tree_snapshotter_impl.cc",
@@ -74,16 +72,12 @@ target(link_target_type, "renderer") {
     "gpu_benchmarking_extension.h",
     "in_process_renderer_thread.cc",
     "in_process_renderer_thread.h",
+    "local_resource_url_loader_factory.cc",
+    "local_resource_url_loader_factory.h",
     "media/audio_decoder.cc",
     "media/audio_decoder.h",
     "media/batching_media_log.cc",
     "media/batching_media_log.h",
-    "media/codec_factory.cc",
-    "media/codec_factory.h",
-    "media/codec_factory_mojo.cc",
-    "media/codec_factory_mojo.h",
-    "media/gpu/gpu_video_accelerator_factories_impl.cc",
-    "media/gpu/gpu_video_accelerator_factories_impl.h",
     "media/inspector_media_event_handler.cc",
     "media/inspector_media_event_handler.h",
     "media/media_factory.cc",
@@ -215,7 +209,11 @@ target(link_target_type, "renderer") {
   }
 
   if (is_win) {
-    sources += [ "renderer_main_platform_delegate_win.cc" ]
+    sources += [
+      "font_data/font_data_manager.cc",
+      "font_data/font_data_manager.h",
+      "renderer_main_platform_delegate_win.cc",
+    ]
   }
 
   if (enable_cast_renderer) {
@@ -231,6 +229,7 @@ target(link_target_type, "renderer") {
   public_deps = [
     "//content/common:mojo_bindings",
     "//content/public/common:common_sources",
+    "//content/public/renderer:render_frame_media_playback_options",
     "//ipc",
   ]
 
@@ -238,15 +237,16 @@ target(link_target_type, "renderer") {
     "//base",
     "//base:i18n",
     "//build:chromecast_buildflags",
-    "//build:chromeos_buildflags",
     "//cc",
     "//cc/animation",
     "//cc/mojo_embedder",
     "//cc/mojom",
     "//cc/paint",
     "//components/discardable_memory/client",
+    "//components/input",
     "//components/metrics",
     "//components/metrics:single_sample_metrics",
+    "//components/services/font_data/public/mojom",
     "//components/startup_metric_utils",
     "//components/url_formatter",
     "//components/variations:variations_mojom",
@@ -307,7 +307,6 @@ target(link_target_type, "renderer") {
     "//third_party/blink/public:buildflags",
     "//third_party/blink/public/common",
     "//third_party/blink/public/platform/media",
-    "//third_party/blink/public/strings:accessibility_strings",
     "//third_party/boringssl",
     "//third_party/icu",
     "//third_party/libyuv",
@@ -326,6 +325,7 @@ target(link_target_type, "renderer") {
     "//ui/gl",
     "//ui/latency",
     "//ui/native_theme",
+    "//ui/strings:auto_image_annotation_strings_grit",
     "//ui/surface",
     "//url",
     "//v8",
@@ -360,11 +360,7 @@ target(link_target_type, "renderer") {
   }
 
   if (is_fuchsia) {
-    sources += [
-      "media/codec_factory_fuchsia.cc",
-      "media/codec_factory_fuchsia.h",
-      "renderer_main_platform_delegate_fuchsia.cc",
-    ]
+    sources += [ "renderer_main_platform_delegate_fuchsia.cc" ]
     public_deps += [ "//third_party/fuchsia-sdk/sdk/fidl/fuchsia.mediacodec:fuchsia.mediacodec_hlcpp" ]
 
     deps += [
@@ -398,10 +394,7 @@ target(link_target_type, "renderer") {
         deps += [ "//chromecast/media/audio:audio_renderer" ]
       }
 
-      deps += [
-        "//media/remoting:remoting_constants",
-        "//media/remoting:remoting_renderer",
-      ]
+      deps += [ "//media/remoting:remoting_renderer" ]
     }
   }
 
@@ -554,6 +547,9 @@ target(link_target_type, "renderer") {
       "media/win/overlay_state_service_provider.cc",
       "media/win/overlay_state_service_provider.h",
     ]
+
+    # For font_data_manager creating FreeType font instances.
+    deps += [ "//third_party:freetype_buildflags" ]
   }
 
   if (is_linux || is_chromeos || is_android) {
@@ -561,10 +557,10 @@ target(link_target_type, "renderer") {
   }
 
   if (is_chromeos) {
-    deps += [ "//chromeos/system:system" ]
-  }
-  if (is_chromeos_ash) {
-    deps += [ "//chromeos:chromeos_export" ]
+    deps += [
+      "//chromeos:chromeos_export",
+      "//chromeos/system",
+    ]
     if (target_cpu == "x64") {
       deps += [ "//chromeos/ash/components/memory/userspace_swap" ]
     }

@@ -7,12 +7,12 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 
 #include "base/check.h"
 #include "base/containers/contains.h"
 #include "base/files/file_path.h"
 #include "base/strings/utf_string_conversions.h"
-#include "build/chromeos_buildflags.h"
 #include "net/base/filename_util.h"
 #include "ui/base/clipboard/clipboard_format_type.h"
 #include "ui/base/clipboard/file_info.h"
@@ -61,16 +61,16 @@ bool OSExchangeDataProviderNonBacked::IsFromPrivileged() const {
   return is_from_privileged_;
 }
 
-void OSExchangeDataProviderNonBacked::SetString(const std::u16string& data) {
+void OSExchangeDataProviderNonBacked::SetString(std::u16string_view data) {
   if (HasString())
     return;
 
-  string_ = data;
+  string_ = std::u16string(data);
   formats_ |= OSExchangeData::STRING;
 }
 
 void OSExchangeDataProviderNonBacked::SetURL(const GURL& url,
-                                             const std::u16string& title) {
+                                             std::u16string_view title) {
   url_ = url;
   title_ = title;
   formats_ |= OSExchangeData::URL;
@@ -122,7 +122,7 @@ OSExchangeDataProviderNonBacked::GetURLAndTitle(
         (policy == FilenameToURLPolicy::CONVERT_FILENAMES &&
          GetFileURL(&url))) {
       DCHECK(url.is_valid());
-      return UrlInfo{url, std::u16string()};
+      return UrlInfo{std::move(url), std::u16string()};
     }
     return std::nullopt;
   }
@@ -265,11 +265,12 @@ bool OSExchangeDataProviderNonBacked::GetFileURL(GURL* url) const {
 
   base::FilePath file_path = filenames_[0].path;
   GURL test_url = net::FilePathToFileURL(file_path);
-  if (!test_url.is_valid())
+  if (!test_url.is_valid()) {
     return false;
-
-  if (url)
-    *url = test_url;
+  }
+  if (url) {
+    *url = std::move(test_url);
+  }
   return true;
 }
 
@@ -278,11 +279,12 @@ bool OSExchangeDataProviderNonBacked::GetPlainTextURL(GURL* url) const {
     return false;
 
   GURL test_url(string_);
-  if (!test_url.is_valid())
+  if (!test_url.is_valid()) {
     return false;
-
-  if (url)
-    *url = test_url;
+  }
+  if (url) {
+    *url = std::move(test_url);
+  }
   return true;
 }
 

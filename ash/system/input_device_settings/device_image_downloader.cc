@@ -4,9 +4,14 @@
 
 #include "ash/system/input_device_settings/device_image_downloader.h"
 
+#include <algorithm>
+#include <string>
+
+#include "ash/constants/ash_features.h"
 #include "ash/public/cpp/image_downloader.h"
 #include "ash/system/input_device_settings/device_image.h"
-#include "base/strings/string_util.h"
+#include "ash/system/input_device_settings/input_device_settings_metadata.h"
+#include "base/strings/strcat.h"
 #include "components/account_id/account_id.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "url/gurl.h"
@@ -39,7 +44,7 @@ constexpr net::NetworkTrafficAnnotationTag kTrafficAnnotation =
     destination: GOOGLE_OWNED_SERVICE
     internal {
       contacts {
-          email: "cros-peripherals@google.com"
+          email: "cros-device-enablement@google.com"
       }
     }
     user_data {
@@ -57,30 +62,39 @@ constexpr net::NetworkTrafficAnnotationTag kTrafficAnnotation =
   }
 )");
 
-GURL GetResourceUrlFromDeviceKey(const std::string& device_key) {
-  CHECK(!device_key.empty());
-
-  // Format the device key for the URL:
-  // Image filenames use underscores instead of colons.
-  std::string formatted_key = device_key;
-  base::ReplaceChars(formatted_key, ":", "_", &formatted_key);
-
-  // Construct the full resource URL:
-  // Combine the base URL, formatted device key, and the file format extension.
-  const std::string url = kGstaticBaseURL + formatted_key + kFileFormat;
-  return GURL(url);
-}
-
 }  // namespace
 
 DeviceImageDownloader::DeviceImageDownloader() = default;
 DeviceImageDownloader::~DeviceImageDownloader() = default;
 
+GURL DeviceImageDownloader::GetResourceUrlFromDeviceKey(
+    const std::string& device_key,
+    DeviceImageDestination destination) {
+  CHECK(!device_key.empty());
+
+  std::string formatted_key = GetDeviceKeyForMetadataRequest(device_key);
+  std::ranges::replace(formatted_key, ':', '_');
+
+  // Format strings for building image URLs based on destination.
+  // Example URLs:
+  // - Settings image: gstatic/chromeos/peripherals/0111_185a_icon.png
+  // - Notification image: gstatic/chromeos/peripherals/0111_185a.png
+  return GURL(base::StrCat(
+      {kGstaticBaseURL, formatted_key,
+       destination == DeviceImageDestination::kSettings ? "_icon" : "",
+       kFileFormat}));
+}
+
 void DeviceImageDownloader::DownloadImage(
     const std::string& device_key,
     const AccountId& account_id,
+    DeviceImageDestination destination,
     base::OnceCallback<void(const DeviceImage& image)> callback) {
-  const auto url = GetResourceUrlFromDeviceKey(device_key);
+  const auto url = GetResourceUrlFromDeviceKey(device_key, destination);
+  if (!ImageDownloader::Get()) {
+    std::move(callback).Run(DeviceImage());
+    return;
+  }
   ImageDownloader::Get()->Download(
       url, kTrafficAnnotation, account_id,
       base::BindOnce(&DeviceImageDownloader::OnImageDownloaded,
@@ -88,9 +102,6 @@ void DeviceImageDownloader::DownloadImage(
                      std::move(callback)));
 }
 
-// TODO(b/329686601): Store image as data URL in local state.
-// TODO(b/329686601): Implement error handling for cases where the image
-// download fails.
 void DeviceImageDownloader::OnImageDownloaded(
     const std::string& device_key,
     base::OnceCallback<void(const DeviceImage& image)> callback,

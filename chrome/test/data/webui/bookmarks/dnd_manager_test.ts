@@ -4,9 +4,9 @@
 
 import type {BookmarkElement, BookmarksAppElement, BookmarksFolderNodeElement, BookmarksItemElement, BookmarksListElement, DndManager} from 'chrome://bookmarks/bookmarks.js';
 import {BookmarkManagerApiProxyImpl, BrowserProxyImpl, DragInfo, overrideFolderOpenerTimeoutDelay, setDebouncerForTesting} from 'chrome://bookmarks/bookmarks.js';
-import {middleOfNode, topLeftOfNode} from 'chrome://resources/polymer/v3_0/iron-test-helpers/mock-interactions.js';
 import {flush} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 import {assertDeepEquals, assertEquals, assertFalse, assertNotReached, assertTrue} from 'chrome://webui-test/chai_assert.js';
+import {middleOfNode, topLeftOfNode} from 'chrome://webui-test/mouse_mock_interactions.js';
 import {flushTasks} from 'chrome://webui-test/polymer_test_util.js';
 
 import {TestBookmarkManagerApiProxy} from './test_bookmark_manager_api_proxy.js';
@@ -519,7 +519,7 @@ suite('drag and drop', function() {
     dispatchDragEvent('dragend', dragElement);
   });
 
-  test('cannot drag items when editing is disabled', async function() {
+  test('cannot drag items when editing is disabled', function() {
     store.data.prefs.canEdit = false;
     store.notifyObservers();
 
@@ -529,7 +529,7 @@ suite('drag and drop', function() {
     assertFalse(dndManager.getDragInfoForTesting()!.isDragValid());
   });
 
-  test('cannot start dragging unmodifiable items', async function() {
+  test('cannot start dragging unmodifiable items', function() {
     store.data.nodes['2']!.unmodifiable = 'managed';
     store.notifyObservers();
 

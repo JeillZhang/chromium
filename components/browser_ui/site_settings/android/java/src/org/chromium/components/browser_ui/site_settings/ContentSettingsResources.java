@@ -209,16 +209,6 @@ public class ContentSettingsResources {
                         R.string.website_settings_site_data_page_toggle_sub_label_block,
                         R.string.website_settings_site_data_page_a11y);
 
-            case ContentSettingsType.REQUEST_DESKTOP_SITE:
-                return new ResourceItem(
-                        R.drawable.ic_desktop_windows,
-                        R.string.desktop_site_title,
-                        ContentSettingValues.ALLOW,
-                        ContentSettingValues.BLOCK,
-                        R.string.website_settings_category_desktop_site_allowed,
-                        R.string.website_settings_category_desktop_site_blocked,
-                        R.string.website_settings_category_desktop_site_a11y);
-
             case ContentSettingsType.FEDERATED_IDENTITY_API:
                 return new ResourceItem(
                         R.drawable.ic_account_circle_24dp,
@@ -229,6 +219,16 @@ public class ContentSettingsResources {
                         R.string.website_settings_category_federated_identity_blocked,
                         R.string.website_settings_category_federated_identity_a11y);
 
+            case ContentSettingsType.FILE_SYSTEM_WRITE_GUARD:
+                return new ResourceItem(
+                        R.drawable.ic_file_save_24,
+                        R.string.website_settings_file_system_write_guard_title,
+                        ContentSettingValues.ASK,
+                        ContentSettingValues.BLOCK,
+                        0,
+                        0,
+                        0);
+
             case ContentSettingsType.GEOLOCATION:
                 return new ResourceItem(
                         R.drawable.gm_filled_location_on_24,
@@ -238,6 +238,16 @@ public class ContentSettingsResources {
                         R.string.website_settings_category_location_ask,
                         0,
                         R.string.website_settings_category_location_a11y);
+
+            case ContentSettingsType.HAND_TRACKING:
+                return new ResourceItem(
+                        R.drawable.gm_filled_hand_gesture_24,
+                        R.string.hand_tracking_permission_title,
+                        ContentSettingValues.ASK,
+                        ContentSettingValues.BLOCK,
+                        R.string.website_settings_category_hand_tracking_ask,
+                        R.string.website_settings_category_hand_tracking_blocked,
+                        R.string.website_settings_category_hand_tracking_a11y);
 
             case ContentSettingsType.IDLE_DETECTION:
                 return new ResourceItem(
@@ -258,6 +268,16 @@ public class ContentSettingsResources {
                         R.string.website_settings_category_javascript_allowed,
                         0,
                         R.string.website_settings_category_javascript_a11y);
+
+            case ContentSettingsType.JAVASCRIPT_OPTIMIZER:
+                return new ResourceItem(
+                        R.drawable.settings_v8,
+                        R.string.website_settings_javascript_optimizer_link_row_label,
+                        ContentSettingValues.ALLOW,
+                        ContentSettingValues.BLOCK,
+                        R.string.website_settings_category_javascript_optimizer_allowed,
+                        R.string.website_settings_category_javascript_optimizer_blocked,
+                        R.string.website_settings_category_javascript_optimizer_a11y);
 
             case ContentSettingsType.MEDIASTREAM_CAMERA:
                 return new ResourceItem(
@@ -330,6 +350,16 @@ public class ContentSettingsResources {
                         0,
                         0,
                         0);
+
+            case ContentSettingsType.REQUEST_DESKTOP_SITE:
+                return new ResourceItem(
+                        R.drawable.ic_desktop_windows,
+                        R.string.desktop_site_title,
+                        ContentSettingValues.ALLOW,
+                        ContentSettingValues.BLOCK,
+                        R.string.website_settings_category_desktop_site_allowed,
+                        R.string.website_settings_category_desktop_site_blocked,
+                        R.string.website_settings_category_desktop_site_a11y);
 
             case ContentSettingsType.SENSORS:
                 int sensorsPermissionTitle = R.string.motion_sensors_permission_title;
@@ -692,6 +722,16 @@ public class ContentSettingsResources {
      */
     public static int getAutoDarkWebContentListSummary(boolean enabled) {
         return enabled ? R.string.text_on : R.string.text_off;
+    }
+
+    /**
+     * Returns the allowed/blocked summary for the javascript optimizer content setting, which
+     * should be used for display in the site settings list only.
+     */
+    public static int getJavascriptOptimizerListSummary(boolean enabled) {
+        return enabled
+                ? R.string.website_settings_category_javascript_optimizer_allowed_list
+                : R.string.website_settings_category_javascript_optimizer_blocked_list;
     }
 
     /**

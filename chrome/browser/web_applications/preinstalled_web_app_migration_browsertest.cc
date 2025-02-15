@@ -37,6 +37,7 @@
 #include "chrome/browser/web_applications/preinstalled_app_install_features.h"
 #include "chrome/browser/web_applications/preinstalled_web_app_manager.h"
 #include "chrome/browser/web_applications/preinstalled_web_apps/preinstalled_web_apps.h"
+#include "chrome/browser/web_applications/proto/web_app_install_state.pb.h"
 #include "chrome/browser/web_applications/test/os_integration_test_override_impl.h"
 #include "chrome/browser/web_applications/test/web_app_install_test_utils.h"
 #include "chrome/browser/web_applications/web_app.h"
@@ -148,7 +149,7 @@ class PreinstalledWebAppMigrationBrowserTest
     const WebAppRegistrar& registrar = provider->registrar_unsafe();
     std::vector<webapps::AppId> app_ids = registrar.GetAppIds();
     for (const auto& app_id : app_ids) {
-      if (!registrar.IsInstalled(app_id)) {
+      if (!registrar.IsInRegistrar(app_id)) {
         continue;
       }
       apps::AppReadinessWaiter(profile(), app_id).Await();
@@ -282,26 +283,18 @@ class PreinstalledWebAppMigrationBrowserTest
   }
 
   bool IsWebAppInstalled() {
-    return WebAppProvider::GetForTest(profile())
-        ->registrar_unsafe()
-        .IsLocallyInstalled(GetWebAppId());
+    std::optional<proto::InstallState> install_state =
+        WebAppProvider::GetForTest(profile())
+            ->registrar_unsafe()
+            .GetInstallState(GetWebAppId());
+
+    return install_state == proto::INSTALLED_WITHOUT_OS_INTEGRATION ||
+           install_state == proto::INSTALLED_WITH_OS_INTEGRATION;
   }
 
   bool IsExtensionAppInstalled() {
     return extensions::ExtensionRegistry::Get(profile())->GetExtensionById(
         kExtensionId, extensions::ExtensionRegistry::EVERYTHING);
-  }
-
-  bool IsUninstallSilentlySupported() {
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-    DCHECK(IsWebAppsCrosapiEnabled());
-    return chromeos::LacrosService::Get()
-               ->GetInterfaceVersion<crosapi::mojom::AppServiceProxy>() >=
-           int{crosapi::mojom::AppServiceProxy::MethodMinVersions::
-                   kUninstallSilentlyMinVersion};
-#else   // BUILDFLAG(IS_CHROMEOS_LACROS)
-    return true;
-#endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
   }
 
  protected:
@@ -319,9 +312,6 @@ class PreinstalledWebAppMigrationBrowserTest
 
 IN_PROC_BROWSER_TEST_F(PreinstalledWebAppMigrationBrowserTest,
                        MigrateRevertMigrate) {
-  if (!IsUninstallSilentlySupported())
-    GTEST_SKIP() << "Unsupported Ash version.";
-
 #if BUILDFLAG(IS_CHROMEOS_ASH)
   // Grab handles to the app list to update shelf/list state for apps later on.
   app_list::AppListSyncableService* app_list_syncable_service =
@@ -408,7 +398,7 @@ IN_PROC_BROWSER_TEST_F(PreinstalledWebAppMigrationBrowserTest,
     SyncExternalExtensions();
     SyncExternalWebApps(
         /*expect_install=*/false,
-        /*expect_uninstall=*/webapps::UninstallResultCode::kSuccess);
+        /*expect_uninstall=*/webapps::UninstallResultCode::kAppRemoved);
 
     EXPECT_TRUE(IsExtensionAppInstalled());
     EXPECT_FALSE(IsWebAppInstalled());
@@ -455,9 +445,6 @@ IN_PROC_BROWSER_TEST_F(PreinstalledWebAppMigrationBrowserTest,
 
 IN_PROC_BROWSER_TEST_F(PreinstalledWebAppMigrationBrowserTest,
                        MigratePreferences) {
-  if (!IsUninstallSilentlySupported())
-    GTEST_SKIP() << "Unsupported Ash version.";
-
 #if BUILDFLAG(IS_CHROMEOS_ASH)
   app_list::AppListSyncableService* app_list_syncable_service =
       app_list::AppListSyncableServiceFactory::GetForProfile(profile());
@@ -581,9 +568,6 @@ class PreinstalledWebAppMigratePlatformAppBrowserTest
 
 IN_PROC_BROWSER_TEST_F(PreinstalledWebAppMigratePlatformAppBrowserTest,
                        MigratePlatformAppPreferences) {
-  if (!IsUninstallSilentlySupported())
-    GTEST_SKIP() << "Unsupported Ash version.";
-
   // Install platform app to migrate.
   {
     apps::AppReadinessWaiter extension_app_registration_waiter(profile(),
@@ -731,9 +715,6 @@ IN_PROC_BROWSER_TEST_F(PreinstalledWebAppMigrationBrowserTest,
 // by the preinstalled apps (rather than an external config).
 IN_PROC_BROWSER_TEST_F(PreinstalledWebAppMigrationBrowserTest,
                        MigrateToPreinstalledWebApp) {
-  if (!IsUninstallSilentlySupported())
-    GTEST_SKIP() << "Unsupported Ash version.";
-
   ScopedTestingPreinstalledAppData preinstalled_apps;
   ExternalInstallOptions options(GetWebAppUrl(),
                                  mojom::UserDisplayMode::kBrowser,
@@ -875,7 +856,7 @@ IN_PROC_BROWSER_TEST_F(PreinstalledWebAppMigrationBrowserTest,
   {
     auto info = WebAppInstallInfo::CreateWithStartUrlForTesting(
         embedded_test_server()->GetURL("/webapps/migration/old/"));
-    info->scope = info->start_url;
+    info->scope = info->start_url();
     info->title = u"Old app";
     old_app_id = web_app::test::InstallWebApp(profile(), std::move(info));
     apps::AppReadinessWaiter(profile(), old_app_id).Await();
@@ -894,7 +875,7 @@ IN_PROC_BROWSER_TEST_F(PreinstalledWebAppMigrationBrowserTest,
   {
     auto info = WebAppInstallInfo::CreateWithStartUrlForTesting(
         embedded_test_server()->GetURL("/webapps/migration/new/"));
-    info->scope = info->start_url;
+    info->scope = info->start_url();
     info->title = u"New app";
 
     WebAppInstallParams install_params;

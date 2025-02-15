@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "ash/webui/focus_mode/focus_mode_untrusted_ui.h"
 
 #include "ash/constants/ash_features.h"
@@ -29,16 +34,16 @@ FocusModeUntrustedUI::FocusModeUntrustedUI(content::WebUI* web_ui)
 
   // Add the content. We don't need to set up a default ("") path since the
   // trusted page will refer directly to player.html.
-  source->AddResourcePaths(base::make_span(kAshFocusModePlayerResources,
-                                           kAshFocusModePlayerResourcesSize));
+  source->AddResourcePaths(kAshFocusModePlayerResources);
   source->OverrideContentSecurityPolicy(
       network::mojom::CSPDirectiveName::DefaultSrc, "default-src 'self';");
   // Enables the page to actually load media.
   source->OverrideContentSecurityPolicy(
       network::mojom::CSPDirectiveName::MediaSrc, "media-src *;");
-  // Enables the page to load images. This is used to load track thumbnails.
+  // Enables the page to load images. The page is restricted to only loading
+  // images from data URLs passed to the page.
   source->OverrideContentSecurityPolicy(
-      network::mojom::CSPDirectiveName::ImgSrc, "img-src *;");
+      network::mojom::CSPDirectiveName::ImgSrc, "img-src data:;");
   // Enables the page to be loaded as an iframe by the trusted page.
   source->AddFrameAncestor(GURL(chrome::kChromeUIFocusModeMediaURL));
 }
@@ -48,14 +53,8 @@ FocusModeUntrustedUI::~FocusModeUntrustedUI() = default;
 WEB_UI_CONTROLLER_TYPE_IMPL(FocusModeUntrustedUI)
 
 FocusModeUntrustedUIConfig::FocusModeUntrustedUIConfig()
-    : WebUIConfig(content::kChromeUIUntrustedScheme,
-                  chrome::kChromeUIFocusModePlayerHost) {}
-
-std::unique_ptr<content::WebUIController>
-FocusModeUntrustedUIConfig::CreateWebUIController(content::WebUI* web_ui,
-                                                  const GURL& url) {
-  return std::make_unique<FocusModeUntrustedUI>(web_ui);
-}
+    : DefaultWebUIConfig(content::kChromeUIUntrustedScheme,
+                         chrome::kChromeUIFocusModePlayerHost) {}
 
 bool FocusModeUntrustedUIConfig::IsWebUIEnabled(
     content::BrowserContext* browser_context) {

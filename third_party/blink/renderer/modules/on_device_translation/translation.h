@@ -13,7 +13,6 @@
 #include "third_party/blink/renderer/bindings/modules/v8/v8_translation_language_options.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context_lifecycle_observer.h"
-#include "third_party/blink/renderer/modules/on_device_translation/language_translator.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
 #include "third_party/blink/renderer/platform/mojo/heap_mojo_remote.h"

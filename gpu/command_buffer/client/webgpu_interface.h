@@ -21,6 +21,14 @@ struct Mailbox;
 
 namespace webgpu {
 
+struct ReservedBuffer {
+  WGPUBuffer buffer;
+  uint32_t id;
+  uint32_t generation;
+  uint32_t deviceId;
+  uint32_t deviceGeneration;
+};
+
 struct ReservedTexture {
   WGPUTexture texture;
   uint32_t id;
@@ -66,6 +74,10 @@ class WebGPUInterface : public InterfaceBase {
   // Get a strong reference to the APIChannel backing the implementation.
   virtual scoped_refptr<APIChannel> GetAPIChannel() const = 0;
 
+  virtual ReservedBuffer ReserveBuffer(
+      WGPUDevice device,
+      const WGPUBufferDescriptor* optionalDesc = nullptr) = 0;
+
   virtual ReservedTexture ReserveTexture(
       WGPUDevice device,
       const WGPUTextureDescriptor* optionalDesc = nullptr) = 0;
@@ -82,13 +94,15 @@ class WebGPUInterface : public InterfaceBase {
 
   // NOTE: Passing WEBGPU_MAILBOX_DISCARD is only valid if the SharedImage
   // associated with `mailbox` has been created with
-  // SHARED_IMAGE_USAGE_WEBGPU_WRITE.
+  // SHARED_IMAGE_USAGE_WEBGPU_WRITE and at least one of `usage` or
+  // `internal_usage` contains a usage supporting lazy clearing (CopyDst or
+  // RenderAttachment).
   virtual void AssociateMailbox(GLuint device_id,
                                 GLuint device_generation,
                                 GLuint id,
                                 GLuint generation,
-                                GLuint usage,
-                                GLuint internal_usage,
+                                uint64_t usage,
+                                uint64_t internal_usage,
                                 const WGPUTextureFormat* view_formats,
                                 GLuint view_format_count,
                                 MailboxFlags flags,
@@ -98,7 +112,7 @@ class WebGPUInterface : public InterfaceBase {
                         GLuint device_generation,
                         GLuint id,
                         GLuint generation,
-                        GLuint usage,
+                        uint64_t usage,
                         const WGPUTextureFormat* view_formats,
                         GLuint view_format_count,
                         MailboxFlags flags,
@@ -111,7 +125,7 @@ class WebGPUInterface : public InterfaceBase {
                         GLuint device_generation,
                         GLuint id,
                         GLuint generation,
-                        GLuint usage,
+                        uint64_t usage,
                         MailboxFlags flags,
                         const Mailbox& mailbox) {
     AssociateMailbox(device_id, device_generation, id, generation, usage, 0,
@@ -122,8 +136,8 @@ class WebGPUInterface : public InterfaceBase {
                         GLuint device_generation,
                         GLuint id,
                         GLuint generation,
-                        GLuint usage,
-                        GLuint internal_usage,
+                        uint64_t usage,
+                        uint64_t internal_usage,
                         MailboxFlags flags,
                         const Mailbox& mailbox) {
     AssociateMailbox(device_id, device_generation, id, generation, usage,
@@ -134,11 +148,18 @@ class WebGPUInterface : public InterfaceBase {
                         GLuint device_generation,
                         GLuint id,
                         GLuint generation,
-                        GLuint usage,
+                        uint64_t usage,
                         const Mailbox& mailbox) {
     AssociateMailbox(device_id, device_generation, id, generation, usage, 0,
                      nullptr, 0, WEBGPU_MAILBOX_NONE, mailbox);
   }
+
+  virtual void AssociateMailboxForBuffer(GLuint device_id,
+                                         GLuint device_generation,
+                                         GLuint id,
+                                         GLuint generation,
+                                         uint64_t usage,
+                                         const Mailbox& mailbox) = 0;
 
   void SetWebGPUExecutionContextToken(
       const blink::WebGPUExecutionContextToken& token) {

@@ -10,15 +10,17 @@ import {TestImportManager} from '/common/testing/test_import_manager.js';
 
 import {BackgroundBridge} from '../common/background_bridge.js';
 import {BrailleCommandData} from '../common/braille/braille_command_data.js';
-import {Command, CommandCategory} from '../common/command.js';
+import type {Command} from '../common/command.js';
+import {CommandCategory} from '../common/command.js';
 import {CommandStore} from '../common/command_store.js';
 import {EventSourceType} from '../common/event_source_type.js';
 import {GestureCommandData} from '../common/gesture_command_data.js';
 import {KeyMap} from '../common/key_map.js';
-import {KeyBinding} from '../common/key_sequence.js';
+import type {KeyBinding} from '../common/key_sequence.js';
 import {KeyUtil} from '../common/key_util.js';
 import {Msgs} from '../common/msgs.js';
-import {ALL_PANEL_MENU_NODE_DATA, PanelNodeMenuData, PanelNodeMenuId, PanelNodeMenuItemData} from '../common/panel_menu_data.js';
+import type {PanelNodeMenuData, PanelNodeMenuId, PanelNodeMenuItemData} from '../common/panel_menu_data.js';
+import {ALL_PANEL_MENU_NODE_DATA} from '../common/panel_menu_data.js';
 
 import {PanelInterface} from './panel_interface.js';
 import {PanelMenu, PanelNodeMenu, PanelSearchMenu} from './panel_menu.js';
@@ -36,7 +38,8 @@ export class MenuManager {
   private activeMenu_: PanelMenu | null = null;
   private lastMenu_ = '';
   private menus_: PanelMenu[] = [];
-  private nodeMenuDictionary_: Record<PanelNodeMenuId, PanelNodeMenu> = {};
+  private nodeMenuDictionary_:
+      Partial<Record<PanelNodeMenuId, PanelNodeMenu>> = {};
   private searchMenu_: PanelSearchMenu | null = null;
 
   static disableMissingMsgsErrorsForTesting = false;
@@ -162,7 +165,7 @@ export class MenuManager {
   }
 
   addNodeMenuItem(itemData: PanelNodeMenuItemData): void {
-    this.nodeMenuDictionary_[itemData.menuId].addItemFromData(itemData);
+    this.nodeMenuDictionary_[itemData.menuId]?.addItemFromData(itemData);
   }
 
   /**
@@ -682,7 +685,7 @@ export class MenuManager {
     return this.menus_;
   }
 
-  get nodeMenuDictionary(): Record<PanelNodeMenuId, PanelNodeMenu> {
+  get nodeMenuDictionary(): Partial<Record<PanelNodeMenuId, PanelNodeMenu>> {
     return this.nodeMenuDictionary_;
   }
 

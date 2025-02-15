@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "ash/login/ui/login_pin_view.h"
 
 #include <memory>
@@ -11,8 +16,8 @@
 #include "ash/resources/vector_icons/vector_icons.h"
 #include "ash/strings/grit/ash_strings.h"
 #include "ash/style/ash_color_id.h"
-#include "ash/style/ash_color_provider.h"
 #include "ash/style/color_util.h"
+#include "ash/system/holding_space/holding_space_util.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
@@ -26,6 +31,7 @@
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/base/models/image_model.h"
+#include "ui/chromeos/styles/cros_tokens_color_mappings.h"
 #include "ui/events/base_event_utils.h"
 #include "ui/events/keycodes/dom/dom_code.h"
 #include "ui/gfx/geometry/size.h"
@@ -35,6 +41,7 @@
 #include "ui/views/animation/ink_drop_highlight.h"
 #include "ui/views/animation/ink_drop_impl.h"
 #include "ui/views/animation/ink_drop_state.h"
+#include "ui/views/background.h"
 #include "ui/views/controls/button/label_button.h"
 #include "ui/views/controls/focus_ring.h"
 #include "ui/views/layout/box_layout.h"
@@ -69,8 +76,9 @@ constexpr int kInitialBackspaceDelayMs = 500;
 constexpr int kRepeatingBackspaceDelayMs = 150;
 
 // Button sizes.
-constexpr int kButtonHeightDp = 56;
-constexpr int kButtonWidthDp = 72;
+constexpr int kButtonHeightDp = 60;
+constexpr int kButtonWidthDp = 64;
+constexpr int kButtonBackgroundDiameter = 48;
 constexpr gfx::Size kButtonSize = gfx::Size(kButtonWidthDp, kButtonHeightDp);
 
 std::u16string GetButtonLabelForNumber(int value) {
@@ -99,9 +107,14 @@ class BasePinButton : public views::View {
                 const std::u16string& accessible_name,
                 const base::RepeatingClosure& on_press)
       : on_press_(on_press) {
+    GetViewAccessibility().SetRole(ax::mojom::Role::kButton);
     GetViewAccessibility().SetName(accessible_name);
     SetFocusBehavior(FocusBehavior::ACCESSIBLE_ONLY);
     SetPreferredSize(size);
+    SetBackground(holding_space_util::CreateCircleBackground(
+        cros_tokens::kCrosSysSystemBaseElevated, kButtonBackgroundDiameter));
+
+    SetTooltipText(accessible_name);
 
     auto layout = std::make_unique<views::BoxLayout>(
         views::BoxLayout::Orientation::kVertical);
@@ -170,11 +183,11 @@ class BasePinButton : public views::View {
   }
 
   void OnEvent(ui::Event* event) override {
-    bool is_key_press = event->type() == ui::ET_KEY_PRESSED &&
+    bool is_key_press = event->type() == ui::EventType::kKeyPressed &&
                         (event->AsKeyEvent()->code() == ui::DomCode::ENTER ||
                          event->AsKeyEvent()->code() == ui::DomCode::SPACE);
-    bool is_mouse_press = event->type() == ui::ET_MOUSE_PRESSED;
-    bool is_gesture_tap = event->type() == ui::ET_GESTURE_TAP_DOWN;
+    bool is_mouse_press = event->type() == ui::EventType::kMousePressed;
+    bool is_gesture_tap = event->type() == ui::EventType::kGestureTapDown;
 
     if (is_key_press || is_mouse_press || is_gesture_tap) {
       DispatchPress(event);
@@ -182,11 +195,6 @@ class BasePinButton : public views::View {
     }
 
     views::View::OnEvent(event);
-  }
-
-  void GetAccessibleNodeData(ui::AXNodeData* node_data) override {
-    node_data->role = ax::mojom::Role::kButton;
-    node_data->SetName(GetViewAccessibility().GetCachedName());
   }
 
  protected:
@@ -296,10 +304,6 @@ class LoginPinView::BackspacePinButton : public BasePinButton {
     return this;
   }
 
-  std::u16string GetTooltipText(const gfx::Point& p) const override {
-    return GetViewAccessibility().GetCachedName();
-  }
-
   void OnEnabledChanged() {
     if (!GetEnabled()) {
       views::InkDrop::Get(this)->AnimateToState(
@@ -316,9 +320,9 @@ class LoginPinView::BackspacePinButton : public BasePinButton {
       return;
     }
     // If this is a button release style event cancel any repeat.
-    if (event->type() == ui::ET_GESTURE_TAP_CANCEL ||
-        event->type() == ui::ET_GESTURE_END ||
-        event->type() == ui::ET_MOUSE_RELEASED) {
+    if (event->type() == ui::EventType::kGestureTapCancel ||
+        event->type() == ui::EventType::kGestureEnd ||
+        event->type() == ui::EventType::kMouseReleased) {
       CancelRepeat();
     }
   }
@@ -477,7 +481,7 @@ void LoginPinView::TestApi::SetBackspaceTimers(
 }
 
 void LoginPinView::TestApi::ClickOnDigit(int number) const {
-  ui::MouseEvent event(ui::ET_MOUSE_PRESSED, gfx::Point(), gfx::Point(),
+  ui::MouseEvent event(ui::EventType::kMousePressed, gfx::Point(), gfx::Point(),
                        ui::EventTimeForNow(), 0, 0);
   GetButton(number)->OnEvent(&event);
 }
@@ -537,11 +541,11 @@ LoginPinView::LoginPinView(Style keyboard_style,
 LoginPinView::~LoginPinView() = default;
 
 void LoginPinView::NotifyAccessibilityLocationChanged() {
-  this->NotifyAccessibilityEvent(ax::mojom::Event::kLocationChanged,
-                                 false /*send_native_event*/);
+  this->NotifyAccessibilityEventDeprecated(ax::mojom::Event::kLocationChanged,
+                                           false /*send_native_event*/);
   for (NonAccessibleView* row : rows_) {
-    row->NotifyAccessibilityEvent(ax::mojom::Event::kLocationChanged,
-                                  false /*send_native_event*/);
+    row->NotifyAccessibilityEventDeprecated(ax::mojom::Event::kLocationChanged,
+                                            false /*send_native_event*/);
   }
 }
 

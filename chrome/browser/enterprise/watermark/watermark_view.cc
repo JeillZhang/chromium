@@ -10,18 +10,16 @@
 #include <string>
 
 #include "cc/paint/paint_canvas.h"
+#include "cc/paint/paint_recorder.h"
+#include "chrome/browser/enterprise/watermark/settings.h"
 #include "components/enterprise/watermarking/watermark.h"
+#include "third_party/skia/include/core/SkColor.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/compositor/layer.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/font.h"
 #include "ui/gfx/render_text.h"
 #include "ui/views/accessibility/view_accessibility.h"
-
-namespace {
-constexpr float kTextSize = 24.0f;
-constexpr int kWatermarkBlockWidth = 350;
-}
 
 namespace enterprise_watermark {
 
@@ -33,6 +31,7 @@ WatermarkView::WatermarkView(std::string text)
   SetPaintToLayer();
   layer()->SetFillsBoundsOpaquely(false);
   SetString(text);
+  GetViewAccessibility().SetIsInvisible(true);
 }
 
 WatermarkView::~WatermarkView() = default;
@@ -40,47 +39,24 @@ WatermarkView::~WatermarkView() = default;
 void WatermarkView::SetString(const std::string& text) {
   DCHECK(base::IsStringUTF8(text));
 
-  if (text.empty()) {
-    text_fill_.reset();
-    text_outline_.reset();
-    block_height_ = 0;
-  } else {
-    std::u16string utf16_text = base::UTF8ToUTF16(text);
-
-    // The coordinates here do not matter as the display rect will change for
-    // each drawn block.
-    gfx::Rect display_rect(0, 0, kWatermarkBlockWidth, 0);
-    text_fill_ = CreateFillRenderText(display_rect, utf16_text);
-    text_outline_ = CreateOutlineRenderText(display_rect, utf16_text);
-
-    // `block_height_` is going to be the max required height for a single line
-    // times the number of line.
-    int w = kWatermarkBlockWidth;
-    gfx::Canvas::SizeStringInt(utf16_text, WatermarkFontList(), &w,
-                               &block_height_, kTextSize,
-                               gfx::Canvas::NO_ELLIPSIS);
-    block_height_ *= text_fill_->GetNumLines();
-  }
+  watermark_block_ =
+      DrawWatermarkToPaintRecord(text, GetFillColor(), GetOutlineColor());
 
   // Invalidate the state of the view.
   SchedulePaint();
 }
 
 void WatermarkView::OnPaint(gfx::Canvas* canvas) {
-  // Trying to render an empty string in Skia will fail. A string is required
-  // to create the command buffer for the renderer.
-  DrawWatermark(canvas, text_fill_.get(), text_outline_.get(), block_height_,
-                background_color_, GetContentsBounds(), GetLocalBounds(),
-                kWatermarkBlockWidth);
+  gfx::Rect contents_bounds = GetContentsBounds();
+  DrawWatermark(
+      canvas->sk_canvas(), &watermark_block_.record, watermark_block_.width,
+      watermark_block_.height,
+      SkSize::Make(contents_bounds.width(), contents_bounds.height()));
 }
 
 void WatermarkView::SetBackgroundColor(SkColor background_color) {
   background_color_ = background_color;
   SchedulePaint();
-}
-
-void WatermarkView::GetAccessibleNodeData(ui::AXNodeData* node_data) {
-  node_data->AddState(ax::mojom::State::kInvisible);
 }
 
 BEGIN_METADATA(WatermarkView)

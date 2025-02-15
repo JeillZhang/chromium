@@ -9,13 +9,13 @@
 #include "ash/system/session/guest_session_confirmation_dialog.h"
 #include "base/notreached.h"
 #include "chrome/browser/ash/login/existing_user_controller.h"
-#include "chrome/browser/ash/login/ui/login_display_host.h"
 #include "chrome/browser/ash/profiles/profile_helper.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/extensions/login_screen/login/errors.h"
 #include "chrome/browser/chromeos/extensions/login_screen/login/login_api_lock_handler.h"
 #include "chrome/browser/chromeos/extensions/login_screen/login/shared_session_handler.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
+#include "chrome/browser/ui/ash/login/login_display_host.h"
 #include "chrome/common/pref_names.h"
 #include "chromeos/ash/components/login/auth/public/auth_types.h"
 #include "chromeos/ash/components/login/auth/public/cryptohome_key_constants.h"
@@ -53,7 +53,7 @@ void LoginAsh::LaunchManagedGuestSession(
   }
 
   user_manager::UserManager* user_manager = user_manager::UserManager::Get();
-  for (const user_manager::User* user : user_manager->GetUsers()) {
+  for (const user_manager::User* user : user_manager->GetPersistedUsers()) {
     if (!user || user->GetType() != user_manager::UserType::kPublicAccount) {
       continue;
     }
@@ -149,7 +149,7 @@ void LoginAsh::UnlockCurrentSession(const std::string& password,
 }
 
 void LoginAsh::LaunchSamlUserSession(const std::string& email,
-                                     const std::string& gaia_id,
+                                     const GaiaId& gaia_id,
                                      const std::string& password,
                                      const std::string& oauth_code,
                                      OptionalErrorCallback callback) {

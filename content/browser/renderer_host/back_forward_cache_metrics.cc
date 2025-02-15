@@ -6,6 +6,7 @@
 
 #include "base/debug/crash_logging.h"
 #include "base/debug/dump_without_crashing.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/metrics_hashes.h"
 #include "base/metrics/sparse_histogram.h"
@@ -528,6 +529,19 @@ void BackForwardCacheMetrics::RecordHistoryNavigationUMA(
   if (back_forward_cache_allowed) {
     UMA_HISTOGRAM_ENUMERATION("BackForwardCache.HistoryNavigationOutcome",
                               outcome);
+    int nav_offset = navigation->GetNavigationEntryOffset();
+    HistoryNavigationDirection direction =
+        nav_offset == 0
+            ? HistoryNavigationDirection::kSameEntry
+            : (nav_offset < 0 ? HistoryNavigationDirection::kBack
+                              : HistoryNavigationDirection::kForward);
+    if (navigation->IsServedFromBackForwardCache()) {
+      base::UmaHistogramEnumeration(
+          "BackForwardCache.RestoredNavigationDirection", direction);
+    } else {
+      base::UmaHistogramEnumeration(
+          "BackForwardCache.NonRestoredNavigationDirection", direction);
+    }
   }
 
   UMA_HISTOGRAM_ENUMERATION(
@@ -572,24 +586,26 @@ void BackForwardCacheMetrics::RecordHistoryNavigationUMA(
         feature);
   }
 
-  for (const auto& [reason, _] : page_store_result_->disabled_reasons()) {
-    // Use SparseHistogram instead of other simple macros for metrics. The
-    // reasons cannot be represented as a unified enum because they come from
-    // multiple sources. At first they were represented as strings but that
-    // makes it hard to track new additions. Now they are represented by
-    // a combination of source and source-specific enum.
-    base::UmaHistogramSparse(
-        "BackForwardCache.HistoryNavigationOutcome."
-        "DisabledForRenderFrameHostReason2",
-        MetricValue(reason));
-  }
+  if (back_forward_cache_allowed) {
+    for (const auto& [reason, _] : page_store_result_->disabled_reasons()) {
+      // Use SparseHistogram instead of other simple macros for metrics. The
+      // reasons cannot be represented as a unified enum because they come from
+      // multiple sources. At first they were represented as strings but that
+      // makes it hard to track new additions. Now they are represented by
+      // a combination of source and source-specific enum.
+      base::UmaHistogramSparse(
+          "BackForwardCache.HistoryNavigationOutcome."
+          "DisabledForRenderFrameHostReason2",
+          MetricValue(reason));
+    }
 
-  for (const uint64_t reason :
-       page_store_result_->disallow_activation_reasons()) {
-    base::UmaHistogramSparse(
-        "BackForwardCache.HistoryNavigationOutcome."
-        "DisallowActivationReason",
-        reason);
+    for (const uint64_t reason :
+         page_store_result_->disallow_activation_reasons()) {
+      base::UmaHistogramSparse(
+          "BackForwardCache.HistoryNavigationOutcome."
+          "DisallowActivationReason",
+          reason);
+    }
   }
 
   if (!DidSwapBrowsingInstance()) {
@@ -606,8 +622,9 @@ void BackForwardCacheMetrics::RecordHistoryNavigationUMA(
         "BrowsingInstanceNotSwappedReason",
         browsing_instance_swap_result_.value());
 
-    if (browsing_instance_swap_result_ ==
-        ShouldSwapBrowsingInstance::kNo_HasRelatedActiveContents) {
+    if (back_forward_cache_allowed &&
+        browsing_instance_swap_result_ ==
+            ShouldSwapBrowsingInstance::kNo_HasRelatedActiveContents) {
       CHECK_GT(related_active_contents_count_, 1);
       // If a page was not restored from the back/forward cache because there
       // are related active contents, log the details of the related active
@@ -739,6 +756,7 @@ bool BackForwardCacheMetrics::DidSwapBrowsingInstance() const {
     case ShouldSwapBrowsingInstance::kNo_Guest:
     case ShouldSwapBrowsingInstance::kNo_HasNotComittedAnyNavigation:
     case ShouldSwapBrowsingInstance::kNo_NotPrimaryMainFrame:
+    case ShouldSwapBrowsingInstance::kNo_InitiatorRequestedNoProactiveSwap:
       return false;
     case ShouldSwapBrowsingInstance::kYes_ForceSwap:
     case ShouldSwapBrowsingInstance::kYes_CrossSiteProactiveSwap:

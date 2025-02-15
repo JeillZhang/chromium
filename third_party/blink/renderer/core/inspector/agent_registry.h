@@ -70,9 +70,8 @@ class CORE_EXPORT AgentRegistry {
   template <typename ForEachCallable>
   void ForEachAgent(const ForEachCallable& callable) const {
     iteration_counter_++;
-    auto* end = agents_.end();
-    for (auto* agent = agents_.begin(); agent != end; agent++) {
-      callable(agent->Get());
+    for (const Member<AgentType>& agent : agents_) {
+      callable(agent);
     }
     if (iteration_counter_ > 0)
       iteration_counter_--;

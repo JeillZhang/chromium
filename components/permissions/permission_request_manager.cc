@@ -4,6 +4,7 @@
 
 #include "components/permissions/permission_request_manager.h"
 
+#include <algorithm>
 #include <string>
 
 #include "base/auto_reset.h"
@@ -16,12 +17,13 @@
 #include "base/metrics/user_metrics_action.h"
 #include "base/observer_list.h"
 #include "base/rand_util.h"
-#include "base/ranges/algorithm.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/time/clock.h"
 #include "base/time/time.h"
-#include "build/chromeos_buildflags.h"
 #include "components/back_forward_cache/back_forward_cache_disable.h"
+#include "components/content_settings/core/browser/content_settings_registry.h"
+#include "components/content_settings/core/common/content_settings.h"
+#include "components/content_settings/core/common/content_settings_types.h"
 #include "components/permissions/constants.h"
 #include "components/permissions/features.h"
 #include "components/permissions/origin_keyed_permission_action_service.h"
@@ -197,9 +199,7 @@ void PermissionRequestManager::AddRequest(
         "Permissions.Prompt.Notifications.EnabledAppLevel",
         app_level_settings_allow_site_notifications);
 
-    if (!app_level_settings_allow_site_notifications &&
-        base::FeatureList::IsEnabled(
-            features::kBlockNotificationPromptsIfDisabledOnAppLevel)) {
+    if (!app_level_settings_allow_site_notifications) {
       // Automatically cancel site Notification requests when Chrome is not able
       // to send notifications in an app level.
       request->Cancelled();
@@ -240,13 +240,13 @@ void PermissionRequestManager::AddRequest(
   bool is_main_frame =
       url::IsSameOriginWith(main_frame_origin, request->requesting_origin());
 
-  std::optional<url::Origin> auto_approval_origin =
-      PermissionsClient::Get()->GetAutoApprovalOrigin(
-          web_contents()->GetBrowserContext());
-  if (auto_approval_origin) {
-    if (url::Origin::Create(request->requesting_origin()) ==
-        auto_approval_origin.value()) {
-      request->PermissionGranted(/*is_one_time=*/false);
+  std::optional<PermissionAction> should_auto_approve_request =
+      PermissionsClient::Get()->GetAutoApprovalStatus(
+          web_contents()->GetBrowserContext(), request->requesting_origin());
+
+  if (should_auto_approve_request) {
+    if (should_auto_approve_request == PermissionAction::GRANTED) {
+      request->PermissionGranted(/*is_one_time=*/true);
     }
     request->RequestFinished();
     return;
@@ -299,7 +299,8 @@ void PermissionRequestManager::AddRequest(
 
 bool PermissionRequestManager::ReprioritizeCurrentRequestIfNeeded() {
   if (!IsRequestInProgress() ||
-      IsCurrentRequestEmbeddedPermissionElementInitiated()) {
+      IsCurrentRequestEmbeddedPermissionElementInitiated() ||
+      !can_preempt_current_request_) {
     return true;
   }
 
@@ -419,7 +420,7 @@ void PermissionRequestManager::PreemptAndRequeueCurrentRequest() {
   }
 
   // Because the order of the requests is changed, we should not preignore it.
-  preignore_timer_.AbandonAndStop();
+  preignore_timer_.Stop();
 
   requests_.clear();
 }
@@ -543,15 +544,7 @@ void PermissionRequestManager::OnVisibilityChanged(
           break;
         case PermissionPrompt::TabSwitchingBehavior::
             kDestroyPromptAndIgnoreRequest:
-// Lacros has an issue with focus switching if a view is destroyed while the
-// webcontents is losing visibility, therefore the Ignore() call gets delayed.
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-          base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
-              FROM_HERE, base::BindOnce(&PermissionRequestManager::Ignore,
-                                        weak_factory_.GetWeakPtr()));
-#else   // BUILDFLAG(IS_CHROMEOS_LACROS)
           Ignore();
-#endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
           break;
         case PermissionPrompt::TabSwitchingBehavior::kKeepPromptAlive:
           break;
@@ -607,6 +600,7 @@ void PermissionRequestManager::Accept() {
   if (ignore_callbacks_from_prompt_)
     return;
   DCHECK(view_);
+  base::AutoReset<bool> block_preempt(&can_preempt_current_request_, false);
   std::vector<raw_ptr<PermissionRequest, VectorExperimental>>::iterator
       requests_iter;
   for (requests_iter = requests_.begin(); requests_iter != requests_.end();
@@ -637,6 +631,7 @@ void PermissionRequestManager::AcceptThisTime() {
   if (ignore_callbacks_from_prompt_)
     return;
   DCHECK(view_);
+  base::AutoReset<bool> block_preempt(&can_preempt_current_request_, false);
   std::vector<raw_ptr<PermissionRequest, VectorExperimental>>::iterator
       requests_iter;
   for (requests_iter = requests_.begin(); requests_iter != requests_.end();
@@ -656,15 +651,14 @@ void PermissionRequestManager::Deny() {
   if (ignore_callbacks_from_prompt_)
     return;
   DCHECK(view_);
+  base::AutoReset<bool> block_preempt(&can_preempt_current_request_, false);
 
   // Suppress any further prompts in this WebContents, from any origin, until
   // there is a user-initiated navigation. This stops users from getting
   // trapped in request loops where the website automatically navigates
   // cross-origin (e.g. to another subdomain) to be able to prompt again after
   // a rejection.
-  if (base::FeatureList::IsEnabled(
-          features::kBlockRepeatedNotificationPermissionPrompts) &&
-      base::Contains(requests_, ContentSettingsType::NOTIFICATIONS,
+  if (base::Contains(requests_, ContentSettingsType::NOTIFICATIONS,
                      &PermissionRequest::GetContentSettingsType)) {
     is_notification_prompt_cooldown_active_ = true;
   }
@@ -687,6 +681,7 @@ void PermissionRequestManager::Dismiss() {
   if (ignore_callbacks_from_prompt_)
     return;
   DCHECK(view_);
+  base::AutoReset<bool> block_preempt(&can_preempt_current_request_, false);
   std::vector<raw_ptr<PermissionRequest, VectorExperimental>>::iterator
       requests_iter;
   for (requests_iter = requests_.begin(); requests_iter != requests_.end();
@@ -705,6 +700,7 @@ void PermissionRequestManager::Ignore() {
   if (ignore_callbacks_from_prompt_)
     return;
   DCHECK(view_);
+  base::AutoReset<bool> block_preempt(&can_preempt_current_request_, false);
   std::vector<raw_ptr<PermissionRequest, VectorExperimental>>::iterator
       requests_iter;
   for (requests_iter = requests_.begin(); requests_iter != requests_.end();
@@ -722,6 +718,7 @@ void PermissionRequestManager::Ignore() {
 void PermissionRequestManager::FinalizeCurrentRequests() {
   CHECK(IsRequestInProgress());
   ResetViewStateForCurrentRequest();
+  base::AutoReset<bool> block_preempt(&can_preempt_current_request_, false);
   std::vector<raw_ptr<PermissionRequest, VectorExperimental>>::iterator
       requests_iter;
   for (requests_iter = requests_.begin(); requests_iter != requests_.end();
@@ -735,9 +732,11 @@ void PermissionRequestManager::FinalizeCurrentRequests() {
 
   // No need to execute the preignore logic as we canceling currently active
   // requests anyway.
-  preignore_timer_.AbandonAndStop();
+  preignore_timer_.Stop();
 
   requests_.clear();
+  // We have no need to block preemption anymore.
+  std::ignore = std::move(block_preempt);
 
   for (Observer& observer : observer_list_) {
     observer.OnRequestsFinalized();
@@ -760,7 +759,7 @@ void PermissionRequestManager::OpenHelpCenterLink(const ui::Event& event) {
           /*navigation_handle_callback=*/{});
       break;
     default:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }
 
@@ -845,6 +844,9 @@ bool PermissionRequestManager::RecreateView() {
   }
 
   current_request_prompt_disposition_ = view_->GetPromptDisposition();
+  current_request_pepc_prompt_position_ = view_->GetPromptPosition();
+  SetCurrentRequestsInitialStatuses();
+
   if (auto_response_for_test_ != NONE && should_do_auto_response_for_testing) {
     // MAC_OS_PROMPT disposition has it's own auto-response logic for testing,
     // so if that was the original disposition we would have skipped our own
@@ -853,6 +855,10 @@ bool PermissionRequestManager::RecreateView() {
     DoAutoResponseForTesting();  // IN-TEST
   }
   return true;
+}
+
+const PermissionPrompt* PermissionRequestManager::GetCurrentPrompt() const {
+  return view_.get();
 }
 
 std::optional<gfx::Rect>
@@ -948,7 +954,7 @@ void PermissionRequestManager::DequeueRequestIfNeeded() {
         permission_ui_selectors_[selector_index]->IsPermissionRequestSupported(
             requests_.front()->request_type())) {
       permission_ui_selectors_[selector_index]->SelectUiToUse(
-          requests_.front(),
+          web_contents(), requests_.front(),
           base::BindOnce(&PermissionRequestManager::OnPermissionUiSelectorDone,
                          weak_factory_.GetWeakPtr(), selector_index));
       continue;
@@ -983,11 +989,18 @@ void PermissionRequestManager::ShowPrompt() {
     return;
   }
 
-  if (!ReprioritizeCurrentRequestIfNeeded())
+  // We check `requests_.empty()` after some following calls
+  // (`ReprioritizeCurrentRequestIfNeeded` and `RecreateView`) to prevent
+  // accidentally finalizing the requests, which could be triggered in the
+  // callback chains or error handling (e.g the factory implementation can't
+  // show a permission prompt).
+  if (!ReprioritizeCurrentRequestIfNeeded() || requests_.empty()) {
     return;
+  }
 
-  if (!RecreateView())
+  if (!RecreateView() || requests_.empty()) {
     return;
+  }
 
   if (!current_request_already_displayed_) {
     PermissionUmaUtil::PermissionPromptShown(requests_);
@@ -1019,8 +1032,14 @@ void PermissionRequestManager::ShowPrompt() {
         web_contents(), requests_[0]->request_type(), std::nullopt,
         DetermineCurrentRequestUIDisposition(),
         DetermineCurrentRequestUIDispositionReasonForUMA(),
-        requests_[0]->GetGestureType(), std::nullopt, false,
-        web_contents()->GetLastCommittedURL(),
+        requests_[0]->GetGestureType(),
+        /*prompt_display_duration=*/std::nullopt, /*is_post_prompt=*/false,
+        web_contents()
+            ->GetPrimaryMainFrame()
+            ->GetLastCommittedOrigin()
+            .GetURL(),
+        current_request_pepc_prompt_position_,
+        GetRequestInitialStatus(requests_[0]),
         hats_shown_callback_.has_value()
             ? std::move(hats_shown_callback_.value())
             : base::DoNothing());
@@ -1061,6 +1080,7 @@ void PermissionRequestManager::ResetViewStateForCurrentRequest() {
   current_request_decision_time_ = base::Time();
   current_request_prompt_disposition_.reset();
   prediction_grant_likelihood_.reset();
+  permission_request_relevance_.reset();
   current_request_ui_to_use_.reset();
   was_decision_held_back_.reset();
   selector_decisions_.clear();
@@ -1069,6 +1089,8 @@ void PermissionRequestManager::ResetViewStateForCurrentRequest() {
   did_click_manage_ = false;
   did_click_learn_more_ = false;
   hats_shown_callback_.reset();
+  current_request_pepc_prompt_position_.reset();
+  current_requests_initial_statuses_.clear();
   if (view_)
     DeletePrompt();
 }
@@ -1114,8 +1136,9 @@ void PermissionRequestManager::CurrentRequestsDecided(
         DetermineCurrentRequestUIDisposition(),
         DetermineCurrentRequestUIDispositionReasonForUMA(),
         view_ ? std::optional(view_->GetPromptVariants()) : std::nullopt,
-        prediction_grant_likelihood_, was_decision_held_back_, ignore_reason,
-        did_show_prompt_, did_click_manage_, did_click_learn_more_);
+        prediction_grant_likelihood_, permission_request_relevance_,
+        was_decision_held_back_, ignore_reason, did_show_prompt_,
+        did_click_manage_, did_click_learn_more_);
   }
 
   std::optional<QuietUiReason> quiet_ui_reason;
@@ -1138,15 +1161,13 @@ void PermissionRequestManager::CurrentRequestsDecided(
         request->requesting_origin(), DetermineCurrentRequestUIDisposition(),
         DetermineCurrentRequestUIDispositionReasonForUMA(),
         request->GetGestureType(), quiet_ui_reason, time_since_shown,
+        current_request_pepc_prompt_position_, GetRequestInitialStatus(request),
         web_contents());
 
     PermissionUmaUtil::RecordEmbargoStatus(RecordActionAndGetEmbargoStatus(
         browser_context, request, permission_action));
   }
 
-  // IGNORED is not a decision on the prompt and it occurs because of external
-  // factors (e.g. tab switching). Therefore |ShouldFinalizeRequestAfterDecided|
-  // does not take effect when the action is IGNORED.
   if (ShouldFinalizeRequestAfterDecided(permission_action)) {
     FinalizeCurrentRequests();
   }
@@ -1155,7 +1176,7 @@ void PermissionRequestManager::CurrentRequestsDecided(
 void PermissionRequestManager::CleanUpRequests() {
   // No need to execute the preignore logic as we canceling currently active
   // requests anyway.
-  preignore_timer_.AbandonAndStop();
+  preignore_timer_.Stop();
 
   for (; !pending_permission_requests_.IsEmpty();
        pending_permission_requests_.Pop()) {
@@ -1247,7 +1268,7 @@ PermissionRequestManager::VisitDuplicateRequests(
 void PermissionRequestManager::PermissionGrantedIncludingDuplicates(
     PermissionRequest* request,
     bool is_one_time) {
-  DCHECK_EQ(1ul, base::ranges::count(requests_, request) +
+  DCHECK_EQ(1ul, std::ranges::count(requests_, request) +
                      pending_permission_requests_.Count(request))
       << "Only requests in [pending_permission_]requests_ can have duplicates";
   request->PermissionGranted(is_one_time);
@@ -1263,7 +1284,7 @@ void PermissionRequestManager::PermissionGrantedIncludingDuplicates(
 
 void PermissionRequestManager::PermissionDeniedIncludingDuplicates(
     PermissionRequest* request) {
-  DCHECK_EQ(1ul, base::ranges::count(requests_, request) +
+  DCHECK_EQ(1ul, std::ranges::count(requests_, request) +
                      pending_permission_requests_.Count(request))
       << "Only requests in [pending_permission_]requests_ can have duplicates";
   request->PermissionDenied();
@@ -1278,7 +1299,7 @@ void PermissionRequestManager::PermissionDeniedIncludingDuplicates(
 void PermissionRequestManager::CancelledIncludingDuplicates(
     PermissionRequest* request,
     bool is_final_decision) {
-  DCHECK_EQ(1ul, base::ranges::count(requests_, request) +
+  DCHECK_EQ(1ul, std::ranges::count(requests_, request) +
                      pending_permission_requests_.Count(request))
       << "Only requests in [pending_permission_]requests_ can have duplicates";
   request->Cancelled(is_final_decision);
@@ -1294,7 +1315,7 @@ void PermissionRequestManager::CancelledIncludingDuplicates(
 
 void PermissionRequestManager::RequestFinishedIncludingDuplicates(
     PermissionRequest* request) {
-  DCHECK_EQ(1ul, base::ranges::count(requests_, request) +
+  DCHECK_EQ(1ul, std::ranges::count(requests_, request) +
                      pending_permission_requests_.Count(request))
       << "Only requests in [pending_permission_]requests_ can have duplicates";
   auto duplicate_list = VisitDuplicateRequests(
@@ -1468,6 +1489,11 @@ void PermissionRequestManager::OnPermissionUiSelectorDone(
                                          ->PredictedGrantLikelihoodForUKM();
     }
 
+    if (!permission_request_relevance_.has_value()) {
+      permission_request_relevance_ = permission_ui_selectors_[decision_index]
+                                          ->PermissionRequestRelevanceForUKM();
+    }
+
     if (!was_decision_held_back_.has_value()) {
       was_decision_held_back_ = permission_ui_selectors_[decision_index]
                                     ->WasSelectorDecisionHeldback();
@@ -1544,7 +1570,7 @@ void PermissionRequestManager::DoAutoResponseForTesting() {
       Dismiss();
       break;
     case NONE:
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
   }
 }
 
@@ -1603,6 +1629,43 @@ PermissionRequestManager::RecordActionAndGetEmbargoStatus(
   }
 
   return PermissionEmbargoStatus::NOT_EMBARGOED;
+}
+
+void PermissionRequestManager::SetCurrentRequestsInitialStatuses() {
+  // This function is called whenever the view is created which can happen
+  // multiple times for the same request (e.g. by tab switching). Only actually
+  // compute this if |current_requests_initial_statuses_| has been cleared
+  // before to mark a view being closed.
+  if (!current_requests_initial_statuses_.empty()) {
+    return;
+  }
+
+  auto* map = PermissionsClient::Get()->GetSettingsMap(
+      web_contents()->GetBrowserContext());
+  for (const auto& request : requests_) {
+    // It's possible in tests for |map| to not be initialized yet. Also there
+    // are some permission requests (like SMART_CARD_DATA) which are not for
+    // content settings.
+    if (!map || !content_settings::ContentSettingsRegistry::GetInstance()->Get(
+                    request->GetContentSettingsType())) {
+      current_requests_initial_statuses_.emplace(request,
+                                                 CONTENT_SETTING_DEFAULT);
+    } else {
+      current_requests_initial_statuses_.emplace(
+          request,
+          map->GetContentSetting(GetRequestingOrigin(), GetEmbeddingOrigin(),
+                                 request->GetContentSettingsType()));
+    }
+  }
+}
+
+ContentSetting PermissionRequestManager::GetRequestInitialStatus(
+    PermissionRequest* request) {
+  if (current_requests_initial_statuses_.contains(request)) {
+    return current_requests_initial_statuses_.at(request);
+  }
+
+  return CONTENT_SETTING_DEFAULT;
 }
 
 WEB_CONTENTS_USER_DATA_KEY_IMPL(PermissionRequestManager);

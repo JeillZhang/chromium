@@ -30,6 +30,8 @@
 #include "ui/base/models/dialog_model.h"
 #include "ui/base/models/dialog_model_field.h"
 #include "ui/base/models/image_model.h"
+#include "ui/base/mojom/dialog_button.mojom.h"
+#include "ui/base/mojom/ui_base_types.mojom-shared.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/color/color_id.h"
 #include "ui/compositor/layer.h"
@@ -107,10 +109,9 @@ ui::ImageModel CreateImageModelFromBundleMetadata(
 // functions that need a string, but want to accept either ids or raw strings.
 class ToU16String {
  public:
-  // NOLINTNEXTLINE(runtime/explicit)
+  // NOLINTNEXTLINE
   ToU16String(int string_id) : string_(l10n_util::GetStringUTF16(string_id)) {}
-
-  // NOLINTNEXTLINE(runtime/explicit)
+  // NOLINTNEXTLINE
   ToU16String(const std::u16string& string) : string_(string) {}
 
   const std::u16string& get() const { return string_; }
@@ -465,14 +466,15 @@ void IsolatedWebAppInstallerView::SetDialogButtons(
     return;
   }
 
-  int buttons = ui::DIALOG_BUTTON_CANCEL;
+  int buttons = static_cast<int>(ui::mojom::DialogButton::kCancel);
   dialog_delegate->SetButtonLabel(
-      ui::DIALOG_BUTTON_CANCEL,
+      ui::mojom::DialogButton::kCancel,
       l10n_util::GetStringUTF16(close_button_label_id));
   if (accept_button_label_id.has_value()) {
-    buttons |= ui::DIALOG_BUTTON_OK;
+    buttons = static_cast<int>(ui::mojom::DialogButton::kOk) |
+              static_cast<int>(ui::mojom::DialogButton::kCancel);
     dialog_delegate->SetButtonLabel(
-        ui::DIALOG_BUTTON_OK,
+        ui::mojom::DialogButton::kOk,
         l10n_util::GetStringUTF16(accept_button_label_id.value()));
   }
   dialog_delegate->SetButtons(buttons);
@@ -669,7 +671,7 @@ views::Widget* IsolatedWebAppInstallerViewImpl::ShowChildDialog(
 
   std::unique_ptr<views::BubbleDialogModelHost> bubble =
       views::BubbleDialogModelHost::CreateModal(dialog_model_builder.Build(),
-                                                ui::MODAL_TYPE_CHILD);
+                                                ui::mojom::ModalType::kChild);
   bubble->SetAnchorView(GetWidget()->GetContentsView());
   bubble->SetArrow(views::BubbleBorder::FLOAT);
   bubble->set_fixed_width(ChromeLayoutProvider::Get()->GetDistanceMetric(

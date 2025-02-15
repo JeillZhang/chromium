@@ -67,7 +67,7 @@ constexpr float kEventsPresentRoundedRadius = 1.f;
 // The gap padding between the date and the indicator.
 constexpr int kGapBetweenDateAndIndicator = 1;
 
-// For GlanceablesV2: the insets within the date cell.
+// The insets within the date cell.
 constexpr int kDateCellVerticalPaddingGlanceables = 10;
 constexpr auto kDateCellInsetsGlanceables =
     gfx::Insets::VH(kDateCellVerticalPaddingGlanceables, 16);
@@ -116,9 +116,10 @@ CalendarDateCellView::CalendarDateCellView(
       time_difference_(time_difference),
       calendar_view_controller_(calendar_view_controller) {
   SetHorizontalAlignment(gfx::ALIGN_CENTER);
-  SetBorder(views::CreateEmptyBorder(calendar_utils::IsForGlanceablesV2()
-                                         ? kDateCellInsetsGlanceables
-                                         : calendar_utils::kDateCellInsets));
+  SetBorder(views::CreateEmptyBorder(
+      features::AreAnyGlanceablesTimeManagementViewsEnabled()
+          ? kDateCellInsetsGlanceables
+          : calendar_utils::kDateCellInsets));
   label()->SetElideBehavior(gfx::NO_ELIDE);
   label()->SetSubpixelRenderingEnabled(false);
   if (is_today_) {
@@ -173,7 +174,8 @@ void CalendarDateCellView::OnPaintBackground(gfx::Canvas* canvas) {
   highlight_border.setStyle(cc::PaintFlags::kStroke_Style);
   highlight_border.setStrokeWidth(kBorderLineThickness);
 
-  const bool is_for_glanceables = calendar_utils::IsForGlanceablesV2();
+  const bool is_for_glanceables =
+      features::AreAnyGlanceablesTimeManagementViewsEnabled();
   if (is_today_) {
     gfx::RectF background_rect(local_bounds);
 
@@ -370,9 +372,10 @@ void CalendarDateCellView::OnDateCellActivated(const ui::Event& event) {
 gfx::Point CalendarDateCellView::GetEventsPresentIndicatorCenterPosition() {
   const gfx::Rect content = GetContentsBounds();
   const int horizontal_padding = calendar_utils::kDateHorizontalPadding;
-  const int vertical_padding = calendar_utils::IsForGlanceablesV2()
-                                   ? kDateCellVerticalPaddingGlanceables
-                                   : calendar_utils::kDateVerticalPadding;
+  const int vertical_padding =
+      features::AreAnyGlanceablesTimeManagementViewsEnabled()
+          ? kDateCellVerticalPaddingGlanceables
+          : calendar_utils::kDateVerticalPadding;
   return gfx::Point(
       (content.width() + horizontal_padding * 2) / 2,
       content.height() + vertical_padding + kGapBetweenDateAndIndicator);
@@ -511,9 +514,7 @@ CalendarMonthView::CalendarMonthView(
 
     ++safe_index;
     if (safe_index == 32) {
-      NOTREACHED_IN_MIGRATION()
-          << "Should not render more than 31 days in a month.";
-      break;
+      NOTREACHED() << "Should not render more than 31 days in a month.";
     }
   }
 
@@ -606,9 +607,8 @@ CalendarMonthView::CalendarMonthView(
       SCOPED_CRASH_KEY_NUMBER("CMV", "first_day_of_month_time",
                               100 * first_day_of_month_exploded.hour +
                                   first_day_of_month_exploded.minute);
-      NOTREACHED_IN_MIGRATION()
+      NOTREACHED()
           << "Should not render more than 7 days as the gray out cells.";
-      break;
     }
   }
 }

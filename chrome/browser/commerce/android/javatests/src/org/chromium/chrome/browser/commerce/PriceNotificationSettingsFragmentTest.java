@@ -5,6 +5,7 @@
 package org.chromium.chrome.browser.commerce;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -30,7 +31,7 @@ import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.components.browser_ui.settings.ChromeSwitchPreference;
 import org.chromium.components.prefs.PrefService;
 import org.chromium.components.signin.base.CoreAccountInfo;
-import org.chromium.components.signin.identitymanager.ConsentLevel;
+import org.chromium.components.signin.base.GaiaId;
 import org.chromium.components.signin.identitymanager.IdentityManager;
 
 /**
@@ -60,8 +61,10 @@ public class PriceNotificationSettingsFragmentTest {
         // Make sure the browser is set up correctly prior to mocking everything for settings.
         mActivityTestRule.startMainActivityOnBlankPage();
 
-        when(mIdentityManager.getPrimaryAccountInfo(ConsentLevel.SYNC))
-                .thenReturn(CoreAccountInfo.createFromEmailAndGaiaId("user@example.com", "12345"));
+        when(mIdentityManager.getPrimaryAccountInfo(anyInt()))
+                .thenReturn(
+                        CoreAccountInfo.createFromEmailAndGaiaId(
+                                "user@example.com", new GaiaId("12345")));
         when(mIdentityServicesProvider.getIdentityManager(any())).thenReturn(mIdentityManager);
 
         IdentityServicesProvider.setInstanceForTests(mIdentityServicesProvider);
@@ -82,7 +85,7 @@ public class PriceNotificationSettingsFragmentTest {
     @SmallTest
     @Feature("PriceTrackingSettings")
     public void testEmailPreferenceToggleInvisibleIfNoAccount() {
-        when(mIdentityManager.getPrimaryAccountInfo(ConsentLevel.SYNC)).thenReturn(null);
+        when(mIdentityManager.getPrimaryAccountInfo(anyInt())).thenReturn(null);
 
         mTestRule.startSettingsActivity();
 

@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "sandbox/win/src/win_utils.h"
 
 #include <windows.h>
@@ -17,6 +22,7 @@
 #include <string>
 #include <vector>
 
+#include "base/containers/span.h"
 #include "base/numerics/safe_math.h"
 #include "base/strings/string_util.h"
 #include "base/win/scoped_handle.h"
@@ -109,25 +115,24 @@ std::optional<std::wstring> GetTypeNameFromHandle(HANDLE handle) {
 }
 
 bool CopyToChildMemory(HANDLE child,
-                       const void* local_buffer,
-                       size_t buffer_bytes,
+                       const base::span<uint8_t> local_buffer,
                        void** remote_buffer) {
   DCHECK(remote_buffer);
-  if (0 == buffer_bytes) {
+  if (local_buffer.empty()) {
     *remote_buffer = nullptr;
     return true;
   }
 
   // Allocate memory in the target process without specifying the address
-  void* remote_data = ::VirtualAllocEx(child, nullptr, buffer_bytes, MEM_COMMIT,
-                                       PAGE_READWRITE);
+  void* remote_data = ::VirtualAllocEx(child, nullptr, local_buffer.size(),
+                                       MEM_COMMIT, PAGE_READWRITE);
   if (!remote_data)
     return false;
 
   SIZE_T bytes_written;
-  bool success = ::WriteProcessMemory(child, remote_data, local_buffer,
-                                      buffer_bytes, &bytes_written);
-  if (!success || bytes_written != buffer_bytes) {
+  bool success = ::WriteProcessMemory(child, remote_data, local_buffer.data(),
+                                      local_buffer.size(), &bytes_written);
+  if (!success || bytes_written != local_buffer.size()) {
     ::VirtualFreeEx(child, remote_data, 0, MEM_RELEASE);
     return false;
   }
@@ -171,37 +176,6 @@ void* GetProcessBaseAddress(HANDLE process) {
     return nullptr;
 
   return base_address;
-}
-
-std::optional<ProcessHandleMap> GetCurrentProcessHandles() {
-  DWORD handle_count;
-  if (!::GetProcessHandleCount(::GetCurrentProcess(), &handle_count))
-    return std::nullopt;
-
-  // The system call will return only handles up to the buffer size so add a
-  // margin of error of an additional 1000 handles.
-  std::vector<char> buffer((handle_count + 1000) * sizeof(uint32_t));
-  DWORD return_length;
-  NTSTATUS status = GetNtExports()->QueryInformationProcess(
-      ::GetCurrentProcess(), ProcessHandleTable, buffer.data(),
-      static_cast<ULONG>(buffer.size()), &return_length);
-
-  if (!NT_SUCCESS(status)) {
-    ::SetLastError(GetLastErrorFromNtStatus(status));
-    return std::nullopt;
-  }
-  DCHECK(buffer.size() >= return_length);
-  DCHECK((buffer.size() % sizeof(uint32_t)) == 0);
-  ProcessHandleMap handle_map;
-  const uint32_t* handle_values = reinterpret_cast<uint32_t*>(buffer.data());
-  size_t count = return_length / sizeof(uint32_t);
-  for (size_t index = 0; index < count; ++index) {
-    HANDLE handle = base::win::Uint32ToHandle(handle_values[index]);
-    auto type_name = GetTypeNameFromHandle(handle);
-    if (type_name)
-      handle_map[type_name.value()].push_back(handle);
-  }
-  return handle_map;
 }
 
 bool ContainsNulCharacter(std::wstring_view str) {

@@ -21,8 +21,7 @@
 #include "ui/views/widget/widget_delegate.h"
 #include "ui/views/widget/widget_observer.h"
 
-#if (BUILDFLAG(IS_LINUX) && !BUILDFLAG(IS_CASTOS)) || \
-    BUILDFLAG(IS_CHROMEOS_LACROS) || BUILDFLAG(IS_WIN)
+#if (BUILDFLAG(IS_LINUX) && !BUILDFLAG(IS_CASTOS)) || BUILDFLAG(IS_WIN)
 
 #include "ui/display/screen.h"
 #endif
@@ -197,8 +196,7 @@ class DesktopWidgetTestInteractive : public DesktopWidgetTest {
   // DesktopWidgetTest
   void SetUp() override;
 
-#if (BUILDFLAG(IS_LINUX) && !BUILDFLAG(IS_CASTOS)) || \
-    BUILDFLAG(IS_CHROMEOS_LACROS) || BUILDFLAG(IS_WIN)
+#if (BUILDFLAG(IS_LINUX) && !BUILDFLAG(IS_CASTOS)) || BUILDFLAG(IS_WIN)
   void TearDown() override;
   std::unique_ptr<display::Screen> screen_;
 #endif
@@ -247,6 +245,7 @@ class TestDesktopWidgetDelegate : public WidgetDelegate {
   bool OnCloseRequested(Widget::ClosedReason close_reason) override;
 
  private:
+  std::unique_ptr<Widget> owned_widget_;
   raw_ptr<Widget> widget_;
   raw_ptr<View> contents_view_ = nullptr;
   int window_closing_count_ = 0;
@@ -311,6 +310,8 @@ class WidgetVisibleWaiter : public WidgetObserver {
 
   // Waits for the widget to become visible.
   void Wait();
+  // Waits for the widget to become invisible.
+  void WaitUntilInvisible();
 
  private:
   // WidgetObserver:
@@ -319,6 +320,8 @@ class WidgetVisibleWaiter : public WidgetObserver {
 
   base::RunLoop run_loop_;
   base::ScopedObservation<Widget, WidgetObserver> widget_observation_{this};
+
+  bool expecting_visible_;
 };
 
 }  // namespace test

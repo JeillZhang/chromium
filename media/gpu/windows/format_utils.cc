@@ -31,7 +31,7 @@ size_t GetFormatPlaneCount(DXGI_FORMAT format) {
     case DXGI_FORMAT_R16G16B16A16_FLOAT:
       return 1;
     default:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }
 
@@ -57,6 +57,21 @@ const char* DxgiFormatToString(DXGI_FORMAT format) {
       return "YUY2";
     default:
       return "UNKNOWN";
+  }
+}
+
+DXGI_FORMAT VideoPixelFormatToDxgiFormat(VideoPixelFormat format) {
+  switch (format) {
+    case PIXEL_FORMAT_I420:
+      return DXGI_FORMAT_420_OPAQUE;
+    case PIXEL_FORMAT_NV12:
+      return DXGI_FORMAT_NV12;
+    case PIXEL_FORMAT_ARGB:
+      return DXGI_FORMAT_B8G8R8A8_UNORM;
+    case PIXEL_FORMAT_P010LE:
+      return DXGI_FORMAT_P010;
+    default:
+      return DXGI_FORMAT_UNKNOWN;
   }
 }
 

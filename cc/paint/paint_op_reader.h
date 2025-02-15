@@ -18,6 +18,7 @@
 #include "cc/paint/paint_filter.h"
 #include "cc/paint/paint_op_writer.h"
 #include "cc/paint/transfer_cache_deserialize_helper.h"
+#include "third_party/skia/include/effects/SkGradientShader.h"
 
 struct SkGainmapInfo;
 struct SkHighContrastConfig;
@@ -73,9 +74,11 @@ class CC_PAINT_EXPORT PaintOpReader {
 
   void Read(SkScalar* data);
   void Read(uint8_t* data);
+  void Read(uint16_t* data);
   void Read(uint32_t* data);
   void Read(uint64_t* data);
   void Read(int32_t* data);
+  void Read(SkPoint* point);
   void Read(SkRect* rect);
   void Read(SkIRect* rect);
   void Read(SkRRect* rect);
@@ -103,8 +106,13 @@ class CC_PAINT_EXPORT PaintOpReader {
   void Read(gpu::Mailbox* mailbox);
   void Read(SkHighContrastConfig* config);
   void Read(gfx::HDRMetadata* hdr_metadata);
-
+  void Read(SkGradientShader::Interpolation* interpolation);
   void Read(scoped_refptr<SkottieWrapper>* skottie);
+  void Read(SkString* sk_string);
+  void Read(std::vector<PaintShader::FloatUniform>* uniforms);
+  void Read(std::vector<PaintShader::Float2Uniform>* uniforms);
+  void Read(std::vector<PaintShader::Float4Uniform>* uniforms);
+  void Read(std::vector<PaintShader::IntUniform>* uniforms);
 
   void Read(SkClipOp* op) { ReadEnum<SkClipOp, SkClipOp::kMax_EnumValue>(op); }
   void Read(PaintCanvas::AnnotationType* type) {
@@ -145,8 +153,8 @@ class CC_PAINT_EXPORT PaintOpReader {
   // there is not enough data, the PaintOpReader is marked invalid.
   template <typename T>
   bool CanReadVector(size_t size, const std::vector<T>& vec) {
-    if (UNLIKELY(size > vec.max_size() ||
-                 remaining_bytes_ < size * sizeof(T))) {
+    if (size > vec.max_size() || remaining_bytes_ < size * sizeof(T))
+        [[unlikely]] {
       SetInvalid(DeserializationError::kInsufficientRemainingBytes_ReadData);
       return false;
     }
@@ -154,13 +162,13 @@ class CC_PAINT_EXPORT PaintOpReader {
   }
 
   template <typename T>
-  void Read(std::vector<T>* vec) {
+    requires(!std::is_const_v<T>)
+  void Read(std::vector<T>& vec) {
     size_t size = 0;
     ReadSize(&size);
-    if (UNLIKELY(!CanReadVector(size, *vec))) {
-      return;
+    if (CanReadVector(size, vec)) [[likely]] {
+      ReadVectorContent(size, vec);
     }
-    ReadVectorContent(size, vec);
   }
 
   // Returns a pointer to the next block of memory of size |bytes|, and treats
@@ -179,9 +187,14 @@ class CC_PAINT_EXPORT PaintOpReader {
   }
 
  private:
+  template <typename ValueType>
+  friend void ReadSimpleValueUniformsHelper(
+      PaintOpReader&,
+      std::vector<PaintShader::Uniform<ValueType>>*);
+
   enum class DeserializationError {
     // Enum values must remain synchronized with PaintOpDeserializationError
-    // in tools/metrics/histograms/enums.xml.
+    // in tools/metrics/histograms/metadata/gpu/enums.xml.
     kDrawLooperForbidden = 0,
     kEnumValueOutOfRange = 1,
     kForbiddenSerializedImageType = 2,
@@ -220,7 +233,7 @@ class CC_PAINT_EXPORT PaintOpReader {
     kSharedImageOpenFailure = 35,  // Obsolete
     kSkColorFilterUnflattenFailure = 36,
     kSkColorSpaceDeserializeFailure = 37,
-    kSkDrawLooperUnflattenFailure = 38,
+    kSkDrawLooperUnflattenFailure = 38,  // Obsolete
     kSkMaskFilterUnflattenFailure = 39,
     kSkPathEffectUnflattenFailure = 40,
     kSkPathReadFromMemoryFailure = 41,
@@ -347,18 +360,12 @@ class CC_PAINT_EXPORT PaintOpReader {
   void DidRead(size_t bytes_read);
 
   template <typename T>
-    requires(std::is_trivially_copyable_v<T>)
-  void ReadVectorContent(size_t size, std::vector<T>* vec) {
-    vec->resize(size);
-    ReadData(base::as_writable_byte_span(*vec));
-  }
-
-  template <typename T>
-    requires(!std::is_trivially_copyable_v<T>)
-  void ReadVectorContent(size_t size, std::vector<T>* vec) {
-    vec->resize(size);
-    for (size_t i = 0; i < size; ++i) {
-      Read(&(*vec)[i]);
+    requires(!std::is_const_v<T>)
+  void ReadVectorContent(size_t size, std::vector<T>& vec) {
+    vec.resize(size);
+    for (base::span span(vec); !span.empty();
+         span = span.template subspan<1>()) {
+      Read(&span.front());
     }
   }
 

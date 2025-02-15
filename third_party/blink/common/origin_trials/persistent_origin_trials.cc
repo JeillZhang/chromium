@@ -28,6 +28,8 @@ bool IsTrialPersistentToNextResponse(std::string_view trial_name) {
       "Tpcd",
       "TopLevelTpcd",
       "LimitThirdPartyCookies",
+      "DisableReduceAcceptLanguage",
+      "StorageAccessHeader",
   };
   return base::Contains(kPersistentTrials, trial_name);
 }

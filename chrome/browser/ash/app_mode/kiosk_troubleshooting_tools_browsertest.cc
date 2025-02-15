@@ -17,7 +17,9 @@
 #include "chrome/browser/ui/views/task_manager_view.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test.h"
+#include "content/public/test/browser_test_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/events/keycodes/keyboard_codes_posix.h"
 #include "ui/events/test/event_generator.h"
@@ -63,7 +65,16 @@ class KioskTroubleshootingToolsTest : public WebKioskBaseTest {
 
   void ExpectOnlyKioskAppOpen() const {
     // The initial browser should exist in the web kiosk session.
-    EXPECT_EQ(BrowserList::GetInstance()->size(), 1u);
+    ASSERT_EQ(BrowserList::GetInstance()->size(), 1u);
+    Browser* kiosk_browser = BrowserList::GetInstance()->get(0);
+    ASSERT_EQ(kiosk_browser->tab_strip_model()->count(), 1);
+    content::WebContents* contents =
+        kiosk_browser->tab_strip_model()->GetActiveWebContents();
+    ASSERT_TRUE(contents);
+    if (contents->IsLoading()) {
+      content::WaitForLoadStop(contents);
+    }
+    ASSERT_EQ(contents->GetLastCommittedURL(), app_install_url());
   }
 
   void EmulateOpenNewWindowShortcutPressed() const {
@@ -106,7 +117,7 @@ class KioskTroubleshootingToolsTest : public WebKioskBaseTest {
   Browser* OpenForAppPopupBrowser() const {
     profile()->GetPrefs()->SetBoolean(prefs::kNewWindowsInKioskAllowed, true);
     Browser::CreateParams params = Browser::CreateParams::CreateForAppPopup(
-        /*app_name=*/initial_browser()->app_name(), /*trusted_source=*/true,
+        /*app_name=*/kiosk_app_browser()->app_name(), /*trusted_source=*/true,
         /*window_bounds=*/gfx::Rect(), /*profile=*/profile(),
         /*user_gesture=*/true);
     Browser* new_browser = Browser::Create(params);
@@ -121,16 +132,6 @@ class KioskTroubleshootingToolsTest : public WebKioskBaseTest {
     views::Widget* widget = views::Widget::GetWidgetForNativeWindow(
         lact_active_window->GetNativeWindow());
     return widget->widget_delegate()->CanResize();
-  }
-
-  Profile* profile() const { return initial_browser()->profile(); }
-
-  Browser* initial_browser() const {
-    return BrowserList::GetInstance()->get(0);
-  }
-
-  KioskSystemSession* kiosk_system_session() const {
-    return KioskController::Get().GetKioskSystemSession();
   }
 
   task_manager::TaskManagerView* GetTaskManagerView() const {
@@ -149,7 +150,7 @@ IN_PROC_BROWSER_TEST_F(KioskTroubleshootingToolsTest,
 
   UpdateTroubleshootingToolsPolicy(/*enable=*/true);
   EnableDevTools();
-  DevToolsWindowTesting::OpenDevToolsWindowSync(initial_browser(),
+  DevToolsWindowTesting::OpenDevToolsWindowSync(kiosk_app_browser(),
                                                 /*is_docked=*/false);
   ExpectOpenBrowser(chromeos::KioskBrowserWindowType::kOpenedDevToolsBrowser);
 
@@ -166,7 +167,7 @@ IN_PROC_BROWSER_TEST_F(KioskTroubleshootingToolsTest,
   UpdateTroubleshootingToolsPolicy(/*enable=*/true);
 
   // Devtools are not enabled, but disabled by default.
-  DevToolsWindowTesting::OpenDevToolsWindowSync(initial_browser(),
+  DevToolsWindowTesting::OpenDevToolsWindowSync(kiosk_app_browser(),
                                                 /*is_docked=*/false);
 
   ExpectOnlyKioskAppOpen();
@@ -179,7 +180,7 @@ IN_PROC_BROWSER_TEST_F(KioskTroubleshootingToolsTest,
   ExpectOnlyKioskAppOpen();
 
   EnableDevTools();
-  DevToolsWindowTesting::OpenDevToolsWindowSync(initial_browser(),
+  DevToolsWindowTesting::OpenDevToolsWindowSync(kiosk_app_browser(),
                                                 /*is_docked=*/false);
   ExpectOnlyKioskAppOpen();
 
@@ -216,7 +217,7 @@ IN_PROC_BROWSER_TEST_F(KioskTroubleshootingToolsTest,
   ExpectOnlyKioskAppOpen();
   EnableDevTools();
 
-  DevToolsWindowTesting::OpenDevToolsWindowSync(initial_browser(),
+  DevToolsWindowTesting::OpenDevToolsWindowSync(kiosk_app_browser(),
                                                 /*is_docked=*/false);
 
   EmulateOpenNewWindowShortcutPressed();
@@ -242,7 +243,7 @@ IN_PROC_BROWSER_TEST_F(KioskTroubleshootingToolsTest,
   // The main browser should not be resizable.
   EXPECT_FALSE(IsLactActiveBrowserResizable());
 
-  DevToolsWindowTesting::OpenDevToolsWindowSync(initial_browser(),
+  DevToolsWindowTesting::OpenDevToolsWindowSync(kiosk_app_browser(),
                                                 /*is_docked=*/false);
   EXPECT_TRUE(IsLactActiveBrowserResizable());
 

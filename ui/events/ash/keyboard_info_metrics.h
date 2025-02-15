@@ -32,10 +32,20 @@ enum class KeyboardTopRowLayoutForMetric {
   kMaxValue = kLayoutCustom2,
 };
 
+// This enum is used to track metrics around how keys are used and comparing it
+// against their physical presence on the device.
+enum class KeyUsageCategory {
+  kPhysicallyPresent = 0,
+  kVirtuallyPresent,
+  kPhysicallyPressed,
+  kVirtuallyPressed,
+  kMaxValue = kVirtuallyPressed,
+};
+
 void RecordKeyboardInfoMetrics(
     const KeyboardCapability::KeyboardInfo& keyboard_info,
     bool has_assistant_key,
-    bool has_right_alt_key);
+    bool has_quick_insert_key);
 
 }  // namespace ui
 

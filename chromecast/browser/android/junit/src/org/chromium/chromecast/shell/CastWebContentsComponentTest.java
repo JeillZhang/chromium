@@ -89,7 +89,7 @@ public class CastWebContentsComponentTest {
     }
 
     @Test
-    @Config(minSdk = VERSION_CODES.R)
+    @Config(sdk = VERSION_CODES.R)
     public void testStartStartsWebContentsActivityWithDisplayId() {
         ContextWrapper context =
                 Mockito.spy(new ContextWrapper(ContextUtils.getApplicationContext()) {
@@ -106,7 +106,7 @@ public class CastWebContentsComponentTest {
 
         ArgumentCaptor<Bundle> bundle = ArgumentCaptor.forClass(Bundle.class);
         verify(context).startActivity(any(Intent.class), bundle.capture());
-        Assert.assertEquals(bundle.getValue().getInt(ACTIVITY_OPTIONS_DISPLAY_ID), DISPLAY_ID);
+        Assert.assertEquals(DISPLAY_ID, bundle.getValue().getInt(ACTIVITY_OPTIONS_DISPLAY_ID));
     }
 
     @Test
@@ -354,12 +354,12 @@ public class CastWebContentsComponentTest {
         } finally {
             LocalBroadcastManager.getInstance(ApplicationProvider.getApplicationContext())
                     .unregisterReceiver(receiver);
-            if (shouldExpect) {
-                verify(receiver).onReceive(any(Context.class), mIntentCaptor.capture());
-            } else {
-                verify(receiver, times(0)).onReceive(any(Context.class), mIntentCaptor.getValue());
-            }
-            return mIntentCaptor.getValue();
         }
+        if (shouldExpect) {
+            verify(receiver).onReceive(any(Context.class), mIntentCaptor.capture());
+        } else {
+            verify(receiver, times(0)).onReceive(any(Context.class), mIntentCaptor.getValue());
+        }
+        return mIntentCaptor.getValue();
     }
 }

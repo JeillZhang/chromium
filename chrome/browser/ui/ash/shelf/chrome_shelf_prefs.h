@@ -44,6 +44,9 @@ class ChromeShelfPrefs : public app_list::AppListSyncableService::Observer {
   // All prefs must be registered early in the process lifecycle.
   static void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry);
 
+  // Cleanup multiple values of 'preload' added to ShelfDefaultPinLayoutRolls.
+  static void CleanupPreloadPrefs(PrefService* profile_prefs);
+
   // Init a local pref from a synced pref, if the local pref has no user
   // setting. This is used to init shelf alignment and auto-hide on the first
   // user sync. The goal is to apply the last elected shelf alignment and
@@ -98,7 +101,6 @@ class ChromeShelfPrefs : public app_list::AppListSyncableService::Observer {
   FRIEND_TEST_ALL_PREFIXES(ChromeShelfPrefsTest, AddChromePinExistingOrdinal);
   FRIEND_TEST_ALL_PREFIXES(ChromeShelfPrefsTest, AddDefaultApps);
   FRIEND_TEST_ALL_PREFIXES(ChromeShelfPrefsTest, ProfileChanged);
-  FRIEND_TEST_ALL_PREFIXES(ChromeShelfPrefsTest, LacrosOnlyPinnedApp);
   FRIEND_TEST_ALL_PREFIXES(ChromeShelfPrefsTest, PinPreloadApps);
   FRIEND_TEST_ALL_PREFIXES(ChromeShelfPrefsTest, PinPreloadRepeats);
   FRIEND_TEST_ALL_PREFIXES(ChromeShelfPrefsTest, PinPreloadEmpty);
@@ -125,8 +127,7 @@ class ChromeShelfPrefs : public app_list::AppListSyncableService::Observer {
   void EnsureProjectorShelfPinConsistency();
 
   // This is run each time ash launches and each time new data is obtained from
-  // sync. It ensures that both ash-chrome and lacros-chrome are properly
-  // pinned or unpinned.
+  // sync. It ensures that ash-chrome is properly pinned or unpinned.
   void EnsureChromePinned();
 
   // Whether the default apps have already been added for this device form
@@ -142,6 +143,9 @@ class ChromeShelfPrefs : public app_list::AppListSyncableService::Observer {
   // in prefs. It is never run again if that pref is present. It causes several
   // default apps to be shown in the shelf.
   void AddDefaultApps();
+
+  // Whether App Preload Service apps have already been added.
+  bool DidAddPreloadApps() const;
 
   // Pin preload apps received along with desired order via OnAppPreloadReady().
   void PinPreloadApps();

@@ -128,14 +128,6 @@ inline constexpr char kSupervisedUserSharedSettings[] =
 inline constexpr char kDefaultSupervisedUserFilteringBehavior[] =
     "profile.managed.default_filtering_behavior";
 
-// An integer pref that stores the current state of the interstitial banner for
-// a supervised user (SupervisedUserFilter::FirstTimeInterstitialBannerState):
-// 0: kNeedToShow
-// 1: kSetupComplete
-// 2: kUnknown
-inline constexpr char kFirstTimeInterstitialBannerState[] =
-    "profile.managed.banner_state";
-
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
 // An integer pref that stores the current state of the local extension
@@ -154,6 +146,12 @@ inline constexpr char kLocallyParentApprovedExtensionsMigrationState[] =
 inline constexpr char kSupervisedUserLocallyParentApprovedExtensions[] =
     "profile.managed.locally_parent_approved_extensions";
 #endif  // BUILDFLAG(ENABLE_EXTENSIONS)
+
+// A string pref that stores the family member role of the primary account
+// as per kids_management::FamilyRole or
+// `supervised_user::kDefaultEmptyFamilyMemberRole` if not in a Family group.
+inline constexpr char kFamilyLinkUserMemberRole[] =
+    "profile.family_member_role";
 
 }  // namespace prefs
 

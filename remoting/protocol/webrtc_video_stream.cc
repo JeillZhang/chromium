@@ -267,7 +267,7 @@ WebrtcVideoStream::WebrtcVideoStream(const SessionOptions& session_options)
     : session_options_(session_options) {
 // TODO(joedow): Dig into the threading model on other platforms to see if they
 // can also be updated to run on a dedicated thread.
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
   core_task_runner_ = base::ThreadPool::CreateSingleThreadTaskRunner(
       {base::TaskPriority::HIGHEST},
       base::SingleThreadTaskRunnerThreadMode::DEDICATED);
@@ -284,6 +284,12 @@ WebrtcVideoStream::~WebrtcVideoStream() {
   }
 
   if (peer_connection_ && transceiver_) {
+    // Stop the video-stream before removing it from the peer-connection.
+    // Otherwise, it will continue to be listed in
+    // peer_connection_->GetSenders(), and may interfere with bandwidth
+    // estimation - b/366055325.
+    transceiver_->StopStandard();
+
     // Ignore any errors here, as this may return an error if the
     // peer-connection has been closed.
     peer_connection_->RemoveTrackOrError(transceiver_->sender());

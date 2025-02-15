@@ -7,17 +7,19 @@
 
 #include "base/memory/raw_ptr.h"
 #include "build/buildflag.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/ui/toolbar/chrome_labs/chrome_labs_model.h"
-#include "components/flags_ui/flags_state.h"
-#include "components/flags_ui/flags_storage.h"
+#include "components/webui/flags/flags_state.h"
+#include "components/webui/flags/flags_storage.h"
 #include "ui/views/view_observer.h"
 #include "ui/views/view_tracker.h"
 
 class Browser;
-class ChromeLabsButton;
 class ChromeLabsBubbleView;
 class ChromeLabsViewController;
+
+namespace views {
+class Button;
+}
 
 class ChromeLabsCoordinator {
  public:
@@ -29,9 +31,9 @@ class ChromeLabsCoordinator {
     kChromeOsOwnerUserType,
   };
 
-  ChromeLabsCoordinator(ChromeLabsButton* anchor_view,
-                        Browser* browser,
-                        const ChromeLabsModel* model);
+  explicit ChromeLabsCoordinator(Browser* browser);
+  ChromeLabsCoordinator(Browser* browser,
+                        std::unique_ptr<ChromeLabsModel> model);
   ~ChromeLabsCoordinator();
 
   bool BubbleExists();
@@ -43,6 +45,8 @@ class ChromeLabsCoordinator {
   // Toggles the visibility of the bubble.
   void ShowOrHide();
 
+  views::Button* GetChromeLabsButton();
+
   ChromeLabsBubbleView* GetChromeLabsBubbleView();
 
   flags_ui::FlagsState* GetFlagsStateForTesting() { return flags_state_; }
@@ -51,22 +55,20 @@ class ChromeLabsCoordinator {
     return controller_.get();
   }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   void SetShouldCircumventDeviceCheckForTesting(bool should_circumvent) {
     should_circumvent_device_check_for_testing_ = should_circumvent;
   }
 #endif
 
  private:
-  raw_ptr<ChromeLabsButton, DanglingUntriaged> anchor_view_;
   raw_ptr<Browser, DanglingUntriaged> browser_;
-  raw_ptr<const ChromeLabsModel, AcrossTasksDanglingUntriaged>
-      chrome_labs_model_;
   std::unique_ptr<flags_ui::FlagsStorage> flags_storage_;
   raw_ptr<flags_ui::FlagsState, DanglingUntriaged> flags_state_;
+  std::unique_ptr<ChromeLabsModel> model_;
   std::unique_ptr<ChromeLabsViewController> controller_;
   views::ViewTracker chrome_labs_bubble_view_tracker_;
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   bool is_waiting_to_show_ = false;
   bool should_circumvent_device_check_for_testing_ = false;
 #endif

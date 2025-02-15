@@ -67,16 +67,6 @@ constexpr char kTestAppID[] = "{D07D2B56-F583-4631-9E8E-9942F63765BE}";
 
 }  // namespace
 
-TEST(WinUtil, GetServiceDisplayName) {
-  for (const bool is_internal_service : {true, false}) {
-    EXPECT_EQ(base::StrCat({base::ASCIIToWide(PRODUCT_FULLNAME_STRING), L" ",
-                            is_internal_service ? kWindowsInternalServiceName
-                                                : kWindowsServiceName,
-                            L" ", kUpdaterVersionUtf16}),
-              GetServiceDisplayName(is_internal_service));
-  }
-}
-
 TEST(WinUtil, GetServiceName) {
   for (const bool is_internal_service : {true, false}) {
     EXPECT_EQ(base::StrCat({base::ASCIIToWide(PRODUCT_FULLNAME_STRING),
@@ -147,32 +137,6 @@ TEST(WinUtil, RunElevated) {
   EXPECT_THAT(RunElevated(test_process_cmd_line.GetProgram(),
                           test_process_cmd_line.GetArgumentsString()),
               base::test::ValueIs(DWORD{0}));
-}
-
-TEST(WinUtil, RunDeElevated_Exe) {
-  if (!::IsUserAnAdmin() || !IsUACOn()) {
-    return;
-  }
-
-  // Create a shared event to be waited for in this process and signaled in the
-  // test process to confirm that the test process is running at medium
-  // integrity.
-  // The event is created with a security descriptor that allows the medium
-  // integrity process to signal it.
-  test::EventHolder event_holder(CreateEveryoneWaitableEventForTest());
-  ASSERT_NE(event_holder.event.handle(), nullptr);
-
-  base::CommandLine test_process_cmd_line = GetTestProcessCommandLine(
-      GetUpdaterScopeForTesting(), test::GetTestName());
-  test_process_cmd_line.AppendSwitchNative(kTestEventToSignalIfMediumIntegrity,
-                                           event_holder.name);
-  EXPECT_HRESULT_SUCCEEDED(
-      RunDeElevated(test_process_cmd_line.GetProgram().value(),
-                    test_process_cmd_line.GetArgumentsString()));
-  EXPECT_TRUE(event_holder.event.TimedWait(TestTimeouts::action_max_timeout()));
-
-  EXPECT_TRUE(test::WaitFor(
-      [] { return test::FindProcesses(kTestProcessExecutableName).empty(); }));
 }
 
 TEST(WinUtil, RunDeElevatedCmdLine_Exe) {
@@ -358,7 +322,7 @@ TEST(WinUtil, StopProcessesUnderPath) {
 
   base::CommandLine command_line = GetTestProcessCommandLine(
       GetUpdaterScopeForTesting(), test::GetTestName());
-  command_line.AppendSwitchASCII(
+  command_line.AppendSwitchUTF8(
       updater::kTestSleepSecondsSwitch,
       base::NumberToString(TestTimeouts::action_timeout().InSeconds() / 4));
 
@@ -662,6 +626,24 @@ TEST(WinUtil, GetUniqueTempFilePath) {
   base::ReplaceSubstringsAfterOffset(&p_base, 0, L"updater", {});
   base::ReplaceSubstringsAfterOffset(&p_base, 0, L".log", {});
   EXPECT_TRUE(base::Uuid::ParseLowercase(base::WideToUTF8(p_base)).is_valid());
+}
+
+TEST(WinUtil, SetEulaAccepted) {
+  // This will set `eulaaccepted=0` in the registry.
+  EXPECT_TRUE(
+      SetEulaAccepted(GetUpdaterScopeForTesting(), /*eula_accepted=*/false));
+  DWORD eula_accepted = 0;
+  const HKEY root = UpdaterScopeToHKeyRoot(GetUpdaterScopeForTesting());
+  EXPECT_EQ(base::win::RegKey(root, UPDATER_KEY, Wow6432(KEY_READ))
+                .ReadValueDW(L"eulaaccepted", &eula_accepted),
+            ERROR_SUCCESS);
+  EXPECT_EQ(eula_accepted, 0ul);
+
+  // This will delete the `eulaaccepted` value in the registry.
+  EXPECT_TRUE(
+      SetEulaAccepted(GetUpdaterScopeForTesting(), /*eula_accepted=*/true));
+  EXPECT_FALSE(base::win::RegKey(root, UPDATER_KEY, Wow6432(KEY_READ))
+                   .HasValue(L"eulaaccepted"));
 }
 
 }  // namespace updater::test

@@ -36,22 +36,10 @@ ManagePasswordsListView::ManagePasswordsListView(
   SetOrientation(views::BoxLayout::Orientation::kVertical);
   for (const std::unique_ptr<password_manager::PasswordForm>& password_form :
        credentials) {
-    std::optional<ui::ImageModel> store_icon = std::nullopt;
-    if (is_account_storage_available &&
-        base::FeatureList::IsEnabled(
-            password_manager::features::kButterOnDesktopFollowup)) {
-      if (!password_form->IsUsingAccountStore()) {
-        store_icon = ui::ImageModel::FromVectorIcon(
-            vector_icons::kNotUploadedIcon, ui::kColorIcon, gfx::kFaviconSize);
-      }
-    } else if (password_form->IsUsingAccountStore()) {
+    ui::ImageModel store_icon;
+    if (is_account_storage_available && !password_form->IsUsingAccountStore()) {
       store_icon = ui::ImageModel::FromVectorIcon(
-#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
-          vector_icons::kGoogleGLogoIcon,
-#else
-          vector_icons::kSyncIcon,
-#endif  // !BUILDFLAG(GOOGLE_CHROME_BRANDING)
-          gfx::kPlaceholderColor, gfx::kFaviconSize);
+          vector_icons::kNotUploadedIcon, ui::kColorIcon, gfx::kFaviconSize);
     }
 
     std::unique_ptr<RichHoverButton> list_item =
@@ -74,25 +62,15 @@ ManagePasswordsListView::ManagePasswordsListView(
                 on_row_clicked_callback, *password_form),
             /*main_image_icon=*/favicon,
             /*title_text=*/GetDisplayUsername(*password_form),
-            /*secondary_text=*/std::u16string(),
-            /*tooltip_text=*/std::u16string(),
             /*subtitle_text=*/std::u16string(),
             /*action_image_icon=*/
             ui::ImageModel::FromVectorIcon(vector_icons::kSubmenuArrowIcon,
                                            ui::kColorIcon),
             /*state_icon=*/store_icon);
 
-    if (is_account_storage_available &&
-        base::FeatureList::IsEnabled(
-            password_manager::features::kButterOnDesktopFollowup)) {
-      if (!password_form->IsUsingAccountStore()) {
-        list_item->GetViewAccessibility().SetName(l10n_util::GetStringFUTF16(
-            IDS_PASSWORD_MANAGER_MANAGEMENT_BUBBLE_LIST_ITEM_DEVICE_ONLY_ACCESSIBLE_TEXT,
-            GetDisplayUsername(*password_form)));
-      }
-    } else if (password_form->IsUsingAccountStore()) {
+    if (is_account_storage_available && !password_form->IsUsingAccountStore()) {
       list_item->GetViewAccessibility().SetName(l10n_util::GetStringFUTF16(
-          IDS_PASSWORD_MANAGER_MANAGEMENT_BUBBLE_LIST_ITEM_ACCESSIBLE_TEXT,
+          IDS_PASSWORD_MANAGER_MANAGEMENT_BUBBLE_LIST_ITEM_DEVICE_ONLY_ACCESSIBLE_TEXT,
           GetDisplayUsername(*password_form)));
     }
 
@@ -115,18 +93,15 @@ ManagePasswordsListView::ManagePasswordsListView(
           /*title_text=*/
           l10n_util::GetStringUTF16(
               IDS_PASSWORD_MANAGER_MANAGE_PASSWORDS_BUTTON),
-          /*secondary_text=*/std::u16string(),
-          /*tooltip_text=*/
-          l10n_util::GetStringUTF16(
-              IDS_PASSWORD_MANAGER_MANAGE_PASSWORDS_BUTTON),
           /*subtitle_text=*/std::u16string(),
           /*action_image_icon=*/
           ui::ImageModel::FromVectorIcon(
               vector_icons::kLaunchIcon, ui::kColorIconSecondary,
-              GetLayoutConstant(PAGE_INFO_ICON_SIZE)),
-          /*state_icon=*/std::nullopt));
+              GetLayoutConstant(PAGE_INFO_ICON_SIZE))));
   manage_passwords_button->SetID(static_cast<int>(
       password_manager::ManagePasswordsViewIDs::kManagePasswordsButton));
+  manage_passwords_button->SetTooltipText(
+      l10n_util::GetStringUTF16(IDS_PASSWORD_MANAGER_MANAGE_PASSWORDS_BUTTON));
 
   SetProperty(views::kElementIdentifierKey, kTopView);
 }

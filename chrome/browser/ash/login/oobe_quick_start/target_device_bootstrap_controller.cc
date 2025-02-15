@@ -6,13 +6,14 @@
 
 #include <optional>
 
+#include "base/check_is_test.h"
 #include "base/check_op.h"
 #include "base/containers/contains.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/functional/overloaded.h"
+#include "base/no_destructor.h"
 #include "base/notreached.h"
-#include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "chrome/browser/ash/login/oobe_quick_start/connectivity/account_transfer_client_data.h"
 #include "chrome/browser/ash/login/oobe_quick_start/connectivity/fido_assertion_info.h"
@@ -35,6 +36,16 @@
 #include "url/origin.h"
 
 namespace ash::quick_start {
+
+namespace {
+std::optional<TargetDeviceBootstrapController::GaiaCredentials>&
+GetTestCredentials() {
+  static base::NoDestructor<
+      std::optional<TargetDeviceBootstrapController::GaiaCredentials>>
+      credentials_for_testing;
+  return *credentials_for_testing;
+}
+}  // namespace
 
 TargetDeviceBootstrapController::GaiaCredentials::GaiaCredentials() = default;
 TargetDeviceBootstrapController::GaiaCredentials::GaiaCredentials(
@@ -63,6 +74,11 @@ TargetDeviceBootstrapController::~TargetDeviceBootstrapController() {
 
 TargetDeviceBootstrapController::Status::Status() = default;
 TargetDeviceBootstrapController::Status::~Status() = default;
+
+void TargetDeviceBootstrapController::SetGaiaCredentialsResponseForTesting(
+    GaiaCredentials test_creds) {
+  GetTestCredentials() = test_creds;
+}
 
 void TargetDeviceBootstrapController::AddObserver(Observer* obs) {
   observers_.AddObserver(obs);
@@ -203,12 +219,6 @@ void TargetDeviceBootstrapController::OnConnectionClosed(
 
   authenticated_connection_.reset();
   CleanupIfNeeded();
-}
-
-std::string TargetDeviceBootstrapController::GetDiscoverableName() {
-  std::string device_type = base::UTF16ToUTF8(ui::GetChromeOSDeviceName());
-  std::string code = connection_broker_->GetAdvertisingIdDisplayCode();
-  return device_type + " (" + code + ")";
 }
 
 void TargetDeviceBootstrapController::UpdateStatus(Step step, Payload payload) {
@@ -359,6 +369,17 @@ void TargetDeviceBootstrapController::AttemptGoogleAccountTransfer() {
   UpdateStatus(/*step=*/Step::TRANSFERRING_GOOGLE_ACCOUNT_DETAILS,
                /*payload=*/absl::monostate());
 
+  // In tests we skip contacting Gaia and return test credentials instead.
+  if (GetTestCredentials().has_value()) {
+    CHECK_IS_TEST();
+    QS_LOG(INFO) << "Skipping SecondDeviceAuthBroker interaction and "
+                    "responding with test credentials.";
+    UpdateStatus(
+        /*step=*/Step::TRANSFERRED_GOOGLE_ACCOUNT_DETAILS,
+        /*payload=*/GetTestCredentials().value());
+    return;
+  }
+
   // Request the challenge bytes from Gaia to be sent to the phone.
   CHECK(auth_broker_) << "Missing auth_broker_";
   auth_broker_->FetchChallengeBytes(
@@ -477,7 +498,6 @@ void TargetDeviceBootstrapController::OnAuthCodeReceived(
             UpdateStatus(/*step=*/Step::TRANSFERRED_GOOGLE_ACCOUNT_DETAILS,
                          /*payload=*/gaia_creds);
             is_error = false;
-            session_context_.SetDidSetUpGaia(true);
           },
           [&](SecondDeviceAuthBroker::
                   AuthCodeAdditionalChallengesOnTargetResponse res) {

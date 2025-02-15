@@ -8,12 +8,12 @@
 #include <vector>
 
 #include "base/memory/weak_ptr.h"
-#include "components/autofill/core/browser/autofill_manager.h"
 #include "components/autofill/core/browser/data_model/credit_card.h"
 #include "components/autofill/core/browser/data_model/iban.h"
 #include "components/autofill/core/browser/form_structure.h"
-#include "components/autofill/core/browser/ui/fast_checkout_client.h"
-#include "components/autofill/core/browser/ui/touch_to_fill_delegate.h"
+#include "components/autofill/core/browser/foundations/autofill_manager.h"
+#include "components/autofill/core/browser/integrators/fast_checkout_client.h"
+#include "components/autofill/core/browser/integrators/touch_to_fill_delegate.h"
 #include "components/autofill/core/common/form_data.h"
 #include "components/autofill/core/common/form_field_data.h"
 
@@ -160,7 +160,7 @@ class TouchToFillDelegateAndroidImpl : public TouchToFillDelegate {
   };
 
   // Checks all preconditions for showing the TTF, that is, for calling
-  // AutofillClient::ShowTouchToFillCreditCard().
+  // PaymentsAutofillClient::ShowTouchToFillCreditCard().
   //
   // If the DryRunResult::outcome is TriggerOutcome::kShow, the
   // DryRun::cards_to_suggest contains the cards; otherwise it is empty.

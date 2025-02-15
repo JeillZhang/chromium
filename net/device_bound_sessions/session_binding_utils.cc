@@ -12,16 +12,17 @@
 #include "base/json/json_writer.h"
 #include "base/logging.h"
 #include "base/strings/strcat.h"
-#include "base/strings/string_piece.h"
 #include "base/time/time.h"
 #include "base/values.h"
 #include "crypto/sha2.h"
 #include "crypto/signature_verifier.h"
+#include "net/base/url_util.h"
+#include "net/device_bound_sessions/jwk_utils.h"
 #include "third_party/boringssl/src/include/openssl/bn.h"
 #include "third_party/boringssl/src/include/openssl/ecdsa.h"
 #include "url/gurl.h"
 
-namespace net {
+namespace net::device_bound_sessions {
 
 namespace {
 
@@ -48,14 +49,9 @@ std::string Base64UrlEncode(std::string_view data) {
   return output;
 }
 
-base::Value::Dict CreatePublicKeyInfo(base::span<const uint8_t> pubkey) {
-  return base::Value::Dict().Set("SubjectPublicKeyInfo",
-                                 Base64UrlEncode(base::as_string_view(pubkey)));
-}
-
 std::optional<std::string> CreateHeaderAndPayloadWithCustomPayload(
     crypto::SignatureVerifier::SignatureAlgorithm algorithm,
-    base::StringPiece schema,
+    std::string_view schema,
     const base::Value::Dict& payload) {
   auto header = base::Value::Dict()
                     .Set("alg", SignatureAlgorithmToString(algorithm))
@@ -109,11 +105,18 @@ std::optional<std::vector<uint8_t>> ConvertDERSignatureToRaw(
 }  // namespace
 
 std::optional<std::string> CreateKeyRegistrationHeaderAndPayload(
-    base::StringPiece challenge,
+    std::string_view challenge,
     const GURL& registration_url,
     crypto::SignatureVerifier::SignatureAlgorithm algorithm,
-    base::span<const uint8_t> pubkey,
-    base::Time timestamp) {
+    base::span<const uint8_t> pubkey_spki,
+    base::Time timestamp,
+    std::optional<std::string> authorization) {
+  base::Value::Dict jwk = ConvertPkeySpkiToJwk(algorithm, pubkey_spki);
+  if (jwk.empty()) {
+    DVLOG(1) << "Unexpected error when converting the SPKI to a JWK";
+    return std::nullopt;
+  }
+
   auto payload =
       base::Value::Dict()
           .Set("aud", registration_url.spec())
@@ -123,7 +126,11 @@ std::optional<std::string> CreateKeyRegistrationHeaderAndPayload(
           // there's no other option.
           .Set("iat", static_cast<double>(
                           (timestamp - base::Time::UnixEpoch()).InSeconds()))
-          .Set("key", CreatePublicKeyInfo(pubkey));
+          .Set("key", std::move(jwk));
+
+  if (authorization.has_value()) {
+    payload.Set("authorization", authorization.value());
+  }
   return CreateHeaderAndPayloadWithCustomPayload(algorithm, /*schema=*/"",
                                                  payload);
 }
@@ -131,10 +138,10 @@ std::optional<std::string> CreateKeyRegistrationHeaderAndPayload(
 std::optional<std::string> CreateKeyAssertionHeaderAndPayload(
     crypto::SignatureVerifier::SignatureAlgorithm algorithm,
     base::span<const uint8_t> pubkey,
-    base::StringPiece client_id,
-    base::StringPiece challenge,
+    std::string_view client_id,
+    std::string_view challenge,
     const GURL& destination_url,
-    base::StringPiece name_space) {
+    std::string_view name_space) {
   auto payload = base::Value::Dict()
                      .Set("sub", client_id)
                      .Set("aud", destination_url.spec())
@@ -147,7 +154,7 @@ std::optional<std::string> CreateKeyAssertionHeaderAndPayload(
 }
 
 std::optional<std::string> AppendSignatureToHeaderAndPayload(
-    base::StringPiece header_and_payload,
+    std::string_view header_and_payload,
     crypto::SignatureVerifier::SignatureAlgorithm algorithm,
     base::span<const uint8_t> signature) {
   std::optional<std::vector<uint8_t>> signature_holder;
@@ -156,11 +163,15 @@ std::optional<std::string> AppendSignatureToHeaderAndPayload(
     if (!signature_holder.has_value()) {
       return std::nullopt;
     }
-    signature = base::make_span(*signature_holder);
+    signature = base::span(*signature_holder);
   }
 
   return base::StrCat(
       {header_and_payload, ".", Base64UrlEncode(as_string_view(signature))});
 }
 
-}  // namespace net
+bool IsSecure(const GURL& url) {
+  return url.SchemeIsCryptographic() || IsLocalhost(url);
+}
+
+}  // namespace net::device_bound_sessions

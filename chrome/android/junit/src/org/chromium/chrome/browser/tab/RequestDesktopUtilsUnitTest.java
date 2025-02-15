@@ -30,7 +30,6 @@ import androidx.test.core.app.ApplicationProvider;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
@@ -43,13 +42,12 @@ import org.robolectric.annotation.Implements;
 import org.robolectric.shadows.ShadowPackageManager;
 
 import org.chromium.base.ContextUtils;
-import org.chromium.base.FeatureList;
-import org.chromium.base.FeatureList.TestValues;
+import org.chromium.base.ResettersForTesting;
 import org.chromium.base.SysUtils;
 import org.chromium.base.shared_preferences.SharedPreferencesManager;
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.base.test.util.JniMocker;
+import org.chromium.build.BuildConfig;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.feature_engagement.TrackerFactory;
 import org.chromium.chrome.browser.preferences.ChromePreferenceKeys;
@@ -77,18 +75,12 @@ import org.chromium.components.user_prefs.UserPrefsJni;
 import org.chromium.ui.display.DisplayAndroid;
 import org.chromium.ui.display.DisplayAndroidManager;
 import org.chromium.ui.display.DisplayUtil;
-import org.chromium.ui.modaldialog.DialogDismissalCause;
-import org.chromium.ui.modaldialog.ModalDialogManager;
-import org.chromium.ui.modaldialog.ModalDialogManager.ModalDialogType;
-import org.chromium.ui.modaldialog.ModalDialogProperties;
-import org.chromium.ui.modaldialog.ModalDialogProperties.ButtonType;
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.url.GURL;
 import org.chromium.url.JUnitTestGURLs;
 
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Map.Entry;
 
 /** Unit tests for {@link RequestDesktopUtils}. */
 @RunWith(BaseRobolectricTestRunner.class)
@@ -102,7 +94,6 @@ import java.util.Map.Entry;
             ShadowDisplayUtil.class
         })
 public class RequestDesktopUtilsUnitTest {
-    @Rule public JniMocker mJniMocker = new JniMocker();
 
     /** Shadows {@link SysUtils} class for testing. */
     @Implements(SysUtils.class)
@@ -182,7 +173,6 @@ public class RequestDesktopUtilsUnitTest {
     @Mock private WindowManager.LayoutParams mLayoutParams;
     @Mock private DisplayMetrics mDisplayMetrics;
     @Mock private Profile mProfile;
-    @Mock private ModalDialogManager mModalDialogManager;
     @Mock private Tracker mTracker;
     @Mock private ObservableSupplier<Tab> mCurrentTabSupplier;
     @Mock private DisplayAndroid mDisplayAndroid;
@@ -201,8 +191,6 @@ public class RequestDesktopUtilsUnitTest {
 
     private Resources mResources;
 
-    private final TestValues mTestValues = new TestValues();
-
     private static final String ANY_SUBDOMAIN_PATTERN = "[*.]";
     private static final String GOOGLE_COM = "[*.]google.com/";
     private ShadowPackageManager mShadowPackageManager;
@@ -211,8 +199,8 @@ public class RequestDesktopUtilsUnitTest {
     @Before
     public void setup() {
         MockitoAnnotations.initMocks(this);
-        mJniMocker.mock(WebsitePreferenceBridgeJni.TEST_HOOKS, mWebsitePreferenceBridgeJniMock);
-        mJniMocker.mock(UserPrefsJni.TEST_HOOKS, mUserPrefsJni);
+        WebsitePreferenceBridgeJni.setInstanceForTesting(mWebsitePreferenceBridgeJniMock);
+        UserPrefsJni.setInstanceForTesting(mUserPrefsJni);
 
         mTab = createTab();
 
@@ -256,7 +244,6 @@ public class RequestDesktopUtilsUnitTest {
         when(mActivity.getResources()).thenReturn(mResources);
 
         TrackerFactory.setTrackerForTests(mTracker);
-        disableGlobalDefaultsExperimentFeatures();
 
         ShadowSysUtils.setMemoryInMB(7000);
         ShadowDisplayAndroid.setDisplayAndroid(mDisplayAndroid);
@@ -292,11 +279,12 @@ public class RequestDesktopUtilsUnitTest {
         mShadowPackageManager.setSystemFeature(
                 PackageManager.FEATURE_AUTOMOTIVE, /* supported= */ false);
         RequestDesktopUtils.setTestDisplayMetrics(mDisplayMetrics);
+        BuildConfig.IS_DESKTOP_ANDROID = false;
+        ResettersForTesting.register(() -> BuildConfig.IS_DESKTOP_ANDROID = false);
     }
 
     @After
     public void tearDown() {
-        FeatureList.setTestValues(null);
         ShadowDisplayAndroid.setDisplayAndroid(null);
         if (mSharedPreferencesManager != null) {
             mSharedPreferencesManager.removeKey(
@@ -311,7 +299,7 @@ public class RequestDesktopUtilsUnitTest {
     public void testSetRequestDesktopSiteContentSettingsForUrl_DefaultBlock_Incognito() {
         // Incognito profile type.
         when(mProfile.isOffTheRecord()).thenReturn(true);
-        when(mProfile.isPrimaryOTRProfile()).thenReturn(true);
+        when(mProfile.isPrimaryOtrProfile()).thenReturn(true);
         mRdsDefaultValue = ContentSettingValues.BLOCK;
 
         RequestDesktopUtils.setRequestDesktopSiteContentSettingsForUrl(mProfile, mGoogleUrl, true);
@@ -331,7 +319,7 @@ public class RequestDesktopUtilsUnitTest {
     public void testSetRequestDesktopSiteContentSettingsForUrl_DefaultAllow_Incognito() {
         // Incognito profile type.
         when(mProfile.isOffTheRecord()).thenReturn(true);
-        when(mProfile.isPrimaryOTRProfile()).thenReturn(true);
+        when(mProfile.isPrimaryOtrProfile()).thenReturn(true);
         mRdsDefaultValue = ContentSettingValues.ALLOW;
 
         RequestDesktopUtils.setRequestDesktopSiteContentSettingsForUrl(mProfile, mGoogleUrl, false);
@@ -574,6 +562,18 @@ public class RequestDesktopUtilsUnitTest {
     }
 
     @Test
+    public void testShouldDefaultEnableGlobalSetting_IsAndroidDesktop() {
+        BuildConfig.IS_DESKTOP_ANDROID = true;
+        ShadowSysUtils.setMemoryInMB(4000);
+        boolean shouldDefaultEnable =
+                RequestDesktopUtils.shouldDefaultEnableGlobalSetting(11, mActivity);
+        Assert.assertTrue(
+                "Desktop site global setting should be default-enabled on desktop "
+                        + "Android, even for low memory",
+                shouldDefaultEnable);
+    }
+
+    @Test
     public void testShouldDefaultEnableGlobalSetting_MemoryThreshold() {
         ShadowSysUtils.setMemoryInMB(6000);
         boolean shouldDefaultEnable =
@@ -682,7 +682,7 @@ public class RequestDesktopUtilsUnitTest {
 
     @Test
     public void testMaybeShowDefaultEnableGlobalSettingMessage() {
-        when(mTracker.shouldTriggerHelpUI(FeatureConstants.REQUEST_DESKTOP_SITE_DEFAULT_ON_FEATURE))
+        when(mTracker.shouldTriggerHelpUi(FeatureConstants.REQUEST_DESKTOP_SITE_DEFAULT_ON_FEATURE))
                 .thenReturn(true);
 
         // Default-enable the global setting before the message is shown.
@@ -719,7 +719,7 @@ public class RequestDesktopUtilsUnitTest {
 
     @Test
     public void testMaybeShowDefaultEnableGlobalSettingMessage_DoNotShowIfSettingIsDisabled() {
-        when(mTracker.shouldTriggerHelpUI(FeatureConstants.REQUEST_DESKTOP_SITE_DEFAULT_ON_FEATURE))
+        when(mTracker.shouldTriggerHelpUi(FeatureConstants.REQUEST_DESKTOP_SITE_DEFAULT_ON_FEATURE))
                 .thenReturn(true);
 
         // Preference is set when the setting is default-enabled.
@@ -739,44 +739,13 @@ public class RequestDesktopUtilsUnitTest {
     }
 
     @Test
-    public void testMaybeShowUserEducationPromptForAppMenuSelection() {
-        when(mTracker.shouldTriggerHelpUI(FeatureConstants.REQUEST_DESKTOP_SITE_APP_MENU_FEATURE))
-                .thenReturn(true);
+    public void testMaybeShowDefaultEnableGlobalSettingMessage_DoNotShowIfDesktopAndroid() {
+        BuildConfig.IS_DESKTOP_ANDROID = true;
+
         boolean shown =
-                RequestDesktopUtils.maybeShowUserEducationPromptForAppMenuSelection(
-                        mProfile, mActivity, mModalDialogManager);
-        Assert.assertTrue("User education prompt should be shown.", shown);
-        ArgumentCaptor<PropertyModel> dialog = ArgumentCaptor.forClass(PropertyModel.class);
-        verify(mModalDialogManager).showDialog(dialog.capture(), eq(ModalDialogType.APP), eq(true));
-        Assert.assertEquals(
-                "Dialog title should match.",
-                mResources.getString(R.string.rds_app_menu_user_education_dialog_title),
-                dialog.getValue().get(ModalDialogProperties.TITLE));
-        Assert.assertEquals(
-                "Dialog message should match.",
-                mResources.getString(R.string.rds_app_menu_user_education_dialog_message),
-                dialog.getValue().get(ModalDialogProperties.MESSAGE_PARAGRAPH_1));
-        Assert.assertEquals(
-                "Dialog button text should match.",
-                mResources.getString(R.string.got_it),
-                dialog.getValue().get(ModalDialogProperties.POSITIVE_BUTTON_TEXT));
-        Assert.assertTrue(
-                "Dialog should be dismissed on touch outside.",
-                dialog.getValue().get(ModalDialogProperties.CANCEL_ON_TOUCH_OUTSIDE));
-
-        // Verify that the button click dismisses the dialog.
-        dialog.getValue()
-                .get(ModalDialogProperties.CONTROLLER)
-                .onClick(dialog.getValue(), ButtonType.POSITIVE);
-        verify(mModalDialogManager)
-                .dismissDialog(
-                        eq(dialog.getValue()), eq(DialogDismissalCause.POSITIVE_BUTTON_CLICKED));
-
-        // Verify that dialog dismissal dismisses the feature in the tracker.
-        dialog.getValue()
-                .get(ModalDialogProperties.CONTROLLER)
-                .onDismiss(dialog.getValue(), DialogDismissalCause.POSITIVE_BUTTON_CLICKED);
-        verify(mTracker).dismissed(FeatureConstants.REQUEST_DESKTOP_SITE_APP_MENU_FEATURE);
+                RequestDesktopUtils.maybeShowDefaultEnableGlobalSettingMessage(
+                        mProfile, mMessageDispatcher, mActivity);
+        Assert.assertFalse("Message should not be shown for desktop Android.", shown);
     }
 
     @Test
@@ -884,6 +853,18 @@ public class RequestDesktopUtilsUnitTest {
     }
 
     @Test
+    public void testMaybeDefaultEnableWindowSetting_DesktopAndroid() {
+        mWindowSetting = false;
+        mIsDefaultValuePreference = true;
+        BuildConfig.IS_DESKTOP_ANDROID = true;
+        RequestDesktopUtils.maybeDefaultEnableWindowSetting(mActivity, mProfile);
+        Assert.assertFalse(
+                "Desktop site window setting should not be default enabled for desktop "
+                        + "Android",
+                mWindowSetting);
+    }
+
+    @Test
     public void testMaybeDefaultEnableWindowSetting_ExternalDisplay() {
         mWindowSetting = false;
         mIsDefaultValuePreference = true;
@@ -916,30 +897,5 @@ public class RequestDesktopUtilsUnitTest {
 
     private Tab createTab() {
         return mock(Tab.class);
-    }
-
-    private void enableFeature(String featureName, boolean enable) {
-        enableFeatureWithParams(featureName, null, enable);
-    }
-
-    private void enableFeatureWithParams(
-            String featureName, Map<String, String> params, boolean enable) {
-        mTestValues.addFeatureFlagOverride(featureName, enable);
-        if (params != null) {
-            for (Entry<String, String> param : params.entrySet()) {
-                mTestValues.addFieldTrialParamOverride(
-                        featureName, param.getKey(), param.getValue());
-            }
-        }
-        FeatureList.setTestValues(mTestValues);
-    }
-
-    private void disableGlobalDefaultsExperimentFeatures() {
-        enableFeatureWithParams("RequestDesktopSiteDefaults", null, false);
-        enableFeatureWithParams("RequestDesktopSiteDefaultsControl", null, false);
-        enableFeatureWithParams("RequestDesktopSiteDefaultsControlCohort1", null, false);
-        enableFeatureWithParams("RequestDesktopSiteDefaultsEnabledCohort1", null, false);
-        enableFeatureWithParams("RequestDesktopSiteDefaultsControlCohort2", null, false);
-        enableFeatureWithParams("RequestDesktopSiteDefaultsEnabledCohort2", null, false);
     }
 }

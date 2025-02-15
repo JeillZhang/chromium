@@ -29,7 +29,6 @@
 #include "chrome/browser/web_applications/web_app_provider.h"
 #include "chrome/browser/web_applications/web_app_ui_manager.h"
 #include "chrome/browser/web_applications/web_contents/web_app_icon_downloader.h"
-#include "components/services/app_service/public/cpp/url_handler_info.h"
 #include "components/webapps/browser/installable/installable_logging.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/web_contents_tester.h"
@@ -418,8 +417,8 @@ class ManifestUpdateCheckCommandTest : public WebAppTest {
  private:
   blink::mojom::ManifestPtr GetManifestFromInfo(const WebAppInstallInfo& info) {
     auto manifest = blink::mojom::Manifest::New();
-    manifest->start_url = info.start_url;
-    manifest->id = GenerateManifestIdFromStartUrlOnly(info.start_url);
+    manifest->start_url = info.start_url();
+    manifest->id = GenerateManifestIdFromStartUrlOnly(info.start_url());
     manifest->scope = info.scope;
     manifest->display = info.display_mode;
     manifest->name = info.title;

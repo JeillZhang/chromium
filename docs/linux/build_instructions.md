@@ -12,7 +12,7 @@ Are you a Google employee? See
 
 ## System requirements
 
-* A 64-bit Intel machine with at least 8GB of RAM. More than 16GB is highly
+* An x86-64 machine with at least 8GB of RAM. More than 16GB is highly
     recommended. If your machine has an SSD, it is recommended to have
     \>=32GB/>=16GB of swap for machines with 8GB/16GB of RAM respectively.
 * At least 100GB of free disk space. It does not have to be on the same drive;
@@ -21,6 +21,10 @@ Are you a Google employee? See
     to a Python v3.8+ binary). Depot_tools bundles an appropriate version
     of Python in `$depot_tools/python-bin`, if you don't have an appropriate
     version already on your system.
+* `libc++` is currently the only supported STL. `clang` is the only
+  officially-supported compiler, though external community members generally
+  keep things building with `gcc`. For more details, see the
+  [supported toolchains doc](../toolchain_support.md).
 
 Most development is done on Ubuntu (Chromium's build infrastructure currently
 runs 22.04, Jammy Jellyfish). There are some instructions for other distros
@@ -376,10 +380,12 @@ add this to your .bashrc / .bash_profile.
 
 ```shell
 if [[ -z "${DISPLAY}" ]]; then
-  export DISPLAY=:$(
-    find /tmp/.X11-unix -maxdepth 1 -mindepth 1 -name 'X*' |
-      grep -o '[0-9]\+$' | head -n 1
-  )
+  # In reality, Chrome Remote Desktop starts with 20 and increases until it
+  # finds an available ID [1]. So this isn't guaranteed to always work, but
+  # should work on the vast majoriy of cases.
+  #
+  # [1] https://source.chromium.org/chromium/chromium/src/+/main:remoting/host/linux/linux_me2me_host.py;l=112;drc=464a632e21bcec76c743930d4db8556613e21fd8
+  export DISPLAY=:20
 fi
 ```
 
@@ -730,7 +736,10 @@ WORKDIR /chromium/src
 
 # Expose any necessary ports (if needed)
 # EXPOSE 8080
-RUN useradd -u 1000 chrom-d
+
+# Create a dummy user and group to avoid permission issues
+RUN groupadd -g 1001 chrom-d && \
+    useradd -u 1000 -g 1001 -m chrom-d
 
 # Create normal user with name "chrom-d". Optional and you can use root but
 # not advised.
@@ -752,7 +761,7 @@ $ docker build -t chrom-b .
 3. Run container as root to install dependencies
 
 ```shell
-$ docker run --rm \ # close instance upon exit
+$ docker run
   -it \ # Run docker interactively
   --name chrom-b \ # with name "chrom-b"
   -u root \ # with user root
@@ -760,6 +769,11 @@ $ docker run --rm \ # close instance upon exit
   -v /path/on/machine/to/depot_tools:/depot_tools \ # With depot_tools mounted
   chrom-b # Run container with image name "chrom-b"
 ```
+
+*** note
+**Note:** When running the command as a single line in bash, please remove the
+comments (after the `#`) to avoid breaking the command.
+***
 
 4. Install dependencies:
 
@@ -769,13 +783,32 @@ $ docker run --rm \ # close instance upon exit
 
 5. [Run hooks](#run-the-hooks) (On docker or machine if you installed depot_tools on machine)
 
+*** note
+**Before running hooks:** Ensure that all directories within
+`third_party` are added as safe directories in Git. This is required
+when running in the container because the ownership of the `src/`
+directory (e.g., `chrom-b`) differs from the current user
+(e.g., `root`). To prevent Git **warnings** about "dubious ownership"
+run the following command after installing the dependencies:
+
+```shell
+# Loop through each directory in /chromium/src/third_party and add
+# them as safe directories in Git
+$ for dir in /chromium/src/third_party/*; do
+    if [ -d "$dir" ]; then
+        git config --global --add safe.directory "$dir"
+    fi
+done
+```
+***
+
 6. Exit container
 
 7. Save container image with tag-id name `dpv1.0`. Run this on the machine, not in container
 
 ```shell
-# Get docker running instances, copy the id you get
-$ docker ps
+# Get docker running/stopped containers, copy the "chrom-b" id
+$ docker container ls -a
 # Save/tag running docker container with name "chrom-b" with "dpv1.0"
 # You can choose any tag name you want but propagate name accordingly
 # You will need to create new tags when working on different parts of
@@ -797,3 +830,8 @@ $ docker run --rm \ # close instance upon exit
   -v /path/on/machine/to/depot_tools:/depot_tools \ # With depot_tools mounted
   chrom-b:dpv1.0 # Run container with image name "chrom-b" and tag dpv1.0
 ```
+
+*** note
+**Note:** When running the command as a single line in bash, please remove the
+comments (after the `#`) to avoid breaking the command.
+***

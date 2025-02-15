@@ -148,8 +148,7 @@ void OverviewDropTarget::ScaleUpSelectedItem(
 
 void OverviewDropTarget::EnsureVisible() {}
 
-std::vector<OverviewFocusableView*> OverviewDropTarget::GetFocusableViews()
-    const {
+std::vector<views::Widget*> OverviewDropTarget::GetFocusableWidgets() {
   return {};
 }
 
@@ -202,10 +201,6 @@ OverviewItemFillMode OverviewDropTarget::GetOverviewItemFillMode() const {
 }
 
 void OverviewDropTarget::UpdateOverviewItemFillMode() {}
-
-gfx::Point OverviewDropTarget::GetMagnifierFocusPointInScreen() const {
-  return gfx::Point();
-}
 
 const gfx::RoundedCornersF OverviewDropTarget::GetRoundedCorners() const {
   return gfx::RoundedCornersF();

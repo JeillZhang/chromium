@@ -19,6 +19,7 @@
 <translation id="115443833402798225">Хангыль Ahnmatae горим</translation>
 <translation id="1155759005174418845">Каталан</translation>
 <translation id="1168100932582989117">Google-н нэрийн сервер</translation>
+<translation id="1170788066030116158">Зураг авсан огноо</translation>
 <translation id="1172970565351728681">Ойролцоогоор <ph name="REMAINING_TIME" /> үлдсэн</translation>
 <translation id="1173894706177603556">Нэр солих</translation>
 <translation id="1173916544412572294">Сүлжээ: <ph name="NETWORK_COUNT" />-н <ph name="NETWORK_INDEX" />, <ph name="PHONE_NAME" />, <ph name="CONNECTION_STATUS" />, дохионы хүч <ph name="SIGNAL_STRENGTH" />%, утасны батарей <ph name="BATTERY_STATUS" />%, дэлгэрэнгүй мэдээлэл</translation>
@@ -72,6 +73,7 @@
 <translation id="1577977504532381335">Админы бодлогыг хянах</translation>
 <translation id="158849752021629804">Гэрийн сүлжээ хэрэгтэй</translation>
 <translation id="1589128298353575783"><ph name="NUMBER_OF_PB" /> ПБ</translation>
+<translation id="1601786938618212857">Zip</translation>
 <translation id="1620510694547887537">Камер</translation>
 <translation id="162175252992296058">АНУ-ын олон улсын гартай португал</translation>
 <translation id="1629521517399325891">Сүлжээний баталгаажуулалтад хэрэглэгчийн сертификат боломжгүй байна.</translation>
@@ -337,6 +339,7 @@
 <translation id="3689865792480713551"><ph name="ACTIVITY_DESCRIPTION" />-г цуцлах.</translation>
 <translation id="3690128548376345212"><ph name="NETWORK_COUNT" />-с <ph name="NETWORK_INDEX" />-р сүлжээ, <ph name="NETWORK_NAME" />, Идэвхжүүлээгүй, <ph name="CONNECTION_STATUS" />, Дохионы хүч <ph name="SIGNAL_STRENGTH" />%, Дэлгэрэнгүй</translation>
 <translation id="3691184985318546178">Синхала</translation>
+<translation id="3702842351052426940">Таны SIM карт эсвэл eSIM профайлыг идэвхгүй болгосон байж магадгүй. SIM картаа солих эсвэл eSIM профайлаа сэлгэж үзнэ үү.</translation>
 <translation id="3722341589402358578">Алдаа гарлаа. Зарим зүйлийг хогийн сав руу зөөгөөгүй байж магадгүй.</translation>
 <translation id="3726463242007121105">Файлын систем нь дэмжигдээгүй учир энэ төхөөрөмжийг нээх боломжгүй.</translation>
 <translation id="3727148787322499904">Энэ тохиргоог өөрчилснөөр хуваалцсан бүх сүлжээнд нөлөөлнө</translation>
@@ -356,6 +359,7 @@
 <translation id="3822559385185038546">Энэ проксиг таны админ идэвхжүүлсэн байна</translation>
 <translation id="3830674330436234648">Дахин тоглуулах боломжгүй</translation>
 <translation id="383652340667548381">Серби</translation>
+<translation id="3839045880592694915">Танай оператор компани таны модемыг холбогдохыг зөвшөөрөөгүй. Илүү дэлгэрэнгүй мэдээлэл авах бол оператор компанитайгаа холбогдоно уу.</translation>
 <translation id="385051799172605136">Буцах</translation>
 <translation id="3855472144336161447">Герман Neo 2</translation>
 <translation id="3858860766373142691">Нэр</translation>
@@ -375,10 +379,10 @@
 <translation id="3999574733850440202">Саяхан нээсэн Microsoft файлуудыг OneDrive руу зөөсөн</translation>
 <translation id="4002066346123236978">Гарчиг</translation>
 <translation id="4017788180641807848">Workman гартай англи (АНУ)</translation>
-<translation id="4019998208269143058">Шуурхай файлуудад бэхлэх</translation>
 <translation id="4040753847560036377">PUK буруу байна</translation>
 <translation id="4057991113334098539">Идэвхжүүлж байна...</translation>
 <translation id="4092890906744441904">Ирланд</translation>
+<translation id="4101601646343868113">Хөдөлгөөнт холбооны сүлжээндээ нэвтрээд, хөдөлгөөнт төхөөрөмжийн дата багцаа идэвхтэй болохыг баталгаажуулна уу</translation>
 <translation id="4124731372776320263">1 Драйвын файлыг синк хийж байна</translation>
 <translation id="4124935795427217608">Ганц эвэртэй морь</translation>
 <translation id="4131235941541910880">Хэрэггүй зүйлсээ хогийн сав руу зөөнө үү</translation>
@@ -391,7 +395,6 @@
 <translation id="4179621117429069925">Энэ зүйл таны хогийн саванд байна</translation>
 <translation id="4186579485882418952">Офлайн горимыг идэвхжүүлэх</translation>
 <translation id="4193154014135846272">Google баримт бичиг</translation>
-<translation id="4197674956721858839">Зип сонголт</translation>
 <translation id="4202378258276439759">Испани (Латин Америк)</translation>
 <translation id="4202977638116331303">Гүрж</translation>
 <translation id="421017592316736757">Та энэ файлд хандахын тулд онлайн байх шаардлагатай.</translation>
@@ -419,6 +422,7 @@
 <translation id="4387004326333427325">Баталгаажуулах сертификатыг алсаас цуцалсан байна.</translation>
 <translation id="4394214039309501350">Гадаад холбоос</translation>
 <translation id="4394980935660306080">Энэ долоо хоногийн эхээр</translation>
+<translation id="4397435965699247285">OneDrive нь офлайн байхад боломжгүй</translation>
 <translation id="4398096759193130964">Зүйлсийг сэргээх эсвэл тэдгээрийг хогийн савнаас гадагш шинэ фолдер луу чирнэ үү</translation>
 <translation id="4401287888955153199">Бүгдийг задлах</translation>
 <translation id="4410695710508688828">Задлах үйл ажиллагаа амжилтгүй боллоо. <ph name="ERROR_MESSAGE" /></translation>
@@ -601,6 +605,7 @@
 <translation id="5625294776298156701">Tamil99 гартай тамил</translation>
 <translation id="5633226425545095130">Энэ зүйлийг зөөснөөр үүнийг '<ph name="DESTINATION_NAME" />' хуваалцсан фолдерыг харах боломжтой бүх хүнтэй хуваалцана.</translation>
 <translation id="5649768706273821470">Сонсох</translation>
+<translation id="5650895901941743674">APN-н тохируулгаа шалгана уу</translation>
 <translation id="5669691691057771421">Шинэ ПИН оруулна уу</translation>
 <translation id="5678784840044122290">Linux апп таны Терминалд боломжтой болохоос гадна таны Эхлүүлэгчид дүрс тэмдэг харуулж болзошгүй.</translation>
 <translation id="5686799162999241776"><ph name="BEGIN_BOLD" />Архив эсвэл виртуал дискнээс салгах боломжгүй байна<ph name="END_BOLD" />
@@ -680,6 +685,7 @@
 <translation id="6267547857941397424">Сүлжээ: <ph name="NETWORK_COUNT" />-н <ph name="NETWORK_INDEX" />, <ph name="PHONE_NAME" />, дохионы хүч <ph name="SIGNAL_STRENGTH" />%, утасны батарей <ph name="BATTERY_STATUS" />%, холбогдох</translation>
 <translation id="6269630227984243955">Малай</translation>
 <translation id="6271903698064569429">"<ph name="SHARED_DRIVE_NAME" />"-д хангалттай хадгалах сан байхгүй тул файлуудыг байршуулах боломжгүй.</translation>
+<translation id="6279140785485544797">Таны хөдөлгөөнт төхөөрөмжийн дата багцын хугацаа дууссан байж магадгүй. Тусламж авах бол оператор компанитайгаа холбогдоно уу.</translation>
 <translation id="6287852322318138013">Аппликейшнээ сонгоод файлаа нээ</translation>
 <translation id="6295542640242147836">SIM-г түгжих</translation>
 <translation id="6296410173147755564">PUK буруу байна</translation>
@@ -689,7 +695,6 @@
 <translation id="6320212353742551423"><ph name="ARCHIVE_TYPE" />-н архив</translation>
 <translation id="6321303798550928047">Даллаж байна</translation>
 <translation id="6327785803543103246">Веб прокси автоматаар илрүүлэх</translation>
-<translation id="6337014272874260727">Шуурхай файлуудаас бэхэлснийг болиулах</translation>
 <translation id="6339145975392024142">АНУ-н олон улсын (PC)</translation>
 <translation id="6356685157277930264">Файлын мэдээллийн цонх</translation>
 <translation id="6358884629796491903">Луу</translation>
@@ -735,6 +740,7 @@
 <translation id="6750737795876287924">Одоогийн лавлах</translation>
 <translation id="6751256176799620176">1 фолдер сонгосон</translation>
 <translation id="6755827872271341378">ChromeOS Flex төхөөрөмж</translation>
+<translation id="6777029074498310250">Нэмэлт мэдээлэл авах бол <ph name="LINK_BEGIN" />onedrive.live.com<ph name="LINK_END" />-д зочилно уу</translation>
 <translation id="6790428901817661496">Тоглуулах</translation>
 <translation id="6794539005637808366">Зүйл сэргээх эсвэл үүнийг хогийн савнаас гадагш шинэ фолдер луу чирнэ үү</translation>
 <translation id="6795884519221689054">Хулсны баавгай</translation>
@@ -788,6 +794,7 @@
 <translation id="7086590977277044826">InScript гартай тамил</translation>
 <translation id="7088615885725309056">Хуучин</translation>
 <translation id="7103992300314999525">Македон</translation>
+<translation id="7104338189998813914">Таны OneDrive бүртгэлд хандахад асуудал гарлаа</translation>
 <translation id="7106346894903675391">Илүү их хадгалалтын санг худалдаж аваарай...</translation>
 <translation id="7126604456862387217">"&lt;b&gt; <ph name="SEARCH_STRING" /> &lt;/ б&gt; '- search &lt;em&gt; Drive &lt;/em&gt;</translation>
 <translation id="7135561821015524160">Каннада авиа зүй</translation>
@@ -1006,6 +1013,7 @@
 <translation id="8600173386174225982">Файлын жагсаалтыг өнгөц зургаар харах горимд шилжүүлэв.</translation>
 <translation id="8601932370724196034">Crostini зургийн файл</translation>
 <translation id="8609695766746872526">Исланд</translation>
+<translation id="8630384863424041081">SIM картын ПИН эсвэл оператор компанийнхаа өгсөн өгөгдмөл ПИН-ээ оруулна уу. Тусламж авах бол оператор компанитайгаа холбогдоно уу.</translation>
 <translation id="863903787380594467">ПИН буруу байна. Танд <ph name="RETRIES" /> оролдлого үлдлээ.</translation>
 <translation id="8639391553632924850"><ph name="INPUT_LABEL" /> - Порт</translation>
 <translation id="8656407365183407932">Таны офлайн файлуудыг хасах шаардлагатай байсан</translation>

@@ -8,21 +8,21 @@
 #import "base/time/time.h"
 #import "components/prefs/pref_service.h"
 #import "components/prefs/scoped_user_pref_update.h"
-#import "components/search_engines/prepopulated_engines.h"
 #import "components/search_engines/template_url.h"
 #import "components/search_engines/template_url_prepopulate_data.h"
 #import "components/search_engines/template_url_service.h"
+#import "components/signin/public/identity_manager/identity_manager.h"
 #import "ios/chrome/browser/content_notification/model/constants.h"
 #import "ios/chrome/browser/metrics/model/constants.h"
 #import "ios/chrome/browser/push_notification/model/constants.h"
 #import "ios/chrome/browser/push_notification/model/push_notification_client_id.h"
 #import "ios/chrome/browser/search_engines/model/template_url_service_factory.h"
-#import "ios/chrome/browser/shared/model/browser_state/chrome_browser_state.h"
 #import "ios/chrome/browser/shared/model/prefs/pref_names.h"
+#import "ios/chrome/browser/shared/model/profile/profile_ios.h"
 #import "ios/chrome/browser/shared/model/utils/first_run_util.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
-#import "ios/chrome/browser/signin/model/authentication_service.h"
-#import "ios/chrome/browser/signin/model/authentication_service_factory.h"
+#import "ios/chrome/browser/signin/model/identity_manager_factory.h"
+#import "third_party/search_engines_data/resources/definitions/prepopulated_engines.h"
 
 namespace {
 
@@ -62,7 +62,7 @@ int GetFeedActivityLevel(PrefService* pref_service) {
 
 // Return true if the user installed Chrome less than 4 weeks.
 bool IsNewUser() {
-  return !IsFirstRunRecent(base::Days(28));
+  return IsFirstRunRecent(base::Days(28));
 }
 
 // Return a dictionary that stores values that impact user enrollment
@@ -158,10 +158,18 @@ void LogHistogramForEligibilityType(ContentNotificationEligibilityType type) {
   base::UmaHistogramEnumeration("ContentNotifications.EligibilityType", type);
 }
 
+// Returns whether the `profile` has a primary account.
+bool IsProfileSignedIn(ProfileIOS* profile) {
+  signin::IdentityManager* identity_manager =
+      IdentityManagerFactory::GetForProfile(profile);
+  return identity_manager &&
+         identity_manager->HasPrimaryAccount(signin::ConsentLevel::kSignin);
+}
+
 }  // namespace
 
-bool IsContentNotificationEnabled(ChromeBrowserState* browser_state) {
-  if (!browser_state) {
+bool IsContentNotificationEnabled(ProfileIOS* profile) {
+  if (!profile) {
     return false;
   }
 
@@ -169,18 +177,19 @@ bool IsContentNotificationEnabled(ChromeBrowserState* browser_state) {
     return false;
   }
 
-  AuthenticationService* auth_service =
-      AuthenticationServiceFactory::GetForBrowserState(browser_state);
-  BOOL user_signed_in = auth_service && auth_service->HasPrimaryIdentity(
-                                            signin::ConsentLevel::kSignin);
+  BOOL user_signed_in = IsProfileSignedIn(profile);
+
+  if (!ios::TemplateURLServiceFactory::GetForProfile(profile)) {
+    return false;
+  }
 
   const TemplateURL* default_search_url_template =
-      ios::TemplateURLServiceFactory::GetForBrowserState(browser_state)
+      ios::TemplateURLServiceFactory::GetForProfile(profile)
           ->GetDefaultSearchProvider();
   bool default_search_engine = default_search_url_template &&
                                default_search_url_template->prepopulate_id() ==
                                    TemplateURLPrepopulateData::google.id;
-  PrefService* pref_service = browser_state->GetPrefs();
+  PrefService* pref_service = profile->GetPrefs();
 
   return IsContentNotificationPromoEnabled(
              user_signed_in, default_search_engine, pref_service) ||
@@ -190,8 +199,8 @@ bool IsContentNotificationEnabled(ChromeBrowserState* browser_state) {
              user_signed_in, default_search_engine, pref_service);
 }
 
-bool IsContentNotificationRegistered(ChromeBrowserState* browser_state) {
-  if (!browser_state) {
+bool IsContentNotificationRegistered(ProfileIOS* profile) {
+  if (!profile) {
     return false;
   }
 
@@ -199,18 +208,19 @@ bool IsContentNotificationRegistered(ChromeBrowserState* browser_state) {
     return false;
   }
 
-  AuthenticationService* auth_service =
-      AuthenticationServiceFactory::GetForBrowserState(browser_state);
-  BOOL user_signed_in = auth_service && auth_service->HasPrimaryIdentity(
-                                            signin::ConsentLevel::kSignin);
+  BOOL user_signed_in = IsProfileSignedIn(profile);
+
+  if (!ios::TemplateURLServiceFactory::GetForProfile(profile)) {
+    return false;
+  }
 
   const TemplateURL* default_search_url_template =
-      ios::TemplateURLServiceFactory::GetForBrowserState(browser_state)
+      ios::TemplateURLServiceFactory::GetForProfile(profile)
           ->GetDefaultSearchProvider();
   bool default_search_engine = default_search_url_template &&
                                default_search_url_template->prepopulate_id() ==
                                    TemplateURLPrepopulateData::google.id;
-  PrefService* pref_service = browser_state->GetPrefs();
+  PrefService* pref_service = profile->GetPrefs();
 
   return IsContentNotificationPromoRegistered(
              user_signed_in, default_search_engine, pref_service) ||

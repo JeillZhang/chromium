@@ -24,21 +24,20 @@
 #include <cerrno>
 #endif  // PA_CONFIG(HAS_LINUX_KERNEL)
 
-#if !PA_CONFIG(HAS_FAST_MUTEX)
+#if !PA_CONFIG(HAS_LINUX_KERNEL) && !PA_BUILDFLAG(IS_WIN) && \
+    !PA_BUILDFLAG(IS_APPLE) && !PA_BUILDFLAG(IS_POSIX) &&    \
+    !PA_BUILDFLAG(IS_FUCHSIA)
 #include "partition_alloc/partition_alloc_base/threading/platform_thread.h"
 
 #if PA_BUILDFLAG(IS_POSIX)
 #include <sched.h>
-
 #define PA_YIELD_THREAD sched_yield()
-
 #else  // Other OS
-
 #warning "Thread yield not supported on this OS."
 #define PA_YIELD_THREAD ((void)0)
 #endif
 
-#endif  // !PA_CONFIG(HAS_FAST_MUTEX)
+#endif
 
 namespace partition_alloc::internal {
 
@@ -55,7 +54,7 @@ void SpinningMutex::AcquireSpinThenBlock() {
   int tries = 0;
   int backoff = 1;
   do {
-    if (PA_LIKELY(Try())) {
+    if (Try()) [[likely]] {
       return;
     }
     // Note: Per the intel optimization manual
@@ -82,8 +81,6 @@ void SpinningMutex::AcquireSpinThenBlock() {
 
   LockSlow();
 }
-
-#if PA_CONFIG(HAS_FAST_MUTEX)
 
 #if PA_CONFIG(HAS_LINUX_KERNEL)
 
@@ -145,8 +142,33 @@ void SpinningMutex::LockSlow() {
 
 #elif PA_BUILDFLAG(IS_APPLE)
 
+// TODO(verwaest): We should use the constants from the header, but they aren't
+// exposed until macOS 15. See their definition here:
+// https://github.com/apple-oss-distributions/libplatform/blob/4f6349dfea579c35b8fa838d785644e441d14e0e/private/os/lock_private.h#L265
+//
+// The first flag prevents the runtime from creating more threads in response to
+// contention. The second will spin in the kernel if the lock owner is currently
+// running.
+#define OS_UNFAIR_LOCK_DATA_SYNCHRONIZATION 0x00010000
+#define OS_UNFAIR_LOCK_ADAPTIVE_SPIN 0x00040000
+
+typedef uint32_t os_unfair_lock_options_t;
+
+extern "C" {
+void __attribute__((weak))
+os_unfair_lock_lock_with_options(os_unfair_lock* lock,
+                                 os_unfair_lock_options_t);
+}
+
 void SpinningMutex::LockSlow() {
-  return os_unfair_lock_lock(&unfair_lock_);
+  if (os_unfair_lock_lock_with_options) {
+    const os_unfair_lock_options_t options =
+        static_cast<os_unfair_lock_options_t>(
+            OS_UNFAIR_LOCK_DATA_SYNCHRONIZATION | OS_UNFAIR_LOCK_ADAPTIVE_SPIN);
+    os_unfair_lock_lock_with_options(&unfair_lock_, options);
+  } else {
+    os_unfair_lock_lock(&unfair_lock_);
+  }
 }
 
 #elif PA_BUILDFLAG(IS_POSIX)
@@ -162,11 +184,9 @@ void SpinningMutex::LockSlow() {
   sync_mutex_lock(&lock_);
 }
 
-#endif
+#else
 
-#else  // PA_CONFIG(HAS_FAST_MUTEX)
-
-void SpinningMutex::LockSlowSpinLock() {
+void SpinningMutex::LockSlow() {
   int yield_thread_count = 0;
   do {
     if (yield_thread_count < 10) {
@@ -179,9 +199,9 @@ void SpinningMutex::LockSlowSpinLock() {
       // progress.
       base::PlatformThread::Sleep(base::Milliseconds(1));
     }
-  } while (!TrySpinLock());
+  } while (!Try());
 }
 
-#endif  // PA_CONFIG(HAS_FAST_MUTEX)
+#endif
 
 }  // namespace partition_alloc::internal

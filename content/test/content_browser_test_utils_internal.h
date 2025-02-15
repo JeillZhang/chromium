@@ -23,6 +23,7 @@
 #include "content/browser/renderer_host/back_forward_cache_metrics.h"
 #include "content/browser/renderer_host/navigation_type.h"
 #include "content/browser/renderer_host/render_frame_host_impl.h"
+#include "content/browser/web_contents/web_contents_impl.h"
 #include "content/public/browser/javascript_dialog_manager.h"
 #include "content/public/browser/web_contents_delegate.h"
 #include "content/public/browser/web_contents_observer.h"
@@ -81,11 +82,24 @@ RenderFrameHost* ConvertToRenderFrameHost(FrameTreeNode* frame_tree_node);
 // the main frame's document, waiting until the RenderFrameHostCreated
 // notification is received by the browser. If |wait_for_navigation| is true,
 // will also wait for the first navigation in the iframe to finish. Returns the
-// RenderFrameHost of the iframe.
+// RenderFrameHost of the iframe. |extra_params| is a struct that allows
+// for optional parameters to be specified for the subframe.
+struct ExtraParams {
+  std::string sandbox_flags = "";
+};
 RenderFrameHost* CreateSubframe(WebContentsImpl* web_contents,
                                 std::string frame_id,
                                 const GURL& url,
                                 bool wait_for_navigation);
+RenderFrameHost* CreateSubframe(RenderFrameHost* parent,
+                                std::string frame_id,
+                                const GURL& url,
+                                bool wait_for_navigation);
+RenderFrameHost* CreateSubframe(RenderFrameHost* parent,
+                                std::string frame_id,
+                                const GURL& url,
+                                bool wait_for_navigation,
+                                ExtraParams extra_params);
 
 // Returns the frames visited by |RenderFrameHostImpl::ForEachRenderFrameHost|
 // in the same order.
@@ -240,7 +254,7 @@ class FileChooserDelegate : public WebContentsDelegate {
 // the given frame tree node.
 class FrameTestNavigationManager : public TestNavigationManager {
  public:
-  FrameTestNavigationManager(int frame_tree_node_id,
+  FrameTestNavigationManager(FrameTreeNodeId frame_tree_node_id,
                              WebContents* web_contents,
                              const GURL& url);
 
@@ -253,7 +267,7 @@ class FrameTestNavigationManager : public TestNavigationManager {
   bool ShouldMonitorNavigation(NavigationHandle* handle) override;
 
   // Notifications are filtered so only this frame is monitored.
-  int filtering_frame_tree_node_id_;
+  FrameTreeNodeId filtering_frame_tree_node_id_;
 };
 
 // An observer that can wait for a specific URL to be committed in a specific
@@ -274,7 +288,7 @@ class UrlCommitObserver : WebContentsObserver {
   void DidFinishNavigation(NavigationHandle* navigation_handle) override;
 
   // The id of the FrameTreeNode in which navigations are peformed.
-  int frame_tree_node_id_;
+  FrameTreeNodeId frame_tree_node_id_;
 
   // The URL this observer is expecting to be committed.
   GURL url_;
@@ -377,7 +391,6 @@ class ShowPopupWidgetWaiter
     void ShowPopupMenu(
         mojo::PendingRemote<blink::mojom::PopupMenuClient> popup_client,
         const gfx::Rect& bounds,
-        int32_t item_height,
         double font_size,
         int32_t selected_item,
         std::vector<blink::mojom::MenuItemPtr> menu_items,
@@ -574,7 +587,7 @@ class FrameNavigateParamsCapturer : public WebContentsObserver {
   // The id of the FrameTreeNode whose navigations to observe. If this is not
   // set, then this FrameNavigateParamsCapturer observes all navigations that
   // happen in the observed WebContents.
-  std::optional<int> frame_tree_node_id_;
+  std::optional<FrameTreeNodeId> frame_tree_node_id_;
 
   // How many navigations remain to capture.
   int navigations_remaining_ = 1;
@@ -813,15 +826,6 @@ void WaitForCopyableViewInWebContents(WebContents* web_contents);
 // is in a steady state, so the caller can issue an `viz::CopyOutputRequest`
 // against its view.
 void WaitForCopyableViewInFrame(RenderFrameHost* render_frame_host);
-
-// Blocks the current execution until the frame submitted via the browser's
-// compositor is presented on the screen.
-void WaitForBrowserCompositorFramePresented(WebContents* web_contents);
-
-// Forces the browser to submit a compositor frame, even if nothing has changed
-// in the viewport. Use `WaitForBrowserCompositorFramePresented()` to wait for
-// the frame's presentation.
-void ForceNewCompositorFrameFromBrowser(WebContents* web_contents);
 
 // Sets up a /redirect-on-second-navigation?url endpoint on the provided
 // `server`, which will return a 200 OK response for the first request, and

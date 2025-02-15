@@ -8,7 +8,7 @@
 #include <utility>
 
 #include "ash/constants/ash_features.h"
-#include "ash/focus_cycler.h"
+#include "ash/focus/focus_cycler.h"
 #include "ash/keyboard/ui/keyboard_ui_controller.h"
 #include "ash/public/cpp/shelf_config.h"
 #include "ash/public/cpp/shelf_model.h"
@@ -22,7 +22,6 @@
 #include "ash/shell.h"
 #include "ash/style/system_shadow.h"
 #include "ash/system/status_area_widget.h"
-#include "ash/utility/forest_util.h"
 #include "ash/wm/overview/overview_controller.h"
 #include "ash/wm/overview/overview_observer.h"
 #include "base/i18n/rtl.h"
@@ -521,7 +520,8 @@ void HotseatWidget::DelegateView::Init(
   OverviewController* overview_controller = Shell::Get()->overview_controller();
   if (overview_controller) {
     overview_controller->AddObserver(this);
-    if (overview_controller->InOverviewSession() && !IsForestFeatureEnabled()) {
+    if (overview_controller->InOverviewSession() &&
+        !features::IsForestFeatureEnabled()) {
       ++blur_lock_;
     }
   }
@@ -584,15 +584,10 @@ void HotseatWidget::DelegateView::UpdateTranslucentBackground() {
 
 void HotseatWidget::DelegateView::UpdateHighlightBorder(
     bool update_corner_radius) {
-  const bool is_jelly_enabled = chromeos::features::IsJellyrollEnabled();
-  views::HighlightBorder::Type border_type;
-  if (!is_jelly_enabled) {
-    border_type = views::HighlightBorder::Type::kHighlightBorder1;
-  } else {
-    border_type = shadow_->GetLayer()->visible()
-                      ? views::HighlightBorder::Type::kHighlightBorderOnShadow
-                      : views::HighlightBorder::Type::kHighlightBorderNoShadow;
-  }
+  views::HighlightBorder::Type border_type =
+      shadow_->GetLayer()->visible()
+          ? views::HighlightBorder::Type::kHighlightBorderOnShadow
+          : views::HighlightBorder::Type::kHighlightBorderNoShadow;
 
   if (GetBorder() && !update_corner_radius && border_type_ == border_type) {
     return;
@@ -609,7 +604,7 @@ SkColor HotseatWidget::DelegateView::GetBackgroundColor() {
   CHECK(widget);
   aura::Window* window = widget->GetNativeWindow();
   // A forest session uses system-on-base.
-  if (IsForestFeatureEnabled() &&
+  if (features::IsForestFeatureEnabled() &&
       OverviewController::Get()->InOverviewSession() &&
       !SplitViewController::Get(window)->InSplitViewMode()) {
     return widget->GetColorProvider()->GetColor(
@@ -669,8 +664,10 @@ void HotseatWidget::DelegateView::SetTranslucentBackground(
 }
 
 void HotseatWidget::DelegateView::SetBackgroundBlur(bool enable_blur) {
-  if (!features::IsBackgroundBlurEnabled() || blur_lock_ > 0)
+  if (!features::IsBackgroundBlurEnabled() ||
+      !chromeos::features::IsSystemBlurEnabled() || blur_lock_ > 0) {
     return;
+  }
 
   const int blur_radius =
       enable_blur ? ShelfConfig::Get()->shelf_blur_radius() : 0;
@@ -722,7 +719,7 @@ bool HotseatWidget::DelegateView::CanActivate() const {
 
 void HotseatWidget::DelegateView::OnOverviewModeWillStart() {
   // Forest uses background blur in overview.
-  was_forest_on_overview_enter_ = IsForestFeatureEnabled();
+  was_forest_on_overview_enter_ = features::IsForestFeatureEnabled();
   if (*was_forest_on_overview_enter_) {
     return;
   }
@@ -823,14 +820,16 @@ void HotseatWidget::OnHotseatTransitionAnimatorCreated(
 }
 
 void HotseatWidget::OnMouseEvent(ui::MouseEvent* event) {
-  if (event->type() == ui::ET_MOUSE_PRESSED)
+  if (event->type() == ui::EventType::kMousePressed) {
     keyboard::KeyboardUIController::Get()->HideKeyboardImplicitlyByUser();
+  }
   views::Widget::OnMouseEvent(event);
 }
 
 void HotseatWidget::OnGestureEvent(ui::GestureEvent* event) {
-  if (event->type() == ui::ET_GESTURE_TAP_DOWN)
+  if (event->type() == ui::EventType::kGestureTapDown) {
     keyboard::KeyboardUIController::Get()->HideKeyboardImplicitlyByUser();
+  }
 
   // Context menus for shelf app button forward gesture events to hotseat
   // widget, so the shelf app button can continue handling drag even after the
@@ -849,8 +848,9 @@ void HotseatWidget::OnGestureEvent(ui::GestureEvent* event) {
 
   // Ensure that the app button's drag state gets cleared on gesture end even if
   // the event doesn't get delivered to the app button.
-  if (item_with_context_menu && event->type() == ui::ET_GESTURE_END)
+  if (item_with_context_menu && event->type() == ui::EventType::kGestureEnd) {
     item_with_context_menu->ClearDragStateOnGestureEnd();
+  }
 }
 
 bool HotseatWidget::OnNativeWidgetActivationChanged(bool active) {
@@ -896,6 +896,10 @@ void HotseatWidget::UpdateTranslucentBackground() {
   delegate_view_->UpdateTranslucentBackground();
 }
 
+void HotseatWidget::InitializeAccessibilityProperties() {
+  scrollable_shelf_view()->UpdateAccessiblePreviousAndNextFocus();
+}
+
 int HotseatWidget::CalculateHotseatYInScreen(
     HotseatState hotseat_target_state) const {
   DCHECK(shelf_->IsHorizontalAlignment());
@@ -931,7 +935,7 @@ int HotseatWidget::CalculateHotseatYInScreen(
           ShelfConfig::Get()->hotseat_bottom_padding() + hotseat_size;
       break;
     case HotseatState::kNone:
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
   }
   const int target_shelf_size =
       shelf_->shelf_widget()->GetTargetBounds().size().height();
@@ -1373,7 +1377,7 @@ void HotseatWidget::StartHotseatTransitionAnimation(
       break;
     case StateTransition::kHiddenAndExtended:
     case StateTransition::kOther:
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
   }
 
   auto* sequence =

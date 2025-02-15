@@ -52,8 +52,11 @@
 #include "components/web_package/signed_web_bundles/signed_web_bundle_id.h"
 #endif  // !BUILDFLAG(IS_ANDROID)
 
-#if BUILDFLAG(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
 #include "chrome/common/initialize_extensions_client.h"
+#endif
+
+#if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "extensions/common/extension_paths.h"
 #endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
@@ -74,7 +77,7 @@ class ChromeUnitTestSuiteInitializer : public testing::EmptyTestEventListener {
   void OnTestStart(const testing::TestInfo& test_info) override {
     TestingBrowserProcess::CreateInstance();
     // Make sure the loaded locale is "en-US".
-    if (ui::ResourceBundle::GetSharedInstance().GetLoadedLocaleForTesting() !=
+    if (ui::ResourceBundle::GetSharedInstance().GetLoadedLocale() !=
         kDefaultLocale) {
       // Linux uses environment to determine locale.
       std::unique_ptr<base::Environment> env(base::Environment::Create());
@@ -87,7 +90,7 @@ class ChromeUnitTestSuiteInitializer : public testing::EmptyTestEventListener {
   void OnTestEnd(const testing::TestInfo& test_info) override {
     TestingBrowserProcess::TearDownAndDeleteInstance();
     // Some tests cause ChildThreadImpl to initialize a PowerMonitor.
-    base::PowerMonitor::ShutdownForTesting();
+    base::PowerMonitor::GetInstance()->ShutdownForTesting();
 #if BUILDFLAG(IS_WIN)
     // Running tests locally on Windows machines with some degree of
     // accessibility enabled can cause this flag to become implicitly set.
@@ -163,11 +166,7 @@ void ChromeUnitTestSuite::InitializeProviders() {
   content::RegisterPathProvider();
   ui::RegisterPathProvider();
   component_updater::RegisterPathProvider(chrome::DIR_COMPONENTS,
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-                                          ash::DIR_PREINSTALLED_COMPONENTS,
-#else
                                           chrome::DIR_INTERNAL_PLUGINS,
-#endif
                                           chrome::DIR_USER_DATA);
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
@@ -180,7 +179,9 @@ void ChromeUnitTestSuite::InitializeProviders() {
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
   extensions::RegisterPathProvider();
+#endif
 
+#if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
   EnsureExtensionsClientInitialized();
 #endif
 

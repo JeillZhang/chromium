@@ -6,6 +6,7 @@
 
 #include <stddef.h>
 
+#include <array>
 #include <memory>
 #include <utility>
 
@@ -598,10 +599,11 @@ TEST(SchemaTest, Wrap) {
   // Wrapped schemas have no sensitive values.
   EXPECT_FALSE(schema.IsSensitiveValue());
 
-  struct {
+  struct ExpectedProperties {
     const char* key;
     base::Value::Type type;
-  } kExpectedProperties[] = {
+  };
+  auto kExpectedProperties = std::to_array<ExpectedProperties>({
       {"Boolean", base::Value::Type::BOOLEAN},
       {"DictRequired", base::Value::Type::DICT},
       {"Integer", base::Value::Type::INTEGER},
@@ -612,7 +614,7 @@ TEST(SchemaTest, Wrap) {
       {"RangedInt", base::Value::Type::INTEGER},
       {"StrEnum", base::Value::Type::STRING},
       {"StrPat", base::Value::Type::STRING},
-  };
+  });
 
   Schema::Iterator it = schema.GetPropertiesIterator();
   for (size_t i = 0; i < std::size(kExpectedProperties); ++i) {

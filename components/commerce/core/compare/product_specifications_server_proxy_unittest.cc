@@ -11,10 +11,10 @@
 #include "base/run_loop.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
-
 #include "components/commerce/core/commerce_feature_list.h"
 #include "components/commerce/core/mock_account_checker.h"
 #include "components/commerce/core/pref_names.h"
+#include "components/commerce/core/test_utils.h"
 #include "components/endpoint_fetcher/endpoint_fetcher.h"
 #include "components/endpoint_fetcher/mock_endpoint_fetcher.h"
 #include "components/prefs/testing_pref_service.h"
@@ -48,10 +48,19 @@ const std::string kSimpleResponse = R"(
             "summaryDescription": [
               {
                 "text": "Circle is round",
-                "url": "http://example.com/circle/"
+                "urls": [
+                  {
+                    "url": "http://example.com/circle/",
+                    "title": "Circles",
+                    "faviconUrl": "http://example.com/favicon.png",
+                    "thumbnailImageUrl": "http://example.com/thumbnail.png",
+                    "text": "Summary of page content"
+                  }
+                ]
               }
             ],
             "imageUrl": "http://example.com/image.png",
+            "buyingOptionsUrl": "http://example.com/jackpot",
             "productSpecificationValues": [
               {
                 "key": "100000",
@@ -62,7 +71,9 @@ const std::string kSimpleResponse = R"(
                         "description": [
                           {
                             "text": "Red",
-                            "url": "http://example.com/red/"
+                            "urls": [
+                              {"url": "http://example.com/red/"}
+                            ]
                           }
                         ]
                       }
@@ -75,7 +86,9 @@ const std::string kSimpleResponse = R"(
                 "summaryDescription": [
                   {
                     "text": "Descriptions summary",
-                    "url": "http://example.com/descriptions/"
+                    "urls": [
+                      {"url": "http://example.com/descriptions/"}
+                    ]
                   }
                 ]
               }
@@ -84,8 +97,6 @@ const std::string kSimpleResponse = R"(
         ]
       }
     })";
-
-}  // namespace
 
 class MockProductSpecificationsServerProxy
     : public ProductSpecificationsServerProxy {
@@ -105,15 +116,26 @@ class MockProductSpecificationsServerProxy
               (override));
 };
 
+}  // namespace
+
 class ProductSpecificationsServerProxyTest : public testing::Test {
+ public:
+  ProductSpecificationsServerProxyTest()
+      : prefs_(std::make_unique<TestingPrefServiceSimple>()) {}
+
  protected:
   void SetUp() override {
     account_checker_ = std::make_unique<MockAccountChecker>();
     account_checker_->SetCountry("us");
     account_checker_->SetLocale("en-us");
+    account_checker_->SetSignedIn(true);
+    account_checker_->SetAnonymizedUrlDataCollectionEnabled(true);
+    ON_CALL(*account_checker_, IsSyncTypeEnabled)
+        .WillByDefault(testing::Return(true));
 
-    RegisterPrefs(prefs_.registry());
-    account_checker_->SetPrefs(&prefs_);
+    MockAccountChecker::RegisterCommercePrefs(prefs_->registry());
+    SetTabCompareEnterprisePolicyPref(prefs_.get(), 0);
+    account_checker_->SetPrefs(prefs_.get());
 
     server_proxy_ = std::make_unique<MockProductSpecificationsServerProxy>(
         account_checker_.get());
@@ -121,8 +143,8 @@ class ProductSpecificationsServerProxyTest : public testing::Test {
 
   void TearDown() override { test_features_.Reset(); }
 
+  std::unique_ptr<TestingPrefServiceSimple> prefs_;
   std::unique_ptr<MockAccountChecker> account_checker_;
-  TestingPrefServiceSimple prefs_;
   std::unique_ptr<MockProductSpecificationsServerProxy> server_proxy_;
 
   base::test::TaskEnvironment task_environment_;
@@ -156,9 +178,25 @@ TEST_F(ProductSpecificationsServerProxyTest, JsonToProductSpecifications) {
             ASSERT_EQ("Circle", spec->products[0].title);
             ASSERT_EQ("http://example.com/image.png",
                       spec->products[0].image_url.spec());
+            ASSERT_EQ("http://example.com/jackpot",
+                      spec->products[0].buying_options_url.spec());
             ASSERT_EQ("Circle is round", spec->products[0].summary[0].text);
             ASSERT_EQ("http://example.com/circle/",
-                      spec->products[0].summary[0].url.spec());
+                      spec->products[0].summary[0].urls[0].url.spec());
+            ASSERT_EQ("http://example.com/favicon.png", spec->products[0]
+                                                            .summary[0]
+                                                            .urls[0]
+                                                            .favicon_url.value()
+                                                            .spec());
+            ASSERT_EQ("http://example.com/thumbnail.png",
+                      spec->products[0]
+                          .summary[0]
+                          .urls[0]
+                          .thumbnail_url.value()
+                          .spec());
+            ASSERT_EQ("Summary of page content",
+                      spec->products[0].summary[0].urls[0].previewText.value());
+            ASSERT_EQ(u"Circles", spec->products[0].summary[0].urls[0].title);
 
             const ProductSpecifications::Description& color_desc =
                 spec->products[0]
@@ -168,7 +206,7 @@ TEST_F(ProductSpecificationsServerProxyTest, JsonToProductSpecifications) {
             ASSERT_EQ("The circle color", color_desc.alt_text);
             ASSERT_EQ("Red", color_desc.options[0].descriptions[0].text);
             ASSERT_EQ("http://example.com/red/",
-                      color_desc.options[0].descriptions[0].url.spec());
+                      color_desc.options[0].descriptions[0].urls[0].url.spec());
 
             looper->Quit();
           },
@@ -205,10 +243,12 @@ TEST_F(ProductSpecificationsServerProxyTest,
                      ASSERT_EQ("Circle", spec->products[0].title);
                      ASSERT_EQ("http://example.com/image.png",
                                spec->products[0].image_url.spec());
+                     ASSERT_EQ("http://example.com/jackpot",
+                               spec->products[0].buying_options_url.spec());
                      ASSERT_EQ("Circle is round",
                                spec->products[0].summary[0].text);
                      ASSERT_EQ("http://example.com/circle/",
-                               spec->products[0].summary[0].url.spec());
+                               spec->products[0].summary[0].urls[0].url.spec());
 
                      const ProductSpecifications::Description& color_desc =
                          spec->products[0]
@@ -218,9 +258,10 @@ TEST_F(ProductSpecificationsServerProxyTest,
                      ASSERT_EQ("The circle color", color_desc.alt_text);
                      ASSERT_EQ("Red",
                                color_desc.options[0].descriptions[0].text);
-                     ASSERT_EQ(
-                         "http://example.com/red/",
-                         color_desc.options[0].descriptions[0].url.spec());
+                     ASSERT_EQ("http://example.com/red/", color_desc.options[0]
+                                                              .descriptions[0]
+                                                              .urls[0]
+                                                              .url.spec());
 
                      looper->Quit();
                    },

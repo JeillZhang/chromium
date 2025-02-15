@@ -39,7 +39,7 @@ OverlayStrategyUnderlayCast::OverlayStrategyUnderlayCast(
     OverlayProcessorUsingStrategy* capability_checker)
     : OverlayStrategyUnderlay(capability_checker) {}
 
-OverlayStrategyUnderlayCast::~OverlayStrategyUnderlayCast() {}
+OverlayStrategyUnderlayCast::~OverlayStrategyUnderlayCast() = default;
 
 void OverlayStrategyUnderlayCast::Propose(
     const SkM44& output_color_matrix,
@@ -55,6 +55,7 @@ void OverlayStrategyUnderlayCast::Propose(
   auto* render_pass = render_pass_list->back().get();
   QuadList& quad_list = render_pass->quad_list;
   OverlayCandidate candidate;
+  candidate.overlay_type = gfx::OverlayType::kUnderlay;
   auto overlay_iter = quad_list.end();
 
   OverlayCandidateFactory::OverlayContext context;

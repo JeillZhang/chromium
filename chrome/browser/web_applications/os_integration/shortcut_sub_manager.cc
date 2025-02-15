@@ -16,7 +16,9 @@
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/web_applications/os_integration/os_integration_manager.h"
+#include "chrome/browser/web_applications/os_integration/os_integration_test_override.h"
 #include "chrome/browser/web_applications/os_integration/web_app_shortcut.h"
+#include "chrome/browser/web_applications/proto/web_app_install_state.pb.h"
 #include "chrome/browser/web_applications/proto/web_app_os_integration_state.pb.h"
 #include "chrome/browser/web_applications/web_app_icon_manager.h"
 #include "chrome/browser/web_applications/web_app_install_info.h"
@@ -27,7 +29,7 @@
 #include "components/sync/base/time.h"
 
 #if BUILDFLAG(IS_MAC)
-#include "chrome/browser/web_applications/app_shim_registry_mac.h"
+#include "chrome/browser/web_applications/os_integration/mac/app_shim_registry.h"
 #endif
 
 namespace web_app {
@@ -58,7 +60,8 @@ void ShortcutSubManager::Configure(
 
   desired_state.clear_shortcut();
 
-  if (!provider_->registrar_unsafe().IsLocallyInstalled(app_id)) {
+  if (provider_->registrar_unsafe().GetInstallState(app_id) !=
+      proto::INSTALLED_WITH_OS_INTEGRATION) {
     std::move(configure_done).Run();
     return;
   }
@@ -90,7 +93,7 @@ void ShortcutSubManager::Execute(
       synchronize_options.has_value() &&
       synchronize_options.value().force_update_shortcuts;
 
-  const bool force_create_shortcuts =
+  bool force_create_shortcuts =
       synchronize_options.has_value() &&
       synchronize_options.value().force_create_shortcuts;
 
@@ -100,6 +103,16 @@ void ShortcutSubManager::Execute(
     std::move(callback).Run();
     return;
   }
+
+  CHECK_OS_INTEGRATION_ALLOWED();
+
+#if BUILDFLAG(IS_MAC)
+  // On Mac, sometimes the AppShimRegistry and the `current_state` get out of
+  // sync. If so, force the shortcut creation.
+  force_create_shortcuts |= current_state.has_shortcut() &&
+                            !AppShimRegistry::Get()->IsAppInstalledInProfile(
+                                app_id, profile_->GetPath());
+#endif
 
   // Second, handle shortcut creation if either one of the following conditions
   // match:
@@ -262,6 +275,7 @@ void ShortcutSubManager::CreateShortcut(
 
   base::FilePath shortcut_data_dir =
       internals::GetShortcutDataDir(*shortcut_info);
+
   internals::ScheduleCreatePlatformShortcuts(
       shortcut_data_dir, locations, options.reason, std::move(shortcut_info),
       base::BindOnce([](bool success) {
@@ -290,15 +304,14 @@ void ShortcutSubManager::UpdateShortcut(
 
   base::FilePath shortcut_data_dir =
       internals::GetShortcutDataDir(*shortcut_info);
-  internals::PostShortcutIOTaskAndReplyWithResult(
-      base::BindOnce(&internals::UpdatePlatformShortcuts,
-                     std::move(shortcut_data_dir), std::move(old_app_title),
-                     locations),
-      std::move(shortcut_info),
+
+  internals::ScheduleUpdatePlatformShortcuts(
+      shortcut_data_dir, old_app_title, locations,
       base::BindOnce([](Result result) {
         base::UmaHistogramBoolean("WebApp.Shortcuts.Update.Result",
                                   (result == Result::kOk));
-      }).Then(std::move(on_complete)));
+      }).Then(std::move(on_complete)),
+      std::move(shortcut_info));
 }
 
 void ShortcutSubManager::OnShortcutsDeleted(const webapps::AppId& app_id,

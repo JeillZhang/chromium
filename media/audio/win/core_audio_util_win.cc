@@ -18,6 +18,7 @@
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/logging.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/win/scoped_co_mem.h"
@@ -202,7 +203,7 @@ std::string ChannelMaskToString(DWORD channel_mask) {
   if (channel_mask != KSAUDIO_SPEAKER_DIRECTOUT) {
     std::bitset<8 * sizeof(DWORD)> mask(channel_mask);
     ss += " (";
-    ss += std::to_string(mask.count());
+    ss += base::NumberToString(mask.count());
     ss += ")";
   }
   return ss;
@@ -1040,12 +1041,11 @@ HRESULT CoreAudioUtil::GetPreferredAudioParameters(const std::string& device_id,
   if (!client.Get())
     return E_FAIL;
 
-  if (is_offload_stream) {
-    EnableOffloadForClient(client.Get());
-  }
+  bool attempt_audio_offload =
+      is_offload_stream && EnableOffloadForClient(client.Get());
 
   HRESULT hr = GetPreferredAudioParametersInternal(
-      client.Get(), is_output_device, params, is_offload_stream);
+      client.Get(), is_output_device, params, attempt_audio_offload);
   if (FAILED(hr) || is_output_device || !params->IsValid()) {
     return hr;
   }

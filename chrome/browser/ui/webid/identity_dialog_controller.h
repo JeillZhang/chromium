@@ -8,6 +8,7 @@
 #include <memory>
 #include <utility>
 #include <vector>
+
 #include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "chrome/browser/ui/webid/account_selection_view.h"
@@ -19,6 +20,9 @@ using AccountSelectionCallback =
     content::IdentityRequestDialogController::AccountSelectionCallback;
 using DismissCallback =
     content::IdentityRequestDialogController::DismissCallback;
+using IdentityProviderDataPtr = scoped_refptr<content::IdentityProviderData>;
+using IdentityRequestAccountPtr =
+    scoped_refptr<content::IdentityRequestAccount>;
 using TokenError = content::IdentityCredentialTokenError;
 
 // The IdentityDialogController controls the views that are used across
@@ -40,26 +44,24 @@ class IdentityDialogController
 
   // content::IdentityRequestDialogController
   bool ShowAccountsDialog(
-      const std::string& top_frame_for_display,
-      const std::optional<std::string>& iframe_for_display,
-      const std::vector<content::IdentityProviderData>& identity_provider_data,
+      const std::string& rp_for_display,
+      const std::vector<IdentityProviderDataPtr>& identity_provider_data,
+      const std::vector<IdentityRequestAccountPtr>& accounts,
       content::IdentityRequestAccount::SignInMode sign_in_mode,
       blink::mojom::RpMode rp_mode,
-      const std::optional<content::IdentityProviderData>& new_account_idp,
+      const std::vector<IdentityRequestAccountPtr>& new_accounts,
       AccountSelectionCallback on_selected,
       LoginToIdPCallback on_add_account,
       DismissCallback dismiss_callback,
       AccountsDisplayedCallback accounts_displayed_callback) override;
-  bool ShowFailureDialog(const std::string& top_frame_for_display,
-                         const std::optional<std::string>& iframe_for_display,
+  bool ShowFailureDialog(const std::string& rp_for_display,
                          const std::string& idp_for_display,
                          blink::mojom::RpContext rp_context,
                          blink::mojom::RpMode rp_mode,
                          const content::IdentityProviderMetadata& idp_metadata,
                          DismissCallback dismiss_callback,
                          LoginToIdPCallback login_callback) override;
-  bool ShowErrorDialog(const std::string& top_frame_for_display,
-                       const std::optional<std::string>& iframe_for_display,
+  bool ShowErrorDialog(const std::string& rp_for_display,
                        const std::string& idp_for_display,
                        blink::mojom::RpContext rp_context,
                        blink::mojom::RpMode rp_mode,
@@ -67,7 +69,7 @@ class IdentityDialogController
                        const std::optional<TokenError>& error,
                        DismissCallback dismiss_callback,
                        MoreDetailsCallback more_details_callback) override;
-  bool ShowLoadingDialog(const std::string& top_frame_for_display,
+  bool ShowLoadingDialog(const std::string& rp_for_display,
                          const std::string& idp_for_display,
                          blink::mojom::RpContext rp_context,
                          blink::mojom::RpMode rp_mode,
@@ -80,12 +82,16 @@ class IdentityDialogController
   // Show a modal dialog that loads content from the IdP in a WebView.
   content::WebContents* ShowModalDialog(
       const GURL& url,
+      blink::mojom::RpMode rp_mode,
       DismissCallback dismiss_callback) override;
   void CloseModalDialog() override;
+  content::WebContents* GetRpWebContents() override;
 
   // AccountSelectionView::Delegate:
-  void OnAccountSelected(const GURL& idp_config_url,
-                         const Account& account) override;
+  void OnAccountSelected(
+      const GURL& idp_config_url,
+      const std::string& account_id,
+      const content::IdentityRequestAccount::LoginState& login_state) override;
   void OnDismiss(DismissReason dismiss_reason) override;
   void OnLoginToIdP(const GURL& idp_config_url,
                     const GURL& idp_login_url) override;
@@ -104,6 +110,10 @@ class IdentityDialogController
       std::unique_ptr<AccountSelectionView> account_view);
 
  private:
+  // Attempts to set `account_view_` if it is not already set -- directly on
+  // Android, via TabFeatures on desktop.
+  bool TrySetAccountView();
+
   std::unique_ptr<AccountSelectionView> account_view_{nullptr};
   AccountSelectionCallback on_account_selection_;
   DismissCallback on_dismiss_;

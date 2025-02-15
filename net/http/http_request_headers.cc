@@ -113,13 +113,12 @@ HttpRequestHeaders& HttpRequestHeaders::operator=(
 HttpRequestHeaders& HttpRequestHeaders::operator=(HttpRequestHeaders&& other) =
     default;
 
-bool HttpRequestHeaders::GetHeader(std::string_view key,
-                                   std::string* out) const {
+std::optional<std::string> HttpRequestHeaders::GetHeader(
+    std::string_view key) const {
   auto it = FindHeader(key);
   if (it == headers_.end())
-    return false;
-  out->assign(it->value);
-  return true;
+    return std::nullopt;
+  return it->value;
 }
 
 void HttpRequestHeaders::Clear() {
@@ -197,7 +196,7 @@ void HttpRequestHeaders::AddHeaderFromString(std::string_view header_line) {
   } else if (value_index == header_line.size()) {
     SetHeader(header_key, "");
   } else {
-    NOTREACHED_IN_MIGRATION();
+    NOTREACHED();
   }
 }
 
@@ -289,9 +288,8 @@ void HttpRequestHeaders::SetAcceptEncodingIfMissing(
   }
   if (!advertised_encoding_names.empty()) {
     // Tell the server what compression formats are supported.
-    SetHeader(
-        kAcceptEncoding,
-        base::JoinString(base::make_span(advertised_encoding_names), ", "));
+    SetHeader(kAcceptEncoding,
+              base::JoinString(base::span(advertised_encoding_names), ", "));
   }
 }
 

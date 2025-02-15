@@ -51,7 +51,7 @@ AwDarkMode* AwDarkMode::FromWebContents(content::WebContents* contents) {
 }
 
 AwDarkMode::AwDarkMode(JNIEnv* env,
-                       jobject obj,
+                       const jni_zero::JavaRef<jobject>& obj,
                        content::WebContents* web_contents)
     : content::WebContentsObserver(web_contents), jobj_(env, obj) {
   web_contents->SetUserData(kAwDarkModeUserDataKey, base::WrapUnique(this));
@@ -143,11 +143,6 @@ void AwDarkMode::PopulateWebPreferencesForPreT(
   } else if (prefers_dark_from_theme_) {
     web_prefs->preferred_color_scheme =
         blink::mojom::PreferredColorScheme::kDark;
-    if (base::FeatureList::IsEnabled(
-            android_webview::features::kWebViewForceDarkModeMatchTheme)) {
-      web_prefs->force_dark_mode_enabled = true;
-      is_force_dark_applied_ = true;
-    }
   } else {
     web_prefs->preferred_color_scheme =
         blink::mojom::PreferredColorScheme::kLight;

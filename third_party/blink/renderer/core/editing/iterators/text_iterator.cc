@@ -58,6 +58,7 @@
 #include "third_party/blink/renderer/core/layout/table/layout_table_row.h"
 #include "third_party/blink/renderer/platform/fonts/font.h"
 #include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
 
 namespace blink {
@@ -448,11 +449,25 @@ void TextIteratorAlgorithm<Strategy>::Advance() {
               Strategy::IsDescendantOf(*end_container_, *parent_node)) {
             return;
           }
+          // ExitNode() is invoked if |node_| is the last child under
+          // |parent_node|, irrespective of whether |node_| possesses a layout
+          // object. However, if any block node resides within a node that has
+          // an inline layout it should not be called.
           bool have_layout_object = node_->GetLayoutObject();
           node_ = parent_node;
           fully_clipped_stack_.Pop();
           parent_node = Strategy::Parent(*node_);
-          if (have_layout_object) {
+          LayoutObject* node_layout =
+              node_ ? node_->GetLayoutObject() : nullptr;
+          LayoutObject* parent_node_layout =
+              parent_node ? parent_node->GetLayoutObject() : nullptr;
+          bool should_exit_node = have_layout_object ||
+              (RuntimeEnabledFeatures::
+                   CallExitNodeWithoutLayoutObjectEnabled() &&
+               node_layout && parent_node_layout &&
+               node_layout->IsLayoutBlock() &&
+               !parent_node_layout->IsInline());
+          if (should_exit_node) {
             ExitNode();
           }
           if (text_state_.PositionNode()) {
@@ -468,9 +483,7 @@ void TextIteratorAlgorithm<Strategy>::Advance() {
           // sibling shadow root, if any.
           const auto* shadow_root = DynamicTo<ShadowRoot>(node_);
           if (!shadow_root) {
-            NOTREACHED_IN_MIGRATION();
-            should_stop_ = true;
-            return;
+            NOTREACHED();
           }
           if (shadow_root->IsOpen()) {
             // We are the shadow root; exit from here and go back to
@@ -679,8 +692,7 @@ static bool ShouldEmitNewlinesBeforeAndAfterNode(const Node& node) {
   }
 
   return !r->IsInline() && r->IsLayoutBlock() &&
-         !r->IsFloatingOrOutOfFlowPositioned() && !r->IsBody() &&
-         !r->IsRubyText();
+         !r->IsFloatingOrOutOfFlowPositioned() && !r->IsBody();
 }
 
 template <typename Strategy>

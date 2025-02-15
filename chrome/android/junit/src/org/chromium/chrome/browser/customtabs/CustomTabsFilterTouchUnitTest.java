@@ -18,7 +18,6 @@ import androidx.test.filters.SmallTest;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
@@ -28,7 +27,8 @@ import org.chromium.base.ApplicationStatus;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.CommandLineFlags;
-import org.chromium.base.test.util.Features;
+import org.chromium.base.test.util.Features.EnableFeatures;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.multiwindow.MultiWindowUtils;
 
@@ -39,12 +39,11 @@ import org.chromium.chrome.browser.multiwindow.MultiWindowUtils;
     ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
     ChromeSwitches.DISABLE_NATIVE_INITIALIZATION
 })
+@EnableFeatures(ChromeFeatureList.CCT_REPORT_PRERENDER_EVENTS)
 public class CustomTabsFilterTouchUnitTest {
     @Rule
     public ActivityScenarioRule<CustomTabActivity> mActivityScenarioRule =
             new ActivityScenarioRule<>(CustomTabActivity.class);
-
-    @Rule public TestRule mProcessor = new Features.JUnitProcessor();
 
     @Mock private MotionEvent mMotionEvent;
 
@@ -68,6 +67,7 @@ public class CustomTabsFilterTouchUnitTest {
     @Test
     @SmallTest
     public void testInjectMissingEventInMultiWindowMode() {
+        mActivity.onEnterAnimationComplete();
         ApplicationStatus.onStateChangeForTesting(mActivity, ActivityState.PAUSED);
         assertTrue("Events should be consumed", mActivity.dispatchTouchEvent(mMotionEvent));
 

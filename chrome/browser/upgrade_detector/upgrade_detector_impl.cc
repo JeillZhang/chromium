@@ -6,6 +6,9 @@
 
 #include <stdint.h>
 
+#include <algorithm>
+#include <array>
+#include <functional>
 #include <optional>
 #include <string>
 
@@ -16,7 +19,6 @@
 #include "base/functional/bind.h"
 #include "base/no_destructor.h"
 #include "base/notreached.h"
-#include "base/ranges/algorithm.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/time/clock.h"
 #include "base/time/default_clock.h"
@@ -317,8 +319,7 @@ void UpgradeDetectorImpl::NotifyOnUpgradeWithTimePassed(
   } else {
     // |stages_| must be sorted by decreasing TimeDelta.
     std::array<base::TimeDelta, kNumStages>::iterator it =
-        base::ranges::lower_bound(stages_, time_passed,
-                                  base::ranges::greater());
+        std::ranges::lower_bound(stages_, time_passed, std::ranges::greater());
     if (it != stages_.end())
       new_stage = StageIndexToAnnoyanceLevel(it - stages_.begin());
     if (it != stages_.begin())
@@ -383,12 +384,14 @@ UpgradeDetectorImpl::AnnoyanceLevelToStagesIndex(
 // static
 UpgradeDetector::UpgradeNotificationAnnoyanceLevel
 UpgradeDetectorImpl::StageIndexToAnnoyanceLevel(size_t index) {
-  static constexpr UpgradeNotificationAnnoyanceLevel kIndexToLevel[] = {
-      UpgradeDetector::UPGRADE_ANNOYANCE_HIGH,
-      UpgradeDetector::UPGRADE_ANNOYANCE_GRACE,
-      UpgradeDetector::UPGRADE_ANNOYANCE_ELEVATED,
-      UpgradeDetector::UPGRADE_ANNOYANCE_LOW,
-      UpgradeDetector::UPGRADE_ANNOYANCE_VERY_LOW};
+  constexpr static const auto kIndexToLevel =
+      std::to_array<UpgradeNotificationAnnoyanceLevel>({
+          UpgradeDetector::UPGRADE_ANNOYANCE_HIGH,
+          UpgradeDetector::UPGRADE_ANNOYANCE_GRACE,
+          UpgradeDetector::UPGRADE_ANNOYANCE_ELEVATED,
+          UpgradeDetector::UPGRADE_ANNOYANCE_LOW,
+          UpgradeDetector::UPGRADE_ANNOYANCE_VERY_LOW,
+      });
   static_assert(std::size(kIndexToLevel) == kNumStages, "mismatch");
   DCHECK_LT(index, std::size(kIndexToLevel));
   return kIndexToLevel[index];

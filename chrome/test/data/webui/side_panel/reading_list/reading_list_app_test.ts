@@ -4,12 +4,12 @@
 
 import 'chrome://read-later.top-chrome/reading_list_app.js';
 
-import type {ReadingListAppElement} from 'chrome://read-later.top-chrome/reading_list_app.js';
 import type {ReadLaterEntriesByStatus} from 'chrome://read-later.top-chrome/reading_list.mojom-webui.js';
 import {ReadingListApiProxyImpl} from 'chrome://read-later.top-chrome/reading_list_api_proxy.js';
+import type {ReadingListAppElement} from 'chrome://read-later.top-chrome/reading_list_app.js';
 import type {ReadingListItemElement} from 'chrome://read-later.top-chrome/reading_list_item.js';
-import {keyDownOn} from 'chrome://resources/polymer/v3_0/iron-test-helpers/mock-interactions.js';
 import {assertEquals, assertFalse, assertTrue} from 'chrome://webui-test/chai_assert.js';
+import {keyDownOn} from 'chrome://webui-test/keyboard_mock_interactions.js';
 import {microtasksFinished} from 'chrome://webui-test/test_util.js';
 
 import {TestReadingListApiProxy} from './test_reading_list_api_proxy.js';
@@ -89,6 +89,9 @@ suite('ReadingListAppTest', () => {
   });
 
   test('return all entries', async () => {
+    readingListApp.setExpandedForTesting();
+    await microtasksFinished();
+
     const urls = [
       'https://www.google.com',
       'https://www.apple.com',
@@ -145,23 +148,27 @@ suite('ReadingListAppTest', () => {
     const readingListItem =
         readingListApp.shadowRoot!.querySelector<ReadingListItemElement>(
             `[data-url="${expectedUrl}"]`)!;
-    const readingListItemUpdateStatusButton =
-        readingListItem.$.updateStatusButton;
-    readingListItemUpdateStatusButton.click();
+    assertEquals(
+        'cr:check-circle', readingListItem.$.updateStatusButton.ironIcon);
+    readingListItem.$.updateStatusButton.click();
     const [url, read] = await testProxy.whenCalled('updateReadStatus');
     assertEquals(expectedUrl, url.url);
     assertTrue(read);
   });
 
   test('Click on item mark as unread button triggers actions', async () => {
+    readingListApp.setExpandedForTesting();
+    await microtasksFinished();
+
     const expectedUrl = 'https://www.bing.com';
 
     const readingListItem =
         readingListApp.shadowRoot!.querySelector<ReadingListItemElement>(
             `[data-url="${expectedUrl}"]`)!;
-    const readingListItemUpdateStatusButton =
-        readingListItem.$.updateStatusButton;
-    readingListItemUpdateStatusButton.click();
+    assertEquals(
+        'read-later:check-circle-reverse',
+        readingListItem.$.updateStatusButton.ironIcon);
+    readingListItem.$.updateStatusButton.click();
     const [url, read] = await testProxy.whenCalled('updateReadStatus');
     assertEquals(expectedUrl, url.url);
     assertFalse(read);
@@ -204,34 +211,31 @@ suite('ReadingListAppTest', () => {
   });
 
   test('Keyboard navigation abides by item list range boundaries', async () => {
-    const urls = [
-      'https://www.google.com',
-      'https://www.apple.com',
-      'https://www.bing.com',
-      'https://www.yahoo.com',
-    ];
+    readingListApp.setExpandedForTesting();
+    await microtasksFinished();
 
-    // Select first item.
-    readingListApp.selected =
-        readingListApp.shadowRoot!.querySelector(
-                                      'reading-list-item')!.dataset['url']!;
+    // First item (after header) should be selected by default.
+    assertEquals(1, readingListApp.getFocusedIndexForTesting());
 
     keyDownOn(readingListApp.$.readingListList, 0, [], 'ArrowUp');
-    assertEquals(urls[3], readingListApp.selected);
+    assertEquals(5, readingListApp.getFocusedIndexForTesting());
 
     keyDownOn(readingListApp.$.readingListList, 0, [], 'ArrowDown');
-    assertEquals(urls[0], readingListApp.selected);
+    assertEquals(1, readingListApp.getFocusedIndexForTesting());
 
     keyDownOn(readingListApp.$.readingListList, 0, [], 'ArrowDown');
-    assertEquals(urls[1], readingListApp.selected);
+    assertEquals(2, readingListApp.getFocusedIndexForTesting());
+
+    keyDownOn(readingListApp.$.readingListList, 0, [], 'ArrowDown');
+    assertEquals(4, readingListApp.getFocusedIndexForTesting());
 
     keyDownOn(readingListApp.$.readingListList, 0, [], 'ArrowUp');
-    assertEquals(urls[0], readingListApp.selected);
+    assertEquals(2, readingListApp.getFocusedIndexForTesting());
   });
 
   test(
       'Keyboard navigation left/right cycles through list item elements',
-      async () => {
+      () => {
         const firstItem =
             readingListApp.shadowRoot!.querySelector('reading-list-item')!;
         // Focus first item.

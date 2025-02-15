@@ -35,11 +35,11 @@ import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.supplier.OneshotSupplier;
 import org.chromium.base.supplier.Supplier;
+import org.chromium.build.BuildConfig;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ActivityTabProvider;
 import org.chromium.chrome.browser.bookmarks.BookmarkModel;
 import org.chromium.chrome.browser.bookmarks.PowerBookmarkUtils;
-import org.chromium.chrome.browser.commerce.ShoppingFeatures;
 import org.chromium.chrome.browser.commerce.ShoppingServiceFactory;
 import org.chromium.chrome.browser.device.DeviceConditions;
 import org.chromium.chrome.browser.download.DownloadUtils;
@@ -53,14 +53,15 @@ import org.chromium.chrome.browser.multiwindow.MultiWindowModeStateDispatcher;
 import org.chromium.chrome.browser.multiwindow.MultiWindowUtils;
 import org.chromium.chrome.browser.night_mode.WebContentsDarkModeController;
 import org.chromium.chrome.browser.omaha.UpdateMenuItemHelper;
+import org.chromium.chrome.browser.preferences.Pref;
 import org.chromium.chrome.browser.profiles.Profile;
-import org.chromium.chrome.browser.quick_delete.QuickDeleteController;
 import org.chromium.chrome.browser.readaloud.ReadAloudController;
 import org.chromium.chrome.browser.share.ShareHelper;
 import org.chromium.chrome.browser.share.ShareUtils;
 import org.chromium.chrome.browser.sync.settings.SyncSettingsUtils;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
+import org.chromium.chrome.browser.tinker_tank.TinkerTankDelegate;
 import org.chromium.chrome.browser.toolbar.ToolbarManager;
 import org.chromium.chrome.browser.translate.TranslateUtils;
 import org.chromium.chrome.browser.ui.appmenu.AppMenuHandler;
@@ -70,10 +71,10 @@ import org.chromium.chrome.browser.ui.appmenu.AppMenuPropertiesDelegate;
 import org.chromium.chrome.browser.ui.appmenu.AppMenuUtil;
 import org.chromium.chrome.browser.ui.appmenu.CustomViewBinder;
 import org.chromium.chrome.browser.util.BrowserUiUtils;
-import org.chromium.chrome.browser.util.BrowserUiUtils.HostSurface;
 import org.chromium.chrome.browser.util.BrowserUiUtils.ModuleTypeOnStartAndNtp;
 import org.chromium.chrome.browser.webapps.WebappRegistry;
 import org.chromium.components.browser_ui.accessibility.PageZoomCoordinator;
+import org.chromium.components.commerce.core.CommerceFeatureUtils;
 import org.chromium.components.commerce.core.CommerceSubscription;
 import org.chromium.components.commerce.core.IdentifierType;
 import org.chromium.components.commerce.core.ManagementType;
@@ -82,6 +83,7 @@ import org.chromium.components.commerce.core.SubscriptionType;
 import org.chromium.components.dom_distiller.core.DomDistillerUrlUtils;
 import org.chromium.components.embedder_support.util.UrlConstants;
 import org.chromium.components.embedder_support.util.UrlUtilities;
+import org.chromium.components.user_prefs.UserPrefs;
 import org.chromium.components.webapk.lib.client.WebApkValidator;
 import org.chromium.components.webapps.AppBannerManager;
 import org.chromium.components.webapps.WebappsUtils;
@@ -315,17 +317,7 @@ public class AppMenuPropertiesDelegateImpl implements AppMenuPropertiesDelegate 
     private boolean isInTabSwitcher() {
         return mLayoutStateProvider != null
                 && mLayoutStateProvider.isLayoutVisible(LayoutType.TAB_SWITCHER)
-                && !mLayoutStateProvider.isLayoutStartingToHide(LayoutType.TAB_SWITCHER)
-                && !isInStartSurfaceHomepage();
-    }
-
-    /**
-     * @return Whether the Start surface homepage is showing.
-     */
-    @VisibleForTesting
-    boolean isInStartSurfaceHomepage() {
-        return mLayoutStateProvider != null
-                && mLayoutStateProvider.isLayoutVisible(LayoutType.START_SURFACE);
+                && !mLayoutStateProvider.isLayoutStartingToHide(LayoutType.TAB_SWITCHER);
     }
 
     private void setMenuGroupVisibility(@MenuGroup int menuGroup, Menu menu) {
@@ -431,8 +423,7 @@ public class AppMenuPropertiesDelegateImpl implements AppMenuPropertiesDelegate 
         Tab currentTab = mActivityTabProvider.get();
 
         if (menuGroup == MenuGroup.PAGE_MENU) {
-            preparePageMenu(
-                    menu, isInStartSurfaceHomepage() ? null : currentTab, handler, isIncognito);
+            preparePageMenu(menu, currentTab, handler, isIncognito);
         }
         prepareCommonMenuItems(menu, menuGroup, isIncognito);
     }
@@ -472,7 +463,7 @@ public class AppMenuPropertiesDelegateImpl implements AppMenuPropertiesDelegate 
 
             MenuItem bookmarkMenuItemShortcut = actionBar.findItem(R.id.bookmark_this_page_id);
             updateBookmarkMenuItemShortcut(
-                    bookmarkMenuItemShortcut, currentTab, /* fromCCT= */ false);
+                    bookmarkMenuItemShortcut, currentTab, /* fromCct= */ false);
 
             MenuItem offlineMenuItem = actionBar.findItem(R.id.offline_page_id);
             offlineMenuItem.setEnabled(isCurrentTabNotNull && shouldEnableDownloadPage(currentTab));
@@ -507,14 +498,27 @@ public class AppMenuPropertiesDelegateImpl implements AppMenuPropertiesDelegate 
                 menu.findItem(R.id.disable_price_tracking_menu_id),
                 currentTab);
 
+        boolean showOpenWith =
+                currentTab != null
+                        && currentTab.isNativePage()
+                        && currentTab.getNativePage().isPdf();
+        menu.findItem(R.id.open_with_id).setVisible(showOpenWith);
+
         // Don't allow either "chrome://" pages or interstitial pages to be shared, or when the
         // current tab is null.
-        menu.findItem(R.id.share_row_menu_id)
-                .setVisible(isCurrentTabNotNull && mShareUtils.shouldEnableShare(currentTab));
+        boolean showShare = isCurrentTabNotNull && mShareUtils.shouldEnableShare(currentTab);
+        menu.findItem(R.id.share_row_menu_id).setVisible(showShare);
 
         if (isCurrentTabNotNull) {
             updateDirectShareMenuItem(menu.findItem(R.id.direct_share_menu_id));
         }
+
+        // For the non-desktop case, Print action will be showed in the Share UI instead.
+        boolean showPrint =
+                showShare
+                        && BuildConfig.IS_DESKTOP_ANDROID
+                        && UserPrefs.get(currentTab.getProfile()).getBoolean(Pref.PRINTING_ENABLED);
+        menu.findItem(R.id.print_id).setVisible(showPrint);
 
         menu.findItem(R.id.paint_preview_show_id)
                 .setVisible(
@@ -522,7 +526,7 @@ public class AppMenuPropertiesDelegateImpl implements AppMenuPropertiesDelegate 
                                 && shouldShowPaintPreview(isNativePage, currentTab, isIncognito));
 
         // Enable image descriptions if touch exploration is currently enabled, but not on the
-        // native NTP or Start surface.
+        // native NTP.
         if (isCurrentTabNotNull
                 && shouldShowWebContentsDependentMenuItem(currentTab)
                 && ImageDescriptionsController.getInstance()
@@ -547,14 +551,14 @@ public class AppMenuPropertiesDelegateImpl implements AppMenuPropertiesDelegate 
             menu.findItem(R.id.get_image_descriptions_id).setVisible(false);
         }
 
-        // Conditionally add the Zoom menu item, but not on the native NTP or on Start surface.
+        // Conditionally add the Zoom menu item, but not on the native NTP.
         menu.findItem(R.id.page_zoom_id)
                 .setVisible(
                         isCurrentTabNotNull
                                 && shouldShowWebContentsDependentMenuItem(currentTab)
                                 && PageZoomCoordinator.shouldShowMenuItem());
 
-        // Disable find in page on the native NTP (except for PDF native page) or on Start surface.
+        // Disable find in page on the native NTP (except for PDF native page).
         updateFindInPageMenuItem(menu, currentTab);
 
         // Prepare translate menu button.
@@ -579,14 +583,18 @@ public class AppMenuPropertiesDelegateImpl implements AppMenuPropertiesDelegate 
 
         updateManagedByMenuItem(menu, currentTab);
 
-        // Only display quick delete divider line on the page menu and if quick delete is enabled.
-        menu.findItem(R.id.quick_delete_divider_line_id)
-                .setVisible(isQuickDeleteEnabled(isIncognito));
+        // Only display quick delete divider line on the regular mode page menu.
+        menu.findItem(R.id.quick_delete_divider_line_id).setVisible(!isIncognito);
+
+        menu.findItem(R.id.download_page_id).setVisible(shouldShowDownloadPageMenuItem(currentTab));
+
+        menu.findItem(R.id.ntp_customization_id)
+                .setVisible(ChromeFeatureList.sNewTabPageCustomization.isEnabled());
     }
 
     /**
-     * @return The number of Chrome instances either running alive or dormant but the state
-     *         is present for restoration.
+     * @return The number of Chrome instances either running alive or dormant but the state is
+     *     present for restoration.
      */
     @VisibleForTesting
     int getInstanceCount() {
@@ -611,8 +619,8 @@ public class AppMenuPropertiesDelegateImpl implements AppMenuPropertiesDelegate 
                         && isMenuSelectTabsVisible
                         && mTabModelSelector.isTabStateInitialized()
                         && mTabModelSelector
-                                        .getTabModelFilterProvider()
-                                        .getCurrentTabModelFilter()
+                                        .getTabGroupModelFilterProvider()
+                                        .getCurrentTabGroupModelFilter()
                                         .getCount()
                                 != 0;
 
@@ -650,9 +658,9 @@ public class AppMenuPropertiesDelegateImpl implements AppMenuPropertiesDelegate 
             }
 
             int itemGroupId = item.getGroupId();
-            if (!(menuGroup == MenuGroup.OVERVIEW_MODE_MENU
-                            && itemGroupId == R.id.OVERVIEW_MODE_MENU
-                    || menuGroup == MenuGroup.PAGE_MENU && itemGroupId == R.id.PAGE_MENU)) {
+            if (!((menuGroup == MenuGroup.OVERVIEW_MODE_MENU
+                            && itemGroupId == R.id.OVERVIEW_MODE_MENU)
+                    || (menuGroup == MenuGroup.PAGE_MENU && itemGroupId == R.id.PAGE_MENU))) {
                 continue;
             }
 
@@ -674,8 +682,12 @@ public class AppMenuPropertiesDelegateImpl implements AppMenuPropertiesDelegate 
                 item.setEnabled(hasIncognitoTabs);
             }
             if (item.getItemId() == R.id.quick_delete_menu_id) {
-                item.setVisible(isQuickDeleteEnabled(isIncognito));
-                item.setEnabled(isQuickDeleteEnabled(isIncognito));
+                item.setVisible(!isIncognito);
+            }
+            if (item.getItemId() == R.id.tinker_tank_menu_id) {
+                boolean enabled = TinkerTankDelegate.isEnabled();
+                item.setVisible(enabled);
+                item.setEnabled(enabled);
             }
 
             // This needs to be done after the visibility of the item is set.
@@ -693,14 +705,6 @@ public class AppMenuPropertiesDelegateImpl implements AppMenuPropertiesDelegate 
                 hasItemBetweenDividers = true;
             }
         }
-    }
-
-    /**
-     * @param isIncognito Whether the currentTab is incognito.
-     * @return Whether the quick delete menu item should be enabled.
-     */
-    private boolean isQuickDeleteEnabled(boolean isIncognito) {
-        return !isIncognito && QuickDeleteController.isQuickDeleteEnabled();
     }
 
     /**
@@ -821,7 +825,7 @@ public class AppMenuPropertiesDelegateImpl implements AppMenuPropertiesDelegate 
     /**
      * @param currentTab The currentTab for which the app menu is showing.
      * @return Whether the currentTab should show an app menu item that requires a webContents. This
-     *     will return false for the Start surface or native NTP, and true otherwise.
+     *     will return false for native NTP, and true otherwise.
      */
     protected boolean shouldShowWebContentsDependentMenuItem(@NonNull Tab currentTab) {
         return !currentTab.isNativePage() && currentTab.getWebContents() != null;
@@ -829,8 +833,8 @@ public class AppMenuPropertiesDelegateImpl implements AppMenuPropertiesDelegate 
 
     /**
      * This method should only be called once per context menu shown.
+     *
      * @param currentTab The currentTab for which the app menu is showing.
-     * @param logging Whether logging should be performed in this check.
      * @return Whether the translate menu item should be displayed.
      */
     @VisibleForTesting(otherwise = VisibleForTesting.PROTECTED)
@@ -878,16 +882,22 @@ public class AppMenuPropertiesDelegateImpl implements AppMenuPropertiesDelegate 
         return false;
     }
 
+    /**
+     * @param currentTab Current tab being displayed.
+     * Returns whether the "Download page" menu item should be displayed.
+     */
+    protected boolean shouldShowDownloadPageMenuItem(Tab currentTab) {
+        return ChromeFeatureList.sHideTabletToolbarDownloadButton.isEnabled()
+                && isTabletSizeScreen()
+                && shouldEnableDownloadPage(currentTab);
+    }
+
     /** Sets the visibility and labels of the "Add to Home screen" and "Open WebAPK" menu items. */
     protected void prepareAddToHomescreenMenuItem(
             Menu menu, Tab currentTab, boolean shouldShowHomeScreenMenuItem) {
-        MenuItem addTohomescreenItem = menu.findItem(R.id.add_to_homescreen_id);
-        MenuItem installWebAppItem = menu.findItem(R.id.install_webapp_id);
         MenuItem universalInstallItem = menu.findItem(R.id.universal_install);
         MenuItem openWebApkItem = menu.findItem(R.id.open_webapk_id);
 
-        addTohomescreenItem.setVisible(false);
-        installWebAppItem.setVisible(false);
         universalInstallItem.setVisible(false);
         openWebApkItem.setVisible(false);
 
@@ -901,13 +911,12 @@ public class AppMenuPropertiesDelegateImpl implements AppMenuPropertiesDelegate 
                 "Android.PrepareMenu.OpenWebApkVisibilityCheck",
                 SystemClock.elapsedRealtime() - addToHomeScreenStart);
 
+        // When Universal Install is active, we only show this menu item if we are browsing
+        // the root page of an already installed app.
         boolean openWebApkItemVisible =
-                resolveInfo != null && resolveInfo.activityInfo.packageName != null;
-        if (ChromeFeatureList.isEnabled(ChromeFeatureList.PWA_UNIVERSAL_INSTALL_UI)) {
-            // When Universal Install is active, we only show this menu item if we are browsing
-            // the root page of an already installed app.
-            openWebApkItemVisible &= "/".equals(currentTab.getUrl().getPath());
-        }
+                resolveInfo != null
+                        && resolveInfo.activityInfo.packageName != null
+                        && "/".equals(currentTab.getUrl().getPath());
 
         if (openWebApkItemVisible) {
             // This is the 'webapp is already installed' case, so we offer to open the webapp.
@@ -917,19 +926,7 @@ public class AppMenuPropertiesDelegateImpl implements AppMenuPropertiesDelegate 
             return;
         }
 
-        if (ChromeFeatureList.isEnabled(ChromeFeatureList.PWA_UNIVERSAL_INSTALL_UI)) {
-            universalInstallItem.setVisible(true);
-        } else {
-            AppBannerManager.InstallStringPair installStrings = getAddToHomeScreenTitle(currentTab);
-
-            if (installStrings.titleTextId == AppBannerManager.PWA_PAIR.titleTextId) {
-                installWebAppItem.setTitle(installStrings.titleTextId);
-                installWebAppItem.setVisible(true);
-            } else if (installStrings.titleTextId == AppBannerManager.NON_PWA_PAIR.titleTextId) {
-                addTohomescreenItem.setTitle(installStrings.titleTextId);
-                addTohomescreenItem.setVisible(true);
-            }
-        }
+        universalInstallItem.setVisible(true);
     }
 
     public static ResolveInfo queryWebApkResolveInfo(Context context, Tab currentTab) {
@@ -948,11 +945,6 @@ public class AppMenuPropertiesDelegateImpl implements AppMenuPropertiesDelegate 
         }
 
         return resolveInfo;
-    }
-
-    @VisibleForTesting(otherwise = VisibleForTesting.PROTECTED)
-    public AppBannerManager.InstallStringPair getAddToHomeScreenTitle(@NonNull Tab currentTab) {
-        return AppBannerManager.getHomescreenLanguageOption(currentTab.getWebContents());
     }
 
     @Override
@@ -1087,7 +1079,7 @@ public class AppMenuPropertiesDelegateImpl implements AppMenuPropertiesDelegate 
             if (SyncSettingsUtils.getIdentityError(profile) != SyncSettingsUtils.SyncError.NO_ERROR
                     || SyncSettingsUtils.getSyncError(profile)
                             != SyncSettingsUtils.SyncError.NO_ERROR) {
-                return mContext.getResources().getString(R.string.menu_settings_account_error);
+                return mContext.getString(R.string.menu_settings_account_error);
             }
         }
         return null;
@@ -1135,7 +1127,7 @@ public class AppMenuPropertiesDelegateImpl implements AppMenuPropertiesDelegate 
                 mIsTablet
                         ? mDecorView.getWidth()
                                 < DeviceFormFactor.getNonMultiDisplayMinimumTabletWidthPx(mContext)
-                        : !isInStartSurfaceHomepage();
+                        : true;
 
         final boolean isMenuButtonOnTop = mToolbarManager != null;
         shouldShowIconRow &= isMenuButtonOnTop;
@@ -1190,7 +1182,7 @@ public class AppMenuPropertiesDelegateImpl implements AppMenuPropertiesDelegate 
      * @param currentTab Current tab being displayed.
      */
     protected void updateBookmarkMenuItemShortcut(
-            MenuItem bookmarkMenuItemShortcut, @Nullable Tab currentTab, boolean fromCCT) {
+            MenuItem bookmarkMenuItemShortcut, @Nullable Tab currentTab, boolean fromCct) {
         if (!mBookmarkModelSupplier.hasValue() || currentTab == null) {
             // If the BookmarkModel still isn't available, assume the bookmark menu item is not
             // editable.
@@ -1236,7 +1228,7 @@ public class AppMenuPropertiesDelegateImpl implements AppMenuPropertiesDelegate 
         }
 
         // If price tracking isn't enabled or the page isn't eligible, then hide both items.
-        if (!ShoppingFeatures.isShoppingListEligible(profile)
+        if (!CommerceFeatureUtils.isShoppingListEligible(service)
                 || !PowerBookmarkUtils.isPriceTrackingEligible(currentTab)
                 || !mBookmarkModelSupplier.hasValue()) {
             startPriceTrackingMenuItem.setVisible(false);
@@ -1299,13 +1291,15 @@ public class AppMenuPropertiesDelegateImpl implements AppMenuPropertiesDelegate 
         MenuItem requestMenuLabel = menu.findItem(R.id.request_desktop_site_id);
         MenuItem requestMenuCheck = menu.findItem(R.id.request_desktop_site_check_id);
 
-        // Hide request desktop site on all native pages.
+        // Hide request desktop site on all native pages. Also hide it for desktop Android, which
+        // always requests desktop sites.
         boolean itemVisible =
                 currentTab != null
                         && canShowRequestDesktopSite
                         && !isNativePage
                         && !shouldShowReaderModePrefs(currentTab)
-                        && currentTab.getWebContents() != null;
+                        && currentTab.getWebContents() != null
+                        && !BuildConfig.IS_DESKTOP_ANDROID;
 
         requestMenuRow.setVisible(itemVisible);
         if (!itemVisible) return;
@@ -1404,20 +1398,14 @@ public class AppMenuPropertiesDelegateImpl implements AppMenuPropertiesDelegate 
         }
     }
 
-    /** Records user clicking on the menu button in New tab page or Start surface. */
+    /** Records user clicking on the menu button in New tab page. */
     @Override
     public void onMenuShown() {
-        if (isInStartSurfaceHomepage()) {
-            BrowserUiUtils.recordModuleClickHistogram(
-                    HostSurface.START_SURFACE, ModuleTypeOnStartAndNtp.MENU_BUTTON);
-            return;
-        }
         Tab currentTab = mActivityTabProvider.get();
         if (currentTab != null
                 && UrlUtilities.isNtpUrl(currentTab.getUrl())
                 && !currentTab.isIncognito()) {
-            BrowserUiUtils.recordModuleClickHistogram(
-                    HostSurface.NEW_TAB_PAGE, ModuleTypeOnStartAndNtp.MENU_BUTTON);
+            BrowserUiUtils.recordModuleClickHistogram(ModuleTypeOnStartAndNtp.MENU_BUTTON);
         }
     }
 }

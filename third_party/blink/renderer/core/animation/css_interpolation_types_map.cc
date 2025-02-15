@@ -51,6 +51,7 @@
 #include "third_party/blink/renderer/core/animation/css_scale_interpolation_type.h"
 #include "third_party/blink/renderer/core/animation/css_scrollbar_color_interpolation_type.h"
 #include "third_party/blink/renderer/core/animation/css_shadow_list_interpolation_type.h"
+#include "third_party/blink/renderer/core/animation/css_shape_interpolation_type.h"
 #include "third_party/blink/renderer/core/animation/css_size_list_interpolation_type.h"
 #include "third_party/blink/renderer/core/animation/css_text_indent_interpolation_type.h"
 #include "third_party/blink/renderer/core/animation/css_time_interpolation_type.h"
@@ -212,6 +213,7 @@ const InterpolationTypes& CSSInterpolationTypesMap::Get(
       case CSSPropertyID::kOpacity:
       case CSSPropertyID::kOrder:
       case CSSPropertyID::kOrphans:
+      case CSSPropertyID::kReadingOrder:
       case CSSPropertyID::kShapeImageThreshold:
       case CSSPropertyID::kStopOpacity:
       case CSSPropertyID::kStrokeMiterlimit:
@@ -230,8 +232,8 @@ const InterpolationTypes& CSSInterpolationTypesMap::Get(
         applicable_types->push_back(
             std::make_unique<CSSNumberInterpolationType>(used_property));
         break;
-      case CSSPropertyID::kPopoverShowDelay:
-      case CSSPropertyID::kPopoverHideDelay:
+      case CSSPropertyID::kInterestTargetShowDelay:
+      case CSSPropertyID::kInterestTargetHideDelay:
         applicable_types->push_back(
             std::make_unique<CSSTimeInterpolationType>(used_property));
         break;
@@ -306,10 +308,8 @@ const InterpolationTypes& CSSInterpolationTypesMap::Get(
                 used_property));
         break;
       case blink::CSSPropertyID::kFontPalette:
-        if (RuntimeEnabledFeatures::FontPaletteAnimationEnabled()) {
-          applicable_types->push_back(
-              std::make_unique<CSSFontPaletteInterpolationType>(used_property));
-        }
+        applicable_types->push_back(
+            std::make_unique<CSSFontPaletteInterpolationType>(used_property));
         break;
       case CSSPropertyID::kVisibility:
         applicable_types->push_back(
@@ -394,6 +394,8 @@ const InterpolationTypes& CSSInterpolationTypesMap::Get(
             std::make_unique<CSSBasicShapeInterpolationType>(used_property));
         applicable_types->push_back(
             std::make_unique<CSSPathInterpolationType>(used_property));
+        applicable_types->push_back(
+            std::make_unique<CSSShapeInterpolationType>(used_property));
         break;
       case CSSPropertyID::kShapeOutside:
         applicable_types->push_back(
@@ -509,9 +511,12 @@ CreateInterpolationTypeForCSSSyntax(const CSSSyntaxComponent syntax,
     case CSSSyntaxType::kUrl:
       // Smooth interpolation not supported for these types.
       return nullptr;
-    default:
-      NOTREACHED_IN_MIGRATION();
+    case CSSSyntaxType::kString:
+      // Smooth interpolation not supported for <string> type.
+      DCHECK(RuntimeEnabledFeatures::CSSAtPropertyStringSyntaxEnabled());
       return nullptr;
+    default:
+      NOTREACHED();
   }
 }
 

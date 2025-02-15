@@ -38,6 +38,8 @@ constexpr char kHistogramFullscreenLockStateAtEntryViaApi[] =
     "WebCore.Fullscreen.LockStateAtEntryViaApi";
 constexpr char kHistogramFullscreenLockStateAtEntryViaBrowserUi[] =
     "WebCore.Fullscreen.LockStateAtEntryViaBrowserUi";
+constexpr char kHistogramEscKeyPressedDownWithModifier[] =
+    "Browser.EscKeyPressedDownWithModifier";
 
 // These values are persisted to logs. Entries should not be renumbered and
 // numeric values should never be reused.
@@ -48,6 +50,18 @@ enum class LockState {
   kKeyboardAndPointerLocked = 3,
   kMaxValue = kKeyboardAndPointerLocked,
 };
+
+// Check whether `event` is a kRawKeyDown type and doesn't have non-stateful
+// modifiers (i.e. shift, ctrl etc.).
+bool IsUnmodifiedEscKeyDownEvent(const input::NativeWebKeyboardEvent& event) {
+  if (event.GetType() != input::NativeWebKeyboardEvent::Type::kRawKeyDown) {
+    return false;
+  }
+  if (event.GetModifiers() & blink::WebInputEvent::kKeyModifiers) {
+    return false;
+  }
+  return true;
+}
 
 }  // namespace
 
@@ -70,19 +84,21 @@ ExclusiveAccessManager::GetExclusiveAccessExitBubbleType() const {
   // want to show exit instructions for browser mode fullscreen.
   bool app_mode = false;
 #if !BUILDFLAG(IS_MAC)  // App mode (kiosk) is not available on Mac yet.
-  app_mode = chrome::IsRunningInAppMode();
+  app_mode = IsRunningInAppMode();
 #endif
 
   if (fullscreen_controller_.IsWindowFullscreenForTabOrPending()) {
-    if (!fullscreen_controller_.IsTabFullscreen())
+    if (!fullscreen_controller_.IsTabFullscreen()) {
       return EXCLUSIVE_ACCESS_BUBBLE_TYPE_FULLSCREEN_EXIT_INSTRUCTION;
+    }
 
     if (pointer_lock_controller_.IsPointerLockedSilently()) {
       return EXCLUSIVE_ACCESS_BUBBLE_TYPE_NONE;
     }
 
-    if (keyboard_lock_controller_.RequiresPressAndHoldEscToExit())
+    if (keyboard_lock_controller_.RequiresPressAndHoldEscToExit()) {
       return EXCLUSIVE_ACCESS_BUBBLE_TYPE_KEYBOARD_LOCK_EXIT_INSTRUCTION;
+    }
 
     if (pointer_lock_controller_.IsPointerLocked()) {
       return EXCLUSIVE_ACCESS_BUBBLE_TYPE_FULLSCREEN_POINTERLOCK_EXIT_INSTRUCTION;
@@ -99,11 +115,13 @@ ExclusiveAccessManager::GetExclusiveAccessExitBubbleType() const {
     return EXCLUSIVE_ACCESS_BUBBLE_TYPE_POINTERLOCK_EXIT_INSTRUCTION;
   }
 
-  if (fullscreen_controller_.IsExtensionFullscreenOrPending())
+  if (fullscreen_controller_.IsExtensionFullscreenOrPending()) {
     return EXCLUSIVE_ACCESS_BUBBLE_TYPE_EXTENSION_FULLSCREEN_EXIT_INSTRUCTION;
+  }
 
-  if (fullscreen_controller_.IsControllerInitiatedFullscreen() && !app_mode)
+  if (fullscreen_controller_.IsControllerInitiatedFullscreen() && !app_mode) {
     return EXCLUSIVE_ACCESS_BUBBLE_TYPE_BROWSER_FULLSCREEN_EXIT_INSTRUCTION;
+  }
 
   return EXCLUSIVE_ACCESS_BUBBLE_TYPE_NONE;
 }
@@ -120,8 +138,9 @@ void ExclusiveAccessManager::UpdateBubble(
 
 GURL ExclusiveAccessManager::GetExclusiveAccessBubbleURL() const {
   GURL result = fullscreen_controller_.GetURLForExclusiveAccessBubble();
-  if (!result.is_valid())
+  if (!result.is_valid()) {
     result = pointer_lock_controller_.GetURLForExclusiveAccessBubble();
+  }
   return result;
 }
 
@@ -161,6 +180,16 @@ bool ExclusiveAccessManager::HandleUserKeyEvent(
     return false;
   }
 
+  // When `features::kPressAndHoldEscToExitBrowserFullscreen` is enabled, the
+  // `esc_key_hold_timer_` starts on `kRawKeyDown` events, unless the key press
+  // event comes with a modifier key. This metrics records how often the timer
+  // does not start due to using the modifier key.
+  if (event.GetType() == input::NativeWebKeyboardEvent::Type::kRawKeyDown) {
+    base::UmaHistogramBoolean(
+        kHistogramEscKeyPressedDownWithModifier,
+        event.GetModifiers() != blink::WebInputEvent::kNoModifiers);
+  }
+
   if (base::FeatureList::IsEnabled(
           features::kPressAndHoldEscToExitBrowserFullscreen)) {
     if (event.GetType() == input::NativeWebKeyboardEvent::Type::kKeyUp &&
@@ -170,8 +199,7 @@ bool ExclusiveAccessManager::HandleUserKeyEvent(
       for (auto controller : exclusive_access_controllers_) {
         controller->HandleUserReleasedEscapeEarly();
       }
-    } else if (event.GetType() ==
-                   input::NativeWebKeyboardEvent::Type::kRawKeyDown &&
+    } else if (IsUnmodifiedEscKeyDownEvent(event) &&
                !esc_key_hold_timer_.IsRunning()) {
       esc_key_hold_timer_.Start(
           FROM_HERE, kHoldEscapeTime,

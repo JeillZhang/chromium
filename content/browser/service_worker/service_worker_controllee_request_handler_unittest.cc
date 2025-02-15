@@ -17,7 +17,7 @@
 #include "components/offline_pages/buildflags/buildflags.h"
 #include "content/browser/loader/response_head_update_params.h"
 #include "content/browser/service_worker/embedded_worker_test_helper.h"
-#include "content/browser/service_worker/service_worker_container_host.h"
+#include "content/browser/service_worker/service_worker_client.h"
 #include "content/browser/service_worker/service_worker_context_core.h"
 #include "content/browser/service_worker/service_worker_context_wrapper.h"
 #include "content/browser/service_worker/service_worker_host.h"
@@ -84,11 +84,11 @@ class ServiceWorkerControlleeRequestHandlerTest : public testing::Test {
               TRAFFIC_ANNOTATION_FOR_TESTS)),
           handler_(std::make_unique<ServiceWorkerControlleeRequestHandler>(
               test->context()->AsWeakPtr(),
+              /*fetch_event_client_id=*/"",
               test->service_worker_client_,
-              destination,
               /*skip_service_worker=*/false,
-              /*frame_tree_node_id=*/RenderFrameHost::kNoFrameTreeNodeId,
-              base::DoNothing())) {}
+              base::DoNothing())),
+          service_worker_client_(test->service_worker_client_) {}
 
     void MaybeCreateLoader() {
       network::ResourceRequest resource_request;
@@ -96,17 +96,20 @@ class ServiceWorkerControlleeRequestHandlerTest : public testing::Test {
       resource_request.destination = destination_;
       resource_request.headers = request()->extra_request_headers();
       DCHECK(!loader_loop_.AnyQuitCalled());
-      handler_->MaybeCreateLoader(
-          resource_request,
+      service_worker_client_->UpdateUrls(
+          resource_request.url, url::Origin::Create(resource_request.url),
           blink::StorageKey::CreateFirstParty(
-              url::Origin::Create(resource_request.url)),
-          nullptr,
+              url::Origin::Create(resource_request.url)));
+      handler_->MaybeCreateLoader(
+          resource_request, nullptr,
           base::BindOnce(
               [](base::OnceClosure closure,
                  std::optional<NavigationLoaderInterceptor::Result>
                      interceptor_result) { std::move(closure).Run(); },
               loader_loop_.QuitClosure()),
-          base::DoNothing());
+          base::BindOnce([](ResponseHeadUpdateParams) {
+            return static_cast<network::mojom::URLLoaderFactory*>(nullptr);
+          }));
     }
 
     void WaitLoader() { loader_loop_.Run(); }
@@ -126,6 +129,7 @@ class ServiceWorkerControlleeRequestHandlerTest : public testing::Test {
     const network::mojom::RequestDestination destination_;
     std::unique_ptr<net::URLRequest> request_;
     std::unique_ptr<ServiceWorkerControlleeRequestHandler> handler_;
+    base::WeakPtr<ServiceWorkerClient> service_worker_client_;
     base::RunLoop loader_loop_;
   };
 
@@ -204,9 +208,10 @@ class ServiceWorkerControlleeRequestHandlerTest : public testing::Test {
 
     // An empty host.
     ScopedServiceWorkerClient service_worker_client =
-        helper_->context()->CreateServiceWorkerClientForWindow(
-            is_parent_frame_secure,
-            /*frame_tree_node_id=*/1);
+        helper_->context()
+            ->service_worker_client_owner()
+            .CreateServiceWorkerClientForWindow(is_parent_frame_secure,
+                                                FrameTreeNodeId(1));
     service_worker_client_ = service_worker_client.AsWeakPtr();
     service_worker_clients_.push_back(std::move(service_worker_client));
   }
@@ -488,11 +493,9 @@ TEST_F(ServiceWorkerControlleeRequestHandlerTest, SkipServiceWorker) {
       network::mojom::RequestDestination::kDocument);
   test_resources.SetHandler(
       std::make_unique<ServiceWorkerControlleeRequestHandler>(
-          context()->AsWeakPtr(), service_worker_client_,
-          network::mojom::RequestDestination::kDocument,
-          /*skip_service_worker=*/true,
-          /*frame_tree_node_id=*/RenderFrameHost::kNoFrameTreeNodeId,
-          base::DoNothing()));
+          context()->AsWeakPtr(),
+          /*fetch_event_client_id=*/"", service_worker_client_,
+          /*skip_service_worker=*/true, base::DoNothing()));
 
   // Conduct a main resource load.
   test_resources.MaybeCreateLoader();
@@ -531,10 +534,8 @@ TEST_F(ServiceWorkerControlleeRequestHandlerTest, NullContext) {
       network::mojom::RequestDestination::kDocument);
   test_resources.SetHandler(
       std::make_unique<ServiceWorkerControlleeRequestHandler>(
-          context()->AsWeakPtr(), service_worker_client_,
-          network::mojom::RequestDestination::kDocument,
-          /*skip_service_worker=*/false,
-          /*frame_tree_node_id=*/RenderFrameHost::kNoFrameTreeNodeId,
+          context()->AsWeakPtr(), /*fetch_event_client_id=*/"",
+          service_worker_client_, /*skip_service_worker=*/false,
           base::DoNothing()));
 
   // Destroy the context and make a new one.

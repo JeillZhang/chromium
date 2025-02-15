@@ -78,9 +78,12 @@ namespace {
 // with the viewport and not occluded by other html elements within the page,
 // with the exception of MediaControls.
 //
-// An HTMLVideoElement with visibility greater or equal than
-// |kVisibilityThreshold| is considered visible, and not visible otherwise.
-constexpr float kVisibilityThreshold = 0.80f;
+// An HTMLVideoElement with visibility greater or equal than a given area
+// measured in square CSS pixels (`kVisibilityThreshold`) is considered visible,
+// and not visible otherwise.
+constexpr int kVisibilityThreshold = 10000;
+
+constexpr base::TimeDelta kTemporaryResourceDeletionDelay = base::Seconds(3);
 }  // namespace
 
 HTMLVideoElement::HTMLVideoElement(Document& document)
@@ -91,7 +94,11 @@ HTMLVideoElement::HTMLVideoElement(Document& document)
       is_auto_picture_in_picture_(false),
       is_effectively_fullscreen_(false),
       video_has_played_(false),
-      mostly_filling_viewport_(false) {
+      mostly_filling_viewport_(false),
+      cache_deleting_timer_(
+          GetDocument().GetTaskRunner(TaskType::kInternalMedia),
+          this,
+          &HTMLVideoElement::ResetCache) {
   if (document.GetSettings()) {
     default_poster_url_ =
         AtomicString(document.GetSettings()->GetDefaultVideoPosterURL());
@@ -113,6 +120,7 @@ void HTMLVideoElement::Trace(Visitor* visitor) const {
   visitor->Trace(wake_lock_);
   visitor->Trace(remoting_interstitial_);
   visitor->Trace(picture_in_picture_interstitial_);
+  visitor->Trace(cache_deleting_timer_);
   Supplementable<HTMLVideoElement>::Trace(visitor);
   HTMLMediaElement::Trace(visitor);
 }
@@ -178,7 +186,7 @@ void HTMLVideoElement::UpdatePosterImage() {
 void HTMLVideoElement::CollectStyleForPresentationAttribute(
     const QualifiedName& name,
     const AtomicString& value,
-    MutableCSSPropertyValueSet* style) {
+    HeapVector<CSSPropertyValue, 8>& style) {
   if (name == html_names::kWidthAttr) {
     AddHTMLLengthToStyle(style, CSSPropertyID::kWidth, value);
     const AtomicString& height = FastGetAttribute(html_names::kHeightAttr);
@@ -339,6 +347,10 @@ void HTMLVideoElement::ReportVisibility(bool meets_visibility_threshold) {
   }
 }
 
+void HTMLVideoElement::ResetCache(TimerBase*) {
+  resource_provider_.reset();
+}
+
 bool HTMLVideoElement::IsPersistent() const {
   return is_persistent_;
 }
@@ -357,7 +369,7 @@ void HTMLVideoElement::OnPlay() {
     return;
   }
 
-  webkitEnterFullscreen();
+  EnterFullscreen();
 }
 
 void HTMLVideoElement::OnLoadStarted() {
@@ -396,6 +408,16 @@ void HTMLVideoElement::RequestEnterPictureInPicture() {
 
 void HTMLVideoElement::RequestMediaRemoting() {
   GetWebMediaPlayer()->RequestMediaRemoting();
+}
+
+void HTMLVideoElement::RequestVisibility(
+    RequestVisibilityCallback request_visibility_cb) {
+  if (!visibility_tracker_) {
+    std::move(request_visibility_cb).Run(false);
+    return;
+  }
+
+  visibility_tracker_->RequestVisibility(std::move(request_visibility_cb));
 }
 
 void HTMLVideoElement::PaintCurrentFrame(cc::PaintCanvas* canvas,
@@ -452,26 +474,13 @@ void HTMLVideoElement::OnFirstFrame(base::TimeTicks frame_time,
   }
 }
 
-void HTMLVideoElement::webkitEnterFullscreen() {
+void HTMLVideoElement::EnterFullscreen() {
   if (!IsFullscreen()) {
     FullscreenOptions* options = FullscreenOptions::Create();
     options->setNavigationUI("hide");
     Fullscreen::RequestFullscreen(*this, options,
                                   FullscreenRequestType::kPrefixed);
   }
-}
-
-void HTMLVideoElement::webkitExitFullscreen() {
-  if (IsFullscreen())
-    Fullscreen::ExitFullscreen(GetDocument());
-}
-
-bool HTMLVideoElement::webkitSupportsFullscreen() {
-  return Fullscreen::FullscreenEnabled(GetDocument());
-}
-
-bool HTMLVideoElement::webkitDisplayingFullscreen() {
-  return IsFullscreen();
 }
 
 void HTMLVideoElement::DidEnterFullscreen() {
@@ -553,7 +562,8 @@ bool HTMLVideoElement::IsDefaultPosterImageURL() const {
 
 scoped_refptr<StaticBitmapImage> HTMLVideoElement::CreateStaticBitmapImage(
     bool allow_accelerated_images,
-    std::optional<gfx::Size> size) {
+    std::optional<gfx::Size> size,
+    bool reinterpret_as_srgb) {
   media::PaintCanvasVideoRenderer* video_renderer = nullptr;
   scoped_refptr<media::VideoFrame> media_video_frame;
   if (auto* wmp = GetWebMediaPlayer()) {
@@ -569,32 +579,41 @@ scoped_refptr<StaticBitmapImage> HTMLVideoElement::CreateStaticBitmapImage(
     return nullptr;
   }
 
-  // TODO(https://crbug.com/1341235): The choice of color type and alpha type
-  // is inappropriate in many circumstances.
-  const auto resource_provider_info = SkImageInfo::Make(
-      gfx::SizeToSkISize(dest_size), kN32_SkColorType, kPremul_SkAlphaType,
-      media_video_frame->CompatRGBColorSpace().ToSkColorSpace());
+  gfx::ColorSpace dest_color_space =
+      reinterpret_as_srgb ? gfx::ColorSpace::CreateSRGB()
+                          : media_video_frame->CompatRGBColorSpace();
   if (!resource_provider_ ||
-      allow_accelerated_images != resource_provider_->IsAccelerated() ||
-      resource_provider_info != resource_provider_->GetSkImageInfo()) {
+      (resource_provider_->IsAccelerated() &&
+       resource_provider_->IsGpuContextLost()) ||
+      allow_accelerated_images != allow_accelerated_images_ ||
+      dest_size != resource_provider_->Size() ||
+      dest_color_space != resource_provider_->GetColorSpace()) {
     viz::RasterContextProvider* raster_context_provider = nullptr;
     if (allow_accelerated_images) {
       if (auto wrapper = SharedGpuContext::ContextProviderWrapper()) {
-        if (auto* context_provider = wrapper->ContextProvider())
-          raster_context_provider = context_provider->RasterContextProvider();
+        raster_context_provider =
+            wrapper->ContextProvider().RasterContextProvider();
       }
     }
+    resource_provider_.reset();
     // Providing a null |raster_context_provider| creates a software provider.
+    // TODO(https://crbug.com/1341235): The choice of color type and alpha type
+    // is inappropriate in many circumstances.
     resource_provider_ = CreateResourceProviderForVideoFrame(
-        resource_provider_info, raster_context_provider);
+        dest_size, GetN32FormatForCanvas(), kPremul_SkAlphaType,
+        dest_color_space, raster_context_provider);
     if (!resource_provider_)
       return nullptr;
+    allow_accelerated_images_ = allow_accelerated_images;
   }
+  cache_deleting_timer_.StartOneShot(kTemporaryResourceDeletionDelay,
+                                     FROM_HERE);
 
-  auto image = CreateImageFromVideoFrame(std::move(media_video_frame),
-                                         /*allow_zero_copy_images=*/true,
-                                         resource_provider_.get(),
-                                         video_renderer, gfx::Rect(dest_size));
+  auto image = CreateImageFromVideoFrame(
+      std::move(media_video_frame),
+      /*allow_zero_copy_images=*/true, resource_provider_.get(), video_renderer,
+      gfx::Rect(dest_size),
+      /*prefer_tagged_orientation=*/true, reinterpret_as_srgb);
   if (image)
     image->SetOriginClean(!WouldTaintOrigin());
   return image;
@@ -628,8 +647,11 @@ gfx::SizeF HTMLVideoElement::ElementSize(
   return gfx::SizeF(videoWidth(), videoHeight());
 }
 
-gfx::Size HTMLVideoElement::BitmapSourceSize() const {
-  return gfx::Size(videoWidth(), videoHeight());
+ImageBitmapSourceStatus HTMLVideoElement::CheckUsability() const {
+  if (!HasAvailableVideoFrame()) {
+    return base::unexpected(ImageBitmapSourceError::kInvalid);
+  }
+  return base::ok();
 }
 
 ScriptPromise<ImageBitmap> HTMLVideoElement::CreateImageBitmap(
@@ -643,13 +665,6 @@ ScriptPromise<ImageBitmap> HTMLVideoElement::CreateImageBitmap(
         "The provided element has not retrieved data.");
     return EmptyPromise();
   }
-  if (!HasAvailableVideoFrame()) {
-    exception_state.ThrowDOMException(
-        DOMExceptionCode::kInvalidStateError,
-        "The provided element's player has no current data.");
-    return EmptyPromise();
-  }
-
   return ImageBitmapSource::FulfillImageBitmap(
       script_state, MakeGarbageCollected<ImageBitmap>(this, crop_rect, options),
       options, exception_state);
@@ -688,6 +703,10 @@ DisplayType HTMLVideoElement::GetDisplayType() const {
   if (is_auto_picture_in_picture_ ||
       PictureInPictureController::IsElementInPictureInPicture(this)) {
     return DisplayType::kPictureInPicture;
+  }
+
+  if (PictureInPictureController::IsInDocumentPictureInPicture(this)) {
+    return DisplayType::kDocumentPictureInPicture;
   }
 
   if (is_effectively_fullscreen_)
@@ -812,6 +831,15 @@ void HTMLVideoElement::OnWebMediaPlayerCleared() {
   UpdateVideoVisibilityTracker();
 }
 
+void HTMLVideoElement::RecordVideoOcclusionState(
+    std::string_view occlusion_state) const {
+  if (!GetWebMediaPlayer()) {
+    return;
+  }
+
+  GetWebMediaPlayer()->RecordVideoOcclusionState(occlusion_state);
+}
+
 void HTMLVideoElement::AttributeChanged(
     const AttributeModificationParams& params) {
   HTMLElement::AttributeChanged(params);
@@ -822,6 +850,32 @@ void HTMLVideoElement::AttributeChanged(
 void HTMLVideoElement::OnRequestVideoFrameCallback() {
   if (auto* vfc_requester = VideoFrameCallbackRequester::From(*this)) {
     vfc_requester->OnRequestVideoFrameCallback();
+  }
+}
+
+void HTMLVideoElement::SetCcLayer(cc::Layer* cc_layer) {
+  HTMLMediaElement::SetCcLayer(cc_layer);
+  if (auto* layer = CcLayer()) {
+    layer->SetFilterQuality(filter_quality_);
+    layer->SetDynamicRangeLimit(dynamic_range_limit_);
+  }
+}
+
+void HTMLVideoElement::StyleDidChange(const ComputedStyle* old_style,
+                                      const ComputedStyle& new_style) {
+  const auto new_filter_quality =
+      (new_style.ImageRendering() == EImageRendering::kPixelated)
+          ? cc::PaintFlags::FilterQuality::kNone
+          : cc::PaintFlags::FilterQuality::kLow;
+  const auto new_dynamic_range_limit = new_style.GetDynamicRangeLimit();
+  if (filter_quality_ != new_filter_quality ||
+      dynamic_range_limit_ != new_dynamic_range_limit) {
+    filter_quality_ = new_filter_quality;
+    dynamic_range_limit_ = new_dynamic_range_limit;
+    if (auto* layer = CcLayer()) {
+      layer->SetFilterQuality(filter_quality_);
+      layer->SetDynamicRangeLimit(dynamic_range_limit_);
+    }
   }
 }
 

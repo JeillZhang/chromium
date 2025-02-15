@@ -11,12 +11,15 @@
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/notreached.h"
+#include "base/strings/utf_string_conversions.h"
+#include "chrome/browser/extensions/extension_sync_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_avatar_icon_util.h"
 #include "chrome/browser/signin/account_consistency_mode_manager.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/signin/signin_promo_util.h"
 #include "chrome/browser/signin/signin_ui_util.h"
+#include "chrome/browser/signin/signin_util.h"
 #include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/browser/ui/views/chrome_typography.h"
@@ -24,6 +27,7 @@
 #include "chrome/grit/branded_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/signin/public/base/signin_metrics.h"
+#include "components/signin/public/base/signin_switches.h"
 #include "components/strings/grit/components_strings.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
@@ -32,6 +36,100 @@
 #include "ui/views/layout/box_layout.h"
 #include "ui/views/layout/flex_layout.h"
 #include "ui/views/widget/widget.h"
+
+using signin_util::SignedInState;
+
+// TODO(crbug.com/391586330): Strings used in this file sometimes originate
+// from a different source which makes their name out of context. Look into
+// whether it would better to have specific strings for these views.
+
+namespace {
+
+constexpr int kTitleMaxWidth = 218;
+constexpr int kExtensionsExplicitSigninTitleMaxWidth = 318;
+
+int GetSubtitleID(signin_metrics::AccessPoint access_point,
+                  SignedInState signed_in_state,
+                  int default_subtitle_id) {
+  if (access_point == signin_metrics::AccessPoint::kPasswordBubble) {
+    switch (signed_in_state) {
+      case SignedInState::kSignedOut:
+      case SignedInState::kWebOnlySignedIn:
+        return IDS_AUTOFILL_SIGNIN_PROMO_SUBTITLE_PASSWORD;
+      case SignedInState::kSignInPending:
+        return IDS_AUTOFILL_VERIFY_PROMO_SUBTITLE_PASSWORD;
+      default:
+        break;
+    }
+  }
+
+  if (access_point == signin_metrics::AccessPoint::kAddressBubble) {
+    switch (signed_in_state) {
+      case SignedInState::kSignedOut:
+      case SignedInState::kWebOnlySignedIn:
+        return IDS_AUTOFILL_SIGNIN_PROMO_SUBTITLE_ADDRESS;
+      case SignedInState::kSignInPending:
+        return IDS_AUTOFILL_VERIFY_PROMO_SUBTITLE_ADDRESS;
+      default:
+        break;
+    }
+  }
+
+  return default_subtitle_id;
+}
+
+std::u16string GetButtonText(bool is_autofill_promo,
+                             SignedInState signed_in_state,
+                             const std::string& name) {
+  if (is_autofill_promo) {
+    switch (signed_in_state) {
+      case SignedInState::kSignedOut:
+        return l10n_util::GetStringUTF16(IDS_PROFILE_MENU_SIGNIN_PROMO_BUTTON);
+      case SignedInState::kWebOnlySignedIn:
+        return l10n_util::GetStringFUTF16(
+            IDS_SIGNIN_DICE_WEB_INTERCEPT_BUBBLE_CHROME_SIGNIN_ACCEPT_TEXT,
+            {base::UTF8ToUTF16(name)});
+      case SignedInState::kSignInPending:
+        return l10n_util::GetStringUTF16(IDS_PROFILES_VERIFY_ACCOUNT_BUTTON);
+      default:
+        break;
+    }
+  }
+
+  return l10n_util::GetStringUTF16(IDS_PROFILES_DICE_SIGNIN_BUTTON);
+}
+
+std::u16string GetAccessibilityText(bool is_autofill_promo,
+                                    SignedInState signed_in_state,
+                                    const AccountInfo& account) {
+  if (is_autofill_promo && signed_in_state == SignedInState::kWebOnlySignedIn) {
+    return l10n_util::GetStringFUTF16(
+        IDS_SIGNIN_DICE_WEB_INTERCEPT_BUBBLE_CHROME_SIGNIN_ACCEPT_TEXT,
+        {base::UTF8ToUTF16(
+            base::StrCat({account.given_name, " ", account.email}))});
+  }
+
+  return std::u16string();
+}
+
+signin_metrics::PromoAction GetPromoAction(bool is_autofill_promo,
+                                           SignedInState signed_in_state) {
+  if (is_autofill_promo) {
+    switch (signed_in_state) {
+      case SignedInState::kSignedOut:
+        return signin_metrics::PromoAction::
+            PROMO_ACTION_NEW_ACCOUNT_NO_EXISTING_ACCOUNT;
+      case SignedInState::kWebOnlySignedIn:
+        return signin_metrics::PromoAction::PROMO_ACTION_WITH_DEFAULT;
+      default:
+        break;
+    }
+  }
+
+  return signin_metrics::PromoAction::PROMO_ACTION_NO_SIGNIN_PROMO;
+}
+
+}  // namespace
 
 BubbleSignInPromoView::BubbleSignInPromoView(
     Profile* profile,
@@ -42,6 +140,7 @@ BubbleSignInPromoView::BubbleSignInPromoView(
     int text_style)
     : delegate_(delegate) {
   DCHECK(!profile->IsGuestSession());
+  bool is_autofill_promo = signin::IsAutofillSigninPromo(access_point);
   signin::IdentityManager* identity_manager =
       IdentityManagerFactory::GetForProfile(profile);
   AccountInfo account;
@@ -51,9 +150,7 @@ BubbleSignInPromoView::BubbleSignInPromoView(
   }
 
   const views::LayoutOrientation orientation =
-      account.IsEmpty() &&
-              access_point !=
-                  signin_metrics::AccessPoint::ACCESS_POINT_PASSWORD_BUBBLE
+      account.IsEmpty() && !is_autofill_promo
           ? views::LayoutOrientation::kHorizontal
           : views::LayoutOrientation::kVertical;
 
@@ -66,43 +163,42 @@ BubbleSignInPromoView::BubbleSignInPromoView(
                                views::MaximumFlexSizeRule::kPreferred, true));
   SetLayoutManager(std::move(layout));
 
-  // Show the accounts sync promo message by default.
-  int title_resource_id = accounts_promo_message_resource_id;
-  std::u16string button_text =
-      l10n_util::GetStringUTF16(IDS_PROFILES_DICE_SIGNIN_BUTTON);
-  const int title_max_width = 218;
+  SignedInState signed_in_state =
+      signin_util::GetSignedInState(identity_manager);
 
+  // Set the parameters depending on the signed in state and type of promo.
+  int title_resource_id = GetSubtitleID(access_point, signed_in_state,
+                                        accounts_promo_message_resource_id);
+  std::u16string button_text =
+      GetButtonText(is_autofill_promo, signed_in_state, account.given_name);
+  std::u16string accessibility_text =
+      GetAccessibilityText(is_autofill_promo, signed_in_state, account);
+  signin_metrics::PromoAction promo_action =
+      GetPromoAction(is_autofill_promo, signed_in_state);
+
+  int title_max_width = kTitleMaxWidth;
 #if BUILDFLAG(ENABLE_DICE_SUPPORT)
-  if (access_point ==
-      signin_metrics::AccessPoint::ACCESS_POINT_PASSWORD_BUBBLE) {
-    signin::SignInAutofillBubbleVersion bubble_version =
-        signin::GetSignInPromoVersion(identity_manager);
-    switch (bubble_version) {
-      case signin::SignInAutofillBubbleVersion::kNoPromo:
-        return;
-      case signin::SignInAutofillBubbleVersion::kNoAccount:
-        title_resource_id = IDS_AUTOFILL_SIGNIN_PROMO_SUBTITLE_PASSWORD;
-        button_text =
-            l10n_util::GetStringUTF16(IDS_PROFILE_MENU_SIGNIN_PROMO_BUTTON);
-        break;
-      case signin::SignInAutofillBubbleVersion::kWebSignedIn:
-        title_resource_id = IDS_AUTOFILL_SIGNIN_PROMO_SUBTITLE_PASSWORD;
-        button_text = l10n_util::GetStringFUTF16(
-            IDS_SIGNIN_DICE_WEB_INTERCEPT_BUBBLE_CHROME_SIGNIN_ACCEPT_TEXT,
-            {base::UTF8ToUTF16(account.given_name)});
-        break;
-      case signin::SignInAutofillBubbleVersion::kSignInPending:
-        title_resource_id = IDS_AUTOFILL_VERIFY_PROMO_SUBTITLE_PASSWORD;
-        button_text =
-            l10n_util::GetStringUTF16(IDS_PROFILES_VERIFY_ACCOUNT_BUTTON);
-        break;
+  if (access_point == signin_metrics::AccessPoint::kExtensionInstallBubble) {
+    if (extensions::sync_util::IsExtensionsExplicitSigninEnabled()) {
+      title_max_width = kExtensionsExplicitSigninTitleMaxWidth;
+      button_text =
+          account.given_name.empty()
+              ? l10n_util::GetStringUTF16(IDS_EXTENSIONS_EXPLICIT_SIGNIN_BUTTON)
+              : l10n_util::GetStringFUTF16(
+                    IDS_EXTENSIONS_EXPLICIT_SIGNIN_BUTTON_WITH_ACCOUNT_AWARENESS,
+                    base::UTF8ToUTF16(account.given_name));
     }
   }
 #endif  // BUILDFLAG(ENABLE_DICE_SUPPORT)
 
+  if (promo_action !=
+      signin_metrics::PromoAction::PROMO_ACTION_NO_SIGNIN_PROMO) {
+    signin_metrics::LogSignInOffered(access_point, promo_action);
+  }
+
   if (title_resource_id) {
     std::u16string title_text = l10n_util::GetStringUTF16(title_resource_id);
-    views::Label* title = new views::Label(
+    std::unique_ptr<views::Label> title = std::make_unique<views::Label>(
         title_text, views::style::CONTEXT_DIALOG_BODY_TEXT, text_style);
     title->SetHorizontalAlignment(gfx::HorizontalAlignment::ALIGN_LEFT);
     title->SetMultiLine(true);
@@ -119,7 +215,7 @@ BubbleSignInPromoView::BubbleSignInPromoView(
                                 .bottom(),
                             0));
     }
-    AddChildView(title);
+    AddChildView(std::move(title));
   }
 
   views::Button::PressedCallback callback = base::BindRepeating(
@@ -129,7 +225,7 @@ BubbleSignInPromoView::BubbleSignInPromoView(
 
   if (account.IsEmpty()) {
     signin_button_pointer = std::make_unique<BubbleSignInPromoSignInButtonView>(
-        std::move(callback), access_point, button_style,
+        std::move(callback), is_autofill_promo, button_style,
         std::move(button_text));
 
     views::View* button_parent = AddChildView(std::make_unique<views::View>());
@@ -158,8 +254,8 @@ BubbleSignInPromoView::BubbleSignInPromoView(
           profiles::GetPlaceholderAvatarIconResourceID());
     }
     signin_button_pointer = std::make_unique<BubbleSignInPromoSignInButtonView>(
-        account, account_icon, std::move(callback), access_point,
-        std::move(button_text), /*use_account_name_as_title=*/true);
+        account, account_icon, std::move(callback), is_autofill_promo,
+        std::move(button_text), std::move(accessibility_text));
 
     signin_button_view_ = AddChildView(std::move(signin_button_pointer));
   }
@@ -168,6 +264,10 @@ BubbleSignInPromoView::BubbleSignInPromoView(
 }
 
 BubbleSignInPromoView::~BubbleSignInPromoView() = default;
+
+views::View* BubbleSignInPromoView::GetSignInButton() const {
+  return signin_button_view_ ? signin_button_view_->GetSignInButton() : nullptr;
+}
 
 void BubbleSignInPromoView::SignIn() {
   std::optional<AccountInfo> account = signin_button_view_->account();

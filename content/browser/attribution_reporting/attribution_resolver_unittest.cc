@@ -18,8 +18,7 @@
 #include <vector>
 
 #include "base/containers/enum_set.h"
-#include "base/files/file_util.h"
-#include "base/files/scoped_temp_dir.h"
+#include "base/files/file_path.h"
 #include "base/functional/callback.h"
 #include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
@@ -27,16 +26,23 @@
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/task_environment.h"
 #include "base/time/time.h"
-#include "build/buildflag.h"
 #include "components/attribution_reporting/aggregatable_debug_reporting_config.h"
 #include "components/attribution_reporting/aggregatable_dedup_key.h"
+#include "components/attribution_reporting/aggregatable_filtering_id_max_bytes.h"
+#include "components/attribution_reporting/aggregatable_named_budget_candidate.h"
+#include "components/attribution_reporting/aggregatable_named_budget_defs.h"
 #include "components/attribution_reporting/aggregatable_trigger_config.h"
 #include "components/attribution_reporting/aggregatable_trigger_data.h"
 #include "components/attribution_reporting/aggregatable_values.h"
 #include "components/attribution_reporting/aggregation_keys.h"
+#include "components/attribution_reporting/attribution_scopes_data.h"
+#include "components/attribution_reporting/attribution_scopes_set.h"
+#include "components/attribution_reporting/constants.h"
+#include "components/attribution_reporting/debug_types.mojom.h"
 #include "components/attribution_reporting/event_report_windows.h"
 #include "components/attribution_reporting/event_trigger_data.h"
 #include "components/attribution_reporting/filters.h"
+#include "components/attribution_reporting/max_event_level_reports.h"
 #include "components/attribution_reporting/privacy_math.h"
 #include "components/attribution_reporting/source_registration_time_config.mojom.h"
 #include "components/attribution_reporting/source_type.mojom.h"
@@ -46,6 +52,7 @@
 #include "components/attribution_reporting/trigger_data_matching.mojom.h"
 #include "components/attribution_reporting/trigger_registration.h"
 #include "content/browser/attribution_reporting/aggregatable_debug_report.h"
+#include "content/browser/attribution_reporting/aggregatable_named_budget_pair.h"
 #include "content/browser/attribution_reporting/attribution_features.h"
 #include "content/browser/attribution_reporting/attribution_report.h"
 #include "content/browser/attribution_reporting/attribution_resolver_impl.h"
@@ -65,6 +72,7 @@
 #include "net/base/schemeful_site.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/abseil-cpp/absl/numeric/int128.h"
+#include "third_party/abseil-cpp/absl/types/variant.h"
 #include "third_party/blink/public/common/storage_key/storage_key.h"
 #include "third_party/blink/public/mojom/aggregation_service/aggregatable_report.mojom.h"
 #include "url/gurl.h"
@@ -81,18 +89,23 @@ using ::testing::Eq;
 using ::testing::Field;
 using ::testing::Ge;
 using ::testing::IsEmpty;
+using ::testing::IsNull;
 using ::testing::IsTrue;
 using ::testing::Le;
 using ::testing::Optional;
+using ::testing::Pointee;
 using ::testing::Property;
 using ::testing::SizeIs;
 using ::testing::UnorderedElementsAre;
 using ::testing::VariantWith;
 
-using AttributionFilterData = ::attribution_reporting::FilterData;
-
+using ::attribution_reporting::AggregatableValues;
+using ::attribution_reporting::AggregatableValuesValue;
 using ::attribution_reporting::FilterConfig;
+using ::attribution_reporting::FilterData;
 using ::attribution_reporting::FilterPair;
+using ::attribution_reporting::kDefaultFilteringId;
+using ::attribution_reporting::MaxEventLevelReports;
 using ::attribution_reporting::SuitableOrigin;
 using ::attribution_reporting::TriggerSpec;
 using ::attribution_reporting::TriggerSpecs;
@@ -134,42 +147,44 @@ MATCHER_P(CreateReportSourceIs, matcher, "") {
   return ExplainMatchResult(matcher, arg.source(), result_listener);
 }
 
-MATCHER_P(CreateReportMaxAttributionsLimitIs, matcher, "") {
-  return ExplainMatchResult(matcher, arg.limits().rate_limits_max_attributions,
-                            result_listener);
-}
-
-MATCHER_P(CreateReportMaxAttributionReportingOriginsLimitIs, matcher, "") {
-  return ExplainMatchResult(
-      matcher, arg.limits().rate_limits_max_attribution_reporting_origins,
-      result_listener);
-}
-
 MATCHER_P(CreateReportMaxEventLevelReportsLimitIs, matcher, "") {
-  return ExplainMatchResult(
-      matcher, arg.limits().max_event_level_reports_per_destination,
-      result_listener);
+  std::optional<int> value;
+  if (const auto* v =
+          absl::get_if<CreateReportResult::NoCapacityForConversionDestination>(
+              &arg.event_level_result())) {
+    value = v->max;
+  }
+  return ExplainMatchResult(matcher, value, result_listener);
 }
 
 MATCHER_P(CreateReportMaxAggregatableReportsLimitIs, matcher, "") {
-  return ExplainMatchResult(
-      matcher, arg.limits().max_aggregatable_reports_per_destination,
-      result_listener);
+  std::optional<int> value;
+  if (const auto* v =
+          absl::get_if<CreateReportResult::NoCapacityForConversionDestination>(
+              &arg.aggregatable_result())) {
+    value = v->max;
+  }
+  return ExplainMatchResult(matcher, value, result_listener);
+}
+
+MATCHER_P(SourceTimeIs, matcher, "") {
+  return ExplainMatchResult(matcher, arg.source_time(), result_listener);
 }
 
 }  // namespace
 
-// Unit test suite for the AttributionResolver interface. All AttributionResolver
-// implementations (including fakes) should be able to re-use this test suite.
+// Unit test suite for the AttributionResolver interface. All
+// AttributionResolver implementations (including fakes) should be able to
+// re-use this test suite.
 class AttributionResolverTest : public testing::Test {
  public:
   AttributionResolverTest() {
-    EXPECT_TRUE(dir_.CreateUniqueTempDir());
     auto delegate = std::make_unique<ConfigurableStorageDelegate>();
     delegate->set_report_delay(kReportDelay);
     delegate_ = delegate.get();
-    storage_ = std::make_unique<AttributionResolverImpl>(dir_.GetPath(),
-                                                       std::move(delegate));
+    // Use an empty path for an in-memory database for performance.
+    storage_ = std::make_unique<AttributionResolverImpl>(base::FilePath(),
+                                                         std::move(delegate));
   }
 
   AttributionReport GetExpectedAggregatableReport(
@@ -210,43 +225,11 @@ class AttributionResolverTest : public testing::Test {
  protected:
   base::test::SingleThreadTaskEnvironment task_environment_{
       base::test::TaskEnvironment::TimeSource::MOCK_TIME};
-  base::ScopedTempDir dir_;
 
  private:
   std::unique_ptr<AttributionResolver> storage_;
   raw_ptr<ConfigurableStorageDelegate> delegate_;
 };
-
-TEST_F(AttributionResolverTest, StorageUsedAfterFailedInitialization_NoCrash) {
-  const base::FilePath db_path =
-      dir_.GetPath().Append(FILE_PATH_LITERAL("Conversions"));
-
-  // We create a failed initialization by writing a dir to the database file
-  // path.
-  ASSERT_TRUE(base::CreateDirectoryAndGetError(db_path, nullptr));
-
-  std::unique_ptr<AttributionResolver> storage =
-      std::make_unique<AttributionResolverImpl>(
-          dir_.GetPath(), std::make_unique<ConfigurableStorageDelegate>());
-
-  // Test all public methods on AttributionResolver.
-  EXPECT_NO_FATAL_FAILURE(storage->StoreSource(SourceBuilder().Build()));
-  EXPECT_EQ(AttributionTrigger::EventLevelResult::kInternalError,
-            storage->MaybeCreateAndStoreReport(DefaultTrigger())
-                .event_level_status());
-  EXPECT_THAT(storage->GetAttributionReports(base::Time::Now()), IsEmpty());
-  EXPECT_THAT(storage->GetActiveSources(), IsEmpty());
-  EXPECT_TRUE(storage->DeleteReport(AttributionReport::Id(0)));
-  EXPECT_NO_FATAL_FAILURE(storage->ClearData(
-      base::Time::Min(), base::Time::Max(), base::NullCallback()));
-  EXPECT_EQ(storage->AdjustOfflineReportTimes(), std::nullopt);
-
-#if BUILDFLAG(IS_FUCHSIA)
-  EXPECT_FALSE(base::PathExists(db_path));
-#else
-  EXPECT_TRUE(base::PathExists(db_path));
-#endif
-}
 
 TEST_F(AttributionResolverTest, ImpressionStoredAndRetrieved_ValuesIdentical) {
   base::HistogramTester histograms;
@@ -264,7 +247,8 @@ TEST_F(AttributionResolverTest, UniqueReportWindowsStored_ValuesIdentical) {
       TriggerSpecs(SourceType::kNavigation,
                    *attribution_reporting::EventReportWindows::Create(
                        /*start_time=*/base::Days(3),
-                       /*end_times=*/{base::Days(15)}));
+                       /*end_times=*/{base::Days(15)}),
+                   MaxEventLevelReports::Max());
 
   storage()->StoreSource(SourceBuilder()
                              .SetExpiry(base::Days(30))
@@ -286,8 +270,7 @@ TEST_F(AttributionResolverTest,
       storage()->MaybeCreateAndStoreReport(DefaultTrigger()),
       AllOf(CreateReportEventLevelStatusIs(
                 AttributionTrigger::EventLevelResult::kNoMatchingImpressions),
-            NewEventLevelReportIs(std::nullopt),
-            NewAggregatableReportIs(std::nullopt),
+            NewEventLevelReportIs(IsNull()), NewAggregatableReportIs(IsNull()),
             CreateReportSourceIs(std::nullopt)));
   EXPECT_THAT(storage()->GetAttributionReports(base::Time::Now()), IsEmpty());
 }
@@ -412,8 +395,8 @@ TEST_F(AttributionResolverTest,
           TriggerBuilder().SetDebugKey(20).Build()),
       AllOf(CreateReportEventLevelStatusIs(
                 AttributionTrigger::EventLevelResult::kPriorityTooLow),
-            ReplacedEventLevelReportIs(std::nullopt),
-            DroppedEventLevelReportIs(Optional(TriggerDebugKeyIs(20u)))));
+            ReplacedEventLevelReportIs(IsNull()),
+            DroppedEventLevelReportIs(Pointee(TriggerDebugKeyIs(20u)))));
 }
 
 TEST_F(AttributionResolverTest,
@@ -431,7 +414,8 @@ TEST_F(AttributionResolverTest,
           .SetTriggerSpecs(
               TriggerSpecs(SourceType::kNavigation,
                            *attribution_reporting::EventReportWindows::Create(
-                               base::Milliseconds(1), {base::Days(30)})))
+                               base::Milliseconds(1), {base::Days(30)}),
+                           MaxEventLevelReports::Max()))
           .Build());
 
   EXPECT_EQ(AttributionTrigger::EventLevelResult::kReportWindowNotStarted,
@@ -445,7 +429,8 @@ TEST_F(AttributionResolverTest,
           .SetTriggerSpecs(
               TriggerSpecs(SourceType::kNavigation,
                            *attribution_reporting::EventReportWindows::Create(
-                               base::Milliseconds(0), {base::Hours(1)})))
+                               base::Milliseconds(0), {base::Hours(1)}),
+                           MaxEventLevelReports::Max()))
           .Build());
 
   task_environment_.FastForwardBy(base::Hours(1) + base::Microseconds(1));
@@ -580,7 +565,8 @@ TEST_F(AttributionResolverTest,
   // Verify it was the new impression that converted.
   EXPECT_THAT(
       storage()->GetAttributionReports(/*max_report_time=*/base::Time::Max()),
-      ElementsAre(ReportSourceIs(SourceEventIdIs(1000u))));
+      ElementsAre(EventLevelDataIs(
+          Field(&AttributionReport::EventLevelData::source_event_id, 1000u))));
 }
 
 TEST_F(AttributionResolverTest,
@@ -641,7 +627,8 @@ TEST_F(
             MaybeCreateAndStoreEventLevelReport(conversion));
 
   EXPECT_THAT(storage()->GetAttributionReports(base::Time::Max()),
-              ElementsAre(ReportSourceIs(SourceEventIdIs(10))));
+              ElementsAre(EventLevelDataIs(Field(
+                  &AttributionReport::EventLevelData::source_event_id, 10))));
 }
 
 TEST_F(AttributionResolverTest,
@@ -691,66 +678,6 @@ TEST_F(AttributionResolverTest, ExceedsChannelCapacity_SupersedesRateLimits) {
   delegate()->set_exceeds_channel_capacity_limit(true);
   EXPECT_EQ(storage()->StoreSource(SourceBuilder().Build()).status(),
             StorableSource::Result::kExceedsMaxChannelCapacity);
-}
-
-TEST_F(AttributionResolverTest, MaxImpressionsPerOrigin_LimitsStorage) {
-  delegate()->set_max_sources_per_origin(2);
-
-  base::HistogramTester histograms;
-
-  ASSERT_EQ(storage()
-                ->StoreSource(SourceBuilder()
-                                  .SetSourceEventId(3)
-                                  .SetPriority(1)
-                                  .SetMaxEventLevelReports(1)
-                                  .Build())
-                .status(),
-            StorableSource::Result::kSuccess);
-
-  ASSERT_EQ(storage()
-                ->StoreSource(SourceBuilder()
-                                  .SetSourceEventId(5)
-                                  .SetPriority(2)
-                                  .SetMaxEventLevelReports(1)
-                                  .Build())
-                .status(),
-            StorableSource::Result::kSuccess);
-
-  // Force the lower-priority source to be deactivated.
-  ASSERT_EQ(AttributionTrigger::EventLevelResult::kSuccess,
-            MaybeCreateAndStoreEventLevelReport(DefaultTrigger()));
-
-  ASSERT_THAT(storage()->GetActiveSources(), ElementsAre(SourceEventIdIs(5u)));
-
-  // There's still room for this source, as the limit applies only to active
-  // sources.
-  ASSERT_EQ(storage()
-                ->StoreSource(SourceBuilder()
-                                  .SetSourceEventId(6)
-                                  .SetMaxEventLevelReports(1)
-                                  .Build())
-                .status(),
-            StorableSource::Result::kSuccess);
-
-  ASSERT_EQ(storage()
-                ->StoreSource(SourceBuilder()
-                                  .SetSourceEventId(7)
-                                  .SetMaxEventLevelReports(1)
-                                  .Build())
-                .status(),
-            StorableSource::Result::kInsufficientSourceCapacity);
-
-  int64_t file_size = histograms.GetTotalSum(
-      "Conversions.Storage.Sql.FileSizeSourcesPerOriginLimitReached2");
-  EXPECT_GT(file_size, 0);
-
-  int64_t file_size_per_source = histograms.GetTotalSum(
-      "Conversions.Storage.Sql.FileSizeSourcesPerOriginLimitReached2."
-      "PerSource");
-  EXPECT_EQ(file_size_per_source, file_size * 1024 / 2);
-
-  ASSERT_THAT(storage()->GetActiveSources(),
-              ElementsAre(SourceEventIdIs(5u), SourceEventIdIs(6u)));
 }
 
 TEST_F(AttributionResolverTest, MaxImpressionsPerOrigin_PerOriginNotSite) {
@@ -864,8 +791,8 @@ TEST_F(AttributionResolverTest, MaxEventLevelReportsPerDestination) {
                             kNoCapacityForConversionDestination),
                     CreateReportAggregatableStatusIs(
                         AttributionTrigger::AggregatableResult::kSuccess),
-                    ReplacedEventLevelReportIs(std::nullopt),
-                    DroppedEventLevelReportIs(std::nullopt),
+                    ReplacedEventLevelReportIs(IsNull()),
+                    DroppedEventLevelReportIs(IsNull()),
                     CreateReportMaxEventLevelReportsLimitIs(1),
                     CreateReportMaxAggregatableReportsLimitIs(std::nullopt)));
 }
@@ -912,8 +839,8 @@ TEST_F(AttributionResolverTest,
                             kNoCapacityForConversionDestination),
                     CreateReportAggregatableStatusIs(
                         AttributionTrigger::AggregatableResult::kSuccess),
-                    ReplacedEventLevelReportIs(std::nullopt),
-                    DroppedEventLevelReportIs(std::nullopt),
+                    ReplacedEventLevelReportIs(IsNull()),
+                    DroppedEventLevelReportIs(IsNull()),
                     CreateReportMaxEventLevelReportsLimitIs(1),
                     CreateReportMaxAggregatableReportsLimitIs(std::nullopt)));
 }
@@ -943,8 +870,8 @@ TEST_F(AttributionResolverTest, MaxAggregatableReportsPerDestination) {
                     CreateReportAggregatableStatusIs(
                         AttributionTrigger::AggregatableResult::
                             kNoCapacityForConversionDestination),
-                    ReplacedEventLevelReportIs(std::nullopt),
-                    DroppedEventLevelReportIs(std::nullopt),
+                    ReplacedEventLevelReportIs(IsNull()),
+                    DroppedEventLevelReportIs(IsNull()),
                     CreateReportMaxEventLevelReportsLimitIs(std::nullopt),
                     CreateReportMaxAggregatableReportsLimitIs(1)));
 }
@@ -961,24 +888,24 @@ TEST_F(AttributionResolverTest,
               {net::SchemefulSite::Deserialize("https://a.test"),
                net::SchemefulSite::Deserialize("https://b.test")})
           .Build());
-  storage()->StoreSource(
-      source_builder
-          .SetDestinationSites(
-              {net::SchemefulSite::Deserialize("https://a.test"),
-               net::SchemefulSite::Deserialize("https://c.test")})
-          .Build());
 
   EXPECT_THAT(storage()->MaybeCreateAndStoreReport(
                   DefaultAggregatableTriggerBuilder()
                       .SetDestinationOrigin(
                           *SuitableOrigin::Deserialize("https://a.test"))
                       .Build()),
-              AllOf(CreateReportEventLevelStatusIs(
-                        AttributionTrigger::EventLevelResult::kSuccess),
-                    CreateReportAggregatableStatusIs(
-                        AttributionTrigger::AggregatableResult::kSuccess),
-                    CreateReportMaxEventLevelReportsLimitIs(std::nullopt),
-                    CreateReportMaxAggregatableReportsLimitIs(std::nullopt)));
+              AllOf(CreateReportAggregatableStatusIs(
+                  AttributionTrigger::AggregatableResult::kSuccess)));
+
+  // Verify that only the effective destination is used for the limit in
+  // aggregatable reports.
+  EXPECT_THAT(storage()->MaybeCreateAndStoreReport(
+                  DefaultAggregatableTriggerBuilder()
+                      .SetDestinationOrigin(
+                          *SuitableOrigin::Deserialize("https://b.test"))
+                      .Build()),
+              AllOf(CreateReportAggregatableStatusIs(
+                  AttributionTrigger::AggregatableResult::kSuccess)));
 
   // Verify that MaxReportsPerDestination is enforced.
   EXPECT_THAT(storage()->MaybeCreateAndStoreReport(
@@ -986,21 +913,16 @@ TEST_F(AttributionResolverTest,
                       .SetDestinationOrigin(
                           *SuitableOrigin::Deserialize("https://a.test"))
                       .Build()),
-              AllOf(CreateReportEventLevelStatusIs(
-                        AttributionTrigger::EventLevelResult::kSuccess),
-                    CreateReportAggregatableStatusIs(
+              AllOf(CreateReportAggregatableStatusIs(
                         AttributionTrigger::AggregatableResult::
                             kNoCapacityForConversionDestination),
-                    ReplacedEventLevelReportIs(std::nullopt),
-                    DroppedEventLevelReportIs(std::nullopt),
-                    CreateReportMaxEventLevelReportsLimitIs(std::nullopt),
                     CreateReportMaxAggregatableReportsLimitIs(1)));
 }
 
 TEST_F(AttributionResolverTest, ClearDataWithNoMatch_NoDelete) {
   base::Time now = base::Time::Now();
   storage()->StoreSource(SourceBuilder(now).Build());
-  storage()->ClearData(
+  storage()->ClearDataIncludingRateLimit(
       now, now, GetMatcher(url::Origin::Create(GURL("https://no-match.com"))));
   EXPECT_EQ(AttributionTrigger::EventLevelResult::kSuccess,
             MaybeCreateAndStoreEventLevelReport(DefaultTrigger()));
@@ -1020,8 +942,8 @@ TEST_F(AttributionResolverTest,
   ASSERT_EQ(storage()->GetActiveSources().size(), 1u);
   ASSERT_EQ(storage()->GetAttributionReports(base::Time::Max()).size(), 1u);
 
-  storage()->ClearData(base::Time::Min(), base::Time::Max(),
-                       GetMatcher(*origin));
+  storage()->ClearDataIncludingRateLimit(base::Time::Min(), base::Time::Max(),
+                                         GetMatcher(*origin));
 
   EXPECT_EQ(storage()->GetActiveSources().size(), 1u);
   EXPECT_EQ(storage()->GetAttributionReports(base::Time::Max()).size(), 1u);
@@ -1032,8 +954,9 @@ TEST_F(AttributionResolverTest, ClearDataOutsideRange_NoDelete) {
   auto impression = SourceBuilder(now).Build();
   storage()->StoreSource(impression);
 
-  storage()->ClearData(now + base::Minutes(10), now + base::Minutes(20),
-                       GetMatcher(impression.common_info().source_origin()));
+  storage()->ClearDataIncludingRateLimit(
+      now + base::Minutes(10), now + base::Minutes(20),
+      GetMatcher(impression.common_info().reporting_origin()));
   EXPECT_EQ(AttributionTrigger::EventLevelResult::kSuccess,
             MaybeCreateAndStoreEventLevelReport(DefaultTrigger()));
 }
@@ -1044,7 +967,7 @@ TEST_F(AttributionResolverTest, ClearDataImpression) {
   {
     auto impression = SourceBuilder(now).Build();
     storage()->StoreSource(impression);
-    storage()->ClearData(
+    storage()->ClearDataIncludingRateLimit(
         now, now + base::Minutes(20),
         GetMatcher(impression.common_info().reporting_origin()));
     EXPECT_EQ(AttributionTrigger::EventLevelResult::kNoMatchingImpressions,
@@ -1061,8 +984,9 @@ TEST_F(AttributionResolverTest, ClearDataImpressionConversion) {
   EXPECT_EQ(AttributionTrigger::EventLevelResult::kSuccess,
             MaybeCreateAndStoreEventLevelReport(conversion));
 
-  storage()->ClearData(now - base::Minutes(20), now + base::Minutes(20),
-                       GetMatcher(impression.common_info().reporting_origin()));
+  storage()->ClearDataIncludingRateLimit(
+      now - base::Minutes(20), now + base::Minutes(20),
+      GetMatcher(impression.common_info().reporting_origin()));
 
   EXPECT_THAT(storage()->GetAttributionReports(base::Time::Max()), IsEmpty());
 }
@@ -1108,7 +1032,8 @@ TEST_F(AttributionResolverTest, ClearDataNullFilter) {
   }
 
   auto null_filter = StoragePartition::StorageKeyMatcherFunction();
-  storage()->ClearData(base::Time::Now(), base::Time::Now(), null_filter);
+  storage()->ClearDataIncludingRateLimit(base::Time::Now(), base::Time::Now(),
+                                         null_filter);
   EXPECT_THAT(storage()->GetAttributionReports(base::Time::Max()), SizeIs(5));
 }
 
@@ -1121,8 +1046,9 @@ TEST_F(AttributionResolverTest, ClearDataWithImpressionOutsideRange) {
 
   EXPECT_EQ(AttributionTrigger::EventLevelResult::kSuccess,
             MaybeCreateAndStoreEventLevelReport(conversion));
-  storage()->ClearData(base::Time::Now(), base::Time::Now(),
-                       GetMatcher(impression.common_info().reporting_origin()));
+  storage()->ClearDataIncludingRateLimit(
+      base::Time::Now(), base::Time::Now(),
+      GetMatcher(impression.common_info().reporting_origin()));
   EXPECT_THAT(storage()->GetAttributionReports(base::Time::Max()), IsEmpty());
 }
 
@@ -1141,8 +1067,9 @@ TEST_F(AttributionResolverTest, ClearDataRangeBetweenEvents) {
   EXPECT_EQ(AttributionTrigger::EventLevelResult::kSuccess,
             MaybeCreateAndStoreEventLevelReport(conversion));
 
-  storage()->ClearData(start + base::Minutes(1), start + base::Minutes(10),
-                       GetMatcher(impression.common_info().source_origin()));
+  storage()->ClearDataIncludingRateLimit(
+      start + base::Minutes(1), start + base::Minutes(10),
+      GetMatcher(impression.common_info().reporting_origin()));
 
   EXPECT_THAT(storage()->GetAttributionReports(base::Time::Max()), SizeIs(1u));
 }
@@ -1163,8 +1090,8 @@ TEST_F(AttributionResolverTest, ClearDataWithMultiTouch) {
 
   // Only the first impression should overlap with this time range, but all the
   // impressions should share the origin.
-  storage()->ClearData(start, start,
-                       GetMatcher(impression1.common_info().source_origin()));
+  storage()->ClearDataIncludingRateLimit(
+      start, start, GetMatcher(impression1.common_info().reporting_origin()));
   EXPECT_THAT(storage()->GetAttributionReports(base::Time::Max()), SizeIs(1));
 }
 
@@ -1184,7 +1111,8 @@ TEST_F(AttributionResolverTest, DeleteAll) {
             MaybeCreateAndStoreEventLevelReport(DefaultTrigger()));
 
   auto null_filter = StoragePartition::StorageKeyMatcherFunction();
-  storage()->ClearData(base::Time::Min(), base::Time::Max(), null_filter);
+  storage()->ClearDataIncludingRateLimit(base::Time::Min(), base::Time::Max(),
+                                         null_filter);
 
   // Verify that everything is deleted.
   EXPECT_THAT(storage()->GetAttributionReports(base::Time::Max()), IsEmpty());
@@ -1207,7 +1135,8 @@ TEST_F(AttributionResolverTest, DeleteAllNullDeleteBegin) {
             MaybeCreateAndStoreEventLevelReport(DefaultTrigger()));
 
   auto null_filter = StoragePartition::StorageKeyMatcherFunction();
-  storage()->ClearData(base::Time(), base::Time::Max(), null_filter);
+  storage()->ClearDataIncludingRateLimit(base::Time(), base::Time::Max(),
+                                         null_filter);
 
   // Verify that everything is deleted.
   EXPECT_THAT(storage()->GetAttributionReports(base::Time::Max()), IsEmpty());
@@ -1230,12 +1159,12 @@ TEST_F(AttributionResolverTest, MaxAttributionsBetweenSites) {
   storage()->StoreSource(source_builder.Build());
 
   auto conversion1 = TriggerBuilder().SetTriggerData(1).Build();
-  EXPECT_THAT(storage()->MaybeCreateAndStoreReport(conversion1),
-              AllOf(CreateReportEventLevelStatusIs(
-                        AttributionTrigger::EventLevelResult::kSuccess),
-                    CreateReportAggregatableStatusIs(
-                        AttributionTrigger::AggregatableResult::kNotRegistered),
-                    CreateReportMaxAttributionsLimitIs(std::nullopt)));
+  EXPECT_THAT(
+      storage()->MaybeCreateAndStoreReport(conversion1),
+      AllOf(CreateReportEventLevelStatusIs(
+                AttributionTrigger::EventLevelResult::kSuccess),
+            CreateReportAggregatableStatusIs(
+                AttributionTrigger::AggregatableResult::kNotRegistered)));
 
   auto conversion2 = DefaultAggregatableTriggerBuilder(/*histogram_values=*/{5})
                          .SetTriggerData(2)
@@ -1244,8 +1173,7 @@ TEST_F(AttributionResolverTest, MaxAttributionsBetweenSites) {
               AllOf(CreateReportEventLevelStatusIs(
                         AttributionTrigger::EventLevelResult::kSuccess),
                     CreateReportAggregatableStatusIs(
-                        AttributionTrigger::AggregatableResult::kSuccess),
-                    CreateReportMaxAttributionsLimitIs(std::nullopt)));
+                        AttributionTrigger::AggregatableResult::kSuccess)));
 
   auto conversion3 = DefaultAggregatableTriggerBuilder(/*histogram_values=*/{3})
                          .SetTriggerData(3)
@@ -1255,23 +1183,26 @@ TEST_F(AttributionResolverTest, MaxAttributionsBetweenSites) {
   // limit.
   EXPECT_THAT(
       storage()->MaybeCreateAndStoreReport(conversion3),
-      AllOf(CreateReportEventLevelStatusIs(
-                AttributionTrigger::EventLevelResult::kExcessiveAttributions),
-            CreateReportAggregatableStatusIs(
-                AttributionTrigger::AggregatableResult::kSuccess),
-            ReplacedEventLevelReportIs(std::nullopt),
-            CreateReportMaxAttributionsLimitIs(2),
-            DroppedEventLevelReportIs(std::nullopt)));
+      AllOf(
+          Property(&CreateReportResult::event_level_result,
+                   VariantWith<CreateReportResult::ExcessiveAttributions>(Field(
+                       &CreateReportResult::ExcessiveAttributions::max, 2))),
+          CreateReportAggregatableStatusIs(
+              AttributionTrigger::AggregatableResult::kSuccess),
+          ReplacedEventLevelReportIs(IsNull()),
+          DroppedEventLevelReportIs(IsNull())));
 
   EXPECT_THAT(
       storage()->MaybeCreateAndStoreReport(conversion3),
-      AllOf(CreateReportEventLevelStatusIs(
-                AttributionTrigger::EventLevelResult::kExcessiveAttributions),
-            CreateReportAggregatableStatusIs(
-                AttributionTrigger::AggregatableResult::kExcessiveAttributions),
-            ReplacedEventLevelReportIs(std::nullopt),
-            CreateReportMaxAttributionsLimitIs(2),
-            DroppedEventLevelReportIs(std::nullopt)));
+      AllOf(
+          Property(&CreateReportResult::event_level_result,
+                   VariantWith<CreateReportResult::ExcessiveAttributions>(Field(
+                       &CreateReportResult::ExcessiveAttributions::max, 2))),
+          Property(&CreateReportResult::aggregatable_result,
+                   VariantWith<CreateReportResult::ExcessiveAttributions>(Field(
+                       &CreateReportResult::ExcessiveAttributions::max, 2))),
+          ReplacedEventLevelReportIs(IsNull()),
+          DroppedEventLevelReportIs(IsNull())));
 
   const auto source =
       source_builder.SetRemainingAggregatableAttributionBudget(65536 - 8)
@@ -1437,7 +1368,8 @@ TEST_F(AttributionResolverTest,
 
   const auto store_source = [&](const char* source_origin,
                                 const char* reporting_origin,
-                                const char* destination_origin) {
+                                const char* destination_origin,
+                                int64_t destination_limit_priority = 0) {
     return storage()
         ->StoreSource(
             SourceBuilder()
@@ -1447,6 +1379,7 @@ TEST_F(AttributionResolverTest,
                 .SetDestinationSites(
                     {net::SchemefulSite::Deserialize(destination_origin)})
                 .SetExpiry(base::Days(30))
+                .SetDestinationLimitPriority(destination_limit_priority)
                 .Build())
         .status();
   };
@@ -1462,9 +1395,9 @@ TEST_F(AttributionResolverTest,
   EXPECT_THAT(storage()->GetActiveSources(), SizeIs(4));
 
   // This should fail because there are already 3 distinct destinations.
-  EXPECT_EQ(
-      store_source("https://s1.test", "https://a.r.test", "https://d4.test"),
-      StorableSource::Result::kInsufficientUniqueDestinationCapacity);
+  EXPECT_EQ(store_source("https://s1.test", "https://a.r.test",
+                         "https://d4.test", /*destination_limit_priority=*/-1),
+            StorableSource::Result::kInsufficientUniqueDestinationCapacity);
   EXPECT_THAT(storage()->GetActiveSources(), SizeIs(4));
 
   // This should succeed because the source site is different.
@@ -1472,7 +1405,8 @@ TEST_F(AttributionResolverTest,
   EXPECT_THAT(storage()->GetActiveSources(), SizeIs(5));
 
   // This should fail because the reporting site is already present.
-  store_source("https://s1.test", "https://b.r.test", "https://d5.test");
+  store_source("https://s1.test", "https://b.r.test", "https://d5.test",
+               /*destination_limit_priority=*/-1);
   EXPECT_THAT(storage()->GetActiveSources(), SizeIs(5));
 
   // This should succeed because the reporting site is different.
@@ -1488,7 +1422,8 @@ TEST_F(AttributionResolverTest, DestinationLimit_ApplyLimit) {
 
   const auto store_source = [&](const char* source_origin,
                                 const char* reporting_origin,
-                                const char* destination_origin) {
+                                const char* destination_origin,
+                                int64_t destination_limit_priority = 0) {
     return storage()
         ->StoreSource(
             SourceBuilder()
@@ -1498,19 +1433,18 @@ TEST_F(AttributionResolverTest, DestinationLimit_ApplyLimit) {
                 .SetDestinationSites(
                     {net::SchemefulSite::Deserialize(destination_origin)})
                 .SetExpiry(expiry)
+                .SetDestinationLimitPriority(destination_limit_priority)
                 .Build())
         .status();
   };
 
-  // Allowed by pending, allowed by unexpired.
   EXPECT_EQ(
       store_source("https://s.test", "https://a.r.test", "https://d1.test"),
       StorableSource::Result::kSuccess);
 
-  // Dropped by pending, dropped by unexpired.
-  EXPECT_EQ(
-      store_source("https://s.test", "https://a.r.test", "https://d2.test"),
-      StorableSource::Result::kInsufficientUniqueDestinationCapacity);
+  EXPECT_EQ(store_source("https://s.test", "https://a.r.test",
+                         "https://d2.test", /*destination_limit_priority=*/-1),
+            StorableSource::Result::kInsufficientUniqueDestinationCapacity);
 
   EXPECT_EQ(AttributionTrigger::EventLevelResult::kSuccess,
             MaybeCreateAndStoreEventLevelReport(
@@ -1521,18 +1455,16 @@ TEST_F(AttributionResolverTest, DestinationLimit_ApplyLimit) {
                         *SuitableOrigin::Deserialize("https://d1.test"))
                     .Build()));
 
-  // Allowed by pending, dropped by unexpired (therefore dropped and not
-  // stored).
-  EXPECT_EQ(
-      store_source("https://s.test", "https://a.r.test", "https://d2.test"),
-      StorableSource::Result::kInsufficientUniqueDestinationCapacity);
+  // The first source is still counted after being attributed to.
+  EXPECT_EQ(store_source("https://s.test", "https://a.r.test",
+                         "https://d2.test", /*destination_limit_priority=*/-1),
+            StorableSource::Result::kInsufficientUniqueDestinationCapacity);
 
   task_environment_.FastForwardBy(expiry);
 
-  // Allowed by pending, allowed by unexpired.
-  EXPECT_EQ(
-      store_source("https://s.test", "https://a.r.test", "https://d3.test"),
-      StorableSource::Result::kSuccess);
+  EXPECT_EQ(store_source("https://s.test", "https://a.r.test",
+                         "https://d3.test", /*destination_limit_priority=*/-1),
+            StorableSource::Result::kSuccess);
 }
 
 TEST_F(AttributionResolverTest,
@@ -1566,6 +1498,7 @@ TEST_F(AttributionResolverTest,
           .SetDestinationSites(
               {net::SchemefulSite::Deserialize("https://b.example")})
           .SetSourceType(SourceType::kEvent)
+          .SetDestinationLimitPriority(-1)
           .Build());
 
   EXPECT_THAT(
@@ -1597,6 +1530,7 @@ TEST_F(AttributionResolverTest,
           .SetDestinationSites(
               {net::SchemefulSite::Deserialize("https://b.example")})
           .SetSourceType(SourceType::kEvent)
+          .SetDestinationLimitPriority(-1)
           .Build());
 
   EXPECT_THAT(storage()->GetActiveSources(), SizeIs(1));
@@ -1734,7 +1668,8 @@ TEST_F(AttributionResolverTest,
             MaybeCreateAndStoreEventLevelReport(DefaultTrigger()));
 
   EXPECT_THAT(storage()->GetAttributionReports(base::Time::Max()),
-              ElementsAre(ReportSourceIs(SourceEventIdIs(5u))));
+              ElementsAre(EventLevelDataIs(Field(
+                  &AttributionReport::EventLevelData::source_event_id, 5u))));
 }
 
 TEST_F(AttributionResolverTest,
@@ -1755,7 +1690,8 @@ TEST_F(AttributionResolverTest,
             MaybeCreateAndStoreEventLevelReport(DefaultTrigger()));
 
   EXPECT_THAT(storage()->GetAttributionReports(base::Time::Max()),
-              ElementsAre(ReportSourceIs(SourceEventIdIs(5u))));
+              ElementsAre(EventLevelDataIs(Field(
+                  &AttributionReport::EventLevelData::source_event_id, 5u))));
 }
 
 TEST_F(AttributionResolverTest, MultipleImpressions_CorrectDeactivation) {
@@ -1788,7 +1724,7 @@ TEST_F(AttributionResolverTest, FalselyAttributeImpression_ReportStored) {
   base::TimeDelta kFirstWindow = base::Days(1);
   base::TimeDelta kExpiry = base::Days(30);
   const base::Time fake_report_time = base::Time::Now() + kFirstWindow;
-  const base::Time fake_trigger_time = fake_report_time - base::Milliseconds(1);
+  const base::Time fake_trigger_time = base::Time::Now();
 
   SourceBuilder builder = TestAggregatableSourceProvider().GetBuilder();
   builder.SetSourceEventId(4)
@@ -1798,8 +1734,8 @@ TEST_F(AttributionResolverTest, FalselyAttributeImpression_ReportStored) {
       .SetTriggerSpecs(
           TriggerSpecs(SourceType::kEvent,
                        *attribution_reporting::EventReportWindows::Create(
-                           base::Days(0), {kFirstWindow, kExpiry})))
-      .SetMaxEventLevelReports(1);
+                           base::Days(0), {kFirstWindow, kExpiry}),
+                       MaxEventLevelReports(1)));
   delegate()->set_randomized_response(
       std::vector<attribution_reporting::FakeEventLevelReport>{
           {.trigger_data = 1, .window_index = 0}});
@@ -1920,11 +1856,12 @@ TEST_F(AttributionResolverTest, StoreSource_ReturnsMinFakeReportTime) {
 
     auto result = storage()->StoreSource(
         SourceBuilder()
-            .SetTriggerSpecs(TriggerSpecs(
-                SourceType::kNavigation,
-                *attribution_reporting::EventReportWindows::Create(
-                    base::Days(0),
-                    {base::Days(1), base::Days(2), base::Days(3)})))
+            .SetTriggerSpecs(
+                TriggerSpecs(SourceType::kNavigation,
+                             *attribution_reporting::EventReportWindows::Create(
+                                 base::Days(0),
+                                 {base::Days(1), base::Days(2), base::Days(3)}),
+                             MaxEventLevelReports::Max()))
             .Build());
 
     EXPECT_THAT(result.result(), test_case.matches);
@@ -1947,21 +1884,20 @@ TEST_F(AttributionResolverTest, TriggerPriority) {
                   TriggerBuilder().SetPriority(0).SetDebugKey(20).Build()),
               AllOf(CreateReportEventLevelStatusIs(
                         AttributionTrigger::EventLevelResult::kSuccess),
-                    ReplacedEventLevelReportIs(std::nullopt),
+                    ReplacedEventLevelReportIs(IsNull()),
                     CreateReportSourceIs(Optional(SourceEventIdIs(5u))),
-                    DroppedEventLevelReportIs(std::nullopt)));
+                    DroppedEventLevelReportIs(IsNull())));
 
   // This conversion should replace the one above because it has a higher
   // priority.
-  EXPECT_THAT(
-      storage()->MaybeCreateAndStoreReport(
-          TriggerBuilder().SetPriority(2).SetDebugKey(21).Build()),
-      AllOf(
-          CreateReportEventLevelStatusIs(AttributionTrigger::EventLevelResult::
-                                             kSuccessDroppedLowerPriority),
-          ReplacedEventLevelReportIs(Optional(TriggerDebugKeyIs(20u))),
-          CreateReportSourceIs(Optional(SourceEventIdIs(5u))),
-          DroppedEventLevelReportIs(std::nullopt)));
+  EXPECT_THAT(storage()->MaybeCreateAndStoreReport(
+                  TriggerBuilder().SetPriority(2).SetDebugKey(21).Build()),
+              AllOf(CreateReportEventLevelStatusIs(
+                        AttributionTrigger::EventLevelResult::
+                            kSuccessDroppedLowerPriority),
+                    ReplacedEventLevelReportIs(Pointee(TriggerDebugKeyIs(20u))),
+                    CreateReportSourceIs(Optional(SourceEventIdIs(5u))),
+                    DroppedEventLevelReportIs(IsNull())));
 
   storage()->StoreSource(SourceBuilder()
                              .SetSourceEventId(7)
@@ -1979,15 +1915,19 @@ TEST_F(AttributionResolverTest, TriggerPriority) {
           TriggerBuilder().SetPriority(0).SetDebugKey(23).Build()),
       AllOf(CreateReportEventLevelStatusIs(
                 AttributionTrigger::EventLevelResult::kPriorityTooLow),
-            ReplacedEventLevelReportIs(std::nullopt),
+            ReplacedEventLevelReportIs(IsNull()),
             CreateReportSourceIs(Optional(SourceEventIdIs(7u))),
-            DroppedEventLevelReportIs(Optional(TriggerDebugKeyIs(23u)))));
+            DroppedEventLevelReportIs(Pointee(TriggerDebugKeyIs(23u)))));
 
   EXPECT_THAT(
       storage()->GetAttributionReports(base::Time::Max()),
       ElementsAre(
-          AllOf(ReportSourceIs(SourceEventIdIs(5u)), TriggerDebugKeyIs(21u)),
-          AllOf(ReportSourceIs(SourceEventIdIs(7u)), TriggerDebugKeyIs(22u))));
+          AllOf(EventLevelDataIs(Field(
+                    &AttributionReport::EventLevelData::source_event_id, 5u)),
+                TriggerDebugKeyIs(21u)),
+          AllOf(EventLevelDataIs(Field(
+                    &AttributionReport::EventLevelData::source_event_id, 7u)),
+                TriggerDebugKeyIs(22u))));
 }
 
 // Regression test for erroneous use of report_time instead of
@@ -1997,7 +1937,6 @@ TEST_F(AttributionResolverTest, TriggerPriority_UsesOriginalReportTime) {
 
   storage()->StoreSource(
       SourceBuilder()
-          .SetMaxEventLevelReports(1)
           .SetTriggerSpecs(
               TriggerSpecs(SourceType::kNavigation,
                            *attribution_reporting::EventReportWindows::Create(
@@ -2006,7 +1945,8 @@ TEST_F(AttributionResolverTest, TriggerPriority_UsesOriginalReportTime) {
                                {
                                    base::Hours(1),
                                    base::Hours(1) + base::Minutes(5),
-                               })))
+                               }),
+                           MaxEventLevelReports(1)))
           .Build());
 
   ASSERT_EQ(AttributionTrigger::EventLevelResult::kSuccess,
@@ -2045,7 +1985,7 @@ TEST_F(AttributionResolverTest, TriggerPriority_UsesOriginalReportTime) {
       AllOf(CreateReportEventLevelStatusIs(
                 AttributionTrigger::EventLevelResult::kExcessiveReports),
             DroppedEventLevelReportIs(
-                Optional(ReportTimeIs(expected_first_report_time)))));
+                Pointee(ReportTimeIs(expected_first_report_time)))));
 }
 
 TEST_F(AttributionResolverTest, TriggerPriority_Simple) {
@@ -2133,7 +2073,7 @@ TEST_F(AttributionResolverTest, TriggerPriority_DeactivatesImpression) {
       AllOf(CreateReportEventLevelStatusIs(
                 AttributionTrigger::EventLevelResult::kExcessiveReports),
             DroppedEventLevelReportIs(
-                Optional(EventLevelDataIs(TriggerPriorityIs(2))))));
+                Pointee(EventLevelDataIs(TriggerPriorityIs(2))))));
 
   // As a result, the impression with data 5 should have reached event-level
   // attribution limit.
@@ -2172,6 +2112,35 @@ TEST_F(AttributionResolverTest, TriggerPriority_AttributionRateLimitAdjusted) {
 
   EXPECT_THAT(storage()->GetAttributionReports(base::Time::Max()),
               ElementsAre(TriggerDebugKeyIs(1u), TriggerDebugKeyIs(2u)));
+}
+
+TEST_F(AttributionResolverTest,
+       TriggerPriority_ReplacementSkipAttributionRateLimitCheck) {
+  delegate()->set_rate_limits([]() {
+    AttributionConfig::RateLimitConfig r;
+    r.max_attributions = 1;
+    return r;
+  }());
+
+  storage()->StoreSource(SourceBuilder()
+                             .SetTriggerSpecs(TriggerSpecs(
+                                 SourceType::kNavigation,
+                                 attribution_reporting::EventReportWindows(),
+                                 MaxEventLevelReports(1)))
+                             .Build());
+
+  EXPECT_EQ(AttributionTrigger::EventLevelResult::kSuccess,
+            MaybeCreateAndStoreEventLevelReport(
+                TriggerBuilder().SetPriority(0).Build()));
+
+  EXPECT_EQ(AttributionTrigger::EventLevelResult::kSuccessDroppedLowerPriority,
+            MaybeCreateAndStoreEventLevelReport(
+                TriggerBuilder().SetPriority(1).Build()));
+
+  storage()->StoreSource(SourceBuilder().Build());
+
+  EXPECT_EQ(AttributionTrigger::EventLevelResult::kExcessiveAttributions,
+            MaybeCreateAndStoreEventLevelReport(TriggerBuilder().Build()));
 }
 
 TEST_F(AttributionResolverTest, DedupKey_Dedups) {
@@ -2229,7 +2198,7 @@ TEST_F(AttributionResolverTest, DedupKey_Dedups) {
           .Build());
   EXPECT_EQ(AttributionTrigger::EventLevelResult::kDeduplicated,
             result.event_level_status());
-  EXPECT_EQ(result.replaced_event_level_report(), std::nullopt);
+  EXPECT_FALSE(result.replaced_event_level_report());
 
   // Shouldn't be stored because conversion destination and dedup key match.
   EXPECT_EQ(AttributionTrigger::EventLevelResult::kDeduplicated,
@@ -2459,7 +2428,8 @@ TEST_F(AttributionResolverTest, DedupKey_AggregatableReportNotDedups) {
             result.aggregatable_status());
 }
 
-TEST_F(AttributionResolverTest, AggregatableDedupKey_EventLevelReportNotDedups) {
+TEST_F(AttributionResolverTest,
+       AggregatableDedupKey_EventLevelReportNotDedups) {
   storage()->StoreSource(
       TestAggregatableSourceProvider()
           .GetBuilder()
@@ -2496,20 +2466,19 @@ TEST_F(AttributionResolverTest, AggregatableDedupKeysFiltering) {
   const auto origin = *SuitableOrigin::Deserialize("https://r.test");
 
   std::vector<attribution_reporting::AggregatableTriggerData>
-      aggregatable_trigger_data{
-          *attribution_reporting::AggregatableTriggerData::Create(
-              absl::MakeUint128(/*high=*/1, /*low=*/0),
-              /*source_keys=*/{"0"}, FilterPair())};
+      aggregatable_trigger_data{attribution_reporting::AggregatableTriggerData(
+          absl::MakeUint128(/*high=*/1, /*low=*/0),
+          /*source_keys=*/{"0"}, FilterPair())};
 
-  auto aggregatable_values = {
-      *attribution_reporting::AggregatableValues::Create({{"0", 1}},
-                                                         FilterPair())};
+  auto aggregatable_values = {*AggregatableValues::Create(
+      {{"0", *AggregatableValuesValue::Create(1, kDefaultFilteringId)}},
+      FilterPair())};
 
   storage()->StoreSource(
       SourceBuilder()
           .SetDestinationSites({net::SchemefulSite(origin)})
           .SetReportingOrigin(origin)
-          .SetFilterData(*AttributionFilterData::Create({{"abc", {"123"}}}))
+          .SetFilterData(*FilterData::Create({{"abc", {"123"}}}))
           .SetAggregationKeys(
               *attribution_reporting::AggregationKeys::FromKeys({{"0", 1}}))
           .Build());
@@ -2518,7 +2487,7 @@ TEST_F(AttributionResolverTest, AggregatableDedupKeysFiltering) {
 
   AttributionTrigger trigger1(
       /*reporting_origin=*/origin, attribution_reporting::TriggerRegistration(),
-      /*destination_origin=*/origin, /*verifications=*/{},
+      /*destination_origin=*/origin,
       /*is_within_fenced_frame=*/false);
 
   trigger1.registration().aggregatable_dedup_keys.emplace_back(
@@ -2639,7 +2608,7 @@ TEST_F(AttributionResolverTest, AggregatableDedupKeysFiltering) {
     AttributionTrigger trigger2(
         /*reporting_origin=*/origin,
         attribution_reporting::TriggerRegistration(),
-        /*destination_origin=*/origin, /*verifications=*/{},
+        /*destination_origin=*/origin,
         /*is_within_fenced_frame=*/false);
 
     trigger2.registration().aggregatable_dedup_keys.emplace_back(
@@ -2671,8 +2640,8 @@ TEST_F(AttributionResolverTest, NoIDReuse_Impression) {
   auto sources = storage()->GetActiveSources();
   const StoredSource::Id id1 = sources.front().source_id();
 
-  storage()->ClearData(base::Time::Min(), base::Time::Max(),
-                       base::NullCallback());
+  storage()->ClearDataIncludingRateLimit(base::Time::Min(), base::Time::Max(),
+                                         base::NullCallback());
   EXPECT_THAT(storage()->GetActiveSources(), IsEmpty());
 
   storage()->StoreSource(SourceBuilder().Build());
@@ -2690,8 +2659,8 @@ TEST_F(AttributionResolverTest, NoIDReuse_Conversion) {
   ASSERT_THAT(reports, SizeIs(1));
   const AttributionReport::Id id1 = reports.front().id();
 
-  storage()->ClearData(base::Time::Min(), base::Time::Max(),
-                       base::NullCallback());
+  storage()->ClearDataIncludingRateLimit(base::Time::Min(), base::Time::Max(),
+                                         base::NullCallback());
   EXPECT_THAT(storage()->GetAttributionReports(base::Time::Max()), IsEmpty());
 
   storage()->StoreSource(SourceBuilder().Build());
@@ -2768,8 +2737,8 @@ TEST_F(AttributionResolverTest,
           TriggerBuilder().SetDebugKey(20).Build()),
       AllOf(CreateReportEventLevelStatusIs(
                 AttributionTrigger::EventLevelResult::kExcessiveReports),
-            ReplacedEventLevelReportIs(std::nullopt),
-            DroppedEventLevelReportIs(Optional(TriggerDebugKeyIs(20u)))));
+            ReplacedEventLevelReportIs(IsNull()),
+            DroppedEventLevelReportIs(Pointee(TriggerDebugKeyIs(20u)))));
   EXPECT_THAT(
       storage()->GetActiveSources(),
       ElementsAre(SourceActiveStateIs(
@@ -2928,7 +2897,7 @@ TEST_F(AttributionResolverTest, GetAttributionReports_Shuffles) {
                 TriggerBuilder().SetTriggerData(2).Build()));
 
   EXPECT_THAT(storage()->GetAttributionReports(
-                  /*max_report_time=*/base::Time::Max(), /*limit=*/-1),
+                  /*max_report_time=*/base::Time::Max()),
               ElementsAre(EventLevelDataIs(TriggerDataIs(3)),
                           EventLevelDataIs(TriggerDataIs(1)),
                           EventLevelDataIs(TriggerDataIs(2))));
@@ -2936,7 +2905,7 @@ TEST_F(AttributionResolverTest, GetAttributionReports_Shuffles) {
   delegate()->set_reverse_reports_on_shuffle(true);
 
   EXPECT_THAT(storage()->GetAttributionReports(
-                  /*max_report_time=*/base::Time::Max(), /*limit=*/-1),
+                  /*max_report_time=*/base::Time::Max()),
               ElementsAre(EventLevelDataIs(TriggerDataIs(2)),
                           EventLevelDataIs(TriggerDataIs(1)),
                           EventLevelDataIs(TriggerDataIs(3))));
@@ -2964,7 +2933,7 @@ TEST_F(AttributionResolverTest, GetAttributionReportsExceedLimit_Shuffles) {
             MaybeCreateAndStoreAggregatableReport(
                 DefaultAggregatableTriggerBuilder().Build()));
 
-  EXPECT_THAT(storage()->GetAttributionReports(
+  EXPECT_THAT(storage()->GetAttributionReportsWithLimit(
                   /*max_report_time=*/base::Time::Max(), /*limit=*/3),
               ElementsAre(EventLevelDataIs(TriggerDataIs(3)),
                           EventLevelDataIs(TriggerDataIs(1)),
@@ -2972,7 +2941,7 @@ TEST_F(AttributionResolverTest, GetAttributionReportsExceedLimit_Shuffles) {
 
   delegate()->set_reverse_reports_on_shuffle(true);
 
-  EXPECT_THAT(storage()->GetAttributionReports(
+  EXPECT_THAT(storage()->GetAttributionReportsWithLimit(
                   /*max_report_time=*/base::Time::Max(), /*limit=*/3),
               ElementsAre(EventLevelDataIs(TriggerDataIs(2)),
                           EventLevelDataIs(TriggerDataIs(1)),
@@ -2980,10 +2949,15 @@ TEST_F(AttributionResolverTest, GetAttributionReportsExceedLimit_Shuffles) {
 }
 
 TEST_F(AttributionResolverTest, GetAttributionDataKeysSet) {
+  base::HistogramTester histograms;
+
   auto expected_1 = AttributionDataModel::DataKey(
       url::Origin::Create(GURL("https://a.r.test")));
   auto expected_2 = AttributionDataModel::DataKey(
       url::Origin::Create(GURL("https://b.r.test")));
+  auto expected_3 = AttributionDataModel::DataKey(
+      url::Origin::Create(GURL("https://c.r.test")));
+  auto expected_origin_4 = url::Origin::Create(GURL("https://d.r.test"));
 
   auto s1 =
       SourceBuilder()
@@ -3009,25 +2983,39 @@ TEST_F(AttributionResolverTest, GetAttributionDataKeysSet) {
   storage()->StoreSource(s2);
   storage()->StoreSource(s3);
 
-  EXPECT_THAT(storage()->GetAllDataKeys(), ElementsAre(expected_1, expected_2));
+  storage()->ProcessAggregatableDebugReport(
+      CreateAggregatableDebugReport({AggregatableReportHistogramContribution(
+                                        /*bucket=*/1, /*value=*/1,
+                                        /*filtering_id=*/std::nullopt)},
+                                    /*reporting_origin=*/"https://c.r.test"),
+      /*remaining_budget=*/std::nullopt,
+      /*source_id=*/std::nullopt);
+
+  storage()->StoreOsRegistrations({expected_origin_4});
+
+  EXPECT_THAT(storage()->GetAllDataKeys(),
+              ElementsAre(expected_1, expected_2, expected_3,
+                          AttributionDataModel::DataKey(expected_origin_4)));
+
+  histograms.ExpectTotalCount("Conversions.GetAllDataKeysTime", 1);
 }
 
 TEST_F(AttributionResolverTest, SourceDebugKey_RoundTrips) {
   storage()->StoreSource(
-      SourceBuilder().SetDebugKey(33).SetDebugCookieSet(true).Build());
+      SourceBuilder().SetDebugKey(33).SetCookieBasedDebugAllowed(true).Build());
   EXPECT_THAT(storage()->GetActiveSources(), ElementsAre(SourceDebugKeyIs(33)));
 }
 
 TEST_F(AttributionResolverTest, TriggerDebugKey_RoundTrips) {
   storage()->StoreSource(
-      SourceBuilder().SetDebugKey(22).SetDebugCookieSet(true).Build());
+      SourceBuilder().SetDebugKey(22).SetCookieBasedDebugAllowed(true).Build());
   EXPECT_EQ(AttributionTrigger::EventLevelResult::kSuccess,
             MaybeCreateAndStoreEventLevelReport(
                 TriggerBuilder().SetDebugKey(33).Build()));
 
-  EXPECT_THAT(storage()->GetAttributionReports(base::Time::Max()),
-              ElementsAre(AllOf(ReportSourceIs(SourceDebugKeyIs(22)),
-                                TriggerDebugKeyIs(33))));
+  EXPECT_THAT(
+      storage()->GetAttributionReports(base::Time::Max()),
+      ElementsAre(AllOf(ReportSourceDebugKeyIs(22), TriggerDebugKeyIs(33))));
 }
 
 TEST_F(AttributionResolverTest, AttributionAggregationKeys_RoundTrips) {
@@ -3045,8 +3033,8 @@ TEST_F(AttributionResolverTest, MaybeCreateAndStoreReport_ReturnsNewReport) {
   EXPECT_THAT(storage()->MaybeCreateAndStoreReport(TriggerBuilder().Build()),
               AllOf(CreateReportEventLevelStatusIs(
                         AttributionTrigger::EventLevelResult::kSuccess),
-                    NewEventLevelReportIs(Optional(EventLevelDataIs(_))),
-                    NewAggregatableReportIs(std::nullopt)));
+                    NewEventLevelReportIs(Pointee(EventLevelDataIs(_))),
+                    NewAggregatableReportIs(IsNull())));
 }
 
 // This is tested more thoroughly by the `RateLimitTable` unit tests. Here just
@@ -3065,7 +3053,7 @@ TEST_F(AttributionResolverTest, MaxReportingOriginsPerSource) {
       SourceBuilder()
           .SetReportingOrigin(*SuitableOrigin::Deserialize("https://r1.test"))
           .SetDebugKey(1)
-          .SetDebugCookieSet(true)
+          .SetCookieBasedDebugAllowed(true)
           .Build());
   ASSERT_EQ(result.status(), StorableSource::Result::kSuccess);
 
@@ -3073,7 +3061,7 @@ TEST_F(AttributionResolverTest, MaxReportingOriginsPerSource) {
       SourceBuilder()
           .SetReportingOrigin(*SuitableOrigin::Deserialize("https://r2.test"))
           .SetDebugKey(2)
-          .SetDebugCookieSet(true)
+          .SetCookieBasedDebugAllowed(true)
           .Build());
   ASSERT_EQ(result.status(), StorableSource::Result::kSuccess);
 
@@ -3083,7 +3071,7 @@ TEST_F(AttributionResolverTest, MaxReportingOriginsPerSource) {
       SourceBuilder()
           .SetReportingOrigin(*SuitableOrigin::Deserialize("https://r3.test"))
           .SetDebugKey(3)
-          .SetDebugCookieSet(true)
+          .SetCookieBasedDebugAllowed(true)
           .Build());
   delegate()->set_randomized_response(std::nullopt);
   ASSERT_EQ(result.status(),
@@ -3127,19 +3115,16 @@ TEST_F(AttributionResolverTest, MaxReportingOriginsPerAttribution) {
       AllOf(CreateReportEventLevelStatusIs(
                 AttributionTrigger::EventLevelResult::kSuccess),
             CreateReportAggregatableStatusIs(
-                AttributionTrigger::AggregatableResult::kNotRegistered),
-            CreateReportMaxAttributionReportingOriginsLimitIs(std::nullopt)));
+                AttributionTrigger::AggregatableResult::kNotRegistered)));
 
-  ASSERT_THAT(
-      storage()->MaybeCreateAndStoreReport(
-          aggregatable_trigger_builder.SetReportingOrigin(origin2)
-              .SetDebugKey(2)
-              .Build(/*generate_event_trigger_data=*/false)),
-      AllOf(CreateReportEventLevelStatusIs(
-                AttributionTrigger::EventLevelResult::kNotRegistered),
-            CreateReportAggregatableStatusIs(
-                AttributionTrigger::AggregatableResult::kSuccess),
-            CreateReportMaxAttributionReportingOriginsLimitIs(std::nullopt)));
+  ASSERT_THAT(storage()->MaybeCreateAndStoreReport(
+                  aggregatable_trigger_builder.SetReportingOrigin(origin2)
+                      .SetDebugKey(2)
+                      .Build(/*generate_event_trigger_data=*/false)),
+              AllOf(CreateReportEventLevelStatusIs(
+                        AttributionTrigger::EventLevelResult::kNotRegistered),
+                    CreateReportAggregatableStatusIs(
+                        AttributionTrigger::AggregatableResult::kSuccess)));
 
   ASSERT_THAT(
       storage()->MaybeCreateAndStoreReport(
@@ -3147,12 +3132,14 @@ TEST_F(AttributionResolverTest, MaxReportingOriginsPerAttribution) {
               .SetDebugKey(3)
               .Build()),
       AllOf(
-          CreateReportEventLevelStatusIs(
-              AttributionTrigger::EventLevelResult::kExcessiveReportingOrigins),
-          CreateReportAggregatableStatusIs(
-              AttributionTrigger::AggregatableResult::
-                  kExcessiveReportingOrigins),
-          CreateReportMaxAttributionReportingOriginsLimitIs(2)));
+          Property(
+              &CreateReportResult::event_level_result,
+              VariantWith<CreateReportResult::ExcessiveReportingOrigins>(Field(
+                  &CreateReportResult::ExcessiveReportingOrigins::max, 2))),
+          Property(
+              &CreateReportResult::aggregatable_result,
+              VariantWith<CreateReportResult::ExcessiveReportingOrigins>(Field(
+                  &CreateReportResult::ExcessiveReportingOrigins::max, 2)))));
 
   // One event-level report, one aggregatable report.
   EXPECT_THAT(storage()->GetAttributionReports(base::Time::Max()),
@@ -3251,12 +3238,21 @@ TEST_F(AttributionResolverTest,
   MaybeCreateAndStoreEventLevelReport(
       TriggerBuilder().SetReportingOrigin(origin2).Build());
 
-  EXPECT_THAT(storage()->GetAttributionReports(base::Time::Max()),
-              UnorderedElementsAre(
-                  ReportSourceIs(AllOf(SourceTypeIs(SourceType::kNavigation),
-                                       RandomizedResponseRateIs(0.1))),
-                  ReportSourceIs(AllOf(SourceTypeIs(SourceType::kEvent),
-                                       RandomizedResponseRateIs(0.1)))));
+  EXPECT_THAT(
+      storage()->GetAttributionReports(base::Time::Max()),
+      UnorderedElementsAre(
+          EventLevelDataIs(AllOf(
+              Field(&AttributionReport::EventLevelData::source_type,
+                    SourceType::kNavigation),
+              Field(
+                  &AttributionReport::EventLevelData::randomized_response_rate,
+                  0.1))),
+          EventLevelDataIs(AllOf(
+              Field(&AttributionReport::EventLevelData::source_type,
+                    SourceType::kEvent),
+              Field(
+                  &AttributionReport::EventLevelData::randomized_response_rate,
+                  0.1)))));
 }
 
 TEST_F(AttributionResolverTest, RandomizedResponseRatePerSourceUsed) {
@@ -3267,7 +3263,8 @@ TEST_F(AttributionResolverTest, RandomizedResponseRatePerSourceUsed) {
             MaybeCreateAndStoreEventLevelReport(DefaultTrigger()));
   EXPECT_THAT(
       storage()->GetAttributionReports(base::Time::Max()),
-      UnorderedElementsAre(ReportSourceIs(RandomizedResponseRateIs(0.1))));
+      UnorderedElementsAre(EventLevelDataIs(Field(
+          &AttributionReport::EventLevelData::randomized_response_rate, 0.1))));
 }
 
 // Will return minimum of next event-level report and next aggregatable report
@@ -3335,19 +3332,23 @@ TEST_F(AttributionResolverTest, TriggerDataSanitized) {
 
   EXPECT_THAT(storage()->GetAttributionReports(base::Time::Max()),
               UnorderedElementsAre(
-                  AllOf(ReportSourceIs(SourceTypeIs(SourceType::kNavigation)),
-                        EventLevelDataIs(TriggerDataIs(0))),
-                  AllOf(ReportSourceIs(SourceTypeIs(SourceType::kEvent)),
-                        EventLevelDataIs(TriggerDataIs(1)))));
+                  EventLevelDataIs(AllOf(
+                      Field(&AttributionReport::EventLevelData::source_type,
+                            SourceType::kNavigation),
+                      TriggerDataIs(0))),
+                  EventLevelDataIs(AllOf(
+                      Field(&AttributionReport::EventLevelData::source_type,
+                            SourceType::kEvent),
+                      TriggerDataIs(1)))));
 }
 
 TEST_F(AttributionResolverTest, SourceFilterData_RoundTrips) {
   storage()->StoreSource(SourceBuilder()
-                             .SetFilterData(AttributionFilterData())
+                             .SetFilterData(FilterData())
                              .SetSourceType(SourceType::kNavigation)
                              .Build());
 
-  const auto filter_data = AttributionFilterData::Create({{"abc", {"x", "y"}}});
+  const auto filter_data = FilterData::Create({{"abc", {"x", "y"}}});
   ASSERT_TRUE(filter_data.has_value());
 
   storage()->StoreSource(SourceBuilder()
@@ -3356,7 +3357,7 @@ TEST_F(AttributionResolverTest, SourceFilterData_RoundTrips) {
                              .Build());
 
   EXPECT_THAT(storage()->GetActiveSources(),
-              ElementsAre(SourceFilterDataIs(AttributionFilterData()),
+              ElementsAre(SourceFilterDataIs(FilterData()),
                           SourceFilterDataIs(filter_data)));
 }
 
@@ -3383,7 +3384,6 @@ TEST_F(AttributionResolverTest, NoMatchingTriggerData_ReturnsError) {
             MaybeCreateAndStoreEventLevelReport(AttributionTrigger(
                 /*reporting_origin=*/origin, std::move(registration),
                 /*destination_origin=*/origin,
-                /*verifications=*/{},
                 /*is_within_fenced_frame=*/false)));
 
   EXPECT_THAT(storage()->GetAttributionReports(base::Time::Max()), IsEmpty());
@@ -3400,7 +3400,7 @@ TEST_F(AttributionResolverTest, MatchingTriggerData_UsesCorrectData) {
           .SetSourceType(SourceType::kNavigation)
           .SetDestinationSites({net::SchemefulSite(origin)})
           .SetReportingOrigin(origin)
-          .SetFilterData(*AttributionFilterData::Create({{"abc", {"123"}}}))
+          .SetFilterData(*FilterData::Create({{"abc", {"123"}}}))
           .Build());
 
   task_environment_.FastForwardBy(kReportDelay);
@@ -3457,7 +3457,6 @@ TEST_F(AttributionResolverTest, MatchingTriggerData_UsesCorrectData) {
             MaybeCreateAndStoreEventLevelReport(AttributionTrigger(
                 /*reporting_origin=*/origin, std::move(registration),
                 /*destination_origin=*/origin,
-                /*verifications=*/{},
                 /*is_within_fenced_frame=*/false)));
 
   EXPECT_THAT(storage()->GetAttributionReports(base::Time::Max()),
@@ -3479,19 +3478,19 @@ TEST_F(AttributionResolverTest, TopLevelTriggerFiltering) {
 
   std::vector<attribution_reporting::AggregatableTriggerData>
       aggregatable_trigger_data = {
-          *attribution_reporting::AggregatableTriggerData::Create(
+          attribution_reporting::AggregatableTriggerData(
               absl::MakeUint128(/*high=*/1, /*low=*/0),
               /*source_keys=*/{"0"}, FilterPair())};
 
-  auto aggregatable_values = {
-      *attribution_reporting::AggregatableValues::Create({{"0", 1}},
-                                                         FilterPair())};
+  auto aggregatable_values = {*AggregatableValues::Create(
+      {{"0", *AggregatableValuesValue::Create(1, kDefaultFilteringId)}},
+      FilterPair())};
 
   storage()->StoreSource(
       SourceBuilder()
           .SetDestinationSites({net::SchemefulSite(origin)})
           .SetReportingOrigin(origin)
-          .SetFilterData(*AttributionFilterData::Create({{"abc", {"123"}}}))
+          .SetFilterData(*FilterData::Create({{"abc", {"123"}}}))
           .SetAggregationKeys(
               *attribution_reporting::AggregationKeys::FromKeys({{"0", 1}}))
           .Build());
@@ -3500,7 +3499,7 @@ TEST_F(AttributionResolverTest, TopLevelTriggerFiltering) {
 
   AttributionTrigger trigger1(
       /*reporting_origin=*/origin, attribution_reporting::TriggerRegistration(),
-      /*destination_origin=*/origin, /*verifications=*/{},
+      /*destination_origin=*/origin,
       /*is_within_fenced_frame=*/false);
   trigger1.registration().filters.positive.emplace_back(*FilterConfig::Create({
       {"abc", {"456"}},
@@ -3511,7 +3510,7 @@ TEST_F(AttributionResolverTest, TopLevelTriggerFiltering) {
 
   AttributionTrigger trigger2(
       /*reporting_origin=*/origin, attribution_reporting::TriggerRegistration(),
-      /*destination_origin=*/origin, /*verifications=*/{},
+      /*destination_origin=*/origin,
       /*is_within_fenced_frame=*/false);
   trigger2.registration().filters.positive.emplace_back(*FilterConfig::Create(
       {
@@ -3525,7 +3524,6 @@ TEST_F(AttributionResolverTest, TopLevelTriggerFiltering) {
   AttributionTrigger trigger3(
       /*reporting_origin=*/origin, attribution_reporting::TriggerRegistration(),
       /*destination_origin=*/origin,
-      /*verifications=*/{},
       /*is_within_fenced_frame=*/false);
   trigger3.registration().filters.negative =
       attribution_reporting::FiltersForSourceType(SourceType::kNavigation);
@@ -3535,7 +3533,7 @@ TEST_F(AttributionResolverTest, TopLevelTriggerFiltering) {
 
   AttributionTrigger trigger4(
       /*reporting_origin=*/origin, attribution_reporting::TriggerRegistration(),
-      /*destination_origin=*/origin, /*verifications=*/{},
+      /*destination_origin=*/origin,
       /*is_within_fenced_frame=*/false);
   trigger4.registration().filters.positive.emplace_back(*FilterConfig::Create(
       {
@@ -3584,8 +3582,8 @@ TEST_F(AttributionResolverTest,
           DefaultAggregatableTriggerBuilder().Build()),
       AllOf(CreateReportAggregatableStatusIs(
                 AttributionTrigger::AggregatableResult::kNoMatchingImpressions),
-            NewEventLevelReportIs(std::nullopt),
-            NewAggregatableReportIs(std::nullopt)));
+            NewEventLevelReportIs(IsNull()),
+            NewAggregatableReportIs(IsNull())));
   EXPECT_THAT(storage()->GetAttributionReports(base::Time::Max()), IsEmpty());
 }
 
@@ -3604,8 +3602,8 @@ TEST_F(AttributionResolverTest,
                 AttributionTrigger::EventLevelResult::kSuccess),
             CreateReportAggregatableStatusIs(
                 AttributionTrigger::AggregatableResult::kNoHistograms),
-            NewEventLevelReportIs(Optional(EventLevelDataIs(TriggerDataIs(5)))),
-            NewAggregatableReportIs(Eq(std::nullopt))));
+            NewEventLevelReportIs(Pointee(EventLevelDataIs(TriggerDataIs(5)))),
+            NewAggregatableReportIs(IsNull())));
 }
 
 TEST_F(AttributionResolverTest,
@@ -3618,17 +3616,17 @@ TEST_F(AttributionResolverTest,
               *attribution_reporting::FilterData::Create({{"product", {"1"}}}))
           .Build());
 
-  EXPECT_EQ(
-      MaybeCreateAndStoreAggregatableReport(
-          TriggerBuilder()
-              .SetAggregatableValues(
-                  {*attribution_reporting::AggregatableValues::Create(
-                      {{"0", 123}}, FilterPair(
-                                        /*positive=*/{*FilterConfig::Create(
-                                            {{"product", {"2"}}})},
-                                        /*negative=*/{}))})
-              .Build()),
-      AttributionTrigger::AggregatableResult::kNoHistograms);
+  EXPECT_EQ(MaybeCreateAndStoreAggregatableReport(
+                TriggerBuilder()
+                    .SetAggregatableValues({*AggregatableValues::Create(
+                        {{"0", *AggregatableValuesValue::Create(
+                                   123, kDefaultFilteringId)}},
+                        FilterPair(
+                            /*positive=*/{*FilterConfig::Create(
+                                {{"product", {"2"}}})},
+                            /*negative=*/{}))})
+                    .Build()),
+            AttributionTrigger::AggregatableResult::kNoHistograms);
 }
 
 TEST_F(AttributionResolverTest, AggregatableAttribution_ReportsScheduled) {
@@ -3636,8 +3634,7 @@ TEST_F(AttributionResolverTest, AggregatableAttribution_ReportsScheduled) {
   storage()->StoreSource(source_builder.Build());
 
   AttributionTrigger trigger =
-      DefaultAggregatableTriggerBuilder(/*histogram_values=*/{5})
-          .Build();
+      DefaultAggregatableTriggerBuilder(/*histogram_values=*/{5}).Build();
   auto contributions =
       DefaultAggregatableHistogramContributions(/*histogram_values=*/{5});
   ASSERT_THAT(contributions, SizeIs(1));
@@ -3648,8 +3645,8 @@ TEST_F(AttributionResolverTest, AggregatableAttribution_ReportsScheduled) {
                 AttributionTrigger::EventLevelResult::kSuccess),
             CreateReportAggregatableStatusIs(
                 AttributionTrigger::AggregatableResult::kSuccess),
-            NewEventLevelReportIs(Optional(EventLevelDataIs(_))),
-            NewAggregatableReportIs(Optional(AggregatableAttributionDataIs(
+            NewEventLevelReportIs(Pointee(EventLevelDataIs(_))),
+            NewAggregatableReportIs(Pointee(AggregatableAttributionDataIs(
                 AggregatableHistogramContributionsAre(contributions))))));
 
   const auto source =
@@ -3705,14 +3702,14 @@ TEST_F(
                 AttributionTrigger::EventLevelResult::kExcessiveReports),
             CreateReportAggregatableStatusIs(
                 AttributionTrigger::AggregatableResult::kSuccess),
-            ReplacedEventLevelReportIs(std::nullopt),
-            NewEventLevelReportIs(std::nullopt),
-            NewAggregatableReportIs(Optional(AggregatableAttributionDataIs(
+            ReplacedEventLevelReportIs(IsNull()),
+            NewEventLevelReportIs(IsNull()),
+            NewAggregatableReportIs(Pointee(AggregatableAttributionDataIs(
                 AggregatableHistogramContributionsAre(
                     DefaultAggregatableHistogramContributions(
                         /*histogram_values=*/{5}))))),
             DroppedEventLevelReportIs(
-                Optional(EventLevelDataIs(TriggerDataIs(5u))))));
+                Pointee(EventLevelDataIs(TriggerDataIs(5u))))));
   EXPECT_THAT(
       storage()->GetActiveSources(),
       ElementsAre(SourceActiveStateIs(
@@ -3736,9 +3733,10 @@ TEST_F(AttributionResolverTest,
 
   EXPECT_EQ(MaybeCreateAndStoreAggregatableReport(
                 TriggerBuilder()
-                    .SetAggregatableValues(
-                        {*attribution_reporting::AggregatableValues::Create(
-                            {{"0", 123}}, FilterPair())})
+                    .SetAggregatableValues({*AggregatableValues::Create(
+                        {{"0", *AggregatableValuesValue::Create(
+                                   123, kDefaultFilteringId)}},
+                        FilterPair())})
                     .Build()),
             AttributionTrigger::AggregatableResult::kSuccess);
 }
@@ -3757,9 +3755,13 @@ TEST_F(AttributionResolverTest,
   ASSERT_EQ(AttributionTrigger::EventLevelResult::kSuccess,
             MaybeCreateAndStoreEventLevelReport(DefaultTrigger()));
 
-  EXPECT_THAT(storage()->GetAttributionReports(base::Time::Max()),
-              ElementsAre(ReportSourceIs(SourceEventIdIs(3)),
-                          ReportSourceIs(SourceEventIdIs(3))));
+  EXPECT_THAT(
+      storage()->GetAttributionReports(base::Time::Max()),
+      ElementsAre(
+          EventLevelDataIs(
+              Field(&AttributionReport::EventLevelData::source_event_id, 3)),
+          EventLevelDataIs(
+              Field(&AttributionReport::EventLevelData::source_event_id, 3))));
 }
 
 TEST_F(AttributionResolverTest,
@@ -3780,9 +3782,13 @@ TEST_F(AttributionResolverTest,
 
   // If the first source were deleted instead of deactivated, this would return
   // only a single report, as the join against the sources table would fail.
-  ASSERT_THAT(storage()->GetAttributionReports(base::Time::Max()),
-              ElementsAre(ReportSourceIs(SourceEventIdIs(3)),
-                          ReportSourceIs(SourceEventIdIs(7))));
+  ASSERT_THAT(
+      storage()->GetAttributionReports(base::Time::Max()),
+      ElementsAre(
+          EventLevelDataIs(
+              Field(&AttributionReport::EventLevelData::source_event_id, 3)),
+          EventLevelDataIs(
+              Field(&AttributionReport::EventLevelData::source_event_id, 7))));
 }
 
 TEST_F(AttributionResolverTest, AggregationCoordinator_RoundTrip) {
@@ -3797,7 +3803,7 @@ TEST_F(AttributionResolverTest, AggregationCoordinator_RoundTrip) {
               .Build(/*generate_event_trigger_data=*/false)),
       AllOf(CreateReportAggregatableStatusIs(
                 AttributionTrigger::AggregatableResult::kSuccess),
-            NewAggregatableReportIs(Optional(AggregatableAttributionDataIs(
+            NewAggregatableReportIs(Pointee(AggregatableAttributionDataIs(
                 AggregationCoordinatorOriginIs(coordinator_origin))))));
   EXPECT_THAT(
       storage()->GetAttributionReports(/*max_report_time=*/base::Time::Max()),
@@ -3842,8 +3848,8 @@ TEST_F(AttributionResolverTest, NoEventTriggerData_NotRegisteredReturned) {
                 AttributionTrigger::EventLevelResult::kNotRegistered),
             CreateReportAggregatableStatusIs(
                 AttributionTrigger::AggregatableResult::kNoMatchingImpressions),
-            NewEventLevelReportIs(std::nullopt),
-            NewAggregatableReportIs(std::nullopt)));
+            NewEventLevelReportIs(IsNull()),
+            NewAggregatableReportIs(IsNull())));
   EXPECT_THAT(storage()->GetAttributionReports(base::Time::Max()), IsEmpty());
 }
 
@@ -3936,7 +3942,7 @@ TEST_F(AttributionResolverTest, SourceRegistrationTimeConfig_RoundTrip) {
                 .Build(/*generate_event_trigger_data=*/false)),
         AllOf(CreateReportAggregatableStatusIs(
                   AttributionTrigger::AggregatableResult::kSuccess),
-              NewAggregatableReportIs(Optional(AggregatableAttributionDataIs(
+              NewAggregatableReportIs(Pointee(AggregatableAttributionDataIs(
                   SourceRegistrationTimeConfigIs(config))))));
   }
 }
@@ -4039,8 +4045,8 @@ TEST_F(AttributionResolverTest, TriggerDataMatching) {
       EXPECT_THAT(reports, IsEmpty());
     }
 
-    storage()->ClearData(base::Time::Min(), base::Time::Max(),
-                         base::NullCallback());
+    storage()->ClearDataIncludingRateLimit(base::Time::Min(), base::Time::Max(),
+                                           base::NullCallback());
   }
 }
 
@@ -4050,7 +4056,8 @@ TEST_F(AttributionResolverTest, EventLevelDedupBeforeWindowCheck) {
           .SetTriggerSpecs(
               TriggerSpecs(SourceType::kNavigation,
                            *attribution_reporting::EventReportWindows::Create(
-                               base::Milliseconds(0), {base::Hours(1)})))
+                               base::Milliseconds(0), {base::Hours(1)}),
+                           MaxEventLevelReports::Max()))
           .Build());
 
   ASSERT_EQ(AttributionTrigger::EventLevelResult::kSuccess,
@@ -4081,7 +4088,7 @@ TEST_F(AttributionResolverTest,
                       .Build(/*generate_event_trigger_data=*/false)),
               AllOf(CreateReportAggregatableStatusIs(
                         AttributionTrigger::AggregatableResult::kSuccess),
-                    NewAggregatableReportIs(Optional(AllOf(
+                    NewAggregatableReportIs(Pointee(AllOf(
                         AggregatableAttributionDataIs(
                             TriggerContextIdIs(Optional(std::string("123")))),
                         ReportTimeIs(report_time))))));
@@ -4118,9 +4125,9 @@ TEST_F(AttributionResolverTest,
 // TODO(crbug.com/40941848): Support multiple trigger specs instead of just 1.
 TEST_F(AttributionResolverTest, RejectsMultipleTriggerSpecs) {
   auto source = SourceBuilder().Build();
-  source.registration().trigger_specs =
-      *TriggerSpecs::Create(/*trigger_data_indices=*/{{0, 0}},
-                            /*specs=*/{TriggerSpec(), TriggerSpec()});
+  source.registration().trigger_specs = *TriggerSpecs::Create(
+      /*trigger_data_indices=*/{{0, 0}},
+      /*specs=*/{TriggerSpec(), TriggerSpec()}, MaxEventLevelReports::Max());
 
   EXPECT_EQ(storage()->StoreSource(source).status(),
             StorableSource::Result::kInternalError);
@@ -4210,24 +4217,21 @@ TEST_F(AttributionResolverTest,
   EXPECT_THAT(result.min_null_aggregatable_report_time(),
               Optional(now + kReportDelay));
 
-  EXPECT_THAT(
-      storage()->GetAttributionReports(base::Time::Max()),
-      UnorderedElementsAre(
-          AggregatableAttributionDataIs(SourceRegistrationTimeConfigIs(
-              attribution_reporting::mojom::SourceRegistrationTimeConfig::
-                  kInclude)),
-          NullAggregatableDataIs(AllOf(
-              SourceRegistrationTimeConfigIs(
-                  attribution_reporting::mojom::SourceRegistrationTimeConfig::
-                      kInclude),
-              Field(&AttributionReport::NullAggregatableData::fake_source_time,
-                    now - base::Days(1)))),
-          NullAggregatableDataIs(AllOf(
-              SourceRegistrationTimeConfigIs(
-                  attribution_reporting::mojom::SourceRegistrationTimeConfig::
-                      kInclude),
-              Field(&AttributionReport::NullAggregatableData::fake_source_time,
-                    now - base::Days(30))))));
+  EXPECT_THAT(storage()->GetAttributionReports(base::Time::Max()),
+              UnorderedElementsAre(
+                  AggregatableAttributionDataIs(SourceRegistrationTimeConfigIs(
+                      attribution_reporting::mojom::
+                          SourceRegistrationTimeConfig::kInclude)),
+                  NullAggregatableDataIs(
+                      AllOf(SourceRegistrationTimeConfigIs(
+                                attribution_reporting::mojom::
+                                    SourceRegistrationTimeConfig::kInclude),
+                            SourceTimeIs(now - base::Days(1)))),
+                  NullAggregatableDataIs(
+                      AllOf(SourceRegistrationTimeConfigIs(
+                                attribution_reporting::mojom::
+                                    SourceRegistrationTimeConfig::kInclude),
+                            SourceTimeIs(now - base::Days(30))))));
 }
 
 TEST_F(
@@ -4249,25 +4253,21 @@ TEST_F(
 
   EXPECT_THAT(
       storage()->GetAttributionReports(base::Time::Max()),
-      UnorderedElementsAre(
-          NullAggregatableDataIs(AllOf(
-              SourceRegistrationTimeConfigIs(
-                  attribution_reporting::mojom::SourceRegistrationTimeConfig::
-                      kInclude),
-              Field(&AttributionReport::NullAggregatableData::fake_source_time,
-                    now))),
-          NullAggregatableDataIs(AllOf(
-              SourceRegistrationTimeConfigIs(
-                  attribution_reporting::mojom::SourceRegistrationTimeConfig::
-                      kInclude),
-              Field(&AttributionReport::NullAggregatableData::fake_source_time,
-                    now - base::Days(1)))),
-          NullAggregatableDataIs(AllOf(
-              SourceRegistrationTimeConfigIs(
-                  attribution_reporting::mojom::SourceRegistrationTimeConfig::
-                      kInclude),
-              Field(&AttributionReport::NullAggregatableData::fake_source_time,
-                    now - base::Days(30))))));
+      UnorderedElementsAre(NullAggregatableDataIs(AllOf(
+                               SourceRegistrationTimeConfigIs(
+                                   attribution_reporting::mojom::
+                                       SourceRegistrationTimeConfig::kInclude),
+                               SourceTimeIs(now))),
+                           NullAggregatableDataIs(AllOf(
+                               SourceRegistrationTimeConfigIs(
+                                   attribution_reporting::mojom::
+                                       SourceRegistrationTimeConfig::kInclude),
+                               SourceTimeIs(now - base::Days(1)))),
+                           NullAggregatableDataIs(AllOf(
+                               SourceRegistrationTimeConfigIs(
+                                   attribution_reporting::mojom::
+                                       SourceRegistrationTimeConfig::kInclude),
+                               SourceTimeIs(now - base::Days(30))))));
 }
 
 TEST_F(
@@ -4311,14 +4311,12 @@ TEST_F(
   EXPECT_THAT(result.min_null_aggregatable_report_time(),
               Optional(now + kReportDelay));
 
-  EXPECT_THAT(
-      storage()->GetAttributionReports(base::Time::Max()),
-      UnorderedElementsAre(NullAggregatableDataIs(AllOf(
-          SourceRegistrationTimeConfigIs(
-              attribution_reporting::mojom::SourceRegistrationTimeConfig::
-                  kExclude),
-          Field(&AttributionReport::NullAggregatableData::fake_source_time,
-                now)))));
+  EXPECT_THAT(storage()->GetAttributionReports(base::Time::Max()),
+              UnorderedElementsAre(NullAggregatableDataIs(
+                  AllOf(SourceRegistrationTimeConfigIs(
+                            attribution_reporting::mojom::
+                                SourceRegistrationTimeConfig::kExclude),
+                        SourceTimeIs(now)))));
 }
 
 TEST_F(AttributionResolverTest,
@@ -4351,8 +4349,7 @@ TEST_F(AttributionResolverTest,
                    /*bucket=*/1, /*value=*/65536,
                    /*filtering_id=*/std::nullopt),
                AggregatableReportHistogramContribution(
-                   /*bucket=*/2, /*value=*/1,
-                   /*filtering_id=*/std::nullopt)}),
+                   /*bucket=*/2, /*value=*/1, /*filtering_id=*/std::nullopt)}),
           /*remaining_budget=*/std::nullopt,
           /*source_id=*/std::nullopt),
       AllOf(Field(&ProcessAggregatableDebugReportResult::report,
@@ -4368,8 +4365,7 @@ TEST_F(AttributionResolverTest,
                    /*bucket=*/1, /*value=*/65535,
                    /*filtering_id=*/std::nullopt),
                AggregatableReportHistogramContribution(
-                   /*bucket=*/2, /*value=*/1,
-                   /*filtering_id=*/std::nullopt)}),
+                   /*bucket=*/2, /*value=*/1, /*filtering_id=*/std::nullopt)}),
           /*remaining_budget=*/std::nullopt,
           /*source_id=*/std::nullopt),
       AllOf(Field(&ProcessAggregatableDebugReportResult::report,
@@ -4382,8 +4378,7 @@ TEST_F(AttributionResolverTest,
       storage()->ProcessAggregatableDebugReport(
           CreateAggregatableDebugReport(
               {AggregatableReportHistogramContribution(
-                  /*bucket=*/1, /*value=*/1,
-                  /*filtering_id=*/std::nullopt)}),
+                  /*bucket=*/1, /*value=*/1, /*filtering_id=*/std::nullopt)}),
           /*remaining_budget=*/std::nullopt,
           /*source_id=*/std::nullopt),
       AllOf(Field(&ProcessAggregatableDebugReportResult::report,
@@ -4400,11 +4395,9 @@ TEST_F(AttributionResolverTest,
       storage()->ProcessAggregatableDebugReport(
           CreateAggregatableDebugReport(
               {AggregatableReportHistogramContribution(
-                   /*bucket=*/1, /*value=*/1000,
-                   /*filtering_id=*/std::nullopt),
+                   /*bucket=*/1, /*value=*/1000, /*filtering_id=*/std::nullopt),
                AggregatableReportHistogramContribution(
-                   /*bucket=*/2, /*value=*/1,
-                   /*filtering_id=*/std::nullopt)}),
+                   /*bucket=*/2, /*value=*/1, /*filtering_id=*/std::nullopt)}),
           /*remaining_budget=*/1000,
           /*source_id=*/std::nullopt),
       AllOf(Field(&ProcessAggregatableDebugReportResult::report,
@@ -4417,11 +4410,9 @@ TEST_F(AttributionResolverTest,
       storage()->ProcessAggregatableDebugReport(
           CreateAggregatableDebugReport(
               {AggregatableReportHistogramContribution(
-                   /*bucket=*/1, /*value=*/999,
-                   /*filtering_id=*/std::nullopt),
+                   /*bucket=*/1, /*value=*/999, /*filtering_id=*/std::nullopt),
                AggregatableReportHistogramContribution(
-                   /*bucket=*/2, /*value=*/1,
-                   /*filtering_id=*/std::nullopt)}),
+                   /*bucket=*/2, /*value=*/1, /*filtering_id=*/std::nullopt)}),
           /*remaining_budget=*/1000,
           /*source_id=*/std::nullopt),
       AllOf(Field(&ProcessAggregatableDebugReportResult::report,
@@ -4557,6 +4548,1022 @@ TEST_F(AttributionResolverTest, ProcessAggregatableDebugReport_SourceId) {
         "Conversions.AggregatableDebugReport.ProcessResult",
         input.expected_result, 1);
   }
+}
+
+TEST_F(AttributionResolverTest, PerDayLimitReached_SourceDropped) {
+  delegate()->set_destination_rate_limit({
+      .max_per_reporting_site_per_day = 1,
+  });
+
+  EXPECT_EQ(storage()
+                ->StoreSource(
+                    SourceBuilder()
+                        .SetDestinationSites({net::SchemefulSite::Deserialize(
+                            "https://d1.test")})
+                        .Build())
+                .status(),
+            StorableSource::Result::kSuccess);
+  EXPECT_EQ(storage()
+                ->StoreSource(
+                    SourceBuilder()
+                        .SetDestinationSites({net::SchemefulSite::Deserialize(
+                            "https://d2.test")})
+                        .Build())
+                .status(),
+            StorableSource::Result::kDestinationPerDayReportingLimitReached);
+
+  task_environment_.FastForwardBy(base::Days(1));
+
+  EXPECT_EQ(storage()
+                ->StoreSource(
+                    SourceBuilder()
+                        .SetDestinationSites({net::SchemefulSite::Deserialize(
+                            "https://d2.test")})
+                        .Build())
+                .status(),
+            StorableSource::Result::kSuccess);
+}
+
+TEST_F(AttributionResolverTest, LimitHit_DestinationDeactivated) {
+  delegate()->set_max_destinations_per_source_site_reporting_site(1);
+
+  EXPECT_THAT(
+      storage()->StoreSource(
+          SourceBuilder()
+              .SetSourceEventId(1)
+              .SetDestinationSites(
+                  {net::SchemefulSite::Deserialize("https://d1.test")})
+              .Build()),
+      AllOf(Property(&StoreSourceResult::result,
+                     VariantWith<StoreSourceResult::Success>(_)),
+            Property(&StoreSourceResult::destination_limit, Eq(std::nullopt))));
+
+  EXPECT_THAT(
+      storage()->StoreSource(
+          SourceBuilder()
+              .SetSourceEventId(2)
+              .SetDestinationSites(
+                  {net::SchemefulSite::Deserialize("https://d2.test")})
+              .Build()),
+      AllOf(Property(&StoreSourceResult::result,
+                     VariantWith<StoreSourceResult::Success>(_)),
+            Property(&StoreSourceResult::destination_limit, Optional(1))));
+
+  EXPECT_THAT(storage()->GetActiveSources(),
+              UnorderedElementsAre(SourceEventIdIs(2)));
+}
+
+TEST_F(AttributionResolverTest, PriorityTooLow_SourceDropped) {
+  delegate()->set_max_destinations_per_source_site_reporting_site(1);
+
+  EXPECT_THAT(
+      storage()->StoreSource(
+          SourceBuilder()
+              .SetSourceEventId(1)
+              .SetDestinationLimitPriority(1)
+              .SetDestinationSites(
+                  {net::SchemefulSite::Deserialize("https://d1.test")})
+              .Build()),
+      AllOf(Property(&StoreSourceResult::result,
+                     VariantWith<StoreSourceResult::Success>(_)),
+            Property(&StoreSourceResult::destination_limit, Eq(std::nullopt))));
+
+  EXPECT_THAT(
+      storage()->StoreSource(
+          SourceBuilder()
+              .SetSourceEventId(2)
+              .SetDestinationSites(
+                  {net::SchemefulSite::Deserialize("https://d2.test")})
+              .Build()),
+      Property(
+          &StoreSourceResult::result,
+          VariantWith<
+              StoreSourceResult::InsufficientUniqueDestinationCapacity>(Field(
+              &StoreSourceResult::InsufficientUniqueDestinationCapacity::limit,
+              1))));
+
+  EXPECT_THAT(storage()->GetActiveSources(),
+              UnorderedElementsAre(SourceEventIdIs(1)));
+}
+
+TEST_F(AttributionResolverTest, LimitHit_EventLevelReportNotDeleted) {
+  delegate()->set_max_destinations_per_source_site_reporting_site(1);
+
+  EXPECT_THAT(
+      storage()->StoreSource(
+          SourceBuilder()
+              .SetSourceEventId(1)
+              .SetDestinationSites(
+                  {net::SchemefulSite::Deserialize("https://d1.test")})
+              .Build()),
+      AllOf(Property(&StoreSourceResult::result,
+                     VariantWith<StoreSourceResult::Success>(_)),
+            Property(&StoreSourceResult::destination_limit, Eq(std::nullopt))));
+
+  EXPECT_EQ(MaybeCreateAndStoreEventLevelReport(
+                TriggerBuilder()
+                    .SetDestinationOrigin(
+                        *SuitableOrigin::Deserialize("https://d1.test"))
+                    .Build()),
+            AttributionTrigger::EventLevelResult::kSuccess);
+
+  task_environment_.FastForwardBy(base::Milliseconds(1));
+
+  // This should deactivate the source, but doesn't delete the pending report.
+  EXPECT_THAT(
+      storage()->StoreSource(
+          SourceBuilder()
+              .SetSourceEventId(2)
+              .SetDestinationSites(
+                  {net::SchemefulSite::Deserialize("https://d2.test")})
+              .Build()),
+      AllOf(Property(&StoreSourceResult::result,
+                     VariantWith<StoreSourceResult::Success>(_)),
+            Property(&StoreSourceResult::destination_limit, Optional(1))));
+  EXPECT_THAT(storage()->GetActiveSources(),
+              UnorderedElementsAre(SourceEventIdIs(2)));
+  EXPECT_THAT(storage()->GetAttributionReports(base::Time::Max()), SizeIs(1));
+}
+
+TEST_F(AttributionResolverTest, LimitHit_AggregatableReportDeleted) {
+  delegate()->set_rate_limits([]() {
+    AttributionConfig::RateLimitConfig r;
+    r.max_attributions = 1;
+    return r;
+  }());
+
+  delegate()->set_max_destinations_per_source_site_reporting_site(1);
+
+  StorableSource source =
+      TestAggregatableSourceProvider()
+          .GetBuilder()
+          .SetDestinationSites(
+              {net::SchemefulSite::Deserialize("https://d1.test")})
+          .Build();
+  AttributionTrigger trigger =
+      DefaultAggregatableTriggerBuilder()
+          .SetDestinationOrigin(*SuitableOrigin::Deserialize("https://d1.test"))
+          .Build(
+              /*generate_event_trigger_data=*/false);
+
+  EXPECT_THAT(
+      storage()->StoreSource(source),
+      AllOf(Property(&StoreSourceResult::result,
+                     VariantWith<StoreSourceResult::Success>(_)),
+            Property(&StoreSourceResult::destination_limit, Eq(std::nullopt))));
+
+  EXPECT_EQ(MaybeCreateAndStoreAggregatableReport(trigger),
+            AttributionTrigger::AggregatableResult::kSuccess);
+  EXPECT_THAT(storage()->GetAttributionReports(base::Time::Max()), SizeIs(1));
+  EXPECT_EQ(MaybeCreateAndStoreAggregatableReport(trigger),
+            AttributionTrigger::AggregatableResult::kExcessiveAttributions);
+
+  task_environment_.FastForwardBy(base::Milliseconds(1));
+
+  // This should deactivate the previous source, delete the pending report, and
+  // the corresponding attribution rate-limit record.
+  EXPECT_THAT(
+      storage()->StoreSource(
+          SourceBuilder()
+              .SetDestinationSites(
+                  {net::SchemefulSite::Deserialize("https://d2.test")})
+              .Build()),
+      AllOf(Property(&StoreSourceResult::result,
+                     VariantWith<StoreSourceResult::Success>(_)),
+            Property(&StoreSourceResult::destination_limit, Optional(1))));
+  EXPECT_THAT(storage()->GetAttributionReports(base::Time::Max()), IsEmpty());
+
+  task_environment_.FastForwardBy(base::Milliseconds(1));
+
+  EXPECT_THAT(
+      storage()->StoreSource(source),
+      AllOf(Property(&StoreSourceResult::result,
+                     VariantWith<StoreSourceResult::Success>(_)),
+            Property(&StoreSourceResult::destination_limit, Optional(1))));
+  EXPECT_EQ(MaybeCreateAndStoreAggregatableReport(trigger),
+            AttributionTrigger::AggregatableResult::kSuccess);
+}
+
+TEST_F(AttributionResolverTest, LimitHit_FakeReportDeleted) {
+  delegate()->set_rate_limits([]() {
+    AttributionConfig::RateLimitConfig r;
+    r.max_attributions = 1;
+    return r;
+  }());
+
+  delegate()->set_max_destinations_per_source_site_reporting_site(1);
+
+  delegate()->set_randomized_response(
+      std::vector<attribution_reporting::FakeEventLevelReport>{
+          {.trigger_data = 0, .window_index = 0},
+          {.trigger_data = 1, .window_index = 1}});
+
+  EXPECT_THAT(
+      storage()->StoreSource(
+          SourceBuilder()
+              .SetDestinationSites(
+                  {net::SchemefulSite::Deserialize("https://d1.test")})
+              .SetTriggerSpecs(TriggerSpecs(
+                  SourceType::kEvent,
+                  *attribution_reporting::EventReportWindows::Create(
+                      base::Days(0), {base::Days(1), base::Days(2)}),
+                  MaxEventLevelReports::Max()))
+              .Build()),
+      AllOf(Property(&StoreSourceResult::result,
+                     VariantWith<StoreSourceResult::Success>(_)),
+            Property(&StoreSourceResult::destination_limit, Eq(std::nullopt))));
+  delegate()->set_randomized_response(std::nullopt);
+
+  EXPECT_THAT(storage()->GetAttributionReports(base::Time::Max()),
+              UnorderedElementsAre(EventLevelDataIs(TriggerDataIs(0)),
+                                   EventLevelDataIs(TriggerDataIs(1))));
+
+  StorableSource source =
+      SourceBuilder()
+          .SetDestinationSites(
+              {net::SchemefulSite::Deserialize("https://d1.test")})
+          .Build();
+  AttributionTrigger trigger =
+      TriggerBuilder()
+          .SetDestinationOrigin(*SuitableOrigin::Deserialize("https://d1.test"))
+          .Build();
+
+  EXPECT_THAT(
+      storage()->StoreSource(source),
+      AllOf(Property(&StoreSourceResult::result,
+                     VariantWith<StoreSourceResult::Success>(_)),
+            Property(&StoreSourceResult::destination_limit, Eq(std::nullopt))));
+  EXPECT_EQ(MaybeCreateAndStoreEventLevelReport(trigger),
+            AttributionTrigger::EventLevelResult::kExcessiveAttributions);
+
+  task_environment_.FastForwardBy(base::Milliseconds(1));
+
+  // This should deactivate the sources and delete the second fake report, but
+  // not deleting the corresponding attribution rate-limit record.
+  EXPECT_THAT(
+      storage()->StoreSource(
+          SourceBuilder()
+              .SetDestinationSites(
+                  {net::SchemefulSite::Deserialize("https://d2.test")})
+              .Build()),
+      AllOf(Property(&StoreSourceResult::result,
+                     VariantWith<StoreSourceResult::Success>(_)),
+            Property(&StoreSourceResult::destination_limit, Optional(1))));
+  EXPECT_THAT(storage()->GetAttributionReports(base::Time::Max()),
+              UnorderedElementsAre(EventLevelDataIs(TriggerDataIs(0))));
+
+  task_environment_.FastForwardBy(base::Milliseconds(1));
+
+  EXPECT_THAT(
+      storage()->StoreSource(source),
+      AllOf(Property(&StoreSourceResult::result,
+                     VariantWith<StoreSourceResult::Success>(_)),
+            Property(&StoreSourceResult::destination_limit, Optional(1))));
+  EXPECT_EQ(MaybeCreateAndStoreEventLevelReport(trigger),
+            AttributionTrigger::EventLevelResult::kExcessiveAttributions);
+}
+
+TEST_F(
+    AttributionResolverTest,
+    LimitHitAndDestinationGlobalRateLimitHit_DestinationDeactivatedAndSourceDropped) {
+  delegate()->set_max_destinations_per_source_site_reporting_site(1);
+  delegate()->set_destination_rate_limit([]() {
+    AttributionConfig::DestinationRateLimit limit;
+    limit.max_total = 1;
+    limit.rate_limit_window = base::Minutes(1);
+    return limit;
+  }());
+
+  storage()->StoreSource(
+      SourceBuilder()
+          .SetDestinationSites(
+              {net::SchemefulSite::Deserialize("https://d1.test")})
+          .Build());
+
+  EXPECT_THAT(
+      storage()->StoreSource(
+          SourceBuilder()
+              .SetDestinationSites(
+                  {net::SchemefulSite::Deserialize("https://d2.test")})
+              .Build()),
+      AllOf(
+          Property(
+              &StoreSourceResult::result,
+              VariantWith<StoreSourceResult::DestinationGlobalLimitReached>(_)),
+          Property(&StoreSourceResult::destination_limit, Optional(1))));
+  EXPECT_THAT(storage()->GetActiveSources(), IsEmpty());
+}
+
+TEST_F(AttributionResolverTest, DestinationLimitResultMetrics) {
+  delegate()->set_max_destinations_per_source_site_reporting_site(1);
+
+  StorableSource source =
+      SourceBuilder()
+          .SetDestinationSites(
+              {net::SchemefulSite::Deserialize("https://d1.test")})
+          .Build();
+
+  const struct {
+    const char* desc;
+    const char* destination;
+    int64_t priority = 0;
+    int expected;
+  } kTestCases[] = {
+      {
+          .desc = "allowed",
+          .destination = "https://d1.test",
+          .expected = 0,  // kAllowed
+      },
+      {
+          .desc = "allowed-limit-hit",
+          .destination = "https://d2.test",
+          .priority = 1,
+          .expected = 1,  // kAllowedLimitHit
+      },
+      {
+          .desc = "not-allowed",
+          .destination = "https://d2.test",
+          .priority = -1,
+          .expected = 2,  // kNotAllowed
+      },
+  };
+
+  for (const auto& test_case : kTestCases) {
+    SCOPED_TRACE(test_case.desc);
+
+    storage()->StoreSource(source);
+
+    base::HistogramTester histograms;
+    storage()->StoreSource(
+        SourceBuilder()
+            .SetDestinationLimitPriority(test_case.priority)
+            .SetDestinationSites(
+                {net::SchemefulSite::Deserialize(test_case.destination)})
+            .Build());
+    storage()->ClearDataIncludingRateLimit(base::Time::Min(), base::Time::Max(),
+                                           base::NullCallback());
+    histograms.ExpectBucketCount("Conversions.SourceDestinationLimitResult",
+                                 test_case.expected, 1);
+  }
+}
+
+TEST_F(AttributionResolverTest, SourceAttributionScopesData_RoundTrips) {
+  auto scopes = *attribution_reporting::AttributionScopesData::Create(
+      attribution_reporting::AttributionScopesSet({"1", "2"}),
+      /*attribution_scope_limit=*/5u,
+      /*max_event_states=*/3u);
+  storage()->StoreSource(
+      SourceBuilder().SetAttributionScopesData(scopes).Build());
+  EXPECT_THAT(storage()->GetActiveSources(),
+              UnorderedElementsAre(AttributionScopesDataIs(scopes)));
+}
+
+TEST_F(AttributionResolverTest, SourcesWithDifferentAttributionScopeLimits) {
+  // Default source, should be deleted once a source with scopes is registered.
+  EXPECT_EQ(storage()
+                ->StoreSource(SourceBuilder().SetSourceEventId(1).Build())
+                .status(),
+            StorableSource::Result::kSuccess);
+  // Should not be deleted along with its respective source as only reports with
+  // trigger time >= current time are deleted.
+  EXPECT_EQ(AttributionTrigger::EventLevelResult::kSuccess,
+            MaybeCreateAndStoreEventLevelReport(DefaultTrigger()));
+
+  task_environment_.FastForwardBy(base::Milliseconds(1));
+
+  // Should delete the first source as that has no scopes.
+  storage()->StoreSource(
+      SourceBuilder()
+          .SetSourceEventId(2)
+          .SetAttributionScopesData(
+              *attribution_reporting::AttributionScopesData::Create(
+                  attribution_reporting::AttributionScopesSet({"1"}),
+                  /*attribution_scope_limit=*/4u,
+                  /*max_event_states=*/3u))
+          .Build());
+  EXPECT_THAT(storage()->GetActiveSources(), ElementsAre(SourceEventIdIs(2u)));
+
+  // Should be stored initially.
+  storage()->StoreSource(
+      SourceBuilder()
+          .SetSourceEventId(3)
+          .SetDestinationSites(
+              {net::SchemefulSite::Deserialize("https://a.test"),
+               net::SchemefulSite::Deserialize("https://conversion.test")})
+          .SetAttributionScopesData(
+              *attribution_reporting::AttributionScopesData::Create(
+                  attribution_reporting::AttributionScopesSet({"1"}),
+                  /*attribution_scope_limit=*/2u,
+                  /*max_event_states=*/3u))
+          .Build());
+  // Should be deleted once the respective source is deleted.
+  EXPECT_EQ(AttributionTrigger::EventLevelResult::kSuccess,
+            MaybeCreateAndStoreEventLevelReport(
+                TriggerBuilder()
+                    .SetDestinationOrigin(
+                        *SuitableOrigin::Deserialize("https://a.test"))
+                    .SetAttributionScopes(
+                        attribution_reporting::AttributionScopesSet({"1", "2"}))
+                    .SetTriggerData(1)
+                    .Build()));
+  EXPECT_THAT(storage()->GetAttributionReports(base::Time::Max()), SizeIs(2));
+
+  // Should remain in storage.
+  storage()->StoreSource(
+      SourceBuilder()
+          .SetSourceEventId(4)
+          .SetDestinationSites(
+              {net::SchemefulSite::Deserialize("https://a.test"),
+               net::SchemefulSite::Deserialize("https://conversion2.test")})
+          .SetAttributionScopesData(
+              *attribution_reporting::AttributionScopesData::Create(
+                  attribution_reporting::AttributionScopesSet({"1"}),
+                  /*attribution_scope_limit=*/2u,
+                  /*max_event_states=*/3u))
+          .Build());
+  EXPECT_THAT(storage()->GetActiveSources(),
+              UnorderedElementsAre(SourceEventIdIs(2u), SourceEventIdIs(3u),
+                                   SourceEventIdIs(4u)));
+
+  // Should delete the third source as that has a lower scope limit.
+  storage()->StoreSource(
+      SourceBuilder()
+          .SetSourceEventId(5)
+          .SetAttributionScopesData(
+              *attribution_reporting::AttributionScopesData::Create(
+                  attribution_reporting::AttributionScopesSet({"1"}),
+                  /*attribution_scope_limit=*/4u,
+                  /*max_event_states=*/3u))
+          .Build());
+  EXPECT_THAT(storage()->GetActiveSources(),
+              UnorderedElementsAre(SourceEventIdIs(2u), SourceEventIdIs(4u),
+                                   SourceEventIdIs(5u)));
+  EXPECT_THAT(storage()->GetAttributionReports(base::Time::Max()),
+              UnorderedElementsAre(EventLevelDataIs(TriggerDataIs(7))));
+}
+
+TEST_F(AttributionResolverTest, IncomingEmptyScopes_RemovesOtherScopes) {
+  auto scopes = *attribution_reporting::AttributionScopesData::Create(
+      attribution_reporting::AttributionScopesSet({"1"}),
+      /*attribution_scope_limit=*/4u,
+      /*max_event_states=*/4u);
+  storage()->StoreSource(SourceBuilder()
+                             .SetSourceEventId(1)
+                             .SetAttributionScopesData(scopes)
+                             .Build());
+
+  // Should not be modified as it does not share the same destination site.
+  storage()->StoreSource(
+      SourceBuilder()
+          .SetSourceEventId(2)
+          .SetDestinationSites(
+              {net::SchemefulSite::Deserialize("https://a.test")})
+          .SetAttributionScopesData(scopes)
+          .Build());
+
+  // Should not be modified as it does not share the same reporting origin.
+  storage()->StoreSource(
+      SourceBuilder()
+          .SetSourceEventId(3)
+          .SetReportingOrigin(*SuitableOrigin::Deserialize("https://a.test"))
+          .SetAttributionScopesData(scopes)
+          .Build());
+
+  // Should remove only the first source's scopes data.
+  storage()->StoreSource(SourceBuilder().SetSourceEventId(4).Build());
+  EXPECT_THAT(
+      storage()->GetActiveSources(),
+      UnorderedElementsAre(
+          AllOf(SourceEventIdIs(1u), AttributionScopesDataIs(std::nullopt)),
+          AllOf(SourceEventIdIs(2u), AttributionScopesDataIs(scopes)),
+          AllOf(SourceEventIdIs(3u), AttributionScopesDataIs(scopes)),
+          AllOf(SourceEventIdIs(4u), AttributionScopesDataIs(std::nullopt))));
+}
+
+TEST_F(AttributionResolverTest, SourcesWithDifferentMaxEventStates) {
+  storage()->StoreSource(
+      SourceBuilder()
+          .SetSourceEventId(1)
+          .SetDestinationSites(
+              {net::SchemefulSite::Deserialize("https://a.test"),
+               net::SchemefulSite::Deserialize("https://b.test")})
+          .SetAttributionScopesData(
+              *attribution_reporting::AttributionScopesData::Create(
+                  attribution_reporting::AttributionScopesSet({"1"}),
+                  /*attribution_scope_limit=*/4u,
+                  /*max_event_states=*/3u))
+          .Build());
+  EXPECT_EQ(AttributionTrigger::EventLevelResult::kSuccess,
+            MaybeCreateAndStoreEventLevelReport(
+                TriggerBuilder()
+                    .SetDestinationOrigin(
+                        *SuitableOrigin::Deserialize("https://a.test"))
+                    .SetAttributionScopes(
+                        attribution_reporting::AttributionScopesSet({"1", "2"}))
+                    .Build()));
+
+  // Should remain in storage.
+  storage()->StoreSource(
+      SourceBuilder()
+          .SetSourceEventId(2)
+          .SetDestinationSites(
+              {net::SchemefulSite::Deserialize("https://a.test"),
+               net::SchemefulSite::Deserialize("https://c.test")})
+          .SetAttributionScopesData(
+              *attribution_reporting::AttributionScopesData::Create(
+                  attribution_reporting::AttributionScopesSet({"1"}),
+                  /*attribution_scope_limit=*/4u,
+                  /*max_event_states=*/3u))
+          .Build());
+
+  // Should delete the first source.
+  storage()->StoreSource(
+      SourceBuilder()
+          .SetSourceEventId(3)
+          .SetDestinationSites(
+              {net::SchemefulSite::Deserialize("https://b.test")})
+          .SetAttributionScopesData(
+              *attribution_reporting::AttributionScopesData::Create(
+                  attribution_reporting::AttributionScopesSet({"1"}),
+                  /*attribution_scope_limit=*/4u,
+                  /*max_event_states=*/2u))
+          .Build());
+  EXPECT_THAT(storage()->GetAttributionReports(base::Time::Max()), IsEmpty());
+  EXPECT_THAT(storage()->GetActiveSources(),
+              ElementsAre(SourceEventIdIs(2u), SourceEventIdIs(3u)));
+
+  // Should delete the third source.
+  storage()->StoreSource(
+      SourceBuilder()
+          .SetSourceEventId(4)
+          .SetDestinationSites(
+              {net::SchemefulSite::Deserialize("https://b.test")})
+          .SetAttributionScopesData(
+              *attribution_reporting::AttributionScopesData::Create(
+                  attribution_reporting::AttributionScopesSet({"1"}),
+                  /*attribution_scope_limit=*/4u,
+                  /*max_event_states=*/4u))
+          .Build());
+  EXPECT_THAT(storage()->GetActiveSources(),
+              ElementsAre(SourceEventIdIs(2u), SourceEventIdIs(4u)));
+}
+
+TEST_F(AttributionResolverTest, RemoveOutdatedScopes) {
+  storage()->StoreSource(
+      SourceBuilder()
+          .SetSourceEventId(1)
+          .SetAttributionScopesData(
+              *attribution_reporting::AttributionScopesData::Create(
+                  attribution_reporting::AttributionScopesSet({"1", "2"}),
+                  /*attribution_scope_limit=*/4u,
+                  /*max_event_states=*/3u))
+          .Build());
+  // Should be deleted along with source 1.
+  EXPECT_EQ(AttributionTrigger::EventLevelResult::kSuccess,
+            MaybeCreateAndStoreEventLevelReport(
+                TriggerBuilder()
+                    .SetAttributionScopes(
+                        attribution_reporting::AttributionScopesSet({"1", "4"}))
+                    .Build()));
+
+  storage()->StoreSource(
+      SourceBuilder()
+          .SetSourceEventId(2)
+          .SetAttributionScopesData(
+              *attribution_reporting::AttributionScopesData::Create(
+                  attribution_reporting::AttributionScopesSet({"3", "4"}),
+                  /*attribution_scope_limit=*/4u,
+                  /*max_event_states=*/3u))
+          .Build());
+  storage()->StoreSource(
+      SourceBuilder()
+          .SetSourceEventId(3)
+          .SetAttributionScopesData(
+              *attribution_reporting::AttributionScopesData::Create(
+                  attribution_reporting::AttributionScopesSet({"3", "5"}),
+                  /*attribution_scope_limit=*/4u,
+                  /*max_event_states=*/3u))
+          .Build());
+
+  EXPECT_THAT(
+      storage()->GetActiveSources(),
+      ElementsAre(
+          AllOf(SourceEventIdIs(2u),
+                AttributionScopesDataIs(AttributionScopesSetIs(
+                    attribution_reporting::AttributionScopesSet({"3", "4"})))),
+          AllOf(
+              SourceEventIdIs(3u),
+              AttributionScopesDataIs(AttributionScopesSetIs(
+                  attribution_reporting::AttributionScopesSet({"3", "5"}))))));
+  EXPECT_THAT(storage()->GetAttributionReports(base::Time::Max()), IsEmpty());
+
+  task_environment_.FastForwardBy(base::Milliseconds(1));
+
+  // This will delete sources 2 and 3 as the list of allowed scopes becomes
+  // `{"2", "1", "5", "4"}` due to prioritizing latest source time first.
+  storage()->StoreSource(
+      SourceBuilder()
+          .SetSourceEventId(4)
+          .SetAttributionScopesData(
+              *attribution_reporting::AttributionScopesData::Create(
+                  attribution_reporting::AttributionScopesSet({"1", "2"}),
+                  /*attribution_scope_limit=*/4u,
+                  /*max_event_states=*/3u))
+          .Build());
+  EXPECT_THAT(
+      storage()->GetActiveSources(),
+      ElementsAre(AllOf(
+          SourceEventIdIs(4u),
+          AttributionScopesDataIs(AttributionScopesSetIs(
+              attribution_reporting::AttributionScopesSet({"1", "2"}))))));
+}
+
+TEST_F(AttributionResolverTest, RemoveOutdatedScopes_RetainTop) {
+  storage()->StoreSource(
+      SourceBuilder()
+          .SetSourceEventId(1)
+          .SetAttributionScopesData(
+              *attribution_reporting::AttributionScopesData::Create(
+                  attribution_reporting::AttributionScopesSet({"1"}),
+                  /*attribution_scope_limit=*/5u,
+                  /*max_event_states=*/3u))
+          .Build());
+
+  storage()->StoreSource(
+      SourceBuilder()
+          .SetSourceEventId(2)
+          .SetAttributionScopesData(
+              *attribution_reporting::AttributionScopesData::Create(
+                  attribution_reporting::AttributionScopesSet({"2", "3"}),
+                  /*attribution_scope_limit=*/5u,
+                  /*max_event_states=*/3u))
+          .Build());
+
+  storage()->StoreSource(
+      SourceBuilder()
+          .SetSourceEventId(3)
+          .SetAttributionScopesData(
+              *attribution_reporting::AttributionScopesData::Create(
+                  attribution_reporting::AttributionScopesSet({"4", "5"}),
+                  /*attribution_scope_limit=*/5u,
+                  /*max_event_states=*/3u))
+          .Build());
+
+  // 5 scopes are already stored; This source's 3 scopes should be retained.
+  // Therefore, we expect `SelectScopes()` to find the top 2 scopes to retain
+  // instead of the bottom 3 scopes to remove.
+  storage()->StoreSource(
+      SourceBuilder()
+          .SetSourceEventId(4)
+          .SetAttributionScopesData(
+              *attribution_reporting::AttributionScopesData::Create(
+                  attribution_reporting::AttributionScopesSet({"6", "7", "8"}),
+                  /*attribution_scope_limit=*/5u,
+                  /*max_event_states=*/3u))
+          .Build());
+
+  EXPECT_THAT(storage()->GetActiveSources(),
+              UnorderedElementsAre(SourceEventIdIs(3u), SourceEventIdIs(4u)));
+}
+
+TEST_F(AttributionResolverTest, RemoveOutdatedScopes_RemoveBottom) {
+  storage()->StoreSource(
+      SourceBuilder()
+          .SetSourceEventId(1)
+          .SetAttributionScopesData(
+              *attribution_reporting::AttributionScopesData::Create(
+                  attribution_reporting::AttributionScopesSet({"1"}),
+                  /*attribution_scope_limit=*/5u,
+                  /*max_event_states=*/3u))
+          .Build());
+
+  storage()->StoreSource(
+      SourceBuilder()
+          .SetSourceEventId(2)
+          .SetAttributionScopesData(
+              *attribution_reporting::AttributionScopesData::Create(
+                  attribution_reporting::AttributionScopesSet({"2", "3"}),
+                  /*attribution_scope_limit=*/5u,
+                  /*max_event_states=*/3u))
+          .Build());
+
+  storage()->StoreSource(
+      SourceBuilder()
+          .SetSourceEventId(3)
+          .SetAttributionScopesData(
+              *attribution_reporting::AttributionScopesData::Create(
+                  attribution_reporting::AttributionScopesSet({"4", "5"}),
+                  /*attribution_scope_limit=*/5u,
+                  /*max_event_states=*/3u))
+          .Build());
+
+  // 5 scopes are already stored; This source's 2 scopes should be retained.
+  // Therefore, we expect `SelectScopes()` to find the bottom 2 scopes to remove
+  // instead of the top 3 scopes to retain.
+  storage()->StoreSource(
+      SourceBuilder()
+          .SetSourceEventId(4)
+          .SetAttributionScopesData(
+              *attribution_reporting::AttributionScopesData::Create(
+                  attribution_reporting::AttributionScopesSet({"6", "7"}),
+                  /*attribution_scope_limit=*/5u,
+                  /*max_event_states=*/3u))
+          .Build());
+
+  EXPECT_THAT(storage()->GetActiveSources(),
+              UnorderedElementsAre(SourceEventIdIs(3u), SourceEventIdIs(4u)));
+}
+
+TEST_F(AttributionResolverTest, TriggerAttributesOnMatchingScope) {
+  // Should be attributed.
+  storage()->StoreSource(
+      SourceBuilder()
+          .SetSourceEventId(1)
+          .SetAttributionScopesData(
+              *attribution_reporting::AttributionScopesData::Create(
+                  attribution_reporting::AttributionScopesSet({"1", "2"}),
+                  /*attribution_scope_limit=*/4u,
+                  /*max_event_states=*/3u))
+          .Build());
+
+  // Should be deleted.
+  storage()->StoreSource(
+      SourceBuilder()
+          .SetSourceEventId(2)
+          .SetPriority(5)
+          .SetAttributionScopesData(
+              *attribution_reporting::AttributionScopesData::Create(
+                  attribution_reporting::AttributionScopesSet({"3", "4"}),
+                  /*attribution_scope_limit=*/4u,
+                  /*max_event_states=*/3u))
+          .Build());
+
+  EXPECT_EQ(AttributionTrigger::EventLevelResult::kNoMatchingImpressions,
+            MaybeCreateAndStoreEventLevelReport(
+                TriggerBuilder()
+                    .SetAttributionScopes(
+                        attribution_reporting::AttributionScopesSet({"5"}))
+                    .Build()));
+
+  EXPECT_EQ(AttributionTrigger::EventLevelResult::kSuccess,
+            MaybeCreateAndStoreEventLevelReport(
+                TriggerBuilder()
+                    .SetAttributionScopes(
+                        attribution_reporting::AttributionScopesSet({"6", "2"}))
+                    .Build()));
+
+  EXPECT_EQ(AttributionTrigger::EventLevelResult::kNoMatchingImpressions,
+            MaybeCreateAndStoreEventLevelReport(
+                TriggerBuilder()
+                    .SetAttributionScopes(
+                        attribution_reporting::AttributionScopesSet({"3"}))
+                    .Build()));
+  EXPECT_THAT(
+      storage()->GetAttributionReports(/*max_report_time=*/base::Time::Max()),
+      ElementsAre(EventLevelDataIs(
+          Field(&AttributionReport::EventLevelData::source_event_id, 1u))));
+}
+
+TEST_F(AttributionResolverTest, DebugKey) {
+  const struct {
+    std::optional<uint64_t> source_debug_key;
+    std::optional<uint64_t> trigger_debug_key;
+    int expected_metric;
+  } kTestCases[] = {
+      {
+          std::nullopt, std::nullopt,
+          0,  // kNone
+      },
+      {
+          1, std::nullopt,
+          1,  // kSourceOnly
+      },
+      {
+          std::nullopt, 1,
+          2,  // kTriggerOnly
+      },
+      {
+          1, 2,
+          3,  // kBoth
+      },
+  };
+
+  for (const auto& test_case : kTestCases) {
+    base::HistogramTester histograms;
+    storage()->StoreSource(TestAggregatableSourceProvider()
+                               .GetBuilder()
+                               .SetDebugKey(test_case.source_debug_key)
+                               .SetCookieBasedDebugAllowed(true)
+                               .Build());
+    storage()->MaybeCreateAndStoreReport(
+        DefaultAggregatableTriggerBuilder()
+            .SetDebugKey(test_case.trigger_debug_key)
+            .Build());
+    histograms.ExpectBucketCount("Conversions.AttributionReportDebugKeyUsage",
+                                 test_case.expected_metric, 2);
+  }
+}
+
+TEST_F(AttributionResolverTest,
+       UniqueReportingOriginsPerSiteForAttributionMetric) {
+  base::HistogramTester histogram_tester;
+
+  storage()->StoreSource(
+      SourceBuilder()
+          .SetDestinationSites(
+              {net::SchemefulSite::Deserialize("https://d.test")})
+          .SetReportingOrigin(*SuitableOrigin::Deserialize("https://a.r.test"))
+          .Build());
+  storage()->StoreSource(
+      TestAggregatableSourceProvider()
+          .GetBuilder()
+          .SetDestinationSites(
+              {net::SchemefulSite::Deserialize("https://d.test")})
+          .SetReportingOrigin(*SuitableOrigin::Deserialize("https://b.r.test"))
+          .Build());
+
+  storage()->MaybeCreateAndStoreReport(
+      TriggerBuilder()
+          .SetDestinationOrigin(*SuitableOrigin::Deserialize("https://d.test"))
+          .SetReportingOrigin(*SuitableOrigin::Deserialize("https://a.r.test"))
+          .Build());
+  storage()->MaybeCreateAndStoreReport(
+      DefaultAggregatableTriggerBuilder()
+          .SetDestinationOrigin(*SuitableOrigin::Deserialize("https://d.test"))
+          .SetReportingOrigin(*SuitableOrigin::Deserialize("https://b.r.test"))
+          .Build(/*generate_event_trigger_data=*/false));
+  // No histogram recorded as no attribution report was created.
+  storage()->MaybeCreateAndStoreReport(TriggerBuilder().Build());
+
+  EXPECT_THAT(histogram_tester.GetAllSamples(
+                  "Conversions.UniqueReportingOriginsPerSiteForAttribution"),
+              base::BucketsAre(base::Bucket(1, 1), base::Bucket(2, 1)));
+}
+
+TEST_F(AttributionResolverTest, SourceAggregatableNamedBudgets_RoundTrips) {
+  auto budgets =
+      *attribution_reporting::AggregatableNamedBudgetDefs::FromBudgetMap({
+          {"a", 5},
+      });
+  storage()->StoreSource(
+      SourceBuilder().SetAggregatableNamedBudgetDefs(budgets).Build());
+  EXPECT_THAT(storage()->GetActiveSources(),
+              UnorderedElementsAre(AggregatableNamedBudgetsIs(
+                  StoredSource::AggregatableNamedBudgets(
+                      {{"a", *AggregatableNamedBudgetPair::Create(5, 5)}}))));
+}
+
+TEST_F(AttributionResolverTest, MaxAggregatableBudgetPerNamedBudgetPerSource) {
+  storage()->StoreSource(
+      TestAggregatableSourceProvider()
+          .GetBuilder()
+          .SetAggregatableNamedBudgetDefs(
+              *attribution_reporting::AggregatableNamedBudgetDefs::
+                  FromBudgetMap({{"a", 5}, {"b", 5}, {"c", 0}}))
+          .Build());
+
+  EXPECT_THAT(
+      storage()->MaybeCreateAndStoreReport(
+          DefaultAggregatableTriggerBuilder(
+              /*histogram_values=*/{7})
+              .SetAggregatableNamedBudgetCandidates(
+                  {attribution_reporting::AggregatableNamedBudgetCandidate(
+                      "a", attribution_reporting::FilterPair())})
+              .Build()),
+      CreateReportAggregatableStatusIs(
+          AttributionTrigger::AggregatableResult::kInsufficientNamedBudget));
+
+  EXPECT_THAT(
+      storage()->MaybeCreateAndStoreReport(
+          DefaultAggregatableTriggerBuilder(
+              /*histogram_values=*/{5})
+              .SetAggregatableNamedBudgetCandidates(
+                  {attribution_reporting::AggregatableNamedBudgetCandidate(
+                      "a", attribution_reporting::FilterPair())})
+              .Build()),
+      CreateReportAggregatableStatusIs(
+          AttributionTrigger::AggregatableResult::kSuccess));
+
+  EXPECT_THAT(
+      storage()->MaybeCreateAndStoreReport(
+          DefaultAggregatableTriggerBuilder(
+              /*histogram_values=*/{1})
+              .SetAggregatableNamedBudgetCandidates(
+                  {attribution_reporting::AggregatableNamedBudgetCandidate(
+                      "a", attribution_reporting::FilterPair())})
+              .Build()),
+      CreateReportAggregatableStatusIs(
+          AttributionTrigger::AggregatableResult::kInsufficientNamedBudget));
+
+  EXPECT_THAT(
+      storage()->MaybeCreateAndStoreReport(
+          DefaultAggregatableTriggerBuilder(
+              /*histogram_values=*/{5})
+              .SetAggregatableNamedBudgetCandidates(
+                  {attribution_reporting::AggregatableNamedBudgetCandidate(
+                      "b", attribution_reporting::FilterPair())})
+              .Build()),
+      CreateReportAggregatableStatusIs(
+          AttributionTrigger::AggregatableResult::kSuccess));
+
+  EXPECT_THAT(
+      storage()->MaybeCreateAndStoreReport(
+          DefaultAggregatableTriggerBuilder(
+              /*histogram_values=*/{5})
+              .SetAggregatableNamedBudgetCandidates(
+                  {attribution_reporting::AggregatableNamedBudgetCandidate(
+                      "c", attribution_reporting::FilterPair())})
+              .Build()),
+      CreateReportAggregatableStatusIs(
+          AttributionTrigger::AggregatableResult::kInsufficientNamedBudget));
+
+  EXPECT_THAT(
+      storage()->MaybeCreateAndStoreReport(
+          DefaultAggregatableTriggerBuilder(
+              /*histogram_values=*/{5})
+              .SetAggregatableNamedBudgetCandidates(
+                  {attribution_reporting::AggregatableNamedBudgetCandidate(
+                      "d", attribution_reporting::FilterPair())})
+              .Build()),
+      CreateReportAggregatableStatusIs(
+          AttributionTrigger::AggregatableResult::kSuccess));
+}
+
+TEST_F(AttributionResolverTest,
+       MaxAggregatableBudgetPerNamedBudgetPerFilteredSource) {
+  storage()->StoreSource(
+      TestAggregatableSourceProvider()
+          .GetBuilder()
+          .SetFilterData(*FilterData::Create({{"abc", {"123"}}}))
+          .SetAggregatableNamedBudgetDefs(
+              *attribution_reporting::AggregatableNamedBudgetDefs::
+                  FromBudgetMap({{"a", 10}, {"b", 5}}))
+          .Build());
+
+  // Different filters should not match named buckets together.
+  EXPECT_THAT(
+      storage()->MaybeCreateAndStoreReport(
+          DefaultAggregatableTriggerBuilder(
+              /*histogram_values=*/{11})
+              .SetAggregatableNamedBudgetCandidates(
+                  {attribution_reporting::AggregatableNamedBudgetCandidate(
+                      "a", FilterPair(/*positive=*/{*FilterConfig::Create({
+                                          {"abc", {"456"}},
+                                      })},
+                                      /*negative=*/{}))})
+              .Build()),
+      CreateReportAggregatableStatusIs(
+          AttributionTrigger::AggregatableResult::kSuccess));
+
+  // No named bucket is matched as the provided name is null.
+  EXPECT_THAT(
+      storage()->MaybeCreateAndStoreReport(
+          DefaultAggregatableTriggerBuilder(
+              /*histogram_values=*/{11})
+              .SetAggregatableNamedBudgetCandidates(
+                  {attribution_reporting::AggregatableNamedBudgetCandidate(
+                      /*name=*/std::nullopt,
+                      FilterPair(/*positive=*/{*FilterConfig::Create({
+                                     {"abc", {"123"}},
+                                 })},
+                                 /*negative=*/{}))})
+              .Build()),
+      CreateReportAggregatableStatusIs(
+          AttributionTrigger::AggregatableResult::kSuccess));
+
+  EXPECT_THAT(
+      storage()->MaybeCreateAndStoreReport(
+          DefaultAggregatableTriggerBuilder(
+              /*histogram_values=*/{11})
+              .SetAggregatableNamedBudgetCandidates(
+                  {attribution_reporting::AggregatableNamedBudgetCandidate(
+                      "a", FilterPair(/*positive=*/{*FilterConfig::Create({
+                                          {"abc", {"123"}},
+                                      })},
+                                      /*negative=*/{}))})
+              .Build()),
+      CreateReportAggregatableStatusIs(
+          AttributionTrigger::AggregatableResult::kInsufficientNamedBudget));
+
+  // First named budget ignored, second used.
+  EXPECT_THAT(
+      storage()->MaybeCreateAndStoreReport(
+          DefaultAggregatableTriggerBuilder(
+              /*histogram_values=*/{7})
+              .SetAggregatableNamedBudgetCandidates(
+                  {attribution_reporting::AggregatableNamedBudgetCandidate(
+                       "a", FilterPair(/*positive=*/{*FilterConfig::Create({
+                                           {"abc", {"456"}},
+                                       })},
+                                       /*negative=*/{})),
+                   attribution_reporting::AggregatableNamedBudgetCandidate(
+                       "b", FilterPair(/*positive=*/{*FilterConfig::Create({
+                                           {"abc", {"123"}},
+                                       })},
+                                       /*negative=*/{}))})
+              .Build()),
+      CreateReportAggregatableStatusIs(
+          AttributionTrigger::AggregatableResult::kInsufficientNamedBudget));
 }
 
 }  // namespace content

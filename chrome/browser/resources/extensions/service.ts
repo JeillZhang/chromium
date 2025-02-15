@@ -11,7 +11,7 @@ import type {ErrorPageDelegate} from './error_page.js';
 import type {ItemDelegate} from './item.js';
 import type {KeyboardShortcutDelegate} from './keyboard_shortcut_delegate.js';
 import type {LoadErrorDelegate} from './load_error.js';
-import type {Mv2DeprecationPanelDelegate} from './mv2_deprecation_panel.js';
+import type {Mv2DeprecationDelegate} from './mv2_deprecation_delegate.js';
 import {Dialog, navigation, Page} from './navigation_helper.js';
 import type {PackDialogDelegate} from './pack_dialog.js';
 import type {SiteSettingsDelegate} from './site_permissions/site_settings_mixin.js';
@@ -22,7 +22,7 @@ export interface ServiceInterface extends ActivityLogDelegate,
                                           ErrorPageDelegate, ItemDelegate,
                                           KeyboardShortcutDelegate,
                                           LoadErrorDelegate,
-                                          Mv2DeprecationPanelDelegate,
+                                          Mv2DeprecationDelegate,
                                           PackDialogDelegate,
                                           SiteSettingsDelegate,
                                           ToolbarDelegate {
@@ -35,7 +35,10 @@ export interface ServiceInterface extends ActivityLogDelegate,
   getExtensionsInfo(): Promise<chrome.developerPrivate.ExtensionInfo[]>;
   getExtensionSize(id: string): Promise<string>;
   dismissSafetyHubExtensionsMenuNotification(): void;
-  dismissMv2DeprecationWarning(): void;
+  dismissMv2DeprecationNotice(): void;
+  shouldIgnoreUpdate(
+      extensionId: string,
+      eventType: chrome.developerPrivate.EventType): boolean;
 }
 
 export class Service implements ServiceInterface {
@@ -196,7 +199,6 @@ export class Service implements ServiceInterface {
       reason: chrome.developerPrivate.SafetyCheckWarningReason): Promise<void> {
     return chrome.developerPrivate.updateExtensionConfiguration({
       extensionId: id,
-      acknowledgeSafetyCheckWarning: true,
       acknowledgeSafetyCheckWarningReason: reason,
     });
   }
@@ -212,6 +214,13 @@ export class Service implements ServiceInterface {
     chrome.developerPrivate.updateExtensionConfiguration({
       extensionId: id,
       incognitoAccess: isAllowedIncognito,
+    });
+  }
+
+  setItemAllowedUserScripts(id: string, isAllowedUserScripts: boolean) {
+    chrome.developerPrivate.updateExtensionConfiguration({
+      extensionId: id,
+      userScriptsAccess: isAllowedUserScripts,
     });
   }
 
@@ -275,7 +284,7 @@ export class Service implements ServiceInterface {
 
   showItemOptionsPage(extension: chrome.developerPrivate.ExtensionInfo): void {
     assert(extension && extension.optionsPage);
-    if (extension.optionsPage!.openInTab) {
+    if (extension.optionsPage.openInTab) {
       chrome.developerPrivate.showOptions(extension.id);
     } else {
       navigation.navigateTo({
@@ -506,16 +515,17 @@ export class Service implements ServiceInterface {
     chrome.developerPrivate.dismissSafetyHubExtensionsMenuNotification();
   }
 
-  dismissMv2DeprecationWarning(): void {
+  dismissMv2DeprecationNotice(): void {
     chrome.developerPrivate.updateProfileConfiguration(
-        {isMv2DeprecationWarningDismissed: true});
+        {isMv2DeprecationNoticeDismissed: true});
   }
 
-  dismissMv2DeprecationWarningForExtension(id: string) {
-    chrome.developerPrivate.updateExtensionConfiguration({
-      extensionId: id,
-      acknowledgeMv2DeprecationWarning: true,
-    });
+  dismissMv2DeprecationNoticeForExtension(id: string): Promise<void> {
+    return chrome.developerPrivate.dismissMv2DeprecationNoticeForExtension(id);
+  }
+
+  uploadItemToAccount(id: string): Promise<void> {
+    return chrome.developerPrivate.uploadExtensionToAccount(id);
   }
 
   static getInstance(): ServiceInterface {

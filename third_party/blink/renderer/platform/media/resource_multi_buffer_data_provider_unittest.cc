@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/platform/media/resource_multi_buffer_data_provider.h"
 
 #include <stdint.h>
@@ -13,7 +18,6 @@
 #include "base/containers/contains.h"
 #include "base/containers/heap_array.h"
 #include "base/format_macros.h"
-#include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/run_loop.h"
@@ -35,6 +39,7 @@
 #include "third_party/blink/renderer/platform/media/testing/mock_resource_fetch_context.h"
 #include "third_party/blink/renderer/platform/media/testing/mock_web_associated_url_loader.h"
 #include "third_party/blink/renderer/platform/media/url_index.h"
+#include "third_party/blink/renderer/platform/wtf/functional.h"
 
 namespace blink {
 
@@ -80,14 +85,14 @@ class ResourceMultiBufferDataProviderTest : public testing::Test {
       const ResourceMultiBufferDataProviderTest&) = delete;
 
   void Initialize(const char* url, int first_position) {
-    gurl_ = GURL(url);
-    url_data_ = url_index_.GetByUrl(gurl_, UrlData::CORS_UNSPECIFIED,
-                                    UrlIndex::kNormal);
+    url_ = KURL(url);
+    url_data_ =
+        url_index_.GetByUrl(url_, UrlData::CORS_UNSPECIFIED, UrlData::kNormal);
     url_data_->set_etag(kEtag);
     DCHECK(url_data_);
     url_data_->OnRedirect(
-        base::BindOnce(&ResourceMultiBufferDataProviderTest::RedirectCallback,
-                       base::Unretained(this)));
+        WTF::BindOnce(&ResourceMultiBufferDataProviderTest::RedirectCallback,
+                      WTF::Unretained(this)));
 
     first_position_ = first_position;
 
@@ -101,7 +106,7 @@ class ResourceMultiBufferDataProviderTest : public testing::Test {
   void Start() { loader_->Start(); }
 
   void FullResponse(int64_t instance_size, bool ok = true) {
-    WebURLResponse response(gurl_);
+    WebURLResponse response(url_);
     response.SetHttpHeaderField(
         WebString::FromUTF8("Content-Length"),
         WebString::FromUTF8(base::StringPrintf("%" PRId64, instance_size)));
@@ -127,7 +132,7 @@ class ResourceMultiBufferDataProviderTest : public testing::Test {
                        int64_t instance_size,
                        bool chunked,
                        bool accept_ranges) {
-    WebURLResponse response(gurl_);
+    WebURLResponse response(url_);
     response.SetHttpHeaderField(
         WebString::FromUTF8("Content-Range"),
         WebString::FromUTF8(
@@ -161,8 +166,8 @@ class ResourceMultiBufferDataProviderTest : public testing::Test {
   }
 
   void Redirect(const char* url) {
-    WebURL new_url{GURL(url)};
-    WebURLResponse redirect_response(gurl_);
+    WebURL new_url{KURL(url)};
+    WebURLResponse redirect_response(url_);
 
     EXPECT_CALL(*this, RedirectCallback(_))
         .WillOnce(
@@ -176,21 +181,6 @@ class ResourceMultiBufferDataProviderTest : public testing::Test {
   void StopWhenLoad() {
     loader_ = nullptr;
     url_data_ = nullptr;
-  }
-
-  // Helper method to write to |loader_| from |data_|.
-  void WriteLoader(int position, int size) {
-    loader_->DidReceiveData(reinterpret_cast<char*>(data_ + position), size);
-  }
-
-  void WriteData(int size) {
-    auto data = base::HeapArray<char>::Uninit(size);
-    loader_->DidReceiveData(data.data(), size);
-  }
-
-  // Verifies that data in buffer[0...size] is equal to data_[pos...pos+size].
-  void VerifyBuffer(uint8_t* buffer, int pos, int size) {
-    EXPECT_EQ(0, memcmp(buffer, data_ + pos, size));
   }
 
   MOCK_METHOD1(RedirectCallback, void(const scoped_refptr<UrlData>&));
@@ -210,7 +200,7 @@ class ResourceMultiBufferDataProviderTest : public testing::Test {
   }
 
   base::test::SingleThreadTaskEnvironment task_environment_;
-  GURL gurl_;
+  KURL url_;
   int32_t first_position_;
 
   NiceMock<MockResourceFetchContext> fetch_context_;
@@ -237,7 +227,7 @@ TEST_F(ResourceMultiBufferDataProviderTest, BadHttpResponse) {
 
   EXPECT_CALL(*this, RedirectCallback(scoped_refptr<UrlData>(nullptr)));
 
-  WebURLResponse response(gurl_);
+  WebURLResponse response(url_);
   response.SetHttpStatusCode(404);
   response.SetHttpStatusText("Not Found\n");
   loader_->DidReceiveResponse(response);
@@ -295,7 +285,7 @@ TEST_F(ResourceMultiBufferDataProviderTest, InvalidPartialResponse) {
 
   EXPECT_CALL(*this, RedirectCallback(scoped_refptr<UrlData>(nullptr)));
 
-  WebURLResponse response(gurl_);
+  WebURLResponse response(url_);
   response.SetHttpHeaderField(
       WebString::FromUTF8("Content-Range"),
       WebString::FromUTF8(base::StringPrintf("bytes "

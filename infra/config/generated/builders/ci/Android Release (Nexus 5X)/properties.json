@@ -48,14 +48,11 @@
       ],
       "mirroring_builder_group_and_names": [
         {
-          "builder": "android-arm64-rel",
-          "group": "tryserver.chromium.android"
-        },
-        {
           "builder": "gpu-try-android-m-nexus-5x-64",
           "group": "tryserver.chromium.android"
         }
-      ]
+      ],
+      "targets_spec_directory": "src/infra/config/generated/builders/ci/Android Release (Nexus 5X)/targets"
     }
   },
   "$build/reclient": {

@@ -28,6 +28,11 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/platform/text/character.h"
 
 #include <unicode/uchar.h>
@@ -180,9 +185,7 @@ unsigned Character::ExpansionOpportunityCount(
         count++;
         is_after_expansion = true;
         continue;
-      } else if (!RuntimeEnabledFeatures::
-                     TextAlignJustifyBidiIsolateEnabled() ||
-                 !IsDefaultIgnorable(character)) {
+      } else if (!IsDefaultIgnorable(character)) {
         is_after_expansion = false;
       }
     }
@@ -204,9 +207,7 @@ unsigned Character::ExpansionOpportunityCount(
         count++;
         is_after_expansion = true;
         continue;
-      } else if (!RuntimeEnabledFeatures::
-                     TextAlignJustifyBidiIsolateEnabled() ||
-                 !IsDefaultIgnorable(character)) {
+      } else if (!IsDefaultIgnorable(character)) {
         is_after_expansion = false;
       }
     }
@@ -248,6 +249,7 @@ bool Character::CanReceiveTextEmphasis(UChar32 c) {
 
   // Additional word-separator characters listed in CSS Text Level 3 Editor's
   // Draft 3 November 2010.
+  // https://www.w3.org/TR/css-text-3/#word-separator
   if (c == kEthiopicWordspaceCharacter ||
       c == kAegeanWordSeparatorLineCharacter ||
       c == kAegeanWordSeparatorDotCharacter ||
@@ -255,6 +257,22 @@ bool Character::CanReceiveTextEmphasis(UChar32 c) {
       c == kTibetanMarkIntersyllabicTshegCharacter ||
       c == kTibetanMarkDelimiterTshegBstarCharacter)
     return false;
+
+  if (!RuntimeEnabledFeatures::TextEmphasisNoPunctuationEnabled()) {
+    return true;
+  }
+  // Punctuation
+  if (category &
+      (WTF::unicode::kPunctuation_Dash | WTF::unicode::kPunctuation_Open |
+       WTF::unicode::kPunctuation_Close | WTF::unicode::kPunctuation_Connector |
+       WTF::unicode::kPunctuation_Other |
+       WTF::unicode::kPunctuation_InitialQuote |
+       WTF::unicode::kPunctuation_FinalQuote)) {
+    return false;
+  }
+  // TODO(layout-dev): css/css-text-decor/text-emphasis-punctuation-3.html
+  // requires implementation for the following rule in the specification:
+  // > do not NFKD normalize to any of the following symbols:
 
   return true;
 }

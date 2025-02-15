@@ -8,7 +8,6 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_window.h"
-#include "chrome/browser/ui/webui/webui_util.h"
 #include "chrome/browser/web_applications/web_app_provider.h"
 #include "chrome/browser/web_applications/web_app_utils.h"
 #include "chrome/common/webui_url_constants.h"
@@ -22,6 +21,7 @@
 #include "content/public/browser/web_ui_controller.h"
 #include "content/public/browser/web_ui_data_source.h"
 #include "ui/gfx/native_widget_types.h"
+#include "ui/webui/webui_util.h"
 
 namespace {
 
@@ -134,10 +134,8 @@ WebAppSettingsUI::WebAppSettingsUI(content::WebUI* web_ui)
   AddAppManagementStrings(html_source);
 
   // Add required resources.
-  webui::SetupWebUIDataSource(
-      html_source,
-      base::make_span(kAppSettingsResources, kAppSettingsResourcesSize),
-      IDR_APP_SETTINGS_WEB_APP_SETTINGS_HTML);
+  webui::SetupWebUIDataSource(html_source, kAppSettingsResources,
+                              IDR_APP_SETTINGS_WEB_APP_SETTINGS_HTML);
 
   auto* provider = web_app::WebAppProvider::GetForWebApps(profile);
   install_manager_observation_.Observe(&provider->install_manager());
@@ -163,8 +161,9 @@ void WebAppSettingsUI::OnWebAppUninstalled(
   const webapps::AppId current_app_id =
       web_app::GetAppIdFromAppSettingsUrl(web_contents->GetURL());
 
-  if (app_id == current_app_id)
+  if (app_id == current_app_id) {
     web_contents->ClosePage();
+  }
 }
 
 void WebAppSettingsUI::OnWebAppInstallManagerDestroyed() {

@@ -307,7 +307,7 @@ class BackgroundURLLoader::Context
     // ResourceRequestClient overrides:
     void OnUploadProgress(uint64_t position, uint64_t size) override {
       // We don't support sending body.
-      NOTREACHED_NORETURN();
+      NOTREACHED();
     }
     void OnReceivedRedirect(
         const net::RedirectInfo& redirect_info,
@@ -419,7 +419,7 @@ class BackgroundURLLoader::Context
     URLLoaderThrottleProvider* throttle_provider =
         background_resource_fetch_context->GetThrottleProvider();
     if (throttle_provider) {
-      WebVector<std::unique_ptr<blink::URLLoaderThrottle>> web_throttles =
+      std::vector<std::unique_ptr<blink::URLLoaderThrottle>> web_throttles =
           throttle_provider->CreateThrottles(
               background_resource_fetch_context->GetLocalFrameToken(),
               *request);
@@ -767,7 +767,7 @@ void BackgroundURLLoader::LoadSynchronously(
     std::unique_ptr<ResourceLoadInfoNotifierWrapper>
         resource_load_info_notifier_wrapper) {
   // BackgroundURLLoader doesn't support sync requests.
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 void BackgroundURLLoader::LoadAsynchronously(

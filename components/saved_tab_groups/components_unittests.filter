@@ -4,6 +4,12 @@
 *SavedTabGroupSyncBridgeMigrationTest.*
 *SavedTabGroupSyncBridgeTest.*
 *SavedTabGroupTest.*
+*SharedTabGroupDataSyncBridgeRemoteUpdateOrderTest.*
 *SharedTabGroupDataSyncBridgeTest.*
-*TabGroupStoreMigrationUtilsTest.*
+*SavedTabGroupsStringUtilsTest.*
+*StartupHelperTest.*
+*TabGroupSyncBridgeMediatorTest.*
+*TabGroupSyncCoordinatorTest.*
+*TabGroupSyncMetricsLoggerTest.*
+*TabGroupSyncServiceAndroidTest.*
 *TabGroupSyncServiceTest.*

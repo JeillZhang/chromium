@@ -1,14 +1,8 @@
 <style>
   :host {
     /* Variables controlling the rendered post selection */
-    --post-selection-corner-horizontal-length: 22px;
-    --post-selection-corner-vertical-length: 22px;
-    --post-selection-corner-radius: 12px;
     --post-selection-corner-width: 4px;
     --post-selection-corner-hitbox-max-size: 40px;
-    /** For the selected area cutout to prevent tiny image corners from
-        sticking out past the rounded draggable corners */
-    --post-selection-cutout-corner-radius: 5px;
     position: relative;
   }
 
@@ -22,7 +16,7 @@
 
   /** Render the selected part of the image again so it appears glowing over
       the scrim */
-  #backgroundImage {
+  #backgroundImageCanvas {
     clip-path: rect(var(--selection-top)
                     calc(var(--selection-left) + var(--selection-width))
                     calc(var(--selection-top) + var(--selection-height))
@@ -51,6 +45,7 @@
 
   #selectionCorners {
     background-image: paint(post-selection);
+    forced-color-adjust: none;
     height: calc(var(--selection-height) +
                     (2 * var(--post-selection-corner-width)));
     left: calc(var(--selection-left) - var(--post-selection-corner-width));
@@ -58,14 +53,7 @@
     top: calc(var(--selection-top) - var(--post-selection-corner-width));
     width: calc(var(--selection-width) +
                    (2 * var(--post-selection-corner-width)));
-  }
-
-  :host([enable-selection-dragging]) #selectionCorners {
-    cursor: all-scroll;
-  }
-
-  .draggable {
-    pointer-events: all;
+    z-index: 5; /* Position above words. */
   }
 
   .corner-hit-box {
@@ -74,9 +62,9 @@
     max-width: var(--post-selection-corner-hitbox-max-size);
     min-height: var(--post-selection-corner-length);
     min-width: var(--post-selection-corner-length);
+    pointer-events: all;
     position: absolute;
     width: 50%;
-    z-index: 5; /* Position above words. */
   }
 
   #topLeft {
@@ -111,13 +99,16 @@
     style$="[[getScrimStyleProperties(height, width)]]">
 </div>
 <div hidden$="[[!hasSelection(height, width)]]">
-  <img id="backgroundImage" src="[[screenshotDataUri]]">
+  <canvas id="backgroundImageCanvas" height="[[canvasPhysicalHeight]]"
+      width="[[canvasPhysicalWidth]]"
+      style$="height: [[canvasHeight]]px; width: [[canvasWidth]]px;">
+  </canvas>
   <!-- This inner postSelection div isn't technically required, but helps make
    testing easier and more readable. -->
   <div id="postSelection"></div>
-  <div id="selectionCorners" class="draggable">
+  <div id="selectionCorners">
     <template is="dom-repeat" items="[[cornerIds]]">
-      <div id="[[item]]" class="corner-hit-box draggable"></div>
+      <div id="[[item]]" class="corner-hit-box"></div>
     </template>
   </div>
 </div>

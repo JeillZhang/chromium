@@ -2,13 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "device/gamepad/nintendo_controller.h"
 
 #include <algorithm>
 #include <utility>
 
 #include "base/functional/bind.h"
-#include "base/ranges/algorithm.h"
 #include "base/task/single_thread_task_runner.h"
 #include "device/gamepad/gamepad_data_fetcher.h"
 #include "device/gamepad/gamepad_id_list.h"
@@ -614,7 +618,7 @@ void UpdateButtonForLeftSide(const Gamepad& src_pad,
       case BUTTON_INDEX_LEFT_THUMBSTICK:
         break;
       default:
-        NOTREACHED_IN_MIGRATION();
+        DUMP_WILL_BE_NOTREACHED();
         break;
     }
   }
@@ -670,8 +674,7 @@ void UpdateButtonForRightSide(const Gamepad& src_pad,
       case BUTTON_INDEX_RIGHT_TRIGGER:
         break;
       default:
-        NOTREACHED_IN_MIGRATION();
-        break;
+        NOTREACHED();
     }
   }
   dst_pad.buttons[remapped_index] = src_pad.buttons[button_index];
@@ -703,8 +706,7 @@ void UpdateAxisForLeftSide(const Gamepad& src_pad,
         remapped_index = AXIS_INDEX_LEFT_STICK_X;
         break;
       default:
-        NOTREACHED_IN_MIGRATION();
-        break;
+        NOTREACHED();
     }
   }
   dst_pad.axes[remapped_index] = axis_value;
@@ -736,8 +738,7 @@ void UpdateAxisForRightSide(const Gamepad& src_pad,
         remapped_index = AXIS_INDEX_LEFT_STICK_X;
         break;
       default:
-        NOTREACHED_IN_MIGRATION();
-        break;
+        NOTREACHED();
     }
   }
   dst_pad.axes[remapped_index] = axis_value;
@@ -834,7 +835,6 @@ GamepadBusType BusTypeFromDeviceInfo(const mojom::HidDeviceInfo* device_info) {
     default:
       break;
   }
-  DUMP_WILL_BE_NOTREACHED();
   return GAMEPAD_BUS_UNKNOWN;
 }
 }  // namespace
@@ -846,16 +846,16 @@ NintendoController::SwitchImuData::SwitchImuData() = default;
 NintendoController::SwitchImuData::~SwitchImuData() = default;
 
 NintendoController::NintendoController(int source_id,
+                                       GamepadBusType bus_type,
                                        mojom::HidDeviceInfoPtr device_info,
                                        mojom::HidManager* hid_manager)
     : source_id_(source_id),
       is_composite_(false),
-      bus_type_(GAMEPAD_BUS_UNKNOWN),
+      bus_type_(bus_type),
       output_report_size_bytes_(0),
       device_info_(std::move(device_info)),
       hid_manager_(hid_manager) {
   if (device_info_) {
-    bus_type_ = BusTypeFromDeviceInfo(device_info_.get());
     output_report_size_bytes_ = device_info_->max_output_report_size;
     gamepad_id_ = GamepadIdList::Get().GetGamepadId(device_info_->product_name,
                                                     device_info_->vendor_id,
@@ -892,8 +892,16 @@ std::unique_ptr<NintendoController> NintendoController::Create(
     int source_id,
     mojom::HidDeviceInfoPtr device_info,
     mojom::HidManager* hid_manager) {
-  return std::make_unique<NintendoController>(source_id, std::move(device_info),
-                                              hid_manager);
+  // Ignore if BusTypeFromDeviceInfo could not determine the bus type.
+  GamepadBusType bus_type = device_info
+                                ? BusTypeFromDeviceInfo(device_info.get())
+                                : GAMEPAD_BUS_UNKNOWN;
+  if (bus_type == GAMEPAD_BUS_UNKNOWN) {
+    return nullptr;
+  }
+
+  return std::make_unique<NintendoController>(
+      source_id, bus_type, std::move(device_info), hid_manager);
 }
 
 // static
@@ -985,8 +993,7 @@ GamepadHand NintendoController::GetGamepadHand() const {
     default:
       break;
   }
-  NOTREACHED_IN_MIGRATION();
-  return GamepadHand::kNone;
+  NOTREACHED();
 }
 
 bool NintendoController::IsUsable() const {
@@ -1006,8 +1013,7 @@ bool NintendoController::IsUsable() const {
     default:
       break;
   }
-  NOTREACHED_IN_MIGRATION();
-  return false;
+  NOTREACHED();
 }
 
 bool NintendoController::HasGuid(const std::string& guid) const {
@@ -1104,8 +1110,7 @@ void NintendoController::UpdateGamepadState(Gamepad& pad) const {
         UpdateRightGamepadState(pad, false);
         break;
       default:
-        NOTREACHED_IN_MIGRATION();
-        break;
+        NOTREACHED();
     }
     pad.connected = pad_.connected;
   }
@@ -1227,8 +1232,7 @@ void NintendoController::StartInitSequence() {
       MakeInitSequenceRequests(kPendingSetPlayerLights);
       break;
     default:
-      NOTREACHED_IN_MIGRATION();
-      break;
+      NOTREACHED();
   }
 }
 
@@ -1468,8 +1472,7 @@ void NintendoController::ContinueInitSequence(
       break;
     case kInitialized:
     case kUninitialized:
-      NOTREACHED_IN_MIGRATION();
-      break;
+      NOTREACHED();
     default:
       break;
   }
@@ -1527,8 +1530,7 @@ void NintendoController::MakeInitSequenceRequests(InitializationState state) {
     case kInitialized:
     case kUninitialized:
     default:
-      NOTREACHED_IN_MIGRATION();
-      break;
+      NOTREACHED();
   }
 }
 
@@ -1549,7 +1551,7 @@ void NintendoController::SubCommand(uint8_t sub_command,
   report_bytes[8] = 0x40;
   report_bytes[9] = sub_command;
   DCHECK_LT(bytes.size() + kSubCommandDataOffset, output_report_size_bytes_);
-  base::ranges::copy(bytes, &report_bytes[kSubCommandDataOffset - 1]);
+  std::ranges::copy(bytes, &report_bytes[kSubCommandDataOffset - 1]);
   WriteOutputReport(kReportIdOutput01, report_bytes, true);
 }
 

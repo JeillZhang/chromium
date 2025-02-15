@@ -27,8 +27,9 @@ import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.base.shared_preferences.SharedPreferencesManager;
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.build.BuildConfig;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.password_check.PasswordCheckFactory;
+import org.chromium.chrome.browser.password_manager.CustomTabIntentHelper;
+import org.chromium.chrome.browser.password_manager.GmsUpdateLauncher;
 import org.chromium.chrome.browser.password_manager.ManagePasswordsReferrer;
 import org.chromium.chrome.browser.password_manager.PasswordCheckReferrer;
 import org.chromium.chrome.browser.password_manager.PasswordManagerHelper;
@@ -46,11 +47,13 @@ import org.chromium.chrome.browser.safe_browsing.settings.SafeBrowsingSettingsFr
 import org.chromium.chrome.browser.safety_check.PasswordsCheckPreferenceProperties.PasswordsState;
 import org.chromium.chrome.browser.safety_check.SafetyCheckProperties.SafeBrowsingState;
 import org.chromium.chrome.browser.safety_check.SafetyCheckProperties.UpdatesState;
-import org.chromium.chrome.browser.ui.signin.SigninAndHistoryOptInActivityLauncher;
-import org.chromium.chrome.browser.ui.signin.SigninAndHistoryOptInCoordinator;
-import org.chromium.chrome.browser.ui.signin.SyncConsentActivityLauncher;
+import org.chromium.chrome.browser.settings.SettingsNavigationFactory;
+import org.chromium.chrome.browser.ui.signin.BottomSheetSigninAndHistorySyncConfig;
+import org.chromium.chrome.browser.ui.signin.BottomSheetSigninAndHistorySyncConfig.NoAccountSigninMode;
+import org.chromium.chrome.browser.ui.signin.BottomSheetSigninAndHistorySyncConfig.WithAccountSigninMode;
+import org.chromium.chrome.browser.ui.signin.SigninAndHistorySyncActivityLauncher;
 import org.chromium.chrome.browser.ui.signin.account_picker.AccountPickerBottomSheetStrings;
-import org.chromium.components.browser_ui.settings.SettingsLauncher;
+import org.chromium.chrome.browser.ui.signin.history_sync.HistorySyncConfig;
 import org.chromium.components.prefs.PrefService;
 import org.chromium.components.signin.metrics.SigninAccessPoint;
 import org.chromium.components.sync.SyncService;
@@ -100,14 +103,8 @@ class SafetyCheckMediator {
     /** Provides access to C++ APIs. */
     private SafetyCheckBridge mBridge;
 
-    /** An instance of SettingsLauncher to start other activities. */
-    private SettingsLauncher mSettingsLauncher;
-
     /** Client to launch a SigninActivity. */
-    private SigninAndHistoryOptInActivityLauncher mSigninLauncher;
-
-    /** Client to launch a SyncActivity. */
-    private SyncConsentActivityLauncher mSyncLauncher;
+    private SigninAndHistorySyncActivityLauncher mSigninLauncher;
 
     /** Async logic for password check. */
     private boolean mShowSafePasswordState;
@@ -117,13 +114,16 @@ class SafetyCheckMediator {
 
     private PasswordManagerHelper mPasswordManagerHelper;
 
+    /**
+     * Provides an intent used to open a p-link help center article in a custom tab. Needed by the
+     * password manager settings.
+     */
+    private CustomTabIntentHelper mCustomTabIntentHelper;
+
     private ObservableSupplier<ModalDialogManager> mModalDialogManagerSupplier;
 
     /** Callbacks and related objects to show the checking state for at least 1 second. */
     private Handler mHandler;
-
-    /** Stores the callback updating the password check state in the UI after the delay. */
-    private Runnable mRunnablePasswords;
 
     /** Stores the callback updating the safe browsing check state in the UI after the delay. */
     private Runnable mRunnableSafeBrowsing;
@@ -185,7 +185,7 @@ class SafetyCheckMediator {
                                 RecordHistogram.recordEnumeratedHistogram(
                                         "Settings.SafetyCheck.UpdatesResult",
                                         SafetyCheckProperties.updatesStateToNative(status),
-                                        UpdateStatus.MAX_VALUE + 1);
+                                        UpdateStatus.MAX_VALUE);
                                 mSafetyCheckModel.set(SafetyCheckProperties.UPDATES_STATE, status);
                             }
                         });
@@ -197,9 +197,7 @@ class SafetyCheckMediator {
      * @param profile Profile to launch SigninActivity.
      * @param safetyCheckModel A model instance.
      * @param client An updates client.
-     * @param settingsLauncher An instance of the {@link SettingsLauncher} implementation.
-     * @param signinLauncher An instance implementing {@link SigninAndHistoryOptInActivityLauncher}.
-     * @param syncLauncher An instance implementing {@SigninActivityLauncher}.
+     * @param signinLauncher An instance implementing {@link SigninAndHistorySyncActivityLauncher}.
      * @param passwordStoreBridge Provides access to stored passwords.
      * @param modalDialogManagerSupplier A supplier for the {@link ModalDialogManager}.
      */
@@ -210,14 +208,13 @@ class SafetyCheckMediator {
             PropertyModel passwordsCheckLocalModel,
             SafetyCheckUpdatesDelegate client,
             SafetyCheckBridge bridge,
-            SettingsLauncher settingsLauncher,
-            SigninAndHistoryOptInActivityLauncher signinLauncher,
-            SyncConsentActivityLauncher syncLauncher,
+            SigninAndHistorySyncActivityLauncher signinLauncher,
             SyncService syncService,
             PrefService prefService,
             PasswordStoreBridge passwordStoreBridge,
             PasswordManagerHelper passwordManagerHelper,
-            ObservableSupplier<ModalDialogManager> modalDialogManagerSupplier) {
+            ObservableSupplier<ModalDialogManager> modalDialogManagerSupplier,
+            CustomTabIntentHelper customTabIntentHelper) {
         this(
                 profile,
                 safetyCheckModel,
@@ -225,9 +222,7 @@ class SafetyCheckMediator {
                 passwordsCheckLocalModel,
                 client,
                 bridge,
-                settingsLauncher,
                 signinLauncher,
-                syncLauncher,
                 syncService,
                 prefService,
                 new Handler(),
@@ -235,6 +230,7 @@ class SafetyCheckMediator {
                 new PasswordCheckControllerFactory(),
                 passwordManagerHelper);
         mModalDialogManagerSupplier = modalDialogManagerSupplier;
+        mCustomTabIntentHelper = customTabIntentHelper;
     }
 
     @VisibleForTesting
@@ -245,9 +241,7 @@ class SafetyCheckMediator {
             PropertyModel passwordsCheckLocalModel,
             SafetyCheckUpdatesDelegate client,
             SafetyCheckBridge bridge,
-            SettingsLauncher settingsLauncher,
-            SigninAndHistoryOptInActivityLauncher signinLauncher,
-            SyncConsentActivityLauncher syncLauncher,
+            SigninAndHistorySyncActivityLauncher signinLauncher,
             SyncService syncService,
             PrefService prefService,
             PasswordStoreBridge passwordStoreBridge,
@@ -262,9 +256,7 @@ class SafetyCheckMediator {
                 passwordsCheckLocalModel,
                 client,
                 bridge,
-                settingsLauncher,
                 signinLauncher,
-                syncLauncher,
                 syncService,
                 prefService,
                 handler,
@@ -281,9 +273,7 @@ class SafetyCheckMediator {
             PropertyModel passwordsCheckLocalModel,
             SafetyCheckUpdatesDelegate client,
             SafetyCheckBridge bridge,
-            SettingsLauncher settingsLauncher,
-            SigninAndHistoryOptInActivityLauncher signinLauncher,
-            SyncConsentActivityLauncher syncLauncher,
+            SigninAndHistorySyncActivityLauncher signinLauncher,
             @Nullable SyncService syncService,
             PrefService prefService,
             Handler handler,
@@ -296,19 +286,13 @@ class SafetyCheckMediator {
         mPasswordsCheckLocalStorageModel = passwordsCheckLocalModel;
         mUpdatesClient = client;
         mBridge = bridge;
-        mSettingsLauncher = settingsLauncher;
         mSigninLauncher = signinLauncher;
-        mSyncLauncher = syncLauncher;
         mSyncService = syncService;
         mHandler = handler;
         mPreferenceManager = ChromeSharedPreferences.getInstance();
         mPasswordCheckController =
                 passwordCheckControllerFactory.create(
-                        syncService,
-                        prefService,
-                        passwordStoreBridge,
-                        settingsLauncher,
-                        passwordManagerHelper);
+                        syncService, prefService, passwordStoreBridge, passwordManagerHelper);
         mPasswordManagerHelper = passwordManagerHelper;
         // Set the listener for clicking the updates element.
         mSafetyCheckModel.set(
@@ -332,14 +316,15 @@ class SafetyCheckMediator {
                             RecordHistogram.recordEnumeratedHistogram(
                                     SAFETY_CHECK_INTERACTIONS,
                                     SafetyCheckInteractions.SAFE_BROWSING_MANAGE,
-                                    SafetyCheckInteractions.MAX_VALUE + 1);
+                                    SafetyCheckInteractions.MAX_VALUE);
                             // Open the Safe Browsing settings.
                             Intent intent =
-                                    settingsLauncher.createSettingsActivityIntent(
-                                            p.getContext(),
-                                            SafeBrowsingSettingsFragment.class,
-                                            SafeBrowsingSettingsFragment.createArguments(
-                                                    SettingsAccessPoint.SAFETY_CHECK));
+                                    SettingsNavigationFactory.createSettingsNavigation()
+                                            .createSettingsIntent(
+                                                    p.getContext(),
+                                                    SafeBrowsingSettingsFragment.class,
+                                                    SafeBrowsingSettingsFragment.createArguments(
+                                                            SettingsAccessPoint.SAFETY_CHECK));
                             p.getContext().startActivity(intent);
                             return true;
                         });
@@ -423,7 +408,7 @@ class SafetyCheckMediator {
         RecordHistogram.recordEnumeratedHistogram(
                 SAFETY_CHECK_INTERACTIONS,
                 SafetyCheckInteractions.STARTED,
-                SafetyCheckInteractions.MAX_VALUE + 1);
+                SafetyCheckInteractions.MAX_VALUE);
         // Record the start time for tracking 1 second checking delay in the UI.
         mCheckStartTime = SystemClock.elapsedRealtime();
         // Record the absolute start time for showing when the last Safety check was performed.
@@ -494,7 +479,7 @@ class SafetyCheckMediator {
                         RecordHistogram.recordEnumeratedHistogram(
                                 "Settings.SafetyCheck.SafeBrowsingResult",
                                 status,
-                                SafeBrowsingStatus.MAX_VALUE + 1);
+                                SafeBrowsingStatus.MAX_VALUE);
                         mSafetyCheckModel.set(
                                 SafetyCheckProperties.SAFE_BROWSING_STATE,
                                 SafetyCheckProperties.safeBrowsingStateFromNative(status));
@@ -542,7 +527,7 @@ class SafetyCheckMediator {
             RecordHistogram.recordEnumeratedHistogram(
                     "Settings.SafetyCheck.PasswordsResult2",
                     passwordsStateToNative(passwordsState),
-                    PasswordsStatus.MAX_VALUE + 1);
+                    PasswordsStatus.MAX_VALUE);
         }
 
         passwordsCheckModel.set(PasswordsCheckPreferenceProperties.PASSWORDS_STATE, passwordsState);
@@ -561,7 +546,7 @@ class SafetyCheckMediator {
             RecordHistogram.recordEnumeratedHistogram(
                     "Settings.SafetyCheck.PasswordsResult2",
                     PasswordsStatus.SIGNED_OUT,
-                    PasswordsStatus.MAX_VALUE + 1);
+                    PasswordsStatus.MAX_VALUE);
             return passwordsState;
         }
         if (!mShowSafePasswordState) {
@@ -596,40 +581,38 @@ class SafetyCheckMediator {
                         mPasswordManagerHelper.showPasswordSettings(
                                 p.getContext(),
                                 ManagePasswordsReferrer.SAFETY_CHECK,
-                                mSettingsLauncher,
                                 mModalDialogManagerSupplier,
                                 /* managePasskeys= */ false,
-                                account);
+                                account,
+                                mCustomTabIntentHelper);
                         return true;
                     };
         } else if (state == PasswordsState.SIGNED_OUT) {
             listener =
                     (p) -> {
-                        if (ChromeFeatureList.isEnabled(
-                                ChromeFeatureList.REPLACE_SYNC_PROMOS_WITH_SIGN_IN_PROMOS)) {
-                            AccountPickerBottomSheetStrings strings =
-                                    new AccountPickerBottomSheetStrings.Builder(
-                                                    R.string
-                                                            .signin_account_picker_bottom_sheet_title)
-                                            .setSubtitleStringId(
-                                                    R.string
-                                                            .safety_check_passwords_error_signed_out)
-                                            .build();
-                            // Open the sign-in page.
-                            mSigninLauncher.launchActivityIfAllowed(
-                                    p.getContext(),
-                                    mProfile,
-                                    strings,
-                                    SigninAndHistoryOptInCoordinator.NoAccountSigninMode
-                                            .ADD_ACCOUNT,
-                                    SigninAndHistoryOptInCoordinator.WithAccountSigninMode
-                                            .DEFAULT_ACCOUNT_BOTTOM_SHEET,
-                                    SigninAndHistoryOptInCoordinator.HistoryOptInMode.NONE,
-                                    SigninAccessPoint.SAFETY_CHECK);
-                        } else {
-                            // Open the sync page.
-                            mSyncLauncher.launchActivityIfAllowed(
-                                    p.getContext(), SigninAccessPoint.SAFETY_CHECK);
+                        AccountPickerBottomSheetStrings strings =
+                                new AccountPickerBottomSheetStrings.Builder(
+                                                R.string.signin_account_picker_bottom_sheet_title)
+                                        .setSubtitleStringId(
+                                                R.string.safety_check_passwords_error_signed_out)
+                                        .build();
+                        BottomSheetSigninAndHistorySyncConfig config =
+                                new BottomSheetSigninAndHistorySyncConfig.Builder(
+                                                strings,
+                                                NoAccountSigninMode.BOTTOM_SHEET,
+                                                WithAccountSigninMode.DEFAULT_ACCOUNT_BOTTOM_SHEET,
+                                                HistorySyncConfig.OptInMode.NONE)
+                                        .build();
+                        // Open the sign-in page.
+                        @Nullable
+                        Intent intent =
+                                mSigninLauncher.createBottomSheetSigninIntentOrShowError(
+                                        p.getContext(),
+                                        mProfile,
+                                        config,
+                                        SigninAccessPoint.SAFETY_CHECK);
+                        if (intent != null) {
+                            p.getContext().startActivity(intent);
                         }
                         return true;
                     };
@@ -641,10 +624,10 @@ class SafetyCheckMediator {
                         RecordHistogram.recordEnumeratedHistogram(
                                 SAFETY_CHECK_INTERACTIONS,
                                 SafetyCheckInteractions.PASSWORDS_MANAGE,
-                                SafetyCheckInteractions.MAX_VALUE + 1);
+                                SafetyCheckInteractions.MAX_VALUE);
                         // Open the Password Check UI.
                         if (!mPasswordManagerHelper.canUseUpm()) {
-                            PasswordCheckFactory.getOrCreate(mSettingsLauncher)
+                            PasswordCheckFactory.getOrCreate()
                                     .showUi(p.getContext(), PasswordCheckReferrer.SAFETY_CHECK);
                         } else {
                             String account =
@@ -661,7 +644,7 @@ class SafetyCheckMediator {
         } else if (state == PasswordsState.BACKEND_VERSION_NOT_SUPPORTED) {
             listener =
                     (p) -> {
-                        PasswordManagerHelper.launchGmsUpdate(p.getContext());
+                        GmsUpdateLauncher.launch(p.getContext());
                         return true;
                     };
         }
@@ -729,7 +712,7 @@ class SafetyCheckMediator {
         RecordHistogram.recordEnumeratedHistogram(
                 "Settings.SafetyCheck.PasswordsResult2",
                 PasswordsCheckPreferenceProperties.passwordsStateToNative(PasswordsState.ERROR),
-                PasswordsStatus.MAX_VALUE + 1);
+                PasswordsStatus.MAX_VALUE);
         determinePasswordStateOnLoadComplete(
                 new PasswordCheckResult(new Exception(error)), passwordStorageType, isInitialLoad);
     }

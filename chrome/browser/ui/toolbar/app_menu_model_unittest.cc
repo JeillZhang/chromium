@@ -7,12 +7,12 @@
 #include <algorithm>
 #include <vector>
 
+#include "base/command_line.h"
 #include "base/functional/callback.h"
 #include "base/memory/ptr_util.h"
 #include "base/test/scoped_feature_list.h"
 #include "build/branding_buildflags.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/defaults.h"
 #include "chrome/browser/password_manager/password_manager_test_util.h"
@@ -22,6 +22,9 @@
 #include "chrome/browser/ui/global_error/global_error.h"
 #include "chrome/browser/ui/global_error/global_error_service.h"
 #include "chrome/browser/ui/global_error/global_error_service_factory.h"
+#include "chrome/browser/ui/hats/hats_service_factory.h"
+#include "chrome/browser/ui/hats/mock_hats_service.h"
+#include "chrome/browser/ui/safety_hub/menu_notification_service_factory.h"
 #include "chrome/browser/ui/safety_hub/password_status_check_service.h"
 #include "chrome/browser/ui/safety_hub/password_status_check_service_factory.h"
 #include "chrome/browser/ui/safety_hub/safety_hub_test_util.h"
@@ -41,7 +44,6 @@
 #include "components/optimization_guide/core/model_execution/model_execution_features.h"
 #include "components/optimization_guide/core/optimization_guide_features.h"
 #include "components/password_manager/core/browser/password_store/test_password_store.h"
-#include "components/performance_manager/public/features.h"
 #include "components/signin/public/base/consent_level.h"
 #include "components/signin/public/identity_manager/identity_test_utils.h"
 #include "components/sync_preferences/testing_pref_service_syncable.h"
@@ -55,19 +57,14 @@
 #include "components/policy/core/common/policy_pref_names.h"
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-#include "ash/constants/ash_features.h"
-#include "chromeos/ash/components/standalone_browser/standalone_browser_features.h"
-#include "components/user_manager/fake_user_manager.h"
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+using ::testing::_;
 
 namespace {
 
 // Error class has a menu item.
 class MenuError : public GlobalError {
  public:
-  explicit MenuError(int command_id)
-      : command_id_(command_id), execute_count_(0) {}
+  explicit MenuError(int command_id) : command_id_(command_id) {}
 
   MenuError(const MenuError&) = delete;
   MenuError& operator=(const MenuError&) = delete;
@@ -86,7 +83,7 @@ class MenuError : public GlobalError {
 
  private:
   int command_id_;
-  int execute_count_;
+  int execute_count_ = 0;
 };
 
 class FakeIconDelegate : public AppMenuIconController::Delegate {
@@ -110,24 +107,14 @@ class AppMenuModelTest : public BrowserWithTestWindowTest,
 
   ~AppMenuModelTest() override = default;
 
-  void SetUp() override {
-    BrowserWithTestWindowTest::SetUp();
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-    auto* user_manager = static_cast<user_manager::FakeUserManager*>(
-        user_manager::UserManager::Get());
-    const auto account_id = AccountId::FromUserEmail("test@test");
-    auto* user = user_manager->AddUser(account_id);
-    user_manager->UserLoggedIn(account_id, user->username_hash(),
-                               /*browser_restart=*/false,
-                               /*is_child=*/false);
-#endif
-  }
-
   // Don't handle accelerators.
   bool GetAcceleratorForCommandId(int command_id,
                                   ui::Accelerator* accelerator) const override {
     return false;
   }
+
+ protected:
+  base::test::ScopedFeatureList feature_list_;
 };
 
 class ExtensionsMenuModelTest : public AppMenuModelTest {
@@ -140,21 +127,6 @@ class ExtensionsMenuModelTest : public AppMenuModelTest {
   ~ExtensionsMenuModelTest() override = default;
 };
 
-class TestAppMenuModelCR2023 : public AppMenuModelTest {
- public:
-  TestAppMenuModelCR2023() {
-    feature_list_.InitWithFeatures({features::kTabOrganization}, {});
-  }
-
-  TestAppMenuModelCR2023(const TestAppMenuModelCR2023&) = delete;
-  TestAppMenuModelCR2023& operator=(const TestAppMenuModelCR2023&) = delete;
-
-  ~TestAppMenuModelCR2023() override = default;
-
- protected:
-  base::test::ScopedFeatureList feature_list_;
-};
-
 // Copies parts of MenuModelTest::Delegate and combines them with the
 // AppMenuModel since AppMenuModel is now a SimpleMenuModel::Delegate and
 // not derived from SimpleMenuModel.
@@ -163,16 +135,14 @@ class TestAppMenuModel : public AppMenuModel {
   TestAppMenuModel(ui::AcceleratorProvider* provider,
                    Browser* browser,
                    AppMenuIconController* app_menu_icon_controller)
-      : AppMenuModel(provider, browser, app_menu_icon_controller),
-        execute_count_(0),
-        checked_count_(0),
-        enable_count_(0) {}
+      : AppMenuModel(provider, browser, app_menu_icon_controller) {}
 
   // Testing overrides to ui::SimpleMenuModel::Delegate:
   bool IsCommandIdChecked(int command_id) const override {
     bool val = AppMenuModel::IsCommandIdChecked(command_id);
-    if (val)
+    if (val) {
       checked_count_++;
+    }
     return val;
   }
 
@@ -185,20 +155,20 @@ class TestAppMenuModel : public AppMenuModel {
     ++execute_count_;
   }
 
-  int execute_count_;
-  mutable int checked_count_;
-  mutable int enable_count_;
+  int execute_count_ = 0;
+  mutable int checked_count_ = 0;
+  mutable int enable_count_ = 0;
 };
 
 class TestLogMetricsAppMenuModel : public AppMenuModel {
  public:
   TestLogMetricsAppMenuModel(ui::AcceleratorProvider* provider,
                              Browser* browser)
-      : AppMenuModel(provider, browser), log_metrics_count_(0) {}
+      : AppMenuModel(provider, browser) {}
 
   void LogMenuAction(AppMenuAction action_id) override { log_metrics_count_++; }
 
-  int log_metrics_count_;
+  int log_metrics_count_ = 0;
 };
 
 TEST_F(AppMenuModelTest, Basics) {
@@ -209,15 +179,6 @@ TEST_F(AppMenuModelTest, Basics) {
       UpgradeDetector::UPGRADE_ANNOYANCE_LOW);
   detector->NotifyUpgrade();
   EXPECT_TRUE(detector->notify_upgrade());
-
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  // Forcibly enable Lacros Profile migration, so that IDC_LACROS_DATA_MIGRATION
-  // becomes visible. Note that profile migration is only enabled if Lacros is
-  // the only browser.
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndEnableFeature(
-      ash::standalone_browser::features::kLacrosOnly);
-#endif
 
   FakeIconDelegate fake_delegate;
   AppMenuIconController app_menu_icon_controller(browser()->profile(),
@@ -233,9 +194,6 @@ TEST_F(AppMenuModelTest, Basics) {
   // Verify that the upgrade item is visible if supported.
   EXPECT_EQ(browser_defaults::kShowUpgradeMenuItem,
             model.GetIndexOfCommandId(IDC_UPGRADE_DIALOG).has_value());
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  EXPECT_TRUE(model.GetIndexOfCommandId(IDC_LACROS_DATA_MIGRATION).has_value());
-#endif
 
   // Execute a couple of the items and make sure it gets back to our delegate.
   // We can't use CountEnabledExecutable() here because the encoding menu's
@@ -243,8 +201,9 @@ TEST_F(AppMenuModelTest, Basics) {
   // Note: the second item in the menu may be a separator if the browser
   // supports showing upgrade status in the app menu.
   size_t item_index = 1;
-  if (model.GetTypeAt(item_index) == ui::MenuModel::TYPE_SEPARATOR)
+  if (model.GetTypeAt(item_index) == ui::MenuModel::TYPE_SEPARATOR) {
     ++item_index;
+  }
   model.ActivatedAt(item_index);
   EXPECT_TRUE(model.IsEnabledAt(item_index));
   // Make sure to use the index that is not separator in all configurations.
@@ -308,7 +267,7 @@ TEST_F(AppMenuModelTest, GlobalError) {
 }
 
 #if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_CHROMEOS)
-TEST_F(TestAppMenuModelCR2023, DefaultBrowserPrompt) {
+TEST_F(AppMenuModelTest, DefaultBrowserPrompt) {
   feature_list_.Reset();
   feature_list_.InitAndEnableFeatureWithParameters(
       features::kDefaultBrowserPromptRefresh,
@@ -356,34 +315,64 @@ TEST_F(AppMenuModelTest, PerformanceItem) {
   EXPECT_TRUE(toolModel.IsEnabledAt(performance_index));
 }
 
-TEST_F(TestAppMenuModelCR2023, PerformanceItemElevated) {
+TEST_F(AppMenuModelTest, CustomizeChromeItem) {
   feature_list_.Reset();
-  feature_list_.InitWithFeatures(
-      /*enabled_features=*/{performance_manager::features::
-                                kPerformanceControlsSidePanel},
-      /*disabled_features=*/{});
+  feature_list_.InitAndEnableFeature(features::kToolbarPinning);
   AppMenuModel model(this, browser());
   model.Init();
-  ASSERT_TRUE(model.GetIndexOfCommandId(IDC_PERFORMANCE));
-  size_t performance_index = model.GetIndexOfCommandId(IDC_PERFORMANCE).value();
-  EXPECT_TRUE(model.IsEnabledAt(performance_index));
+  ToolsMenuModel tool_model(&model, browser());
+  ASSERT_TRUE(
+      tool_model.GetIndexOfCommandId(IDC_SHOW_CUSTOMIZE_CHROME_SIDE_PANEL));
+  size_t customize_chrome_index =
+      tool_model.GetIndexOfCommandId(IDC_SHOW_CUSTOMIZE_CHROME_SIDE_PANEL)
+          .value();
+  EXPECT_TRUE(tool_model.IsEnabledAt(customize_chrome_index));
 }
 
-TEST_F(TestAppMenuModelCR2023, OrganizeTabsItem) {
+TEST_F(AppMenuModelTest, CustomizeChromeLogMetrics) {
+  feature_list_.Reset();
+  feature_list_.InitAndEnableFeature(features::kToolbarPinning);
+
+  TestLogMetricsAppMenuModel model(this, browser());
+  model.Init();
+  model.ExecuteCommand(IDC_SHOW_CUSTOMIZE_CHROME_SIDE_PANEL, 0);
+  EXPECT_EQ(1, model.log_metrics_count_);
+}
+
+TEST_F(AppMenuModelTest, OrganizeTabsItem) {
+  feature_list_.Reset();
+  feature_list_.InitWithFeatures(
+      {features::kTabOrganization, features::kTabOrganizationAppMenuItem}, {});
+
   TabOrganizationUtils::GetInstance()->SetIgnoreOptGuideForTesting(true);
   AppMenuModel model(this, browser());
   model.Init();
+  ToolsMenuModel toolModel(&model, browser());
   size_t organize_tabs_index =
-      model.GetIndexOfCommandId(IDC_ORGANIZE_TABS).value();
-  EXPECT_TRUE(model.IsEnabledAt(organize_tabs_index));
+      toolModel.GetIndexOfCommandId(IDC_ORGANIZE_TABS).value();
+  EXPECT_TRUE(toolModel.IsEnabledAt(organize_tabs_index));
 }
 
-TEST_F(TestAppMenuModelCR2023, ModelHasIcons) {
+TEST_F(AppMenuModelTest, DeclutterTabsItem) {
+  feature_list_.Reset();
+  feature_list_.InitAndEnableFeature(features::kTabstripDeclutter);
+  TabOrganizationUtils::GetInstance()->SetIgnoreOptGuideForTesting(true);
+  TestLogMetricsAppMenuModel model(this, browser());
+  model.Init();
+  ToolsMenuModel toolModel(&model, browser());
+  size_t declutter_tabs_index =
+      toolModel.GetIndexOfCommandId(IDC_DECLUTTER_TABS).value();
+  EXPECT_TRUE(toolModel.IsEnabledAt(declutter_tabs_index));
+  model.ExecuteCommand(IDC_DECLUTTER_TABS, 0);
+  EXPECT_EQ(1, model.log_metrics_count_);
+}
+
+TEST_F(AppMenuModelTest, ModelHasIcons) {
   // Skip the items that are either not supposed to have an icon, or are not
   // ready to be tested. Remove items once they're ready for testing.
   static const std::vector<int> skip_commands = {
       IDC_RECENT_TABS_NO_DEVICE_TABS, IDC_ABOUT,
-      RecentTabsSubMenuModel::kDisabledRecentlyClosedHeaderCommandId,
+      RecentTabsSubMenuModel::GetDisabledRecentlyClosedHeaderCommandId(),
       IDC_EXTENSIONS_SUBMENU_VISIT_CHROME_WEB_STORE, IDC_TAKE_SCREENSHOT};
   AppMenuModel model(this, browser());
   model.Init();
@@ -426,14 +415,13 @@ TEST_F(TestAppMenuModelCR2023, ModelHasIcons) {
 
 // Profile row does not show on ChromeOS.
 #if !BUILDFLAG(IS_CHROMEOS)
-class TestAppMenuModelCR2023MetricsTest
-    : public TestAppMenuModelCR2023,
-      public testing::WithParamInterface<int> {
+class TestAppMenuModelMetricsTest : public AppMenuModelTest,
+                                    public testing::WithParamInterface<int> {
  public:
-  TestAppMenuModelCR2023MetricsTest() = default;
+  TestAppMenuModelMetricsTest() = default;
 };
 
-TEST_P(TestAppMenuModelCR2023MetricsTest, LogProfileMenuMetrics) {
+TEST_P(TestAppMenuModelMetricsTest, LogProfileMenuMetrics) {
   int command_id = GetParam();
   TestLogMetricsAppMenuModel model(this, browser());
   model.Init();
@@ -443,25 +431,24 @@ TEST_P(TestAppMenuModelCR2023MetricsTest, LogProfileMenuMetrics) {
 
 INSTANTIATE_TEST_SUITE_P(
     All,
-    TestAppMenuModelCR2023MetricsTest,
-    testing::Values(
-        IDC_MANAGE_GOOGLE_ACCOUNT,
-        IDC_CLOSE_PROFILE,
-        IDC_CUSTOMIZE_CHROME,
-        IDC_SHOW_SIGNIN_WHEN_PAUSED,
-        IDC_SHOW_SYNC_SETTINGS,
-        IDC_TURN_ON_SYNC,
-        IDC_OPEN_GUEST_PROFILE,
-        IDC_ADD_NEW_PROFILE,
-        IDC_MANAGE_CHROME_PROFILES,
-        IDC_READING_LIST_MENU_ADD_TAB,
-        IDC_READING_LIST_MENU_SHOW_UI,
-        IDC_SHOW_PASSWORD_MANAGER,
-        IDC_SHOW_PAYMENT_METHODS,
-        IDC_SHOW_ADDRESSES,
-        IDC_SHOW_SEARCH_COMPANION, AppMenuModel::kMinOtherProfileCommandId));
+    TestAppMenuModelMetricsTest,
+    testing::Values(IDC_MANAGE_GOOGLE_ACCOUNT,
+                    IDC_CLOSE_PROFILE,
+                    IDC_CUSTOMIZE_CHROME,
+                    IDC_SHOW_SIGNIN_WHEN_PAUSED,
+                    IDC_SHOW_SYNC_SETTINGS,
+                    IDC_TURN_ON_SYNC,
+                    IDC_OPEN_GUEST_PROFILE,
+                    IDC_ADD_NEW_PROFILE,
+                    IDC_MANAGE_CHROME_PROFILES,
+                    IDC_READING_LIST_MENU_ADD_TAB,
+                    IDC_READING_LIST_MENU_SHOW_UI,
+                    IDC_SHOW_PASSWORD_MANAGER,
+                    IDC_SHOW_PAYMENT_METHODS,
+                    IDC_SHOW_ADDRESSES,
+                    AppMenuModel::kMinOtherProfileCommandId));
 
-TEST_F(TestAppMenuModelCR2023, ProfileSyncOnTest) {
+TEST_F(AppMenuModelTest, ProfileSyncOnTest) {
   signin::IdentityManager* identity_manager =
       IdentityManagerFactory::GetForProfile(browser()->profile());
   signin::MakePrimaryAccountAvailable(identity_manager, "user@example.com",
@@ -535,11 +522,14 @@ TEST_F(AppMenuModelTest, DisableSettingsItem) {
 class TestAppMenuModelSafetyHubTest : public AppMenuModelTest {
  public:
   TestAppMenuModelSafetyHubTest() {
-    feature_list_.InitAndEnableFeature(features::kSafetyHub);
+    feature_list_.InitWithFeatures(
+        /*enabled_features=*/{features::kSafetyHub,
+                              features::kSafetyHubHaTSOneOffSurvey},
+        /*disabled_features=*/{});
   }
 
   void SetUp() override {
-    BrowserWithTestWindowTest::SetUp();
+    AppMenuModelTest::SetUp();
     password_store_ = CreateAndUseTestPasswordStore(profile());
 
     // Let PasswordStatusCheckService run until it fetches the latest data.
@@ -547,11 +537,28 @@ class TestAppMenuModelSafetyHubTest : public AppMenuModelTest {
         PasswordStatusCheckServiceFactory::GetForProfile(profile());
     safety_hub_test_util::UpdatePasswordCheckServiceAsync(password_service);
     EXPECT_EQ(password_service->compromised_credential_count(), 0UL);
+
+    // mock_hats_service_ should return true for CanShowAnySurvey on each test
+    // running for desktop, since hats service is called in
+    // SafetyHubMenuNotificationService ctor.
+    mock_hats_service_ = static_cast<MockHatsService*>(
+        HatsServiceFactory::GetInstance()->SetTestingFactoryAndUse(
+            profile(), base::BindRepeating(&BuildMockHatsService)));
+    EXPECT_CALL(*mock_hats_service(), CanShowAnySurvey(_))
+        .WillRepeatedly(testing::Return(true));
   }
+
+  void TearDown() override {
+    mock_hats_service_ = nullptr;
+    AppMenuModelTest::TearDown();
+  }
+
+  MockHatsService* mock_hats_service() { return mock_hats_service_; }
 
  protected:
   base::test::ScopedFeatureList feature_list_;
   scoped_refptr<password_manager::TestPasswordStore> password_store_;
+  raw_ptr<MockHatsService> mock_hats_service_;
 };
 
 TEST_F(TestAppMenuModelSafetyHubTest, SafetyHubMenuNotification) {
@@ -573,4 +580,24 @@ TEST_F(TestAppMenuModelSafetyHubTest, SafetyHubMenuNotification) {
   new_model.ActivatedAt(menu_index);
   EXPECT_TRUE(new_model.IsEnabledAt(menu_index));
   EXPECT_FALSE(new_model.GetLabelAt(menu_index).empty());
+}
+
+TEST_F(TestAppMenuModelSafetyHubTest, HaTSControlTrigger) {
+  EXPECT_CALL(*mock_hats_service(),
+              LaunchSurvey(kHatsSurveyTriggerSafetyHubOneOffExperimentControl,
+                           _, _, _, _))
+      .Times(1);
+
+  // Attempting to show the safety hub item in the app menu should trigger the
+  // control experiment.
+  AppMenuModel model(this, browser());
+  model.Init();
+
+  // Generate a menu notification that has been shown. After a notification is
+  // shown, the control survey should not be shown.
+  safety_hub_test_util::GenerateSafetyHubMenuNotification(profile());
+  SafetyHubMenuNotificationServiceFactory::GetForProfile(profile())
+      ->GetNotificationToShow();
+  AppMenuModel new_model(this, browser());
+  new_model.Init();
 }

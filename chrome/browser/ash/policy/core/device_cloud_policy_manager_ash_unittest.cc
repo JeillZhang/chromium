@@ -266,7 +266,7 @@ class DeviceCloudPolicyManagerAshTest
     }
     ShutdownManager();
 
-    manager_->OnUserManagerWillBeDestroyed(user_manager_.get());
+    manager_->OnUserManagerWillBeDestroyed();
     user_manager_.reset();
 
     manager_.reset();
@@ -449,6 +449,36 @@ TEST_F(DeviceCloudPolicyManagerAshTest, EnrolledDevice) {
             PolicyBuilder::kFakeServiceAccountIdentity);
 }
 
+TEST_F(DeviceCloudPolicyManagerAshTest, EnrolledDevicePolicyFetchSHA256) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndEnableFeature(policy::kPolicyFetchWithSha256);
+  device_policy_->SetSignatureType(em::PolicyFetchRequest::SHA256_RSA);
+  device_policy_->Build();
+  session_manager_client_.set_device_policy(device_policy_->GetBlob());
+  LockDevice();
+  // Normally this happens at signin screen profile creation. But
+  // TestingProfile doesn't do that.
+  device_settings_service_->LoadImmediately();
+  FlushDeviceSettings();
+  EXPECT_EQ(CloudPolicyStore::STATUS_OK, store_->status());
+  EXPECT_TRUE(manager_->IsInitializationComplete(POLICY_DOMAIN_CHROME));
+  VerifyPolicyPopulated();
+
+  // Trigger a policy refresh - this triggers a policy update.
+  DeviceManagementService::JobForTesting policy_job;
+  DeviceManagementService::JobConfiguration::JobType job_type;
+  EXPECT_CALL(job_creation_handler_, OnJobCreation)
+      .WillOnce(DoAll(device_management_service_.CaptureJobType(&job_type),
+                      SaveArg<0>(&policy_job)));
+  AllowUninterestingRemoteCommandFetches();
+  ConnectManager();
+  Mock::VerifyAndClearExpectations(&device_management_service_);
+  ASSERT_TRUE(policy_job.IsActive());
+  ASSERT_EQ(DeviceManagementService::JobConfiguration::TYPE_POLICY_FETCH,
+            job_type);
+  VerifyPolicyPopulated();
+}
+
 TEST_F(DeviceCloudPolicyManagerAshTest, UnmanagedDevice) {
   device_policy_->policy_data().set_state(em::PolicyData::UNMANAGED);
   device_policy_->Build();
@@ -566,7 +596,7 @@ class DeviceCloudPolicyManagerAshObserverTest
     : public DeviceCloudPolicyManagerAshTest,
       public DeviceCloudPolicyManagerAsh::Observer {
  protected:
-  DeviceCloudPolicyManagerAshObserverTest() {}
+  DeviceCloudPolicyManagerAshObserverTest() = default;
 
   void SetUp() override {
     DeviceCloudPolicyManagerAshTest::SetUp();
@@ -721,8 +751,6 @@ class DeviceCloudPolicyManagerAshEnrollmentTest
     ASSERT_TRUE(owner_settings_service);
 
     EnrollmentConfig enrollment_config;
-    enrollment_config.auth_mechanism =
-        EnrollmentConfig::AUTH_MECHANISM_ATTESTATION_PREFERRED;
     enrollment_config.mode = with_cert ? EnrollmentConfig::MODE_ATTESTATION
                                        : EnrollmentConfig::MODE_MANUAL;
     DMAuth auth =
@@ -954,15 +982,16 @@ TEST_P(DeviceCloudPolicyManagerAshEnrollmentTest, Success) {
 
 TEST_P(DeviceCloudPolicyManagerAshEnrollmentTest,
        EnabledKioskHeartbeatsViaERP) {
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndEnableFeature(chromeos::features::kKioskHeartbeatsViaERP);
-
   RunTest();
   EXPECT_FALSE(manager_->GetHeartbeatSchedulerForTesting());
 }
 
 TEST_P(DeviceCloudPolicyManagerAshEnrollmentTest,
        DisabledKioskHeartbeatsViaERP) {
+    base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndDisableFeature(
+      chromeos::features::kKioskHeartbeatsViaERP);
+
   RunTest();
   EXPECT_EQ(manager_->GetHeartbeatSchedulerForTesting()->last_heartbeat(),
             base::Time());

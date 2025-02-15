@@ -6,6 +6,8 @@ package org.jni_zero;
 
 import android.graphics.Rect;
 
+import org.jni_zero.internal.Nullable;
+
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -30,6 +32,7 @@ import java.util.Set;
  * namespace, including the native class that this object binds to.
  */
 @JNINamespace("jni_zero::tests")
+@NullMarked
 class SampleForTests {
     // Classes can store their C++ pointer counterpart as an int that is normally initialized by
     // calling out a SampleForTestsJni.get().init() function. Replace "CPPClass" with your
@@ -155,8 +158,15 @@ class SampleForTests {
 
     @CalledByNative
     @JniType("std::vector")
-    Collection<SampleForTests> listTest1(@JniType("std::vector<std::string>") List<String> items) {
+    static Collection<SampleForTests> listTest1(
+            @JniType("std::vector<std::string>") List<String> items) {
         return Collections.emptyList();
+    }
+
+    @CalledByNative
+    static @JniType("std::map<std::string, std::string>") @Nullable Map<String, String> mapTest1(
+            @JniType("std::map<std::string, std::string>") Map<String, String> arg0) {
+        return arg0;
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -187,9 +197,11 @@ class SampleForTests {
     private List<InnerStructA> mListInnerStructA = new ArrayList<InnerStructA>();
 
     @CalledByNative
-    private void addStructA(InnerStructA a) {
+    private SampleForTests.@Nullable InnerStructA addStructA(
+            SampleForTests.@Nullable InnerStructA a) {
         // Called by the native side to append another element.
         mListInnerStructA.add(a);
+        return null;
     }
 
     @CalledByNative
@@ -339,7 +351,12 @@ class SampleForTests {
         Throwable getThrowable(Throwable arg0);
 
         // Test Map.
-        Map<String, String> getMap(Map<String, String> arg0);
+        @JniType("std::map<std::string, std::string>")
+        Map<String, String> mapTest2(
+                @JniType("std::map<std::string, std::string>") Map<String, String> arg0);
+
+        // Test class under the same package
+        void classUnderSamePackageTest(SampleUnderSamePackage arg);
 
         // Similar to nativeDestroy above, this will cast nativeCPPClass into pointer of CPPClass
         // type and call its Method member function. Replace "CPPClass" with your particular class

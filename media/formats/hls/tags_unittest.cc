@@ -4,13 +4,13 @@
 
 #include "media/formats/hls/tags.h"
 
+#include <algorithm>
 #include <array>
 #include <optional>
 #include <string_view>
 #include <utility>
 
 #include "base/location.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/string_number_conversions.h"
 #include "media/base/media_serializers.h"
 #include "media/formats/hls/items.h"
@@ -57,7 +57,7 @@ void ErrorTest(std::optional<std::string_view> content,
   ASSERT_FALSE(result.has_value()) << from.ToString();
   auto error = std::move(result).error();
   EXPECT_EQ(error.code(), expected_status)
-      << "Actual Error: " << MediaSerialize(error) << "\n"
+      << "Actual Error: " << MediaSerializeForTesting(error) << "\n"
       << from.ToString();
 }
 
@@ -95,11 +95,9 @@ OkTestResult<T> OkTest(std::optional<std::string> content,
                                       SourceString::CreateForTesting(*source))
                     : TagItem::CreateEmpty(ToTagName(T::kName), 1);
   auto result = T::Parse(tag, variable_dict, sub_buffer);
-  if (!result.has_value()) {
-    CHECK(false) << from.ToString() << "\n"
-                 << MediaSerialize(std::move(result).error());
-    NOTREACHED_NORETURN();
-  }
+  CHECK(result.has_value())
+      << from.ToString() << "\n"
+      << MediaSerializeForTesting(std::move(result).error());
   return OkTestResult<T>{.tag = std::move(result).value(),
                          .source = std::move(source)};
 }
@@ -1070,11 +1068,74 @@ TEST(HlsTagsTest, ParseXSessionDataTag) {
 }
 
 TEST(HlsTagsTest, ParseXSessionKeyTag) {
-  RunTagIdenficationTest(
-      ToTagName(MultivariantPlaylistTagName::kXSessionKey),
-      "#EXT-X-SESSION-KEY:METHOD=AES-128,URI=\"https://google.com/key\"\n",
-      "METHOD=AES-128,URI=\"https://google.com/key\"");
-  // TODO(crbug.com/40057824): Implement the EXT-X-SESSION-KEY tag.
+  RunTagIdenficationTest<XSessionKeyTag>("#EXT-X-SESSION-KEY:METHOD=NONE\n",
+                                         "METHOD=NONE");
+
+  VariableDictionary dict = CreateBasicDictionary();
+  VariableDictionary::SubstitutionBuffer subs;
+
+  // Invalid method
+  ErrorTest<XSessionKeyTag>("METHOD=77", dict, subs,
+                            ParseStatusCode::kMalformedTag);
+  ErrorTest<XSessionKeyTag>("METHOD=NONE", dict, subs,
+                            ParseStatusCode::kMalformedTag);
+
+  // No IV when method is SAMPLE-AES-CTR
+  ErrorTest<XSessionKeyTag>(
+      "METHOD=SAMPLE-AES-CTR,IV=0xf4d52cf0dc02329c3ad6578744590658", dict, subs,
+      ParseStatusCode::kMalformedTag);
+
+  // Invalid IV
+  ErrorTest<XSessionKeyTag>(
+      "METHOD=AES-128,IV=0xf4d52cf0dc2329c3ad6578744590658", dict, subs,
+      ParseStatusCode::kMalformedTag);
+
+  {
+    auto result = OkTest<XSessionKeyTag>(
+        "METHOD=AES-128,URI=\"https://example.com\","
+        "IV=0xf4d52cf0dc02329c3ad6578744590658",
+        dict, subs);
+    EXPECT_EQ(result.tag.method, XKeyTagMethod::kAES128);
+    EXPECT_EQ(result.tag.uri.Str(), "https://example.com");
+    EXPECT_TRUE(result.tag.iv.has_value());
+    EXPECT_EQ(std::get<0>(result.tag.iv.value()), 0xf4d52cf0dc02329cu);
+    EXPECT_EQ(std::get<1>(result.tag.iv.value()), 0x3ad6578744590658u);
+    EXPECT_EQ(result.tag.keyformat, XKeyTagKeyFormat::kIdentity);
+    EXPECT_FALSE(result.tag.keyformat_versions.has_value());
+  }
+  {
+    auto result = OkTest<XSessionKeyTag>(
+        "METHOD=AES-128,URI=\"https://example.com\","
+        "KEYFORMAT=\"supersecretcrypto\"",
+        dict, subs);
+    EXPECT_EQ(result.tag.method, XKeyTagMethod::kAES128);
+    EXPECT_EQ(result.tag.uri.Str(), "https://example.com");
+    EXPECT_FALSE(result.tag.iv.has_value());
+    EXPECT_EQ(result.tag.keyformat, XKeyTagKeyFormat::kUnsupported);
+    EXPECT_FALSE(result.tag.keyformat_versions.has_value());
+  }
+  {
+    auto result = OkTest<XSessionKeyTag>(
+        "METHOD=SAMPLE-AES,URI=\"https://example.com\","
+        "KEYFORMAT=\"supersecretcrypto\"",
+        dict, subs);
+    EXPECT_EQ(result.tag.method, XKeyTagMethod::kSampleAES);
+    EXPECT_EQ(result.tag.uri.Str(), "https://example.com");
+    EXPECT_FALSE(result.tag.iv.has_value());
+    EXPECT_EQ(result.tag.keyformat, XKeyTagKeyFormat::kUnsupported);
+    EXPECT_FALSE(result.tag.keyformat_versions.has_value());
+  }
+  {
+    auto result = OkTest<XSessionKeyTag>(
+        "METHOD=SAMPLE-AES-CTR,URI=\"https://example.com\","
+        "KEYFORMAT=\"supersecretcrypto\"",
+        dict, subs);
+    EXPECT_EQ(result.tag.method, XKeyTagMethod::kSampleAESCTR);
+    EXPECT_EQ(result.tag.uri.Str(), "https://example.com");
+    EXPECT_FALSE(result.tag.iv.has_value());
+    EXPECT_EQ(result.tag.keyformat, XKeyTagKeyFormat::kUnsupported);
+    EXPECT_FALSE(result.tag.keyformat_versions.has_value());
+  }
 }
 
 TEST(HlsTagsTest, ParseXStreamInfTag) {
@@ -1093,7 +1154,7 @@ TEST(HlsTagsTest, ParseXStreamInfTag) {
   EXPECT_DOUBLE_EQ(result.tag.score.value(), 12.2);
   ASSERT_TRUE(result.tag.codecs.has_value());
   EXPECT_TRUE(
-      base::ranges::equal(result.tag.codecs.value(), std::array{"foo", "bar"}));
+      std::ranges::equal(result.tag.codecs.value(), std::array{"foo", "bar"}));
   EXPECT_EQ(result.tag.resolution, std::nullopt);
   EXPECT_EQ(result.tag.frame_rate, std::nullopt);
 
@@ -1171,7 +1232,7 @@ TEST(HlsTagsTest, ParseXStreamInfTag) {
   EXPECT_EQ(result.tag.score, std::nullopt);
   ASSERT_TRUE(result.tag.codecs.has_value());
   EXPECT_TRUE(
-      base::ranges::equal(result.tag.codecs.value(), std::array{"bar", "baz"}));
+      std::ranges::equal(result.tag.codecs.value(), std::array{"bar", "baz"}));
   EXPECT_EQ(result.tag.resolution, std::nullopt);
 
   // "RESOLUTION" must be a valid decimal-resolution
@@ -1338,9 +1399,114 @@ TEST(HlsTagsTest, ParseXIFramesOnlyTag) {
 }
 
 TEST(HlsTagsTest, ParseXKeyTag) {
-  RunTagIdenficationTest(ToTagName(MediaPlaylistTagName::kXKey),
-                         "#EXT-X-KEY:METHOD=NONE\n", "METHOD=NONE");
-  // TODO(crbug.com/40057824): Implement the EXT-X-KEY tag.
+  RunTagIdenficationTest<XKeyTag>("#EXT-X-KEY:METHOD=NONE\n", "METHOD=NONE");
+
+  VariableDictionary dict = CreateBasicDictionary();
+  VariableDictionary::SubstitutionBuffer subs;
+
+  // Invalid method
+  ErrorTest<XKeyTag>("METHOD=77", dict, subs, ParseStatusCode::kMalformedTag);
+
+  // If method is NONE, other attributes MUST NOT be present.
+  ErrorTest<XKeyTag>("METHOD=NONE,URI=\"https://example.com\"", dict, subs,
+                     ParseStatusCode::kMalformedTag);
+  ErrorTest<XKeyTag>("METHOD=NONE,IV=0xf4d52cf0dc02329c3ad6578744590658", dict,
+                     subs, ParseStatusCode::kMalformedTag);
+  ErrorTest<XKeyTag>("METHOD=NONE,KEYFORMAT=identity", dict, subs,
+                     ParseStatusCode::kMalformedTag);
+  ErrorTest<XKeyTag>("METHOD=NONE,KEYFORMATVERSIONS=1/2/3", dict, subs,
+                     ParseStatusCode::kMalformedTag);
+
+  // No IV when method is SAMPLE-AES-CTR
+  ErrorTest<XKeyTag>(
+      "METHOD=SAMPLE-AES-CTR,IV=0xf4d52cf0dc02329c3ad6578744590658", dict, subs,
+      ParseStatusCode::kMalformedTag);
+
+  // Invalid IV
+  ErrorTest<XKeyTag>("METHOD=AES-128,IV=0xf4d52cf0dc2329c3ad6578744590658",
+                     dict, subs, ParseStatusCode::kMalformedTag);
+
+  // Not allowed certain methods with clearkey or widevine
+  ErrorTest<XKeyTag>(
+      "METHOD=AES-128,FORMAT=\"org.w3.clearkey\",IV="
+      "0xf4d52cf0dc02329c3ad6578744590658",
+      dict, subs, ParseStatusCode::kMalformedTag);
+  // Not allowed certain methods with clearkey or widevine
+  ErrorTest<XKeyTag>(
+      "METHOD=AES-256,FORMAT=\"org.w3.clearkey\",IV="
+      "0xf4d52cf0dc02329c3ad6578744590658",
+      dict, subs, ParseStatusCode::kMalformedTag);
+
+  {
+    auto result = OkTest<XKeyTag>("METHOD=NONE", dict, subs);
+    EXPECT_EQ(result.tag.method, XKeyTagMethod::kNone);
+    EXPECT_FALSE(result.tag.uri.has_value());
+    EXPECT_FALSE(result.tag.iv.has_value());
+    EXPECT_EQ(result.tag.keyformat, XKeyTagKeyFormat::kIdentity);
+    EXPECT_FALSE(result.tag.keyformat_versions.has_value());
+  }
+  {
+    auto result = OkTest<XKeyTag>(
+        "METHOD=AES-128,URI=\"https://example.com\","
+        "IV=0xf4d52cf0dc02329c3ad6578744590658",
+        dict, subs);
+    EXPECT_EQ(result.tag.method, XKeyTagMethod::kAES128);
+    EXPECT_TRUE(result.tag.uri.has_value());
+    EXPECT_EQ(result.tag.uri.value().Str(), "https://example.com");
+    EXPECT_TRUE(result.tag.iv.has_value());
+    EXPECT_EQ(std::get<0>(result.tag.iv.value()), 0xf4d52cf0dc02329cu);
+    EXPECT_EQ(std::get<1>(result.tag.iv.value()), 0x3ad6578744590658u);
+    EXPECT_EQ(result.tag.keyformat, XKeyTagKeyFormat::kIdentity);
+    EXPECT_FALSE(result.tag.keyformat_versions.has_value());
+  }
+  {
+    auto result = OkTest<XKeyTag>(
+        "METHOD=AES-128,URI=\"https://example.com\","
+        "KEYFORMAT=\"supersecretcrypto\"",
+        dict, subs);
+    EXPECT_EQ(result.tag.method, XKeyTagMethod::kAES128);
+    EXPECT_TRUE(result.tag.uri.has_value());
+    EXPECT_EQ(result.tag.uri.value().Str(), "https://example.com");
+    EXPECT_FALSE(result.tag.iv.has_value());
+    EXPECT_EQ(result.tag.keyformat, XKeyTagKeyFormat::kUnsupported);
+    EXPECT_FALSE(result.tag.keyformat_versions.has_value());
+  }
+  {
+    auto result = OkTest<XKeyTag>(
+        "METHOD=SAMPLE-AES,URI=\"https://example.com\","
+        "KEYFORMAT=\"supersecretcrypto\"",
+        dict, subs);
+    EXPECT_EQ(result.tag.method, XKeyTagMethod::kSampleAES);
+    EXPECT_TRUE(result.tag.uri.has_value());
+    EXPECT_EQ(result.tag.uri.value().Str(), "https://example.com");
+    EXPECT_FALSE(result.tag.iv.has_value());
+    EXPECT_EQ(result.tag.keyformat, XKeyTagKeyFormat::kUnsupported);
+    EXPECT_FALSE(result.tag.keyformat_versions.has_value());
+  }
+  {
+    auto result = OkTest<XKeyTag>(
+        "METHOD=SAMPLE-AES-CTR,URI=\"https://example.com\","
+        "KEYFORMAT=\"supersecretcrypto\"",
+        dict, subs);
+    EXPECT_EQ(result.tag.method, XKeyTagMethod::kSampleAESCTR);
+    EXPECT_TRUE(result.tag.uri.has_value());
+    EXPECT_EQ(result.tag.uri.value().Str(), "https://example.com");
+    EXPECT_FALSE(result.tag.iv.has_value());
+    EXPECT_EQ(result.tag.keyformat, XKeyTagKeyFormat::kUnsupported);
+    EXPECT_FALSE(result.tag.keyformat_versions.has_value());
+  }
+  {
+    auto result = OkTest<XKeyTag>(
+        "METHOD=SAMPLE-AES-CTR,URI=\"https://example.com\","
+        "KEYFORMAT=\"org.w3.clearkey\"",
+        dict, subs);
+    EXPECT_EQ(result.tag.method, XKeyTagMethod::kSampleAESCTR);
+    EXPECT_TRUE(result.tag.uri.has_value());
+    EXPECT_EQ(result.tag.uri.value().Str(), "https://example.com");
+    EXPECT_FALSE(result.tag.iv.has_value());
+    EXPECT_EQ(result.tag.keyformat, XKeyTagKeyFormat::kClearKey);
+    EXPECT_FALSE(result.tag.keyformat_versions.has_value());
+  }
 }
 
 TEST(HlsTagsTest, ParseXMapTag) {

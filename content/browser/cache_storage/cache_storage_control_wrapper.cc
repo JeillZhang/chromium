@@ -65,6 +65,9 @@ void CacheStorageControlWrapper::AddReceiver(
     const network::CrossOriginEmbedderPolicy& cross_origin_embedder_policy,
     mojo::PendingRemote<network::mojom::CrossOriginEmbedderPolicyReporter>
         coep_reporter_remote,
+    const network::DocumentIsolationPolicy& document_isolation_policy,
+    mojo::PendingRemote<network::mojom::DocumentIsolationPolicyReporter>
+        dip_reporter_remote,
     const storage::BucketLocator& bucket,
     storage::mojom::CacheStorageOwner owner,
     mojo::PendingReceiver<blink::mojom::CacheStorage> receiver) {
@@ -72,9 +75,10 @@ void CacheStorageControlWrapper::AddReceiver(
 
   if (storage_policy_observer_)
     storage_policy_observer_->StartTrackingOrigin(bucket.storage_key.origin());
-  cache_storage_control_->AddReceiver(cross_origin_embedder_policy,
-                                      std::move(coep_reporter_remote), bucket,
-                                      owner, std::move(receiver));
+  cache_storage_control_->AddReceiver(
+      cross_origin_embedder_policy, std::move(coep_reporter_remote),
+      document_isolation_policy, std::move(dip_reporter_remote), bucket, owner,
+      std::move(receiver));
 }
 
 void CacheStorageControlWrapper::AddObserver(

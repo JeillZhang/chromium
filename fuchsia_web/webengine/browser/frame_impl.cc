@@ -37,6 +37,7 @@
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/global_routing_id.h"
 #include "content/public/browser/host_zoom_map.h"
 #include "content/public/browser/media_session.h"
 #include "content/public/browser/message_port_provider.h"
@@ -318,7 +319,6 @@ class AudioStreamBrokerFactory final
       const std::string& device_id,
       const media::AudioParameters& params,
       uint32_t shared_memory_count,
-      media::UserInputMonitorBase* user_input_monitor,
       bool enable_agc,
       media::mojom::AudioProcessingConfigPtr processing_config,
       content::AudioStreamBroker::DeleterCallback deleter,
@@ -326,9 +326,8 @@ class AudioStreamBrokerFactory final
           renderer_factory_client) final {
     return base_factory_->CreateAudioInputStreamBroker(
         render_process_id, render_frame_id, device_id, params,
-        shared_memory_count, user_input_monitor, enable_agc,
-        std::move(processing_config), std::move(deleter),
-        std::move(renderer_factory_client));
+        shared_memory_count, enable_agc, std::move(processing_config),
+        std::move(deleter), std::move(renderer_factory_client));
   }
 
   std::unique_ptr<content::AudioStreamBroker> CreateAudioLoopbackStreamBroker(
@@ -349,6 +348,7 @@ class AudioStreamBrokerFactory final
   std::unique_ptr<content::AudioStreamBroker> CreateAudioOutputStreamBroker(
       int render_process_id,
       int render_frame_id,
+      const content::GlobalRenderFrameHostToken& main_frame_token,
       int stream_id,
       const std::string& output_device_id,
       const media::AudioParameters& params,
@@ -364,8 +364,9 @@ class AudioStreamBrokerFactory final
           GetEffectFlagsForRenderUsage(output_usage_.value()));
     }
     return base_factory_->CreateAudioOutputStreamBroker(
-        render_process_id, render_frame_id, stream_id, output_device_id,
-        params_with_effects, group_id, std::move(deleter), std::move(client));
+        render_process_id, render_frame_id, main_frame_token, stream_id,
+        output_device_id, params_with_effects, group_id, std::move(deleter),
+        std::move(client));
   }
 
  private:
@@ -595,7 +596,7 @@ bool FrameImpl::IsWebContentsCreationOverridden(
   return false;
 }
 
-void FrameImpl::AddNewContents(
+content::WebContents* FrameImpl::AddNewContents(
     content::WebContents* source,
     std::unique_ptr<content::WebContents> new_contents,
     const GURL& target_url,
@@ -615,7 +616,7 @@ void FrameImpl::AddNewContents(
       if (url_request_rewrite_rules_manager_.GetCachedRules()) {
         // There is no support for URL request rules rewriting with popups.
         *was_blocked = true;
-        return;
+        return nullptr;
       }
 
       auto* popup_creation_info =
@@ -645,7 +646,7 @@ void FrameImpl::AddNewContents(
       pending_popups_.emplace_back(popup_frame, std::move(frame_handle),
                                    std::move(popup_frame_creation_info));
       MaybeSendPopup();
-      return;
+      return nullptr;
     }
 
     // These kinds of windows don't produce Frames.
@@ -658,7 +659,7 @@ void FrameImpl::AddNewContents(
     case WindowOpenDisposition::UNKNOWN:
       NOTIMPLEMENTED() << "Dropped new web contents (disposition: "
                        << static_cast<int>(disposition) << ")";
-      return;
+      return nullptr;
   }
 }
 
@@ -798,7 +799,7 @@ void FrameImpl::UpdateRenderFrameZoomLevel(
       content::HostZoomMap::GetForWebContents(web_contents_.get());
   host_zoom_map->SetTemporaryZoomLevel(
       render_frame_host->GetGlobalId(),
-      blink::PageZoomFactorToZoomLevel(page_scale));
+      blink::ZoomFactorToZoomLevel(page_scale));
 }
 
 void FrameImpl::ConnectToAccessibilityBridge() {
@@ -1532,8 +1533,7 @@ bool FrameImpl::CheckMediaAccessPermission(
       permission = blink::PermissionType::VIDEO_CAPTURE;
       break;
     default:
-      NOTREACHED_IN_MIGRATION();
-      return false;
+      NOTREACHED();
   }
 
   // TODO(crbug.com/40223767): Remove `security_origin`.

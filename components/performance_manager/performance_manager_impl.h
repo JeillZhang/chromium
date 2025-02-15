@@ -47,12 +47,13 @@ struct BrowserProcessNodeTag;
 // manager interfaces.
 class PerformanceManagerImpl : public PerformanceManager {
  public:
-  using FrameNodeCreationCallback = base::OnceCallback<void(FrameNodeImpl*)>;
-
   PerformanceManagerImpl(const PerformanceManagerImpl&) = delete;
   PerformanceManagerImpl& operator=(const PerformanceManagerImpl&) = delete;
 
   ~PerformanceManagerImpl() override;
+
+  // Same as GetGraph(), but returns a GraphImpl*.
+  static GraphImpl* GetGraphImpl();
 
   // Posts a callback that will run on the PM sequence. Valid to call from any
   // sequence.
@@ -110,17 +111,14 @@ class PerformanceManagerImpl : public PerformanceManager {
       int render_frame_id,
       const blink::LocalFrameToken& frame_token,
       content::BrowsingInstanceId browsing_instance_id,
-      content::SiteInstanceId site_instance_id,
-      bool is_current,
-      FrameNodeCreationCallback creation_callback =
-          FrameNodeCreationCallback());
+      content::SiteInstanceGroupId site_instance_group_id,
+      bool is_current);
   static std::unique_ptr<PageNodeImpl> CreatePageNode(
       base::WeakPtr<content::WebContents> web_contents,
       const std::string& browser_context_id,
       const GURL& visible_url,
       PagePropertyFlags initial_properties,
-      base::TimeTicks visibility_change_time,
-      PageNode::PageState page_state);
+      base::TimeTicks visibility_change_time);
   static std::unique_ptr<ProcessNodeImpl> CreateProcessNode(
       BrowserProcessNodeTag tag);
   static std::unique_ptr<ProcessNodeImpl> CreateProcessNode(
@@ -170,9 +168,7 @@ class PerformanceManagerImpl : public PerformanceManager {
   static PerformanceManagerImpl* GetInstance();
 
   template <typename NodeType, typename... Args>
-  static std::unique_ptr<NodeType> CreateNodeImpl(
-      base::OnceCallback<void(NodeType*)> creation_callback,
-      Args&&... constructor_args);
+  static std::unique_ptr<NodeType> CreateNodeImpl(Args&&... constructor_args);
 
   // Helper functions that removes a node/vector of nodes from the graph on the
   // PM sequence and deletes them.

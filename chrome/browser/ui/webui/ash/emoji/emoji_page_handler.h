@@ -9,7 +9,6 @@
 #include "base/time/time.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/webui/ash/emoji/emoji_picker.mojom.h"
-#include "chrome/browser/ui/webui/ash/emoji/gif_tenor_api_fetcher.h"
 #include "content/public/browser/web_ui.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/receiver.h"
@@ -51,8 +50,9 @@ class EmojiPageHandler : public emoji_picker::mojom::PageHandler {
   void OnUiFullyLoaded() override;
   void GetInitialCategory(GetInitialCategoryCallback callback) override;
   void GetInitialQuery(GetInitialQueryCallback callback) override;
-  void UpdateHistoryInPrefs(emoji_picker::mojom::Category category,
-                            const std::vector<std::string>& history) override;
+  void UpdateHistoryInPrefs(
+      emoji_picker::mojom::Category category,
+      std::vector<emoji_picker::mojom::HistoryItemPtr> history) override;
   void UpdatePreferredVariantsInPrefs(
       std::vector<emoji_picker::mojom::EmojiVariantPtr> preferred_variants)
       override;
@@ -67,7 +67,6 @@ class EmojiPageHandler : public emoji_picker::mojom::PageHandler {
   bool gif_support_enabled_;
   bool incognito_mode_;
   bool no_text_field_;
-  GifTenorApiFetcher gif_tenor_api_fetcher_;
   scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory_;
   emoji_picker::mojom::Category initial_category_;
   std::string initial_query_;

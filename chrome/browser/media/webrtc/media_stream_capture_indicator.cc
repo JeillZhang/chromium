@@ -45,7 +45,7 @@
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/common/extensions/extension_constants.h"
-#include "extensions/browser/extension_registry.h"
+#include "extensions/browser/extension_registry.h"  // nogncheck
 #include "extensions/common/extension.h"
 #endif
 
@@ -127,7 +127,7 @@ ObserverMethod GetObserverMethodToCall(const blink::MediaStreamDevice& device) {
 
     case blink::mojom::MediaStreamType::NO_SERVICE:
     case blink::mojom::MediaStreamType::NUM_MEDIA_TYPES:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }
 
@@ -347,13 +347,9 @@ void MediaStreamCaptureIndicator::WebContentsDeviceUsage::AddDevices(
     user_media_stop_callbacks_[stop_callback_id] = std::move(stop_callback);
   }
 
-  // TODO(crbug.com/40071631): Don't turn on this until related bugs are fixed.
-  // This may record the same stop_callback twice and lead to a crash if
-  // called later on.
-  // if (type == MediaType::kDisplayMedia) {
-  //     display_media_stop_callbacks_[stop_callback_id] =
-  //     std::move(stop_callback);
-  //   }
+  if (type == MediaType::kDisplayMedia) {
+    display_media_stop_callbacks_[stop_callback_id] = std::move(stop_callback);
+  }
 
   if (web_contents()) {
     web_contents()->NotifyNavigationStateChanged(content::INVALIDATE_TYPE_TAB);
@@ -441,7 +437,7 @@ int& MediaStreamCaptureIndicator::WebContentsDeviceUsage::GetStreamCount(
 
     case blink::mojom::MediaStreamType::NO_SERVICE:
     case blink::mojom::MediaStreamType::NUM_MEDIA_TYPES:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }
 
@@ -679,8 +675,10 @@ void MediaStreamCaptureIndicator::MaybeDestroyStatusTrayIcon() {
 
   StatusTray* status_tray = g_browser_process->status_tray();
   if (status_tray != nullptr) {
-    status_tray->RemoveStatusIcon(status_icon_);
+    std::unique_ptr<StatusIcon> removed_icon =
+        status_tray->RemoveStatusIcon(status_icon_);
     status_icon_ = nullptr;
+    removed_icon.reset();
   }
 }
 
@@ -742,7 +740,7 @@ void MediaStreamCaptureIndicator::GetStatusTrayIconInfo(
     gfx::ImageSkia* image,
     std::u16string* tool_tip) {
 #if BUILDFLAG(IS_ANDROID)
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 #else   // !BUILDFLAG(IS_ANDROID)
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   DCHECK(audio || video);

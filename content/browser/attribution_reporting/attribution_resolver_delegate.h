@@ -7,6 +7,7 @@
 
 #include <stdint.h>
 
+#include <optional>
 #include <vector>
 
 #include "base/sequence_checker.h"
@@ -19,22 +20,17 @@
 #include "content/browser/attribution_reporting/attribution_config.h"
 #include "content/browser/attribution_reporting/attribution_reporting.mojom-forward.h"
 #include "content/common/content_export.h"
-#include "third_party/abseil-cpp/absl/numeric/int128.h"
 
 namespace attribution_reporting {
+class AttributionScopesData;
 class EventLevelEpsilon;
 class EventReportWindows;
-class MaxEventLevelReports;
 class TriggerSpecs;
 }  // namespace attribution_reporting
 
 namespace base {
 class Uuid;
 }  // namespace base
-
-namespace network {
-class TriggerVerification;
-}  // namespace network
 
 namespace content {
 
@@ -98,14 +94,6 @@ class CONTENT_EXPORT AttributionResolverDelegate {
   // Returns the rate limits for capping contributions per window.
   const AttributionConfig::RateLimitConfig& GetRateLimits() const;
 
-  // Returns the max number of info gain in bits for a source given its
-  // SourceType.
-  double GetMaxChannelCapacity(attribution_reporting::mojom::SourceType) const;
-
-  // Returns the max number of report states allowed for any source
-  // registration.
-  absl::uint128 GetMaxTriggerStateCardinality() const;
-
   // Returns the maximum frequency at which to delete expired sources.
   // Must be positive.
   virtual base::TimeDelta GetDeleteExpiredSourcesFrequency() const = 0;
@@ -113,6 +101,10 @@ class CONTENT_EXPORT AttributionResolverDelegate {
   // Returns the maximum frequency at which to delete expired rate limits.
   // Must be positive.
   virtual base::TimeDelta GetDeleteExpiredRateLimitsFrequency() const = 0;
+
+  // Returns the maximum frequency at which to delete expired OS registrations.
+  // Must be positive.
+  virtual base::TimeDelta GetDeleteExpiredOsRegistrationsFrequency() const = 0;
 
   // Returns a new report ID.
   virtual base::Uuid NewReportID() const = 0;
@@ -131,20 +123,6 @@ class CONTENT_EXPORT AttributionResolverDelegate {
   // ordering on their conversion metadata bits.
   virtual void ShuffleReports(std::vector<AttributionReport>& reports) = 0;
 
-  // Shuffles trigger verifications to provide plausible deniability on the
-  // ordering and use of verification tokens.
-  virtual void ShuffleTriggerVerifications(
-      std::vector<network::TriggerVerification>& verifications) = 0;
-
-  // Returns the rate used to determine whether to randomize the response to a
-  // source with the given trigger specs, as implemented by
-  // `GetRandomizedResponse()`. Must be in the range [0, 1] and remain constant
-  // for the lifetime of the delegate for calls with identical inputs.
-  virtual double GetRandomizedResponseRate(
-      const attribution_reporting::TriggerSpecs&,
-      attribution_reporting::MaxEventLevelReports,
-      attribution_reporting::EventLevelEpsilon) const = 0;
-
   using GetRandomizedResponseResult =
       base::expected<attribution_reporting::RandomizedResponseData,
                      attribution_reporting::RandomizedResponseError>;
@@ -155,8 +133,8 @@ class CONTENT_EXPORT AttributionResolverDelegate {
   virtual GetRandomizedResponseResult GetRandomizedResponse(
       attribution_reporting::mojom::SourceType,
       const attribution_reporting::TriggerSpecs&,
-      attribution_reporting::MaxEventLevelReports,
-      attribution_reporting::EventLevelEpsilon) = 0;
+      attribution_reporting::EventLevelEpsilon,
+      const std::optional<attribution_reporting::AttributionScopesData>&) = 0;
 
   int GetMaxAggregatableReportsPerSource() const;
 
@@ -168,6 +146,11 @@ class CONTENT_EXPORT AttributionResolverDelegate {
   virtual bool GenerateNullAggregatableReportForLookbackDay(
       int lookback_day,
       attribution_reporting::mojom::SourceRegistrationTimeConfig) const = 0;
+
+  const AttributionConfig& config() const {
+    DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+    return config_;
+  }
 
  protected:
   AttributionConfig config_ GUARDED_BY_CONTEXT(sequence_checker_);

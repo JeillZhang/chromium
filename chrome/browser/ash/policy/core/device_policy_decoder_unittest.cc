@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "base/functional/bind.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
 #include "base/values.h"
@@ -32,6 +33,11 @@ namespace policy {
 namespace {
 
 constexpr char kInvalidJson[] = R"({"foo": "bar")";
+
+// Prefix of the invalid-JSON error. The remainder of the error depends on which
+// specific JSON parser is used.
+constexpr char16_t kInvalidJsonParsingErrorPrefix[] =
+    u"Policy parsing error: Invalid JSON string:";
 
 constexpr char kInvalidPolicyName[] = "invalid-policy-name";
 
@@ -87,6 +93,29 @@ constexpr char kValidDeviceWeeklyScheduledSuspendList[] = R"([
         "time": 25200000
       }
     }
+])";
+
+constexpr char kValidDeviceRestrictionScheduleJson[] = R"([
+  {
+    "start": {
+        "day_of_week": "WEDNESDAY",
+        "milliseconds_since_midnight": 43200000
+    },
+    "end": {
+        "day_of_week": "WEDNESDAY",
+        "milliseconds_since_midnight": 75600000
+    }
+  },
+  {
+    "start": {
+        "day_of_week": "FRIDAY",
+        "milliseconds_since_midnight": 64800000
+    },
+    "end": {
+        "day_of_week": "MONDAY",
+        "milliseconds_since_midnight": 21600000
+    }
+  }
 ])";
 
 }  // namespace
@@ -764,8 +793,9 @@ TEST_F(DevicePolicyDecoderTest, DeviceLoginScreenTouchVirtualKeyboardPolicy) {
   device_policy.mutable_deviceloginscreentouchvirtualkeyboardenabled()
       ->set_value(true);
 
-  DecodeDevicePolicyTestHelper(device_policy, key::kTouchVirtualKeyboardEnabled,
-                               base::Value(true));
+  DecodeDevicePolicyTestHelper(
+      device_policy, key::kDeviceLoginScreenTouchVirtualKeyboardEnabled,
+      base::Value(true));
 }
 
 TEST_F(DevicePolicyDecoderTest, DeviceExtendedAutoUpdateEnabled) {
@@ -860,4 +890,76 @@ TEST_F(DevicePolicyDecoderTest, DeviceAllowEnterpriseRemoteAccessConnections) {
       std::move(value));
 }
 
+TEST_F(DevicePolicyDecoderTest, DevicePostQuantumKeyAgreementEnabled) {
+  em::ChromeDeviceSettingsProto device_policy;
+
+  DecodeUnsetDevicePolicyTestHelper(device_policy,
+                                    key::kDevicePostQuantumKeyAgreementEnabled);
+
+  base::Value devicepostquantumkeyagreementenabled(true);
+  device_policy.mutable_devicepostquantumkeyagreementenabled()->set_value(
+      devicepostquantumkeyagreementenabled.GetBool());
+
+  DecodeDevicePolicyTestHelper(device_policy,
+                               key::kDevicePostQuantumKeyAgreementEnabled,
+                               std::move(devicepostquantumkeyagreementenabled));
+}
+
+TEST_F(DevicePolicyDecoderTest, DecodeDeviceRestrictionSchedule) {
+  em::ChromeDeviceSettingsProto device_policy;
+
+  DecodeUnsetDevicePolicyTestHelper(device_policy,
+                                    key::kDeviceRestrictionSchedule);
+
+  auto decoding_result = DecodeJsonStringAndNormalize(
+      kValidDeviceRestrictionScheduleJson, key::kDeviceRestrictionSchedule);
+  ASSERT_TRUE(decoding_result.has_value());
+  base::Value device_restriction_schedule(
+      decoding_result->decoded_json.Clone());
+
+  device_policy.mutable_devicerestrictionschedule()->set_value(
+      kValidDeviceRestrictionScheduleJson);
+
+  DecodeDevicePolicyTestHelper(device_policy, key::kDeviceRestrictionSchedule,
+                               std::move(device_restriction_schedule));
+}
+
+TEST_F(DevicePolicyDecoderTest, DecodeDeviceRestrictionScheduleError) {
+  em::ChromeDeviceSettingsProto device_policy;
+  device_policy.mutable_devicerestrictionschedule()->set_value(kInvalidJson);
+
+  PolicyBundle bundle;
+  PolicyMap& policies = bundle.Get(PolicyNamespace(POLICY_DOMAIN_CHROME, ""));
+
+  base::WeakPtr<ExternalDataManager> external_data_manager;
+  DecodeDevicePolicy(device_policy, external_data_manager, &policies);
+
+  const PolicyMap::Entry* entry = policies.Get(key::kDeviceRestrictionSchedule);
+  ASSERT_NE(entry, nullptr);
+  EXPECT_TRUE(entry->HasMessage(PolicyMap::MessageType::kError));
+  EXPECT_TRUE(base::StartsWith(
+      entry->GetLocalizedMessages(PolicyMap::MessageType::kError,
+                                  PolicyMap::Entry::L10nLookupFunction()),
+      kInvalidJsonParsingErrorPrefix));
+}
+
+TEST_F(DevicePolicyDecoderTest, DevicePowerBatteryChargingOptimization) {
+  em::ChromeDeviceSettingsProto device_policy;
+
+  // Test that the policy is not set by default.
+  DecodeUnsetDevicePolicyTestHelper(
+      device_policy, key::kDevicePowerBatteryChargingOptimization);
+
+  // Test with a valid value (e.g., Adaptive charging, value = 2).
+  // The specific value doesn't matter, as we're testing the decoding logic.
+  // Test with Adaptive charging (value = 2)
+  int64_t charging_optimization_value = 2;
+  device_policy.mutable_devicepowerbatterychargingoptimization()->set_value(
+      charging_optimization_value);
+
+  base::Value expected_value(static_cast<int>(charging_optimization_value));
+  DecodeDevicePolicyTestHelper(device_policy,
+                               key::kDevicePowerBatteryChargingOptimization,
+                               std::move(expected_value));
+}
 }  // namespace policy

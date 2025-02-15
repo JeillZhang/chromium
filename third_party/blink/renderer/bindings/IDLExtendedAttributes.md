@@ -464,16 +464,10 @@ Standard: [SecureContext](https://webidl.spec.whatwg.org/#SecureContext)
 
 Summary: Interfaces and interface members with a `SecureContext` attribute are exposed only inside ["Secure Contexts"](https://w3c.github.io/webappsec-secure-contexts/).
 
-**Non-standard:** Blink supports adding a value to the `SecureContext` attribute, which specifies a runtime-enabled flag used to control whether or not the restriction applies. This is intended for use when deprecating legacy APIs, and should not be used for new APIs.
-
-For example: we intend to lock `window.applicationCache` to secure contexts, but need to do so in a way that allows some subset of users (enterprises) to opt out. We can do so by defining a `RestrictAppCacheToSecureContexts` runtime flag, and specifying it in IDL as follows:
-
 ```webidl
-interface Window {
-  ...
-  [SecureContext=RestrictAppCacheToSecureContexts] readonly attribute ApplicationCache applicationCache;
-  ...
-}
+interface PointerEvent : MouseEvent {
+    [SecureContext] sequence<PointerEvent> getCoalescedEvents();
+};
 ```
 
 ### [Serializable]
@@ -713,7 +707,6 @@ Both methods and attribute/constant getters annotated with this attribute are wi
 ```webidl
 [HighEntropy] attribute Node interestingAttribute;
 [HighEntropy] Node getInterestingNode();
-[HighEntropy] const INTERESTING_CONSTANT = 1;
 ```
 
 Attributes and methods labeled with `[HighEntropy=Direct]` are simple surfaces which can be expressed as a sequence of bytes without any need for additional parsing logic.
@@ -761,7 +754,7 @@ Summary: Measures usage of a specific feature via `UseCounter`.
 
 In order to measure usage of specific features, Chrome submits anonymous statistics through the Histogram recording system for users who opt-in to sharing usage statistics. This extended attribute hooks up a specific feature to this measurement system.
 
-Usage: `[Measure]` can be specified on interfaces, methods, attributes, and constants.
+Usage: `[Measure]` can be specified on interfaces, methods, and attributes.
 
 (_deprecated_) When specified on an interface usage of the constructor will be measured. This behavior could be changed in the future. Specify `[Measure]` on constructor operations instead.
 
@@ -770,7 +763,7 @@ The generated feature name must be added to `WebFeature` (in [blink/public/mojom
 ```webidl
 [Measure] attribute Node interestingAttribute;
 [Measure] Node getInterestingNode();
-[Measure] const INTERESTING_CONSTANT = 1;
+// Note that Measure is no longer supported on constants.
 ```
 
 ### [MeasureAs]
@@ -778,16 +771,19 @@ The generated feature name must be added to `WebFeature` (in [blink/public/mojom
 Summary: Like `[Measure]`, but the feature name is provided as the extended attribute value.
 This is similar to the standard `[DeprecateAs]` extended attribute, but does not display a deprecation warning.
 
-Usage: `[MeasureAs]` can be specified on interfaces, methods, attributes, and constants.
+Usage: `[MeasureAs]` can be specified on interfaces, methods, and attributes.
 
 (_deprecated_) Specifying `[MeasureAs]` on interfaces is deprecated. Specify `[MeasureAs]` on constructor operations instead.
 
 The value must match one of the enumeration values in `WebFeature` (in [blink/public/mojom/use_counter/metrics/web_feature.mojom](https://source.chromium.org/chromium/chromium/src/+/master:third_party/blink/public/mojom/use_counter/metrics/web_feature.mojom)).
 
+For WebDX features, the value must start with `WebDXFeature::` and must match one of the enumeration values in `WebDXFeature` (in [blink/public/mojom/use_counter/metrics/webdx_feature.mojom](https://source.chromium.org/chromium/chromium/src/+/master:third_party/blink/public/mojom/use_counter/metrics/webdx_feature.mojom)).
+
 ```webidl
 [MeasureAs=AttributeWeAreInterestedIn] attribute Node interestingAttribute;
 [MeasureAs=MethodsAreInterestingToo] Node getInterestingNode();
-[MeasureAs=EvenSomeConstantsAreInteresting] const INTERESTING_CONSTANT = 1;
+[MeasureAs="WebDXFeature::kInterestingFeature"] void doInterestingWork();
+// Note that MeasureAs is no longer supported on constants.
 ```
 
 ### [NotEnumerable]
@@ -1156,6 +1152,24 @@ This is important because cross-origin access is not transitive. For example, if
 `window` and `window.parent` are cross-origin, access to `window.parent` is
 allowed, but access to `window.parent.document` is not.
 
+### [ConvertibleToObject]
+
+Summary:
+
+Forces generation of code to convert native to script value for dictionaries and unions.
+This is assumed for all types that appear as return values for methods (or arguments to
+callback methods), but may need to be specified explicitly for cases where the conversion
+happens internally in C++ code and is not specified in IDL.
+
+Usage:
+```webidl
+[ConvertiableToObject] dictionary Foo {
+    DOMString bar;
+}
+
+void frob([ConvertiableToObject] (Foo or USVString) param);
+```
+
 ### [CrossOrigin]
 
 Summary: Allows cross-origin access to an attribute or method. Used for
@@ -1190,16 +1204,6 @@ reads would leak cross-origin information.
 ```
 With both `Getter` and `Setter`, allows both cross-origin reads and cross-origin
 writes. This is used for the `Window.location` attribute.
-
-### [FlexibleArrayBufferView]
-
-Summary: `[FlexibleArrayBufferView]` wraps a parameter that is known to be an ArrayBufferView (or a subtype of, e.g. typed arrays) with a FlexibleArrayBufferView.
-
-The FlexibleArrayBufferView itself can then either refer to an actual ArrayBufferView or a temporary copy (for small payloads) that may even live on the stack. The idea is that copying the payload on the stack and referring to the temporary copy saves creating global handles (resulting in weak roots) in V8. Note that `[FlexibleArrayBufferView]`  will actually result in a TypedFlexibleArrayBufferView wrapper for typed arrays.
-
-The FlexibleArrayBufferView extended attribute always requires the AllowShared extended attribute.
-
-Usage: Applies to arguments of methods. See modules/webgl/WebGLRenderingContextBase.idl for an example.
 
 ### [HasAsyncIteratorReturnAlgorithm]
 
@@ -1315,11 +1319,13 @@ Summary: The byte length of buffer source types is currently restricted to be un
 
 Consult with the bindings team before you use this extended attribute.
 
-### [IDLTypeImplementedAsV8Promise]
+### [NodeWrapInOwnContext]
 
-Summary: Indicates that an IDL `Promise` type should be implemented as `v8::Local<v8::Promise>` rather than the default `ScriptPromiseUntyped` type.
+Summary: Forces a Node to be wrapped in its own context, rather than the receiver's context.
 
-This is currently only used for the return types of `AsyncIteratorBase` methods. Consult with the bindings team before you use this extended attribute.
+In most cases, return values are wrapped in the receiver context (i.e., the context of the interface whose operation/attribute/etc. is being called). The bindings assert that `[NodeWrapInOwnContext]` is only used for `Node`s. When used, we find the correct `ScriptState` with the `Node`'s `ExecutionContext` and the current `DOMWrapperWorld`, and if it exists, wrap the `Node` using that `ScriptState`. If that `ScriptState` is not available (usually because the `Node` is detached), we fall back to the receiver `ScriptState`.
+
+`[NodeWrapInOwnContext]` is only necessary where a `Node` may be returned by an interface from a different context, *and* that interface does not use `[CheckSecurity=ReturnValue]` to enable cross-context security checks. The only interfaces that this applies to are ones that unnecessarily mix contexts (`NodeFilter`, `NodeIterator`, and `TreeWalker`), and new usage should not be introduced.
 
 ### [TargetOfExposed]
 

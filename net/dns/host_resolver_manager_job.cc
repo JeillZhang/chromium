@@ -15,6 +15,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/not_fatal_until.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/time/time.h"
 #include "net/base/address_family.h"
@@ -28,11 +29,13 @@
 #include "net/dns/host_cache.h"
 #include "net/dns/host_resolver.h"
 #include "net/dns/host_resolver_dns_task.h"
+#include "net/dns/host_resolver_internal_result.h"
 #include "net/dns/host_resolver_manager.h"
 #include "net/dns/host_resolver_manager_request_impl.h"
 #include "net/dns/host_resolver_manager_service_endpoint_request_impl.h"
 #include "net/dns/host_resolver_mdns_task.h"
 #include "net/dns/host_resolver_nat64_task.h"
+#include "net/dns/host_resolver_system_task.h"
 #include "net/dns/public/dns_query_type.h"
 #include "net/dns/public/secure_dns_mode.h"
 #include "net/log/net_log_with_source.h"
@@ -172,6 +175,11 @@ HostResolverManager::Job::Job(
   net_log_.BeginEvent(NetLogEventType::HOST_RESOLVER_MANAGER_JOB, [&] {
     return NetLogJobCreationParams(source_net_log.source());
   });
+
+  if (base::FeatureList::IsEnabled(features::kHappyEyeballsV3)) {
+    dns_task_results_manager_ = std::make_unique<DnsTaskResultsManager>(
+        this, key_.host, key_.query_types, net_log_);
+  }
 }
 
 HostResolverManager::Job::~Job() {
@@ -379,7 +387,7 @@ bool HostResolverManager::Job::ServeFromHosts() {
 
 void HostResolverManager::Job::OnAddedToJobMap(JobMap::iterator iterator) {
   DCHECK(!self_iterator_);
-  DCHECK(iterator != resolver_->jobs_.end());
+  CHECK(iterator != resolver_->jobs_.end(), base::NotFatalUntil::M130);
   self_iterator_ = iterator;
 }
 
@@ -469,8 +477,7 @@ void HostResolverManager::Job::RunNextTask() {
     case TaskType::HOSTS:
       // These task types should have been handled synchronously in
       // ResolveLocally() prior to Job creation.
-      NOTREACHED_IN_MIGRATION();
-      break;
+      NOTREACHED();
   }
 }
 
@@ -544,7 +551,7 @@ void HostResolverManager::Job::ReduceByOneJobSlot() {
     }
     --num_occupied_job_slots_;
   } else {
-    NOTREACHED_IN_MIGRATION();
+    NOTREACHED();
   }
 }
 
@@ -609,11 +616,17 @@ void HostResolverManager::Job::StartSystemTask() {
   DCHECK_EQ(1, num_occupied_job_slots_);
   DCHECK(HasAddressType(key_.query_types));
 
+  std::optional<HostResolverSystemTask::CacheParams> cache_params;
+  if (key_.resolve_context->host_resolver_cache()) {
+    cache_params.emplace(*key_.resolve_context->host_resolver_cache(),
+                         key_.network_anonymization_key);
+  }
+
   system_task_ = HostResolverSystemTask::Create(
       std::string(key_.host.GetHostnameWithoutBrackets()),
       HostResolver::DnsQueryTypeSetToAddressFamily(key_.query_types),
       key_.flags, resolver_->host_resolver_system_params_, net_log_,
-      key_.GetTargetNetwork());
+      key_.GetTargetNetwork(), std::move(cache_params));
 
   // Start() could be called from within Resolve(), hence it must NOT directly
   // call OnSystemTaskComplete, for example, on synchronous failure.
@@ -689,12 +702,6 @@ void HostResolverManager::Job::StartDnsTask(bool secure) {
   DCHECK_EQ(dispatched_ ? 1 : 0, num_occupied_job_slots_);
   DCHECK(!resolver_->ShouldForceSystemResolverDueToTestOverride());
 
-  CHECK(!dns_task_results_manager_);
-  if (base::FeatureList::IsEnabled(features::kUseServiceEndpointRequest)) {
-    dns_task_results_manager_ = std::make_unique<DnsTaskResultsManager>(
-        this, key_.host, key_.query_types, net_log_);
-  }
-
   // Need to create the task even if we're going to post a failure instead of
   // running it, as a "started" job needs a task to be properly cleaned up.
   dns_task_ = std::make_unique<HostResolverDnsTask>(
@@ -761,25 +768,30 @@ void HostResolverManager::Job::OnDnsTaskFailure(
   RunNextTask();
 }
 
-void HostResolverManager::Job::OnDnsTaskComplete(base::TimeTicks start_time,
-                                                 bool allow_fallback,
-                                                 HostCache::Entry results,
-                                                 bool secure) {
+void HostResolverManager::Job::OnDnsTaskComplete(
+    base::TimeTicks start_time,
+    bool allow_fallback,
+    HostResolverDnsTask::Results results,
+    bool secure) {
   DCHECK(dns_task_);
+
+  HostCache::Entry legacy_results(results, base::Time::Now(),
+                                  tick_clock_->NowTicks(),
+                                  HostCache::Entry::SOURCE_DNS);
 
   // Tasks containing address queries are only considered successful overall
   // if they find address results. However, DnsTask may claim success if any
   // transaction, e.g. a supplemental HTTPS transaction, finds results.
   DCHECK(!key_.query_types.Has(DnsQueryType::UNSPECIFIED));
-  if (HasAddressType(key_.query_types) && results.error() == OK &&
-      results.ip_endpoints().empty()) {
-    results.set_error(ERR_NAME_NOT_RESOLVED);
+  if (HasAddressType(key_.query_types) && legacy_results.error() == OK &&
+      legacy_results.ip_endpoints().empty()) {
+    legacy_results.set_error(ERR_NAME_NOT_RESOLVED);
   }
 
   base::TimeDelta duration = tick_clock_->NowTicks() - start_time;
-  if (results.error() != OK) {
-    OnDnsTaskFailure(dns_task_->AsWeakPtr(), duration, allow_fallback, results,
-                     secure);
+  if (legacy_results.error() != OK) {
+    OnDnsTaskFailure(dns_task_->AsWeakPtr(), duration, allow_fallback,
+                     legacy_results, secure);
     return;
   }
 
@@ -795,15 +807,15 @@ void HostResolverManager::Job::OnDnsTaskComplete(base::TimeTicks start_time,
   }
 
   base::TimeDelta bounded_ttl =
-      std::max(results.ttl(), base::Seconds(kMinimumTTLSeconds));
+      std::max(legacy_results.ttl(), base::Seconds(kMinimumTTLSeconds));
 
-  if (ContainsIcannNameCollisionIp(results.ip_endpoints())) {
+  if (ContainsIcannNameCollisionIp(legacy_results.ip_endpoints())) {
     CompleteRequestsWithError(ERR_ICANN_NAME_COLLISION,
                               secure ? TaskType::SECURE_DNS : TaskType::DNS);
     return;
   }
 
-  CompleteRequests(results, bounded_ttl, true /* allow_cache */, secure,
+  CompleteRequests(legacy_results, bounded_ttl, true /* allow_cache */, secure,
                    secure ? TaskType::SECURE_DNS : TaskType::DNS);
 }
 
@@ -842,7 +854,7 @@ void HostResolverManager::Job::OnIntermediateTransactionsComplete(
   if (dns_task_results_manager_ && single_transaction_results.has_value()) {
     dns_task_results_manager_->ProcessDnsTransactionResults(
         single_transaction_results->query_type,
-        single_transaction_results->results);
+        std::move(single_transaction_results->results));
     // `this` may be deleted. Do not add code below.
   }
 }

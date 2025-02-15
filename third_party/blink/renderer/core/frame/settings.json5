@@ -543,10 +543,10 @@
     // Only used by web tests.
     {
       name: "windowShowState",
-      initial: "ui::WindowShowState::SHOW_STATE_DEFAULT",
+      initial: "ui::mojom::blink::WindowShowState::kDefault",
       invalidate: ["MediaQuery"],
-      type: "ui::WindowShowState",
-      include_paths: ["ui/base/ui_base_types.h"],
+      type: "ui::mojom::blink::WindowShowState",
+      include_paths: ["ui/base/mojom/window_show_state.mojom-blink.h"],
     },
 
     // Only used by web tests.
@@ -976,14 +976,6 @@
       initial: true,
     },
 
-    // HTML Fullscreen (e.g. `Element.requestFullscreen()`)'s transient
-    // activation requirement can be bypassed via the "Automatic Fullscreen"
-    // content setting.
-    {
-      name: "requireTransientActivationForHtmlFullscreen",
-      initial: true,
-    },
-
     //
     // Dark mode
     //
@@ -1088,7 +1080,13 @@
     {
       name: "inForcedColors",
       initial: false,
-      invalidate: ["ColorScheme"],
+      type: "bool",
+    },
+
+    {
+      name: "isForcedColorsDisabled",
+      initial: false,
+      invalidate: ["ForcedColors"],
       type: "bool",
     },
 
@@ -1247,6 +1245,13 @@
     {
       name: "requireTransientActivationAndAuthorizationForSubAppsAPI",
       initial: true,
+    },
+    // Enable the features to change the safe-area-inset* CSS environment
+    // variables based on the browser controls's shown ration.
+    {
+      name: "dynamicSafeAreaInsetsEnabled",
+      initial: false,
+      type: "bool"
     },
   ],
 }

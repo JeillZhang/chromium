@@ -5,6 +5,7 @@
 #ifndef COMPONENTS_VIZ_SERVICE_DISPLAY_DIRECT_RENDERER_H_
 #define COMPONENTS_VIZ_SERVICE_DISPLAY_DIRECT_RENDERER_H_
 
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <utility>
@@ -96,7 +97,7 @@ class VIZ_SERVICE_EXPORT DirectRenderer {
   gfx::Rect GetTargetDamageBoundingRect() const;
 
   // Public interface implemented by subclasses.
-  struct SwapFrameData {
+  struct VIZ_SERVICE_EXPORT SwapFrameData {
     SwapFrameData();
     ~SwapFrameData();
 
@@ -119,6 +120,9 @@ class VIZ_SERVICE_EXPORT DirectRenderer {
     // integration testing.
     gfx::CALayerResult ca_layer_error_code = gfx::kCALayerSuccess;
 #endif
+
+    bool is_handling_interaction_or_animation = false;
+
     std::optional<int64_t> choreographer_vsync_id;
     int64_t swap_trace_id = -1;
   };
@@ -276,10 +280,10 @@ class VIZ_SERVICE_EXPORT DirectRenderer {
 
   virtual void SetRenderPassBackingDrawnRect(
       const AggregatedRenderPassId& render_pass_id,
-      const gfx::Rect& drawn_rect) {}
+      const gfx::Rect& drawn_rect) = 0;
 
   virtual gfx::Rect GetRenderPassBackingDrawnRect(
-      const AggregatedRenderPassId& render_pass_id) const;
+      const AggregatedRenderPassId& render_pass_id) const = 0;
 
   // Private interface implemented by subclasses for use by DirectRenderer.
   virtual bool CanPartialSwap() = 0;
@@ -313,7 +317,8 @@ class VIZ_SERVICE_EXPORT DirectRenderer {
   // a render pass (e.g. applying a filter directly to the tile quad)
   // return that quad, otherwise return null.
   virtual const DrawQuad* CanPassBeDrawnDirectly(
-      const AggregatedRenderPass* pass);
+      const AggregatedRenderPass* pass,
+      const RenderPassRequirements& requirements);
   virtual void EnsureScissorTestDisabled() = 0;
   virtual void DidChangeVisibility() = 0;
   virtual void CopyDrawnRenderPass(
@@ -371,13 +376,16 @@ class VIZ_SERVICE_EXPORT DirectRenderer {
   // RenderPass. The DrawQuads are owned by their RenderPasses, which outlive
   // the drawn frame, so it is safe to store these pointers until the end of
   // DrawFrame().
-  base::flat_map<AggregatedRenderPassId, const DrawQuad*>
+  base::flat_map<AggregatedRenderPassId,
+                 raw_ptr<const DrawQuad, CtnExperimental>>
       render_pass_bypass_quads_;
 
   // A map from RenderPass id to the filters used when drawing the RenderPass.
-  base::flat_map<AggregatedRenderPassId, cc::FilterOperations*>
+  base::flat_map<AggregatedRenderPassId,
+                 raw_ptr<cc::FilterOperations, CtnExperimental>>
       render_pass_filters_;
-  base::flat_map<AggregatedRenderPassId, cc::FilterOperations*>
+  base::flat_map<AggregatedRenderPassId,
+                 raw_ptr<cc::FilterOperations, CtnExperimental>>
       render_pass_backdrop_filters_;
   base::flat_map<AggregatedRenderPassId, std::optional<gfx::RRectF>>
       render_pass_backdrop_filter_bounds_;
@@ -402,7 +410,7 @@ class VIZ_SERVICE_EXPORT DirectRenderer {
     DCHECK(current_frame_valid_);
     return &current_frame_;
   }
-  gfx::BufferFormat reshape_buffer_format() const {
+  SharedImageFormat reshape_si_format() const {
     DCHECK(reshape_params_);
     return reshape_params_->format;
   }
@@ -421,9 +429,17 @@ class VIZ_SERVICE_EXPORT DirectRenderer {
       std::unique_ptr<DelegatedInkPointRendererSkia> renderer) {}
 
  private:
-  virtual void DrawDelegatedInkTrail();
+  // Update the damage rect of the render pass that will contain the drawn ink
+  // trail, or had drawn the ink trail in the previous frame.
+  void AddInkDamageToRenderPass(const AggregatedRenderPass* render_pass,
+                                gfx::Rect& output_damage_rect);
 
   bool initialized_ = false;
+
+  // Track the id of the render pass that received delegated ink in the latest
+  // frame. This will be used when the the ink trail is cleared and damage
+  // needs to be applied to the correct render pass.
+  std::optional<AggregatedRenderPassId> last_pass_with_delegated_ink_;
 
   gfx::Rect last_root_render_pass_scissor_rect_;
   gfx::Size enlarge_pass_texture_amount_;
@@ -451,6 +467,7 @@ class VIZ_SERVICE_EXPORT DirectRenderer {
   gfx::Size device_viewport_size_;
   gfx::OverlayTransform reshape_display_transform_ =
       gfx::OVERLAY_TRANSFORM_INVALID;
+  uint64_t total_pixels_rendered_this_frame_ = 0;
 };
 
 }  // namespace viz

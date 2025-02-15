@@ -2,9 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import {UnguessableToken} from 'chrome://resources/mojo/mojo/public/mojom/base/unguessable_token.mojom-webui.js';
+import type {UnguessableToken} from 'chrome://resources/mojo/mojo/public/mojom/base/unguessable_token.mojom-webui.js';
 
-import {DestinationProviderInterface} from '../../destination_provider.mojom-webui.js';
+import type {DestinationProviderInterface} from '../../destination_provider.mojom-webui.js';
 
 /**
  * @fileoverview
@@ -492,6 +492,10 @@ export interface SessionContext {
   hasSelection: boolean;
 }
 
+export interface FakeGeneratePreviewObserver {
+  onDocumentReady(previewRequestId: number): void;
+}
+
 // Placeholder for PrintPreviewPageHandler mojo interface.
 export interface PrintPreviewPageHandler {
   // Completes initialization on the backend and provides immutable
@@ -510,6 +514,10 @@ export interface PrintPreviewPageHandler {
 
   // Send a request to generate a PDF with the desired settings.
   generatePreview(previewTicket: PreviewTicket): Promise<void>;
+
+  // Registers an observer that returns updates on the status of generated
+  // previews.
+  observePreviewReady(observer: FakeGeneratePreviewObserver): Promise<void>;
 }
 
 export interface FakeDestinationObserverInterface {
@@ -535,3 +543,12 @@ export interface DestinationProvider {
 // implemented.
 export interface DestinationProviderCompositeInterface extends
     DestinationProviderInterface, DestinationProvider {}
+
+// This is a temporary interface with the purpose of combining methods from the
+// above fake PrintPreviewPageHandler interface and the actual
+// PrintPreviewPageHandlerInterface mojo implementation. All tests and classes
+// will use this interface until all methods are defined in mojom.
+// TODO(b/323421684): Remove the interface once all mojo methods are
+// implemented.
+export interface PrintPreviewPageHandlerCompositeInterface extends
+    PrintPreviewPageHandler {}

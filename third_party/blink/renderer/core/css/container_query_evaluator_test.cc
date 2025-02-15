@@ -21,7 +21,6 @@
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/dom_token_list.h"
 #include "third_party/blink/renderer/core/dom/element.h"
-#include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/dom/shadow_root.h"
 #include "third_party/blink/renderer/core/execution_context/security_context.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
@@ -80,14 +79,10 @@ class ContainerQueryEvaluatorTest : public PageTestBase {
   bool Eval(String query,
             String custom_property_name,
             String custom_property_value) {
-    CSSTokenizer tokenizer(custom_property_value);
-    CSSParserTokenStream stream(tokenizer);
-    CSSTokenizedValue tokenized_value =
-        CSSParserImpl::ConsumeUnrestrictedPropertyValue(stream);
     const CSSParserContext* context =
         StrictCSSParserContext(SecureContextMode::kSecureContext);
     CSSUnparsedDeclarationValue* value =
-        CSSVariableParser::ParseDeclarationValue(tokenized_value, false,
+        CSSVariableParser::ParseDeclarationValue(custom_property_value, false,
                                                  *context);
     DCHECK(value);
 
@@ -139,6 +134,10 @@ class ContainerQueryEvaluatorTest : public PageTestBase {
     builder.SetContainerType(container_type);
     ContainerElement().SetComputedStyle(builder.TakeStyle());
     return evaluator->SnapContainerChanged(snapped);
+  }
+
+  Change StyleContainerChanged(ContainerQueryEvaluator* evaluator) {
+    return evaluator->StyleContainerChanged();
   }
 
   bool EvalAndAdd(ContainerQueryEvaluator* evaluator,
@@ -335,7 +334,7 @@ TEST_F(ContainerQueryEvaluatorTest, StyleContainerChanged) {
 
   // Calling StyleContainerChanged without changing the style should not produce
   // a change.
-  EXPECT_EQ(Change::kNone, evaluator->StyleContainerChanged());
+  EXPECT_EQ(Change::kNone, StyleContainerChanged(evaluator));
   EXPECT_EQ(3u, GetResults(evaluator).size());
 
   const bool inherited = true;
@@ -348,7 +347,7 @@ TEST_F(ContainerQueryEvaluatorTest, StyleContainerChanged) {
                           inherited);
   style = builder.TakeStyle();
   container_element.SetComputedStyle(style);
-  EXPECT_EQ(Change::kNone, evaluator->StyleContainerChanged());
+  EXPECT_EQ(Change::kNone, StyleContainerChanged(evaluator));
   EXPECT_EQ(3u, GetResults(evaluator).size());
 
   // Set --foo: bar. Should trigger change.
@@ -358,7 +357,7 @@ TEST_F(ContainerQueryEvaluatorTest, StyleContainerChanged) {
                           inherited);
   style = builder.TakeStyle();
   container_element.SetComputedStyle(style);
-  EXPECT_EQ(Change::kNearestContainer, evaluator->StyleContainerChanged());
+  EXPECT_EQ(Change::kNearestContainer, StyleContainerChanged(evaluator));
   EXPECT_EQ(0u, GetResults(evaluator).size());
 
   // Set --bar: foo. Should trigger change because size part also matches.
@@ -369,7 +368,7 @@ TEST_F(ContainerQueryEvaluatorTest, StyleContainerChanged) {
                           inherited);
   style = builder.TakeStyle();
   container_element.SetComputedStyle(style);
-  EXPECT_EQ(Change::kNearestContainer, evaluator->StyleContainerChanged());
+  EXPECT_EQ(Change::kNearestContainer, StyleContainerChanged(evaluator));
   EXPECT_EQ(0u, GetResults(evaluator).size());
 }
 
@@ -425,9 +424,9 @@ TEST_F(ContainerQueryEvaluatorTest, SnapContainerChanged) {
 
   ContainerQueryEvaluator* evaluator =
       CreateEvaluatorForType(type_scroll_state);
-  SnapContainerChanged(
-      evaluator, static_cast<ContainerSnappedFlags>(ContainerSnapped::kBlock),
-      type_scroll_state);
+  SnapContainerChanged(evaluator,
+                       static_cast<ContainerSnappedFlags>(ContainerSnapped::kY),
+                       type_scroll_state);
 
   EXPECT_TRUE(EvalAndAdd(evaluator, *container_query_snap_block));
   EXPECT_FALSE(EvalAndAdd(evaluator, *container_query_snap_inline));
@@ -435,11 +434,11 @@ TEST_F(ContainerQueryEvaluatorTest, SnapContainerChanged) {
 
   // Calling SnapContainerChanged with the values we already have should not
   // produce a Change.
-  EXPECT_EQ(Change::kNone,
-            SnapContainerChanged(
-                evaluator,
-                static_cast<ContainerSnappedFlags>(ContainerSnapped::kBlock),
-                type_scroll_state));
+  EXPECT_EQ(
+      Change::kNone,
+      SnapContainerChanged(
+          evaluator, static_cast<ContainerSnappedFlags>(ContainerSnapped::kY),
+          type_scroll_state));
   EXPECT_EQ(2u, GetResults(evaluator).size());
 
   // EvalAndAdding the same queries again is allowed.
@@ -448,13 +447,12 @@ TEST_F(ContainerQueryEvaluatorTest, SnapContainerChanged) {
   EXPECT_EQ(2u, GetResults(evaluator).size());
 
   // Add inline snapped.
-  EXPECT_EQ(
-      Change::kNearestContainer,
-      SnapContainerChanged(
-          evaluator,
-          static_cast<ContainerSnappedFlags>(ContainerSnapped::kBlock) |
-              static_cast<ContainerSnappedFlags>(ContainerSnapped::kInline),
-          type_scroll_state));
+  EXPECT_EQ(Change::kNearestContainer,
+            SnapContainerChanged(
+                evaluator,
+                static_cast<ContainerSnappedFlags>(ContainerSnapped::kX) |
+                    static_cast<ContainerSnappedFlags>(ContainerSnapped::kY),
+                type_scroll_state));
   EXPECT_EQ(0u, GetResults(evaluator).size());
 
   // Now both block and inline queries should return true.

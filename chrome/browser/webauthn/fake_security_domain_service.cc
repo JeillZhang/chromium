@@ -4,10 +4,12 @@
 
 #include "chrome/browser/webauthn/fake_security_domain_service.h"
 
+#include <algorithm>
+
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/memory/weak_ptr.h"
-#include "base/ranges/algorithm.h"
+#include "base/notreached.h"
 #include "base/sequence_checker.h"
 #include "components/trusted_vault/proto/vault.pb.h"
 #include "services/network/public/cpp/data_element.h"
@@ -50,6 +52,12 @@ class FakeSecurityDomainServiceImpl : public FakeSecurityDomainService {
         weak_ptr_factory_.GetWeakPtr());
   }
 
+  void fail_all_requests() override {
+    DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+    fail_all_requests_ = true;
+  }
+
   void pretend_there_are_members() override {
     DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
@@ -59,7 +67,7 @@ class FakeSecurityDomainServiceImpl : public FakeSecurityDomainService {
   size_t num_physical_members() const override {
     DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-    return base::ranges::count_if(members_, [](const auto& member) -> bool {
+    return std::ranges::count_if(members_, [](const auto& member) -> bool {
       return member.member_type() == trusted_vault_pb::SecurityDomainMember::
                                          MEMBER_TYPE_PHYSICAL_DEVICE;
     });
@@ -68,7 +76,7 @@ class FakeSecurityDomainServiceImpl : public FakeSecurityDomainService {
   size_t num_pin_members() const override {
     DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-    return base::ranges::count_if(members_, [](const auto& member) -> bool {
+    return std::ranges::count_if(members_, [](const auto& member) -> bool {
       return member.member_type() ==
              trusted_vault_pb::SecurityDomainMember::
                  MEMBER_TYPE_GOOGLE_PASSWORD_MANAGER_PIN;
@@ -90,14 +98,18 @@ class FakeSecurityDomainServiceImpl : public FakeSecurityDomainService {
       return std::nullopt;
     }
 
+    if (fail_all_requests_) {
+      return std::make_pair(net::HTTP_INTERNAL_SERVER_ERROR,
+                            std::string("fail_all_requests() has been called"));
+    }
+
     const std::string_view path = request.url.path_piece();
     if (path.starts_with("/v1/users/me/members")) {
       return ListMembers();
     } else if (path.starts_with("/v1/users/me/securitydomains/")) {
       return AddMember(request);
     } else {
-      CHECK(false) << "Unhandled security domain service path: " << path;
-      NOTREACHED_NORETURN();
+      NOTREACHED() << "Unhandled security domain service path: " << path;
     }
   }
 
@@ -145,7 +157,7 @@ class FakeSecurityDomainServiceImpl : public FakeSecurityDomainService {
                  .empty());
 
       const auto existing_pin =
-          base::ranges::find_if(members_, [](const auto& member) -> bool {
+          std::ranges::find_if(members_, [](const auto& member) -> bool {
             return member.member_type() ==
                    trusted_vault_pb::SecurityDomainMember::
                        MEMBER_TYPE_GOOGLE_PASSWORD_MANAGER_PIN;
@@ -179,6 +191,7 @@ class FakeSecurityDomainServiceImpl : public FakeSecurityDomainService {
   }
 
   const int epoch_;
+  bool fail_all_requests_ = false;
   bool pretend_there_are_members_ = false;
   std::vector<trusted_vault_pb::SecurityDomainMember> members_;
   SEQUENCE_CHECKER(sequence_checker_);

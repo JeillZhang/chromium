@@ -400,10 +400,8 @@ double RoundGyroscopeValue(double value) {
 // Tests that PlatformSensorManager returns null sensor when sensor
 // is not implemented.
 TEST_F(PlatformSensorAndProviderTestWin, SensorIsNotImplemented) {
-  EXPECT_CALL(*(sensor_manager_.Get()),
-              GetSensorsByType(SENSOR_TYPE_PRESSURE, _))
-      .Times(0);
-  EXPECT_FALSE(CreateSensor(SensorType::PRESSURE));
+  EXPECT_CALL(*(sensor_manager_.Get()), GetSensorsByType(_, _)).Times(0);
+  EXPECT_FALSE(CreateSensor(SensorType::RELATIVE_ORIENTATION_EULER_ANGLES));
 }
 
 // Tests that PlatformSensorManager returns null sensor when sensor
@@ -545,7 +543,7 @@ TEST_F(PlatformSensorAndProviderTestWin, CheckAccelerometerReadingConversion) {
   base::ReadOnlySharedMemoryRegion region =
       provider_->CloneSharedMemoryRegion();
   base::ReadOnlySharedMemoryMapping mapping = region.MapAt(
-      SensorReadingSharedBuffer::GetOffset(SensorType::ACCELEROMETER),
+      GetSensorReadingSharedBufferOffset(SensorType::ACCELEROMETER),
       sizeof(SensorReadingSharedBuffer));
 
   SetSupportedSensor(SENSOR_TYPE_ACCELEROMETER_3D);
@@ -587,7 +585,7 @@ TEST_F(PlatformSensorAndProviderTestWin, CheckGyroscopeReadingConversion) {
   base::ReadOnlySharedMemoryRegion region =
       provider_->CloneSharedMemoryRegion();
   base::ReadOnlySharedMemoryMapping mapping =
-      region.MapAt(SensorReadingSharedBuffer::GetOffset(SensorType::GYROSCOPE),
+      region.MapAt(GetSensorReadingSharedBufferOffset(SensorType::GYROSCOPE),
                    sizeof(SensorReadingSharedBuffer));
 
   SetSupportedSensor(SENSOR_TYPE_GYROMETER_3D);
@@ -629,9 +627,9 @@ TEST_F(PlatformSensorAndProviderTestWin, CheckGyroscopeReadingConversion) {
 TEST_F(PlatformSensorAndProviderTestWin, CheckMagnetometerReadingConversion) {
   base::ReadOnlySharedMemoryRegion region =
       provider_->CloneSharedMemoryRegion();
-  base::ReadOnlySharedMemoryMapping mapping = region.MapAt(
-      SensorReadingSharedBuffer::GetOffset(SensorType::MAGNETOMETER),
-      sizeof(SensorReadingSharedBuffer));
+  base::ReadOnlySharedMemoryMapping mapping =
+      region.MapAt(GetSensorReadingSharedBufferOffset(SensorType::MAGNETOMETER),
+                   sizeof(SensorReadingSharedBuffer));
 
   SetSupportedSensor(SENSOR_TYPE_COMPASS_3D);
   auto sensor = CreateSensor(SensorType::MAGNETOMETER);
@@ -672,7 +670,7 @@ TEST_F(PlatformSensorAndProviderTestWin,
   base::ReadOnlySharedMemoryRegion region =
       provider_->CloneSharedMemoryRegion();
   base::ReadOnlySharedMemoryMapping mapping =
-      region.MapAt(SensorReadingSharedBuffer::GetOffset(
+      region.MapAt(GetSensorReadingSharedBufferOffset(
                        SensorType::ABSOLUTE_ORIENTATION_EULER_ANGLES),
                    sizeof(SensorReadingSharedBuffer));
 
@@ -715,7 +713,7 @@ TEST_F(PlatformSensorAndProviderTestWin,
   base::ReadOnlySharedMemoryRegion region =
       provider_->CloneSharedMemoryRegion();
   base::ReadOnlySharedMemoryMapping mapping =
-      region.MapAt(SensorReadingSharedBuffer::GetOffset(
+      region.MapAt(GetSensorReadingSharedBufferOffset(
                        SensorType::ABSOLUTE_ORIENTATION_QUATERNION),
                    sizeof(SensorReadingSharedBuffer));
 

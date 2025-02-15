@@ -9,6 +9,7 @@ blink_modules_sources("canvas") {
   sources = [
     "canvas2d/base_rendering_context_2d.cc",
     "canvas2d/base_rendering_context_2d.h",
+    "canvas2d/cached_color.h",
     "canvas2d/canvas_filter.cc",
     "canvas2d/canvas_filter.h",
     "canvas2d/canvas_filter_operation_resolver.cc",
@@ -21,6 +22,8 @@ blink_modules_sources("canvas") {
     "canvas2d/canvas_path.h",
     "canvas2d/canvas_pattern.cc",
     "canvas2d/canvas_pattern.h",
+    "canvas2d/canvas_recording_context_2d.cc",
+    "canvas2d/canvas_recording_context_2d.h",
     "canvas2d/canvas_rendering_context_2d.cc",
     "canvas2d/canvas_rendering_context_2d.h",
     "canvas2d/canvas_rendering_context_2d_state.cc",
@@ -57,7 +60,6 @@ blink_modules_sources("canvas") {
   ]
 
   deps = [
-    "//third_party/blink/renderer/modules/formatted_text",
     "//third_party/blink/renderer/modules/webcodecs",
     "//third_party/blink/renderer/modules/webgpu",
   ]

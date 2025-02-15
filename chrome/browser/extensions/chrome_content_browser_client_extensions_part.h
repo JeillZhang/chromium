@@ -42,8 +42,6 @@ class Profile;
 
 namespace extensions {
 
-BASE_DECLARE_FEATURE(kDirectSocketsInChromeApps);
-
 // Implements the extensions portion of ChromeContentBrowserClient.
 class ChromeContentBrowserClientExtensionsPart
     : public ChromeContentBrowserClientParts {
@@ -71,6 +69,10 @@ class ChromeContentBrowserClientExtensionsPart
   static bool DoesSiteRequireDedicatedProcess(
       content::BrowserContext* browser_context,
       const GURL& effective_site_url);
+  static bool ShouldAllowCrossProcessSandboxedFrameForPrecursor(
+      content::BrowserContext* browser_context,
+      const GURL& precursor,
+      const GURL& url);
   static bool CanCommitURL(content::RenderProcessHost* process_host,
                            const GURL& url);
   static bool IsSuitableHost(Profile* profile,
@@ -131,10 +133,13 @@ class ChromeContentBrowserClientExtensionsPart
   // ChromeContentBrowserClientParts:
   void SiteInstanceGotProcessAndSite(
       content::SiteInstance* site_instance) override;
-  void OverrideWebkitPrefs(content::WebContents* web_contents,
-                           blink::web_pref::WebPreferences* web_prefs) override;
+  void OverrideWebPreferences(
+      content::WebContents* web_contents,
+      content::SiteInstance& main_frame_site,
+      blink::web_pref::WebPreferences* web_prefs) override;
   bool OverrideWebPreferencesAfterNavigation(
       content::WebContents* web_contents,
+      content::SiteInstance& main_frame_site,
       blink::web_pref::WebPreferences* web_prefs) override;
   void BrowserURLHandlerCreated(content::BrowserURLHandler* handler) override;
   void GetAdditionalAllowedSchemesForFileSystem(

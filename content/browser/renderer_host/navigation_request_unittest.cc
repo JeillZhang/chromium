@@ -480,7 +480,6 @@ TEST_F(NavigationRequestTest, SharedStorageWritable) {
   base::test::ScopedFeatureList feature_list;
   feature_list.InitWithFeatures(
       /*enabled_features=*/{blink::features::kSharedStorageAPI,
-                            blink::features::kSharedStorageAPIM118,
                             blink::features::kFencedFrames},
       /*disabled_features=*/{});
 
@@ -530,7 +529,7 @@ TEST_F(NavigationRequestTest, SharedStorageWritable) {
       static_cast<RenderFrameHostImpl*>(fenced_frame_root)->frame_tree_node();
   FencedFrameConfig new_config = FencedFrameConfig(GURL("about:blank"));
   new_config.AddEffectiveEnabledPermissionForTesting(
-      blink::mojom::PermissionsPolicyFeature::kSharedStorage);
+      network::mojom::PermissionsPolicyFeature::kSharedStorage);
   FencedFrameProperties new_props = FencedFrameProperties(new_config);
   fenced_frame_node->set_fenced_frame_properties(new_props);
   fenced_frame_root->ResetPermissionsPolicy({});
@@ -780,7 +779,7 @@ TEST_F(NavigationRequestTest, RuntimeFeatureStateStorageKey) {
 
     if (disable_sp) {
       request->GetMutableRuntimeFeatureStateContext()
-          .SetDisableThirdPartyStoragePartitioning2Enabled(true);
+          .SetDisableThirdPartyStoragePartitioning3Enabled(true);
     }
 
     navigation->ReadyToCommit();
@@ -965,9 +964,9 @@ class CSPEmbeddedEnforcementUnitTest : public NavigationRequestTest {
     navigation->Start();
     NavigationRequest* request =
         NavigationRequest::From(navigation->GetNavigationHandle());
-    std::string sec_required_csp;
-    request->GetRequestHeaders().GetHeader("sec-required-csp",
-                                           &sec_required_csp);
+    std::string sec_required_csp = request->GetRequestHeaders()
+                                       .GetHeader("sec-required-csp")
+                                       .value_or(std::string());
 
     // Complete the navigation so that the required csp is stored in the
     // RenderFrameHost, so that when we will add children to this document they
@@ -1160,7 +1159,7 @@ class OriginTrialsControllerDelegateMock
       const base::span<const std::string> header_tokens,
       const base::Time current_time,
       std::optional<ukm::SourceId> source_id) override {
-    NOTREACHED_IN_MIGRATION() << "not used by test";
+    NOTREACHED() << "not used by test";
   }
   bool IsFeaturePersistedForOrigin(const url::Origin& origin,
                                    const url::Origin& partition_origin,
@@ -1227,8 +1226,6 @@ TEST_F(PersistentOriginTrialNavigationRequestTest,
       "SI"
       "6ICJGcm9idWxhdGVQZXJzaXN0ZW50IiwgImV4cGlyeSI6IDIwMDAwMDAwMDB9";
 
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndEnableFeature(features::kPersistentOriginTrials);
   blink::ScopedTestOriginTrialPolicy origin_trial_policy_;
 
   const GURL kUrl = GURL("https://example.com");
@@ -1332,9 +1329,9 @@ class NavigationRequestResponseBodyTest : public NavigationRequestTest {
 TEST_F(NavigationRequestResponseBodyTest, Received) {
   auto navigation = CreateNavigationSimulator();
   std::string response = "response-body-content";
-  size_t write_size = response.size();
-  ASSERT_EQ(MOJO_RESULT_OK, mojo::CreateDataPipe(write_size, producer_handle_,
-                                                 consumer_handle_));
+  ASSERT_EQ(MOJO_RESULT_OK,
+            mojo::CreateDataPipe(response.size(), producer_handle_,
+                                 consumer_handle_));
   navigation->SetResponseBody(std::move(consumer_handle_));
 
   navigation->ReadyToCommit();
@@ -1344,10 +1341,12 @@ TEST_F(NavigationRequestResponseBodyTest, Received) {
   EXPECT_FALSE(was_callback_called());
   EXPECT_EQ(std::string(), response_body());
 
+  size_t actually_written_bytes = 0;
   ASSERT_EQ(MOJO_RESULT_OK,
-            producer_handle_->WriteData(response.c_str(), &write_size,
-                                        MOJO_WRITE_DATA_FLAG_NONE));
-  EXPECT_EQ(write_size, response.size());
+            producer_handle_->WriteData(base::as_byte_span(response),
+                                        MOJO_WRITE_DATA_FLAG_NONE,
+                                        actually_written_bytes));
+  EXPECT_EQ(actually_written_bytes, response.size());
 
   navigation->Wait();
   EXPECT_EQ(
@@ -1374,11 +1373,12 @@ TEST_F(NavigationRequestResponseBodyTest, PartiallyReceived) {
   EXPECT_EQ(std::string(), response_body());
 
   std::string response = "response-body-content";
-  size_t write_size = response.size();
+  size_t actually_written_bytes = 0;
   ASSERT_EQ(MOJO_RESULT_OK,
-            producer_handle_->WriteData(response.c_str(), &write_size,
-                                        MOJO_WRITE_DATA_FLAG_NONE));
-  EXPECT_EQ(write_size, pipe_size);
+            producer_handle_->WriteData(base::as_byte_span(response),
+                                        MOJO_WRITE_DATA_FLAG_NONE,
+                                        actually_written_bytes));
+  EXPECT_EQ(actually_written_bytes, pipe_size);
 
   navigation->Wait();
   EXPECT_EQ(

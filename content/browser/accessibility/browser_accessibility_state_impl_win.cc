@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/342213636): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "content/browser/accessibility/browser_accessibility_state_impl.h"
 
 #include <windows.h>  // Must be in front of other Windows header files.
@@ -11,6 +16,7 @@
 
 #include <memory>
 
+#include "base/check_deref.h"
 #include "base/containers/heap_array.h"
 #include "base/files/file_path.h"
 #include "base/metrics/histogram_macros.h"
@@ -65,8 +71,9 @@ class WindowsAccessibilityEnabler
     // We used to trust this as a signal that a screen reader is running,
     // but it's been abused. Now only enable accessibility if we also
     // detect a call to get_accName.
-    if (screen_reader_honeypot_queried_)
+    if (screen_reader_honeypot_queried_) {
       return;
+    }
     screen_reader_honeypot_queried_ = true;
     if (acc_name_called_) {
       BrowserAccessibilityStateImpl::GetInstance()->AddAccessibilityModeFlags(
@@ -76,8 +83,9 @@ class WindowsAccessibilityEnabler
 
   void OnAccNameCalled() override {
     // See OnScreenReaderHoneyPotQueried, above.
-    if (acc_name_called_)
+    if (acc_name_called_) {
       return;
+    }
     acc_name_called_ = true;
     if (screen_reader_honeypot_queried_) {
       BrowserAccessibilityStateImpl::GetInstance()->AddAccessibilityModeFlags(
@@ -91,15 +99,6 @@ class WindowsAccessibilityEnabler
 
   void OnAdvancedUIAutomationUsed() override {
     AddAXModeForUIA(ui::AXMode::kWebContents);
-  }
-
-  void OnUIAutomationIdRequested() override {
-    // TODO(janewman): Currently, UIA_AutomationIdPropertyId currently uses
-    // GetAuthorUniqueId. This implementation requires html to be enabled, we
-    // should avoid needing all of kHTML by either modifying what we return for
-    // this property or serializing the author supplied ID attribute separately.
-    // Separating out the id is being tracked by crbug 703277
-    AddAXModeForUIA(ui::AXMode::kHTML);
   }
 
   void OnProbableUIAutomationScreenReaderDetected() override {
@@ -117,14 +116,16 @@ class WindowsAccessibilityEnabler
 
     // Firing a UIA event can cause UIA to call back into our APIs, don't
     // consider this to be usage.
-    if (firing_uia_events_)
+    if (firing_uia_events_) {
       return;
+    }
 
     // UI Automation insulates providers from knowing about the client(s) asking
     // for information. When IsSelectiveUIAEnablement is Enabled, we turn on
     // various parts of accessibility depending on what APIs have been called.
-    if (!features::IsSelectiveUIAEnablementEnabled())
+    if (!features::IsSelectiveUIAEnablementEnabled()) {
       mode = ui::kAXModeComplete;
+    }
     BrowserAccessibilityStateImpl::GetInstance()->AddAccessibilityModeFlags(
         mode);
   }
@@ -145,9 +146,8 @@ void OnWndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (message == WM_SETTINGCHANGE && wparam == SPI_SETCLIENTAREAANIMATION) {
     gfx::Animation::UpdatePrefersReducedMotion();
-    for (WebContentsImpl* wc : WebContentsImpl::GetAllWebContents()) {
-      wc->OnWebPreferencesChanged();
-    }
+    BrowserAccessibilityStateImpl::GetInstance()
+        ->NotifyWebContentsPreferencesChanged();
   }
 }
 
@@ -161,6 +161,8 @@ class BrowserAccessibilityStateImplWin : public BrowserAccessibilityStateImpl {
   void InitBackgroundTasks() override;
   void UpdateHistogramsOnOtherThread() override;
   void UpdateUniqueUserHistograms() override;
+  ui::AXPlatform::ProductStrings GetProductStrings() override;
+  void OnUiaProviderRequested(bool uia_provider_enabled) override;
 
  private:
   std::unique_ptr<gfx::SingletonHwndObserver> singleton_hwnd_observer_;
@@ -203,18 +205,19 @@ void BrowserAccessibilityStateImplWin::UpdateHistogramsOnOtherThread() {
   HANDLE process = GetCurrentProcess();
   HMODULE* modules = nullptr;
   DWORD bytes_required;
-  if (!EnumProcessModules(process, modules, 0, &bytes_required))
+  if (!EnumProcessModules(process, modules, 0, &bytes_required)) {
     return;
+  }
 
   auto buffer = base::HeapArray<uint8_t>::WithSize(bytes_required);
   modules = reinterpret_cast<HMODULE*>(buffer.data());
   DWORD ignore;
-  if (!EnumProcessModules(process, modules, bytes_required, &ignore))
+  if (!EnumProcessModules(process, modules, bytes_required, &ignore)) {
     return;
+  }
 
   // Look for DLLs of assistive technology known to work with Chrome.
   size_t module_count = bytes_required / sizeof(HMODULE);
-  bool satogo = false;  // Very few users -- do not need uniques
   for (size_t i = 0; i < module_count; i++) {
     TCHAR filename[MAX_PATH];
     GetModuleFileName(modules[i], filename, std::size(filename));
@@ -233,12 +236,6 @@ void BrowserAccessibilityStateImplWin::UpdateHistogramsOnOtherThread() {
       base::debug::SetCrashKeyString(ax_nvda_crash_key, "true");
       g_nvda = true;
     }
-    if (base::EqualsCaseInsensitiveASCII(module_name, "stsaw32.dll")) {
-      static auto* ax_satogo_crash_key = base::debug::AllocateCrashKeyString(
-          "ax_satogo", base::debug::CrashKeySize::Size32);
-      base::debug::SetCrashKeyString(ax_satogo_crash_key, "true");
-      satogo = true;
-    }
     if (base::EqualsCaseInsensitiveASCII(module_name, "dolwinhk.dll")) {
       static auto* ax_supernova_crash_key = base::debug::AllocateCrashKeyString(
           "ax_supernova", base::debug::CrashKeySize::Size32);
@@ -256,7 +253,6 @@ void BrowserAccessibilityStateImplWin::UpdateHistogramsOnOtherThread() {
 
   UMA_HISTOGRAM_BOOLEAN("Accessibility.WinJAWS", g_jaws);
   UMA_HISTOGRAM_BOOLEAN("Accessibility.WinNVDA", g_nvda);
-  UMA_HISTOGRAM_BOOLEAN("Accessibility.WinSAToGo", satogo);
   UMA_HISTOGRAM_BOOLEAN("Accessibility.WinSupernova", g_supernova);
   UMA_HISTOGRAM_BOOLEAN("Accessibility.WinZoomText", g_zoomtext);
 }
@@ -271,6 +267,28 @@ void BrowserAccessibilityStateImplWin::UpdateUniqueUserHistograms() {
   UMA_HISTOGRAM_BOOLEAN("Accessibility.WinNVDA.EveryReport", g_nvda);
   UMA_HISTOGRAM_BOOLEAN("Accessibility.WinSupernova.EveryReport", g_supernova);
   UMA_HISTOGRAM_BOOLEAN("Accessibility.WinZoomText.EveryReport", g_zoomtext);
+}
+
+ui::AXPlatform::ProductStrings
+BrowserAccessibilityStateImplWin::GetProductStrings() {
+  ContentClient& content_client = CHECK_DEREF(content::GetContentClient());
+  // GetProduct() returns a string like "Chrome/aa.bb.cc.dd", split out
+  // the part before and after the "/".
+  std::vector<std::string> product_components = base::SplitString(
+      CHECK_DEREF(CHECK_DEREF(content::GetContentClient()).browser())
+          .GetProduct(),
+      "/", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
+  if (product_components.size() != 2) {
+    return {{}, {}, CHECK_DEREF(content_client.browser()).GetUserAgent()};
+  }
+  return {product_components[0], product_components[1],
+          CHECK_DEREF(content_client.browser()).GetUserAgent()};
+}
+
+void BrowserAccessibilityStateImplWin::OnUiaProviderRequested(
+    bool uia_provider_enabled) {
+  CHECK_DEREF(CHECK_DEREF(GetContentClient()).browser())
+      .OnUiaProviderRequested(uia_provider_enabled);
 }
 
 // static

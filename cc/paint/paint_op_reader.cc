@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "cc/paint/paint_op_reader.h"
 
 #include <stddef.h>
@@ -15,11 +20,12 @@
 #include "base/bits.h"
 #include "base/compiler_specific.h"
 #include "base/containers/heap_array.h"
+#include "base/containers/span.h"
 #include "base/debug/dump_without_crashing.h"
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/notreached.h"
-#include "base/numerics/safe_conversions.h"
+#include "base/numerics/safe_math.h"
 #include "base/rand_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/types/optional_util.h"
@@ -50,9 +56,12 @@
 #include "ui/gfx/hdr_metadata.h"
 #include "ui/gfx/mojom/hdr_metadata.mojom.h"
 #include "ui/gfx/mojom/hdr_metadata_mojom_traits.h"
+#include "ui/gfx/skia_span_util.h"
 
 namespace cc {
 namespace {
+
+static_assert(std::is_same_v<unsigned char, uint8_t>);
 
 bool IsValidPaintShaderType(PaintShader::Type type) {
   return static_cast<uint8_t>(type) <
@@ -65,6 +74,34 @@ bool IsValidPaintShaderScalingBehavior(PaintShader::ScalingBehavior behavior) {
 }
 
 }  // namespace
+
+// Being a friend to `PaintOpReader`, this cannot be in the anonymous namespace.
+template <typename ValueType>
+void ReadSimpleValueUniformsHelper(
+    PaintOpReader& reader,
+    std::vector<PaintShader::Uniform<ValueType>>* output_uniforms) {
+  size_t count = 0u;
+  reader.ReadSize(&count);
+  if (!reader.valid() || count == 0u) {
+    return;
+  }
+  output_uniforms->reserve(count);
+  for (size_t i = 0; i < count; ++i) {
+    SkString name;
+    reader.Read(&name);
+    if (!reader.valid()) {
+      return;
+    }
+    CHECK(!name.isEmpty());
+    ValueType value;
+    reader.ReadSimple(&value);
+    if (!reader.valid()) {
+      return;
+    }
+    output_uniforms->push_back(
+        {.name = std::move(name), .value = std::move(value)});
+  }
+}
 
 PaintOpReader::PaintOpReader(const volatile void* memory,
                              size_t size,
@@ -117,6 +154,9 @@ bool PaintOpReader::ReadAndValidateOpHeader(uint8_t* type,
 template <typename T>
 void PaintOpReader::ReadSimple(T* val) {
   static_assert(std::is_trivially_copyable_v<T>);
+  // Serialized values other than 0 or 1 can cause different behavior in debug
+  // and release, making debugging harder. Please use Read(bool*).
+  static_assert(!std::is_same_v<T, bool>);
 
   AssertFieldAlignment();
   // Align everything to 4 bytes, as the writer does.
@@ -193,6 +233,10 @@ void PaintOpReader::Read(uint8_t* data) {
   ReadSimple(data);
 }
 
+void PaintOpReader::Read(uint16_t* data) {
+  ReadSimple(data);
+}
+
 void PaintOpReader::Read(uint32_t* data) {
   ReadSimple(data);
 }
@@ -203,6 +247,10 @@ void PaintOpReader::Read(uint64_t* data) {
 
 void PaintOpReader::Read(int32_t* data) {
   ReadSimple(data);
+}
+
+void PaintOpReader::Read(SkPoint* point) {
+  ReadSimple(point);
 }
 
 void PaintOpReader::Read(SkRect* rect) {
@@ -306,7 +354,7 @@ void PaintOpReader::Read(PaintFlags* flags) {
 
   if (enable_security_constraints_) {
     bool has_looper = false;
-    ReadSimple(&has_looper);
+    Read(&has_looper);
     if (has_looper) {
       SetInvalid(DeserializationError::kDrawLooperForbidden);
       return;
@@ -342,11 +390,14 @@ void PaintOpReader::Read(
   if (serialized_type == PaintOp::SerializedImageType::kNoImage)
     return;
 
+  // Compute the HDR headroom for tone mapping.
+  const float hdr_headroom =
+      dynamic_range_limit.ComputeHdrHeadroom(options_.hdr_headroom);
+
   if (enable_security_constraints_) {
     switch (serialized_type) {
       case PaintOp::SerializedImageType::kNoImage:
-        NOTREACHED_IN_MIGRATION();
-        return;
+        NOTREACHED();
       case PaintOp::SerializedImageType::kImageData: {
         SkColorType color_type;
         Read(&color_type);
@@ -386,6 +437,7 @@ void PaintOpReader::Read(
                      .set_id(PaintImage::GetNextId())
                      .set_texture_image(SkImages::RasterFromPixmapCopy(pixmap),
                                         PaintImage::kNonLazyStableId)
+                     .set_target_hdr_headroom(hdr_headroom)
                      .TakePaintImage();
       }
         return;
@@ -395,8 +447,7 @@ void PaintOpReader::Read(
         return;
     }
 
-    NOTREACHED_IN_MIGRATION();
-    return;
+    NOTREACHED();
   }
 
   if (serialized_type == PaintOp::SerializedImageType::kMailbox) {
@@ -411,6 +462,9 @@ void PaintOpReader::Read(
       SetInvalid(DeserializationError::kZeroMailbox);
       return;
     }
+
+    bool reinterpret_as_srgb = 0;
+    Read(&reinterpret_as_srgb);
 
     SharedImageProvider::Error error;
     sk_sp<SkImage> sk_image =
@@ -428,8 +482,7 @@ void PaintOpReader::Read(
           SetInvalid(DeserializationError::kSharedImageProviderUnknownMailbox);
           break;
         default:
-          NOTREACHED_IN_MIGRATION();
-          break;
+          NOTREACHED();
       }
       SetInvalid(DeserializationError::kSharedImageOpenFailure);
       return;
@@ -440,6 +493,8 @@ void PaintOpReader::Read(
                  .set_id(PaintImage::GetNextId())
                  .set_texture_image(std::move(sk_image),
                                     PaintImage::kNonLazyStableId)
+                 .set_target_hdr_headroom(hdr_headroom)
+                 .set_reinterpret_as_srgb(reinterpret_as_srgb)
                  .TakePaintImage();
     return;
   }
@@ -455,7 +510,7 @@ void PaintOpReader::Read(
     return;
 
   bool needs_mips;
-  ReadSimple(&needs_mips);
+  Read(&needs_mips);
   if (!valid_)
     return;
 
@@ -468,66 +523,23 @@ void PaintOpReader::Read(
   if (auto* entry =
           options_.transfer_cache->GetEntryAs<ServiceImageTransferCacheEntry>(
               transfer_cache_entry_id)) {
-    // Compute the HDR headroom if tone mapping will be applied.
-    float hdr_headroom = 1.f;
-    if (entry->NeedsToneMapApplied()) {
-      const float dynamic_range_high_mix =
-          1.f - dynamic_range_limit.constrained_high_mix -
-          dynamic_range_limit.standard_mix;
-      if (dynamic_range_limit.constrained_high_mix > 0) {
-        hdr_headroom *= std::pow(std::min(2.f, options_.hdr_headroom),
-                                 dynamic_range_limit.constrained_high_mix);
-      }
-      if (dynamic_range_high_mix > 0) {
-        hdr_headroom *= std::pow(options_.hdr_headroom, dynamic_range_high_mix);
-      }
-    }
-
-    // Bake the HDR headroom into the image now.
-    // TODO(b/328665503): Move the application of tone mapping from here to
-    // playback time.
-    if ((entry->HasGainmap() &&
-         !base::FeatureList::IsEnabled(features::kPaintWithGainmapShader)) ||
-        (entry->use_global_tone_map() &&
-         !base::FeatureList::IsEnabled(
-             features::kPaintWithGlobalToneMapFilter))) {
-      auto sk_image =
-          entry->GetImageWithToneMapApplied(hdr_headroom, needs_mips);
-      *image = PaintImageBuilder::WithDefault()
-                   .set_id(PaintImage::GetNextId())
-                   .set_texture_image(std::move(sk_image),
-                                      PaintImage::kNonLazyStableId)
-                   .TakePaintImage();
-      return;
-    }
-
     if (needs_mips) {
       entry->EnsureMips();
     }
+
+    PaintImageBuilder builder =
+        PaintImageBuilder::WithDefault()
+            .set_id(PaintImage::GetNextId())
+            .set_texture_image(entry->image(), PaintImage::kNonLazyStableId)
+            .set_target_hdr_headroom(hdr_headroom);
     if (entry->HasGainmap()) {
-      *image = PaintImageBuilder::WithDefault()
-                   .set_id(PaintImage::GetNextId())
-                   .set_gainmap_texture_image(
-                       entry->image(), entry->gainmap_image(),
-                       entry->gainmap_info(), PaintImage::kNonLazyStableId)
-                   .set_target_hdr_headroom(hdr_headroom)
-                   .TakePaintImage();
-    } else if (entry->use_global_tone_map()) {
-      *image =
-          PaintImageBuilder::WithDefault()
-              .set_id(PaintImage::GetNextId())
-              .set_texture_image(entry->image(), PaintImage::kNonLazyStableId)
-              .set_hdr_metadata(entry->hdr_metadata())
-              .set_use_global_tone_map(true)
-              .set_target_hdr_headroom(hdr_headroom)
-              .TakePaintImage();
-    } else {
-      *image =
-          PaintImageBuilder::WithDefault()
-              .set_id(PaintImage::GetNextId())
-              .set_texture_image(entry->image(), PaintImage::kNonLazyStableId)
-              .TakePaintImage();
+      builder = std::move(builder).set_gainmap_texture_image(
+          entry->gainmap_image(), entry->gainmap_info());
     }
+    if (entry->hdr_metadata().has_value()) {
+      builder = std::move(builder).set_hdr_metadata(entry->hdr_metadata());
+    }
+    *image = builder.TakePaintImage();
   }
 }
 
@@ -549,7 +561,8 @@ void PaintOpReader::Read(sk_sp<SkData>* data) {
   }
 
   // This is safe to cast away the volatile as it is just a memcpy internally.
-  *data = SkData::MakeWithCopy(const_cast<const uint8_t*>(memory_), bytes);
+  *data = gfx::MakeSkDataFromSpanWithCopy(
+      base::span(const_cast<const uint8_t*>(memory_), bytes));
   DidRead(bytes);
 }
 
@@ -622,7 +635,7 @@ void PaintOpReader::Read(sk_sp<sktext::gpu::Slug>* slug) {
 
 void PaintOpReader::Read(sk_sp<DrawLooper>* looper) {
   bool has_looper = false;
-  ReadSimple(&has_looper);
+  Read(&has_looper);
   if (!has_looper) {
     *looper = nullptr;
     return;
@@ -657,7 +670,7 @@ void PaintOpReader::Read(sk_sp<DrawLooper>* looper) {
 
 void PaintOpReader::Read(sk_sp<PaintShader>* shader) {
   bool has_shader = false;
-  ReadSimple(&has_shader);
+  Read(&has_shader);
   if (!has_shader) {
     *shader = nullptr;
     return;
@@ -674,6 +687,11 @@ void PaintOpReader::Read(sk_sp<PaintShader>* shader) {
     SetInvalid(DeserializationError::kPaintRecordForbidden);
     return;
   }
+  if (!options_.is_privileged &&
+      shader_type == PaintShader::Type::kSkSLCommand) {
+    valid_ = false;
+    return;
+  }
 
   *shader = sk_sp<PaintShader>(new PaintShader(shader_type));
   PaintShader& ref = **shader;
@@ -687,7 +705,7 @@ void PaintOpReader::Read(sk_sp<PaintShader>* shader) {
   if (!IsValidPaintShaderScalingBehavior(ref.scaling_behavior_))
     SetInvalid(DeserializationError::kInvalidPaintShaderScalingBehavior);
   bool has_local_matrix = false;
-  ReadSimple(&has_local_matrix);
+  Read(&has_local_matrix);
   if (has_local_matrix) {
     ref.local_matrix_.emplace();
     Read(&*ref.local_matrix_);
@@ -698,11 +716,11 @@ void PaintOpReader::Read(sk_sp<PaintShader>* shader) {
   ReadSimple(&ref.end_point_);
   ReadSimple(&ref.start_degrees_);
   ReadSimple(&ref.end_degrees_);
-  ReadSimple(&ref.gradient_interpolation_);
+  Read(&ref.gradient_interpolation_);
   Read(&ref.image_, PaintFlags::DynamicRangeLimitMixture(
                         PaintFlags::DynamicRangeLimit::kHigh));
   bool has_record = false;
-  ReadSimple(&has_record);
+  Read(&has_record);
   uint32_t shader_id = PaintShader::kInvalidRecordShaderId;
   size_t shader_size = 0;
   if (has_record) {
@@ -725,24 +743,22 @@ void PaintOpReader::Read(sk_sp<PaintShader>* shader) {
 
     ref.id_ = shader_id;
   }
-  decltype(ref.colors_)::size_type colors_size = 0;
+  size_t colors_size = 0;
   ReadSize(&colors_size);
 
   // If there are too many colors, abort.
-  if (colors_size > remaining_bytes_) {
+  size_t colors_bytes;
+  if (!base::CheckMul(colors_size, sizeof(decltype(ref.colors_)::value_type))
+           .AssignIfValid(&colors_bytes)) {
     SetInvalid(DeserializationError::
                    kInsufficientRemainingBytes_Read_PaintShader_ColorSize);
-    return;
   }
-  size_t colors_bytes =
-      colors_size * (colors_size > 0 ? sizeof(ref.colors_[0]) : 0u);
   if (colors_bytes > remaining_bytes_) {
     SetInvalid(DeserializationError::
                    kInsufficientRemainingBytes_Read_PaintShader_ColorBytes);
     return;
   }
-  ref.colors_.resize(colors_size);
-  ReadData(base::as_writable_byte_span(ref.colors_));
+  ReadVectorContent(colors_size, ref.colors_);
 
   decltype(ref.positions_)::size_type positions_size = 0;
   ReadSize(&positions_size);
@@ -757,8 +773,13 @@ void PaintOpReader::Read(sk_sp<PaintShader>* shader) {
                    kInsufficientRemainingBytes_Read_PaintShader_Positions);
     return;
   }
-  ref.positions_.resize(positions_size);
-  ReadData(base::as_writable_byte_span(ref.positions_));
+  ReadVectorContent(positions_size, ref.positions_);
+
+  Read(&ref.sksl_command_);
+  Read(&ref.scalar_uniforms_);
+  Read(&ref.float2_uniforms_);
+  Read(&ref.float4_uniforms_);
+  Read(&ref.int_uniforms_);
 
   // We don't write the cached shader, so don't attempt to read it either.
 
@@ -867,7 +888,7 @@ void PaintOpReader::Read(gpu::Mailbox* mailbox) {
 }
 
 void PaintOpReader::Read(SkHighContrastConfig* config) {
-  ReadSimple(&config->fGrayscale);
+  Read(&config->fGrayscale);
   ReadEnum<SkHighContrastConfig::InvertStyle,
            SkHighContrastConfig::InvertStyle::kLast>(&config->fInvertStyle);
   ReadSimple(&config->fContrast);
@@ -887,6 +908,18 @@ void PaintOpReader::Read(gfx::HDRMetadata* hdr_metadata) {
     SetInvalid(DeserializationError::kHdrMetadataDeserializeFailure);
   }
   DidRead(size);
+}
+
+void PaintOpReader::Read(SkGradientShader::Interpolation* interpolation) {
+  ReadEnum<SkGradientShader::Interpolation::InPremul,
+           SkGradientShader::Interpolation::InPremul::kYes>(
+      &interpolation->fInPremul);
+  ReadEnum<SkGradientShader::Interpolation::ColorSpace,
+           SkGradientShader::Interpolation::ColorSpace::kLastColorSpace>(
+      &interpolation->fColorSpace);
+  ReadEnum<SkGradientShader::Interpolation::HueMethod,
+           SkGradientShader::Interpolation::HueMethod::kLastHueMethod>(
+      &interpolation->fHueMethod);
 }
 
 void PaintOpReader::Read(scoped_refptr<SkottieWrapper>* skottie) {
@@ -917,6 +950,37 @@ void PaintOpReader::Read(scoped_refptr<SkottieWrapper>* skottie) {
     return;
   }
   DidRead(bytes_to_skip);
+}
+
+void PaintOpReader::Read(SkString* sk_string) {
+  size_t size = 0;
+  // We always serialize the empty string's size (0u).
+  ReadSize(&size);
+  if (remaining_bytes_ < size) {
+    valid_ = false;
+  }
+  if (!valid_ || size == 0) {
+    return;
+  }
+  uint8_t* scratch = CopyScratchSpace(size);
+  *sk_string = SkString(reinterpret_cast<char*>(scratch), size);
+  DidRead(size);
+}
+
+void PaintOpReader::Read(std::vector<PaintShader::FloatUniform>* uniforms) {
+  ReadSimpleValueUniformsHelper<SkScalar>(*this, uniforms);
+}
+
+void PaintOpReader::Read(std::vector<PaintShader::Float2Uniform>* uniforms) {
+  ReadSimpleValueUniformsHelper<SkV2>(*this, uniforms);
+}
+
+void PaintOpReader::Read(std::vector<PaintShader::Float4Uniform>* uniforms) {
+  ReadSimpleValueUniformsHelper<SkV4>(*this, uniforms);
+}
+
+void PaintOpReader::Read(std::vector<PaintShader::IntUniform>* uniforms) {
+  ReadSimpleValueUniformsHelper<int>(*this, uniforms);
 }
 
 void PaintOpReader::AlignMemory(size_t alignment) {
@@ -1010,8 +1074,7 @@ void PaintOpReader::Read(sk_sp<PaintFilter>* filter) {
   AssertFieldAlignment();
   switch (type) {
     case PaintFilter::Type::kNullFilter:
-      NOTREACHED_IN_MIGRATION();
-      break;
+      NOTREACHED();
     case PaintFilter::Type::kColorFilter:
       ReadColorFilterPaintFilter(filter, crop_rect);
       break;
@@ -1271,8 +1334,8 @@ void PaintOpReader::ReadMatrixConvolutionPaintFilter(
   if (!valid_)
     return;
   filter->reset(new MatrixConvolutionPaintFilter(
-      kernel_size, kernel.data(), gain, bias, kernel_offset, tile_mode,
-      convolve_alpha, std::move(input), base::OptionalToPtr(crop_rect)));
+      kernel_size, kernel, gain, bias, kernel_offset, tile_mode, convolve_alpha,
+      std::move(input), base::OptionalToPtr(crop_rect)));
 }
 
 void PaintOpReader::ReadDisplacementMapEffectPaintFilter(
@@ -1325,7 +1388,7 @@ void PaintOpReader::ReadRecordPaintFilter(
     sk_sp<PaintFilter>* filter,
     const std::optional<PaintFilter::CropRect>& crop_rect) {
   bool has_filter = false;
-  ReadSimple(&has_filter);
+  Read(&has_filter);
   if (!has_filter) {
     *filter = nullptr;
     return;
@@ -1385,9 +1448,7 @@ void PaintOpReader::ReadMergePaintFilter(
     Read(&input);
   if (!valid_)
     return;
-  filter->reset(new MergePaintFilter(inputs.data(),
-                                     static_cast<int>(input_count),
-                                     base::OptionalToPtr(crop_rect)));
+  filter->reset(new MergePaintFilter(inputs, base::OptionalToPtr(crop_rect)));
 }
 
 void PaintOpReader::ReadMorphologyPaintFilter(

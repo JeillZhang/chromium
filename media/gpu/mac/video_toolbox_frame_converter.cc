@@ -6,6 +6,7 @@
 
 #include <optional>
 
+#include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/logging.h"
@@ -38,7 +39,7 @@ namespace {
 // The SharedImages created by this class to back VideoFrames can be read by the
 // raster interface for canvas and by the GLES2 interface for WebGL in addition
 // to being sent to the display compositor and/or used as overlays.
-constexpr uint32_t kSharedImageUsage =
+constexpr gpu::SharedImageUsageSet kSharedImageUsage =
     gpu::SHARED_IMAGE_USAGE_DISPLAY_READ | gpu::SHARED_IMAGE_USAGE_SCANOUT |
     gpu::SHARED_IMAGE_USAGE_MACOS_VIDEO_TOOLBOX |
     gpu::SHARED_IMAGE_USAGE_RASTER_READ | gpu::SHARED_IMAGE_USAGE_GLES2_READ;
@@ -76,17 +77,26 @@ VideoPixelFormat PixelFormatToVideoPixelFormat(OSType pixel_format) {
     case kCVPixelFormatType_444YpCbCr8BiPlanarVideoRange:
       return PIXEL_FORMAT_NV24;
     case kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange:
-      return PIXEL_FORMAT_P016LE;
+      return PIXEL_FORMAT_P010LE;
     case kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange:
-      return PIXEL_FORMAT_P216LE;
+      return PIXEL_FORMAT_P210LE;
     case kCVPixelFormatType_444YpCbCr10BiPlanarVideoRange:
-      return PIXEL_FORMAT_P416LE;
+      return PIXEL_FORMAT_P410LE;
     case kCVPixelFormatType_420YpCbCr8VideoRange_8A_TriPlanar:
       return PIXEL_FORMAT_NV12A;
     default:
       return PIXEL_FORMAT_UNKNOWN;
   }
 }
+
+// If enabled, adds SHARED_IMAGE_USAGE_WEBGPU_READ as a usage when creating
+// SharedImages for a WebGpu-compatible IOSurface. Intended as a killswitch
+// to guard against performance regressions.
+// TODO: crbug.com/349290188 - Clean up if no performance regressions are
+// observed.
+BASE_FEATURE(kVideoToolboxFrameConverterSpecifyWebGpuUsage,
+             "VideoToolboxFrameConverterSpecifyWebGpuUsage",
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 }  // namespace
 
@@ -142,11 +152,6 @@ void VideoToolboxFrameConverter::Initialize() {
     DestroyStub();
     return;
   }
-
-  texture_rectangle_ = stub_->decoder_context()
-                           ->GetFeatureInfo()
-                           ->feature_flags()
-                           .arb_texture_rectangle;
 }
 
 void VideoToolboxFrameConverter::DestroyStub() {
@@ -215,12 +220,43 @@ void VideoToolboxFrameConverter::Convert(
   VideoPixelFormat video_pixel_format =
       PixelFormatToVideoPixelFormat(pixel_format);
 
+  if (__builtin_available(macOS 13.0, iOS 16.0, *)) {
+    // On macOS < 13 or iOS < 16, there is a video artifact issue if the decoded
+    // YUV 4:4:4 CVImageBuffer is processed by macOS internally.
+    //
+    // There are some operations that could trigger the process operation:
+    // - Video overlay promotion.
+    // - Video down/up-sampling. i.e. 10 bit 4:4:4 -> 10 bit 4:2:0, or 16 bit
+    // 4:4:4 -> 10 bit 4:4:4.
+    //
+    // Below codes that disable overlay promotion for 4:4:4 chroma sampling
+    // video could solve the artifact issue for 8/10 bit 4:4:4 video. But note
+    // that for 12 bit 4:4:4 chroma sampling video, unfortunately since there is
+    // no `444YpCbCr12BiPlanarVideoRange` pixel format support, we have to down
+    // sampling the video to `444YpCbCr10BiPlanarVideoRange`, which means the
+    // issue still could not be solved for 12 bit 4:4:4 videos. See:
+    // crbug.com/387619594.
+  } else if (VideoPixelFormatToChromaSampling(video_pixel_format) ==
+             VideoChromaSampling::k444) {
+    allow_overlay = false;
+  }
+
   auto shared_image_interface = sis_->shared_image_interface();
   CHECK(shared_image_interface);
 
+  // Extract IOSurface webgpu compatible attribute before image is moved.
+  const bool is_webgpu_compatible =
+      IOSurfaceIsWebGPUCompatible(CVPixelBufferGetIOSurface(image.get()));
+  gpu::SharedImageUsageSet shared_image_usage = kSharedImageUsage;
+  if (is_webgpu_compatible &&
+      base::FeatureList::IsEnabled(
+          kVideoToolboxFrameConverterSpecifyWebGpuUsage)) {
+    shared_image_usage |= gpu::SHARED_IMAGE_USAGE_WEBGPU_READ;
+  }
+
   auto shared_image = shared_image_interface->CreateSharedImage(
-      {*format, coded_size, metadata->color_space, kTopLeft_GrSurfaceOrigin,
-       kOpaque_SkAlphaType, kSharedImageUsage, kSharedImageDebugLabel},
+      {*format, coded_size, color_space, kTopLeft_GrSurfaceOrigin,
+       kOpaque_SkAlphaType, shared_image_usage, kSharedImageDebugLabel},
       std::move(handle));
   if (!shared_image) {
     MEDIA_LOG(ERROR, media_log_.get()) << "Failed to create shared image";
@@ -228,11 +264,6 @@ void VideoToolboxFrameConverter::Convert(
     return;
   }
 
-  // Extract IOSurface webgpu compatible attribute before image is moved.
-  const bool is_webgpu_compatible =
-      IOSurfaceIsWebGPUCompatible(CVPixelBufferGetIOSurface(image.get()));
-
-  GLenum target = texture_rectangle_ ? GL_TEXTURE_RECTANGLE_ARB : GL_TEXTURE_2D;
 
   // |image| must be retained until after the release sync token passes.
   VideoFrame::ReleaseMailboxCB release_cb = base::BindPostTask(
@@ -245,24 +276,17 @@ void VideoToolboxFrameConverter::Convert(
   // expensive whenever the renderer is not doing readback.
   scoped_refptr<VideoFrame> frame = VideoFrame::WrapSharedImage(
       video_pixel_format, shared_image, shared_image->creation_sync_token(),
-      target, std::move(release_cb), coded_size, visible_rect, natural_size,
+      std::move(release_cb), coded_size, visible_rect, natural_size,
       metadata->timestamp);
 
   if (!frame) {
     MEDIA_LOG(ERROR, media_log_.get()) << "Failed to create VideoFrame";
-
-    // |image| was dropped along with |release_cb|, but the SharedImage is still
-    // alive.
-    shared_image->MarkForDestruction();
-
     std::move(output_cb).Run(nullptr, std::move(metadata));
     return;
   }
 
   frame->set_color_space(color_space);
   frame->set_hdr_metadata(metadata->hdr_metadata);
-  frame->set_shared_image_format_type(
-      SharedImageFormatType::kSharedImageFormat);
   if (metadata->duration != kNoTimestamp && !metadata->duration.is_zero()) {
     frame->metadata().frame_duration = metadata->duration;
   }
@@ -292,7 +316,6 @@ void VideoToolboxFrameConverter::OnVideoFrameReleased(
 
   if (client_shared_image) {
     client_shared_image->UpdateDestructionSyncToken(sync_token);
-    client_shared_image->MarkForDestruction();
   }
 
   // Release |image|.

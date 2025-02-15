@@ -35,6 +35,10 @@ class CC_EXPORT LayerTreeSettings {
   // using tile resources prepared by this tree.
   bool UseLayerContextForDisplay() const;
 
+  // If true, the remote display tree handles its own composited animations.
+  // This can only be true when UseLayerContextForDisplay() is also true.
+  bool UseLayerContextForAnimations() const;
+
   // If true, this is a GPU-side display tree receiving updates from a remote
   // client via the LayerContext API. Such trees do no raster work of their own
   // and submit compositor frames directly within Viz using tiles rastered by
@@ -135,8 +139,8 @@ class CC_EXPORT LayerTreeSettings {
   // rendered in a different process from its ancestor frames.
   bool is_for_embedded_frame = false;
 
-  // Indicates when the LayerTree is for a portal element, GuestView, or top
-  // level frame. In all these cases we may have a page scale.
+  // Indicates when the LayerTree is for a GuestView or top level frame. In all
+  // these cases we may have a page scale.
   bool is_for_scalable_page = true;
 
   // Determines whether we disallow non-exact matches when finding resources
@@ -149,9 +153,6 @@ class CC_EXPORT LayerTreeSettings {
   // completed the current BeginFrame before triggering their own BeginFrame
   // deadlines.
   bool wait_for_all_pipeline_stages_before_draw = false;
-
-  // If enabled, the scroll deltas will be a percentage of the target scroller.
-  bool percent_based_scrolling = false;
 
   // Determines whether animated scrolling is supported. If true, and the
   // incoming gesture scroll is of a type that would normally be animated (e.g.
@@ -239,11 +240,8 @@ class CC_EXPORT LayerTreeSettings {
 
   // Whether to use variable refresh rates when generating begin frames.
   bool enable_variable_refresh_rate = false;
-};
 
-class CC_EXPORT LayerListSettings : public LayerTreeSettings {
- public:
-  LayerListSettings() { use_layer_lists = true; }
+  bool dynamic_safe_area_insets_on_scroll_enabled = false;
 };
 
 }  // namespace cc

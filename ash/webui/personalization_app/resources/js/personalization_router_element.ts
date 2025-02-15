@@ -11,15 +11,16 @@ import 'chrome://resources/polymer/v3_0/iron-location/iron-location.js';
 import 'chrome://resources/polymer/v3_0/iron-location/iron-query-params.js';
 
 import {assert} from 'chrome://resources/ash/common/assert.js';
-import {isSeaPenEnabled} from 'chrome://resources/ash/common/sea_pen/load_time_booleans.js';
-import {SeaPenQueryParams} from 'chrome://resources/ash/common/sea_pen/sea_pen_router_element.js';
+import {isManagedSeaPenEnabled, isSeaPenEnabled} from 'chrome://resources/ash/common/sea_pen/load_time_booleans.js';
+import type {SeaPenQueryParams} from 'chrome://resources/ash/common/sea_pen/sea_pen_router_element.js';
 import {maybeDoPageTransition} from 'chrome://resources/ash/common/sea_pen/transition.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
-import {GooglePhotosAlbum, TopicSource, WallpaperCollection} from '../personalization_app.mojom-webui.js';
+import type {GooglePhotosAlbum, WallpaperCollection} from '../personalization_app.mojom-webui.js';
+import {TopicSource} from '../personalization_app.mojom-webui.js';
 
-import {isAmbientModeAllowed, isManagedSeaPenEnabled} from './load_time_booleans.js';
+import {isAmbientModeAllowed} from './load_time_booleans.js';
 import {logAmbientAlbumsPathUMA, logPersonalizationPathUMA} from './personalization_metrics_logger.js';
 import {getTemplate} from './personalization_router_element.html.js';
 import {WallpaperObserver} from './wallpaper/wallpaper_observer.js';
@@ -34,6 +35,7 @@ export enum Paths {
   ROOT = '/',
   SEA_PEN_COLLECTION = '/wallpaper/sea-pen',
   SEA_PEN_RESULTS = '/wallpaper/sea-pen/results',
+  SEA_PEN_FREEFORM = '/wallpaper/sea-pen/freeform',
   USER = '/user',
 }
 
@@ -204,8 +206,8 @@ export class PersonalizationRouterElement extends PolymerElement {
     return isSeaPenAllowed() && isSeaPenPath(path);
   }
 
-  private shouldShowWallpaperSelected_(templateId: string|null): boolean {
-    return !templateId;
+  private getWallpaperSelectedClass_(path: string|null): string {
+    return path !== Paths.SEA_PEN_COLLECTION ? 'wallpaperSelectedHidden' : '';
   }
 
   private shouldShowBreadcrumb_(path: string|null): boolean {

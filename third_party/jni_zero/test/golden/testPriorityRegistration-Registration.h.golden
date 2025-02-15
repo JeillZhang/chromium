@@ -10,6 +10,8 @@
 
 #include "third_party/jni_zero/jni_zero_internal.h"
 
+extern const int64_t kJniZeroHashWhole = -7874644414477415949LL;
+extern const int64_t kJniZeroHashPriority = 4128442159926458844LL;
 
 // Class Accessors.
 #ifndef org_jni_1zero_SampleProxyEdgeCases_clazz_defined
@@ -22,198 +24,174 @@ inline jclass org_jni_1zero_SampleProxyEdgeCases_clazz(JNIEnv* env) {
 #endif
 
 
-// Forward declarations (methods).
-
-JNI_BOUNDARY_EXPORT void Java_J_N_M5bM_1xqb(JNIEnv* env, jclass jcaller);
-JNI_BOUNDARY_EXPORT jint Java_J_N_MYplquli(
+// Forward Declarations.
+JNI_ZERO_MUXED_ENTRYPOINT void Muxed_org_jni_1zero_TinySample2_test(
     JNIEnv* env,
-    jclass jcaller,
+    jint b,
+    jobject a);
+JNI_ZERO_MUXED_ENTRYPOINT void Muxed_org_jni_1zero_TinySample2_test2(
+    JNIEnv* env,
+    jint a,
+    jobject b);
+JNI_ZERO_MUXED_ENTRYPOINT jint Muxed_org_jni_1zero_SampleProxyEdgeCases_addStructB(
+    JNIEnv* env,
     jobject caller,
     jobject b);
-JNI_BOUNDARY_EXPORT jobjectArray Java_J_N_M3RUFTzC(
+JNI_ZERO_MUXED_ENTRYPOINT jobject Muxed_org_jni_1zero_SampleProxyEdgeCases_arrayTypes1(
     JNIEnv* env,
-    jclass jcaller,
-    jintArray a,
-    jobjectArray b);
-JNI_BOUNDARY_EXPORT jintArray Java_J_N_MV9JEAYF(
+    jobject a,
+    jobject b);
+JNI_ZERO_MUXED_ENTRYPOINT jobject Muxed_org_jni_1zero_SampleProxyEdgeCases_arrayTypes2(
     JNIEnv* env,
-    jclass jcaller,
-    jintArray a,
-    jobjectArray b);
-JNI_BOUNDARY_EXPORT void Java_J_N_MKWEYRlq(JNIEnv* env, jclass jcaller);
-JNI_BOUNDARY_EXPORT jobjectArray Java_J_N_MalqUoB_1(
+    jobject a,
+    jobject b);
+JNI_ZERO_MUXED_ENTRYPOINT void Muxed_org_jni_1zero_SampleProxyEdgeCases_foo__weirdly__escaped_name1(
+    JNIEnv* env);
+JNI_ZERO_MUXED_ENTRYPOINT jobject Muxed_org_jni_1zero_SampleProxyEdgeCases_genericsWithNestedClassArray(
     JNIEnv* env,
-    jclass jcaller,
-    jobjectArray arg);
-JNI_BOUNDARY_EXPORT void Java_J_N_M0E4cldm(
+    jobject arg);
+JNI_ZERO_MUXED_ENTRYPOINT void Muxed_org_jni_1zero_SampleProxyEdgeCases_setBool(
     JNIEnv* env,
-    jclass jcaller,
     jobject b,
     jobject i);
-JNI_BOUNDARY_EXPORT jboolean Java_J_N_MWbFhvyA(
+JNI_ZERO_MUXED_ENTRYPOINT jboolean Muxed_org_jni_1zero_SampleProxyEdgeCases_setStringBuilder(
     JNIEnv* env,
-    jclass jcaller,
     jobject sb);
-JNI_BOUNDARY_EXPORT jint Java_J_N_MWbFhvyA(
+JNI_ZERO_MUXED_ENTRYPOINT jint Muxed_org_jni_1zero_SampleProxyEdgeCases_setStringBuilder(
     JNIEnv* env,
-    jclass jcaller,
     jint sb);
-JNI_BOUNDARY_EXPORT void Java_org_jni_1zero_SampleProxyEdgeCases_nativeInstanceMethod(
+JNI_ZERO_BOUNDARY_EXPORT void Java_org_jni_1zero_SampleProxyEdgeCases_nativeInstanceMethod(
     JNIEnv* env,
-    jobject jcaller,
     jlong nativeInstance);
-JNI_BOUNDARY_EXPORT void Java_org_jni_1zero_SampleProxyEdgeCases_nativeStaticMethod(
+JNI_ZERO_BOUNDARY_EXPORT void Java_org_jni_1zero_SampleProxyEdgeCases_nativeStaticMethod(
+    JNIEnv* env);
+JNI_ZERO_MUXED_ENTRYPOINT jboolean Muxed_org_jni_1zero_TinySample_bar(
     JNIEnv* env,
-    jclass jcaller);
-JNI_BOUNDARY_EXPORT jboolean Java_J_N_MXKBD_1lj(
-    JNIEnv* env,
-    jclass jcaller,
-    jint a);
-JNI_BOUNDARY_EXPORT void Java_J_N_MnQLCFmK(JNIEnv* env, jclass jcaller);
+    jint a,
+    jobject b);
+JNI_ZERO_MUXED_ENTRYPOINT void Muxed_org_jni_1zero_TinySample_foo(JNIEnv* env, jint b, jobject a);
 
-
-JNI_BOUNDARY_EXPORT jboolean Java_J_N__1Z_1I(
-    JNIEnv* env,
-    jclass jcaller,
-    jint switch_num, jint int_param1) {
-        switch (switch_num) {
-          
-          case 0:
-            return Java_J_N_MXKBD_1lj(env, jcaller, int_param1);
-          
-          default:
-            JNI_ZERO_ILOG("J_N__1Z_1I was called with an invalid switch number: %d", switch_num);
-            JNI_ZERO_CHECK(false);
-            return {};
-        }
+// Multiplexing Methods.
+JNI_ZERO_BOUNDARY_EXPORT void Java_J_N_V(JNIEnv* env, jclass jcaller, jint switch_num) {
+  JNI_ZERO_DCHECK(switch_num >= 0 && switch_num < 1);
+  switch (switch_num) {
+    case 0:
+      return Muxed_org_jni_1zero_SampleProxyEdgeCases_foo__weirdly__escaped_name1(env);
+    default:
+      __builtin_unreachable();
+  }
 }
-JNI_BOUNDARY_EXPORT jboolean Java_J_N__1Z_1O(
-    JNIEnv* env,
-    jclass jcaller,
-    jint switch_num, jobject object_param1) {
-        switch (switch_num) {
-          
-          case 0:
-            return Java_J_N_MWbFhvyA(env, jcaller, object_param1);
-          
-          default:
-            JNI_ZERO_ILOG("J_N__1Z_1O was called with an invalid switch number: %d", switch_num);
-            JNI_ZERO_CHECK(false);
-            return {};
-        }
+JNI_ZERO_BOUNDARY_EXPORT jint Java_J_N_II(JNIEnv* env, jclass jcaller, jint switch_num, jint p0) {
+  JNI_ZERO_DCHECK(switch_num >= 0 && switch_num < 1);
+  switch (switch_num) {
+    case 0:
+      return Muxed_org_jni_1zero_SampleProxyEdgeCases_setStringBuilder(env, p0);
+    default:
+      __builtin_unreachable();
+  }
 }
-JNI_BOUNDARY_EXPORT jint Java_J_N__1I_1I(
+JNI_ZERO_BOUNDARY_EXPORT jobject Java_J_N_OO(
     JNIEnv* env,
     jclass jcaller,
-    jint switch_num, jint int_param1) {
-        switch (switch_num) {
-          
-          case 0:
-            return Java_J_N_MWbFhvyA(env, jcaller, int_param1);
-          
-          default:
-            JNI_ZERO_ILOG("J_N__1I_1I was called with an invalid switch number: %d", switch_num);
-            JNI_ZERO_CHECK(false);
-            return {};
-        }
+    jint switch_num,
+    jobject p0) {
+  JNI_ZERO_DCHECK(switch_num >= 0 && switch_num < 1);
+  switch (switch_num) {
+    case 0:
+      return Muxed_org_jni_1zero_SampleProxyEdgeCases_genericsWithNestedClassArray(env, p0);
+    default:
+      __builtin_unreachable();
+  }
 }
-JNI_BOUNDARY_EXPORT void Java_J_N__1V_1OO(
+JNI_ZERO_BOUNDARY_EXPORT jboolean Java_J_N_ZO(
     JNIEnv* env,
     jclass jcaller,
-    jint switch_num, jobject object_param1, jobject object_param2) {
-        switch (switch_num) {
-          
-          case 0:
-            return Java_J_N_M0E4cldm(env, jcaller, object_param1, object_param2);
-          
-          default:
-            JNI_ZERO_ILOG("J_N__1V_1OO was called with an invalid switch number: %d", switch_num);
-            JNI_ZERO_CHECK(false);
-            return;
-        }
+    jint switch_num,
+    jobject p0) {
+  JNI_ZERO_DCHECK(switch_num >= 0 && switch_num < 1);
+  switch (switch_num) {
+    case 0:
+      return Muxed_org_jni_1zero_SampleProxyEdgeCases_setStringBuilder(env, p0);
+    default:
+      __builtin_unreachable();
+  }
 }
-JNI_BOUNDARY_EXPORT jobjectArray Java_J_N__1OA_1OA(
+JNI_ZERO_BOUNDARY_EXPORT void Java_J_N_VIO(
     JNIEnv* env,
     jclass jcaller,
-    jint switch_num, jobjectArray object_array_param1) {
-        switch (switch_num) {
-          
-          case 0:
-            return Java_J_N_MalqUoB_1(env, jcaller, object_array_param1);
-          
-          default:
-            JNI_ZERO_ILOG("J_N__1OA_1OA was called with an invalid switch number: %d", switch_num);
-            JNI_ZERO_CHECK(false);
-            return {};
-        }
+    jint switch_num,
+    jint p0,
+    jobject p1) {
+  JNI_ZERO_DCHECK(switch_num >= 0 && switch_num < 3);
+  switch (switch_num) {
+    case 0:
+      return Muxed_org_jni_1zero_TinySample2_test(env, p0, p1);
+    case 1:
+      return Muxed_org_jni_1zero_TinySample2_test2(env, p0, p1);
+    case 2:
+      return Muxed_org_jni_1zero_TinySample_foo(env, p0, p1);
+    default:
+      __builtin_unreachable();
+  }
 }
-JNI_BOUNDARY_EXPORT jintArray Java_J_N__1IA_1IATAA(
+JNI_ZERO_BOUNDARY_EXPORT void Java_J_N_VOO(
     JNIEnv* env,
     jclass jcaller,
-    jint switch_num, jintArray int_array_param1, jobjectArray throwable_array_array_param1) {
-        switch (switch_num) {
-          
-          case 0:
-            return Java_J_N_MV9JEAYF(env, jcaller, int_array_param1, throwable_array_array_param1);
-          
-          default:
-            JNI_ZERO_ILOG("J_N__1IA_1IATAA was called with an invalid switch number: %d", switch_num);
-            JNI_ZERO_CHECK(false);
-            return {};
-        }
+    jint switch_num,
+    jobject p0,
+    jobject p1) {
+  JNI_ZERO_DCHECK(switch_num >= 0 && switch_num < 1);
+  switch (switch_num) {
+    case 0:
+      return Muxed_org_jni_1zero_SampleProxyEdgeCases_setBool(env, p0, p1);
+    default:
+      __builtin_unreachable();
+  }
 }
-JNI_BOUNDARY_EXPORT jobjectArray Java_J_N__1RAA_1IAOAA(
+JNI_ZERO_BOUNDARY_EXPORT jint Java_J_N_IOO(
     JNIEnv* env,
     jclass jcaller,
-    jint switch_num, jintArray int_array_param1, jobjectArray object_array_array_param1) {
-        switch (switch_num) {
-          
-          case 0:
-            return Java_J_N_M3RUFTzC(env, jcaller, int_array_param1, object_array_array_param1);
-          
-          default:
-            JNI_ZERO_ILOG("J_N__1RAA_1IAOAA was called with an invalid switch number: %d", switch_num);
-            JNI_ZERO_CHECK(false);
-            return {};
-        }
+    jint switch_num,
+    jobject p0,
+    jobject p1) {
+  JNI_ZERO_DCHECK(switch_num >= 0 && switch_num < 1);
+  switch (switch_num) {
+    case 0:
+      return Muxed_org_jni_1zero_SampleProxyEdgeCases_addStructB(env, p0, p1);
+    default:
+      __builtin_unreachable();
+  }
 }
-JNI_BOUNDARY_EXPORT jint Java_J_N__1I_1OO(
+JNI_ZERO_BOUNDARY_EXPORT jobject Java_J_N_OOO(
     JNIEnv* env,
     jclass jcaller,
-    jint switch_num, jobject object_param1, jobject object_param2) {
-        switch (switch_num) {
-          
-          case 0:
-            return Java_J_N_MYplquli(env, jcaller, object_param1, object_param2);
-          
-          default:
-            JNI_ZERO_ILOG("J_N__1I_1OO was called with an invalid switch number: %d", switch_num);
-            JNI_ZERO_CHECK(false);
-            return {};
-        }
+    jint switch_num,
+    jobject p0,
+    jobject p1) {
+  JNI_ZERO_DCHECK(switch_num >= 0 && switch_num < 2);
+  switch (switch_num) {
+    case 0:
+      return Muxed_org_jni_1zero_SampleProxyEdgeCases_arrayTypes1(env, p0, p1);
+    case 1:
+      return Muxed_org_jni_1zero_SampleProxyEdgeCases_arrayTypes2(env, p0, p1);
+    default:
+      __builtin_unreachable();
+  }
 }
-JNI_BOUNDARY_EXPORT void Java_J_N__1V(
+JNI_ZERO_BOUNDARY_EXPORT jboolean Java_J_N_ZIO(
     JNIEnv* env,
     jclass jcaller,
-    jint switch_num) {
-        switch (switch_num) {
-          
-          case 0:
-            return Java_J_N_M5bM_1xqb(env, jcaller);
-          
-          case 1:
-            return Java_J_N_MKWEYRlq(env, jcaller);
-          
-          case 2:
-            return Java_J_N_MnQLCFmK(env, jcaller);
-          
-          default:
-            JNI_ZERO_ILOG("J_N__1V was called with an invalid switch number: %d", switch_num);
-            JNI_ZERO_CHECK(false);
-            return;
-        }
+    jint switch_num,
+    jint p0,
+    jobject p1) {
+  JNI_ZERO_DCHECK(switch_num >= 0 && switch_num < 1);
+  switch (switch_num) {
+    case 0:
+      return Muxed_org_jni_1zero_TinySample_bar(env, p0, p1);
+    default:
+      __builtin_unreachable();
+  }
 }
 
 
 #endif  // TEMP_DIR_HEADER_
-

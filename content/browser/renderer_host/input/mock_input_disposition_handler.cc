@@ -5,7 +5,7 @@
 #include "content/browser/renderer_host/input/mock_input_disposition_handler.h"
 
 #include "base/functional/bind.h"
-#include "content/common/input/input_router.h"
+#include "components/input/input_router.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 using blink::WebInputEvent;
@@ -20,13 +20,13 @@ MockInputDispositionHandler::MockInputDispositionHandler()
 
 MockInputDispositionHandler::~MockInputDispositionHandler() {}
 
-InputRouter::KeyboardEventCallback
+input::InputRouter::KeyboardEventCallback
 MockInputDispositionHandler::CreateKeyboardEventCallback() {
   return base::BindOnce(&MockInputDispositionHandler::OnKeyboardEventAck,
                         base::Unretained(this));
 }
 
-InputRouter::MouseEventCallback
+input::InputRouter::MouseEventCallback
 MockInputDispositionHandler::CreateMouseEventCallback() {
   return base::BindOnce(&MockInputDispositionHandler::OnMouseEventAck,
                         base::Unretained(this));
@@ -49,10 +49,18 @@ void MockInputDispositionHandler::OnTouchEventAck(
   VLOG(1) << __FUNCTION__ << " called!";
   acked_touch_event_ = event;
   RecordAckCalled(event.event.GetType(), ack_result);
-  if (touch_followup_event_)
-    input_router_->SendTouchEvent(*touch_followup_event_);
-  if (gesture_followup_event_)
-    input_router_->SendGestureEvent(*gesture_followup_event_);
+  if (touch_followup_event_) {
+    input::ScopedDispatchToRendererCallback dispatch_callback(
+        base::DoNothing());
+    input_router_->SendTouchEvent(*touch_followup_event_,
+                                  dispatch_callback.callback);
+  }
+  if (gesture_followup_event_) {
+    input::ScopedDispatchToRendererCallback dispatch_callback(
+        base::DoNothing());
+    input_router_->SendGestureEvent(*gesture_followup_event_,
+                                    dispatch_callback.callback);
+  }
 }
 
 void MockInputDispositionHandler::OnGestureEventAck(

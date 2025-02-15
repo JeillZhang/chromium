@@ -4,7 +4,8 @@
 
 #import "ios/chrome/browser/passwords/model/password_manager_app_interface.h"
 
-#import "base/ranges/algorithm.h"
+#import <algorithm>
+
 #import "base/strings/sys_string_conversions.h"
 #import "base/strings/utf_string_conversions.h"
 #import "base/test/ios/wait_util.h"
@@ -15,7 +16,7 @@
 #import "components/password_manager/core/common/password_manager_pref_names.h"
 #import "components/prefs/pref_service.h"
 #import "ios/chrome/browser/passwords/model/ios_chrome_profile_password_store_factory.h"
-#import "ios/chrome/browser/shared/model/browser_state/chrome_browser_state.h"
+#import "ios/chrome/browser/shared/model/profile/profile_ios.h"
 #import "ios/chrome/test/app/chrome_test_util.h"
 #import "ios/chrome/test/app/tab_test_util.h"
 #import "ios/testing/nserror_util.h"
@@ -33,9 +34,9 @@ namespace {
 
 // Returns the password store corresponding to the main browser state.
 scoped_refptr<password_manager::PasswordStoreInterface> PasswordStore() {
-  return IOSChromeProfilePasswordStoreFactory::GetForBrowserState(
-             chrome_test_util::GetOriginalBrowserState(),
-             ServiceAccessType::IMPLICIT_ACCESS);
+  return IOSChromeProfilePasswordStoreFactory::GetForProfile(
+      chrome_test_util::GetOriginalProfile(),
+      ServiceAccessType::IMPLICIT_ACCESS);
 }
 
 }  // namespace
@@ -81,7 +82,7 @@ class PasswordStoreConsumerHelper : public PasswordStoreConsumer {
       PasswordStore();
   if (passwordStore == nullptr) {
     return testing::NSErrorWithLocalizedDescription(
-        @"PasswordStore is unexpectedly null for BrowserState");
+        @"PasswordStore is unexpectedly null for Profile");
   }
 
   // Store a PasswordForm representing a PasswordCredential.
@@ -139,8 +140,8 @@ class PasswordStoreConsumerHelper : public PasswordStoreConsumer {
 + (int)storedCredentialsCount {
   // Obtain a PasswordStore.
   scoped_refptr<PasswordStoreInterface> passwordStore =
-      IOSChromeProfilePasswordStoreFactory::GetForBrowserState(
-          chrome_test_util::GetOriginalBrowserState(),
+      IOSChromeProfilePasswordStoreFactory::GetForProfile(
+          chrome_test_util::GetOriginalProfile(),
           ServiceAccessType::IMPLICIT_ACCESS)
           .get();
 
@@ -166,7 +167,7 @@ class PasswordStoreConsumerHelper : public PasswordStoreConsumer {
   std::u16string usernameStr = base::SysNSStringToUTF16(username);
   std::u16string passwordStr = base::SysNSStringToUTF16(password);
 
-  return base::ranges::any_of(
+  return std::ranges::any_of(
       credentials, [&](const std::unique_ptr<PasswordForm>& credential) {
         return credential->username_value == usernameStr &&
                credential->password_value == passwordStr;

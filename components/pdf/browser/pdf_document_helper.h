@@ -8,6 +8,7 @@
 #include <memory>
 
 #include "base/memory/raw_ptr.h"
+#include "base/observer_list.h"
 #include "content/public/browser/document_user_data.h"
 #include "content/public/browser/render_frame_host_receiver_set.h"
 #include "content/public/browser/render_widget_host_observer.h"
@@ -15,6 +16,7 @@
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "pdf/mojom/pdf.mojom.h"
+#include "services/screen_ai/buildflags/buildflags.h"
 #include "ui/touch_selection/selection_event_type.h"
 #include "ui/touch_selection/touch_selection_controller.h"
 #include "ui/touch_selection/touch_selection_menu_runner.h"
@@ -37,6 +39,15 @@ class PDFDocumentHelper
       public ui::TouchSelectionMenuClient,
       public content::TouchSelectionControllerClientManager::Observer {
  public:
+  class Observer : public base::CheckedObserver {
+   public:
+    // Invoked when the document load is completed successfully. Will not be
+    // invoked when the PDF is already loaded. Will not be invoked when the load
+    // fails. This is useful to wait for document metadata to be loaded, before
+    // calls to `GetPdfBytes`, `GetPageText` can be made.
+    virtual void OnDocumentLoadComplete() {}
+  };
+
   PDFDocumentHelper(const PDFDocumentHelper&) = delete;
   PDFDocumentHelper& operator=(const PDFDocumentHelper&) = delete;
 
@@ -46,6 +57,9 @@ class PDFDocumentHelper
       mojo::PendingAssociatedReceiver<mojom::PdfHost> pdf_host,
       content::RenderFrameHost* rfh,
       std::unique_ptr<PDFDocumentHelperClient> client);
+
+  static PDFDocumentHelper* MaybeGetForWebContents(
+      content::WebContents* contents);
 
   // content::RenderWidgetHostObserver:
   void RenderWidgetHostDestroyed(
@@ -77,7 +91,7 @@ class PDFDocumentHelper
 
   // pdf::mojom::PdfHost:
   void SetListener(mojo::PendingRemote<mojom::PdfListener> listener) override;
-  void HasUnsupportedFeature() override;
+  void OnDocumentLoadComplete() override;
   void SaveUrlAs(const GURL& url,
                  network::mojom::ReferrerPolicy policy) override;
   void UpdateContentRestrictions(int32_t content_restrictions) override;
@@ -86,6 +100,24 @@ class PDFDocumentHelper
                         const gfx::PointF& right,
                         int32_t right_height) override;
   void SetPluginCanSave(bool can_save) override;
+#if BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
+  void OnSearchifyStarted() override;
+#endif
+
+  // Returns whether document is loaded, at which point, the other calls to
+  // document metadata such  as `GetPdfBytes`, `GetPageText` can be made.
+  bool IsDocumentLoadComplete() const { return is_document_load_complete_; }
+
+  void GetPdfBytes(uint32_t size_limit,
+                   pdf::mojom::PdfListener::GetPdfBytesCallback callback);
+
+  void GetPageText(int32_t page_index,
+                   pdf::mojom::PdfListener::GetPageTextCallback callback);
+  void GetMostVisiblePageIndex(
+      pdf::mojom::PdfListener::GetMostVisiblePageIndexCallback callback);
+
+  void AddObserver(Observer* observer);
+  void RemoveObserver(Observer* observer);
 
  private:
   friend class content::DocumentUserData<PDFDocumentHelper>;
@@ -116,7 +148,11 @@ class PDFDocumentHelper
   int32_t selection_right_height_ = 0;
   bool has_selection_ = false;
 
+  bool is_document_load_complete_ = false;
+
   mojo::Remote<mojom::PdfListener> remote_pdf_client_;
+
+  base::ObserverList<Observer> observers_;
 
   DOCUMENT_USER_DATA_KEY_DECL();
 };

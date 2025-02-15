@@ -11,8 +11,8 @@ extern NSString* const kMostVisitedSectionIdentifier;
 extern NSString* const kMagicStackSectionIdentifier;
 extern NSString* const kMagicStackEditSectionIdentifier;
 
-// The max height of the modules.
-extern const int kModuleMaxHeight;
+// The max text size of text with the Footnote Text Style.
+extern const int kMaxTextSizeForStyleFootnote;
 
 // The spacing between modules in the Magic Stack.
 extern const CGFloat kMagicStackSpacing;
@@ -42,10 +42,5 @@ extern NSString* const kMagicStackEditButtonContainerAccessibilityIdentifier;
 
 // Represents the Edit Button in the Magic Stack.
 extern NSString* const kMagicStackEditButtonAccessibilityIdentifier;
-
-// Returns the amount that MagicStack modules are narrower than the ScrollView,
-// in order to allow peeking at the sides.
-CGFloat ModuleNarrowerWidthToAllowPeekingForTraitCollection(
-    UITraitCollection* traitCollection);
 
 #endif  // IOS_CHROME_BROWSER_UI_CONTENT_SUGGESTIONS_MAGIC_STACK_MAGIC_STACK_CONSTANTS_H_

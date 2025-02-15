@@ -37,7 +37,7 @@ public class AccountCapabilities {
     }
 
     @VisibleForTesting
-    public AccountCapabilities(HashMap<String, Boolean> accountCapabilities) {
+    public AccountCapabilities(Map<String, Boolean> accountCapabilities) {
         mAccountCapabilities = accountCapabilities;
     }
 
@@ -49,7 +49,7 @@ public class AccountCapabilities {
             Map<String, Integer> capabilityResponses) {
         assert capabilityResponses.size()
                 == AccountCapabilitiesConstants.SUPPORTED_ACCOUNT_CAPABILITY_NAMES.size();
-        HashMap<String, Boolean> capabilities = new HashMap<>();
+        Map<String, Boolean> capabilities = new HashMap<>();
         for (String capabilityName :
                 AccountCapabilitiesConstants.SUPPORTED_ACCOUNT_CAPABILITY_NAMES) {
             assert capabilityResponses.containsKey(capabilityName);
@@ -100,6 +100,14 @@ public class AccountCapabilities {
     }
 
     /**
+     * @return canFetchFamilyMemberInfo capability value.
+     */
+    public @Tribool int canFetchFamilyMemberInfo() {
+        return getCapabilityByName(
+                AccountCapabilitiesConstants.CAN_FETCH_FAMILY_MEMBER_INFO_CAPABILITY_NAME);
+    }
+
+    /**
      * @return canToggleAutoUpdates capability value.
      */
     public @Tribool int canToggleAutoUpdates() {
@@ -111,6 +119,13 @@ public class AccountCapabilities {
      */
     public @Tribool int canUseChromeIpProtection() {
         return getCapabilityByName(AccountCapabilitiesConstants.CAN_USE_CHROME_IP_PROTECTION_NAME);
+    }
+
+    /**
+     * @return canUseCopyeditorFeature capability value.
+     */
+    public @Tribool int canUseCopyeditorFeature() {
+        return getCapabilityByName(AccountCapabilitiesConstants.CAN_USE_COPYEDITOR_FEATURE_NAME);
     }
 
     /**
@@ -176,6 +191,37 @@ public class AccountCapabilities {
     public @Tribool int isSubjectToParentalControls() {
         return getCapabilityByName(
                 AccountCapabilitiesConstants.IS_SUBJECT_TO_PARENTAL_CONTROLS_CAPABILITY_NAME);
+    }
+
+    /**
+     * @return canUseSpeakerLabelInRecorderApp capability value.
+     */
+    public @Tribool int canUseSpeakerLabelInRecorderApp() {
+        return getCapabilityByName(
+                AccountCapabilitiesConstants.CAN_USE_SPEAKER_LABEL_IN_RECORDER_APP);
+    }
+
+    /**
+     * @return canUseGenerativeAiInRecorderApp capability value.
+     */
+    public @Tribool int canUseGenerativeAiInRecorderApp() {
+        return getCapabilityByName(
+                AccountCapabilitiesConstants.CAN_USE_GENERATIVE_AI_IN_RECORDER_APP);
+    }
+
+    /**
+     * @return canUseGenerativeAiPhotoEditing capability value.
+     */
+    public @Tribool int canUseGenerativeAiPhotoEditing() {
+        return getCapabilityByName(
+                AccountCapabilitiesConstants.CAN_USE_GENERATIVE_AI_PHOTO_EDITING);
+    }
+
+    /**
+     * @return canUseChromeOSGenerativeAi capability value.
+     */
+    public @Tribool int canUseChromeOSGenerativeAi() {
+        return getCapabilityByName(AccountCapabilitiesConstants.CAN_USE_CHROMEOS_GENERATIVE_AI);
     }
 
     /**

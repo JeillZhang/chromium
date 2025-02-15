@@ -21,8 +21,6 @@ import {TestPrivacyPageBrowserProxy} from './test_privacy_page_browser_proxy.js'
 import {TestSafetyHubBrowserProxy} from './test_safety_hub_browser_proxy.js';
 import {TestSiteSettingsPrefsBrowserProxy} from './test_site_settings_prefs_browser_proxy.js';
 
-// clang-format on
-
 const redesignedPages: Route[] = [
   routes.SITE_SETTINGS_ADS,
   routes.SITE_SETTINGS_AR,
@@ -37,7 +35,7 @@ const redesignedPages: Route[] = [
   routes.SITE_SETTINGS_IDLE_DETECTION,
   routes.SITE_SETTINGS_IMAGES,
   routes.SITE_SETTINGS_JAVASCRIPT,
-  routes.SITE_SETTINGS_JAVASCRIPT_JIT,
+  routes.SITE_SETTINGS_JAVASCRIPT_OPTIMIZER,
   routes.SITE_SETTINGS_LOCAL_FONTS,
   routes.SITE_SETTINGS_MICROPHONE,
   routes.SITE_SETTINGS_MIDI_DEVICES,
@@ -70,6 +68,8 @@ const redesignedPages: Route[] = [
   // routes.SITE_SETTINGS_ZOOM_LEVELS,
 ];
 
+// clang-format on
+
 suite('PrivacyPage', function() {
   let page: SettingsPrivacyPageElement;
   let settingsPrefs: SettingsPrefsElement;
@@ -86,6 +86,13 @@ suite('PrivacyPage', function() {
     return CrSettingsPrefs.initialized;
   });
 
+  function createPage() {
+    page = document.createElement('settings-privacy-page');
+    page.prefs = settingsPrefs.prefs!;
+    document.body.appendChild(page);
+    return flushTasks();
+  }
+
   setup(function() {
     document.body.innerHTML = window.trustedTypes!.emptyHTML;
 
@@ -97,10 +104,7 @@ suite('PrivacyPage', function() {
     metricsBrowserProxy = new TestMetricsBrowserProxy();
     MetricsBrowserProxyImpl.setInstance(metricsBrowserProxy);
 
-    page = document.createElement('settings-privacy-page');
-    page.prefs = settingsPrefs.prefs!;
-    document.body.appendChild(page);
-    return flushTasks();
+    return createPage();
   });
 
   teardown(function() {
@@ -108,19 +112,16 @@ suite('PrivacyPage', function() {
     Router.getInstance().navigateTo(routes.BASIC);
   });
 
-  // New certificate manager should be shown since kEnableCertManagementUIV2
+  // <if expr="use_nss_certs">
+  // Old certificate manager should not be shown since kEnableCertManagementUIV2
   // feature flag is enabled in SettingsSecurityPageTest constructor.
-  // TODO(crbug.com/40928765): remove this comment once the feature flag is
-  // set to default enabled.
+  // TODO(crbug.com/40928765): remove this test once feature is rolled out
   test('certificate_manager_visibility', function() {
     Router.getInstance().navigateTo(routes.CERTIFICATES);
-    const certManager = page.shadowRoot!.querySelector('certificate-manager')!;
+    const certManager = page.shadowRoot!.querySelector('certificate-manager');
     assertFalse(!!certManager, 'found unexpected <certificate-manager> tag');
-    const certManagerV2 =
-        page.shadowRoot!.querySelector('certificate-manager-v2')!;
-    assertTrue(
-        !!certManagerV2, 'did not find expected <certificate-manager-v2> tag');
   });
+  // </if>
 
   test('showClearBrowsingDataDialog', function() {
     assertFalse(!!page.shadowRoot!.querySelector(
@@ -133,32 +134,49 @@ suite('PrivacyPage', function() {
     assertTrue(!!dialog);
   });
 
-  test('cookiesLinkRowSublabel', async function() {
+  test('cookiesLinkRowSublabel', function() {
     page.set(
         'prefs.profile.cookie_controls_mode.value', CookieControlsMode.OFF);
+    const thirdPartyCookiesLinkRow =
+        page.shadowRoot!.querySelector<CrLinkRowElement>(
+            '#thirdPartyCookiesLinkRow');
+    assertTrue(!!thirdPartyCookiesLinkRow);
     assertEquals(
         page.i18n('thirdPartyCookiesLinkRowSublabelEnabled'),
-        page.shadowRoot!
-            .querySelector<CrLinkRowElement>(
-                '#thirdPartyCookiesLinkRow')!.subLabel);
+        thirdPartyCookiesLinkRow.subLabel);
 
     page.set(
         'prefs.profile.cookie_controls_mode.value',
         CookieControlsMode.INCOGNITO_ONLY);
     assertEquals(
         page.i18n('thirdPartyCookiesLinkRowSublabelDisabledIncognito'),
-        page.shadowRoot!
-            .querySelector<CrLinkRowElement>(
-                '#thirdPartyCookiesLinkRow')!.subLabel);
+        thirdPartyCookiesLinkRow.subLabel);
 
     page.set(
         'prefs.profile.cookie_controls_mode.value',
         CookieControlsMode.BLOCK_THIRD_PARTY);
     assertEquals(
         page.i18n('thirdPartyCookiesLinkRowSublabelDisabled'),
-        page.shadowRoot!
-            .querySelector<CrLinkRowElement>(
-                '#thirdPartyCookiesLinkRow')!.subLabel);
+        thirdPartyCookiesLinkRow.subLabel);
+  });
+
+  test('cookiesLinkRowSublabelAlwaysBlock3pcsIncognito', async function() {
+    loadTimeData.overrideValues({
+      isAlwaysBlock3pcsIncognitoEnabled: true,
+    });
+    resetRouterForTesting();
+    await createPage();
+
+    page.set(
+        'prefs.profile.cookie_controls_mode.value',
+        CookieControlsMode.INCOGNITO_ONLY);
+    const thirdPartyCookiesLinkRow =
+        page.shadowRoot!.querySelector<CrLinkRowElement>(
+            '#thirdPartyCookiesLinkRow');
+    assertTrue(!!thirdPartyCookiesLinkRow);
+    assertEquals(
+        page.i18n('thirdPartyCookiesLinkRowSublabelEnabled'),
+        thirdPartyCookiesLinkRow.subLabel);
   });
 
   test('ContentSettingsVisibility', async function() {
@@ -191,7 +209,8 @@ suite('PrivacyPage', function() {
 
     assertTrue(isChildVisible(page, '#notificationRadioGroup'));
     const categorySettingExceptions =
-        page.shadowRoot!.querySelector('category-setting-exceptions')!;
+        page.shadowRoot!.querySelector('category-setting-exceptions');
+    assertTrue(!!categorySettingExceptions);
     assertTrue(isVisible(categorySettingExceptions));
     assertEquals(
         ContentSettingsTypes.NOTIFICATIONS, categorySettingExceptions.category);
@@ -203,7 +222,8 @@ suite('PrivacyPage', function() {
 
     assertTrue(isChildVisible(page, '#locationRadioGroup'));
     const categorySettingExceptions =
-        page.shadowRoot!.querySelector('category-setting-exceptions')!;
+        page.shadowRoot!.querySelector('category-setting-exceptions');
+    assertTrue(!!categorySettingExceptions);
     assertTrue(isVisible(categorySettingExceptions));
     assertEquals(
         ContentSettingsTypes.GEOLOCATION, categorySettingExceptions.category);
@@ -217,7 +237,8 @@ suite('PrivacyPage', function() {
     Router.getInstance().navigateTo(routes.SITE_SETTINGS_HID_DEVICES);
     await flushTasks();
 
-    const settingsSubpage = page.shadowRoot!.querySelector('settings-subpage')!;
+    const settingsSubpage = page.shadowRoot!.querySelector('settings-subpage');
+    assertTrue(!!settingsSubpage);
     assertTrue(isVisible(settingsSubpage));
     assertEquals(
         settingsSubpage.learnMoreUrl,
@@ -228,7 +249,8 @@ suite('PrivacyPage', function() {
     Router.getInstance().navigateTo(routes.SITE_SETTINGS_SERIAL_PORTS);
     await flushTasks();
 
-    const settingsSubpage = page.shadowRoot!.querySelector('settings-subpage')!;
+    const settingsSubpage = page.shadowRoot!.querySelector('settings-subpage');
+    assertTrue(!!settingsSubpage);
     assertTrue(isVisible(settingsSubpage));
     assertEquals(
         settingsSubpage.learnMoreUrl,
@@ -239,7 +261,8 @@ suite('PrivacyPage', function() {
     Router.getInstance().navigateTo(routes.SITE_SETTINGS_USB_DEVICES);
     await flushTasks();
 
-    const settingsSubpage = page.shadowRoot!.querySelector('settings-subpage')!;
+    const settingsSubpage = page.shadowRoot!.querySelector('settings-subpage');
+    assertTrue(!!settingsSubpage);
     assertTrue(isVisible(settingsSubpage));
     assertEquals(
         settingsSubpage.learnMoreUrl,
@@ -311,7 +334,8 @@ suite(`PrivacySandbox`, function() {
   test('privacySandboxRowLabel', function() {
     const privacySandboxLinkRow =
         page.shadowRoot!.querySelector<CrLinkRowElement>(
-            '#privacySandboxLinkRow')!;
+            '#privacySandboxLinkRow');
+    assertTrue(!!privacySandboxLinkRow);
     assertEquals(
         loadTimeData.getString('adPrivacyLinkRowLabel'),
         privacySandboxLinkRow.label);
@@ -343,7 +367,9 @@ suite(`PrivacySandbox`, function() {
   });
 });
 
+// <if expr="use_nss_certs">
 // Test with Certificate Management V2 flag off.
+// TODO(crbug.com/40928765): remove this suite once feature is rolled out
 suite(`CertificateManagementV2`, function() {
   let page: SettingsPrivacyPageElement;
   let settingsPrefs: SettingsPrefsElement;
@@ -375,22 +401,13 @@ suite(`CertificateManagementV2`, function() {
 
   test('certificate_manager_visibility', function() {
     Router.getInstance().navigateTo(routes.CERTIFICATES);
-    // Old certificate manager only shown on platforms using NSS.
+    // Old certificate manager shown on platforms using NSS.
     const certManager = page.shadowRoot!.querySelector('certificate-manager');
-    // <if expr="use_nss_certs">
     assertTrue(
         !!certManager, 'did not find expected <certificate-manager> tag');
-    // </if>
-    // <if expr="not use_nss_certs">
-    assertFalse(!!certManager, 'found unexpected <certificate-manager> tag');
-    // </if>
-    // New certificate manager not shown anywhere with the load time flag off.
-    const certManagerV2 =
-        page.shadowRoot!.querySelector('certificate-manager-v2')!;
-    assertFalse(
-        !!certManagerV2, 'found unexpected <certificate-manager-v2> tag');
   });
 });
+// </if>
 
 suite('WebPrintingNotShown', function () {
   test('navigateToWebPrinting', function () {
@@ -473,38 +490,37 @@ suite(`TrackingProtectionSubpage`, function() {
     resetRouterForTesting();
   });
 
-  test('trackingProtectionSubpageAttributes', async function() {
+
+  test('cookiesSubpageAttributes', async function() {
     // The subpage is only in the DOM if the corresponding route is open.
-    page.shadowRoot!
-        .querySelector<CrLinkRowElement>('#trackingProtectionLinkRow')!.click();
+    const thirdPartyCookiesLinkRow =
+        page.shadowRoot!.querySelector<CrLinkRowElement>(
+            '#thirdPartyCookiesLinkRow');
+    assertTrue(!!thirdPartyCookiesLinkRow);
+    thirdPartyCookiesLinkRow.click();
     await flushTasks();
 
-    const trackingProtectionSubpage =
-        page.shadowRoot!.querySelector<PolymerElement>('#trackingProtection');
-    assertTrue(!!trackingProtectionSubpage);
+    const cookiesSubpage =
+        page.shadowRoot!.querySelector<PolymerElement>('#cookies');
+    assertTrue(!!cookiesSubpage);
     assertEquals(
-        page.i18n('trackingProtectionPageTitle'),
-        trackingProtectionSubpage.getAttribute('page-title'));
-    const associatedControl =
-        trackingProtectionSubpage.get('associatedControl');
+        page.i18n('thirdPartyCookiesPageTitle'),
+        cookiesSubpage.getAttribute('page-title'));
+    const associatedControl = cookiesSubpage.get('associatedControl');
     assertTrue(!!associatedControl);
-    assertEquals('trackingProtectionLinkRow', associatedControl.id);
+    assertEquals('thirdPartyCookiesLinkRow', associatedControl.id);
   });
 
-  test('clickTrackingProtectionRow', async function() {
-    const trackingProtectionLinkRow =
+  test('clickCookiesRow', async function() {
+    const thirdPartyCookiesLinkRow =
         page.shadowRoot!.querySelector<HTMLElement>(
-            '#trackingProtectionLinkRow');
-    assertTrue(!!trackingProtectionLinkRow);
-    trackingProtectionLinkRow.click();
-    // Ensure UMA is logged.
-    assertEquals(
-        'Settings.TrackingProtection.OpenedFromPrivacyPage',
-        await metricsBrowserProxy.whenCalled('recordAction'));
+            '#thirdPartyCookiesLinkRow');
+    assertTrue(!!thirdPartyCookiesLinkRow);
+    thirdPartyCookiesLinkRow.click();
     // Ensure we navigate to the correct page.
     await flushTasks();
     assertEquals(
-        routes.TRACKING_PROTECTION, Router.getInstance().getCurrentRoute());
+        routes.COOKIES, Router.getInstance().getCurrentRoute());
   });
 });
 
@@ -604,7 +620,8 @@ suite(`PrivacySandbox4EnabledButRestrictedWithNotice`, function() {
   test('privacySandboxRowSublabel', function() {
     const privacySandboxLinkRow =
         page.shadowRoot!.querySelector<CrLinkRowElement>(
-            '#privacySandboxLinkRow')!;
+            '#privacySandboxLinkRow');
+    assertTrue(!!privacySandboxLinkRow);
     // Ensure that a measurement-specific message is shown in this
     // configuration. The default is tested in the regular
     // PrivacySandbox4Enabled suite.
@@ -692,8 +709,10 @@ suite('PrivacyGuideRow', function() {
   });
 
   test('privacyGuideRowClick', async function() {
-    page.shadowRoot!.querySelector<HTMLElement>(
-                        '#privacyGuideLinkRow')!.click();
+    const privacyGuideLinkRow =
+        page.shadowRoot!.querySelector<HTMLElement>('#privacyGuideLinkRow');
+    assertTrue(!!privacyGuideLinkRow);
+    privacyGuideLinkRow.click();
 
     const result = await metricsBrowserProxy.whenCalled(
         'recordPrivacyGuideEntryExitHistogram');
@@ -844,8 +863,11 @@ suite('HappinessTrackingSurveys', function() {
   });
 
   test('CookiesTrigger', async function() {
-    page.shadowRoot!.querySelector<HTMLElement>(
-                        '#thirdPartyCookiesLinkRow')!.click();
+    const thirdPartyCookiesLinkRow =
+        page.shadowRoot!.querySelector<HTMLElement>(
+            '#thirdPartyCookiesLinkRow');
+    assertTrue(!!thirdPartyCookiesLinkRow);
+    thirdPartyCookiesLinkRow.click();
     const interaction =
         await testHatsBrowserProxy.whenCalled('trustSafetyInteractionOccurred');
     assertEquals(TrustSafetyInteraction.USED_PRIVACY_CARD, interaction);
@@ -905,8 +927,7 @@ suite('NotificationPermissionReview', function() {
         SafetyHubEvent.NOTIFICATION_PERMISSIONS_MAYBE_CHANGED,
         oneElementMockData);
     await flushTasks();
-
-    assertFalse(isChildVisible(page, 'review-notification-permissions'));
+    assertFalse(isChildVisible(page, '#safetyHubEntryPoint'));
 
     // Set guest mode back to false.
     loadTimeData.overrideValues({isGuest: false});
@@ -937,88 +958,6 @@ suite('NotificationPermissionReview', function() {
         oneElementMockData);
     await flushTasks();
     assertTrue(isChildVisible(page, '#safetyHubEntryPoint'));
-  });
-});
-
-// TODO(crbug.com/40267370): Remove the test once Safety Hub has been rolled out.
-suite('NotificationPermissionReviewSafetyHubDisabled', function() {
-  let page: SettingsPrivacyPageElement;
-  let siteSettingsBrowserProxy: TestSafetyHubBrowserProxy;
-
-  const oneElementMockData = [{
-    origin: 'www.example.com',
-    notificationInfoString: 'About 4 notifications a day',
-  }];
-
-  suiteSetup(function() {
-    loadTimeData.overrideValues({
-      enableSafetyHub: false,
-    });
-    resetRouterForTesting();
-  });
-
-  setup(function() {
-    document.body.innerHTML = window.trustedTypes!.emptyHTML;
-
-    Router.getInstance().navigateTo(routes.SITE_SETTINGS_NOTIFICATIONS);
-    siteSettingsBrowserProxy = new TestSafetyHubBrowserProxy();
-    SafetyHubBrowserProxyImpl.setInstance(siteSettingsBrowserProxy);
-  });
-
-  teardown(function() {
-    page.remove();
-  });
-
-  function createPage() {
-    page = document.createElement('settings-privacy-page');
-    document.body.appendChild(page);
-    return flushTasks();
-  }
-
-  test('InvisibleWhenGuestMode', async function() {
-    loadTimeData.overrideValues({isGuest: true});
-    resetPageVisibilityForTesting();
-    resetRouterForTesting();
-    await createPage();
-
-    // The UI should remain invisible even when there's an event that the
-    // notification permissions may have changed.
-    webUIListenerCallback(
-        SafetyHubEvent.NOTIFICATION_PERMISSIONS_MAYBE_CHANGED,
-        oneElementMockData);
-    await flushTasks();
-
-    assertFalse(isChildVisible(page, 'review-notification-permissions'));
-
-    // Set guest mode back to false.
-    loadTimeData.overrideValues({isGuest: false});
-    resetPageVisibilityForTesting();
-    resetRouterForTesting();
-  });
-
-  test('VisibilityWithChangingPermissionList', async function() {
-    // The element is not visible when there is nothing to review.
-    await createPage();
-    assertFalse(isChildVisible(page, 'review-notification-permissions'));
-
-    // The element becomes visible if the list of permissions is no longer
-    // empty.
-    webUIListenerCallback(
-        SafetyHubEvent.NOTIFICATION_PERMISSIONS_MAYBE_CHANGED,
-        oneElementMockData);
-    await flushTasks();
-    assertTrue(isChildVisible(page, 'review-notification-permissions'));
-
-    // Once visible, it remains visible regardless of list length.
-    webUIListenerCallback(
-        SafetyHubEvent.NOTIFICATION_PERMISSIONS_MAYBE_CHANGED, []);
-    await flushTasks();
-    assertTrue(isChildVisible(page, 'review-notification-permissions'));
-    webUIListenerCallback(
-        SafetyHubEvent.NOTIFICATION_PERMISSIONS_MAYBE_CHANGED,
-        oneElementMockData);
-    await flushTasks();
-    assertTrue(isChildVisible(page, 'review-notification-permissions'));
   });
 });
 
@@ -1069,7 +1008,8 @@ suite('EnableWebBluetoothNewPermissionsBackend', function() {
         routes.SITE_SETTINGS.createChild('bluetoothDevices'));
     await flushTasks();
 
-    const settingsSubpage = page.shadowRoot!.querySelector('settings-subpage')!;
+    const settingsSubpage = page.shadowRoot!.querySelector('settings-subpage');
+    assertTrue(!!settingsSubpage);
     assertTrue(isVisible(settingsSubpage));
     assertEquals(
         settingsSubpage.learnMoreUrl,

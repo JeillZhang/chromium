@@ -2,6 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+from collections import OrderedDict
 import json
 import logging
 import os
@@ -14,7 +15,6 @@ import test_runner
 import test_runner_errors
 import mac_util
 
-from collections import OrderedDict
 
 LOGGER = logging.getLogger(__name__)
 
@@ -22,6 +22,8 @@ MAX_WAIT_TIME_TO_DELETE_RUNTIME = 45  # 45 seconds
 
 SIMULATOR_DEFAULT_PATH = os.path.expanduser(
     '~/Library/Developer/CoreSimulator/Devices')
+
+IOS18_SIM_RUNTIME_ID = 'com.apple.CoreSimulator.SimRuntime.iOS-18-0'
 
 # TODO(crbug.com/40910268): remove Legacy Download once iOS 15.5 is deprecated
 IOS_SIM_RUNTIME_BUILTIN_STATE = ['Legacy Download', 'Bundled with Xcode']
@@ -450,17 +452,17 @@ def override_default_iphonesim_runtime(runtime_id, ios_version):
 
 
 def add_simulator_runtime(runtime_dmg_path):
-  cmd = ['xcrun', 'simctl', 'runtime', 'add', runtime_dmg_path]
+  cmd = ['xcrun', 'simctl', 'runtime', 'add', runtime_dmg_path, '--verbose']
   LOGGER.debug('Adding runtime with command %s' % cmd)
-  return subprocess.check_output(cmd).decode('utf-8')
+  return subprocess.check_output(cmd, stderr=subprocess.STDOUT).decode('utf-8')
 
 
-def delete_simulator_runtime(runtime_id, shoud_wait=False):
+def delete_simulator_runtime(runtime_id, should_wait=False):
   cmd = ['xcrun', 'simctl', 'runtime', 'delete', runtime_id]
   LOGGER.debug('Deleting runtime with command %s' % cmd)
   subprocess.check_output(cmd)
 
-  if shoud_wait:
+  if should_wait:
     # runtime takes a few seconds to delete
     time_waited = 0
     runtime_to_delete = get_simulator_runtime_info_by_id(runtime_id)

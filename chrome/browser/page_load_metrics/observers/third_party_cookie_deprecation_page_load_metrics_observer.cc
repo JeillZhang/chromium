@@ -19,6 +19,7 @@
 #include "net/cookies/site_for_cookies.h"
 #include "services/metrics/public/cpp/ukm_builders.h"
 #include "services/metrics/public/cpp/ukm_recorder.h"
+#include "third_party/blink/public/mojom/use_counter/metrics/web_feature.mojom.h"
 #include "url/gurl.h"
 
 namespace {
@@ -143,7 +144,13 @@ void ThirdPartyCookieDeprecationMetricsObserver::RecordCookieUseCounters(
     const GURL& first_party_url,
     bool blocked_by_policy,
     ThirdPartyCookieAllowMechanism allow_mechanism) {
-  if (blocked_by_policy || !IsThirdParty(url, first_party_url)) {
+  if (!IsThirdParty(url, first_party_url)) {
+    return;
+  }
+  if (blocked_by_policy) {
+    page_load_metrics::MetricsWebContentsObserver::RecordFeatureUsage(
+        GetDelegate().GetWebContents()->GetPrimaryMainFrame(),
+        blink::mojom::WebFeature::kThirdPartyCookieBlocked);
     return;
   }
 
@@ -236,8 +243,8 @@ void ThirdPartyCookieDeprecationMetricsObserver::RecordCookieUseCounters(
     // No feature usage recorded for the following mechanism values.
     case ThirdPartyCookieAllowMechanism::kNone:
     case ThirdPartyCookieAllowMechanism::kAllowByTopLevel3PCD:
-    case ThirdPartyCookieAllowMechanism::kAllowByCORSException:
     case ThirdPartyCookieAllowMechanism::kAllowByScheme:
+    case ThirdPartyCookieAllowMechanism::kAllowBySandboxValue:
       break;
   }
 

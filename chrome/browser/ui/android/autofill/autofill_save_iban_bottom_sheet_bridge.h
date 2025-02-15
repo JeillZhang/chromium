@@ -21,6 +21,7 @@ class WindowAndroid;
 namespace autofill {
 
 class AutofillSaveIbanDelegate;
+struct AutofillSaveIbanUiInfo;
 
 // Bridge class owned by ChromeAutofillClient providing an entry point
 // to trigger the save IBAN bottom sheet on Android.
@@ -35,15 +36,24 @@ class AutofillSaveIbanBottomSheetBridge {
   AutofillSaveIbanBottomSheetBridge& operator=(
       const AutofillSaveIbanBottomSheetBridge&) = delete;
 
-  ~AutofillSaveIbanBottomSheetBridge();
+  virtual ~AutofillSaveIbanBottomSheetBridge();
 
   // Requests to show the save IBAN bottom sheet.
-  void RequestShowContent(std::u16string_view iban_label,
+  void RequestShowContent(const AutofillSaveIbanUiInfo& ui_info,
                           std::unique_ptr<AutofillSaveIbanDelegate> delegate);
+
+  // Hides the save IBAN bottom sheet.
+  virtual void Hide();
 
   void OnUiAccepted(JNIEnv* env, const std::u16string& user_provided_nickname);
   void OnUiCanceled(JNIEnv* env);
   void OnUiIgnored(JNIEnv* env);
+
+ protected:
+  // Used in tests to inject dependencies.
+  explicit AutofillSaveIbanBottomSheetBridge(
+      base::android::ScopedJavaGlobalRef<jobject>
+          java_autofill_save_iban_bottom_sheet_bridge);
 
  private:
   void ResetSaveIbanDelegate();

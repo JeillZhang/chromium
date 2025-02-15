@@ -7,6 +7,7 @@
 #include <string_view>
 #include <utility>
 
+#include "base/containers/fixed_flat_set.h"
 #include "base/format_macros.h"
 #include "base/functional/callback.h"
 #include "base/strings/string_number_conversions.h"
@@ -26,7 +27,7 @@ namespace {
 bool IsUncachedHeader(std::string_view name) {
   DCHECK_EQ(name, base::ToLowerASCII(name));
 
-  const char* const kUncachedHeaders[] = {
+  constexpr auto kUncachedHeaders = base::MakeFixedFlatSet<std::string_view>({
       // "Hop-by-hop header fields listed in the Connection header field
       // (Section 6.1 of {{!RFC7230}})." [spec text]
       // Note: The Connection header field itself is banned as uncached headers,
@@ -59,13 +60,9 @@ bool IsUncachedHeader(std::string_view name) {
       "trailer",
       "transfer-encoding",
       "upgrade",
-  };
+  });
 
-  for (const char* field : kUncachedHeaders) {
-    if (name == field)
-      return true;
-  }
-  return false;
+  return kUncachedHeaders.contains(name);
 }
 
 // Returns if the response is cacheble by a shared cache, as per Section 3 of
@@ -101,11 +98,11 @@ bool IsCacheableBySharedCache(const SignedExchangeEnvelope::HeaderMap& headers,
   if (found == headers.end())
     return true;
   net::HttpUtil::NameValuePairsIterator it(
-      found->second.begin(), found->second.end(), ',',
+      found->second, /*delimiter=*/',',
       net::HttpUtil::NameValuePairsIterator::Values::NOT_REQUIRED,
       net::HttpUtil::NameValuePairsIterator::Quotes::STRICT_QUOTES);
   while (it.GetNext()) {
-    std::string_view name = it.name_piece();
+    std::string_view name = it.name();
     if (name == "no-store" || name == "private") {
       signed_exchange_utils::ReportErrorAndTraceEvent(
           devtools_proxy,

@@ -114,16 +114,9 @@ void CookieSettings::SetCookieSetting(const GURL& primary_url,
 bool CookieSettings::IsAllowedByTpcdMetadataGrant(const GURL& url,
                                                   const GURL& first_party_url,
                                                   SettingInfo* out_info) const {
-  if (!ShouldConsider3pcdMetadataGrantsSettings(
-          first_party_url, net::CookieSettingOverrides())) {
-    return false;
-  }
   if (!tpcd_metadata_manager_) {
     return false;
   }
-
-  SCOPED_UMA_HISTOGRAM_TIMER_MICROS(
-      "ContentSettings.IsAllowedByTpcdMetadataGrant.Duration");
 
   return tpcd_metadata_manager_->IsAllowed(url, first_party_url, out_info);
 }
@@ -206,8 +199,8 @@ bool CookieSettings::IsStoragePartitioningBypassEnabled(
   if (base::FeatureList::IsEnabled(
           privacy_sandbox::kTrackingProtectionContentSettingFor3pcb) &&
       tracking_protection_settings_ &&
-      tracking_protection_settings_->GetTrackingProtectionSetting(
-          first_party_url) == CONTENT_SETTING_ALLOW) {
+      tracking_protection_settings_->HasTrackingProtectionException(
+          first_party_url)) {
     return true;
   }
   return false;
@@ -217,6 +210,19 @@ void CookieSettings::ResetCookieSetting(const GURL& primary_url) {
   host_content_settings_map_->SetNarrowestContentSetting(
       primary_url, GURL(), ContentSettingsType::COOKIES,
       CONTENT_SETTING_DEFAULT);
+}
+
+bool CookieSettings::AreThirdPartyCookiesLimited() const {
+  // Checks whether we are in the limited state via Mode B or
+  // `CookieControlsMode`
+  return (tracking_protection_settings_ &&
+          tracking_protection_settings_->IsTrackingProtection3pcdEnabled() &&
+          !tracking_protection_settings_->AreAllThirdPartyCookiesBlocked()) ||
+         (static_cast<CookieControlsMode>(
+              pref_change_registrar_->prefs()->GetInteger(
+                  prefs::kCookieControlsMode)) ==
+              CookieControlsMode::kLimited &&
+          !is_incognito_);
 }
 
 // TODO(crbug.com/40247160): Update to take in CookieSettingOverrides.
@@ -329,6 +335,9 @@ bool CookieSettings::ShouldAlwaysAllowCookies(
       first_party_url.SchemeIs(extension_scheme_)) {
     return true;
   }
+#else
+  // Suppress -Wunused-private-field warning.
+  (void)extension_scheme_;
 #endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
   return false;
@@ -378,9 +387,8 @@ bool CookieSettings::ShouldBlockThirdPartyCookiesInternal() const {
 
   if (tracking_protection_settings_ &&
       tracking_protection_settings_->IsTrackingProtection3pcdEnabled()) {
-    // 3PCs are blocked by default post-3PCD unless an enterprise policy is set.
-    return !pref_change_registrar_->prefs()->GetBoolean(
-        prefs::kAllowAll3pcToggleEnabled);
+    // 3PCs are blocked by default post-3PCD.
+    return true;
   }
 
   CookieControlsMode mode = static_cast<CookieControlsMode>(
@@ -388,29 +396,21 @@ bool CookieSettings::ShouldBlockThirdPartyCookiesInternal() const {
 
   switch (mode) {
     case CookieControlsMode::kBlockThirdParty:
+    case CookieControlsMode::kLimited:
       return true;
     case CookieControlsMode::kIncognitoOnly:
       return is_incognito_;
     case CookieControlsMode::kOff:
-      return false;
+      return base::FeatureList::IsEnabled(
+                 privacy_sandbox::kAlwaysBlock3pcsIncognito) &&
+             is_incognito_;
   }
 #endif
 }
 
 bool CookieSettings::MitigationsEnabledFor3pcdInternal() const {
-  if (tracking_protection_settings_ &&
-      tracking_protection_settings_->IsTrackingProtection3pcdEnabled()) {
-    // Mitigations should be on iff we are not blocking or allowing all 3PC.
-    return !tracking_protection_settings_->AreAllThirdPartyCookiesBlocked() &&
-           !tracking_protection_settings_
-                ->AreThirdPartyCookiesAllowedByEnterprise();
-  }
-
-  if (net::cookie_util::IsForceThirdPartyCookieBlockingEnabled()) {
-    return true;
-  }
-
-  return false;
+  return AreThirdPartyCookiesLimited() ||
+         net::cookie_util::IsForceThirdPartyCookieBlockingEnabled();
 }
 
 void CookieSettings::OnContentSettingChanged(
@@ -434,7 +434,9 @@ void CookieSettings::OnContentSettingChanged(
 
 void CookieSettings::OnBlockAllThirdPartyCookiesChanged() {
   OnCookiePreferencesChanged();
+}
 
+void CookieSettings::OnMitigationsEnabledChanged() {
   bool new_mitigations_enabled_for_3pcd = MitigationsEnabledFor3pcdInternal();
   {
     base::AutoLock auto_lock(lock_);
@@ -483,8 +485,13 @@ void CookieSettings::OnTrackingProtection3pcdChanged() {
 void CookieSettings::OnCookiePreferencesChanged() {
   DCHECK(thread_checker_.CalledOnValidThread());
 
-  bool new_block_third_party_cookies = ShouldBlockThirdPartyCookiesInternal();
+  if (base::FeatureList::IsEnabled(privacy_sandbox::kAddLimit3pcsSetting) ||
+      (tracking_protection_settings_ &&
+       tracking_protection_settings_->IsTrackingProtection3pcdEnabled())) {
+    OnMitigationsEnabledChanged();
+  }
 
+  bool new_block_third_party_cookies = ShouldBlockThirdPartyCookiesInternal();
   {
     base::AutoLock auto_lock(lock_);
     if (block_third_party_cookies_ == new_block_third_party_cookies) {
@@ -498,6 +505,20 @@ void CookieSettings::OnCookiePreferencesChanged() {
 }
 
 bool CookieSettings::ShouldBlockThirdPartyCookies() const {
+  return ShouldBlockThirdPartyCookies(std::nullopt,
+                                      net::CookieSettingOverrides());
+}
+
+bool CookieSettings::ShouldBlockThirdPartyCookies(
+    base::optional_ref<const url::Origin> top_frame_origin,
+    net::CookieSettingOverrides overrides) const {
+  if (Are3pcsForceDisabledByOverride(overrides)) {
+    return true;
+  }
+  if (top_frame_origin &&
+      IsBlockedByTopLevel3pcdOriginTrial(top_frame_origin->GetURL())) {
+    return true;
+  }
   base::AutoLock auto_lock(lock_);
   return block_third_party_cookies_;
 }
@@ -531,6 +552,11 @@ bool CookieSettings::HasFedCmSharingPermission(
 
   return entry && content_settings::ValueToContentSetting(
                       entry->second.value) == CONTENT_SETTING_ALLOW;
+}
+
+ContentSettingsForOneType CookieSettings::GetTpcdMetadataGrants() const {
+  return tpcd_metadata_manager_ ? tpcd_metadata_manager_->GetGrants()
+                                : ContentSettingsForOneType();
 }
 
 }  // namespace content_settings

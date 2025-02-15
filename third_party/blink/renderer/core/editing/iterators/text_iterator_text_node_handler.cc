@@ -5,7 +5,6 @@
 #include "third_party/blink/renderer/core/editing/iterators/text_iterator_text_node_handler.h"
 
 #include <algorithm>
-#include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/editing/ephemeral_range.h"
 #include "third_party/blink/renderer/core/editing/iterators/text_iterator_text_state.h"
 #include "third_party/blink/renderer/core/layout/inline/offset_mapping.h"
@@ -31,7 +30,13 @@ bool ShouldSkipInvisibleTextAt(const Text& text,
 
 String TextIgnoringCSSTextTransforms(const LayoutText& layout_text,
                                      const OffsetMappingUnit& unit) {
-  String text = layout_text.OriginalText();
+  // LayoutTextFragment represents text substring of the element that is split
+  // because of first-letter css. In that case, OriginalText() returns only a
+  // portion of the text. Use CompleteText() instead to get all text from the
+  // associated DOM node.
+  String text = layout_text.IsTextFragment()
+                    ? To<LayoutTextFragment>(layout_text).CompleteText()
+                    : layout_text.OriginalText();
   text = text.Substring(unit.DOMStart(), unit.DOMEnd() - unit.DOMStart());
   // Per the white space processing spec
   // https://drafts.csswg.org/css-text-3/#white-space-processing,
@@ -179,7 +184,7 @@ void TextIteratorTextNodeHandler::HandleTextNodeInRange(const Text* node,
 
   const OffsetMapping* const mapping =
       OffsetMapping::ForceGetFor(Position(node, offset_));
-  if (UNLIKELY(!mapping)) {
+  if (!mapping) [[unlikely]] {
     DUMP_WILL_BE_NOTREACHED()
         << "We have LayoutText outside LayoutBlockFlow " << text_node_;
     return;

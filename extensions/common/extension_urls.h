@@ -8,6 +8,7 @@
 #include <string>
 #include <string_view>
 
+#include "base/auto_reset.h"
 #include "build/branding_buildflags.h"
 #include "extensions/common/extension_id.h"
 #include "url/gurl.h"
@@ -42,10 +43,6 @@ extern const char kAppMenuUtmSource[];
 extern const char kExtensionsMenuUtmSource[];
 // From the link in the sidebar in the chrome://extensions page.
 extern const char kExtensionsSidebarUtmSource[];
-#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
-// From the link on chrome://settings/getMostChrome page.
-extern const char kGetMostChromeUtmSource[];
-#endif
 
 // Returns the URL prefix for the extension/apps gallery. Can be set via the
 // --apps-gallery-url switch. The URL returned will not contain a trailing
@@ -59,7 +56,7 @@ GURL AppendUtmSource(const GURL& url, std::string_view utm_source_value);
 
 // Returns the URL to the extensions category on the old and new Web Store
 // depending on extensions_features::kNewWebstoreURL feature flag.
-std::string GetWebstoreExtensionsCategoryURL();
+GURL GetWebstoreExtensionsCategoryURL();
 
 // Returns the URL prefix for an item in the extension/app gallery. This URL
 // will contain a trailing slash and should be concatenated with an item ID
@@ -72,7 +69,10 @@ GURL GetWebstoreItemJsonDataURL(const extensions::ExtensionId& extension_id);
 
 // Returns the URL used to get webstore data (ratings, manifest, icon URL,
 // etc.) about an extension from the webstore using the new itemSnippets API.
-GURL GetWebstoreItemSnippetURL(const std::string& extension_id);
+GURL GetWebstoreItemSnippetURL(const extensions::ExtensionId& extension_id);
+
+// Sets the itemSnippets API URL to `test_url`.
+base::AutoReset<const GURL*> SetItemSnippetURLForTesting(const GURL* test_url);
 
 // Returns the compile-time constant webstore update url specific to
 // Chrome. Usually you should prefer using GetWebstoreUpdateUrl.

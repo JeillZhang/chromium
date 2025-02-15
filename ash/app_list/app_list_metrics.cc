@@ -138,7 +138,7 @@ std::string GetCategoryString(AppListSearchControlCategory category) {
     case AppListSearchControlCategory::kWeb:
       return "Web";
     case AppListSearchControlCategory::kCannotToggle:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }
 
@@ -161,24 +161,23 @@ void AppListRecordPageSwitcherSourceByEventType(ui::EventType type) {
   AppListPageSwitcherSource source;
 
   switch (type) {
-    case ui::ET_MOUSEWHEEL:
+    case ui::EventType::kMousewheel:
       source = kMouseWheelScroll;
       break;
-    case ui::ET_SCROLL:
+    case ui::EventType::kScroll:
       source = kMousePadScroll;
       break;
-    case ui::ET_GESTURE_SCROLL_END:
+    case ui::EventType::kGestureScrollEnd:
       source = kSwipeAppGrid;
       break;
-    case ui::ET_SCROLL_FLING_START:
+    case ui::EventType::kScrollFlingStart:
       source = kFlingAppGrid;
       break;
-    case ui::ET_MOUSE_RELEASED:
+    case ui::EventType::kMouseReleased:
       source = kMouseDrag;
       break;
     default:
-      NOTREACHED_IN_MIGRATION();
-      return;
+      NOTREACHED();
   }
   RecordPageSwitcherSource(source);
 }
@@ -214,7 +213,7 @@ std::string GetAppListOpenMethod(AppListShowSource source) {
     case AppListShowSource::kWelcomeTour:
       return "Others";
   }
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 void RecordAppListUserJourneyTime(AppListShowSource source,
@@ -446,11 +445,9 @@ bool IsCommandIdAnAppLaunch(int command_id_number) {
     case CommandId::DEPRECATED_LAUNCH_TYPE_FULLSCREEN:
     case CommandId::DEPRECATED_USE_LAUNCH_TYPE_PINNED:
     case CommandId::DEPRECATED_USE_LAUNCH_TYPE_FULLSCREEN:
-      NOTREACHED_IN_MIGRATION();
-      return false;
+      NOTREACHED();
   }
-  NOTREACHED_IN_MIGRATION();
-  return false;
+  NOTREACHED();
 }
 
 void ReportPaginationSmoothness(int smoothness) {

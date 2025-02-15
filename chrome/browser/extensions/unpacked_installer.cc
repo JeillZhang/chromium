@@ -24,18 +24,18 @@
 #include "components/sync/model/string_ordinal.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
-#include "extensions/browser/api/declarative_net_request/file_backed_ruleset_source.h"
 #include "extensions/browser/api/declarative_net_request/install_index_helper.h"
-#include "extensions/browser/api/declarative_net_request/ruleset_source.h"
 #include "extensions/browser/extension_file_task_runner.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_util.h"
 #include "extensions/browser/install_flag.h"
+#include "extensions/browser/install_prefs_helper.h"
 #include "extensions/browser/path_util.h"
 #include "extensions/browser/policy_check.h"
 #include "extensions/browser/preload_check_group.h"
 #include "extensions/browser/requirements_checker.h"
+#include "extensions/browser/ruleset_parse_result.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_features.h"
@@ -64,19 +64,6 @@ const char kImportMinVersionNewer[] =
 const char kImportMissing[] = "'import' extension is not installed.";
 const char kImportNotSharedModule[] = "'import' is not a shared module.";
 
-// Deletes files reserved for use by the Extension system in the kMetadataFolder
-// and the kMetadataFolder itself if it is empty.
-void MaybeCleanupMetadataFolder(const base::FilePath& extension_path) {
-  const std::vector<base::FilePath> reserved_filepaths =
-      file_util::GetReservedMetadataFilePaths(extension_path);
-  for (const auto& file : reserved_filepaths)
-    base::DeletePathRecursively(file);
-
-  const base::FilePath& metadata_dir = extension_path.Append(kMetadataFolder);
-  if (base::IsDirectoryEmpty(metadata_dir))
-    base::DeletePathRecursively(metadata_dir);
-}
-
 }  // namespace
 
 // static
@@ -95,8 +82,7 @@ UnpackedInstaller::UnpackedInstaller(ExtensionService* extension_service)
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 }
 
-UnpackedInstaller::~UnpackedInstaller() {
-}
+UnpackedInstaller::~UnpackedInstaller() = default;
 
 void UnpackedInstaller::Load(const base::FilePath& path_in) {
   DCHECK(extension_path_.empty());
@@ -262,7 +248,7 @@ bool UnpackedInstaller::LoadExtension(mojom::ManifestLocation location,
   // Clean up the kMetadataFolder if necessary. This prevents spurious
   // warnings/errors and ensures we don't treat a user provided file as one by
   // the Extension system.
-  MaybeCleanupMetadataFolder(extension_path_);
+  file_util::MaybeCleanupMetadataFolder(extension_path_);
 
   // Treat presence of illegal filenames as a hard error for unpacked
   // extensions. Don't do so for command line extensions since this breaks
@@ -284,30 +270,16 @@ bool UnpackedInstaller::LoadExtension(mojom::ManifestLocation location,
 bool UnpackedInstaller::IndexAndPersistRulesIfNeeded(std::string* error) {
   DCHECK(extension());
 
-  // Index all static rulesets and therefore parse all static rules at
-  // installation time for unpacked extensions. Throw an error for invalid rules
-  // where possible so that the extension developer is immediately notified.
-  auto ruleset_filter = declarative_net_request::FileBackedRulesetSource::
-      RulesetFilter::kIncludeAll;
-  auto parse_flags =
-      declarative_net_request::RulesetSource::kRaiseErrorOnInvalidRules |
-      declarative_net_request::RulesetSource::kRaiseWarningOnLargeRegexRules;
+  base::expected<base::Value::Dict, std::string> index_result =
+      declarative_net_request::InstallIndexHelper::
+          IndexAndPersistRulesOnInstall(*extension_);
 
-  // TODO(crbug.com/40538050): IndexStaticRulesetsUnsafe will read and parse
-  // JSON synchronously. Change this so that we don't need to parse JSON in the
-  // browser process.
-  declarative_net_request::InstallIndexHelper::Result result =
-      declarative_net_request::InstallIndexHelper::IndexStaticRulesetsUnsafe(
-          *extension(), ruleset_filter, parse_flags);
-  if (result.error) {
-    *error = std::move(*result.error);
+  if (!index_result.has_value()) {
+    *error = std::move(index_result.error());
     return false;
   }
 
-  ruleset_install_prefs_ = std::move(result.ruleset_install_prefs);
-  if (!result.warnings.empty())
-    extension_->AddInstallWarnings(std::move(result.warnings));
-
+  ruleset_install_prefs_ = std::move(index_result.value());
   return true;
 }
 
@@ -393,7 +365,7 @@ void UnpackedInstaller::InstallExtension() {
     prefs->SetIsIncognitoEnabled(extension()->id(), *allow_incognito_access_);
   }
   if (install_param_.has_value()) {
-    prefs->SetInstallParam(extension()->id(), *install_param_);
+    SetInstallParam(prefs, extension()->id(), *install_param_);
   }
 
   PermissionsUpdater perms_updater(service_weak_->profile());
@@ -402,7 +374,7 @@ void UnpackedInstaller::InstallExtension() {
 
   service_weak_->OnExtensionInstalled(extension(), syncer::StringOrdinal(),
                                       kInstallFlagInstallImmediately,
-                                      ruleset_install_prefs_);
+                                      std::move(ruleset_install_prefs_));
 
   // Record metrics here since the registry would contain the extension by now.
   RecordCommandLineDeveloperModeMetrics();

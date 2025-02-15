@@ -11,7 +11,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "chrome/browser/ui/views/chrome_layout_provider.h"
+#include "chrome/browser/ui/color/chrome_color_id.h"
 #include "chrome/browser/ui/views/chrome_typography.h"
 #include "chrome/browser/ui/views/hover_button_controller.h"
 #include "ui/base/metadata/metadata_header_macros.h"
@@ -60,8 +60,11 @@ class IconWrapper : public views::View {
   METADATA_HEADER(IconWrapper, views::View)
 
  public:
-  explicit IconWrapper(std::unique_ptr<views::View> icon, int vertical_spacing)
-      : icon_(AddChildView(std::move(icon))) {
+  explicit IconWrapper(std::unique_ptr<views::View> icon,
+                       int vertical_spacing,
+                       int icon_label_spacing)
+      : icon_(AddChildView(std::move(icon))),
+        icon_label_spacing_(icon_label_spacing) {
     SetLayoutManager(std::make_unique<views::BoxLayout>(
         views::BoxLayout::Orientation::kHorizontal));
     // Make sure hovering over the icon also hovers the |HoverButton|.
@@ -77,16 +80,14 @@ class IconWrapper : public views::View {
   gfx::Size CalculatePreferredSize(
       const views::SizeBounds& available_size) const override {
     const int icon_height = icon_->GetPreferredSize(available_size).height();
-    const int icon_label_spacing =
-        ChromeLayoutProvider::Get()->GetDistanceMetric(
-            views::DISTANCE_RELATED_LABEL_HORIZONTAL);
-    return gfx::Size(icon_height + icon_label_spacing, icon_height);
+    return gfx::Size(icon_height + icon_label_spacing_, icon_height);
   }
 
   views::View* icon() { return icon_; }
 
  private:
   raw_ptr<views::View> icon_;
+  int icon_label_spacing_;
 };
 
 BEGIN_METADATA(IconWrapper)
@@ -94,12 +95,9 @@ END_METADATA
 
 }  // namespace
 
-HoverButton::HoverButton(PressedCallback callback, const std::u16string& text)
-    : views::LabelButton(
-          base::BindRepeating(&HoverButton::OnPressed, base::Unretained(this)),
-          text,
-          views::style::CONTEXT_BUTTON),
-      callback_(std::move(callback)) {
+HoverButton::HoverButton()
+    : views::LabelButton(base::BindRepeating(&HoverButton::OnPressed,
+                                             base::Unretained(this))) {
   SetButtonController(std::make_unique<HoverButtonController>(
       this,
       std::make_unique<views::Button::DefaultButtonControllerDelegate>(this)));
@@ -115,14 +113,22 @@ HoverButton::HoverButton(PressedCallback callback, const std::u16string& text)
   views::InkDrop::UseInkDropForFloodFillRipple(views::InkDrop::Get(this),
                                                /*highlight_on_hover=*/false,
                                                /*highlight_on_focus=*/true);
-  views::InkDrop::Get(this)->SetBaseColorId(
-      views::TypographyProvider::Get().GetColorId(
-          views::style::CONTEXT_BUTTON, views::style::STYLE_SECONDARY));
+  views::InkDrop::Get(this)->SetBaseColorId(kColorHoverButtonBackgroundHovered);
+  // kColorHoverButtonBackgroundHovered has its own opacity.
+  // sets the opacity to 100% * opacity(kColorHoverButtonBackgroundHovered).
+  views::InkDrop::Get(this)->SetVisibleOpacity(1.0f);
+  views::InkDrop::Get(this)->SetHighlightOpacity(1.0f);
 
   SetTriggerableEventFlags(ui::EF_LEFT_MOUSE_BUTTON |
                            ui::EF_RIGHT_MOUSE_BUTTON);
   button_controller()->set_notify_action(
       views::ButtonController::NotifyAction::kOnRelease);
+}
+
+HoverButton::HoverButton(PressedCallback callback, const std::u16string& text)
+    : HoverButton() {
+  SetCallback(std::move(callback));
+  SetText(text);
 }
 
 HoverButton::HoverButton(PressedCallback callback,
@@ -138,7 +144,8 @@ HoverButton::HoverButton(PressedCallback callback,
                          const std::u16string& subtitle,
                          std::unique_ptr<views::View> secondary_view,
                          bool add_vertical_label_spacing,
-                         const std::u16string& footer)
+                         const std::u16string& footer,
+                         int icon_label_spacing)
     : HoverButton(std::move(callback), std::u16string()) {
   label()->SetHandlesTooltips(false);
 
@@ -154,8 +161,8 @@ HoverButton::HoverButton(PressedCallback callback,
   // vertically.
   const int vertical_spacing = GetVerticalSpacing();
   if (icon_view) {
-    icon_wrapper_ = AddChildView(
-        std::make_unique<IconWrapper>(std::move(icon_view), vertical_spacing));
+    icon_wrapper_ = AddChildView(std::make_unique<IconWrapper>(
+        std::move(icon_view), vertical_spacing, icon_label_spacing));
     icon_view_ = static_cast<IconWrapper*>(icon_wrapper_)->icon();
   }
 
@@ -193,7 +200,8 @@ HoverButton::HoverButton(PressedCallback callback,
       .SetMainAxisAlignment(views::LayoutAlignment::kCenter);
   label_wrapper->SetProperty(
       views::kFlexBehaviorKey,
-      views::FlexSpecification(views::MinimumFlexSizeRule::kScaleToZero,
+      views::FlexSpecification(views::LayoutOrientation::kHorizontal,
+                               views::MinimumFlexSizeRule::kScaleToZero,
                                views::MaximumFlexSizeRule::kUnbounded, true));
   label_wrapper->SetCanProcessEventsWithinSubtree(false);
   label_wrapper->SetProperty(
@@ -210,15 +218,13 @@ HoverButton::HoverButton(PressedCallback callback,
     // used in drawing ink drops.
     secondary_view->SetPaintToLayer();
     secondary_view->layer()->SetFillsBoundsOpaquely(false);
-    const int icon_label_spacing =
-        ChromeLayoutProvider::Get()->GetDistanceMetric(
-            views::DISTANCE_RELATED_LABEL_HORIZONTAL);
+    const int secondary_icon_label_spacing = icon_label_spacing;
 
     // Set vertical margins such that the vertical distance between HoverButtons
     // is maintained.
     secondary_view->SetProperty(
         views::kMarginsKey,
-        gfx::Insets::TLBR(vertical_spacing, icon_label_spacing,
+        gfx::Insets::TLBR(vertical_spacing, secondary_icon_label_spacing,
                           vertical_spacing, 0));
     secondary_view_ = AddChildView(std::move(secondary_view));
   }
@@ -230,6 +236,12 @@ HoverButton::HoverButton(PressedCallback callback,
 
 HoverButton::~HoverButton() = default;
 
+void HoverButton::SetCallback(PressedCallback callback) {
+  // TODO(pkasting): Why does HoverButton have its own callback -- to disable
+  // special handling of the label? Can we remove this member and override?
+  callback_ = std::move(callback);
+}
+
 gfx::Size HoverButton::CalculatePreferredSize(
     const views::SizeBounds& available_size) const {
   if (label_wrapper_) {
@@ -239,21 +251,9 @@ gfx::Size HoverButton::CalculatePreferredSize(
   return views::LabelButton::CalculatePreferredSize(available_size);
 }
 
-int HoverButton::GetHeightForWidth(int w) const {
-  if (label_wrapper_) {
-    return GetLayoutManager()->GetPreferredHeightForWidth(this, w);
-  }
-
-  return views::LabelButton::GetHeightForWidth(w);
-}
-
 void HoverButton::SetBorder(std::unique_ptr<views::Border> b) {
   LabelButton::SetBorder(std::move(b));
   PreferredSizeChanged();
-}
-
-void HoverButton::GetAccessibleNodeData(ui::AXNodeData* node_data) {
-  Button::GetAccessibleNodeData(node_data);
 }
 
 void HoverButton::PreferredSizeChanged() {
@@ -286,8 +286,9 @@ void HoverButton::SetTitleTextStyle(views::style::TextStyle text_style,
 
 void HoverButton::SetSubtitleTextStyle(int text_context,
                                        views::style::TextStyle text_style) {
-  if (!subtitle())
+  if (!subtitle()) {
     return;
+  }
 
   subtitle()->SetTextContext(text_context);
   subtitle()->SetTextStyle(text_style);
@@ -366,8 +367,9 @@ void HoverButton::StateChanged(ButtonState old_state) {
 }
 
 views::View* HoverButton::GetTooltipHandlerForPoint(const gfx::Point& point) {
-  if (!HitTestPoint(point))
+  if (!HitTestPoint(point)) {
     return nullptr;
+  }
 
   // Let the secondary control handle it if it has a tooltip.
   if (secondary_view_) {
@@ -378,7 +380,7 @@ views::View* HoverButton::GetTooltipHandlerForPoint(const gfx::Point& point) {
     if (handler) {
       gfx::Point point_in_handler_view(point);
       ConvertPointToTarget(this, handler, &point_in_handler_view);
-      if (!handler->GetTooltipText(point_in_secondary_view).empty()) {
+      if (!handler->GetRenderedTooltipText(point_in_secondary_view).empty()) {
         return handler;
       }
     }

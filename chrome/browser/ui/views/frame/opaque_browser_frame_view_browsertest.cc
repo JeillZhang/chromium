@@ -23,6 +23,7 @@
 #include "chrome/browser/ui/views/web_apps/frame_toolbar/web_app_toolbar_button_container.h"
 #include "chrome/browser/ui/web_applications/app_browser_controller.h"
 #include "chrome/browser/ui/web_applications/test/web_app_browsertest_util.h"
+#include "chrome/browser/ui/web_applications/web_app_browsertest_base.h"
 #include "chrome/browser/web_applications/mojom/user_display_mode.mojom.h"
 #include "chrome/browser/web_applications/test/os_integration_test_override_impl.h"
 #include "chrome/browser/web_applications/test/web_app_install_test_utils.h"
@@ -61,7 +62,7 @@ class FakeLinuxUiGetter : public ui::LinuxUiGetter {
 
 // Tests web-app windows that use the OpaqueBrowserFrameView implementation
 // for their non client frames.
-class WebAppOpaqueBrowserFrameViewTest : public InProcessBrowserTest {
+class WebAppOpaqueBrowserFrameViewTest : public web_app::WebAppBrowserTestBase {
  public:
   WebAppOpaqueBrowserFrameViewTest() = default;
 
@@ -72,9 +73,15 @@ class WebAppOpaqueBrowserFrameViewTest : public InProcessBrowserTest {
 
   ~WebAppOpaqueBrowserFrameViewTest() override = default;
 
-  static GURL GetAppURL() { return GURL("https://test.org"); }
+  GURL GetAppURL() {
+    // The page shouldn't have a manifest so no updating will occur to override
+    // our settings.
+    return embedded_https_test_server().GetURL("/web_apps/no_manifest.html");
+  }
 
   void SetUpOnMainThread() override {
+    web_app::WebAppBrowserTestBase::SetUpOnMainThread();
+    CHECK(embedded_https_test_server().Start());
     SetThemeMode(ThemeMode::kDefault);
 #if BUILDFLAG(IS_LINUX)
     ui::LinuxUiGetter::set_instance(nullptr);
@@ -104,8 +111,9 @@ class WebAppOpaqueBrowserFrameViewTest : public InProcessBrowserTest {
 #if BUILDFLAG(IS_LINUX)
     DCHECK(is_opaque_browser_frame_view);
 #else
-    if (!is_opaque_browser_frame_view)
+    if (!is_opaque_browser_frame_view) {
       return false;
+    }
 #endif
 
     opaque_browser_frame_view_ =
@@ -133,15 +141,15 @@ class WebAppOpaqueBrowserFrameViewTest : public InProcessBrowserTest {
 #endif
     ThemeService* theme_service =
         ThemeServiceFactory::GetForProfile(browser()->profile());
-    if (theme_mode == ThemeMode::kSystem)
+    if (theme_mode == ThemeMode::kSystem) {
       theme_service->UseSystemTheme();
-    else
+    } else {
       theme_service->UseDefaultTheme();
+    }
     ASSERT_EQ(theme_service->UsingDefaultTheme(),
               theme_mode == ThemeMode::kDefault);
   }
 
-  web_app::OsIntegrationTestOverrideBlockingRegistration faked_os_integration_;
   raw_ptr<BrowserView, AcrossTasksDanglingUntriaged> browser_view_ = nullptr;
   raw_ptr<OpaqueBrowserFrameView, AcrossTasksDanglingUntriaged>
       opaque_browser_frame_view_ = nullptr;
@@ -153,8 +161,9 @@ class WebAppOpaqueBrowserFrameViewTest : public InProcessBrowserTest {
 };
 
 IN_PROC_BROWSER_TEST_F(WebAppOpaqueBrowserFrameViewTest, NoThemeColor) {
-  if (!InstallAndLaunchWebApp())
-    return;
+  if (!InstallAndLaunchWebApp()) {
+    GTEST_SKIP();
+  }
   EXPECT_EQ(web_app_frame_toolbar_->active_color_for_testing(),
             web_app_frame_toolbar_->GetColorProvider()->GetColor(
                 kColorFrameCaptionActive));
@@ -194,8 +203,9 @@ IN_PROC_BROWSER_TEST_F(WebAppOpaqueBrowserFrameViewTest, SystemThemeColor) {
 #endif  // BUILDFLAG(IS_LINUX)
 
 IN_PROC_BROWSER_TEST_F(WebAppOpaqueBrowserFrameViewTest, LightThemeColor) {
-  if (!InstallAndLaunchWebApp(SK_ColorYELLOW))
-    return;
+  if (!InstallAndLaunchWebApp(SK_ColorYELLOW)) {
+    GTEST_SKIP();
+  }
   EXPECT_EQ(web_app_frame_toolbar_->active_color_for_testing(),
             web_app_frame_toolbar_->GetColorProvider()->GetColor(
                 kColorFrameCaptionActive));
@@ -204,8 +214,9 @@ IN_PROC_BROWSER_TEST_F(WebAppOpaqueBrowserFrameViewTest, LightThemeColor) {
 }
 
 IN_PROC_BROWSER_TEST_F(WebAppOpaqueBrowserFrameViewTest, DarkThemeColor) {
-  if (!InstallAndLaunchWebApp(SK_ColorBLUE))
-    return;
+  if (!InstallAndLaunchWebApp(SK_ColorBLUE)) {
+    GTEST_SKIP();
+  }
   EXPECT_EQ(web_app_frame_toolbar_->active_color_for_testing(),
             web_app_frame_toolbar_->GetColorProvider()->GetColor(
                 kColorFrameCaptionActive));
@@ -215,8 +226,9 @@ IN_PROC_BROWSER_TEST_F(WebAppOpaqueBrowserFrameViewTest, DarkThemeColor) {
 
 IN_PROC_BROWSER_TEST_F(WebAppOpaqueBrowserFrameViewTest, MediumThemeColor) {
   // Use the theme color for Gmail.
-  if (!InstallAndLaunchWebApp(SkColorSetRGB(0xD6, 0x49, 0x3B)))
-    return;
+  if (!InstallAndLaunchWebApp(SkColorSetRGB(0xD6, 0x49, 0x3B))) {
+    GTEST_SKIP();
+  }
   EXPECT_EQ(web_app_frame_toolbar_->active_color_for_testing(),
             web_app_frame_toolbar_->GetColorProvider()->GetColor(
                 kColorFrameCaptionActive));
@@ -225,8 +237,9 @@ IN_PROC_BROWSER_TEST_F(WebAppOpaqueBrowserFrameViewTest, MediumThemeColor) {
 }
 
 IN_PROC_BROWSER_TEST_F(WebAppOpaqueBrowserFrameViewTest, StaticTitleBarHeight) {
-  if (!InstallAndLaunchWebApp())
-    return;
+  if (!InstallAndLaunchWebApp()) {
+    GTEST_SKIP();
+  }
 
   RunScheduledLayouts();
   const int title_bar_height = GetRestoredTitleBarHeight();
@@ -245,8 +258,9 @@ IN_PROC_BROWSER_TEST_F(WebAppOpaqueBrowserFrameViewTest, StaticTitleBarHeight) {
 }
 
 IN_PROC_BROWSER_TEST_F(WebAppOpaqueBrowserFrameViewTest, Fullscreen) {
-  if (!InstallAndLaunchWebApp())
-    return;
+  if (!InstallAndLaunchWebApp()) {
+    GTEST_SKIP();
+  }
 
   opaque_browser_frame_view_->frame()->SetFullscreen(true);
   browser_view_->GetWidget()->LayoutRootViewIfNecessary();
@@ -257,6 +271,18 @@ IN_PROC_BROWSER_TEST_F(WebAppOpaqueBrowserFrameViewTest, Fullscreen) {
     EXPECT_EQ(views::IsViewClass<views::ClientView>(child),
               child->GetVisible());
   }
+}
+
+IN_PROC_BROWSER_TEST_F(WebAppOpaqueBrowserFrameViewTest, AccessibleProperties) {
+  if (!InstallAndLaunchWebApp()) {
+    GTEST_SKIP();
+  }
+
+  ui::AXNodeData data;
+
+  opaque_browser_frame_view_->GetViewAccessibility().GetAccessibleNodeData(
+      &data);
+  EXPECT_EQ(data.role, ax::mojom::Role::kPane);
 }
 
 #if BUILDFLAG(IS_WIN)
@@ -312,8 +338,9 @@ class WebAppOpaqueBrowserFrameViewWindowControlsOverlayTest
     bool is_opaque_browser_frame_view =
         views::IsViewClass<OpaqueBrowserFrameView>(frame_view);
 
-    if (!is_opaque_browser_frame_view)
+    if (!is_opaque_browser_frame_view) {
       return false;
+    }
 
     opaque_browser_frame_view_ =
         static_cast<OpaqueBrowserFrameView*>(frame_view);
@@ -347,8 +374,9 @@ class WebAppOpaqueBrowserFrameViewWindowControlsOverlayTest
 
 IN_PROC_BROWSER_TEST_F(WebAppOpaqueBrowserFrameViewWindowControlsOverlayTest,
                        CaptionButtonsTooltip) {
-  if (!InstallAndLaunchWebAppWithWindowControlsOverlay())
+  if (!InstallAndLaunchWebAppWithWindowControlsOverlay()) {
     GTEST_SKIP() << "Skip test if it is not a OpaqueBrowserFrameView";
+  }
 
   auto* minimize_button = static_cast<const views::Button*>(
       opaque_browser_frame_view_->GetViewByID(VIEW_ID_MINIMIZE_BUTTON));
@@ -388,8 +416,9 @@ IN_PROC_BROWSER_TEST_F(WebAppOpaqueBrowserFrameViewWindowControlsOverlayTest,
 
 IN_PROC_BROWSER_TEST_F(WebAppOpaqueBrowserFrameViewWindowControlsOverlayTest,
                        CaptionButtonHitTest) {
-  if (!InstallAndLaunchWebAppWithWindowControlsOverlay())
+  if (!InstallAndLaunchWebAppWithWindowControlsOverlay()) {
     GTEST_SKIP() << "Skip test if it is not a OpaqueBrowserFrameView";
+  }
 
   opaque_browser_frame_view_->GetWidget()->LayoutRootViewIfNecessary();
 

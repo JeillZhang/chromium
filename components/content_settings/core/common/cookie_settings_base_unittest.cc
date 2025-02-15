@@ -47,14 +47,19 @@ class CallbackCookieSettings : public CookieSettingsBase {
   explicit CallbackCookieSettings(GetSettingCallback callback)
       : callback_(std::move(callback)) {}
 
-  // A simple constructor that returns a specified setting for COOKIES and BLOCK
-  // otherwise.
+  // A simple constructor that returns a specified setting for COOKIES, ALLOW
+  // for TOP_LEVEL_TPCD_ORIGIN_TRIAL, and BLOCK otherwise.
   explicit CallbackCookieSettings(ContentSetting setting)
       : callback_(base::BindLambdaForTesting(
             [setting](const GURL&, ContentSettingsType type, SettingInfo*) {
               if (type == ContentSettingsType::COOKIES) {
                 return setting;
               }
+
+              if (type == ContentSettingsType::TOP_LEVEL_TPCD_ORIGIN_TRIAL) {
+                return CONTENT_SETTING_ALLOW;
+              }
+
               return CONTENT_SETTING_BLOCK;
             })) {}
 
@@ -75,7 +80,11 @@ class CallbackCookieSettings : public CookieSettingsBase {
     return false;
   }
 
-  bool ShouldBlockThirdPartyCookies() const override { return false; }
+  bool ShouldBlockThirdPartyCookies(
+      base::optional_ref<const url::Origin> top_frame_origin,
+      net::CookieSettingOverrides overrides) const override {
+    return Are3pcsForceDisabledByOverride(overrides);
+  }
   bool MitigationsEnabledFor3pcd() const override { return false; }
 
   bool IsThirdPartyCookiesAllowedScheme(
@@ -86,13 +95,11 @@ class CallbackCookieSettings : public CookieSettingsBase {
   bool ShouldIgnoreSameSiteRestrictions(
       const GURL& url,
       const net::SiteForCookies& site_for_cookies) const override {
-    NOTREACHED_IN_MIGRATION();
-    return false;
+    NOTREACHED();
   }
 
  private:
   GetSettingCallback callback_;
-  ContentSettingsType type_;
 };
 
 class CookieSettingsBaseTest : public testing::Test {

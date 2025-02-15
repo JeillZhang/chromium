@@ -4,7 +4,7 @@
 
 package org.chromium.chrome.browser.keyboard_accessory;
 
-import static org.chromium.content_public.browser.test.util.TestThreadUtils.runOnUiThreadBlocking;
+import static org.chromium.base.ThreadUtils.runOnUiThreadBlocking;
 
 import android.app.Activity;
 import android.content.Context;
@@ -44,7 +44,8 @@ public class FakeKeyboard extends ChromeKeyboardVisibilityDelegate {
     }
 
     protected int getStaticKeyboardHeight() {
-        return (int) getActivity().getResources().getDisplayMetrics().density * KEYBOARD_HEIGHT_DP;
+        return (int)
+                (getActivity().getResources().getDisplayMetrics().density * KEYBOARD_HEIGHT_DP);
     }
 
     @Override

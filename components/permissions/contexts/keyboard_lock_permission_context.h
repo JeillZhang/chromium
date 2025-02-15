@@ -20,14 +20,14 @@ class KeyboardLockPermissionContext
   KeyboardLockPermissionContext& operator=(
       const KeyboardLockPermissionContext&) = delete;
 
-  void NotifyPermissionSet(const PermissionRequestID& id,
-                           const GURL& requesting_origin,
-                           const GURL& embedding_origin,
-                           BrowserPermissionCallback callback,
-                           bool persist,
-                           ContentSetting content_setting,
-                           bool is_one_time,
-                           bool is_final_decision) override;
+#if !BUILDFLAG(IS_ANDROID)
+ private:
+  // PermissionContextBase:
+  ContentSetting GetPermissionStatusInternal(
+      content::RenderFrameHost* render_frame_host,
+      const GURL& requesting_origin,
+      const GURL& embedding_origin) const override;
+#endif
 };
 
 }  // namespace permissions

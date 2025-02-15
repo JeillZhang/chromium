@@ -9,7 +9,6 @@ import static org.chromium.content.browser.accessibility.AccessibilityContentShe
 import static org.chromium.content.browser.accessibility.AccessibilityContentShellTestUtils.sClassNameMatcher;
 
 import android.annotation.SuppressLint;
-import android.os.Build.VERSION_CODES;
 
 import androidx.core.view.accessibility.AccessibilityNodeInfoCompat;
 import androidx.test.filters.SmallTest;
@@ -19,15 +18,18 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.Batch;
+import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.CriteriaHelper;
 import org.chromium.base.test.util.DisableIf;
 import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Features.DisableFeatures;
+import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.base.test.util.Restriction;
+import org.chromium.base.test.util.TestAnimations;
 import org.chromium.content_public.browser.ContentFeatureList;
 import org.chromium.content_public.browser.test.ContentJUnit4ClassRunner;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.ui.test.util.DeviceRestriction;
 
 /** Tests for WebContentsAccessibilityImpl integration with accessibility services. */
@@ -36,6 +38,7 @@ import org.chromium.ui.test.util.DeviceRestriction;
 @Batch(Batch.PER_CLASS)
 @Restriction(DeviceRestriction.RESTRICTION_TYPE_NON_AUTO)
 @DisableFeatures(ContentFeatureList.ACCESSIBILITY_UNIFIED_SNAPSHOTS)
+@TestAnimations.EnableAnimations
 public class WebContentsAccessibilityTreeTest {
     // File path that holds all the relevant tests.
     private static final String BASE_ACCNAME_FILE_PATH = "content/test/data/accessibility/accname/";
@@ -202,7 +205,7 @@ public class WebContentsAccessibilityTreeTest {
         TestViewStructure testViewStructure = new TestViewStructure();
         testViewStructure.setShouldIncludeScreenSizeDependentAttributes(
                 sIncludeScreenSizeDependentAttributes);
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> mActivityTestRule.mWcax.onProvideVirtualStructure(testViewStructure, false));
         CriteriaHelper.pollUiThread(
                 mActivityTestRule.mWcax::hasFinishedLatestAccessibilitySnapshotForTesting,
@@ -233,7 +236,7 @@ public class WebContentsAccessibilityTreeTest {
 
     // Helper method to create an AccessibilityNodeInfo object.
     private AccessibilityNodeInfoCompat createAccessibilityNodeInfo(int virtualViewId) {
-        return TestThreadUtils.runOnUiThreadBlockingNoException(
+        return ThreadUtils.runOnUiThreadBlocking(
                 () -> mActivityTestRule.mNodeProvider.createAccessibilityNodeInfo(virtualViewId));
     }
 
@@ -335,6 +338,12 @@ public class WebContentsAccessibilityTreeTest {
     @SmallTest
     public void test_ariaButton() {
         performAriaTest("aria-button.html");
+    }
+
+    @Test
+    @SmallTest
+    public void test_ariaCaption() {
+        performAriaTest("aria-caption.html");
     }
 
     @Test
@@ -634,6 +643,12 @@ public class WebContentsAccessibilityTreeTest {
 
     @Test
     @SmallTest
+    public void test_ariaLink() {
+        performAriaTest("aria-link.html");
+    }
+
+    @Test
+    @SmallTest
     public void test_ariaListboxAriaSelected() {
         performAriaTest("aria-listbox-aria-selected.html");
     }
@@ -664,14 +679,30 @@ public class WebContentsAccessibilityTreeTest {
 
     @Test
     @SmallTest
+    @DisableFeatures(ContentFeatureList.ACCESSIBILITY_DEPRECATE_TYPE_ANNOUNCE)
     public void test_ariaLive() {
         performAriaTest("aria-live.html");
     }
 
     @Test
     @SmallTest
+    @EnableFeatures(ContentFeatureList.ACCESSIBILITY_DEPRECATE_TYPE_ANNOUNCE)
+    public void test_ariaLive_exp() {
+        performAriaTest("aria-live.html", "aria-live-exp");
+    }
+
+    @Test
+    @SmallTest
+    @DisableFeatures(ContentFeatureList.ACCESSIBILITY_DEPRECATE_TYPE_ANNOUNCE)
     public void test_ariaLiveWithContent() {
         performAriaTest("aria-live-with-content.html");
+    }
+
+    @Test
+    @SmallTest
+    @EnableFeatures(ContentFeatureList.ACCESSIBILITY_DEPRECATE_TYPE_ANNOUNCE)
+    public void test_ariaLiveWithContent_exp() {
+        performAriaTest("aria-live-with-content.html", "aria-live-with-content-exp");
     }
 
     @Test
@@ -784,6 +815,7 @@ public class WebContentsAccessibilityTreeTest {
 
     @Test
     @SmallTest
+    @DisableIf.Build(supported_abis_includes = "x86_64", message = "https://crbug.com/349962563")
     public void test_ariaOption() {
         performAriaTest("aria-option.html");
     }
@@ -816,6 +848,12 @@ public class WebContentsAccessibilityTreeTest {
     @SmallTest
     public void test_ariaOwnsList() {
         performAriaTest("aria-owns-list.html");
+    }
+
+    @Test
+    @SmallTest
+    public void test_ariaParagraph() {
+        performAriaTest("aria-paragraph.html");
     }
 
     @Test
@@ -954,6 +992,12 @@ public class WebContentsAccessibilityTreeTest {
     @SmallTest
     public void test_ariaSortHtmlTable() {
         performAriaTest("aria-sort-html-table.html");
+    }
+
+    @Test
+    @SmallTest
+    public void test_ariaSpinbutton() {
+        performAriaTest("aria-spinbutton.html");
     }
 
     @Test
@@ -1102,6 +1146,18 @@ public class WebContentsAccessibilityTreeTest {
 
     @Test
     @SmallTest
+    public void test_ariaValuemax() {
+        performAriaTest("aria-valuemax.html");
+    }
+
+    @Test
+    @SmallTest
+    public void test_ariaValuemin() {
+        performAriaTest("aria-valuemin.html");
+    }
+
+    @Test
+    @SmallTest
     public void test_ariaValuenow() {
         performAriaTest("aria-valuenow.html");
     }
@@ -1158,6 +1214,48 @@ public class WebContentsAccessibilityTreeTest {
     @SmallTest
     public void test_presentational() {
         performAriaTest("presentational.html");
+    }
+
+    @Test
+    @SmallTest
+    public void test_supplementalDescriptionAnnotate() {
+        performAriaTest("supplemental-description-annotate.html");
+    }
+
+    @Test
+    @SmallTest
+    public void test_supplementalDescriptionButtonLabel() {
+        performAriaTest("supplemental-description-button-label.html");
+    }
+
+    @Test
+    @SmallTest
+    public void test_supplementalDescriptionImageButton() {
+        performAriaTest("supplemental-description-image-button.html");
+    }
+
+    @Test
+    @SmallTest
+    public void test_supplementalDescriptionLinks() {
+        performAriaTest("supplemental-description-links.html");
+    }
+
+    @Test
+    @SmallTest
+    public void test_supplementalDescriptionNav() {
+        performAriaTest("supplemental-description-nav.html");
+    }
+
+    @Test
+    @SmallTest
+    public void test_supplementalDescriptionRegion() {
+        performAriaTest("supplemental-description-region.html");
+    }
+
+    @Test
+    @SmallTest
+    public void test_supplementalDescriptionSelect() {
+        performAriaTest("supplemental-description-select.html");
     }
 
     @Test
@@ -1412,6 +1510,20 @@ public class WebContentsAccessibilityTreeTest {
 
     @Test
     @SmallTest
+    @CommandLineFlags.Add({"enable-experimental-web-platform-features"})
+    public void test_carouselNoTabs() {
+        performCssTest("carousel-no-tabs.html");
+    }
+
+    @Test
+    @SmallTest
+    @CommandLineFlags.Add({"enable-experimental-web-platform-features"})
+    public void test_carouselWithTabs() {
+        performCssTest("carousel-with-tabs.html");
+    }
+
+    @Test
+    @SmallTest
     public void test_characterLocations() {
         performHtmlTest("character-locations.html");
     }
@@ -1460,6 +1572,18 @@ public class WebContentsAccessibilityTreeTest {
 
     @Test
     @SmallTest
+    public void test_comboboxItemVisibility() {
+        performHtmlTest("combobox-item-visibility.html");
+    }
+
+    @Test
+    @SmallTest
+    public void test_comboboxWithRedundantAriaRole() {
+        performHtmlTest("combobox-with-redundant-aria-role.html");
+    }
+
+    @Test
+    @SmallTest
     public void test_comboboxOptgroup() {
         performHtmlTest("combobox-optgroup.html");
     }
@@ -1486,6 +1610,42 @@ public class WebContentsAccessibilityTreeTest {
     @SmallTest
     public void test_continuations() {
         performHtmlTest("continuations.html");
+    }
+
+    @Test
+    @SmallTest
+    public void test_customSelect() {
+        performHtmlTest("custom-select.html");
+    }
+
+    @Test
+    @SmallTest
+    public void test_customSelectOpen() {
+        performHtmlTest("custom-select-open.html");
+    }
+
+    @Test
+    @SmallTest
+    public void test_customSelectLabelElement() {
+        performHtmlTest("custom-select-label-element.html");
+    }
+
+    @Test
+    @SmallTest
+    public void test_customSelectMixedOptions() {
+        performHtmlTest("custom-select-mixed-options.html");
+    }
+
+    @Test
+    @SmallTest
+    public void test_customSelectSimple() {
+        performHtmlTest("custom-select-simple.html");
+    }
+
+    @Test
+    @SmallTest
+    public void test_customSelectSimpleOpen() {
+        performHtmlTest("custom-select-simple-open.html");
     }
 
     @Test
@@ -1550,8 +1710,8 @@ public class WebContentsAccessibilityTreeTest {
 
     @Test
     @SmallTest
-    public void test_elementClassIdSrcAttr() {
-        performHtmlTest("element-class-id-src-attr.html");
+    public void test_elementClassIdAttr() {
+        performHtmlTest("element-class-id-attr.html");
     }
 
     @Test
@@ -1584,7 +1744,6 @@ public class WebContentsAccessibilityTreeTest {
         performHtmlTest("figure.html");
     }
 
-    @DisableIf.Build(sdk_is_less_than = VERSION_CODES.O, message = "https://crbug.com/1376954")
     @Test
     @SmallTest
     public void test_fixedWidthText() {
@@ -1953,6 +2112,30 @@ public class WebContentsAccessibilityTreeTest {
 
     @Test
     @SmallTest
+    public void test_inputTypesWithPlaceholder() {
+        performHtmlTest("input-types-with-placeholder.html");
+    }
+
+    @Test
+    @SmallTest
+    public void test_inputTypesWithValueAndPlaceholder() {
+        performHtmlTest("input-types-with-value-and-placeholder.html");
+    }
+
+    @Test
+    @SmallTest
+    public void test_inputTypesWithValue() {
+        performHtmlTest("input-types-with-value.html");
+    }
+
+    @Test
+    @SmallTest
+    public void test_inputTypes() {
+        performHtmlTest("input-types.html");
+    }
+
+    @Test
+    @SmallTest
     public void test_inputUrl() {
         performHtmlTest("input-url.html");
     }
@@ -1985,6 +2168,12 @@ public class WebContentsAccessibilityTreeTest {
     @SmallTest
     public void test_label() {
         performHtmlTest("label.html");
+    }
+
+    @Test
+    @SmallTest
+    public void test_labelWithSelectedOption() {
+        performHtmlTest("label-with-selected-option.html");
     }
 
     @Test
@@ -2080,6 +2269,7 @@ public class WebContentsAccessibilityTreeTest {
 
     @Test
     @SmallTest
+    @DisableIf.Build(supported_abis_includes = "x86_64", message = "https://crbug.com/349962563")
     public void test_nestedlist() {
         performHtmlTest("nestedlist.html");
     }
@@ -2118,6 +2308,24 @@ public class WebContentsAccessibilityTreeTest {
     @SmallTest
     public void test_optgroup() {
         performHtmlTest("optgroup.html");
+    }
+
+    @Test
+    @SmallTest
+    public void test_optgroupMenulist() {
+        performHtmlTest("optgroup-menulist.html");
+    }
+
+    @Test
+    @SmallTest
+    public void test_optgroupCustomMenulist() {
+        performHtmlTest("optgroup-custom-menulist.html");
+    }
+
+    @Test
+    @SmallTest
+    public void test_optionInDatalist() {
+        performHtmlTest("option-in-datalist.html");
     }
 
     @Test
@@ -2226,6 +2434,18 @@ public class WebContentsAccessibilityTreeTest {
     @SmallTest
     public void test_select() {
         performHtmlTest("select.html");
+    }
+
+    @Test
+    @SmallTest
+    public void test_selectInCanvas() {
+        performHtmlTest("select-in-canvas.html");
+    }
+
+    @Test
+    @SmallTest
+    public void test_selectOpen() {
+        performHtmlTest("select-open.html");
     }
 
     @Test

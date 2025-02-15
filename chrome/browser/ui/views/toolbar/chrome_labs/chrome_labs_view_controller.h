@@ -7,7 +7,7 @@
 
 #include "base/callback_list.h"
 #include "base/memory/raw_ptr.h"
-#include "components/user_education/common/new_badge_controller.h"
+#include "components/user_education/common/new_badge/new_badge_controller.h"
 
 class Browser;
 class ChromeLabsModel;
@@ -25,7 +25,8 @@ class ChromeLabsViewController {
  public:
   ChromeLabsViewController(const ChromeLabsModel* model,
                            ChromeLabsBubbleView* chrome_labs_bubble_view,
-                           Browser* browser, flags_ui::FlagsState* flags_state,
+                           Browser* browser,
+                           flags_ui::FlagsState* flags_state,
                            flags_ui::FlagsStorage* flags_storage);
   ~ChromeLabsViewController() = default;
 

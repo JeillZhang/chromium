@@ -33,8 +33,8 @@ using base::test::ios::kWaitForUIElementTimeout;
 using base::test::ios::WaitUntilConditionOrTimeout;
 using chrome_test_util::ActivityViewHeader;
 using chrome_test_util::CopyLinkButton;
-using chrome_test_util::OpenLinkInNewTabButton;
 using chrome_test_util::OpenLinkInIncognitoButton;
+using chrome_test_util::OpenLinkInNewTabButton;
 using chrome_test_util::OpenLinkInNewWindowButton;
 using chrome_test_util::ShareButton;
 
@@ -47,8 +47,6 @@ NSString* const kWaitForPageToStartLoadingError = @"Page did not start to load";
 NSString* const kWaitForPageToFinishLoadingError =
     @"Page did not finish loading";
 NSString* const kHistoryError = @"Error occurred during history verification.";
-NSString* const kWaitForRestoreSessionToFinishError =
-    @"Session restoration did not finish";
 
 // Helper class to allow EarlGrey to match elements with isAccessible=N.
 class ScopedMatchNonAccessibilityElements {
@@ -89,19 +87,19 @@ UIWindow* GetAnyKeyWindow() {
 
   return [ChromeEarlGreyAppInterface keyWindow];
 }
+
+void GREYAssertErrorNil(NSError* error) {
+  GREYAssertNil(error, error.description);
+}
+
+void GREYAssertErrorNil(NSError* error, NSString* message) {
+  GREYAssertNil(error, @"%@\n%@", message, error.description);
+}
 }  // namespace chrome_test_util
 
 id<GREYAction> grey_longPressWithDuration(base::TimeDelta duration) {
   return grey_longPressWithDuration(duration.InSecondsF());
 }
-
-@interface ChromeEarlGreyImpl ()
-
-// Waits for session restoration to finish within a timeout, or a GREYAssert is
-// induced.
-- (void)waitForRestoreSessionToFinish;
-
-@end
 
 @implementation ChromeEarlGreyImpl
 
@@ -188,6 +186,16 @@ id<GREYAction> grey_longPressWithDuration(base::TimeDelta duration) {
 
 - (BOOL)isEnhancedSafeBrowsingInfobarEnabled {
   return [ChromeEarlGreyAppInterface isEnhancedSafeBrowsingInfobarEnabled];
+}
+
+#pragma mark - Profile Utilities (EG2)
+
+- (NSString*)currentProfileName {
+  return [ChromeEarlGreyAppInterface currentProfileName];
+}
+
+- (NSString*)personalProfileName {
+  return [ChromeEarlGreyAppInterface personalProfileName];
 }
 
 #pragma mark - History Utilities (EG2)
@@ -694,19 +702,6 @@ id<GREYAction> grey_longPressWithDuration(base::TimeDelta duration) {
   return [ChromeEarlGreyAppInterface indexOfActiveNormalTab];
 }
 
-- (void)waitForRestoreSessionToFinish {
-  GREYCondition* finishedRestoreSession = [GREYCondition
-      conditionWithName:kWaitForRestoreSessionToFinishError
-                  block:^{
-                    return !
-                        [ChromeEarlGreyAppInterface isRestoreSessionInProgress];
-                  }];
-  bool restoreSessionCompleted = [finishedRestoreSession
-      waitWithTimeout:kWaitForPageLoadTimeout.InSecondsF()];
-  EG_TEST_HELPER_ASSERT_TRUE(restoreSessionCompleted,
-                             kWaitForRestoreSessionToFinishError);
-}
-
 - (void)submitWebStateFormWithID:(const std::string&)UTF8FormID {
   NSString* formID = base::SysUTF8ToNSString(UTF8FormID);
   EG_TEST_HELPER_ASSERT_NO_ERROR(
@@ -766,12 +761,12 @@ id<GREYAction> grey_longPressWithDuration(base::TimeDelta duration) {
   NSString* errorString = [NSString
       stringWithFormat:@"Failed waiting for web state not containing %@", text];
 
-  GREYCondition* waitForText = [GREYCondition
-      conditionWithName:errorString
-                  block:^{
-                    return !
-                        [ChromeEarlGreyAppInterface webStateContainsText:text];
-                  }];
+  GREYCondition* waitForText =
+      [GREYCondition conditionWithName:errorString
+                                 block:^{
+                                   return ![ChromeEarlGreyAppInterface
+                                       webStateContainsText:text];
+                                 }];
   bool containsText =
       [waitForText waitWithTimeout:kWaitForUIElementTimeout.InSecondsF()];
   EG_TEST_HELPER_ASSERT_TRUE(containsText, errorString);
@@ -808,7 +803,6 @@ id<GREYAction> grey_longPressWithDuration(base::TimeDelta duration) {
 
 - (void)purgeCachedWebViewPages {
   [ChromeEarlGreyAppInterface purgeCachedWebViewPages];
-  [self waitForRestoreSessionToFinish];
   [self waitForPageToFinishLoading];
 }
 
@@ -851,10 +845,6 @@ id<GREYAction> grey_longPressWithDuration(base::TimeDelta duration) {
 
 - (void)connectFakeSyncServerNetwork {
   [ChromeEarlGreyAppInterface connectFakeSyncServerNetwork];
-}
-
-- (void)signInWithoutSyncWithIdentity:(FakeSystemIdentity*)identity {
-  [ChromeEarlGreyAppInterface signInWithoutSyncWithIdentity:identity];
 }
 
 - (void)
@@ -906,7 +896,7 @@ id<GREYAction> grey_longPressWithDuration(base::TimeDelta duration) {
   [ChromeEarlGreyAppInterface flushFakeSyncServerToDisk];
 }
 
-- (int)numberOfSyncEntitiesWithType:(syncer::ModelType)type {
+- (int)numberOfSyncEntitiesWithType:(syncer::DataType)type {
   return [ChromeEarlGreyAppInterface numberOfSyncEntitiesWithType:type];
 }
 
@@ -948,6 +938,13 @@ id<GREYAction> grey_longPressWithDuration(base::TimeDelta duration) {
   [ChromeEarlGreyAppInterface addHistoryServiceTypedURL:spec];
 }
 
+- (void)addHistoryServiceTypedURL:(const GURL&)URL
+                   visitTimestamp:(base::Time)visitTimestamp {
+  NSString* spec = base::SysUTF8ToNSString(URL.spec());
+  [ChromeEarlGreyAppInterface addHistoryServiceTypedURL:spec
+                                         visitTimestamp:visitTimestamp];
+}
+
 - (void)deleteHistoryServiceTypedURL:(const GURL&)URL {
   NSString* spec = base::SysUTF8ToNSString(URL.spec());
   [ChromeEarlGreyAppInterface deleteHistoryServiceTypedURL:spec];
@@ -973,7 +970,7 @@ id<GREYAction> grey_longPressWithDuration(base::TimeDelta duration) {
       [ChromeEarlGreyAppInterface waitForSyncInvalidationFields]);
 }
 
-- (void)triggerSyncCycleForType:(syncer::ModelType)type {
+- (void)triggerSyncCycleForType:(syncer::DataType)type {
   [ChromeEarlGreyAppInterface triggerSyncCycleForType:type];
 }
 
@@ -982,13 +979,6 @@ id<GREYAction> grey_longPressWithDuration(base::TimeDelta duration) {
   NSString* GUID = base::SysUTF8ToNSString(UTF8GUID);
   [ChromeEarlGreyAppInterface
       deleteAutofillProfileFromFakeSyncServerWithGUID:GUID];
-}
-
-- (void)waitForSyncEngineInitialized:(BOOL)isInitialized
-                         syncTimeout:(base::TimeDelta)timeout {
-  EG_TEST_HELPER_ASSERT_NO_ERROR([ChromeEarlGreyAppInterface
-      waitForSyncEngineInitialized:isInitialized
-                       syncTimeout:timeout]);
 }
 
 - (void)waitForSyncFeatureEnabled:(BOOL)isEnabled
@@ -1013,7 +1003,7 @@ id<GREYAction> grey_longPressWithDuration(base::TimeDelta duration) {
       [ChromeEarlGreyAppInterface verifySessionsOnSyncServerWithSpecs:URLs]);
 }
 
-- (void)waitForSyncServerEntitiesWithType:(syncer::ModelType)type
+- (void)waitForSyncServerEntitiesWithType:(syncer::DataType)type
                                      name:(const std::string&)UTF8Name
                                     count:(size_t)count
                                   timeout:(base::TimeDelta)timeout {
@@ -1054,6 +1044,10 @@ id<GREYAction> grey_longPressWithDuration(base::TimeDelta duration) {
 
 - (BOOL)isSyncHistoryDataTypeSelected {
   return [ChromeEarlGreyAppInterface isSyncHistoryDataTypeSelected];
+}
+
+- (void)addSyncPassphrase:(NSString*)syncPassphrase {
+  [ChromeEarlGreyAppInterface addSyncPassphrase:syncPassphrase];
 }
 
 #pragma mark - Window utilities (EG2)
@@ -1263,7 +1257,7 @@ id<GREYAction> grey_longPressWithDuration(base::TimeDelta duration) {
 
 #pragma mark - SignIn Utilities (EG2)
 
-- (void)signOutAndClearIdentitiesAndWaitForCompletion {
+- (void)signOutAndClearIdentities {
   __block BOOL isSignoutFinished = NO;
   [ChromeEarlGreyAppInterface signOutAndClearIdentitiesWithCompletion:^{
     isSignoutFinished = YES;
@@ -1278,23 +1272,11 @@ id<GREYAction> grey_longPressWithDuration(base::TimeDelta duration) {
                         base::Milliseconds(100));
                     return isSignoutFinished;
                   }];
-  bool success =
-      [signOutFinished waitWithTimeout:kWaitForActionTimeout.InSecondsF()];
+  bool success = [signOutFinished
+      waitWithTimeout:base::test::ios::kWaitForClearBrowsingDataTimeout
+                          .InSecondsF()];
   EG_TEST_HELPER_ASSERT_TRUE(
       success, @"Failed waiting for sign-out & cleaning completion");
-}
-
-- (void)signOutAndClearIdentities {
-  [ChromeEarlGreyAppInterface signOutAndClearIdentitiesWithCompletion:nil];
-  GREYCondition* allIdentitiesCleared = [GREYCondition
-      conditionWithName:@"All Chrome identities were cleared"
-                  block:^{
-                    return ![ChromeEarlGreyAppInterface hasIdentities];
-                  }];
-  bool success =
-      [allIdentitiesCleared waitWithTimeout:kWaitForActionTimeout.InSecondsF()];
-  EG_TEST_HELPER_ASSERT_TRUE(success,
-                             @"Failed waiting for identities to be cleared");
 }
 
 #pragma mark - Bookmarks Utilities (EG2)
@@ -1342,8 +1324,10 @@ id<GREYAction> grey_longPressWithDuration(base::TimeDelta duration) {
   std::string errorMessage;
   auto jsonValue = deserializer.Deserialize(&errorCode, &errorMessage);
   NSString* message = [NSString
-      stringWithFormat:@"JSON parsing failed: code=%d, message=%@", errorCode,
-                       base::SysUTF8ToNSString(errorMessage)];
+      stringWithFormat:
+          @"JSON parsing failed: code=%d, message=%@, jsonRepresentation=%@",
+          errorCode, base::SysUTF8ToNSString(errorMessage),
+          base::SysUTF8ToNSString(jsonRepresentation)];
   EG_TEST_HELPER_ASSERT_TRUE(jsonValue, message);
 
   return jsonValue ? std::move(*jsonValue) : base::Value();
@@ -1432,7 +1416,7 @@ id<GREYAction> grey_longPressWithDuration(base::TimeDelta duration) {
 
 - (BOOL)isUnfocusedOmniboxAtBottom {
   return !self.isIPadIdiom && self.isSplitToolbarMode &&
-         [self userBooleanPref:prefs::kBottomOmnibox];
+         [self localStateBooleanPref:prefs::kBottomOmnibox];
 }
 
 #pragma mark - ContentSettings
@@ -1464,6 +1448,28 @@ id<GREYAction> grey_longPressWithDuration(base::TimeDelta duration) {
 - (void)simulatePhysicalKeyboardEvent:(NSString*)input
                                 flags:(UIKeyModifierFlags)flags {
   [ChromeEarlGreyAppInterface simulatePhysicalKeyboardEvent:input flags:flags];
+}
+
+- (void)waitForKeyboardToAppear {
+  GREYCondition* waitForKeyboard = [GREYCondition
+      conditionWithName:@"Wait for keyboard to appear"
+                  block:^BOOL {
+                    return [EarlGrey isKeyboardShownWithError:nil];
+                  }];
+  bool success =
+      [waitForKeyboard waitWithTimeout:kWaitForActionTimeout.InSecondsF()];
+  EG_TEST_HELPER_ASSERT_TRUE(success, @"Keyboard didn't appear");
+}
+
+- (void)waitForKeyboardToDisappear {
+  GREYCondition* waitForKeyboard = [GREYCondition
+      conditionWithName:@"Wait for keyboard to disappear"
+                  block:^BOOL {
+                    return ![EarlGrey isKeyboardShownWithError:nil];
+                  }];
+  bool success =
+      [waitForKeyboard waitWithTimeout:kWaitForActionTimeout.InSecondsF()];
+  EG_TEST_HELPER_ASSERT_TRUE(success, @"Keyboard didn't dismiss");
 }
 
 #pragma mark - Default Utilities (EG2)
@@ -1530,6 +1536,12 @@ id<GREYAction> grey_longPressWithDuration(base::TimeDelta duration) {
   NSString* prefName = base::SysUTF8ToNSString(UTF8PrefName);
   return [ChromeEarlGreyAppInterface setTimeValue:value
                                 forLocalStatePref:prefName];
+}
+
+- (void)setTimeValue:(base::Time)value
+         forUserPref:(const std::string&)UTF8PrefName {
+  NSString* prefName = base::SysUTF8ToNSString(UTF8PrefName);
+  return [ChromeEarlGreyAppInterface setTimeValue:value forUserPref:prefName];
 }
 
 - (void)setStringValue:(const std::string&)UTF8Value
@@ -1882,4 +1894,18 @@ id<GREYAction> grey_longPressWithDuration(base::TimeDelta duration) {
 - (bool)hasFirstRunSentinel {
   return [ChromeEarlGreyAppInterface hasFirstRunSentinel];
 }
+
+#pragma mark - Notification Utilities
+
+- (void)requestTipsNotification:(TipsNotificationType)type {
+  return [ChromeEarlGreyAppInterface requestTipsNotification:type];
+}
+
+#pragma mark - Variations Utilities
+
+- (void)overrideVariationsServiceStoredPermanentCountry:(NSString*)country {
+  return [ChromeEarlGreyAppInterface
+      overrideVariationsServiceStoredPermanentCountry:country];
+}
+
 @end

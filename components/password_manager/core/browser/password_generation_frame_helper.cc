@@ -13,6 +13,7 @@
 #include "components/autofill/core/browser/proto/password_requirements.pb.h"
 #include "components/autofill/core/common/form_data.h"
 #include "components/autofill/core/common/signatures.h"
+#include "components/autofill/core/common/unique_ids.h"
 #include "components/password_manager/core/browser/browser_save_password_progress_logger.h"
 #include "components/password_manager/core/browser/generation/password_generator.h"
 #include "components/password_manager/core/browser/password_feature_manager.h"
@@ -86,7 +87,7 @@ void PasswordGenerationFrameHelper::ProcessPasswordRequirements(
 
   // Store password requirements from the autofill server.
   FormSignature form_signature = autofill::CalculateFormSignature(form);
-  for (const FormFieldData& field : form.fields) {
+  for (const FormFieldData& field : form.fields()) {
     if (auto it = predictions.find(field.global_id());
         it != predictions.end() && it->second.password_requirements) {
       password_requirements_service->AddSpec(
@@ -106,7 +107,7 @@ bool PasswordGenerationFrameHelper::IsGenerationEnabled(
   std::unique_ptr<Logger> logger;
   if (log_debug_data && password_manager_util::IsLoggingActive(client_)) {
     logger = std::make_unique<BrowserSavePasswordProgressLogger>(
-        client_->GetLogManager());
+        client_->GetCurrentLogManager());
   }
 
   GURL url = driver_->GetLastCommittedURL();
@@ -149,6 +150,16 @@ bool PasswordGenerationFrameHelper::IsGenerationEnabled(
   return false;
 }
 
+bool PasswordGenerationFrameHelper::IsManualGenerationEnabledField(
+    autofill::FieldRendererId field_renderer_id) const {
+  return generation_enabled_fields_.contains(field_renderer_id);
+}
+
+void PasswordGenerationFrameHelper::AddManualGenerationEnabledField(
+    autofill::FieldRendererId field_renderer_id) {
+  generation_enabled_fields_.insert(field_renderer_id);
+}
+
 std::u16string PasswordGenerationFrameHelper::GeneratePassword(
     const GURL& last_committed_url,
     PasswordGenerationType generation_type,
@@ -181,7 +192,7 @@ std::u16string PasswordGenerationFrameHelper::GeneratePassword(
   spec.set_max_length(target_length);
 
   if (password_manager_util::IsLoggingActive(client_)) {
-    BrowserSavePasswordProgressLogger logger(client_->GetLogManager());
+    BrowserSavePasswordProgressLogger logger(client_->GetCurrentLogManager());
     logger.LogPasswordRequirements(
         last_committed_url.DeprecatedGetOriginAsURL(), form_signature,
         field_signature, spec);

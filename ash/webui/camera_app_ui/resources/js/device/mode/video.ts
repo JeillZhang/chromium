@@ -24,6 +24,7 @@ import {ChromeHelper} from '../../mojo/chrome_helper.js';
 import {DeviceOperator} from '../../mojo/device_operator.js';
 import {CrosImageCapture} from '../../mojo/image_capture.js';
 import {StorageMonitorStatus} from '../../mojo/type.js';
+import {PerfLogger} from '../../perf.js';
 import * as sound from '../../sound.js';
 import * as state from '../../state.js';
 import * as toast from '../../toast.js';
@@ -37,6 +38,7 @@ import {
   Metadata,
   NoChunkError,
   NoFrameError,
+  PerfEvent,
   PreviewVideo,
   Resolution,
   VideoType,
@@ -53,6 +55,7 @@ import {RecordTime} from './record_time.js';
  * Maps from board name to its default encoding profile and bitrate multiplier.
  */
 const encoderPreference = new Map([
+  ['brya', {profile: h264.Profile.HIGH, multiplier: 8}],
   ['corsola', {profile: h264.Profile.HIGH, multiplier: 6}],
   ['dedede', {profile: h264.Profile.HIGH, multiplier: 8}],
   ['geralt', {profile: h264.Profile.HIGH, multiplier: 8}],
@@ -326,6 +329,9 @@ export class Video extends ModeBase {
         return;
       }
       state.set(state.State.SNAPSHOTTING, true);
+      const perfLogger = PerfLogger.getInstance();
+      perfLogger.start(PerfEvent.SNAPSHOT_TAKING);
+      let hasError = true;
       try {
         const timestamp = Date.now();
         let blob: Blob;
@@ -352,7 +358,13 @@ export class Video extends ModeBase {
           timestamp,
           metadata,
         });
+        hasError = false;
       } finally {
+        perfLogger.stop(PerfEvent.SNAPSHOT_TAKING, {
+          resolution: this.captureResolution,
+          facing: this.facing,
+          hasError,
+        });
         state.set(state.State.SNAPSHOTTING, false);
       }
     });
@@ -486,7 +498,8 @@ export class Video extends ModeBase {
     }
     const preference = encoderPreference.get(loadTimeData.getBoard()) ??
         {profile: h264.Profile.HIGH, multiplier: 2};
-    let {profile, multiplier} = preference;
+    const {profile} = preference;
+    let {multiplier} = preference;
     if (this.recordingType === RecordType.TIME_LAPSE) {
       multiplier = Math.max(multiplier, TIME_LAPSE_MIN_BITRATE_MULTIPLIER);
     }
@@ -503,6 +516,12 @@ export class Video extends ModeBase {
               `profile: ${h264.getProfileName(profile)} bitrate: ${bitrate}`));
       return null;
     }
+    // Adding a console.log for now for debugging video recording issue.
+    // TODO(b/374657378): Remove the log after the root cause is found.
+    // eslint-disable-next-line no-console
+    console.log(
+        'video encode parameter used: ',
+        {width, height, frameRate, profile, level, bitrate});
     return {profile, level, bitrate};
   }
 

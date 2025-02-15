@@ -49,6 +49,7 @@
 <translation id="2295140143284145483">ស្ទង់មតិ</translation>
 <translation id="2297836609126180313"><ph name="QUANTITY" /> TB/វិនាទី</translation>
 <translation id="2353636109065292463">កំពុងពិនិត្យមើល​ការតភ្ជាប់អ៊ីនធឺណិត​របស់អ្នក</translation>
+<translation id="2359808026110333948">បន្ត</translation>
 <translation id="2388990488038464401">ហៅទូរសព្ទទៅលេខនេះ​ពីទូរសព្ទរបស់អ្នក?</translation>
 <translation id="2435457462613246316">បង្ហាញពាក្យសម្ងាត់</translation>
 <translation id="24452542372838207">ពង្រីក​ការ​ជូន​ដំណឹង</translation>
@@ -128,7 +129,9 @@
 <translation id="5528053674512161860">ការផ្ទុក​ទំព័រ​មិនបានសម្រេច​ទេ ដោយសារ​មិនបានដំឡើង​ម៉ូឌុល UI អ្នកអភិវឌ្ឍន៍ (dev_ui)</translation>
 <translation id="5574202486608032840">ប្រព័ន្ធ <ph name="IDS_SHORT_PRODUCT_OS_NAME" /></translation>
 <translation id="5583640892426849032">Backspace</translation>
+<translation id="5606865426897221650">Tab</translation>
 <translation id="5613020302032141669">ព្រួញខាងឆ្វេង</translation>
+<translation id="5633029987065897167">ទទេ</translation>
 <translation id="5754277640426581776">{MINUTES,plural, =1{ 1 នាទី}other{# នាទី}}</translation>
 <translation id="5763338081255973061">{DAYS,plural, =0{ដំណើរការ​ថ្ងៃនេះ}=1{ដំណើរការ 1 ថ្ងៃមុន}other{ដំណើរការ # ថ្ងៃមុន}}</translation>
 <translation id="5768079895599174203">{DAYS,plural, =1{1 ថ្ងៃ និង }other{# ថ្ងៃ និង }}</translation>
@@ -157,7 +160,6 @@
 <translation id="6503257047630241175">ខ្លឹមសារ RTF</translation>
 <translation id="6539092367496845964">មានអ្វីមួយខុសប្រក្រតី។ សូមព្យាយាមម្តង​ទៀតនៅ​ពេលក្រោយ។</translation>
 <translation id="654149438358937226">ទប់ស្កាត់ការជូនដំណឹងទាំងអស់</translation>
-<translation id="6612467943526193239">ដើម្បី​ចាក​ចេញ​ពី​ការ​ក្រិត​​ខ្នាត​ សូម​ចុច Esc ។</translation>
 <translation id="6620110761915583480">រក្សាទុកឯកសារ</translation>
 <translation id="6699343763173986273">Media Next Track</translation>
 <translation id="6808150112686056157">Media Stop</translation>
@@ -199,7 +201,6 @@
 <translation id="8179976553408161302">បញ្ចូល</translation>
 <translation id="8210608804940886430">Page Down</translation>
 <translation id="822964464349305906"><ph name="TYPE_1" />, <ph name="TYPE_2" /></translation>
-<translation id="8245914219290430011">ផ្ទាំង</translation>
 <translation id="8259556432390118667">តម្លៃពណ៌ Hex</translation>
 <translation id="8328145009876646418">គែមឆ្វេង</translation>
 <translation id="8331626408530291785">ទាញឡើង</translation>
@@ -223,6 +224,8 @@
 <translation id="9044832324875206639">{SECONDS,plural, =1{1 វិនាទី}other{# វិនាទី}}</translation>
 <translation id="9059834730836941392">បង្រួមការ​ជូន​ដំណឹង</translation>
 <translation id="9170848237812810038">បកក្រោយ</translation>
+<translation id="9195990613383871904">ថ្ងៃស្អែក</translation>
+<translation id="928628199082367701">Super</translation>
 <translation id="932327136139879170">ទំព័រដើម</translation>
 <translation id="944069440740578670">ការ​ជូន​ដំណឹង​មិន​ទាន់​អាន</translation>
 <translation id="966963601246348639">{SECONDS,plural, =1{1 វិនាទីមុន}other{# វិនាទី​មុន}}</translation>

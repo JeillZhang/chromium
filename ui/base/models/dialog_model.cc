@@ -4,15 +4,16 @@
 
 #include "ui/base/models/dialog_model.h"
 
+#include <algorithm>
 #include <memory>
 #include <vector>
 
 #include "base/functional/callback_helpers.h"
 #include "base/functional/overloaded.h"
 #include "base/notreached.h"
-#include "base/ranges/algorithm.h"
 #include "ui/base/interaction/element_identifier.h"
 #include "ui/base/models/dialog_model_field.h"
+#include "ui/base/mojom/dialog_button.mojom.h"
 #include "ui/base/ui_base_types.h"
 
 namespace ui {
@@ -59,7 +60,7 @@ DialogModel::Button::Button(
     base::RepeatingCallback<void(const Event&)> callback,
     const DialogModel::Button::Params& params)
     : DialogModelField(kCustom, params.id_, params.accelerators_, params),
-      label_(std::move(params.label_)),
+      label_(params.label_),
       style_(params.style_),
       is_enabled_(params.is_enabled_),
       callback_(std::move(callback)) {
@@ -121,9 +122,8 @@ DialogModel::Builder& DialogModel::Builder::AddButtonInternal(
   model_callback = std::move(callback);
   // NOTREACHED() is used below to make sure this callback isn't used.
   // DialogModelHost should be using OnDialogCanceled() instead.
-  model_button.emplace(
-      base::BindRepeating([](const Event&) { NOTREACHED_IN_MIGRATION(); }),
-      params);
+  model_button.emplace(base::BindRepeating([](const Event&) { NOTREACHED(); }),
+                       params);
 
   return *this;
 }
@@ -149,17 +149,17 @@ DialogModel::Builder& DialogModel::Builder::AddExtraLink(
 }
 
 DialogModel::Builder& DialogModel::Builder::OverrideDefaultButton(
-    DialogButton button) {
+    mojom::DialogButton button) {
   // This can only be called once.
   CHECK(!model_->override_default_button_, base::NotFatalUntil::M123);
   // Confirm the button exists.
   switch (button) {
-    case DIALOG_BUTTON_NONE:
+    case mojom::DialogButton::kNone:
       break;
-    case DIALOG_BUTTON_OK:
+    case mojom::DialogButton::kOk:
       CHECK(model_->ok_button_, base::NotFatalUntil::M123);
       break;
-    case DIALOG_BUTTON_CANCEL:
+    case mojom::DialogButton::kCancel:
       CHECK(model_->cancel_button_, base::NotFatalUntil::M123);
       break;
   }
@@ -187,14 +187,14 @@ DialogModel::DialogModel(base::PassKey<Builder>,
 DialogModel::~DialogModel() = default;
 
 bool DialogModel::HasField(ElementIdentifier id) const {
-  return base::ranges::any_of(contents_.fields(),
-                              [id](auto& field) {
-                                // TODO(pbos): This does not
-                                // work recursively yet.
-                                CHECK_NE(field->type_,
-                                         DialogModelField::kSection);
-                                return field->id_ == id;
-                              }) ||
+  return std::ranges::any_of(contents_.fields(),
+                             [id](auto& field) {
+                               // TODO(pbos): This does not
+                               // work recursively yet.
+                               CHECK_NE(field->type_,
+                                        DialogModelField::kSection);
+                               return field->id_ == id;
+                             }) ||
          (ok_button_ && ok_button_->id_ == id) ||
          (cancel_button_ && cancel_button_->id_ == id) ||
          (extra_button_ && extra_button_->id_ == id);

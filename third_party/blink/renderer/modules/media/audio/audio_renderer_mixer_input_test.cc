@@ -2,6 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
+#include "third_party/blink/renderer/modules/media/audio/audio_renderer_mixer_input.h"
+
 #include <stddef.h>
 #include <memory>
 
@@ -15,7 +22,6 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/renderer/modules/media/audio/audio_renderer_mixer.h"
-#include "third_party/blink/renderer/modules/media/audio/audio_renderer_mixer_input.h"
 #include "third_party/blink/renderer/modules/media/audio/audio_renderer_mixer_pool.h"
 
 using testing::_;
@@ -58,6 +64,7 @@ class AudioRendererMixerInputTest : public testing::Test,
   }
 
   AudioRendererMixer* GetMixer(
+      const LocalFrameToken&,
       const FrameToken&,
       const media::AudioParameters& params,
       media::AudioLatency::Type,
@@ -82,6 +89,7 @@ class AudioRendererMixerInputTest : public testing::Test,
 
   scoped_refptr<media::AudioRendererSink> GetSink(
       const LocalFrameToken&,
+      const FrameToken&,
       std::string_view device_id) override {
     media::OutputDeviceStatus status = media::OUTPUT_DEVICE_STATUS_OK;
     if (device_id == kNonexistentDeviceId) {

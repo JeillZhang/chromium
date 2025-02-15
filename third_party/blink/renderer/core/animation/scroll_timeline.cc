@@ -143,7 +143,7 @@ ScrollTimeline::TimelineState ScrollTimeline::ComputeTimelineState() const {
   state.zoom = scroll_container->StyleRef().EffectiveZoom();
   // Timeline is inactive unless the scroll offset range is positive.
   // github.com/w3c/csswg-drafts/issues/7401
-  if (std::abs(state.scroll_offsets->end - state.scroll_offsets->start) > 0) {
+  if (state.scroll_offsets->end - state.scroll_offsets->start > 0) {
     state.phase = TimelinePhase::kActive;
     double offset = current_offset - state.scroll_offsets->start;
     double range = state.scroll_offsets->end - state.scroll_offsets->start;
@@ -214,8 +214,7 @@ Element* ScrollTimeline::ComputeSourceNoLayout() const {
   }
 
   if (!node) {
-    NOTREACHED_IN_MIGRATION();
-    return nullptr;
+    NOTREACHED();
   }
 
   if (node->IsElementNode()) {
@@ -225,8 +224,7 @@ Element* ScrollTimeline::ComputeSourceNoLayout() const {
     return DynamicTo<Document>(node)->ScrollingElementNoLayout();
   }
 
-  NOTREACHED_IN_MIGRATION();
-  return nullptr;
+  NOTREACHED();
 }
 
 void ScrollTimeline::AnimationAttached(Animation* animation) {

@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ui/safety_hub/notification_permission_review_service.h"
 
+#include <algorithm>
 #include <map>
 #include <memory>
 #include <set>
@@ -13,7 +14,6 @@
 #include "base/containers/contains.h"
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
-#include "base/ranges/algorithm.h"
 #include "base/values.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/ui/safety_hub/safety_hub_service.h"
@@ -29,36 +29,6 @@
 namespace {
 
 constexpr char kExcludedKey[] = "exempted";
-constexpr char kDisplayedKey[] = "display_count";
-// The daily average is calculated over the past this many days.
-constexpr int kDays = 7;
-
-int ExtractNotificationCount(ContentSettingPatternSource item,
-                             std::string date) {
-  if (!item.setting_value.is_dict()) {
-    return 0;
-  }
-
-  base::Value::Dict* bucket = item.setting_value.GetDict().FindDict(date);
-  if (!bucket) {
-    return 0;
-  }
-  return bucket->FindInt(kDisplayedKey).value_or(0);
-}
-
-int GetDailyAverageNotificationCount(ContentSettingPatternSource item) {
-  // Calculate daily average count for the past week.
-  base::Time date = base::Time::Now();
-  int notification_count_total = 0;
-
-  for (int day = 0; day < kDays; ++day) {
-    notification_count_total += ExtractNotificationCount(
-        item, permissions::NotificationsEngagementService::GetBucketLabel(
-                  date - base::Days(day)));
-  }
-
-  return std::ceil(notification_count_total / kDays);
-}
 
 std::set<std::pair<ContentSettingsPattern, ContentSettingsPattern>>
 GetIgnoredPatternPairs(scoped_refptr<HostContentSettingsMap> hcsm) {
@@ -87,7 +57,8 @@ GetNotificationCountMapPerPatternPair(
   for (auto& item : hcsm->GetSettingsForOneType(
            ContentSettingsType::NOTIFICATION_INTERACTIONS)) {
     result[std::pair{item.primary_pattern, item.secondary_pattern}] =
-        GetDailyAverageNotificationCount(item);
+        permissions::NotificationsEngagementService::
+            GetDailyAverageNotificationCount(item);
   }
 
   return result;
@@ -204,22 +175,17 @@ bool NotificationPermissionsReviewService::NotificationPermissionsResult::
         *notification_permission.FindString(kSafetyHubOriginKey)));
   }
   std::set<ContentSettingsPattern> new_origins = GetOrigins();
-  return !base::ranges::includes(old_origins, new_origins);
+  return !std::ranges::includes(old_origins, new_origins);
 }
 
 std::u16string NotificationPermissionsReviewService::
     NotificationPermissionsResult::GetNotificationString() const {
-#if !BUILDFLAG(IS_ANDROID)
   if (notification_permissions_.empty()) {
     return std::u16string();
   }
   return l10n_util::GetPluralStringFUTF16(
       IDS_SETTINGS_SAFETY_HUB_REVIEW_NOTIFICATION_PERMISSIONS_MENU_NOTIFICATION,
       GetOrigins().size());
-#else
-  // Menu notifications are not present on Android.
-  return std::u16string();
-#endif
 }
 
 int NotificationPermissionsReviewService::NotificationPermissionsResult::
@@ -233,11 +199,13 @@ NotificationPermissionsReviewService::NotificationPermissionsReviewService(
     : engagement_service_(engagement_service), hcsm_(hcsm) {
   content_settings_observation_.Observe(hcsm);
 
+#if BUILDFLAG(IS_ANDROID)
   if (!base::FeatureList::IsEnabled(features::kSafetyHub)) {
     return;
   }
+#endif  // BUILDFLAG(IS_ANDROID)
 
-  // TODO(crbug.com/40267370): Because there is only an UI thread for this
+  // TODO(crbug.com/40267370): Because there is only a UI thread for this
   // service, calling both |StartRepeatedUpdates()| and
   // |InitializeLatestResult()| will result in the result being calculated twice
   // when the service starts. When redesigning SafetyHubService, that should be
@@ -326,6 +294,11 @@ NotificationPermissionsReviewService::UpdateOnUIThread(
        hcsm_->GetSettingsForOneType(ContentSettingsType::NOTIFICATIONS)) {
     std::pair pair(item.primary_pattern, item.secondary_pattern);
 
+    // Invalid primary pattern should not be in the review list.
+    if (!item.primary_pattern.IsValid()) {
+      continue;
+    }
+
     // Blocklisted permissions should not be in the review list.
     if (base::Contains(ignored_patterns_set, pair)) {
       continue;
@@ -342,12 +315,12 @@ NotificationPermissionsReviewService::UpdateOnUIThread(
       continue;
     }
 
-    int notification_count = notification_count_map[pair];
-
     // Converting primary pattern to GURL should always be valid, since
     // Notification Permission Review list only contains single origins.
     GURL url = GURL(item.primary_pattern.ToString());
     DCHECK(url.is_valid());
+
+    int notification_count = notification_count_map[pair];
     if (!ShouldAddToNotificationPermissionReviewList(url, notification_count)) {
       continue;
     }

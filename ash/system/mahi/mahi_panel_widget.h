@@ -6,6 +6,8 @@
 #define ASH_SYSTEM_MAHI_MAHI_PANEL_WIDGET_H_
 
 #include "ash/ash_export.h"
+#include "ash/shelf/shelf.h"
+#include "ash/shelf/shelf_observer.h"
 #include "ui/views/view_observer.h"
 #include "ui/views/widget/unique_widget_ptr.h"
 #include "ui/views/widget/widget.h"
@@ -18,9 +20,13 @@ class RefreshBannerView;
 // The widget that contains the Mahi panel.
 // TODO(b/319329379): Use this class in `CreatePanelWidget()` when resizing and
 // closing capability is added.
-class ASH_EXPORT MahiPanelWidget : public views::Widget, views::ViewObserver {
+class ASH_EXPORT MahiPanelWidget : public views::Widget,
+                                   public ShelfObserver,
+                                   views::ViewObserver {
  public:
-  MahiPanelWidget(InitParams params, MahiUiController* ui_controller);
+  MahiPanelWidget(InitParams params,
+                  RefreshBannerView* refresh_view,
+                  MahiUiController* ui_controller);
 
   MahiPanelWidget(const MahiPanelWidget&) = delete;
   MahiPanelWidget& operator=(const MahiPanelWidget&) = delete;
@@ -37,6 +43,9 @@ class ASH_EXPORT MahiPanelWidget : public views::Widget, views::ViewObserver {
   static const char* GetName();
 
  private:
+  // ShelfObserver:
+  void OnShelfWorkAreaInsetsChanged() override;
+
   // views::ViewObserver:
   void OnViewVisibilityChanged(views::View* observed_view,
                                views::View* starting_view) override;
@@ -49,6 +58,9 @@ class ASH_EXPORT MahiPanelWidget : public views::Widget, views::ViewObserver {
 
   base::ScopedObservation<views::View, views::ViewObserver>
       refresh_view_observation_{this};
+
+  // Used to observe the work area bounds to update the panel bounds.
+  base::ScopedObservation<Shelf, ShelfObserver> shelf_observation_{this};
 };
 
 }  // namespace ash

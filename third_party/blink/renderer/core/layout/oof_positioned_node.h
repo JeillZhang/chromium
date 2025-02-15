@@ -378,7 +378,7 @@ struct FragmentedOofData final : PhysicalFragment::OofData {
     HeapVector<PhysicalOofNodeForFragmentation>& descendants =
         const_cast<HeapVector<PhysicalOofNodeForFragmentation>&>(
             oof_data->oof_positioned_fragmentainer_descendants);
-    return {descendants.data(), descendants.size()};
+    return descendants;
   }
 
   void Trace(Visitor* visitor) const override {

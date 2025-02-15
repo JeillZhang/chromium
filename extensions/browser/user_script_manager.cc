@@ -6,12 +6,14 @@
 
 #include "base/containers/contains.h"
 #include "content/public/browser/browser_context.h"
-#include "extensions/browser/api/scripting/scripting_constants.h"
-#include "extensions/browser/api/scripting/scripting_utils.h"
+#include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/browser/extension_util.h"
 #include "extensions/browser/extensions_browser_client.h"
+#include "extensions/browser/pref_types.h"
+#include "extensions/browser/scripting_constants.h"
+#include "extensions/browser/scripting_utils.h"
 #include "extensions/browser/state_store.h"
 #include "extensions/browser/user_script_loader.h"
 #include "extensions/common/api/content_scripts.h"
@@ -23,6 +25,15 @@
 
 namespace extensions {
 
+namespace {
+
+// Key corresponding to whether the user has allowed user scripts to run for the
+// extension.
+constexpr PrefMap kUserScriptsAllowedPref = {
+    "user_scripts_enabled", PrefType::kBool, PrefScope::kExtensionSpecific};
+
+}  // namespace
+
 UserScriptManager::UserScriptManager(content::BrowserContext* browser_context)
     : browser_context_(browser_context) {
   extension_registry_observation_.Observe(
@@ -30,8 +41,9 @@ UserScriptManager::UserScriptManager(content::BrowserContext* browser_context)
 
   StateStore* store =
       ExtensionSystem::Get(browser_context_)->dynamic_user_scripts_store();
-  if (store)
+  if (store) {
     store->RegisterKey(scripting::kRegisteredScriptsStorageKey);
+  }
 }
 
 UserScriptManager::~UserScriptManager() = default;
@@ -74,8 +86,7 @@ EmbedderUserScriptLoader* UserScriptManager::GetUserScriptLoaderForEmbedder(
     case mojom::HostID::HostType::kExtensions:
       break;
   }
-  NOTREACHED_IN_MIGRATION();
-  return nullptr;
+  NOTREACHED();
 }
 
 void UserScriptManager::SetUserScriptSourceEnabledForExtensions(
@@ -84,6 +95,23 @@ void UserScriptManager::SetUserScriptSourceEnabledForExtensions(
   for (auto& map_entry : extension_script_loaders_) {
     map_entry.second->SetSourceEnabled(source, enabled);
   }
+}
+
+bool UserScriptManager::IsUserScriptPrefEnabled(
+    const ExtensionId& extension_id) const {
+  bool user_scripts_allowed = false;
+  ExtensionPrefs::Get(browser_context_)
+      ->ReadPrefAsBoolean(extension_id, kUserScriptsAllowedPref,
+                          &user_scripts_allowed);
+
+  return user_scripts_allowed;
+}
+
+void UserScriptManager::SetUserScriptPrefEnabled(
+    const ExtensionId& extension_id,
+    bool enabled) {
+  ExtensionPrefs::Get(browser_context_)
+      ->SetBooleanPref(extension_id, kUserScriptsAllowedPref, enabled);
 }
 
 void UserScriptManager::OnExtensionWillBeInstalled(
@@ -128,8 +156,9 @@ void UserScriptManager::OnInitialExtensionLoadComplete(
 void UserScriptManager::RemovePendingExtensionLoadAndSignal(
     const ExtensionId& extension_id) {
   int erased = pending_initial_extension_loads_.erase(extension_id);
-  if (!erased || !pending_initial_extension_loads_.empty())
+  if (!erased || !pending_initial_extension_loads_.empty()) {
     return;  // Not a relevant extension, or still waiting on more.
+  }
 
   // All our extensions are loaded!
   ExtensionsBrowserClient::Get()->SignalContentScriptsLoaded(browser_context_);

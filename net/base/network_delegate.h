@@ -14,16 +14,19 @@
 #include "base/functional/callback.h"
 #include "base/gtest_prod_util.h"
 #include "base/threading/thread_checker.h"
+#include "base/types/optional_ref.h"
 #include "net/base/auth.h"
 #include "net/base/completion_once_callback.h"
 #include "net/base/net_export.h"
 #include "net/cookies/canonical_cookie.h"
 #include "net/cookies/cookie_inclusion_status.h"
 #include "net/cookies/cookie_setting_override.h"
+#include "net/cookies/cookie_util.h"
 #include "net/cookies/site_for_cookies.h"
 #include "net/first_party_sets/first_party_set_metadata.h"
 #include "net/first_party_sets/first_party_sets_cache_filter.h"
 #include "net/proxy_resolution/proxy_retry_info.h"
+#include "net/url_request/redirect_info.h"
 
 class GURL;
 
@@ -90,6 +93,15 @@ class NET_EXPORT NetworkDelegate {
                     CookieOptions* options,
                     const net::FirstPartySetMetadata& first_party_set_metadata,
                     CookieInclusionStatus* inclusion_status);
+
+  std::optional<cookie_util::StorageAccessStatus> GetStorageAccessStatus(
+      const URLRequest& request,
+      base::optional_ref<const RedirectInfo> redirect_info) const;
+
+  // Returns true if the `Sec-Fetch-Storage-Access` request header flow is
+  // enabled in the given context.
+  bool IsStorageAccessHeaderEnabled(const url::Origin* top_frame_origin,
+                                    const GURL& url) const;
 
   // PrivacySetting is kStateDisallowed iff the given |url| has to be
   // requested over connection that is not tracked by the server.
@@ -302,6 +314,15 @@ class NET_EXPORT NetworkDelegate {
 
   virtual bool OnCanUseReportingClient(const url::Origin& origin,
                                        const GURL& endpoint) const = 0;
+
+  virtual std::optional<cookie_util::StorageAccessStatus>
+  OnGetStorageAccessStatus(
+      const URLRequest& request,
+      base::optional_ref<const RedirectInfo> redirect_info) const = 0;
+
+  virtual bool OnIsStorageAccessHeaderEnabled(
+      const url::Origin* top_frame_origin,
+      const GURL& url) const = 0;
 };
 
 }  // namespace net

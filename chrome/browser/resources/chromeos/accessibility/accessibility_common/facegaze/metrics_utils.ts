@@ -4,6 +4,13 @@
 
 import {TestImportManager} from '/common/testing/test_import_manager.js';
 
+/**
+ * The metric used to record the average FaceLandmarker performance time on a
+ * single video frame (in milliseconds).
+ */
+const FACELANDMARKER_PERFORMANCE_METRIC =
+    'Accessibility.FaceGaze.AverageFaceLandmarkerLatency';
+
 /** A class used to record metrics for FaceGaze. */
 export class MetricsUtils {
   private latencies_: number[] = [];
@@ -22,19 +29,10 @@ export class MetricsUtils {
       sum += val;
     }
 
-    const average = sum / this.latencies_.length;
+    const average = Math.ceil(sum / this.latencies_.length);
     chrome.metricsPrivate.recordMediumTime(
-        MetricsUtils.FACELANDMARKER_PERFORMANCE_METRIC, average);
+        FACELANDMARKER_PERFORMANCE_METRIC, average);
   }
-}
-
-export namespace MetricsUtils {
-  /**
-   * The metric used to record the average FaceLandmarker performance time on a
-   * single video frame (in milliseconds).
-   */
-  export const FACELANDMARKER_PERFORMANCE_METRIC =
-      'Accessibility.FaceGaze.AverageFaceLandmarkerLatency';
 }
 
 TestImportManager.exportForTesting(MetricsUtils);

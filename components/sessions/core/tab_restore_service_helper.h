@@ -87,6 +87,19 @@ class SESSIONS_EXPORT TabRestoreServiceHelper
 
   void SetHelperObserver(Observer* observer);
 
+  // Creates a mapping of local to saved ids for groups that have a
+  // saved_group_id. Take in a window's group storage type, and outputs a type
+  // usable for UpdateSavedGroupIDsForTabEntries.
+  static std::map<tab_groups::TabGroupId, base::Uuid>
+  CreateLocalSavedGroupIDMapping(
+      const std::map<tab_groups::TabGroupId, std::unique_ptr<Group>>& groups);
+
+  // Updates the saved group IDs for tabs based on the provided group mapping.
+  // Used by RestoreEntryByID.
+  static void UpdateSavedGroupIDsForTabEntries(
+      std::vector<std::unique_ptr<tab_restore::Tab>>& tabs,
+      const std::map<tab_groups::TabGroupId, base::Uuid>& group_mapping);
+
   // Helper methods used to implement TabRestoreService.
   void AddObserver(TabRestoreServiceObserver* observer);
   void RemoveObserver(TabRestoreServiceObserver* observer);
@@ -154,9 +167,12 @@ class SESSIONS_EXPORT TabRestoreServiceHelper
   // will be respected instead. If a new LiveTabContext needs to be created for
   // this tab, If present, |live_tab| will be populated with the LiveTab of the
   // restored tab.
+  // |original_session_type| indicates the type of session entry the tab
+  // belongs to.
   LiveTabContext* RestoreTab(const Tab& tab,
                              LiveTabContext* context,
                              WindowOpenDisposition disposition,
+                             sessions::tab_restore::Type session_restore_type,
                              LiveTab** live_tab);
 
   // This is a helper function for RestoreEntryById(). Restores a single entry

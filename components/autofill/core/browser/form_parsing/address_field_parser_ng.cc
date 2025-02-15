@@ -347,15 +347,14 @@ void AddressFieldParserNG::AddClassifications(
     if (!field_ptr) {
       continue;
     }
-    AddClassification(field_ptr, field_type, kBaseAddressParserScore,
-                      field_candidates);
+    // TODO(crbug.com/320965828): Support MatchInfo. The NG parser doesn't track
+    // how matches are found. `kHighQualityLabel` is merely a placeholder.
+    AddClassification(
+        FieldAndMatchInfo{field_ptr,
+                          {.matched_attribute =
+                               MatchInfo::MatchAttribute::kHighQualityLabel}},
+        field_type, kBaseAddressParserScore, field_candidates);
   }
-}
-
-base::span<const MatchPatternRef> AddressFieldParserNG::GetMatchPatterns(
-    std::string_view name) {
-  return ::autofill::GetMatchPatterns(name, context_->page_language,
-                                      context_->pattern_source);
 }
 
 std::optional<double> AddressFieldParserNG::FindScoreOfBestMatchingRule(
@@ -383,9 +382,7 @@ std::optional<double> AddressFieldParserNG::FindScoreOfBestMatchingRule(
       base::FeatureList::IsEnabled(
           features::kAutofillEnableLabelPrecedenceForTurkishAddresses)) {
     prefer_label = true;
-  } else if (context_->client_country == GeoIpCountryCode("MX") &&
-             base::FeatureList::IsEnabled(
-                 features::kAutofillPreferLabelsInSomeCountries)) {
+  } else if (context_->client_country == GeoIpCountryCode("MX")) {
     prefer_label = true;
   }
 
@@ -408,8 +405,7 @@ std::optional<double> AddressFieldParserNG::FindScoreOfBestMatchingRule(
     // preferred attribute match.
     auto MatchAttribute = [&](bool match_label) -> std::optional<double> {
       if (FieldMatchesMatchPatternRef(
-              *context_, GetMatchPatterns(pattern_name), *scanner_->Cursor(),
-              pattern_name.data(),
+              *context_, *scanner_->Cursor(), pattern_name,
               {match_label ? MatchOnlyLabel : MatchOnlyName,
                match_pattern_projection})) {
         return score + (match_label == prefer_label ? 0.05 : 0.0);
@@ -617,6 +613,11 @@ std::optional<double> AddressFieldParserNG::FindScoreOfBestMatchingRule(
     case NAME_MIDDLE_INITIAL:
     case NAME_FULL:
     case NAME_SUFFIX:
+    case NAME_LAST_PREFIX:
+    case NAME_LAST_CORE:
+    case ALTERNATIVE_FULL_NAME:
+    case ALTERNATIVE_GIVEN_NAME:
+    case ALTERNATIVE_FAMILY_NAME:
     case EMAIL_ADDRESS:
     case USERNAME_AND_EMAIL_ADDRESS:
     case PHONE_HOME_NUMBER:
@@ -665,6 +666,25 @@ std::optional<double> AddressFieldParserNG::FindScoreOfBestMatchingRule(
     case PRICE:
     case NUMERIC_QUANTITY:
     case SEARCH_TERM:
+    case IMPROVED_PREDICTION:
+    case PASSPORT_NAME_TAG:
+    case PASSPORT_NUMBER:
+    case PASSPORT_ISSUING_COUNTRY_TAG:
+    case PASSPORT_EXPIRATION_DATE_TAG:
+    case PASSPORT_ISSUE_DATE_TAG:
+    case LOYALTY_MEMBERSHIP_PROGRAM:
+    case LOYALTY_MEMBERSHIP_PROVIDER:
+    case LOYALTY_MEMBERSHIP_ID:
+    case VEHICLE_OWNER_TAG:
+    case VEHICLE_LICENSE_PLATE:
+    case VEHICLE_VIN:
+    case VEHICLE_MAKE:
+    case VEHICLE_MODEL:
+    case DRIVERS_LICENSE_NAME_TAG:
+    case DRIVERS_LICENSE_REGION:
+    case DRIVERS_LICENSE_NUMBER:
+    case DRIVERS_LICENSE_EXPIRATION_DATE_TAG:
+    case DRIVERS_LICENSE_ISSUE_DATE_TAG:
     case MAX_VALID_FIELD_TYPE:
       return std::nullopt;
   }

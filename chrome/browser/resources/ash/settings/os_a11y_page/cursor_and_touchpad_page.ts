@@ -20,9 +20,8 @@ import '../settings_shared.css.js';
 import 'chrome://resources/ash/common/cr_elements/localized_link/localized_link.js';
 
 import {PrefsMixin} from '/shared/settings/prefs/prefs_mixin.js';
-import {CrLinkRowElement} from 'chrome://resources/ash/common/cr_elements/cr_link_row/cr_link_row.js';
-import {SliderTick} from 'chrome://resources/ash/common/cr_elements/cr_slider/cr_slider.js';
-import {CrToggleElement} from 'chrome://resources/ash/common/cr_elements/cr_toggle/cr_toggle.js';
+import type {CrLinkRowElement} from 'chrome://resources/ash/common/cr_elements/cr_link_row/cr_link_row.js';
+import type {CrToggleElement} from 'chrome://resources/ash/common/cr_elements/cr_toggle/cr_toggle.js';
 import {I18nMixin} from 'chrome://resources/ash/common/cr_elements/i18n_mixin.js';
 import {WebUiListenerMixin} from 'chrome://resources/ash/common/cr_elements/web_ui_listener_mixin.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
@@ -30,32 +29,20 @@ import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bu
 
 import {DeepLinkingMixin} from '../common/deep_linking_mixin.js';
 import {RouteOriginMixin} from '../common/route_origin_mixin.js';
-import {SettingsToggleButtonElement} from '../controls/settings_toggle_button.js';
-import {DevicePageBrowserProxy, DevicePageBrowserProxyImpl} from '../device_page/device_page_browser_proxy.js';
+import type {DevicePageBrowserProxy} from '../device_page/device_page_browser_proxy.js';
+import {DevicePageBrowserProxyImpl} from '../device_page/device_page_browser_proxy.js';
 import {Setting} from '../mojom-webui/setting.mojom-webui.js';
-import {Route, Router, routes} from '../router.js';
+import type {Route} from '../router.js';
+import {Router, routes} from '../router.js';
 
 import {getTemplate} from './cursor_and_touchpad_page.html.js';
-import {CursorAndTouchpadPageBrowserProxy, CursorAndTouchpadPageBrowserProxyImpl} from './cursor_and_touchpad_page_browser_proxy.js';
-
-const DEFAULT_BLACK_CURSOR_COLOR = 0;
+import type {CursorAndTouchpadPageBrowserProxy} from './cursor_and_touchpad_page_browser_proxy.js';
+import {CursorAndTouchpadPageBrowserProxyImpl} from './cursor_and_touchpad_page_browser_proxy.js';
+import {DisableTouchpadMode} from './disable_touchpad_constants.js';
 
 interface Option {
   name: string;
   value: number;
-}
-
-interface SliderData {
-  min: number;
-  max: number;
-  step: number;
-  defaultValue: number;
-}
-
-interface TickData {
-  tick: number;
-  percent: number;
-  defaultValue: number;
 }
 
 export interface SettingsCursorAndTouchpadPageElement {
@@ -152,7 +139,7 @@ export class SettingsCursorAndTouchpadPageElement extends
         value() {
           return [
             {
-              value: DEFAULT_BLACK_CURSOR_COLOR,
+              value: -0x1000000,  // Black
               name: loadTimeData.getString('cursorColorBlack'),
             },
             {
@@ -188,16 +175,17 @@ export class SettingsCursorAndTouchpadPageElement extends
         },
       },
 
-      mouseKeysDominantHandOptions_: {
+      disableTouchpadOptions_: {
         readOnly: true,
         type: Array,
         value() {
-          // These values correspond to the values of MouseKeysDominantHand in
-          // ash/public/cpp/accessibility_controller_enums.h
-          // If these values get changed then this needs to be updated as well.
           return [
-            {value: 1, name: loadTimeData.getString('mouseKeysLeftHand')},
-            {value: 0, name: loadTimeData.getString('mouseKeysRightHand')},
+            {value: 0, name: loadTimeData.getString('disableTouchpadNever')},
+            {value: 1, name: loadTimeData.getString('disableTouchpadAlways')},
+            {
+              value: 2,
+              name: loadTimeData.getString('disableTouchpadMouseConnected'),
+            },
           ];
         },
       },
@@ -220,6 +208,12 @@ export class SettingsCursorAndTouchpadPageElement extends
         type: Boolean,
         computed:
             'computeShowShelfNavigationButtonsSettings_(isKioskModeActive_)',
+      },
+
+      /** Whether or not the facegaze settings row should be displayed. */
+      showFaceGazeRow_: {
+        type: Boolean,
+        computed: 'computeShowFaceGazeRow_(isKioskModeActive_)',
       },
 
       /**
@@ -249,13 +243,14 @@ export class SettingsCursorAndTouchpadPageElement extends
       },
 
       /**
-       * Whether the face movements mouse cursor and keyboard control feature is
+       * Whether the controlling the mouse cursor with the keyboard feature is
        * enabled.
        */
-      isAccessibilityFaceGazeEnabled_: {
+      isAccessibilityDisableTouchpadEnabled_: {
         type: Boolean,
         value() {
-          return loadTimeData.getBoolean('isAccessibilityFaceGazeEnabled');
+          return loadTimeData.getBoolean(
+              'isAccessibilityDisableTouchpadEnabled');
         },
       },
 
@@ -271,29 +266,19 @@ export class SettingsCursorAndTouchpadPageElement extends
       },
 
       /**
-       * Whether to show the overscroll history navigation setting.
-       */
-      isAccessibilityOverscrollSettingFeatureEnabled_: {
-        type: Boolean,
-        value: () => {
-          return loadTimeData.getBoolean(
-              'isAccessibilityOverscrollSettingFeatureEnabled');
-        },
-      },
-
-      /**
        * Used by DeepLinkingMixin to focus this page's deep links.
        */
       supportedSettingIds: {
         type: Object,
         value: () => new Set<Setting>([
           Setting.kAutoClickWhenCursorStops,
-          Setting.kMouseKeysEnabled,
-          Setting.kLargeCursor,
-          Setting.kHighlightCursorWhileMoving,
-          Setting.kTabletNavigationButtons,
+          Setting.kDisableTouchpad,
           Setting.kEnableCursorColor,
+          Setting.kHighlightCursorWhileMoving,
+          Setting.kLargeCursor,
+          Setting.kMouseKeysEnabled,
           Setting.kOverscrollEnabled,
+          Setting.kTabletNavigationButtons,
         ]),
       },
 
@@ -332,14 +317,15 @@ export class SettingsCursorAndTouchpadPageElement extends
   private cursorAndTouchpadBrowserProxy_: CursorAndTouchpadPageBrowserProxy;
   private cursorColorOptions_: Option[];
   private deviceBrowserProxy_: DevicePageBrowserProxy;
+  private disableTouchpadOptions_: Option[];
   private readonly isKioskModeActive_: boolean;
   private shelfNavigationButtonsImplicitlyEnabled_: boolean;
   private shelfNavigationButtonsPref_:
       chrome.settingsPrivate.PrefObject<boolean>;
   private showShelfNavigationButtonsSettings_: boolean;
+  private readonly isAccessibilityDisableTouchpadEnabled_: boolean;
   private readonly isAccessibilityFaceGazeEnabled_: boolean;
   private readonly isAccessibilityMouseKeysEnabled_: boolean;
-  private readonly isAccessibilityOverscrollSettingFeatureEnabled_: boolean;
   private readonly largeCursorMaxSize_: number;
   private hasMouse_: boolean;
   private hasTouchpad_: boolean;
@@ -402,77 +388,8 @@ export class SettingsCursorAndTouchpadPageElement extends
     this.attemptDeepLink();
   }
 
-  /**
-   * Ticks for the Mouse Keys accelerations slider. Valid rates are
-   * between 0 and 1.
-   */
-  private mouseKeysAccelerationTicks_(): SliderTick[] {
-    return this.buildLinearTicks_({
-      min: 0,
-      max: 1,
-      step: 0.1,
-      defaultValue: 0.2,
-    });
-  }
-
-  /**
-   * Ticks for the Mouse Keys max speed slider. Valid rates are
-   * between 1 and 10.
-   */
-  private mouseKeysMaxSpeedTicks_(): SliderTick[] {
-    return this.buildLinearTicks_({
-      min: 1,
-      max: 10,
-      step: 1,
-      defaultValue: 5,
-    });
-  }
-
-  /**
-   * A helper to build a set of ticks between |min| and |max| (inclusive) spaced
-   * evenly by |step|.
-   */
-  private buildLinearTicks_(data: SliderData): SliderTick[] {
-    const ticks: SliderTick[] = [];
-
-    const count = (data.max - data.min) / data.step;
-    for (let i = 0; i <= count; i++) {
-      const tickValue = data.step * i + data.min;
-      ticks.push(this.initTick_({
-        tick: tickValue,
-        percent: tickValue / data.max,
-        defaultValue: data.defaultValue,
-      }));
-    }
-    return ticks;
-  }
-
-  /**
-   * Initializes i18n labels for ticks arrays.
-   */
-  private initTick_(data: TickData): SliderTick {
-    const value = Math.round(100 * data.percent);
-    const strValue = value.toFixed(0);
-    const label = data.tick.toFixed(1) === data.defaultValue.toFixed(1) ?
-        this.i18n('defaultPercentage', strValue) :
-        this.i18n('percentage', strValue);
-    return {label: label, value: data.tick, ariaValue: value};
-  }
-
-  private onFaceGazeToggleChange_(): void {
-    const faceGazeToggle =
-        this.shadowRoot!.querySelector<CrToggleElement>('#faceGazeToggle');
-    if (!faceGazeToggle) {
-      return;
-    }
-    this.setPrefValue(
-        'settings.a11y.face_gaze.enabled', faceGazeToggle.checked);
-  }
-
   private onFaceGazeSettingsClick_(): void {
-    if (this.getPref<boolean>('settings.a11y.face_gaze.enabled').value) {
-      Router.getInstance().navigateTo(routes.MANAGE_FACEGAZE_SETTINGS);
-    }
+    Router.getInstance().navigateTo(routes.MANAGE_FACEGAZE_SETTINGS);
   }
 
   pointersChanged(
@@ -526,6 +443,11 @@ export class SettingsCursorAndTouchpadPageElement extends
   private computeShowShelfNavigationButtonsSettings_(): boolean {
     return !this.isKioskModeActive_ &&
         loadTimeData.getBoolean('showTabletModeShelfNavigationButtonsSettings');
+  }
+
+  private computeShowFaceGazeRow_(): boolean {
+    return !this.isKioskModeActive_ &&
+        loadTimeData.getBoolean('isAccessibilityFaceGazeEnabled');
   }
 
   /**
@@ -582,7 +504,7 @@ export class SettingsCursorAndTouchpadPageElement extends
     }
 
     const enabled = this.shadowRoot!
-                        .querySelector<SettingsToggleButtonElement>(
+                        .querySelector<CrToggleElement>(
                             '#shelfNavigationButtonsEnabledControl')!.checked;
     this.setPrefValue(
         'settings.a11y.tablet_mode_shelf_nav_buttons_enabled', enabled);
@@ -590,13 +512,19 @@ export class SettingsCursorAndTouchpadPageElement extends
         .recordSelectedShowShelfNavigationButtonValue(enabled);
   }
 
-  private onA11yCursorColorChange_(): void {
-    // Custom cursor color is enabled when the color is not set to black.
-    const a11yCursorColorOn =
-        this.getPref<number>('settings.a11y.cursor_color').value !==
-        DEFAULT_BLACK_CURSOR_COLOR;
-    this.set(
-        'prefs.settings.a11y.cursor_color_enabled.value', a11yCursorColorOn);
+  private showTouchpadEnableMessage_(trackpadMode: number): boolean {
+    return trackpadMode !== DisableTouchpadMode.NEVER;
+  }
+
+  private onMouseKeysRowClicked_() {
+    Router.getInstance().navigateTo(routes.MANAGE_MOUSE_KEYS_SETTINGS);
+  }
+
+  private onMouseKeysToggleClicked_() {
+    const enabled =
+        this.shadowRoot!.querySelector<CrToggleElement>(
+                            '#mouseKeysToggle')!.checked;
+    this.setPrefValue('settings.a11y.mouse_keys.enabled', enabled);
   }
 }
 

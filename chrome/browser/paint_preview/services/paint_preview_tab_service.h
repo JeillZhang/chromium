@@ -99,7 +99,7 @@ class PaintPreviewTabService : public PaintPreviewBaseService {
       JNIEnv* env,
       const base::android::JavaParamRef<jintArray>& j_tab_ids);
   jboolean IsCacheInitializedAndroid(JNIEnv* env);
-  base::android::ScopedJavaLocalRef<jstring> GetPathAndroid(JNIEnv* env);
+  std::string GetPathAndroid(JNIEnv* env);
 
   base::android::ScopedJavaGlobalRef<jobject> GetJavaRef() { return java_ref_; }
 #endif  // BUILDFLAG(IS_ANDROID)
@@ -111,7 +111,7 @@ class PaintPreviewTabService : public PaintPreviewBaseService {
 
     TabServiceTask(int tab_id,
                    const DirectoryKey& key,
-                   int frame_tree_node_id,
+                   content::FrameTreeNodeId frame_tree_node_id,
                    content::GlobalRenderFrameHostId frame_routing_id,
                    float page_scale_factor,
                    int x,
@@ -124,7 +124,9 @@ class PaintPreviewTabService : public PaintPreviewBaseService {
 
     int tab_id() const { return tab_id_; }
     const DirectoryKey& key() const { return key_; }
-    int frame_tree_node_id() const { return frame_tree_node_id_; }
+    content::FrameTreeNodeId frame_tree_node_id() const {
+      return frame_tree_node_id_;
+    }
     content::GlobalRenderFrameHostId frame_routing_id() const {
       return frame_routing_id_;
     }
@@ -161,7 +163,7 @@ class PaintPreviewTabService : public PaintPreviewBaseService {
    private:
     int tab_id_;
     DirectoryKey key_;
-    int frame_tree_node_id_;
+    content::FrameTreeNodeId frame_tree_node_id_;
     content::GlobalRenderFrameHostId frame_routing_id_;
     float page_scale_factor_;
     int scroll_offset_x_;

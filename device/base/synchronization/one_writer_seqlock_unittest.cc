@@ -2,9 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "device/base/synchronization/one_writer_seqlock.h"
 
 #include <stdlib.h>
+
+#include <array>
 #include <atomic>
 
 #include "base/memory/raw_ptr.h"
@@ -108,8 +115,8 @@ TEST(OneWriterSeqLockTest, MAYBE_ManyThreads) {
   ABSL_ANNOTATE_BENIGN_RACE_SIZED(&data, sizeof(data), "Racey reads are discarded");
 
   static const unsigned kNumReaderThreads = 10;
-  BasicSeqLockTestThread threads[kNumReaderThreads];
-  base::PlatformThreadHandle handles[kNumReaderThreads];
+  std::array<BasicSeqLockTestThread, kNumReaderThreads> threads;
+  std::array<base::PlatformThreadHandle, kNumReaderThreads> handles;
 
   for (uint32_t i = 0; i < kNumReaderThreads; ++i)
     threads[i].Init(&seqlock, &data, &ready);
@@ -144,8 +151,8 @@ TEST(OneWriterSeqLockTest, MaxRetries) {
   std::atomic<int> ready(0);
 
   static const unsigned kNumReaderThreads = 3;
-  MaxRetriesSeqLockTestThread threads[kNumReaderThreads];
-  base::PlatformThreadHandle handles[kNumReaderThreads];
+  std::array<MaxRetriesSeqLockTestThread, kNumReaderThreads> threads;
+  std::array<base::PlatformThreadHandle, kNumReaderThreads> handles;
 
   for (uint32_t i = 0; i < kNumReaderThreads; ++i)
     threads[i].Init(&seqlock, &ready);

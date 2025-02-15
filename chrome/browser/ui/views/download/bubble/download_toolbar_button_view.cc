@@ -10,6 +10,7 @@
 #include "base/i18n/number_formatting.h"
 #include "base/location.h"
 #include "base/memory/raw_ptr.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/strings/strcat.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
@@ -49,6 +50,7 @@
 #include "content/public/browser/browser_thread.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
+#include "ui/base/mojom/dialog_button.mojom.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/color/color_id.h"
 #include "ui/color/color_provider.h"
@@ -412,6 +414,13 @@ bool DownloadToolbarButtonView::ShouldShowExclusiveAccessBubble() const {
   if (!browser_view) {
     return false;
   }
+#if BUILDFLAG(IS_MAC)
+  // In content fullscreen, we do not show the download bubble and the toolbar
+  // is not visible. Therefore, we must show the ExclusiveAccessBubble notice.
+  if (fullscreen_utils::IsInContentFullscreen(browser_)) {
+    return true;
+  }
+#endif
 #if BUILDFLAG(IS_CHROMEOS)
   if (chromeos::IsKioskSession()) {
     return false;
@@ -438,28 +447,6 @@ void DownloadToolbarButtonView::ShowDetails() {
     auto_close_bubble_timer_.Reset();
   }
   CreateBubbleDialogDelegate();
-}
-
-bool DownloadToolbarButtonView::OpenMostSpecificDialog(
-    const offline_items_collection::ContentId& content_id) {
-  if (!IsShowing()) {
-    Show();
-  }
-
-  if (!bubble_delegate_) {
-    // This should behave similarly to a normal button press on the toolbar
-    // button, so create the main view.
-    is_primary_partial_view_ = false;
-    CreateBubbleDialogDelegate();
-  }
-
-  DownloadBubbleRowView* row = ShowPrimaryDialogRow(content_id);
-
-  // Open the more specific security subpage if it has one.
-  if (row && row->info().has_subpage()) {
-    OpenSecurityDialog(content_id);
-  }
-  return row != nullptr;
 }
 
 void DownloadToolbarButtonView::HideDetails() {
@@ -564,8 +551,10 @@ DownloadBubbleRowView* DownloadToolbarButtonView::ShowPrimaryDialogRow(
     return nullptr;
   }
   DownloadBubbleRowView* row = bubble_contents_->ShowPrimaryPage(content_id);
-  bubble_delegate_->SetButtons(ui::DIALOG_BUTTON_NONE);
-  bubble_delegate_->SetDefaultButton(ui::DIALOG_BUTTON_NONE);
+  bubble_delegate_->SetButtons(
+      static_cast<int>(ui::mojom::DialogButton::kNone));
+  bubble_delegate_->SetDefaultButton(
+      static_cast<int>(ui::mojom::DialogButton::kNone));
   bubble_delegate_->set_margins(GetPrimaryViewMargin());
   return row;
 }
@@ -647,8 +636,9 @@ void DownloadToolbarButtonView::CreateBubbleDialogDelegate() {
   bubble_delegate->SetShowTitle(false);
   bubble_delegate->set_internal_name(kBubbleName);
   bubble_delegate->SetShowCloseButton(false);
-  bubble_delegate->SetButtons(ui::DIALOG_BUTTON_NONE);
-  bubble_delegate->SetDefaultButton(ui::DIALOG_BUTTON_NONE);
+  bubble_delegate->SetButtons(static_cast<int>(ui::mojom::DialogButton::kNone));
+  bubble_delegate->SetDefaultButton(
+      static_cast<int>(ui::mojom::DialogButton::kNone));
   bubble_delegate->RegisterWindowClosingCallback(base::BindOnce(
       &DownloadToolbarButtonView::OnBubbleClosing, weak_factory_.GetWeakPtr()));
   auto bubble_contents = std::make_unique<DownloadBubbleContentsView>(
@@ -738,7 +728,8 @@ DownloadToolbarButtonView::BubbleCloser::BubbleCloser(
       toolbar_button->GetWidget()->GetNativeWindow()) {
     event_monitor_ = views::EventMonitor::CreateWindowMonitor(
         this, toolbar_button->GetWidget()->GetNativeWindow(),
-        {ui::ET_MOUSE_PRESSED, ui::ET_KEY_PRESSED, ui::ET_TOUCH_PRESSED});
+        {ui::EventType::kMousePressed, ui::EventType::kKeyPressed,
+         ui::EventType::kTouchPressed});
   }
 }
 
@@ -766,10 +757,9 @@ void DownloadToolbarButtonView::ShowIphPromo() {
   }
   if (safe_browsing::GetSafeBrowsingState(*profile->GetPrefs()) ==
           safe_browsing::SafeBrowsingState::STANDARD_PROTECTION &&
-      !profile->IsOffTheRecord() &&
-      browser_->window()->MaybeShowFeaturePromo(
-          feature_engagement::kIPHDownloadEsbPromoFeature)) {
-    return;
+      !profile->IsOffTheRecord()) {
+    browser_->window()->MaybeShowFeaturePromo(
+        feature_engagement::kIPHDownloadEsbPromoFeature);
   }
 #endif
 }

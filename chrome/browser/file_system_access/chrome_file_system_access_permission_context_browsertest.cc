@@ -206,7 +206,8 @@ IN_PROC_BROWSER_TEST_F(
 
   // Add prerendering.
   GURL prerender_url = embedded_test_server()->GetURL("/title1.html");
-  int host_id = prerender_helper().AddPrerender(prerender_url);
+  content::FrameTreeNodeId host_id =
+      prerender_helper().AddPrerender(prerender_url);
   content::RenderFrameHost* prerendered_frame_host =
       prerender_helper().GetPrerenderedMainFrameHost(host_id);
 
@@ -318,10 +319,9 @@ IN_PROC_BROWSER_TEST_F(FileSystemChromeAppTest,
 
   // Initialize file permission grant.
   const url::Origin kTestOrigin = extension->origin();
-  const base::FilePath kTestPath =
-      base::FilePath(FILE_PATH_LITERAL("/foo/bar"));
+  const content::PathInfo kTestPathInfo(FILE_PATH_LITERAL("/foo/bar"));
   auto grant = permission_context.GetReadPermissionGrant(
-      kTestOrigin, kTestPath,
+      kTestOrigin, kTestPathInfo,
       ChromeFileSystemAccessPermissionContext::HandleType::kFile,
       ChromeFileSystemAccessPermissionContext::UserAction::kOpen);
   EXPECT_EQ(grant->GetStatus(), content::PermissionStatus::GRANTED);
@@ -340,11 +340,12 @@ IN_PROC_BROWSER_TEST_F(FileSystemChromeAppTest,
       content::FileSystemAccessPermissionGrant::PermissionRequestOutcome>
       future;
   auto* rfh = web_contents->GetPrimaryMainFrame();
-  grant->RequestPermission(content::GlobalRenderFrameHostId(
-                               rfh->GetProcess()->GetID(), rfh->GetRoutingID()),
-                           content::FileSystemAccessPermissionGrant::
-                               UserActivationState::kNotRequired,
-                           future.GetCallback());
+  grant->RequestPermission(
+      content::GlobalRenderFrameHostId(rfh->GetProcess()->GetDeprecatedID(),
+                                       rfh->GetRoutingID()),
+      content::FileSystemAccessPermissionGrant::UserActivationState::
+          kNotRequired,
+      future.GetCallback());
   auto result = future.Get();
   EXPECT_NE(result, content::FileSystemAccessPermissionGrant::
                         PermissionRequestOutcome::kGrantedByRestorePrompt);

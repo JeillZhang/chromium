@@ -9,7 +9,9 @@
 #include <string>
 
 #include "base/memory/raw_ptr.h"
+#include "base/time/time.h"
 #include "build/build_config.h"
+#include "chrome/app/startup_timestamps.h"
 #include "content/public/test/test_launcher.h"
 
 #if BUILDFLAG(IS_ANDROID)
@@ -46,8 +48,8 @@ class ChromeTestChromeMainDelegate
 #if BUILDFLAG(IS_ANDROID)
   ChromeTestChromeMainDelegate() : ChromeMainDelegateAndroid() {}
 #else
-  explicit ChromeTestChromeMainDelegate(base::TimeTicks time)
-      : ChromeMainDelegate(time) {}
+  ChromeTestChromeMainDelegate()
+      : ChromeMainDelegate({.exe_entry_point_ticks = base::TimeTicks::Now()}) {}
 #endif
 
   // ChromeMainDelegateOverrides.
@@ -78,8 +80,6 @@ class ChromeTestLauncherDelegate : public content::TestLauncherDelegate {
 #if !BUILDFLAG(IS_ANDROID)
   content::ContentMainDelegate* CreateContentMainDelegate() override;
 #endif
-  void CreatedBrowserMainParts(
-      content::BrowserMainParts* browser_main_parts) override;
   void PreSharding() override;
   void OnDoneRunningTests() override;
 

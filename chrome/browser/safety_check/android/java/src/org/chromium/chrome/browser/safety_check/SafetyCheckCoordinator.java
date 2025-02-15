@@ -13,12 +13,11 @@ import androidx.lifecycle.LifecycleOwner;
 import androidx.lifecycle.Observer;
 
 import org.chromium.base.supplier.ObservableSupplier;
+import org.chromium.chrome.browser.password_manager.CustomTabIntentHelper;
 import org.chromium.chrome.browser.password_manager.PasswordManagerHelper;
 import org.chromium.chrome.browser.password_manager.PasswordStoreBridge;
 import org.chromium.chrome.browser.profiles.Profile;
-import org.chromium.chrome.browser.ui.signin.SigninAndHistoryOptInActivityLauncher;
-import org.chromium.chrome.browser.ui.signin.SyncConsentActivityLauncher;
-import org.chromium.components.browser_ui.settings.SettingsLauncher;
+import org.chromium.chrome.browser.ui.signin.SigninAndHistorySyncActivityLauncher;
 import org.chromium.components.prefs.PrefService;
 import org.chromium.components.signin.base.CoreAccountInfo;
 import org.chromium.components.sync.SyncService;
@@ -33,6 +32,7 @@ public class SafetyCheckCoordinator implements DefaultLifecycleObserver, SafetyC
     private SafetyCheckMediator mMediator;
     private SyncService mSyncService;
     private PrefService mPrefService;
+    private PasswordStoreBridge mPasswordStoreBridge;
     private PropertyModel mPasswordCheckLocalModel;
     private PropertyModel mPasswordCheckAccountModel;
 
@@ -46,40 +46,38 @@ public class SafetyCheckCoordinator implements DefaultLifecycleObserver, SafetyC
      * @param updatesClient An instance implementing the {@link SafetyCheckUpdatesDelegate}
      *     interface.
      * @param bridge An instances of {@link SafetyCheckBridge} to access C++ APIs.
-     * @param settingsLauncher An instance implementing the {@link SettingsLauncher} interface.
-     * @param signinLauncher An instance implementing {@link SigninAndHistoryOptInActivityLauncher}.
-     * @param syncLauncher An instance implementing {@link SyncConsentActivityLauncher}.
+     * @param signinLauncher An instance implementing {@link SigninAndHistorySyncActivityLauncher}.
      * @param modalDialogManagerSupplier An supplier for the {@link ModalDialogManager}.
      * @param passwordStoreBridge Provides access to stored passwords.
      * @param passwordManagerHelper An instance of {@link PasswordManagerHelper} that provides
      *     access to password management capabilities.
+     * @param customTabIntentHelper Provides an intent to open a p-link help center article in a
+     *     custom tab.
      */
     public static void create(
             SafetyCheckSettingsFragment settingsFragment,
             Profile profile,
             SafetyCheckUpdatesDelegate updatesClient,
             SafetyCheckBridge bridge,
-            SettingsLauncher settingsLauncher,
-            SigninAndHistoryOptInActivityLauncher signinLauncher,
-            SyncConsentActivityLauncher syncLauncher,
+            SigninAndHistorySyncActivityLauncher signinLauncher,
             ObservableSupplier<ModalDialogManager> modalDialogManagerSupplier,
             @Nullable SyncService syncService,
             PrefService prefService,
             PasswordStoreBridge passwordStoreBridge,
-            PasswordManagerHelper passwordManagerHelper) {
+            PasswordManagerHelper passwordManagerHelper,
+            CustomTabIntentHelper customTabIntentHelper) {
         new SafetyCheckCoordinator(
                 settingsFragment,
                 profile,
                 updatesClient,
                 bridge,
-                settingsLauncher,
                 signinLauncher,
-                syncLauncher,
                 modalDialogManagerSupplier,
                 syncService,
                 prefService,
                 passwordStoreBridge,
-                passwordManagerHelper);
+                passwordManagerHelper,
+                customTabIntentHelper);
     }
 
     private SafetyCheckCoordinator(
@@ -87,18 +85,18 @@ public class SafetyCheckCoordinator implements DefaultLifecycleObserver, SafetyC
             Profile profile,
             SafetyCheckUpdatesDelegate updatesClient,
             SafetyCheckBridge bridge,
-            SettingsLauncher settingsLauncher,
-            SigninAndHistoryOptInActivityLauncher signinLauncher,
-            SyncConsentActivityLauncher syncLauncher,
+            SigninAndHistorySyncActivityLauncher signinLauncher,
             ObservableSupplier<ModalDialogManager> modalDialogManagerSupplier,
             @Nullable SyncService syncService,
             PrefService prefService,
             PasswordStoreBridge passwordStoreBridge,
-            PasswordManagerHelper passwordManagerHelper) {
+            PasswordManagerHelper passwordManagerHelper,
+            CustomTabIntentHelper customTabIntentHelper) {
         mSettingsFragment = settingsFragment;
         mUpdatesClient = updatesClient;
         mSyncService = syncService;
         mPrefService = prefService;
+        mPasswordStoreBridge = passwordStoreBridge;
         mSettingsFragment.setComponentDelegate(this);
         // Create the model and the mediator once the view is created.
         // The view's lifecycle is not available at this point, so observe the {@link LiveData} for
@@ -135,14 +133,13 @@ public class SafetyCheckCoordinator implements DefaultLifecycleObserver, SafetyC
                                                     mPasswordCheckLocalModel,
                                                     mUpdatesClient,
                                                     bridge,
-                                                    settingsLauncher,
                                                     signinLauncher,
-                                                    syncLauncher,
                                                     syncService,
                                                     prefService,
                                                     passwordStoreBridge,
                                                     passwordManagerHelper,
-                                                    modalDialogManagerSupplier);
+                                                    modalDialogManagerSupplier,
+                                                    customTabIntentHelper);
                                 }
                             }
                         });
@@ -159,6 +156,19 @@ public class SafetyCheckCoordinator implements DefaultLifecycleObserver, SafetyC
                                     return;
                                 }
                                 mMediator.setInitialState();
+                            }
+                        });
+        // Clean up any objects we are holding on to when the fragment is destroyed.
+        mSettingsFragment
+                .getLifecycle()
+                .addObserver(
+                        new DefaultLifecycleObserver() {
+                            @Override
+                            public void onDestroy(LifecycleOwner lifecycleOwner) {
+                                mSettingsFragment = null;
+                                mUpdatesClient = null;
+                                mPasswordStoreBridge.destroy();
+                                mPasswordStoreBridge = null;
                             }
                         });
     }
@@ -218,16 +228,19 @@ public class SafetyCheckCoordinator implements DefaultLifecycleObserver, SafetyC
         return passwordSafetyCheckModel;
     }
 
-    /** Gets invoked when the Fragment detaches (the View is destroyed ). */
+    /**
+     * Gets invoked when the Fragment's view is destroyed.
+     *
+     * <p>This method can be called back for several different views as a fragment may create
+     * multiple views (e.g. when the user navigation pushes the fragment into the back stack and
+     * then pops it).
+     */
     @Override
     public void onDestroy(LifecycleOwner owner) {
         // Stop observing the Lifecycle of the View as it is about to be destroyed.
         owner.getLifecycle().removeObserver(this);
         // Cancel any pending tasks.
         mMediator.destroy();
-        // Clean up any objects we are holding on to.
-        mSettingsFragment = null;
-        mUpdatesClient = null;
         mMediator = null;
     }
 

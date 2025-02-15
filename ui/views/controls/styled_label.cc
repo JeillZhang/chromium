@@ -13,7 +13,6 @@
 
 #include "base/i18n/rtl.h"
 #include "base/memory/raw_ptr.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/string_util.h"
 #include "third_party/abseil-cpp/absl/types/variant.h"
 #include "ui/accessibility/ax_enums.mojom.h"
@@ -69,9 +68,9 @@ StyledLabel::LayoutSizeInfo& StyledLabel::LayoutSizeInfo::operator=(
     const LayoutSizeInfo&) = default;
 StyledLabel::LayoutSizeInfo::~LayoutSizeInfo() = default;
 
-bool StyledLabel::StyleRange::operator<(
+auto StyledLabel::StyleRange::operator<=>(
     const StyledLabel::StyleRange& other) const {
-  return range.start() < other.range.start();
+  return range <=> other.range;
 }
 
 struct StyledLabel::LayoutViews {
@@ -84,10 +83,9 @@ struct StyledLabel::LayoutViews {
 };
 
 StyledLabel::StyledLabel() {
-  GetViewAccessibility().SetProperties(text_context_ ==
-                                               style::CONTEXT_DIALOG_TITLE
-                                           ? ax::mojom::Role::kTitleBar
-                                           : ax::mojom::Role::kStaticText);
+  GetViewAccessibility().SetRole(text_context_ == style::CONTEXT_DIALOG_TITLE
+                                     ? ax::mojom::Role::kTitleBar
+                                     : ax::mojom::Role::kStaticText);
 }
 
 StyledLabel::~StyledLabel() = default;
@@ -106,7 +104,7 @@ void StyledLabel::SetText(std::u16string text) {
   }
 
   text_ = text;
-  SetAccessibleName(text_);
+  GetViewAccessibility().SetName(text_);
   style_ranges_.clear();
   RemoveOrDeleteAllChildViews();
   OnPropertyChanged(&text_, kPropertyEffectsPreferredSizeChanged);
@@ -194,11 +192,12 @@ void StyledLabel::SetLineHeight(int line_height) {
   OnPropertyChanged(&line_height_, kPropertyEffectsPreferredSizeChanged);
 }
 
-StyledLabel::ColorVariant StyledLabel::GetDisplayedOnBackgroundColor() const {
+std::optional<ui::ColorVariant> StyledLabel::GetDisplayedOnBackgroundColor()
+    const {
   return displayed_on_background_color_;
 }
 
-void StyledLabel::SetDisplayedOnBackgroundColor(ColorVariant color) {
+void StyledLabel::SetDisplayedOnBackgroundColor(ui::ColorVariant color) {
   if (color == displayed_on_background_color_) {
     return;
   }
@@ -293,10 +292,6 @@ void StyledLabel::OnBoundsChanged(const gfx::Rect& previous_bounds) {
   need_recreate_child_ = true;
 }
 
-int StyledLabel::GetHeightForWidth(int w) const {
-  return GetLayoutSizeInfoForWidth(w).total_size.height();
-}
-
 void StyledLabel::Layout(PassKey) {
   if (!need_recreate_child_) {
     return;
@@ -332,11 +327,11 @@ void StyledLabel::ClearStyleRanges() {
 
 void StyledLabel::ClickFirstLinkForTesting() {
   GetFirstLinkForTesting()->OnKeyPressed(  // IN-TEST
-      ui::KeyEvent(ui::ET_KEY_PRESSED, ui::VKEY_SPACE, ui::EF_NONE));
+      ui::KeyEvent(ui::EventType::kKeyPressed, ui::VKEY_SPACE, ui::EF_NONE));
 }
 
 views::Link* StyledLabel::GetFirstLinkForTesting() {
-  const auto it = base::ranges::find_if(children(), &IsViewClass<LinkFragment>);
+  const auto it = std::ranges::find_if(children(), &IsViewClass<LinkFragment>);
   return (it == children().cend()) ? nullptr : static_cast<views::Link*>(*it);
 }
 
@@ -356,8 +351,9 @@ void StyledLabel::CalculateLayout(int width) const {
   const gfx::Insets insets = GetInsets();
   width = std::max(width, insets.width());
   if (width >= layout_size_info_.total_size.width() &&
-      width <= layout_size_info_.max_valid_width)
+      width <= layout_size_info_.max_valid_width) {
     return;
+  }
 
   layout_size_info_ = LayoutSizeInfo(width);
   layout_views_ = std::make_unique<LayoutViews>();
@@ -451,8 +447,9 @@ void StyledLabel::CalculateLayout(int width) const {
           // unless this is the first line, in which case we strip leading
           // whitespace and try again.
           if ((line_size.width() != 0) ||
-              (layout_views_->views_per_line.size() > 1))
+              (layout_views_->views_per_line.size() > 1)) {
             break;
+          }
           can_trim_leading_whitespace = true;
           continue;
         }
@@ -487,8 +484,9 @@ void StyledLabel::CalculateLayout(int width) const {
           }
         }
 
-        if (chunk.size() > range.end() - position)
+        if (chunk.size() > range.end() - position) {
           chunk = chunk.substr(0, range.end() - position);
+        }
 
         if (!custom_view) {
           label =
@@ -504,8 +502,9 @@ void StyledLabel::CalculateLayout(int width) const {
         }
       } else {
         chunk = substrings[0];
-        if (position + chunk.size() > range.start())
+        if (position + chunk.size() > range.start()) {
           chunk = chunk.substr(0, range.start() - position);
+        }
 
         // This chunk is normal text.
         label =
@@ -562,6 +561,8 @@ std::unique_ptr<Label> StyledLabel::CreateLabel(
     LinkFragment** previous_link_fragment) const {
   std::unique_ptr<Label> result;
   if (style_info.text_style == style::STYLE_LINK ||
+      style_info.text_style == style::STYLE_LINK_3 ||
+      style_info.text_style == style::STYLE_LINK_4 ||
       style_info.text_style == style::STYLE_LINK_5) {
     // Nothing should (and nothing does) use a custom font for links.
     DCHECK(!style_info.custom_font);
@@ -571,8 +572,9 @@ std::unique_ptr<Label> StyledLabel::CreateLabel(
         text, text_context_, *style_info.text_style, *previous_link_fragment);
     *previous_link_fragment = link.get();
     link->SetCallback(style_info.callback);
-    if (!style_info.accessible_name.empty())
-      link->SetAccessibleName(style_info.accessible_name);
+    if (!style_info.accessible_name.empty()) {
+      link->GetViewAccessibility().SetName(style_info.accessible_name);
+    }
 
     result = std::move(link);
   } else if (style_info.custom_font) {
@@ -592,18 +594,15 @@ std::unique_ptr<Label> StyledLabel::CreateLabel(
     result->SetEnabledColorId(default_enabled_color_id_);
   }
   if (!style_info.tooltip.empty()) {
-    result->SetTooltipText(style_info.tooltip);
+    result->SetCustomTooltipText(style_info.tooltip);
   }
-  if (!style_info.accessible_name.empty())
-    result->SetAccessibleName(style_info.accessible_name);
-  if (absl::holds_alternative<SkColor>(displayed_on_background_color_)) {
-    result->SetBackgroundColor(
-        absl::get<SkColor>(displayed_on_background_color_));
-  } else if (absl::holds_alternative<ui::ColorId>(
-                 displayed_on_background_color_)) {
-    result->SetBackgroundColorId(
-        absl::get<ui::ColorId>(displayed_on_background_color_));
+  if (!style_info.accessible_name.empty()) {
+    result->GetViewAccessibility().SetName(style_info.accessible_name);
   }
+  if (displayed_on_background_color_) {
+    result->SetBackgroundColor(*displayed_on_background_color_);
+  }
+
   result->SetAutoColorReadabilityEnabled(auto_color_readability_enabled_);
   result->SetSubpixelRenderingEnabled(subpixel_rendering_enabled_);
   return result;
@@ -611,28 +610,26 @@ std::unique_ptr<Label> StyledLabel::CreateLabel(
 
 void StyledLabel::UpdateLabelBackgroundColor() {
   for (View* child : children()) {
-    if (!child->GetProperty(kStyledLabelCustomViewKey)) {
+    if (!child->GetProperty(kStyledLabelCustomViewKey) &&
+        displayed_on_background_color_) {
       // TODO(kylixrd): Should updating the label background color even be
       // allowed if there are custom views?
       DCHECK(IsViewClass<Label>(child) || IsViewClass<LinkFragment>(child));
-      static_cast<Label*>(child)->SetBackgroundColorId(
-          absl::holds_alternative<ui::ColorId>(displayed_on_background_color_)
-              ? std::optional<ui::ColorId>(
-                    absl::get<ui::ColorId>(displayed_on_background_color_))
-              : std::nullopt);
-      if (absl::holds_alternative<SkColor>(displayed_on_background_color_)) {
-        static_cast<Label*>(child)->SetBackgroundColor(
-            absl::get<SkColor>(displayed_on_background_color_));
-      }
+      static_cast<Label*>(child)->SetBackgroundColor(
+          *displayed_on_background_color_);
     }
   }
 }
 
 void StyledLabel::RemoveOrDeleteAllChildViews() {
+  pending_delete_views_.clear();
   while (children().size() > 0) {
     std::unique_ptr<View> view = RemoveChildViewT(children()[0]);
-    if (view->GetProperty(kStyledLabelCustomViewKey))
+    if (view->GetProperty(kStyledLabelCustomViewKey)) {
       custom_views_.push_back(std::move(view));
+    } else {
+      pending_delete_views_.push_back(std::move(view));
+    }
   }
 }
 
@@ -667,8 +664,8 @@ void StyledLabel::RecreateChildViews() {
         // Transfer ownership for any views in layout_views_->owned_views or
         // custom_views_.  The actual pointer is the same in both arms below.
         if (view->GetProperty(kStyledLabelCustomViewKey)) {
-          auto custom_view = base::ranges::find(custom_views_, view,
-                                                &std::unique_ptr<View>::get);
+          auto custom_view = std::ranges::find(custom_views_, view,
+                                               &std::unique_ptr<View>::get);
           DCHECK(custom_view != custom_views_.end());
           AddChildView(std::move(*custom_view));
           custom_views_.erase(custom_view);
@@ -710,7 +707,8 @@ ADD_PROPERTY_METADATA(int, TextContext)
 ADD_PROPERTY_METADATA(int, DefaultTextStyle)
 ADD_PROPERTY_METADATA(int, LineHeight)
 ADD_PROPERTY_METADATA(bool, AutoColorReadabilityEnabled)
-ADD_PROPERTY_METADATA(StyledLabel::ColorVariant, DisplayedOnBackgroundColor)
+ADD_PROPERTY_METADATA(std::optional<ui::ColorVariant>,
+                      DisplayedOnBackgroundColor)
 ADD_PROPERTY_METADATA(std::optional<ui::ColorId>, DefaultEnabledColorId)
 END_METADATA
 

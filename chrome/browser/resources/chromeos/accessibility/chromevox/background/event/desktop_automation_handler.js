@@ -15,7 +15,7 @@ import {LocalStorage} from '/common/local_storage.js';
 import {TestImportManager} from '/common/testing/test_import_manager.js';
 
 import {Command} from '../../common/command.js';
-import {ChromeVoxEvent, CustomAutomationEvent} from '../../common/custom_automation_event.js';
+import {CustomAutomationEvent} from '../../common/custom_automation_event.js';
 import {EventSourceType} from '../../common/event_source_type.js';
 import {Msgs} from '../../common/msgs.js';
 import {Personality, QueueMode, TtsCategory} from '../../common/tts_types.js';
@@ -79,6 +79,9 @@ export class DesktopAutomationHandler extends DesktopAutomationInterface {
     this.lastRootUrl_ = '';
 
     /** @private {boolean} */
+    this.isSubMenuShowing_ = false;
+
+    /** @private {boolean} */
     this.shouldIgnoreDocumentSelectionFromAction_ = false;
 
     /** @private {number?} */
@@ -115,6 +118,8 @@ export class DesktopAutomationHandler extends DesktopAutomationInterface {
         EventType.LOAD_COMPLETE, event => this.onLoadComplete_(event));
     this.addListener_(
         EventType.FOCUS_AFTER_MENU_CLOSE, event => this.onMenuEnd_(event));
+    this.addListener_(
+        EventType.MENU_POPUP_START, event => this.onMenuPopupStart_(event));
     this.addListener_(EventType.MENU_START, event => this.onMenuStart_(event));
     this.addListener_(
         EventType.RANGE_VALUE_CHANGED, event => this.onValueChanged_(event));
@@ -139,6 +144,8 @@ export class DesktopAutomationHandler extends DesktopAutomationInterface {
         EventType.AUTOFILL_AVAILABILITY_CHANGED,
         this.onAutofillAvailabilityChanged);
     this.addListener_(EventType.ORIENTATION_CHANGED, this.onOrientationChanged);
+    // Called when a child MenuItem is collapsed.
+    this.addListener_(EventType.COLLAPSED, this.onMenuItemCollapsed);
 
     await AutomationObjectConstructorInstaller.init(node);
     const focus = await AsyncUtil.getFocus();
@@ -351,6 +358,10 @@ export class DesktopAutomationHandler extends DesktopAutomationInterface {
 
     // Refresh the handler, if needed, now that ChromeVox focus is up to date.
     this.createTextEditHandlerIfNeeded_(node);
+
+    // Reset `isSubMenuShowing_` when a focus changes because focus
+    // changes should automatically close any menus.
+    this.isSubMenuShowing_ = false;
   }
 
   /**
@@ -540,6 +551,25 @@ export class DesktopAutomationHandler extends DesktopAutomationInterface {
     // exception of spin buttons.
     if (evt.target.state[StateType.EDITABLE] &&
         evt.target.role !== RoleType.SPIN_BUTTON) {
+      // If a value changed event came from NTP Searchbox input, announce the
+      // new value. This is a special behavior for NTP Searchbox to announce
+      // its suggestions when users navigate them using the up/down arrow key.
+      // `evt.intents` is empty when NTP Searchbox gets auto-completed by
+      // navigating a list of suggestions; it won't be empty if users type,
+      // delete, or paste text in NTP Searchbox.
+      // TODO(crbug.com/328824322): Remove the special behavior and implement
+      // the active-descendant-based approach in NTP Searchbox when
+      // crbug.com/346835896 lands in the stable.
+      if (evt.target.root.url === DesktopAutomationHandler.NTP_URL &&
+          evt.target.htmlTag === 'input' && !evt.intents?.length) {
+        new Output()
+            .withString(evt.target.value)
+            .withSpeechCategory(TtsCategory.NAV)
+            .withQueueMode(QueueMode.CATEGORY_FLUSH)
+            .withoutFocusRing()
+            .go();
+        return;
+      }
       this.onEditableChanged_(evt);
       return;
     }
@@ -712,6 +742,8 @@ export class DesktopAutomationHandler extends DesktopAutomationInterface {
           target.className === 'PopupBaseView' ||
           target.className === 'PopupRowView' ||
           target.className === 'PopupRowContentView' ||
+          target.className === 'PopupRowPredictionImprovementsFeedbackView' ||
+          target.className === 'PredictionImprovementsLoadingStateView' ||
           target.className ===
               'PasswordGenerationPopupViewViews::GeneratedPasswordBox') {
         override = true;
@@ -750,6 +782,24 @@ export class DesktopAutomationHandler extends DesktopAutomationInterface {
         ChromeVoxRange.set(range);
       }
     });
+
+    // Reset the state to stop handling a Collapsed event.
+    this.isSubMenuShowing_ = false;
+  }
+
+  /**
+   * @param {!ChromeVoxEvent} event
+   * @private
+   */
+  onMenuPopupStart_(event) {
+    // Handles a MenuPopupStart event only if it's from a menu node. This event
+    // will be fired from a menu node, instead of a menu item node, when its
+    // sub-menu gets expanded.
+    if (!event.target || !AutomationPredicate.menu(event.target)) {
+      return;
+    }
+    // Set a state to start handling a Collapsed event.
+    this.isSubMenuShowing_ = true;
   }
 
   /**
@@ -816,6 +866,20 @@ export class DesktopAutomationHandler extends DesktopAutomationInterface {
                                                            'device_portrait';
       new Output().format('@' + msg).go();
     }
+  }
+
+  /**
+   * Handles focus back to a parent MenuItem when its child is collapsed.
+   * @param {!ChromeVoxEvent} evt
+   */
+  onMenuItemCollapsed(evt) {
+    const target = evt.target;
+    if (!this.isSubMenuShowing_ || !AutomationPredicate.menuItem(target) ||
+        !target.state.collapsed || !target.selected) {
+      return;
+    }
+
+    this.onEventDefault(evt);
   }
 
   /**
@@ -923,6 +987,10 @@ export class DesktopAutomationHandler extends DesktopAutomationInterface {
     }
 
     o.withRichSpeechAndBraille(ChromeVoxRange.current, null, evt.type).go();
+
+    // Reset `isSubMenuShowing_` when a focus changes because focus
+    // changes should automatically close any menus.
+    this.isSubMenuShowing_ = false;
   }
 
   /** Initializes global state for DesktopAutomationHandler. */
@@ -949,10 +1017,9 @@ DesktopAutomationHandler.MIN_VALUE_CHANGE_DELAY_MS = 50;
 DesktopAutomationHandler.MIN_ALERT_DELAY_MS = 50;
 
 /**
- * Time to wait before announcing attribute changes that are otherwise too
- * disruptive.
- * @const {number}
+ * URL for NTP (New tap page).
+ * @const {string}
  */
-DesktopAutomationHandler.ATTRIBUTE_DELAY_MS = 1500;
+DesktopAutomationHandler.NTP_URL = 'chrome://new-tab-page/';
 
 TestImportManager.exportForTesting(DesktopAutomationHandler);

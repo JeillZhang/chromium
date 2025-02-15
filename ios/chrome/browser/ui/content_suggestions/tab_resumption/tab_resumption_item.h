@@ -7,10 +7,13 @@
 
 #import <UIKit/UIKit.h>
 
+#import <string>
+
 #import "components/segmentation_platform/public/trigger.h"
 #import "ios/chrome/browser/ui/content_suggestions/magic_stack/magic_stack_module.h"
 
 @protocol TabResumptionCommands;
+@class ShopCardData;
 
 namespace base {
 class Time;
@@ -38,8 +41,11 @@ enum TabResumptionItemType {
 // The title of the tab.
 @property(nonatomic, copy) NSString* tabTitle;
 
+// The reason the tab was displayed in Tab Resumption, if any.
+@property(nonatomic, copy) NSString* reason;
+
 // The URL of the tab.
-@property(nonatomic, assign) GURL tabURL;
+@property(nonatomic, assign) const GURL& tabURL;
 
 // The time when the tab was synced.
 @property(nonatomic, assign) base::Time syncedTime;
@@ -47,18 +53,22 @@ enum TabResumptionItemType {
 // The favicon image of the tab if any.
 @property(nonatomic, strong) UIImage* faviconImage;
 
-// The favicon image of the tab if any.
-@property(nonatomic, strong) UIImage* salientImage;
+// The image representing the content of the tab if any.
+@property(nonatomic, strong) UIImage* contentImage;
 
 // Command handler for user actions.
 @property(nonatomic, weak) id<TabResumptionCommands> commandHandler;
 
 // The URL key used to log metrics when displaying or activating the item.
-@property(nonatomic, assign) std::string URLKey;
+@property(nonatomic, assign) const std::string& URLKey;
 
 // An ID used to collect metrics associated with the triggering visit for model
 // training purposes.
 @property(nonatomic, assign) segmentation_platform::TrainingRequestId requestID;
+
+// ShopCard related information to render the ShopCard variants of
+// tab-resumption.
+@property(nonatomic, strong) ShopCardData* shopCardData;
 
 // The Item's designated initializer.
 - (instancetype)initWithItemType:(TabResumptionItemType)itemType

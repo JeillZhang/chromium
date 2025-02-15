@@ -58,13 +58,13 @@
 #include "third_party/blink/renderer/core/dom/events/event_dispatcher.h"
 #include "third_party/blink/renderer/core/dom/events/event_listener.h"
 #include "third_party/blink/renderer/core/dom/events/event_path.h"
+#include "third_party/blink/renderer/core/dom/events/mutation_event_suppression_scope.h"
 #include "third_party/blink/renderer/core/dom/flat_tree_node_data.h"
 #include "third_party/blink/renderer/core/dom/flat_tree_traversal.h"
 #include "third_party/blink/renderer/core/dom/focus_params.h"
 #include "third_party/blink/renderer/core/dom/layout_tree_builder_traversal.h"
 #include "third_party/blink/renderer/core/dom/mutation_observer_registration.h"
 #include "third_party/blink/renderer/core/dom/node_cloning_data.h"
-#include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/dom/node_lists_node_data.h"
 #include "third_party/blink/renderer/core/dom/node_rare_data.h"
 #include "third_party/blink/renderer/core/dom/node_traversal.h"
@@ -118,6 +118,7 @@
 #include "third_party/blink/renderer/core/html_names.h"
 #include "third_party/blink/renderer/core/input/event_handler.h"
 #include "third_party/blink/renderer/core/input/input_device_capabilities.h"
+#include "third_party/blink/renderer/core/inspector/console_message.h"
 #include "third_party/blink/renderer/core/inspector/inspector_trace_events.h"
 #include "third_party/blink/renderer/core/layout/layout_box.h"
 #include "third_party/blink/renderer/core/layout/layout_embedded_content.h"
@@ -362,6 +363,15 @@ NodeRareData& Node::CreateRareData() {
   return *data_;
 }
 
+void Node::MaybeAddNodeInsertedTraceEvent() {
+  DEVTOOLS_TIMELINE_TRACE_EVENT_INSTANT_WITH_CATEGORIES(
+      TRACE_DISABLED_BY_DEFAULT("devtools.timeline.invalidationTracking"),
+      "StyleRecalcInvalidationTracking",
+      inspector_style_recalc_invalidation_tracking_event::Data, this,
+      kLocalStyleChange,
+      StyleChangeReasonForTracing::Create(style_change_reason::kNodeInserted));
+}
+
 Node* Node::ToNode() {
   return this;
 }
@@ -389,9 +399,11 @@ Node* Node::PseudoAwarePreviousSibling() const {
 
   // Note the [[fallthrough]] attributes, the order of the cases matters and
   // corresponds to the ordering of pseudo elements in a traversal:
-  // ::scroll-marker-group(before), ::marker, ::before, non-pseudo Elements,
-  // ::after, ::scroll-marker-group(after), ::view-transition. The fallthroughs
-  // ensure this ordering by checking for each kind of node in-turn.
+  // ::scroll-marker-group(before), ::marker, ::scroll-marker,
+  // ::scroll-button(), ::checkmark,
+  // ::before, non-pseudo Elements, ::after, ::picker-icon,
+  // ::scroll-marker-group(after), ::view-transition. The fallthroughs ensure
+  // this ordering by checking for each kind of node in-turn.
   switch (GetPseudoId()) {
     case kPseudoIdViewTransition:
       if (Node* previous =
@@ -400,6 +412,11 @@ Node* Node::PseudoAwarePreviousSibling() const {
       }
       [[fallthrough]];
     case kPseudoIdScrollMarkerGroupAfter:
+      if (Node* next = parent->GetPseudoElement(kPseudoIdPickerIcon)) {
+        return next;
+      }
+      [[fallthrough]];
+    case kPseudoIdPickerIcon:
       if (Node* next = parent->GetPseudoElement(kPseudoIdAfter)) {
         return next;
       }
@@ -413,6 +430,54 @@ Node* Node::PseudoAwarePreviousSibling() const {
         return previous;
       [[fallthrough]];
     case kPseudoIdBefore:
+      if (Node* previous = parent->GetPseudoElement(kPseudoIdCheckMark)) {
+        return previous;
+      }
+      [[fallthrough]];
+    case kPseudoIdCheckMark:
+      if (Node* previous =
+              parent->GetPseudoElement(kPseudoIdScrollButtonBlockEnd)) {
+        return previous;
+      }
+      [[fallthrough]];
+    case kPseudoIdScrollButtonBlockEnd:
+      if (Node* previous =
+              parent->GetPseudoElement(kPseudoIdScrollButtonInlineEnd)) {
+        return previous;
+      }
+      [[fallthrough]];
+    case kPseudoIdScrollButtonInlineEnd:
+      if (Node* previous =
+              parent->GetPseudoElement(kPseudoIdScrollButtonInlineStart)) {
+        return previous;
+      }
+      [[fallthrough]];
+    case kPseudoIdScrollButtonInlineStart:
+      if (Node* previous =
+              parent->GetPseudoElement(kPseudoIdScrollButtonBlockStart)) {
+        return previous;
+      }
+      [[fallthrough]];
+    case kPseudoIdScrollButtonBlockStart:
+      if (Node* previous = parent->GetPseudoElement(kPseudoIdScrollMarker)) {
+        return previous;
+      }
+      [[fallthrough]];
+    case kPseudoIdScrollMarker:
+      if (const ColumnPseudoElementsVector* columns =
+              parent->GetColumnPseudoElements();
+          columns && !columns->empty()) {
+        return columns->back();
+      }
+      [[fallthrough]];
+    case kPseudoIdColumn:
+      if (auto* column = DynamicTo<ColumnPseudoElement>(this)) {
+        const ColumnPseudoElementsVector* columns =
+            parent->GetColumnPseudoElements();
+        if (column->Index() > 0) {
+          return columns->at(column->Index() - 1u);
+        }
+      }
       if (Node* previous = parent->GetPseudoElement(kPseudoIdMarker)) {
         return previous;
       }
@@ -452,8 +517,7 @@ Node* Node::PseudoAwarePreviousSibling() const {
     case kPseudoIdViewTransitionOld:
       return nullptr;
     default:
-      NOTREACHED_IN_MIGRATION();
-      return nullptr;
+      NOTREACHED();
   }
 }
 
@@ -471,6 +535,54 @@ Node* Node::PseudoAwareNextSibling() const {
       }
       [[fallthrough]];
     case kPseudoIdMarker:
+      if (const ColumnPseudoElementsVector* columns =
+              parent->GetColumnPseudoElements();
+          columns && !columns->empty()) {
+        return columns->front();
+      }
+      [[fallthrough]];
+    case kPseudoIdColumn:
+      if (auto* column = DynamicTo<ColumnPseudoElement>(this)) {
+        const ColumnPseudoElementsVector* columns =
+            parent->GetColumnPseudoElements();
+        if (column->Index() + 1u < columns->size()) {
+          return columns->at(column->Index() + 1u);
+        }
+      }
+      if (Node* next = parent->GetPseudoElement(kPseudoIdScrollMarker)) {
+        return next;
+      }
+      [[fallthrough]];
+    case kPseudoIdScrollMarker:
+      if (Node* next =
+              parent->GetPseudoElement(kPseudoIdScrollButtonBlockStart)) {
+        return next;
+      }
+      [[fallthrough]];
+    case kPseudoIdScrollButtonBlockStart:
+      if (Node* next =
+              parent->GetPseudoElement(kPseudoIdScrollButtonInlineStart)) {
+        return next;
+      }
+      [[fallthrough]];
+    case kPseudoIdScrollButtonInlineStart:
+      if (Node* next =
+              parent->GetPseudoElement(kPseudoIdScrollButtonInlineEnd)) {
+        return next;
+      }
+      [[fallthrough]];
+    case kPseudoIdScrollButtonInlineEnd:
+      if (Node* next =
+              parent->GetPseudoElement(kPseudoIdScrollButtonBlockEnd)) {
+        return next;
+      }
+      [[fallthrough]];
+    case kPseudoIdScrollButtonBlockEnd:
+      if (Node* next = parent->GetPseudoElement(kPseudoIdCheckMark)) {
+        return next;
+      }
+      [[fallthrough]];
+    case kPseudoIdCheckMark:
       if (Node* next = parent->GetPseudoElement(kPseudoIdBefore))
         return next;
       [[fallthrough]];
@@ -483,6 +595,11 @@ Node* Node::PseudoAwareNextSibling() const {
         return next;
       [[fallthrough]];
     case kPseudoIdAfter:
+      if (Node* next = parent->GetPseudoElement(kPseudoIdPickerIcon)) {
+        return next;
+      }
+      [[fallthrough]];
+    case kPseudoIdPickerIcon:
       if (Node* next =
               parent->GetPseudoElement(kPseudoIdScrollMarkerGroupAfter)) {
         return next;
@@ -518,8 +635,7 @@ Node* Node::PseudoAwareNextSibling() const {
     case kPseudoIdViewTransitionNew:
       return nullptr;
     default:
-      NOTREACHED_IN_MIGRATION();
-      return nullptr;
+      NOTREACHED();
   }
 }
 
@@ -558,11 +674,44 @@ Node* Node::PseudoAwareFirstChild() const {
     }
     if (Node* first = current_element->GetPseudoElement(kPseudoIdMarker))
       return first;
+    if (const ColumnPseudoElementsVector* columns =
+            current_element->GetColumnPseudoElements();
+        columns && !columns->empty()) {
+      if (Node* first = columns->front()) {
+        return first;
+      }
+    }
+    if (Node* first =
+            current_element->GetPseudoElement(kPseudoIdScrollMarker)) {
+      return first;
+    }
+    if (Node* first = current_element->GetPseudoElement(
+            kPseudoIdScrollButtonBlockStart)) {
+      return first;
+    }
+    if (Node* first = current_element->GetPseudoElement(
+            kPseudoIdScrollButtonInlineStart)) {
+      return first;
+    }
+    if (Node* first =
+            current_element->GetPseudoElement(kPseudoIdScrollButtonInlineEnd)) {
+      return first;
+    }
+    if (Node* first =
+            current_element->GetPseudoElement(kPseudoIdScrollButtonBlockEnd)) {
+      return first;
+    }
+    if (Node* first = current_element->GetPseudoElement(kPseudoIdCheckMark)) {
+      return first;
+    }
     if (Node* first = current_element->GetPseudoElement(kPseudoIdBefore))
       return first;
     if (Node* first = current_element->firstChild())
       return first;
     if (Node* first = current_element->GetPseudoElement(kPseudoIdAfter)) {
+      return first;
+    }
+    if (Node* first = current_element->GetPseudoElement(kPseudoIdPickerIcon)) {
       return first;
     }
     if (Node* first = current_element->GetPseudoElement(
@@ -612,12 +761,44 @@ Node* Node::PseudoAwareLastChild() const {
             kPseudoIdScrollMarkerGroupAfter)) {
       return last;
     }
+    if (Node* last = current_element->GetPseudoElement(kPseudoIdPickerIcon)) {
+      return last;
+    }
     if (Node* last = current_element->GetPseudoElement(kPseudoIdAfter))
       return last;
     if (Node* last = current_element->lastChild())
       return last;
     if (Node* last = current_element->GetPseudoElement(kPseudoIdBefore))
       return last;
+    if (Node* last = current_element->GetPseudoElement(kPseudoIdCheckMark)) {
+      return last;
+    }
+    if (Node* last =
+            current_element->GetPseudoElement(kPseudoIdScrollButtonBlockEnd)) {
+      return last;
+    }
+    if (Node* last =
+            current_element->GetPseudoElement(kPseudoIdScrollButtonInlineEnd)) {
+      return last;
+    }
+    if (Node* last = current_element->GetPseudoElement(
+            kPseudoIdScrollButtonInlineStart)) {
+      return last;
+    }
+    if (Node* last = current_element->GetPseudoElement(
+            kPseudoIdScrollButtonBlockStart)) {
+      return last;
+    }
+    if (Node* last = current_element->GetPseudoElement(kPseudoIdScrollMarker)) {
+      return last;
+    }
+    if (const ColumnPseudoElementsVector* columns =
+            current_element->GetColumnPseudoElements();
+        columns && !columns->empty()) {
+      if (Node* last = columns->back()) {
+        return last;
+      }
+    }
     if (Node* last = current_element->GetPseudoElement(kPseudoIdMarker)) {
       return last;
     }
@@ -660,46 +841,64 @@ Node* Node::insertBefore(Node* new_child, Node* ref_child) {
   return insertBefore(new_child, ref_child, ASSERT_NO_EXCEPTION);
 }
 
-Node* Node::moveBefore(Node* new_child,
-                       Node* ref_child,
-                       ExceptionState& exception_state) {
+void Node::moveBefore(Node* new_child,
+                      Node* ref_child,
+                      ExceptionState& exception_state) {
   DCHECK(new_child);
 
-  // Only perform a state-preserving atomic move if the child is ALREADY
-  // connected to this document, and doesn't cross shadow boundaries.
-  // If the child is NOT connected to this document, then script can run during
-  // the node's initial post-insertion steps (i.e.,
+  // Only perform a state-preserving atomic move if the new parent and the child
+  // are ALREADY connected, and its document is the same as `this`'s. If the
+  // child is NOT connected to this document, then script could run during the
+  // node's initial post-insertion steps (i.e.,
   // `Node::DidNotifySubtreeInsertionsToDocument()`), and no script is permitted
   // to run during atomic moves.
   const bool perform_state_preserving_atomic_move =
-      isConnected() && new_child->isConnected() && GetDocument().IsActive() &&
-      (GetTreeScope() == new_child->GetTreeScope());
+      // "If any of the following conditions are true"
+      // " - parent is connected and node is not connected; or"
+      // " - parent is not connected and node is connected,"
+      // "then..."
+      isConnected() == new_child->isConnected() &&
+      // "If parent’s shadow-including root is not the same as node’s
+      // shadow-including root, then..."
+      ShadowIncludingRoot() == new_child->ShadowIncludingRoot() &&
+      // "If node is not an Element or a CharacterData node, then ..."
+      (new_child->IsElementNode() || new_child->IsCharacterDataNode());
+  // These three conditions below are caught by `EnsurePreInsertionValidity()`
+  // that gets invoked in `insertBefore()`:
+  //
+  // "If parent is not a Document, DocumentFragment, or Element node, then...
+  // "If node is a host-including inclusive ancestor of parent, then...
+  // "If child is non-null and its parent is not parent, then..."
 
-  if (perform_state_preserving_atomic_move) {
-    // When `moveBefore()` is called, AND we're actually performing a
-    // state-preserving atomic move, no script can run synchronously during the
-    // move. That means it is impossible for nested `moveBefore()` calls to
-    // occur. Assert that no atomic move is already in progress.
-    DCHECK(!GetDocument().StatePreservingAtomicMoveInProgress());
-    GetDocument().SetStatePreservingAtomicMoveInProgress(true);
-  } else if (GetTreeScope() != new_child->GetTreeScope() &&
-             GetDocument() == new_child->GetDocument()) {
-    // Currently we disable atomic move for same-document cross-shadow use
-    // cases, but this UseCounter can help use discern if this is an interesting
-    // use case in the future.
-    UseCounter::Count(&GetDocument(), WebFeature::kCrossShadowAtomicMove);
+  // ...throw a "HierarchyRequestError" DOMException."
+  if (!perform_state_preserving_atomic_move) {
+    exception_state.ThrowDOMException(
+        DOMExceptionCode::kHierarchyRequestError,
+        "State-preserving atomic move cannot be performed on nodes "
+        "participating in an invalid hierarchy.");
+    return;
   }
 
-  Node* return_node = insertBefore(new_child, ref_child, exception_state);
+  // No script can run synchronously during the move. That means it is
+  // impossible for nested `moveBefore()` calls to occur. Assert that no atomic
+  // move is already in progress.
+  DCHECK(!GetDocument().StatePreservingAtomicMoveInProgress());
+  GetDocument().SetStatePreservingAtomicMoveInProgress(true);
 
-  // Regardless of whether we were *actually* performing a state-preserving
-  // atomic move, we can safely, unconditionally reset the document's boolean.
+  // Mutation events are disabled during the `moveBefore()` API.
+  MutationEventSuppressionScope scope(GetDocument());
+
+  ContainerNode* old_parent = new_child->parentNode();
+
+  insertBefore(new_child, ref_child, exception_state);
   GetDocument().SetStatePreservingAtomicMoveInProgress(false);
 
-  // We don't need to conditionally return `nullptr` if `exception_state` had an
-  // exception. `insertBefore()` already handles this for us, so we can just
-  // unconditionally return its value.
-  return return_node;
+  if (exception_state.HadException()) {
+    return;
+  }
+
+  DCHECK(old_parent);
+  new_child->MovedFrom(*old_parent);
 }
 
 Node* Node::replaceChild(Node* new_child,
@@ -785,6 +984,7 @@ static Node* NodeOrStringToNode(
     const V8UnionNodeOrStringOrTrustedScript* node_or_string,
     Document& document,
     bool needs_trusted_types_check,
+    const char* property_name,
     ExceptionState& exception_state) {
   if (!needs_trusted_types_check) {
     // Without trusted type checks, we simply extract the string from whatever
@@ -798,8 +998,7 @@ static Node* NodeOrStringToNode(
         return Text::Create(document,
                             node_or_string->GetAsTrustedScript()->toString());
     }
-    NOTREACHED_IN_MIGRATION();
-    return nullptr;
+    NOTREACHED();
   }
 
   // With trusted type checks, we can process trusted script or non-text nodes
@@ -816,76 +1015,99 @@ static Node* NodeOrStringToNode(
                             ? node_or_string->GetAsString()
                             : node_or_string->GetAsNode()->textContent();
 
-  string_value = TrustedTypesCheckForScript(
-      string_value, document.GetExecutionContext(), exception_state);
+  string_value =
+      TrustedTypesCheckForScript(string_value, document.GetExecutionContext(),
+                                 "Node", property_name, exception_state);
   if (exception_state.HadException())
     return nullptr;
   return Text::Create(document, string_value);
 }
 
-// static
-// Returns nullptr if an exception was thrown.
-Node* Node::ConvertNodesIntoNode(const Node* parent,
-                                 const VectorOf<Node>& nodes,
-                                 Document& document,
-                                 ExceptionState& exception_state) {
-  if (nodes.size() == 1) {
-    return nodes[0].Get();
-  }
-
-  Node* fragment = DocumentFragment::Create(document);
-  for (const auto& node : nodes) {
-    fragment->appendChild(node, exception_state);
-    if (exception_state.HadException()) {
-      return nullptr;
-    }
-  }
-  return fragment;
-}
-
-namespace {
-
 // Converts |node_unions| from bindings into actual Nodes by converting strings
 // and script into text nodes via NodeOrStringToNode.
 // Returns nullptr if an exception was thrown.
-VectorOf<Node> ConvertNodeUnionsIntoNodes(
-    const Node* parent,
+// static
+VectorOf<Node> Node::ConvertNodeUnionsIntoNodes(
+    const ContainerNode* parent,
     const HeapVector<Member<V8UnionNodeOrStringOrTrustedScript>>& node_unions,
     Document& document,
+    const char* property_name,
     ExceptionState& exception_state) {
   bool needs_check = IsA<HTMLScriptElement>(parent) &&
                      document.GetExecutionContext() &&
                      document.GetExecutionContext()->RequireTrustedTypes();
   VectorOf<Node> nodes;
   for (const auto& node_union : node_unions) {
-    Node* node =
-        NodeOrStringToNode(node_union, document, needs_check, exception_state);
+    Node* node = NodeOrStringToNode(node_union, document, needs_check,
+                                    property_name, exception_state);
     if (exception_state.HadException()) {
       nodes.clear();
       return nodes;
     }
     if (node) {
-      nodes.push_back(node);
+      if (auto* fragment = DynamicTo<DocumentFragment>(node)) {
+        NodeVector fragment_nodes;
+        GetChildNodes(*fragment, fragment_nodes);
+        fragment->RemoveChildren();
+        nodes.AppendVector(fragment_nodes);
+      } else {
+        nodes.push_back(node);
+      }
     }
   }
-  return nodes;
-}
 
-}  // namespace
+  // When there's more than one node, we need to pretend that we're inserting
+  // the nodes into a document fragment (which we later insert into the
+  // intended parent, which transfers them from the document fragment), but we
+  // don't actually do that because of the costs of inserting and later
+  // removing (which require walking the entire tree).  Not actually inserting
+  // into a DocumentFragment is web observable in some edge cases, and
+  // https://github.com/whatwg/dom/issues/1313 proposes to specify this new
+  // (faster) behavior instead.
+  //
+  // TODO(https://github.com/whatwg/dom/issues/1313): We should consider not
+  // having different behavior depending on how many nodes are here, which
+  // makes it a strange API.
+  //
+  // The only pre-insertion check that could fail when inserting into a
+  // DocumentFragment is the ChildTypeAllowed check.  This will be checked
+  // again later when we insert the nodes into their intended parent.
+  // However, this does mean we differ from the spec in two ways:
+  // * we allow the use of DocumentType nodes (when their eventual parent is a
+  //   Document) in these methods where the spec would disallow them.
+  // * we perform some of the checks at different times, which means that when
+  //   an exception is thrown it could be a different exception from the one
+  //   the spec calls for, and we could leave the tree in a different state
+  //   than exactly following the spec would lead to.
 
-// static
-// Returns nullptr if an exception was thrown.
-Node* Node::ConvertNodeUnionsIntoNode(
-    const Node* parent,
-    const HeapVector<Member<V8UnionNodeOrStringOrTrustedScript>>& node_unions,
-    Document& document,
-    ExceptionState& exception_state) {
-  VectorOf<Node> nodes = ConvertNodeUnionsIntoNodes(parent, node_unions,
-                                                    document, exception_state);
-  if (exception_state.HadException()) {
-    return nullptr;
+  if (nodes.size() > 1u) {
+    // Remove each node from its parent, and if a node occurs multiple
+    // times in the list, remove all except the *last* occurrence.
+    HeapHashSet<Member<Node>> nodes_seen;
+    HeapVector<Member<Node>> nodes_to_remove;
+    for (Node* node : nodes) {
+      auto add_result = nodes_seen.insert(node);
+      if (add_result.is_new_entry) {
+        node->remove(exception_state);
+        if (exception_state.HadException()) {
+          nodes.clear();
+          return nodes;
+        }
+      } else {
+        nodes_to_remove.push_back(node);
+      }
+    }
+    // The same node might be in nodes_to_remove more than once; for
+    // each occurrence we will remove one occurrence.  This is slow, but
+    // it's handling what is essentially an error case.
+    for (Node* node : nodes_to_remove) {
+      wtf_size_t index = nodes.Find(node);
+      CHECK_NE(index, kNotFound);
+      nodes.EraseAt(index);
+    }
   }
-  return Node::ConvertNodesIntoNode(parent, nodes, document, exception_state);
+
+  return nodes;
 }
 
 void Node::prepend(
@@ -899,10 +1121,13 @@ void Node::prepend(
     return;
   }
 
-  if (Node* node = ConvertNodeUnionsIntoNode(this, nodes, GetDocument(),
-                                             exception_state)) {
-    this_node->InsertBefore(node, this_node->firstChild(), exception_state);
+  VectorOf<Node> node_vector = ConvertNodeUnionsIntoNodes(
+      this_node, nodes, GetDocument(), "prepend", exception_state);
+  if (exception_state.HadException()) {
+    return;
   }
+  this_node->InsertBefore(node_vector, this_node->firstChild(),
+                          exception_state);
 }
 
 void Node::append(
@@ -916,10 +1141,12 @@ void Node::append(
     return;
   }
 
-  if (Node* node = ConvertNodeUnionsIntoNode(this, nodes, GetDocument(),
-                                             exception_state)) {
-    this_node->AppendChild(node, exception_state);
+  VectorOf<Node> node_vector = ConvertNodeUnionsIntoNodes(
+      this_node, nodes, GetDocument(), "append", exception_state);
+  if (exception_state.HadException()) {
+    return;
   }
+  this_node->AppendChildren(node_vector, exception_state);
 }
 
 void Node::before(
@@ -929,14 +1156,16 @@ void Node::before(
   if (!parent)
     return;
   Node* viable_previous_sibling = FindViablePreviousSibling(*this, nodes);
-  if (Node* node = ConvertNodeUnionsIntoNode(parent, nodes, GetDocument(),
-                                             exception_state)) {
-    parent->InsertBefore(node,
-                         viable_previous_sibling
-                             ? viable_previous_sibling->nextSibling()
-                             : parent->firstChild(),
-                         exception_state);
+  VectorOf<Node> node_vector = ConvertNodeUnionsIntoNodes(
+      parent, nodes, GetDocument(), "before", exception_state);
+  if (exception_state.HadException()) {
+    return;
   }
+  parent->InsertBefore(node_vector,
+                       viable_previous_sibling
+                           ? viable_previous_sibling->nextSibling()
+                           : parent->firstChild(),
+                       exception_state);
 }
 
 void Node::after(
@@ -946,10 +1175,12 @@ void Node::after(
   if (!parent)
     return;
   Node* viable_next_sibling = FindViableNextSibling(*this, nodes);
-  if (Node* node = ConvertNodeUnionsIntoNode(parent, nodes, GetDocument(),
-                                             exception_state)) {
-    parent->InsertBefore(node, viable_next_sibling, exception_state);
+  VectorOf<Node> node_vector = ConvertNodeUnionsIntoNodes(
+      parent, nodes, GetDocument(), "after", exception_state);
+  if (exception_state.HadException()) {
+    return;
   }
+  parent->InsertBefore(node_vector, viable_next_sibling, exception_state);
 }
 
 void Node::replaceWith(
@@ -959,14 +1190,16 @@ void Node::replaceWith(
   if (!parent)
     return;
   Node* viable_next_sibling = FindViableNextSibling(*this, nodes);
-  Node* node =
-      ConvertNodeUnionsIntoNode(parent, nodes, GetDocument(), exception_state);
-  if (exception_state.HadException())
+  VectorOf<Node> node_vector = ConvertNodeUnionsIntoNodes(
+      parent, nodes, GetDocument(), "replaceWith", exception_state);
+  if (exception_state.HadException()) {
     return;
-  if (parent == parentNode())
-    parent->ReplaceChild(node, this, exception_state);
-  else
-    parent->InsertBefore(node, viable_next_sibling, exception_state);
+  }
+  if (parent == parentNode()) {
+    parent->ReplaceChild(node_vector, this, exception_state);
+  } else {
+    parent->InsertBefore(node_vector, viable_next_sibling, exception_state);
+  }
 }
 
 // https://dom.spec.whatwg.org/#dom-parentnode-replacechildren
@@ -982,10 +1215,11 @@ void Node::replaceChildren(
   }
 
   VectorOf<Node> nodes = ConvertNodeUnionsIntoNodes(
-      this, node_unions, GetDocument(), exception_state);
-  if (!exception_state.HadException()) {
-    this_node->ReplaceChildren(nodes, exception_state);
+      this_node, node_unions, GetDocument(), "replace", exception_state);
+  if (exception_state.HadException()) {
+    return;
   }
+  this_node->ReplaceChildren(nodes, exception_state);
 }
 
 void Node::remove(ExceptionState& exception_state) {
@@ -1413,6 +1647,10 @@ NodeListsNodeData* Node::NodeLists() {
   return data_ ? data_->NodeLists() : nullptr;
 }
 
+const NodeListsNodeData* Node::NodeLists() const {
+  return data_ ? data_->NodeLists() : nullptr;
+}
+
 void Node::ClearNodeLists() {
   RareData()->ClearNodeLists();
 }
@@ -1567,7 +1805,8 @@ void Node::ReattachLayoutTree(AttachContext& context) {
 }
 
 void Node::AttachLayoutTree(AttachContext& context) {
-  DCHECK(GetDocument().InStyleRecalc() || IsDocumentNode());
+  DCHECK(GetDocument().InStyleRecalc() || IsDocumentNode() ||
+         GetDocument().GetStyleEngine().InScrollMarkersAttachment());
   DCHECK(!GetDocument().Lifecycle().InDetach());
   DCHECK(!context.performing_reattach ||
          GetDocument().GetStyleEngine().InRebuildLayoutTree());
@@ -1594,10 +1833,12 @@ void Node::DetachLayoutTree(bool performing_reattach) {
   // DetachLayoutTree().
   DCHECK(GetDocument().Lifecycle().StateAllowsDetach() ||
          GetDocument().GetStyleEngine().InContainerQueryStyleRecalc() ||
+         GetDocument().GetStyleEngine().InScrollMarkersAttachment() ||
          (GetDocument().GetStyleEngine().InPositionTryStyleRecalc() &&
           IsPseudoElement() && !GetLayoutObject()));
   DCHECK(!performing_reattach ||
-         GetDocument().GetStyleEngine().InRebuildLayoutTree());
+         GetDocument().GetStyleEngine().InRebuildLayoutTree() ||
+         GetDocument().GetStyleEngine().InScrollMarkersAttachment());
   DocumentLifecycle::DetachScope will_detach(GetDocument().Lifecycle());
 
   if (auto* cache = GetDocument().ExistingAXObjectCache()) {
@@ -2054,7 +2295,7 @@ void Node::setTextContentForBinding(const V8UnionStringOrTrustedScript* value,
       return setTextContent(value->GetAsTrustedScript()->toString());
   }
 
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 void Node::setTextContent(const String& text) {
@@ -2072,11 +2313,16 @@ void Node::setTextContent(const String& text) {
       auto* container = To<ContainerNode>(this);
 
       // Note: This is an intentional optimization.
-      // See crbug.com/352836 also.
-      // No need to do anything if the text is identical.
+      // See crbug.com/41095015, crbug.com/40553863, and crbug.com/391394132.
+      // No need to do anything if the text is identical *and* there are no
+      // mutation observer listeners attached.
       if (container->HasOneTextChild() &&
-          To<Text>(container->firstChild())->data() == text && !text.empty())
+          To<Text>(container->firstChild())->data() == text && !text.empty() &&
+          (!RuntimeEnabledFeatures::
+               SameValueTextContentFiresMutationObserversEnabled() ||
+           !GetDocument().HasMutationObservers())) {
         return;
+      }
 
       ChildListMutationScope mutation(*this);
       // Note: This API will not insert empty text nodes:
@@ -2095,7 +2341,7 @@ void Node::setTextContent(const String& text) {
       // Do nothing.
       return;
   }
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 uint16_t Node::compareDocumentPosition(const Node* other_node,
@@ -2147,8 +2393,7 @@ uint16_t Node::compareDocumentPosition(const Node* other_node,
                kDocumentPositionPreceding;
     }
 
-    NOTREACHED_IN_MIGRATION();
-    return kDocumentPositionDisconnected;
+    NOTREACHED();
   }
 
   // If one node is in the document and the other is not, we must be
@@ -2264,11 +2509,10 @@ Node::InsertionNotificationRequest Node::InsertedInto(
     cache->NodeIsConnected(this);
   }
 
-  if (GetDocument().StatePreservingAtomicMoveInProgress()) {
-    FlatTreeParentChanged();
-  }
   return kInsertionDone;
 }
+
+void Node::MovedFrom(ContainerNode& old_parent) {}
 
 void Node::RemovedFrom(ContainerNode& insertion_point) {
   DCHECK(IsContainerNode() || IsInTreeScope() || GetDOMParts());
@@ -2471,7 +2715,27 @@ static void AppendMarkedTree(const String& base_indent,
     String indent_string = indent.ReleaseString();
 
     if (const auto* element = DynamicTo<Element>(node)) {
+      if (Element* pseudo =
+              element->GetPseudoElement(kPseudoIdScrollMarkerGroupBefore)) {
+        AppendMarkedTree(indent_string, pseudo, marked_node1, marked_label1,
+                         marked_node2, marked_label2, builder);
+      }
       if (Element* pseudo = element->GetPseudoElement(kPseudoIdMarker)) {
+        AppendMarkedTree(indent_string, pseudo, marked_node1, marked_label1,
+                         marked_node2, marked_label2, builder);
+      }
+      if (const ColumnPseudoElementsVector* column_pseudo_elements =
+              element->GetColumnPseudoElements()) {
+        for (const ColumnPseudoElement* pseudo : *column_pseudo_elements) {
+          AppendMarkedTree(indent_string, pseudo, marked_node1, marked_label1,
+                           marked_node2, marked_label2, builder);
+        }
+      }
+      if (Element* pseudo = element->GetPseudoElement(kPseudoIdScrollMarker)) {
+        AppendMarkedTree(indent_string, pseudo, marked_node1, marked_label1,
+                         marked_node2, marked_label2, builder);
+      }
+      if (Element* pseudo = element->GetPseudoElement(kPseudoIdCheckMark)) {
         AppendMarkedTree(indent_string, pseudo, marked_node1, marked_label1,
                          marked_node2, marked_label2, builder);
       }
@@ -2481,6 +2745,15 @@ static void AppendMarkedTree(const String& base_indent,
       if (Element* pseudo = element->GetPseudoElement(kPseudoIdAfter))
         AppendMarkedTree(indent_string, pseudo, marked_node1, marked_label1,
                          marked_node2, marked_label2, builder);
+      if (Element* pseudo = element->GetPseudoElement(kPseudoIdPickerIcon)) {
+        AppendMarkedTree(indent_string, pseudo, marked_node1, marked_label1,
+                         marked_node2, marked_label2, builder);
+      }
+      if (Element* pseudo =
+              element->GetPseudoElement(kPseudoIdScrollMarkerGroupAfter)) {
+        AppendMarkedTree(indent_string, pseudo, marked_node1, marked_label1,
+                         marked_node2, marked_label2, builder);
+      }
       if (Element* pseudo = element->GetPseudoElement(kPseudoIdFirstLetter))
         AppendMarkedTree(indent_string, pseudo, marked_node1, marked_label1,
                          marked_node2, marked_label2, builder);
@@ -3197,8 +3470,7 @@ void Node::SetCustomElementState(CustomElementState new_state) {
 
   switch (new_state) {
     case CustomElementState::kUncustomized:
-      NOTREACHED_IN_MIGRATION();  // Everything starts in this state
-      return;
+      NOTREACHED();  // Everything starts in this state
 
     case CustomElementState::kUndefined:
       DCHECK_EQ(CustomElementState::kUncustomized, old_state);
@@ -3416,6 +3688,15 @@ void Node::SetCachedDirectionality(TextDirection direction) {
       ClearFlag(kCachedDirectionalityIsRtl);
       break;
   }
+}
+
+void Node::AddConsoleMessage(mojom::blink::ConsoleMessageSource source,
+                             mojom::blink::ConsoleMessageLevel level,
+                             const String& message) {
+  auto* console_message =
+      MakeGarbageCollected<ConsoleMessage>(source, level, message);
+  console_message->SetNodes(GetDocument().GetFrame(), {GetDomNodeId()});
+  GetDocument().AddConsoleMessage(console_message);
 }
 
 void Node::Trace(Visitor* visitor) const {

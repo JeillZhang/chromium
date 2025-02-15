@@ -37,10 +37,6 @@ class MockTrustSafetySentimentService : public TrustSafetySentimentService {
               (content::WebContents * web_contents),
               (override));
   MOCK_METHOD(void, SavedCard, (), (override));
-  MOCK_METHOD(void,
-              InteractedWithPrivacySandbox4,
-              (FeatureArea feature_area),
-              (override));
   MOCK_METHOD(void, RanPasswordCheck, (), (override));
   MOCK_METHOD(void,
               ClearedBrowsingData,
@@ -65,12 +61,10 @@ class MockTrustSafetySentimentService : public TrustSafetySentimentService {
               (PasswordProtectionUIType, PasswordProtectionUIAction),
               (override));
   MOCK_METHOD(void, PhishedPasswordUpdateFinished, (), (override));
-  MOCK_METHOD(void, SafetyHubModuleInteracted, (), (override));
-  MOCK_METHOD(void, SafetyHubVisited, (), (override));
-  MOCK_METHOD(void, SafetyHubNotificationClicked, (), (override));
   MOCK_METHOD(void,
               TriggerSafetyHubSurvey,
-              (TrustSafetySentimentService::FeatureArea),
+              (TrustSafetySentimentService::FeatureArea,
+               (std::map<std::string, bool>)),
               (override));
 };
 

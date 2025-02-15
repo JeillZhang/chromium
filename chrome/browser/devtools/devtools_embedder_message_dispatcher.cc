@@ -8,8 +8,8 @@
 
 #include "base/functional/bind.h"
 #include "base/values.h"
-#include "chrome/browser/browser_features.h"
 #include "chrome/browser/devtools/devtools_settings.h"
+#include "chrome/browser/devtools/features.h"
 #include "chrome/browser/devtools/visual_logging.h"
 
 namespace {
@@ -89,14 +89,15 @@ bool GetValue(const base::Value& value, ImpressionEvent* event) {
     if (!impression.is_dict()) {
       return false;
     }
-    std::optional<int> id = impression.GetDict().FindInt("id");
+    std::optional<double> id = impression.GetDict().FindDouble("id");
     std::optional<int> type = impression.GetDict().FindInt("type");
     if (!id || !type) {
       return false;
     }
-    event->impressions.emplace_back(VisualElementImpression{*id, *type});
+    event->impressions.emplace_back(
+        VisualElementImpression{static_cast<int64_t>(*id), *type});
 
-    std::optional<int> parent = impression.GetDict().FindInt("parent");
+    std::optional<double> parent = impression.GetDict().FindDouble("parent");
     if (parent) {
       event->impressions.back().parent = *parent;
     }
@@ -121,7 +122,7 @@ bool GetValue(const base::Value& value, ResizeEvent* event) {
     return false;
   }
 
-  std::optional<int> veid = value.GetDict().FindInt("veid");
+  std::optional<double> veid = value.GetDict().FindDouble("veid");
   if (!veid) {
     return false;
   }
@@ -143,7 +144,7 @@ bool GetValue(const base::Value& value, ClickEvent* event) {
     return false;
   }
 
-  std::optional<int> veid = value.GetDict().FindInt("veid");
+  std::optional<double> veid = value.GetDict().FindDouble("veid");
   if (!veid) {
     return false;
   }
@@ -152,6 +153,10 @@ bool GetValue(const base::Value& value, ClickEvent* event) {
   std::optional<int> mouse_button = value.GetDict().FindInt("mouseButton");
   if (mouse_button) {
     event->mouse_button = *mouse_button;
+  }
+  std::optional<int> double_click = value.GetDict().FindInt("doubleClick");
+  if (double_click) {
+    event->double_click = *double_click;
   }
   std::optional<int> context = value.GetDict().FindInt("context");
   if (context) {
@@ -165,7 +170,7 @@ bool GetValue(const base::Value& value, HoverEvent* event) {
     return false;
   }
 
-  std::optional<int> veid = value.GetDict().FindInt("veid");
+  std::optional<double> veid = value.GetDict().FindDouble("veid");
   if (!veid) {
     return false;
   }
@@ -187,7 +192,7 @@ bool GetValue(const base::Value& value, DragEvent* event) {
     return false;
   }
 
-  std::optional<int> veid = value.GetDict().FindInt("veid");
+  std::optional<double> veid = value.GetDict().FindDouble("veid");
   if (!veid) {
     return false;
   }
@@ -209,7 +214,7 @@ bool GetValue(const base::Value& value, ChangeEvent* event) {
     return false;
   }
 
-  std::optional<int> veid = value.GetDict().FindInt("veid");
+  std::optional<double> veid = value.GetDict().FindDouble("veid");
   if (!veid) {
     return false;
   }
@@ -227,11 +232,10 @@ bool GetValue(const base::Value& value, KeyDownEvent* event) {
     return false;
   }
 
-  std::optional<int> veid = value.GetDict().FindInt("veid");
-  if (!veid) {
-    return false;
+  std::optional<double> veid = value.GetDict().FindDouble("veid");
+  if (veid) {
+    event->veid = *veid;
   }
-  event->veid = *veid;
 
   std::optional<int> context = value.GetDict().FindInt("context");
   if (context) {
@@ -454,13 +458,10 @@ DevToolsEmbedderMessageDispatcher::CreateForDevToolsFrontend(
   d->RegisterHandlerWithCallback("showSurvey", &Delegate::ShowSurvey, delegate);
   d->RegisterHandlerWithCallback("canShowSurvey", &Delegate::CanShowSurvey,
                                  delegate);
-  if (base::FeatureList::IsEnabled(::features::kDevToolsConsoleInsights) ||
-      base::FeatureList::IsEnabled(
-          ::features::kDevToolsConsoleInsightsDogfood)) {
-    d->RegisterHandlerWithCallback("doAidaConversation",
-                                   &Delegate::DoAidaConversation, delegate);
-    d->RegisterHandler("registerAidaClientEvent",
-                       &Delegate::RegisterAidaClientEvent, delegate);
-  }
+
+  d->RegisterHandlerWithCallback("doAidaConversation",
+                                 &Delegate::DoAidaConversation, delegate);
+  d->RegisterHandlerWithCallback("registerAidaClientEvent",
+                                 &Delegate::RegisterAidaClientEvent, delegate);
   return d;
 }

@@ -21,7 +21,6 @@
 #include "base/task/task_traits.h"
 #include "base/task/thread_pool.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "components/services/app_service/public/cpp/file_handler_info.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_task_traits.h"
@@ -52,10 +51,12 @@
 #include "net/base/filename_util.h"
 #include "url/gurl.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
+#include "base/feature_list.h"
 #include "components/app_restore/app_launch_info.h"
 #include "components/app_restore/full_restore_utils.h"
 #include "components/user_manager/user_manager.h"
+#include "extensions/common/extension_features.h"
 #endif
 
 namespace app_runtime = extensions::api::app_runtime;
@@ -129,7 +130,12 @@ class PlatformAppPathLauncher
   PlatformAppPathLauncher& operator=(const PlatformAppPathLauncher&) = delete;
 
   void set_action_data(std::optional<app_runtime::ActionData> action_data) {
-    action_data_ = std::move(action_data);
+#if BUILDFLAG(IS_CHROMEOS)
+    if (base::FeatureList::IsEnabled(
+            extensions_features::kApiRuntimeActionData)) {
+      action_data_ = std::move(action_data);
+    }
+#endif
   }
 
   void set_launch_source(extensions::AppLaunchSource launch_source) {
@@ -333,7 +339,7 @@ class PlatformAppPathLauncher
     std::vector<GrantedFileEntry> granted_entries;
     for (size_t i = 0; i < entry_paths_.size(); ++i) {
       granted_entries.push_back(CreateFileEntry(
-          context_, app, context_info->render_process_host->GetID(),
+          context_, app, context_info->render_process_host->GetDeprecatedID(),
           entries_[i].path, entries_[i].is_directory));
     }
 
@@ -391,15 +397,13 @@ void LaunchPlatformAppWithCommandLineAndLaunchId(
   // check in case this scenario does occur.
   if (extensions::KioskModeInfo::IsKioskOnly(app)) {
     bool in_kiosk_mode = false;
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
     user_manager::UserManager* user_manager = user_manager::UserManager::Get();
     in_kiosk_mode = user_manager && user_manager->IsLoggedInAsKioskApp();
 #endif
     if (!in_kiosk_mode) {
-      LOG(ERROR) << "App with 'kiosk_only' attribute must be run in "
-                 << " ChromeOS kiosk mode.";
-      NOTREACHED_IN_MIGRATION();
-      return;
+      NOTREACHED() << "App with 'kiosk_only' attribute must be run in "
+                   << " ChromeOS kiosk mode.";
     }
   }
 
@@ -450,12 +454,6 @@ void LaunchPlatformAppWithFilePaths(
 void LaunchPlatformAppWithAction(content::BrowserContext* context,
                                  const extensions::Extension* app,
                                  app_runtime::ActionData action_data) {
-  CHECK(!action_data.is_lock_screen_action ||
-        !*action_data.is_lock_screen_action ||
-        app->permissions_data()->HasAPIPermission(
-            extensions::mojom::APIPermissionID::kLockScreen))
-      << "Launching lock screen action handler requires lockScreen permission.";
-
   scoped_refptr<PlatformAppPathLauncher> launcher =
       new PlatformAppPathLauncher(context, app, base::FilePath());
   launcher->set_action_data(std::move(action_data));
@@ -476,7 +474,7 @@ void LaunchPlatformAppWithFileHandler(
     const Extension* app,
     const std::string& handler_id,
     const std::vector<base::FilePath>& entry_paths) {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   auto launch_info = std::make_unique<app_restore::AppLaunchInfo>(
       app->id(), handler_id, entry_paths);
   full_restore::SaveAppLaunchInfo(context->GetPath(), std::move(launch_info));

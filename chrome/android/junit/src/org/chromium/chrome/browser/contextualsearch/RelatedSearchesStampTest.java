@@ -20,7 +20,7 @@ import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
-import org.chromium.base.FeatureList;
+import org.chromium.base.FeatureOverrides;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Feature;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
@@ -54,7 +54,6 @@ public class RelatedSearchesStampTest {
     @Mock private Profile mProfile;
 
     private ContextualSearchPolicy mPolicy;
-    private FeatureList.TestValues mFeatureListValues;
 
     /** Our instance under test. */
     private RelatedSearchesStamp mStamp;
@@ -62,8 +61,6 @@ public class RelatedSearchesStampTest {
     @Before
     public void setup() {
         MockitoAnnotations.initMocks(this);
-        mFeatureListValues = new FeatureList.TestValues();
-        FeatureList.setTestValues(mFeatureListValues);
         mPolicy = new ContextualSearchPolicy(mProfile, null, null);
         mStamp = new RelatedSearchesStamp(mPolicy);
     }
@@ -90,8 +87,12 @@ public class RelatedSearchesStampTest {
      * Searches.
      */
     private void setSupportAllLanguage(boolean support) {
-        mFeatureListValues.addFeatureFlagOverride(
-                ChromeFeatureList.RELATED_SEARCHES_ALL_LANGUAGE, support);
+        FeatureOverrides.overrideFlag(ChromeFeatureList.RELATED_SEARCHES_ALL_LANGUAGE, support);
+    }
+
+    /** Sets whether the Related Searches switch is enabled. */
+    private void setRelatedSearchesSwitch(boolean enable) {
+        FeatureOverrides.overrideFlag(ChromeFeatureList.RELATED_SEARCHES_SWITCH, enable);
     }
 
     /** Sets the standard config setup that we're using for Related Searches experiments. */
@@ -106,6 +107,7 @@ public class RelatedSearchesStampTest {
         setStandardExperimentRequirements();
         setCanSendUrl(true);
         setCanSendContent(true);
+        setRelatedSearchesSwitch(true);
     }
 
     // ====================================================================================
@@ -251,5 +253,20 @@ public class RelatedSearchesStampTest {
         assertFalse(
                 "Replacing a non-existing parameter is adding the new parameter anyway!",
                 shouldBeUnchanged.contains("qqq"));
+    }
+
+    @Test
+    @Feature({"RelatedSearches", "RelatedSearchesStamp"})
+    public void testRelatedSearchSwitchIsDisabled() {
+        setStandardDefaultLaunchConfiguration();
+        setRelatedSearchesSwitch(false);
+        assertThat(
+                "related searches should be disabled!",
+                mStamp.getRelatedSearchesStamp(GERMAN),
+                is(""));
+        assertThat(
+                "related searches should be disabled!",
+                mStamp.getRelatedSearchesStamp(ENGLISH),
+                is(""));
     }
 }

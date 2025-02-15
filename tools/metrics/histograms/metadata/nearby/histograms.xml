@@ -31,7 +31,7 @@ chromium-metrics-reviews@google.com.
 </variants>
 
 <histogram name="Nearby.BluetoothAdapter.AdvertisingSupport"
-    enum="NearbyBluetoothAdapterAdvertisingSupport" expires_after="2025-04-30">
+    enum="NearbyBluetoothAdapterAdvertisingSupport" expires_after="2025-06-29">
   <owner>julietlevesque@google.com</owner>
   <owner>chromeos-cross-device-eng@google.com</owner>
   <summary>
@@ -222,7 +222,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Nearby.Connections.BleV2.ScatternetDualRoleSupported"
-    enum="Boolean" expires_after="2025-04-30">
+    enum="Boolean" expires_after="2025-06-29">
   <owner>julietlevesque@google.com</owner>
   <owner>chromeos-cross-device-eng@google.com</owner>
   <summary>
@@ -257,7 +257,7 @@ chromium-metrics-reviews@google.com.
 
 <histogram
     name="Nearby.Connections.BleV2.StartAdvertising.Result{AdvertisementType}"
-    enum="BooleanSuccess" expires_after="2025-04-30">
+    enum="BooleanSuccess" expires_after="2025-07-06">
   <owner>dclasson@google.com</owner>
   <owner>chromeos-cross-device-eng@google.com</owner>
   <summary>
@@ -288,7 +288,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Nearby.Connections.BleV2.StartScanning.Result"
-    enum="BooleanSuccess" expires_after="2025-04-30">
+    enum="BooleanSuccess" expires_after="2025-06-29">
   <owner>dclasson@google.com</owner>
   <owner>chromeos-cross-device-eng@google.com</owner>
   <summary>
@@ -298,7 +298,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Nearby.Connections.Bluetooth.Adapter.SetName.Result"
-    enum="BooleanSuccess" expires_after="2025-04-30">
+    enum="BooleanSuccess" expires_after="2025-06-29">
   <owner>hansenmichael@google.com</owner>
   <owner>nearby-share-chromeos-eng@google.com</owner>
   <summary>
@@ -308,7 +308,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Nearby.Connections.Bluetooth.Adapter.SetScanMode.Result"
-    enum="BooleanSuccess" expires_after="2025-04-30">
+    enum="BooleanSuccess" expires_after="2025-06-29">
   <owner>hansenmichael@google.com</owner>
   <owner>nearby-share-chromeos-eng@google.com</owner>
   <summary>
@@ -319,7 +319,7 @@ chromium-metrics-reviews@google.com.
 
 <histogram
     name="Nearby.Connections.Bluetooth.ClassicMedium.ConnectToService.Duration"
-    units="ms" expires_after="2025-04-30">
+    units="ms" expires_after="2025-06-29">
   <owner>hansenmichael@google.com</owner>
   <owner>nearby-share-chromeos-eng@google.com</owner>
   <summary>
@@ -329,7 +329,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Nearby.Connections.Bluetooth.ClassicMedium.{Operation}.Result"
-    enum="BooleanSuccess" expires_after="2025-04-30">
+    enum="BooleanSuccess" expires_after="2025-07-06">
   <owner>hansenmichael@google.com</owner>
   <owner>nearby-share-chromeos-eng@google.com</owner>
   <summary>Records the result of {Operation}.</summary>
@@ -342,7 +342,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Nearby.Connections.Bluetooth.LEMedium.StartAdvertising.Result"
-    enum="BooleanSuccess" expires_after="2025-04-30">
+    enum="BooleanSuccess" expires_after="2025-06-29">
   <owner>hansenmichael@google.com</owner>
   <owner>nearby-share-chromeos-eng@google.com</owner>
   <summary>
@@ -351,7 +351,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Nearby.Connections.Bluetooth.LEMedium.StartScanning.Result"
-    enum="BooleanSuccess" expires_after="2025-04-30">
+    enum="BooleanSuccess" expires_after="2025-06-29">
   <owner>hansenmichael@google.com</owner>
   <owner>nearby-share-chromeos-eng@google.com</owner>
   <summary>
@@ -412,7 +412,7 @@ chromium-metrics-reviews@google.com.
 
 <histogram
     name="Nearby.Connections.InstantMessaging.TachyonIceConfigFetcher.OAuthTokenFetchResult"
-    enum="BooleanSuccess" expires_after="2025-04-30">
+    enum="BooleanSuccess" expires_after="2025-08-10">
   <owner>crisrael@google.com</owner>
   <owner>nearby-share-chromeos-eng@google.com</owner>
   <summary>
@@ -434,7 +434,7 @@ chromium-metrics-reviews@google.com.
 
 <histogram
     name="Nearby.Connections.InstantMessaging.{Direction}Express.OAuthTokenFetchResult"
-    enum="BooleanSuccess" expires_after="2025-04-30">
+    enum="BooleanSuccess" expires_after="2025-08-10">
   <owner>hansenmichael@google.com</owner>
   <owner>nearby-share-chromeos-eng@google.com</owner>
   <summary>
@@ -450,7 +450,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Nearby.Connections.InstantMessaging.{Direction}Express.Result"
-    enum="BooleanSuccess" expires_after="2025-04-30">
+    enum="BooleanSuccess" expires_after="2025-07-06">
   <owner>hansenmichael@google.com</owner>
   <owner>nearby-share-chromeos-eng@google.com</owner>
   <summary>
@@ -481,7 +481,7 @@ chromium-metrics-reviews@google.com.
 
 <histogram name="Nearby.Connections.UtilityProcessShutdownReason"
     enum="NearbyConnectionsUtilityProcessShutdownReason"
-    expires_after="2025-04-30">
+    expires_after="2025-06-29">
   <owner>hansenmichael@google.com</owner>
   <owner>nearby-share-chromeos-eng@google.com</owner>
   <summary>
@@ -539,8 +539,167 @@ chromium-metrics-reviews@google.com.
   </summary>
 </histogram>
 
+<histogram name="Nearby.Connections.WifiDirect.AssociateSocket.Result"
+    enum="BooleanSuccess" expires_after="2025-06-29">
+  <owner>jackshira@google.com</owner>
+  <owner>nearby-share-chromeos-eng@google.com</owner>
+  <summary>
+    Records if the socket was able to be associated with the WiFi Direct
+    interface. Emitted when both connecting and listening for Nearby
+    Connections.
+  </summary>
+</histogram>
+
+<histogram name="Nearby.Connections.WifiDirect.ConnectToService.Error"
+    enum="NearbyConnectionsWifiDirectServiceError" expires_after="2025-04-30">
+  <owner>jackshira@google.com</owner>
+  <owner>nearby-share-chromeos-eng@google.com</owner>
+  <summary>
+    Records the error that occured attempting to connect to the Nearby
+    Connections endpoint via the connected WiFi Direct interface. Emitted when
+    Nearby Connections encounters an error initiating the TCP connection.
+  </summary>
+</histogram>
+
+<histogram name="Nearby.Connections.WifiDirect.ConnectToService.Result"
+    enum="BooleanSuccess" expires_after="2025-06-29">
+  <owner>jackshira@google.com</owner>
+  <owner>nearby-share-chromeos-eng@google.com</owner>
+  <summary>
+    Records the result of attempting to connect to the Nearby onnections
+    endpoint via the connected WiFi Direct interface. Emitted when Nearby
+    Connections returns the result from connect to service call.
+  </summary>
+</histogram>
+
+<histogram name="Nearby.Connections.WifiDirect.ConnectToWifiDirectGroup.Error"
+    enum="NearbyConnectionsWifiDirectResult" expires_after="2025-06-29">
+  <owner>jackshira@google.com</owner>
+  <owner>nearby-share-chromeos-eng@google.com</owner>
+  <summary>
+    Records the error that occured when a connection to an external WiFi Direct
+    group was attempted. Emitted when Nearby Connections returns the result from
+    the mojo call to connect the GC.
+  </summary>
+</histogram>
+
+<histogram name="Nearby.Connections.WifiDirect.ConnectToWifiDirectGroup.Result"
+    enum="BooleanSuccess" expires_after="2025-06-29">
+  <owner>jackshira@google.com</owner>
+  <owner>nearby-share-chromeos-eng@google.com</owner>
+  <summary>
+    Records if the WiFi Direct group was able to be connected to. Emitted when
+    Nearby Connections returns the result from the mojo call to connect the GC.
+  </summary>
+</histogram>
+
+<histogram name="Nearby.Connections.WifiDirect.CreateWifiDirectGroup.Error"
+    enum="NearbyConnectionsWifiDirectResult" expires_after="2025-06-29">
+  <owner>jackshira@google.com</owner>
+  <owner>nearby-share-chromeos-eng@google.com</owner>
+  <summary>
+    Records the error that occured when the WiFi Direct group creation was
+    attempted. Emitted when Nearby Connections returns the result from the mojo
+    call to create the GO.
+  </summary>
+</histogram>
+
+<histogram name="Nearby.Connections.WifiDirect.CreateWifiDirectGroup.Result"
+    enum="BooleanSuccess" expires_after="2025-06-29">
+  <owner>jackshira@google.com</owner>
+  <owner>nearby-share-chromeos-eng@google.com</owner>
+  <summary>
+    Records if the WiFi Direct group was able to be created. Emitted when Nearby
+    Connections returns the result from the mojo call to create the GO.
+  </summary>
+</histogram>
+
+<histogram name="Nearby.Connections.WifiDirect.IsP2pSupported" enum="Boolean"
+    expires_after="2025-06-29">
+  <owner>jackshira@google.com</owner>
+  <owner>nearby-share-chromeos-eng@google.com</owner>
+  <summary>
+    Records if the WiFi Direct interface currently supports P2P. If P2P support
+    is true, it indicates that the interface is valid and ready to use. Emitted
+    when Nearby Connections initiates a bandwidth upgrade and checks for
+    available transfer mediums.
+  </summary>
+</histogram>
+
+<histogram name="Nearby.Connections.WifiDirect.ListenForService.Error"
+    enum="NearbyConnectionsWifiDirectServiceError" expires_after="2025-04-30">
+  <owner>jackshira@google.com</owner>
+  <owner>nearby-share-chromeos-eng@google.com</owner>
+  <summary>
+    Records the error that occured attempting to listen for new Nearby
+    Connections via the connected WiFi Direct interface. Emitted when Nearby
+    Connections encounters an error setting up the the TCP server socket.
+  </summary>
+</histogram>
+
+<histogram name="Nearby.Connections.WifiDirect.ListenForService.Result"
+    enum="BooleanSuccess" expires_after="2025-06-29">
+  <owner>jackshira@google.com</owner>
+  <owner>nearby-share-chromeos-eng@google.com</owner>
+  <summary>
+    Records the result of attempting to listen for new Nearby Connections via
+    the connected WiFi Direct interface. Emitted when Nearby Connections returns
+    the result from listen for service call.
+  </summary>
+</histogram>
+
+<histogram name="Nearby.Connections.WifiDirect.ServerSocket.Accept.Error"
+    enum="NearbyConnectionsWifiDirectSocketError" expires_after="2025-04-30">
+  <owner>jackshira@google.com</owner>
+  <owner>nearby-share-chromeos-eng@google.com</owner>
+  <summary>
+    Records the error that occured attempting to accept a new Nearby Connection
+    via TCP socket on the connected WiFi Direct interface. Emitted when Nearby
+    Connections encounters an error accepting a connection on the TCP server
+    socket. Cancellations and socket closures do not emit errors because they
+    are expected final states.
+  </summary>
+</histogram>
+
+<histogram name="Nearby.Connections.WifiDirect.ServerSocket.Accept.Result"
+    enum="BooleanSuccess" expires_after="2025-04-30">
+  <owner>jackshira@google.com</owner>
+  <owner>nearby-share-chromeos-eng@google.com</owner>
+  <summary>
+    Records the result of attempting to accept a new Nearby Connection via TCP
+    socket on the connected WiFi Direct interface. Accept is called once during
+    the initial upgrade process, and again after each incoming connection has
+    been handled. Additionally, a negative value is logged for cancellations and
+    socket closure. This means that each successful WiFi Direct transfer will
+    have both a successful accept result and a failure due to the closing down
+    of the socket when the medium is destructed.
+  </summary>
+</histogram>
+
+<histogram name="Nearby.Connections.WifiDirect.Socket.Read.Result"
+    enum="BooleanSuccess" expires_after="2025-06-29">
+  <owner>jackshira@google.com</owner>
+  <owner>nearby-share-chromeos-eng@google.com</owner>
+  <summary>
+    Records the result of attempting to read bytes from a connected TCP socket
+    on a connected WiFi Direct medium. Read is called repeatedly during the
+    duration of a connection.
+  </summary>
+</histogram>
+
+<histogram name="Nearby.Connections.WifiDirect.Socket.Write.Result"
+    enum="BooleanSuccess" expires_after="2025-06-29">
+  <owner>jackshira@google.com</owner>
+  <owner>nearby-share-chromeos-eng@google.com</owner>
+  <summary>
+    Records the result of attempting to write bytes to a connected TCP socket on
+    a connected WiFi Direct medium. Write is called repeatedly during the
+    duration of a connection.
+  </summary>
+</histogram>
+
 <histogram name="Nearby.Connections.WifiLan.ConnectResult"
-    enum="NearbyConnectionsWifiLanConnectResult" expires_after="2025-04-30">
+    enum="NearbyConnectionsWifiLanConnectResult" expires_after="2025-06-29">
   <owner>hansenmichael@google.com</owner>
   <owner>nearby-share-chromeos-eng@google.com</owner>
   <summary>
@@ -553,7 +712,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Nearby.Connections.WifiLan.ListenResult"
-    enum="NearbyConnectionsWifiLanListenResult" expires_after="2025-04-30">
+    enum="NearbyConnectionsWifiLanListenResult" expires_after="2025-06-29">
   <owner>hansenmichael@google.com</owner>
   <owner>nearby-share-chromeos-eng@google.com</owner>
   <summary>
@@ -591,7 +750,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Nearby.Connections.{Medium}.Socket.{Operation}.Result"
-    enum="BooleanSuccess" expires_after="2025-04-30">
+    enum="BooleanSuccess" expires_after="2025-07-06">
   <owner>hansenmichael@google.com</owner>
   <owner>nearby-share-chromeos-eng@google.com</owner>
   <summary>
@@ -1144,7 +1303,7 @@ chromium-metrics-reviews@google.com.
 
 <histogram
     name="Nearby.Share.Certificates.Manager.BluetoothMacAddressPresentForPrivateCertificateCreation"
-    enum="BooleanPresent" expires_after="2025-04-30">
+    enum="BooleanPresent" expires_after="2025-06-29">
   <owner>pushi@google.com</owner>
   <owner>nearby-share-chromeos-eng@google.com</owner>
   <summary>
@@ -1207,7 +1366,7 @@ chromium-metrics-reviews@google.com.
 
 <histogram
     name="Nearby.Share.Certificates.Manager.DownloadPublicCertificatesSuccessRate"
-    enum="BooleanSuccess" expires_after="2025-04-30">
+    enum="BooleanSuccess" expires_after="2025-06-29">
   <owner>crisrael@google.com</owner>
   <owner>nearby-share-chromeos-eng@google.com</owner>
   <summary>
@@ -1219,7 +1378,7 @@ chromium-metrics-reviews@google.com.
 <histogram
     name="Nearby.Share.Certificates.Manager.GetDecryptedPublicCertificateResult"
     enum="NearbyShareCertificateManagerGetDecryptedPublicCertificateResult"
-    expires_after="2025-04-30">
+    expires_after="2025-07-13">
   <owner>crisrael@google.com</owner>
   <owner>nearby-share-chromeos-eng@google.com</owner>
   <summary>
@@ -1262,7 +1421,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Nearby.Share.Certificates.Storage.{Operation}SuccessRate"
-    enum="BooleanSuccess" expires_after="2025-04-30">
+    enum="BooleanSuccess" expires_after="2025-07-06">
   <owner>crisrael@google.com</owner>
   <owner>nearby-share-chromeos-eng@google.com</owner>
   <summary>
@@ -1277,7 +1436,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Nearby.Share.Connection.EstablishOutgoingConnection.Success"
-    enum="BooleanSuccess" expires_after="2025-04-30">
+    enum="BooleanSuccess" expires_after="2025-06-29">
   <owner>pushi@google.com</owner>
   <owner>nearby-share-chromeos-eng@google.com</owner>
   <summary>
@@ -1300,6 +1459,20 @@ chromium-metrics-reviews@google.com.
     to send a payload to but before the payload begins its transfer. Because the
     sending device initiates the connection--via the Nearby Connections
     library--this metric is only emitted for outgoing transfers.
+  </summary>
+</histogram>
+
+<histogram name="Nearby.Share.Connection.InitialMedium"
+    enum="NearbyShareUpgradedMedium" expires_after="2025-06-29">
+  <owner>dclasson@google.com</owner>
+  <owner>nearby-share-chromeos-eng@google.com</owner>
+  <summary>
+    Records what the initial medium is when connection is established, which
+    will either be Bluetooth (true in most cases) or Wifi LAN (true only when
+    ChromeOS is sending and discovery happens using mDNS). Note that this metric
+    is not emitted for receiving Nearby Shares, and Wifi LAN is only supported
+    as an initial medium for sending Nearby Shares (as mDNS discovery is
+    supported, but advertising isn't).
   </summary>
 </histogram>
 
@@ -1353,7 +1526,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Nearby.Share.Contacts.DownloadResult" enum="BooleanSuccess"
-    expires_after="2025-04-30">
+    expires_after="2025-06-29">
   <owner>crisrael@google.com</owner>
   <owner>nearby-share-chromeos-eng@google.com</owner>
   <summary>
@@ -1445,7 +1618,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Nearby.Share.DeviceType{Direction}"
-    enum="NearbyShareDeviceType" expires_after="2025-04-30">
+    enum="NearbyShareDeviceType" expires_after="2025-07-06">
   <owner>pushi@google.com</owner>
   <owner>nearby-share-chromeos-eng@google.com</owner>
   <summary>
@@ -1461,7 +1634,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Nearby.Share.Discovery.Delay.FromStartDiscoveryTo{EndState}"
-    units="ms" expires_after="2025-04-30">
+    units="ms" expires_after="2025-07-06">
   <owner>crisrael@google.com</owner>
   <owner>nearby-share-chromeos-eng@google.com</owner>
   <summary>
@@ -1498,7 +1671,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Nearby.Share.Discovery.NumShareTargets.{Variation}"
-    units="share targets" expires_after="2025-04-30">
+    units="share targets" expires_after="2025-07-06">
   <owner>pushi@google.com</owner>
   <owner>nearby-share-chromeos-eng@google.com</owner>
   <summary>
@@ -1532,7 +1705,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Nearby.Share.Enabled" enum="NearbyShareEnabledState"
-    expires_after="2025-04-30">
+    expires_after="2025-06-29">
   <owner>pushi@google.com</owner>
   <owner>nearby-share-chromeos-eng@google.com</owner>
   <summary>
@@ -1578,7 +1751,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Nearby.Share.IsSelfShare" enum="BooleanSuccess"
-    expires_after="2025-04-30">
+    expires_after="2025-08-03">
   <owner>brandosocarras@google.com</owner>
   <owner>nearby-share-chromeos-eng@google.com</owner>
   <summary>
@@ -1600,7 +1773,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Nearby.Share.Medium.ChangedToMedium"
-    enum="NearbyConnectionsMedium" expires_after="2025-04-30">
+    enum="NearbyConnectionsMedium" expires_after="2025-06-29">
   <owner>crisrael@google.com</owner>
   <owner>nearby-share-chromeos-eng@google.com</owner>
   <summary>
@@ -1646,7 +1819,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Nearby.Share.Onboarding.EntryPoint"
-    enum="NearbyShareOnboardingEntryPoint" expires_after="2025-04-30">
+    enum="NearbyShareOnboardingEntryPoint" expires_after="2025-06-29">
   <owner>pushi@google.com</owner>
   <owner>nearby-share-chromeos-eng@google.com</owner>
   <summary>
@@ -1668,7 +1841,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Nearby.Share.Onboarding.Result"
-    enum="NearbyShareOnboardingFinalState" expires_after="2025-04-30">
+    enum="NearbyShareOnboardingFinalState" expires_after="2025-06-29">
   <owner>pushi@google.com</owner>
   <owner>nearby-share-chromeos-eng@google.com</owner>
   <summary>
@@ -1729,7 +1902,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Nearby.Share.Payload.FinalStatus{UpgradedMedium}"
-    enum="NearbyShareFinalStatus" expires_after="2025-04-30">
+    enum="NearbyShareFinalStatus" expires_after="2025-07-06">
   <owner>crisrael@google.com</owner>
   <owner>nearby-share-chromeos-eng@google.com</owner>
   <summary>
@@ -1748,7 +1921,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Nearby.Share.Payload.Medium" enum="NearbyShareUpgradedMedium"
-    expires_after="2025-04-30">
+    expires_after="2025-06-29">
   <owner>pushi@google.com</owner>
   <owner>nearby-share-chromeos-eng@google.com</owner>
   <summary>
@@ -1760,7 +1933,7 @@ chromium-metrics-reviews@google.com.
 
 <histogram
     name="Nearby.Share.Payload.Medium.Over5MbTransferred{ShareTargetType}"
-    enum="NearbyShareUpgradedMedium" expires_after="2025-04-30">
+    enum="NearbyShareUpgradedMedium" expires_after="2025-07-06">
   <owner>crisrael@google.com</owner>
   <owner>nearby-share-chromeos-eng@google.com</owner>
   <summary>
@@ -1779,7 +1952,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Nearby.Share.Payload.NumAttachments{Type}" units="attachments"
-    expires_after="2025-04-30">
+    expires_after="2025-07-06">
   <owner>pushi@google.com</owner>
   <owner>nearby-share-chromeos-eng@google.com</owner>
   <summary>
@@ -1795,7 +1968,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Nearby.Share.Payload.TotalSize{Variation}" units="KB"
-    expires_after="2025-04-30">
+    expires_after="2025-07-06">
   <owner>crisrael@google.com</owner>
   <owner>nearby-share-chromeos-eng@google.com</owner>
   <summary>
@@ -1828,7 +2001,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Nearby.Share.Payload.TransferRate{Variation}" units="KB/s"
-    expires_after="2025-04-30">
+    expires_after="2025-07-06">
   <owner>pushi@google.com</owner>
   <owner>nearby-share-chromeos-eng@google.com</owner>
   <summary>
@@ -1911,7 +2084,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Nearby.Share.StartAdvertising.Result.FailureReason{Mode}"
-    enum="NearbyShareStartAdvertisingFailureReason" expires_after="2025-04-30">
+    enum="NearbyShareStartAdvertisingFailureReason" expires_after="2025-07-06">
   <owner>crisrael@google.com</owner>
   <owner>nearby-share-chromeos-eng@google.com</owner>
   <summary>
@@ -1925,7 +2098,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Nearby.Share.StartAdvertising.Result{Mode}"
-    enum="BooleanSuccess" expires_after="2025-04-30">
+    enum="BooleanSuccess" expires_after="2025-07-06">
   <owner>pushi@google.com</owner>
   <owner>nearby-share-chromeos-eng@google.com</owner>
   <summary>
@@ -1939,7 +2112,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Nearby.Share.TimeFromInitiateSendToRemoteDeviceNotification"
-    units="ms" expires_after="2025-04-30">
+    units="ms" expires_after="2025-06-29">
   <owner>crisrael@google.com</owner>
   <owner>nearby-share-chromeos-eng@google.com</owner>
   <summary>
@@ -1966,7 +2139,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Nearby.Share.Transfer.FinalStatus{Variation}"
-    enum="NearbyShareTransferFinalStatus" expires_after="2025-04-30">
+    enum="NearbyShareTransferFinalStatus" expires_after="2025-07-06">
   <owner>crisrael@google.com</owner>
   <owner>nearby-share-chromeos-eng@google.com</owner>
   <summary>
@@ -1993,7 +2166,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Nearby.Share.Transfer.Success" enum="BooleanSuccess"
-    expires_after="2025-04-30">
+    expires_after="2025-06-29">
   <owner>pushi@google.com</owner>
   <owner>nearby-share-chromeos-eng@google.com</owner>
   <summary>
@@ -2029,7 +2202,7 @@ chromium-metrics-reviews@google.com.
 
 <histogram
     name="Nearby.Share.Transfer.Success.{Direction}.{ShareTargetType}.{ContactStatus}"
-    enum="BooleanSuccess" expires_after="2025-04-30">
+    enum="BooleanSuccess" expires_after="2025-08-03">
   <owner>crisrael@google.com</owner>
   <owner>nearby-share-chromeos-eng@google.com</owner>
   <summary>
@@ -2069,7 +2242,7 @@ chromium-metrics-reviews@google.com.
 
 <histogram
     name="Nearby.Share.TransferDuration.Receiver.BandwidthUpgradeToAllFilesReceived2{TransferMedium}"
-    units="ms" expires_after="2025-04-30">
+    units="ms" expires_after="2025-07-06">
   <owner>jackshira@google.com</owner>
   <owner>dclasson@google.com</owner>
   <owner>nearby-share-chromeos-eng@google.com</owner>
@@ -2151,7 +2324,7 @@ chromium-metrics-reviews@google.com.
 
 <histogram
     name="Nearby.Share.TransferDuration.Sender.ConnectionEstablishedToBandwidthUpgrade2{TransferMedium}"
-    units="ms" expires_after="2025-04-30">
+    units="ms" expires_after="2025-07-06">
   <owner>jackshira@google.com</owner>
   <owner>dclasson@google.com</owner>
   <owner>nearby-share-chromeos-eng@google.com</owner>
@@ -2164,7 +2337,7 @@ chromium-metrics-reviews@google.com.
 
 <histogram
     name="Nearby.Share.TransferDuration.Sender.DiscoveredToConnectionEstablished"
-    units="ms" expires_after="2025-04-30">
+    units="ms" expires_after="2025-06-29">
   <owner>jackshira@google.com</owner>
   <owner>dclasson@google.com</owner>
   <owner>nearby-share-chromeos-eng@google.com</owner>
@@ -2176,7 +2349,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Nearby.Share.TransferDuration.Sender.InitiatedToAllFilesSent"
-    units="ms" expires_after="2025-04-30">
+    units="ms" expires_after="2025-06-29">
   <owner>jackshira@google.com</owner>
   <owner>dclasson@google.com</owner>
   <owner>nearby-share-chromeos-eng@google.com</owner>

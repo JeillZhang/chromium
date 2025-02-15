@@ -5,9 +5,11 @@
 package org.chromium.chrome.browser.hub;
 
 import android.view.View;
+import android.view.ViewGroup;
 
+import org.chromium.base.Callback;
 import org.chromium.ui.modelutil.PropertyKey;
-import org.chromium.ui.modelutil.PropertyModel.WritableIntPropertyKey;
+import org.chromium.ui.modelutil.PropertyModel.WritableBooleanPropertyKey;
 import org.chromium.ui.modelutil.PropertyModel.WritableObjectPropertyKey;
 
 /** Responsible for holding properties of hub pane host views. */
@@ -19,12 +21,18 @@ class HubPaneHostProperties {
     public static final WritableObjectPropertyKey<View> PANE_ROOT_VIEW =
             new WritableObjectPropertyKey();
 
-    /** When set then an interactable button for the primary pane action should be shown. */
-    public static final WritableObjectPropertyKey<FullButtonData> ACTION_BUTTON_DATA =
-            new WritableObjectPropertyKey();
+    // Holds two values from @HubColorScheme. The first value holds the current color scheme. The
+    // second value holds the previous color scheme.
+    public static final WritableObjectPropertyKey<HubColorSchemeUpdate> COLOR_SCHEME =
+            new WritableObjectPropertyKey<>();
 
-    // Hold a value from @HubColorScheme.
-    public static final WritableIntPropertyKey COLOR_SCHEME = new WritableIntPropertyKey();
+    public static final WritableBooleanPropertyKey HAIRLINE_VISIBILITY =
+            new WritableBooleanPropertyKey();
 
-    static final PropertyKey[] ALL_KEYS = {PANE_ROOT_VIEW, ACTION_BUTTON_DATA, COLOR_SCHEME};
+    public static final WritableObjectPropertyKey<Callback<ViewGroup>> SNACKBAR_CONTAINER_CALLBACK =
+            new WritableObjectPropertyKey<>();
+
+    static final PropertyKey[] ALL_KEYS = {
+        PANE_ROOT_VIEW, COLOR_SCHEME, HAIRLINE_VISIBILITY, SNACKBAR_CONTAINER_CALLBACK,
+    };
 }

@@ -4,7 +4,7 @@
 
 #include "base/test/metrics/histogram_tester.h"
 #include "build/build_config.h"
-#include "chrome/browser/ui/autofill/payments/view_factory.h"
+#include "chrome/browser/ui/autofill/payments/payments_view_factory.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/test/test_browser_dialog.h"
@@ -15,10 +15,9 @@
 #include "content/public/test/browser_test.h"
 
 namespace autofill {
-
 namespace {
+
 const int kDefaultOtpLength = 6;
-}  // namespace
 
 class CardUnmaskOtpInputDialogBrowserTest
     : public DialogBrowserTest,
@@ -50,8 +49,9 @@ class CardUnmaskOtpInputDialogBrowserTest
 
     base::WeakPtr<CardUnmaskOtpInputDialogView> dialog_view =
         controller_->GetDialogViewForTesting();
-    if (!dialog_view)
+    if (!dialog_view) {
       return nullptr;
+    }
 
     return static_cast<CardUnmaskOtpInputDialogViews*>(dialog_view.get());
   }
@@ -128,4 +128,5 @@ INSTANTIATE_TEST_SUITE_P(
     testing::Values(CardUnmaskChallengeOptionType::kSmsOtp,
                     CardUnmaskChallengeOptionType::kEmailOtp));
 
+}  // namespace
 }  // namespace autofill

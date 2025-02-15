@@ -42,8 +42,9 @@ static base::android::ScopedJavaLocalRef<jobject> ConvertUiInfoToJavaObject(
       base::android::ConvertUTF16ToJavaString(env, ui_info.title_text),
       base::android::ConvertUTF16ToJavaString(env, ui_info.confirm_text),
       base::android::ConvertUTF16ToJavaString(env, ui_info.cancel_text),
-      ui_info.is_google_pay_branding_enabled,
-      base::android::ConvertUTF16ToJavaString(env, ui_info.description_text));
+      base::android::ConvertUTF16ToJavaString(env, ui_info.description_text),
+      base::android::ConvertUTF16ToJavaString(env, ui_info.loading_description),
+      ui_info.is_google_pay_branding_enabled);
   // LINT.ThenChange(//components/autofill/android/java/src/org/chromium/components/autofill/payments/AutofillSaveCardUiInfo.java)
 }
 
@@ -71,11 +72,14 @@ AutofillSaveCardBottomSheetBridge::~AutofillSaveCardBottomSheetBridge() {
 void AutofillSaveCardBottomSheetBridge::RequestShowContent(
     const AutofillSaveCardUiInfo& ui_info,
     std::unique_ptr<AutofillSaveCardDelegateAndroid> delegate) {
+  // Skip loading if additional fix flows are needed after save.
+  bool skip_loading = delegate->requires_fix_flow();
+
   JNIEnv* env = base::android::AttachCurrentThread();
   save_card_delegate_ = std::move(delegate);
   Java_AutofillSaveCardBottomSheetBridge_requestShowContent(
       env, java_autofill_save_card_bottom_sheet_bridge_,
-      ConvertUiInfoToJavaObject(env, ui_info));
+      ConvertUiInfoToJavaObject(env, ui_info), skip_loading);
 }
 
 void AutofillSaveCardBottomSheetBridge::Hide() {

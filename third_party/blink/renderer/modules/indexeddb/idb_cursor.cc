@@ -124,8 +124,7 @@ v8::Local<v8::Object> IDBCursor::AssociateWithWrapper(
   if (!wrapper.IsEmpty()) {
     static const V8PrivateProperty::SymbolKey kPrivatePropertyRequest;
     V8PrivateProperty::GetSymbol(isolate, kPrivatePropertyRequest)
-        .Set(wrapper,
-             ToV8Traits<IDBRequest>::ToV8(isolate, request_.Get(), wrapper));
+        .Set(wrapper, request_->ToV8(isolate, wrapper));
   }
   return wrapper;
 }
@@ -445,8 +444,7 @@ IDBObjectStore* IDBCursor::EffectiveObjectStore() const {
     case Source::ContentType::kIDBObjectStore:
       return source_->GetAsIDBObjectStore();
   }
-  NOTREACHED_IN_MIGRATION();
-  return nullptr;
+  NOTREACHED();
 }
 
 bool IDBCursor::IsDeleted() const {
@@ -456,24 +454,22 @@ bool IDBCursor::IsDeleted() const {
     case Source::ContentType::kIDBObjectStore:
       return source_->GetAsIDBObjectStore()->IsDeleted();
   }
-  NOTREACHED_IN_MIGRATION();
-  return false;
+  NOTREACHED();
 }
 
 // static
-mojom::IDBCursorDirection IDBCursor::StringToDirection(
-    const String& direction_string) {
-  if (direction_string == indexed_db_names::kNext)
-    return mojom::IDBCursorDirection::Next;
-  if (direction_string == indexed_db_names::kNextunique)
-    return mojom::IDBCursorDirection::NextNoDuplicate;
-  if (direction_string == indexed_db_names::kPrev)
-    return mojom::IDBCursorDirection::Prev;
-  if (direction_string == indexed_db_names::kPrevunique)
-    return mojom::IDBCursorDirection::PrevNoDuplicate;
-
-  NOTREACHED_IN_MIGRATION();
-  return mojom::IDBCursorDirection::Next;
+mojom::blink::IDBCursorDirection IDBCursor::V8EnumToDirection(
+    V8IDBCursorDirection::Enum mode) {
+  switch (mode) {
+    case V8IDBCursorDirection::Enum::kNext:
+      return mojom::blink::IDBCursorDirection::Next;
+    case V8IDBCursorDirection::Enum::kNextunique:
+      return mojom::blink::IDBCursorDirection::NextNoDuplicate;
+    case V8IDBCursorDirection::Enum::kPrev:
+      return mojom::blink::IDBCursorDirection::Prev;
+    case V8IDBCursorDirection::Enum::kPrevunique:
+      return mojom::blink::IDBCursorDirection::PrevNoDuplicate;
+  }
 }
 
 // static
@@ -489,24 +485,21 @@ void IDBCursor::ResetCursorPrefetchCaches(int64_t transaction_id,
   }
 }
 
-const String& IDBCursor::direction() const {
+V8IDBCursorDirection IDBCursor::direction() const {
   switch (direction_) {
     case mojom::IDBCursorDirection::Next:
-      return indexed_db_names::kNext;
+      return V8IDBCursorDirection(V8IDBCursorDirection::Enum::kNext);
 
     case mojom::IDBCursorDirection::NextNoDuplicate:
-      return indexed_db_names::kNextunique;
+      return V8IDBCursorDirection(V8IDBCursorDirection::Enum::kNextunique);
 
     case mojom::IDBCursorDirection::Prev:
-      return indexed_db_names::kPrev;
+      return V8IDBCursorDirection(V8IDBCursorDirection::Enum::kPrev);
 
     case mojom::IDBCursorDirection::PrevNoDuplicate:
-      return indexed_db_names::kPrevunique;
-
-    default:
-      NOTREACHED_IN_MIGRATION();
-      return indexed_db_names::kNext;
+      return V8IDBCursorDirection(V8IDBCursorDirection::Enum::kPrevunique);
   }
+  NOTREACHED();
 }
 
 void IDBCursor::AdvanceImpl(uint32_t count, IDBRequest* request) {

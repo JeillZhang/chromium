@@ -17,13 +17,17 @@ found in the LICENSE file.
         android:key="identity_error_card"
         app:isPreferenceVisible="false"/>
 
+    <org.chromium.chrome.browser.sync.settings.BatchUploadCardPreference
+        android:key="batch_upload_card"
+        app:isPreferenceVisible="false"/>
+
     <PreferenceCategory
         android:key="account_section_header"
         android:title="@string/account_section_header"/>
 
     <org.chromium.components.browser_ui.settings.ChromeBasePreference
-        android:key="settings_sync_type_disabled_by_administrator"
-        android:title="@string/settings_sync_type_disabled_by_administrator"
+        android:key="settings_sync_disabled_by_administrator"
+        android:title="@string/settings_sync_disabled_by_administrator"
         android:icon="@drawable/ic_business_small"
         app:isPreferenceVisible="false"/>
 
@@ -94,6 +98,7 @@ found in the LICENSE file.
         android:title="@string/account_android_device_accounts"/>
 
     <org.chromium.chrome.browser.ui.signin.SignoutButtonPreference
-        android:key="sign_out_button"/>
+        android:key="sign_out_button"
+        app:allowDividerAbove="false"/>
 
 </PreferenceScreen>

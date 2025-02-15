@@ -15,6 +15,7 @@
 #include <utility>
 
 #include "base/logging.h"
+#include "base/not_fatal_until.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/time/time.h"
 #include "components/google/core/common/google_util.h"
@@ -41,7 +42,7 @@ std::pair<std::string, std::string> GetOriginSearchBounds(const GURL& origin) {
   // '/'. This effectively applies the GLOB optimization by doing it in C++
   // instead of relying on SQLite to do it.
   static_assert('/' + 1 == '0', "");
-  const std::string origin_query_min = origin.DeprecatedGetOriginAsURL().spec();
+  std::string origin_query_min = origin.DeprecatedGetOriginAsURL().spec();
   DCHECK(!origin_query_min.empty());
   DCHECK_EQ('/', origin_query_min.back());
 
@@ -329,7 +330,7 @@ bool VisitDatabase::FillVisitVectorWithOptions(sql::Statement& statement,
         if (!ov.app_id && visit.app_id) {
           auto is_matched = [ov](VisitRow v) { return ov.url_id == v.url_id; };
           auto pos = std::find_if(visits->begin(), visits->end(), is_matched);
-          DCHECK(pos != visits->end());
+          CHECK(pos != visits->end(), base::NotFatalUntil::M130);
           *pos = visit;
           found_urls[visit.url_id] = visit;
         }
@@ -673,18 +674,18 @@ bool VisitDatabase::GetSomeForeignVisits(VisitID max_visit_id,
   visits->clear();
 
   // Exactly all foreign visits (i.e. coming from a different device) have an
-  // `originator_cache_guid` set. (This does *not* include legacy TypedURL
-  // visits though - those have SOURCE_SYNCED but are otherwise not considered
-  // "foreign".)
+  // `originator_cache_guid` set.
   sql::Statement statement(GetDB().GetCachedStatement(
       SQL_FROM_HERE,
       "SELECT" HISTORY_VISIT_ROW_FIELDS
       "FROM visits "
       "WHERE originator_cache_guid IS NOT NULL AND originator_cache_guid != '' "
+      "AND (transition & ?) <> 0 "
       "AND id <= ? "
       "LIMIT ?"));
-  statement.BindInt64(0, max_visit_id);
-  statement.BindInt(1, max_results);
+  statement.BindInt64(0, ui::PAGE_TRANSITION_CHAIN_END);
+  statement.BindInt64(1, max_visit_id);
+  statement.BindInt(2, max_results);
 
   return FillVisitVector(statement, visits);
 }
@@ -1013,37 +1014,6 @@ bool VisitDatabase::GetLastVisitToOrigin(const url::Origin& origin,
   return true;
 }
 
-bool VisitDatabase::GetLastVisitToURL(const GURL& url,
-                                      base::Time end_time,
-                                      base::Time* last_visit) {
-  if (!url.is_valid() || !url.SchemeIsHTTPOrHTTPS())
-    return false;
-
-  sql::Statement statement(GetDB().GetCachedStatement(
-      SQL_FROM_HERE,
-      "SELECT "
-      "  v.visit_time "
-      "FROM visits v INNER JOIN urls u ON v.url = u.id "
-      "WHERE "
-      "  u.url = ? AND "
-      "  v.visit_time < ? "
-      "ORDER BY v.visit_time DESC "
-      "LIMIT 1"));
-  statement.BindString(0, url.spec());
-  statement.BindTime(1, end_time);
-
-  if (!statement.Step()) {
-    // If there are no entries from the statement, the URL may not have been
-    // visited in the given time range. Zero the time result and report the
-    // success of the statement.
-    *last_visit = base::Time();
-    return statement.Succeeded();
-  }
-
-  *last_visit = statement.ColumnTime(0);
-  return true;
-}
-
 DailyVisitsResult VisitDatabase::GetDailyVisitsToHost(const GURL& host,
                                                       base::Time begin_time,
                                                       base::Time end_time) {
@@ -1135,7 +1105,7 @@ void VisitDatabase::GetVisitsSource(const VisitVector& visits,
       sql.append(base::NumberToString(visits[j].visit_id));
     }
     sql.append(") ORDER BY id");
-    sql::Statement statement(GetDB().GetUniqueStatement(sql.c_str()));
+    sql::Statement statement(GetDB().GetUniqueStatement(sql));
 
     // Get the source entries out of the query result.
     while (statement.Step()) {
@@ -1193,10 +1163,19 @@ VisitDatabase::GetGoogleDomainVisitsFromSearchesInRange(base::Time begin_time,
   return domain_visits;
 }
 
+bool VisitDatabase::GetIsUrlKnownToSync(URLID url_id, bool* is_known_to_sync) {
+  sql::Statement statement(
+      GetDB().GetCachedStatement(SQL_FROM_HERE,
+                                 "SELECT 1 FROM visits "
+                                 "WHERE url=? AND is_known_to_sync"));
+  statement.BindInt64(0, url_id);
+  *is_known_to_sync = statement.Step();
+  return true;
+}
+
 bool VisitDatabase::MigrateVisitsWithoutDuration() {
   if (!GetDB().DoesTableExist("visits")) {
-    NOTREACHED_IN_MIGRATION() << " Visits table should exist before migration";
-    return false;
+    NOTREACHED() << " Visits table should exist before migration";
   }
 
   if (!GetDB().DoesColumnExist("visits", "visit_duration")) {
@@ -1212,8 +1191,7 @@ bool VisitDatabase::MigrateVisitsWithoutDuration() {
 
 bool VisitDatabase::MigrateVisitsWithoutIncrementedOmniboxTypedScore() {
   if (!GetDB().DoesTableExist("visits")) {
-    NOTREACHED_IN_MIGRATION() << " Visits table should exist before migration";
-    return false;
+    NOTREACHED() << " Visits table should exist before migration";
   }
 
   if (!GetDB().DoesColumnExist("visits", "incremented_omnibox_typed_score")) {
@@ -1280,8 +1258,7 @@ bool VisitDatabase::MigrateVisitsWithoutIncrementedOmniboxTypedScore() {
 
 bool VisitDatabase::MigrateVisitsWithoutPubliclyRoutableColumn() {
   if (!GetDB().DoesTableExist("visits")) {
-    NOTREACHED_IN_MIGRATION() << " Visits table should exist before migration";
-    return false;
+    NOTREACHED() << " Visits table should exist before migration";
   }
 
   if (GetDB().DoesColumnExist("visits", "publicly_routable"))
@@ -1304,8 +1281,7 @@ bool VisitDatabase::CanMigrateFlocAllowed() {
 bool VisitDatabase::
     MigrateVisitsWithoutOpenerVisitColumnAndDropPubliclyRoutableColumn() {
   if (!GetDB().DoesTableExist("visits")) {
-    NOTREACHED_IN_MIGRATION() << " Visits table should exist before migration";
-    return false;
+    NOTREACHED() << " Visits table should exist before migration";
   }
 
   if (GetDB().DoesColumnExist("visits", "opener_visit"))
@@ -1337,8 +1313,7 @@ bool VisitDatabase::
 
 bool VisitDatabase::MigrateVisitsAutoincrementIdAndAddOriginatorColumns() {
   if (!GetDB().DoesTableExist("visits")) {
-    NOTREACHED_IN_MIGRATION() << " Visits table should exist before migration";
-    return false;
+    NOTREACHED() << " Visits table should exist before migration";
   }
 
   if (GetDB().DoesColumnExist("visits", "originator_cache_guid") &&
@@ -1376,8 +1351,7 @@ bool VisitDatabase::MigrateVisitsAutoincrementIdAndAddOriginatorColumns() {
 
 bool VisitDatabase::MigrateVisitsAddOriginatorFromVisitAndOpenerVisitColumns() {
   if (!GetDB().DoesTableExist("visits")) {
-    NOTREACHED_IN_MIGRATION() << " Visits table should exist before migration";
-    return false;
+    NOTREACHED() << " Visits table should exist before migration";
   }
 
   // Old versions don't have the originator_from_visit or
@@ -1434,8 +1408,7 @@ bool VisitDatabase::GetAllVisitedURLRowidsForMigrationToVersion40(
 
 bool VisitDatabase::MigrateVisitsAddIsKnownToSyncColumn() {
   if (!GetDB().DoesTableExist("visits")) {
-    NOTREACHED_IN_MIGRATION() << " Visits table should exist before migration";
-    return false;
+    NOTREACHED() << " Visits table should exist before migration";
   }
 
   if (!GetDB().DoesColumnExist("visits", "is_known_to_sync")) {
@@ -1458,8 +1431,7 @@ bool VisitDatabase::MigrateVisitsAddIsKnownToSyncColumn() {
 
 bool VisitDatabase::MigrateVisitsAddConsiderForNewTabPageMostVisitedColumn() {
   if (!GetDB().DoesTableExist("visits")) {
-    NOTREACHED_IN_MIGRATION() << " Visits table should exist before migration";
-    return false;
+    NOTREACHED() << " Visits table should exist before migration";
   }
 
   if (!GetDB().DoesColumnExist("visits", "consider_for_ntp_most_visited")) {
@@ -1475,8 +1447,7 @@ bool VisitDatabase::MigrateVisitsAddConsiderForNewTabPageMostVisitedColumn() {
 
 bool VisitDatabase::MigrateVisitsAddExternalReferrerUrlColumn() {
   if (!GetDB().DoesTableExist("visits")) {
-    NOTREACHED_IN_MIGRATION() << " Visits table should exist before migration";
-    return false;
+    NOTREACHED() << " Visits table should exist before migration";
   }
 
   if (!GetDB().DoesColumnExist("visits", "external_referrer_url")) {
@@ -1491,8 +1462,7 @@ bool VisitDatabase::MigrateVisitsAddExternalReferrerUrlColumn() {
 
 bool VisitDatabase::MigrateVisitsAddVisitedLinkIdColumn() {
   if (!GetDB().DoesTableExist("visits")) {
-    NOTREACHED_IN_MIGRATION() << " Visits table should exist before migration";
-    return false;
+    NOTREACHED() << " Visits table should exist before migration";
   }
   if (!GetDB().DoesColumnExist("visits", "visited_link_id")) {
     if (!GetDB().Execute(
@@ -1505,8 +1475,7 @@ bool VisitDatabase::MigrateVisitsAddVisitedLinkIdColumn() {
 
 bool VisitDatabase::MigrateVisitsAddAppId() {
   if (!GetDB().DoesTableExist("visits")) {
-    NOTREACHED_IN_MIGRATION() << " Visits table should exist before migration";
-    return false;
+    NOTREACHED() << " Visits table should exist before migration";
   }
   if (!GetDB().DoesColumnExist("visits", "app_id")) {
     if (!GetDB().Execute("ALTER TABLE visits ADD COLUMN app_id TEXT")) {

@@ -9,6 +9,7 @@
 
 #include "net/dns/host_resolver_manager_unittest.h"
 
+#include <algorithm>
 #include <iterator>
 #include <limits>
 #include <optional>
@@ -28,7 +29,6 @@
 #include "base/memory/ref_counted.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/rand_util.h"
-#include "base/ranges/algorithm.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -396,9 +396,19 @@ const DohProviderEntry& GetDohProviderEntryForTesting(
     std::string_view provider) {
   auto provider_list = DohProviderEntry::GetList();
   auto it =
-      base::ranges::find(provider_list, provider, &DohProviderEntry::provider);
+      std::ranges::find(provider_list, provider, &DohProviderEntry::provider);
   CHECK(it != provider_list.end());
   return **it;
+}
+
+void DisableHostResolverCache(base::test::ScopedFeatureList& feature_list) {
+  // The HappyEyeballsV3 feature depends on the UseHostResolverCache feature.
+  // Disable them together for tests that disables the UseHostResolverCache
+  // feature.
+  feature_list.InitWithFeatures(
+      /*enabled_features=*/{},
+      /*disabled_features=*/{features::kUseHostResolverCache,
+                             features::kHappyEyeballsV3});
 }
 
 }  // namespace
@@ -515,10 +525,17 @@ bool HostResolverManagerTest::GetLastIpv6ProbeResult() {
 
 void HostResolverManagerTest::PopulateCache(const HostCache::Key& key,
                                             IPEndPoint endpoint) {
-  resolver_->CacheResult(resolve_context_->host_cache(), key,
-                         HostCache::Entry(OK, {endpoint}, /*aliases=*/{},
-                                          HostCache::Entry::SOURCE_UNKNOWN),
-                         base::Seconds(1));
+  std::vector<IPEndPoint> endpoints = {endpoint};
+  PopulateCache(key, std::move(endpoints));
+}
+
+void HostResolverManagerTest::PopulateCache(const HostCache::Key& key,
+                                            std::vector<IPEndPoint> endpoints) {
+  resolver_->CacheResult(
+      resolve_context_->host_cache(), key,
+      HostCache::Entry(OK, std::move(endpoints), /*aliases=*/{},
+                       HostCache::Entry::SOURCE_UNKNOWN),
+      base::Seconds(1));
 }
 
 const std::pair<const HostCache::Key, HostCache::Entry>*
@@ -543,6 +560,8 @@ IPEndPoint HostResolverManagerTest::CreateExpected(
 }
 
 TEST_F(HostResolverManagerTest, AsynchronousLookup) {
+  base::test::ScopedFeatureList feature_list(features::kUseHostResolverCache);
+
   proc_->AddRuleForAllFamilies("just.testing", "192.168.1.42");
   proc_->SignalMultiple(1u);
 
@@ -567,6 +586,21 @@ TEST_F(HostResolverManagerTest, AsynchronousLookup) {
                                  HostResolverSource::ANY,
                                  NetworkAnonymizationKey()));
   EXPECT_TRUE(cache_result);
+
+  EXPECT_THAT(resolve_context_->host_resolver_cache()->Lookup(
+                  "just.testing", NetworkAnonymizationKey(), DnsQueryType::A,
+                  HostResolverSource::SYSTEM, /*secure=*/false),
+              Pointee(ExpectHostResolverInternalDataResult(
+                  "just.testing", DnsQueryType::A,
+                  HostResolverInternalResult::Source::kUnknown, _, _,
+                  ElementsAre(CreateExpected("192.168.1.42", 0)))));
+  EXPECT_THAT(resolve_context_->host_resolver_cache()->Lookup(
+                  "just.testing", NetworkAnonymizationKey(), DnsQueryType::AAAA,
+                  HostResolverSource::SYSTEM, /*secure=*/false),
+              Pointee(ExpectHostResolverInternalErrorResult(
+                  "just.testing", DnsQueryType::AAAA,
+                  HostResolverInternalResult::Source::kUnknown, _, _,
+                  ERR_NAME_NOT_RESOLVED)));
 }
 
 // TODO(crbug.com/40181080): Confirm scheme behavior once it affects behavior.
@@ -596,6 +630,71 @@ TEST_F(HostResolverManagerTest, AsynchronousLookupWithScheme) {
                          DnsQueryType::UNSPECIFIED, 0 /* host_resolver_flags */,
                          HostResolverSource::ANY, NetworkAnonymizationKey()));
   EXPECT_TRUE(cache_result);
+}
+
+TEST_F(HostResolverManagerTest, AsynchronousIpv6Lookup) {
+  base::test::ScopedFeatureList feature_list(features::kUseHostResolverCache);
+
+  proc_->AddRuleForAllFamilies("foo.test", "2001:db8:1::");
+  proc_->SignalMultiple(1u);
+
+  ResolveHostResponseHelper response(resolver_->CreateRequest(
+      url::SchemeHostPort(url::kHttpScheme, "foo.test", 80),
+      NetworkAnonymizationKey(), NetLogWithSource(), std::nullopt,
+      resolve_context_.get()));
+
+  EXPECT_THAT(response.result_error(), IsOk());
+  EXPECT_THAT(response.request()->GetEndpointResults(),
+              Pointee(ElementsAre(ExpectEndpointResult(
+                  ElementsAre(CreateExpected("2001:db8:1::", 80))))));
+
+  EXPECT_THAT(resolve_context_->host_resolver_cache()->Lookup(
+                  "foo.test", NetworkAnonymizationKey(), DnsQueryType::A,
+                  HostResolverSource::SYSTEM, /*secure=*/false),
+              Pointee(ExpectHostResolverInternalErrorResult(
+                  "foo.test", DnsQueryType::A,
+                  HostResolverInternalResult::Source::kUnknown, _, _,
+                  ERR_NAME_NOT_RESOLVED)));
+  EXPECT_THAT(resolve_context_->host_resolver_cache()->Lookup(
+                  "foo.test", NetworkAnonymizationKey(), DnsQueryType::AAAA,
+                  HostResolverSource::SYSTEM, /*secure=*/false),
+              Pointee(ExpectHostResolverInternalDataResult(
+                  "foo.test", DnsQueryType::AAAA,
+                  HostResolverInternalResult::Source::kUnknown, _, _,
+                  ElementsAre(CreateExpected("2001:db8:1::", 0)))));
+}
+
+TEST_F(HostResolverManagerTest, AsynchronousAllFamilyLookup) {
+  base::test::ScopedFeatureList feature_list(features::kUseHostResolverCache);
+
+  proc_->AddRuleForAllFamilies("foo.test", "192.168.1.43,2001:db8:2::");
+  proc_->SignalMultiple(1u);
+
+  ResolveHostResponseHelper response(resolver_->CreateRequest(
+      url::SchemeHostPort(url::kHttpScheme, "foo.test", 80),
+      NetworkAnonymizationKey(), NetLogWithSource(), std::nullopt,
+      resolve_context_.get()));
+
+  EXPECT_THAT(response.result_error(), IsOk());
+  EXPECT_THAT(response.request()->GetEndpointResults(),
+              Pointee(ElementsAre(ExpectEndpointResult(
+                  UnorderedElementsAre(CreateExpected("2001:db8:2::", 80),
+                                       CreateExpected("192.168.1.43", 80))))));
+
+  EXPECT_THAT(resolve_context_->host_resolver_cache()->Lookup(
+                  "foo.test", NetworkAnonymizationKey(), DnsQueryType::A,
+                  HostResolverSource::SYSTEM, /*secure=*/false),
+              Pointee(ExpectHostResolverInternalDataResult(
+                  "foo.test", DnsQueryType::A,
+                  HostResolverInternalResult::Source::kUnknown, _, _,
+                  ElementsAre(CreateExpected("192.168.1.43", 0)))));
+  EXPECT_THAT(resolve_context_->host_resolver_cache()->Lookup(
+                  "foo.test", NetworkAnonymizationKey(), DnsQueryType::AAAA,
+                  HostResolverSource::SYSTEM, /*secure=*/false),
+              Pointee(ExpectHostResolverInternalDataResult(
+                  "foo.test", DnsQueryType::AAAA,
+                  HostResolverInternalResult::Source::kUnknown, _, _,
+                  ElementsAre(CreateExpected("2001:db8:2::", 0)))));
 }
 
 TEST_F(HostResolverManagerTest, JobsClearedOnCompletion) {
@@ -830,6 +929,10 @@ TEST_F(HostResolverManagerTest, FailedAsynchronousLookup) {
                                  HostResolverSource::ANY,
                                  NetworkAnonymizationKey()));
   EXPECT_FALSE(cache_result);
+
+  // Expect system resolve failures never cached.
+  EXPECT_FALSE(resolve_context_->host_resolver_cache()->Lookup(
+      "just.testing", NetworkAnonymizationKey()));
 }
 
 TEST_F(HostResolverManagerTest, AbortedAsynchronousLookup) {
@@ -1514,9 +1617,11 @@ void HostResolverManagerTest::FlushCacheOnIPAddressChangeTest(bool is_async) {
 // Test that IP address changes flush the cache but initial DNS config reads
 // do not.
 TEST_F(HostResolverManagerTest, FlushCacheOnIPAddressChangeAsync) {
+  base::test::ScopedFeatureList feature_list(features::kUseHostResolverCache);
   FlushCacheOnIPAddressChangeTest(true);
 }
 TEST_F(HostResolverManagerTest, FlushCacheOnIPAddressChangeSync) {
+  base::test::ScopedFeatureList feature_list(features::kUseHostResolverCache);
   FlushCacheOnIPAddressChangeTest(false);
 }
 
@@ -2630,6 +2735,8 @@ TEST_F(HostResolverManagerTest, StartIPv6ReachabilityCheck) {
 }
 
 TEST_F(HostResolverManagerTest, IncludeCanonicalName) {
+  base::test::ScopedFeatureList feature_list(features::kUseHostResolverCache);
+
   proc_->AddRuleForAllFamilies("just.testing", "192.168.1.42",
                                HOST_RESOLVER_CANONNAME, "canon.name");
   proc_->SignalMultiple(2u);
@@ -2652,6 +2759,35 @@ TEST_F(HostResolverManagerTest, IncludeCanonicalName) {
           testing::ElementsAre(CreateExpected("192.168.1.42", 80))))));
   EXPECT_THAT(response.request()->GetDnsAliasResults(),
               testing::Pointee(testing::UnorderedElementsAre("canon.name")));
+
+  EXPECT_THAT(
+      resolve_context_->host_resolver_cache()->Lookup(
+          "just.testing", NetworkAnonymizationKey(), DnsQueryType::A,
+          HostResolverSource::SYSTEM, /*secure=*/false),
+      Pointee(ExpectHostResolverInternalAliasResult(
+          "just.testing", DnsQueryType::A,
+          HostResolverInternalResult::Source::kUnknown, _, _, "canon.name")));
+  EXPECT_THAT(
+      resolve_context_->host_resolver_cache()->Lookup(
+          "just.testing", NetworkAnonymizationKey(), DnsQueryType::AAAA,
+          HostResolverSource::SYSTEM, /*secure=*/false),
+      Pointee(ExpectHostResolverInternalAliasResult(
+          "just.testing", DnsQueryType::AAAA,
+          HostResolverInternalResult::Source::kUnknown, _, _, "canon.name")));
+  EXPECT_THAT(resolve_context_->host_resolver_cache()->Lookup(
+                  "canon.name", NetworkAnonymizationKey(), DnsQueryType::A,
+                  HostResolverSource::SYSTEM, /*secure=*/false),
+              Pointee(ExpectHostResolverInternalDataResult(
+                  "canon.name", DnsQueryType::A,
+                  HostResolverInternalResult::Source::kUnknown, _, _,
+                  ElementsAre(CreateExpected("192.168.1.42", 0)))));
+  EXPECT_THAT(resolve_context_->host_resolver_cache()->Lookup(
+                  "canon.name", NetworkAnonymizationKey(), DnsQueryType::AAAA,
+                  HostResolverSource::SYSTEM, /*secure=*/false),
+              Pointee(ExpectHostResolverInternalErrorResult(
+                  "canon.name", DnsQueryType::AAAA,
+                  HostResolverInternalResult::Source::kUnknown, _, _,
+                  ERR_NAME_NOT_RESOLVED)));
 
   EXPECT_THAT(response_no_flag.result_error(), IsError(ERR_NAME_NOT_RESOLVED));
 }
@@ -4651,9 +4787,9 @@ TEST_F(HostResolverManagerDnsTest, LocalhostLookup) {
 TEST_F(HostResolverManagerDnsTest, LocalhostLookupWithHosts) {
   DnsHosts hosts;
   hosts[DnsHostsKey("localhost", ADDRESS_FAMILY_IPV4)] =
-      IPAddress({192, 168, 1, 1});
+      IPAddress(base::span<const uint8_t>({192, 168, 1, 1}));
   hosts[DnsHostsKey("foo.localhost", ADDRESS_FAMILY_IPV4)] =
-      IPAddress({192, 168, 1, 2});
+      IPAddress(base::span<const uint8_t>({192, 168, 1, 2}));
 
   DnsConfig config = CreateValidDnsConfig();
   config.hosts = hosts;
@@ -7431,7 +7567,7 @@ TEST_F(HostResolverManagerDnsTest, NotFoundTtl) {
 
 TEST_F(HostResolverManagerDnsTest, NotFoundTtlWithHostCache) {
   base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndDisableFeature(features::kUseHostResolverCache);
+  DisableHostResolverCache(feature_list);
 
   CreateResolver();
   set_allow_fallback_to_systemtask(false);
@@ -8494,8 +8630,8 @@ TEST_F(HostResolverManagerDnsTest, DohMappingWithExclusion) {
   base::test::ScopedFeatureList feature_list;
   feature_list.InitWithFeatures(
       /*enabled_features=*/{}, /*disabled_features=*/{
-          GetDohProviderEntryForTesting("CleanBrowsingSecure").feature,
-          GetDohProviderEntryForTesting("Cloudflare").feature});
+          GetDohProviderEntryForTesting("CleanBrowsingSecure").feature.get(),
+          GetDohProviderEntryForTesting("Cloudflare").feature.get()});
 
   // Create a DnsConfig containing IP addresses associated with Cloudflare,
   // SafeBrowsing family filter, SafeBrowsing security filter, and other IPs
@@ -8854,8 +8990,8 @@ TEST_F(HostResolverManagerDnsTest, TxtQuery) {
                   "foo1", "foo2", "foo3", "bar1", "bar2")));
   const std::vector<std::string>* results =
       response.request()->GetTextResults();
-  EXPECT_NE(results->end(), base::ranges::search(*results, foo_records));
-  EXPECT_NE(results->end(), base::ranges::search(*results, bar_records));
+  EXPECT_NE(results->end(), std::ranges::search(*results, foo_records).begin());
+  EXPECT_NE(results->end(), std::ranges::search(*results, bar_records).begin());
 
   // Expect result to be cached.
   EXPECT_EQ(resolve_context_->host_cache()->size(), 1u);
@@ -8868,8 +9004,8 @@ TEST_F(HostResolverManagerDnsTest, TxtQuery) {
               testing::Pointee(testing::UnorderedElementsAre(
                   "foo1", "foo2", "foo3", "bar1", "bar2")));
   results = cached_response.request()->GetTextResults();
-  EXPECT_NE(results->end(), base::ranges::search(*results, foo_records));
-  EXPECT_NE(results->end(), base::ranges::search(*results, bar_records));
+  EXPECT_NE(results->end(), std::ranges::search(*results, foo_records).begin());
+  EXPECT_NE(results->end(), std::ranges::search(*results, bar_records).begin());
 }
 
 TEST_F(HostResolverManagerDnsTest, TxtQueryRejectsIpLiteral) {
@@ -9322,8 +9458,8 @@ TEST_F(HostResolverManagerDnsTest, TxtDnsQuery) {
                   "foo1", "foo2", "foo3", "bar1", "bar2")));
   const std::vector<std::string>* results =
       response.request()->GetTextResults();
-  EXPECT_NE(results->end(), base::ranges::search(*results, foo_records));
-  EXPECT_NE(results->end(), base::ranges::search(*results, bar_records));
+  EXPECT_NE(results->end(), std::ranges::search(*results, foo_records).begin());
+  EXPECT_NE(results->end(), std::ranges::search(*results, bar_records).begin());
 
   // Expect result to be cached.
   EXPECT_EQ(resolve_context_->host_cache()->size(), 1u);
@@ -9336,8 +9472,8 @@ TEST_F(HostResolverManagerDnsTest, TxtDnsQuery) {
               testing::Pointee(testing::UnorderedElementsAre(
                   "foo1", "foo2", "foo3", "bar1", "bar2")));
   results = cached_response.request()->GetTextResults();
-  EXPECT_NE(results->end(), base::ranges::search(*results, foo_records));
-  EXPECT_NE(results->end(), base::ranges::search(*results, bar_records));
+  EXPECT_NE(results->end(), std::ranges::search(*results, foo_records).begin());
+  EXPECT_NE(results->end(), std::ranges::search(*results, bar_records).begin());
 }
 
 TEST_F(HostResolverManagerDnsTest, PtrQuery) {
@@ -13374,7 +13510,7 @@ TEST_F(HostResolverManagerDnsTest, ResultsAreSorted) {
 
 TEST_F(HostResolverManagerDnsTest, ResultsAreSortedWithHostCache) {
   base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndDisableFeature(features::kUseHostResolverCache);
+  DisableHostResolverCache(feature_list);
 
   // When using HostCache, expect sorter to be called once for all address
   // results together (AAAA before A).
@@ -13457,7 +13593,7 @@ TEST_F(HostResolverManagerDnsTest, Ipv4OnlyResultsAreSorted) {
 
 TEST_F(HostResolverManagerDnsTest, Ipv4OnlyResultsNotSortedWithHostCache) {
   base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndDisableFeature(features::kUseHostResolverCache);
+  DisableHostResolverCache(feature_list);
 
   // When using HostCache, expect no sort calls for IPv4-only results.
   auto sorter = std::make_unique<testing::StrictMock<MockAddressSorter>>();
@@ -13517,7 +13653,7 @@ TEST_F(HostResolverManagerDnsTest, EmptyResultsNotSorted) {
 
 TEST_F(HostResolverManagerDnsTest, EmptyResultsNotSortedWithHostCache) {
   base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndDisableFeature(features::kUseHostResolverCache);
+  DisableHostResolverCache(feature_list);
 
   // Expect no calls to sorter for empty results.
   auto sorter = std::make_unique<testing::StrictMock<MockAddressSorter>>();
@@ -13590,7 +13726,7 @@ TEST_F(HostResolverManagerDnsTest, ResultsSortedAsUnreachable) {
 // Test for when AddressSorter removes all results.
 TEST_F(HostResolverManagerDnsTest, ResultsSortedAsUnreachableWithHostCache) {
   base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndDisableFeature(features::kUseHostResolverCache);
+  DisableHostResolverCache(feature_list);
 
   // Set up sorter to return result with no addresses.
   auto sorter = std::make_unique<testing::StrictMock<MockAddressSorter>>();
@@ -13782,7 +13918,7 @@ TEST_F(HostResolverManagerDnsTest, PartialSortFailure) {
 
 TEST_F(HostResolverManagerDnsTest, SortFailureWithHostCache) {
   base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndDisableFeature(features::kUseHostResolverCache);
+  DisableHostResolverCache(feature_list);
 
   // Fail the sort.
   auto sorter = std::make_unique<testing::StrictMock<MockAddressSorter>>();

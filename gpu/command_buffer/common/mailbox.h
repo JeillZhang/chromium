@@ -55,6 +55,9 @@ struct COMPONENT_EXPORT(GPU_MAILBOX) Mailbox {
   // check, only to catch bugs where clients forgot to call Mailbox::Generate.
   bool Verify() const;
 
+  // Returns the first four bytes of the mailbox name as an unsigned integer.
+  uint32_t ToU32() const;
+
   std::string ToDebugString() const;
 
   bool operator==(const Mailbox& other) const;
@@ -70,10 +73,7 @@ struct std::hash<gpu::Mailbox> {
   std::size_t operator()(const gpu::Mailbox& m) const noexcept {
     // As the name is cryptographically random bytes, the first few bytes
     // should be more than sufficient as a hash.
-    return static_cast<size_t>(m.name[0]) |
-           (static_cast<size_t>(m.name[1]) << 8) |
-           (static_cast<size_t>(m.name[2]) << 16) |
-           (static_cast<size_t>(m.name[3]) << 24);
+    return m.ToU32();
   }
 };
 

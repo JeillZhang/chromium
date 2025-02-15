@@ -4,11 +4,11 @@
 
 #include "components/autofill/core/browser/data_model/autofill_i18n_api.h"
 
+#include <algorithm>
 #include <string>
 #include <type_traits>
 
 #include "base/containers/contains.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/scoped_feature_list.h"
 #include "components/autofill/core/browser/data_model/autofill_i18n_formatting_expressions.h"
@@ -23,7 +23,6 @@
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace autofill::i18n_model_definition {
-
 namespace {
 
 // Checks that the AddressComponent graph has no cycles.
@@ -38,24 +37,24 @@ bool IsTree(AddressComponent* node, FieldTypeSet* visited_types) {
   if (node->Subcomponents().empty()) {
     return true;
   }
-  return base::ranges::all_of(node->Subcomponents(),
-                              [&visited_types](AddressComponent* child) {
-                                return IsTree(child, visited_types);
-                              });
+  return std::ranges::all_of(node->Subcomponents(),
+                             [&visited_types](AddressComponent* child) {
+                               return IsTree(child, visited_types);
+                             });
 }
-}  // namespace
 
 class AutofillI18nApiTest : public testing::Test {
  public:
   AutofillI18nApiTest() {
     feature_list_.InitWithFeatures(
         {
-            features::kAutofillUseI18nAddressModel,
             features::kAutofillUseAUAddressModel,
-            features::kAutofillUseBRAddressModel,
+            features::kAutofillUseCAAddressModel,
             features::kAutofillUseDEAddressModel,
+            features::kAutofillUseFRAddressModel,
             features::kAutofillUseINAddressModel,
-            features::kAutofillUseMXAddressModel,
+            features::kAutofillUseITAddressModel,
+            features::kAutofillUseNLAddressModel,
             features::kAutofillUsePLAddressModel,
         },
         {});
@@ -74,8 +73,7 @@ TEST_F(AutofillI18nApiTest, GetAddressComponentModel_ReturnsNonEmptyModel) {
     AddressComponentsStore model =
         CreateAddressComponentModel(AddressCountryCode(country_code));
 
-    FieldTypeSet field_type_set;
-    model.Root()->GetSupportedTypes(&field_type_set);
+    FieldTypeSet field_type_set = model.Root()->GetSupportedTypes();
     EXPECT_FALSE(field_type_set.empty());
     EXPECT_FALSE(field_type_set.contains_any(
         {NO_SERVER_DATA, UNKNOWN_TYPE, EMPTY_TYPE}));
@@ -179,25 +177,6 @@ TEST_F(AutofillI18nApiTest, ParseValueByI18nRegularExpression) {
                                               kLegacyHierarchyCountryCode));
 }
 
-TEST_F(AutofillI18nApiTest, GetStopwordsExpression) {
-  // The expected values are contained in `kAutofillModelStopwords`.
-  EXPECT_EQ(u"Ponto de referência:",
-            GetStopwordsExpression(ADDRESS_HOME_OVERFLOW_AND_LANDMARK,
-                                   AddressCountryCode("BR")));
-  EXPECT_EQ(u"Andar", GetStopwordsExpression(ADDRESS_HOME_SUBPREMISE,
-                                             AddressCountryCode("BR")));
-  EXPECT_EQ(u"Entre Calles",
-            GetStopwordsExpression(ADDRESS_HOME_BETWEEN_STREETS_OR_LANDMARK,
-                                   AddressCountryCode("MX")));
-  EXPECT_EQ(u"Apt\\.|Floor", GetStopwordsExpression(ADDRESS_HOME_SUBPREMISE,
-                                                    AddressCountryCode("XX")));
-  EXPECT_EQ(std::nullopt, GetStopwordsExpression(ADDRESS_HOME_OVERFLOW,
-                                                 AddressCountryCode("MX")));
-  EXPECT_EQ(std::nullopt,
-            GetStopwordsExpression(ADDRESS_HOME_BETWEEN_STREETS_OR_LANDMARK,
-                                   AddressCountryCode("")));
-}
-
 TEST_F(AutofillI18nApiTest, IsTypeEnabledForCountry) {
   CountryDataMap* country_data_map = CountryDataMap::GetInstance();
   for (const std::string& country_code : country_data_map->country_codes()) {
@@ -250,15 +229,11 @@ TEST_F(AutofillI18nApiTest, SynthesizedTypesAreSupportedButNotStorable) {
   AddressComponentsStore store =
       CreateAddressComponentModel(AddressCountryCode("IN"));
 
-  FieldTypeSet field_type_set;
-  store.Root()->GetStorableTypes(&field_type_set);
-  EXPECT_FALSE(
-      field_type_set.contains(ADDRESS_HOME_DEPENDENT_LOCALITY_AND_LANDMARK));
+  EXPECT_FALSE(store.Root()->GetStorableTypes().contains(
+      ADDRESS_HOME_DEPENDENT_LOCALITY_AND_LANDMARK));
 
-  field_type_set.clear();
-  store.Root()->GetSupportedTypes(&field_type_set);
-  EXPECT_TRUE(
-      field_type_set.contains(ADDRESS_HOME_DEPENDENT_LOCALITY_AND_LANDMARK));
+  EXPECT_TRUE(store.Root()->GetSupportedTypes().contains(
+      ADDRESS_HOME_DEPENDENT_LOCALITY_AND_LANDMARK));
 }
 
 TEST_F(AutofillI18nApiTest, SynthesizedTypesDoNotSupportSetValueForType) {
@@ -278,4 +253,5 @@ TEST_F(AutofillI18nApiTest, SynthesizedTypesDoNotSupportSetValueForType) {
   EXPECT_EQ(u"foo", store.Root()->GetValueForType(normal_type));
 }
 
+}  // namespace
 }  // namespace autofill::i18n_model_definition

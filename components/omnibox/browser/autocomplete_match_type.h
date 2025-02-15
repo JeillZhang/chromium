@@ -28,6 +28,7 @@ struct AutocompleteMatchType {
   //
   // Any changes to this enum also requires an update to:
   //  - `AutocompleteMatch::GetOmniboxEventResultType()`
+  //  - `AutocompleteMatch::GetVectorIcon()`
   //  - `GetClientSummarizedResultType()`
   //  - `AutocompleteMatchType::ToString()`
   //  - `AutocompleteMatchType::GetAccessibilityBaseLabel()`
@@ -36,8 +37,8 @@ struct AutocompleteMatchType {
     HISTORY_URL           = 1,  // A past page whose URL contains the input.
     HISTORY_TITLE         = 2,  // A past page whose title contains the input.
     HISTORY_BODY          = 3,  // A past page whose body contains the input.
-    HISTORY_KEYWORD       = 4,  // A past page whose keyword contains the
-                                // input.
+    HISTORY_KEYWORD [[deprecated]] = 4,  // A past page whose keyword contains
+                                         // the input (deprecated).
     NAVSUGGEST            = 5,  // A suggested URL.
     SEARCH_WHAT_YOU_TYPED = 6,  // The input as a search query (with the
                                 // default engine).
@@ -96,6 +97,7 @@ struct AutocompleteMatchType {
                                        // similar embeddings to the query.
     FEATURED_ENTERPRISE_SEARCH  = 37,  // Site search engines featured by
                                        // Enterprise policy.
+    HISTORY_EMBEDDINGS_ANSWER = 38,
     NUM_TYPES,
   };
   // clang-format on

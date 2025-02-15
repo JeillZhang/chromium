@@ -17,12 +17,14 @@ MessagePumpIOSForIO::FdWatchController::~FdWatchController() {
 }
 
 bool MessagePumpIOSForIO::FdWatchController::StopWatchingFileDescriptor() {
-  if (fdref_ == NULL)
+  if (fdref_ == NULL) {
     return true;
+  }
 
   CFFileDescriptorDisableCallBacks(fdref_.get(), callback_types_);
-  if (pump_)
+  if (pump_) {
     pump_->RemoveRunLoopSource(fd_source_);
+  }
   fd_source_.reset();
   fdref_.reset();
   callback_types_ = 0;
@@ -58,11 +60,9 @@ void MessagePumpIOSForIO::FdWatchController::OnFileCanWriteWithoutBlocking(
   watcher_->OnFileCanWriteWithoutBlocking(fd);
 }
 
-MessagePumpIOSForIO::MessagePumpIOSForIO() : weak_factory_(this) {
-}
+MessagePumpIOSForIO::MessagePumpIOSForIO() = default;
 
-MessagePumpIOSForIO::~MessagePumpIOSForIO() {
-}
+MessagePumpIOSForIO::~MessagePumpIOSForIO() = default;
 
 bool MessagePumpIOSForIO::WatchFileDescriptor(int fd,
                                               bool persistent,
@@ -95,8 +95,7 @@ bool MessagePumpIOSForIO::WatchFileDescriptor(int fd,
         CFFileDescriptorCreate(kCFAllocatorDefault, fd, false, HandleFdIOEvent,
                                &source_context));
     if (scoped_fdref == NULL) {
-      NOTREACHED_IN_MIGRATION() << "CFFileDescriptorCreate failed";
-      return false;
+      NOTREACHED() << "CFFileDescriptorCreate failed";
     }
 
     CFFileDescriptorEnableCallBacks(scoped_fdref, callback_types);
@@ -106,8 +105,7 @@ bool MessagePumpIOSForIO::WatchFileDescriptor(int fd,
         CFFileDescriptorCreateRunLoopSource(kCFAllocatorDefault, scoped_fdref,
                                             0));
     if (scoped_fd_source == NULL) {
-      NOTREACHED_IN_MIGRATION() << "CFFileDescriptorCreateRunLoopSource failed";
-      return false;
+      NOTREACHED() << "CFFileDescriptorCreateRunLoopSource failed";
     }
     CFRunLoopAddSource(run_loop(), scoped_fd_source, kCFRunLoopCommonModes);
 
@@ -118,14 +116,12 @@ bool MessagePumpIOSForIO::WatchFileDescriptor(int fd,
     // It's illegal to use this function to listen on 2 separate fds with the
     // same |controller|.
     if (CFFileDescriptorGetNativeDescriptor(fdref) != fd) {
-      NOTREACHED_IN_MIGRATION()
-          << "FDs don't match: " << CFFileDescriptorGetNativeDescriptor(fdref)
-          << " != " << fd;
-      return false;
+      NOTREACHED() << "FDs don't match: "
+                   << CFFileDescriptorGetNativeDescriptor(fdref)
+                   << " != " << fd;
     }
     if (persistent != controller->is_persistent_) {
-      NOTREACHED_IN_MIGRATION() << "persistent doesn't match";
-      return false;
+      NOTREACHED() << "persistent doesn't match";
     }
 
     // Combine old/new event masks.
@@ -168,8 +164,9 @@ void MessagePumpIOSForIO::HandleFdIOEvent(CFFileDescriptorRef fdref,
     scoped_do_work_item = pump->delegate()->BeginWorkItem();
   }
 
-  if (callback_types & kCFFileDescriptorWriteCallBack)
+  if (callback_types & kCFFileDescriptorWriteCallBack) {
     controller->OnFileCanWriteWithoutBlocking(fd, pump);
+  }
 
   // Perform the read callback only if the file descriptor has not been
   // invalidated in the write callback. As |FdWatchController| invalidates

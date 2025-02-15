@@ -34,8 +34,9 @@ const char* TabbedWebAppNavigationThrottle::GetNameForLogging() {
 std::unique_ptr<content::NavigationThrottle>
 TabbedWebAppNavigationThrottle::MaybeCreateThrottleFor(
     content::NavigationHandle* handle) {
-  if (!handle->IsInPrimaryMainFrame())
+  if (!handle->IsInPrimaryMainFrame()) {
     return nullptr;
+  }
 
   // Reloading the page should not cause the tab to change.
   if (handle->GetReloadType() != content::ReloadType::NONE) {
@@ -45,22 +46,22 @@ TabbedWebAppNavigationThrottle::MaybeCreateThrottleFor(
   content::WebContents* web_contents = handle->GetWebContents();
 
   Browser* browser = chrome::FindBrowserWithTab(web_contents);
-  if (!browser || !browser->app_controller())
+  if (!browser || !browser->app_controller()) {
     return nullptr;
+  }
 
   WebAppProvider* provider = WebAppProvider::GetForWebContents(web_contents);
-  if (!provider)
+  if (!provider) {
     return nullptr;
+  }
 
   const webapps::AppId& app_id = browser->app_controller()->app_id();
 
   std::optional<GURL> home_tab_url =
       provider->registrar_unsafe().GetAppPinnedHomeTabUrl(app_id);
 
-  auto* tab_helper = WebAppTabHelper::FromWebContents(web_contents);
-
   // Only create the throttle for tabbed web apps that have a home tab.
-  if (tab_helper && tab_helper->acting_as_app() &&
+  if (WebAppTabHelper::GetAppId(web_contents) &&
       provider->registrar_unsafe().IsTabbedWindowModeEnabled(app_id) &&
       home_tab_url.has_value()) {
     return std::make_unique<TabbedWebAppNavigationThrottle>(handle);
@@ -137,7 +138,7 @@ TabbedWebAppNavigationThrottle::FocusHomeTab() {
   content::OpenURLParams params =
       content::OpenURLParams::FromNavigationHandle(navigation_handle());
   params.disposition = WindowOpenDisposition::CURRENT_TAB;
-  params.frame_tree_node_id = content::RenderFrameHost::kNoFrameTreeNodeId;
+  params.frame_tree_node_id = content::FrameTreeNodeId();
 
   if (params.url != tab_strip->GetWebContentsAt(0)->GetLastCommittedURL()) {
     // Only do the navigation if the URL has changed.

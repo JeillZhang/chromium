@@ -2,10 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import 'chrome://os-settings/os_settings.js';
+import 'chrome://os-settings/lazy_load.js';
 import 'chrome://resources/polymer/v3_0/iron-test-helpers/mock-interactions.js';
 
-import {CrLinkRowElement, FakeInputDeviceSettingsProvider, fakeKeyboards, Keyboard, MetaKey, PolicyStatus, Router, routes, setInputDeviceSettingsProviderForTesting, SettingsPerDeviceKeyboardSubsectionElement, SettingsSliderElement, SettingsToggleButtonElement} from 'chrome://os-settings/os_settings.js';
+import type {SettingsPerDeviceKeyboardSubsectionElement} from 'chrome://os-settings/lazy_load.js';
+import type {CrLinkRowElement, Keyboard, SettingsSliderElement, SettingsToggleButtonElement} from 'chrome://os-settings/os_settings.js';
+import {FakeInputDeviceSettingsProvider, fakeKeyboards, MetaKey, PolicyStatus, Router, routes, setInputDeviceSettingsProviderForTesting} from 'chrome://os-settings/os_settings.js';
 import {loadTimeData} from 'chrome://resources/ash/common/load_time_data.m.js';
 import {assert} from 'chrome://resources/js/assert.js';
 import {assertEquals, assertFalse, assertTrue} from 'chrome://webui-test/chai_assert.js';
@@ -602,5 +604,67 @@ suite('<settings-per-device-keyboard-subsection>', () => {
     slider.dispatchEvent(new KeyboardEvent('keyup', {key: 'Enter'}));
     assertEquals(
         2, provider.getRecordKeyboardBrightnessChangeFromSliderCallCount());
+  });
+
+  test('Observe lid state change for internal keyboard', async () => {
+    // Set keyboard to internal state.
+    await changeIsExternalState(false);
+    let subsectionHeader =
+        subsection.shadowRoot!.querySelector<HTMLElement>('#subsectionHeader');
+    let subsectionBody =
+        subsection.shadowRoot!.querySelector<HTMLElement>('.subsection');
+
+    // Subsection header and body should be present.
+    assertTrue(!!subsectionHeader);
+    assertTrue(!!subsectionBody);
+
+    // Simulate lid close.
+    provider.setLidStateClosed();
+    await flushTasks();
+
+    // Subsection header and body should be hidden.
+    subsectionHeader =
+        subsection.shadowRoot!.querySelector<HTMLElement>('#subsectionHeader');
+    subsectionBody =
+        subsection.shadowRoot!.querySelector<HTMLElement>('.subsection');
+    assertFalse(!!subsectionHeader);
+    assertFalse(!!subsectionBody);
+
+    // Simulate lid open.
+    provider.setLidStateOpen();
+    await flushTasks();
+
+    // Subsection header and body should be visible again.
+    subsectionHeader =
+        subsection.shadowRoot!.querySelector<HTMLElement>('#subsectionHeader');
+    subsectionBody =
+        subsection.shadowRoot!.querySelector<HTMLElement>('.subsection');
+    assertTrue(!!subsectionHeader);
+    assertTrue(!!subsectionBody);
+  });
+
+  test('Observe lid state change for external keyboard', async () => {
+    // Set keyboard to external state.
+    await changeIsExternalState(true);
+
+    // Subsection header and body should be present.
+    let subsectionHeader =
+        subsection.shadowRoot!.querySelector<HTMLElement>('#subsectionHeader');
+    let subsectionBody =
+        subsection.shadowRoot!.querySelector<HTMLElement>('.subsection');
+    assertTrue(!!subsectionHeader);
+    assertTrue(!!subsectionBody);
+
+    // Simulate lid close.
+    provider.setLidStateClosed();
+    await flushTasks();
+
+    // Subsection header and body should still be present.
+    subsectionHeader =
+        subsection.shadowRoot!.querySelector<HTMLElement>('#subsectionHeader');
+    subsectionBody =
+        subsection.shadowRoot!.querySelector<HTMLElement>('.subsection');
+    assertTrue(!!subsectionHeader);
+    assertTrue(!!subsectionBody);
   });
 });

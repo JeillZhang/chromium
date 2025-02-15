@@ -31,7 +31,6 @@
 #include "services/image_annotation/public/mojom/image_annotation.mojom-forward.h"
 #include "services/metrics/public/cpp/mojo_ukm_recorder.h"
 #include "services/metrics/public/cpp/ukm_builders.h"
-#include "third_party/blink/public/strings/grit/blink_accessibility_strings.h"
 #include "third_party/blink/public/web/web_ax_object.h"
 #include "third_party/blink/public/web/web_document.h"
 #include "third_party/blink/public/web/web_element.h"
@@ -44,6 +43,7 @@
 #include "ui/base/models/image_model.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/geometry/transform.h"
+#include "ui/strings/grit/auto_image_annotation_strings.h"
 #include "url/gurl.h"
 
 using blink::WebAXObject;
@@ -51,7 +51,6 @@ using blink::WebDocument;
 using blink::WebElement;
 using blink::WebNode;
 using blink::WebString;
-using blink::WebVector;
 
 namespace content {
 
@@ -220,7 +219,7 @@ void AXImageAnnotator::EnableAnnotations() {
   mojo::PendingRemote<image_annotation::mojom::Annotator> annotator;
   render_accessibility_->render_frame()
       ->GetBrowserInterfaceBroker()
-      ->GetInterface(annotator.InitWithNewPipeAndPassReceiver());
+      .GetInterface(annotator.InitWithNewPipeAndPassReceiver());
   annotator_remote_.Bind(std::move(annotator));
 }
 
@@ -306,7 +305,7 @@ void AXImageAnnotator::AddImageAnnotationsForNode(WebAXObject& src,
   // Reject images that are explicitly empty, or that have a
   // meaningful name already.
   ax::mojom::NameFrom name_from;
-  WebVector<WebAXObject> name_objects;
+  std::vector<WebAXObject> name_objects;
   WebString web_name = src.GetName(name_from, name_objects);
 
   // If an image has a nonempty name, compute whether we should add an
@@ -759,7 +758,7 @@ void AXImageAnnotator::OnImageAnnotated(
   // as a function of whether the retrieved image label was
   // a success, an error, or empty.
   ax::mojom::NameFrom name_from;
-  blink::WebVector<blink::WebAXObject> name_objects;
+  std::vector<blink::WebAXObject> name_objects;
   blink::WebString web_name = image.GetName(name_from, name_objects);
   int non_stop_length = GetLengthAfterRemovingStopwords(web_name.Utf8());
 

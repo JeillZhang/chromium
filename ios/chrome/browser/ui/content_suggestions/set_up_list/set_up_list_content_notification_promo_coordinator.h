@@ -6,10 +6,8 @@
 #define IOS_CHROME_BROWSER_UI_CONTENT_SUGGESTIONS_SET_UP_LIST_SET_UP_LIST_CONTENT_NOTIFICATION_PROMO_COORDINATOR_H_
 
 #import "ios/chrome/browser/shared/coordinator/chrome_coordinator/chrome_coordinator.h"
-
 #import "ios/chrome/common/ui/promo_style/promo_style_view_controller_delegate.h"
 
-@protocol NotificationsConfirmationPresenter;
 @protocol SetUpListContentNotificationPromoCoordinatorDelegate;
 
 // Enum actions for content notification promo action UMA metrics. Entries
@@ -72,10 +70,6 @@ enum class ContentNotificationPromptAction {
 @property(nonatomic, weak)
     id<SetUpListContentNotificationPromoCoordinatorDelegate>
         delegate;
-
-// The presenter displays the notification confirmation message.
-@property(nonatomic, weak) id<NotificationsConfirmationPresenter>
-    messagePresenter;
 
 @end
 

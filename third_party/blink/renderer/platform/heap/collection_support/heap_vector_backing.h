@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_HEAP_COLLECTION_SUPPORT_HEAP_VECTOR_BACKING_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_HEAP_COLLECTION_SUPPORT_HEAP_VECTOR_BACKING_H_
 
@@ -223,6 +228,15 @@ struct TraceTrait<blink::HeapVectorBacking<T, Traits>> {
   }
 
   static void Trace(Visitor* visitor, const void* self) {
+    static_assert(!WTF::IsWeak<T>::value,
+                  "Weakness is not supported in HeapVector and HeapDeque");
+
+    // Early bailout for non-traceable types. `GetTraceDescriptor()` doesn't
+    // support returning a null callback, so this is the best we can do for now.
+    if (!WTF::IsTraceable<T>::value) {
+      return;
+    }
+
     if (!Traits::kCanTraceConcurrently && self) {
       if (visitor->DeferTraceToMutatorThreadIfConcurrent(
               self, &Trace,
@@ -232,13 +246,9 @@ struct TraceTrait<blink::HeapVectorBacking<T, Traits>> {
       }
     }
 
-    static_assert(!WTF::IsWeak<T>::value,
-                  "Weakness is not supported in HeapVector and HeapDeque");
-    if (WTF::IsTraceable<T>::value) {
-      WTF::TraceInCollectionTrait<WTF::kNoWeakHandling,
-                                  blink::HeapVectorBacking<T, Traits>,
-                                  void>::Trace(visitor, self);
-    }
+    WTF::TraceInCollectionTrait<WTF::kNoWeakHandling,
+                                blink::HeapVectorBacking<T, Traits>,
+                                void>::Trace(visitor, self);
   }
 };
 

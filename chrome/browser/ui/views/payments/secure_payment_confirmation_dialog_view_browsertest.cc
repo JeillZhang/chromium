@@ -5,19 +5,22 @@
 #include "chrome/browser/ui/views/payments/secure_payment_confirmation_dialog_view.h"
 
 #include <optional>
+#include <utility>
 
+#include "base/functional/callback.h"
+#include "base/run_loop.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "cc/test/pixel_comparator.h"
 #include "cc/test/pixel_test_utils.h"
 #include "chrome/app/vector_icons/vector_icons.h"
+#include "chrome/browser/picture_in_picture/picture_in_picture_occlusion_observer.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/test/test_browser_dialog.h"
 #include "chrome/browser/ui/views/payments/secure_payment_confirmation_views_util.h"
 #include "chrome/browser/ui/views/payments/test_secure_payment_confirmation_payment_request_delegate.h"
 #include "chrome/test/base/in_process_browser_test.h"
-#include "components/payments/core/features.h"
 #include "components/payments/core/sizes.h"
 #include "components/strings/grit/components_strings.h"
 #include "components/web_modal/web_contents_modal_dialog_manager.h"
@@ -25,8 +28,10 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/common/features_generated.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/base/mojom/dialog_button.mojom.h"
 #include "ui/events/base_event_utils.h"
 #include "ui/gfx/paint_vector_icon.h"
+#include "ui/views/bubble/bubble_frame_view.h"
 #include "ui/views/controls/button/label_button.h"
 #include "ui/views/controls/image_view.h"
 #include "ui/views/controls/label.h"
@@ -201,11 +206,11 @@ class SecurePaymentConfirmationDialogViewTest
 
     EXPECT_EQ(model_.verify_button_label(),
               test_delegate_->dialog_view()->GetDialogButtonLabel(
-                  ui::DIALOG_BUTTON_OK));
+                  ui::mojom::DialogButton::kOk));
 
     EXPECT_EQ(model_.cancel_button_label(),
               test_delegate_->dialog_view()->GetDialogButtonLabel(
-                  ui::DIALOG_BUTTON_CANCEL));
+                  ui::mojom::DialogButton::kCancel));
 
     if (ShouldShowHeaderIcon()) {
       EXPECT_TRUE(GetViewByID(
@@ -215,11 +220,10 @@ class SecurePaymentConfirmationDialogViewTest
           SecurePaymentConfirmationDialogView::DialogViewID::HEADER_ICON));
     }
 
-    EXPECT_EQ(
-        model_.progress_bar_visible(),
-        GetViewByID(
-            SecurePaymentConfirmationDialogView::DialogViewID::PROGRESS_BAR)
-            ->GetVisible());
+    ASSERT_TRUE(test_delegate_->dialog_view()->GetBubbleFrameView());
+    std::optional<double> progress =
+        test_delegate_->dialog_view()->GetBubbleFrameView()->GetProgress();
+    ASSERT_EQ(model_.progress_bar_visible(), progress.has_value());
 
     ExpectLabelText(GetExpectedTitleText(),
                     SecurePaymentConfirmationDialogView::DialogViewID::TITLE);
@@ -302,7 +306,7 @@ class SecurePaymentConfirmationDialogViewTest
 
   void ClickButton(views::View* button) {
     gfx::Point center(button->width() / 2, button->height() / 2);
-    const ui::MouseEvent event(ui::ET_MOUSE_PRESSED, center, center,
+    const ui::MouseEvent event(ui::EventType::kMousePressed, center, center,
                                ui::EventTimeForNow(), ui::EF_LEFT_MOUSE_BUTTON,
                                ui::EF_LEFT_MOUSE_BUTTON);
     button->OnMousePressed(event);
@@ -310,7 +314,14 @@ class SecurePaymentConfirmationDialogViewTest
   }
 
   // SecurePaymentConfirmationDialogView::ObserverForTest:
-  void OnDialogClosed() override { dialog_closed_ = true; }
+  void OnDialogClosed() override {
+    dialog_closed_ = true;
+    if (dialog_closed_callback_) {
+      std::move(dialog_closed_callback_).Run();
+    }
+  }
+
+  // SecurePaymentConfirmationDialogView::ObserverForTest:
   void OnConfirmButtonPressed() override { confirm_pressed_ = true; }
   void OnCancelButtonPressed() override { cancel_pressed_ = true; }
   void OnOptOutClicked() override { opt_out_clicked_ = true; }
@@ -328,6 +339,7 @@ class SecurePaymentConfirmationDialogViewTest
   bool opt_out_clicked_ = false;
 
   base::HistogramTester histogram_tester_;
+  base::OnceClosure dialog_closed_callback_;
 
   base::WeakPtrFactory<SecurePaymentConfirmationDialogViewTest>
       weak_ptr_factory_{this};
@@ -624,11 +636,34 @@ IN_PROC_BROWSER_TEST_F(SecurePaymentConfirmationDialogViewTest,
   EXPECT_TRUE(opt_out_clicked_);
 }
 
+// Occlusion by picture-in-picture video should dismiss the SPC authentication
+// dialog.
+IN_PROC_BROWSER_TEST_F(SecurePaymentConfirmationDialogViewTest,
+                       PictureInPictureOcclusionClosesTheDialog) {
+  CreateModel();
+  InvokeSecurePaymentConfirmationUI();
+  base::RunLoop run_loop;
+  dialog_closed_callback_ = run_loop.QuitClosure();
+
+  static_cast<PictureInPictureOcclusionObserver*>(test_delegate_->dialog_view())
+      ->OnOcclusionStateChanged(/*occluded=*/true);
+
+  run_loop.Run();
+  EXPECT_TRUE(dialog_closed_);
+}
+
 // A variant of SecurePaymentConfirmationDialogViewTest that enables the network
 // and issuer rows feature, and verifies their contents.
 class SecurePaymentConfirmationDialogViewNetworkAndIssuerIconsTest
     : public SecurePaymentConfirmationDialogViewTest {
  public:
+  SecurePaymentConfirmationDialogViewNetworkAndIssuerIconsTest() {
+    base::FieldTrialParams params;
+    params["spc_network_and_issuer_icons_option"] = "rows";
+    scoped_feature_list_.InitAndEnableFeatureWithParameters(
+        blink::features::kSecurePaymentConfirmationNetworkAndIssuerIcons,
+        params);
+  }
   void ExpectViewMatchesModelForNetworkAndIssuerRows() override {
     ExpectLabelText(
         model_.network_label(),
@@ -650,8 +685,7 @@ class SecurePaymentConfirmationDialogViewNetworkAndIssuerIconsTest
   }
 
  private:
-  base::test::ScopedFeatureList scoped_feature_list_{
-      blink::features::kSecurePaymentConfirmationNetworkAndIssuerIcons};
+  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 // Variant of the main ViewMatchesModel test, which verifies that the network
@@ -702,10 +736,11 @@ class SecurePaymentConfirmationDialogViewInlineNetworkAndIssuerIconsTest
     : public SecurePaymentConfirmationDialogViewTest {
  public:
   SecurePaymentConfirmationDialogViewInlineNetworkAndIssuerIconsTest() {
-    scoped_feature_list_.InitWithFeatures(
-        {blink::features::kSecurePaymentConfirmationNetworkAndIssuerIcons,
-         features::kSecurePaymentConfirmationInlineNetworkAndIssuerIcons},
-        {});
+    base::FieldTrialParams params;
+    params["spc_network_and_issuer_icons_option"] = "inline";
+    scoped_feature_list_.InitAndEnableFeatureWithParameters(
+        blink::features::kSecurePaymentConfirmationNetworkAndIssuerIcons,
+        params);
   }
 
   void CreateModel() override {

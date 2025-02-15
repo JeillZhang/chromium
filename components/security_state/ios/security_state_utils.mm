@@ -63,7 +63,6 @@ MaliciousContentStatus GetMaliciousContentStatus(
     case DEPRECATED_SB_THREAT_TYPE_URL_CLIENT_SIDE_MALWARE:
     case SB_THREAT_TYPE_URL_BINARY_MALWARE:
     case SB_THREAT_TYPE_EXTENSION:
-    case SB_THREAT_TYPE_BLOCKLISTED_RESOURCE:
     case SB_THREAT_TYPE_API_ABUSE:
     case SB_THREAT_TYPE_SUBRESOURCE_FILTER:
     case SB_THREAT_TYPE_CSD_ALLOWLIST:
@@ -78,8 +77,7 @@ MaliciousContentStatus GetMaliciousContentStatus(
       // These threat types are not currently associated with
       // interstitials, and thus resources with these threat types are
       // not ever whitelisted or pending whitelisting.
-      NOTREACHED_IN_MIGRATION();
-      break;
+      NOTREACHED();
   }
   return security_state::MALICIOUS_CONTENT_STATUS_NONE;
 }
@@ -113,8 +111,7 @@ security_state::SecurityLevel GetSecurityLevelForWebState(
     return security_state::NONE;
   }
   return security_state::GetSecurityLevel(
-      *GetVisibleSecurityStateForWebState(web_state),
-      false /* used policy installed certificate */);
+      *GetVisibleSecurityStateForWebState(web_state));
 }
 
 }  // namespace security_state

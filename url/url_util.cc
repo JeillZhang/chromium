@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/350788890): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "url/url_util.h"
 
 #include <stddef.h>
@@ -121,9 +126,6 @@ struct SchemeRegistry {
   std::vector<std::string> opaque_non_special_schemes = {
       // See https://crrev.com/c/5465607 for the reason.
       kAndroidScheme,
-      // Temporarily opted-out. See https://crrev.com/c/5547181.
-      kAlmanacScheme,
-      kCrosAppsScheme,
       // Temporarily opted-out. See https://crrev.com/c/5569365.
       kDrivefsScheme,
       // Temporarily opted-out. See https://crrev.com/c/5568919.
@@ -530,7 +532,8 @@ bool DoReplaceComponents(const char* spec,
     return ReplaceMailtoURL(spec, parsed, replacements, output, out_parsed);
   }
 
-  if (IsUsingStandardCompliantNonSpecialSchemeURLParsing()) {
+  if (IsUsingStandardCompliantNonSpecialSchemeURLParsing() &&
+      !DoIsOpaqueNonSpecial(spec, parsed.scheme)) {
     return ReplaceNonSpecialURL(spec, parsed, replacements, charset_converter,
                                 *output, *out_parsed);
   }

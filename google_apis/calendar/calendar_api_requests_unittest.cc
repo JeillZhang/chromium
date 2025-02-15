@@ -86,7 +86,7 @@ class CalendarApiRequestsTest : public testing::Test {
       return test_util::CreateHttpResponseFromFile(
           test_util::GetTestFilePath("calendar/calendar_list.json"));
     }
-    NOTREACHED_NORETURN();
+    NOTREACHED();
   }
 };
 
@@ -274,7 +274,6 @@ TEST_F(CalendarApiRequestsTest,
       "?timeMin=2021-06-13T10%3A00%3A00.000Z"
       "&timeMax=2021-06-16T10%3A00%3A00.000Z"
       "&singleEvents=true"
-      "&maxAttendees=1"
       "&maxResults=2500"
       "&orderBy=startTime"
       "&eventTypes=default"

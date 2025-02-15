@@ -57,9 +57,9 @@ class CONTENT_EXPORT PrerenderHost : public FrameTree::Delegate,
                                      public NavigationControllerDelegate {
  public:
   // These values are persisted to logs. Entries should not be renumbered and
-  // numeric values should never be reused. This enum corresponds to
-  // PrerenderActivationNavigationParamsMatch in
-  // tools/metrics/histograms/enums.xml
+  // numeric values should never be reused.
+  //
+  // LINT.IfChange(ActivationNavigationParamsMatch)
   enum class ActivationNavigationParamsMatch {
     kOk = 0,
     kInitiatorFrameToken = 1,
@@ -88,17 +88,39 @@ class CONTENT_EXPORT PrerenderHost : public FrameTree::Delegate,
     kRequestDestination = 24,
     kMaxValue = kRequestDestination,
   };
+  // LINT.ThenChange(//tools/metrics/histograms/metadata/navigation/enums.xml:PrerenderActivationNavigationParamsMatch)
 
   // Reasons blocking navigation while waiting for headers started.
   enum class WaitingForHeadersStartedReason { kWithoutTimeout, kWithTimeout };
 
   // Reasons blocking navigation while waiting for headers finished.
+  //
+  // These values are persisted to logs. Entries should not be renumbered and
+  // numeric values should never be reused.
+  //
+  // LINT.IfChange(WaitingForHeadersFinishedReason)
   enum class WaitingForHeadersFinishedReason {
-    kHeadersReceived,
-    kHostDestroyed,
-    kTimeoutElapsed,
-    kMaybeNavigationCancelled
+    // This is split into kNoVarySearchHeaderReceivedAndMatched,
+    // kNoVarySearchHeaderReceivedButNotMatched, and
+    // kNoVarySearchHeaderReceivedButDefaultValue.
+    // kNoVarySearchHeaderReceived = 0,
+
+    kNoVarySearchHeaderNotReceived = 1,
+    kNoVarySearchHeaderParseFailed = 2,
+    kHostDestroyed = 3,
+    kTimeoutElapsed = 4,
+    kMaybeNavigationCancelled = 5,
+
+    // Success case. The No-Vary-Search header is received and matches
+    // navigation.
+    kNoVarySearchHeaderReceivedAndMatched = 6,
+
+    kNoVarySearchHeaderReceivedButNotMatched = 7,
+    kNoVarySearchHeaderReceivedButDefaultValue = 8,
+
+    kMaxValue = kNoVarySearchHeaderReceivedButDefaultValue,
   };
+  // LINT.ThenChange(//tools/metrics/histograms/metadata/navigation/enums.xml:PrerenderWaitingForHeadersFinishedReason)
 
   // Observes a triggered prerender. Note that the observer should overlive the
   // prerender host instance, or be removed properly upon destruction.
@@ -122,6 +144,12 @@ class CONTENT_EXPORT PrerenderHost : public FrameTree::Delegate,
     virtual void OnWaitingForHeadersFinished(
         NavigationHandle& navigation_handle,
         WaitingForHeadersFinishedReason reason) {}
+
+    // Called from PrerenderHost::RecordFailedFinalStatusImpl when prerendering
+    // fails. This is called even when prerendering is intentionally cancelled
+    // by triggers (e.g., removing the speculation rules), but not called when
+    // the prerendered page is activated (i.e., `status` is never kActivated).
+    virtual void OnFailed(PrerenderFinalStatus status) {}
 
     // Called from the PrerenderHost's destructor. The observer should drop any
     // reference to the host.
@@ -147,6 +175,9 @@ class CONTENT_EXPORT PrerenderHost : public FrameTree::Delegate,
 
   static bool AreHttpRequestHeadersCompatible(
       const std::string& potential_activation_headers_str,
+#if BUILDFLAG(IS_ANDROID)
+      const std::string& potential_activation_additional_headers_str,
+#endif  // BUILDFLAG(IS_ANDROID)
       const std::string& prerender_headers_str,
       PreloadingTriggerType trigger_type,
       const std::string& histogram_suffix,
@@ -154,7 +185,7 @@ class CONTENT_EXPORT PrerenderHost : public FrameTree::Delegate,
 
   // Sets a callback to be called on PrerenderHost creation.
   static void SetHostCreationCallbackForTesting(
-      base::OnceCallback<void(int host_id)> callback);
+      base::OnceCallback<void(FrameTreeNodeId host_id)> callback);
 
   PrerenderHost(const PrerenderAttributes& attributes,
                 WebContentsImpl& web_contents,
@@ -178,11 +209,14 @@ class CONTENT_EXPORT PrerenderHost : public FrameTree::Delegate,
   void DidStopLoading() override;
   bool IsHidden() override;
   FrameTree* LoadingTree() override;
-  int GetOuterDelegateFrameTreeNodeId() override;
+  FrameTreeNodeId GetOuterDelegateFrameTreeNodeId() override;
   RenderFrameHostImpl* GetProspectiveOuterDocument() override;
   void SetFocusedFrame(FrameTreeNode* node, SiteInstanceGroup* source) override;
   FrameTree* GetOwnedPictureInPictureFrameTree() override;
   FrameTree* GetPictureInPictureOpenerFrameTree() override;
+  bool OnRenderFrameProxyVisibilityChanged(
+      RenderFrameProxyHost* render_frame_proxy_host,
+      blink::mojom::FrameVisibility visibility) override;
 
   // NavigationControllerDelegate
   void NotifyNavigationStateChangedFromController(
@@ -294,10 +328,13 @@ class CONTENT_EXPORT PrerenderHost : public FrameTree::Delegate,
 
   // Returns true if the given `url` indicates the same destination to the
   // initial_url.
-  bool IsUrlMatch(const GURL& url) const;
+  std::optional<UrlMatchType> IsUrlMatch(const GURL& url) const;
 
   // Returns true if the given `url` might indicate the same destination to the
-  // initial_url based on `no_vary_search_expected`.
+  // initial_url based on `no_vary_search_hint`. Note that this returns
+  // false if the given `url` exactly matches the initial_url, or matches it
+  // with `attributes_.url_match_predicate` or the No-Vary-Search header that is
+  // already received. These cases should be checked by `IsUrlMatch()`.
   bool IsNoVarySearchHintUrlMatch(const GURL& url) const;
 
   // Called when the prerender pages asks the client to change the Accept Client
@@ -325,27 +362,21 @@ class CONTENT_EXPORT PrerenderHost : public FrameTree::Delegate,
     return attributes_.initiator_devtools_navigation_token;
   }
 
-  const GURL& prerendering_url() const { return attributes_.prerendering_url; }
-
   bool IsBrowserInitiated() { return attributes_.IsBrowserInitiated(); }
 
-  int frame_tree_node_id() const { return frame_tree_node_id_; }
+  FrameTreeNodeId frame_tree_node_id() const { return frame_tree_node_id_; }
 
   base::WeakPtr<WebContents> initiator_web_contents() {
     return attributes_.initiator_web_contents;
   }
 
-  int initiator_frame_tree_node_id() const {
+  FrameTreeNodeId initiator_frame_tree_node_id() const {
     return attributes_.initiator_frame_tree_node_id;
   }
 
   int initiator_ukm_id() const { return attributes_.initiator_ukm_id; }
 
   bool is_ready_for_activation() const { return is_ready_for_activation_; }
-
-  const std::optional<PrerenderFinalStatus>& final_status() const {
-    return final_status_;
-  }
 
   PreloadingTriggerType trigger_type() const {
     return attributes_.trigger_type;
@@ -363,10 +394,20 @@ class CONTENT_EXPORT PrerenderHost : public FrameTree::Delegate,
   const std::optional<net::HttpNoVarySearchData>& no_vary_search() const {
     return no_vary_search_;
   }
+  const std::optional<network::mojom::NoVarySearchParseError>&
+  no_vary_search_parse_error() const {
+    return no_vary_search_parse_error_;
+  }
 
-  const std::optional<net::HttpNoVarySearchData>& no_vary_search_expected()
-      const {
-    return attributes_.no_vary_search_expected;
+  const std::optional<net::HttpNoVarySearchData>& no_vary_search_hint() const {
+    return attributes_.no_vary_search_hint;
+  }
+
+  bool should_warm_up_compositor() const {
+    return attributes_.should_warm_up_compositor;
+  }
+  bool should_prepare_paint_tree() const {
+    return attributes_.should_prepare_paint_tree;
   }
 
   bool IsInitialNavigation(const NavigationRequest& navigation_request) const;
@@ -383,6 +424,17 @@ class CONTENT_EXPORT PrerenderHost : public FrameTree::Delegate,
   void OnWaitingForHeadersFinished(NavigationHandle& navigation_handle,
                                    WaitingForHeadersFinishedReason reason);
 
+  // Returns true iff prefetch ahead of prerender is not available for this
+  // prerender and this prerender should be aborted.
+  //
+  // If `kPrerender2FallbackPrefetchSpecRules` is enabled, `PrerendererImpl`
+  // triggers a prefetch ahead of prerender to reduce fetch in the case of that
+  // the prerender failed. If the prefetch failed, prerender initial navigation
+  // tries to fall back to normal request, i.e. without prefetch, which can be a
+  // second fetch if the prefetch reached to fetch phase. To avoid the second
+  // fetch, we need to abort the prerender. This method judges a condition.
+  bool ShouldAbortNavigationBecausePrefetchUnavailable() const;
+
  private:
   void RecordFailedFinalStatusImpl(const PrerenderCancellationReason& reason);
 
@@ -397,6 +449,7 @@ class CONTENT_EXPORT PrerenderHost : public FrameTree::Delegate,
 
   ActivationNavigationParamsMatch
   AreBeginNavigationParamsCompatibleWithNavigation(
+      const GURL& potential_activation_url,
       const blink::mojom::BeginNavigationParams& potential_activation,
       bool allow_initiator_and_transition_mismatch,
       PrerenderCancellationReason& reason);
@@ -405,7 +458,8 @@ class CONTENT_EXPORT PrerenderHost : public FrameTree::Delegate,
       const blink::mojom::CommonNavigationParams& potential_activation,
       bool allow_initiator_and_transition_mismatch);
 
-  void SetNoVarySearch(net::HttpNoVarySearchData no_vary_search);
+  void MaybeSetNoVarySearch(network::mojom::NoVarySearchWithParseError&
+                                no_vary_search_with_parse_error);
 
   const PrerenderAttributes attributes_;
 
@@ -415,7 +469,7 @@ class CONTENT_EXPORT PrerenderHost : public FrameTree::Delegate,
   // The ID of the root node of the frame tree for the prerendered page `this`
   // is hosting. Since PrerenderHost has 1:1 correspondence with FrameTree,
   // this is also used for the ID of this PrerenderHost.
-  int frame_tree_node_id_ = RenderFrameHost::kNoFrameTreeNodeId;
+  FrameTreeNodeId frame_tree_node_id_;
 
   std::optional<PrerenderFinalStatus> final_status_;
 
@@ -466,6 +520,8 @@ class CONTENT_EXPORT PrerenderHost : public FrameTree::Delegate,
   // No-Vary-Search header information for the main frame of the prerendered
   // page.
   std::optional<net::HttpNoVarySearchData> no_vary_search_;
+  std::optional<network::mojom::NoVarySearchParseError>
+      no_vary_search_parse_error_;
 
   // True if headers were received.
   bool were_headers_received_ = false;

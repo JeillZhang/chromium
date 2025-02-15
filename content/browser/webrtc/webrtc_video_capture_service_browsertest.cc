@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/342213636): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "base/command_line.h"
 #include "base/functional/bind.h"
 #include "base/run_loop.h"
@@ -132,11 +137,11 @@ class TextureDeviceExerciser : public VirtualDeviceExerciser {
     virtual_device_->OnNewSharedImageBufferHandle(
         0, media::mojom::SharedImageBufferHandleSet::New(
                std::move(dummy_frame_0_exported_shared_image),
-               dummy_frame_0_sync_token_, GL_TEXTURE_2D));
+               dummy_frame_0_sync_token_));
     virtual_device_->OnNewSharedImageBufferHandle(
         1, media::mojom::SharedImageBufferHandleSet::New(
                std::move(dummy_frame_1_exported_shared_image),
-               dummy_frame_1_sync_token_, GL_TEXTURE_2D));
+               dummy_frame_1_sync_token_));
     frame_being_consumed_[0] = false;
     frame_being_consumed_[1] = false;
   }
@@ -318,7 +323,7 @@ class SharedMemoryDeviceExerciser : public VirtualDeviceExerciser,
     info->metadata = metadata;
     info->strides = strides_.Clone();
 
-    const base::WritableSharedMemoryMapping& outgoing_buffer =
+    base::WritableSharedMemoryMapping& outgoing_buffer =
         outgoing_buffer_id_to_buffer_map_.at(buffer_id);
 
     static int frame_count = 0;

@@ -10,13 +10,13 @@
 #include "base/feature_list.h"
 #include "base/functional/callback.h"
 #include "base/metrics/histogram_functions.h"
-#include "base/time/time.h"
 #include "chrome/browser/apps/almanac_api_client/almanac_api_util.h"
-#include "chrome/browser/apps/almanac_api_client/device_info_manager.h"
 #include "chrome/browser/apps/almanac_api_client/proto/client_context.pb.h"
 #include "chrome/browser/apps/app_preload_service/app_preload_service.h"
 #include "chrome/browser/apps/app_preload_service/proto/app_preload.pb.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chromeos/constants/chromeos_features.h"
+#include "components/app_constants/constants.h"
 #include "net/base/net_errors.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "services/network/public/cpp/simple_url_loader.h"
@@ -33,9 +33,6 @@ constexpr int kMaxResponseSizeInBytes = 1024 * 1024;
 
 constexpr char kServerErrorHistogramName[] =
     "AppPreloadService.ServerResponseCodes";
-
-constexpr char kServerRoundTripTimeForFirstLogin[] =
-    "AppPreloadService.ServerRoundTripTimeForFirstLogin";
 
 constexpr net::NetworkTrafficAnnotationTag kTrafficAnnotation =
     net::DefineNetworkTrafficAnnotation("app_preload_service", R"(
@@ -67,14 +64,6 @@ constexpr net::NetworkTrafficAnnotationTag kTrafficAnnotation =
           "cannot be disabled by policy."
       }
     )");
-
-std::string BuildGetAppsForFirstLoginRequestBody(const apps::DeviceInfo& info) {
-  apps::proto::AppPreloadListRequest request_proto;
-  *request_proto.mutable_device_context() = info.ToDeviceContext();
-  *request_proto.mutable_user_context() = info.ToUserContext();
-
-  return request_proto.SerializeAsString();
-}
 
 // Filters entries in LauncherConfig and ShelfConfig to ignore when the
 // specified feature is disabled.
@@ -114,6 +103,15 @@ void ParseLauncherOrdering(
         item_map[*parsed] = LauncherItemData(item.type(), item.order());
       }
     }
+    // Add packages for both chrome and lacros for TYPE_CHROME.
+    if (item.type() ==
+        proto::AppPreloadListResponse_LauncherType_LAUNCHER_TYPE_CHROME) {
+      item_map[PackageId(PackageType::kChromeApp,
+                         app_constants::kChromeAppId)] =
+          LauncherItemData(item.type(), item.order());
+      item_map[PackageId(PackageType::kSystem, app_constants::kLacrosChrome)] =
+          LauncherItemData(item.type(), item.order());
+    }
     // Add nested child folder.
     if (allow_nested_folders && !item.folder_name().empty()) {
       item_map[item.folder_name()] =
@@ -146,7 +144,6 @@ void ParseShelfPinOrdering(const google::protobuf::RepeatedPtrField<
 }
 
 void ConvertAppPreloadListResponseProto(
-    base::TimeTicks request_start_time,
     GetInitialAppsCallback callback,
     base::expected<proto::AppPreloadListResponse, QueryError> query_response) {
   LauncherOrdering launcher_ordering;
@@ -158,22 +155,17 @@ void ConvertAppPreloadListResponseProto(
     return;
   }
 
-  base::UmaHistogramTimes(kServerRoundTripTimeForFirstLogin,
-                          base::TimeTicks::Now() - request_start_time);
-
-
   std::vector<PreloadAppDefinition> apps;
   for (const auto& app : query_response->apps_to_install()) {
     apps.emplace_back(app);
   }
 
   std::string empty_root_folder;
-  ParseLauncherOrdering(query_response->launcher_config(),
-                        empty_root_folder, &launcher_ordering,
+  ParseLauncherOrdering(query_response->launcher_config(), empty_root_folder,
+                        &launcher_ordering,
                         /*allow_nested_folders=*/true);
 
-  ParseShelfPinOrdering(query_response->shelf_config(),
-                        &shelf_pin_ordering);
+  ParseShelfPinOrdering(query_response->shelf_config(), &shelf_pin_ordering);
 
   std::move(callback).Run(std::move(apps), std::move(launcher_ordering),
                           std::move(shelf_pin_ordering));
@@ -181,17 +173,14 @@ void ConvertAppPreloadListResponseProto(
 
 }  // namespace
 
-void GetAppsForFirstLogin(
-    const DeviceInfo& device_info,
-    network::mojom::URLLoaderFactory& url_loader_factory,
-    GetInitialAppsCallback callback) {
-  QueryAlmanacApi<proto::AppPreloadListResponse>(
-      url_loader_factory, kTrafficAnnotation,
-      BuildGetAppsForFirstLoginRequestBody(device_info),
-      kAppPreloadAlmanacEndpoint, kMaxResponseSizeInBytes,
-      kServerErrorHistogramName,
-      base::BindOnce(&ConvertAppPreloadListResponseProto,
-                     base::TimeTicks::Now(), std::move(callback)));
+void GetAppsForFirstLogin(Profile* profile, GetInitialAppsCallback callback) {
+  proto::AppPreloadListRequest request_proto;
+
+  QueryAlmanacApiWithContext<proto::AppPreloadListRequest,
+                             proto::AppPreloadListResponse>(
+      profile, kAppPreloadAlmanacEndpoint, request_proto, kTrafficAnnotation,
+      kMaxResponseSizeInBytes, kServerErrorHistogramName,
+      base::BindOnce(&ConvertAppPreloadListResponseProto, std::move(callback)));
 }
 
 GURL GetServerUrl() {

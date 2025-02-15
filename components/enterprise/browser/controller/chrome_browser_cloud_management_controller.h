@@ -166,7 +166,7 @@ class ChromeBrowserCloudManagementController
 
   class Observer {
    public:
-    virtual ~Observer() {}
+    virtual ~Observer() = default;
 
     // Called when policy enrollment is finished.
     // |succeeded| is true if |dm_token| is returned from the server.
@@ -241,8 +241,6 @@ class ChromeBrowserCloudManagementController
   void UnenrollBrowser(bool delete_dm_token);
 
   // CloudPolicyClient::Observer implementation:
-  void OnPolicyFetched(CloudPolicyClient* client) override;
-  void OnRegistrationStateChanged(CloudPolicyClient* client) override;
   void OnClientError(CloudPolicyClient* client) override;
   void OnServiceAccountSet(CloudPolicyClient* client,
                            const std::string& account_email) override;

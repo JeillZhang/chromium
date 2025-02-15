@@ -7,6 +7,7 @@
 #include "base/functional/bind.h"
 #include "content/browser/loader/navigation_loader_interceptor.h"
 #include "content/browser/loader/response_head_update_params.h"
+#include "content/browser/service_worker/service_worker_client.h"
 #include "content/browser/service_worker/service_worker_main_resource_handle.h"
 #include "content/browser/service_worker/service_worker_main_resource_loader_interceptor.h"
 #include "content/public/browser/browser_task_traits.h"
@@ -90,18 +91,21 @@ void WorkerScriptLoader::Start() {
         resource_request_, browser_context,
         base::BindOnce(&WorkerScriptLoader::MaybeStartLoader,
                        weak_factory_.GetWeakPtr(), interceptor_.get()),
-        base::BindOnce(
-            [](base::WeakPtr<WorkerScriptLoader> self,
-               ResponseHeadUpdateParams) {
-              if (self) {
-                self->LoadFromNetwork();
-              }
-            },
-            weak_factory_.GetWeakPtr()));
+        base::BindOnce(&WorkerScriptLoader::Fallback,
+                       weak_factory_.GetWeakPtr()));
     return;
   }
 
   LoadFromNetwork();
+}
+
+network::mojom::URLLoaderFactory* WorkerScriptLoader::Fallback(
+    base::WeakPtr<WorkerScriptLoader> self,
+    ResponseHeadUpdateParams) {
+  if (!self) {
+    return nullptr;
+  }
+  return self->default_loader_factory_.get();
 }
 
 void WorkerScriptLoader::MaybeStartLoader(
@@ -117,10 +121,8 @@ void WorkerScriptLoader::MaybeStartLoader(
     return;
   }
 
-  subresource_loader_params_ =
-      interceptor_result
-          ? std::move(interceptor_result->subresource_loader_params)
-          : SubresourceLoaderParams();
+  // `interceptor_result->subresource_loader_params` isn't set by
+  // ServiceWorkerMainResourceLoaderInterceptor and thus is ignored here.
 
   if (interceptor_result && interceptor_result->single_request_factory) {
     // The interceptor elected to handle the request. Use it.
@@ -200,18 +202,6 @@ void WorkerScriptLoader::SetPriority(net::RequestPriority priority,
   if (url_loader_)
     url_loader_->SetPriority(priority, intra_priority_value);
 }
-
-void WorkerScriptLoader::PauseReadingBodyFromNet() {
-  DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  if (url_loader_)
-    url_loader_->PauseReadingBodyFromNet();
-}
-
-void WorkerScriptLoader::ResumeReadingBodyFromNet() {
-  DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  if (url_loader_)
-    url_loader_->ResumeReadingBodyFromNet();
-}
 // URLLoader end --------------------------------------------------------------
 
 // URLLoaderClient ------------------------------------------------------------
@@ -281,7 +271,7 @@ void WorkerScriptLoader::OnComplete(
       break;
     case State::kOnCompleteCalled:
     case State::kCompleted:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
   CommitCompleted();
 }
@@ -303,7 +293,7 @@ void WorkerScriptLoader::OnFetcherCallbackCalled() {
       // ignore the fetcher callback notification.
       break;
     case State::kFetcherCallbackCalled:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }
 

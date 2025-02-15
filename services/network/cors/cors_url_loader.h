@@ -8,6 +8,7 @@
 #include <optional>
 
 #include "base/memory/raw_ptr.h"
+#include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "base/types/strong_alias.h"
@@ -15,6 +16,7 @@
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
+#include "net/cookies/cookie_setting_override.h"
 #include "net/log/net_log_with_source.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "net/url_request/redirect_info.h"
@@ -30,6 +32,10 @@
 #include "url/gurl.h"
 #include "url/origin.h"
 
+namespace net {
+class SharedDictionary;
+}  // namespace net
+
 namespace network {
 namespace mojom {
 enum class SharedDictionaryError : int32_t;
@@ -37,7 +43,6 @@ enum class SharedDictionaryError : int32_t;
 
 class URLLoaderFactory;
 class NetworkContext;
-class SharedDictionary;
 class SharedDictionaryStorage;
 class SharedDictionaryDataPipeWriter;
 
@@ -84,7 +89,9 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) CorsURLLoader
       const CrossOriginEmbedderPolicy& cross_origin_embedder_policy,
       scoped_refptr<SharedDictionaryStorage> shared_dictionary_storage,
       raw_ptr<mojom::SharedDictionaryAccessObserver> shared_dictionary_observer,
-      NetworkContext* context);
+      NetworkContext* context,
+      net::CookieSettingOverrides factory_cookie_setting_overrides,
+      net::CookieSettingOverrides devtools_cookie_setting_overrides);
 
   CorsURLLoader(const CorsURLLoader&) = delete;
   CorsURLLoader& operator=(const CorsURLLoader&) = delete;
@@ -103,8 +110,6 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) CorsURLLoader
       const std::optional<GURL>& new_url) override;
   void SetPriority(net::RequestPriority priority,
                    int intra_priority_value) override;
-  void PauseReadingBodyFromNet() override;
-  void ResumeReadingBodyFromNet() override;
 
   // mojom::URLLoaderClient overrides:
   void OnReceiveEarlyHints(mojom::EarlyHintsPtr early_hints) override;
@@ -228,10 +233,27 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) CorsURLLoader
       const mojom::URLResponseHead& response,
       const std::string& header_name);
 
-  // Parses the "Shared-Storage-Cross-Origin-Worklet-Allowed" response header
-  // into a Structured Fields Boolean, and returns the result. Returns false if
-  // the header does not exist or if the parsing fails.
-  static bool CheckSharedStorageCrossOriginWorkletAllowedResponseHeader(
+  // Precondition: The request is cross-origin with destination
+  // `mojom::RequestDestination::kSharedStorageWorklet`.
+  //
+  // If the "Sec-Shared-Storage-Data-Origin" request header has not been set,
+  // then returns true (as no shared storage response header is required).
+  //
+  // Otherwise, there is a value for the "Sec-Shared-Storage-Data-Origin"
+  // request header. Parses this request header value into a URL. If the parsed
+  // data origin URL is valid and cross-origin to the request's URL, returns
+  // true, as again no shared storage response header is required. (Note that
+  // regular JavaScript is unable to modify the forbidden
+  // "Sec-Shared-Storage-Data-Origin" request header, and any modifications made
+  // by extensions will not be propagated back to the request's headers here).
+  //
+  // Finally, in the case where the parsed data origin URL is valid and
+  // same-origin to the request's URL, the
+  // "Shared-Storage-Cross-Origin-Worklet-Allowed" header is required. Parses
+  // the "Shared-Storage-Cross-Origin-Worklet-Allowed" response header into a
+  // Structured Fields Boolean, and returns the result. Returns false if the
+  // header does not exist or if the parsing fails.
+  bool CheckSharedStorageCrossOriginWorkletAllowedResponseHeaderIfNeeded(
       const mojom::URLResponseHead& response);
 
   void OnSharedDictionaryWritten(bool success);
@@ -321,10 +343,6 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) CorsURLLoader
   raw_ptr<const mojom::ClientSecurityState> factory_client_security_state_ =
       nullptr;
 
-  // True when `network_loader_` is bound to a URLLoader that serves response
-  // from `memory_cache_`.
-  bool memory_cache_was_used_ = false;
-
   // Observer for this request and any preflight requests we send ahead of it.
   // Owned by the parent `CorsURLLoaderFactory`, never nullptr - though the
   // pointee remote itself may be unbound.
@@ -371,11 +389,13 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) CorsURLLoader
   const raw_ptr<NetworkContext> context_;
 
   scoped_refptr<SharedDictionaryStorage> shared_dictionary_storage_;
-  std::unique_ptr<SharedDictionary> shared_dictionary_;
+  scoped_refptr<net::SharedDictionary> shared_dictionary_;
   raw_ptr<mojom::SharedDictionaryAccessObserver> shared_dictionary_observer_;
   std::unique_ptr<SharedDictionaryDataPipeWriter>
       shared_dictionary_data_pipe_writer_;
   std::optional<URLLoaderCompletionStatus> deferred_completion_status_;
+  const net::CookieSettingOverrides factory_cookie_setting_overrides_;
+  const net::CookieSettingOverrides devtools_cookie_setting_overrides_;
 
   // Used to provide weak pointers of this class for synchronously calling
   // URLLoaderClient methods. This should be reset any time

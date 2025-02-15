@@ -6,19 +6,16 @@
 
 #include <memory>
 
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/user_metrics.h"
-#include "chrome/browser/companion/core/companion_metrics_logger.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/signin/account_consistency_mode_manager.h"
 #include "chrome/browser/signin/chrome_signin_pref_names.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
-#include "chrome/browser/signin/signin_promo_util.h"
 #include "chrome/browser/signin/signin_ui_util.h"
 #include "chrome/browser/ui/autofill/autofill_bubble_signin_promo_controller.h"
-#include "chrome/browser/ui/passwords/passwords_model_delegate.h"
 #include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/browser/ui/views/chrome_typography.h"
-#include "chrome/browser/ui/views/promos/bubble_signin_promo_view.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/prefs/pref_service.h"
 #include "components/signin/public/base/signin_buildflags.h"
@@ -63,13 +60,10 @@ void AutofillBubbleSignInPromoView::DiceSigninPromoDelegate::OnSignIn(
 
 AutofillBubbleSignInPromoView::AutofillBubbleSignInPromoView(
     content::WebContents* web_contents,
-    signin::SignInAutofillBubblePromoType promo_type,
-    const password_manager::PasswordForm& saved_password)
-    // TODO(crbug.com/319411728): Make this dependant on type (for now only
-    // password).
-    : controller_(PasswordsModelDelegateFromWebContents(web_contents),
-                  saved_password),
-      promo_type_(promo_type) {
+    signin_metrics::AccessPoint access_point,
+    syncer::LocalDataItemModel::DataId data_id)
+    : controller_(*web_contents, access_point, std::move(data_id)),
+      access_point_(access_point) {
   SetLayoutManager(std::make_unique<views::FillLayout>());
 
   Profile* profile =
@@ -79,37 +73,44 @@ AutofillBubbleSignInPromoView::AutofillBubbleSignInPromoView(
       std::make_unique<AutofillBubbleSignInPromoView::DiceSigninPromoDelegate>(
           &controller_);
 
-  // Set prefs to record the bubbles appearance.
-  signin::IdentityManager* identity_manager =
-      IdentityManagerFactory::GetForProfile(profile);
-  AccountInfo account =
-      signin_ui_util::GetSingleAccountForPromos(identity_manager);
+  signin::RecordSignInPromoShown(access_point, profile);
 
-  switch (promo_type_) {
-    case signin::SignInAutofillBubblePromoType::Payments:
-    case signin::SignInAutofillBubblePromoType::Addresses:
-      break;
-    case signin::SignInAutofillBubblePromoType::Passwords:
-      if (account.gaia.empty()) {
-        int show_count = profile->GetPrefs()->GetInteger(
-            prefs::kPasswordSignInPromoShownCountPerProfile);
-        profile->GetPrefs()->SetInteger(
-            prefs::kPasswordSignInPromoShownCountPerProfile, show_count + 1);
-      } else {
-        SigninPrefs(*profile->GetPrefs())
-            .IncrementPasswordSigninPromoImpressionCount(account.gaia);
-      }
-  }
-
-  AddChildView(new BubbleSignInPromoView(
-      profile, dice_sign_in_promo_delegate_.get(),
-      signin_metrics::AccessPoint::ACCESS_POINT_PASSWORD_BUBBLE));
+  bubble_sign_in_promo_view_ = AddChildView(new BubbleSignInPromoView(
+      profile, dice_sign_in_promo_delegate_.get(), access_point));
 }
 
-void AutofillBubbleSignInPromoView::RecordSignInPromoDismissed(
-    content::WebContents* web_contents) {
-  Profile* profile =
-      Profile::FromBrowserContext(web_contents->GetBrowserContext());
+views::View* AutofillBubbleSignInPromoView::GetSignInButton() const {
+  return bubble_sign_in_promo_view_
+             ? bubble_sign_in_promo_view_->GetSignInButton()
+             : nullptr;
+}
+
+void AutofillBubbleSignInPromoView::AddedToWidget() {
+  scoped_widget_observation_.Observe(GetWidget());
+}
+
+void AutofillBubbleSignInPromoView::OnWidgetDestroying(views::Widget* widget) {
+  scoped_widget_observation_.Reset();
+  std::string dismiss_action;
+
+  switch (widget->closed_reason()) {
+    case views::Widget::ClosedReason::kCloseButtonClicked:
+      dismiss_action = "CloseButton";
+      break;
+    case views::Widget::ClosedReason::kEscKeyPressed:
+      dismiss_action = "EscapeKey";
+      break;
+    case views::Widget::ClosedReason::kUnspecified:
+    case views::Widget::ClosedReason::kLostFocus:
+    case views::Widget::ClosedReason::kCancelButtonClicked:
+    case views::Widget::ClosedReason::kAcceptButtonClicked:
+      // Don't record anything if the bubble was not actively dismissed by the
+      // user.
+      return;
+  }
+
+  Profile* profile = Profile::FromBrowserContext(
+      controller_.GetWebContents()->GetBrowserContext());
   AccountInfo account = signin_ui_util::GetSingleAccountForPromos(
       IdentityManagerFactory::GetForProfile(profile));
 
@@ -124,6 +125,10 @@ void AutofillBubbleSignInPromoView::RecordSignInPromoDismissed(
     SigninPrefs(*profile->GetPrefs())
         .IncrementAutofillSigninPromoDismissCount(account.gaia);
   }
+
+  base::UmaHistogramEnumeration(
+      base::StrCat({"Signin.SignInPromo.Dismissed", dismiss_action}),
+      access_point_);
 }
 
 AutofillBubbleSignInPromoView::~AutofillBubbleSignInPromoView() = default;

@@ -22,9 +22,9 @@ import '../icons.html.js';
 
 // </if>
 
+import {I18nMixin} from '//resources/cr_elements/i18n_mixin.js';
 import {PrefsMixin} from '/shared/settings/prefs/prefs_mixin.js';
 import type {CrLinkRowElement} from 'chrome://resources/cr_elements/cr_link_row/cr_link_row.js';
-import {OpenWindowProxyImpl} from 'chrome://resources/js/open_window_proxy.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {BaseMixin} from '../base_mixin.js';
@@ -34,8 +34,10 @@ import {Router} from '../router.js';
 
 import {getTemplate} from './autofill_page.html.js';
 import {PasswordManagerImpl, PasswordManagerPage} from './password_manager_proxy.js';
+import {UserAnnotationsManagerProxyImpl} from './user_annotations_manager_proxy.js';
 
-const SettingsAutofillPageElementBase = PrefsMixin(BaseMixin(PolymerElement));
+const SettingsAutofillPageElementBase =
+    PrefsMixin(I18nMixin(BaseMixin(PolymerElement)));
 
 export interface SettingsAutofillPageElement {
   $: {
@@ -71,15 +73,64 @@ export class SettingsAutofillPageElement extends
           return map;
         },
       },
-      isPlusAddressSettingEnabled_: {
+
+      plusAddressIcon_: {
+        type: String,
+        value() {
+          // <if expr="_google_chrome">
+          return 'settings-internal:plus-address-logo-medium';
+          // </if>
+          // <if expr="not _google_chrome">
+          return 'settings:email';
+          // </if>
+        },
+      },
+
+      userEligibleForAutofillAi_: {
         type: Boolean,
-        value: () => !!loadTimeData.getString('plusAddressManagementUrl'),
+        value: false,
+      },
+
+
+      userHasAutofillAiEntries_: {
+        type: Boolean,
+        value: false,
+      },
+
+      autofillAiAvailable_: {
+        type: Boolean,
+        computed: 'computeAutofillAiAvailable_(userEligibleForAutofillAi_, ' +
+            'userHasAutofillAiEntries_)',
       },
     };
   }
 
   private passkeyFilter_: string;
+  private userEligibleForAutofillAi_: boolean;
+  private userHasAutofillAiEntries_: boolean;
+  private autofillAiAvailable_: boolean;
   private focusConfig_: Map<string, string>;
+
+  override connectedCallback() {
+    super.connectedCallback();
+    // TODO(crbug.com/368565649): Consider updating on sign-in state changes.
+    UserAnnotationsManagerProxyImpl.getInstance().isUserEligible().then(
+        eligible => {
+          this.userEligibleForAutofillAi_ = eligible;
+        });
+    UserAnnotationsManagerProxyImpl.getInstance().hasEntries().then(value => {
+      this.userHasAutofillAiEntries_ = value;
+    });
+  }
+
+  /**
+   * Computes `autofillAiAvailable_`.
+   */
+  private computeAutofillAiAvailable_(): boolean {
+    return loadTimeData.getBoolean('autofillAiEnabled') &&
+        (this.userEligibleForAutofillAi_ || this.userHasAutofillAiEntries_);
+  }
+
 
   /**
    * Shows the manage addresses sub page.
@@ -104,9 +155,20 @@ export class SettingsAutofillPageElement extends
         PasswordManagerPage.PASSWORDS);
   }
 
-  private onPlusAddressClick_() {
-    OpenWindowProxyImpl.getInstance().openUrl(
-        loadTimeData.getString('plusAddressManagementUrl'));
+  /**
+   * Shows the Autofill AI settings sub page.
+   */
+  private onAutofillAiClick_() {
+    Router.getInstance().navigateTo(routes.AUTOFILL_AI);
+  }
+
+  /**
+   * @returns the sublabel of the address entry.
+   */
+  private addressesSublabel_() {
+    return loadTimeData.getBoolean('plusAddressEnabled') ?
+        this.i18n('addressesSublabel') :
+        '';
   }
 }
 

@@ -57,8 +57,7 @@ NotificationOperation GetNotificationOperationFromAction(
           isEqualToString:mac_notifications::kNotificationSettingsButtonTag]) {
     return NotificationOperation::kSettings;
   }
-  NOTREACHED_IN_MIGRATION();
-  return NotificationOperation::kClick;
+  NOTREACHED();
 }
 
 int GetActionButtonIndexFromAction(NSString* actionIdentifier) {
@@ -213,16 +212,8 @@ void MacNotificationServiceUN::DoDisplayNotification(
     // without the .png extension. So |options| here is used to tell the system
     // that the file is of type PNG, as NotificationImageRetainer converts files
     // to PNG before writing them.
-    NSDictionary* options;
-    if (@available(macOS 11, *)) {
-      options =
-          @{UNNotificationAttachmentOptionsTypeHintKey : UTTypePNG.identifier};
-    } else {
-      options = @{
-        UNNotificationAttachmentOptionsTypeHintKey :
-            (__bridge NSString*)kUTTypePNG
-      };
-    }
+    NSDictionary* options =
+        @{UNNotificationAttachmentOptionsTypeHintKey : UTTypePNG.identifier};
 
     UNNotificationAttachment* attachment =
         [UNNotificationAttachment attachmentWithIdentifier:notification_id_ns
@@ -715,16 +706,10 @@ void MacNotificationServiceUN::OnGotAuthorizationStatus(
              (void (^)(UNNotificationPresentationOptions options))
                  completionHandler {
   // Receiving a notification when the app is in the foreground.
-  if (@available(macOS 11, *)) {
-    completionHandler(UNNotificationPresentationOptionSound |
-                      UNNotificationPresentationOptionList |
-                      UNNotificationPresentationOptionBanner |
-                      UNNotificationPresentationOptionBadge);
-  } else {
-    completionHandler(UNNotificationPresentationOptionSound |
-                      UNNotificationPresentationOptionAlert |
-                      UNNotificationPresentationOptionBadge);
-  }
+  completionHandler(UNNotificationPresentationOptionSound |
+                    UNNotificationPresentationOptionList |
+                    UNNotificationPresentationOptionBanner |
+                    UNNotificationPresentationOptionBadge);
 }
 
 - (void)userNotificationCenter:(UNUserNotificationCenter*)center

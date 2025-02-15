@@ -74,12 +74,12 @@ class SyncEngine
 
   class DriveServiceFactory {
    public:
-    DriveServiceFactory() {}
+    DriveServiceFactory() = default;
 
     DriveServiceFactory(const DriveServiceFactory&) = delete;
     DriveServiceFactory& operator=(const DriveServiceFactory&) = delete;
 
-    virtual ~DriveServiceFactory() {}
+    virtual ~DriveServiceFactory() = default;
     virtual std::unique_ptr<drive::DriveServiceInterface> CreateDriveService(
         signin::IdentityManager* identity_manager,
         scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
@@ -123,9 +123,6 @@ class SyncEngine
   void SetRemoteChangeProcessor(RemoteChangeProcessor* processor) override;
   LocalChangeProcessor* GetLocalChangeProcessor() override;
   RemoteServiceState GetCurrentState() const override;
-  void GetOriginStatusMap(StatusMapCallback callback) override;
-  void DumpFiles(const GURL& origin, ListCallback callback) override;
-  void DumpDatabase(ListCallback callback) override;
   void SetSyncEnabled(bool enabled) override;
   void PromoteDemotedChanges(base::OnceClosure callback) override;
 

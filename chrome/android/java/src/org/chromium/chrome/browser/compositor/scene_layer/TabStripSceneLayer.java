@@ -9,6 +9,7 @@ import androidx.annotation.ColorInt;
 import org.jni_zero.JNINamespace;
 import org.jni_zero.NativeMethods;
 
+import org.chromium.cc.input.OffsetTag;
 import org.chromium.chrome.browser.compositor.LayerTitleCache;
 import org.chromium.chrome.browser.compositor.layouts.components.CompositorButton;
 import org.chromium.chrome.browser.compositor.layouts.components.TintedCompositorButton;
@@ -35,6 +36,17 @@ public class TabStripSceneLayer extends SceneOverlayLayer {
      */
     public TabStripSceneLayer(float density) {
         mDpToPx = density;
+        TabStripSceneLayerJni.get()
+                .setConstants(
+                        mNativePtr,
+                        Math.round(StripLayoutGroupTitle.REORDER_BACKGROUND_TOP_MARGIN * mDpToPx),
+                        Math.round(
+                                StripLayoutGroupTitle.REORDER_BACKGROUND_BOTTOM_MARGIN * mDpToPx),
+                        Math.round(
+                                StripLayoutGroupTitle.REORDER_BACKGROUND_PADDING_START * mDpToPx),
+                        Math.round(StripLayoutGroupTitle.REORDER_BACKGROUND_PADDING_END * mDpToPx),
+                        Math.round(
+                                StripLayoutGroupTitle.REORDER_BACKGROUND_CORNER_RADIUS * mDpToPx));
     }
 
     public static void setTestFlag(boolean testFlag) {
@@ -91,6 +103,7 @@ public class TabStripSceneLayer extends SceneOverlayLayer {
             float topPaddingDp) {
         if (mNativePtr == 0) return;
         final boolean visible = yOffset > -layoutHelper.getHeight();
+
         // This will hide the tab strips if necessary.
         TabStripSceneLayerJni.get()
                 .beginBuildingFrame(mNativePtr, TabStripSceneLayer.this, visible);
@@ -101,6 +114,7 @@ public class TabStripSceneLayer extends SceneOverlayLayer {
             float leftPaddingPx = (float) Math.ceil(leftPaddingDp * mDpToPx);
             float rightPaddingPx = (float) Math.ceil(rightPaddingDp * mDpToPx);
             float topPaddingPx = (float) Math.ceil(topPaddingDp * mDpToPx);
+
             pushButtonsAndBackground(
                     layoutHelper,
                     resourceManager,
@@ -110,6 +124,7 @@ public class TabStripSceneLayer extends SceneOverlayLayer {
                     leftPaddingPx,
                     rightPaddingPx,
                     topPaddingPx);
+            pushGroupIndicators(stripLayoutGroupTitlesToRender, layerTitleCache);
             pushStripTabs(
                     layoutHelper,
                     layerTitleCache,
@@ -117,9 +132,12 @@ public class TabStripSceneLayer extends SceneOverlayLayer {
                     stripLayoutTabsToRender,
                     selectedTabId,
                     hoveredTabId);
-            pushGroupIndicators(stripLayoutGroupTitlesToRender, layerTitleCache);
         }
         TabStripSceneLayerJni.get().finishBuildingFrame(mNativePtr, TabStripSceneLayer.this);
+    }
+
+    public void updateOffsetTag(OffsetTag offsetTag) {
+        TabStripSceneLayerJni.get().updateOffsetTag(mNativePtr, TabStripSceneLayer.this, offsetTag);
     }
 
     private void pushButtonsAndBackground(
@@ -148,8 +166,6 @@ public class TabStripSceneLayer extends SceneOverlayLayer {
                         topPaddingPx);
 
         TintedCompositorButton newTabButton = layoutHelper.getNewTabButton();
-        CompositorButton modelSelectorButton = layoutHelper.getModelSelectorButton();
-        boolean modelSelectorButtonVisible = modelSelectorButton.isVisible();
         boolean newTabButtonVisible = newTabButton.isVisible();
         TabStripSceneLayerJni.get()
                 .updateNewTabButton(
@@ -157,34 +173,35 @@ public class TabStripSceneLayer extends SceneOverlayLayer {
                         TabStripSceneLayer.this,
                         newTabButton.getResourceId(),
                         newTabButton.getBackgroundResourceId(),
-                        newTabButton.getShouldApplyHoverBackground(),
                         newTabButton.getDrawX() * mDpToPx,
                         newTabButton.getDrawY() * mDpToPx,
-                        topPaddingPx,
                         layoutHelper.getNewTabBtnVisualOffset() * mDpToPx,
                         newTabButtonVisible,
+                        newTabButton.getShouldApplyHoverBackground(),
                         newTabButton.getTint(),
                         newTabButton.getBackgroundTint(),
                         newTabButton.getOpacity(),
                         resourceManager);
-        TabStripSceneLayerJni.get()
-                .updateModelSelectorButtonBackground(
-                        mNativePtr,
-                        TabStripSceneLayer.this,
-                        modelSelectorButton.getResourceId(),
-                        ((TintedCompositorButton) modelSelectorButton).getBackgroundResourceId(),
-                        modelSelectorButton.getDrawX() * mDpToPx,
-                        modelSelectorButton.getDrawY() * mDpToPx,
-                        modelSelectorButton.getWidth() * mDpToPx,
-                        modelSelectorButton.getHeight() * mDpToPx,
-                        modelSelectorButton.isIncognito(),
-                        modelSelectorButtonVisible,
-                        ((TintedCompositorButton) modelSelectorButton).getTint(),
-                        ((TintedCompositorButton) modelSelectorButton).getBackgroundTint(),
-                        ((TintedCompositorButton) modelSelectorButton)
-                                .getShouldApplyHoverBackground(),
-                        modelSelectorButton.getOpacity(),
-                        resourceManager);
+
+        CompositorButton modelSelectorButton = layoutHelper.getModelSelectorButton();
+        if (modelSelectorButton != null) {
+            boolean modelSelectorButtonVisible = modelSelectorButton.isVisible();
+            TabStripSceneLayerJni.get()
+                    .updateModelSelectorButton(
+                            mNativePtr,
+                            TabStripSceneLayer.this,
+                            modelSelectorButton.getResourceId(),
+                            ((TintedCompositorButton) modelSelectorButton)
+                                    .getBackgroundResourceId(),
+                            modelSelectorButton.getDrawX() * mDpToPx,
+                            modelSelectorButton.getDrawY() * mDpToPx,
+                            modelSelectorButtonVisible,
+                            modelSelectorButton.getShouldApplyHoverBackground(),
+                            ((TintedCompositorButton) modelSelectorButton).getTint(),
+                            ((TintedCompositorButton) modelSelectorButton).getBackgroundTint(),
+                            modelSelectorButton.getOpacity(),
+                            resourceManager);
+        }
 
         TabStripSceneLayerJni.get()
                 .updateTabStripLeftFade(
@@ -220,16 +237,16 @@ public class TabStripSceneLayer extends SceneOverlayLayer {
         //  unused.
         for (int i = 0; i < tabsCount; i++) {
             final StripLayoutTab st = stripTabs[i];
-            boolean isSelected = st.getId() == selectedTabId;
-            boolean isHovered = st.getId() == hoveredTabId;
+            boolean isSelected = st.getTabId() == selectedTabId;
+            boolean isHovered = st.getTabId() == hoveredTabId;
             boolean shouldShowOutline = layoutHelper.shouldShowTabOutline(st);
 
-            // TODO(b/326301060): Update tab outline placeholder color with color picker.
+            // TODO(crbug.com/326301060): Update tab outline placeholder color with color picker.
             TabStripSceneLayerJni.get()
                     .putStripTabLayer(
                             mNativePtr,
                             TabStripSceneLayer.this,
-                            st.getId(),
+                            st.getTabId(),
                             st.getCloseButton().getResourceId(),
                             st.getCloseButton().getBackgroundResourceId(),
                             st.getDividerResourceId(),
@@ -239,8 +256,9 @@ public class TabStripSceneLayer extends SceneOverlayLayer {
                             st.getCloseButton().getBackgroundTint(),
                             st.getDividerTint(),
                             st.getTint(isSelected, isHovered),
-                            layoutHelper.getSelectedOutlineGroupTint(st.getId(), shouldShowOutline),
-                            isSelected,
+                            layoutHelper.getSelectedOutlineGroupTint(
+                                    st.getTabId(), shouldShowOutline),
+                            st.isForegrounded(),
                             shouldShowOutline,
                             st.getClosePressed(),
                             layoutHelper.getWidth() * mDpToPx,
@@ -258,7 +276,6 @@ public class TabStripSceneLayer extends SceneOverlayLayer {
                             st.isEndDividerVisible(),
                             st.isLoading(),
                             st.getLoadingSpinnerRotation(),
-                            st.getBrightness(),
                             st.getContainerOpacity(),
                             layerTitleCache,
                             resourceManager);
@@ -277,16 +294,24 @@ public class TabStripSceneLayer extends SceneOverlayLayer {
                             mNativePtr,
                             TabStripSceneLayer.this,
                             gt.isIncognito(),
+                            gt.isForegrounded(),
+                            gt.shouldShowReorderBackground(),
+                            gt.shouldShowBubble(),
                             gt.getRootId(),
                             gt.getTint(),
+                            gt.getReorderBackgroundTint(),
+                            gt.getBubbleTint(),
                             gt.getPaddedX() * mDpToPx,
                             gt.getPaddedY() * mDpToPx,
                             gt.getPaddedWidth() * mDpToPx,
                             gt.getPaddedHeight() * mDpToPx,
-                            gt.getTitleTextPadding() * mDpToPx,
+                            gt.getTitleStartPadding() * mDpToPx,
+                            gt.getTitleEndPadding() * mDpToPx,
                             gt.getCornerRadius() * mDpToPx,
                             gt.getBottomIndicatorWidth() * mDpToPx,
                             gt.getBottomIndicatorHeight() * mDpToPx,
+                            gt.getBubblePadding() * mDpToPx,
+                            gt.getBubbleSize() * mDpToPx,
                             layerTitleCache);
         }
     }
@@ -301,10 +326,21 @@ public class TabStripSceneLayer extends SceneOverlayLayer {
     public interface Natives {
         long init(TabStripSceneLayer caller);
 
+        void setConstants(
+                long nativeTabStripSceneLayer,
+                int reorderBackgroundTopMargin,
+                int reorderBackgroundBottomMargin,
+                int reorderBackgroundPaddingStart,
+                int reorderBackgroundPaddingEnd,
+                int reorderBackgroundCornerRadius);
+
         void beginBuildingFrame(
                 long nativeTabStripSceneLayer, TabStripSceneLayer caller, boolean visible);
 
         void finishBuildingFrame(long nativeTabStripSceneLayer, TabStripSceneLayer caller);
+
+        void updateOffsetTag(
+                long nativeTabStripSceneLayer, TabStripSceneLayer caller, OffsetTag offsetTag);
 
         void updateTabStripLayer(
                 long nativeTabStripSceneLayer,
@@ -324,12 +360,11 @@ public class TabStripSceneLayer extends SceneOverlayLayer {
                 TabStripSceneLayer caller,
                 int resourceId,
                 int backgroundResourceId,
-                boolean isHovered,
                 float x,
                 float y,
-                float topPadding,
                 float touchTargetOffset,
                 boolean visible,
+                boolean isHovered,
                 int tint,
                 int backgroundTint,
                 float buttonAlpha,
@@ -339,29 +374,13 @@ public class TabStripSceneLayer extends SceneOverlayLayer {
                 long nativeTabStripSceneLayer,
                 TabStripSceneLayer caller,
                 int resourceId,
-                float x,
-                float y,
-                float width,
-                float height,
-                boolean incognito,
-                boolean visible,
-                float buttonAlpha,
-                ResourceManager resourceManager);
-
-        void updateModelSelectorButtonBackground(
-                long nativeTabStripSceneLayer,
-                TabStripSceneLayer caller,
-                int resourceId,
                 int backgroundResourceId,
                 float x,
                 float y,
-                float width,
-                float height,
-                boolean incognito,
                 boolean visible,
+                boolean isHovered,
                 int tint,
                 int backgroundTint,
-                boolean isHovered,
                 float buttonAlpha,
                 ResourceManager resourceManager);
 
@@ -415,7 +434,6 @@ public class TabStripSceneLayer extends SceneOverlayLayer {
                 boolean isEndDividerVisible,
                 boolean isLoading,
                 float spinnerRotation,
-                float brightness,
                 float opacity,
                 LayerTitleCache layerTitleCache,
                 ResourceManager resourceManager);
@@ -424,16 +442,24 @@ public class TabStripSceneLayer extends SceneOverlayLayer {
                 long nativeTabStripSceneLayer,
                 TabStripSceneLayer caller,
                 boolean incognito,
+                boolean foreground,
+                boolean showReorderBackground,
+                boolean showBubble,
                 int id,
                 int tint,
+                int reorderBackgroundTint,
+                int bubbleTint,
                 float x,
                 float y,
                 float width,
                 float height,
-                float titleTextPadding,
+                float titleStartPadding,
+                float titleEndPadding,
                 float cornerRadius,
                 float bottomIndicatorWidth,
                 float bottomIndicatorHeight,
+                float bubblePadding,
+                float bubbleSize,
                 LayerTitleCache layerTitleCache);
 
         void setContentTree(

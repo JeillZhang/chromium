@@ -26,6 +26,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
+/** Static constants and helpers shared across Tab Resumption Module unit tests. */
 public class TestSupport {
     static final long BASE_TIME_MS = 1705000000000L; // 2024-01-11, 14:06:40 EST.
 
@@ -185,7 +186,7 @@ public class TestSupport {
                 /* sourceName= */ "Desktop",
                 /* url= */ urlChoices[index],
                 /* title= */ titleChoices[index],
-                /* timestamp= */ makeTimestamp(16, 0, 0));
+                /* lastActiveTime= */ makeTimestamp(16, 0, 0));
     }
 
     static Tab makeMockBrowserTab() {
@@ -217,7 +218,7 @@ public class TestSupport {
             Assert.assertEquals(expectedEntry.url, entry.url);
             Assert.assertEquals(expectedEntry.title, entry.title);
             Assert.assertEquals(expectedEntry.lastActiveTime, entry.lastActiveTime);
-            Assert.assertEquals(expectedEntry.localTabId, entry.localTabId);
+            Assert.assertEquals(expectedEntry.getLocalTabId(), entry.getLocalTabId());
         }
     }
 }

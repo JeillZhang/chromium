@@ -12,11 +12,14 @@ import org.chromium.base.ObserverList;
 import org.chromium.base.ObserverList.RewindableIterator;
 import org.chromium.base.TerminationStatus;
 import org.chromium.base.ThreadUtils;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.content_public.browser.GlobalRenderFrameHostId;
 import org.chromium.content_public.browser.LifecycleState;
 import org.chromium.content_public.browser.LoadCommittedDetails;
 import org.chromium.content_public.browser.MediaSession;
 import org.chromium.content_public.browser.NavigationHandle;
+import org.chromium.content_public.browser.Visibility;
 import org.chromium.content_public.browser.WebContentsObserver;
 import org.chromium.ui.base.WindowAndroid;
 import org.chromium.ui.mojom.VirtualKeyboardMode;
@@ -29,6 +32,7 @@ import java.util.Iterator;
  * avoiding redundant JNI-related work when there are multiple Java-based observers.
  */
 @JNINamespace("content")
+@NullMarked
 class WebContentsObserverProxy extends WebContentsObserver {
     private long mNativeWebContentsObserverProxy;
     private final ObserverList<WebContentsObserver> mObservers;
@@ -234,22 +238,11 @@ class WebContentsObserverProxy extends WebContentsObserver {
 
     @Override
     @CalledByNative
-    public void wasShown() {
+    public void onVisibilityChanged(@Visibility int visibility) {
         handleObserverCall();
         Iterator<WebContentsObserver> observersIterator = mObservers.iterator();
         for (; observersIterator.hasNext(); ) {
-            observersIterator.next().wasShown();
-        }
-        finishObserverCall();
-    }
-
-    @Override
-    @CalledByNative
-    public void wasHidden() {
-        handleObserverCall();
-        Iterator<WebContentsObserver> observersIterator = mObservers.iterator();
-        for (; observersIterator.hasNext(); ) {
-            observersIterator.next().wasHidden();
+            observersIterator.next().onVisibilityChanged(visibility);
         }
         finishObserverCall();
     }
@@ -450,6 +443,16 @@ class WebContentsObserverProxy extends WebContentsObserver {
 
     @Override
     @CalledByNative
+    public void safeAreaConstraintChanged(boolean hasConstraint) {
+        handleObserverCall();
+        for (WebContentsObserver mObserver : mObservers) {
+            mObserver.safeAreaConstraintChanged(hasConstraint);
+        }
+        finishObserverCall();
+    }
+
+    @Override
+    @CalledByNative
     public void virtualKeyboardModeChanged(@VirtualKeyboardMode.EnumType int mode) {
         handleObserverCall();
         Iterator<WebContentsObserver> observersIterator = mObservers.iterator();
@@ -482,7 +485,7 @@ class WebContentsObserverProxy extends WebContentsObserver {
     }
 
     @Override
-    public void onTopLevelNativeWindowChanged(WindowAndroid windowAndroid) {
+    public void onTopLevelNativeWindowChanged(@Nullable WindowAndroid windowAndroid) {
         handleObserverCall();
         Iterator<WebContentsObserver> observersIterator = mObservers.iterator();
         for (; observersIterator.hasNext(); ) {
@@ -504,17 +507,15 @@ class WebContentsObserverProxy extends WebContentsObserver {
 
     @Override
     @CalledByNative
-    public void destroy() {
-        // Super destruction semantics (removing the observer from the
-        // Java-based WebContents) are quite different, so we explicitly avoid
-        // calling it here.
+    public void webContentsDestroyed() {
         ThreadUtils.assertOnUiThread();
         RewindableIterator<WebContentsObserver> observersIterator = mObservers.rewindableIterator();
         for (; observersIterator.hasNext(); ) {
-            observersIterator.next().destroy();
+            WebContentsObserver observer = observersIterator.next();
+            observer.webContentsDestroyed();
+            observer.observe(null);
         }
-        // All observer destroy() implementations should result in their removal
-        // from the proxy.
+        // All observer observe(null) implementations should result in their removal from the proxy.
         String remainingObservers = "These observers were not removed: ";
         if (!mObservers.isEmpty()) {
             for (observersIterator.rewind(); observersIterator.hasNext(); ) {

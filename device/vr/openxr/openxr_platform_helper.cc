@@ -8,6 +8,7 @@
 #include <utility>
 
 #include "base/containers/contains.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
 #include "base/version.h"
@@ -19,6 +20,7 @@
 #include "device/vr/openxr/openxr_extension_helper.h"
 #include "device/vr/openxr/openxr_graphics_binding.h"
 #include "device/vr/openxr/openxr_interaction_profiles.h"
+#include "device/vr/openxr/openxr_util.h"
 
 namespace device {
 
@@ -116,7 +118,7 @@ XrResult OpenXrPlatformHelper::CreateInstance(XrInstance* instance,
   // engine version should be the build number of chromium
   instance_create_info.applicationInfo.engineVersion = build;
 
-  instance_create_info.applicationInfo.apiVersion = XR_CURRENT_API_VERSION;
+  instance_create_info.applicationInfo.apiVersion = XR_API_VERSION_1_0;
 
   // xrCreateInstance validates the list of extensions and returns
   // XR_ERROR_EXTENSION_NOT_PRESENT if an extension is not supported,
@@ -163,6 +165,15 @@ XrResult OpenXrPlatformHelper::CreateInstance(XrInstance* instance,
     EnableExtensionIfSupported(XR_MSFT_FIRST_PERSON_OBSERVER_EXTENSION_NAME);
   }
 
+  const bool local_floor_ext_supported =
+      GetExtensionEnumeration()->ExtensionSupported(
+          XR_EXT_LOCAL_FLOOR_EXTENSION_NAME);
+  if (local_floor_ext_supported) {
+    extensions.push_back(XR_EXT_LOCAL_FLOOR_EXTENSION_NAME);
+  }
+  UMA_HISTOGRAM_BOOLEAN("XR.OpenXR.LocalFloorExtAvailable",
+                        local_floor_ext_supported);
+
   // Enable any other platform-specific extensions that we don't just enable or
   // try to enable across the board.
   for (const auto* extension : GetOptionalExtensions()) {
@@ -184,12 +195,29 @@ XrResult OpenXrPlatformHelper::CreateInstance(XrInstance* instance,
   XrResult result = xrCreateInstance(&instance_create_info, instance);
   if (XR_SUCCEEDED(result)) {
     xr_instance_ = *instance;
+    UpdateExtensionFactorySupport();
   } else {
     DLOG(ERROR) << __func__ << " Failed to create instance: " << result;
     OnInstanceCreateFailure();
   }
 
   return result;
+}
+
+void OpenXrPlatformHelper::UpdateExtensionFactorySupport() {
+  CHECK(xr_instance_ != XR_NULL_HANDLE);
+  auto* extension_enumeration = GetExtensionEnumeration();
+
+  // If we can't get the System, then the worst case here is that any extensions
+  // that need XrSystemProperties will just stay disabled and that can be
+  // handled later.
+  XrSystemId system;
+  OpenXrApiWrapper::GetSystem(xr_instance_, &system);
+
+  for (auto* extension_factory : GetExtensionHandlerFactories()) {
+    extension_factory->ProcessSystemProperties(extension_enumeration,
+                                               xr_instance_, system);
+  }
 }
 
 XrResult OpenXrPlatformHelper::DestroyInstance(XrInstance& instance) {

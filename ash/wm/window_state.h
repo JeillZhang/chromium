@@ -10,7 +10,6 @@
 #include <vector>
 
 #include "ash/ash_export.h"
-#include "ash/public/cpp/presentation_time_recorder.h"
 #include "ash/wm/drag_details.h"
 #include "ash/wm/multi_display/persistent_window_info.h"
 #include "ash/wm/wm_metrics.h"
@@ -22,6 +21,7 @@
 #include "base/timer/timer.h"
 #include "chromeos/ui/base/window_state_type.h"
 #include "ui/aura/window_observer.h"
+#include "ui/base/mojom/window_show_state.mojom-forward.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/display/display.h"
 #include "ui/gfx/animation/tween.h"
@@ -138,6 +138,8 @@ class ASH_EXPORT WindowState : public aura::WindowObserver {
   void set_is_moving_to_another_display(bool moving) {
     is_moving_to_another_display_ = moving;
   }
+
+  void set_can_update_snap_ratio(bool val) { can_update_snap_ratio_ = val; }
 
   std::optional<float> snap_ratio() const { return snap_ratio_; }
 
@@ -427,9 +429,8 @@ class ASH_EXPORT WindowState : public aura::WindowObserver {
   // Sets the currently stored restore bounds and clears the restore bounds.
   void SetAndClearRestoreBounds();
 
-  // Notifies that the drag operation has been started. Optionally returns a
-  // presentation time recorder for the drag.
-  std::unique_ptr<PresentationTimeRecorder> OnDragStarted(int window_component);
+  // Notifies that the drag operation has been started.
+  void OnDragStarted(int window_component);
 
   // Notifies that the drag operation has been either completed or reverted.
   // |location| is the last position of the pointer device used to drag.
@@ -529,7 +530,7 @@ class ASH_EXPORT WindowState : public aura::WindowObserver {
   ui::ZOrderLevel GetZOrdering() const;
 
   // Returns the window's current show state.
-  ui::WindowShowState GetShowState() const;
+  ui::mojom::WindowShowState GetShowState() const;
 
   // Sets the window's bounds in screen coordinates.
   void SetBoundsInScreen(const gfx::Rect& bounds_in_screen);
@@ -651,6 +652,16 @@ class ASH_EXPORT WindowState : public aura::WindowObserver {
   bool is_moving_to_another_display_ = false;
 
   bool is_handling_float_event_ = false;
+
+  // True while a snap event is being handled. Needed because a snap event can
+  // trigger other events, during which we don't want the nested events to
+  // update the snap ratio.
+  bool is_handling_snap_event_ = false;
+
+  // Set to false while a window may about to be unsnapped. Needed because when
+  // a drag to unsnap starts, the state type is still considered snapped, but we
+  // don't want to update the snap ratio with the target unsnapped bounds.
+  bool can_update_snap_ratio_ = true;
 
   // Contains the window's target snap ratio if it's going to be snapped by a
   // WMEvent, and the updated window snap ratio if the snapped window's bounds

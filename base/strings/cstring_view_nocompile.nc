@@ -41,11 +41,8 @@ void WontCompileNoNulInArray() {
 #endif
 }
 
-void WontCompilePointerInsteadOfArray() {
-  const char good[] = "abc";
-  const char* bad = good;
-  auto v = cstring_view(bad);  // expected-error {{no matching conversion}}
-  auto v2 = cstring_view(nullptr);  // expected-error {{no matching conversion}}
+void WontCompileNullptr() {
+  auto v = cstring_view(nullptr);  // expected-error {{no matching conversion}}
 }
 
 void WontCompileCompareTypeMismatch() {
@@ -70,9 +67,9 @@ void WontCompileDanglingInput() {
   // TODO: construct from string.
   // auto v1 = cstring_view(std::string("abc"));
 
-  auto v2 = UNSAFE_BUFFERS(cstring_view(
-    std::vector<char>{'a', 'b', 'c', '\0'}.data(),
-    3u));  // This should make a lifetime error but doesn't. :(
+  auto v2 = UNSAFE_BUFFERS(cstring_view( // expected-error {{object backing the pointer will be destroyed at the end of the full-expression}}
+      std::vector<char>{'a', 'b', 'c', '\0'}.data(),
+      3u));
 
   auto v3 = cstring_view();
   {

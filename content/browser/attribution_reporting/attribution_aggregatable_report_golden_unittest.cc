@@ -25,11 +25,11 @@
 #include "base/test/values_test_util.h"
 #include "base/time/time.h"
 #include "components/aggregation_service/aggregation_coordinator_utils.h"
+#include "components/attribution_reporting/aggregatable_filtering_id_max_bytes.h"
 #include "components/attribution_reporting/source_registration_time_config.mojom.h"
 #include "components/attribution_reporting/suitable_origin.h"
 #include "content/browser/aggregation_service/aggregatable_report.h"
 #include "content/browser/aggregation_service/aggregation_service.h"
-#include "content/browser/aggregation_service/aggregation_service_features.h"
 #include "content/browser/aggregation_service/aggregation_service_impl.h"
 #include "content/browser/aggregation_service/aggregation_service_test_utils.h"
 #include "content/browser/aggregation_service/public_key.h"
@@ -339,16 +339,10 @@ class AttributionAggregatableReportGoldenLatestVersionTest
     ASSERT_TRUE(request);
 
     const auto get_report_body = [&](AggregatableReport assembled_report) {
-      auto* data = absl::get_if<AttributionReport::AggregatableAttributionData>(
-          &report.data());
-      if (data) {
-        data->common_data.assembled_report = std::move(assembled_report);
-      } else {
-        auto* null_data = absl::get_if<AttributionReport::NullAggregatableData>(
-            &report.data());
-        CHECK(null_data);
-        null_data->common_data.assembled_report = std::move(assembled_report);
-      }
+      auto* data =
+          absl::get_if<AttributionReport::AggregatableData>(&report.data());
+      CHECK(data);
+      data->SetAssembledReport(std::move(assembled_report));
       return report.ReportBody();
     };
 
@@ -372,7 +366,7 @@ TEST_F(AttributionAggregatableReportGoldenLatestVersionTest,
                      SourceBuilder(base::Time::FromMillisecondsSinceUnixEpoch(
                                        1234483200000))
                          .SetDebugKey(123)
-                         .SetDebugCookieSet(true)
+                         .SetCookieBasedDebugAllowed(true)
                          .BuildStored())
                      .SetAggregatableHistogramContributions(
                          {AggregatableReportHistogramContribution(
@@ -402,7 +396,7 @@ TEST_F(AttributionAggregatableReportGoldenLatestVersionTest,
                      SourceBuilder(base::Time::FromMillisecondsSinceUnixEpoch(
                                        1234483300000))
                          .SetDebugKey(123)
-                         .SetDebugCookieSet(true)
+                         .SetCookieBasedDebugAllowed(true)
                          .BuildStored())
                      .SetAggregatableHistogramContributions(
                          {AggregatableReportHistogramContribution(
@@ -438,7 +432,7 @@ TEST_F(AttributionAggregatableReportGoldenLatestVersionTest,
                      SourceBuilder(base::Time::FromMillisecondsSinceUnixEpoch(
                                        1234483400000))
                          .SetDebugKey(123)
-                         .SetDebugCookieSet(true)
+                         .SetCookieBasedDebugAllowed(true)
                          .BuildStored())
                      .SetAggregatableHistogramContributions(
                          {AggregatableReportHistogramContribution(
@@ -512,11 +506,32 @@ TEST_F(AttributionAggregatableReportGoldenLatestVersionTest,
        .report_file = "report_9.json",
        .cleartext_payloads_file = "report_9_cleartext_payloads.json"},
       {.report = ReportBuilder(
+                     AttributionInfoBuilder().Build(),
+                     SourceBuilder(base::Time::FromMillisecondsSinceUnixEpoch(
+                                       1234483200000))
+                         .BuildStored())
+                     .SetAggregatableHistogramContributions(
+                         {AggregatableReportHistogramContribution(
+                             /*bucket=*/0,
+                             /*value=*/33, /*filtering_id=*/257)})
+                     .SetReportTime(base::Time::FromMillisecondsSinceUnixEpoch(
+                         1234486400000))
+                     .SetSourceRegistrationTimeConfig(
+                         attribution_reporting::mojom::
+                             SourceRegistrationTimeConfig::kExclude)
+                     .SetTriggerContextId("example")
+                     .SetAggregatableFilteringIdsMaxBytes(
+                         *attribution_reporting::
+                             AggregatableFilteringIdsMaxBytes::Create(2))
+                     .BuildAggregatableAttribution(),
+       .report_file = "report_10.json",
+       .cleartext_payloads_file = "report_10_cleartext_payloads.json"},
+      {.report = ReportBuilder(
                      AttributionInfoBuilder().SetDebugKey(456).Build(),
                      SourceBuilder(base::Time::FromMillisecondsSinceUnixEpoch(
                                        1234483200000))
                          .SetDebugKey(123)
-                         .SetDebugCookieSet(true)
+                         .SetCookieBasedDebugAllowed(true)
                          .BuildStored())
                      .SetAggregatableHistogramContributions(
                          {AggregatableReportHistogramContribution(
@@ -548,7 +563,7 @@ TEST_F(AttributionAggregatableReportGoldenLatestVersionTest,
                      SourceBuilder(base::Time::FromMillisecondsSinceUnixEpoch(
                                        1234483300000))
                          .SetDebugKey(123)
-                         .SetDebugCookieSet(true)
+                         .SetCookieBasedDebugAllowed(true)
                          .BuildStored())
                      .SetAggregatableHistogramContributions(
                          {AggregatableReportHistogramContribution(
@@ -586,7 +601,7 @@ TEST_F(AttributionAggregatableReportGoldenLatestVersionTest,
                      SourceBuilder(base::Time::FromMillisecondsSinceUnixEpoch(
                                        1234483400000))
                          .SetDebugKey(123)
-                         .SetDebugCookieSet(true)
+                         .SetCookieBasedDebugAllowed(true)
                          .BuildStored())
                      .SetAggregatableHistogramContributions(
                          {AggregatableReportHistogramContribution(
@@ -671,78 +686,6 @@ TEST_F(AttributionAggregatableReportGoldenLatestVersionTest,
                             test_case.cleartext_payloads_file);
   }
 }
-
-std::vector<base::FilePath> GetLegacyVersions() {
-  base::FilePath input_dir;
-  base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &input_dir);
-  input_dir = input_dir.AppendASCII(
-      "content/test/data/attribution_reporting/aggregatable_report_goldens");
-
-  std::vector<base::FilePath> input_paths;
-
-  base::FileEnumerator e(input_dir, /*recursive=*/false,
-                         base::FileEnumerator::DIRECTORIES);
-
-  for (base::FilePath name = e.Next(); !name.empty(); name = e.Next()) {
-    if (name.BaseName() == base::FilePath(FILE_PATH_LITERAL("latest"))) {
-      continue;
-    }
-
-    input_paths.push_back(std::move(name));
-  }
-
-  return input_paths;
-}
-
-// Verifies that legacy versions are properly labeled/stored. Note that there
-// is an implicit requirement that "version" is located in the "shared_info"
-// field in the report.
-class AttributionAggregatableReportGoldenLegacyVersionTest
-    : public ::testing::TestWithParam<base::FilePath> {};
-
-TEST_P(AttributionAggregatableReportGoldenLegacyVersionTest,
-       HasExpectedVersion) {
-  static constexpr std::string_view prefix = "version_";
-
-  base::FilePath dir = GetParam();
-
-  std::string base_name = dir.BaseName().MaybeAsASCII();
-  ASSERT_TRUE(base::StartsWith(base_name, prefix));
-
-  std::string expected_version = base_name.substr(prefix.size());
-
-  base::FileEnumerator e(dir, /*recursive=*/false, base::FileEnumerator::FILES,
-                         FILE_PATH_LITERAL("*.json"));
-
-  for (base::FilePath name = e.Next(); !name.empty(); name = e.Next()) {
-    base::Value value = ParseJsonFromFile(name);
-    if (!value.is_dict()) {
-      continue;
-    }
-
-    const base::Value::Dict& dict = value.GetDict();
-    if (const std::string* shared_info = dict.FindString("shared_info")) {
-      base::Value shared_info_value = base::test::ParseJson(*shared_info);
-      EXPECT_TRUE(shared_info_value.is_dict()) << name;
-      if (!shared_info_value.is_dict()) {
-        continue;
-      }
-
-      const std::string* version =
-          shared_info_value.GetDict().FindString("version");
-      EXPECT_TRUE(version) << name;
-      if (!version) {
-        continue;
-      }
-
-      EXPECT_EQ(*version, expected_version) << name;
-    }
-  }
-}
-
-INSTANTIATE_TEST_SUITE_P(,
-                         AttributionAggregatableReportGoldenLegacyVersionTest,
-                         ::testing::ValuesIn(GetLegacyVersions()));
 
 class AggregatableDebugReportGoldenLatestVersionTest
     : public AggregatableReportGoldenLatestVersionTest {
@@ -848,6 +791,84 @@ TEST_F(AggregatableDebugReportGoldenLatestVersionTest, VerifyGoldenReport) {
                                   test_case.cleartext_payloads_file);
   }
 }
+
+// Returns the legacy versions of attribution and debug aggregatable reports.
+std::vector<base::FilePath> GetLegacyVersions() {
+  std::vector<base::FilePath> input_paths;
+
+  for (const std::string& relative_path :
+       {"content/test/data/attribution_reporting/aggregatable_report_goldens",
+        "content/test/data/attribution_reporting/"
+        "aggregatable_debug_report_goldens"}) {
+    base::FilePath input_dir;
+    base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &input_dir);
+    input_dir = input_dir.AppendASCII(relative_path);
+
+    base::FileEnumerator e(input_dir, /*recursive=*/false,
+                           base::FileEnumerator::DIRECTORIES);
+
+    for (base::FilePath name = e.Next(); !name.empty(); name = e.Next()) {
+      if (name.BaseName() == base::FilePath(FILE_PATH_LITERAL("latest"))) {
+        continue;
+      }
+
+      input_paths.push_back(std::move(name));
+    }
+  }
+
+  return input_paths;
+}
+
+// Verifies that legacy versions are properly labeled/stored. Note that there
+// is an implicit requirement that "version" is located in the "shared_info"
+// field in the report.
+class AttributionAndDebugAggregatableReportGoldenLegacyVersionTest
+    : public ::testing::TestWithParam<base::FilePath> {};
+
+TEST_P(AttributionAndDebugAggregatableReportGoldenLegacyVersionTest,
+       HasExpectedVersion) {
+  static constexpr std::string_view prefix = "version_";
+
+  base::FilePath dir = GetParam();
+
+  std::string base_name = dir.BaseName().MaybeAsASCII();
+  ASSERT_TRUE(base::StartsWith(base_name, prefix));
+
+  std::string expected_version = base_name.substr(prefix.size());
+
+  base::FileEnumerator e(dir, /*recursive=*/false, base::FileEnumerator::FILES,
+                         FILE_PATH_LITERAL("*.json"));
+
+  for (base::FilePath name = e.Next(); !name.empty(); name = e.Next()) {
+    base::Value value = ParseJsonFromFile(name);
+    if (!value.is_dict()) {
+      continue;
+    }
+
+    const base::Value::Dict& dict = value.GetDict();
+    if (const std::string* shared_info = dict.FindString("shared_info")) {
+      base::Value shared_info_value = base::test::ParseJson(*shared_info);
+      EXPECT_TRUE(shared_info_value.is_dict()) << name;
+      if (!shared_info_value.is_dict()) {
+        continue;
+      }
+
+      const std::string* version =
+          shared_info_value.GetDict().FindString("version");
+      EXPECT_TRUE(version) << name;
+      if (!version) {
+        continue;
+      }
+
+      EXPECT_EQ(*version, expected_version) << name;
+    }
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    ,
+    AttributionAndDebugAggregatableReportGoldenLegacyVersionTest,
+    ::testing::ValuesIn(GetLegacyVersions()));
 
 }  // namespace
 }  // namespace content

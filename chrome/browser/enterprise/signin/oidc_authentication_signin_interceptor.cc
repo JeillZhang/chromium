@@ -9,15 +9,16 @@
 #include "base/check.h"
 #include "base/functional/callback.h"
 #include "base/logging.h"
+#include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/uuid.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/enterprise/identifiers/profile_id_delegate_impl.h"
 #include "chrome/browser/enterprise/identifiers/profile_id_service_factory.h"
 #include "chrome/browser/enterprise/profile_management/profile_management_features.h"
+#include "chrome/browser/enterprise/signin/enterprise_signin_prefs.h"
 #include "chrome/browser/enterprise/signin/oidc_authentication_signin_interceptor_factory.h"
 #include "chrome/browser/enterprise/signin/oidc_managed_profile_creation_delegate.h"
-#include "chrome/browser/enterprise/signin/oidc_metrics_utils.h"
 #include "chrome/browser/enterprise/signin/user_policy_oidc_signin_service.h"
 #include "chrome/browser/enterprise/signin/user_policy_oidc_signin_service_factory.h"
 #include "chrome/browser/enterprise/util/managed_browser_utils.h"
@@ -48,6 +49,7 @@
 #include "components/policy/core/common/cloud/user_cloud_policy_manager.h"
 #include "components/policy/core/common/policy_logger.h"
 #include "components/prefs/pref_service.h"
+#include "components/signin/public/base/signin_pref_names.h"
 #include "components/signin/public/identity_manager/primary_account_mutator.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_contents.h"
@@ -60,14 +62,20 @@ using profile_management::features::kOidcAuthStubDmToken;
 using profile_management::features::kOidcAuthStubUserEmail;
 using profile_management::features::kOidcAuthStubUserName;
 
+using profile_management::features::kOidcAuthForceErrorUi;
+using profile_management::features::kOidcAuthForceTimeoutUi;
+
+using profile_management::features::kOidcEnrollRegistrationTimeout;
+
 using enterprise::ProfileIdServiceFactory;
 
 namespace {
 
 constexpr char kUniqueIdentifierTemplate[] = "iss:%s,sub:%s";
 
-bool IsValidOidcToken(ProfileManagementOicdTokens oidc_tokens) {
-  return !oidc_tokens.auth_token.empty() && !oidc_tokens.id_token.empty();
+bool IsValidOidcToken(const ProfileManagementOidcTokens& oidc_tokens) {
+  return (!oidc_tokens.auth_token.empty() || oidc_tokens.is_token_encrypted) &&
+         !oidc_tokens.id_token.empty();
 }
 
 }  // namespace
@@ -85,9 +93,9 @@ OidcAuthenticationSigninInterceptor::~OidcAuthenticationSigninInterceptor() =
 
 void OidcAuthenticationSigninInterceptor::MaybeInterceptOidcAuthentication(
     content::WebContents* intercepted_contents,
-    ProfileManagementOicdTokens oidc_tokens,
-    std::string issuer_id,
-    std::string subject_id,
+    const ProfileManagementOidcTokens& oidc_tokens,
+    const std::string& issuer_id,
+    const std::string& subject_id,
     OidcInterceptionCallback oidc_callback) {
   RecordOidcInterceptionFunnelStep(
       OidcInterceptionFunnelStep::kEnrollmentStarted);
@@ -99,8 +107,6 @@ void OidcAuthenticationSigninInterceptor::MaybeInterceptOidcAuthentication(
   // want to retry the process or a different identity.
   if (interception_in_progress_) {
     VLOG_POLICY(1, OIDC_ENROLLMENT) << "OIDC Interception already in progress";
-    RecordOidcInterceptionResult(
-        OidcInterceptionResult::kInterceptionInProgress);
     return;
   }
 
@@ -109,17 +115,19 @@ void OidcAuthenticationSigninInterceptor::MaybeInterceptOidcAuthentication(
 
   if (!IsValidOidcToken(oidc_tokens)) {
     LOG_POLICY(ERROR, OIDC_ENROLLMENT) << "Invalid tokens in the OIDC response";
+    Reset();
     return;
   }
 
   if (!intercepted_contents) {
     LOG_POLICY(ERROR, OIDC_ENROLLMENT)
         << "Web contents no longer available, aborting interception";
+    Reset();
     return;
   }
 
   web_contents_ = intercepted_contents->GetWeakPtr();
-  oidc_tokens_ = oidc_tokens;
+  oidc_tokens_ = std::move(oidc_tokens);
   unique_user_identifier_ = base::StringPrintf(
       kUniqueIdentifierTemplate, issuer_id.c_str(), subject_id.c_str());
 
@@ -128,7 +136,7 @@ void OidcAuthenticationSigninInterceptor::MaybeInterceptOidcAuthentication(
   for (const auto* entry : g_browser_process->profile_manager()
                                ->GetProfileAttributesStorage()
                                .GetAllProfilesAttributes()) {
-    if (!entry->GetProfileManagementOidcTokens().auth_token.empty() &&
+    if (!entry->GetProfileManagementOidcTokens().id_token.empty() &&
         entry->GetProfileManagementId() == unique_user_identifier_) {
       switch_to_entry_ = entry;
       break;
@@ -172,10 +180,28 @@ void OidcAuthenticationSigninInterceptor::MaybeInterceptOidcAuthentication(
   RecordOidcInterceptionFunnelStep(
       OidcInterceptionFunnelStep::kConsetDialogShown);
 
-  interception_bubble_handle_ = delegate_->ShowSigninInterceptionBubble(
+  if (switch_to_entry_) {
+    interception_bubble_handle_ = delegate_->ShowSigninInterceptionBubble(
+        web_contents_.get(), bubble_parameters,
+        base::BindOnce(
+            &OidcAuthenticationSigninInterceptor::OnProfileSwitchChoice,
+            base::Unretained(this)));
+    return;
+  }
+
+  // TODO(374765466): Simplify this logic by creating a function that can call
+  // one of the following callbacks according to an argument, then passing
+  // this single callback instead of three separate callbacks.
+  interception_bubble_handle_ = delegate_->ShowOidcInterceptionDialog(
       web_contents_.get(), bubble_parameters,
       base::BindOnce(
           &OidcAuthenticationSigninInterceptor::OnProfileCreationChoice,
+          base::Unretained(this)),
+      base::BindOnce(
+          &OidcAuthenticationSigninInterceptor::FinalizeSigninInterception,
+          base::Unretained(this)),
+      base::BindRepeating(
+          &OidcAuthenticationSigninInterceptor::StartOidcRegistration,
           base::Unretained(this)));
 }
 
@@ -189,7 +215,7 @@ void OidcAuthenticationSigninInterceptor::Reset() {
   }
 
   web_contents_ = nullptr;
-  oidc_tokens_ = {};
+  oidc_tokens_ = ProfileManagementOidcTokens();
   dm_token_.clear();
   client_id_.clear();
   user_display_name_.clear();
@@ -203,6 +229,57 @@ void OidcAuthenticationSigninInterceptor::Reset() {
   interception_bubble_handle_.reset();
   interception_in_progress_ = false;
   client_for_testing_ = nullptr;
+  preset_profile_id_.clear();
+  new_profile_.reset();
+  user_choice_handling_done_callback_.Reset();
+  user_choice_handling_retry_callback_.Reset();
+}
+
+// TODO(374766082): Create a separate function for error logging and calls to
+// `RecordOidcProfileCreationResult`, to simplify the logic of this function.
+void OidcAuthenticationSigninInterceptor::HandleError(
+    std::variant<OidcInterceptionResult, OidcProfileCreationResult> result,
+    std::optional<bool> is_dasher_based) {
+  auto operation_result = signin::SigninChoiceOperationResult::SIGNIN_ERROR;
+  signin::SigninChoiceErrorType error_type =
+      signin::SigninChoiceErrorType::kUnknown;
+  if (std::holds_alternative<OidcInterceptionResult>(result)) {
+    CHECK(is_dasher_based == std::nullopt);
+    auto interception_result = std::get<OidcInterceptionResult>(result);
+    RecordOidcInterceptionResult(interception_result);
+    if (interception_result == OidcInterceptionResult::kRegistrationTimeout) {
+      operation_result = signin::SigninChoiceOperationResult::SIGNIN_TIMEOUT;
+    } else if (interception_result ==
+               OidcInterceptionResult::kBrowserSigninDisabled) {
+      error_type = signin::SigninChoiceErrorType::kSigninDisabled;
+    }
+  } else {
+    CHECK(is_dasher_based != std::nullopt);
+    RecordOidcProfileCreationResult(std::get<OidcProfileCreationResult>(result),
+                                    is_dasher_based.value());
+  }
+
+  // Display the error dialog for profile creation case only
+  if (switch_to_entry_) {
+    Reset();
+    return;
+  }
+
+  if (interception_bubble_handle_ && user_choice_handling_done_callback_ &&
+      user_choice_handling_retry_callback_) {
+    if (operation_result ==
+        signin::SigninChoiceOperationResult::SIGNIN_TIMEOUT) {
+      user_choice_handling_retry_callback_.Run(operation_result, error_type);
+      return;
+    }
+
+    std::move(user_choice_handling_done_callback_)
+        .Run(operation_result, error_type);
+    return;
+  }
+
+  // Reset in case the error dialog is not shown correctly.
+  Reset();
 }
 
 void OidcAuthenticationSigninInterceptor::StartOidcRegistration() {
@@ -218,10 +295,9 @@ void OidcAuthenticationSigninInterceptor::StartOidcRegistration() {
           ->GetProfileIdWithGuidAndDeviceId(preset_profile_guid, device_id);
 
   if (preset_profile_id == std::nullopt || preset_profile_id.value().empty()) {
-    VLOG_POLICY(2, OIDC_ENROLLMENT)
+    LOG_POLICY(ERROR, OIDC_ENROLLMENT)
         << "Failed to create a preset profile ID for the new profile";
-
-    Reset();
+    HandleError(OidcInterceptionResult::kInvalidProfile);
     return;
   }
   preset_profile_id_ = preset_profile_id.value();
@@ -263,26 +339,49 @@ void OidcAuthenticationSigninInterceptor::StartOidcRegistration() {
                      base::Unretained(this), std::move(client),
                      preset_profile_guid, registration_start_time);
 
+  base::TimeDelta timeout_duration =
+      (base::FeatureList::IsEnabled(
+          profile_management::features::kOidcEnrollmentTimeout))
+          ? kOidcEnrollRegistrationTimeout.Get()
+          : base::TimeDelta();
   registration_helper_for_temporary_client_->StartRegistrationWithOidcTokens(
       oidc_tokens_.auth_token, oidc_tokens_.id_token, std::string(),
+      oidc_tokens_.state, timeout_duration, oidc_tokens_.is_token_encrypted,
       std::move(registration_callback));
 }
 
 void OidcAuthenticationSigninInterceptor::OnClientRegistered(
     std::unique_ptr<CloudPolicyClient> client,
     std::string preset_profile_guid,
-    base::TimeTicks registration_start_time) {
+    base::TimeTicks registration_start_time,
+    CloudPolicyClient::Result result) {
+  if (kOidcAuthForceErrorUi.Get() ==
+      static_cast<int>(signin::SigninChoiceErrorType::kUnknown)) {
+    LOG_POLICY(ERROR, OIDC_ENROLLMENT) << "OIDC client registration failure "
+                                          "enforced by feature flag parameter.";
+
+    return HandleError(OidcInterceptionResult::kFailedToRegisterProfile);
+  }
+
+  if (kOidcAuthForceTimeoutUi.Get()) {
+    LOG_POLICY(ERROR, OIDC_ENROLLMENT) << "OIDC client registration timeout "
+                                          "enforced by feature flag parameter.";
+
+    return HandleError(OidcInterceptionResult::kRegistrationTimeout);
+  }
+
   if (client->last_dm_status() != policy::DM_STATUS_SUCCESS) {
-    RecordOidcInterceptionResult(
-        OidcInterceptionResult::kFailedToRegisterProfile);
+    // TODO(358986371): Invoke the timeout dialog instead of error dialog if
+    // net error is a timeout.
     RecordOidcEnrollmentRegistrationLatency(
         std::nullopt, /*success=*/false,
         base::TimeTicks::Now() - registration_start_time);
     LOG_POLICY(ERROR, OIDC_ENROLLMENT)
         << "OIDC client registration failed with DM Status: "
         << client->last_dm_status() << ". Enrollment process interrupted.";
-
-    Reset();
+    HandleError((result.GetNetError() == net::ERR_TIMED_OUT)
+                    ? OidcInterceptionResult::kRegistrationTimeout
+                    : OidcInterceptionResult::kFailedToRegisterProfile);
     return;
   }
 
@@ -316,6 +415,25 @@ void OidcAuthenticationSigninInterceptor::OnClientRegistered(
   dasher_based_ = !kOidcAuthIsDasherBased.Get() ? kOidcAuthIsDasherBased.Get()
                                                 : !is_dasherless_client;
 
+  if (kOidcAuthForceErrorUi.Get() ==
+      static_cast<int>(signin::SigninChoiceErrorType::kSigninDisabled)) {
+    LOG_POLICY(ERROR, OIDC_ENROLLMENT)
+        << "OIDC enrollment disabled by sign in, which is enforced by feature "
+           "flag parameter.";
+
+    return HandleError(OidcInterceptionResult::kBrowserSigninDisabled);
+  }
+
+  // TODO(b/355270189): The interaction between OIDC profiles and BrowserSignin
+  // policy should be finalized, this check only prevents Chrome from crashing.
+  if (dasher_based_ &&
+      !profile_->GetPrefs()->GetBoolean(prefs::kSigninAllowedOnNextStartup)) {
+    LOG_POLICY(ERROR, OIDC_ENROLLMENT)
+        << "Google-synced OIDC profile can't be created because browser sign"
+           "in is disabled.";
+    return HandleError(OidcInterceptionResult::kBrowserSigninDisabled);
+  }
+
   RecordOidcEnrollmentRegistrationLatency(
       dasher_based_, /*success=*/true,
       base::TimeTicks::Now() - registration_start_time);
@@ -324,9 +442,7 @@ void OidcAuthenticationSigninInterceptor::OnClientRegistered(
   // Unretained is fine because the profile creator is owned by this.
   profile_creator_ = std::make_unique<ManagedProfileCreator>(
       profile_, unique_user_identifier_,
-      (user_display_name_.empty())
-          ? profiles::GetDefaultNameForNewEnterpriseProfile()
-          : base::UTF8ToUTF16(user_display_name_),
+      profiles::GetDefaultNameForNewEnterpriseProfile(),
       std::make_unique<OidcManagedProfileCreationDelegate>(
           oidc_tokens_.auth_token, oidc_tokens_.id_token, dasher_based_,
           user_display_name_, user_email_),
@@ -337,33 +453,57 @@ void OidcAuthenticationSigninInterceptor::OnClientRegistered(
 }
 
 void OidcAuthenticationSigninInterceptor::OnProfileCreationChoice(
-    SigninInterceptionResult create) {
-  if (create != SigninInterceptionResult::kAccepted) {
-    RecordOidcInterceptionResult(OidcInterceptionResult::kConsetDialogRejected);
-    if (switch_to_entry_) {
-      VLOG_POLICY(2, OIDC_ENROLLMENT) << "Profile switch refused by the user";
-    } else {
-      VLOG_POLICY(2, OIDC_ENROLLMENT) << "Profile creation refused by the user";
-    }
+    signin::SigninChoice choice,
+    signin::SigninChoiceOperationDoneCallback confirm_callback,
+    signin::SigninChoiceOperationRetryCallback retry_callback) {
+  user_choice_handling_done_callback_ = std::move(confirm_callback);
+  user_choice_handling_retry_callback_ = std::move(retry_callback);
 
-    Reset();
+  if (choice == signin::SIGNIN_CHOICE_CANCEL) {
+    RecordOidcInterceptionResult(OidcInterceptionResult::kConsetDialogRejected);
+      VLOG_POLICY(2, OIDC_ENROLLMENT) << "Profile creation refused by the user";
+      if (user_choice_handling_done_callback_) {
+        std::move(user_choice_handling_done_callback_)
+            .Run(signin::SigninChoiceOperationResult::SIGNIN_SILENT_SUCCESS,
+                 signin::SigninChoiceErrorType::kNoError);
+      }
+      return;
+  }
+
+  CHECK(!profile_creator_);
+  CHECK(!switch_to_entry_);
+
+  if (kOidcAuthStubDmToken.Get().empty()) {
+    StartOidcRegistration();
+  } else {
+    OnClientRegistered(
+        nullptr, std::string(), base::TimeTicks::Now(),
+        CloudPolicyClient::Result(policy::DM_STATUS_SUCCESS, /*net_error=*/0));
+  }
+}
+
+void OidcAuthenticationSigninInterceptor::OnProfileSwitchChoice(
+    SigninInterceptionResult result) {
+  if (result != SigninInterceptionResult::kAccepted) {
+    RecordOidcInterceptionResult(OidcInterceptionResult::kConsetDialogRejected);
+    VLOG_POLICY(2, OIDC_ENROLLMENT) << "Profile switch refused by the user";
+    if (user_choice_handling_done_callback_) {
+      std::move(user_choice_handling_done_callback_)
+          .Run(signin::SigninChoiceOperationResult::SIGNIN_SILENT_SUCCESS,
+               signin::SigninChoiceErrorType::kNoError);
+    }
     return;
   }
 
   CHECK(!profile_creator_);
-  if (switch_to_entry_) {
-    // Unretained is fine because the profile creator is owned by this.
-    profile_creator_ = std::make_unique<ManagedProfileCreator>(
-        profile_, switch_to_entry_->GetPath(),
-        std::make_unique<OidcManagedProfileCreationDelegate>(),
-        base::BindOnce(
-            &OidcAuthenticationSigninInterceptor::OnNewSignedInProfileCreated,
-            base::Unretained(this)));
-  } else {
-    kOidcAuthStubDmToken.Get().empty()
-        ? StartOidcRegistration()
-        : OnClientRegistered(nullptr, std::string(), base::TimeTicks::Now());
-  }
+  CHECK(switch_to_entry_);
+  // Unretained is fine because the profile creator is owned by this.
+  profile_creator_ = std::make_unique<ManagedProfileCreator>(
+      profile_, switch_to_entry_->GetPath(),
+      std::make_unique<OidcManagedProfileCreationDelegate>(),
+      base::BindOnce(
+          &OidcAuthenticationSigninInterceptor::OnNewSignedInProfileCreated,
+          base::Unretained(this)));
 }
 
 void OidcAuthenticationSigninInterceptor::OnNewSignedInProfileCreated(
@@ -371,12 +511,12 @@ void OidcAuthenticationSigninInterceptor::OnNewSignedInProfileCreated(
   CHECK(profile_creator_);
 
   if (!new_profile) {
-    RecordOidcProfileCreationResult(
-        OidcProfileCreationResult::kFailedToCreateProfile, dasher_based_);
-    VLOG_POLICY(1, OIDC_ENROLLMENT) << "Failed to create new profile";
-    Reset();
+    LOG_POLICY(ERROR, OIDC_ENROLLMENT) << "Failed to create new profile";
+    HandleError(OidcProfileCreationResult::kFailedToCreateProfile,
+                dasher_based_);
     return;
   }
+  new_profile_ = new_profile->GetWeakPtr();
 
   if (switch_to_entry_) {
     ProfileAttributesEntry* new_profile_entry =
@@ -396,118 +536,102 @@ void OidcAuthenticationSigninInterceptor::OnNewSignedInProfileCreated(
   new_profile->GetPrefs()->SetBoolean(
       device_signals::prefs::kDeviceSignalsPermanentConsentReceived, true);
 
-  // Generate a color theme for new profiles
   if (!switch_to_entry_) {
-    CHECK_NE(SkColor(), profile_color_);
+    VLOG_POLICY(2, OIDC_ENROLLMENT)
+        << "Created new OIDC-managed profile with preset profile ID: "
+        << preset_profile_id_;
+    std::optional<std::string> new_profile_id =
+        ProfileIdServiceFactory::GetForProfile(new_profile.get())
+            ->GetProfileId();
+    if (new_profile_id == std::nullopt) {
+      LOG_POLICY(ERROR, OIDC_ENROLLMENT)
+          << "Failed to retrieve profile ID for the new OIDC-managed profile";
+      RecordOidcProfileCreationResult(
+          OidcProfileCreationResult::kMismatchingProfileId, dasher_based_);
+    } else if (new_profile_id.value() != preset_profile_id_) {
+      LOG_POLICY(ERROR, OIDC_ENROLLMENT)
+          << "New profile's ID " << new_profile_id.value()
+          << " mismatches with the preset value";
+      RecordOidcProfileCreationResult(
+          OidcProfileCreationResult::kMismatchingProfileId, dasher_based_);
+    }
+
+    // Generate a color theme for new profiles
     ThemeServiceFactory::GetForProfile(new_profile.get())
         ->SetUserColorAndBrowserColorVariant(
             profile_color_, ui::mojom::BrowserColorVariant::kTonalSpot);
+
+    // Create a backup copy of the dm token/client ID in case of losing cached
+    // policies.
+    new_profile->GetPrefs()->SetString(
+        enterprise_signin::prefs::kPolicyRecoveryToken, dm_token_);
+    new_profile->GetPrefs()->SetString(
+        enterprise_signin::prefs::kPolicyRecoveryClientId, client_id_);
   } else {
     VLOG_POLICY(2, OIDC_ENROLLMENT) << "Profile switched sucessfully";
   }
-
-  policy::UserPolicyOidcSigninService* policy_service =
-      policy::UserPolicyOidcSigninServiceFactory::GetForProfile(
-          new_profile.get());
-
-  CHECK_EQ(ProfileIdServiceFactory::GetForProfile(new_profile.get())
-               ->GetProfileId()
-               .value(),
-           preset_profile_id_);
 
   VLOG_POLICY(2, OIDC_ENROLLMENT)
       << "Starting policy fetch process for OIDC-managed profile";
   RecordOidcProfileCreationFunnelStep(
       OidcProfileCreationFunnelStep::kPolicyFetchStarted, dasher_based_);
 
-  policy_service->FetchPolicyForSignedInUser(
-      AccountId(), dm_token_, client_id_,
+  auto* oidc_signin_service =
+      policy::UserPolicyOidcSigninServiceFactory::GetForProfile(
+          new_profile.get());
+
+  if (!oidc_signin_service) {
+    LOG_POLICY(ERROR, OIDC_ENROLLMENT)
+        << "Can not find OIDC policy sign in service. Policy fetch aborted";
+    HandleError(OidcProfileCreationResult::kFailedToFetchPolicy, dasher_based_);
+    return;
+  }
+
+  oidc_signin_service->FetchPolicyForOidcUser(
+      AccountId(), dm_token_, client_id_, user_email_,
       /*user_affiliation_ids=*/std::vector<std::string>(),
-      new_profile.get()
-          ->GetDefaultStoragePartition()
+      base::TimeTicks::Now(), switch_to_entry_ != nullptr,
+      new_profile->GetDefaultStoragePartition()
           ->GetURLLoaderFactoryForBrowserProcess(),
       base::BindOnce(&OidcAuthenticationSigninInterceptor::
                          OnPolicyFetchCompleteInNewProfile,
-                     weak_factory_.GetWeakPtr(), new_profile.get(),
-                     base::TimeTicks::Now()));
+                     weak_factory_.GetWeakPtr()));
+
+  if (user_choice_handling_done_callback_) {
+    std::move(user_choice_handling_done_callback_)
+        .Run(signin::SigninChoiceOperationResult::SIGNIN_CONFIRM_SUCCESS,
+             signin::SigninChoiceErrorType::kNoError);
+  } else {
+    FinalizeSigninInterception();
+  }
+}
+
+void OidcAuthenticationSigninInterceptor::OnPolicyFetchCompleteInNewProfile(
+    bool success) {}
+
+void OidcAuthenticationSigninInterceptor::FinalizeSigninInterception() {
+  if (new_profile_) {
+    // Work is done in this profile, creating a new browser window/tab for the
+    // new/existing profile with chrome://newtab/, using the new profile's
+    // interceptor. We can create the window regardless of policy fetch and
+    // primary account setting succeeds or not.
+    OidcAuthenticationSigninInterceptorFactory::GetForProfile(
+        new_profile_.get())
+        ->CreateBrowserAfterSigninInterception();
+    // Since user has been sent to the newly created profile, the old landing
+    // page is no longer relevant and can be closed.
+    if (web_contents_) {
+      web_contents_->Close();
+    }
+  }
+  Reset();
 }
 
 void OidcAuthenticationSigninInterceptor::
     CreateBrowserAfterSigninInterception() {
-  GURL url_to_open = GURL(chrome::kChromeUINewTabURL);
-
   // Open a new browser.
-  NavigateParams params(profile_, url_to_open,
+  NavigateParams params(profile_, GURL(chrome::kChromeUINewTabURL),
                         ui::PAGE_TRANSITION_AUTO_BOOKMARK);
   Navigate(&params);
   VLOG_POLICY(2, OIDC_ENROLLMENT) << "New browser created";
-}
-
-void OidcAuthenticationSigninInterceptor::OnPolicyFetchCompleteInNewProfile(
-    Profile* new_profile,
-    base::TimeTicks policy_fetch_start_time,
-    bool success) {
-  RecordOidcEnrollmentPolicyFetchLatency(
-      dasher_based_, success, base::TimeTicks::Now() - policy_fetch_start_time);
-  if (success) {
-    VLOG_POLICY(2, OIDC_ENROLLMENT) << "Policy fetched for OIDC profile.";
-  }
-
-  if (success && dasher_based_ && !switch_to_entry_) {
-    VLOG_POLICY(2, OIDC_ENROLLMENT)
-        << "Policy fetched for Dasher-based OIDC profile, adding the user as "
-           "the primary account.";
-    RecordOidcProfileCreationFunnelStep(
-        OidcProfileCreationFunnelStep::kAddingPrimaryAccount, dasher_based_);
-
-    // User account management would be included in unified consent dialog.
-    chrome::enterprise_util::SetUserAcceptedAccountManagement(new_profile,
-                                                              true);
-
-    policy::CloudPolicyManager* user_policy_manager =
-        new_profile->GetUserCloudPolicyManager();
-
-    std::string gaia_id =
-        user_policy_manager->core()->store()->policy()->gaia_id();
-
-    VLOG_POLICY(2, OIDC_ENROLLMENT) << "GAIA ID retrieved from user policy for "
-                                    << user_email_ << ": " << gaia_id << ".";
-    auto set_primary_account_result =
-        signin_util::SetPrimaryAccountWithInvalidToken(
-            new_profile, user_email_, gaia_id,
-            /*is_under_advanced_protection=*/false,
-            signin_metrics::AccessPoint::
-                ACCESS_POINT_OIDC_REDIRECTION_INTERCEPTION,
-            signin_metrics::SourceForRefreshTokenOperation::
-                kMachineLogon_CredentialProvider);
-
-    VLOG_POLICY(2, OIDC_ENROLLMENT)
-        << "Operation of setting account id " << gaia_id
-        << " received the following result: "
-        << static_cast<int>(set_primary_account_result);
-
-    RecordOidcProfileCreationResult(
-        (set_primary_account_result ==
-         signin::PrimaryAccountMutator::PrimaryAccountError::kNoError)
-            ? OidcProfileCreationResult::kEnrollmentSucceeded
-            : OidcProfileCreationResult::kFailedToAddPrimaryAccount,
-        dasher_based_);
-
-  } else {
-    RecordOidcProfileCreationResult(
-        (success) ? ((switch_to_entry_)
-                         ? OidcProfileCreationResult::kSwitchedToExistingProfile
-                         : OidcProfileCreationResult::kEnrollmentSucceeded)
-                  : OidcProfileCreationResult::kFailedToFetchPolicy,
-        dasher_based_);
-  }
-
-  // Work is done in this profile, creating a new browser window/tab for the
-  // new/existing profile with chrome://newtab/, using the new profile's
-  // interceptor. We can create the window regardless of policy fetch and
-  // primary account setting succeeds or not.
-  OidcAuthenticationSigninInterceptorFactory::GetForProfile(new_profile)
-      ->CreateBrowserAfterSigninInterception();
-
-  Reset();
 }

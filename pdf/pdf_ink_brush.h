@@ -5,18 +5,21 @@
 #ifndef PDF_PDF_INK_BRUSH_H_
 #define PDF_PDF_INK_BRUSH_H_
 
-#include <memory>
 #include <optional>
 #include <string>
 
+#include "third_party/ink/src/ink/brush/brush.h"
 #include "third_party/skia/include/core/SkColor.h"
+#include "ui/gfx/geometry/rect.h"
+
+namespace gfx {
+class PointF;
+}
 
 namespace chrome_pdf {
 
-class InkBrush;
-
-// A wrapper class used to create ink brushes specifically for PDF annotation
-// mode.
+// A class used to create Ink brushes for PDF annotation mode and support
+// invalidation for rendering.
 class PdfInkBrush {
  public:
   // The types of brushes supported in PDF annotation mode.
@@ -25,28 +28,35 @@ class PdfInkBrush {
     kPen,
   };
 
-  // Parameters for the brush.
-  struct Params {
-    SkColor color;
-    float size;
-  };
-
-  PdfInkBrush(Type brush_type, Params brush_params);
-
+  PdfInkBrush(Type brush_type, SkColor color, float size);
   PdfInkBrush(const PdfInkBrush&) = delete;
   PdfInkBrush& operator=(const PdfInkBrush&) = delete;
   ~PdfInkBrush();
+
+  // Determine the area to invalidate encompassing a line between two
+  // consecutive points where a brush is applied.  Values are in screen-based
+  // coordinates.  The area to invalidated is correlated to the size of the
+  // brush.
+  gfx::Rect GetInvalidateArea(const gfx::PointF& center1,
+                              const gfx::PointF& center2) const;
 
   // Converts `brush_type` to a `Type`, returning `std::nullopt` if `brush_type`
   // does not correspond to any `Type`.
   static std::optional<Type> StringToType(const std::string& brush_type);
 
-  // Returns the `InkBrush` that `this` represents.
-  const InkBrush& GetInkBrush() const;
+  static std::string TypeToString(Type brush_type);
+
+  // Returns whether `size` is in range or not.
+  static bool IsToolSizeInRange(float size);
+
+  const ink::Brush& ink_brush() const { return ink_brush_; }
+
+  void SetColor(SkColor color);
+
+  void SetSize(float size);
 
  private:
-  // The ink brush of type `type_` with params` params_`. Always non-nullptr.
-  std::unique_ptr<InkBrush> ink_brush_;
+  ink::Brush ink_brush_;
 };
 
 }  // namespace chrome_pdf

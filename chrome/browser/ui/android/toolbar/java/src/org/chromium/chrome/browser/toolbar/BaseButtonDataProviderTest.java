@@ -16,26 +16,23 @@ import androidx.annotation.Nullable;
 
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.robolectric.Robolectric;
 import org.robolectric.annotation.Config;
 
-import org.chromium.base.FeatureList;
+import org.chromium.base.FeatureOverrides;
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.supplier.Supplier;
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.base.test.util.Features;
 import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.toolbar.adaptive.AdaptiveToolbarButtonVariant;
 import org.chromium.chrome.browser.toolbar.adaptive.AdaptiveToolbarFeatures;
-import org.chromium.chrome.browser.user_education.IPHCommandBuilder;
+import org.chromium.chrome.browser.user_education.IphCommandBuilder;
 import org.chromium.components.feature_engagement.FeatureConstants;
 import org.chromium.ui.modaldialog.ModalDialogManager;
 
@@ -44,7 +41,7 @@ import org.chromium.ui.modaldialog.ModalDialogManager;
 @Config(manifest = Config.NONE)
 @EnableFeatures({ChromeFeatureList.ADAPTIVE_BUTTON_IN_TOP_TOOLBAR_CUSTOMIZATION_V2})
 public class BaseButtonDataProviderTest {
-    private class TestButtonDataProvider extends BaseButtonDataProvider {
+    private static class TestButtonDataProvider extends BaseButtonDataProvider {
         public TestButtonDataProvider(
                 Supplier<Tab> activeTabSupplier,
                 @Nullable ModalDialogManager modalDialogManager,
@@ -67,9 +64,9 @@ public class BaseButtonDataProviderTest {
         }
 
         @Override
-        protected IPHCommandBuilder getIphCommandBuilder(Tab tab) {
-            IPHCommandBuilder iphCommandBuilder =
-                    new IPHCommandBuilder(
+        protected IphCommandBuilder getIphCommandBuilder(Tab tab) {
+            IphCommandBuilder iphCommandBuilder =
+                    new IphCommandBuilder(
                             tab.getContext().getResources(),
                             FeatureConstants.CONTEXTUAL_PAGE_ACTIONS_QUIET_VARIANT,
                             /* stringId= */ R.string.iph_price_tracking_menu_item,
@@ -80,8 +77,6 @@ public class BaseButtonDataProviderTest {
         @Override
         public void onClick(View view) {}
     }
-
-    @Rule public TestRule mFeaturesProcessor = new Features.JUnitProcessor();
 
     private Activity mActivity;
     @Mock private Tab mMockTab;
@@ -101,11 +96,7 @@ public class BaseButtonDataProviderTest {
 
     @Test
     public void testButtonData_QuietVariation() {
-        FeatureList.TestValues testValues = new FeatureList.TestValues();
-        testValues.addFeatureFlagOverride(ChromeFeatureList.CONTEXTUAL_PAGE_ACTIONS, true);
-        testValues.addFeatureFlagOverride(
-                ChromeFeatureList.ADAPTIVE_BUTTON_IN_TOP_TOOLBAR_CUSTOMIZATION_V2, true);
-        FeatureList.setTestValues(testValues);
+        FeatureOverrides.enable(ChromeFeatureList.ADAPTIVE_BUTTON_IN_TOP_TOOLBAR_CUSTOMIZATION_V2);
         AdaptiveToolbarFeatures.setActionChipOverrideForTesting(
                 AdaptiveToolbarButtonVariant.READER_MODE, false);
 
@@ -120,17 +111,13 @@ public class BaseButtonDataProviderTest {
                         AdaptiveToolbarButtonVariant.READER_MODE);
         ButtonData buttonData = testButtonDataProvider.get(mMockTab);
 
-        // Quiet variation uses an IPHCommandBuilder to highlight the action.
-        Assert.assertNotNull(buttonData.getButtonSpec().getIPHCommandBuilder());
+        // Quiet variation uses an IphCommandBuilder to highlight the action.
+        Assert.assertNotNull(buttonData.getButtonSpec().getIphCommandBuilder());
     }
 
     @Test
     public void testButtonData_ActionChipVariation() {
-        FeatureList.TestValues testValues = new FeatureList.TestValues();
-        testValues.addFeatureFlagOverride(ChromeFeatureList.CONTEXTUAL_PAGE_ACTIONS, true);
-        testValues.addFeatureFlagOverride(
-                ChromeFeatureList.ADAPTIVE_BUTTON_IN_TOP_TOOLBAR_CUSTOMIZATION_V2, true);
-        FeatureList.setTestValues(testValues);
+        FeatureOverrides.enable(ChromeFeatureList.ADAPTIVE_BUTTON_IN_TOP_TOOLBAR_CUSTOMIZATION_V2);
         AdaptiveToolbarFeatures.setActionChipOverrideForTesting(
                 AdaptiveToolbarButtonVariant.READER_MODE, true);
 
@@ -146,7 +133,7 @@ public class BaseButtonDataProviderTest {
         ButtonData buttonData = testButtonDataProvider.get(mMockTab);
 
         // Action chip variation should not set an IPH command builder.
-        Assert.assertNull(buttonData.getButtonSpec().getIPHCommandBuilder());
+        Assert.assertNull(buttonData.getButtonSpec().getIphCommandBuilder());
     }
 
     @Test

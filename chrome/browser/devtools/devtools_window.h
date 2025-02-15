@@ -183,12 +183,6 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
   static std::unique_ptr<content::NavigationThrottle>
   MaybeCreateNavigationThrottle(content::NavigationHandle* handle);
 
-  // Updates the WebContents inspected by the DevToolsWindow by reattaching
-  // the binding to |new_web_contents|. Called when swapping an outer
-  // WebContents with its inner WebContents.
-  void UpdateInspectedWebContents(content::WebContents* new_web_contents,
-                                  base::OnceCallback<void()> callback);
-
   // Sets closure to be called after load is done. If already loaded, calls
   // closure immediately.
   void SetLoadCompletedCallback(base::OnceClosure closure);
@@ -289,6 +283,10 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
   // content::DevToolsUIBindings::Delegate overrides
   void ActivateWindow() override;
 
+  void MainWebContentRenderFrameHostChanged(
+      content::RenderFrameHost* old_frame,
+      content::RenderFrameHost* new_frame);
+
  private:
   friend class DevToolsWindowTesting;
   friend class DevToolsWindowCreationObserver;
@@ -388,13 +386,14 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
 
   // content::WebContentsDelegate:
   void ActivateContents(content::WebContents* contents) override;
-  void AddNewContents(content::WebContents* source,
-                      std::unique_ptr<content::WebContents> new_contents,
-                      const GURL& target_url,
-                      WindowOpenDisposition disposition,
-                      const blink::mojom::WindowFeatures& window_features,
-                      bool user_gesture,
-                      bool* was_blocked) override;
+  content::WebContents* AddNewContents(
+      content::WebContents* source,
+      std::unique_ptr<content::WebContents> new_contents,
+      const GURL& target_url,
+      WindowOpenDisposition disposition,
+      const blink::mojom::WindowFeatures& window_features,
+      bool user_gesture,
+      bool* was_blocked) override;
   void WebContentsCreated(content::WebContents* source_contents,
                           int opener_render_process_id,
                           int opener_render_frame_id,
@@ -471,8 +470,6 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
   // display web modal dialogs triggered by it.
   void RegisterModalDialogManager(Browser* browser);
 
-  void OnReattachMainTargetComplete(base::Value);
-
   // Called when the accepted language changes. |navigator.language| of the
   // DevTools window should match the application language. When the user
   // changes the accepted language then this listener flips the language back
@@ -487,6 +484,21 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
   FrontendType frontend_type_;
   raw_ptr<Profile> profile_;
   raw_ptr<content::WebContents> main_web_contents_;
+
+  class MainWebContentsObserver : public content::WebContentsObserver {
+   public:
+    MainWebContentsObserver(content::WebContents& web_contents,
+                            DevToolsWindow& window)
+        : WebContentsObserver(&web_contents), window_(window) {}
+    ~MainWebContentsObserver() override;
+
+   private:
+    void RenderFrameHostChanged(content::RenderFrameHost* old_frame,
+                                content::RenderFrameHost* new_frame) override;
+
+    raw_ref<DevToolsWindow> window_;
+  };
+  MainWebContentsObserver main_web_contents_observer_;
 
   // DevToolsWindow is informed of the creation of the |toolbox_web_contents_|
   // in WebContentsCreated right before ownership is passed to to DevToolsWindow
@@ -533,8 +545,6 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
   bool open_new_window_for_popups_ = false;
   raw_ptr<infobars::InfoBar> sharing_infobar_ = nullptr;
   int checked_sharing_process_id_ = content::ChildProcessHost::kInvalidUniqueID;
-
-  base::OnceCallback<void()> reattach_complete_callback_;
 
   PrefChangeRegistrar pref_change_registrar_;
 

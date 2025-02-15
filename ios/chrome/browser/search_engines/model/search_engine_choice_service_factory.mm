@@ -7,20 +7,20 @@
 #import <memory>
 
 #import "base/check_deref.h"
-#import "components/keyed_service/ios/browser_state_dependency_manager.h"
 #import "components/search_engines/search_engine_choice/search_engine_choice_service.h"
 #import "components/variations/service/variations_service.h"
+#import "ios/chrome/browser/regional_capabilities/model/regional_capabilities_service_factory.h"
 #import "ios/chrome/browser/shared/model/application_context/application_context.h"
-#import "ios/chrome/browser/shared/model/browser_state/browser_state_otr_helper.h"
-#import "ios/chrome/browser/shared/model/browser_state/chrome_browser_state.h"
+#import "ios/chrome/browser/shared/model/profile/profile_ios.h"
 #import "ios/web/public/browser_state.h"
 
 namespace ios {
 
 SearchEngineChoiceServiceFactory::SearchEngineChoiceServiceFactory()
-    : BrowserStateKeyedServiceFactory(
-          "SearchEngineChoiceServiceFactory",
-          BrowserStateDependencyManager::GetInstance()) {}
+    : ProfileKeyedServiceFactoryIOS("SearchEngineChoiceService",
+                                    ProfileSelection::kRedirectedInIncognito) {
+  DependsOn(ios::RegionalCapabilitiesServiceFactory::GetInstance());
+}
 
 SearchEngineChoiceServiceFactory::~SearchEngineChoiceServiceFactory() = default;
 
@@ -33,26 +33,23 @@ SearchEngineChoiceServiceFactory::GetInstance() {
 
 // static
 search_engines::SearchEngineChoiceService*
-SearchEngineChoiceServiceFactory::GetForBrowserState(
-    ChromeBrowserState* browser_state) {
-  return static_cast<search_engines::SearchEngineChoiceService*>(
-      GetInstance()->GetServiceForBrowserState(browser_state, true));
+SearchEngineChoiceServiceFactory::GetForProfile(ProfileIOS* profile) {
+  return GetInstance()
+      ->GetServiceForProfileAs<search_engines::SearchEngineChoiceService>(
+          profile, /*create=*/true);
 }
 
 std::unique_ptr<KeyedService>
 SearchEngineChoiceServiceFactory::BuildServiceInstanceFor(
     web::BrowserState* context) const {
-  ChromeBrowserState* browser_state =
-      ChromeBrowserState::FromBrowserState(context);
+  ProfileIOS* profile = ProfileIOS::FromBrowserState(context);
   return std::make_unique<search_engines::SearchEngineChoiceService>(
-      CHECK_DEREF(browser_state->GetPrefs()),
+      CHECK_DEREF(profile->GetPrefs()),
       GetApplicationContext()->GetLocalState(),
+      CHECK_DEREF(
+          ios::RegionalCapabilitiesServiceFactory::GetForProfile(profile)),
+      /*is_profile_elibile_for_dse_guest_propagation=*/false,
       GetApplicationContext()->GetVariationsService());
-}
-
-web::BrowserState* SearchEngineChoiceServiceFactory::GetBrowserStateToUse(
-    web::BrowserState* context) const {
-  return GetBrowserStateRedirectedInIncognito(context);
 }
 
 }  // namespace ios

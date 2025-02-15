@@ -43,7 +43,7 @@ void LogLocalCardMigrationDialogOfferMetric(
 }
 
 void LogLocalCardMigrationDialogUserInteractionMetric(
-    const base::TimeDelta& duration,
+    base::TimeDelta duration,
     LocalCardMigrationDialogUserInteractionMetric metric) {
   DCHECK_LT(metric, NUM_LOCAL_CARD_MIGRATION_DIALOG_USER_INTERACTION_METRICS);
   base::UmaHistogramEnumeration(
@@ -104,8 +104,7 @@ void LogLocalCardMigrationPromptMetric(
       histogram_name += "SettingsPage";
       break;
     default:
-      NOTREACHED_IN_MIGRATION();
-      return;
+      NOTREACHED();
   }
   base::UmaHistogramEnumeration(histogram_name, metric,
                                 NUM_LOCAL_CARD_MIGRATION_PROMPT_METRICS);

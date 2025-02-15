@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/filters/ffmpeg_glue.h"
 
 #include <stdint.h>
@@ -11,7 +16,6 @@
 #include "base/check.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
-#include "build/chromeos_buildflags.h"
 #include "media/base/container_names.h"
 #include "media/base/media_switches.h"
 #include "media/base/mock_filters.h"

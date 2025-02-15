@@ -18,7 +18,7 @@
 namespace {
 const void* const kLowUsageHelpControllerKey = &kLowUsageHelpControllerKey;
 constexpr base::TimeDelta kRetryDelay = base::Seconds(1);
-}
+}  // namespace
 
 LowUsageHelpController::LowUsageHelpController(Profile* profile)
     : profile_(profile) {
@@ -90,8 +90,6 @@ void LowUsageHelpController::MaybeShowPromo() {
     return;
   }
 
-  const bool result = browser->window()->MaybeShowStartupFeaturePromo(
+  browser->window()->MaybeShowStartupFeaturePromo(
       feature_engagement::kIPHDesktopReEngagementFeature);
-
-  (void)result;
 }

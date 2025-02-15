@@ -5,14 +5,16 @@
 package org.chromium.chrome.browser.omnibox;
 
 import static org.hamcrest.core.IsEqual.equalTo;
+import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 import android.text.TextUtils;
-import android.util.TypedValue;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.inputmethod.InputConnection;
 
-import androidx.core.widget.TextViewCompat;
 import androidx.test.InstrumentationRegistry;
 import androidx.test.filters.SmallTest;
 
@@ -24,46 +26,45 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mockito;
 
-import org.chromium.base.MathUtils;
+import org.chromium.base.Callback;
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.params.ParameterAnnotations.UseRunnerDelegate;
 import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CommandLineFlags;
-import org.chromium.base.test.util.Criteria;
-import org.chromium.base.test.util.CriteriaHelper;
 import org.chromium.base.test.util.DisabledTest;
-import org.chromium.base.test.util.Restriction;
-import org.chromium.base.test.util.UrlUtils;
+import org.chromium.base.test.util.RequiresRestart;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.ChromeJUnit4RunnerDelegate;
 import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.chrome.test.R;
 import org.chromium.chrome.test.util.OmniboxTestUtils;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
+import org.chromium.components.omnibox.OmniboxFeatures;
 import org.chromium.content_public.common.ContentUrlConstants;
-import org.chromium.ui.test.util.DisableAnimationsTestRule;
-import org.chromium.ui.test.util.UiRestriction;
+import org.chromium.ui.base.Clipboard;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
-/** Tests for the URL bar UI component. */
+/**
+ * Tests for the URL bar UI component.
+ *
+ * <p>TODO(ender): Wrap the UrlBar in a separate standalone activity to focus testing on the
+ * component alone. This should help deflake several tests here and focus on the logic and behavior.
+ */
 @RunWith(ChromeJUnit4ClassRunner.class)
 @CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 @UseRunnerDelegate(ChromeJUnit4RunnerDelegate.class)
 @Batch(Batch.PER_CLASS)
 public class UrlBarTest {
-    @ClassRule
-    public static ChromeTabbedActivityTestRule sActivityTestRule =
+    public static @ClassRule ChromeTabbedActivityTestRule sActivityTestRule =
             new ChromeTabbedActivityTestRule();
-
-    @ClassRule
-    public static DisableAnimationsTestRule sIsableAnimationsRule = new DisableAnimationsTestRule();
-
     private UrlBar mUrlBar;
     private OmniboxTestUtils mOmnibox;
 
@@ -110,7 +111,7 @@ public class UrlBarTest {
         final AtomicReference<String> textWithAutocomplete = new AtomicReference<String>();
         final AtomicReference<String> additionalText = new AtomicReference<String>();
 
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     if (action != null) action.run();
                     hasAutocomplete.set(mUrlBar.hasAutocomplete());
@@ -133,7 +134,7 @@ public class UrlBarTest {
     private void setTextAndVerifyTextDirection(String text, int expectedDirection)
             throws TimeoutException {
         CallbackHelper directionCallback = new CallbackHelper();
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mUrlBar.setUrlDirectionListener(
                             (direction) -> {
@@ -143,15 +144,14 @@ public class UrlBarTest {
                             });
                 });
         mOmnibox.setText(text);
-        directionCallback.waitForFirst(
+        directionCallback.waitForOnly(
                 "Direction never reached expected direction: " + expectedDirection);
         assertUrlDirection(expectedDirection);
-        TestThreadUtils.runOnUiThreadBlocking(() -> mUrlBar.setUrlDirectionListener(null));
+        ThreadUtils.runOnUiThreadBlocking(() -> mUrlBar.setUrlDirectionListener(null));
     }
 
     private void assertUrlDirection(int expectedDirection) {
-        int actualDirection =
-                TestThreadUtils.runOnUiThreadBlockingNoException(() -> mUrlBar.getUrlDirection());
+        int actualDirection = ThreadUtils.runOnUiThreadBlocking(() -> mUrlBar.getUrlDirection());
         Assert.assertEquals(expectedDirection, actualDirection);
     }
 
@@ -179,7 +179,7 @@ public class UrlBarTest {
         // Replace part of the non-autocomplete text
         mOmnibox.setText("test");
         mOmnibox.setAutocompleteText("ing is fun", Optional.empty());
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mUrlBar.setText(mUrlBar.getText().replace(1, 2, "a"));
                 });
@@ -188,7 +188,7 @@ public class UrlBarTest {
         // Replace part of the autocomplete text.
         mOmnibox.setText("test");
         mOmnibox.setAutocompleteText("ing is fun", Optional.empty());
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mUrlBar.setText(mUrlBar.getText().replace(8, 10, "no"));
                 });
@@ -213,12 +213,12 @@ public class UrlBarTest {
         final CallbackHelper autocompleteHelper = new CallbackHelper();
         final AtomicReference<String> requestedAutocompleteText = new AtomicReference<String>();
         final AtomicBoolean didPreventInlineAutocomplete = new AtomicBoolean();
-        mUrlBar.setUrlTextChangeListener(
+        mUrlBar.setTextChangeListener(
                 (textWithoutAutocomplete) -> {
                     autocompleteHelper.notifyCalled();
                     requestedAutocompleteText.set(textWithoutAutocomplete);
                     didPreventInlineAutocomplete.set(!mUrlBar.shouldAutocomplete());
-                    mUrlBar.setUrlTextChangeListener(null);
+                    mUrlBar.setTextChangeListener(null);
                 });
 
         AutocompleteState state = setSelection(selectionStart, selectionEnd);
@@ -328,7 +328,7 @@ public class UrlBarTest {
         // this slightly differently than the other cases.
         mOmnibox.setText("test");
         mOmnibox.setAutocompleteText("ing is fun", Optional.of("www.bar.com"));
-        TestThreadUtils.runOnUiThreadBlocking(() -> mUrlBar.setSelection(4, 14));
+        ThreadUtils.runOnUiThreadBlocking(() -> mUrlBar.setSelection(4, 14));
         mOmnibox.checkText(equalTo("testing is fun"), null, equalTo("www.bar.com"));
     }
 
@@ -343,7 +343,7 @@ public class UrlBarTest {
     public void testSendCursorPosition() throws TimeoutException {
         final CallbackHelper autocompleteHelper = new CallbackHelper();
         final AtomicInteger cursorPositionUsed = new AtomicInteger();
-        mUrlBar.setUrlTextChangeListener(
+        mUrlBar.setTextChangeListener(
                 (textWithoutAutocomplete) -> {
                     int cursorPosition =
                             mUrlBar.getSelectionEnd() == mUrlBar.getSelectionStart()
@@ -392,7 +392,7 @@ public class UrlBarTest {
         autocompleteHelper.waitForCallback(4);
         Assert.assertEquals(0, cursorPositionUsed.get());
 
-        mUrlBar.setUrlTextChangeListener(null);
+        mUrlBar.setTextChangeListener(null);
     }
 
     /**
@@ -411,14 +411,14 @@ public class UrlBarTest {
 
         final CallbackHelper autocompleteHelper = new CallbackHelper();
         final AtomicBoolean didPreventInlineAutocomplete = new AtomicBoolean();
-        mUrlBar.setUrlTextChangeListener(
+        mUrlBar.setTextChangeListener(
                 (textWithoutAutocomplete) -> {
                     if (!TextUtils.equals(textToBeEntered, mUrlBar.getTextWithoutAutocomplete())) {
                         return;
                     }
                     didPreventInlineAutocomplete.set(!mUrlBar.shouldAutocomplete());
                     autocompleteHelper.notifyCalled();
-                    mUrlBar.setUrlTextChangeListener(null);
+                    mUrlBar.setTextChangeListener(null);
                 });
 
         mOmnibox.typeText(textToBeEntered, false);
@@ -439,12 +439,12 @@ public class UrlBarTest {
 
         final CallbackHelper autocompleteHelper = new CallbackHelper();
         final AtomicBoolean didPreventInlineAutocomplete = new AtomicBoolean();
-        mUrlBar.setUrlTextChangeListener(
+        mUrlBar.setTextChangeListener(
                 (textWithoutAutocomplete) -> {
                     if (!TextUtils.equals("test", mUrlBar.getTextWithoutAutocomplete())) return;
                     didPreventInlineAutocomplete.set(!mUrlBar.shouldAutocomplete());
                     autocompleteHelper.notifyCalled();
-                    mUrlBar.setUrlTextChangeListener(null);
+                    mUrlBar.setTextChangeListener(null);
                 });
 
         mOmnibox.sendKey(KeyEvent.KEYCODE_DEL);
@@ -490,7 +490,7 @@ public class UrlBarTest {
         // Invalid case (cursor not at the end of the text).
         mOmnibox.setText("g");
         mOmnibox.setAutocompleteText("oogle.com", Optional.empty());
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     InputConnection conn = mUrlBar.getInputConnection();
                     conn.beginBatchEdit();
@@ -578,17 +578,17 @@ public class UrlBarTest {
     @SmallTest
     @DisabledTest(message = "Disabled because of b/333536371")
     public void testUrlTextChangeListener() {
-        UrlBar.UrlTextChangeListener listener = Mockito.mock(UrlBar.UrlTextChangeListener.class);
-        mUrlBar.setUrlTextChangeListener(listener);
+        Callback<String> listener = mock(Callback.class);
+        mUrlBar.setTextChangeListener(listener);
 
         mOmnibox.setText("onomatop");
-        Mockito.verify(listener).onTextChanged("onomatop");
+        Mockito.verify(listener).onResult("onomatop");
 
         // Setting autocomplete does not send a change update.
         mOmnibox.setAutocompleteText("oeia", Optional.empty());
 
         mOmnibox.setText("");
-        Mockito.verify(listener).onTextChanged("");
+        Mockito.verify(listener).onResult("");
     }
 
     @Test
@@ -673,44 +673,191 @@ public class UrlBarTest {
 
     @Test
     @SmallTest
-    @Restriction({UiRestriction.RESTRICTION_TYPE_PHONE})
-    public void testDarkThemeColor() throws Throwable {
-        // Execute HTML from within the omnibox and observe the style change.
-        mOmnibox.typeText(
-                UrlUtils.encodeHtmlDataUri(
-                        "<html><meta name=\"theme-color\" content=\"#000000\" /></html>"),
-                true);
-
-        CriteriaHelper.pollUiThread(
-                () -> {
-                    final int expectedTextColor =
-                            sActivityTestRule
-                                    .getActivity()
-                                    .getColor(R.color.branded_url_text_on_dark_bg);
-                    Criteria.checkThat(mUrlBar.getCurrentTextColor(), equalTo(expectedTextColor));
-                });
+    public void typingStarted_emittedOncePerFocus() {
+        testTypingStarted_emittedOncePerFocus();
     }
 
     @Test
     @SmallTest
-    public void testEnforceTextHeight() {
-        TestThreadUtils.runOnUiThreadBlocking(
+    public void typingStarted_emittedOncePerFocusWithRetainOmniboxOnFocusDisabled() {
+        OmniboxFeatures.setShouldRetainOmniboxOnFocusForTesting(Boolean.FALSE);
+        testTypingStarted_emittedOncePerFocus();
+    }
+
+    @Test
+    @SmallTest
+    public void typingStarted_emittedOncePerFocusWithRetainOmniboxOnFocusEnabled() {
+        OmniboxFeatures.setShouldRetainOmniboxOnFocusForTesting(Boolean.TRUE);
+        testTypingStarted_emittedOncePerFocus();
+    }
+
+    private void testTypingStarted_emittedOncePerFocus() {
+        var listener = mock(Runnable.class);
+
+        mOmnibox.clearFocus();
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+        mUrlBar.setTypingStartedListener(listener);
+        mOmnibox.requestFocus();
+
+        verifyNoInteractions(listener);
+
+        // Verify that UrlBar emits a single Typing Started event.
+        mOmnibox.typeText("a", false);
+        verify(listener).run();
+
+        clearInvocations(listener);
+
+        // Verify no subsequent events emitted.
+        mOmnibox.typeText("a", false);
+        verifyNoInteractions(listener);
+    }
+
+    @Test
+    @SmallTest
+    public void typingStarted_emittedOnceEveryFocus() {
+        testTypingStarted_emittedOnceEveryFocus();
+    }
+
+    @Test
+    @SmallTest
+    public void typingStarted_emittedOnceEveryFocusWithRetainOmniboxOnFocusDisabled() {
+        OmniboxFeatures.setShouldRetainOmniboxOnFocusForTesting(Boolean.FALSE);
+        testTypingStarted_emittedOnceEveryFocus();
+    }
+
+    @Test
+    @SmallTest
+    public void typingStarted_emittedOnceEveryFocusWithRetainOmniboxOnFocusEnabled() {
+        OmniboxFeatures.setShouldRetainOmniboxOnFocusForTesting(Boolean.TRUE);
+        testTypingStarted_emittedOnceEveryFocus();
+    }
+
+    private void testTypingStarted_emittedOnceEveryFocus() {
+        var listener = mock(Runnable.class);
+
+        mOmnibox.clearFocus();
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+        mUrlBar.setTypingStartedListener(listener);
+        mOmnibox.requestFocus();
+
+        verifyNoInteractions(listener);
+
+        // Verify that UrlBar emits a single Typing Started event.
+        mOmnibox.typeText("a", false);
+        verify(listener).run();
+
+        mOmnibox.clearFocus();
+        clearInvocations(listener);
+        mOmnibox.requestFocus();
+
+        // Verify no subsequent events emitted.
+        mOmnibox.typeText("a", false);
+        verify(listener).run();
+    }
+
+    @Test
+    @SmallTest
+    @RequiresRestart("crbug.com/358170962")
+    public void typingStarted_notEmittedForNonTypingCharacters() {
+        testTypingStarted_notEmittedForNonTypingCharacters(
+                /* expectRetainOmniboxOnFocus= */ ThreadUtils.runOnUiThreadBlocking(
+                        OmniboxFeatures::shouldRetainOmniboxOnFocus));
+    }
+
+    @Test
+    @SmallTest
+    @RequiresRestart("crbug.com/358170962")
+    public void typingStarted_notEmittedForNonTypingCharactersWithRetainOmniboxOnFocusDisabled() {
+        OmniboxFeatures.setShouldRetainOmniboxOnFocusForTesting(Boolean.FALSE);
+        testTypingStarted_notEmittedForNonTypingCharacters(/* expectRetainOmniboxOnFocus= */ false);
+    }
+
+    @Test
+    @SmallTest
+    @RequiresRestart("crbug.com/358170962")
+    public void typingStarted_notEmittedForNonTypingCharactersWithRetainOmniboxOnFocusEnabled() {
+        OmniboxFeatures.setShouldRetainOmniboxOnFocusForTesting(Boolean.TRUE);
+        testTypingStarted_notEmittedForNonTypingCharacters(/* expectRetainOmniboxOnFocus= */ true);
+    }
+
+    private void testTypingStarted_notEmittedForNonTypingCharacters(
+            boolean expectRetainOmniboxOnFocus) {
+        var listener = mock(Runnable.class);
+
+        mOmnibox.clearFocus();
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+        mUrlBar.setTypingStartedListener(listener);
+        mOmnibox.requestFocus();
+
+        var nonTypingKeys =
+                new ArrayList<>(
+                        List.of(
+                                KeyEvent.KEYCODE_F1,
+                                KeyEvent.KEYCODE_SHIFT_LEFT,
+                                KeyEvent.KEYCODE_DEL,
+                                KeyEvent.KEYCODE_PAGE_UP,
+                                KeyEvent.KEYCODE_DPAD_LEFT));
+
+        // When retaining omnibox on focus, the tab key causes selection of the first omnibox
+        // suggestion. This results in a push to the model which, in turn, results in a typing
+        // started event. This is not a real world scenario for the NTP on Large-Form-Factor
+        // devices, where the omnibox is pre-focused and the tab key reveals the suggestions list,
+        // so this is acceptable.
+        if (!expectRetainOmniboxOnFocus) {
+            nonTypingKeys.add(KeyEvent.KEYCODE_TAB);
+        }
+
+        for (int key : nonTypingKeys) {
+            mOmnibox.sendKey(key);
+            verifyNoInteractions(listener);
+        }
+    }
+
+    @Test
+    @SmallTest
+    public void typingStarted_clipboardPasteTriggersTypingStarted() {
+        testTypingStarted_clipboardPasteTriggersTypingStarted();
+    }
+
+    @Test
+    @SmallTest
+    public void
+            typingStarted_clipboardPasteTriggersTypingStartedWithRetainOmniboxOnFocusDisabled() {
+        OmniboxFeatures.setShouldRetainOmniboxOnFocusForTesting(Boolean.FALSE);
+        testTypingStarted_clipboardPasteTriggersTypingStarted();
+    }
+
+    @Test
+    @SmallTest
+    public void typingStarted_clipboardPasteTriggersTypingStartedWithRetainOmniboxOnFocusEnabled() {
+        OmniboxFeatures.setShouldRetainOmniboxOnFocusForTesting(Boolean.TRUE);
+        testTypingStarted_clipboardPasteTriggersTypingStarted();
+    }
+
+    private void testTypingStarted_clipboardPasteTriggersTypingStarted() {
+        var listener = mock(Runnable.class);
+
+        mOmnibox.clearFocus();
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+        mUrlBar.setTypingStartedListener(listener);
+        mOmnibox.requestFocus();
+
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
-                    float origTextSize = mUrlBar.getTextSize();
-                    mUrlBar.clearFocus();
-                    mUrlBar.setTextSize(TypedValue.COMPLEX_UNIT_PX, 100);
-                    mUrlBar.enforceMaxTextHeight();
-                    Assert.assertTrue(
-                            mUrlBar.getMaxTextHeight()
-                                    >= UrlBar.getMaxHeightOfFont(
-                                            TextViewCompat.getTextMetricsParams(mUrlBar)
-                                                    .getTextPaint()
-                                                    .getFontMetrics()));
-                    // Enforce a max, but not a min.
-                    mUrlBar.setTextSize(TypedValue.COMPLEX_UNIT_PX, 10f);
-                    mUrlBar.enforceMaxTextHeight();
-                    Assert.assertEquals(10f, mUrlBar.getTextSize(), MathUtils.EPSILON);
-                    mUrlBar.setTextSize(origTextSize);
+                    Clipboard.getInstance().setText("");
+                    // Paste directly. This is because Keyboard paste normally goes through an IME,
+                    // which requires a lengthier process, rendering test flaky.
+                    mUrlBar.onTextContextMenuItem(android.R.id.paste);
                 });
+        verifyNoInteractions(listener);
+
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    Clipboard.getInstance().setText("asdf");
+                    // Paste directly. This is because Keyboard paste normally goes through an IME,
+                    // which requires a lengthier process, rendering test flaky.
+                    mUrlBar.onTextContextMenuItem(android.R.id.paste);
+                });
+        verify(listener).run();
     }
 }

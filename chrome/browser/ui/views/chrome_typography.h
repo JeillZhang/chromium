@@ -5,19 +5,18 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_CHROME_TYPOGRAPHY_H_
 #define CHROME_BROWSER_UI_VIEWS_CHROME_TYPOGRAPHY_H_
 
-#include "build/chromeos_buildflags.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/font.h"
 #include "ui/views/style/typography.h"
 #include "ui/views/style/typography_provider.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 // gn check complains on Linux Ozone.
 #include "ash/public/cpp/ash_typography.h"  // nogncheck
 #endif
 
 enum ChromeTextContext {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   CHROME_TEXT_CONTEXT_START = ash::ASH_TEXT_CONTEXT_END,
 #else
   CHROME_TEXT_CONTEXT_START = views::style::VIEWS_TEXT_CONTEXT_END,
@@ -35,6 +34,10 @@ enum ChromeTextContext {
   // Text of the number of tabs in the tab counter used in tablet mode.
   CONTEXT_TAB_COUNTER,
 
+  // Used in `ManagePasswordsDetailsView` error messages. It likely has little
+  // to no effect in terms of typography (font size, font weight, etc.).
+  CONTEXT_DEEMPHASIZED,
+
   // Text used in the following UI contexts:
   //   - Omnibox query row text entry
   //   - Location icon view in the Omnibox
@@ -48,20 +51,15 @@ enum ChromeTextContext {
   CONTEXT_OMNIBOX_PRIMARY,
 
   // Primary text in the omnibox dropdown.
+  // TODO(crbug.com/370088101): The contexts below used for omnibox controls
+  //   should reuse `CONTEXT_OMNIBOX_POPUP` with a custom style if necessary.
   CONTEXT_OMNIBOX_POPUP,
 
   // Text in the suggestions section header in the omnibox dropdown.
   CONTEXT_OMNIBOX_SECTION_HEADER,
 
-  // Text used in the following UI contexts:
-  //   - Omnibox answer results
-  //   - Two-line entity suggestions (description)
-  //
-  // This context is also used in the following UI components, but likely has
-  // little to no effect in terms of typography (font size, font weight, etc.):
-  //   - Additional text view in the Omnibox
-  //   - Error messages in password manager (manage_passwords_details_view.cc)
-  CONTEXT_OMNIBOX_DEEMPHASIZED,
+  // Text for suggestion row chips; e.g. the history embeddings chip.
+  CONTEXT_OMNIBOX_POPUP_ROW_CHIP,
 
   // ToolbarButton label
   CONTEXT_TOOLBAR_BUTTON,
@@ -80,26 +78,26 @@ enum ChromeTextContext {
 
   // Title label in the browser side panel. Usually 13pt.
   CONTEXT_SIDE_PANEL_TITLE,
+
+  // Body label in the toast. Usually 13pt.
+  CONTEXT_TOAST_BODY_TEXT,
 };
 
 enum ChromeTextStyle {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   CHROME_TEXT_STYLE_START = ash::ASH_TEXT_STYLE_END,
 #else
   CHROME_TEXT_STYLE_START = views::style::VIEWS_TEXT_STYLE_END,
 #endif
 
-  // Similar to views::style::STYLE_PRIMARY but with a monospaced typeface.
-  STYLE_PRIMARY_MONOSPACED = CHROME_TEXT_STYLE_START,
-
-  // Similar to views::style::STYLE_SECONDARY but with a monospaced typeface.
-  STYLE_SECONDARY_MONOSPACED,
-
   // A solid shade of red.
-  STYLE_RED,
+  STYLE_RED = CHROME_TEXT_STYLE_START,
 
   // A solid shade of green.
   STYLE_GREEN,
+
+  // 2px smaller.
+  STYLE_SMALL,
 };
 
 // Takes a desired font size and returns the size delta to request from
@@ -110,6 +108,8 @@ int GetFontSizeDeltaBoundedByAvailableHeight(int available_height,
                                              int desired_font_size);
 
 // Sets the |details| for text that should not be affected by the Harmony spec.
+// TODO(crbug.com/370088101) Merge into the callsite
+//   `ChromeTypographyProvider::GetFontDetailsImpl()`.
 void ApplyCommonFontStyles(int context,
                            int style,
                            ui::ResourceBundle::FontDetails& details);

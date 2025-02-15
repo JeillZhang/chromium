@@ -15,7 +15,6 @@
 #include "components/privacy_sandbox/canonical_topic.h"
 #include "components/privacy_sandbox/privacy_sandbox_features.h"
 #include "components/privacy_sandbox/privacy_sandbox_prefs.h"
-#include "content/public/common/content_features.h"
 #include "content/public/test/browser_test.h"
 
 namespace {
@@ -47,16 +46,6 @@ DeepQuery GetAdTopicsPageQuery() {
 class PrivacySandboxSettingsTopicsInteractiveTest
     : public InteractiveBrowserTest {
  public:
-  void SetUp() override {
-    scoped_feature_list_.InitWithFeaturesAndParameters(
-        {{privacy_sandbox::kPrivacySandboxProactiveTopicsBlocking,
-          {{privacy_sandbox::
-                kPrivacySandboxProactiveTopicsBlockingIncludeModeBName,
-            "false"}}}},
-        {{features::kCookieDeprecationFacilitatedTesting}});
-    InteractiveBrowserTest::SetUp();
-  }
-
   void SetUpOnMainThread() override {
     browser()->profile()->GetPrefs()->SetBoolean(
         prefs::kPrivacySandboxM1TopicsEnabled, true);
@@ -94,7 +83,7 @@ class PrivacySandboxSettingsTopicsInteractiveTest
       (blockedTopicsList + "privacy-sandbox-interest-item") + "cr-button";
   const DeepQuery blockedTopicsRow =
       GetAdTopicsPageQuery() + "#blockedTopicsRow";
-  const DeepQuery ironCollapse = GetAdTopicsPageQuery() + "iron-collapse";
+  const DeepQuery ironCollapse = GetAdTopicsPageQuery() + "cr-collapse";
 
  private:
   base::test::ScopedFeatureList scoped_feature_list_;
@@ -180,13 +169,13 @@ IN_PROC_BROWSER_TEST_F(PrivacySandboxSettingsTopicsInteractiveTest,
       CheckJsResultAt(kPrivacySandboxTopicsElementId,
                       GetManageTopicsPageQuery(),
                       R"(
-        (el) => Array.from(el.shadowRoot.querySelectorAll('iron-icon')).some(
+        (el) => Array.from(el.shadowRoot.querySelectorAll('cr-icon')).some(
                     el => el.icon === 'firstLevelTopics20:artist')
         )"),
       CheckJsResultAt(kPrivacySandboxTopicsElementId,
                       GetManageTopicsPageQuery(),
                       R"(
-        (el) => Array.from(el.shadowRoot.querySelectorAll('iron-icon')).some(
+        (el) => Array.from(el.shadowRoot.querySelectorAll('cr-icon')).some(
                 el => el.icon === 'firstLevelTopics20:category')
         )",
                       false));

@@ -92,11 +92,11 @@ suite('Chrome OS', function() {
     peoplePage.remove();
   });
 
-  test('GAIA name and picture', async () => {
-    chai.assert.include(
-        peoplePage.shadowRoot!.querySelector<HTMLElement>(
-                                  '#profile-icon')!.style.backgroundImage,
-        'data:image/png;base64,primaryAccountPicData');
+  test('GAIA name and picture', () => {
+    assertTrue(
+        peoplePage.shadowRoot!.querySelector<HTMLElement>('#profile-icon')!
+            .style.backgroundImage.includes(
+                'data:image/png;base64,primaryAccountPicData'));
     assertEquals(
         'Primary Account',
         peoplePage.shadowRoot!.querySelector(

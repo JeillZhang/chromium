@@ -38,10 +38,6 @@ class PerformanceTimelineBrowserTest : public ContentBrowserTest {
     return static_cast<WebContentsImpl*>(shell()->web_contents());
   }
 
-  void SetUpCommandLine(base::CommandLine* command_line) override {
-    ContentBrowserTest::SetUpCommandLine(command_line);
-  }
-
   RenderFrameHostImpl* current_frame_host() {
     return web_contents()->GetPrimaryFrameTree().root()->current_frame_host();
   }
@@ -190,13 +186,8 @@ class PerformanceTimelineLCPStartTimePrecisionBrowserTest
   int32_t precision_ = 10;
 };
 
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-#define MAYBE_LCPStartTimePrecision DISABLED_LCPStartTimePrecision
-#else
-#define MAYBE_LCPStartTimePrecision LCPStartTimePrecision
-#endif
 IN_PROC_BROWSER_TEST_F(PerformanceTimelineLCPStartTimePrecisionBrowserTest,
-                       MAYBE_LCPStartTimePrecision) {
+                       LCPStartTimePrecision) {
   ASSERT_TRUE(embedded_test_server()->Start());
   const GURL url1(embedded_test_server()->GetURL(
       "a.com", "/performance_timeline/lcp-start-time-precision.html"));
@@ -211,8 +202,7 @@ class PerformanceTimelineNavigationIdBrowserTest
  protected:
   void SetUpCommandLine(base::CommandLine* command_line) override {
     PerformanceTimelineBrowserTest::SetUpCommandLine(command_line);
-    base::CommandLine::ForCurrentProcess()->AppendSwitch(
-        "--enable-blink-test-features");
+    command_line->AppendSwitch("--enable-blink-test-features");
   }
 };
 
@@ -241,9 +231,9 @@ IN_PROC_BROWSER_TEST_F(PerformanceTimelineNavigationIdBrowserTest,
 
     // Verify `rfh_a` is stored in back/forward cache in case back/forward cache
     // feature is enabled.
-    if (IsBackForwardCacheEnabled())
+    if (IsBackForwardCacheEnabled()) {
       ASSERT_TRUE(rfh_a->IsInBackForwardCache());
-    else {
+    } else {
       // Verify `rfh_a` is deleted in case back/forward cache feature is
       // disabled.
       ASSERT_TRUE(rfh_a.WaitUntilRenderFrameDeleted());
@@ -291,15 +281,15 @@ IN_PROC_BROWSER_TEST_F(PerformanceTimelinePrefetchTransferSizeBrowserTest,
   ASSERT_TRUE(embedded_test_server()->Start());
 
   const GURL prefetch_url(
-      embedded_test_server()->GetURL("a.com", "/title1.html"));
+      embedded_test_server()->GetURL("a.com", "/cacheable.html"));
   const GURL landing_url(embedded_test_server()->GetURL(
       "a.com", "/performance_timeline/prefetch.html"));
 
   EXPECT_TRUE(NavigateToURL(shell(), landing_url));
   Prefetch();
   EXPECT_TRUE(NavigateToURL(shell(), prefetch_url));
-  // Navigate to a prefetched url should result in a navigation timing entry
-  // with 0 transfer size.
+  // Navigate to a HTTP-cached prefetched url should result in a navigation
+  // timing entry with 0 transfer size since the HTTP cache gets used.
   EXPECT_EQ(0, GetTransferSize());
 }
 
@@ -308,8 +298,8 @@ class PerformanceTimelineBackForwardCacheRestorationBrowserTest
  protected:
   void SetUpCommandLine(base::CommandLine* command_line) override {
     ContentBrowserTest::SetUpCommandLine(command_line);
-    base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
-        switches::kEnableBlinkTestFeatures, "NavigationId");
+    command_line->AppendSwitchASCII(switches::kEnableBlinkTestFeatures,
+                                    "NavigationId");
     command_line->AppendSwitch(switches::kExposeInternalsForTesting);
   }
 
@@ -441,9 +431,7 @@ IN_PROC_BROWSER_TEST_F(
     // Navigate back.
     ASSERT_TRUE(HistoryGoBack(web_contents()));
   }
-  auto result = std::move(GetBackForwardCacheRestorationEntriesByObserver()
-                              .ExtractList()
-                              .GetList());
+  auto result = GetBackForwardCacheRestorationEntriesByObserver().ExtractList();
   CheckEntries(std::move(result[0]).TakeList(), initial_navigation_id);
   CheckEntries(std::move(result[1]).TakeList(), initial_navigation_id);
 
@@ -458,10 +446,8 @@ class PerformanceEventTimingBrowserTest
  protected:
   void SetUpCommandLine(base::CommandLine* command_line) override {
     PerformanceTimelineBrowserTest::SetUpCommandLine(command_line);
-    base::CommandLine::ForCurrentProcess()->AppendSwitch(
-        "--enable-blink-test-features");
-    base::CommandLine::ForCurrentProcess()->AppendSwitch(
-        switches::kExposeInternalsForTesting);
+    command_line->AppendSwitch("--enable-blink-test-features");
+    command_line->AppendSwitch(switches::kExposeInternalsForTesting);
   }
 
   content::EvalJsResult setEventTimingBufferSize(int size) const {
@@ -517,11 +503,10 @@ IN_PROC_BROWSER_TEST_F(PerformanceEventTimingBrowserTest,
       EvalJs(web_contents(), " getEntriesCntAndDroppedEntriesCnt()")
           .ExtractList();
 
-  int num_event_entres = entry_cnt_and_dropped_entry_cnt.GetList()[0].GetInt();
+  int num_event_entres = entry_cnt_and_dropped_entry_cnt[0].GetInt();
   EXPECT_EQ(num_event_entres, buffer_size);
 
-  int num_dropped_entries =
-      entry_cnt_and_dropped_entry_cnt.GetList()[1].GetInt();
+  int num_dropped_entries = entry_cnt_and_dropped_entry_cnt[1].GetInt();
   EXPECT_GE(num_dropped_entries, 1);
 
   // Verify that at least buffer_size+1 events are emitted to tracing.

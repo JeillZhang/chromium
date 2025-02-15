@@ -11,12 +11,12 @@
 #include "base/test/bind.h"
 #include "base/time/default_clock.h"
 #include "base/time/default_tick_clock.h"
-#include "third_party/blink/public/common/browser_interface_broker_proxy.h"
+#include "third_party/blink/public/platform/browser_interface_broker_proxy.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_font_face_descriptors.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_union_arraybuffer_arraybufferview_string.h"
 #include "third_party/blink/renderer/core/css/css_default_style_sheets.h"
 #include "third_party/blink/renderer/core/css/font_face_set_document.h"
-#include "third_party/blink/renderer/core/frame/csp/conversion_util.h"
+#include "third_party/blink/renderer/core/frame/csp/test_util.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
@@ -74,7 +74,7 @@ void ToSimpleLayoutTree(std::ostream& ostream,
 }  // namespace
 
 PageTestBase::MockClipboardHostProvider::MockClipboardHostProvider(
-    blink::BrowserInterfaceBrokerProxy& interface_broker) {
+    const blink::BrowserInterfaceBrokerProxy& interface_broker) {
   Install(interface_broker);
 }
 
@@ -88,7 +88,7 @@ PageTestBase::MockClipboardHostProvider::~MockClipboardHostProvider() {
 }
 
 void PageTestBase::MockClipboardHostProvider::Install(
-    blink::BrowserInterfaceBrokerProxy& interface_broker) {
+    const blink::BrowserInterfaceBrokerProxy& interface_broker) {
   interface_broker_ = &interface_broker;
   interface_broker_->SetBinderForTesting(
       blink::mojom::blink::ClipboardHost::Name_,
@@ -276,7 +276,7 @@ void PageTestBase::InsertStyleElement(const std::string& style_rules) {
   DCHECK_EQ(head, GetOrCreateElement(&GetDocument(), html_names::kHeadTag));
   Element* const style = GetDocument().CreateRawElement(
       html_names::kStyleTag, CreateElementFlags::ByCreateElement());
-  style->setTextContent(String(style_rules.data(), style_rules.size()));
+  style->setTextContent(String(style_rules));
   head->appendChild(style);
 }
 

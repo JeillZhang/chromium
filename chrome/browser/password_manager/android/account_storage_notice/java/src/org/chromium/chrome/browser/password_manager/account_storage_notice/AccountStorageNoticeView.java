@@ -11,39 +11,28 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.widget.TextView;
 
-import androidx.annotation.Nullable;
-
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetContent;
-import org.chromium.ui.text.NoUnderlineClickableSpan;
+import org.chromium.ui.text.ChromeClickableSpan;
 import org.chromium.ui.text.SpanApplier;
 import org.chromium.ui.widget.ButtonCompat;
 
+@NullMarked
 class AccountStorageNoticeView implements BottomSheetContent {
-    private static boolean sSkipLayoutForTesting;
-
     private final View mContentView;
 
-    // Initialized lazily by the corresponding setters.
-    private Runnable mButtonCallback;
-    private Runnable mSettingsLinkCallback;
-
-    // TODO(crbug.com/341176706): Shadow the AccountStorageNoticeView constructor in the unit test
-    // instead. There seems to be a problem with shadow and release builds.
-    public static void setSkipLayoutForTesting(boolean skip) {
-        sSkipLayoutForTesting = skip;
-    }
-
-    public AccountStorageNoticeView(Context context) {
-        if (sSkipLayoutForTesting) {
-            mContentView = null;
-            return;
-        }
-
+    /** Context must be consumed on the constructor and not cached. */
+    public AccountStorageNoticeView(
+            Context context, Runnable buttonCallback, Runnable settingsLinkCallback) {
+        assert context != null;
+        assert buttonCallback != null;
+        assert settingsLinkCallback != null;
         mContentView =
                 LayoutInflater.from(context)
                         .inflate(R.layout.account_storage_notice_layout, /* root= */ null);
         ((ButtonCompat) mContentView.findViewById(R.id.account_storage_notice_button))
-                .setOnClickListener(unused -> mButtonCallback.run());
+                .setOnClickListener(unused -> buttonCallback.run());
         TextView linkView = mContentView.findViewById(R.id.account_storage_settings_link);
         SpannableString linkText =
                 SpanApplier.applySpans(
@@ -51,18 +40,10 @@ class AccountStorageNoticeView implements BottomSheetContent {
                         new SpanApplier.SpanInfo(
                                 "<link>",
                                 "</link>",
-                                new NoUnderlineClickableSpan(
-                                        context, unused -> mSettingsLinkCallback.run())));
+                                new ChromeClickableSpan(
+                                        context, unused -> settingsLinkCallback.run())));
         linkView.setText(linkText);
         linkView.setMovementMethod(LinkMovementMethod.getInstance());
-    }
-
-    public void setButtonCallback(Runnable buttonCallback) {
-        mButtonCallback = buttonCallback;
-    }
-
-    public void setSettingsLinkCallback(Runnable settingsLinkCallback) {
-        mSettingsLinkCallback = settingsLinkCallback;
     }
 
     @Override
@@ -71,8 +52,7 @@ class AccountStorageNoticeView implements BottomSheetContent {
     }
 
     @Override
-    @Nullable
-    public View getToolbarView() {
+    public @Nullable View getToolbarView() {
         return null;
     }
 
@@ -105,8 +85,8 @@ class AccountStorageNoticeView implements BottomSheetContent {
     }
 
     @Override
-    public int getSheetContentDescriptionStringId() {
-        return R.string.passwords_account_storage_notice_title;
+    public String getSheetContentDescription(Context context) {
+        return context.getString(R.string.passwords_account_storage_notice_title);
     }
 
     @Override

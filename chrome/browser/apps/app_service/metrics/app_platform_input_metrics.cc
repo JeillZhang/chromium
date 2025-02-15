@@ -160,20 +160,20 @@ AppPlatformInputMetrics::~AppPlatformInputMetrics() {
 }
 
 void AppPlatformInputMetrics::OnMouseEvent(ui::MouseEvent* event) {
-  if (event->type() == ui::ET_MOUSE_RELEASED) {
+  if (event->type() == ui::EventType::kMouseReleased) {
     RecordEventCount(GetInputEventSource(event->pointer_details().pointer_type),
                      event->target());
   }
 }
 
 void AppPlatformInputMetrics::OnKeyEvent(ui::KeyEvent* event) {
-  if (event->type() == ui::ET_KEY_RELEASED) {
+  if (event->type() == ui::EventType::kKeyReleased) {
     RecordEventCount(InputEventSource::kKeyboard, event->target());
   }
 }
 
 void AppPlatformInputMetrics::OnTouchEvent(ui::TouchEvent* event) {
-  if (event->type() == ui::ET_TOUCH_RELEASED) {
+  if (event->type() == ui::EventType::kTouchReleased) {
     RecordEventCount(GetInputEventSource(event->pointer_details().pointer_type),
                      event->target());
   }
@@ -255,7 +255,7 @@ void AppPlatformInputMetrics::SetAppInfoForActivatedWindow(
   // For apps opened in browser windows, get the top level window, and modify
   // `browser_to_tab_list_` to save the activated tab app id.
   if (IsAppOpenedWithBrowserWindow(profile_, app_type, app_id)) {
-    window = IsLacrosWindow(window) ? window : window->GetToplevelWindow();
+    window = window->GetToplevelWindow();
     if (IsAppOpenedInTab(app_type_name, app_id)) {
       // When the tab is pulled to a separate browser window, the instance id is
       // not changed, but the parent browser window is changed. So remove the
@@ -288,14 +288,12 @@ void AppPlatformInputMetrics::SetAppInfoForInactivatedWindow(
 
   auto app_id = browser_to_tab_list_.GetActivatedTabAppId(browser_window);
   if (app_id.empty()) {
-    app_id = IsLacrosWindow(browser_window) ? app_constants::kLacrosAppId
-                                            : app_constants::kChromeAppId;
+    app_id = app_constants::kChromeAppId;
   }
 
   window_to_app_info_[browser_window].app_id = app_id;
   window_to_app_info_[browser_window].app_type_name =
-      IsLacrosWindow(browser_window) ? apps::AppTypeName::kStandaloneBrowser
-                                     : apps::AppTypeName::kChromeBrowser;
+      apps::AppTypeName::kChromeBrowser;
 }
 
 void AppPlatformInputMetrics::RecordEventCount(InputEventSource event_source,

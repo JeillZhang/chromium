@@ -15,8 +15,10 @@
 #include "ash/style/typography.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_forward.h"
+#include "chromeos/constants/chromeos_features.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
+#include "ui/base/mojom/ui_base_types.mojom-shared.h"
 #include "ui/chromeos/styles/cros_tokens_color_mappings.h"
 #include "ui/color/color_id.h"
 #include "ui/compositor/layer.h"
@@ -50,11 +52,14 @@ constexpr int kMarginBetweenButtons = 8;
 AppsCollectionsDismissDialog::AppsCollectionsDismissDialog(
     base::OnceClosure confirm_callback)
     : confirm_callback_(std::move(confirm_callback)) {
-  SetModalType(ui::MODAL_TYPE_WINDOW);
+  SetModalType(ui::mojom::ModalType::kWindow);
 
   SetPaintToLayer();
-  layer()->SetBackgroundBlur(ColorProvider::kBackgroundBlurSigma);
-  layer()->SetBackdropFilterQuality(ColorProvider::kBackgroundBlurQuality);
+
+  if (chromeos::features::IsSystemBlurEnabled()) {
+    layer()->SetBackgroundBlur(ColorProvider::kBackgroundBlurSigma);
+    layer()->SetBackdropFilterQuality(ColorProvider::kBackgroundBlurQuality);
+  }
 
   view_shadow_ =
       std::make_unique<views::ViewShadow>(this, kDialogShadowElevation);

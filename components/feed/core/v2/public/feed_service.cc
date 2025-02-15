@@ -161,9 +161,7 @@ class FeedService::StreamDelegateImpl : public FeedStream::Delegate {
   }
   bool IsOffline() override { return net::NetworkChangeNotifier::IsOffline(); }
 
-  std::string GetCountry() override {
-    return country_codes::GetCurrentCountryCode();
-  }
+  std::string GetCountry() override { return service_delegate_->GetCountry(); }
 
   DisplayMetrics GetDisplayMetrics() override {
     return service_delegate_->GetDisplayMetrics();
@@ -181,13 +179,6 @@ class FeedService::StreamDelegateImpl : public FeedStream::Delegate {
   AccountInfo GetAccountInfo() override {
     return AccountInfo(identity_manager_->GetPrimaryAccountInfo(
         GetConsentLevelNeededForPersonalizedFeed()));
-  }
-  bool IsSupervisedAccount() override {
-    ::AccountInfo account_info = identity_manager_->FindExtendedAccountInfo(
-        identity_manager_->GetPrimaryAccountInfo(
-            signin::ConsentLevel::kSignin));
-    return account_info.capabilities.is_subject_to_parental_controls() ==
-           signin::Tribool::kTrue;
   }
   // Returns if signin is allowed on Android. Return true on other platform so
   // behavior is unchanged there.
@@ -332,6 +323,10 @@ FeedApi* FeedService::GetStream() {
 
 void FeedService::ClearCachedData() {
   stream_->OnCacheDataCleared();
+}
+
+const Experiments& FeedService::GetExperiments() const {
+  return delegate_->GetExperiments();
 }
 
 // static

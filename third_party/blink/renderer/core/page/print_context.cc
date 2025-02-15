@@ -73,10 +73,10 @@ wtf_size_t PrintContext::PageCount() const {
   return ::blink::PageCount(*frame_->GetDocument()->GetLayoutView());
 }
 
-gfx::Rect PrintContext::PageRect(wtf_size_t page_number) const {
+gfx::Rect PrintContext::PageRect(wtf_size_t page_index) const {
   CHECK(IsFrameValid());
   DCHECK(is_printing_);
-  DCHECK_LT(page_number, PageCount());
+  DCHECK_LT(page_index, PageCount());
   const LayoutView& layout_view = *frame_->GetDocument()->GetLayoutView();
 
   if (!use_paginated_layout_) {
@@ -85,8 +85,7 @@ gfx::Rect PrintContext::PageRect(wtf_size_t page_number) const {
     return ToPixelSnappedRect(layout_view.DocumentRect());
   }
 
-  PhysicalRect physical_rect =
-      StitchedPageContentRect(layout_view, page_number);
+  PhysicalRect physical_rect = StitchedPageContentRect(layout_view, page_index);
   gfx::Rect page_rect = ToEnclosingRect(physical_rect);
 
   // There's code to avoid fractional page sizes, so we shouldn't have to worry
@@ -170,7 +169,7 @@ void PrintContext::CollectLinkedDestinations(Node* node) {
 
   if (url.HasFragmentIdentifier() &&
       EqualIgnoringFragmentIdentifier(url, node->GetDocument().BaseURL())) {
-    String name = url.FragmentIdentifier();
+    String name = url.FragmentIdentifier().ToString();
     if (Node* target = node->GetDocument().FindAnchor(name))
       linked_destinations_.Set(name, target);
   }
@@ -199,8 +198,14 @@ void PrintContext::OutputLinkedDestinations(
     if (!layout_object || !layout_object->GetFrameView())
       continue;
     gfx::Point anchor_point = layout_object->AbsoluteBoundingBoxRect().origin();
-    if (page_rect.Contains(anchor_point))
-      context.SetURLDestinationLocation(entry.key, anchor_point);
+    if (page_rect.Contains(anchor_point)) {
+      // The linked destination location is relative to the current page (in
+      // fact just like everything else that's painted, but the linked
+      // destination code is tacked on the outside of the paint code, so extra
+      // awareness is required).
+      context.SetURLDestinationLocation(
+          entry.key, anchor_point - page_rect.OffsetFromOrigin());
+    }
   }
 }
 

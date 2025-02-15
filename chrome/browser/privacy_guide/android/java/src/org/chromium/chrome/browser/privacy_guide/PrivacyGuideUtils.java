@@ -4,9 +4,6 @@
 
 package org.chromium.chrome.browser.privacy_guide;
 
-import android.content.Context;
-import android.content.Intent;
-
 import org.chromium.chrome.browser.preferences.Pref;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.safe_browsing.SafeBrowsingBridge;
@@ -18,6 +15,7 @@ import org.chromium.components.content_settings.CookieControlsMode;
 import org.chromium.components.content_settings.PrefNames;
 import org.chromium.components.signin.identitymanager.ConsentLevel;
 import org.chromium.components.signin.identitymanager.IdentityManager;
+import org.chromium.components.sync.SyncService;
 import org.chromium.components.sync.UserSelectableType;
 import org.chromium.components.user_prefs.UserPrefs;
 
@@ -34,7 +32,14 @@ class PrivacyGuideUtils {
 
     static boolean isHistorySyncEnabled(Profile profile) {
         Set<Integer> syncTypes = SyncServiceFactory.getForProfile(profile).getSelectedTypes();
-        return syncTypes.contains(UserSelectableType.HISTORY);
+
+        // The toggle represents both History and Tabs.
+        // History and Tabs should usually have the same value, but in some
+        // cases they may not, e.g. if one of them is disabled by policy. In that
+        // case, show the toggle as on if at least one of them is enabled. The
+        // toggle should reflect the value of the non-disabled type.
+        return syncTypes.contains(UserSelectableType.HISTORY)
+                || syncTypes.contains(UserSelectableType.TABS);
     }
 
     static boolean isUserSignedIn(Profile profile) {
@@ -43,8 +48,8 @@ class PrivacyGuideUtils {
         return identityManager.hasPrimaryAccount(ConsentLevel.SIGNIN);
     }
 
-    static boolean isSearchSuggestionsEnabled(Profile profile) {
-        return UserPrefs.get(profile).getBoolean(Pref.SEARCH_SUGGEST_ENABLED);
+    static boolean isAdTopicsEnabled(Profile profile) {
+        return UserPrefs.get(profile).getBoolean(Pref.PRIVACY_SANDBOX_M1_TOPICS_ENABLED);
     }
 
     static @SafeBrowsingState int getSafeBrowsingState(Profile profile) {
@@ -55,15 +60,26 @@ class PrivacyGuideUtils {
         return UserPrefs.get(profile).getInteger(PrefNames.COOKIE_CONTROLS_MODE);
     }
 
-    /**
-     * Functional interface to start a Chrome Custom Tab for the given intent, e.g. by using {@link
-     * org.chromium.chrome.browser.LaunchIntentDispatcher#createCustomTabActivityIntent}.
-     * TODO(crbug.com/40751023): Update when LaunchIntentDispatcher is (partially-)modularized.
-     */
-    public interface CustomTabIntentHelper {
-        /**
-         * @see org.chromium.chrome.browser.LaunchIntentDispatcher#createCustomTabActivityIntent
-         */
-        Intent createCustomTabActivityIntent(Context context, Intent intent);
+    static boolean canUpdateHistorySyncValue(Profile profile) {
+        SyncService syncService = SyncServiceFactory.getForProfile(profile);
+        if (syncService == null) {
+            return false;
+        }
+
+        if (!isUserSignedIn(profile)) {
+            return false;
+        }
+        if (syncService.isSyncDisabledByEnterprisePolicy()) {
+            return false;
+        }
+        if (syncService.isTypeManagedByPolicy(UserSelectableType.HISTORY)
+                && syncService.isTypeManagedByPolicy(UserSelectableType.TABS)) {
+            return false;
+        }
+        if (syncService.isTypeManagedByCustodian(UserSelectableType.HISTORY)
+                && syncService.isTypeManagedByCustodian(UserSelectableType.TABS)) {
+            return false;
+        }
+        return true;
     }
 }

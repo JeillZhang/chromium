@@ -6,6 +6,7 @@
 #define CONTENT_BROWSER_RENDERER_HOST_BROWSING_CONTEXT_STATE_H_
 
 #include "base/feature_list.h"
+#include "base/functional/function_ref.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/safe_ref.h"
 #include "base/unguessable_token.h"
@@ -75,8 +76,7 @@ class CONTENT_EXPORT BrowsingContextState
  public:
   using RenderFrameProxyHostMap =
       std::unordered_map<SiteInstanceGroupId,
-                         std::unique_ptr<RenderFrameProxyHost>,
-                         SiteInstanceGroupId::Hasher>;
+                         std::unique_ptr<RenderFrameProxyHost>>;
 
   // Currently `browsing_instance_id` and `coop_related_group_id` will be null
   // iff the legacy mode is enabled, as the legacy mode BrowsingContextState is
@@ -247,12 +247,6 @@ class CONTENT_EXPORT BrowsingContextState
       FrameTreeNode* frame_tree_node,
       const blink::RemoteFrameToken& frame_token);
 
-  // Called on an inner WebContents that's being detached from its outer
-  // WebContents. This will delete the proxy in the
-  // |outer_contents_site_instance_group|.
-  void DeleteOuterDelegateProxy(
-      SiteInstanceGroup* outer_contents_site_instance_group);
-
   // Deletes any proxy hosts associated with this node. Used during destruction
   // of WebContentsImpl.
   void ResetProxyHosts();
@@ -269,7 +263,7 @@ class CONTENT_EXPORT BrowsingContextState
       const blink::mojom::FrameOwnerProperties& properties);
 
   void ExecuteRemoteFramesBroadcastMethod(
-      base::RepeatingCallback<void(RenderFrameProxyHost*)> callback,
+      base::FunctionRef<void(RenderFrameProxyHost*)> callback,
       SiteInstanceGroup* group_to_skip,
       RenderFrameProxyHost* outer_delegate_proxy);
 

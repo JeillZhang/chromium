@@ -14,7 +14,6 @@
 #include "chrome/browser/ash/login/test/oobe_screens_utils.h"
 #include "chrome/browser/ash/login/test/scoped_policy_update.h"
 #include "chrome/browser/ash/login/test/user_policy_mixin.h"
-#include "chrome/browser/ash/login/ui/login_display_host.h"
 #include "chrome/browser/ash/login/users/fake_chrome_user_manager.h"
 #include "chrome/browser/ash/ownership/owner_settings_service_ash_factory.h"
 #include "chrome/browser/ash/policy/core/device_policy_builder.h"
@@ -23,12 +22,14 @@
 #include "chrome/browser/ash/profiles/profile_helper.h"
 #include "chrome/browser/ash/settings/scoped_testing_cros_settings.h"
 #include "chrome/browser/ash/settings/stats_reporting_controller.h"
+#include "chrome/browser/ash/settings/stub_cros_settings_provider.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/metrics/chrome_metrics_service_accessor.h"
 #include "chrome/browser/metrics/chrome_metrics_service_client.h"
 #include "chrome/browser/metrics/profile_pref_names.h"
 #include "chrome/browser/metrics/testing/metrics_reporting_pref_helper.h"
 #include "chrome/browser/policy/profile_policy_connector.h"
+#include "chrome/browser/ui/ash/login/login_display_host.h"
 #include "chrome/browser/ui/webui/ash/login/consolidated_consent_screen_handler.h"
 #include "chrome/test/base/mixin_based_in_process_browser_test.h"
 #include "chrome/test/base/testing_browser_process.h"
@@ -42,6 +43,7 @@
 #include "components/user_manager/scoped_user_manager.h"
 #include "components/user_manager/user_names.h"
 #include "content/public/test/browser_test.h"
+#include "google_apis/gaia/gaia_id.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -55,9 +57,9 @@ using ::testing::Ne;
 // Create fake test users in order to test different owner and secondary user
 // consent flows.
 constexpr char kTestUser1[] = "test-user1@gmail.com";
-constexpr char kTestUser1GaiaId[] = "1111111111";
+constexpr GaiaId::Literal kTestUser1GaiaId("1111111111");
 constexpr char kTestUser2[] = "test-user2@gmail.com";
-constexpr char kTestUser2GaiaId[] = "2222222222";
+constexpr GaiaId::Literal kTestUser2GaiaId("2222222222");
 
 }  // namespace
 

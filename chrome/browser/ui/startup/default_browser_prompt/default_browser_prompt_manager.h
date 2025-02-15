@@ -7,6 +7,7 @@
 
 #include <map>
 
+#include "base/memory/raw_ptr.h"
 #include "base/memory/singleton.h"
 #include "base/timer/timer.h"
 #include "chrome/browser/browser_process.h"
@@ -30,11 +31,6 @@ class DefaultBrowserPromptManager : public BrowserTabStripTrackerDelegate,
   DefaultBrowserPromptManager& operator=(const DefaultBrowserPromptManager&) =
       delete;
 
-  class Observer : public base::CheckedObserver {
-   public:
-    virtual void OnShowAppMenuPromptChanged() = 0;
-  };
-
   enum class CloseReason {
     kAccept,
     kDismiss,
@@ -42,12 +38,7 @@ class DefaultBrowserPromptManager : public BrowserTabStripTrackerDelegate,
 
   static DefaultBrowserPromptManager* GetInstance();
 
-  bool get_show_app_menu_prompt() const { return show_app_menu_prompt_; }
-
   bool get_show_app_menu_item() const { return show_app_menu_item_; }
-
-  void AddObserver(Observer* observer);
-  void RemoveObserver(Observer* observer);
 
   void MaybeShowPrompt();
 
@@ -63,8 +54,6 @@ class DefaultBrowserPromptManager : public BrowserTabStripTrackerDelegate,
                                    Profile* profile);
 
   void CloseAllInfoBars();
-
-  void SetShowAppMenuPromptVisibility(bool show);
 
   void SetAppMenuItemVisibility(bool show);
 
@@ -85,16 +74,12 @@ class DefaultBrowserPromptManager : public BrowserTabStripTrackerDelegate,
   void OnDismiss() override;
 
   std::unique_ptr<BrowserTabStripTracker> browser_tab_strip_tracker_;
-  std::map<content::WebContents*, infobars::InfoBar*> infobars_;
+  std::map<content::WebContents*, raw_ptr<infobars::InfoBar, CtnExperimental>>
+      infobars_;
 
   std::optional<CloseReason> user_initiated_info_bar_close_pending_;
 
-  bool show_app_menu_prompt_ = false;
   bool show_app_menu_item_ = false;
-
-  base::ObserverList<Observer> observers_;
-
-  base::OneShotTimer app_menu_prompt_dismiss_timer_;
 };
 
-#endif // CHROME_BROWSER_UI_STARTUP_DEFAULT_BROWSER_PROMPT_DEFAULT_BROWSER_PROMPT_MANAGER_H_
+#endif  // CHROME_BROWSER_UI_STARTUP_DEFAULT_BROWSER_PROMPT_DEFAULT_BROWSER_PROMPT_MANAGER_H_

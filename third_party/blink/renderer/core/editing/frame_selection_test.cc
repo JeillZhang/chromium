@@ -752,7 +752,7 @@ TEST_F(FrameSelectionTest, SelectInvalidPositionInFlatTreeDoesntCrash) {
 
   // This only records the current behavior. It might be changed in the future.
   EXPECT_EQ(PositionInFlatTree(foo, 0), selection.Anchor());
-  EXPECT_EQ(PositionInFlatTree(foo, 0), selection.Focus());
+  EXPECT_NE(PositionInFlatTree(foo, 0), selection.Focus());
 }
 
 TEST_F(FrameSelectionTest, CaretInShadowTree) {
@@ -1510,24 +1510,23 @@ TEST_F(FrameSelectionTest, PaintCaretRecordsSelectionWithNoSelectionHandles) {
   EXPECT_TRUE(Selection().ShouldPaintCaret(
       *To<LayoutBlock>(GetDocument().body()->GetLayoutObject())));
 
-  auto* paint_controller =
-      MakeGarbageCollected<PaintController>(PaintController::kTransient);
+  PaintController paint_controller;
   {
-    GraphicsContext context(*paint_controller);
-    paint_controller->UpdateCurrentPaintChunkProperties(
+    GraphicsContext context(paint_controller);
+    paint_controller.UpdateCurrentPaintChunkProperties(
         root_paint_chunk_id_, *root_paint_property_client_,
         PropertyTreeState::Root());
     Selection().PaintCaret(context, PhysicalOffset());
   }
-  paint_controller->CommitNewDisplayItems();
+  auto& paint_artifact = paint_controller.CommitNewDisplayItems();
 
-  const PaintChunk& chunk = paint_controller->GetPaintChunks()[0];
+  const PaintChunk& chunk = paint_artifact.GetPaintChunks()[0];
   EXPECT_THAT(chunk.layer_selection_data, Not(IsNull()));
-  LayerSelectionData selection_data = *chunk.layer_selection_data;
-  EXPECT_TRUE(selection_data.start.has_value());
-  EXPECT_EQ(gfx::SelectionBound::HIDDEN, selection_data.start->type);
-  EXPECT_TRUE(selection_data.end.has_value());
-  EXPECT_EQ(gfx::SelectionBound::HIDDEN, selection_data.end->type);
+  LayerSelectionData* selection_data = chunk.layer_selection_data;
+  EXPECT_TRUE(selection_data->start.has_value());
+  EXPECT_EQ(gfx::SelectionBound::HIDDEN, selection_data->start->type);
+  EXPECT_TRUE(selection_data->end.has_value());
+  EXPECT_EQ(gfx::SelectionBound::HIDDEN, selection_data->end->type);
 }
 
 }  // namespace blink

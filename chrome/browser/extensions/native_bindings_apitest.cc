@@ -8,8 +8,7 @@
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/metrics/histogram_tester.h"
-#include "base/test/scoped_feature_list.h"
-#include "chrome/browser/extensions/api/extension_action/extension_action_api.h"
+#include "chrome/browser/extensions/extension_action_dispatcher.h"
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/renderer_context_menu/render_view_context_menu_test_util.h"
@@ -46,6 +45,43 @@ namespace {
 // a boolean "is API available") so we can better verify expected errors and
 // give more meaningful messages in the case of failure.
 constexpr char kCheckApiAvailability[] =
+    R"(
+       async function verifyApiIsAvailable() {
+         let message;
+         try {
+           const tabs = await chrome.tabs.query({});
+           chrome.test.assertEq(1, tabs.length);
+           const debuggee = {tabId: tabs[0].id};
+           await chrome.debugger.attach(debuggee, '1.3');
+           await chrome.debugger.detach(debuggee);
+           message = 'success';
+         } catch (e) {
+           message = 'Unexpected error: ' + e.toString();
+         }
+         chrome.test.sendScriptResult(message);
+       }
+
+       async function verifyApiIsNotAvailable() {
+         let message;
+         try {
+           // Note: we try to call a method on the API (and not just test
+           // accessing it) since, if it was previously instantiated when the
+           // API was available, it would still be present.
+           await chrome.debugger.getTargets();
+           message = 'API unexpectedly available.';
+         } catch(e) {
+           const expectedError =
+               `Error: Failed to read the 'debugger' property from ` +
+               `'Object': The 'debugger' API is only available for users ` +
+               'in developer mode.';
+           message = e.toString() == expectedError
+               ? 'success'
+               : 'Unexpected error: ' + e.toString();
+         }
+         chrome.test.sendScriptResult(message);
+       })";
+
+constexpr char kCheckApiAvailabilityUserScripts[] =
     R"(const script =
            {
              id: 'script',
@@ -81,7 +117,8 @@ constexpr char kCheckApiAvailability[] =
            await chrome.userScripts.unregister();
          } catch(e) {
            const expectedError =
-               `Error: The 'userScripts' API is only available for users ` +
+               `Error: Failed to read the 'userScripts' property from ` +
+               `'Object': The 'userScripts' API is only available for users ` +
                'in developer mode.';
            message = e.toString() == expectedError
                ? 'success'
@@ -95,12 +132,12 @@ constexpr char kCheckApiAvailability[] =
 // And end-to-end test for extension APIs using native bindings.
 class NativeBindingsApiTest : public ExtensionApiTest {
  public:
-  NativeBindingsApiTest() {}
+  NativeBindingsApiTest() = default;
 
   NativeBindingsApiTest(const NativeBindingsApiTest&) = delete;
   NativeBindingsApiTest& operator=(const NativeBindingsApiTest&) = delete;
 
-  ~NativeBindingsApiTest() override {}
+  ~NativeBindingsApiTest() override = default;
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
     ExtensionApiTest::SetUpCommandLine(command_line);
@@ -114,29 +151,6 @@ class NativeBindingsApiTest : public ExtensionApiTest {
     ExtensionApiTest::SetUpOnMainThread();
     host_resolver()->AddRule("*", "127.0.0.1");
   }
-};
-
-// And end-to-end test for extension APIs restricted to developer mode using
-// native bindings.
-class NativeBindingsRestrictedToDeveloperModeApiTest
-    : public NativeBindingsApiTest {
- public:
-  NativeBindingsRestrictedToDeveloperModeApiTest() {
-    scoped_feature_list_.InitAndEnableFeature(
-        extensions_features::kRestrictDeveloperModeAPIs);
-  }
-
-  NativeBindingsRestrictedToDeveloperModeApiTest(
-      const NativeBindingsRestrictedToDeveloperModeApiTest&) = delete;
-  NativeBindingsRestrictedToDeveloperModeApiTest& operator=(
-      const NativeBindingsRestrictedToDeveloperModeApiTest&) = delete;
-
-  ~NativeBindingsRestrictedToDeveloperModeApiTest() override = default;
-
- private:
-  // The userScripts API is currently behind a feature restriction.
-  // TODO(crbug.com/40926805): Remove once the feature is stable for awhile.
-  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 IN_PROC_BROWSER_TEST_F(NativeBindingsApiTest, SimpleEndToEndTest) {
@@ -197,7 +211,7 @@ IN_PROC_BROWSER_TEST_F(NativeBindingsApiTest, DeclarativeEvents) {
 
   // And the extension should be notified of the click.
   ExtensionTestMessageListener clicked_listener("clicked and removed");
-  ExtensionActionAPI::Get(profile())->DispatchExtensionActionClicked(
+  ExtensionActionDispatcher::Get(profile())->DispatchExtensionActionClicked(
       *action, web_contents, extension);
   ASSERT_TRUE(clicked_listener.WaitUntilSatisfied());
 }
@@ -643,58 +657,99 @@ IN_PROC_BROWSER_TEST_F(NativeBindingsApiTest, MV2PromisesNotSupported) {
                    functions::HistogramValue::TABS_CREATE));
 }
 
-IN_PROC_BROWSER_TEST_F(
-    NativeBindingsRestrictedToDeveloperModeApiTest,
+class DeveloperModeNativeBindingsApiTest
+    : public NativeBindingsApiTest,
+      public testing::WithParamInterface<bool> {
+ public:
+  DeveloperModeNativeBindingsApiTest() {
+    scoped_feature_list_.InitWithFeatureState(
+        extensions_features::kDebuggerAPIRestrictedToDevMode, GetParam());
+  }
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
+
+// TODO(crbug.com/390138269): Revert the user scripts specific testing once the
+// extensions::kUserScriptUserExtensionToggle feature is launched.
+IN_PROC_BROWSER_TEST_P(
+    DeveloperModeNativeBindingsApiTest,
     DeveloperModeOnlyWithAPIPermissionUserIsNotInDeveloperMode) {
-  // With kDeveloperModeRestriction enabled, developer mode-only APIs
-  // should not be available if the user is not in developer mode.
+  // Developer mode-only APIs should not be available if the user is not in
+  // developer mode.
   SetCustomArg("not_in_developer_mode");
   util::SetDeveloperModeForProfile(profile(), false);
-  ASSERT_TRUE(RunExtensionTest(
-      "native_bindings/developer_mode_only_with_api_permission"))
-      << message_;
+  if (GetParam()) {
+    ASSERT_TRUE(RunExtensionTest(
+        "native_bindings/developer_mode_only_with_api_permission"))
+        << message_;
+  } else {
+    ASSERT_TRUE(RunExtensionTest(
+        "native_bindings/developer_mode_only_with_user_scripts_api_permission"))
+        << message_;
+  }
 }
 
-IN_PROC_BROWSER_TEST_F(
-    NativeBindingsRestrictedToDeveloperModeApiTest,
+IN_PROC_BROWSER_TEST_P(
+    DeveloperModeNativeBindingsApiTest,
     DeveloperModeOnlyWithAPIPermissionUserIsInDeveloperMode) {
-  // With kDeveloperModeRestriction enabled, developer mode-only APIs
-  // should be available if the user is in developer mode.
+  // Developer mode-only APIs should be available if the user is in developer
+  // mode.
   SetCustomArg("in_developer_mode");
   util::SetDeveloperModeForProfile(profile(), true);
-  ASSERT_TRUE(RunExtensionTest(
-      "native_bindings/developer_mode_only_with_api_permission"))
-      << message_;
+  if (GetParam()) {
+    ASSERT_TRUE(RunExtensionTest(
+        "native_bindings/developer_mode_only_with_api_permission"))
+        << message_;
+  } else {
+    ASSERT_TRUE(RunExtensionTest(
+        "native_bindings/developer_mode_only_with_user_scripts_api_permission"))
+        << message_;
+  }
 }
 
-IN_PROC_BROWSER_TEST_F(
-    NativeBindingsRestrictedToDeveloperModeApiTest,
+IN_PROC_BROWSER_TEST_P(
+    DeveloperModeNativeBindingsApiTest,
     DeveloperModeOnlyWithoutAPIPermissionUserIsNotInDeveloperMode) {
   util::SetDeveloperModeForProfile(profile(), false);
-  ASSERT_TRUE(RunExtensionTest(
-      "native_bindings/developer_mode_only_without_api_permission"))
-      << message_;
+  if (GetParam()) {
+    ASSERT_TRUE(RunExtensionTest(
+        "native_bindings/developer_mode_only_without_api_permission"))
+        << message_;
+  } else {
+    ASSERT_TRUE(RunExtensionTest(
+        "native_bindings/"
+        "developer_mode_only_without_user_scripts_api_permission"))
+        << message_;
+  }
 }
 
-IN_PROC_BROWSER_TEST_F(
-    NativeBindingsRestrictedToDeveloperModeApiTest,
+IN_PROC_BROWSER_TEST_P(
+    DeveloperModeNativeBindingsApiTest,
     DeveloperModeOnlyWithoutAPIPermissionUserIsInDeveloperMode) {
   util::SetDeveloperModeForProfile(profile(), true);
-  ASSERT_TRUE(RunExtensionTest(
-      "native_bindings/developer_mode_only_without_api_permission"))
-      << message_;
+  if (GetParam()) {
+    ASSERT_TRUE(RunExtensionTest(
+        "native_bindings/developer_mode_only_without_api_permission"))
+        << message_;
+  } else {
+    ASSERT_TRUE(RunExtensionTest(
+        "native_bindings/"
+        "developer_mode_only_without_user_scripts_api_permission"))
+        << message_;
+  }
 }
 
 // Tests that changing the developer mode setting affects existing renderers
 // for page-based contexts (i.e., the main renderer thread).
-IN_PROC_BROWSER_TEST_F(NativeBindingsRestrictedToDeveloperModeApiTest,
+IN_PROC_BROWSER_TEST_P(DeveloperModeNativeBindingsApiTest,
                        SwitchingDeveloperModeAffectsExistingRenderers_Pages) {
   static constexpr char kManifest[] =
       R"({
            "name": "Test",
            "manifest_version": 3,
            "version": "0.1",
-           "permissions": ["userScripts"]
+           "permissions": ["%s"]
          })";
   static constexpr char kPageHtml[] =
       R"(<!doctype html>
@@ -703,9 +758,12 @@ IN_PROC_BROWSER_TEST_F(NativeBindingsRestrictedToDeveloperModeApiTest,
          </html>)";
 
   TestExtensionDir test_dir;
-  test_dir.WriteManifest(kManifest);
+  test_dir.WriteManifest(
+      base::StringPrintf(kManifest, GetParam() ? "debugger" : "userScripts"));
   test_dir.WriteFile(FILE_PATH_LITERAL("page.html"), kPageHtml);
-  test_dir.WriteFile(FILE_PATH_LITERAL("page.js"), kCheckApiAvailability);
+  test_dir.WriteFile(
+      FILE_PATH_LITERAL("page.js"),
+      GetParam() ? kCheckApiAvailability : kCheckApiAvailabilityUserScripts);
   test_dir.WriteFile(FILE_PATH_LITERAL("script.js"), "// blank");
 
   const Extension* extension = LoadExtension(test_dir.UnpackedPath());
@@ -739,7 +797,7 @@ IN_PROC_BROWSER_TEST_F(NativeBindingsRestrictedToDeveloperModeApiTest,
 // Tests that incognito windows use the developer mode setting from the
 // original, on-the-record profile (since incognito windows can't separately
 // set developer mode).
-IN_PROC_BROWSER_TEST_F(NativeBindingsRestrictedToDeveloperModeApiTest,
+IN_PROC_BROWSER_TEST_P(DeveloperModeNativeBindingsApiTest,
                        IncognitoRenderersUseOriginalProfilesDevModeSetting) {
   static constexpr char kManifest[] =
       R"({
@@ -747,7 +805,7 @@ IN_PROC_BROWSER_TEST_F(NativeBindingsRestrictedToDeveloperModeApiTest,
            "manifest_version": 3,
            "version": "0.1",
            "incognito": "split",
-           "permissions": ["userScripts"]
+           "permissions": ["%s"]
          })";
   static constexpr char kPageHtml[] =
       R"(<!doctype html>
@@ -756,9 +814,12 @@ IN_PROC_BROWSER_TEST_F(NativeBindingsRestrictedToDeveloperModeApiTest,
          </html>)";
 
   TestExtensionDir test_dir;
-  test_dir.WriteManifest(kManifest);
+  test_dir.WriteManifest(
+      base::StringPrintf(kManifest, GetParam() ? "debugger" : "userScripts"));
   test_dir.WriteFile(FILE_PATH_LITERAL("page.html"), kPageHtml);
-  test_dir.WriteFile(FILE_PATH_LITERAL("page.js"), kCheckApiAvailability);
+  test_dir.WriteFile(
+      FILE_PATH_LITERAL("page.js"),
+      GetParam() ? kCheckApiAvailability : kCheckApiAvailabilityUserScripts);
   test_dir.WriteFile(FILE_PATH_LITERAL("script.js"), "// blank");
 
   const Extension* extension =
@@ -792,21 +853,24 @@ IN_PROC_BROWSER_TEST_F(NativeBindingsRestrictedToDeveloperModeApiTest,
 // Tests that changing the developer mode setting affects existing renderers
 // for service worker contexts (which run off the main thread in the renderer).
 // TODO(crbug.com/40946312): Test flaky on multiple platforms
-IN_PROC_BROWSER_TEST_F(
-    NativeBindingsRestrictedToDeveloperModeApiTest,
+IN_PROC_BROWSER_TEST_P(
+    DeveloperModeNativeBindingsApiTest,
     DISABLED_SwitchingDeveloperModeAffectsExistingRenderers_ServiceWorkers) {
   static constexpr char kManifest[] =
       R"({
            "name": "Test",
            "manifest_version": 3,
            "version": "0.1",
-           "permissions": ["userScripts"],
+           "permissions": ["%s"],
            "background": {"service_worker": "background.js"}
          })";
 
   TestExtensionDir test_dir;
-  test_dir.WriteManifest(kManifest);
-  test_dir.WriteFile(FILE_PATH_LITERAL("background.js"), kCheckApiAvailability);
+  test_dir.WriteManifest(
+      base::StringPrintf(kManifest, GetParam() ? "debugger" : "userScripts"));
+  test_dir.WriteFile(
+      FILE_PATH_LITERAL("background.js"),
+      GetParam() ? kCheckApiAvailability : kCheckApiAvailabilityUserScripts);
   test_dir.WriteFile(FILE_PATH_LITERAL("script.js"), "// blank");
 
   const Extension* extension = LoadExtension(test_dir.UnpackedPath());
@@ -842,5 +906,10 @@ IN_PROC_BROWSER_TEST_F(
   renderer_round_trip();
   EXPECT_EQ("success", call_in_service_worker("verifyApiIsNotAvailable();"));
 }
+
+INSTANTIATE_TEST_SUITE_P(All,
+                         DeveloperModeNativeBindingsApiTest,
+                         // extensions_features::kDebuggerAPIRestrictedToDevMode
+                         testing::Bool());
 
 }  // namespace extensions

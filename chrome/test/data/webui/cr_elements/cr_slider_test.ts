@@ -7,11 +7,9 @@ import 'chrome://resources/cr_elements/cr_slider/cr_slider.js';
 
 import {getTrustedHTML} from 'chrome://resources/js/static_types.js';
 import type {CrSliderElement} from 'chrome://resources/cr_elements/cr_slider/cr_slider.js';
-import {pressAndReleaseKeyOn} from 'chrome://resources/polymer/v3_0/iron-test-helpers/mock-interactions.js';
-import {flush} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+import {pressAndReleaseKeyOn} from 'chrome://webui-test/keyboard_mock_interactions.js';
 import {assertEquals, assertFalse, assertTrue, assertNotReached} from 'chrome://webui-test/chai_assert.js';
 import {eventToPromise, isVisible, microtasksFinished} from 'chrome://webui-test/test_util.js';
-import {flushTasks} from 'chrome://webui-test/polymer_test_util.js';
 // clang-format on
 
 suite('cr-slider', function() {
@@ -31,7 +29,7 @@ suite('cr-slider', function() {
 
     crSlider = document.body.querySelector('cr-slider')!;
     crSlider.value = 0;
-    return flushTasks();
+    return microtasksFinished();
   });
 
   function checkDisabled(expected: boolean) {
@@ -233,14 +231,13 @@ suite('cr-slider', function() {
 
   test('markers', async () => {
     const markersElement =
-        crSlider.shadowRoot!.querySelector<HTMLElement>('#markers')!;
+        crSlider.shadowRoot.querySelector<HTMLElement>('#markers')!;
     assertTrue(markersElement.hidden);
     crSlider.markerCount = 10;
     await microtasksFinished();
     assertFalse(markersElement.hidden);
-    flush();
     const markers =
-        Array.from(crSlider.shadowRoot!.querySelectorAll('#markers div'));
+        Array.from(crSlider.shadowRoot.querySelectorAll('#markers div'));
     assertEquals(9, markers.length);
     markers.forEach(marker => {
       assertTrue(marker.classList.contains('inactive-marker'));
@@ -270,7 +267,7 @@ suite('cr-slider', function() {
     assertEquals('4', crSlider.getAttribute('aria-valuetext'));
     assertEquals('4', crSlider.getAttribute('aria-valuenow'));
     assertEquals(
-        '', crSlider.shadowRoot!.querySelector('#label')!.textContent!.trim());
+        '', crSlider.shadowRoot.querySelector('#label')!.textContent!.trim());
     assertEquals(2, crSlider.value);
     pressArrowRight();
     assertEquals(3, crSlider.value);
@@ -278,7 +275,7 @@ suite('cr-slider', function() {
     assertEquals('8', crSlider.getAttribute('aria-valuetext'));
     assertEquals('8', crSlider.getAttribute('aria-valuenow'));
     assertEquals(
-        '', crSlider.shadowRoot!.querySelector('#label')!.textContent!.trim());
+        '', crSlider.shadowRoot.querySelector('#label')!.textContent!.trim());
 
     crSlider.value = 2;
     crSlider.ticks = [
@@ -304,7 +301,7 @@ suite('cr-slider', function() {
     assertEquals('Third', crSlider.getAttribute('aria-valuetext'));
     assertEquals(
         'Third',
-        crSlider.shadowRoot!.querySelector('#label')!.textContent!.trim());
+        crSlider.shadowRoot.querySelector('#label')!.textContent!.trim());
     assertEquals('3', crSlider.getAttribute('aria-valuenow'));
     pressArrowLeft();
     await microtasksFinished();
@@ -312,7 +309,7 @@ suite('cr-slider', function() {
     assertEquals('20', crSlider.getAttribute('aria-valuenow'));
     assertEquals(
         'Second',
-        crSlider.shadowRoot!.querySelector('#label')!.textContent!.trim());
+        crSlider.shadowRoot.querySelector('#label')!.textContent!.trim());
   });
 
   test('disabled whenever public |disabled| is true', async () => {
@@ -406,16 +403,16 @@ suite('cr-slider', function() {
       const expected = 'all';
       assertEquals(
           expected,
-          getComputedStyle(crSlider.shadowRoot!.querySelector('#knobAndLabel')!)
+          getComputedStyle(crSlider.shadowRoot.querySelector('#knobAndLabel')!)
               .transition);
       assertEquals(
           expected,
-          getComputedStyle(crSlider.shadowRoot!.querySelector('#bar')!)
+          getComputedStyle(crSlider.shadowRoot.querySelector('#bar')!)
               .transition);
     }
 
     const knobAndLabel =
-        crSlider.shadowRoot!.querySelector<HTMLElement>('#knobAndLabel')!;
+        crSlider.shadowRoot.querySelector<HTMLElement>('#knobAndLabel')!;
 
     type TransitionEventName = 'transitionstart'|'transitionend';
     function whenTransitionEvent(eventName: TransitionEventName):
@@ -535,12 +532,12 @@ suite('cr-slider', function() {
         assertEquals(100, crSlider.value);
 
         crSlider.max = 25;
-        await flushTasks();
+        await microtasksFinished();
         assertEquals(25, crSlider.value);
 
         crSlider.min = 50;
         crSlider.max = 100;
-        await flushTasks();
+        await microtasksFinished();
         assertEquals(50, crSlider.value);
       });
 

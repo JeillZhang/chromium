@@ -25,6 +25,7 @@
 
 #include "third_party/blink/renderer/platform/graphics/decoding_image_generator.h"
 
+#include <array>
 #include <memory>
 #include <utility>
 
@@ -70,7 +71,7 @@ DecodingImageGenerator::CreateAsSkImageGenerator(sk_sp<SkData> data) {
   std::unique_ptr<ImageDecoder> decoder = ImageDecoder::Create(
       segment_reader, data_complete, ImageDecoder::kAlphaPremultiplied,
       ImageDecoder::kDefaultBitDepth, ColorBehavior::kTag,
-      Platform::GetMaxDecodedImageBytes());
+      cc::AuxImage::kDefault, Platform::GetMaxDecodedImageBytes());
   if (!decoder || !decoder->IsSizeAvailable())
     return nullptr;
 
@@ -81,12 +82,12 @@ DecodingImageGenerator::CreateAsSkImageGenerator(sk_sp<SkData> data) {
 
   scoped_refptr<ImageFrameGenerator> frame = ImageFrameGenerator::Create(
       SkISize::Make(size.width(), size.height()), false,
-      decoder->GetColorBehavior(), decoder->GetSupportedDecodeSizes());
+      decoder->GetColorBehavior(), cc::AuxImage::kDefault,
+      decoder->GetSupportedDecodeSizes());
   if (!frame)
     return nullptr;
 
-  WebVector<FrameMetadata> frames;
-  frames.emplace_back(FrameMetadata());
+  std::vector<FrameMetadata> frames = {FrameMetadata()};
   cc::ImageHeaderMetadata image_metadata =
       decoder->MakeMetadataForDecodeAcceleration();
   image_metadata.all_data_received_prior_to_decode = true;
@@ -104,7 +105,7 @@ sk_sp<DecodingImageGenerator> DecodingImageGenerator::Create(
     scoped_refptr<ImageFrameGenerator> frame_generator,
     const SkImageInfo& info,
     scoped_refptr<SegmentReader> data,
-    WebVector<FrameMetadata> frames,
+    std::vector<FrameMetadata> frames,
     PaintImage::ContentId content_id,
     bool all_data_received,
     bool can_yuv_decode,
@@ -118,12 +119,12 @@ DecodingImageGenerator::DecodingImageGenerator(
     scoped_refptr<ImageFrameGenerator> frame_generator,
     const SkImageInfo& info,
     scoped_refptr<SegmentReader> data,
-    WebVector<FrameMetadata> frames,
+    std::vector<FrameMetadata> frames,
     PaintImage::ContentId complete_frame_content_id,
     bool all_data_received,
     bool can_yuv_decode,
     const cc::ImageHeaderMetadata& image_metadata)
-    : PaintImageGenerator(info, frames.ReleaseVector()),
+    : PaintImageGenerator(info, std::move(frames)),
       frame_generator_(std::move(frame_generator)),
       data_(std::move(data)),
       all_data_received_(all_data_received),
@@ -271,9 +272,9 @@ bool DecodingImageGenerator::GetYUVAPlanes(
   TRACE_EVENT1(TRACE_DISABLED_BY_DEFAULT("devtools.timeline"),
                "Decode LazyPixelRef", "LazyPixelRef", lazy_pixel_ref);
 
-  SkISize plane_sizes[3];
-  wtf_size_t plane_row_bytes[3];
-  void* plane_addrs[3];
+  std::array<SkISize, 3> plane_sizes;
+  std::array<wtf_size_t, 3> plane_row_bytes;
+  std::array<void*, 3> plane_addrs;
 
   // Verify sizes and extract DecodeToYUV parameters
   for (int i = 0; i < 3; ++i) {

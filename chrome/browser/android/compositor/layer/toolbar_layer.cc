@@ -118,7 +118,7 @@ void ToolbarLayer::PushResource(int toolbar_resource_id,
   layer_->SetPosition(
       gfx::PointF(x_offset, content_offset - layer_->bounds().height()));
 
-  // TODO(peilinwang): update layer_ with offset_tag.
+  layer_->SetOffsetTag(offset_tag);
 }
 
 int ToolbarLayer::GetIndexOfLayer(scoped_refptr<cc::slim::Layer> layer) {
@@ -208,7 +208,6 @@ ToolbarLayer::ToolbarLayer(ui::ResourceManager* resource_manager)
   debug_layer_->SetOpacity(0.5f);
 }
 
-ToolbarLayer::~ToolbarLayer() {
-}
+ToolbarLayer::~ToolbarLayer() = default;
 
 }  //  namespace android

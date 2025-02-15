@@ -244,15 +244,24 @@ PrerenderCancellationReason::DisallowedMojoInterface() const {
 
 PrerenderMismatchedHeaders::PrerenderMismatchedHeaders(
     const std::string& header_name,
-    const std::optional<std::string> initial_value,
-    const std::optional<std::string> activation_value)
+    std::optional<std::string> initial_value,
+    std::optional<std::string> activation_value)
     : header_name(header_name),
-      initial_value(initial_value),
-      activation_value(activation_value) {}
+      initial_value(std::move(initial_value)),
+      activation_value(std::move(activation_value)) {}
 
 PrerenderMismatchedHeaders::~PrerenderMismatchedHeaders() = default;
 
 PrerenderMismatchedHeaders::PrerenderMismatchedHeaders(
+    const PrerenderMismatchedHeaders& other) = default;
+
+PrerenderMismatchedHeaders::PrerenderMismatchedHeaders(
+    PrerenderMismatchedHeaders&& other) = default;
+
+PrerenderMismatchedHeaders& PrerenderMismatchedHeaders::operator=(
+    const PrerenderMismatchedHeaders& other) = default;
+
+PrerenderMismatchedHeaders& PrerenderMismatchedHeaders::operator=(
     PrerenderMismatchedHeaders&& other) = default;
 
 std::string GeneratePrerenderHistogramSuffix(
@@ -270,7 +279,7 @@ std::string GeneratePrerenderHistogramSuffix(
     case PreloadingTriggerType::kEmbedder:
       return ".Embedder_" + embedder_suffix;
   }
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 void RecordPrerenderTriggered(ukm::SourceId ukm_id) {
@@ -296,6 +305,20 @@ void RecordFailedPrerenderFinalStatus(
   RecordPrerenderFinalStatusUma(cancellation_reason.final_status(),
                                 attributes.trigger_type,
                                 attributes.embedder_histogram_suffix);
+
+  if (cancellation_reason.final_status() ==
+      PrerenderFinalStatus::kPrerenderFailedDuringPrefetch) {
+    const std::optional<PrefetchStatus>& prefetch_status =
+        attributes.preload_pipeline_info->prefetch_status();
+    if (prefetch_status.has_value()) {
+      base::UmaHistogramEnumeration(
+          GenerateHistogramName("Prerender.Experimental."
+                                "PrefetchAheadOfPrerenderFailed.PrefetchStatus",
+                                attributes.trigger_type,
+                                attributes.embedder_histogram_suffix),
+          prefetch_status.value());
+    }
+  }
 
   if (attributes.initiator_ukm_id != ukm::kInvalidSourceId) {
     // `initiator_ukm_id` must be valid for the speculation rules.

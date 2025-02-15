@@ -158,9 +158,9 @@ export class ThemeColorPickerElement extends ThemeColorPickerElementBase {
       return {type: ColorType.DEFAULT};
     }
     if (this.theme_.backgroundImageMainColor &&
-        this.theme_.backgroundImageMainColor!.value ===
+        this.theme_.backgroundImageMainColor.value ===
             this.theme_.seedColor.value) {
-        return {type: ColorType.CUSTOM};
+      return {type: ColorType.CUSTOM};
     }
     if (this.colors_.find(
             (color: ChromeColor) =>
@@ -269,8 +269,7 @@ export class ThemeColorPickerElement extends ThemeColorPickerElementBase {
   private async updateColors_() {
     assert(this.theme_);
     this.colors_ =
-        (await this.handler_.getChromeColors(this.theme_.isDarkMode, false))
-            .colors;
+        (await this.handler_.getChromeColors(this.theme_.isDarkMode)).colors;
   }
 
   protected onManagedDialogClosed_() {

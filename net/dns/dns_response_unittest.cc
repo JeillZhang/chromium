@@ -9,6 +9,8 @@
 
 #include "net/dns/dns_response.h"
 
+#include <stdint.h>
+
 #include <algorithm>
 #include <memory>
 #include <optional>
@@ -34,14 +36,14 @@ namespace net {
 namespace {
 
 TEST(DnsRecordParserTest, Constructor) {
-  const char data[] = { 0 };
+  const uint8_t data[] = {0};
 
   EXPECT_FALSE(DnsRecordParser().IsValid());
-  EXPECT_TRUE(DnsRecordParser(data, 1, 0, 0).IsValid());
-  EXPECT_TRUE(DnsRecordParser(data, 1, 1, 0).IsValid());
+  EXPECT_TRUE(DnsRecordParser(data, 0, 0).IsValid());
+  EXPECT_TRUE(DnsRecordParser(data, 1, 0).IsValid());
 
-  EXPECT_FALSE(DnsRecordParser(data, 1, 0, 0).AtEnd());
-  EXPECT_TRUE(DnsRecordParser(data, 1, 1, 0).AtEnd());
+  EXPECT_FALSE(DnsRecordParser(data, 0, 0).AtEnd());
+  EXPECT_TRUE(DnsRecordParser(data, 1, 0).AtEnd());
 }
 
 TEST(DnsRecordParserTest, ReadName) {
@@ -61,7 +63,7 @@ TEST(DnsRecordParserTest, ReadName) {
   };
 
   std::string out;
-  DnsRecordParser parser(data, sizeof(data), 0, /*num_records=*/0);
+  DnsRecordParser parser(data, 0, /*num_records=*/0);
   ASSERT_TRUE(parser.IsValid());
 
   EXPECT_EQ(0x11u, parser.ReadName(data + 0x00, &out));
@@ -84,7 +86,7 @@ TEST(DnsRecordParserTest, ReadName) {
   EXPECT_EQ(0x2u, parser.ReadName(data + 0x17, nullptr));
 
   // Check that it works even if initial position is different.
-  parser = DnsRecordParser(data, sizeof(data), 0x12, /*num_records=*/0);
+  parser = DnsRecordParser(data, 0x12, /*num_records=*/0);
   EXPECT_EQ(0x6u, parser.ReadName(data + 0x11, nullptr));
 }
 
@@ -102,7 +104,7 @@ TEST(DnsRecordParserTest, ReadNameFail) {
       0x02, 'x', 'x',
   };
 
-  DnsRecordParser parser(data, sizeof(data), 0, /*num_records=*/0);
+  DnsRecordParser parser(data, 0, /*num_records=*/0);
   ASSERT_TRUE(parser.IsValid());
 
   std::string out;
@@ -181,7 +183,7 @@ TEST(DnsRecordParserTest, ReadNameGoodLength) {
     ASSERT_EQ(data_vector.size(), name_len + 1);
     const uint8_t* data = data_vector.data();
 
-    DnsRecordParser parser(data, data_vector.size(), 0, /*num_records=*/0);
+    DnsRecordParser parser(data_vector, 0, /*num_records=*/0);
     ASSERT_TRUE(parser.IsValid());
 
     std::string out;
@@ -203,7 +205,7 @@ TEST(DnsRecordParserTest, ReadNameTooLongFail) {
     ASSERT_EQ(data_vector.size(), name_len + 1);
     const uint8_t* data = data_vector.data();
 
-    DnsRecordParser parser(data, data_vector.size(), 0, /*num_records=*/0);
+    DnsRecordParser parser(data_vector, 0, /*num_records=*/0);
     ASSERT_TRUE(parser.IsValid());
 
     std::string out;
@@ -220,7 +222,7 @@ TEST(DnsRecordParserTest, RejectsNamesWithLoops) {
       "aaaaaaaaaaa"                 // Garbage data to spread things out.
       "\003foo\300\004";            // foo with pointer to byte 4.
 
-  DnsRecordParser parser(kData, /*length=*/sizeof(kData) - 1, /*offset=*/0,
+  DnsRecordParser parser(base::byte_span_from_cstring(kData), /*offset=*/0,
                          /*num_records=*/0);
   ASSERT_TRUE(parser.IsValid());
 
@@ -235,7 +237,7 @@ TEST(DnsRecordParserTest, RejectsNamesPointingOutsideData) {
   const char kData[] =
       "\003www\007example\300\031";  // www.example with pointer to byte 25
 
-  DnsRecordParser parser(kData, /*length=*/sizeof(kData) - 1, /*offset=*/0,
+  DnsRecordParser parser(base::byte_span_from_cstring(kData), /*offset=*/0,
                          /*num_records=*/0);
   ASSERT_TRUE(parser.IsValid());
 
@@ -249,7 +251,7 @@ TEST(DnsRecordParserTest, ParsesValidPointer) {
       "aaaa"                        // Garbage data to spread things out.
       "\004test\000";               // .test
 
-  DnsRecordParser parser(kData, /*length=*/sizeof(kData) - 1, /*offset=*/0,
+  DnsRecordParser parser(base::byte_span_from_cstring(kData), /*offset=*/0,
                          /*num_records=*/0);
   ASSERT_TRUE(parser.IsValid());
 
@@ -273,7 +275,7 @@ TEST(DnsRecordParserTest, RejectsNamesWithInvalidLabelTypeAsPointer) {
       "aaaa"                        // Garbage data to spread things out.
       "\004test\000";               // .test
 
-  DnsRecordParser parser(kData, /*length=*/sizeof(kData) - 1, /*offset=*/0,
+  DnsRecordParser parser(base::byte_span_from_cstring(kData), /*offset=*/0,
                          /*num_records=*/0);
   ASSERT_TRUE(parser.IsValid());
 
@@ -299,7 +301,7 @@ TEST(DnsRecordParserTest, RejectsNamesWithInvalidLabelTypeAsLength) {
   std::string data(kData, sizeof(kData) - 1);
   data.append(256, '\000');
 
-  DnsRecordParser parser(data.data(), data.size(), /*offset=*/0,
+  DnsRecordParser parser(base::as_byte_span(data), /*offset=*/0,
                          /*num_records=*/0);
   ASSERT_TRUE(parser.IsValid());
 
@@ -350,7 +352,8 @@ TEST(DnsRecordParserTest, ReadRecord) {
   EXPECT_TRUE(parser.AtEnd());
 
   // Test truncated record.
-  parser = DnsRecordParser(data, sizeof(data) - 2, 0, /*num_records=*/2);
+  auto span = base::span(data);
+  parser = DnsRecordParser(span.first(span.size() - 2), 0, /*num_records=*/2);
   EXPECT_TRUE(parser.ReadRecord(&record));
   EXPECT_FALSE(parser.AtEnd());
   EXPECT_FALSE(parser.ReadRecord(&record));
@@ -371,7 +374,7 @@ TEST(DnsRecordParserTest, ReadsRecordWithLongName) {
       "\xc0\xa8\x00\x01",  // 192.168.0.1
       14);
 
-  DnsRecordParser parser(data.data(), data.size(), 0, /*num_records=*/1);
+  DnsRecordParser parser(base::as_byte_span(data), 0, /*num_records=*/1);
 
   DnsResourceRecord record;
   EXPECT_TRUE(parser.ReadRecord(&record));
@@ -395,7 +398,7 @@ TEST(DnsRecordParserTest, RejectRecordWithTooLongName) {
       "\xc0\xa8\x00\x01",  // 192.168.0.1
       14);
 
-  DnsRecordParser parser(data.data(), data.size(), 0, /*num_records=*/1);
+  DnsRecordParser parser(base::as_byte_span(data), 0, /*num_records=*/1);
 
   DnsResourceRecord record;
   EXPECT_FALSE(parser.ReadRecord(&record));
@@ -409,7 +412,7 @@ TEST(DnsRecordParserTest, RejectRecordWithTooLongName) {
 TEST(DnsRecordParserTest, RejectRecordWithNonendedName) {
   const char kNonendedName[] = "\003www\006google\006www";
 
-  DnsRecordParser parser(kNonendedName, sizeof(kNonendedName) - 1, 0,
+  DnsRecordParser parser(base::byte_span_from_cstring(kNonendedName), 0,
                          /*num_records=*/1);
 
   DnsResourceRecord record;
@@ -432,7 +435,8 @@ TEST(DnsRecordParserTest, RejectRecordNameMissingNullTermination) {
       "\x00\x04"                   // RDLENGTH=4 bytes
       "\xc0\xa8\x00\x01";          // 192.168.0.1
 
-  DnsRecordParser parser(kData, sizeof(kData) - 1, 0, /*num_records=*/1);
+  DnsRecordParser parser(base::byte_span_from_cstring(kData), 0,
+                         /*num_records=*/1);
 
   DnsResourceRecord record;
   EXPECT_FALSE(parser.ReadRecord(&record));
@@ -456,7 +460,7 @@ TEST(DnsRecordParserTest, RejectReadingTooManyRecords) {
       "\xc0\xa8\x00\x02";  // 192.168.0.2
 
   DnsRecordParser parser(
-      kData, /*length=*/sizeof(kData) - 1, /*offset=*/0,
+      base::byte_span_from_cstring(kData), /*offset=*/0,
       /*num_records=*/1);  // Claim 1 record despite there being 2 in `kData`.
 
   DnsResourceRecord record1;
@@ -485,7 +489,7 @@ TEST(DnsRecordParserTest, RejectReadingPastEnd) {
       "\xc0\xa8\x00\x02";  // 192.168.0.2
 
   DnsRecordParser parser(
-      kData, /*length=*/sizeof(kData) - 1, /*offset=*/0,
+      base::byte_span_from_cstring(kData), /*offset=*/0,
       /*num_records=*/3);  // Claim 3 record despite there being 2 in `kData`.
 
   DnsResourceRecord record;
@@ -729,7 +733,7 @@ TEST(DnsResponseTest, InitParseWithoutQuery) {
 
   DnsResourceRecord record;
   DnsRecordParser parser = resp.Parser();
-  for (unsigned i = 0; i < kT0RecordCount; i ++) {
+  for (uint32_t i = 0; i < kT0RecordCount; i++) {
     EXPECT_FALSE(parser.AtEnd());
     EXPECT_TRUE(parser.ReadRecord(&record));
   }
@@ -1326,8 +1330,9 @@ TEST(DnsResponseWriteTest, SingleARecordAnswerWithQuestion) {
   ASSERT_TRUE(dns_name.has_value());
 
   OptRecordRdata opt_rdata;
-  opt_rdata.AddOpt(
-      OptRecordRdata::UnknownOpt::CreateForTesting(255, "\xde\xad\xbe\xef"));
+  const auto data = std::to_array<uint8_t>({0xde, 0xad, 0xbe, 0xef});
+
+  opt_rdata.AddOpt(OptRecordRdata::UnknownOpt::CreateForTesting(255, data));
 
   std::optional<DnsQuery> query;
   query.emplace(0x1234 /* id */, dns_name.value(), dns_protocol::kTypeA,
@@ -1383,8 +1388,8 @@ TEST(DnsResponseWriteTest,
       2 /* qclass */ +
       10 /* extra bytes that inflate the internal buffer of a query */;
   auto buf = base::MakeRefCounted<IOBufferWithSize>(buf_size);
-  std::ranges::fill(buf->span(), char{0});
-  auto writer = base::SpanWriter(base::as_writable_bytes(buf->span()));
+  std::ranges::fill(buf->span(), 0);
+  auto writer = base::SpanWriter(buf->span());
   writer.WriteU16BigEndian(0x1234);                  // id
   writer.WriteU16BigEndian(0);                       // flags, is query
   writer.WriteU16BigEndian(1);                       // qdcount

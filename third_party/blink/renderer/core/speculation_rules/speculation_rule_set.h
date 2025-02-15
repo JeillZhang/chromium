@@ -5,10 +5,11 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_SPECULATION_RULES_SPECULATION_RULE_SET_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_SPECULATION_RULES_SPECULATION_RULE_SET_H_
 
+#include "base/containers/span.h"
 #include "base/types/pass_key.h"
 #include "third_party/blink/renderer/core/core_export.h"
-#include "third_party/blink/renderer/core/dom/dom_node_ids.h"
 #include "third_party/blink/renderer/core/speculation_rules/speculation_rule.h"
+#include "third_party/blink/renderer/platform/graphics/dom_node_id.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_vector.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 
@@ -157,7 +158,7 @@ class CORE_EXPORT SpeculationRuleSet final
 
  private:
   void SetError(SpeculationRuleSetErrorType error_type, String error_message);
-  void SetWarnings(Vector<String> warning_messages);
+  void AddWarnings(base::span<const String> warning_messages);
 
   SpeculationRuleSetId inspector_id_;
   HeapVector<Member<SpeculationRule>> prefetch_rules_;

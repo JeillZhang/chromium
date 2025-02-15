@@ -7,7 +7,6 @@
 #include <stdint.h>
 
 #include <algorithm>
-#include <array>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -134,15 +133,12 @@ void OnDeviceOpen(mojo::Remote<device::mojom::UsbDevice> device,
 // big-endian order.  |val| must be a simple integer type
 void MD5UpdateU8BigEndian(base::MD5Context* ctx,
                           base::StrictNumeric<uint8_t> val) {
-  std::array<uint8_t, 1u> buf;
-  base::span(buf).copy_from(base::numerics::U8ToBigEndian(val));
-  base::MD5Update(ctx, buf);
+  uint8_t tmp = val;
+  base::MD5Update(ctx, base::span_from_ref(tmp));
 }
 void MD5UpdateU16BigEndian(base::MD5Context* ctx,
                            base::StrictNumeric<uint16_t> val) {
-  std::array<uint8_t, 2u> buf;
-  base::span(buf).copy_from(base::numerics::U16ToBigEndian(val));
-  base::MD5Update(ctx, buf);
+  base::MD5Update(ctx, base::U16ToBigEndian(val));
 }
 
 // Update the hash with the contents of |str|.
@@ -154,8 +150,7 @@ void MD5UpdateU16BigEndian(base::MD5Context* ctx,
 // This is a long way to say "UTF-16 is hard to hash, let's just convert
 // to UTF-8 and hash that", which avoids all of these issues.
 void MD5UpdateString16(base::MD5Context* ctx, const std::u16string& str) {
-  std::string tmp = base::UTF16ToUTF8(str);
-  base::MD5Update(ctx, std::string_view(tmp.data(), tmp.size()));
+  base::MD5Update(ctx, base::UTF16ToUTF8(str));
 }
 
 // Get the usb printer id for |device|.  This is used both as the identifier for
@@ -364,8 +359,8 @@ void UpdateSearchDataFromDeviceId(const chromeos::UsbPrinterId& device_id,
                                   PrinterDetector::DetectedPrinter* printer) {
   // If the IEEE1284 device info looks complete and doesn't match the USB
   // string descriptors, add an additional PPD search string.  In addition, if
-  // the USB make_and_model matches known generic strings, replace the entire
-  // device description with the values from the IEEE1284 info.
+  // the USB make_and_model is empty or matches known generic strings, replace
+  // the entire device description with the values from the IEEE1284 info.
   const std::string& usb_make = device_id.make();
   const std::string& usb_model = device_id.model();
   if (usb_make.empty() || usb_model.empty()) {
@@ -377,7 +372,10 @@ void UpdateSearchDataFromDeviceId(const chromeos::UsbPrinterId& device_id,
     return;
   }
 
-  if (IsGenericUsbDescription(
+  if (base::TrimWhitespaceASCII(printer->printer.make_and_model(),
+                                base::TRIM_ALL)
+          .empty() ||
+      IsGenericUsbDescription(
           base::ToLowerASCII(printer->printer.make_and_model()))) {
     PRINTER_LOG(EVENT) << printer->printer.make_and_model()
                        << " replaced with USB device info: "

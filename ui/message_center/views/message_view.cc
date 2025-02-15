@@ -7,7 +7,6 @@
 #include "base/observer_list.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "ui/accessibility/ax_enums.mojom.h"
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -38,7 +37,7 @@
 #include "ui/views/focus/focus_manager.h"
 #include "ui/views/widget/widget.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #include "base/time/time.h"
 #endif
 
@@ -84,6 +83,10 @@ MessageView::MessageView(const Notification& notification)
   // Paint to a dedicated layer to make the layer non-opaque.
   SetPaintToLayer();
   layer()->SetFillsBoundsOpaquely(false);
+
+  GetViewAccessibility().SetRole(ax::mojom::Role::kGenericContainer);
+  GetViewAccessibility().SetRoleDescription(
+      l10n_util::GetStringUTF8(IDS_MESSAGE_NOTIFICATION_ACCESSIBLE_NAME));
 
   UpdateWithNotification(notification);
 
@@ -138,7 +141,19 @@ std::u16string MessageView::CreateAccessibleName(
 
 void MessageView::UpdateWithNotification(const Notification& notification) {
   pinned_ = notification.pinned();
-  SetAccessibleName(CreateAccessibleName(notification));
+
+  std::u16string name = CreateAccessibleName(notification);
+  if (name.empty()) {
+    GetViewAccessibility().SetName(
+        std::u16string(), ax::mojom::NameFrom::kAttributeExplicitlyEmpty);
+  } else {
+    GetViewAccessibility().SetName(name);
+  }
+  if (updated_name_callback_) {
+    updated_name_callback_.Run(
+        notification.rich_notification_data()
+            .should_make_spoken_feedback_for_popup_updates);
+  }
   slide_out_controller_.set_slide_mode(CalculateSlideMode());
 }
 
@@ -216,19 +231,6 @@ void MessageView::OnContainerAnimationEnded() {
   // Not implemented by default.
 }
 
-void MessageView::GetAccessibleNodeData(ui::AXNodeData* node_data) {
-  node_data->role = ax::mojom::Role::kGenericContainer;
-  node_data->AddStringAttribute(
-      ax::mojom::StringAttribute::kRoleDescription,
-      l10n_util::GetStringUTF8(IDS_MESSAGE_NOTIFICATION_ACCESSIBLE_NAME));
-
-  if (GetViewAccessibility().GetCachedName().empty()) {
-    node_data->SetNameFrom(ax::mojom::NameFrom::kAttributeExplicitlyEmpty);
-  }
-
-  node_data->SetNameChecked(GetViewAccessibility().GetCachedName());
-}
-
 bool MessageView::OnMousePressed(const ui::MouseEvent& event) {
   return true;
 }
@@ -301,7 +303,7 @@ void MessageView::OnBlur() {
 }
 
 void MessageView::OnGestureEvent(ui::GestureEvent* event) {
-  if (event->type() == ui::ET_GESTURE_TAP) {
+  if (event->type() == ui::EventType::kGestureTap) {
     MessageCenter::Get()->ClickOnNotification(notification_id_);
     event->SetHandled();
     return;
@@ -352,9 +354,7 @@ ui::Layer* MessageView::GetSlideOutLayer() {
 }
 
 void MessageView::OnSlideStarted() {
-  for (auto& observer : observers_) {
-    observer.OnSlideStarted(notification_id_);
-  }
+  observers_.Notify(&Observer::OnSlideStarted, notification_id_);
 }
 
 void MessageView::OnSlideChanged(bool in_progress) {
@@ -373,11 +373,10 @@ void MessageView::OnSlideChanged(bool in_progress) {
         views::ScrollView::ScrollBarMode::kEnabled);
   }
 
-  for (auto& observer : observers_) {
-    if (in_progress)
-      observer.OnSlideChanged(notification_id_);
-    else
-      observer.OnSlideEnded(notification_id_);
+  if (in_progress) {
+    observers_.Notify(&Observer::OnSlideChanged, notification_id_);
+  } else {
+    observers_.Notify(&Observer::OnSlideEnded, notification_id_);
   }
 }
 
@@ -395,18 +394,14 @@ void MessageView::OnSlideOut() {
 
   // The notification may be deleted after slide out, so give observers a
   // chance to handle the notification before fulling sliding out.
-  for (auto& observer : observers_) {
-    observer.OnPreSlideOut(notification_id_);
-  }
+  observers_.Notify(&Observer::OnPreSlideOut, notification_id_);
 
   // Copy the |notification_id| here as calling OnSlideOut() might destroy
   // |this| but we still want to call RemoveNotification(). Note that the
   // iteration over |observers_| is still safe and will simply stop.
   std::string notification_id_copy = notification_id_;
 
-  for (auto& observer : observers_) {
-    observer.OnSlideOut(notification_id_);
-  }
+  observers_.Notify(&Observer::OnSlideOut, notification_id_);
 
   auto* message_center = MessageCenter::Get();
   if (message_center->FindPopupNotificationById(notification_id_copy)) {
@@ -441,8 +436,7 @@ views::SlideOutController::SlideMode MessageView::CalculateSlideMode() const {
       return views::SlideOutController::SlideMode::kFull;
   }
 
-  NOTREACHED_IN_MIGRATION();
-  return views::SlideOutController::SlideMode::kFull;
+  NOTREACHED();
 }
 
 MessageView::Mode MessageView::GetMode() const {
@@ -497,15 +491,13 @@ void MessageView::SetCornerRadius(int top_radius, int bottom_radius) {
 }
 
 void MessageView::OnCloseButtonPressed() {
-  for (auto& observer : observers_)
-    observer.OnCloseButtonPressed(notification_id_);
+  observers_.Notify(&Observer::OnCloseButtonPressed, notification_id_);
   MessageCenter::Get()->RemoveNotification(notification_id_,
                                            true /* by_user */);
 }
 
 void MessageView::OnSettingsButtonPressed(const ui::Event& event) {
-  for (auto& observer : observers_)
-    observer.OnSettingsButtonPressed(notification_id_);
+  observers_.Notify(&Observer::OnSettingsButtonPressed, notification_id_);
 
   if (inline_settings_enabled_) {
     ToggleInlineSettings(event);
@@ -515,8 +507,7 @@ void MessageView::OnSettingsButtonPressed(const ui::Event& event) {
 }
 
 void MessageView::OnSnoozeButtonPressed(const ui::Event& event) {
-  for (auto& observer : observers_)
-    observer.OnSnoozeButtonPressed(notification_id_);
+  observers_.Notify(&Observer::OnSnoozeButtonPressed, notification_id_);
 
   if (snooze_settings_enabled_) {
     ToggleSnoozeSettings(event);
@@ -525,7 +516,7 @@ void MessageView::OnSnoozeButtonPressed(const ui::Event& event) {
   }
 }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 base::TimeDelta MessageView::GetBoundsAnimationDuration(
     const Notification& notification) const {
   return base::Milliseconds(0);
@@ -533,7 +524,7 @@ base::TimeDelta MessageView::GetBoundsAnimationDuration(
 #endif
 
 bool MessageView::ShouldShowControlButtons() const {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   // Users on ChromeOS are used to the Settings and Close buttons not being
   // visible at all times, but users on other platforms expect them to be
   // visible.
@@ -571,7 +562,7 @@ void MessageView::UpdateNestedBorder() {
   }
 
   SkColor border_color;
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   border_color = SK_ColorTRANSPARENT;
 #else
   border_color =
@@ -600,6 +591,11 @@ void MessageView::UpdateControlButtonsVisibilityWithNotification(
     control_buttons_view->ShowCloseButton(GetMode() != Mode::PINNED);
   }
   UpdateControlButtonsVisibility();
+}
+
+void MessageView::SetUpdatedNameCallback(UpdatedNameCallback callback) {
+  CHECK(callback);
+  updated_name_callback_ = std::move(callback);
 }
 
 BEGIN_METADATA(MessageView)

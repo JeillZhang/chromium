@@ -56,18 +56,19 @@ class FakeLargeIconService : public favicon::LargeIconServiceImpl {
       bitmapResult.expired = false;
 
       // Create bitmap.
-      auto data = base::MakeRefCounted<base::RefCountedBytes>();
       SkBitmap bitmap;
       bitmap.allocN32Pixels(30, 30);
-      gfx::PNGCodec::EncodeBGRASkBitmap(bitmap, false, &data->as_vector());
-      bitmapResult.bitmap_data = data;
+      std::optional<std::vector<uint8_t>> data =
+          gfx::PNGCodec::EncodeBGRASkBitmap(bitmap,
+                                            /*discard_transparency=*/false);
+      bitmapResult.bitmap_data =
+          base::MakeRefCounted<base::RefCountedBytes>(std::move(data.value()));
 
       favicon_base::LargeIconResult result(bitmapResult);
       std::move(callback).Run(result);
     } else {
-      favicon_base::FallbackIconStyle* fallback =
-          new favicon_base::FallbackIconStyle();
-      favicon_base::LargeIconResult result(fallback);
+      auto fallback = std::make_unique<favicon_base::FallbackIconStyle>();
+      favicon_base::LargeIconResult result(std::move(fallback));
       fallback = NULL;
       std::move(callback).Run(result);
     }

@@ -8,6 +8,9 @@
 #include "base/check.h"
 #include "base/compiler_specific.h"
 #include "cc/paint/paint_flags.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_canvas_text_align.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_canvas_text_baseline.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_canvas_direction.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_canvas_font_stretch.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_canvas_text_rendering.h"
 #include "third_party/blink/renderer/core/css/css_primitive_value.h"
@@ -15,6 +18,7 @@
 #include "third_party/blink/renderer/modules/canvas/canvas2d/canvas_style.h"
 #include "third_party/blink/renderer/modules/canvas/canvas2d/clip_list.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
+#include "third_party/blink/renderer/platform/bindings/trace_wrapper_v8_reference.h"
 #include "third_party/blink/renderer/platform/fonts/font.h"
 #include "third_party/blink/renderer/platform/fonts/font_description.h"
 #include "third_party/blink/renderer/platform/fonts/font_selector_client.h"
@@ -44,6 +48,13 @@ namespace gfx {
 class Size;
 }  // namespace gfx
 
+namespace v8 {
+class Isolate;
+template <class T>
+class Local;
+class String;
+}  // namespace v8
+
 namespace blink {
 
 class BaseRenderingContext2D;
@@ -54,6 +65,7 @@ class CanvasRenderingContext2D;
 class Element;
 class FontSelector;
 enum class FontInvalidationReason;
+class V8ImageSmoothingQuality;
 
 enum ShadowMode {
   kDrawShadowAndForeground,
@@ -127,15 +139,16 @@ class MODULES_EXPORT CanvasRenderingContext2DState final
     return clip_list_.IntersectPathWithClip(path);
   }
 
-  void SetFont(const FontDescription&, FontSelector*);
+  void SetFont(const FontDescription& passed_font_description,
+               FontSelector* selector);
   bool IsFontDirtyForFilter() const;
-  const Font& GetFont() const;
+  const Font* GetFont() const;
   const FontDescription& GetFontDescription() const;
   inline bool HasRealizedFont() const { return realized_font_; }
   void SetUnparsedFont(const String& font) { unparsed_font_ = font; }
   const String& UnparsedFont() const { return unparsed_font_; }
 
-  void SetFontForFilter(const Font& font) { font_for_filter_ = font; }
+  void SetFontForFilter(const Font* font) { font_for_filter_ = font; }
 
   void SetCSSFilter(const CSSValue*);
   void SetUnparsedCSSFilter(const String& filter_string) {
@@ -208,16 +221,16 @@ class MODULES_EXPORT CanvasRenderingContext2DState final
     return Style(type).GetCanvasPattern()->GetPattern()->IsTextureBacked();
   }
 
-  enum Direction { kDirectionInherit, kDirectionRTL, kDirectionLTR };
+  void SetDirection(V8CanvasDirection direction) { direction_ = direction; }
+  V8CanvasDirection GetDirection() const { return direction_; }
 
-  void SetDirection(Direction direction) { direction_ = direction; }
-  Direction GetDirection() const { return direction_; }
+  void SetTextAlign(V8CanvasTextAlign align) { text_align_ = align; }
+  V8CanvasTextAlign GetTextAlign() const { return text_align_; }
 
-  void SetTextAlign(TextAlign align) { text_align_ = align; }
-  TextAlign GetTextAlign() const { return text_align_; }
-
-  void SetTextBaseline(TextBaseline baseline) { text_baseline_ = baseline; }
-  TextBaseline GetTextBaseline() const { return text_baseline_; }
+  void SetTextBaseline(V8CanvasTextBaseline baseline) {
+    text_baseline_ = baseline;
+  }
+  V8CanvasTextBaseline GetTextBaseline() const { return text_baseline_; }
 
   void SetLetterSpacing(const String& letter_spacing);
   String GetLetterSpacing() const { return parsed_letter_spacing_; }
@@ -286,18 +299,25 @@ class MODULES_EXPORT CanvasRenderingContext2DState final
 
   void SetImageSmoothingEnabled(bool);
   bool ImageSmoothingEnabled() const;
-  void SetImageSmoothingQuality(const String&);
-  String ImageSmoothingQuality() const;
+  void SetImageSmoothingQuality(const V8ImageSmoothingQuality&);
+  V8ImageSmoothingQuality ImageSmoothingQuality() const;
 
-  void SetUnparsedStrokeColor(const String& color) {
-    unparsed_stroke_color_ = color;
+  bool IsUnparsedStrokeColor(v8::Local<v8::String> string) const {
+    return unparsed_stroke_color_ == string;
   }
-  const String& UnparsedStrokeColor() const { return unparsed_stroke_color_; }
+  void SetUnparsedStrokeColor(v8::Isolate* isolate,
+                              v8::Local<v8::String> color) {
+    unparsed_stroke_color_.Reset(isolate, color);
+  }
+  void ClearUnparsedStrokeColor() { unparsed_stroke_color_.Reset(); }
 
-  void SetUnparsedFillColor(const String& color) {
-    unparsed_fill_color_ = color;
+  bool IsUnparsedFillColor(v8::Local<v8::String> string) const {
+    return unparsed_fill_color_ == string;
   }
-  const String& UnparsedFillColor() const { return unparsed_fill_color_; }
+  void SetUnparsedFillColor(v8::Isolate* isolate, v8::Local<v8::String> color) {
+    unparsed_fill_color_.Reset(isolate, color);
+  }
+  void ClearUnparsedFillColor() { unparsed_fill_color_.Reset(); }
 
   bool ShouldDrawShadows() const;
 
@@ -337,12 +357,13 @@ class MODULES_EXPORT CanvasRenderingContext2DState final
   void UpdateFilterQuality() const;
   void UpdateFilterQuality(cc::PaintFlags::FilterQuality) const;
   void ShadowParameterChanged();
+  void SetFontInternal(const FontDescription&, FontSelector*);
   sk_sp<cc::DrawLooper>& EmptyDrawLooper() const;
   sk_sp<cc::DrawLooper>& ShadowOnlyDrawLooper() const;
   sk_sp<cc::DrawLooper>& ShadowAndForegroundDrawLooper() const;
 
-  String unparsed_stroke_color_;
-  String unparsed_fill_color_;
+  TraceWrapperV8Reference<v8::String> unparsed_stroke_color_;
+  TraceWrapperV8Reference<v8::String> unparsed_fill_color_;
   CanvasStyle stroke_style_;
   CanvasStyle fill_style_;
 
@@ -365,8 +386,8 @@ class MODULES_EXPORT CanvasRenderingContext2DState final
   double line_dash_offset_;
 
   String unparsed_font_;
-  Font font_;
-  Font font_for_filter_;
+  Member<const Font> font_;
+  Member<const Font> font_for_filter_;
 
   enum class FilterState {
     kNone,
@@ -381,9 +402,9 @@ class MODULES_EXPORT CanvasRenderingContext2DState final
   sk_sp<PaintFilter> resolved_filter_;
 
   // Text state.
-  TextAlign text_align_;
-  TextBaseline text_baseline_{kAlphabeticTextBaseline};
-  Direction direction_{kDirectionInherit};
+  V8CanvasTextAlign text_align_{V8CanvasTextAlign::Enum::kStart};
+  V8CanvasTextBaseline text_baseline_{V8CanvasTextBaseline::Enum::kAlphabetic};
+  V8CanvasDirection direction_{V8CanvasDirection::Enum::kInherit};
   float letter_spacing_{0};
   CSSPrimitiveValue::UnitType letter_spacing_unit_{
       CSSPrimitiveValue::UnitType::kPixels};

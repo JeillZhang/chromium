@@ -8,6 +8,7 @@
 
 #include "ash/constants/ash_features.h"
 #include "ash/constants/ash_switches.h"
+#include "base/check.h"
 #include "base/check_is_test.h"
 #include "base/command_line.h"
 #include "base/functional/bind.h"
@@ -23,11 +24,11 @@
 #include "base/timer/elapsed_timer.h"
 #include "chrome/browser/ash/login/configuration_keys.h"
 #include "chrome/browser/ash/login/enrollment/enrollment_uma.h"
+#include "chrome/browser/ash/login/enrollment/timebound_user_context_holder.h"
 #include "chrome/browser/ash/login/screen_manager.h"
 #include "chrome/browser/ash/login/screens/base_screen.h"
 #include "chrome/browser/ash/login/screens/error_screen.h"
 #include "chrome/browser/ash/login/startup_utils.h"
-#include "chrome/browser/ash/login/ui/login_display_host.h"
 #include "chrome/browser/ash/login/wizard_context.h"
 #include "chrome/browser/ash/login/wizard_controller.h"
 #include "chrome/browser/ash/policy/core/browser_policy_connector_ash.h"
@@ -39,10 +40,13 @@
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/browser_process_platform_part.h"
 #include "chrome/browser/lifetime/browser_shutdown.h"
+#include "chrome/browser/ui/ash/login/login_display_host.h"
 #include "chrome/browser/ui/webui/ash/login/error_screen_handler.h"
+#include "chrome/browser/ui/webui/ash/login/online_login_utils.h"
 #include "chromeos/ash/components/dbus/dbus_thread_manager.h"
 #include "chromeos/ash/components/dbus/device_management/install_attributes_util.h"
-#include "chromeos/dbus/common/dbus_method_call_status.h"
+#include "chromeos/ash/components/login/auth/public/user_context.h"
+#include "chromeos/dbus/common/dbus_callback.h"
 #include "chromeos/dbus/tpm_manager/tpm_manager_client.h"
 #include "components/policy/core/common/cloud/cloud_policy_client.h"
 #include "components/policy/core/common/cloud/cloud_policy_constants.h"
@@ -81,6 +85,7 @@ constexpr int64_t kMaxDelayMS = 8 * 60 * 1000;  // 8 minutes
 
 constexpr char kUserActionCancelTPMCheck[] = "cancel-tpm-check";
 constexpr char kUserActionSkipDialogConfirmation[] = "skip-confirmation";
+constexpr char kUserActionUsingSamlApi[] = "using-saml-api";
 
 // Max number of retries to check install attributes state.
 constexpr int kMaxInstallAttributesStateCheckRetries = 60;
@@ -175,34 +180,28 @@ EnrollmentScreen::~EnrollmentScreen() {
 void EnrollmentScreen::SetEnrollmentConfig(
     const policy::EnrollmentConfig& enrollment_config) {
   prescribed_config_ = enrollment_config;
-  switch (prescribed_config_.auth_mechanism) {
-    case EnrollmentConfig::AUTH_MECHANISM_INTERACTIVE:
+  if (prescribed_config_.is_mode_oauth()) {
+    current_auth_ = AUTH_OAUTH;
+    next_auth_ = AUTH_OAUTH;
+  } else if (prescribed_config_.is_mode_attestation()) {
+    if (TestForcesManualEnrollment()) {
       current_auth_ = AUTH_OAUTH;
       next_auth_ = AUTH_OAUTH;
-      break;
-    case EnrollmentConfig::AUTH_MECHANISM_ATTESTATION:
+    } else if (prescribed_config_.is_mode_with_manual_fallback()) {
+      current_auth_ = AUTH_ATTESTATION;
+      next_auth_ = AUTH_OAUTH;
+    } else {
       current_auth_ = AUTH_ATTESTATION;
       next_auth_ = AUTH_ATTESTATION;
-      break;
-    case EnrollmentConfig::AUTH_MECHANISM_ATTESTATION_PREFERRED:
-      if (TestForcesManualEnrollment()) {
-        current_auth_ = AUTH_OAUTH;
-        next_auth_ = AUTH_OAUTH;
-        break;
-      }
-      current_auth_ = AUTH_ATTESTATION;
-      next_auth_ = prescribed_config_.should_enroll_interactively()
-                       ? AUTH_OAUTH
-                       : AUTH_ATTESTATION;
-      break;
-    case EnrollmentConfig::AUTH_MECHANISM_TOKEN_PREFERRED:
-      current_auth_ = AUTH_ENROLLMENT_TOKEN;
-      next_auth_ = AUTH_OAUTH;
-      break;
-    default:
-      NOTREACHED_IN_MIGRATION();
-      break;
+    }
+  } else if (prescribed_config_.is_mode_token()) {
+    current_auth_ = AUTH_ENROLLMENT_TOKEN;
+    next_auth_ = AUTH_OAUTH;
+  } else {
+    NOTREACHED() << "EnrollmentConfig does not match any auth: "
+                 << prescribed_config_;
   }
+
   SetConfig();
 }
 
@@ -210,14 +209,7 @@ void EnrollmentScreen::SetConfig() {
   effective_config_ = prescribed_config_;
   if (current_auth_ == AUTH_OAUTH &&
       effective_config_.is_mode_with_manual_fallback()) {
-    effective_config_.mode =
-        policy::EnrollmentConfig::GetManualFallbackMode(effective_config_.mode);
-  } else if (current_auth_ == AUTH_ATTESTATION &&
-             !prescribed_config_.is_mode_attestation()) {
-    effective_config_.mode =
-        effective_config_.is_attestation_auth_forced()
-            ? policy::EnrollmentConfig::MODE_ATTESTATION_LOCAL_FORCED
-            : policy::EnrollmentConfig::MODE_ATTESTATION;
+    effective_config_ = effective_config_.GetManualFallbackConfig();
   }
   // TODO(crbug.com/40805389): Logging as "WARNING" to make sure it's preserved
   // in the logs.
@@ -256,9 +248,14 @@ void EnrollmentScreen::ClearAuth(base::OnceClosure callback) {
     std::move(callback).Run();
     return;
   }
+
+  const bool revoke_oauth2_tokens =
+      !(features::IsOobeAddUserDuringEnrollmentEnabled() &&
+        context()->timebound_user_context_holder);
   enrollment_launcher_->ClearAuth(
       base::BindOnce(&EnrollmentScreen::OnAuthCleared,
-                     weak_ptr_factory_.GetWeakPtr(), std::move(callback)));
+                     weak_ptr_factory_.GetWeakPtr(), std::move(callback)),
+      revoke_oauth2_tokens);
 }
 
 void EnrollmentScreen::OnAuthCleared(base::OnceClosure callback) {
@@ -304,7 +301,7 @@ void EnrollmentScreen::UpdateFlowType() {
     return;
   }
 
-  const bool cfm = policy::EnrollmentRequisitionManager::IsRemoraRequisition();
+  const bool cfm = policy::EnrollmentRequisitionManager::IsMeetDevice();
   if (cfm) {
     view_->SetFlowType(EnrollmentScreenView::FlowType::kCFM);
     view_->SetGaiaButtonsType(EnrollmentScreenView::GaiaButtonsType::kDefault);
@@ -372,8 +369,7 @@ void EnrollmentScreen::ShowImpl() {
       AuthenticateUsingEnrollmentToken();
       break;
     default:
-      NOTREACHED_IN_MIGRATION();
-      break;
+      NOTREACHED();
   }
 }
 
@@ -416,7 +412,7 @@ void EnrollmentScreen::OnTpmStatusResponse(
       ClearAuth(base::BindOnce(exit_callback_, Result::TPM_DBUS_ERROR));
       break;
     default:
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
   }
 }
 
@@ -458,7 +454,7 @@ void EnrollmentScreen::CheckInstallAttributesState() {
       ClearAuth(base::BindOnce(exit_callback_, Result::TPM_ERROR));
       break;
     default:
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
   }
 }
 
@@ -499,17 +495,21 @@ void EnrollmentScreen::AuthenticateUsingEnrollmentToken() {
   enrollment_launcher_->EnrollUsingEnrollmentToken();
 }
 
-void EnrollmentScreen::OnLoginDone(const std::string& user,
-                                   int license_type,
-                                   const std::string& auth_code) {
+void EnrollmentScreen::OnLoginDone(
+    login::OnlineSigninArtifacts signin_artifacts,
+    int license_type,
+    const std::string& auth_code) {
   LOG_IF(ERROR, auth_code.empty()) << "Auth code is empty.";
   scoped_network_observation_.Reset();
   elapsed_timer_ = std::make_unique<base::ElapsedTimer>();
-  enrolling_user_domain_ = gaia::ExtractDomainName(user);
+  enrolling_user_domain_ = gaia::ExtractDomainName(signin_artifacts.email);
   effective_config_.license_type =
       static_cast<policy::LicenseType>(license_type);
   UMA(enrollment_failed_once_ ? policy::kMetricEnrollmentRestarted
                               : policy::kMetricEnrollmentStarted);
+
+  signin_artifacts_ = std::make_unique<login::OnlineSigninArtifacts>(
+      std::move(signin_artifacts));
 
   if (view_) {
     view_->ShowEnrollmentWorkingScreen();
@@ -602,6 +602,7 @@ void EnrollmentScreen::OnConfirmationClosed() {
   // TODO(crbug.com/40805389): Logging as "WARNING" to make sure it's preserved
   // in the logs.
   LOG(WARNING) << "Confirmation closed.";
+
   // The callback passed to ClearAuth is either called immediately or gets
   // wrapped in a callback bound to a weak pointer from `weak_ptr_factory_` - in
   // either case, passing exit_callback_ directly should be safe.
@@ -661,6 +662,8 @@ void EnrollmentScreen::OnDeviceEnrolled() {
     view_->SetEnterpriseDomainInfo(GetEnterpriseDomainManager(),
                                    ui::GetChromeOSDeviceName());
   }
+
+  MaybeStoreUserContextInWizardContext();
 
   enrollment_launcher_->GetDeviceAttributeUpdatePermission();
 
@@ -849,6 +852,10 @@ void EnrollmentScreen::OnUserAction(const base::Value::List& args) {
     OnCancel();
     return;
   }
+  if (action_id == kUserActionUsingSamlApi) {
+    using_saml_api_ = true;
+    return;
+  }
   BaseScreen::OnUserAction(args);
 }
 
@@ -860,8 +867,17 @@ bool EnrollmentScreen::ShouldAutoRetryOnError() const {
 }
 
 bool EnrollmentScreen::AutoCloseEnrollmentConfirmationOnSuccess() const {
-  return prescribed_config_.mode ==
-         policy::EnrollmentConfig::MODE_ATTESTATION_ROLLBACK_FORCED;
+  if (prescribed_config_.mode ==
+      policy::EnrollmentConfig::MODE_ATTESTATION_ROLLBACK_FORCED) {
+    return true;
+  }
+  const std::optional<bool> skip_enrollment_success_screen =
+      context()->configuration.FindBool(
+          configuration::kSkipEnrollmentSuccessScreen);
+  if (!skip_enrollment_success_screen.has_value()) {
+    return false;
+  }
+  return skip_enrollment_success_screen.value();
 }
 
 bool EnrollmentScreen::IsEnrollmentScreenHiddenByError() {
@@ -971,6 +987,47 @@ void EnrollmentScreen::HideOfflineMessage(NetworkStateInformer::State state,
     error_screen_->Hide();
   }
   histogram_helper_.OnErrorHide();
+}
+
+void EnrollmentScreen::MaybeStoreUserContextInWizardContext() {
+  if (!features::IsOobeAddUserDuringEnrollmentEnabled() ||
+      effective_config_.mode != policy::EnrollmentConfig::MODE_MANUAL) {
+    return;
+  }
+  // Technically this should be an invariant, but this feature is not crucial
+  // and allows for an easy fallback to the normal flow. Because of this we use
+  // soft checks in case of unforeseen flows that would cause a crash otherwise.
+  if (!signin_artifacts_ || !enrollment_launcher_ || !enrollment_succeeded_) {
+    return;
+  }
+
+  const AccountId account_id = AccountId::FromNonCanonicalEmail(
+      signin_artifacts_->email, signin_artifacts_->gaia_id,
+      AccountType::GOOGLE);
+  std::unique_ptr<UserContext> user_context =
+      login::BuildUserContextForGaiaSignIn(
+          /*user_type=*/user_manager::UserType::kRegular,
+          /*account_id=*/account_id,
+          /*using_saml=*/signin_artifacts_->using_saml,
+          /*using_saml_api=*/using_saml_api_,
+          /*password=*/signin_artifacts_->password.value_or(""),
+          /*password_attributes=*/SamlPasswordAttributes(),
+          /*sync_trusted_vault_keys=*/std::nullopt,
+          /*challenge_response_key=*/std::nullopt);
+  user_context->SetRefreshToken(enrollment_launcher_->GetOAuth2RefreshToken());
+
+  signin_artifacts_.reset();
+
+  CHECK(LoginDisplayHost::default_host());
+  WizardContext* wizard_context =
+      LoginDisplayHost::default_host()->GetWizardContext();
+  CHECK(wizard_context);
+  // Make sure we aren't overwriting any existing information.
+  CHECK(!wizard_context->user_context);
+  wizard_context->timebound_user_context_holder =
+      std::make_unique<TimeboundUserContextHolder>(std::move(user_context));
+
+  return;
 }
 
 }  // namespace ash

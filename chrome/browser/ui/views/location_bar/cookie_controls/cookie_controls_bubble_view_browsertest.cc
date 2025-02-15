@@ -15,11 +15,14 @@
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/content_settings/core/browser/cookie_settings.h"
+#include "components/content_settings/core/common/content_settings_types.h"
 #include "components/content_settings/core/common/content_settings_utils.h"
 #include "components/content_settings/core/common/cookie_blocking_3pcd_status.h"
 #include "components/content_settings/core/common/features.h"
 #include "components/content_settings/core/common/pref_names.h"
 #include "components/prefs/pref_service.h"
+#include "components/privacy_sandbox/privacy_sandbox_features.h"
+#include "components/privacy_sandbox/tracking_protection_prefs.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
@@ -63,7 +66,17 @@ class CookieControlsBubbleViewBrowserTest : public InProcessBrowserTest {
     controller_ = std::make_unique<content_settings::CookieControlsController>(
         CookieSettingsFactory::GetForProfile(browser()->profile()), nullptr,
         HostContentSettingsMapFactory::GetForProfile(browser()->profile()),
-        TrackingProtectionSettingsFactory::GetForProfile(browser()->profile()));
+        TrackingProtectionSettingsFactory::GetForProfile(browser()->profile()),
+        /*is_incognito_profile=*/false);
+
+    incognito_controller_ =
+        std::make_unique<content_settings::CookieControlsController>(
+            CookieSettingsFactory::GetForProfile(incognito_profile()),
+            CookieSettingsFactory::GetForProfile(browser()->profile()),
+            HostContentSettingsMapFactory::GetForProfile(incognito_profile()),
+            TrackingProtectionSettingsFactory::GetForProfile(
+                incognito_profile()),
+            /*is_incognito_profile=*/true);
 
     coordinator_ = std::make_unique<CookieControlsBubbleCoordinator>();
   }
@@ -76,12 +89,18 @@ class CookieControlsBubbleViewBrowserTest : public InProcessBrowserTest {
 
     coordinator_ = nullptr;
     controller_ = nullptr;
+    incognito_controller_ = nullptr;
     InProcessBrowserTest::TearDownOnMainThread();
   }
 
  protected:
   void ShowBubble() {
     coordinator_->ShowBubble(active_web_contents(), controller_.get());
+  }
+
+  void ShowIncognitoBubble() {
+    coordinator_->ShowBubble(active_web_contents(),
+                             incognito_controller_.get());
   }
 
   void WaitForBubbleClose() {
@@ -114,14 +133,6 @@ class CookieControlsBubbleViewBrowserTest : public InProcessBrowserTest {
     }
   }
 
-  void CheckTrackingProtectionException(const GURL& first_party_url,
-                                        bool should_exist) {
-    EXPECT_EQ(
-        host_content_settings_map()->GetContentSetting(
-            GURL(), first_party_url, ContentSettingsType::TRACKING_PROTECTION),
-        should_exist ? CONTENT_SETTING_ALLOW : CONTENT_SETTING_BLOCK);
-  }
-
   net::EmbeddedTestServer* https_server() { return https_server_.get(); }
   GURL third_party_cookie_page_url() {
     return https_server()->GetURL("a.test",
@@ -140,11 +151,17 @@ class CookieControlsBubbleViewBrowserTest : public InProcessBrowserTest {
     return browser()->tab_strip_model()->GetActiveWebContents();
   }
 
+  Profile* incognito_profile() {
+    return browser()->profile()->GetPrimaryOTRProfile(true);
+  }
+
  private:
   base::test::ScopedFeatureList feature_list_;
   std::unique_ptr<net::EmbeddedTestServer> https_server_;
   std::unique_ptr<CookieControlsBubbleCoordinator> coordinator_;
   std::unique_ptr<content_settings::CookieControlsController> controller_;
+  std::unique_ptr<content_settings::CookieControlsController>
+      incognito_controller_;
 };
 
 IN_PROC_BROWSER_TEST_F(CookieControlsBubbleViewBrowserTest,
@@ -159,19 +176,43 @@ IN_PROC_BROWSER_TEST_F(CookieControlsBubbleViewBrowserTest,
   CheckCookiesException(third_party_cookie_page_url(), /*should_exist=*/false);
 }
 
-IN_PROC_BROWSER_TEST_F(CookieControlsBubbleViewBrowserTest,
+class TrackingProtectionBubbleViewBrowserTest
+    : public CookieControlsBubbleViewBrowserTest {
+ public:
+  TrackingProtectionBubbleViewBrowserTest() {
+    https_server_ = std::make_unique<net::EmbeddedTestServer>(
+        net::EmbeddedTestServer::TYPE_HTTPS);
+    // Enable FPP to display UB UX with ACT features
+    feature_list_.InitWithFeatures(
+        {privacy_sandbox::kTrackingProtectionContentSettingUbControl,
+         privacy_sandbox::kActUserBypassUx,
+         privacy_sandbox::kFingerprintingProtectionUx},
+        {});
+  }
+
+ private:
+  base::test::ScopedFeatureList feature_list_;
+  std::unique_ptr<net::EmbeddedTestServer> https_server_;
+};
+
+IN_PROC_BROWSER_TEST_F(TrackingProtectionBubbleViewBrowserTest,
                        ToggleCreatesTrackingProtectionException) {
-  ShowBubble();
-  CheckTrackingProtectionException(third_party_cookie_page_url(),
-                                   /*should_exist=*/false);
-
-  SimulateTogglePress(true);
-  CheckTrackingProtectionException(third_party_cookie_page_url(),
-                                   /*should_exist=*/true);
-
+  // Set FPP pref to display UB UX with ACT feature.
+  // Note: this value is set in the incognito profile for testing, in reality
+  // this will be set on the regular profile.
+  incognito_profile()->GetPrefs()->SetBoolean(
+      prefs::kFingerprintingProtectionEnabled, true);
+  auto* tracking_protection_settings =
+      TrackingProtectionSettingsFactory::GetForProfile(incognito_profile());
+  ShowIncognitoBubble();
+  EXPECT_FALSE(tracking_protection_settings->HasTrackingProtectionException(
+      third_party_cookie_page_url()));
   SimulateTogglePress(false);
-  CheckTrackingProtectionException(third_party_cookie_page_url(),
-                                   /*should_exist=*/false);
+  EXPECT_TRUE(tracking_protection_settings->HasTrackingProtectionException(
+      third_party_cookie_page_url()));
+  SimulateTogglePress(true);
+  EXPECT_FALSE(tracking_protection_settings->HasTrackingProtectionException(
+      third_party_cookie_page_url()));
 }
 
 IN_PROC_BROWSER_TEST_F(CookieControlsBubbleViewBrowserTest,

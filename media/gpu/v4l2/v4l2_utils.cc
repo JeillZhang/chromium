@@ -2,27 +2,26 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/gpu/v4l2/v4l2_utils.h"
 
 #include <fcntl.h>
 #include <sys/ioctl.h>
 
+#include <algorithm>
 #include <iomanip>
 #include <iostream>
 #include <map>
 #include <sstream>
 
-// build_config.h must come before BUILDFLAG()
-#include "build/build_config.h"
-#if BUILDFLAG(IS_CHROMEOS)
-#include <linux/media/av1-ctrls.h>
-#endif
-
 #include "base/containers/contains.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/posix/eintr_wrapper.h"
-#include "base/ranges/algorithm.h"
 #include "build/build_config.h"
 #include "media/base/media_switches.h"
 #include "media/base/video_codecs.h"
@@ -49,6 +48,18 @@
 namespace {
 int HandledIoctl(int fd, int request, void* arg) {
   return HANDLE_EINTR(ioctl(fd, request, arg));
+}
+
+std::string GetDriverName(const media::IoctlAsCallback& ioctl_cb) {
+  struct v4l2_capability caps;
+  memset(&caps, 0, sizeof(caps));
+  if (ioctl_cb.Run(VIDIOC_QUERYCAP, &caps) != 0) {
+    VPLOGF(1) << "ioctl() failed: VIDIOC_QUERYCAP" << ", caps check failed: 0x"
+              << std::hex << caps.capabilities;
+    return "";
+  }
+
+  return std::string(reinterpret_cast<const char*>(caps.driver));
 }
 }  // namespace
 namespace media {
@@ -319,7 +330,6 @@ static const std::map<v4l2_enum_type, v4l2_enum_type>
         {V4L2_PIX_FMT_H264, V4L2_CID_MPEG_VIDEO_H264_PROFILE},
         {V4L2_PIX_FMT_H264_SLICE, V4L2_CID_MPEG_VIDEO_H264_PROFILE},
 #if BUILDFLAG(ENABLE_HEVC_PARSER_AND_HW_DECODER)
-        {V4L2_PIX_FMT_HEVC, V4L2_CID_MPEG_VIDEO_HEVC_PROFILE},
         {V4L2_PIX_FMT_HEVC_SLICE, V4L2_CID_MPEG_VIDEO_HEVC_PROFILE},
 #endif  // BUILDFLAG(ENABLE_HEVC_PARSER_AND_HW_DECODER)
         {V4L2_PIX_FMT_VP8, V4L2_CID_MPEG_VIDEO_VP8_PROFILE},
@@ -375,6 +385,63 @@ static const std::map<VideoCodecProfile,
 
 }  // namespace
 
+std::vector<SVCScalabilityMode> GetSupportedScalabilityModesForV4L2Codec(
+    const IoctlAsCallback& ioctl_cb,
+    VideoCodecProfile media_profile) {
+  std::vector<SVCScalabilityMode> scalability_modes;
+  scalability_modes.push_back(SVCScalabilityMode::kL1T1);
+
+  if (base::FeatureList::IsEnabled(kV4L2H264TemporalLayerHWEncoding) &&
+      media_profile >= H264PROFILE_MIN && media_profile <= H264PROFILE_MAX) {
+    struct v4l2_queryctrl query_ctrl;
+    memset(&query_ctrl, 0, sizeof(query_ctrl));
+    query_ctrl.id = V4L2_CID_MPEG_VIDEO_H264_HIERARCHICAL_CODING;
+    if (ioctl_cb.Run(VIDIOC_QUERYCTRL, &query_ctrl) != kIoctlOk) {
+      DPLOG(WARNING) << "h.264 hierarchical coding not supported.";
+      return {};
+    }
+
+    memset(&query_ctrl, 0, sizeof(query_ctrl));
+    query_ctrl.id = V4L2_CID_MPEG_VIDEO_H264_HIERARCHICAL_CODING_TYPE;
+    if (ioctl_cb.Run(VIDIOC_QUERYCTRL, &query_ctrl) != kIoctlOk) {
+      DPLOG(WARNING) << "h.264 hierarchical coding type not supported.";
+      return {};
+    }
+
+    struct v4l2_querymenu query_menu = {
+        .id = query_ctrl.id, .index = static_cast<__u32>(query_ctrl.minimum)};
+    for (; static_cast<int>(query_menu.index) <= query_ctrl.maximum;
+         query_menu.index++) {
+      if (ioctl_cb.Run(VIDIOC_QUERYMENU, &query_menu) != kIoctlOk) {
+        continue;
+      }
+
+      if (query_menu.index == V4L2_MPEG_VIDEO_H264_HIERARCHICAL_CODING_P) {
+        break;
+      }
+    }
+
+    if (query_menu.index != V4L2_MPEG_VIDEO_H264_HIERARCHICAL_CODING_P) {
+      DPLOG(WARNING) << "h.264 hierarchical P coding not supported.";
+      return {};
+    }
+
+    memset(&query_ctrl, 0, sizeof(query_ctrl));
+    query_ctrl.id = V4L2_CID_MPEG_VIDEO_H264_HIERARCHICAL_CODING_LAYER;
+    if (ioctl_cb.Run(VIDIOC_QUERYCTRL, &query_ctrl) != kIoctlOk) {
+      DPLOG(WARNING) << "Unable to determine the number of layers supported.";
+      return {};
+    }
+
+    if (query_ctrl.maximum >= 2) {
+      DVLOGF(2) << "h.264 kL1T2 scalability mode supported.";
+      scalability_modes.push_back(SVCScalabilityMode::kL1T2);
+    }
+  }
+
+  return scalability_modes;
+}
+
 std::vector<VideoCodecProfile> EnumerateSupportedProfilesForV4L2Codec(
     const IoctlAsCallback& ioctl_cb,
     uint32_t codec_as_pix_fmt) {
@@ -387,8 +454,7 @@ std::vector<VideoCodecProfile> EnumerateSupportedProfilesForV4L2Codec(
 
   v4l2_queryctrl query_ctrl = {.id = static_cast<__u32>(profile_cid)};
   if (ioctl_cb.Run(VIDIOC_QUERYCTRL, &query_ctrl) != kIoctlOk) {
-    // This happens for example for VP8 on Hana MTK8173, or for HEVC on Trogdor
-    // QC SC7180) at the time of writing.
+    // This happens for example for VP8 on Hana MTK8173 at the time of writing.
     DVLOGF(4) << "Driver doesn't support enumerating "
               << FourccToString(codec_as_pix_fmt)
               << " profiles, using default ones.";
@@ -420,8 +486,9 @@ std::vector<VideoCodecProfile> EnumerateSupportedProfilesForV4L2Codec(
 
   // Erase duplicated profiles. This is needed because H264PROFILE_BASELINE maps
   // to both V4L2_MPEG_VIDEO_H264_PROFILE__BASELINE/CONSTRAINED_BASELINE
-  base::ranges::sort(profiles);
-  profiles.erase(base::ranges::unique(profiles), profiles.end());
+  std::ranges::sort(profiles);
+  auto to_remove = std::ranges::unique(profiles);
+  profiles.erase(to_remove.begin(), to_remove.end());
   return profiles;
 }
 
@@ -501,38 +568,54 @@ struct timeval TimeDeltaToTimeVal(base::TimeDelta time_delta) {
 
 std::optional<SupportedVideoDecoderConfigs> GetSupportedV4L2DecoderConfigs() {
   SupportedVideoDecoderConfigs supported_media_configs;
+  std::vector<std::string> candidate_paths;
 
-  constexpr char kVideoDeviceDriverPath[] = "/dev/video-dec0";
-  base::ScopedFD device_fd(HANDLE_EINTR(
-      open(kVideoDeviceDriverPath, O_RDWR | O_NONBLOCK | O_CLOEXEC)));
-  if (!device_fd.is_valid()) {
-    PLOG(ERROR) << "Could not open " << kVideoDeviceDriverPath;
-    return std::nullopt;
-  }
-
-  std::vector<uint32_t> v4l2_codecs = EnumerateSupportedPixFmts(
-      base::BindRepeating(&HandledIoctl, device_fd.get()),
-      V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE);
-
-  for (const uint32_t v4l2_codec : v4l2_codecs) {
-    const std::vector<VideoCodecProfile> media_codec_profiles =
-        EnumerateSupportedProfilesForV4L2Codec(
-            base::BindRepeating(&HandledIoctl, device_fd.get()), v4l2_codec);
-
-    gfx::Size min_coded_size;
-    gfx::Size max_coded_size;
-    GetSupportedResolution(base::BindRepeating(&HandledIoctl, device_fd.get()),
-                           v4l2_codec, &min_coded_size, &max_coded_size);
-
-    for (const auto& profile : media_codec_profiles) {
-      supported_media_configs.emplace_back(SupportedVideoDecoderConfig(
-          profile, profile, min_coded_size, max_coded_size,
-#if BUILDFLAG(USE_CHROMEOS_PROTECTED_MEDIA)
-          /*allow_encrypted=*/true,
+#if BUILDFLAG(IS_CHROMEOS)
+  constexpr char kVideoDevicePattern[] = "/dev/video-dec0";
+  candidate_paths.push_back(kVideoDevicePattern);
 #else
-          /*allow_encrypted=*/false,
+  constexpr char kVideoDevicePattern[] = "/dev/video";
+  constexpr int kMaxDevices = 256;
+  candidate_paths.reserve(kMaxDevices);
+  for (int i = 0; i < kMaxDevices; ++i) {
+    candidate_paths.push_back(
+        base::StringPrintf("%s%d", kVideoDevicePattern, i));
+  }
 #endif
-          /*require_encrypted=*/false));
+
+  for (const auto& path : candidate_paths) {
+    base::ScopedFD device_fd(
+        HANDLE_EINTR(open(path.c_str(), O_RDWR | O_NONBLOCK | O_CLOEXEC)));
+    if (!device_fd.is_valid()) {
+      PLOG(WARNING) << "Could not open " << path;
+      continue;
+    }
+
+    std::vector<uint32_t> v4l2_codecs = EnumerateSupportedPixFmts(
+        base::BindRepeating(&HandledIoctl, device_fd.get()),
+        V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE);
+
+    for (const uint32_t v4l2_codec : v4l2_codecs) {
+      const std::vector<VideoCodecProfile> media_codec_profiles =
+          EnumerateSupportedProfilesForV4L2Codec(
+              base::BindRepeating(&HandledIoctl, device_fd.get()), v4l2_codec);
+
+      gfx::Size min_coded_size;
+      gfx::Size max_coded_size;
+      GetSupportedResolution(
+          base::BindRepeating(&HandledIoctl, device_fd.get()), v4l2_codec,
+          &min_coded_size, &max_coded_size);
+
+      for (const auto& profile : media_codec_profiles) {
+        supported_media_configs.emplace_back(SupportedVideoDecoderConfig(
+            profile, profile, min_coded_size, max_coded_size,
+#if BUILDFLAG(USE_CHROMEOS_PROTECTED_MEDIA)
+            /*allow_encrypted=*/true,
+#else
+            /*allow_encrypted=*/false,
+#endif
+            /*require_encrypted=*/false));
+      }
     }
   }
 
@@ -562,9 +645,6 @@ bool IsV4L2DecoderStateful() {
   // V4L2 stateful formats (don't end up with _SLICE or _FRAME) supported.
   constexpr std::array<uint32_t, 4> kSupportedStatefulInputCodecs = {
       V4L2_PIX_FMT_H264,
-#if BUILDFLAG(ENABLE_HEVC_PARSER_AND_HW_DECODER)
-      V4L2_PIX_FMT_HEVC,
-#endif  // BUILDFLAG(ENABLE_HEVC_PARSER_AND_HW_DECODER)
       V4L2_PIX_FMT_VP8,
       V4L2_PIX_FMT_VP9,
   };
@@ -573,6 +653,20 @@ bool IsV4L2DecoderStateful() {
                             kSupportedStatefulInputCodecs.begin(),
                             kSupportedStatefulInputCodecs.end()) !=
          v4l2_codecs.end();
+}
+
+bool IsVislDriver() {
+  constexpr char kVideoDeviceDriverPath[] = "/dev/video-dec0";
+  base::ScopedFD device_fd(HANDLE_EINTR(
+      open(kVideoDeviceDriverPath, O_RDWR | O_NONBLOCK | O_CLOEXEC)));
+  if (!device_fd.is_valid()) {
+    return false;
+  }
+
+  std::string v4l2_driver_name =
+      GetDriverName(base::BindRepeating(&HandledIoctl, device_fd.get()));
+
+  return v4l2_driver_name.compare("visl") == 0;
 }
 
 #ifndef NDEBUG

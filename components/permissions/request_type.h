@@ -8,7 +8,6 @@
 #include <optional>
 
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "components/content_settings/core/common/content_settings_types.h"
 #include "printing/buildflags/buildflags.h"
 
@@ -21,7 +20,6 @@ namespace permissions {
 // The type of the request that will be seen by the user. Values are only
 // defined on the platforms where they are used and should be kept alphabetized.
 enum class RequestType {
-  kAccessibilityEvents,
   kArSession,
 #if !BUILDFLAG(IS_ANDROID)
   kCameraPanTiltZoom,
@@ -33,10 +31,9 @@ enum class RequestType {
   kClipboard,
   kTopLevelStorageAccess,
   kDiskQuota,
-#if !BUILDFLAG(IS_ANDROID)
   kFileSystemAccess,
-#endif
   kGeolocation,
+  kHandTracking,
   kIdentityProvider,
   kIdleDetection,
 #if !BUILDFLAG(IS_ANDROID)
@@ -64,6 +61,9 @@ enum class RequestType {
 #endif
   kStorageAccess,
   kVrSession,
+#if !BUILDFLAG(IS_ANDROID)
+  kWebAppInstallation,
+#endif
 #if BUILDFLAG(IS_CHROMEOS) && BUILDFLAG(USE_CUPS)
   kWebPrinting,
 #endif

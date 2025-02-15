@@ -7,13 +7,14 @@
 #import "base/strings/string_number_conversions.h"
 #import "base/strings/sys_string_conversions.h"
 #import "base/strings/utf_string_conversions.h"
-#import "components/keyed_service/ios/browser_state_keyed_service_factory.h"
 #import "components/prefs/pref_service.h"
 #import "ios/chrome/browser/ntp/model/set_up_list_item_type.h"
 #import "ios/chrome/browser/ntp/model/set_up_list_prefs.h"
 #import "ios/chrome/browser/search_engines/model/template_url_service_factory.h"
 #import "ios/chrome/browser/shared/model/application_context/application_context.h"
-#import "ios/chrome/browser/shared/model/browser_state/chrome_browser_state.h"
+#import "ios/chrome/browser/shared/model/prefs/pref_names.h"
+#import "ios/chrome/browser/shared/model/profile/profile_ios.h"
+#import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/shared/public/features/system_flags.h"
 #import "ios/chrome/browser/shared/ui/util/uikit_ui_util.h"
 #import "ios/chrome/browser/ui/content_suggestions/content_suggestions_collection_utils.h"
@@ -56,12 +57,23 @@ using set_up_list_prefs::SetUpListItemState;
 }
 
 + (void)disableSetUpList {
-  set_up_list_prefs::DisableSetUpList(GetApplicationContext()->GetLocalState());
+  PrefService* prefService =
+      IsHomeCustomizationEnabled()
+          ? chrome_test_util::GetOriginalProfile()->GetPrefs()
+          : GetApplicationContext()->GetLocalState();
+  set_up_list_prefs::DisableSetUpList(prefService);
 }
 
 + (void)resetSetUpListPrefs {
   PrefService* localState = GetApplicationContext()->GetLocalState();
-  localState->ClearPref(set_up_list_prefs::kDisabled);
+  if (IsHomeCustomizationEnabled()) {
+    PrefService* prefService =
+        chrome_test_util::GetOriginalProfile()->GetPrefs();
+    prefService->SetBoolean(prefs::kHomeCustomizationMagicStackSetUpListEnabled,
+                            true);
+  } else {
+    localState->ClearPref(set_up_list_prefs::kDisabled);
+  }
   SetUpListItemState unknown = SetUpListItemState::kUnknown;
   set_up_list_prefs::SetItemState(localState, SetUpListItemType::kSignInSync,
                                   unknown);
@@ -70,6 +82,10 @@ using set_up_list_prefs::SetUpListItemState;
   set_up_list_prefs::SetItemState(localState, SetUpListItemType::kAutofill,
                                   unknown);
   set_up_list_prefs::SetItemState(localState, SetUpListItemType::kNotifications,
+                                  unknown);
+  set_up_list_prefs::SetItemState(localState, SetUpListItemType::kDocking,
+                                  unknown);
+  set_up_list_prefs::SetItemState(localState, SetUpListItemType::kAddressBar,
                                   unknown);
 }
 
@@ -83,6 +99,18 @@ using set_up_list_prefs::SetUpListItemState;
 + (BOOL)setUpListItemAutofillInMagicStackIsComplete {
   return ntp_home::SetUpListItemViewInMagicStackWithAccessibilityId(
              set_up_list::kAutofillItemID)
+      .complete;
+}
+
++ (BOOL)setUpListItemDockingInMagicStackIsComplete {
+  return ntp_home::SetUpListItemViewInMagicStackWithAccessibilityId(
+             set_up_list::kDockingItemID)
+      .complete;
+}
+
++ (BOOL)setUpListItemAddressBarInMagicStackIsComplete {
+  return ntp_home::SetUpListItemViewInMagicStackWithAccessibilityId(
+             set_up_list::kAddressBarItemID)
       .complete;
 }
 

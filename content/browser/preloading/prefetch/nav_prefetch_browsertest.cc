@@ -4,8 +4,9 @@
 
 #include "base/synchronization/lock.h"
 #include "base/thread_annotations.h"
+#include "base/timer/elapsed_timer.h"
 #include "content/browser/preloading/prefetch/prefetch_document_manager.h"
-#include "content/browser/preloading/prefetch/prefetch_test_util.h"
+#include "content/browser/preloading/preloading.h"
 #include "content/browser/renderer_host/render_frame_host_impl.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/public/browser/browser_thread.h"
@@ -14,6 +15,8 @@
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/content_browser_test_utils.h"
+#include "content/public/test/prefetch_test_util.h"
+#include "content/public/test/preloading_test_util.h"
 #include "content/public/test/test_frame_navigation_observer.h"
 #include "content/public/test/test_navigation_observer.h"
 #include "content/shell/browser/shell.h"
@@ -32,6 +35,10 @@ class NavPrefetchBrowserTest : public ContentBrowserTest {
  public:
   void SetUpOnMainThread() override {
     host_resolver()->AddRule("*", "127.0.0.1");
+    ukm_recorder_ = std::make_unique<ukm::TestAutoSetUkmRecorder>();
+    attempt_ukm_entry_builder_ =
+        std::make_unique<test::PreloadingAttemptUkmEntryBuilder>(
+            content_preloading_predictor::kSpeculationRules);
   }
 
   void StartPrefetch(const GURL& url) {
@@ -48,8 +55,7 @@ class NavPrefetchBrowserTest : public ContentBrowserTest {
                  network::mojom::ReferrerPolicy::kStrictOriginWhenCrossOrigin));
     std::vector<blink::mojom::SpeculationCandidatePtr> candidates;
     candidates.push_back(std::move(candidate));
-    prefetch_document_manager->ProcessCandidates(candidates,
-                                                 /*devtools_observer=*/nullptr);
+    prefetch_document_manager->ProcessCandidates(candidates);
   }
 
   RenderFrameHostImpl& GetPrimaryMainFrameHost() {
@@ -70,8 +76,24 @@ class NavPrefetchBrowserTest : public ContentBrowserTest {
     return request_count_by_path_[url.PathForRequest()];
   }
 
+  ukm::TestAutoSetUkmRecorder* test_ukm_recorder() {
+    return ukm_recorder_.get();
+  }
+
+  const test::PreloadingAttemptUkmEntryBuilder&
+  attempt_entry_builder() {
+    return *attempt_ukm_entry_builder_;
+  }
+
  private:
+  base::ScopedMockElapsedTimersForTest test_timer_;
   std::map<std::string, int> request_count_by_path_ GUARDED_BY(lock_);
+  std::unique_ptr<ukm::TestAutoSetUkmRecorder> ukm_recorder_;
+  std::unique_ptr<test::PreloadingAttemptUkmEntryBuilder>
+      attempt_ukm_entry_builder_;
+  // Disable sampling for UKM preloading logs.
+  test::PreloadingConfigOverride preloading_config_override_;
+
   base::Lock lock_;
 };
 
@@ -99,8 +121,7 @@ IN_PROC_BROWSER_TEST_F(NavPrefetchBrowserTest,
   auto* prefetch_document_manager =
       PrefetchDocumentManager::GetOrCreateForCurrentDocument(rfh);
   std::vector<blink::mojom::SpeculationCandidatePtr> candidates;
-  prefetch_document_manager->ProcessCandidates(candidates,
-                                               /*devtools_observer=*/nullptr);
+  prefetch_document_manager->ProcessCandidates(candidates);
 
   // Wait for a new request, and respond to it.
   response2.WaitForRequest();
@@ -144,6 +165,105 @@ IN_PROC_BROWSER_TEST_F(NavPrefetchBrowserTest, ServedToRedirectionChain) {
 
   EXPECT_TRUE(test_prefetch_watcher.PrefetchUsedInLastNavigation());
   EXPECT_EQ(GetRequestCount(des_url), 1);
+  ukm::SourceId ukm_source_id =
+      shell()->web_contents()->GetPrimaryMainFrame()->GetPageUkmSourceId();
+
+  // Navigate primary page to flush the metrics.
+  ASSERT_TRUE(NavigateToURL(shell(), initiator_url));
+
+  test::ExpectPreloadingAttemptUkm(
+      *test_ukm_recorder(),
+      {attempt_entry_builder().BuildEntry(
+          ukm_source_id, PreloadingType::kPrefetch,
+          PreloadingEligibility::kEligible, PreloadingHoldbackStatus::kAllowed,
+          PreloadingTriggeringOutcome::kSuccess,
+          PreloadingFailureReason::kUnspecified,
+          /*accurate=*/true,
+          base::ScopedMockElapsedTimersForTest::kMockElapsedTime,
+          blink::mojom::SpeculationEagerness::kEager)});
+}
+
+// TODO(crbug.com/345352974): Make it a web platform test instead.
+IN_PROC_BROWSER_TEST_F(NavPrefetchBrowserTest, SetCookieViaHTTPResponse) {
+  net::test_server::EmbeddedTestServer ssl_server{
+      net::test_server::EmbeddedTestServer::TYPE_HTTPS};
+  ssl_server.RegisterRequestMonitor(base::BindRepeating(
+      &NavPrefetchBrowserTest::MonitorResourceRequest, base::Unretained(this)));
+  ssl_server.AddDefaultHandlers(GetTestDataFilePath());
+  ssl_server.SetSSLConfig(
+      net::test_server::EmbeddedTestServer::CERT_TEST_NAMES);
+  ASSERT_TRUE(ssl_server.Start());
+
+  GURL initiator_url = ssl_server.GetURL("a.test", "/empty.html");
+  const std::string server_cookie = "host_cookie=1";
+  GURL des_url = ssl_server.GetURL("b.test", "/set-cookie?" + server_cookie);
+  ASSERT_TRUE(NavigateToURL(shell(), initiator_url));
+
+  // 1. Prefetch a resource which sets cookie.
+  test::TestPrefetchWatcher test_prefetch_watcher;
+  StartPrefetch(des_url);
+  test_prefetch_watcher.WaitUntilPrefetchResponseCompleted(
+      GetPrimaryMainFrameHost().GetDocumentToken(), des_url);
+  ASSERT_EQ(GetRequestCount(des_url), 1);
+
+  // 2. Activate the prefetched result.
+  TestNavigationObserver nav_observer(shell()->web_contents());
+  nav_observer.set_wait_event(TestNavigationObserver::WaitEvent::kLoadStopped);
+  std::ignore = ExecJs(shell()->web_contents()->GetPrimaryMainFrame(),
+                       JsReplace("location = $1", des_url));
+  nav_observer.Wait();
+
+  // 3. The cookie was written into the real cookie storage.
+  EXPECT_TRUE(test_prefetch_watcher.PrefetchUsedInLastNavigation());
+  EXPECT_EQ(GetRequestCount(des_url), 1);
+  EXPECT_EQ(EvalJs(shell()->web_contents()->GetPrimaryMainFrame(),
+                   "document.cookie"), server_cookie);
+
+  // 4. Navigate to another same-site page to confirm the cookie is persistent.
+  GURL after_prefetch_url = ssl_server.GetURL("b.test", "/title2.html");
+  std::ignore = ExecJs(shell()->web_contents()->GetPrimaryMainFrame(),
+                       JsReplace("location = $1", after_prefetch_url));
+  EXPECT_EQ(EvalJs(shell()->web_contents()->GetPrimaryMainFrame(),
+                   "document.cookie"), server_cookie);
+}
+
+// TODO(crbug.com/345352974): Make it a web platform test instead.
+IN_PROC_BROWSER_TEST_F(NavPrefetchBrowserTest,
+                       NeverSetCookieForDiscardedPrefetch) {
+  net::test_server::EmbeddedTestServer ssl_server{
+      net::test_server::EmbeddedTestServer::TYPE_HTTPS};
+  ssl_server.RegisterRequestMonitor(base::BindRepeating(
+      &NavPrefetchBrowserTest::MonitorResourceRequest, base::Unretained(this)));
+  ssl_server.AddDefaultHandlers(GetTestDataFilePath());
+  ssl_server.SetSSLConfig(
+      net::test_server::EmbeddedTestServer::CERT_TEST_NAMES);
+  ASSERT_TRUE(ssl_server.Start());
+
+  GURL initiator_url = ssl_server.GetURL("a.test", "/empty.html");
+  const std::string server_cookie = "host_cookie=1";
+  GURL des_url = ssl_server.GetURL("b.test", "/set-cookie?" + server_cookie);
+  ASSERT_TRUE(NavigateToURL(shell(), initiator_url));
+
+  // 1. Prefetch a resource which sets cookie.
+  test::TestPrefetchWatcher test_prefetch_watcher;
+  StartPrefetch(des_url);
+  test_prefetch_watcher.WaitUntilPrefetchResponseCompleted(
+      GetPrimaryMainFrameHost().GetDocumentToken(), des_url);
+  ASSERT_EQ(GetRequestCount(des_url), 1);
+
+  // 2. Navigate to another URL to invalidate the prefetch result.
+  TestNavigationObserver nav_observer(shell()->web_contents());
+  nav_observer.set_wait_event(TestNavigationObserver::WaitEvent::kLoadStopped);
+  GURL after_prefetch_url = ssl_server.GetURL("b.test", "/title2.html");
+
+  std::ignore = ExecJs(shell()->web_contents()->GetPrimaryMainFrame(),
+                       JsReplace("location = $1", after_prefetch_url));
+  nav_observer.Wait();
+
+  // 3. Check the cookie set by discarded prefetch response cannot affect the
+  // real jar.
+  EXPECT_EQ(EvalJs(shell()->web_contents()->GetPrimaryMainFrame(),
+                       "document.cookie").ExtractString(), "");
 }
 
 }  // namespace

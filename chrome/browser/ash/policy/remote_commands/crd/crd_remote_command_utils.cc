@@ -7,14 +7,19 @@
 #include <vector>
 
 #include "base/check_deref.h"
+#include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/notreached.h"
 #include "base/time/time.h"
+#include "chrome/browser/ash/app_mode/isolated_web_app/kiosk_iwa_manager.h"
 #include "chrome/browser/ash/app_mode/kiosk_chrome_app_manager.h"
 #include "chrome/browser/ash/app_mode/web_app/web_kiosk_app_manager.h"
 #include "chrome/browser/ash/policy/remote_commands/crd/crd_logging.h"
+#include "chrome/common/pref_names.h"
 #include "chromeos/ash/services/network_config/in_process_instance.h"
+#include "components/prefs/pref_service.h"
 #include "components/user_manager/user_manager.h"
+#include "remoting/host/chromeos/features.h"
 #include "remoting/protocol/errors.h"
 #include "ui/base/user_activity/user_activity_detector.h"
 
@@ -29,6 +34,7 @@ using chromeos::network_config::mojom::NetworkFilter;
 using chromeos::network_config::mojom::NetworkStatePropertiesPtr;
 using chromeos::network_config::mojom::NetworkType;
 using chromeos::network_config::mojom::OncSource;
+using remoting::features::kEnableCrdSharedSessionToUnattendedDevice;
 using remoting::protocol::ErrorCode;
 
 const ash::KioskAppManagerBase* GetKioskAppManager(
@@ -39,11 +45,13 @@ const ash::KioskAppManagerBase* GetKioskAppManager(
   if (user_manager.IsLoggedInAsWebKioskApp()) {
     return ash::WebKioskAppManager::Get();
   }
+  if (user_manager.IsLoggedInAsKioskIWA()) {
+    return ash::KioskIwaManager::Get();
+  }
 
   // This method should only be invoked when we know we're in a kiosk
   // environment, so one of these app managers must exist.
-  NOTREACHED_IN_MIGRATION();
-  return nullptr;
+  NOTREACHED();
 }
 
 bool IsRunningAutoLaunchedKiosk(const user_manager::UserManager& user_manager) {
@@ -154,12 +162,18 @@ ExtendedStartCrdSessionResultCode ToExtendedStartCrdSessionResultCode(
     // This error can only take place for windows builds which is not a part for
     // commercial CRD.
     case ErrorCode::ELEVATION_ERROR:
+    // This error is only reported on Mac.
+    case ErrorCode::LOGIN_SCREEN_NOT_SUPPORTED:
       return ExtendedStartCrdSessionResultCode::kFailureUnknownError;
     case ErrorCode::REAUTHZ_POLICY_CHECK_FAILED:
       return ExtendedStartCrdSessionResultCode::
           kFailureReauthzPolicyCheckFailed;
+    case ErrorCode::NO_COMMON_AUTH_METHOD:
+      return ExtendedStartCrdSessionResultCode::kFailureNoCommonAuthMethod;
+    case ErrorCode::SESSION_POLICIES_CHANGED:
+      return ExtendedStartCrdSessionResultCode::kFailureSessionPoliciesChanged;
   }
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 StartCrdSessionResultCode ToStartCrdSessionResultCode(
@@ -204,12 +218,14 @@ StartCrdSessionResultCode ToStartCrdSessionResultCode(
     case ExtendedStartCrdSessionResultCode::kFailureHostInvalidDomainError:
     case ExtendedStartCrdSessionResultCode::kHostSessionDisconnected:
     case ExtendedStartCrdSessionResultCode::kFailureReauthzPolicyCheckFailed:
+    case ExtendedStartCrdSessionResultCode::kFailureNoCommonAuthMethod:
+    case ExtendedStartCrdSessionResultCode::kFailureSessionPoliciesChanged:
       // The server side is not interested in a lot of the different CRD host
       // failures, which is why most of them are simply mapped to
       // 'FAILURE_CRD_HOST_ERROR`.
       return StartCrdSessionResultCode::FAILURE_CRD_HOST_ERROR;
   }
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 base::TimeDelta GetDeviceIdleTime() {
@@ -279,11 +295,26 @@ bool UserSessionSupportsRemoteSupport(UserSessionType user_session) {
       return true;
 
     case UserSessionType::NO_SESSION:
+      return base::FeatureList::IsEnabled(
+          kEnableCrdSharedSessionToUnattendedDevice);
+
     case UserSessionType::UNAFFILIATED_USER_SESSION:
     case UserSessionType::GUEST_SESSION:
     case UserSessionType::USER_SESSION_TYPE_UNKNOWN:
       return false;
   }
+}
+
+bool IsRemoteAccessAllowedByPolicy(const PrefService& prefs) {
+  return prefs.GetBoolean(
+             prefs::kDeviceAllowEnterpriseRemoteAccessConnections) &&
+         prefs.GetBoolean(
+             prefs::kRemoteAccessHostAllowEnterpriseRemoteSupportConnections);
+}
+
+bool IsRemoteSupportAllowedByPolicy(const PrefService& prefs) {
+  return prefs.GetBoolean(
+      prefs::kRemoteAccessHostAllowEnterpriseRemoteSupportConnections);
 }
 
 const char* UserSessionTypeToString(UserSessionType value) {

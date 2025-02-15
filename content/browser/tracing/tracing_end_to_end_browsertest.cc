@@ -11,11 +11,14 @@
 #include "base/test/test_trace_processor.h"
 #include "base/test/trace_test_utils.h"
 #include "build/build_config.h"
+#include "components/variations/active_field_trials.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/content_browser_test_utils.h"
 #include "services/resource_coordinator/public/cpp/memory_instrumentation/tracing_observer_proto.h"
+#include "services/tracing/public/cpp/perfetto/metadata_data_source.h"
+#include "services/tracing/public/cpp/stack_sampling/tracing_sampler_profiler.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "third_party/perfetto/protos/perfetto/config/chrome/chrome_config.gen.h"
 
@@ -39,7 +42,10 @@ const char kBackgroundDumpMode[] = "background";
 perfetto::protos::gen::TraceConfig TraceConfigWithHistograms(
     const std::string& category_filter_string,
     const std::vector<std::string>& histograms) {
-  base::trace_event::TraceConfig trace_event_config(category_filter_string, "");
+  // Which categories are specified in the legacy config should not affect
+  // anything. Only the list of enabled histograms should be read from the
+  // legacy config.
+  base::trace_event::TraceConfig trace_event_config;
   for (const auto& histogram : histograms) {
     trace_event_config.EnableHistogram(histogram);
   }
@@ -83,6 +89,29 @@ perfetto::protos::gen::TraceConfig TraceConfigWithMetadata(
   auto* data_source = perfetto_config.add_data_sources();
   auto* source_config = data_source->mutable_config();
   source_config->set_name("org.chromium.trace_metadata");
+
+  return perfetto_config;
+}
+
+perfetto::protos::gen::TraceConfig TraceConfigWithSamplerProfiler() {
+  auto perfetto_config = base::test::DefaultTraceConfig(
+      "-*,disabled-by-default-cpu_profiler", false);
+
+  auto* data_source = perfetto_config.add_data_sources();
+  auto* source_config = data_source->mutable_config();
+  source_config->set_name("org.chromium.sampler_profiler");
+
+  return perfetto_config;
+}
+
+perfetto::protos::gen::TraceConfig TraceConfigWithMetadataMultisession(
+    const std::string& category_filter_string) {
+  auto perfetto_config =
+      base::test::DefaultTraceConfig(category_filter_string, false);
+
+  auto* data_source = perfetto_config.add_data_sources();
+  auto* source_config = data_source->mutable_config();
+  source_config->set_name("org.chromium.trace_metadata2");
 
   return perfetto_config;
 }
@@ -144,6 +173,47 @@ IN_PROC_BROWSER_TEST_F(TracingEndToEndBrowserTest, Metadata) {
                                      std::vector<std::string>{"1"}));
 }
 
+IN_PROC_BROWSER_TEST_F(TracingEndToEndBrowserTest, MetadataMultisession) {
+  base::test::TestTraceProcessor ttp;
+  ttp.StartTrace(TraceConfigWithMetadataMultisession("-*"));
+
+  absl::Status status = ttp.StopAndParseTrace();
+  ASSERT_TRUE(status.ok()) << status.message();
+
+  base::expected<base::test::TestTraceProcessor::QueryResult,
+    std::string> result;
+
+  std::vector<variations::ActiveGroupId> active_group_ids;
+  variations::GetFieldTrialActiveGroupIds(std::string_view(),
+                                            &active_group_ids);
+  if (!active_group_ids.empty()) {
+    result = ttp.RunQuery(R"(
+      SELECT
+        str_value IS NOT NULL AS has_field_trial_hashes
+      FROM metadata
+      WHERE name = 'cr-a-field_trial_hashes'
+    )");
+    ASSERT_TRUE(result.has_value()) << result.error();
+    EXPECT_THAT(
+        result.value(),
+        ::testing::ElementsAre(std::vector<std::string>{"has_field_trial_hashes"},
+                               std::vector<std::string>{"1"}));
+  }
+
+#if BUILDFLAG(IS_ANDROID) && defined(OFFICIAL_BUILD)
+  result = ttp.RunQuery(R"(
+    SELECT
+      int_value IS NOT NULL AS has_version_code
+    FROM metadata
+    WHERE name = 'cr-a-playstore_version_code'
+  )");
+  ASSERT_TRUE(result.has_value()) << result.error();
+  EXPECT_THAT(result.value(), ::testing::ElementsAre(
+                                  std::vector<std::string>{"has_version_code"},
+                                  std::vector<std::string>{"1"}));
+#endif
+}
+
 IN_PROC_BROWSER_TEST_F(TracingEndToEndBrowserTest, TaskExecutionEvent) {
   base::test::TestTraceProcessor ttp;
   ttp.StartTrace("toplevel");
@@ -194,9 +264,8 @@ IN_PROC_BROWSER_TEST_F(TracingEndToEndBrowserTest, ThreadAndProcessName) {
       "process.name AS process_name "
       "FROM slice "
       "JOIN thread_track ON thread_track.id = slice.track_id "
-      "JOIN thread ON thread.utid = thread_track.utid "
-      "JOIN process_track ON process_track.id = thread_track.parent_id "
-      "JOIN process ON process.upid = process_track.upid "
+      "JOIN thread USING (utid) "
+      "JOIN process USING (upid) "
       "WHERE slice.cat = 'foo'";
   auto result = ttp.RunQuery(query);
   ASSERT_TRUE(result.has_value()) << result.error();
@@ -277,6 +346,69 @@ IN_PROC_BROWSER_TEST_F(TracingEndToEndBrowserTest,
       result.value(),
       ::testing::ElementsAre(std::vector<std::string>{"has_other_processes"},
                              std::vector<std::string>{"1"}));
+}
+
+namespace {
+
+class FakeUnwinder : public base::Unwinder {
+ public:
+  bool CanUnwindFrom(const base::Frame& current_frame) const override {
+    return true;
+  }
+
+  base::UnwindResult TryUnwind(base::UnwinderStateCapture* capture_state,
+                               base::RegisterContext* thread_context,
+                               uintptr_t stack_top,
+                               std::vector<base::Frame>* stack) override {
+    return base::UnwindResult::kCompleted;
+  }
+};
+
+// Note that this is relevant only for Android, since TracingSamplingProfiler
+// ignores any provided unwinder factory for non-Android platforms:
+// https://source.chromium.org/chromium/chromium/src/+/main:services/tracing/public/cpp/stack_sampling/tracing_sampler_profiler.cc;l=905-908;drc=70d839a3b8bcf1ef43c42a54a4b27f14ee149750
+base::StackSamplingProfiler::UnwindersFactory MakeFakeUnwinder() {
+  return base::BindOnce([] {
+    auto fake_unwinder = std::make_unique<FakeUnwinder>();
+    std::vector<std::unique_ptr<base::Unwinder>> unwinders;
+    unwinders.push_back(std::move(fake_unwinder));
+    return unwinders;
+  });
+}
+
+}  // namespace
+
+IN_PROC_BROWSER_TEST_F(TracingEndToEndBrowserTest, CpuProfiler) {
+  // In the browser process, the tracing sampler profiler gets constructed by
+  // the chrome/ layer, so we need to do the same manually for testing purposes.
+  std::unique_ptr<tracing::TracingSamplerProfiler> tracing_sampler_profiler;
+  {
+    base::ScopedAllowBlockingForTesting allow_blocking;
+    tracing_sampler_profiler =
+        tracing::TracingSamplerProfiler::CreateOnMainThread(
+            base::BindRepeating(&MakeFakeUnwinder));
+  }
+
+  // There won't be any samples if stack unwinding isn't supported.
+  if (!tracing::TracingSamplerProfiler::IsStackUnwindingSupportedForTesting()) {
+    GTEST_SKIP() << "Stack unwinding not supported on this platform";
+  }
+
+  base::RunLoop wait_for_sample;
+  tracing_sampler_profiler->SetSampleCallbackForTesting(
+      wait_for_sample.QuitClosure());
+
+  base::test::TestTraceProcessor ttp;
+  ttp.StartTrace(TraceConfigWithSamplerProfiler());
+
+  wait_for_sample.Run();
+
+  absl::Status status = ttp.StopAndParseTrace();
+  ASSERT_TRUE(status.ok()) << status.message();
+
+  auto result = ttp.RunQuery("SELECT * FROM cpu_profile_stack_sample");
+  ASSERT_TRUE(result.has_value()) << result.error();
+  EXPECT_GT(result.value().size(), 1U);
 }
 
 IN_PROC_BROWSER_TEST_F(TracingEndToEndBrowserTest,
@@ -541,6 +673,79 @@ IN_PROC_BROWSER_TEST_F(TracingEndToEndBrowserTest,
               ::testing::ElementsAre(std::vector<std::string>{"detail_level"}));
 }
 
+IN_PROC_BROWSER_TEST_F(TracingEndToEndBrowserTest, TwoSessionsMetadata) {
+  base::test::TestTraceProcessor ttp1, ttp2;
+  ttp1.StartTrace(TraceConfigWithMetadataMultisession("-*"));
+  ttp2.StartTrace(TraceConfigWithMetadataMultisession("-*"));
+
+  absl::Status status = ttp1.StopAndParseTrace();
+  ASSERT_TRUE(status.ok()) << status.message();
+
+  base::expected<base::test::TestTraceProcessor::QueryResult,
+    std::string> result;
+
+  std::vector<variations::ActiveGroupId> active_group_ids;
+  variations::GetFieldTrialActiveGroupIds(std::string_view(),
+                                            &active_group_ids);
+
+  if (!active_group_ids.empty()) {
+    result = ttp1.RunQuery(R"(
+      SELECT
+        str_value IS NOT NULL AS has_field_trial_hashes
+      FROM metadata
+      WHERE name = 'cr-a-field_trial_hashes'
+    )");
+    ASSERT_TRUE(result.has_value()) << result.error();
+    EXPECT_THAT(
+        result.value(),
+        ::testing::ElementsAre(std::vector<std::string>{"has_field_trial_hashes"},
+                               std::vector<std::string>{"1"}));
+  }
+
+#if BUILDFLAG(IS_ANDROID) && defined(OFFICIAL_BUILD)
+  result = ttp1.RunQuery(R"(
+    SELECT
+      int_value IS NOT NULL AS has_version_code
+    FROM metadata
+    WHERE name = 'cr-a-playstore_version_code'
+  )");
+  ASSERT_TRUE(result.has_value()) << result.error();
+  EXPECT_THAT(result.value(), ::testing::ElementsAre(
+                                  std::vector<std::string>{"has_version_code"},
+                                  std::vector<std::string>{"1"}));
+#endif
+
+  status = ttp2.StopAndParseTrace();
+  ASSERT_TRUE(status.ok()) << status.message();
+
+  if (!active_group_ids.empty()) {
+    result = ttp2.RunQuery(R"(
+      SELECT
+        str_value IS NOT NULL AS has_field_trial_hashes
+      FROM metadata
+      WHERE name = 'cr-a-field_trial_hashes'
+    )");
+    ASSERT_TRUE(result.has_value()) << result.error();
+    EXPECT_THAT(
+        result.value(),
+        ::testing::ElementsAre(std::vector<std::string>{"has_field_trial_hashes"},
+                               std::vector<std::string>{"1"}));
+  }
+
+#if BUILDFLAG(IS_ANDROID) && defined(OFFICIAL_BUILD)
+  result = ttp2.RunQuery(R"(
+    SELECT
+      int_value IS NOT NULL AS has_version_code
+    FROM metadata
+    WHERE name = 'cr-a-playstore_version_code'
+  )");
+  ASSERT_TRUE(result.has_value()) << result.error();
+  EXPECT_THAT(result.value(), ::testing::ElementsAre(
+                                  std::vector<std::string>{"has_version_code"},
+                                  std::vector<std::string>{"1"}));
+#endif
+}
+
 #if BUILDFLAG(IS_POSIX)
 class SystemTracingEndToEndBrowserTest : public ContentBrowserTest {
  public:
@@ -561,8 +766,8 @@ class SystemTracingEndToEndBrowserTest : public ContentBrowserTest {
                             .c_str(),
                         /*overwrite=*/true));
     feature_list_.InitAndEnableFeature(features::kEnablePerfettoSystemTracing);
-    tracing::PerfettoTracedProcess::Get()
-        ->SetAllowSystemTracingConsumerForTesting(true);
+    tracing::PerfettoTracedProcess::SetAllowSystemTracingConsumerForTesting(
+        true);
 
     ContentBrowserTest::SetUp();
   }
@@ -611,7 +816,7 @@ class SystemTracingEndToEndBrowserTest : public ContentBrowserTest {
   // producer.
   bool WaitForCurrentProcessConnected() {
     std::string current_process_name = tracing::PerfettoTracedProcess::Get()
-                                           ->perfetto_platform_for_testing()
+                                           .perfetto_platform_for_testing()
                                            ->GetCurrentProcessName();
     std::unique_ptr<perfetto::TracingSession> session =
         perfetto::Tracing::NewTrace(perfetto::kSystemBackend);

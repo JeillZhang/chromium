@@ -96,7 +96,12 @@ void AddMaterialUiColorMixer(ColorProvider* provider,
   mixer[kColorHistoryClustersSidePanelCardSecondaryForeground] = {
       kColorSysOnSurfaceSubtle};
   mixer[kColorLabelSelectionBackground] = {kColorTextSelectionBackground};
+  mixer[kColorLinkForeground] = {kColorLinkForegroundDefault};
   mixer[kColorLinkForegroundDefault] = {kColorSysPrimary};
+  mixer[kColorLinkForegroundOnBubbleFooter] = {kColorLinkForegroundDefault};
+  mixer[kColorLinkForegroundPressed] = {kColorLinkForegroundPressedDefault};
+  mixer[kColorLinkForegroundPressedOnBubbleFooter] = {
+      kColorLinkForegroundPressedDefault};
   mixer[kColorListItemFolderIconBackground] = {kColorSysTonalContainer};
   mixer[kColorListItemFolderIconForeground] = {kColorSysOnTonalContainer};
   mixer[kColorListItemUrlFaviconBackground] = {kColorSysNeutralContainer};
@@ -138,6 +143,20 @@ void AddMaterialUiColorMixer(ColorProvider* provider,
   mixer[kColorSliderTrackMinimal] = {kColorSysOnSecondary};
   mixer[kColorSuggestionChipBorder] = {kColorSysTonalOutline};
   mixer[kColorSuggestionChipIcon] = {kColorSysPrimary};
+  mixer[kColorTabBorderSelected] = {kColorSysPrimary};
+  mixer[kColorTabForeground] = {kColorSecondaryForeground};
+  mixer[kColorTabForegroundSelected] = {kColorSysPrimary};
+  mixer[kColorTableBackground] = {kColorPrimaryBackground};
+  mixer[kColorTableBackgroundAlternate] = {kColorTableBackground};
+  mixer[kColorTableBackgroundSelectedFocused] = {kColorSysTonalContainer};
+  mixer[kColorTableBackgroundSelectedUnfocused] = {
+      kColorTableBackgroundSelectedFocused};
+  mixer[kColorTableForeground] = {kColorPrimaryForeground};
+  mixer[kColorTableForegroundSelectedFocused] = {kColorTableForeground};
+  mixer[kColorTableForegroundSelectedUnfocused] = {
+      kColorTableForegroundSelectedFocused};
+  mixer[kColorTableIconBackground] = {kColorSysSurface};
+  mixer[kColorTableRowHighlight] = {kColorSysStateHoverOnSubtle};
   // TODO(colehorvitz): Rename textfield color IDs to specify which
   // textfield variation they are used for ('filled' or 'stroked').
   mixer[kColorTextfieldBackground] = {kColorSysSurface};
@@ -172,6 +191,7 @@ void AddMaterialUiColorMixer(ColorProvider* provider,
   mixer[kColorThemeColorPickerOptionBackground] = {kColorSysNeutralContainer};
   mixer[kColorThrobber] = {kColorSysPrimary};
   mixer[kColorToastBackground] = {kColorSysInverseSurface};
+  mixer[kColorToastBackgroundProminent] = {kColorSysInverseSurfacePrimary};
   mixer[kColorToastButton] = {kColorSysInversePrimary};
   mixer[kColorToastForeground] = {kColorSysInverseOnSurface};
   mixer[kColorToggleButtonHover] = {kColorSysStateHover};

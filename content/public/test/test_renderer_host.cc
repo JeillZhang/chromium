@@ -11,6 +11,7 @@
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/task_environment.h"
 #include "build/build_config.h"
+#include "components/input/render_widget_host_input_event_router.h"
 #include "content/browser/gpu/gpu_data_manager_impl.h"
 #include "content/browser/renderer_host/frame_tree_node.h"
 #include "content/browser/renderer_host/navigation_entry_impl.h"
@@ -18,7 +19,6 @@
 #include "content/browser/renderer_host/render_view_host_factory.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
 #include "content/browser/site_instance_impl.h"
-#include "content/common/input/render_widget_host_input_event_router.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_widget_host_iterator.h"
@@ -215,7 +215,7 @@ RenderViewHostTestHarness::CreateTestWebContents() {
 
   scoped_refptr<SiteInstance> instance =
       SiteInstance::Create(GetBrowserContext());
-  instance->GetProcess()->Init();
+  instance->GetOrCreateProcess()->Init();
 
   return TestWebContents::Create(GetBrowserContext(), std::move(instance));
 }

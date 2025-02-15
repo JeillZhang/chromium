@@ -65,6 +65,9 @@ base::Value ConvertedResultFromScriptResult(const base::Value* value,
       DCHECK_EQ(result.type(), base::Value::Type::DOUBLE);
     }
     // End of different implementation.
+  } else if (value->is_int()) {
+    result = base::Value(value->GetInt());
+    DCHECK_EQ(result.type(), base::Value::Type::INTEGER);
   } else if (value->is_bool()) {
     result = base::Value(value->GetBool());
     DCHECK_EQ(result.type(), base::Value::Type::BOOLEAN);
@@ -96,7 +99,7 @@ base::Value ConvertedResultFromScriptResult(const base::Value* value,
     result = base::Value(std::move(list));
     DCHECK_EQ(result.type(), base::Value::Type::LIST);
   } else {
-    NOTREACHED_IN_MIGRATION();  // Convert other types as needed.
+    NOTREACHED();  // Convert other types as needed.
   }
   return result;
 }
@@ -159,7 +162,7 @@ void DistillerPageIOS::AttachWebState(
   }
   web_state_ = std::move(web_state);
   if (web_state_) {
-    web_state_->AddObserver(this);
+    web_state_observation_.Observe(web_state_.get());
     media_blocker_ =
         std::make_unique<DistillerPageMediaBlocker>(web_state_.get());
   }
@@ -168,7 +171,7 @@ void DistillerPageIOS::AttachWebState(
 std::unique_ptr<web::WebState> DistillerPageIOS::DetachWebState() {
   if (web_state_) {
     media_blocker_.reset();
-    web_state_->RemoveObserver(this);
+    web_state_observation_.Reset();
   }
   return std::move(web_state_);
 }
@@ -269,7 +272,7 @@ void DistillerPageIOS::WebStateDestroyed(web::WebState* web_state) {
   // The DistillerPageIOS owns the WebState that it observe and unregister
   // itself from the WebState before destroying it, so this method should
   // never be called.
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 }  // namespace dom_distiller

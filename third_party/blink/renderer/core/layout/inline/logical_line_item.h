@@ -14,6 +14,7 @@
 #include "third_party/blink/renderer/core/layout/layout_result.h"
 #include "third_party/blink/renderer/platform/fonts/shaping/shape_result_view.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/gc_plugin.h"
 
 namespace blink {
 
@@ -54,16 +55,14 @@ struct LogicalLineItem {
         children_count(children_count),
         bidi_level(bidi_level) {}
   // Create an in-flow text fragment.
-  LogicalLineItem(const InlineItem& inline_item,
-                  InlineItemResult& item_result,
-                  const TextOffsetRange& text_offset,
+  LogicalLineItem(const InlineItemResult& item_result,
                   LayoutUnit block_offset,
                   LayoutUnit inline_size,
                   LayoutUnit text_height,
                   UBiDiLevel bidi_level)
-      : inline_item(&inline_item),
+      : inline_item(item_result.item),
         shape_result(item_result.shape_result),
-        text_offset(text_offset),
+        text_offset(item_result.TextOffset()),
         rect(LayoutUnit(), block_offset, LayoutUnit(), text_height),
         inline_size(inline_size),
         bidi_level(bidi_level),
@@ -229,7 +228,7 @@ struct LogicalLineItem {
 
   // Data to create a text fragment from.
   // |inline_item| is null only for ellipsis items.
-  const InlineItem* inline_item = nullptr;
+  Member<const InlineItem> inline_item;
   Member<const ShapeResultView> shape_result;
   TextOffsetRange text_offset;
 
@@ -303,13 +302,16 @@ class CORE_EXPORT LogicalLineItems : public GarbageCollected<LogicalLineItems> {
   void Shrink(wtf_size_t size) { children_.Shrink(size); }
   void swap(LogicalLineItems& other) { children_.swap(other.children_); }
 
-  using iterator = Vector<LogicalLineItem, 16>::iterator;
+  explicit operator base::span<LogicalLineItem>() {
+    return base::span(children_);
+  }
+  using iterator = HeapVector<LogicalLineItem, 16>::iterator;
   iterator begin() { return children_.begin(); }
   iterator end() { return children_.end(); }
-  using const_iterator = Vector<LogicalLineItem, 16>::const_iterator;
+  using const_iterator = HeapVector<LogicalLineItem, 16>::const_iterator;
   const_iterator begin() const { return children_.begin(); }
   const_iterator end() const { return children_.end(); }
-  using reverse_iterator = Vector<LogicalLineItem, 16>::reverse_iterator;
+  using reverse_iterator = HeapVector<LogicalLineItem, 16>::reverse_iterator;
   reverse_iterator rbegin() { return children_.rbegin(); }
   reverse_iterator rend() { return children_.rend(); }
   using const_reverse_iterator =

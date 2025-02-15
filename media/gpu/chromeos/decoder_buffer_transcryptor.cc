@@ -10,8 +10,8 @@
 #include "base/task/bind_post_task.h"
 #include "base/task/sequenced_task_runner.h"
 #include "chromeos/components/cdm_factory_daemon/chromeos_cdm_context.h"
-#include "media/filters/vp9_parser.h"
 #include "media/gpu/chromeos/video_decoder_pipeline.h"
+#include "media/parsers/vp9_parser.h"
 
 namespace media {
 DecoderBufferTranscryptor::TranscryptTask::TranscryptTask(
@@ -132,7 +132,7 @@ void DecoderBufferTranscryptor::DecryptPendingBuffer() {
     // then add the rest to the queue.
     //
     // TODO(crbug.com/40284755): Use `base::span` in `Vp9Parser::FrameInfo`.
-    current_transcrypt_task_->buffer = DecoderBuffer::CopyFrom(UNSAFE_BUFFERS(
+    current_transcrypt_task_->buffer = DecoderBuffer::CopyFrom(UNSAFE_TODO(
         base::span(frames.front().ptr.get(),
                    base::checked_cast<size_t>(frames.front().size))));
     curr_buffer = current_transcrypt_task_->buffer.get();
@@ -144,7 +144,10 @@ void DecoderBufferTranscryptor::DecryptPendingBuffer() {
     current_transcrypt_task_->buffer->set_duration(superframe->duration());
     current_transcrypt_task_->buffer->set_is_key_frame(
         superframe->is_key_frame());
-    current_transcrypt_task_->buffer->set_side_data(superframe->side_data());
+    if (superframe->side_data()) {
+      current_transcrypt_task_->buffer->set_side_data(
+          superframe->side_data()->Clone());
+    }
     if (frames.front().decrypt_config) {
       current_transcrypt_task_->buffer->set_decrypt_config(
           std::move(frames.front().decrypt_config));
@@ -161,14 +164,13 @@ void DecoderBufferTranscryptor::DecryptPendingBuffer() {
     while (!frames.empty()) {
       // The |frames| are in decode order, so we take from the back of |frames|
       // and append to the front of |transcrypt_task_queue_|.
-      scoped_refptr<DecoderBuffer> buffer =
-          DecoderBuffer::CopyFrom(UNSAFE_BUFFERS(
-              base::span(frames.back().ptr.get(),
-                         base::checked_cast<size_t>(frames.back().size))));
+      scoped_refptr<DecoderBuffer> buffer = DecoderBuffer::CopyFrom(UNSAFE_TODO(
+          base::span(frames.back().ptr.get(),
+                     base::checked_cast<size_t>(frames.back().size))));
       buffer->set_timestamp(superframe->timestamp());
       buffer->set_duration(superframe->duration());
       buffer->set_is_key_frame(superframe->is_key_frame());
-      buffer->set_side_data(superframe->side_data());
+      buffer->set_side_data(superframe->side_data()->Clone());
       if (frames.back().decrypt_config) {
         buffer->set_decrypt_config(std::move(frames.back().decrypt_config));
       }
@@ -180,8 +182,7 @@ void DecoderBufferTranscryptor::DecryptPendingBuffer() {
   }
 
   // If we've already attached a secure buffer, don't do it again.
-  if (!curr_buffer->has_side_data() ||
-      !curr_buffer->side_data()->secure_handle) {
+  if (!curr_buffer->side_data() || !curr_buffer->side_data()->secure_handle) {
     auto status =
         decoder_->AttachSecureBuffer(current_transcrypt_task_->buffer);
     if (status == CroStatus::Codes::kSecureBufferPoolEmpty) {
@@ -194,8 +195,7 @@ void DecoderBufferTranscryptor::DecryptPendingBuffer() {
       return;
     }
 
-    if (curr_buffer->has_side_data() &&
-        curr_buffer->side_data()->secure_handle) {
+    if (curr_buffer->side_data() && curr_buffer->side_data()->secure_handle) {
       // Wrap the callback so we can release the secure buffer when decoding is
       // done.
       current_transcrypt_task_->decode_done_cb =

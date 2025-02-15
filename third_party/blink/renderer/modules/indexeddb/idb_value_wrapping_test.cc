@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/modules/indexeddb/idb_value_wrapping.h"
 
 #include <algorithm>
@@ -458,8 +463,6 @@ TEST(IDBValueUnwrapperTest, IsWrapped) {
                           non_throwable_exception_state);
   wrapper.set_wrapping_threshold_for_test(0);
   wrapper.DoneCloning();
-  Vector<scoped_refptr<BlobDataHandle>> blob_data_handles =
-      wrapper.TakeBlobDataHandles();
   Vector<WebBlobInfo> blob_infos = wrapper.TakeBlobInfo();
   Vector<char> wrapped_marker_buffer = wrapper.TakeWireBytes();
   IDBKeyPath key_path(String("primaryKey"));
@@ -477,7 +480,7 @@ TEST(IDBValueUnwrapperTest, IsWrapped) {
   ASSERT_LT(3U, wrapped_marker_bytes.size());
   for (wtf_size_t i = 0; i < 3; ++i) {
     auto mutant_value = std::make_unique<IDBValue>(
-        Vector<char>(base::span(wrapped_marker_bytes).subspan(0, i)),
+        Vector<char>(base::span(wrapped_marker_bytes).first(i)),
         std::move(blob_infos));
     mutant_value->SetIsolate(scope.GetIsolate());
 
@@ -502,20 +505,36 @@ TEST(IDBValueUnwrapperTest, IsWrapped) {
 
 TEST(IDBValueUnwrapperTest, Compression) {
   test::TaskEnvironment task_environment;
-  base::test::ScopedFeatureList enable_feature_list{
-      features::kIndexedDBCompressValuesWithSnappy};
 
   struct {
     bool should_compress;
     std::string bytes;
+    int32_t compression_threshold;
+    // Wrapping threshold is tested here to ensure it does not interfere
+    // with the compression threshold.
+    int32_t wrapping_threshold;
   } test_cases[] = {
       {false,
        "abcdefghijcklmnopqrstuvwxyz123456789?/"
-       ".,'[]!@#$%^&*(&)asjdflkajnwefkajwneflkacoiw93lkm"},
-      {true, base::StrCat(std::vector<std::string>(100u, "abcd"))}};
+       ".,'[]!@#$%^&*(&)asjdflkajnwefkajwneflkacoiw93lkm",
+       /* compression_threshold = */ 0, /*wrapping_threshold = */ 500},
+      {false, base::StrCat(std::vector<std::string>(100u, "abcd")),
+       /* compression_threshold = */ 500, /*wrapping_threshold = */ 500},
+      {true, base::StrCat(std::vector<std::string>(500, "abcd")),
+       /* compression_threshold = */ 500, /*wrapping_threshold = */ 500},
+      {true, base::StrCat(std::vector<std::string>(500, "abcd")),
+       /* compression_threshold = */ 500, /*wrapping_threshold = */ 400},
+      {true, base::StrCat(std::vector<std::string>(500, "abcd")),
+       /* compression_threshold = */ 500, /*wrapping_threshold = */ 600}};
 
   for (const auto& test_case : test_cases) {
     SCOPED_TRACE(testing::Message() << "Testing string " << test_case.bytes);
+
+    base::test::ScopedFeatureList enable_feature_list;
+    enable_feature_list.InitAndEnableFeatureWithParameters(
+        features::kIndexedDBCompressValuesWithSnappy,
+        {{"compression-threshold",
+          base::StringPrintf("%i", test_case.compression_threshold)}});
 
     V8TestingScope scope;
     NonThrowableExceptionState non_throwable_exception_state;
@@ -526,9 +545,9 @@ TEST(IDBValueUnwrapperTest, Compression) {
     IDBValueWrapper wrapper(scope.GetIsolate(), v8_value,
                             SerializedScriptValue::SerializeOptions::kSerialize,
                             non_throwable_exception_state);
+    wrapper.set_wrapping_threshold_for_test(test_case.wrapping_threshold);
+    wrapper.set_compression_threshold_for_test(test_case.compression_threshold);
     wrapper.DoneCloning();
-    Vector<scoped_refptr<BlobDataHandle>> blob_data_handles =
-        wrapper.TakeBlobDataHandles();
     Vector<WebBlobInfo> blob_infos = wrapper.TakeBlobInfo();
     Vector<char> buffer = wrapper.TakeWireBytes();
 
@@ -579,8 +598,6 @@ TEST(IDBValueUnwrapperTest, Decompression) {
                             SerializedScriptValue::SerializeOptions::kSerialize,
                             non_throwable_exception_state);
     wrapper.DoneCloning();
-    Vector<scoped_refptr<BlobDataHandle>> blob_data_handles =
-        wrapper.TakeBlobDataHandles();
     blob_infos = wrapper.TakeBlobInfo();
     buffer = wrapper.TakeWireBytes();
   }

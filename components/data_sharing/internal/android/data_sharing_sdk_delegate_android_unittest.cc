@@ -13,6 +13,7 @@
 #include "base/test/task_environment.h"
 #include "components/data_sharing/internal/test_jni_headers/DataSharingSDKDelegateAndroidTestSupport_jni.h"
 #include "components/data_sharing/public/features.h"
+#include "components/data_sharing/test_support/mock_data_sharing_network_loader.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace data_sharing {
@@ -29,9 +30,12 @@ class DataSharingSDKDelegateAndroidTest : public testing::Test {
 
   void SetUp() override {
     JNIEnv* env = base::android::AttachCurrentThread();
-    delegate_ = new DataSharingSDKDelegateAndroid();
-    Java_DataSharingSDKDelegateAndroidTestSupport_setUpBridge(
-        env, delegate_->GetJavaObject());
+    auto callback = base::BindOnce(
+        &Java_DataSharingSDKDelegateAndroidTestSupport_createDelegateTestImpl,
+        env);
+    delegate_ =
+        std::make_unique<DataSharingSDKDelegateAndroid>(std::move(callback));
+    delegate_->Initialize(&mock_network_loader_);
   }
 
   data_sharing_pb::CreateGroupResult TestCreateGroup() {
@@ -105,6 +109,21 @@ class DataSharingSDKDelegateAndroidTest : public testing::Test {
     return outcome;
   }
 
+  absl::Status TestLeaveGroup() {
+    absl::Status outcome;
+    base::RunLoop run_loop;
+    data_sharing_pb::LeaveGroupParams params;
+    params.set_group_id(kTestGroupId);
+    delegate_->LeaveGroup(
+        params, base::BindLambdaForTesting(
+                    [&run_loop, &outcome](const absl::Status& result) {
+                      outcome = result;
+                      run_loop.Quit();
+                    }));
+    run_loop.Run();
+    return outcome;
+  }
+
   absl::Status TestDeleteGroup() {
     absl::Status outcome;
     base::RunLoop run_loop;
@@ -140,8 +159,29 @@ class DataSharingSDKDelegateAndroidTest : public testing::Test {
     return outcome;
   }
 
+  data_sharing_pb::AddAccessTokenResult TestAddAccessToken() {
+    data_sharing_pb::AddAccessTokenResult outcome;
+    base::RunLoop run_loop;
+    data_sharing_pb::AddAccessTokenParams params;
+    params.set_group_id(kTestGroupId);
+    delegate_->AddAccessToken(
+        params,
+        base::BindLambdaForTesting(
+            [&run_loop, &outcome](
+                const base::expected<data_sharing_pb::AddAccessTokenResult,
+                                     absl::Status>& result) {
+              if (result.has_value()) {
+                outcome = result.value();
+              }
+              run_loop.Quit();
+            }));
+    run_loop.Run();
+    return outcome;
+  }
+
   base::test::TaskEnvironment task_environment_;
-  raw_ptr<DataSharingSDKDelegateAndroid> delegate_;
+  MockDataSharingNetworkLoader mock_network_loader_;
+  std::unique_ptr<DataSharingSDKDelegateAndroid> delegate_;
 };
 
 TEST_F(DataSharingSDKDelegateAndroidTest, TestCreateGroup) {
@@ -172,6 +212,11 @@ TEST_F(DataSharingSDKDelegateAndroidTest, TestRemoveMember) {
   EXPECT_EQ(outcome, absl::CancelledError());
 }
 
+TEST_F(DataSharingSDKDelegateAndroidTest, TestLeaveGroup) {
+  absl::Status outcome = TestLeaveGroup();
+  EXPECT_EQ(outcome, absl::OkStatus());
+}
+
 TEST_F(DataSharingSDKDelegateAndroidTest, TestDeleteGroup) {
   absl::Status outcome = TestDeleteGroup();
   EXPECT_EQ(outcome, absl::OkStatus());
@@ -181,6 +226,11 @@ TEST_F(DataSharingSDKDelegateAndroidTest, TestLookupGaiaIdByEmail) {
   data_sharing_pb::LookupGaiaIdByEmailResult outcome =
       TestLookupGaiaIdByEmail();
   EXPECT_EQ(outcome.gaia_id(), kTestGroupName);
+}
+
+TEST_F(DataSharingSDKDelegateAndroidTest, TestAddAccessToken) {
+  data_sharing_pb::AddAccessTokenResult outcome = TestAddAccessToken();
+  EXPECT_EQ(outcome.group_data().group_id(), kTestGroupId);
 }
 
 }  // namespace

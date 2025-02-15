@@ -5,35 +5,19 @@
 package org.chromium.chrome.browser.omnibox;
 
 import android.content.Context;
-import android.os.Bundle;
-import android.text.Editable;
-import android.text.Selection;
-import android.text.SpannableString;
-import android.text.Spanned;
 import android.text.TextUtils;
-import android.text.style.BackgroundColorSpan;
-import android.text.style.ForegroundColorSpan;
 import android.view.KeyEvent;
 import android.view.accessibility.AccessibilityEvent;
-import android.view.inputmethod.BaseInputConnection;
-import android.view.inputmethod.CompletionInfo;
-import android.view.inputmethod.CorrectionInfo;
-import android.view.inputmethod.ExtractedText;
-import android.view.inputmethod.ExtractedTextRequest;
 import android.view.inputmethod.InputConnection;
-import android.view.inputmethod.InputConnectionWrapper;
-import android.view.inputmethod.InputContentInfo;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 
 import org.chromium.base.Log;
-import org.chromium.chrome.browser.omnibox.styles.OmniboxResourceProvider;
 import org.chromium.components.omnibox.OmniboxFeatures;
 import org.chromium.ui.accessibility.AccessibilityState;
 
-import java.util.Locale;
 import java.util.Optional;
 import java.util.regex.Pattern;
 
@@ -42,9 +26,10 @@ import java.util.regex.Pattern;
  * SpannableString. By wrapping all the keyboard related operations in a batch edit, we can
  * effectively hide the existence of autocomplete text from keyboard.
  */
-public class SpannableAutocompleteEditTextModel implements AutocompleteEditTextModelBase {
+public class SpannableAutocompleteEditTextModel
+        implements AutocompleteEditTextModelBase, AutocompleteInputConnection.InputDelegate {
     private static final String TAG = "SpanAutocomplete";
-    private static final boolean DEBUG = false;
+    private static final boolean DEBUG = OmniboxFeatures.sDiagInputConnection.getValue();
 
     // A pattern that matches strings consisting of English and European character sets, numbers,
     // punctuations, and a white space.
@@ -74,7 +59,6 @@ public class SpannableAutocompleteEditTextModel implements AutocompleteEditTextM
     private AutocompleteInputConnection mInputConnection;
     private boolean mLastEditWasTyping = true;
     private boolean mIgnoreTextChangeFromAutocomplete = true;
-    private boolean mLayoutDirectionIsLtr = true;
     private int mBatchEditNestCount;
     private int mDeletePostfixOnNextBeginImeCommand;
 
@@ -116,28 +100,13 @@ public class SpannableAutocompleteEditTextModel implements AutocompleteEditTextM
             return null;
         }
         if (DEBUG) Log.i(TAG, "onCreateInputConnection");
-        mInputConnection = new AutocompleteInputConnection();
+        mInputConnection = new AutocompleteInputConnection(this);
         mInputConnection.setTarget(inputConnection);
         return mInputConnection;
     }
 
     public void setInputConnectionForTesting(AutocompleteInputConnection connection) {
         mInputConnection = connection;
-    }
-
-    /**
-     * @param editable The editable.
-     * @return Debug string for the given {@Editable}.
-     */
-    private static String getEditableDebugString(Editable editable) {
-        return String.format(
-                Locale.US,
-                "Editable {[%s] SEL[%d %d] COM[%d %d]}",
-                editable.toString(),
-                Selection.getSelectionStart(editable),
-                Selection.getSelectionEnd(editable),
-                BaseInputConnection.getComposingSpanStart(editable),
-                BaseInputConnection.getComposingSpanEnd(editable));
     }
 
     private void sendAccessibilityEventForUserTextChange(
@@ -208,7 +177,8 @@ public class SpannableAutocompleteEditTextModel implements AutocompleteEditTextM
         sendAccessibilityEventForAppendingAutocomplete(mCurrentState);
     }
 
-    private void notifyAutocompleteTextStateChanged() {
+    @Override
+    public void notifyAutocompleteTextStateChanged() {
         if (DEBUG) {
             Log.i(
                     TAG,
@@ -245,7 +215,8 @@ public class SpannableAutocompleteEditTextModel implements AutocompleteEditTextM
         mDelegate.onAutocompleteTextStateChanged(/* updateDisplay= */ false);
     }
 
-    private void clearAutocompleteText() {
+    @Override
+    public void clearAutocompleteText() {
         if (DEBUG) Log.i(TAG, "clearAutocomplete");
         mPreviouslySetState.clearAutocompleteText();
         mCurrentState.clearAutocompleteText();
@@ -259,7 +230,7 @@ public class SpannableAutocompleteEditTextModel implements AutocompleteEditTextM
             mInputConnection.onBeginImeCommand();
             mInputConnection.onEndImeCommand();
         } else {
-            mSpanCursorController.removeSpan();
+            mSpanCursorController.removeAutocompleteSpan();
             notifyAutocompleteTextStateChanged();
         }
     }
@@ -301,12 +272,14 @@ public class SpannableAutocompleteEditTextModel implements AutocompleteEditTextM
                 mInputConnection.commitAutocomplete();
                 mDelegate.setSelection(currentPos, totalLength);
                 retVal = mDelegate.super_dispatchKeyEvent(event);
-            } else if (((event.getKeyCode() == KeyEvent.KEYCODE_TAB)
-                            || (event.getKeyCode() == KeyEvent.KEYCODE_ENTER))
-                    && event.getAction() == KeyEvent.ACTION_DOWN) {
+            } else if (event.getKeyCode() == KeyEvent.KEYCODE_TAB) {
                 mInputConnection.commitAutocomplete();
                 retVal = true;
             } else {
+                // It might make sense to commit the autocomplete text here but the
+                // AutocompleteMediator queries us via getTextWithAutocomplete() so it's included
+                // either way. Avoiding the extra commit eliminates a brief cursor flash at the end
+                // of the autocomplete suggestion.
                 retVal = mDelegate.super_dispatchKeyEvent(event);
             }
         } else {
@@ -341,7 +314,7 @@ public class SpannableAutocompleteEditTextModel implements AutocompleteEditTextM
         if (DEBUG) Log.i(TAG, "onSelectionChanged [%d,%d]", selStart, selEnd);
         if (mCurrentState.getSelStart() == selStart && mCurrentState.getSelEnd() == selEnd) return;
 
-        // Do not users to select the space between additional texts.
+        // Do not allow users to select the space between additional texts.
         int maxLength =
                 mCurrentState.getUserText().length()
                         + mCurrentState.getAutocompleteText().map(t -> t.length()).orElse(0);
@@ -482,7 +455,8 @@ public class SpannableAutocompleteEditTextModel implements AutocompleteEditTextM
                 && !pkgName.contains(".iwnn"); // crbug.com/758443
     }
 
-    private boolean shouldFinishCompositionOnDeletion() {
+    @Override
+    public boolean shouldFinishCompositionOnDeletion() {
         // crbug.com/758443, crbug.com/766888: Japanese keyboard does not finish composition when we
         // restore the deleted text, and later typing will make Japanese keyboard move before the
         // restored character. Most keyboards accept finishComposingText and update their internal
@@ -520,7 +494,8 @@ public class SpannableAutocompleteEditTextModel implements AutocompleteEditTextM
         return mInputConnection;
     }
 
-    private void updateSelectionForTesting() {
+    @Override
+    public void updateSelectionForTesting() {
         int selStart = mDelegate.getSelectionStart();
         int selEnd = mDelegate.getSelectionEnd();
         if (selStart == mLastUpdateSelStart && selEnd == mLastUpdateSelEnd) return;
@@ -535,454 +510,67 @@ public class SpannableAutocompleteEditTextModel implements AutocompleteEditTextM
         return mDelegateShouldIgnoreAccessibilityEvents;
     }
 
-    @Override
-    public void setLayoutDirectionIsLtr(boolean isLtr) {
-        mLayoutDirectionIsLtr = isLtr;
-    }
-
     @VisibleForTesting
     public AutocompleteState getCurrentAutocompleteState() {
         return mCurrentState;
     }
 
-    /**
-     * A class to set and remove, or do other operations on Span and SpannableString of autocomplete
-     * text that will be appended to the user text. In addition, cursor will be hidden whenever we
-     * are showing span to the user.
-     */
-    private static class SpanCursorController {
-        private final @NonNull Delegate mDelegate;
-        private final @NonNull BackgroundColorSpan mAutocompleteBgColorSpan;
-        private final @NonNull ForegroundColorSpan mAdditionalTextFgColorSpan;
-
-        public SpanCursorController(Delegate delegate, Context context) {
-            mDelegate = delegate;
-            mAutocompleteBgColorSpan = new BackgroundColorSpan(mDelegate.getHighlightColor());
-            mAdditionalTextFgColorSpan =
-                    new ForegroundColorSpan(
-                            OmniboxResourceProvider.getAdditionalTextColor(context));
-        }
-
-        public void setSpan(AutocompleteState state) {
-            int sel = state.getSelStart();
-
-            Editable editable = mDelegate.getEditableText();
-
-            if (state.getAutocompleteText().isPresent()) {
-                SpannableString spanString = new SpannableString(state.getAutocompleteText().get());
-                // The flag here helps make sure that span does not get spill to other part of the
-                // text.
-                spanString.setSpan(
-                        mAutocompleteBgColorSpan,
-                        0,
-                        state.getAutocompleteText().map(t -> t.length()).orElse(0),
-                        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-                editable.append(spanString);
-            }
-
-            if (state.getAdditionalText().isPresent()
-                    && OmniboxFeatures.shouldShowRichInlineAutocompleteUrl(
-                            state.getUserText().length())) {
-                String additionalText = " - " + state.getAdditionalText().get();
-                SpannableString additionalTextSpanString = new SpannableString(additionalText);
-                additionalTextSpanString.setSpan(
-                        mAdditionalTextFgColorSpan,
-                        0,
-                        additionalText.length(),
-                        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-                editable.append(additionalTextSpanString);
-            }
-
-            // Keep the original selection before adding spannable string.
-            Selection.setSelection(editable, sel, sel);
-            setCursorVisible(false);
-            if (DEBUG) Log.i(TAG, "setSpan: " + getEditableDebugString(editable));
-        }
-
-        private void setCursorVisible(boolean visible) {
-            if (mDelegate.isFocused()) mDelegate.setCursorVisible(visible);
-        }
-
-        private int getSpanIndex(Editable editable) {
-            if (editable == null) return -1;
-            // returns -1 if mAutocompleteBgColorSpan is not attached
-            return editable.getSpanStart(mAutocompleteBgColorSpan);
-        }
-
-        public void reset() {
-            setCursorVisible(true);
-            Editable editable = mDelegate.getEditableText();
-            int idx = getSpanIndex(editable);
-            if (idx != -1) {
-                editable.removeSpan(mAutocompleteBgColorSpan);
-            }
-        }
-
-        public boolean removeSpan() {
-            setCursorVisible(true);
-            Editable editable = mDelegate.getEditableText();
-            int idx = getSpanIndex(editable);
-            if (idx == -1) return false;
-            if (DEBUG) Log.i(TAG, "removeSpan IDX[%d]", idx);
-            editable.removeSpan(mAutocompleteBgColorSpan);
-            editable.delete(idx, editable.length());
-            if (DEBUG) {
-                Log.i(TAG, "removeSpan - after removal: " + getEditableDebugString(editable));
-            }
-            return true;
-        }
-
-        public void commitSpan() {
-            mDelegate.getEditableText().removeSpan(mAutocompleteBgColorSpan);
-            setCursorVisible(true);
-        }
-
-        public void reflectTextUpdateInState(AutocompleteState state, CharSequence text) {
-            if (text instanceof Editable) {
-                Editable editable = (Editable) text;
-                int idx = getSpanIndex(editable);
-                if (idx != -1) {
-                    // We do not set autocomplete text here as model should solely control it.
-                    state.setUserText(editable.subSequence(0, idx).toString());
-                    return;
-                }
-            }
-            state.setUserText(text.toString());
-        }
+    // ============================================================================================
+    // AutocompleteEditTextModelBase.InputDelegate
+    // ============================================================================================
+    //
+    @Override
+    public boolean isInBatchEdit() {
+        return mBatchEditNestCount > 0;
     }
 
-    @VisibleForTesting
-    public class AutocompleteInputConnection extends InputConnectionWrapper {
-        private final AutocompleteState mPreBatchEditState;
+    @Override
+    public boolean isInFirstBatchEdit() {
+        return mBatchEditNestCount == 1;
+    }
 
-        public AutocompleteInputConnection() {
-            super(null, true);
-            mPreBatchEditState = new AutocompleteState(mCurrentState);
-        }
+    @Override
+    public void incrementBatchEditCount() {
+        ++mBatchEditNestCount;
+    }
 
-        private boolean incrementBatchEditCount() {
-            ++mBatchEditNestCount;
-            // After the outermost super.beginBatchEdit(), EditText will stop selection change
-            // update to the IME app.
-            return super.beginBatchEdit();
-        }
+    @Override
+    public void decrementBatchEditCount() {
+        --mBatchEditNestCount;
+    }
 
-        private boolean decrementBatchEditCount() {
-            --mBatchEditNestCount;
-            boolean retVal = super.endBatchEdit();
-            if (mBatchEditNestCount == 0) {
-                // At the outermost super.endBatchEdit(), EditText will resume selection change
-                // update to the IME app.
-                updateSelectionForTesting();
-            }
-            return retVal;
-        }
+    @Override
+    public AutocompleteState getCurrentState() {
+        return mCurrentState;
+    }
 
-        public void commitAutocomplete() {
-            if (DEBUG) Log.i(TAG, "commitAutocomplete");
-            if (!hasAutocomplete()) return;
+    @Override
+    public AutocompleteState getPreviouslySetState() {
+        return mPreviouslySetState;
+    }
 
-            String autocompleteText = mCurrentState.getAutocompleteText().get();
+    @Override
+    public SpanCursorController getSpanCursorController() {
+        return mSpanCursorController;
+    }
 
-            mCurrentState.commitAutocompleteText();
-            // Invalidate mPreviouslySetState.
-            mPreviouslySetState.copyFrom(mCurrentState);
-            mLastEditWasTyping = false;
+    @Override
+    public void setLastEditWasTyping(boolean wasTyping) {
+        mLastEditWasTyping = wasTyping;
+    }
 
-            if (mBatchEditNestCount == 0) {
-                incrementBatchEditCount(); // avoids additional notifyAutocompleteTextStateChanged()
-                mSpanCursorController.commitSpan();
-                decrementBatchEditCount();
-            } else {
-                // We have already removed span in the onBeginImeCommand(), just append the text.
-                mDelegate.append(autocompleteText);
-            }
-        }
+    @Override
+    public Delegate getAutocompleteEditTextModelBaseDelegate() {
+        return mDelegate;
+    }
 
-        @Override
-        public boolean beginBatchEdit() {
-            if (DEBUG) Log.i(TAG, "beginBatchEdit");
-            onBeginImeCommand();
-            incrementBatchEditCount();
-            return onEndImeCommand();
-        }
+    @Override
+    public int getDeletePostfixOnNextBeginImeCommand() {
+        return mDeletePostfixOnNextBeginImeCommand;
+    }
 
-        /**
-         * Always call this at the beginning of any IME command. Compare this with beginBatchEdit()
-         * which is by itself an IME command.
-         *
-         * @return {@code true} if the batch edit is still in progress. {@code false} otherwise.
-         */
-        public boolean onBeginImeCommand() {
-            if (DEBUG) Log.i(TAG, "onBeginImeCommand: " + mBatchEditNestCount);
-            boolean retVal = incrementBatchEditCount();
-            if (mBatchEditNestCount == 1) {
-                mPreBatchEditState.copyFrom(mCurrentState);
-            } else if (mDeletePostfixOnNextBeginImeCommand > 0) {
-                // Note: in languages that rely on character composition, the last incomplete
-                // character may not be recognized as part of the string, but it may still be
-                // accounted for by the mDeletePostfixOnNextBeginImeCommand.
-                // In such case, the text below is actually shorter than the user input, and the
-                // computed string boundaries enter negative index space.
-                int len = mDelegate.getText().length();
-                if (mDeletePostfixOnNextBeginImeCommand > len) {
-                    mDeletePostfixOnNextBeginImeCommand = len;
-                }
-                mDelegate.getText().delete(len - mDeletePostfixOnNextBeginImeCommand, len);
-            }
-            mDeletePostfixOnNextBeginImeCommand = 0;
-            mSpanCursorController.removeSpan();
-            return retVal;
-        }
-
-        private void restoreBackspacedText(String diff) {
-            if (DEBUG) Log.i(TAG, "restoreBackspacedText. diff: " + diff);
-
-            if (mBatchEditNestCount > 0) {
-                // If batch edit hasn't finished, we will restore backspaced text only for visual
-                // effects. However, for internal operations to work correctly, we need to remove
-                // the restored diff at the beginning of next IME operation.
-                mDeletePostfixOnNextBeginImeCommand = diff.length();
-            }
-            if (mBatchEditNestCount == 0) { // only at the outermost batch edit
-                if (shouldFinishCompositionOnDeletion()) super.finishComposingText();
-            }
-            incrementBatchEditCount(); // avoids additional notifyAutocompleteTextStateChanged()
-            Editable editable = mDelegate.getEditableText();
-            editable.append(diff);
-            decrementBatchEditCount();
-        }
-
-        private boolean setAutocompleteSpan() {
-            mSpanCursorController.removeSpan();
-            if (DEBUG) {
-                Log.i(TAG, "setAutocompleteSpan. %s->%s", mPreviouslySetState, mCurrentState);
-            }
-            if (!mCurrentState.isCursorAtEndOfUserText()) return false;
-
-            if (mCurrentState.reuseAutocompleteTextIfPrefixExtension(mPreviouslySetState)) {
-                mSpanCursorController.setSpan(mCurrentState);
-                return true;
-            } else {
-                return false;
-            }
-        }
-
-        @Override
-        public boolean endBatchEdit() {
-            if (DEBUG) Log.i(TAG, "endBatchEdit");
-            onBeginImeCommand();
-            decrementBatchEditCount();
-            return onEndImeCommand();
-        }
-
-        /**
-         * Always call this at the end of an IME command. Compare this with endBatchEdit() which is
-         * by itself an IME command.
-         *
-         * @return {@code true} if the batch edit is still in progress. {@code false} otherwise.
-         */
-        public boolean onEndImeCommand() {
-            if (DEBUG) Log.i(TAG, "onEndImeCommand: " + (mBatchEditNestCount - 1));
-            String diff = mCurrentState.getBackwardDeletedTextFrom(mPreBatchEditState);
-            if (diff != null) {
-                // Update selection first such that keyboard app gets what it expects.
-                boolean retVal = decrementBatchEditCount();
-
-                if (mPreBatchEditState.getAutocompleteText().isPresent()) {
-                    // Undo delete to retain the last character and only remove autocomplete text.
-                    restoreBackspacedText(diff);
-                }
-                mLastEditWasTyping = false;
-                clearAutocompleteText();
-                notifyAutocompleteTextStateChanged();
-                return retVal;
-            }
-            if (!setAutocompleteSpan()) {
-                clearAutocompleteText();
-            }
-            boolean retVal = decrementBatchEditCount();
-            // Simply typed some characters or whole text selection has been overridden.
-            if (mCurrentState.isForwardTypedFrom(mPreBatchEditState)
-                    || (mPreBatchEditState.isWholeUserTextSelected()
-                            && mCurrentState.getUserText().length() > 0
-                            && mCurrentState.isCursorAtEndOfUserText())) {
-                mLastEditWasTyping = true;
-            }
-            notifyAutocompleteTextStateChanged();
-            return retVal;
-        }
-
-        @Override
-        public boolean commitText(CharSequence text, int newCursorPosition) {
-            if (DEBUG) Log.i(TAG, "commitText: " + text);
-            onBeginImeCommand();
-            boolean retVal = super.commitText(text, newCursorPosition);
-            onEndImeCommand();
-            return retVal;
-        }
-
-        @Override
-        public boolean setComposingText(CharSequence text, int newCursorPosition) {
-            if (DEBUG) Log.i(TAG, "setComposingText: " + text);
-            onBeginImeCommand();
-            boolean retVal = super.setComposingText(text, newCursorPosition);
-            onEndImeCommand();
-            return retVal;
-        }
-
-        @Override
-        public boolean setComposingRegion(int start, int end) {
-            if (DEBUG) Log.i(TAG, "setComposingRegion: [%d,%d]", start, end);
-            onBeginImeCommand();
-            boolean retVal = super.setComposingRegion(start, end);
-            onEndImeCommand();
-            return retVal;
-        }
-
-        @Override
-        public boolean finishComposingText() {
-            if (DEBUG) Log.i(TAG, "finishComposingText");
-            onBeginImeCommand();
-            boolean retVal = super.finishComposingText();
-            onEndImeCommand();
-            return retVal;
-        }
-
-        @Override
-        public boolean deleteSurroundingText(final int beforeLength, final int afterLength) {
-            if (DEBUG) Log.i(TAG, "deleteSurroundingText [%d,%d]", beforeLength, afterLength);
-            onBeginImeCommand();
-            boolean retVal = super.deleteSurroundingText(beforeLength, afterLength);
-            onEndImeCommand();
-            return retVal;
-        }
-
-        @Override
-        public boolean setSelection(final int start, final int end) {
-            if (DEBUG) Log.i(TAG, "setSelection [%d,%d]", start, end);
-            onBeginImeCommand();
-            boolean retVal = super.setSelection(start, end);
-            onEndImeCommand();
-            return retVal;
-        }
-
-        @Override
-        public boolean performEditorAction(final int editorAction) {
-            if (DEBUG) Log.i(TAG, "performEditorAction: " + editorAction);
-            onBeginImeCommand();
-            commitAutocomplete();
-            boolean retVal = super.performEditorAction(editorAction);
-            onEndImeCommand();
-            return retVal;
-        }
-
-        @Override
-        public boolean sendKeyEvent(final KeyEvent event) {
-            if (DEBUG) Log.i(TAG, "sendKeyEvent: " + event.getKeyCode());
-            onBeginImeCommand();
-            boolean retVal = super.sendKeyEvent(event);
-            onEndImeCommand();
-            return retVal;
-        }
-
-        @Override
-        public ExtractedText getExtractedText(final ExtractedTextRequest request, final int flags) {
-            if (DEBUG) Log.i(TAG, "getExtractedText");
-            onBeginImeCommand();
-            ExtractedText retVal = super.getExtractedText(request, flags);
-            onEndImeCommand();
-            return retVal;
-        }
-
-        @Override
-        public CharSequence getTextAfterCursor(final int n, final int flags) {
-            if (DEBUG) Log.i(TAG, "getTextAfterCursor");
-            onBeginImeCommand();
-            CharSequence retVal = super.getTextAfterCursor(n, flags);
-            onEndImeCommand();
-            return retVal;
-        }
-
-        @Override
-        public CharSequence getTextBeforeCursor(final int n, final int flags) {
-            if (DEBUG) Log.i(TAG, "getTextBeforeCursor");
-            onBeginImeCommand();
-            CharSequence retVal = super.getTextBeforeCursor(n, flags);
-            onEndImeCommand();
-            return retVal;
-        }
-
-        @Override
-        public CharSequence getSelectedText(final int flags) {
-            if (DEBUG) Log.i(TAG, "getSelectedText");
-            onBeginImeCommand();
-            CharSequence retVal = super.getSelectedText(flags);
-            onEndImeCommand();
-            return retVal;
-        }
-
-        @Override
-        public boolean commitCompletion(CompletionInfo text) {
-            if (DEBUG) Log.i(TAG, "commitCompletion");
-            onBeginImeCommand();
-            boolean retVal = super.commitCompletion(text);
-            onEndImeCommand();
-            return retVal;
-        }
-
-        @Override
-        public boolean commitContent(InputContentInfo inputContentInfo, int flags, Bundle opts) {
-            if (DEBUG) Log.i(TAG, "commitContent");
-            onBeginImeCommand();
-            boolean retVal = super.commitContent(inputContentInfo, flags, opts);
-            onEndImeCommand();
-            return retVal;
-        }
-
-        @Override
-        public boolean commitCorrection(CorrectionInfo correctionInfo) {
-            if (DEBUG) Log.i(TAG, "commitCorrection");
-            onBeginImeCommand();
-            boolean retVal = super.commitCorrection(correctionInfo);
-            onEndImeCommand();
-            return retVal;
-        }
-
-        @Override
-        public boolean deleteSurroundingTextInCodePoints(int beforeLength, int afterLength) {
-            if (DEBUG) Log.i(TAG, "deleteSurroundingTextInCodePoints");
-            onBeginImeCommand();
-            boolean retVal = super.deleteSurroundingTextInCodePoints(beforeLength, afterLength);
-            onEndImeCommand();
-            return retVal;
-        }
-
-        @Override
-        public int getCursorCapsMode(int reqModes) {
-            if (DEBUG) Log.i(TAG, "getCursorCapsMode");
-            onBeginImeCommand();
-            int retVal = super.getCursorCapsMode(reqModes);
-            onEndImeCommand();
-            return retVal;
-        }
-
-        @Override
-        public boolean requestCursorUpdates(int cursorUpdateMode) {
-            if (DEBUG) Log.i(TAG, "requestCursorUpdates");
-            onBeginImeCommand();
-            boolean retVal = super.requestCursorUpdates(cursorUpdateMode);
-            onEndImeCommand();
-            return retVal;
-        }
-
-        @Override
-        public boolean clearMetaKeyStates(int states) {
-            if (DEBUG) Log.i(TAG, "clearMetaKeyStates");
-            onBeginImeCommand();
-            boolean retVal = super.clearMetaKeyStates(states);
-            onEndImeCommand();
-            return retVal;
-        }
+    @Override
+    public void setDeletePostfixOnNextBeginImeCommand(int postfix) {
+        mDeletePostfixOnNextBeginImeCommand = postfix;
     }
 }

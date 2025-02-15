@@ -40,7 +40,7 @@ export class CrFeedbackButtonsElement extends CrLitElement {
 
   static override get properties() {
     return {
-      selectedOption: {type: String},
+      selectedOption: {type: Number},
       thumbsDownLabel_: {type: String},
       thumbsUpLabel_: {type: String},
       disabled: {type: Boolean},
@@ -76,11 +76,7 @@ export class CrFeedbackButtonsElement extends CrLitElement {
     // Wait for the element's DOM to be updated before dispatching
     // selected-option-changed event.
     await this.updateComplete;
-    this.dispatchEvent(new CustomEvent('selected-option-changed', {
-      bubbles: true,
-      composed: true,
-      detail: {value: this.selectedOption},
-    }));
+    this.fire('selected-option-changed', {value: this.selectedOption});
   }
 
   protected onThumbsDownClick_() {

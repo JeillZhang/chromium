@@ -6,7 +6,9 @@
 
 #include <stddef.h>
 
+#include <algorithm>
 #include <memory>
+#include <optional>
 #include <utility>
 
 #include "base/command_line.h"
@@ -14,7 +16,6 @@
 #include "base/functional/callback.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
-#include "base/ranges/algorithm.h"
 #include "base/task/single_thread_task_runner.h"
 #include "build/build_config.h"
 #include "components/named_mojo_ipc_server/connection_info.h"
@@ -22,6 +23,7 @@
 #include "components/named_mojo_ipc_server/named_mojo_ipc_server.h"
 #include "components/webrtc/thread_wrapper.h"
 #include "remoting/base/constants.h"
+#include "remoting/base/local_session_policies_provider.h"
 #include "remoting/base/logging.h"
 #include "remoting/host/desktop_environment.h"
 #include "remoting/host/host_config.h"
@@ -83,7 +85,9 @@ ChromotingHost::ChromotingHost(
     scoped_refptr<protocol::TransportContext> transport_context,
     scoped_refptr<base::SingleThreadTaskRunner> audio_task_runner,
     scoped_refptr<base::SingleThreadTaskRunner> video_encode_task_runner,
-    const DesktopEnvironmentOptions& options)
+    const DesktopEnvironmentOptions& options,
+    const SessionPoliciesValidator& per_session_policies_validator,
+    const LocalSessionPoliciesProvider* local_session_policies_provider)
     : desktop_environment_factory_(desktop_environment_factory),
       session_manager_(std::move(session_manager)),
       transport_context_(transport_context),
@@ -91,7 +95,9 @@ ChromotingHost::ChromotingHost(
       video_encode_task_runner_(video_encode_task_runner),
       status_monitor_(new HostStatusMonitor()),
       login_backoff_(&kDefaultBackoffPolicy),
-      desktop_environment_options_(options) {
+      desktop_environment_options_(options),
+      local_session_policies_provider_(local_session_policies_provider),
+      per_session_policies_validator_(per_session_policies_validator) {
   webrtc::ThreadWrapper::EnsureForCurrentMessageLoop();
 }
 
@@ -156,11 +162,6 @@ void ChromotingHost::SetAuthenticatorFactory(
     std::unique_ptr<protocol::AuthenticatorFactory> authenticator_factory) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   session_manager_->set_authenticator_factory(std::move(authenticator_factory));
-}
-
-void ChromotingHost::SetMaximumSessionDuration(
-    const base::TimeDelta& max_session_duration) {
-  max_session_duration_ = max_session_duration;
 }
 
 ////////////////////////////////////////////////////////////////////////////
@@ -228,8 +229,8 @@ void ChromotingHost::OnSessionAuthenticationFailed(ClientSession* client) {
 void ChromotingHost::OnSessionClosed(ClientSession* client) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  auto it = base::ranges::find(clients_, client,
-                               &std::unique_ptr<ClientSession>::get);
+  auto it =
+      std::ranges::find(clients_, client, &std::unique_ptr<ClientSession>::get);
   CHECK(it != clients_.end());
 
   bool was_authenticated = client->is_authenticated();
@@ -251,6 +252,17 @@ void ChromotingHost::OnSessionRouteChange(
   for (auto& observer : status_monitor_->observers()) {
     observer.OnClientRouteChange(session->client_jid(), channel_name, route);
   }
+}
+
+std::optional<ErrorCode> ChromotingHost::OnSessionPoliciesReceived(
+    const SessionPolicies& policies) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+  if (!per_session_policies_validator_) {
+    return std::nullopt;
+  }
+
+  return per_session_policies_validator_.Run(policies);
 }
 
 void ChromotingHost::BindSessionServices(
@@ -319,8 +331,8 @@ void ChromotingHost::OnIncomingSession(
   }
   clients_.push_back(std::make_unique<ClientSession>(
       this, std::move(connection), desktop_environment_factory_,
-      desktop_environment_options_, max_session_duration_, pairing_registry_,
-      extension_ptrs));
+      desktop_environment_options_, pairing_registry_, extension_ptrs,
+      local_session_policies_provider_));
 }
 
 ClientSession* ChromotingHost::GetConnectedClientSession() const {

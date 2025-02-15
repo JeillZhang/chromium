@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import {str} from '../../../../common/js/translations.js';
 import {isNullOrUndefined} from '../../../../common/js/util.js';
 import {VolumeType} from '../../../../common/js/volume_manager_types.js';
 
@@ -38,40 +39,29 @@ export class FilesMigratingToCloudBanner extends WarningBanner {
   }
 
   /**
-   * The context contains the current default download location, which is
-   * usually My Files/Downloads. When Skyvault is enabled, it should be Google
-   * Drive or OneDrive.
+   * The context contains the CloudProvider set as SkyVault migration
+   * destination.
    */
   override onFilteredContext(context: {
-    defaultLocation: chrome.fileManagerPrivate.DefaultLocation,
+    cloudProvider: chrome.fileManagerPrivate.CloudProvider,
   }) {
     if (isNullOrUndefined(context) ||
-        isNullOrUndefined(context.defaultLocation)) {
+        isNullOrUndefined(context.cloudProvider)) {
       console.warn('Context not supplied or defaultLocation key missing.');
       return;
     }
     const text =
-        this.shadowRoot!.querySelector('span[slot="text"]')! as HTMLSpanElement;
+        this.shadowRoot!.querySelector<HTMLSpanElement>('span[slot="text"]')!;
 
-    function getMessage(driveLabel: string): string {
-      // TODO(b/334511998): Replace with i18n strings.
-      return 'Your administrator has restricted the use of local storage. All ' +
-          `of your files are being automatically migrated to ${driveLabel}. ` +
-          'You can modify these files once the transfer has been completed.';
-    }
-
-    switch (context.defaultLocation) {
-      case chrome.fileManagerPrivate.DefaultLocation.GOOGLE_DRIVE:
-        text.innerText = getMessage('Google Drive');
+    switch (context.cloudProvider) {
+      case chrome.fileManagerPrivate.CloudProvider.GOOGLE_DRIVE:
+        text.innerText = str('SKYVAULT_MIGRATION_BANNER_GOOGLE_DRIVE');
         return;
-      case chrome.fileManagerPrivate.DefaultLocation.ONEDRIVE:
-        text.innerText = getMessage('Microsoft OneDrive');
+      case chrome.fileManagerPrivate.CloudProvider.ONEDRIVE:
+        text.innerText = str('SKYVAULT_MIGRATION_BANNER_ONEDRIVE');
         return;
-      case chrome.fileManagerPrivate.DefaultLocation.MY_FILES:
-      default:
-        console.warn(
-            `Unsupported default location ${context.defaultLocation}.`);
-        return;
+      case chrome.fileManagerPrivate.CloudProvider.NOT_SPECIFIED:
+        console.warn(`Cloud provider must be specified.`);
     }
   }
 

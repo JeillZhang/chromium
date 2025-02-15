@@ -47,6 +47,8 @@ std::string ToUTCString(const base::Time& time) {
                                                 icu::TimeZone::getGMT());
 }
 
+using USDStatus = policy::AutoEnrollmentTypeChecker::USDStatus;
+
 }  // namespace
 
 namespace policy {
@@ -57,15 +59,21 @@ class AutoEnrollmentTypeCheckerTest : public testing::Test {
   ~AutoEnrollmentTypeCheckerTest() override = default;
 
  protected:
-  void SetUpNonchromeDevice() {
-    fake_statistics_provider_.SetMachineStatistic(
-        ash::system::kFirmwareTypeKey,
-        ash::system::kFirmwareTypeValueNonchrome);
+  void SetUp() override {
+    // TODO(b/353731379): Remove when removing legacy state determination code.
+    command_line_.GetProcessCommandLine()->AppendSwitchASCII(
+        ash::switches::kEnterpriseEnableUnifiedStateDetermination,
+        AutoEnrollmentTypeChecker::kUnifiedStateDeterminationNever);
   }
 
   void SetUpFlexDeviceWithFREOnFlexEnabled() {
     enrollment_test_helper_.SetUpFlexDevice();
     enrollment_test_helper_.EnableFREOnFlex();
+  }
+
+  void SetUpFlexDeviceWithFREOnFlexDisabled() {
+    enrollment_test_helper_.SetUpFlexDevice();
+    enrollment_test_helper_.DisableFREOnFlex();
   }
 
   void SetupFREEnabled() {
@@ -137,8 +145,7 @@ class AutoEnrollmentTypeCheckerTest : public testing::Test {
     fake_statistics_provider_.SetMachineStatistic(ash::system::kRlzBrandCodeKey,
                                                   kBrandCodeValue);
     fake_statistics_provider_.SetMachineStatistic(
-        ash::system::kEnterpriseManagementEmbargoEndDateKey,
-        kMalformedEmbargoDateValue);
+        ash::system::kRlzEmbargoEndDateKey, kMalformedEmbargoDateValue);
   }
 
 #if BUILDFLAG(GOOGLE_CHROME_BRANDING)
@@ -360,7 +367,7 @@ TEST_F(AutoEnrollmentTypeCheckerTest,
        FRERequiredOnFlexEnabledByCommandLineSwitch) {
   SetUpFlexDeviceWithFREOnFlexEnabled();
 
-  EXPECT_TRUE(AutoEnrollmentTypeChecker::IsFREEnabled());
+  EXPECT_EQ(AutoEnrollmentTypeChecker::IsFREEnabled(), is_google_branded_);
   EXPECT_EQ(AutoEnrollmentTypeChecker::GetFRERequirementAccordingToVPD(
                 &fake_statistics_provider_),
             AutoEnrollmentTypeChecker::FRERequirement::kDisabled);
@@ -377,13 +384,29 @@ TEST_F(AutoEnrollmentTypeCheckerTest,
 }
 
 TEST_F(AutoEnrollmentTypeCheckerTest,
-       FRERequiredOnFlexNotEnabledByCommandLineSwitch) {
-  enrollment_test_helper_.SetUpFlexDevice();
+       FRERequiredOnFlexFREOnFlexDisabledByCommandLineSwitch) {
+  SetUpFlexDeviceWithFREOnFlexDisabled();
 
   EXPECT_FALSE(AutoEnrollmentTypeChecker::IsFREEnabled());
   EXPECT_EQ(AutoEnrollmentTypeChecker::GetFRERequirementAccordingToVPD(
                 &fake_statistics_provider_),
             AutoEnrollmentTypeChecker::FRERequirement::kDisabled);
+}
+
+// TODO(b/353731379): Remove when removing legacy state determination code.
+TEST_F(AutoEnrollmentTypeCheckerTest,
+       FRERequiredOnFlexFREOnFlexNoCommandLineSwitch) {
+  enrollment_test_helper_.SetUpFlexDevice();
+  command_line_.GetProcessCommandLine()->AppendSwitchASCII(
+      ash::switches::kEnterpriseEnableUnifiedStateDetermination,
+      AutoEnrollmentTypeChecker::kUnifiedStateDeterminationAlways);
+
+  EXPECT_EQ(AutoEnrollmentTypeChecker::IsFREEnabled(), is_google_branded_);
+  EXPECT_EQ(AutoEnrollmentTypeChecker::GetFRERequirementAccordingToVPD(
+                &fake_statistics_provider_),
+            is_google_branded_
+                ? AutoEnrollmentTypeChecker::FRERequirement::kExplicitlyRequired
+                : AutoEnrollmentTypeChecker::FRERequirement::kDisabled);
 }
 
 TEST_F(AutoEnrollmentTypeCheckerTest,
@@ -394,6 +417,9 @@ TEST_F(AutoEnrollmentTypeCheckerTest,
                                                 kSerialNumberValue);
   fake_statistics_provider_.SetMachineStatistic(ash::system::kRlzBrandCodeKey,
                                                 kBrandCodeValue);
+  command_line_.GetProcessCommandLine()->AppendSwitchASCII(
+      ash::switches::kEnterpriseEnableUnifiedStateDetermination,
+      AutoEnrollmentTypeChecker::kUnifiedStateDeterminationNever);
 
   EXPECT_EQ(AutoEnrollmentTypeChecker::IsInitialEnrollmentEnabled(),
             is_google_branded_);
@@ -412,6 +438,7 @@ TEST_F(AutoEnrollmentTypeCheckerTest,
 // device, auto_enrollment_type_checker should ignore it and continue initial
 // state determination as normal (and the token won't be included in the state
 // retrieval request).
+// TODO(b/353731379): Remove when removing legacy state determination code.
 TEST_F(AutoEnrollmentTypeCheckerTest,
        DetermineAutoEnrollmentCheckTypeNotOnFlexWhenTokenPresent) {
   enrollment_test_helper_.SetUpEnrollmentTokenConfig();
@@ -419,6 +446,9 @@ TEST_F(AutoEnrollmentTypeCheckerTest,
                                                 kSerialNumberValue);
   fake_statistics_provider_.SetMachineStatistic(ash::system::kRlzBrandCodeKey,
                                                 kBrandCodeValue);
+  command_line_.GetProcessCommandLine()->AppendSwitchASCII(
+      ash::switches::kEnterpriseEnableUnifiedStateDetermination,
+      AutoEnrollmentTypeChecker::kUnifiedStateDeterminationNever);
 
   EXPECT_EQ(AutoEnrollmentTypeChecker::IsInitialEnrollmentEnabled(),
             is_google_branded_);
@@ -434,6 +464,7 @@ TEST_F(AutoEnrollmentTypeCheckerTest,
   EXPECT_EQ(check_type, expected_check_type);
 }
 
+// TODO(b/353731379): Remove when removing legacy state determination code.
 TEST_F(AutoEnrollmentTypeCheckerTest,
        DetermineAutoEnrollmentCheckTypeOnFlexWithoutTokenPresent) {
   enrollment_test_helper_.SetUpFlexDevice();
@@ -441,6 +472,9 @@ TEST_F(AutoEnrollmentTypeCheckerTest,
                                                 kSerialNumberValue);
   fake_statistics_provider_.SetMachineStatistic(ash::system::kRlzBrandCodeKey,
                                                 kBrandCodeValue);
+  command_line_.GetProcessCommandLine()->AppendSwitchASCII(
+      ash::switches::kEnterpriseEnableUnifiedStateDetermination,
+      AutoEnrollmentTypeChecker::kUnifiedStateDeterminationNever);
 
   EXPECT_EQ(AutoEnrollmentTypeChecker::IsInitialEnrollmentEnabled(),
             is_google_branded_);
@@ -451,6 +485,7 @@ TEST_F(AutoEnrollmentTypeCheckerTest,
   EXPECT_EQ(check_type, AutoEnrollmentTypeChecker::CheckType::kNone);
 }
 
+// TODO(b/353731379): Remove when removing legacy state determination code.
 TEST_F(AutoEnrollmentTypeCheckerTest,
        DetermineAutoEnrollmentCheckTypeOnFlexWithEmptyToken) {
   // TODO(b/331285209): Change the JSON key to "enrollmentToken" along with the
@@ -465,6 +500,9 @@ TEST_F(AutoEnrollmentTypeCheckerTest,
                                                 kSerialNumberValue);
   fake_statistics_provider_.SetMachineStatistic(ash::system::kRlzBrandCodeKey,
                                                 kBrandCodeValue);
+  command_line_.GetProcessCommandLine()->AppendSwitchASCII(
+      ash::switches::kEnterpriseEnableUnifiedStateDetermination,
+      AutoEnrollmentTypeChecker::kUnifiedStateDeterminationNever);
 
   EXPECT_EQ(AutoEnrollmentTypeChecker::IsInitialEnrollmentEnabled(),
             is_google_branded_);
@@ -475,200 +513,75 @@ TEST_F(AutoEnrollmentTypeCheckerTest,
   EXPECT_EQ(check_type, AutoEnrollmentTypeChecker::CheckType::kNone);
 }
 
-class AutoEnrollmentTypeCheckerInitializationTest
+class AutoEnrollmentTypeCheckerUSDStatusTest
     : public AutoEnrollmentTypeCheckerTest {
  public:
   void SetUp() override {
     AutoEnrollmentTypeCheckerTest::SetUp();
-    AutoEnrollmentTypeChecker::
-        ClearUnifiedStateDeterminationKillSwitchForTesting();
-    test_shared_loader_factory_ = test_url_loader_factory_.GetSafeWeakWrapper();
+    // TODO(b/353731379): Remove when removing legacy state determination code.
+    command_line_.GetProcessCommandLine()->RemoveSwitch(
+        ash::switches::kEnterpriseEnableUnifiedStateDetermination);
   }
 
  protected:
-  network::TestURLLoaderFactory test_url_loader_factory_;
-  scoped_refptr<network::WeakWrapperSharedURLLoaderFactory>
-      test_shared_loader_factory_;
-
- private:
-  base::test::SingleThreadTaskEnvironment task_environment_;
+  base::HistogramTester histograms_;
 };
 
-TEST_F(AutoEnrollmentTypeCheckerInitializationTest, Request) {
-  base::test::TestFuture<void> future;
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
+TEST_F(AutoEnrollmentTypeCheckerUSDStatusTest, Default) {
+  AutoEnrollmentTypeChecker::IsUnifiedStateDeterminationEnabled();
 
-  AutoEnrollmentTypeChecker::Initialize(test_shared_loader_factory_,
-                                        future.GetCallback());
-
-  ASSERT_EQ(test_url_loader_factory_.NumPending(), 1);
-  auto request = test_url_loader_factory_.GetPendingRequest(0)->request;
-  EXPECT_EQ(request.url,
-            "https://www.gstatic.com/chromeos-usd-experiment/v1.json");
-  EXPECT_EQ(request.method, "GET");
-  EXPECT_TRUE(request.load_flags & net::LOAD_DISABLE_CACHE);
-  EXPECT_EQ(request.credentials_mode, network::mojom::CredentialsMode::kOmit);
+  histograms_.ExpectUniqueSample(kUMAStateDeterminationStatus,
+                                 USDStatus::kEnabledOnOfficialGoogleChrome, 1);
 }
 
-TEST_F(AutoEnrollmentTypeCheckerInitializationTest, RetriesAllErrors) {
-  base::test::TestFuture<void> future;
-  network::URLLoaderCompletionStatus status;
+TEST_F(AutoEnrollmentTypeCheckerUSDStatusTest, FlexDevice) {
+  enrollment_test_helper_.SetUpFlexDevice();
 
-  AutoEnrollmentTypeChecker::Initialize(test_shared_loader_factory_,
-                                        future.GetCallback());
+  AutoEnrollmentTypeChecker::IsUnifiedStateDeterminationEnabled();
 
-  // Network changed.
-  ASSERT_EQ(test_url_loader_factory_.NumPending(), 1);
-  status.error_code = net::ERR_NETWORK_CHANGED;
-  test_url_loader_factory_.SimulateResponseForPendingRequest(
-      GURL("https://www.gstatic.com/chromeos-usd-experiment/v1.json"), status,
-      network::mojom::URLResponseHead::New(), "");
-
-  // DNS failed.
-  ASSERT_EQ(test_url_loader_factory_.NumPending(), 1);
-  status.error_code = net::ERR_TIMED_OUT;
-  test_url_loader_factory_.SimulateResponseForPendingRequest(
-      GURL("https://www.gstatic.com/chromeos-usd-experiment/v1.json"), status,
-      network::mojom::URLResponseHead::New(), "");
-
-  // HTTP 5xx error.
-  ASSERT_EQ(test_url_loader_factory_.NumPending(), 1);
-  test_url_loader_factory_.SimulateResponseForPendingRequest(
-      "https://www.gstatic.com/chromeos-usd-experiment/v1.json", "",
-      net::HTTP_SERVICE_UNAVAILABLE);
-
-  EXPECT_EQ(test_url_loader_factory_.NumPending(), 1);
-  EXPECT_FALSE(future.IsReady());
-  EXPECT_FALSE(AutoEnrollmentTypeChecker::Initialized());
+  histograms_.ExpectUniqueSample(kUMAStateDeterminationStatus,
+                                 USDStatus::kEnabledOnOfficialGoogleFlex, 1);
 }
 
-TEST_F(AutoEnrollmentTypeCheckerInitializationTest, UmaHistograms) {
-  base::HistogramTester histograms;
-  base::test::TestFuture<void> future;
-  network::URLLoaderCompletionStatus status;
+TEST_F(AutoEnrollmentTypeCheckerUSDStatusTest, AlwaysSwitch) {
+  command_line_.GetProcessCommandLine()->AppendSwitchASCII(
+      ash::switches::kEnterpriseEnableUnifiedStateDetermination,
+      AutoEnrollmentTypeChecker::kUnifiedStateDeterminationAlways);
 
-  AutoEnrollmentTypeChecker::Initialize(test_shared_loader_factory_,
-                                        future.GetCallback());
+  AutoEnrollmentTypeChecker::IsUnifiedStateDeterminationEnabled();
 
-  status.error_code = net::ERR_NETWORK_CHANGED;
-  test_url_loader_factory_.SimulateResponseForPendingRequest(
-      GURL("https://www.gstatic.com/chromeos-usd-experiment/v1.json"), status,
-      network::mojom::URLResponseHead::New(), "");
-  test_url_loader_factory_.AddResponse(
-      "https://www.gstatic.com/chromeos-usd-experiment/v1.json",
-      R"({"disable_up_to_version": 1})", net::HTTP_OK);
-
-  ASSERT_TRUE(future.Wait());
-  histograms.ExpectTotalCount(
-      kUMAStateDeterminationKillSwitchFetchNetworkErrorCode, 2);
-  histograms.ExpectBucketCount(
-      kUMAStateDeterminationKillSwitchFetchNetworkErrorCode,
-      -net::ERR_NETWORK_CHANGED, 1);
-  histograms.ExpectBucketCount(
-      kUMAStateDeterminationKillSwitchFetchNetworkErrorCode, -net::OK, 1);
-  histograms.ExpectUniqueSample(kUMAStateDeterminationKillSwitchFetchNumTries,
-                                2, 1);
+  histograms_.ExpectUniqueSample(kUMAStateDeterminationStatus,
+                                 USDStatus::kEnabledViaAlwaysSwitch, 1);
 }
 
-TEST_F(AutoEnrollmentTypeCheckerInitializationTest, KilledBeforeInitStarted) {
-  EXPECT_FALSE(AutoEnrollmentTypeChecker::Initialized());
-  EXPECT_TRUE(AutoEnrollmentTypeChecker::
-                  IsUnifiedStateDeterminationDisabledByKillSwitchForTesting());
+TEST_F(AutoEnrollmentTypeCheckerUSDStatusTest, NeverSwitch) {
+  command_line_.GetProcessCommandLine()->AppendSwitchASCII(
+      ash::switches::kEnterpriseEnableUnifiedStateDetermination,
+      AutoEnrollmentTypeChecker::kUnifiedStateDeterminationNever);
+
+  AutoEnrollmentTypeChecker::IsUnifiedStateDeterminationEnabled();
+
+  histograms_.ExpectUniqueSample(kUMAStateDeterminationStatus,
+                                 USDStatus::kDisabledViaNeverSwitch, 1);
 }
 
-TEST_F(AutoEnrollmentTypeCheckerInitializationTest, KilledBeforeInitCompleted) {
-  base::test::TestFuture<void> future;
+TEST_F(AutoEnrollmentTypeCheckerUSDStatusTest, NonChrome) {
+  enrollment_test_helper_.SetUpNonchromeDevice();
 
-  AutoEnrollmentTypeChecker::Initialize(test_shared_loader_factory_,
-                                        future.GetCallback());
+  AutoEnrollmentTypeChecker::IsUnifiedStateDeterminationEnabled();
 
-  EXPECT_FALSE(future.IsReady());
-  EXPECT_FALSE(AutoEnrollmentTypeChecker::Initialized());
-  EXPECT_TRUE(AutoEnrollmentTypeChecker::
-                  IsUnifiedStateDeterminationDisabledByKillSwitchForTesting());
+  histograms_.ExpectUniqueSample(kUMAStateDeterminationStatus,
+                                 USDStatus::kDisabledOnNonChromeDevice, 1);
 }
+#else
+TEST_F(AutoEnrollmentTypeCheckerUSDStatusTest, UnbrandedBuild) {
+  AutoEnrollmentTypeChecker::IsUnifiedStateDeterminationEnabled();
 
-TEST_F(AutoEnrollmentTypeCheckerInitializationTest, KilledOnTimeout) {
-  base::test::TestFuture<void> future;
-
-  AutoEnrollmentTypeChecker::Initialize(test_shared_loader_factory_,
-                                        future.GetCallback());
-  network::SimpleURLLoader::SetTimeoutTickClockForTest(nullptr);
-
-  ASSERT_TRUE(future.Wait());
-  EXPECT_TRUE(AutoEnrollmentTypeChecker::Initialized());
-  EXPECT_TRUE(AutoEnrollmentTypeChecker::
-                  IsUnifiedStateDeterminationDisabledByKillSwitchForTesting());
+  histograms_.ExpectUniqueSample(kUMAStateDeterminationStatus,
+                                 USDStatus::kDisabledOnUnbrandedBuild, 1);
 }
-
-TEST_F(AutoEnrollmentTypeCheckerInitializationTest, KilledOnInvalidJSON) {
-  base::test::TestFuture<void> future;
-  test_url_loader_factory_.AddResponse(
-      "https://www.gstatic.com/chromeos-usd-experiment/v1.json", "!!!",
-      net::HTTP_OK);
-
-  AutoEnrollmentTypeChecker::Initialize(test_shared_loader_factory_,
-                                        future.GetCallback());
-
-  ASSERT_TRUE(future.Wait());
-  EXPECT_TRUE(AutoEnrollmentTypeChecker::
-                  IsUnifiedStateDeterminationDisabledByKillSwitchForTesting());
-}
-
-TEST_F(AutoEnrollmentTypeCheckerInitializationTest, KilledOnNonDict) {
-  base::test::TestFuture<void> future;
-  test_url_loader_factory_.AddResponse(
-      "https://www.gstatic.com/chromeos-usd-experiment/v1.json", "42",
-      net::HTTP_OK);
-
-  AutoEnrollmentTypeChecker::Initialize(test_shared_loader_factory_,
-                                        future.GetCallback());
-
-  ASSERT_TRUE(future.Wait());
-  EXPECT_TRUE(AutoEnrollmentTypeChecker::
-                  IsUnifiedStateDeterminationDisabledByKillSwitchForTesting());
-}
-
-TEST_F(AutoEnrollmentTypeCheckerInitializationTest, KilledOnMissingKey) {
-  base::test::TestFuture<void> future;
-  test_url_loader_factory_.AddResponse(
-      "https://www.gstatic.com/chromeos-usd-experiment/v1.json", "{}",
-      net::HTTP_OK);
-
-  AutoEnrollmentTypeChecker::Initialize(test_shared_loader_factory_,
-                                        future.GetCallback());
-
-  ASSERT_TRUE(future.Wait());
-  EXPECT_TRUE(AutoEnrollmentTypeChecker::
-                  IsUnifiedStateDeterminationDisabledByKillSwitchForTesting());
-}
-
-TEST_F(AutoEnrollmentTypeCheckerInitializationTest, KilledVersion) {
-  base::test::TestFuture<void> future;
-  test_url_loader_factory_.AddResponse(
-      "https://www.gstatic.com/chromeos-usd-experiment/v1.json",
-      R"({"disable_up_to_version": 1})", net::HTTP_OK);
-
-  AutoEnrollmentTypeChecker::Initialize(test_shared_loader_factory_,
-                                        future.GetCallback());
-
-  ASSERT_TRUE(future.Wait());
-  EXPECT_TRUE(AutoEnrollmentTypeChecker::
-                  IsUnifiedStateDeterminationDisabledByKillSwitchForTesting());
-}
-
-TEST_F(AutoEnrollmentTypeCheckerInitializationTest, ActiveVersion) {
-  base::test::TestFuture<void> future;
-  test_url_loader_factory_.AddResponse(
-      "https://www.gstatic.com/chromeos-usd-experiment/v1.json",
-      R"({"disable_up_to_version": 0})", net::HTTP_OK);
-
-  AutoEnrollmentTypeChecker::Initialize(test_shared_loader_factory_,
-                                        future.GetCallback());
-
-  ASSERT_TRUE(future.Wait());
-  EXPECT_FALSE(AutoEnrollmentTypeChecker::
-                   IsUnifiedStateDeterminationDisabledByKillSwitchForTesting());
-}
+#endif
 
 // An enum for the kind of Chromium OS running on the device.
 enum class DeviceOs {
@@ -679,27 +592,28 @@ enum class DeviceOs {
   FlexWithFRE = 3,
 };
 
-// This is parameterized by device OS and USD kill switch enablement.
+// This is parameterized by device OS.
 class AutoEnrollmentTypeCheckerUnifiedStateDeterminationTestP
     : public AutoEnrollmentTypeCheckerTest,
-      public testing::WithParamInterface<std::tuple<DeviceOs, bool>> {
+      public testing::WithParamInterface<std::tuple<DeviceOs>> {
  protected:
   void SetUp() override {
     AutoEnrollmentTypeCheckerTest::SetUp();
+    // TODO(b/353731379): Remove when removing legacy state determination code.
+    command_line_.GetProcessCommandLine()->RemoveSwitch(
+        ash::switches::kEnterpriseEnableUnifiedStateDetermination);
     if (device_os_ == DeviceOs::Nonchrome) {
-      SetUpNonchromeDevice();
+      enrollment_test_helper_.SetUpNonchromeDevice();
     } else if (device_os_ == DeviceOs::FlexWithoutFRE) {
-      enrollment_test_helper_.SetUpFlexDevice();
+      SetUpFlexDeviceWithFREOnFlexDisabled();
     } else if (device_os_ == DeviceOs::FlexWithFRE) {
       SetUpFlexDeviceWithFREOnFlexEnabled();
     }
-    AutoEnrollmentTypeChecker::SetUnifiedStateDeterminationKillSwitchForTesting(
-        kill_switch_enabled_);
   }
 
   bool IsFRESupportedByDevice() {
-    return (google_branded_ && device_os_ == DeviceOs::Chrome) ||
-           device_os_ == DeviceOs::FlexWithFRE;
+    return google_branded_ && (device_os_ == DeviceOs::Chrome ||
+                               device_os_ == DeviceOs::FlexWithFRE);
   }
 
   bool IsOfficialGoogleOS() {
@@ -709,7 +623,6 @@ class AutoEnrollmentTypeCheckerUnifiedStateDeterminationTestP
   }
 
   const DeviceOs device_os_ = std::get<0>(GetParam());
-  const bool kill_switch_enabled_ = std::get<1>(GetParam());
 #if BUILDFLAG(GOOGLE_CHROME_BRANDING)
   const bool google_branded_ = true;
 #else
@@ -718,18 +631,26 @@ class AutoEnrollmentTypeCheckerUnifiedStateDeterminationTestP
 };
 
 TEST_P(AutoEnrollmentTypeCheckerUnifiedStateDeterminationTestP, Default) {
+#if BUILDFLAG(IS_CHROMEOS_DEVICE)
   EXPECT_EQ(AutoEnrollmentTypeChecker::IsUnifiedStateDeterminationEnabled(),
-            !kill_switch_enabled_ && IsOfficialGoogleOS());
+            IsOfficialGoogleOS());
+#else
+  // No state determination when running ChromeOS in Chrome (unless forced by
+  // flag).
+  EXPECT_FALSE(AutoEnrollmentTypeChecker::IsUnifiedStateDeterminationEnabled());
+#endif
 }
 
+#if BUILDFLAG(IS_CHROMEOS_DEVICE)
 TEST_P(AutoEnrollmentTypeCheckerUnifiedStateDeterminationTestP, OfficialBuild) {
   command_line_.GetProcessCommandLine()->AppendSwitchASCII(
       ash::switches::kEnterpriseEnableUnifiedStateDetermination,
       AutoEnrollmentTypeChecker::kUnifiedStateDeterminationOfficialBuild);
 
   EXPECT_EQ(AutoEnrollmentTypeChecker::IsUnifiedStateDeterminationEnabled(),
-            !kill_switch_enabled_ && IsOfficialGoogleOS());
+            IsOfficialGoogleOS());
 }
+#endif
 
 TEST_P(AutoEnrollmentTypeCheckerUnifiedStateDeterminationTestP, Never) {
   command_line_.GetProcessCommandLine()->AppendSwitchASCII(
@@ -793,11 +714,10 @@ TEST_P(AutoEnrollmentTypeCheckerUnifiedStateDeterminationTestP, Always) {
 INSTANTIATE_TEST_SUITE_P(
     AutoEnrollmentTypeCheckerUnifiedStateDeterminationTestSuite,
     AutoEnrollmentTypeCheckerUnifiedStateDeterminationTestP,
-    testing::Combine(testing::Values(DeviceOs::Chrome,
-                                     DeviceOs::Nonchrome,
-                                     DeviceOs::FlexWithoutFRE,
-                                     DeviceOs::FlexWithFRE),
-                     testing::Bool()));
+    testing::Values(DeviceOs::Chrome,
+                    DeviceOs::Nonchrome,
+                    DeviceOs::FlexWithoutFRE,
+                    DeviceOs::FlexWithFRE));
 
 // This is parametrized with dev_disable_boot.
 class AutoEnrollmentTypeCheckerTestP
@@ -1022,8 +942,7 @@ TEST_P(
         ToUTCString(base::Time::Now() +
                     2 * ash::system::kEmbargoEndDateGarbageDateThreshold);
     fake_statistics_provider_.SetMachineStatistic(
-        ash::system::kEnterpriseManagementEmbargoEndDateKey,
-        past_embargo_threshold);
+        ash::system::kRlzEmbargoEndDateKey, past_embargo_threshold);
 
     EXPECT_EQ(AutoEnrollmentTypeChecker::DetermineAutoEnrollmentCheckType(
                   /*is_system_clock_synchronized=*/false,
@@ -1042,8 +961,7 @@ TEST_P(
         ToUTCString(base::Time::Now() +
                     ash::system::kEmbargoEndDateGarbageDateThreshold / 2);
     fake_statistics_provider_.SetMachineStatistic(
-        ash::system::kEnterpriseManagementEmbargoEndDateKey,
-        before_embargo_threshold);
+        ash::system::kRlzEmbargoEndDateKey, before_embargo_threshold);
 
     EXPECT_EQ(AutoEnrollmentTypeChecker::DetermineAutoEnrollmentCheckType(
                   /*is_system_clock_synchronized=*/false,
@@ -1070,8 +988,7 @@ TEST_P(
 
   {
     fake_statistics_provider_.SetMachineStatistic(
-        ash::system::kEnterpriseManagementEmbargoEndDateKey,
-        kMalformedEmbargoDateValue);
+        ash::system::kRlzEmbargoEndDateKey, kMalformedEmbargoDateValue);
     EXPECT_EQ(
         AutoEnrollmentTypeChecker::DetermineAutoEnrollmentCheckType(
             /*is_system_clock_synchronized=*/false, &fake_statistics_provider_,
@@ -1090,8 +1007,7 @@ TEST_P(
     const auto yeasterday_embargo =
         ToUTCString(base::Time::Now() - base::Days(1));
     fake_statistics_provider_.SetMachineStatistic(
-        ash::system::kEnterpriseManagementEmbargoEndDateKey,
-        yeasterday_embargo);
+        ash::system::kRlzEmbargoEndDateKey, yeasterday_embargo);
     EXPECT_EQ(
         AutoEnrollmentTypeChecker::DetermineAutoEnrollmentCheckType(
             /*is_system_clock_synchronized=*/false, &fake_statistics_provider_,

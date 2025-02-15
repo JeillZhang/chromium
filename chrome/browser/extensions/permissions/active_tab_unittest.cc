@@ -54,10 +54,10 @@ scoped_refptr<const Extension> CreateTestExtension(
     bool has_tab_capture_permission) {
   ExtensionBuilder builder(name);
   if (has_active_tab_permission) {
-    builder.AddPermission("activeTab");
+    builder.AddAPIPermission("activeTab");
   }
   if (has_tab_capture_permission) {
-    builder.AddPermission("tabCapture");
+    builder.AddAPIPermission("tabCapture");
   }
 
   return builder.Build();
@@ -138,8 +138,7 @@ class ActiveTabTest : public ChromeRenderViewHostTestHarness {
       case PERMITTED_NONE:
         return !script && !capture;
     }
-    NOTREACHED_IN_MIGRATION();
-    return false;
+    NOTREACHED();
   }
 
   bool IsBlocked(const scoped_refptr<const Extension>& extension_refptr,
@@ -474,7 +473,7 @@ TEST_F(ActiveTabTest, ClearAllActiveExtensionsAndNotify) {
 // An active tab test that includes an ExtensionService.
 class ActiveTabWithServiceTest : public ExtensionServiceTestBase {
  public:
-  ActiveTabWithServiceTest() {}
+  ActiveTabWithServiceTest() = default;
 
   ActiveTabWithServiceTest(const ActiveTabWithServiceTest&) = delete;
   ActiveTabWithServiceTest& operator=(const ActiveTabWithServiceTest&) = delete;

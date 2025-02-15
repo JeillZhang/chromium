@@ -3,14 +3,15 @@
 // For
 //     org.jni_zero.SampleUniqueAnnotations
 
-#ifndef org_jni_zero_SampleUniqueAnnotations_JNI
-#define org_jni_zero_SampleUniqueAnnotations_JNI
+#ifndef org_jni_1zero_SampleUniqueAnnotations_JNI
+#define org_jni_1zero_SampleUniqueAnnotations_JNI
 
 #include <jni.h>
 
 #include "third_party/jni_zero/jni_export.h"
 #include "third_party/jni_zero/jni_zero_helper.h"
-// Class Accessors.
+
+// Class Accessors
 #ifndef org_jni_1zero_SampleUniqueAnnotations_clazz_defined
 #define org_jni_1zero_SampleUniqueAnnotations_clazz_defined
 inline jclass org_jni_1zero_SampleUniqueAnnotations_clazz(JNIEnv* env) {
@@ -20,11 +21,12 @@ inline jclass org_jni_1zero_SampleUniqueAnnotations_clazz(JNIEnv* env) {
 }
 #endif
 
+
 // Java to native functions
 // Forward declaration. To be implemented by the including .cc file.
 static jint JNI_SampleUniqueAnnotations_Bar(JNIEnv* env, jint x, jint y);
 
-JNI_BOUNDARY_EXPORT jint Java_org_jni_1zero_GEN_1JNI_org_1jni_11zero_1SampleUniqueAnnotations_1bar(
+JNI_ZERO_BOUNDARY_EXPORT jint Java_org_jni_1zero_GEN_1JNI_org_1jni_11zero_1SampleUniqueAnnotations_1bar(
     JNIEnv* env,
     jclass jcaller,
     jint x,
@@ -33,20 +35,30 @@ JNI_BOUNDARY_EXPORT jint Java_org_jni_1zero_GEN_1JNI_org_1jni_11zero_1SampleUniq
   return _ret;
 }
 
-JNI_BOUNDARY_EXPORT void Java_org_jni_1zero_GEN_1JNI_org_1jni_11zero_1SampleUniqueAnnotations_1foo(
+// Forward declaration. To be implemented by the including .cc file.
+static void JNI_SampleUniqueAnnotations_Baz(
+    JNIEnv* env,
+    const jni_zero::JavaParamRef<jobject>& handle);
+
+JNI_ZERO_BOUNDARY_EXPORT void Java_org_jni_1zero_GEN_1JNI_org_1jni_11zero_1SampleUniqueAnnotations_1baz(
+    JNIEnv* env,
+    jclass jcaller,
+    jobject handle) {
+  JNI_SampleUniqueAnnotations_Baz(env, jni_zero::JavaParamRef<jobject>(env, handle));
+}
+
+JNI_ZERO_BOUNDARY_EXPORT void Java_org_jni_1zero_GEN_1JNI_org_1jni_11zero_1SampleUniqueAnnotations_1foo(
     JNIEnv* env,
     jclass jcaller,
     jlong nativePtr,
-    jstring arg) {
+    jobject arg) {
   std::string arg_converted = jni_zero::FromJniType<std::string>(
       env,
       jni_zero::JavaParamRef<jobject>(env, arg));
-  reinterpret_cast<FooAndroid::BarDelegate*>(nativePtr)->Foo(
-      env,
-      arg_converted);
+  reinterpret_cast<FooAndroid::BarDelegate*>(nativePtr)->Foo(env, arg_converted);
 }
 
-JNI_BOUNDARY_EXPORT void Java_org_jni_1zero_SampleUniqueAnnotations_nativeCallWithQualifiedObject(
+JNI_ZERO_BOUNDARY_EXPORT void Java_org_jni_1zero_SampleUniqueAnnotations_nativeCallWithQualifiedObject(
     JNIEnv* env,
     jobject jcaller,
     jlong nativePtr) {
@@ -55,10 +67,12 @@ JNI_BOUNDARY_EXPORT void Java_org_jni_1zero_SampleUniqueAnnotations_nativeCallWi
       jni_zero::JavaParamRef<jobject>(env, jcaller));
 }
 
+
 // Native to Java functions
 static void Java_SampleUniqueAnnotations_useBar1(
     JNIEnv* env,
     const jni_zero::JavaRef<jobject>& inner) {
+  jni_zero::CallNativeToJavaCallback("org/jni_zero/SampleUniqueAnnotations", "useBar1");
   static std::atomic<jmethodID> cached_method_id(nullptr);
   jclass clazz = org_jni_1zero_SampleUniqueAnnotations_clazz(env);
   CHECK_CLAZZ(env, clazz, clazz);
@@ -73,4 +87,5 @@ static void Java_SampleUniqueAnnotations_useBar1(
 }
 
 
-#endif  // org_jni_zero_SampleUniqueAnnotations_JNI
+
+#endif  // org_jni_1zero_SampleUniqueAnnotations_JNI

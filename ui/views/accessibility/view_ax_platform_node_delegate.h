@@ -29,7 +29,6 @@
 namespace ui {
 
 struct AXActionData;
-class AXUniqueId;
 
 }  // namespace ui
 
@@ -57,7 +56,6 @@ class VIEWS_EXPORT ViewAXPlatformNodeDelegate
   void SetPopupFocusOverride() override;
   void EndPopupFocusOverride() override;
   void FireFocusAfterMenuClose() override;
-  bool GetIsIgnored() const override;
   gfx::NativeViewAccessible GetNativeObject() const override;
   void FireNativeEvent(ax::mojom::Event event_type) override;
 #if BUILDFLAG(IS_MAC)
@@ -74,10 +72,10 @@ class VIEWS_EXPORT ViewAXPlatformNodeDelegate
   // Also in |ViewAccessibility|.
   bool IsChildOfLeaf() const override;
   const ui::AXSelection GetUnignoredSelection() const override;
+  const ui::AXSelection GetHypertextSelection() const override;
   ui::AXNodePosition::AXPositionInstance CreatePositionAt(
       int offset,
-      ax::mojom::TextAffinity affinity =
-          ax::mojom::TextAffinity::kDownstream) const override;
+      ax::mojom::TextAffinity affinity) const override;
   ui::AXNodePosition::AXPositionInstance CreateTextPositionAt(
       int offset,
       ax::mojom::TextAffinity affinity) const override;
@@ -90,7 +88,6 @@ class VIEWS_EXPORT ViewAXPlatformNodeDelegate
   bool IsLeaf() const override;
   bool IsInvisibleOrIgnored() const override;
   bool IsFocused() const override;
-  bool IsToplevelBrowserWindow() override;
   gfx::Rect GetBoundsRect(
       const ui::AXCoordinateSystem coordinate_system,
       const ui::AXClippingBehavior clipping_behavior,
@@ -117,7 +114,7 @@ class VIEWS_EXPORT ViewAXPlatformNodeDelegate
   bool IsReadOnlyOrDisabled() const override;
 
   // Also in |ViewAccessibility|.
-  const ui::AXUniqueId& GetUniqueId() const override;
+  ui::AXPlatformNodeId GetUniqueId() const override;
   std::vector<int32_t> GetColHeaderNodeIds() const override;
   std::vector<int32_t> GetColHeaderNodeIds(int col_index) const override;
   std::optional<int32_t> GetCellId(int row_index, int col_index) const override;
@@ -154,7 +151,7 @@ class VIEWS_EXPORT ViewAXPlatformNodeDelegate
   // during the constructor.
   virtual void Init();
 
-  ui::AXNodeData data() { return data_; }
+  const ui::AXNodeData& data() const { return data_; }
   ui::AXPlatformNode* ax_platform_node() { return ax_platform_node_; }
 
   // Manager for the accessibility tree for this view. The tree will only have

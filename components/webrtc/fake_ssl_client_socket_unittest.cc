@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "components/webrtc/fake_ssl_client_socket.h"
 
 #include <stddef.h>
@@ -54,7 +59,7 @@ enum {
 // Used by PassThroughMethods test.
 class MockClientSocket : public net::StreamSocket {
  public:
-  ~MockClientSocket() override {}
+  ~MockClientSocket() override = default;
 
   MOCK_METHOD3(Read, int(net::IOBuffer*, int, net::CompletionOnceCallback));
   MOCK_METHOD4(Write,
@@ -100,9 +105,9 @@ void AddChunkedOps(std::string_view data,
 
 class FakeSSLClientSocketTest : public testing::Test {
  protected:
-  FakeSSLClientSocketTest() {}
+  FakeSSLClientSocketTest() = default;
 
-  ~FakeSSLClientSocketTest() override {}
+  ~FakeSSLClientSocketTest() override = default;
 
   std::unique_ptr<net::StreamSocket> MakeClientSocket() {
     return mock_client_socket_factory_.CreateTransportClientSocket(

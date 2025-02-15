@@ -16,6 +16,15 @@ NS_ASSUME_NONNULL_BEGIN
 
 extern NSString* const CRUReturnCodeErrorDomain;
 
+typedef NS_ERROR_ENUM(CRURegistrationInternalErrorDomain,
+                      CRURegistrationInternalError){
+    CRURegistrationInternalErrorTaskAlreadyLaunched = 1,
+
+    // An underlying API that can fail returned an error that we did not
+    // specifically anticipate.
+    CRURegistrationInternalErrorUnrecognized = 9999,
+};
+
 /***
  * CRUTaskResultCallback is a block receiving the result of an NSTask
  * invocation.
@@ -35,6 +44,34 @@ extern NSString* const CRUReturnCodeErrorDomain;
 typedef void (^CRUTaskResultCallback)(NSString* _Nullable,
                                       NSString* _Nullable,
                                       NSError* _Nullable);
+
+@class CRURegistrationWorkItem;  // break circular reference
+/***
+ * CRUNextTaskCallback is similar to CRUTaskResultCallback, but it is run
+ * synchronously by the work queue and may return a new work item to perform
+ * next, preempting any other queued task. The current work item (that has just
+ * completed or failed its task) is provided to the callback to make it easier
+ * to avoid dependency cycles.
+ *
+ * Parameters:
+ *  CRURegistrationWorkItem* -- the work item that just completed, which
+ *      contained this block as its `onDone` callback.
+ *  NSString* -- all stdout content, nil if the process never launched.
+ *  NSString* -- all stderr content. nil if the process never launched.
+ *  NSError* -- return value of the process.
+ *      * nil: the process ran and returned zero
+ *      * error domain is CRUReturnCodeErrorDomain: process ran and returned
+ *      nonzero; error code
+ *          is the return value. NSData* arguments will be nonnil.
+ *      * any other error domain: the task could not be launched; this is the
+ *      error from NSTask or
+ *          is in CRURegistrationErrorDomain. NSData* elements will be nil.
+ */
+typedef CRURegistrationWorkItem* _Nullable (^CRUNextTaskCallback)(
+    CRURegistrationWorkItem*,
+    NSString* _Nullable,
+    NSString* _Nullable,
+    NSError* _Nullable);
 
 /**
  * CRUAsyncTaskRunner runs an NSTask and asynchronously accumulates its stdout
@@ -88,6 +125,14 @@ typedef void (^CRUTaskResultCallback)(NSString* _Nullable,
  */
 @property(nonatomic, copy) CRUTaskResultCallback resultCallback;
 
+/**
+ * Handler invoked synchronously with the task results, which has the
+ * opportunity to preempt the next task or edit this CRURegistrationWorkItem
+ * (for example, to change `resultCallback`) before `resultCallback` is
+ * asynchronously invoked.
+ */
+@property(nonatomic, copy) CRUNextTaskCallback onDone;
+
 @end
 
 @interface CRURegistration (VisibleForTesting)
@@ -98,6 +143,46 @@ typedef void (^CRUTaskResultCallback)(NSString* _Nullable,
  * items will be picked up by its continued execution.)
  */
 - (void)addWorkItems:(NSArray<CRURegistrationWorkItem*>*)item;
+
+/**
+ * Synchronously finds the path to an installed KSAdmin binary. If a systemwide
+ * ksadmin is available, it prefers it; otherwise, if a user ksadmin is
+ * available, it returns that; if neither can be found, it returns nil.
+ *
+ * This does not depend on, or mutate, any protected state inside
+ * CRURegistration itself, but does check filesystem state. If the updater is
+ * concurrently being installed, it might not find it. This is intended for
+ * use while CRURegistration is not concurrently running a task.
+ */
+- (nullable NSURL*)syncFindBestKSAdmin;
+
+/**
+ * Wrap an NSError from a failed attempt to run a task with a semantically
+ * appropriate domain and code. If the error is an intended part of the library
+ * API, it will be in CRURegistrationErrorDomain; otherwise, it represents a
+ * library bug that the user should, ideally, not rely on and will be wrapped
+ * under CRURegistrationInternalErrorDomain.
+ *
+ * Errors already in one of these two error domains are returned unchanged.
+ * Nil is also returned unchanged. Otherwise:
+ * - errors representing nonzero return codes from tasks are converted to
+ *   CRURegistrationErrorTaskFailed
+ * - "file not found" errors from Apple APIs are assumed to be NSTask failing
+ *   to find a binary and are converted to CRURegistrationErrorHelperNotFound
+ * - other errors are unexpected
+ *
+ * If the returned error is not the same as the input error, the result error's
+ * `userInfo` dictionary contains a value under `NSUnderlyingErrorKey` with the
+ * original error unchanged. A wrapped error's `userInfo` also contains the
+ * values of `gotStdout` and `gotStderr` under `CRUStdoutKey` and `CRUStderrKey`
+ * respectively. Values in `userInfo` are intended to assist with debugging, but
+ * production code should not rely on these values for identifying and handling
+ * the disposition of an error; file bugs against this library if more detail
+ * is required than is available, or if any internal error is encountered.
+ */
+- (nullable NSError*)wrapError:(nullable NSError*)error
+                    withStdout:(nullable NSString*)gotStdout
+                     andStderr:(nullable NSString*)gotStderr;
 
 @end
 

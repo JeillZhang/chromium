@@ -135,6 +135,7 @@ class DrmWrapper {
 
   virtual bool SetMaster();
   virtual bool DropMaster();
+  virtual bool has_master() const;
 
   /**************
    * Dumb Buffers
@@ -221,11 +222,11 @@ class DrmWrapper {
   virtual ScopedDrmPropertyPtr GetProperty(drmModeConnector* connector,
                                            const char* name) const;
 
-  // Using the Legacy API, sets the value of property with ID |property_id| to
-  // |value|. The property is applied to the connector with ID |connector_id|.
-  virtual bool SetConnectorProperty(uint32_t connector_id,
-                                    uint32_t property_id,
-                                    uint64_t value);
+  // Sets the value of property with ID |property_id| to |value|. The property
+  // is applied to the connector with ID |connector_id|.
+  virtual bool SetProperty(uint32_t connector_id,
+                           uint32_t property_id,
+                           uint64_t value);
 
   /****************
    * Property Blobs
@@ -309,6 +310,11 @@ class DrmWrapper {
   bool is_atomic_ = false;
 
   const bool is_primary_device_;
+
+  // DRM master for a device is initially acquired implicitly in Chrome by
+  // opening the device node when no one else is holding the master, not through
+  // set master ioctl.
+  bool has_master_ = true;
 };
 
 }  // namespace ui

@@ -7,7 +7,9 @@ package org.chromium.chrome.browser.browsing_data;
 import static androidx.test.espresso.Espresso.onView;
 import static androidx.test.espresso.action.ViewActions.click;
 import static androidx.test.espresso.assertion.ViewAssertions.doesNotExist;
+import static androidx.test.espresso.assertion.ViewAssertions.matches;
 import static androidx.test.espresso.matcher.RootMatchers.isDialog;
+import static androidx.test.espresso.matcher.ViewMatchers.isDisplayed;
 import static androidx.test.espresso.matcher.ViewMatchers.withId;
 import static androidx.test.espresso.matcher.ViewMatchers.withText;
 
@@ -17,6 +19,7 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
@@ -40,16 +43,13 @@ import androidx.fragment.app.Fragment;
 import androidx.preference.CheckBoxPreference;
 import androidx.preference.Preference;
 import androidx.preference.PreferenceScreen;
-import androidx.recyclerview.widget.RecyclerView;
 import androidx.test.core.app.ApplicationProvider;
 import androidx.test.espresso.NoMatchingViewException;
 import androidx.test.espresso.UiController;
 import androidx.test.espresso.ViewAction;
+import androidx.test.espresso.contrib.RecyclerViewActions;
 import androidx.test.filters.LargeTest;
 import androidx.test.filters.MediumTest;
-import androidx.viewpager2.widget.ViewPager2;
-
-import com.google.android.material.tabs.TabLayout;
 
 import org.hamcrest.Matcher;
 import org.hamcrest.Matchers;
@@ -59,23 +59,23 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 import org.mockito.stubbing.Answer;
 
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Criteria;
 import org.chromium.base.test.util.CriteriaHelper;
 import org.chromium.base.test.util.Feature;
-import org.chromium.base.test.util.Features;
 import org.chromium.base.test.util.HistogramWatcher;
-import org.chromium.base.test.util.JniMocker;
 import org.chromium.chrome.browser.ChromeTabbedActivity;
 import org.chromium.chrome.browser.browsing_data.BrowsingDataBridge.OnClearBrowsingDataListener;
 import org.chromium.chrome.browser.browsing_data.ClearBrowsingDataFragment.DialogOption;
 import org.chromium.chrome.browser.feedback.HelpAndFeedbackLauncher;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
+import org.chromium.chrome.browser.feedback.HelpAndFeedbackLauncherFactory;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.multiwindow.MultiWindowUtils;
 import org.chromium.chrome.browser.notifications.channels.SiteChannelsManager;
@@ -85,6 +85,8 @@ import org.chromium.chrome.browser.searchwidget.SearchActivity;
 import org.chromium.chrome.browser.settings.SettingsActivity;
 import org.chromium.chrome.browser.settings.SettingsActivityTestRule;
 import org.chromium.chrome.browser.signin.services.IdentityServicesProvider;
+import org.chromium.chrome.browser.sync.FakeSyncServiceImpl;
+import org.chromium.chrome.browser.sync.SyncServiceFactory;
 import org.chromium.chrome.browser.ui.messages.snackbar.SnackbarManager;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
@@ -93,7 +95,9 @@ import org.chromium.chrome.test.util.browser.signin.SigninTestRule;
 import org.chromium.components.browser_ui.settings.SpinnerPreference;
 import org.chromium.components.browsing_data.DeleteBrowsingDataAction;
 import org.chromium.components.signin.identitymanager.ConsentLevel;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
+import org.chromium.components.signin.test.util.TestAccounts;
+import org.chromium.components.sync.DataType;
+import org.chromium.ui.test.util.ViewUtils;
 
 import java.util.Arrays;
 import java.util.Set;
@@ -107,17 +111,12 @@ public class ClearBrowsingDataFragmentTest {
     public ChromeTabbedActivityTestRule mActivityTestRule = new ChromeTabbedActivityTestRule();
 
     @Rule
-    public SettingsActivityTestRule<ClearBrowsingDataFragmentAdvanced> mSettingsActivityTestRule =
-            new SettingsActivityTestRule<>(ClearBrowsingDataFragmentAdvanced.class);
-
-    @Rule
-    public SettingsActivityTestRule<ClearBrowsingDataTabsFragment>
-            mSettingsActivityTabFragmentTestRule =
-                    new SettingsActivityTestRule<>(ClearBrowsingDataTabsFragment.class);
+    public SettingsActivityTestRule<ClearBrowsingDataFragment> mSettingsActivityTestRule =
+            new SettingsActivityTestRule<>(ClearBrowsingDataFragment.class);
 
     @Rule public final SigninTestRule mSigninTestRule = new SigninTestRule();
 
-    @Rule public JniMocker mJniMocker = new JniMocker();
+    @Rule public MockitoRule mMockitoRule = MockitoJUnit.rule();
 
     @Mock private BrowsingDataBridge.Natives mBrowsingDataBridgeMock;
 
@@ -129,25 +128,22 @@ public class ClearBrowsingDataFragmentTest {
 
     @Before
     public void setUp() throws Exception {
-        MockitoAnnotations.initMocks(this);
-
-        mJniMocker.mock(BrowsingDataBridgeJni.TEST_HOOKS, mBrowsingDataBridgeMock);
+        BrowsingDataBridgeJni.setInstanceForTesting(mBrowsingDataBridgeMock);
         // Ensure that whenever the mock is asked to clear browsing data, the callback is
         // immediately called.
         doAnswer(
                         (Answer<Void>)
                                 invocation -> {
-                                    ((OnClearBrowsingDataListener) invocation.getArgument(2))
+                                    ((OnClearBrowsingDataListener) invocation.getArgument(1))
                                             .onBrowsingDataCleared();
                                     mCallbackHelper.notifyCalled();
                                     return null;
                                 })
                 .when(mBrowsingDataBridgeMock)
-                .clearBrowsingData(
-                        any(), any(), any(), any(), anyInt(), any(), any(), any(), any());
+                .clearBrowsingData(any(), any(), any(), anyInt(), any(), any(), any(), any());
 
         // Default to delete all history.
-        when(mBrowsingDataBridgeMock.getBrowsingDataDeletionTimePeriod(any(), any(), anyInt()))
+        when(mBrowsingDataBridgeMock.getBrowsingDataDeletionTimePeriod(any()))
                 .thenReturn(DEFAULT_TIME_PERIOD);
 
         mActivityTestRule.startMainActivityOnBlankPage();
@@ -156,7 +152,7 @@ public class ClearBrowsingDataFragmentTest {
         // TODO(crbug.com/41452182): Find a general solution to avoid leaking channels between
         // tests.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            TestThreadUtils.runOnUiThreadBlocking(
+            ThreadUtils.runOnUiThreadBlocking(
                     () -> {
                         SiteChannelsManager manager = SiteChannelsManager.getInstance();
                         manager.deleteAllSiteChannels();
@@ -188,10 +184,9 @@ public class ClearBrowsingDataFragmentTest {
         SettingsActivity settingsActivity =
                 mSettingsActivityTestRule.startSettingsActivity(
                         ClearBrowsingDataFragment.createFragmentArgs(
-                                mActivityTestRule.getActivity().getClass().getName(),
-                                /* isFetcherSuppliedFromOutside= */ false));
+                                mActivityTestRule.getActivity().getClass().getName()));
         ClearBrowsingDataFragment fragment = mSettingsActivityTestRule.getFragment();
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     fragment.getClearBrowsingDataFetcher()
                             .fetchImportantSites(fragment.getProfile());
@@ -202,78 +197,63 @@ public class ClearBrowsingDataFragmentTest {
     @Test
     @LargeTest
     public void testSigningOut() {
-        mSigninTestRule.addTestAccountThenSigninAndEnableSync();
+        mSigninTestRule.addAccountThenSignin(TestAccounts.ACCOUNT1);
         final ClearBrowsingDataFragment preferences =
                 (ClearBrowsingDataFragment) startPreferences().getMainFragment();
-        CriteriaHelper.pollUiThread(
-                () -> {
-                    return mSettingsActivityTestRule
-                                    .getActivity()
-                                    .findViewById(R.id.menu_id_targeted_help)
-                            != null;
-                });
+        ViewUtils.waitForVisibleView(withId(R.id.menu_id_targeted_help));
 
-        TestThreadUtils.runOnUiThreadBlocking(
-                () -> {
-                    RecyclerView recyclerView =
-                            preferences.getView().findViewById(R.id.recycler_view);
-                    recyclerView.scrollToPosition(recyclerView.getAdapter().getItemCount() - 1);
-                });
+        onView(withId(R.id.recycler_view)).perform(RecyclerViewActions.scrollToLastPosition());
         onView(withText(preferences.buildSignOutOfChromeText().toString()))
                 .perform(clickOnSignOutLink());
-        onView(withText(R.string.continue_button)).inRoot(isDialog()).perform(click());
+
+        // Title of the confirm sign out dialog.
+        onView(withText(R.string.sign_out_title)).inRoot(isDialog()).check(matches(isDisplayed()));
+        onView(withText(R.string.sign_out)).inRoot(isDialog()).perform(click());
+
         CriteriaHelper.pollUiThread(
                 () ->
                         !IdentityServicesProvider.get()
                                 .getIdentityManager(ProfileManager.getLastUsedRegularProfile())
                                 .hasPrimaryAccount(ConsentLevel.SIGNIN),
                 "Account should be signed out!");
-
         // Footer should be hidden after sign-out.
         onView(withText(preferences.buildSignOutOfChromeText().toString())).check(doesNotExist());
     }
 
-    /** Test that Clear Browsing Data offers two tabs and records a preference when switched. */
     @Test
-    @MediumTest
-    public void testTabsSwitcher() {
-        setDataTypesToClear(ClearBrowsingDataFragment.getAllOptions().toArray(new Integer[0]));
-        // Set "Advanced" as the user's cached preference.
-        when(mBrowsingDataBridgeMock.getLastClearBrowsingDataTab(any(), any())).thenReturn(1);
-
-        mSettingsActivityTabFragmentTestRule.startSettingsActivity(
-                ClearBrowsingDataTabsFragment.createFragmentArgs(
-                        mActivityTestRule.getActivity().getClass().getName()));
-        final ClearBrowsingDataTabsFragment preferences =
-                mSettingsActivityTabFragmentTestRule.getFragment();
-
-        // Verify tab preference is loaded.
-        verify(mBrowsingDataBridgeMock).getLastClearBrowsingDataTab(any(), any());
-
-        TestThreadUtils.runOnUiThreadBlocking(
+    @LargeTest
+    public void testSigningOut_UnsavedDataDialog() {
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
-                    ViewPager2 viewPager =
-                            (ViewPager2)
-                                    preferences
-                                            .getView()
-                                            .findViewById(R.id.clear_browsing_data_viewpager);
-                    RecyclerView.Adapter adapter = viewPager.getAdapter();
-                    Assert.assertEquals(2, adapter.getItemCount());
-                    Assert.assertEquals(1, viewPager.getCurrentItem());
-                    TabLayout tabLayout =
-                            preferences.getView().findViewById(R.id.clear_browsing_data_tabs);
-                    Assert.assertEquals(
-                            ApplicationProvider.getApplicationContext()
-                                    .getString(R.string.clear_browsing_data_basic_tab_title),
-                            tabLayout.getTabAt(0).getText());
-                    Assert.assertEquals(
-                            ApplicationProvider.getApplicationContext()
-                                    .getString(R.string.prefs_section_advanced),
-                            tabLayout.getTabAt(1).getText());
-                    viewPager.setCurrentItem(0);
+                    FakeSyncServiceImpl fakeSyncService = new FakeSyncServiceImpl();
+                    fakeSyncService.setTypesWithUnsyncedData(Set.of(DataType.BOOKMARKS));
+                    SyncServiceFactory.setInstanceForTesting(fakeSyncService);
                 });
-        // Verify the tab preference is saved.
-        verify(mBrowsingDataBridgeMock).setLastClearBrowsingDataTab(any(), any(), eq(0));
+        mSigninTestRule.addAccountThenSignin(TestAccounts.ACCOUNT1);
+        final ClearBrowsingDataFragment preferences =
+                (ClearBrowsingDataFragment) startPreferences().getMainFragment();
+        ViewUtils.waitForVisibleView(withId(R.id.menu_id_targeted_help));
+
+        onView(withId(R.id.recycler_view)).perform(RecyclerViewActions.scrollToLastPosition());
+        onView(withText(preferences.buildSignOutOfChromeText().toString()))
+                .perform(clickOnSignOutLink());
+
+        // Title of the confirm sign out dialog.
+        onView(withText(R.string.sign_out_unsaved_data_title))
+                .inRoot(isDialog())
+                .check(matches(isDisplayed()));
+        onView(withText(R.string.sign_out_unsaved_data_primary_button))
+                .inRoot(isDialog())
+                .perform(click());
+
+        CriteriaHelper.pollUiThread(
+                () ->
+                        !IdentityServicesProvider.get()
+                                .getIdentityManager(ProfileManager.getLastUsedRegularProfile())
+                                .hasPrimaryAccount(ConsentLevel.SIGNIN),
+                "Account should be signed out!");
+        // Footer should be hidden after sign-out.
+        onView(withText(preferences.buildSignOutOfChromeText().toString())).check(doesNotExist());
     }
 
     /**
@@ -282,10 +262,6 @@ public class ClearBrowsingDataFragmentTest {
      */
     @Test
     @MediumTest
-    @Features.EnableFeatures({
-        ChromeFeatureList.QUICK_DELETE_FOR_ANDROID,
-        ChromeFeatureList.QUICK_DELETE_ANDROID_FOLLOWUP
-    })
     public void testClearingEverything() throws Exception {
         setDataTypesToClear(ClearBrowsingDataFragment.getAllOptions().toArray(new Integer[0]));
 
@@ -298,7 +274,7 @@ public class ClearBrowsingDataFragmentTest {
                         "Privacy.DeleteBrowsingData.Action",
                         DeleteBrowsingDataAction.CLEAR_BROWSING_DATA_DIALOG);
 
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     PreferenceScreen screen = preferences.getPreferenceScreen();
 
@@ -314,7 +290,7 @@ public class ClearBrowsingDataFragmentTest {
                 });
 
         waitForProgressToComplete(preferences);
-        mCallbackHelper.waitForFirst();
+        mCallbackHelper.waitForOnly();
 
         // Verify DeleteBrowsingDataAction metric is recorded.
         histogramWatcher.assertExpected();
@@ -322,7 +298,6 @@ public class ClearBrowsingDataFragmentTest {
         // Verify that we got the appropriate call to clear all data.
         verify(mBrowsingDataBridgeMock)
                 .clearBrowsingData(
-                        any(),
                         eq(expectedProfile),
                         any(),
                         eq(getAllDataTypes()),
@@ -345,29 +320,31 @@ public class ClearBrowsingDataFragmentTest {
         return datatypes;
     }
 
-    /** Tests that changing the time interval for deletion affects the delete request. */
+    /**
+     * Tests that changing the time interval for a deletion changes the option prefs of Clear
+     * Browsing Data and affects the delete request if the deletion goes through.
+     */
     @Test
     @MediumTest
-    public void testClearTimeInterval() throws Exception {
+    public void testTimeIntervalChangedAndDelete() throws Exception {
         setDataTypesToClear(DialogOption.CLEAR_CACHE);
 
         final ClearBrowsingDataFragment preferences =
                 (ClearBrowsingDataFragment) startPreferences().getMainFragment();
         final Profile expectedProfile = preferences.getProfile();
 
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     changeTimePeriodTo(preferences, TimePeriod.LAST_HOUR);
                     clickClearButton(preferences);
                 });
 
         waitForProgressToComplete(preferences);
-        mCallbackHelper.waitForFirst();
+        mCallbackHelper.waitForOnly();
 
         // Verify that we got the appropriate call to clear all data.
         verify(mBrowsingDataBridgeMock)
                 .clearBrowsingData(
-                        any(),
                         eq(expectedProfile),
                         any(),
                         eq(new int[] {BrowsingDataType.CACHE}),
@@ -376,6 +353,37 @@ public class ClearBrowsingDataFragmentTest {
                         any(),
                         any(),
                         any());
+
+        // Verify the preferences are saved if the deletion goes through.
+        verify(mBrowsingDataBridgeMock)
+                .setBrowsingDataDeletionTimePeriod(eq(expectedProfile), eq(TimePeriod.LAST_HOUR));
+        verify(mBrowsingDataBridgeMock)
+                .setBrowsingDataDeletionPreference(
+                        eq(expectedProfile), eq(BrowsingDataType.CACHE), eq(true));
+    }
+
+    /**
+     * Tests that changing the time interval for a deletion does not change the option prefs of
+     * Clear Browsing Data if the deletion doesn't go through.
+     */
+    @Test
+    @MediumTest
+    public void testTimeIntervalChangedAndDismiss() throws Exception {
+        setDataTypesToClear(DialogOption.CLEAR_CACHE);
+
+        final ClearBrowsingDataFragment preferences =
+                (ClearBrowsingDataFragment) startPreferences().getMainFragment();
+        final Profile expectedProfile = preferences.getProfile();
+
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    changeTimePeriodTo(preferences, TimePeriod.LAST_HOUR);
+                });
+
+        // Verify the preferences are not set if the deletion doesn't go through.
+        verify(mBrowsingDataBridgeMock, never()).setBrowsingDataDeletionTimePeriod(any(), anyInt());
+        verify(mBrowsingDataBridgeMock, never())
+                .setBrowsingDataDeletionPreference(eq(expectedProfile), anyInt(), anyBoolean());
     }
 
     /** Selects the specified time for browsing data removal. */
@@ -401,9 +409,9 @@ public class ClearBrowsingDataFragmentTest {
         SettingsActivity activity = startPreferences();
         ClearBrowsingDataFragment fragment = mSettingsActivityTestRule.getFragment();
 
-        fragment.setHelpAndFeedbackLauncher(mHelpAndFeedbackLauncher);
+        HelpAndFeedbackLauncherFactory.setInstanceForTesting(mHelpAndFeedbackLauncher);
         onView(withId(R.id.menu_id_targeted_help)).perform(click());
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     verify(mHelpAndFeedbackLauncher)
                             .show(
@@ -411,6 +419,14 @@ public class ClearBrowsingDataFragmentTest {
                                     fragment.getString(R.string.help_context_clear_browsing_data),
                                     null);
                 });
+    }
+
+    @Test
+    @MediumTest
+    public void testTitleShown() {
+        startPreferences();
+        ViewUtils.waitForVisibleView(withId(R.id.menu_id_targeted_help));
+        onView(withText(R.string.clear_browsing_data_title)).check(matches(isDisplayed()));
     }
 
     /**
@@ -485,7 +501,7 @@ public class ClearBrowsingDataFragmentTest {
         // "Clear" button won't be enabled.
         setDataTypesToClear(DialogOption.CLEAR_CACHE);
         final SettingsActivity settingsActivity1 = startPreferences();
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 new OpenPreferencesEnableDialogAndClickClearRunnable(settingsActivity1));
         mCallbackHelper.waitForCallback(0);
 
@@ -497,7 +513,7 @@ public class ClearBrowsingDataFragmentTest {
         // Reopen Clear Browsing Data preferences, this time with history selected for clearing.
         setDataTypesToClear(DialogOption.CLEAR_HISTORY);
         final SettingsActivity settingsActivity2 = startPreferences();
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 new OpenPreferencesEnableDialogAndClickClearRunnable(settingsActivity2));
 
         // The dialog about other forms of history should now be shown.
@@ -512,7 +528,7 @@ public class ClearBrowsingDataFragmentTest {
                 });
 
         // Close that dialog.
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     ClearBrowsingDataFragment fragment =
                             (ClearBrowsingDataFragment) settingsActivity2.getMainFragment();
@@ -531,7 +547,7 @@ public class ClearBrowsingDataFragmentTest {
         setDataTypesToClear(DialogOption.CLEAR_HISTORY);
         final SettingsActivity settingsActivity3 = startPreferences();
         final Profile expectedProfile = mSettingsActivityTestRule.getFragment().getProfile();
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 new OpenPreferencesEnableDialogAndClickClearRunnable(settingsActivity3));
 
         // The dialog about other forms of browsing history is still enabled, and history has been
@@ -543,7 +559,6 @@ public class ClearBrowsingDataFragmentTest {
         // Should be cleared again.
         verify(mBrowsingDataBridgeMock, times(2))
                 .clearBrowsingData(
-                        any(),
                         eq(expectedProfile),
                         any(),
                         eq(expectedTypes),
@@ -563,7 +578,6 @@ public class ClearBrowsingDataFragmentTest {
         // TODO(yfriedman): Add testing for time period.
         verify(mBrowsingDataBridgeMock)
                 .clearBrowsingData(
-                        any(),
                         any(),
                         any(),
                         eq(types),
@@ -656,14 +670,14 @@ public class ClearBrowsingDataFragmentTest {
                 (ClearBrowsingDataFragment) startPreferences().getMainFragment();
 
         // Clear in root preference.
-        TestThreadUtils.runOnUiThreadBlocking(getPressClearRunnable(preferences));
+        ThreadUtils.runOnUiThreadBlocking(getPressClearRunnable(preferences));
         // Check that the important sites dialog is shown, and the list is visible.
         waitForImportantDialogToShow(preferences, 2);
         // Clear in important dialog.
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 getPressButtonInImportantDialogRunnable(preferences, AlertDialog.BUTTON_POSITIVE));
         waitForProgressToComplete(preferences);
-        mCallbackHelper.waitForFirst();
+        mCallbackHelper.waitForOnly();
 
         // Verify history cleared.
         assertDataTypesCleared(BrowsingDataType.HISTORY, BrowsingDataType.CACHE);
@@ -690,26 +704,18 @@ public class ClearBrowsingDataFragmentTest {
         ClearBrowsingDataFragment fragment =
                 (ClearBrowsingDataFragment) settingsActivity.getMainFragment();
         Profile expectedProfile = fragment.getProfile();
-        TestThreadUtils.runOnUiThreadBlocking(getPressClearRunnable(fragment));
+        ThreadUtils.runOnUiThreadBlocking(getPressClearRunnable(fragment));
         // Check that the important sites dialog is shown, and the list is visible.
         waitForImportantDialogToShow(fragment, 2);
         // Press the cancel button.
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 getPressButtonInImportantDialogRunnable(fragment, AlertDialog.BUTTON_NEGATIVE));
         settingsActivity.finish();
 
         // Nothing was cleared.
         verify(mBrowsingDataBridgeMock, never())
                 .clearBrowsingData(
-                        any(),
-                        eq(expectedProfile),
-                        any(),
-                        any(),
-                        anyInt(),
-                        any(),
-                        any(),
-                        any(),
-                        any());
+                        eq(expectedProfile), any(), any(), anyInt(), any(), any(), any(), any());
     }
 
     /**
@@ -739,9 +745,9 @@ public class ClearBrowsingDataFragmentTest {
         final Profile expectedProfile = fragment.getProfile();
 
         // Uncheck the first item (our internal web server).
-        TestThreadUtils.runOnUiThreadBlocking(getPressClearRunnable(fragment));
+        ThreadUtils.runOnUiThreadBlocking(getPressClearRunnable(fragment));
         waitForImportantDialogToShow(fragment, 2);
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     ListView sitesList = fragment.getImportantSitesDialogFragment().getSitesList();
                     sitesList.performItemClick(
@@ -758,11 +764,11 @@ public class ClearBrowsingDataFragmentTest {
                 });
 
         // Click the clear button.
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 getPressButtonInImportantDialogRunnable(fragment, AlertDialog.BUTTON_POSITIVE));
 
         waitForProgressToComplete(fragment);
-        mCallbackHelper.waitForFirst();
+        mCallbackHelper.waitForOnly();
 
         int[] expectedTypes = new int[] {BrowsingDataType.HISTORY, BrowsingDataType.CACHE};
         String[] keepDomains = new String[] {kKeepDomain};
@@ -770,7 +776,6 @@ public class ClearBrowsingDataFragmentTest {
 
         verify(mBrowsingDataBridgeMock)
                 .clearBrowsingData(
-                        any(),
                         eq(expectedProfile),
                         any(),
                         eq(expectedTypes),
@@ -783,24 +788,7 @@ public class ClearBrowsingDataFragmentTest {
 
     @Test
     @MediumTest
-    @Features.DisableFeatures(ChromeFeatureList.QUICK_DELETE_ANDROID_FOLLOWUP)
-    @Features.EnableFeatures(ChromeFeatureList.QUICK_DELETE_FOR_ANDROID)
-    public void testTabsCheckbox_withQuickDeleteV2Disabled() {
-        ClearBrowsingDataFragment preferences =
-                (ClearBrowsingDataFragment) startPreferences().getMainFragment();
-        CheckBoxPreference checkboxPreference =
-                preferences.findPreference(
-                        ClearBrowsingDataFragment.getPreferenceKey(DialogOption.CLEAR_TABS));
-        assertNull(checkboxPreference);
-    }
-
-    @Test
-    @MediumTest
-    @Features.EnableFeatures({
-        ChromeFeatureList.QUICK_DELETE_FOR_ANDROID,
-        ChromeFeatureList.QUICK_DELETE_ANDROID_FOLLOWUP
-    })
-    public void testTabsCheckbox_SingleInstance_withQuickDeleteV2Enabled() {
+    public void testTabsCheckbox_SingleInstance() {
         MultiWindowUtils.setInstanceCountForTesting(1);
         HistogramWatcher histogramWatcher =
                 HistogramWatcher.newSingleRecordWatcher(
@@ -819,11 +807,7 @@ public class ClearBrowsingDataFragmentTest {
 
     @Test
     @MediumTest
-    @Features.EnableFeatures({
-        ChromeFeatureList.QUICK_DELETE_FOR_ANDROID,
-        ChromeFeatureList.QUICK_DELETE_ANDROID_FOLLOWUP
-    })
-    public void testTabsCheckbox_MultiInstance_withQuickDeleteV2Enabled() {
+    public void testTabsCheckbox_MultiInstance() {
         MultiWindowUtils.setInstanceCountForTesting(3);
         HistogramWatcher histogramWatcher =
                 HistogramWatcher.newSingleRecordWatcher(
@@ -846,23 +830,19 @@ public class ClearBrowsingDataFragmentTest {
 
     @Test
     @MediumTest
-    @Features.EnableFeatures({
-        ChromeFeatureList.QUICK_DELETE_FOR_ANDROID,
-        ChromeFeatureList.QUICK_DELETE_ANDROID_FOLLOWUP
-    })
-    public void testSnackbarShown_defaultTimePeriod_withQuickDeleteV2Enabled() throws Exception {
+    public void testSnackbarShown_defaultTimePeriod() throws Exception {
         setDataTypesToClear(DialogOption.CLEAR_CACHE);
 
         final ClearBrowsingDataFragment preferences =
                 (ClearBrowsingDataFragment) startPreferences().getMainFragment();
 
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     clickClearButton(preferences);
                 });
 
         waitForProgressToComplete(preferences);
-        mCallbackHelper.waitForFirst();
+        mCallbackHelper.waitForOnly();
 
         ChromeTabbedActivity activity = mActivityTestRule.getActivity();
         final String expectedSnackbarMessage =
@@ -872,24 +852,20 @@ public class ClearBrowsingDataFragmentTest {
 
     @Test
     @MediumTest
-    @Features.EnableFeatures({
-        ChromeFeatureList.QUICK_DELETE_FOR_ANDROID,
-        ChromeFeatureList.QUICK_DELETE_ANDROID_FOLLOWUP
-    })
-    public void testSnackbarShown_changeTimePeriod_withQuickDeleteV2Enabled() throws Exception {
+    public void testSnackbarShown_changeTimePeriod() throws Exception {
         setDataTypesToClear(DialogOption.CLEAR_CACHE);
 
         final ClearBrowsingDataFragment preferences =
                 (ClearBrowsingDataFragment) startPreferences().getMainFragment();
 
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     changeTimePeriodTo(preferences, TimePeriod.LAST_HOUR);
                     clickClearButton(preferences);
                 });
 
         waitForProgressToComplete(preferences);
-        mCallbackHelper.waitForFirst();
+        mCallbackHelper.waitForOnly();
 
         ChromeTabbedActivity activity = mActivityTestRule.getActivity();
         final String expectedSnackbarMessage =
@@ -901,14 +877,9 @@ public class ClearBrowsingDataFragmentTest {
 
     @Test
     @MediumTest
-    @Features.EnableFeatures({
-        ChromeFeatureList.QUICK_DELETE_FOR_ANDROID,
-        ChromeFeatureList.QUICK_DELETE_ANDROID_FOLLOWUP
-    })
     public void testTabsCheckboxHidden_WhenLaunchedFromSearch() {
         mSettingsActivityTestRule.startSettingsActivity(
-                ClearBrowsingDataFragment.createFragmentArgs(
-                        SearchActivity.class.getName(), /* isFetcherSuppliedFromOutside= */ false));
+                ClearBrowsingDataFragment.createFragmentArgs(SearchActivity.class.getName()));
         ClearBrowsingDataFragment fragment = mSettingsActivityTestRule.getFragment();
 
         CheckBoxPreference checkboxPreference =
@@ -935,15 +906,12 @@ public class ClearBrowsingDataFragmentTest {
 
     private void setDataTypesToClear(final Integer... typesToClear) {
         Set<Integer> typesToClearSet = new ArraySet<Integer>(Arrays.asList(typesToClear));
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     for (@DialogOption Integer option : ClearBrowsingDataFragment.getAllOptions()) {
                         boolean enabled = typesToClearSet.contains(option);
                         when(mBrowsingDataBridgeMock.getBrowsingDataDeletionPreference(
-                                        any(),
-                                        any(),
-                                        eq(ClearBrowsingDataFragment.getDataType(option)),
-                                        anyInt()))
+                                        any(), eq(ClearBrowsingDataFragment.getDataType(option))))
                                 .thenReturn(enabled);
                     }
                 });

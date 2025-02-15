@@ -104,20 +104,9 @@ class NET_EXPORT HttpResponseInfo {
   // True if the response was fetched via explicit proxying. Any type of
   // proxying may have taken place, HTTP or SOCKS. Note, we do not know if a
   // transparent proxy may have been involved.
-  //
-  // If true and this struct was not restored from pickled data, `proxy_chain`
-  // contains the proxy chain that was used.
-  //
-  // TODO(crbug.com/40487912): Remove this in favor of `proxy_chain`.
-  bool was_fetched_via_proxy = false;
+  bool WasFetchedViaProxy() const;
 
   // Information about the proxy chain used to fetch this response, if any.
-  //
-  // This field is not persisted by `Persist()` and not restored by
-  // `InitFromPickle()`.
-  //
-  // TODO(crbug.com/40487912): Support this field in `Persist()` and
-  // `InitFromPickle()` then use it to replace `was_fetched_via_proxy`.
   ProxyChain proxy_chain;
 
   // Whether this request was eligible for IP Protection based on the request
@@ -175,6 +164,9 @@ class NET_EXPORT HttpResponseInfo {
   // The time at which the response headers were received.  For cached
   // this is the last time the cache entry was validated.
   base::Time response_time;
+
+  // Like response_time, but ignoring revalidations.
+  base::Time original_response_time;
 
   // Host resolution error info.
   ResolveErrorInfo resolve_error_info;

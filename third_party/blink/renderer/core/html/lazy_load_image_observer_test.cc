@@ -2,13 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/core/html/lazy_load_image_observer.h"
 
 #include <optional>
 #include <tuple>
 
 #include "third_party/blink/renderer/core/dom/document.h"
-#include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
 #include "third_party/blink/renderer/core/frame/web_local_frame_impl.h"
@@ -27,7 +31,6 @@
 #include "third_party/blink/renderer/platform/loader/fetch/resource_fetcher.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_request.h"
 #include "third_party/blink/renderer/platform/network/network_state_notifier.h"
-#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
 
 namespace blink {
@@ -697,6 +700,49 @@ TEST_F(LazyLoadImagesTest, GarbageCollectDeferredLazyLoadImages) {
   ThreadState::Current()->CollectAllGarbageForTesting();
 
   EXPECT_EQ(nullptr, image);
+}
+
+// This is a regression test added for https://crbug.com/40071424, which was
+// filed as a result of outstanding decode promises *not* keeping an underlying
+// lazyload-deferred image alive, even after removal from the DOM. Images of
+// this sort must kept alive for the underlying decode request promise's sake.
+TEST_F(LazyLoadImagesTest, DeferredLazyLoadImagesKeptAliveForDecodeRequest) {
+  SimRequest main_resource("https://example.com/", "text/html");
+  LoadURL("https://example.com/");
+  main_resource.Complete(String::Format(
+      R"HTML(
+        <body>
+        <div style='height: %dpx;'></div>
+        <img src='https://example.com/image.png' loading='lazy'>
+        </body>)HTML",
+      kViewportHeight + kLoadingDistanceThreshold + 100));
+
+  Compositor().BeginFrame();
+  test::RunPendingTasks();
+
+  WeakPersistent<HTMLImageElement> image =
+      To<HTMLImageElement>(GetDocument().QuerySelector(AtomicString("img")));
+
+  ScriptState* script_state =
+      ToScriptStateForMainWorld(GetDocument().GetFrame());
+  v8::HandleScope handle_scope(script_state->GetIsolate());
+  // This creates an outstanding decode request for the underlying image, which
+  // keeps it alive solely for the sake of the promise's existence.
+  image->decode(script_state, ASSERT_NO_EXCEPTION);
+
+  EXPECT_FALSE(image->complete());
+  image->remove();
+  EXPECT_FALSE(image->isConnected());
+  EXPECT_FALSE(image->complete());
+  EXPECT_NE(image, nullptr);
+
+  GetDocument().View()->UpdateAllLifecyclePhasesForTest();
+  test::RunPendingTasks();
+  ThreadState::Current()->CollectAllGarbageForTesting();
+
+  // After GC, the image is still non-null, since it is kept alive due to the
+  // outstanding decode request.
+  EXPECT_NE(image, nullptr);
 }
 
 }  // namespace

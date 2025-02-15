@@ -43,6 +43,10 @@ bool FakeTabSlotController::IsFocusInTabs() const {
   return false;
 }
 
+bool FakeTabSlotController::ShouldCompactLeadingEdge() const {
+  return true;
+}
+
 TabSlotController::Liveness FakeTabSlotController::ContinueDrag(
     views::View* view,
     const ui::LocatedEvent& event) {
@@ -137,3 +141,22 @@ SkColor FakeTabSlotController::GetPaintedGroupColor(
 const Browser* FakeTabSlotController::GetBrowser() const {
   return nullptr;
 }
+
+int FakeTabSlotController::GetInactiveTabWidth() const {
+  return inactive_tab_width_;
+}
+
+bool FakeTabSlotController::IsFrameCondensed() const {
+  return false;
+}
+
+TabGroup* FakeTabSlotController::GetTabGroup(
+    const tab_groups::TabGroupId& group_id) const {
+  return nullptr;
+}
+
+#if BUILDFLAG(IS_CHROMEOS)
+bool FakeTabSlotController::IsLockedForOnTask() {
+  return on_task_locked_;
+}
+#endif

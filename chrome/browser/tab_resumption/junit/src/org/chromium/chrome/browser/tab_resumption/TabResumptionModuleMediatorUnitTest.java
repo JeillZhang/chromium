@@ -4,12 +4,14 @@
 
 package org.chromium.chrome.browser.tab_resumption;
 
+import static android.os.Looper.getMainLooper;
+
 import static org.mockito.Mockito.any;
-import static org.mockito.Mockito.anyInt;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
-
-import android.content.Context;
+import static org.mockito.Mockito.when;
+import static org.robolectric.Shadows.shadowOf;
 
 import androidx.test.core.app.ApplicationProvider;
 import androidx.test.filters.SmallTest;
@@ -23,18 +25,24 @@ import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.mockito.invocation.InvocationOnMock;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 import org.robolectric.annotation.Config;
 
 import org.chromium.base.Callback;
+import org.chromium.base.CallbackUtils;
+import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.base.test.BaseRobolectricTestRunner;
+import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.Features.EnableFeatures;
-import org.chromium.base.test.util.Features.JUnitProcessor;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
-import org.chromium.chrome.browser.magic_stack.ModuleDelegate;
+import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.tab.TabObserver;
 import org.chromium.chrome.browser.tab_resumption.TabResumptionDataProvider.ResultStrength;
 import org.chromium.chrome.browser.tab_resumption.TabResumptionDataProvider.SuggestionsResult;
 import org.chromium.chrome.browser.tab_resumption.TabResumptionModuleUtils.SuggestionClickCallback;
+import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.components.visited_url_ranking.ScoredURLUserAction;
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.url.JUnitTestGURLs;
@@ -42,25 +50,25 @@ import org.chromium.url.JUnitTestGURLs;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.TimeoutException;
 
 @RunWith(BaseRobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
 @EnableFeatures({ChromeFeatureList.TAB_RESUMPTION_MODULE_ANDROID})
-public class TabResumptionModuleMediatorUnitTest extends TestSupport {
+public class TabResumptionModuleMediatorUnitTest extends TestSupportExtended {
 
     /** Custom mock for TrainingInfo. */
-    class FakeTrainingInfo extends TrainingInfo {
-        // Counter to ensure distinctness of instantiated FakeTrainingInfo. */
-        private static int sRequestIdCounter;
+    static class FakeTrainingInfo extends TrainingInfo {
         public String recordHistory = "";
 
-        FakeTrainingInfo(SuggestionEntry entry) {
+        FakeTrainingInfo(SuggestionEntry entry, long requestId) {
             super(
                     /* nativeVisitedUrlRankingBackend= */ 0L,
                     /* visitId= */ entry.url.getSpec(),
-                    /* requestId= */ sRequestIdCounter);
-            ++sRequestIdCounter;
+                    /* requestId= */ requestId);
         }
 
         @Override
@@ -82,36 +90,50 @@ public class TabResumptionModuleMediatorUnitTest extends TestSupport {
         }
     }
 
-    @Rule public JUnitProcessor mFeaturesProcessor = new JUnitProcessor();
+    @Rule public MockitoRule mMockitoRule = MockitoJUnit.rule();
 
-    @Mock private ModuleDelegate mModuleDelegate;
     @Mock private TabResumptionDataProvider mDataProvider;
     @Mock private UrlImageProvider mUrlImageProvider;
     @Mock private SuggestionClickCallback mClickCallback;
+    @Mock private TabModelSelector mTabModelSelector;
 
     @Captor private ArgumentCaptor<Callback<SuggestionsResult>> mFetchSuggestionCallbackCaptor;
 
-    private PropertyModel mModel;
+    // Fake Tab observation helper, assumes each Tab has at most one TabObserver.
+    private Map<Integer, TabObserver> mTabObserverMap;
+
     private TabResumptionModuleMediator mMediator;
+
+    private int mReloadSessionCounter;
+    private CallbackHelper mReloadSessionCallbackHelper;
+    private ObservableSupplierImpl<TabModelSelector> mTabModelSelectorSupplier;
 
     @Before
     public void setUp() {
-        MockitoAnnotations.initMocks(this);
+        mContext = ApplicationProvider.getApplicationContext();
+        mContext.setTheme(R.style.Theme_BrowserUI_DayNight);
 
-        Context context = ApplicationProvider.getApplicationContext();
-        context.setTheme(R.style.Theme_BrowserUI_DayNight);
+        mTabObserverMap = new HashMap<Integer, TabObserver>();
+        mTabModelSelectorSupplier = new ObservableSupplierImpl<>();
+        mTabModelSelectorSupplier.set(mTabModelSelector);
+        when(mTabModelSelector.getModel(false)).thenReturn(mTabModel);
 
         TabResumptionModuleUtils.setFakeCurrentTimeMsForTesting(() -> CURRENT_TIME_MS);
         mModel = new PropertyModel(TabResumptionModuleProperties.ALL_KEYS);
 
         mMediator =
                 new TabResumptionModuleMediator(
-                        /* context= */ context,
+                        /* context= */ mContext,
                         /* moduleDelegate= */ mModuleDelegate,
+                        /* tabModelSelectorSupplier= */ mTabModelSelectorSupplier,
                         /* model= */ mModel,
                         /* urlImageProvider= */ mUrlImageProvider,
-                        /* statusChangedCallback= */ () -> {},
-                        /* seeMoreLinkClickCallback= */ () -> {},
+                        /* reloadSessionCallback= */ () -> {
+                            ++mReloadSessionCounter;
+                            mReloadSessionCallbackHelper.notifyCalled();
+                        },
+                        /* statusChangedCallback= */ CallbackUtils.emptyRunnable(),
+                        /* seeMoreLinkClickCallback= */ CallbackUtils.emptyRunnable(),
                         /* suggestionClickCallback= */ mClickCallback);
         mMediator.startSession(mDataProvider);
 
@@ -184,14 +206,14 @@ public class TabResumptionModuleMediatorUnitTest extends TestSupport {
                         /* sourceName= */ "Desktop",
                         /* url= */ JUnitTestGURLs.GOOGLE_URL_DOG,
                         /* title= */ "Google Dog",
-                        /* timestamp= */ makeTimestamp(16, 0, 0));
+                        /* lastActiveTime= */ makeTimestamp(16, 0, 0));
         // Invalid due to empty title.
         SuggestionEntry entryInvalid =
                 SuggestionEntry.createFromForeignFields(
                         /* sourceName= */ "Desktop",
                         /* url= */ JUnitTestGURLs.RED_2,
                         /* title= */ "",
-                        /* timestamp= */ makeTimestamp(17, 0, 0));
+                        /* lastActiveTime= */ makeTimestamp(17, 0, 0));
 
         List<SuggestionEntry> suggestions = new ArrayList<SuggestionEntry>();
         suggestions.add(entryInvalid);
@@ -223,19 +245,19 @@ public class TabResumptionModuleMediatorUnitTest extends TestSupport {
                         /* sourceName= */ "Desktop",
                         /* url= */ JUnitTestGURLs.GOOGLE_URL_DOG,
                         /* title= */ "Google Dog",
-                        /* timestamp= */ makeTimestamp(16, 0, 0));
+                        /* lastActiveTime= */ makeTimestamp(16, 0, 0));
         SuggestionEntry entryNewer =
                 SuggestionEntry.createFromForeignFields(
                         /* sourceName= */ "Phone",
                         /* url= */ JUnitTestGURLs.RED_2,
                         /* title= */ "Red 2",
-                        /* timestamp= */ makeTimestamp(13, 0, 0));
+                        /* lastActiveTime= */ makeTimestamp(13, 0, 0));
         SuggestionEntry entryOldest =
                 SuggestionEntry.createFromForeignFields(
                         /* sourceName= */ "Desktop",
                         /* url= */ JUnitTestGURLs.BLUE_1,
                         /* title= */ "Blue 1",
-                        /* timestamp= */ makeTimestamp(12, 0, 0));
+                        /* lastActiveTime= */ makeTimestamp(12, 0, 0));
 
         List<SuggestionEntry> suggestions = new ArrayList<SuggestionEntry>();
         suggestions.add(entryNewest);
@@ -467,11 +489,88 @@ public class TabResumptionModuleMediatorUnitTest extends TestSupport {
 
     @Test
     @SmallTest
+    public void testShowOnlyOneLocalTab() {
+        Tab tab0 = createMockLocalTab(0);
+        Tab tab1 = createMockLocalTab(1);
+        bindBasicTabObservation(tab0);
+        bindBasicTabObservation(tab1);
+        List<SuggestionEntry> suggestions =
+                Arrays.asList(
+                        SuggestionEntry.createFromLocalTab(tab0),
+                        SuggestionEntry.createFromLocalTab(tab1));
+        mReloadSessionCallbackHelper = new CallbackHelper();
+
+        mMediator.loadModule();
+        verify(mDataProvider, times(1)).fetchSuggestions(mFetchSuggestionCallbackCaptor.capture());
+        mFetchSuggestionCallbackCaptor
+                .getAllValues()
+                .get(0)
+                .onResult(new SuggestionsResult(ResultStrength.STABLE, suggestions));
+        checkModuleState(
+                /* isVisible= */ true,
+                /* expectOnDataReadyCalls= */ 1,
+                /* expectOnDataFetchFailedCalls= */ 0,
+                /* expectRemoveModuleCalls= */ 0);
+        Assert.assertEquals(1, getSuggestionBundle().entries.size());
+        Assert.assertEquals(suggestions.get(0), getSuggestionBundle().entries.get(0));
+
+        // Examine Local Tab observation: Only the shown tab is observed.
+        Assert.assertNotNull(mTabObserverMap.get(tab0.getId()));
+        Assert.assertNull(mTabObserverMap.get(tab1.getId()));
+
+        // Simulate closing the suggested Local Tab: Causes `reloadSessionCallback` to be called.
+        Assert.assertEquals(0, mReloadSessionCounter);
+        mTabObserverMap.get(tab0.getId()).onClosingStateChanged(tab0, /* closing= */ false);
+        Assert.assertEquals(0, mReloadSessionCounter);
+        mTabObserverMap.get(tab0.getId()).onClosingStateChanged(tab0, /* closing= */ true);
+        try {
+            shadowOf(getMainLooper()).idle();
+            mReloadSessionCallbackHelper.waitForNext();
+        } catch (TimeoutException e) {
+            throw new AssertionError("Timed out waiting for reload callback.", e);
+        }
+        Assert.assertEquals(1, mReloadSessionCounter);
+
+        // Simulate ending session: Observation should be released.
+        mMediator.endSession();
+        Assert.assertNull(mTabObserverMap.get(tab0.getId()));
+        Assert.assertNull(mTabObserverMap.get(tab1.getId()));
+    }
+
+    @Test
+    @SmallTest
+    public void testShowOnlyOneLocalTab_WithForeignTab() {
+        Tab tab0 = createMockLocalTab(0);
+        Tab tab1 = createMockLocalTab(1);
+        List<SuggestionEntry> suggestions =
+                Arrays.asList(
+                        SuggestionEntry.createFromLocalTab(tab0),
+                        SuggestionEntry.createFromLocalTab(tab1),
+                        makeSyncDerivedSuggestion(1));
+
+        mMediator.loadModule();
+        verify(mDataProvider, times(1)).fetchSuggestions(mFetchSuggestionCallbackCaptor.capture());
+        mFetchSuggestionCallbackCaptor
+                .getAllValues()
+                .get(0)
+                .onResult(new SuggestionsResult(ResultStrength.STABLE, suggestions));
+        checkModuleState(
+                /* isVisible= */ true,
+                /* expectOnDataReadyCalls= */ 1,
+                /* expectOnDataFetchFailedCalls= */ 0,
+                /* expectRemoveModuleCalls= */ 0);
+        Assert.assertEquals(2, getSuggestionBundle().entries.size());
+        Assert.assertEquals(suggestions.get(0), getSuggestionBundle().entries.get(0));
+        Assert.assertEquals(suggestions.get(2), getSuggestionBundle().entries.get(1));
+    }
+
+    @Test
+    @SmallTest
     public void testTrainingInfoUsageTentativeClick() {
         List<SuggestionEntry> tentativeSuggestions =
                 Arrays.asList(makeSyncDerivedSuggestion(0), makeSyncDerivedSuggestion(1));
         List<FakeTrainingInfo> tentativeFakeTrainingInfos =
-                addFakeTrainingInfo(tentativeSuggestions);
+                addFakeTrainingInfo(tentativeSuggestions, Arrays.asList(1234L, -314159265358L));
 
         // Tentative suggestions = something: Call onDataReady() and show (tentative).
         mMediator.loadModule();
@@ -514,9 +613,11 @@ public class TabResumptionModuleMediatorUnitTest extends TestSupport {
         List<SuggestionEntry> stableSuggestions2 = Arrays.asList(makeSyncDerivedSuggestion(0));
 
         List<FakeTrainingInfo> tentativeFakeTrainingInfos =
-                addFakeTrainingInfo(tentativeSuggestions);
-        List<FakeTrainingInfo> stableFakeTrainingInfos1 = addFakeTrainingInfo(stableSuggestions1);
-        List<FakeTrainingInfo> stableFakeTrainingInfos2 = addFakeTrainingInfo(stableSuggestions2);
+                addFakeTrainingInfo(tentativeSuggestions, Arrays.asList(0L, -1L));
+        List<FakeTrainingInfo> stableFakeTrainingInfos1 =
+                addFakeTrainingInfo(stableSuggestions1, Arrays.asList(-2024L, -133700000000L));
+        List<FakeTrainingInfo> stableFakeTrainingInfos2 =
+                addFakeTrainingInfo(stableSuggestions2, Arrays.asList(9876543219876543L));
 
         // Tentative suggestions = something: Call onDataReady() and show (tentative).
         mMediator.loadModule();
@@ -591,7 +692,7 @@ public class TabResumptionModuleMediatorUnitTest extends TestSupport {
     }
 
     private void testMaxTilesNumberImpl(int maxTilesNumber) {
-        TabResumptionModuleUtils.TAB_RESUMPTION_MAX_TILES_NUMBER.setForTesting(maxTilesNumber);
+        ChromeFeatureList.sTabResumptionModuleAndroidMaxTilesNumber.setForTesting(maxTilesNumber);
         List<SuggestionEntry> suggestions =
                 Arrays.asList(makeSyncDerivedSuggestion(1), makeSyncDerivedSuggestion(0));
 
@@ -609,29 +710,47 @@ public class TabResumptionModuleMediatorUnitTest extends TestSupport {
         Assert.assertEquals(maxTilesNumber, getSuggestionBundle().entries.size());
     }
 
-    private void checkModuleState(
-            boolean isVisible,
-            int expectOnDataReadyCalls,
-            int expectOnDataFetchFailedCalls,
-            int expectRemoveModuleCalls) {
-        Assert.assertEquals(isVisible, mModel.get(TabResumptionModuleProperties.IS_VISIBLE));
-        verify(mModuleDelegate, times(expectOnDataReadyCalls)).onDataReady(anyInt(), any());
-        verify(mModuleDelegate, times(expectOnDataFetchFailedCalls)).onDataFetchFailed(anyInt());
-        verify(mModuleDelegate, times(expectRemoveModuleCalls)).removeModule(anyInt());
-    }
-
     private SuggestionBundle getSuggestionBundle() {
         return (SuggestionBundle) mModel.get(TabResumptionModuleProperties.SUGGESTION_BUNDLE);
     }
 
-    private List<FakeTrainingInfo> addFakeTrainingInfo(List<SuggestionEntry> entries) {
+    private List<FakeTrainingInfo> addFakeTrainingInfo(
+            List<SuggestionEntry> entries, List<Long> requestIds) {
+        int n = entries.size();
+        assert requestIds.size() == n;
         List<FakeTrainingInfo> fakeTrainingInfos = new ArrayList<FakeTrainingInfo>();
-        for (SuggestionEntry entry : entries) {
+        for (int i = 0; i < n; ++i) {
+            SuggestionEntry entry = entries.get(i);
             Assert.assertNull(entry.trainingInfo);
-            FakeTrainingInfo traingInfo = new FakeTrainingInfo(entry);
+            FakeTrainingInfo traingInfo = new FakeTrainingInfo(entry, requestIds.get(i));
             fakeTrainingInfos.add(traingInfo);
             entry.trainingInfo = traingInfo;
         }
         return fakeTrainingInfos;
+    }
+
+    /** Simulates behavior of Tab.{addObserver(),removeObserver()}, captured in `mTabObserveMap` */
+    private void bindBasicTabObservation(Tab tab) {
+        doAnswer(
+                        (InvocationOnMock invocation) -> {
+                            // Enforce our restriction that a Tab can have at most one observer.
+                            Assert.assertFalse(mTabObserverMap.containsKey(tab.getId()));
+                            mTabObserverMap.put(
+                                    tab.getId(), (TabObserver) invocation.getArguments()[0]);
+                            return null;
+                        })
+                .when(tab)
+                .addObserver(any(TabObserver.class));
+
+        doAnswer(
+                        (InvocationOnMock invocation) -> {
+                            Assert.assertEquals(
+                                    mTabObserverMap.get(tab.getId()),
+                                    (TabObserver) invocation.getArguments()[0]);
+                            mTabObserverMap.remove(tab.getId());
+                            return null;
+                        })
+                .when(tab)
+                .removeObserver(any(TabObserver.class));
     }
 }

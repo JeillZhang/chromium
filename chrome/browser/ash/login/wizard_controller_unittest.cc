@@ -7,6 +7,7 @@
 #include <memory>
 #include <utility>
 
+#include "ash/constants/ash_switches.h"
 #include "ash/shell.h"
 #include "ash/test/ash_test_helper.h"
 #include "ash/wm/tablet_mode/tablet_mode_controller.h"
@@ -18,11 +19,12 @@
 #include "chrome/browser/ash/input_method/input_method_configuration.h"
 #include "chrome/browser/ash/login/enrollment/mock_enrollment_launcher.h"
 #include "chrome/browser/ash/login/startup_utils.h"
-#include "chrome/browser/ash/login/ui/fake_login_display_host.h"
 #include "chrome/browser/ash/login/wizard_context.h"
 #include "chrome/browser/ash/net/network_portal_detector_test_impl.h"
 #include "chrome/browser/ash/net/rollback_network_config/fake_rollback_network_config.h"
 #include "chrome/browser/ash/net/rollback_network_config/rollback_network_config_service.h"
+#include "chrome/browser/ash/policy/enrollment/auto_enrollment_controller.h"
+#include "chrome/browser/ash/policy/enrollment/auto_enrollment_type_checker.h"
 #include "chrome/browser/ash/profiles/signin_profile_handler.h"
 #include "chrome/browser/ash/settings/device_settings_cache.h"
 #include "chrome/browser/ash/settings/device_settings_test_helper.h"
@@ -33,8 +35,9 @@
 #include "chrome/browser/extensions/test_extension_system.h"
 #include "chrome/browser/prefs/browser_prefs.h"
 #include "chrome/browser/ui/ash/keyboard/chrome_keyboard_controller_client_test_helper.h"
-#include "chrome/browser/ui/ash/test_wallpaper_controller.h"
-#include "chrome/browser/ui/ash/wallpaper_controller_client_impl.h"
+#include "chrome/browser/ui/ash/login/fake_login_display_host.h"
+#include "chrome/browser/ui/ash/wallpaper/test_wallpaper_controller.h"
+#include "chrome/browser/ui/ash/wallpaper/wallpaper_controller_client_impl.h"
 #include "chrome/browser/ui/webui/ash/login/demo_preferences_screen_handler.h"
 #include "chrome/browser/ui/webui/ash/login/demo_setup_screen_handler.h"
 #include "chrome/browser/ui/webui/ash/login/gaia_screen_handler.h"
@@ -49,7 +52,6 @@
 #include "chromeos/ash/components/browser_context_helper/browser_context_types.h"
 #include "chromeos/ash/components/dbus/biod/biod_client.h"
 #include "chromeos/ash/components/dbus/dbus_thread_manager.h"
-#include "chromeos/ash/components/dbus/dlcservice/dlcservice_client.h"
 #include "chromeos/ash/components/dbus/oobe_config/fake_oobe_configuration_client.h"
 #include "chromeos/ash/components/dbus/oobe_config/oobe_configuration_client.h"
 #include "chromeos/ash/components/dbus/update_engine/fake_update_engine_client.h"
@@ -214,7 +216,6 @@ class WizardControllerTestBase : public ::testing::Test {
         std::make_unique<ScopedEnrollmentLauncherFactoryOverrideForTesting>(
             base::BindRepeating(FakeEnrollmentLauncher::Create,
                                 &mock_enrollment_launcher_));
-    DlcserviceClient::InitializeFake();
     network_portal_detector::InitializeForTesting(&network_portal_detector_);
     chromeos::TpmManagerClient::InitializeFake();
     StatsReportingController::Initialize(
@@ -239,7 +240,6 @@ class WizardControllerTestBase : public ::testing::Test {
     StatsReportingController::Shutdown();
     chromeos::TpmManagerClient::Shutdown();
     network_portal_detector::InitializeForTesting(nullptr);
-    DlcserviceClient::Shutdown();
     enrollment_launcher_factory_.reset();
     OobeConfigurationClient::Shutdown();
     DBusThreadManager::Shutdown();
@@ -389,6 +389,14 @@ class WizardControllerTest : public WizardControllerTestBase {
     fake_login_display_host_->GetWizardContext()->is_branded_build = is_branded;
   }
 
+  void SetupUnfiedStateDeterminationDisabled() {
+    // TODO(crbug.com/375564225) Remove `kUnifiedStateDeterminationNever` to
+    // make tests more realistic.
+    command_line_.GetProcessCommandLine()->AppendSwitchASCII(
+        ash::switches::kEnterpriseEnableUnifiedStateDetermination,
+        policy::AutoEnrollmentTypeChecker::kUnifiedStateDeterminationNever);
+  }
+
   raw_ptr<WizardController> wizard_controller_ = nullptr;
 
  private:
@@ -399,6 +407,7 @@ class WizardControllerTest : public WizardControllerTestBase {
   std::unique_ptr<content::TestWebContentsFactory> web_contents_factory_;
   std::unique_ptr<network::TestURLLoaderFactory> test_url_loader_factory_;
   SigninProfileHandler signing_profile_handler_;
+  base::test::ScopedCommandLine command_line_;
 };
 
 // Chromebox For Meetings (CFM) has forced enrollment. Tests that want to do
@@ -406,6 +415,7 @@ class WizardControllerTest : public WizardControllerTestBase {
 #if !BUILDFLAG(PLATFORM_CFM)
 TEST_F(WizardControllerTest,
        ConsumerOobeFlowShouldContinueToUserCreationOnNonCriticalUpdate) {
+  SetupUnfiedStateDeterminationDisabled();
   wizard_controller_->Init(/*first_screen=*/ash::OOBE_SCREEN_UNKNOWN);
   ASSERT_TRUE(AwaitScreen(kWelcomeScreen));
 
@@ -420,6 +430,7 @@ TEST_F(WizardControllerTest,
 }
 
 TEST_F(WizardControllerTest, DemoModeOobeFlowEndsOnGaiaScreenAndCompletesOobe) {
+  SetupUnfiedStateDeterminationDisabled();
   wizard_controller_->Init(kWelcomeScreen);
   ASSERT_TRUE(AwaitScreen(kWelcomeScreen));
   EXPECT_FALSE(DemoSetupController::IsOobeDemoSetupFlowInProgress());
@@ -533,7 +544,9 @@ class WizardControllerAfterRollbackTest : public WizardControllerTest {
 };
 
 TEST_F(WizardControllerAfterRollbackTest, AdvanceToEnrollmentAfterRollback) {
+  SetupUnfiedStateDeterminationDisabled();
   wizard_controller_->Init(kAutoEnrollmentCheckScreen);
+  // Advance to enrollment despite FRE not being enabled.
   ASSERT_TRUE(AwaitScreen(kEnrollmentScreen));
 }
 

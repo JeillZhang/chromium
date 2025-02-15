@@ -13,7 +13,6 @@
 #include "base/command_line.h"
 #include "base/containers/fixed_flat_map.h"
 #include "base/containers/to_vector.h"
-#include "base/feature_list.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/user_metrics.h"
 #include "base/strings/stringprintf.h"
@@ -24,7 +23,8 @@
 #include "components/policy/core/common/policy_service.h"
 #include "components/policy/policy_constants.h"
 #include "components/prefs/pref_service.h"
-#include "components/search_engines/eea_countries_ids.h"
+#include "components/regional_capabilities/regional_capabilities_utils.h"
+#include "components/search_engines/choice_made_location.h"
 #include "components/search_engines/search_engine_type.h"
 #include "components/search_engines/search_engines_pref_names.h"
 #include "components/search_engines/search_engines_switches.h"
@@ -55,40 +55,6 @@ constexpr char kDisplayStateSearchEnginesKey[] = "search_engines";
 constexpr char kDisplayStateSelectedEngineIndexKey[] = "selected_engine_index";
 
 }  // namespace
-
-const char kSearchEngineChoiceScreenNavigationConditionsHistogram[] =
-    "Search.ChoiceScreenNavigationConditions";
-
-const char kSearchEngineChoiceScreenProfileInitConditionsHistogram[] =
-    "Search.ChoiceScreenProfileInitConditions";
-
-const char kSearchEngineChoiceScreenEventsHistogram[] =
-    "Search.ChoiceScreenEvents";
-
-const char kSearchEngineChoiceScreenDefaultSearchEngineTypeHistogram[] =
-    "Search.ChoiceScreenDefaultSearchEngineType";
-
-const char kSearchEngineChoiceScreenSelectedEngineIndexHistogram[] =
-    "Search.ChoiceScreenSelectedEngineIndex";
-
-const char kSearchEngineChoiceScreenShowedEngineAtHistogramPattern[] =
-    "Search.ChoiceScreenShowedEngineAt.Index%d";
-
-const char kSearchEngineChoiceScreenShowedEngineAtCountryMismatchHistogram[] =
-    "Search.ChoiceScreenShowedEngineAt.CountryMismatch";
-
-const char kSearchEngineChoiceWipeReasonHistogram[] = "Search.ChoiceWipeReason";
-
-const char kSearchEngineChoiceRepromptHistogram[] = "Search.ChoiceReprompt";
-
-const char kSearchEngineChoiceRepromptWildcardHistogram[] =
-    "Search.ChoiceReprompt.Wildcard";
-
-const char kSearchEngineChoiceRepromptSpecificCountryHistogram[] =
-    "Search.ChoiceReprompt.SpecificCountry";
-
-const char kSearchEngineChoiceUnexpectedIdHistogram[] =
-    "Search.ChoiceDebug.UnexpectedSearchEngineId";
 
 ChoiceScreenDisplayState::ChoiceScreenDisplayState(
     std::vector<SearchEngineType> search_engines,
@@ -173,37 +139,20 @@ ChoiceScreenData::ChoiceScreenData(
 
 ChoiceScreenData::~ChoiceScreenData() = default;
 
-// Returns whether the choice screen flag is generally enabled for the specific
-// user flow.
-bool IsChoiceScreenFlagEnabled(ChoicePromo promo) {
-  if (!base::FeatureList::IsEnabled(switches::kSearchEngineChoiceTrigger)) {
-    return false;
-  }
-
-#if BUILDFLAG(IS_IOS)
-  // Chrome on iOS does not tag profiles, so this param instead determines
-  // whether we show the choice screen outside of the FRE or not.
-  if (switches::kSearchEngineChoiceTriggerForTaggedProfilesOnly.Get() &&
-      promo == ChoicePromo::kDialog) {
-    return false;
-  }
-#endif
-
-  return true;
-}
-
 bool IsEeaChoiceCountry(int country_id) {
-  // Consider the search engine list command line country override as an EEA
-  // region country to display the search engine choice screen.
-  return HasSearchEngineCountryListOverride()
-             ? true
-             : kEeaChoiceCountriesIds.contains(country_id);
+  return regional_capabilities::IsEeaCountry(country_id);
 }
 
 void RecordChoiceScreenProfileInitCondition(
     SearchEngineChoiceScreenConditions condition) {
   base::UmaHistogramEnumeration(
       kSearchEngineChoiceScreenProfileInitConditionsHistogram, condition);
+}
+
+void RecordChoiceScreenNavigationCondition(
+    SearchEngineChoiceScreenConditions condition) {
+  base::UmaHistogramEnumeration(
+      kSearchEngineChoiceScreenNavigationConditionsHistogram, condition);
 }
 
 void RecordChoiceScreenEvent(SearchEngineChoiceScreenEvents event) {
@@ -219,10 +168,17 @@ void RecordChoiceScreenEvent(SearchEngineChoiceScreenEvents event) {
   }
 }
 
-void RecordChoiceScreenDefaultSearchProviderType(SearchEngineType engine_type) {
+void RecordChoiceScreenDefaultSearchProviderType(
+    SearchEngineType engine_type,
+    ChoiceMadeLocation choice_location) {
   base::UmaHistogramEnumeration(
       kSearchEngineChoiceScreenDefaultSearchEngineTypeHistogram, engine_type,
       SEARCH_ENGINE_MAX);
+  if (choice_location == ChoiceMadeLocation::kChoiceScreen) {
+    base::UmaHistogramEnumeration(
+        kSearchEngineChoiceScreenDefaultSearchEngineType2Histogram, engine_type,
+        SEARCH_ENGINE_MAX);
+  }
 }
 
 void RecordChoiceScreenSelectedIndex(int selected_engine_index) {
@@ -251,58 +207,20 @@ void RecordChoiceScreenPositions(
   }
 }
 
-void RecordUnexpectedSearchProvider(const TemplateURLData& data) {
-  base::UmaHistogramSparse(kSearchEngineChoiceUnexpectedIdHistogram,
-                           data.prepopulate_id);
-}
-
 void WipeSearchEngineChoicePrefs(PrefService& profile_prefs,
                                  WipeSearchEngineChoiceReason reason) {
-  if (IsChoiceScreenFlagEnabled(ChoicePromo::kAny)) {
-    base::UmaHistogramEnumeration(kSearchEngineChoiceWipeReasonHistogram,
-                                  reason);
-    profile_prefs.ClearPref(
-        prefs::kDefaultSearchProviderChoiceScreenCompletionTimestamp);
-    profile_prefs.ClearPref(
-        prefs::kDefaultSearchProviderChoiceScreenCompletionVersion);
-    profile_prefs.ClearPref(
-        prefs::kDefaultSearchProviderPendingChoiceScreenDisplayState);
+  base::UmaHistogramEnumeration(kSearchEngineChoiceWipeReasonHistogram, reason);
+  profile_prefs.ClearPref(
+      prefs::kDefaultSearchProviderChoiceScreenCompletionTimestamp);
+  profile_prefs.ClearPref(
+      prefs::kDefaultSearchProviderChoiceScreenCompletionVersion);
+  profile_prefs.ClearPref(
+      prefs::kDefaultSearchProviderPendingChoiceScreenDisplayState);
 
 #if BUILDFLAG(IS_IOS)
     profile_prefs.ClearPref(
         prefs::kDefaultSearchProviderChoiceScreenSkippedCount);
 #endif
-  }
-}
-
-std::optional<SearchEngineCountryOverride> GetSearchEngineCountryOverride() {
-  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
-  if (!command_line->HasSwitch(switches::kSearchEngineChoiceCountry)) {
-    return std::nullopt;
-  }
-
-  std::string country_id =
-      base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
-          switches::kSearchEngineChoiceCountry);
-
-  if (country_id == switches::kDefaultListCountryOverride) {
-    return SearchEngineCountryListOverride::kEeaDefault;
-  }
-  if (country_id == switches::kEeaListCountryOverride) {
-    return SearchEngineCountryListOverride::kEeaAll;
-  }
-  return country_codes::CountryStringToCountryID(country_id);
-}
-
-bool HasSearchEngineCountryListOverride() {
-  std::optional<SearchEngineCountryOverride> country_override =
-      GetSearchEngineCountryOverride();
-  if (!country_override.has_value()) {
-    return false;
-  }
-
-  return absl::holds_alternative<SearchEngineCountryListOverride>(
-      country_override.value());
 }
 
 #if !BUILDFLAG(IS_ANDROID)

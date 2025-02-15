@@ -40,7 +40,7 @@ std::unique_ptr<BookmarkModel> TestBookmarkClient::CreateModelWithClient(
 
 BookmarkPermanentNode* TestBookmarkClient::EnableManagedNode() {
   managed_node_ = BookmarkPermanentNode::CreateManagedBookmarks(/*id=*/100);
-  // Keep a copy of the node in |unowned_managed_node_| for the accessor
+  // Keep a copy of the node in `unowned_managed_node_` for the accessor
   // functions.
   unowned_managed_node_ = managed_node_.get();
   return unowned_managed_node_;
@@ -142,7 +142,6 @@ TestBookmarkClient::GetFaviconImageForPageURL(
 }
 
 void TestBookmarkClient::OnBookmarkNodeRemovedUndoable(
-    BookmarkModel* model,
     const BookmarkNode* parent,
     size_t index,
     std::unique_ptr<BookmarkNode> node) {}

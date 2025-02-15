@@ -9,7 +9,6 @@
 #include <utility>
 
 #include "base/functional/bind.h"
-#include "base/ranges/algorithm.h"
 #include "chrome/browser/media/prefs/capture_device_ranking.h"
 #include "chrome/browser/ui/views/media_preview/media_preview_metrics.h"
 #include "chrome/browser/ui/views/media_preview/media_view.h"
@@ -57,7 +56,7 @@ MicCoordinator::MicCoordinator(
 }
 
 MicCoordinator::~MicCoordinator() {
-  if (allow_device_selection_) {
+  if (allow_device_selection_ && mic_mediator_.IsDeviceListInitialized()) {
     RecordDeviceSelectionTotalDevices(metrics_context_,
                                       eligible_device_infos_.size());
   }

@@ -17,6 +17,7 @@
 #include "components/viz/common/frame_sinks/begin_frame_args.h"
 #include "components/viz/common/quads/compositor_frame_transition_directive.h"
 #include "components/viz/common/quads/frame_deadline.h"
+#include "components/viz/common/quads/frame_interval_inputs.h"
 #include "components/viz/common/quads/offset_tag.h"
 #include "components/viz/common/surfaces/region_capture_bounds.h"
 #include "components/viz/common/surfaces/surface_id.h"
@@ -97,22 +98,22 @@ class VIZ_COMMON_EXPORT CompositorFrameMetadata {
 
   gfx::SizeF scrollable_viewport_size;
 
+  // The size of the viewport for the visible region in DIP.
+  gfx::Size visible_viewport_size;
+
   gfx::ContentColorUsage content_color_usage = gfx::ContentColorUsage::kSRGB;
 
   bool may_contain_video = false;
 
   bool may_throttle_if_undrawn_frames = true;
 
-  // WebView makes quality decisions for rastering resourceless software frames
-  // based on information that a scroll or animation is active.
-  // TODO(aelias): Remove this and always enable filtering if there aren't apps
-  // depending on this anymore.
-  bool is_resourceless_software_draw_with_scroll_or_animation = false;
-
   // True if this compositor frame is related to an animated or precise scroll.
   // This includes during the touch interaction just prior to the initiation of
   // gesture scroll events.
   bool is_handling_interaction = false;
+
+  // True if this compositor frame contains animations.
+  bool is_handling_animation = false;
 
   // This color is usually obtained from the background color of the <body>
   // element. It can be used for filling in gutter areas around the frame when
@@ -173,8 +174,6 @@ class VIZ_COMMON_EXPORT CompositorFrameMetadata {
   // value set.
   std::optional<float> top_controls_visible_height;
 
-  std::optional<base::TimeDelta> preferred_frame_interval;
-
   // Display transform hint when the frame is generated. Note this is only
   // applicable to frames of the root surface.
   gfx::OverlayTransform display_transform_hint = gfx::OVERLAY_TRANSFORM_NONE;
@@ -223,6 +222,9 @@ class VIZ_COMMON_EXPORT CompositorFrameMetadata {
   // List of values for tags that apply to tagged quads in an embedding
   // CompositorFrame.
   std::vector<OffsetTagValue> offset_tag_values;
+
+  // Information used to compute overall ideal frame interval.
+  FrameIntervalInputs frame_interval_inputs;
 
  private:
   CompositorFrameMetadata(const CompositorFrameMetadata& other);

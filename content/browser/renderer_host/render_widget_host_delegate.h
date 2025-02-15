@@ -13,6 +13,7 @@
 
 #include "base/functional/callback.h"
 #include "build/build_config.h"
+#include "components/input/render_input_router.mojom.h"
 #include "components/viz/common/vertical_scroll_direction.h"
 #include "content/browser/renderer_host/render_widget_host_view_child_frame.h"
 #include "content/common/content_export.h"
@@ -24,6 +25,7 @@
 #include "third_party/blink/public/mojom/frame/lifecycle.mojom.h"
 #include "third_party/blink/public/mojom/input/input_handler.mojom-shared.h"
 #include "third_party/blink/public/mojom/manifest/display_mode.mojom.h"
+#include "ui/base/mojom/window_show_state.mojom-forward.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/gfx/mojom/delegated_ink_point_renderer.mojom.h"
 #include "ui/gfx/native_widget_types.h"
@@ -42,18 +44,18 @@ class Size;
 
 namespace input {
 struct NativeWebKeyboardEvent;
+class RenderWidgetHostInputEventRouter;
 }  // namespace input
 
 namespace ui {
 class Compositor;
+class BrowserAccessibilityManager;
 }  // namespace ui
 
 namespace content {
 
-class BrowserAccessibilityManager;
 class RenderFrameProxyHost;
 class RenderWidgetHostImpl;
-class RenderWidgetHostInputEventRouter;
 class RenderViewHostDelegateView;
 class TextInputManager;
 class VisibleTimeRequestTrigger;
@@ -85,11 +87,12 @@ class CONTENT_EXPORT RenderWidgetHostDelegate {
   // The RenderWidgetHost is going to be deleted.
   virtual void RenderWidgetDeleted(RenderWidgetHostImpl* render_widget_host) {}
 
-  // If a main frame navigation is in progress, this will return the zoom level
-  // for the pending page. Otherwise, this returns the zoom level for the
-  // current page. Note that subframe navigations do not affect the zoom level,
-  // which is tracked at the level of the page.
-  virtual double GetPendingPageZoomLevel();
+  // If a frame navigation is in progress for the frame that owns `rwh`, this
+  // will return the pending zoom level for that frame. Otherwise, this returns
+  // the zoom level for the current frame. Note that subframe navigations only
+  // affect the zoom level if the frame has requested independent zoom via
+  // HostZoomMap.
+  virtual double GetPendingZoomLevel(RenderWidgetHostImpl* rwh);
 
   // The RenderWidget was resized.
   virtual void RenderWidgetWasResized(RenderWidgetHostImpl* render_widget_host,
@@ -135,11 +138,11 @@ class CONTENT_EXPORT RenderWidgetHostDelegate {
   virtual bool PreHandleGestureEvent(const blink::WebGestureEvent& event);
 
   // Get the root BrowserAccessibilityManager for this frame tree.
-  virtual BrowserAccessibilityManager* GetRootBrowserAccessibilityManager();
+  virtual ui::BrowserAccessibilityManager* GetRootBrowserAccessibilityManager();
 
   // Get the root BrowserAccessibilityManager for this frame tree,
   // or create it if it doesn't exist.
-  virtual BrowserAccessibilityManager*
+  virtual ui::BrowserAccessibilityManager*
   GetOrCreateRootBrowserAccessibilityManager();
 
   // Send OS Cut/Copy/Paste actions to the focused frame.
@@ -170,7 +173,9 @@ class CONTENT_EXPORT RenderWidgetHostDelegate {
   // Request the renderer to Move the caret to the new position.
   virtual void MoveCaret(const gfx::Point& extent) {}
 
-  virtual RenderWidgetHostInputEventRouter* GetInputEventRouter();
+  virtual base::UnguessableToken GetCompositorFrameSinkGroupingId() const;
+
+  virtual input::RenderWidgetHostInputEventRouter* GetInputEventRouter();
 
   virtual void GetRenderWidgetHostAtPointAsynchronously(
       RenderWidgetHostViewBase* root_view,
@@ -226,7 +231,7 @@ class CONTENT_EXPORT RenderWidgetHostDelegate {
   virtual blink::mojom::DisplayMode GetDisplayMode() const;
 
   // Returns the window show state.
-  virtual ui::WindowShowState GetWindowShowState();
+  virtual ui::mojom::WindowShowState GetWindowShowState();
 
   // Returns the device posture provider tracking the device posture.
   virtual blink::mojom::DevicePostureProvider* GetDevicePostureProvider();
@@ -248,6 +253,11 @@ class CONTENT_EXPORT RenderWidgetHostDelegate {
   // Returns the widget that holds the pointer lock or nullptr if the mouse
   // pointer isn't locked.
   virtual RenderWidgetHostImpl* GetPointerLockWidget();
+
+  // Returns true if we are waiting for the user to make a selection on the
+  // pointer lock permission request dialog.
+  virtual bool IsWaitingForPointerLockPrompt(
+      RenderWidgetHostImpl* render_widget_host);
 
   // Requests to lock the keyboard. Once the request is approved or rejected,
   // GotResponseToKeyboardLockRequest() will be called on the requesting render
@@ -335,9 +345,6 @@ class CONTENT_EXPORT RenderWidgetHostDelegate {
   virtual void OnVerticalScrollDirectionChanged(
       viz::VerticalScrollDirection scroll_direction) {}
 
-  // Returns true if the delegate is a portal.
-  virtual bool IsPortal();
-
   // Notify the delegate that the screen orientation has been changed.
   virtual void DidChangeScreenOrientation() {}
 
@@ -358,13 +365,12 @@ class CONTENT_EXPORT RenderWidgetHostDelegate {
   // shouldn't be used to improve typing suggestions for the user.
   virtual bool ShouldDoLearning();
 
-  // Zoom level is normally inherited from the parent. The delegate can override
-  // this behavior by returning a value.
-  // This is used in <webview>, which permits zoom level to be set
-  // programmatically by script:
-  // https://developer.chrome.com/docs/apps/reference/webviewTag#method-setZoom
-  virtual std::optional<double> AdjustedChildZoom(
-      const RenderWidgetHostViewChildFrame* render_widget);
+  // Notifies when an input event is ignored.
+  virtual void OnInputIgnored(const blink::WebInputEvent& event) {}
+
+  // Get remote for making calls to RenderInputRouterDelegate interface.
+  virtual input::mojom::RenderInputRouterDelegate*
+  GetRenderInputRouterDelegateRemote();
 
  protected:
   virtual ~RenderWidgetHostDelegate() {}

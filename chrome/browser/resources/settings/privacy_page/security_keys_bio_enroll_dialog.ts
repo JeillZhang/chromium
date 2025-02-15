@@ -11,11 +11,11 @@
 import 'chrome://resources/cr_elements/cr_button/cr_button.js';
 import 'chrome://resources/cr_elements/cr_dialog/cr_dialog.js';
 import 'chrome://resources/cr_elements/cr_input/cr_input.js';
+import 'chrome://resources/cr_elements/cr_spinner_style.css.js';
 import 'chrome://resources/cr_elements/cr_icon_button/cr_icon_button.js';
-import 'chrome://resources/polymer/v3_0/iron-icon/iron-icon.js';
+import 'chrome://resources/cr_elements/cr_page_selector/cr_page_selector.js';
+import 'chrome://resources/cr_elements/cr_icon/cr_icon.js';
 import 'chrome://resources/polymer/v3_0/iron-list/iron-list.js';
-import 'chrome://resources/polymer/v3_0/iron-pages/iron-pages.js';
-import 'chrome://resources/polymer/v3_0/paper-spinner/paper-spinner-lite.js';
 import '../settings_shared.css.js';
 import '../site_favicon.js';
 import '../i18n_setup.js';
@@ -303,8 +303,8 @@ export class SettingsSecurityKeysBioEnrollDialogElement extends
         100 * (this.maxSamples_ - 1) / this.maxSamples_, 100, true);
 
     assert(response.enrollment);
-    this.recentEnrollmentId_ = response.enrollment!.id;
-    this.recentEnrollmentName_ = response.enrollment!.name;
+    this.recentEnrollmentId_ = response.enrollment.id;
+    this.recentEnrollmentName_ = response.enrollment.name;
     this.cancelButtonVisible_ = false;
     this.confirmButtonVisible_ = true;
     this.confirmButtonDisabled_ = false;
@@ -394,6 +394,9 @@ export class SettingsSecurityKeysBioEnrollDialogElement extends
     // Prevent this event from bubbling since it is unnecessarily triggering
     // the listener within settings-animated-pages.
     e.stopPropagation();
+
+    // Also asynchronously notify iron-list of the possible resize.
+    setTimeout(() => this.$.enrollmentList.notifyResize(), 0);
   }
 
   private deleteEnrollment_(event: {model: {index: number}}) {

@@ -10,7 +10,14 @@
 #include "components/data_sharing/public/protocol/data_sharing_sdk.pb.h"
 #include "third_party/abseil-cpp/absl/status/status.h"
 
+#if BUILDFLAG(IS_ANDROID)
+#include "base/android/scoped_java_ref.h"
+
+using base::android::ScopedJavaLocalRef;
+#endif  // BUILDFLAG(IS_ANDROID)
+
 namespace data_sharing {
+class DataSharingNetworkLoader;
 
 // Used by DataSharingService to provide access to SDK.
 class DataSharingSDKDelegate {
@@ -25,8 +32,22 @@ class DataSharingSDKDelegate {
   virtual ~DataSharingSDKDelegate() = default;
 
 #if BUILDFLAG(IS_ANDROID)
-  static std::unique_ptr<DataSharingSDKDelegate> CreateDelegate();
+  using CreateJavaDelegateCallback =
+      base::OnceCallback<base::android::ScopedJavaLocalRef<jobject>()>;
+
+  // Callback to create the java object. The java object is created only when
+  // the sdk is used to avoid overhead of library loading.
+  static std::unique_ptr<DataSharingSDKDelegate> CreateDelegate(
+      CreateJavaDelegateCallback sdk_delegate);
 #endif  // BUILDFLAG(IS_ANDROID)
+
+  virtual void Initialize(
+      DataSharingNetworkLoader* data_sharing_network_loader) = 0;
+
+  // Implemented only for android. Normally initialize method will lazily intiialize the SDK to
+  // avoid overhead. This will force the loading of delegate.
+  virtual void ForceInitialize(
+      DataSharingNetworkLoader* data_sharing_network_loader) {}
 
   virtual void CreateGroup(
       const data_sharing_pb::CreateGroupParams& params,
@@ -48,6 +69,10 @@ class DataSharingSDKDelegate {
       const data_sharing_pb::RemoveMemberParams& params,
       base::OnceCallback<void(const absl::Status&)> callback) = 0;
 
+  virtual void LeaveGroup(
+      const data_sharing_pb::LeaveGroupParams& params,
+      base::OnceCallback<void(const absl::Status&)> callback) = 0;
+
   virtual void DeleteGroup(
       const data_sharing_pb::DeleteGroupParams& params,
       base::OnceCallback<void(const absl::Status&)> callback) = 0;
@@ -56,6 +81,13 @@ class DataSharingSDKDelegate {
       const data_sharing_pb::LookupGaiaIdByEmailParams& params,
       base::OnceCallback<
           void(const base::expected<data_sharing_pb::LookupGaiaIdByEmailResult,
+                                    absl::Status>&)> callback) = 0;
+
+  virtual void Shutdown() {}
+  virtual void AddAccessToken(
+      const data_sharing_pb::AddAccessTokenParams& params,
+      base::OnceCallback<
+          void(const base::expected<data_sharing_pb::AddAccessTokenResult,
                                     absl::Status>&)> callback) = 0;
 };
 

@@ -11,11 +11,12 @@
 
 #if BUILDFLAG(IS_ANDROID)
 #include "components/download/internal/common/in_memory_download_file.h"
+#include "components/download/public/common/download_stats.h"
 #endif  // BUILDFLAG(IS_ANDROID)
 
 namespace download {
 
-DownloadFileFactory::~DownloadFileFactory() {}
+DownloadFileFactory::~DownloadFileFactory() = default;
 
 DownloadFile* DownloadFileFactory::CreateFile(
     std::unique_ptr<DownloadSaveInfo> save_info,
@@ -32,6 +33,9 @@ DownloadFile* DownloadFileFactory::CreateFile(
 #endif  // BUILDFLAG(IS_ANDROID)
 
   if (!duplicate_download_file_path.empty()) {
+#if BUILDFLAG(IS_ANDROID)
+    RecordDuplicatePdfDownloadTriggered(/*open_inline=*/true);
+#endif  // BUILDFLAG(IS_ANDROID)
     return new DownloadFileWithCopy(duplicate_download_file_path, observer);
   } else {
     return new DownloadFileImpl(std::move(save_info),

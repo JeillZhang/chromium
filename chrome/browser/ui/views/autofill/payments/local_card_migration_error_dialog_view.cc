@@ -19,6 +19,8 @@
 #include "components/web_modal/web_contents_modal_dialog_manager_delegate.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
+#include "ui/base/mojom/dialog_button.mojom.h"
+#include "ui/base/mojom/ui_base_types.mojom-shared.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/color/color_id.h"
 #include "ui/color/color_provider.h"
@@ -37,7 +39,7 @@ namespace autofill {
 LocalCardMigrationErrorDialogView::LocalCardMigrationErrorDialogView(
     LocalCardMigrationDialogController* controller)
     : controller_(controller) {
-  SetButtons(ui::DIALOG_BUTTON_CANCEL);
+  SetButtons(static_cast<int>(ui::mojom::DialogButton::kCancel));
   SetCancelCallback(
       base::BindOnce(&LocalCardMigrationDialogController::OnDoneButtonClicked,
                      base::Unretained(controller_)));
@@ -45,7 +47,7 @@ LocalCardMigrationErrorDialogView::LocalCardMigrationErrorDialogView(
   // The error dialog should be a modal dialog blocking the whole browser
   // which is consistent with other dialogs. It should make sure that the
   // user can see the error message.
-  SetModalType(ui::MODAL_TYPE_WINDOW);
+  SetModalType(ui::mojom::ModalType::kWindow);
   SetShowCloseButton(false);
   set_fixed_width(ChromeLayoutProvider::Get()->GetDistanceMetric(
       DISTANCE_LARGE_MODAL_DIALOG_PREFERRED_WIDTH));
@@ -89,11 +91,10 @@ void LocalCardMigrationErrorDialogView::Init() {
 
 #if BUILDFLAG(GOOGLE_CHROME_BRANDING)
   auto* image = new views::ImageView();
-  ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
-  image->SetImage(
-      rb.GetImageSkiaNamed(GetNativeTheme()->ShouldUseDarkColors()
-                               ? IDR_AUTOFILL_MIGRATION_DIALOG_HEADER_DARK
-                               : IDR_AUTOFILL_MIGRATION_DIALOG_HEADER));
+  image->SetImage(ui::ImageModel::FromResourceId(
+      GetNativeTheme()->ShouldUseDarkColors()
+          ? IDR_AUTOFILL_MIGRATION_DIALOG_HEADER_DARK
+          : IDR_AUTOFILL_MIGRATION_DIALOG_HEADER));
   image->SetAccessibleName(
       l10n_util::GetStringUTF16(IDS_AUTOFILL_GOOGLE_PAY_LOGO_ACCESSIBLE_NAME));
   AddChildView(image);

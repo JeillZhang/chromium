@@ -5,6 +5,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <array>
+
 #include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "build/build_config.h"
@@ -21,11 +23,11 @@
 #include "cc/resources/ui_resource_manager.h"
 #include "cc/test/fake_content_layer_client.h"
 #include "cc/test/fake_layer_tree_host_client.h"
-#include "cc/test/fake_painted_scrollbar_layer.h"
 #include "cc/test/fake_picture_layer.h"
 #include "cc/test/fake_picture_layer_impl.h"
 #include "cc/test/fake_scoped_ui_resource.h"
 #include "cc/test/fake_scrollbar.h"
+#include "cc/test/fake_scrollbar_layer.h"
 #include "cc/test/fake_video_frame_provider.h"
 #include "cc/test/layer_tree_test.h"
 #include "cc/test/render_pass_test_utils.h"
@@ -38,7 +40,6 @@
 #include "components/viz/test/fake_output_surface.h"
 #include "components/viz/test/test_context_provider.h"
 #include "components/viz/test/test_gles2_interface.h"
-#include "components/viz/test/test_shared_bitmap_manager.h"
 #include "gpu/GLES2/gl2extchromium.h"
 #include "gpu/command_buffer/client/raster_interface.h"
 #include "media/base/media.h"
@@ -238,7 +239,7 @@ class LayerTreeHostContextTestLostContextSucceeds
   }
 
   bool NextTestCase() {
-    static const TestCase kTests[] = {
+    static const auto kTests = std::to_array<TestCase>({
         // Losing the context and failing to recreate it (or losing it again
         // immediately) a small number of times should succeed.
         {
@@ -322,7 +323,7 @@ class LayerTreeHostContextTestLostContextSucceeds
             true,  // fallback_context_works
             true,  // async_layer_tree_frame_sink_creation
         },
-    };
+    });
 
     if (test_case_ >= std::size(kTests))
       return false;
@@ -792,7 +793,7 @@ class LayerTreeHostContextTestLayersNotified : public LayerTreeHostContextTest {
         EndTest();
         break;
       default:
-        NOTREACHED_IN_MIGRATION();
+        NOTREACHED();
     }
   }
 
@@ -814,7 +815,6 @@ class LayerTreeHostContextTestDontUseLostResources
     child_context_provider_ = viz::TestContextProvider::CreateRaster();
     auto result = child_context_provider_->BindToCurrentSequence();
     CHECK_EQ(result, gpu::ContextResult::kSuccess);
-    shared_bitmap_manager_ = std::make_unique<viz::TestSharedBitmapManager>();
     child_resource_provider_ = std::make_unique<viz::ClientResourceProvider>();
   }
 
@@ -885,12 +885,12 @@ class LayerTreeHostContextTestDontUseLostResources
         gfx::Size(4, 4), 0x80, 0x80, 0x80, base::TimeDelta());
     ASSERT_TRUE(color_video_frame_);
     hw_video_frame_ = VideoFrame::WrapSharedImage(
-        media::PIXEL_FORMAT_ARGB, shared_image, sync_token, GL_TEXTURE_2D,
+        media::PIXEL_FORMAT_ARGB, shared_image, sync_token,
         media::VideoFrame::ReleaseMailboxCB(), gfx::Size(4, 4),
         gfx::Rect(0, 0, 4, 4), gfx::Size(4, 4), base::TimeDelta());
     ASSERT_TRUE(hw_video_frame_);
     scaled_hw_video_frame_ = VideoFrame::WrapSharedImage(
-        media::PIXEL_FORMAT_ARGB, shared_image, sync_token, GL_TEXTURE_2D,
+        media::PIXEL_FORMAT_ARGB, shared_image, sync_token,
         media::VideoFrame::ReleaseMailboxCB(), gfx::Size(4, 4),
         gfx::Rect(0, 0, 3, 2), gfx::Size(4, 4), base::TimeDelta());
     ASSERT_TRUE(scaled_hw_video_frame_);
@@ -965,7 +965,6 @@ class LayerTreeHostContextTestDontUseLostResources
   bool lost_context_;
 
   scoped_refptr<viz::TestContextProvider> child_context_provider_;
-  std::unique_ptr<viz::SharedBitmapManager> shared_bitmap_manager_;
   std::unique_ptr<viz::ClientResourceProvider> child_resource_provider_;
 
   scoped_refptr<VideoFrame> color_video_frame_;
@@ -1014,10 +1013,15 @@ class ScrollbarLayerLostContext : public LayerTreeHostContextTest {
  public:
   ScrollbarLayerLostContext() : commits_(0) {}
 
+  void SetupTree() override {
+    SetInitialRootBounds(gfx::Size(256, 256));
+    LayerTreeTest::SetupTree();
+  }
+
   void BeginTest() override {
     scoped_refptr<Layer> scroll_layer = Layer::Create();
-    scrollbar_layer_ = FakePaintedScrollbarLayer::Create(
-        false, true, scroll_layer->element_id());
+    scrollbar_layer_ = base::MakeRefCounted<FakePaintedScrollbarLayer>(
+        scroll_layer->element_id());
     scrollbar_layer_->SetBounds(gfx::Size(10, 100));
     layer_tree_host()->root_layer()->AddChild(scrollbar_layer_);
     layer_tree_host()->root_layer()->AddChild(scroll_layer);
@@ -1042,7 +1046,7 @@ class ScrollbarLayerLostContext : public LayerTreeHostContextTest {
         EndTest();
         break;
       default:
-        NOTREACHED_IN_MIGRATION();
+        NOTREACHED();
     }
   }
 
@@ -1126,8 +1130,7 @@ class UIResourceLostAfterCommit : public UIResourceLostTestSimple {
         EndTest();
         break;
       case 5:
-        NOTREACHED_IN_MIGRATION();
-        break;
+        NOTREACHED();
     }
   }
 
@@ -1220,8 +1223,7 @@ class UIResourceLostBeforeCommit : public UIResourceLostTestSimple {
         EndTest();
         break;
       case 6:
-        NOTREACHED_IN_MIGRATION();
-        break;
+        NOTREACHED();
     }
   }
 
@@ -1295,7 +1297,7 @@ class UIResourceLostBeforeActivateTree : public UIResourceLostTest {
         break;
       case 6:
         // Make sure no extra commits happened.
-        NOTREACHED_IN_MIGRATION();
+        NOTREACHED();
     }
   }
 
@@ -1397,7 +1399,7 @@ class UIResourceLostEviction : public UIResourceLostTestSimple {
         EndTest();
         break;
       case 4:
-        NOTREACHED_IN_MIGRATION();
+        NOTREACHED();
     }
   }
 

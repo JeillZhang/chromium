@@ -4,6 +4,7 @@
 
 #include "components/subresource_filter/content/browser/safe_browsing_page_activation_throttle.h"
 
+#include <algorithm>
 #include <optional>
 #include <sstream>
 #include <utility>
@@ -14,7 +15,6 @@
 #include "base/functional/bind.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/not_fatal_until.h"
-#include "base/ranges/algorithm.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/timer/timer.h"
 #include "base/trace_event/trace_event.h"
@@ -25,7 +25,7 @@
 #include "components/subresource_filter/content/browser/navigation_console_logger.h"
 #include "components/subresource_filter/content/browser/subresource_filter_observer_manager.h"
 #include "components/subresource_filter/content/browser/subresource_filter_safe_browsing_client.h"
-#include "components/subresource_filter/content/shared/common/subresource_filter_utils.h"
+#include "components/subresource_filter/content/shared/browser/utils.h"
 #include "components/subresource_filter/core/browser/subresource_filter_constants.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/navigation_handle.h"
@@ -70,18 +70,12 @@ std::optional<RedirectPosition> GetEnforcementRedirectPosition(
 SafeBrowsingPageActivationThrottle::SafeBrowsingPageActivationThrottle(
     content::NavigationHandle* handle,
     SafeBrowsingPageActivationThrottle::Delegate* delegate,
-    scoped_refptr<base::SingleThreadTaskRunner> io_task_runner,
     scoped_refptr<safe_browsing::SafeBrowsingDatabaseManager> database_manager)
     : NavigationThrottle(handle),
-      io_task_runner_(std::move(io_task_runner)),
-      database_client_(nullptr,
-                       base::OnTaskRunnerDeleter(
-                           base::SequencedTaskRunner::GetCurrentDefault())),
+      database_client_(nullptr),
       delegate_(delegate) {
   database_client_.reset(new SubresourceFilterSafeBrowsingClient(
-      std::move(database_manager),
-      weak_ptr_factory_.GetWeakPtr(),
-      io_task_runner_,
+      std::move(database_manager), this,
       base::SingleThreadTaskRunner::GetCurrentDefault()));
 
   CHECK(IsInSubresourceFilterRoot(handle), base::NotFatalUntil::M129);
@@ -283,7 +277,7 @@ SafeBrowsingPageActivationThrottle::
   if (navigation_handle()->GetURL().SchemeIsHTTPOrHTTPS()) {
     const auto& decreasing_configs =
         GetEnabledConfigurations()->configs_by_decreasing_priority();
-    const auto selected_config_itr = base::ranges::find_if(
+    const auto selected_config_itr = std::ranges::find_if(
         decreasing_configs, [matched_list, this](const Configuration& config) {
           return DoesRootFrameURLSatisfyActivationConditions(
               config.activation_conditions, matched_list);
@@ -356,8 +350,7 @@ bool SafeBrowsingPageActivationThrottle::
     case ActivationScope::NO_SITES:
       return false;
   }
-  NOTREACHED_IN_MIGRATION();
-  return false;
+  NOTREACHED();
 }
 
 }  //  namespace subresource_filter

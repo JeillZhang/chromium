@@ -4,66 +4,68 @@
 
 #include "third_party/blink/renderer/modules/ai/ai_metrics.h"
 
+#include <string_view>
+
 #include "base/notreached.h"
+#include "base/strings/strcat.h"
 
 namespace blink {
+namespace {
+
+std::string_view GetAISessionTypeName(AIMetrics::AISessionType session_type) {
+  switch (session_type) {
+    case AIMetrics::AISessionType::kLanguageModel:
+      return "LanguageModel";
+    case AIMetrics::AISessionType::kWriter:
+      return "Writer";
+    case AIMetrics::AISessionType::kRewriter:
+      return "Rewriter";
+    case AIMetrics::AISessionType::kSummarizer:
+      return "Summarizer";
+    case AIMetrics::AISessionType::kTranslator:
+      return "Translator";
+  }
+  NOTREACHED();
+}
+
+}  // namespace
 
 // static
-const char* AIMetrics::GetAIAPIUsageMetricName(AISessionType session_type) {
-  switch (session_type) {
-    case AISessionType::kText:
-      return "AI.Text.APIUsage";
-  }
-  NOTREACHED_IN_MIGRATION();
+std::string AIMetrics::GetAIAPIUsageMetricName(AISessionType session_type) {
+  return base::StrCat({"AI.", GetAISessionTypeName(session_type), ".APIUsage"});
 }
 
 // static
-const char* AIMetrics::GetAIModelAvailabilityMetricName(
-    AISessionType session_type) {
-  switch (session_type) {
-    case AISessionType::kText:
-      return "AI.Text.Availability";
-  }
-  NOTREACHED_IN_MIGRATION();
+std::string AIMetrics::GetAIAvailabilityMetricName(AISessionType session_type) {
+  return base::StrCat(
+      {"AI.", GetAISessionTypeName(session_type), ".AvailabilityV2"});
 }
 
 // static
-const char* AIMetrics::GetAISessionRequestSizeMetricName(
+std::string AIMetrics::GetAISessionRequestSizeMetricName(
     AISessionType session_type) {
-  switch (session_type) {
-    case AISessionType::kText:
-      return "AI.Session.Text.PromptRequestSize";
-  }
-  NOTREACHED_IN_MIGRATION();
+  return base::StrCat({"AI.Session.", GetAISessionTypeName(session_type),
+                       ".PromptRequestSize"});
 }
 
 // static
-const char* AIMetrics::GetAISessionResponseStatusMetricName(
+std::string AIMetrics::GetAISessionResponseStatusMetricName(
     AISessionType session_type) {
-  switch (session_type) {
-    case AISessionType::kText:
-      return "AI.Session.Text.PromptResponseStatus";
-  }
-  NOTREACHED_IN_MIGRATION();
+  return base::StrCat({"AI.Session.", GetAISessionTypeName(session_type),
+                       ".PromptResponseStatus"});
 }
 
 // static
-const char* AIMetrics::GetAISessionResponseSizeMetricName(
+std::string AIMetrics::GetAISessionResponseSizeMetricName(
     AISessionType session_type) {
-  switch (session_type) {
-    case AISessionType::kText:
-      return "AI.Session.Text.PromptResponseSize";
-  }
-  NOTREACHED_IN_MIGRATION();
+  return base::StrCat({"AI.Session.", GetAISessionTypeName(session_type),
+                       ".PromptResponseSize"});
 }
 
 // static
-const char* AIMetrics::GetAISessionResponseCallbackCountMetricName(
+std::string AIMetrics::GetAISessionResponseCallbackCountMetricName(
     AISessionType session_type) {
-  switch (session_type) {
-    case AISessionType::kText:
-      return "AI.Session.Text.PromptResponseCallbackCount";
-  }
-  NOTREACHED_IN_MIGRATION();
+  return base::StrCat({"AI.Session.", GetAISessionTypeName(session_type),
+                       ".PromptResponseCallbackCount"});
 }
 }  // namespace blink

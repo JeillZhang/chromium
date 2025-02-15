@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/filters/source_buffer_stream.h"
 
 #include <algorithm>
@@ -79,7 +84,7 @@ std::string StatusToString(const SourceBufferStreamStatus& status) {
     case SourceBufferStreamStatus::kEndOfStream:
       return "kEndOfStream";
   }
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 // Helper method for logging, converts a range into a readable string.
@@ -505,10 +510,9 @@ void SourceBufferStream::UpdateLastAppendStateForRemove(
         ResetLastAppendedState();
       }
     } else {
-      NOTREACHED_IN_MIGRATION()
-          << __func__ << " " << GetStreamTypeName()
-          << " range_for_next_append_ set, but not tracking last"
-          << " append nor new coded frame group.";
+      NOTREACHED() << __func__ << " " << GetStreamTypeName()
+                   << " range_for_next_append_ set, but not tracking last"
+                   << " append nor new coded frame group.";
     }
   }
 }
@@ -1923,9 +1927,15 @@ void SourceBufferStream::SetSelectedRangeIfNeeded(
     return;
   }
 
+  auto* range = FindExistingRangeFor(seek_timestamp)->get();
+  if (!range->CanSeekTo(seek_timestamp)) {
+    DVLOG(2) << __func__ << " " << GetStreamTypeName()
+             << " couldn't find range seekable to timestamp";
+    return;
+  }
+
   DCHECK(track_buffer_.empty());
-  SeekAndSetSelectedRange(FindExistingRangeFor(seek_timestamp)->get(),
-                          seek_timestamp);
+  SeekAndSetSelectedRange(range, seek_timestamp);
 }
 
 base::TimeDelta SourceBufferStream::FindNewSelectedRangeSeekTimestamp(
@@ -1987,7 +1997,7 @@ std::string SourceBufferStream::GetStreamTypeName() const {
     case SourceBufferStreamType::kVideo:
       return "VIDEO";
   }
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 SourceBufferStreamType SourceBufferStream::GetType() const {

@@ -18,8 +18,7 @@ import org.chromium.ui.modelutil.PropertyModel;
 public class ImprovedBookmarkRowViewBinder {
     public static void bind(PropertyModel model, View view, PropertyKey key) {
         ImprovedBookmarkRow row = (ImprovedBookmarkRow) view;
-        ImprovedBookmarkFolderView folderView =
-                (ImprovedBookmarkFolderView) view.findViewById(R.id.folder_view);
+        ImprovedBookmarkFolderView folderView = view.findViewById(R.id.folder_view);
         if (key == ImprovedBookmarkRowProperties.ENABLED) {
             row.setRowEnabled(model.get(ImprovedBookmarkRowProperties.ENABLED));
         } else if (key == ImprovedBookmarkRowProperties.TITLE) {
@@ -47,7 +46,7 @@ public class ImprovedBookmarkRowViewBinder {
         } else if (key == ImprovedBookmarkRowProperties.ACCESSORY_VIEW) {
             row.setAccessoryView(model.get(ImprovedBookmarkRowProperties.ACCESSORY_VIEW));
         } else if (key == ImprovedBookmarkRowProperties.LIST_MENU_BUTTON_DELEGATE) {
-            row.setListMenuButtonDelegate(
+            row.setListMenuDelegate(
                     model.get(ImprovedBookmarkRowProperties.LIST_MENU_BUTTON_DELEGATE));
         } else if (key == ImprovedBookmarkRowProperties.POPUP_LISTENER) {
             row.setPopupListener(
@@ -56,8 +55,6 @@ public class ImprovedBookmarkRowViewBinder {
             row.setIsSelected(model.get(ImprovedBookmarkRowProperties.SELECTED));
         } else if (key == ImprovedBookmarkRowProperties.SELECTION_ACTIVE) {
             row.setSelectionEnabled(model.get(ImprovedBookmarkRowProperties.SELECTION_ACTIVE));
-        } else if (key == ImprovedBookmarkRowProperties.DRAG_ENABLED) {
-            row.setDragEnabled(model.get(ImprovedBookmarkRowProperties.DRAG_ENABLED));
         } else if (key == ImprovedBookmarkRowProperties.EDITABLE) {
             row.setBookmarkIdEditable(model.get(ImprovedBookmarkRowProperties.EDITABLE));
         } else if (key == ImprovedBookmarkRowProperties.ROW_CLICK_LISTENER) {

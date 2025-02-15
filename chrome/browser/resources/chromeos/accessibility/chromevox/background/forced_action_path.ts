@@ -10,8 +10,9 @@ import {KeyCode} from '/common/key_code.js';
 import {TestImportManager} from '/common/testing/test_import_manager.js';
 
 import {BridgeConstants} from '../common/bridge_constants.js';
-import {Command} from '../common/command.js';
-import {KeySequence, SerializedKeySequence} from '../common/key_sequence.js';
+import type {Command} from '../common/command.js';
+import type {SerializedKeySequence} from '../common/key_sequence.js';
+import {KeySequence} from '../common/key_sequence.js';
 import {KeyUtil} from '../common/key_util.js';
 import {PanelCommand, PanelCommandType} from '../common/panel_command.js';
 import {QueueMode} from '../common/tts_types.js';
@@ -69,7 +70,7 @@ export class ForcedActionPath {
     (new PanelCommand(PanelCommandType.CLOSE_CHROMEVOX)).send();
   }
 
-  static create(actions: ActionInfo[]): Promise<void> {
+  static listenFor(actions: ActionInfo[]): Promise<void> {
     if (ForcedActionPath.instance) {
       throw 'Error: trying to create a second ForcedActionPath';
     }
@@ -79,7 +80,7 @@ export class ForcedActionPath {
   }
 
   /** Destroys the forced action path. */
-  static destroy(): void {
+  static stopListening(): void {
     ForcedActionPath.instance = null;
   }
 
@@ -314,16 +315,6 @@ abstract class Action {
   abstract typedValue(value: SerializedValueType): ValueType;
 }
 
-/** Uses Output module to provide speech and braille feedback. */
-function output(message: string): void {
-  new Output().withString(message).withQueueMode(QueueMode.FLUSH).go();
-}
-
-/** Uses the CommandHandler to perform a command. */
-function onCommand(command: Command): void {
-  CommandHandlerInterface.instance.onCommand(command);
-}
-
 class KeySequenceAction extends Action {
   override equals(other: Action): boolean {
     return super.equals(other) &&
@@ -354,14 +345,26 @@ class StringAction extends Action {
   }
 }
 
+// Local to module.
+
+/** Uses Output module to provide speech and braille feedback. */
+function output(message: string): void {
+  new Output().withString(message).withQueueMode(QueueMode.FLUSH).go();
+}
+
+/** Uses the CommandHandler to perform a command. */
+function onCommand(command: Command): void {
+  CommandHandlerInterface.instance.onCommand(command);
+}
+
 BridgeHelper.registerHandler(
     BridgeConstants.ForcedActionPath.TARGET,
-    BridgeConstants.ForcedActionPath.Action.CREATE,
-    (actions: ActionInfo[]) => ForcedActionPath.create(actions));
+    BridgeConstants.ForcedActionPath.Action.LISTEN_FOR,
+    (actions: ActionInfo[]) => ForcedActionPath.listenFor(actions));
 BridgeHelper.registerHandler(
     BridgeConstants.ForcedActionPath.TARGET,
-    BridgeConstants.ForcedActionPath.Action.DESTROY,
-    () => ForcedActionPath.destroy());
+    BridgeConstants.ForcedActionPath.Action.STOP_LISTENING,
+    () => ForcedActionPath.stopListening());
 BridgeHelper.registerHandler(
     BridgeConstants.ForcedActionPath.TARGET,
     BridgeConstants.ForcedActionPath.Action.ON_KEY_DOWN,

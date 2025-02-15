@@ -54,10 +54,6 @@
 #include "url/gurl.h"
 #include "url/origin.h"
 
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-#include "chromeos/lacros/lacros_test_helper.h"
-#endif
-
 #if defined(USE_ALSA)
 #include "media/audio/alsa/audio_manager_alsa.h"
 #elif BUILDFLAG(IS_ANDROID)
@@ -160,12 +156,6 @@ class MockAudioManager : public AudioManagerPlatform {
           /*unique_id=*/std::string(kFakeDeviceIdPrefix) +
               base::NumberToString(i));
     }
-  }
-
-  media::AudioParameters GetDefaultOutputStreamParameters() override {
-    return media::AudioParameters(media::AudioParameters::AUDIO_PCM_LOW_LATENCY,
-                                  media::ChannelLayoutConfig::Stereo(), 48000,
-                                  128);
   }
 
   media::AudioParameters GetOutputStreamParameters(
@@ -324,6 +314,9 @@ class TestMediaStreamDispatcherHost
   void SetZoomLevel(const base::UnguessableToken& device_id,
                     int32_t zoom_level,
                     SetZoomLevelCallback callback) override {}
+  void RequestCapturedSurfaceControlPermission(
+      const base::UnguessableToken& device_id,
+      RequestCapturedSurfaceControlPermissionCallback callback) override {}
   void FocusCapturedSurface(const std::string& label, bool focus) override {}
   void ApplySubCaptureTarget(const base::UnguessableToken& device_id,
                              media::mojom::SubCaptureTargetType type,
@@ -386,6 +379,7 @@ blink::StreamControls GetAudioStreamControls(std::string hmac_device_id) {
 enum class CapturedSurfaceControlAPI {
   kSendWheel,
   kSetZoomLevel,
+  kRequestPermission,
 };
 
 // Make an arbitrary valid CapturedWheelAction.
@@ -473,11 +467,6 @@ class MediaStreamManagerTest : public ::testing::Test {
                     _, _, _, _,
                     blink::mojom::MediaStreamType::DISPLAY_VIDEO_CAPTURE_SET,
                     MEDIA_REQUEST_STATE_OPENING));
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-    EXPECT_CALL(*browser_content_client_,
-                NotifyMultiCaptureStateChanged(
-                    _, _, ContentBrowserClient::MultiCaptureChanged::kStarted));
-#endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
     stream_provider_listener_ =
         std::make_unique<MediaStreamProviderListenerMock>();
     media_stream_manager_->video_capture_manager_->RegisterListener(
@@ -1306,11 +1295,6 @@ TEST_F(MediaStreamManagerTest, MultiCaptureIntermediateErrorOnOpening) {
           _, _, _, _, blink::mojom::MediaStreamType::DISPLAY_VIDEO_CAPTURE_SET,
           MEDIA_REQUEST_STATE_DONE))
       .Times(0);
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-  EXPECT_CALL(*browser_content_client_,
-              NotifyMultiCaptureStateChanged(
-                  _, _, ContentBrowserClient::MultiCaptureChanged::kStopped));
-#endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
 }
 
 TEST_F(MediaStreamManagerTest, RegisterUnregisterHosts) {
@@ -1864,6 +1848,8 @@ class MediaStreamManagerCapturedSurfaceControlTest
                   100, CapturedSurfaceControlResult::kSuccess);
               captured_surface_controller->SetSetZoomLevelResponse(
                   CapturedSurfaceControlResult::kSuccess);
+              captured_surface_controller->SetRequestPermissionResponse(
+                  CapturedSurfaceControlResult::kSuccess);
               return base::WrapUnique<CapturedSurfaceController>(
                   captured_surface_controller.release());
             },
@@ -1909,6 +1895,14 @@ class MediaStreamManagerCapturedSurfaceControlTest
         MakeCallback());
   }
 
+  void RequestPermission(
+      GlobalRenderFrameHostId gdm_rfhid,
+      std::optional<base::UnguessableToken> session_id = std::nullopt) {
+    media_stream_manager_->RequestCapturedSurfaceControlPermission(
+        gdm_rfhid, session_id.value_or(video_device_.session_id()),
+        MakeCallback());
+  }
+
   blink::MediaStreamDevice video_device_;
   blink::MediaStreamDevice audio_device_;
 
@@ -1950,8 +1944,12 @@ class MediaStreamManagerCapturedSurfaceControlActionTest
         SetZoomLevel(gdm_rfhid, session_id);
         return;
       }
+      case CapturedSurfaceControlAPI::kRequestPermission: {
+        RequestPermission(gdm_rfhid, session_id);
+        return;
+      }
     }
-    NOTREACHED_NORETURN();
+    NOTREACHED();
   }
 
   const CapturedSurfaceControlAPI tested_api_;
@@ -1961,7 +1959,8 @@ INSTANTIATE_TEST_SUITE_P(
     ,
     MediaStreamManagerCapturedSurfaceControlActionTest,
     testing::Values(CapturedSurfaceControlAPI::kSendWheel,
-                    CapturedSurfaceControlAPI::kSetZoomLevel));
+                    CapturedSurfaceControlAPI::kSetZoomLevel,
+                    CapturedSurfaceControlAPI::kRequestPermission));
 
 TEST_P(MediaStreamManagerCapturedSurfaceControlActionTest, SuccessfulIfValid) {
   SCOPED_TRACE("SuccessfulIfValid");

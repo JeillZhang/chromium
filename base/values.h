@@ -8,7 +8,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <algorithm>
 #include <array>
+#include <concepts>
 #include <initializer_list>
 #include <iosfwd>
 #include <iterator>
@@ -25,8 +27,6 @@
 #include "base/containers/checked_iterators.h"
 #include "base/containers/flat_map.h"
 #include "base/containers/span.h"
-#include "base/memory/raw_ref.h"
-#include "base/strings/string_piece.h"
 #include "base/trace_event/base_tracing_forward.h"
 #include "base/value_iterators.h"
 #include "third_party/abseil-cpp/absl/types/variant.h"
@@ -138,9 +138,9 @@ namespace base {
 // Lists support:
 // - `empty()`, `size()`, `begin()`, `end()`, `cbegin()`, `cend()`,
 //       `rbegin()`, `rend()`, `front()`, `back()`, `reserve()`, `operator[]`,
-//       `clear()`, `erase()`: Identical to the STL container equivalents, with
-//       additional safety checks, e.g. `operator[]` will `CHECK()` if the index
-//       is out of range.
+//       `contains()`, `clear()`, `erase()`: Identical to the STL container
+//       equivalents, with additional safety checks, e.g. `operator[]` will
+//       `CHECK()` if the index is out of range.
 // - `Clone()`: Create a deep copy.
 // - `Append()`: Append a value to the end of the list. Accepts `Value` or any
 //       of the subtypes that `Value` can hold.
@@ -258,6 +258,7 @@ class BASE_EXPORT GSL_OWNER Value {
   const std::string* GetIfString() const;
   std::string* GetIfString();
   const BlobStorage* GetIfBlob() const;
+  BlobStorage* GetIfBlob();
   const Dict* GetIfDict() const;
   Dict* GetIfDict();
   const List* GetIfList() const;
@@ -271,13 +272,14 @@ class BASE_EXPORT GSL_OWNER Value {
   // Returns a value for both `Value::Type::DOUBLE` and `Value::Type::INT`,
   // converting the latter to a double.
   double GetDouble() const;
-  const std::string& GetString() const;
-  std::string& GetString();
-  const BlobStorage& GetBlob() const;
-  const Dict& GetDict() const;
-  Dict& GetDict();
-  const List& GetList() const;
-  List& GetList();
+  const std::string& GetString() const LIFETIME_BOUND;
+  std::string& GetString() LIFETIME_BOUND;
+  const BlobStorage& GetBlob() const LIFETIME_BOUND;
+  BlobStorage& GetBlob() LIFETIME_BOUND;
+  const Dict& GetDict() const LIFETIME_BOUND;
+  Dict& GetDict() LIFETIME_BOUND;
+  const List& GetList() const LIFETIME_BOUND;
+  List& GetList() LIFETIME_BOUND;
 
   // Transfers ownership of the underlying value. Similarly to `Get...()`
   // variants above, fails with a `CHECK()` on a type mismatch. After
@@ -285,6 +287,7 @@ class BASE_EXPORT GSL_OWNER Value {
   // Prefer over `std::move(value.Get...())` so clang-tidy can warn about
   // potential use-after-move mistakes.
   std::string TakeString() &&;
+  BlobStorage TakeBlob() &&;
   Dict TakeDict() &&;
   List TakeList() &&;
 
@@ -383,6 +386,7 @@ class BASE_EXPORT GSL_OWNER Value {
     const std::string* FindString(std::string_view key) const;
     std::string* FindString(std::string_view key);
     const BlobStorage* FindBlob(std::string_view key) const;
+    BlobStorage* FindBlob(std::string_view key);
     const Dict* FindDict(std::string_view key) const;
     Dict* FindDict(std::string_view key);
     const List* FindList(std::string_view key) const;
@@ -508,6 +512,7 @@ class BASE_EXPORT GSL_OWNER Value {
     const std::string* FindStringByDottedPath(std::string_view path) const;
     std::string* FindStringByDottedPath(std::string_view path);
     const BlobStorage* FindBlobByDottedPath(std::string_view path) const;
+    BlobStorage* FindBlobByDottedPath(std::string_view path);
     const Dict* FindDictByDottedPath(std::string_view path) const;
     Dict* FindDictByDottedPath(std::string_view path);
     const List* FindListByDottedPath(std::string_view path) const;
@@ -613,8 +618,6 @@ class BASE_EXPORT GSL_OWNER Value {
     BASE_EXPORT friend bool operator<=(const Dict& lhs, const Dict& rhs);
     BASE_EXPORT friend bool operator>=(const Dict& lhs, const Dict& rhs);
 
-    explicit Dict(const flat_map<std::string, std::unique_ptr<Value>>& storage);
-
     // TODO(dcheng): Replace with `flat_map<std::string, Value>` once no caller
     // relies on stability of pointers anymore.
     flat_map<std::string, std::unique_ptr<Value>> storage_;
@@ -673,13 +676,13 @@ class BASE_EXPORT GSL_OWNER Value {
 
     // Returns a reference to the first value in the container. Fails with
     // `CHECK()` if the list is empty.
-    const Value& front() const;
-    Value& front();
+    const Value& front() const LIFETIME_BOUND;
+    Value& front() LIFETIME_BOUND;
 
     // Returns a reference to the last value in the container. Fails with
     // `CHECK()` if the list is empty.
-    const Value& back() const;
-    Value& back();
+    const Value& back() const LIFETIME_BOUND;
+    Value& back() LIFETIME_BOUND;
 
     // Increase the capacity of the backing container, but does not change
     // the size. Assume all existing iterators will be invalidated.
@@ -697,6 +700,18 @@ class BASE_EXPORT GSL_OWNER Value {
     // `CHECK()` if `index >= size()`.
     const Value& operator[](size_t index) const;
     Value& operator[](size_t index);
+
+    // Returns true if the specified `val` is present in the list.
+    bool contains(bool val) const;
+    bool contains(int val) const;
+    bool contains(double val) const;
+    // Note: std::u16string_view overload intentionally omitted: Value
+    // internally stores strings as UTF-8.
+    bool contains(std::string_view val) const;
+    bool contains(const char* val) const;
+    bool contains(const BlobStorage& val) const;
+    bool contains(const Dict& val) const;
+    bool contains(const List& val) const;
 
     // Removes all value from this list.
     REINITIALIZES_AFTER_MOVE void clear();
@@ -803,6 +818,17 @@ class BASE_EXPORT GSL_OWNER Value {
 
     explicit List(const std::vector<Value>& storage);
 
+    // Shared implementation of public `contains()` methods.
+    template <typename T, typename R>
+      requires std::equality_comparable_with<T, R>
+    bool contains(const T& val,
+                  bool (Value::*test)() const,
+                  R (Value::*get)() const) const {
+      return std::ranges::any_of(storage_, [&](const Value& value) {
+        return (value.*test)() && (value.*get)() == val;
+      });
+    }
+
     std::vector<Value> storage_;
   };
 
@@ -837,11 +863,11 @@ class BASE_EXPORT GSL_OWNER Value {
   friend bool operator==(double lhs, const Value& rhs) { return rhs == lhs; }
   friend bool operator!=(const Value& lhs, double rhs) { return !(lhs == rhs); }
   friend bool operator!=(double lhs, const Value& rhs) { return !(lhs == rhs); }
-  // Note: StringPiece16 overload intentionally omitted: Value internally stores
-  // strings as UTF-8. While it is possible to implement a comparison operator
-  // that would not require first creating a new UTF-8 string from the UTF-16
-  // string argument, it is simpler to just not implement it at all for a rare
-  // use case.
+  // Note: std::u16string_view overload intentionally omitted: Value internally
+  // stores strings as UTF-8. While it is possible to implement a comparison
+  // operator that would not require first creating a new UTF-8 string from the
+  // UTF-16 string argument, it is simpler to just not implement it at all for a
+  // rare use case.
   BASE_EXPORT friend bool operator==(const Value& lhs, std::string_view rhs);
   friend bool operator==(std::string_view lhs, const Value& rhs) {
     return rhs == lhs;
@@ -999,10 +1025,10 @@ class BASE_EXPORT GSL_OWNER Value {
 // serialization methods without having to clone the contents and transfer
 // ownership of the clone to a `Value` wrapper object.
 //
-// Like `StringPiece` and `span<T>`, this adapter does NOT retain ownership. Any
-// underlying object that is passed by reference (i.e. `std::string`,
-// `Value::BlobStorage`, `Value::Dict`, `Value::List`, or `Value`) MUST remain
-// live as long as there is a `ValueView` referencing it.
+// Like `std::string_view` and `span<T>`, this adapter does NOT retain
+// ownership. Any underlying object that is passed by reference (i.e.
+// `std::string`, `Value::BlobStorage`, `Value::Dict`, `Value::List`, or
+// `Value`) MUST remain live as long as there is a `ValueView` referencing it.
 //
 // While it might be nice to just use the `absl::variant` type directly, the
 // need to use `std::reference_wrapper` makes it clunky. `absl::variant` and

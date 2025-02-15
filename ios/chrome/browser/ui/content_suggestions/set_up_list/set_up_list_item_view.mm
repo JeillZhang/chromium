@@ -3,14 +3,15 @@
 // found in the LICENSE file.
 
 #import "ios/chrome/browser/ui/content_suggestions/set_up_list/set_up_list_item_view.h"
-#import "ios/chrome/browser/ui/content_suggestions/set_up_list/set_up_list_item_view+Testing.h"
 
+#import "base/feature_list.h"
 #import "base/notreached.h"
 #import "base/task/sequenced_task_runner.h"
 #import "base/time/time.h"
 #import "components/password_manager/core/common/password_manager_features.h"
 #import "ios/chrome/browser/ntp/model/set_up_list_item.h"
 #import "ios/chrome/browser/ntp/model/set_up_list_item_type.h"
+#import "ios/chrome/browser/segmentation_platform/model/segmented_default_browser_utils.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/shared/ui/elements/crossfade_label.h"
 #import "ios/chrome/browser/shared/ui/symbols/symbols.h"
@@ -18,12 +19,14 @@
 #import "ios/chrome/browser/ui/content_suggestions/content_suggestions_view_controller_audience.h"
 #import "ios/chrome/browser/ui/content_suggestions/set_up_list/constants.h"
 #import "ios/chrome/browser/ui/content_suggestions/set_up_list/set_up_list_item_icon.h"
+#import "ios/chrome/browser/ui/content_suggestions/set_up_list/set_up_list_item_view+Testing.h"
 #import "ios/chrome/browser/ui/content_suggestions/set_up_list/set_up_list_item_view_data.h"
 #import "ios/chrome/common/ui/colors/semantic_color_names.h"
 #import "ios/chrome/common/ui/util/constraints_ui_util.h"
 #import "ios/chrome/common/ui/util/dynamic_type_util.h"
 #import "ios/chrome/grit/ios_branded_strings.h"
 #import "ios/chrome/grit/ios_strings.h"
+#import "ui/base/device_form_factor.h"
 #import "ui/base/l10n/l10n_util.h"
 
 namespace {
@@ -32,7 +35,7 @@ namespace {
 constexpr CGFloat kPadding = 15;
 
 // The spacing between the title and description labels.
-constexpr CGFloat kTextSpacing = 5;
+constexpr CGFloat kTextSpacing = 2;
 constexpr CGFloat kCompactTextSpacing = 0;
 
 // The duration of the icon / label crossfade animation.
@@ -81,6 +84,7 @@ struct ViewConfig {
   if (self) {
     _type = data.type;
     _complete = data.complete;
+
     if (data.compactLayout) {
       // ViewConfig for a compact layout.
       int syncString =
@@ -89,11 +93,15 @@ struct ViewConfig {
           IsIOSTipsNotificationsEnabled()
               ? IDS_IOS_SET_UP_LIST_NOTIFICATIONS_SHORT_DESCRIPTION
               : IDS_IOS_SET_UP_LIST_CONTENT_NOTIFICATION_SHORT_DESCRIPTION;
+      int defaultBrowserString =
+          IsSegmentedDefaultBrowserPromoEnabled()
+              ? GetSetUpListDefaultBrowserDescriptionStringID(data.userSegment)
+              : IDS_IOS_SET_UP_LIST_DEFAULT_BROWSER_SHORT_DESCRIPTION;
       _config = {
           YES,
           NO,
           syncString,
-          IDS_IOS_SET_UP_LIST_DEFAULT_BROWSER_SHORT_DESCRIPTION,
+          defaultBrowserString,
           IDS_IOS_SET_UP_LIST_AUTOFILL_SHORT_DESCRIPTION,
           notificationsString,
           UIFontTextStyleFootnote,
@@ -106,11 +114,15 @@ struct ViewConfig {
           IsIOSTipsNotificationsEnabled()
               ? IDS_IOS_SET_UP_LIST_NOTIFICATIONS_DESCRIPTION
               : IDS_IOS_SET_UP_LIST_CONTENT_NOTIFICATION_DESCRIPTION;
+      int defaultBrowserString =
+          IsSegmentedDefaultBrowserPromoEnabled()
+              ? GetSetUpListDefaultBrowserDescriptionStringID(data.userSegment)
+              : IDS_IOS_SET_UP_LIST_DEFAULT_BROWSER_MAGIC_STACK_DESCRIPTION;
       _config = {
           NO,
           YES,
           syncString,
-          IDS_IOS_SET_UP_LIST_DEFAULT_BROWSER_MAGIC_STACK_DESCRIPTION,
+          defaultBrowserString,
           IDS_IOS_SET_UP_LIST_AUTOFILL_MAGIC_STACK_DESCRIPTION,
           notificationsString,
           UIFontTextStyleSubheadline,
@@ -124,11 +136,15 @@ struct ViewConfig {
           IsIOSTipsNotificationsEnabled()
               ? IDS_IOS_SET_UP_LIST_NOTIFICATIONS_DESCRIPTION
               : IDS_IOS_SET_UP_LIST_CONTENT_NOTIFICATION_DESCRIPTION;
+      int defaultBrowserString =
+          IsSegmentedDefaultBrowserPromoEnabled()
+              ? GetSetUpListDefaultBrowserDescriptionStringID(data.userSegment)
+              : IDS_IOS_SET_UP_LIST_DEFAULT_BROWSER_DESCRIPTION;
       _config = {
           NO,
           NO,
           syncString,
-          IDS_IOS_SET_UP_LIST_DEFAULT_BROWSER_DESCRIPTION,
+          defaultBrowserString,
           IDS_IOS_SET_UP_LIST_AUTOFILL_DESCRIPTION,
           notificationsString,
           UIFontTextStyleSubheadline,
@@ -155,17 +171,14 @@ struct ViewConfig {
 
 #pragma mark - UITraitEnvironment
 
+#if !defined(__IPHONE_17_0) || __IPHONE_OS_VERSION_MIN_REQUIRED < __IPHONE_17_0
 - (void)traitCollectionDidChange:(UITraitCollection*)previousTraitCollection {
   [super traitCollectionDidChange:previousTraitCollection];
-  if (previousTraitCollection.preferredContentSizeCategory !=
-      self.traitCollection.preferredContentSizeCategory) {
-    _description.hidden = self.traitCollection.preferredContentSizeCategory >
-                          UIContentSizeCategoryExtraExtraLarge;
-    // Force a layout since the size of text components may have changed.
-    [self setNeedsLayout];
-    [self layoutIfNeeded];
+  if (@available(iOS 17, *)) {
+    return;
   }
 }
+#endif
 
 #pragma mark - Public methods
 
@@ -274,6 +287,8 @@ struct ViewConfig {
   textStack.axis = UILayoutConstraintAxisVertical;
   textStack.translatesAutoresizingMaskIntoConstraints = NO;
   textStack.spacing = _config.text_spacing;
+  textStack.maximumContentSizeCategory =
+      UIContentSizeCategoryAccessibilityMedium;
 
   // Add a horizontal stack to contain the icon(s) and the text stack.
   NSArray* arrangedSubviews = putIconInSquareBackground
@@ -334,6 +349,10 @@ struct ViewConfig {
   if (_complete) {
     label.attributedText = Strikethrough(label.text);
   }
+  // Set height constraint. Applicable for larger text.
+  [NSLayoutConstraint activateConstraints:@[ [label.heightAnchor
+                                              constraintEqualToConstant:26] ]];
+
   [label
       setContentCompressionResistancePriority:UILayoutPriorityDefaultLow
                                       forAxis:UILayoutConstraintAxisVertical];
@@ -348,7 +367,10 @@ struct ViewConfig {
       return l10n_util::GetNSString(
           IDS_IOS_CONSISTENCY_PROMO_DEFAULT_ACCOUNT_TITLE);
     case SetUpListItemType::kDefaultBrowser:
-      return l10n_util::GetNSString(IDS_IOS_SET_UP_LIST_DEFAULT_BROWSER_TITLE);
+      return l10n_util::GetNSString(
+          ui::GetDeviceFormFactor() == ui::DEVICE_FORM_FACTOR_TABLET
+              ? IDS_IOS_SET_UP_LIST_DEFAULT_BROWSER_TITLE_IPAD
+              : IDS_IOS_SET_UP_LIST_DEFAULT_BROWSER_TITLE);
     case SetUpListItemType::kAutofill:
       return l10n_util::GetNSString(IDS_IOS_SET_UP_LIST_AUTOFILL_TITLE);
     case SetUpListItemType::kNotifications:
@@ -357,11 +379,15 @@ struct ViewConfig {
                        IDS_IOS_SET_UP_LIST_NOTIFICATIONS_TITLE)
                  : l10n_util::GetNSString(
                        IDS_IOS_SET_UP_LIST_CONTENT_NOTIFICATION_TITLE);
+    case SetUpListItemType::kDocking:
+      return l10n_util::GetNSString(IDS_IOS_SET_UP_LIST_DOCK_CHROME_TITLE);
+    case SetUpListItemType::kAddressBar:
+      return l10n_util::GetNSString(IDS_IOS_SET_UP_LIST_ADDRESS_BAR_TITLE);
     case SetUpListItemType::kAllSet:
       return l10n_util::GetNSString(IDS_IOS_SET_UP_LIST_ALL_SET_TITLE);
     case SetUpListItemType::kFollow:
       // TODO(crbug.com/40262090): Add a Follow item to the Set Up List.
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }
 
@@ -376,11 +402,17 @@ struct ViewConfig {
       return l10n_util::GetNSString(_config.autofill_description);
     case SetUpListItemType::kNotifications:
       return l10n_util::GetNSString(_config.notifications_description);
+    case SetUpListItemType::kDocking:
+      return l10n_util::GetNSString(
+          IDS_IOS_SET_UP_LIST_DOCK_CHROME_LONG_DESCRIPTION);
+    case SetUpListItemType::kAddressBar:
+      return l10n_util::GetNSString(
+          IDS_IOS_SET_UP_LIST_ADDRESS_BAR_SHORT_DESCRIPTION);
     case SetUpListItemType::kAllSet:
       return l10n_util::GetNSString(IDS_IOS_SET_UP_LIST_ALL_SET_DESCRIPTION);
     case SetUpListItemType::kFollow:
       // TODO(crbug.com/40262090): Add a Follow item to the Set Up List.
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }
 
@@ -394,6 +426,10 @@ struct ViewConfig {
       return set_up_list::kAutofillItemID;
     case SetUpListItemType::kNotifications:
       return set_up_list::kContentNotificationItemID;
+    case SetUpListItemType::kDocking:
+      return set_up_list::kDockingItemID;
+    case SetUpListItemType::kAddressBar:
+      return set_up_list::kAddressBarItemID;
     case SetUpListItemType::kAllSet:
       return set_up_list::kAllSetItemID;
     case SetUpListItemType::kFollow:

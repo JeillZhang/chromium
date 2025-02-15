@@ -4,7 +4,9 @@
 
 package org.chromium.chrome.browser.tab_group_sync;
 
+import static org.junit.Assert.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
@@ -14,6 +16,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import org.junit.After;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
@@ -29,17 +32,23 @@ import org.robolectric.annotation.Config;
 import org.chromium.base.Token;
 import org.chromium.base.supplier.LazyOneshotSupplier;
 import org.chromium.base.test.BaseRobolectricTestRunner;
+import org.chromium.base.test.util.UserActionTester;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabCreationState;
 import org.chromium.chrome.browser.tab.TabLaunchType;
+import org.chromium.chrome.browser.tab.TabSelectionType;
+import org.chromium.chrome.browser.tabmodel.TabGroupModelFilter;
+import org.chromium.chrome.browser.tabmodel.TabGroupModelFilterObserver;
+import org.chromium.chrome.browser.tabmodel.TabGroupModelFilterObserver.DidRemoveTabGroupReason;
 import org.chromium.chrome.browser.tabmodel.TabModelObserver;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
-import org.chromium.chrome.browser.tasks.tab_groups.TabGroupModelFilter;
-import org.chromium.chrome.browser.tasks.tab_groups.TabGroupModelFilterObserver;
-import org.chromium.chrome.browser.tasks.tab_groups.TabGroupModelFilterObserver.DidRemoveTabGroupReason;
 import org.chromium.chrome.test.util.browser.tabmodel.MockTabModel;
+import org.chromium.components.tab_group_sync.ClosingSource;
+import org.chromium.components.tab_group_sync.EventDetails;
 import org.chromium.components.tab_group_sync.LocalTabGroupId;
+import org.chromium.components.tab_group_sync.SavedTabGroup;
+import org.chromium.components.tab_group_sync.SavedTabGroupTab;
 import org.chromium.components.tab_group_sync.TabGroupSyncService;
 import org.chromium.components.tab_groups.TabGroupColorId;
 import org.chromium.url.GURL;
@@ -55,8 +64,10 @@ import java.util.Set;
 public class TabGroupSyncLocalObserverUnitTest {
     private static final int TAB_ID_1 = 1;
     private static final int TAB_ID_2 = 2;
+    private static final int TAB_ID_3 = 3;
     private static final int ROOT_ID_1 = 1;
     private static final int ROOT_ID_2 = 2;
+    private static final int ROOT_ID_3 = 3;
     private static final Token TOKEN_1 = new Token(2, 3);
     private static final LocalTabGroupId LOCAL_TAB_GROUP_ID_1 = new LocalTabGroupId(TOKEN_1);
     private static final String TITLE_1 = "Group Title";
@@ -75,9 +86,14 @@ public class TabGroupSyncLocalObserverUnitTest {
 
     private @Captor ArgumentCaptor<TabModelObserver> mTabModelObserverCaptor;
     private @Captor ArgumentCaptor<TabGroupModelFilterObserver> mTabGroupModelFilterObserverCaptor;
+    private @Captor ArgumentCaptor<EventDetails> mEventDetailsCaptor;
+    private @Captor ArgumentCaptor<SavedTabGroup> mSavedTabGroupCaptor;
 
     private Tab mTab1;
     private Tab mTab2;
+    private Tab mTab3;
+
+    private UserActionTester mActionTester;
 
     private static Tab prepareTab(int tabId, int rootId) {
         Tab tab = Mockito.mock(Tab.class);
@@ -90,11 +106,16 @@ public class TabGroupSyncLocalObserverUnitTest {
 
     @Before
     public void setUp() {
+        mActionTester = new UserActionTester();
         mTabGroupSyncService = spy(new TestTabGroupSyncService());
         mTab1 = prepareTab(TAB_ID_1, ROOT_ID_1);
         mTab2 = prepareTab(TAB_ID_2, ROOT_ID_2);
+        mTab3 = prepareTab(TAB_ID_3, ROOT_ID_3);
         Mockito.doReturn(TOKEN_1).when(mTab1).getTabGroupId();
+        Mockito.doReturn(TOKEN_1).when(mTab2).getTabGroupId();
 
+        when(mTabGroupModelFilter.isTabInTabGroup(mTab1)).thenReturn(true);
+        when(mTabGroupModelFilter.isTabInTabGroup(mTab2)).thenReturn(true);
         when(mTabGroupModelFilter.getRootIdFromStableId(eq(TOKEN_1))).thenReturn(ROOT_ID_1);
         when(mTabGroupModelFilter.getStableIdFromRootId(eq(ROOT_ID_1))).thenReturn(TOKEN_1);
 
@@ -107,6 +128,9 @@ public class TabGroupSyncLocalObserverUnitTest {
         Mockito.doNothing()
                 .when(mTabGroupModelFilter)
                 .addTabGroupObserver(mTabGroupModelFilterObserverCaptor.capture());
+        Mockito.doNothing()
+                .when(mTabGroupSyncService)
+                .recordTabGroupEvent(mEventDetailsCaptor.capture());
         mNavigationTracker = new NavigationTracker();
         mRemoteMutationHelper =
                 new RemoteTabGroupMutationHelper(mTabGroupModelFilter, mTabGroupSyncService);
@@ -123,6 +147,71 @@ public class TabGroupSyncLocalObserverUnitTest {
     @After
     public void tearDown() {
         mLocalObserver.destroy();
+        mActionTester.tearDown();
+    }
+
+    @Test
+    public void testDidSelectTabRemote() {
+        // Stub the bare minimum.
+        SavedTabGroup savedGroup = new SavedTabGroup();
+        String remoteGuid = "remote_device";
+        savedGroup.creatorCacheGuid = remoteGuid;
+        savedGroup.lastUpdaterCacheGuid = remoteGuid;
+        SavedTabGroupTab savedTab1 = new SavedTabGroupTab();
+        SavedTabGroupTab savedTab2 = new SavedTabGroupTab();
+        savedTab2.localId = TAB_ID_2;
+        savedGroup.savedTabs.add(savedTab1);
+        savedGroup.savedTabs.add(savedTab2);
+        when(mTabGroupSyncService.getGroup(LOCAL_TAB_GROUP_ID_1)).thenReturn(savedGroup);
+        when(mTabGroupSyncService.isRemoteDevice(remoteGuid)).thenReturn(true);
+
+        List<String> actions =
+                List.of(
+                        "TabGroups.Sync.SelectedTabInRemotelyCreatedGroup",
+                        "MobileCrossDeviceTabJourney",
+                        "TabGroups.Sync.SelectedRemotelyUpdatedTabInSession");
+        for (String action : actions) {
+            assertEquals(
+                    "Expected no actions for " + action, 0, mActionTester.getActionCount(action));
+        }
+        mTabModelObserverCaptor
+                .getValue()
+                .didSelectTab(mTab2, TabSelectionType.FROM_USER, Tab.INVALID_TAB_ID);
+        verify(mTabGroupSyncService)
+                .onTabSelected(eq(LOCAL_TAB_GROUP_ID_1), eq(TAB_ID_2), eq(TAB_TITLE_1));
+        for (String action : actions) {
+            assertEquals(
+                    "Expected one action for " + action, 1, mActionTester.getActionCount(action));
+        }
+    }
+
+    @Test
+    public void testDidSelectTabLocal() {
+        // Stub the bare minimum.
+        SavedTabGroup savedGroup = new SavedTabGroup();
+        savedGroup.creatorCacheGuid = TestTabGroupSyncService.LOCAL_DEVICE_CACHE_GUID;
+        SavedTabGroupTab savedTab1 = new SavedTabGroupTab();
+        SavedTabGroupTab savedTab2 = new SavedTabGroupTab();
+        savedTab2.localId = TAB_ID_2;
+        savedGroup.savedTabs.add(savedTab1);
+        savedGroup.savedTabs.add(savedTab2);
+        when(mTabGroupSyncService.getGroup(LOCAL_TAB_GROUP_ID_1)).thenReturn(savedGroup);
+
+        String action = "TabGroups.Sync.SelectedTabInLocallyCreatedGroup";
+        assertEquals(0, mActionTester.getActionCount(action));
+        mTabModelObserverCaptor
+                .getValue()
+                .didSelectTab(mTab2, TabSelectionType.FROM_USER, Tab.INVALID_TAB_ID);
+        assertEquals(1, mActionTester.getActionCount(action));
+        verify(mTabGroupSyncService)
+                .onTabSelected(eq(LOCAL_TAB_GROUP_ID_1), eq(TAB_ID_2), eq(TAB_TITLE_1));
+
+        // Select a non-grouped tab.
+        mTabModelObserverCaptor
+                .getValue()
+                .didSelectTab(mTab3, TabSelectionType.FROM_USER, Tab.INVALID_TAB_ID);
+        assertEquals(1, mActionTester.getActionCount(action));
+        verify(mTabGroupSyncService).onTabSelected(eq(null), eq(TAB_ID_3), eq(TAB_TITLE_1));
     }
 
     @Test
@@ -167,7 +256,8 @@ public class TabGroupSyncLocalObserverUnitTest {
         mTabGroupModelFilterObserverCaptor
                 .getValue()
                 .committedTabGroupClosure(TOKEN_1, /* wasHiding= */ true);
-        verify(mTabGroupSyncService).removeLocalTabGroupMapping(LOCAL_TAB_GROUP_ID_1);
+        verify(mTabGroupSyncService)
+                .removeLocalTabGroupMapping(LOCAL_TAB_GROUP_ID_1, ClosingSource.CLOSED_BY_USER);
     }
 
     @Test
@@ -175,7 +265,8 @@ public class TabGroupSyncLocalObserverUnitTest {
         mTabGroupModelFilterObserverCaptor
                 .getValue()
                 .committedTabGroupClosure(TOKEN_1, /* wasHiding= */ false);
-        verify(mTabGroupSyncService).removeLocalTabGroupMapping(LOCAL_TAB_GROUP_ID_1);
+        verify(mTabGroupSyncService)
+                .removeLocalTabGroupMapping(LOCAL_TAB_GROUP_ID_1, ClosingSource.DELETED_BY_USER);
         verify(mTabGroupSyncService).removeGroup(LOCAL_TAB_GROUP_ID_1);
     }
 
@@ -192,7 +283,7 @@ public class TabGroupSyncLocalObserverUnitTest {
     public void testCloseMultipleTabs_HidingTabGroup() {
         List<Tab> tabs = new ArrayList<>();
         tabs.add(mTab1);
-        when(mTabGroupModelFilter.getLazyAllTabGroupIdsInComprehensiveModel(any()))
+        when(mTabGroupModelFilter.getLazyAllTabGroupIds(any(), anyBoolean()))
                 .thenReturn(LazyOneshotSupplier.fromValue(new HashSet<Token>()));
         when(mTabGroupModelFilter.isTabGroupHiding(TOKEN_1)).thenReturn(true);
         mTabModelObserverCaptor
@@ -206,7 +297,7 @@ public class TabGroupSyncLocalObserverUnitTest {
     public void testCloseMultipleTabs_HidingTabGroup_NotLastTabInGroup() {
         List<Tab> tabs = new ArrayList<>();
         tabs.add(mTab1);
-        when(mTabGroupModelFilter.getLazyAllTabGroupIdsInComprehensiveModel(any()))
+        when(mTabGroupModelFilter.getLazyAllTabGroupIds(any(), anyBoolean()))
                 .thenReturn(LazyOneshotSupplier.fromValue(Set.of(TOKEN_1)));
         when(mTabGroupModelFilter.isTabGroupHiding(TOKEN_1)).thenReturn(true);
         mTabModelObserverCaptor
@@ -233,8 +324,9 @@ public class TabGroupSyncLocalObserverUnitTest {
 
     @Test
     public void testDidMergeTabToGroup() {
-        mTabGroupModelFilterObserverCaptor.getValue().didMergeTabToGroup(mTab1, 1);
-        verify(mTabGroupSyncService, times(1)).createGroup(eq(LOCAL_TAB_GROUP_ID_1));
+        mTabGroupModelFilterObserverCaptor.getValue().didMergeTabToGroup(mTab1);
+        verify(mTabGroupSyncService, times(1)).addGroup(mSavedTabGroupCaptor.capture());
+        Assert.assertEquals(LOCAL_TAB_GROUP_ID_1, mSavedTabGroupCaptor.getValue().localId);
         verify(mTabGroupModelFilter, never()).getRelatedTabList(anyInt());
         verify(mTabGroupModelFilter, times(1)).getRelatedTabListForRootId(1);
     }
@@ -258,7 +350,8 @@ public class TabGroupSyncLocalObserverUnitTest {
         mTabGroupModelFilterObserverCaptor
                 .getValue()
                 .didCreateNewGroup(mTab1, mTabGroupModelFilter);
-        verify(mTabGroupSyncService, times(1)).createGroup(eq(LOCAL_TAB_GROUP_ID_1));
+        verify(mTabGroupSyncService, times(1)).addGroup(mSavedTabGroupCaptor.capture());
+        Assert.assertEquals(LOCAL_TAB_GROUP_ID_1, mSavedTabGroupCaptor.getValue().localId);
     }
 
     @Test
@@ -304,7 +397,8 @@ public class TabGroupSyncLocalObserverUnitTest {
         verify(mTabGroupSyncService, never()).updateVisualData(any(), any(), anyInt());
 
         // Handle updates for non-existing groups.
-        when(mTabGroupModelFilter.getOrCreateTabGroupColor(12)).thenReturn(TabGroupColorId.BLUE);
+        when(mTabGroupModelFilter.getTabGroupColorWithFallback(12))
+                .thenReturn(TabGroupColorId.BLUE);
         mTabGroupModelFilterObserverCaptor
                 .getValue()
                 .didChangeTabGroupColor(12, TabGroupColorId.BLUE);

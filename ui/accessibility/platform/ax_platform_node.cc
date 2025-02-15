@@ -4,6 +4,7 @@
 
 #include "ui/accessibility/platform/ax_platform_node.h"
 
+#include "base/check_deref.h"
 #include "base/debug/crash_logging.h"
 #include "base/lazy_instance.h"
 #include "build/build_config.h"
@@ -32,13 +33,13 @@ AXPlatformNode* AXPlatformNode::FromNativeWindow(
   return nullptr;
 }
 
-#if !BUILDFLAG_INTERNAL_HAS_NATIVE_ACCESSIBILITY()
+#if !BUILDFLAG(HAS_NATIVE_ACCESSIBILITY)
 // static
 AXPlatformNode* AXPlatformNode::FromNativeViewAccessible(
     gfx::NativeViewAccessible accessible) {
   return nullptr;
 }
-#endif  // !BUILDFLAG_INTERNAL_HAS_NATIVE_ACCESSIBILITY()
+#endif  // !BUILDFLAG(HAS_NATIVE_ACCESSIBILITY)
 
 // static
 void AXPlatformNode::RegisterNativeWindowHandler(
@@ -58,17 +59,16 @@ AXPlatformNode::~AXPlatformNode() = default;
 void AXPlatformNode::Destroy() {
 }
 
-int32_t AXPlatformNode::GetUniqueId() const {
-  DCHECK(GetDelegate()) << "|GetUniqueId| must be called after |Init|.";
-  return GetDelegate() ? GetDelegate()->GetUniqueId().Get()
-                       : AXUniqueId::kInvalidId;
+AXPlatformNodeId AXPlatformNode::GetUniqueId() const {
+  // Must not be called before `Init()`.
+  return CHECK_DEREF(GetDelegate()).GetUniqueId();
 }
 
-std::string AXPlatformNode::ToString() {
+std::string AXPlatformNode::ToString() const {
   return GetDelegate() ? GetDelegate()->ToString() : "No delegate";
 }
 
-std::string AXPlatformNode::SubtreeToString() {
+std::string AXPlatformNode::SubtreeToString() const {
   return GetDelegate() ? GetDelegate()->SubtreeToString() : "No delegate";
 }
 

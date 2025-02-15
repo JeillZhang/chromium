@@ -4,8 +4,9 @@
 
 #include "components/password_manager/ios/account_select_fill_data.h"
 
+#include <algorithm>
+
 #include "base/feature_list.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/string_util.h"
 #include "components/autofill/core/common/password_form_fill_data.h"
 #include "components/password_manager/core/browser/features/password_features.h"
@@ -16,11 +17,6 @@ using autofill::FormRendererId;
 namespace password_manager {
 
 namespace {
-
-bool IsSigninUffEnabled() {
-  return base::FeatureList::IsEnabled(
-      password_manager::features::kIOSPasswordSignInUff);
-}
 
 // Returns true if credentials are eligible. For example, credentials are
 // ineglible when there are only credentials with an empty username available
@@ -38,8 +34,7 @@ bool AreCredentialsEligibleForFilling(
     return c.username.empty();
   };
   return !(is_single_username &&
-           base::ranges::all_of(credentials, has_empty_username) &&
-           IsSigninUffEnabled());
+           std::ranges::all_of(credentials, has_empty_username));
 }
 
 }  // namespace
@@ -146,7 +141,7 @@ std::unique_ptr<FillData> AccountSelectFillData::GetFillData(
     return nullptr;
   }
 
-  auto it = base::ranges::find(credentials_, username, &Credential::username);
+  auto it = std::ranges::find(credentials_, username, &Credential::username);
   if (it == credentials_.end())
     return nullptr;
   const Credential& credential = *it;

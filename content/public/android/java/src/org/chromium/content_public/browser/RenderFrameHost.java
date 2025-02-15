@@ -4,10 +4,10 @@
 
 package org.chromium.content_public.browser;
 
-import androidx.annotation.Nullable;
-
 import org.chromium.base.Callback;
 import org.chromium.blink.mojom.AuthenticatorStatus;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.mojo.bindings.Interface;
 import org.chromium.url.GURL;
 import org.chromium.url.Origin;
@@ -17,6 +17,7 @@ import java.util.List;
 /**
  * The RenderFrameHost Java wrapper to allow communicating with the native RenderFrameHost object.
  */
+@NullMarked
 public interface RenderFrameHost {
     /** The results of {@link #GetAssertionWebAuthSecurityChecks}. */
     final class WebAuthSecurityChecksResults {
@@ -58,11 +59,17 @@ public interface RenderFrameHost {
     /**
      * Returns the eldest parent of this RenderFrameHost.
      *
-     * <p>Will only be {@code null} if this {@code RenderFrameHost} is not associated with a native
-     * object.
+     * <p>Will only be {@code null} if this (callee) {@code RenderFrameHost} is no longer associated
+     * with a native object, due to it being or having been destroyed. Note that if this method
+     * returns {@code null}, this does not necessarily mean that any original parent frame or frames
+     * have been destroyed.
+     *
+     * <p>If the callee frame is the eldest in the frame ancestry, it will return itself (if it has
+     * not been destroyed).
      *
      * @see
      *     https://crsrc.org/c/content/public/browser/render_frame_host.h?q=symbol:%5Cbcontent::RenderFrameHost::GetMainFrame%5Cb%20case:yes
+     * @return The eldest parent frame or null when this frame is being destroyed.
      */
     @Nullable
     RenderFrameHost getMainFrame();
@@ -79,7 +86,7 @@ public interface RenderFrameHost {
      *
      * @return A list of RenderFramesHosts including the current frame and all descendents.
      */
-    public List<RenderFrameHost> getAllRenderFrameHosts();
+    public @Nullable List<RenderFrameHost> getAllRenderFrameHosts();
 
     /**
      * Returns whether the feature policy allows the feature in this frame.
@@ -100,7 +107,7 @@ public interface RenderFrameHost {
      * isRenderFrameLive() if the caller is not inside the call-stack of an
      * IPC form the renderer (which would guarantee its existence at that time).
      */
-    <I extends Interface, P extends Interface.Proxy> P getInterfaceToRendererFrame(
+    <I extends Interface, P extends Interface.Proxy> @Nullable P getInterfaceToRendererFrame(
             Interface.Manager<I, P> manager);
 
     /**
@@ -173,13 +180,15 @@ public interface RenderFrameHost {
      * credential. See performGetAssertionWebAuthSecurityChecks for more on |effectiveOrigin|.
      *
      * <p>This operation may trigger network fetches and thus it takes a `Callback`. The argument to
-     * the callback is a code corresponding to the AuthenticatorStatus mojo enum.
+     * the callback is an object containing (1) the status code indicating the result of the
+     * GetAssertion request security checks, and (2) whether the effectiveOrigin is a cross-origin
+     * with any frame in this frame's ancestor chain.
      */
     void performMakeCredentialWebAuthSecurityChecks(
             String relyingPartyId,
             Origin effectiveOrigin,
             boolean isPaymentCredentialCreation,
-            Callback<Integer> callback);
+            Callback<WebAuthSecurityChecksResults> callback);
 
     /**
      * @return An identifier for this RenderFrameHost.

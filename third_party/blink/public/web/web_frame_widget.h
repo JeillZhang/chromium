@@ -33,6 +33,8 @@
 
 #include <stdint.h>
 
+#include <vector>
+
 #include "base/functional/callback_forward.h"
 #include "base/types/pass_key.h"
 #include "components/viz/common/surfaces/frame_sink_id.h"
@@ -41,7 +43,6 @@
 #include "third_party/blink/public/platform/cross_variant_mojo_util.h"
 #include "third_party/blink/public/platform/web_common.h"
 #include "third_party/blink/public/platform/web_touch_action.h"
-#include "third_party/blink/public/platform/web_vector.h"
 #include "third_party/blink/public/web/web_widget.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/base/dragdrop/mojom/drag_drop_types.mojom-shared.h"
@@ -64,6 +65,7 @@ class RectF;
 
 namespace viz {
 struct FrameTimingDetails;
+class LocalSurfaceId;
 }  // namespace viz
 
 namespace blink {
@@ -224,7 +226,7 @@ class WebFrameWidget : public WebWidget {
   // Get the viewport segments for this widget.
   // See
   // https://github.com/WICG/visual-viewport/blob/gh-pages/segments-explainer/SEGMENTS-EXPLAINER.md
-  virtual const WebVector<gfx::Rect>& ViewportSegments() const = 0;
+  virtual const std::vector<gfx::Rect>& ViewportSegments() const = 0;
 
   // Release any mouse lock or pointer capture held. This is used to reset
   // state between WebTest runs.
@@ -251,6 +253,13 @@ class WebFrameWidget : public WebWidget {
   // Changes the zoom level to the specified level, clamping at the limits
   // defined by the associated `webView`.
   virtual void SetZoomLevel(double zoom_level) = 0;
+
+  // Returns the cumulative effect of the CSS "zoom" property on the embedding
+  // element of this widget (if any) and all of its WebFrame ancestors.
+  virtual double GetCSSZoomFactor() const = 0;
+
+  // Update the LocalSurfaceId used for frames produced by this widget.
+  virtual void ApplyLocalSurfaceIdUpdate(const viz::LocalSurfaceId& id) = 0;
 
  private:
   // This is a private virtual method so we don't expose cc::LayerTreeHost

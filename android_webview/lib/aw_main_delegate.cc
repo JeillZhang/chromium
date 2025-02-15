@@ -7,7 +7,6 @@
 #include <memory>
 
 #include "android_webview/browser/aw_content_browser_client.h"
-#include "android_webview/browser/aw_media_url_interceptor.h"
 #include "android_webview/browser/gfx/aw_draw_fn_impl.h"
 #include "android_webview/browser/gfx/browser_view_renderer.h"
 #include "android_webview/browser/gfx/gpu_service_webview.h"
@@ -49,8 +48,8 @@
 #include "components/spellcheck/spellcheck_buildflags.h"
 #include "components/variations/variations_ids_provider.h"
 #include "components/version_info/android/channel_getter.h"
+#include "components/viz/common/features.h"
 #include "content/public/app/initialize_mojo_core.h"
-#include "content/public/browser/android/media_url_interceptor_register.h"
 #include "content/public/browser/browser_main_runner.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/network_service_util.h"
@@ -104,7 +103,7 @@ std::optional<int> AwMainDelegate::BasicStartupComplete() {
   cl->AppendSwitch(switches::kDisableNotifications);
 
   // Check damage in OnBeginFrame to prevent unnecessary draws.
-  cl->AppendSwitch(cc::switches::kCheckDamageEarly);
+  cl->AppendSwitch(switches::kCheckDamageEarly);
 
   // This is needed for sharing textures across the different GL threads.
   cl->AppendSwitch(switches::kEnableThreadedTextureMailboxes);
@@ -115,9 +114,6 @@ std::optional<int> AwMainDelegate::BasicStartupComplete() {
   // WebView does not currently support Web Speech Synthesis API,
   // but it does support Web Speech Recognition API (crbug.com/487255).
   cl->AppendSwitch(switches::kDisableSpeechSynthesisAPI);
-
-  // WebView does not currently support the Permissions API (crbug.com/490120)
-  cl->AppendSwitch(switches::kDisablePermissionsAPI);
 
   // WebView does not (yet) save Chromium data during shutdown, so add setting
   // for Chrome to aggressively persist DOM Storage to minimize data loss.
@@ -153,7 +149,6 @@ std::optional<int> AwMainDelegate::BasicStartupComplete() {
   if (cl->GetSwitchValueASCII(switches::kProcessType).empty()) {
     // Browser process (no type specified).
 
-    content::RegisterMediaUrlInterceptor(new AwMediaUrlInterceptor());
     BrowserViewRenderer::CalculateTileMemoryPolicy();
 
     if (AwDrawFnImpl::IsUsingVulkan())
@@ -214,6 +209,11 @@ std::optional<int> AwMainDelegate::BasicStartupComplete() {
 
     // Enabled by default for webview.
     features.EnableIfNotSet(::features::kWebViewThreadSafeMediaDefault);
+
+    // WebView uses kWebViewFrameRateHints to control this. Not using
+    // AwFieldTrials::RegisterFeatureOverrides to avoid misconfiguring
+    // experimients accidentally enabling kUseFrameIntervalDecider for WebView.
+    features.DisableIfNotSet(::features::kUseFrameIntervalDecider);
   }
 
   android_webview::RegisterPathProvider();
@@ -243,12 +243,6 @@ std::optional<int> AwMainDelegate::BasicStartupComplete() {
 
 void AwMainDelegate::PreSandboxStartup() {
   TRACE_EVENT0("startup", "AwMainDelegate::PreSandboxStartup");
-#if defined(ARCH_CPU_ARM_FAMILY)
-  // Create an instance of the CPU class to parse /proc/cpuinfo and cache
-  // cpu_brand info.
-  base::CPU cpu_info;
-#endif
-
   const base::CommandLine& command_line =
       *base::CommandLine::ForCurrentProcess();
 
@@ -327,16 +321,6 @@ std::optional<int> AwMainDelegate::PostEarlyInitialization(
     InitIcuAndResourceBundleBrowserSide();
     aw_feature_list_creator_->CreateFeatureListAndFieldTrials();
     content::InitializeMojoCore();
-
-    // WebView apps can override WebView#computeScroll to achieve custom
-    // scroll/fling. As a result, fling animations may not be ticked,
-    // potentially
-    // confusing the tap suppression controller. Simply disable it for WebView
-    if (!base::FeatureList::IsEnabled(
-            ::features::kWebViewSuppressTapDuringFling)) {
-      ui::GestureConfiguration::GetInstance()
-          ->set_fling_touchscreen_tap_suppression_enabled(false);
-    }
   }
 
   InitializeMemorySystem(is_browser_process);
@@ -383,7 +367,8 @@ content::ContentGpuClient* AwMainDelegate::CreateContentGpuClient() {
       base::BindRepeating(&GetSyncPointManager),
       base::BindRepeating(&GetSharedImageManager),
       base::BindRepeating(&GetScheduler),
-      base::BindRepeating(&GetVizCompositorThreadRunner));
+      base::BindRepeating(&GetVizCompositorThreadRunner),
+      &aw_gr_context_options_provider_);
   return content_gpu_client_.get();
 }
 

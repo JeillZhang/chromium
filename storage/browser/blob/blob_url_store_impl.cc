@@ -6,6 +6,7 @@
 
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/strings/strcat.h"
 #include "components/crash/core/common/crash_key.h"
 #include "mojo/public/cpp/bindings/receiver_set.h"
@@ -14,6 +15,8 @@
 #include "storage/browser/blob/blob_url_loader_factory.h"
 #include "storage/browser/blob/blob_url_registry.h"
 #include "storage/browser/blob/blob_url_utils.h"
+#include "storage/browser/blob/features.h"
+#include "third_party/blink/public/mojom/devtools/inspector_issue.mojom.h"
 #include "url/url_util.h"
 
 namespace storage {
@@ -65,17 +68,21 @@ class BlobURLTokenImpl : public blink::mojom::BlobURLToken {
 
 BlobURLStoreImpl::BlobURLStoreImpl(
     const blink::StorageKey& storage_key,
+    const url::Origin& renderer_origin,
+    int render_process_host_id,
     base::WeakPtr<BlobUrlRegistry> registry,
-    BlobURLValidityCheckBehavior validity_check_behavior)
+    BlobURLValidityCheckBehavior validity_check_behavior,
+    base::RepeatingCallback<void(const GURL&,
+                                 blink::mojom::PartitioningBlobURLInfo)>
+        partitioning_blob_url_closure,
+    bool partitioning_disabled_by_policy)
     : storage_key_(storage_key),
+      renderer_origin_(renderer_origin),
+      render_process_host_id_(render_process_host_id),
       registry_(std::move(registry)),
-      validity_check_behavior_(validity_check_behavior) {
-  if (validity_check_behavior_ ==
-      BlobURLValidityCheckBehavior::ALLOW_OPAQUE_ORIGIN_STORAGE_KEY_MISMATCH) {
-    DCHECK(base::FeatureList::IsEnabled(
-        net::features::kSupportPartitionedBlobUrl));
-  }
-}
+      validity_check_behavior_(validity_check_behavior),
+      partitioning_blob_url_closure_(std::move(partitioning_blob_url_closure)),
+      partitioning_disabled_by_policy_(partitioning_disabled_by_policy) {}
 
 BlobURLStoreImpl::~BlobURLStoreImpl() {
   if (registry_) {
@@ -100,6 +107,7 @@ void BlobURLStoreImpl::Register(
 
   if (registry_)
     registry_->AddUrlMapping(url, std::move(blob), storage_key_,
+                             renderer_origin_, render_process_host_id_,
                              unsafe_agent_cluster_id, unsafe_top_level_site);
   urls_.insert(url);
   std::move(callback).Run();
@@ -114,16 +122,6 @@ void BlobURLStoreImpl::Revoke(const GURL& url) {
   urls_.erase(url);
 }
 
-void BlobURLStoreImpl::Resolve(const GURL& url, ResolveCallback callback) {
-  if (!registry_) {
-    std::move(callback).Run(mojo::NullRemote(), std::nullopt);
-    return;
-  }
-  mojo::PendingRemote<blink::mojom::Blob> blob = registry_->GetBlobFromUrl(url);
-  std::move(callback).Run(std::move(blob),
-                          registry_->GetUnsafeAgentClusterID(url));
-}
-
 void BlobURLStoreImpl::ResolveAsURLLoaderFactory(
     const GURL& url,
     mojo::PendingReceiver<network::mojom::URLLoaderFactory> receiver,
@@ -133,9 +131,27 @@ void BlobURLStoreImpl::ResolveAsURLLoaderFactory(
     std::move(callback).Run(std::nullopt, std::nullopt);
     return;
   }
+  if (!registry_->IsUrlMapped(BlobUrlUtils::ClearUrlFragment(url),
+                              storage_key_)) {
+    partitioning_blob_url_closure_.Run(
+        url,
+        blink::mojom::PartitioningBlobURLInfo::kBlockedCrossPartitionFetching);
+    if (base::FeatureList::IsEnabled(
+            features::kBlockCrossPartitionBlobUrlFetching) &&
+        !partitioning_disabled_by_policy_) {
+      BlobURLLoaderFactory::Create(mojo::NullRemote(), url,
+                                   std::move(receiver));
+      std::move(callback).Run(std::nullopt, std::nullopt);
+      return;
+    }
+  }
 
   BlobURLLoaderFactory::Create(registry_->GetBlobFromUrl(url), url,
                                std::move(receiver));
+  // When a fragment URL is present, registry_->GetUnsafeAgentClusterID(url) and
+  // registry_->GetUnsafeTopLevelSite(url) will return nullopt because their
+  // implementations don't remove the fragment and only support fragmentless
+  // URLs (crbug.com/40775506).
   std::move(callback).Run(registry_->GetUnsafeAgentClusterID(url),
                           registry_->GetUnsafeTopLevelSite(url));
 }
@@ -143,18 +159,47 @@ void BlobURLStoreImpl::ResolveAsURLLoaderFactory(
 void BlobURLStoreImpl::ResolveForNavigation(
     const GURL& url,
     mojo::PendingReceiver<blink::mojom::BlobURLToken> token,
+    bool is_top_level_navigation,
     ResolveForNavigationCallback callback) {
   if (!registry_) {
     std::move(callback).Run(std::nullopt);
     return;
   }
+
+  if (!is_top_level_navigation &&
+      !registry_->IsUrlMapped(BlobUrlUtils::ClearUrlFragment(url),
+                              storage_key_)) {
+    partitioning_blob_url_closure_.Run(
+        url,
+        blink::mojom::PartitioningBlobURLInfo::kBlockedCrossPartitionFetching);
+    if (base::FeatureList::IsEnabled(
+            features::kBlockCrossPartitionBlobUrlFetching) &&
+        !partitioning_disabled_by_policy_) {
+      std::move(callback).Run(std::nullopt);
+      return;
+    }
+  }
+
   mojo::PendingRemote<blink::mojom::Blob> blob = registry_->GetBlobFromUrl(url);
   if (!blob) {
     std::move(callback).Run(std::nullopt);
     return;
   }
+
   new BlobURLTokenImpl(registry_, url, std::move(blob), std::move(token));
   std::move(callback).Run(registry_->GetUnsafeAgentClusterID(url));
+}
+
+void BlobURLStoreImpl::ResolveForWorkerScriptFetch(
+    const GURL& url,
+    mojo::PendingReceiver<blink::mojom::BlobURLToken> token,
+    ResolveForNavigationCallback callback) {
+  if (!registry_) {
+    std::move(callback).Run(std::nullopt);
+    return;
+  }
+  ResolveForNavigation(url, std::move(token), /*is_top_level_navigation=*/false,
+                       std::move(callback));
 }
 
 bool BlobURLStoreImpl::BlobUrlIsValid(const GURL& url,

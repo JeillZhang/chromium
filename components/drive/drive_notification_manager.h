@@ -18,7 +18,9 @@
 #include "base/sequence_checker.h"
 #include "base/time/default_tick_clock.h"
 #include "base/timer/timer.h"
+#include "components/drive/drive_export.h"
 #include "components/drive/drive_notification_observer.h"
+#include "components/drive/features.h"
 #include "components/invalidation/public/invalidation_handler.h"
 #include "components/invalidation/public/invalidation_util.h"
 #include "components/keyed_service/core/keyed_service.h"
@@ -33,8 +35,9 @@ namespace drive {
 // Conditions under which updates should be searched:
 // 1. XMPP invalidation is received from Google Drive.
 // 2. Polling timer counts down.
-class DriveNotificationManager : public KeyedService,
-                                 public invalidation::InvalidationHandler {
+class COMPONENTS_DRIVE_EXPORT DriveNotificationManager
+    : public KeyedService,
+      public invalidation::InvalidationHandler {
  public:
   // |clock| can be injected for testing.
   explicit DriveNotificationManager(

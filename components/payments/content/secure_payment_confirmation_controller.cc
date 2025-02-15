@@ -25,6 +25,8 @@
 
 namespace payments {
 
+using features::SecurePaymentConfirmationNetworkAndIssuerIconsTreatment;
+
 SecurePaymentConfirmationController::SecurePaymentConfirmationController(
     base::WeakPtr<PaymentRequest> request)
     : request_(request) {
@@ -36,9 +38,8 @@ SecurePaymentConfirmationController::~SecurePaymentConfirmationController() =
 
 void SecurePaymentConfirmationController::ShowDialog() {
 #if BUILDFLAG(IS_ANDROID)
-  NOTREACHED_IN_MIGRATION();
-#endif  // BUILDFLAG(IS_ANDROID)
-
+  NOTREACHED();
+#else
   if (!request_ || !request_->spec())
     return;
 
@@ -54,6 +55,7 @@ void SecurePaymentConfirmationController::ShowDialog() {
 
   if (number_of_initialization_tasks_ == 0)
     SetupModelAndShowDialogIfApplicable();
+#endif  // BUILDFLAG(IS_ANDROID)
 }
 
 void SecurePaymentConfirmationController::
@@ -101,8 +103,8 @@ void SecurePaymentConfirmationController::
   model_.set_cancel_button_label(l10n_util::GetStringUTF16(IDS_CANCEL));
   model_.set_progress_bar_visible(false);
 
-  if (base::FeatureList::IsEnabled(
-          features::kSecurePaymentConfirmationInlineNetworkAndIssuerIcons)) {
+  if (features::GetNetworkAndIssuerIconsTreatment() ==
+      SecurePaymentConfirmationNetworkAndIssuerIconsTreatment::kInline) {
     model_.set_title(l10n_util::GetStringUTF16(
         IDS_SECURE_PAYMENT_CONFIRMATION_INLINE_TITLE));
     model_.set_description(l10n_util::GetStringUTF16(
@@ -240,7 +242,7 @@ void SecurePaymentConfirmationController::ShowPaymentHandlerScreen(
     const GURL& url,
     PaymentHandlerOpenWindowCallback callback) {
   // Payment handler screen is not supported.
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 void SecurePaymentConfirmationController::ConfirmPaymentForTesting() {

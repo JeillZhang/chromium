@@ -18,7 +18,6 @@ import androidx.appcompat.app.AppCompatActivity;
 
 import org.junit.After;
 import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
@@ -29,8 +28,8 @@ import org.robolectric.annotation.Config;
 
 import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.base.test.util.JniMocker;
-import org.chromium.chrome.browser.browser_controls.BrowserControlsSizer;
+import org.chromium.chrome.browser.browser_controls.BottomControlsStacker;
+import org.chromium.chrome.browser.browser_controls.BrowserControlsStateProvider;
 import org.chromium.chrome.browser.layouts.LayoutManager;
 import org.chromium.chrome.browser.readaloud.ReadAloudMiniPlayerSceneLayer;
 import org.chromium.chrome.browser.readaloud.ReadAloudMiniPlayerSceneLayerJni;
@@ -52,10 +51,11 @@ import java.util.List;
 @Config(manifest = Config.NONE)
 @RunWith(BaseRobolectricTestRunner.class)
 public class PlayerCoordinatorUnitTest {
-    @Rule public JniMocker mJniMocker = new JniMocker();
     @Mock ReadAloudMiniPlayerSceneLayer.Natives mSceneLayerNativeMock;
 
     @Mock private BottomSheetController mBottomSheetController;
+    @Mock private BottomControlsStacker mBottomControlsStacker;
+    @Mock private BrowserControlsStateProvider mBrowserControlsStateProvider;
     @Mock private Playback mPlayback;
     @Mock private PlayerCoordinator.Observer mObserver;
     @Mock private PlayerMediator mMediator;
@@ -72,8 +72,10 @@ public class PlayerCoordinatorUnitTest {
     @Before
     public void setUp() {
         MockitoAnnotations.initMocks(this);
-        mJniMocker.mock(ReadAloudMiniPlayerSceneLayerJni.TEST_HOOKS, mSceneLayerNativeMock);
+        ReadAloudMiniPlayerSceneLayerJni.setInstanceForTesting(mSceneLayerNativeMock);
         doReturn(123456789L).when(mSceneLayerNativeMock).init(any());
+        doReturn(mBottomControlsStacker).when(mDelegate).getBottomControlsStacker();
+        doReturn(mBrowserControlsStateProvider).when(mBottomControlsStacker).getBrowserControls();
         mPlayerCoordinator =
                 new PlayerCoordinator(mMiniPlayer, mMediator, mDelegate, mExpandedPlayer);
     }
@@ -105,9 +107,6 @@ public class PlayerCoordinatorUnitTest {
         ReadAloudPrefs.setSpeed(prefs, 2f);
         doReturn(prefs).when(mDelegate).getPrefService();
         doReturn(Mockito.mock(LayoutManager.class)).when(mDelegate).getLayoutManager();
-        doReturn(Mockito.mock(BrowserControlsSizer.class))
-                .when(mDelegate)
-                .getBrowserControlsSizer();
         doReturn(new ObservableSupplierImpl<List<PlaybackVoice>>())
                 .when(mDelegate)
                 .getCurrentLanguageVoicesSupplier();
@@ -199,6 +198,23 @@ public class PlayerCoordinatorUnitTest {
         verify(mMediator).setPlayback(eq(null));
         verify(mMediator).setPlaybackState(eq(PlaybackListener.State.STOPPED));
         verify(mMiniPlayer).dismiss(eq(true));
+        verify(mMediator).setHiddenAndPlaying(eq(false));
+    }
+
+    @Test
+    public void testDismissPlayers_restorablePlayer() {
+        mPlayerCoordinator.playTabRequested();
+        verify(mMediator).setPlayback(eq(null));
+        verify(mMediator).setPlaybackState(eq(PlaybackListener.State.BUFFERING));
+        reset(mMediator);
+
+        doReturn(true).when(mMediator).isPlayerRestorable();
+        mPlayerCoordinator.dismissPlayers();
+
+        verify(mMediator).setPlayback(eq(null));
+        verify(mMediator).setPlaybackState(eq(PlaybackListener.State.STOPPED));
+        verify(mMiniPlayer, never()).dismiss(eq(true));
+        verify(mExpandedPlayer, never()).dismiss();
         verify(mMediator).setHiddenAndPlaying(eq(false));
     }
 
@@ -299,6 +315,12 @@ public class PlayerCoordinatorUnitTest {
     public void testOnScreenStatusChanged() {
         mPlayerCoordinator.onScreenStatusChanged(true);
         verify(mMediator).onScreenStatusChanged(true);
+    }
+
+    @Test
+    public void testSetPlayerRestorable() {
+        mPlayerCoordinator.setPlayerRestorable(true);
+        verify(mMediator).setPlayerRestorable(true);
     }
 
     @Test

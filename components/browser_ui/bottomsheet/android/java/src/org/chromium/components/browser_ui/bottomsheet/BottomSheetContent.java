@@ -4,13 +4,15 @@
 
 package org.chromium.components.browser_ui.bottomsheet;
 
+import android.content.Context;
 import android.view.View;
 
 import androidx.annotation.ColorInt;
 import androidx.annotation.IntDef;
-import androidx.annotation.Nullable;
 
 import org.chromium.base.supplier.ObservableSupplierImpl;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.components.browser_ui.styles.SemanticColorUtils;
 
 import java.lang.annotation.Retention;
@@ -20,6 +22,7 @@ import java.lang.annotation.RetentionPolicy;
  * An interface defining content that can be displayed inside of the bottom sheet for Chrome
  * Home.
  */
+@NullMarked
 public interface BottomSheetContent {
     /** The different possible height modes for a given state. */
     @IntDef({HeightMode.DEFAULT, HeightMode.WRAP_CONTENT, HeightMode.DISABLED})
@@ -206,15 +209,15 @@ public interface BottomSheetContent {
     default void onBackPressed() {}
 
     /**
-     * @return The resource id of the content description for the bottom sheet. This is
-     *         generally the name of the feature/content that is showing. 'Swipe down to close.'
-     *         will be automatically appended after the content description.
+     * Returns the content description for the bottom sheet. This is generally the name of the
+     * feature/content that is showing. It can be a dynamic string. 'Swipe down to close.' will be
+     * automatically appended after the content description.
      */
-    int getSheetContentDescriptionStringId();
+    String getSheetContentDescription(Context context);
 
     /**
-     * @return The resource id of the string announced when the sheet is opened at half height.
-     *         This is typically the name of your feature followed by 'opened at half height'.
+     * @return The resource id of the string announced when the sheet is opened at half height. This
+     *     is typically the name of your feature followed by 'opened at half height'.
      */
     int getSheetHalfHeightAccessibilityStringId();
 
@@ -236,6 +239,19 @@ public interface BottomSheetContent {
      *     the sheet is dismissed. If returning true here, this content's priority should be LOW.
      */
     default boolean canSuppressInAnyState() {
+        return false;
+    }
+
+    /**
+     * Whether long press gestures should move the bottom sheet.
+     *
+     * <p>Should NOT be overridden to return `true` if the bottom sheet contains any UI that
+     * responds to long presses. Otherwise bugs will occur when long press is used. See
+     * crbug.com/41384419.
+     *
+     * @return True if long press should move the bottom sheet.
+     */
+    default boolean shouldLongPressMoveSheet() {
         return false;
     }
 }

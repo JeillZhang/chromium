@@ -25,6 +25,27 @@
 
 namespace blink {
 
+PropertyTreeManager::EffectState::EffectState(const CurrentEffectState& other)
+    : effect_id(other.effect_id),
+      effect(other.effect),
+      clip(other.clip),
+      transform(other.transform),
+      may_be_2d_axis_misaligned_to_render_surface(
+          other.may_be_2d_axis_misaligned_to_render_surface),
+      contained_by_non_render_surface_synthetic_rounded_clip(
+          other.contained_by_non_render_surface_synthetic_rounded_clip) {}
+
+PropertyTreeManager::CurrentEffectState::CurrentEffectState(
+    const EffectState& other)
+    : effect_id(other.effect_id),
+      effect(other.effect),
+      clip(other.clip),
+      transform(other.transform),
+      may_be_2d_axis_misaligned_to_render_surface(
+          other.may_be_2d_axis_misaligned_to_render_surface),
+      contained_by_non_render_surface_synthetic_rounded_clip(
+          other.contained_by_non_render_surface_synthetic_rounded_clip) {}
+
 PropertyTreeManager::PropertyTreeManager(PropertyTreeManagerClient& client,
                                          cc::PropertyTrees& property_trees,
                                          cc::Layer& root_layer,
@@ -127,11 +148,11 @@ bool PropertyTreeManager::DirectlyUpdateScrollOffsetTransform(
     return false;
 
   auto* property_trees = host.property_trees();
-  auto* cc_scroll_node = property_trees->scroll_tree_mutable().Node(
+  auto& scroll_tree = property_trees->scroll_tree_mutable();
+  auto* cc_scroll_node = scroll_tree.Node(
       scroll_node->CcNodeId(property_trees->sequence_number()));
   if (!cc_scroll_node ||
-      property_trees->scroll_tree().ShouldRealizeScrollsOnMain(
-          *cc_scroll_node)) {
+      scroll_tree.ShouldRealizeScrollsOnMain(*cc_scroll_node)) {
     return false;
   }
 
@@ -223,37 +244,49 @@ void PropertyTreeManager::DropCompositorScrollDeltaNextCommit(
   host.DropActiveScrollDeltaNextCommit(element_id);
 }
 
-static uint32_t NonCompositedMainThreadScrollingReasons(
-    const ScrollPaintPropertyNode& scroll) {
-  // TODO(crbug.com/1414885): We can't distinguish kNotOpaqueForTextAndLCDText
-  // and kCantPaintScrollingBackgroundAndLCDText here. We should probably
-  // merge the two reasons.
-  return scroll.GetCompositedScrollingPreference() ==
-                 CompositedScrollingPreference::kNotPreferred
-             ? cc::MainThreadScrollingReason::kPreferNonCompositedScrolling
-             : cc::MainThreadScrollingReason::kNotOpaqueForTextAndLCDText;
+uint32_t PropertyTreeManager::NonCompositedMainThreadRepaintReasons(
+    const TransformPaintPropertyNode& scroll_translation) const {
+  if (scroll_translation.ScrollNode()->GetCompositedScrollingPreference() ==
+      CompositedScrollingPreference::kNotPreferred) {
+    return cc::MainThreadScrollingReason::kPreferNonCompositedScrolling;
+  }
+  if (RuntimeEnabledFeatures::RasterInducingScrollEnabled() &&
+      !client_.ShouldForceMainThreadRepaint(scroll_translation)) {
+    return cc::MainThreadScrollingReason::kNotScrollingOnMain;
+  }
+  return cc::MainThreadScrollingReason::kNotOpaqueForTextAndLCDText;
 }
 
-uint32_t PropertyTreeManager::GetMainThreadScrollingReasons(
+uint32_t PropertyTreeManager::GetMainThreadRepaintReasons(
     const cc::LayerTreeHost& host,
     const ScrollPaintPropertyNode& scroll) {
   const auto* property_trees = host.property_trees();
   const auto* cc_scroll = property_trees->scroll_tree().Node(
       scroll.CcNodeId(property_trees->sequence_number()));
   return cc_scroll
-             ? cc_scroll->main_thread_scrolling_reasons
+             ? cc_scroll->main_thread_repaint_reasons
              : cc::MainThreadScrollingReason::kPreferNonCompositedScrolling;
 }
 
 bool PropertyTreeManager::UsesCompositedScrolling(
     const cc::LayerTreeHost& host,
     const ScrollPaintPropertyNode& scroll) {
-  CHECK(!RuntimeEnabledFeatures::RasterInducingScrollEnabled() ||
-        !RuntimeEnabledFeatures::ScrollTimelineAlwaysOnCompositorEnabled());
+  CHECK(!RuntimeEnabledFeatures::RasterInducingScrollEnabled());
   const auto* property_trees = host.property_trees();
   const auto* cc_scroll = property_trees->scroll_tree().Node(
       scroll.CcNodeId(property_trees->sequence_number()));
   return cc_scroll && cc_scroll->is_composited;
+}
+
+bool PropertyTreeManager::UsesRasterInducingScroll(
+    const cc::LayerTreeHost& host,
+    const ScrollPaintPropertyNode& scroll) {
+  const auto* property_trees = host.property_trees();
+  const auto* cc_scroll = property_trees->scroll_tree().Node(
+      scroll.CcNodeId(property_trees->sequence_number()));
+  return cc_scroll &&
+         property_trees->scroll_tree().CanRealizeScrollsOnPendingTree(
+             *cc_scroll);
 }
 
 void PropertyTreeManager::SetupRootTransformNode() {
@@ -381,7 +414,7 @@ void PropertyTreeManager::SetCurrentEffectState(
     const ClipPaintPropertyNode& clip,
     const TransformPaintPropertyNode& transform) {
   const auto* previous_transform =
-      effect.IsRoot() ? nullptr : current_.transform;
+      effect.IsRoot() ? nullptr : current_.transform.Get();
   current_.effect_id = cc_effect_node.id;
   current_.effect_type = effect_type;
   current_.effect = &effect;
@@ -441,6 +474,14 @@ int PropertyTreeManager::EnsureCompositorTransformNode(
   if (transform_node.IsAffectedByOuterViewportBoundsDelta()) {
     compositor_node.moved_by_outer_viewport_bounds_delta_y = true;
     transform_tree_.AddNodeAffectedByOuterViewportBoundsDelta(id);
+  }
+
+  if (base::FeatureList::IsEnabled(
+          features::kDynamicSafeAreaInsetsSupportedByCC)) {
+    if (transform_node.IsAffectedBySafeAreaBottom()) {
+      compositor_node.moved_by_safe_area_bottom = true;
+      transform_tree_.AddNodeAffectedBySafeAreaInsetBottom(id);
+    }
   }
 
   compositor_node.in_subtree_of_page_scale_layer =
@@ -505,8 +546,8 @@ int PropertyTreeManager::EnsureCompositorTransformNode(
     scroll_node->is_composited =
         client_.NeedsCompositedScrolling(transform_node);
     if (!scroll_node->is_composited) {
-      scroll_node->main_thread_scrolling_reasons |=
-          NonCompositedMainThreadScrollingReasons(*transform_node.ScrollNode());
+      scroll_node->main_thread_repaint_reasons |=
+          NonCompositedMainThreadRepaintReasons(transform_node);
     }
   }
 
@@ -593,6 +634,7 @@ int PropertyTreeManager::EnsureCompositorScrollNodeInternal(
   id = scroll_tree_.Insert(cc::ScrollNode(), parent_id);
 
   cc::ScrollNode& compositor_node = *scroll_tree_.Node(id);
+  compositor_node.container_origin = scroll_node.ContainerRect().origin();
   compositor_node.container_bounds = scroll_node.ContainerRect().size();
   compositor_node.bounds = scroll_node.ContentsRect().size();
   compositor_node.user_scrollable_horizontal =
@@ -621,8 +663,10 @@ int PropertyTreeManager::EnsureCompositorScrollNodeInternal(
   // overridden when we handle the painted scroll.
   compositor_node.transform_id = cc::kInvalidPropertyNodeId;
   compositor_node.is_composited = false;
-  compositor_node.main_thread_scrolling_reasons =
-      scroll_node.GetMainThreadScrollingReasons();
+  compositor_node.main_thread_repaint_reasons =
+      scroll_node.GetMainThreadRepaintReasons();
+  CHECK_EQ(compositor_node.main_thread_repaint_reasons,
+           scroll_tree_.GetMainThreadRepaintReasons(compositor_node));
 
   scroll_node.SetCcNodeId(new_sequence_number_, id);
   return id;
@@ -630,10 +674,8 @@ int PropertyTreeManager::EnsureCompositorScrollNodeInternal(
 
 int PropertyTreeManager::EnsureCompositorScrollAndTransformNode(
     const TransformPaintPropertyNode& scroll_translation) {
-  const auto* scroll_node = scroll_translation.ScrollNode();
-  DCHECK(scroll_node);
   EnsureCompositorTransformNode(scroll_translation);
-  int id = scroll_node->CcNodeId(new_sequence_number_);
+  int id = scroll_translation.ScrollNode()->CcNodeId(new_sequence_number_);
   DCHECK(scroll_tree_.Node(id));
   return id;
 }
@@ -870,6 +912,16 @@ void PropertyTreeManager::ForceRenderSurfaceIfSyntheticRoundedCornerClip(
   }
 }
 
+struct PendingClip {
+  DISALLOW_NEW();
+
+ public:
+  Member<const ClipPaintPropertyNode> clip;
+  PropertyTreeManager::CcEffectType type;
+
+  void Trace(Visitor* visitor) const { visitor->Trace(clip); }
+};
+
 std::optional<gfx::RRectF> PropertyTreeManager::ShaderBasedRRect(
     const ClipPaintPropertyNode& clip,
     PropertyTreeManager::CcEffectType type,
@@ -955,7 +1007,7 @@ int PropertyTreeManager::SynthesizeCcEffectsForClipsIfNeeded(
         // fully launched.
         return cc::kInvalidPropertyNodeId;
       }
-      const auto* pre_exit_clip = current_.clip;
+      const auto* pre_exit_clip = current_.clip.Get();
       CloseCcEffect();
       // We may run past the lowest common ancestor because it may not have
       // been synthesized.
@@ -964,11 +1016,7 @@ int PropertyTreeManager::SynthesizeCcEffectsForClipsIfNeeded(
     }
   }
 
-  struct PendingClip {
-    const ClipPaintPropertyNode* clip;
-    CcEffectType type;
-  };
-  Vector<PendingClip> pending_clips;
+  HeapVector<PendingClip, 8> pending_clips;
   const ClipPaintPropertyNode* clip_node = &target_clip;
   for (; clip_node && clip_node != current_.clip;
        clip_node = clip_node->UnaliasedParent()) {
@@ -1025,7 +1073,7 @@ int PropertyTreeManager::SynthesizeCcEffectsForClipsIfNeeded(
 
     if (pending_clip.type & CcEffectType::kSyntheticForNonTrivialClip) {
       if (clip_id == cc::kInvalidPropertyNodeId) {
-        const auto* clip = pending_clip.clip;
+        const auto* clip = pending_clip.clip.Get();
         // Some virtual/threaded/external/wpt/css/css-view-transitions/*
         // tests will fail without the following condition.
         // TODO(crbug.com/1345805): Investigate the reason and remove the
@@ -1210,6 +1258,10 @@ static cc::RenderSurfaceReason ConditionalRenderSurfaceReasonForEffect(
 
 static cc::RenderSurfaceReason RenderSurfaceReasonForEffect(
     const EffectPaintPropertyNode& effect) {
+  if (effect
+          .RequiresCompositingFor2DScaleTransformWithCompositedDescendants()) {
+    return cc::RenderSurfaceReason::k2DTransformWithCompositedDescendants;
+  }
   if (!effect.Filter().IsEmpty() ||
       effect.RequiresCompositingForWillChangeFilter()) {
     return cc::RenderSurfaceReason::kFilter;
@@ -1330,7 +1382,7 @@ void PropertyTreeManager::UpdateConditionalRenderSurfaceReasons(
 // This is called after all property nodes have been converted and we know
 // pixel_moving_filter_id for the pixel-moving clip expanders.
 void PropertyTreeManager::UpdatePixelMovingFilterClipExpanders() {
-  for (auto* clip : pixel_moving_filter_clip_expanders_) {
+  for (const auto& clip : pixel_moving_filter_clip_expanders_) {
     DCHECK(clip->PixelMovingFilter());
     cc::ClipNode* cc_clip =
         clip_tree_.Node(clip->CcNodeId(new_sequence_number_));
@@ -1344,3 +1396,5 @@ void PropertyTreeManager::UpdatePixelMovingFilterClipExpanders() {
 }
 
 }  // namespace blink
+
+WTF_ALLOW_MOVE_AND_INIT_WITH_MEM_FUNCTIONS(blink::PendingClip)

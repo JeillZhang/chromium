@@ -1,8 +1,8 @@
 set noparent
 afakhry@chromium.org
+blundell@chromium.org
 jamescook@chromium.org
 oshima@chromium.org
-sky@chromium.org
 xiyuan@chromium.org
 
 # For WindowManager related.
@@ -17,6 +17,3 @@ per-file BUILD.gn=*
 
 # Translation artifacts:
 per-file ....xtb=file://tools/translation/TRANSLATION_OWNERS
-
-# git submodules
-per-file webui/conch=*

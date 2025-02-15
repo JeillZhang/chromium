@@ -26,12 +26,11 @@
 #include "chrome/grit/generated_resources.h"
 #include "components/infobars/core/confirm_infobar_delegate.h"
 #include "components/infobars/core/infobar.h"
+#include "components/omnibox/browser/vector_icons.h"
 #include "components/prefs/pref_service.h"
 #include "components/vector_icons/vector_icons.h"
 #include "content/public/common/content_switches.h"
 #include "ui/base/l10n/l10n_util.h"
-
-namespace chrome {
 
 // static
 infobars::InfoBar* DefaultBrowserInfoBarDelegate::Create(
@@ -76,7 +75,8 @@ DefaultBrowserInfoBarDelegate::GetIdentifier() const {
 }
 
 const gfx::VectorIcon& DefaultBrowserInfoBarDelegate::GetVectorIcon() const {
-  return vector_icons::kProductIcon;
+  return dark_mode() ? omnibox::kProductChromeRefreshIcon
+                     : vector_icons::kProductIcon;
 }
 
 bool DefaultBrowserInfoBarDelegate::ShouldExpire(
@@ -99,10 +99,6 @@ void DefaultBrowserInfoBarDelegate::InfoBarDismissed() {
 }
 
 std::u16string DefaultBrowserInfoBarDelegate::GetMessageText() const {
-  if (base::FeatureList::IsEnabled(features::kDefaultBrowserPromptRefresh) &&
-      features::kUpdatedInfoBarCopy.Get()) {
-    return l10n_util::GetStringUTF16(IDS_DEFAULT_BROWSER_INFOBAR_REFRESH_TEXT);
-  }
   return l10n_util::GetStringUTF16(IDS_DEFAULT_BROWSER_INFOBAR_TEXT);
 }
 
@@ -113,11 +109,6 @@ int DefaultBrowserInfoBarDelegate::GetButtons() const {
 std::u16string DefaultBrowserInfoBarDelegate::GetButtonLabel(
     InfoBarButton button) const {
   DCHECK_EQ(BUTTON_OK, button);
-  if (base::FeatureList::IsEnabled(features::kDefaultBrowserPromptRefresh) &&
-      features::kUpdatedInfoBarCopy.Get()) {
-    return l10n_util::GetStringUTF16(
-        IDS_DEFAULT_BROWSER_INFOBAR_REFRESH_OK_BUTTON_LABEL);
-  }
   return l10n_util::GetStringUTF16(IDS_DEFAULT_BROWSER_INFOBAR_OK_BUTTON_LABEL);
 }
 
@@ -141,5 +132,3 @@ bool DefaultBrowserInfoBarDelegate::Accept() {
 
   return ConfirmInfoBarDelegate::Accept();
 }
-
-}  // namespace chrome

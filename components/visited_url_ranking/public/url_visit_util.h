@@ -14,10 +14,12 @@
 #include "components/visited_url_ranking/public/url_visit_schema.h"
 #include "url/gurl.h"
 
+namespace url_deduplication {
+class URLDeduplicationHelper;
+}  // namespace url_deduplication
+
 namespace visited_url_ranking {
 
-// TODO(crbug.com/330580421): Remove/replace the category blocklist array
-// specified in `modules_util.h` with the one below.
 inline constexpr auto kBlocklistedCategories =
     base::MakeFixedFlatSet<std::string_view>(
         {"/g/11b76fyj2r", "/m/09lkz", "/m/012mj", "/m/01rbb", "/m/02px0wr",
@@ -33,15 +35,51 @@ inline constexpr auto kDefaultAppBlocklist =
          "drive.google.com", "mail.google.com", "music.youtube.com",
          "m.youtube.com", "photos.google.com", "www.youtube.com"});
 
+std::unique_ptr<url_deduplication::URLDeduplicationHelper>
+CreateDefaultURLDeduplicationHelper();
+
 // Generates an identifier for the given URL leveraged for merging and
 // deduplication of similar URLs.
-URLMergeKey ComputeURLMergeKey(const GURL& url);
+URLMergeKey ComputeURLMergeKey(
+    const GURL& url,
+    const std::u16string& title,
+    url_deduplication::URLDeduplicationHelper* deduplication_helper);
 
 // Generates an input context from a given `URLVisitAggregate` object given a
 // schema definition.
 scoped_refptr<segmentation_platform::InputContext> AsInputContext(
     const std::array<FieldSchema, kNumInputs>& fields_schema,
     const URLVisitAggregate& url_visit_aggregate);
+
+// Returns tab data if it exists for a `URLVisitAggregate`.
+const URLVisitAggregate::TabData* GetTabDataIfExists(
+    const URLVisitAggregate& url_visit_aggregate,
+    const std::vector<Fetcher>& fetchers = std::vector<Fetcher>{
+        Fetcher::kTabModel, Fetcher::kSession});
+
+// Returns a tab if it exists for a `URLVisitAggregate`.
+const URLVisitAggregate::Tab* GetTabIfExists(
+    const URLVisitAggregate& url_visit_aggregate);
+
+const URLVisitAggregate::HistoryData* GetHistoryDataIfExists(
+    const URLVisitAggregate& url_visit_aggregate);
+
+// Returns a history entry if it exists for a `URLVisitAggregate`.
+const history::AnnotatedVisit* GetHistoryEntryVisitIfExists(
+    const URLVisitAggregate& url_visit_aggregate);
+
+// Returns the highest priority decorator for a `URLVisitAggregate`.
+const Decoration& GetMostRelevantDecoration(
+    const URLVisitAggregate& url_visit_aggregate);
+
+// Returns the decoration string for the given `type`.
+std::u16string GetStringForDecoration(DecorationType type,
+                                      bool visited_recently = false);
+
+// Returns the decoration string for a recent visit at given `last_visit_time`.
+std::u16string GetStringForRecencyDecorationWithTime(
+    base::Time last_visit_time,
+    base::TimeDelta recently_visited_minutes_threshold = base::Minutes(1));
 
 }  // namespace visited_url_ranking
 

@@ -37,7 +37,7 @@ class FormStructureTestApi {
   // Set the heuristic and server types for each field. The `heuristic_types`
   // and `server_types` vectors must be aligned with the indices of the fields
   // in the form. For each field in `heuristic_types` there must be exactly one
-  // `GetActivePatternSource()` prediction and any number of alternative
+  // `GetActivePatternFile()` prediction and any number of alternative
   // predictions.
   void SetFieldTypes(
       const std::vector<std::vector<std::pair<HeuristicSource, FieldType>>>&
@@ -71,18 +71,14 @@ class FormStructureTestApi {
 
   void AssignSections() { autofill::AssignSections(form_structure_->fields_); }
 
-  bool phone_rationalized(const Section& section) const {
-    return base::Contains(form_structure_->phone_rationalized_, section);
-  }
-
   FieldCandidatesMap ParseFieldTypesWithPatterns(
       ParsingContext& context) const {
     return form_structure_->ParseFieldTypesWithPatterns(context);
   }
 
   void AssignBestFieldTypes(const FieldCandidatesMap& field_type_map,
-                            PatternSource pattern_source) {
-    form_structure_->AssignBestFieldTypes(field_type_map, pattern_source);
+                            HeuristicSource heuristic_source) {
+    form_structure_->AssignBestFieldTypes(field_type_map, heuristic_source);
   }
 
  private:

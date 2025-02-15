@@ -30,7 +30,7 @@ import org.chromium.chrome.browser.browserservices.intents.BrowserServicesIntent
 import org.chromium.chrome.browser.browserservices.intents.BrowserServicesIntentDataProvider.CustomTabsUiType;
 import org.chromium.chrome.browser.browserservices.ui.controller.Verifier;
 import org.chromium.chrome.browser.firstrun.FirstRunStatus;
-import org.chromium.chrome.browser.history.HistoryManager;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.multiwindow.MultiWindowModeStateDispatcher;
 import org.chromium.chrome.browser.readaloud.ReadAloudController;
 import org.chromium.chrome.browser.readaloud.ReadAloudFeatures;
@@ -42,13 +42,14 @@ import org.chromium.chrome.browser.ui.appmenu.AppMenuPropertiesDelegate;
 import org.chromium.chrome.browser.ui.appmenu.CustomViewBinder;
 import org.chromium.components.embedder_support.util.UrlConstants;
 import org.chromium.components.webapps.WebappsUtils;
+import org.chromium.content_public.browser.ContentFeatureList;
+import org.chromium.content_public.browser.ContentFeatureMap;
 import org.chromium.url.GURL;
 
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.function.BooleanSupplier;
 
 /** App menu properties delegate for {@link CustomTabActivity}. */
 public class CustomTabAppMenuPropertiesDelegate extends AppMenuPropertiesDelegateImpl {
@@ -60,9 +61,9 @@ public class CustomTabAppMenuPropertiesDelegate extends AppMenuPropertiesDelegat
     private final boolean mShowStar;
     private final boolean mShowDownload;
     private final boolean mIsOpenedByChrome;
-    private final boolean mIsIncognito;
+    private final boolean mIsIncognitoBranded;
+    private final boolean mIsOffTheRecord;
     private final boolean mIsStartIconMenu;
-    private final BooleanSupplier mIsPageInsightsHubEnabled;
 
     private final List<String> mMenuEntries;
     private final Map<String, Integer> mTitleToItemIdMap = new HashMap<String, Integer>();
@@ -86,9 +87,9 @@ public class CustomTabAppMenuPropertiesDelegate extends AppMenuPropertiesDelegat
             boolean showShare,
             boolean showStar,
             boolean showDownload,
-            boolean isIncognito,
+            boolean isIncognitoBranded,
+            boolean isOffTheRecord,
             boolean isStartIconMenu,
-            BooleanSupplier isPageInsightsHubEnabled,
             Supplier<ReadAloudController> readAloudControllerSupplier,
             boolean hasClientPackage) {
         super(
@@ -106,12 +107,12 @@ public class CustomTabAppMenuPropertiesDelegate extends AppMenuPropertiesDelegat
         mUiType = uiType;
         mMenuEntries = menuEntries;
         mIsOpenedByChrome = isOpenedByChrome;
-        mShowShare = showShare;
+        mShowShare = showShare && mUiType != CustomTabsUiType.AUTH_TAB;
         mShowStar = showStar;
         mShowDownload = showDownload;
-        mIsIncognito = isIncognito;
+        mIsIncognitoBranded = isIncognitoBranded;
+        mIsOffTheRecord = isOffTheRecord;
         mIsStartIconMenu = isStartIconMenu;
-        mIsPageInsightsHubEnabled = isPageInsightsHubEnabled;
         mHasClientPackage = hasClientPackage;
     }
 
@@ -156,17 +157,12 @@ public class CustomTabAppMenuPropertiesDelegate extends AppMenuPropertiesDelegat
             boolean downloadItemVisible = mShowDownload;
             boolean addToHomeScreenVisible = true;
             boolean requestDesktopSiteVisible = true;
-            boolean tryAddingReadAloud = ReadAloudFeatures.isEnabledForOverflowMenuInCCT();
-            boolean historyItemVisible = true;
-            if (!HistoryManager.isAppSpecificHistoryEnabled() || !mHasClientPackage) {
-                historyItemVisible = false;
-            }
+            boolean tryAddingReadAloud = ReadAloudFeatures.isEnabledForOverflowMenuInCct();
 
             if (mUiType == CustomTabsUiType.MEDIA_VIEWER) {
                 // Most of the menu items don't make sense when viewing media.
                 menu.findItem(R.id.icon_row_menu_id).setVisible(false);
                 menu.findItem(R.id.find_in_page_id).setVisible(false);
-                historyItemVisible = false;
                 bookmarkItemVisible = false; // Set to skip initialization.
                 downloadItemVisible = false; // Set to skip initialization.
                 openInChromeItemVisible = false;
@@ -176,7 +172,6 @@ public class CustomTabAppMenuPropertiesDelegate extends AppMenuPropertiesDelegat
             } else if (mUiType == CustomTabsUiType.READER_MODE) {
                 // Only 'find in page' and the reader mode preference are shown for Reader Mode UI.
                 menu.findItem(R.id.icon_row_menu_id).setVisible(false);
-                historyItemVisible = false;
                 bookmarkItemVisible = false; // Set to skip initialization.
                 downloadItemVisible = false; // Set to skip initialization.
                 openInChromeItemVisible = false;
@@ -185,7 +180,6 @@ public class CustomTabAppMenuPropertiesDelegate extends AppMenuPropertiesDelegat
                 tryAddingReadAloud = false;
                 menu.findItem(R.id.reader_mode_prefs_id).setVisible(true);
             } else if (mUiType == CustomTabsUiType.MINIMAL_UI_WEBAPP) {
-                historyItemVisible = false;
                 requestDesktopSiteVisible = false;
                 // For Webapps & WebAPKs Verifier#wasPreviouslyVerified() performs verification
                 // (instead of looking up cached value).
@@ -193,24 +187,32 @@ public class CustomTabAppMenuPropertiesDelegate extends AppMenuPropertiesDelegat
                 downloadItemVisible = false;
                 bookmarkItemVisible = false;
             } else if (mUiType == CustomTabsUiType.OFFLINE_PAGE) {
-                historyItemVisible = false;
                 openInChromeItemVisible = false;
                 bookmarkItemVisible = true;
                 downloadItemVisible = false;
                 addToHomeScreenVisible = false;
                 requestDesktopSiteVisible = true;
                 tryAddingReadAloud = false;
+            } else if (mUiType == CustomTabsUiType.AUTH_TAB) {
+                openInChromeItemVisible = false;
+                bookmarkItemVisible = false;
+                downloadItemVisible = false;
+                addToHomeScreenVisible = false;
+                tryAddingReadAloud = false;
+            } else if (mUiType == CustomTabsUiType.NETWORK_BOUND_TAB) {
+                openInChromeItemVisible = false;
+                addToHomeScreenVisible = false;
+                requestDesktopSiteVisible = true;
             }
 
             if (!FirstRunStatus.getFirstRunFlowComplete()) {
-                historyItemVisible = false;
                 openInChromeItemVisible = false;
                 bookmarkItemVisible = false;
                 downloadItemVisible = false;
                 addToHomeScreenVisible = false;
             }
 
-            if (mIsIncognito) {
+            if (mIsIncognitoBranded) {
                 addToHomeScreenVisible = false;
                 downloadItemVisible = false;
                 openInChromeItemVisible = false;
@@ -223,6 +225,14 @@ public class CustomTabAppMenuPropertiesDelegate extends AppMenuPropertiesDelegat
                             || currentTab.isNativePage();
             boolean isFileScheme = url.getScheme().equals(UrlConstants.FILE_SCHEME);
             boolean isContentScheme = url.getScheme().equals(UrlConstants.CONTENT_SCHEME);
+            // TODO(crbug.com/380936306): Hide open in Chrome for blob url. Revisit once we
+            // understand when the URL can be blob. Flag guard to make it safe to merge.
+            if ((ContentFeatureMap.isEnabled(ContentFeatureList.ANDROID_OPEN_PDF_INLINE)
+                            || ChromeFeatureList.isEnabled(
+                                    ChromeFeatureList.ANDROID_OPEN_PDF_INLINE_BACKPORT))
+                    && url.getScheme().equals(UrlConstants.BLOB_SCHEME)) {
+                openInChromeItemVisible = false;
+            }
             if (isNativePage || isFileScheme || isContentScheme || url.isEmpty()) {
                 addToHomeScreenVisible = false;
             }
@@ -231,7 +241,7 @@ public class CustomTabAppMenuPropertiesDelegate extends AppMenuPropertiesDelegat
                 addToHomeScreenVisible = false;
             }
 
-            if (!historyItemVisible) {
+            if (!CustomTabAppMenuHelper.showHistoryItem(mHasClientPackage, mUiType)) {
                 menu.findItem(R.id.open_history_menu_id).setVisible(false);
             }
 
@@ -244,7 +254,7 @@ public class CustomTabAppMenuPropertiesDelegate extends AppMenuPropertiesDelegat
 
             MenuItem bookmarkItem = menu.findItem(R.id.bookmark_this_page_id);
             if (bookmarkItemVisible) {
-                updateBookmarkMenuItemShortcut(bookmarkItem, currentTab, /* fromCCT= */ true);
+                updateBookmarkMenuItemShortcut(bookmarkItem, currentTab, /* fromCct= */ true);
             } else {
                 bookmarkItem.setVisible(false);
             }
@@ -259,10 +269,13 @@ public class CustomTabAppMenuPropertiesDelegate extends AppMenuPropertiesDelegat
                 menu.findItem(R.id.readaloud_menu_id).setVisible(false);
             }
 
+            boolean showOpenWith = currentTab.isNativePage() && currentTab.getNativePage().isPdf();
+            menu.findItem(R.id.open_with_id).setVisible(showOpenWith);
+
             MenuItem openInChromeItem = menu.findItem(R.id.open_in_browser_id);
             if (openInChromeItemVisible) {
                 String title =
-                        mIsIncognito
+                        mIsOffTheRecord
                                 ? ContextUtils.getApplicationContext()
                                         .getString(R.string.menu_open_in_incognito_chrome)
                                 : DefaultBrowserInfo.getTitleOpenInDefaultBrowser(
@@ -271,10 +284,6 @@ public class CustomTabAppMenuPropertiesDelegate extends AppMenuPropertiesDelegat
                 openInChromeItem.setTitle(title);
             } else {
                 openInChromeItem.setVisible(false);
-            }
-
-            if (mIsPageInsightsHubEnabled.getAsBoolean()) {
-                menu.findItem(R.id.page_insights_id).setVisible(true);
             }
 
             // Add custom menu items.
@@ -295,9 +304,8 @@ public class CustomTabAppMenuPropertiesDelegate extends AppMenuPropertiesDelegat
     }
 
     /**
-     * @return The index that the given menu item should appear in the result of
-     *         {@link BrowserServicesIntentDataProvider#getMenuTitles()}. Returns -1 if item not
-     * found.
+     * @return The index that the given menu item should appear in the result of {@link
+     *     BrowserServicesIntentDataProvider#getMenuTitles()}. Returns -1 if item not found.
      */
     public static int getIndexOfMenuItemFromBundle(Bundle menuItemData) {
         if (menuItemData != null && menuItemData.containsKey(CUSTOM_MENU_ITEM_ID_KEY)) {
@@ -358,7 +366,6 @@ public class CustomTabAppMenuPropertiesDelegate extends AppMenuPropertiesDelegat
         return mIsStartIconMenu;
     }
 
-    @VisibleForTesting
     void setHasClientPackageForTesting(boolean hasClientPackage) {
         mHasClientPackage = hasClientPackage;
     }

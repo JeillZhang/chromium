@@ -24,10 +24,8 @@ import java.util.Optional;
 
 /** Handles translating the UrlBar model data to the view state. */
 class UrlBarViewBinder {
-    private static final String TAG = "UrlBarViewBinder";
-
     /**
-     * @see PropertyModelChangeProcessor.ViewBinder#bind(Object, Object, Object)
+     * @see PropertyModelChangeProcfessor.ViewBinder#bind(Object, Object, Object)
      */
     public static void bind(PropertyModel model, UrlBar view, PropertyKey propertyKey) {
         if (UrlBarProperties.ACTION_MODE_CALLBACK.equals(propertyKey)) {
@@ -36,6 +34,8 @@ class UrlBarViewBinder {
             view.setCustomSelectionActionModeCallback(callback);
         } else if (UrlBarProperties.ALLOW_FOCUS.equals(propertyKey)) {
             view.setAllowFocus(model.get(UrlBarProperties.ALLOW_FOCUS));
+        } else if (UrlBarProperties.IS_IN_CCT.equals(propertyKey)) {
+            view.setIsInCct(model.get(UrlBarProperties.IS_IN_CCT));
         } else if (UrlBarProperties.AUTOCOMPLETE_TEXT.equals(propertyKey)) {
             AutocompleteText autocomplete = model.get(UrlBarProperties.AUTOCOMPLETE_TEXT);
             if (view.shouldAutocomplete()) {
@@ -78,8 +78,6 @@ class UrlBarViewBinder {
             view.setTextColor(model.get(UrlBarProperties.TEXT_COLOR));
         } else if (UrlBarProperties.HINT_TEXT_COLOR.equals(propertyKey)) {
             view.setHintTextColor(model.get(UrlBarProperties.HINT_TEXT_COLOR));
-        } else if (UrlBarProperties.TYPEFACE.equals(propertyKey)) {
-            view.setTypeface(model.get(UrlBarProperties.TYPEFACE));
         } else if (UrlBarProperties.INCOGNITO_COLORS_ENABLED.equals(propertyKey)) {
             final boolean incognitoColorsEnabled =
                     model.get(UrlBarProperties.INCOGNITO_COLORS_ENABLED);
@@ -89,10 +87,12 @@ class UrlBarViewBinder {
             }
         } else if (UrlBarProperties.URL_DIRECTION_LISTENER.equals(propertyKey)) {
             view.setUrlDirectionListener(model.get(UrlBarProperties.URL_DIRECTION_LISTENER));
-        } else if (UrlBarProperties.URL_TEXT_CHANGE_LISTENER.equals(propertyKey)) {
-            view.setUrlTextChangeListener(model.get(UrlBarProperties.URL_TEXT_CHANGE_LISTENER));
-        } else if (UrlBarProperties.WINDOW_DELEGATE.equals(propertyKey)) {
-            view.setWindowDelegate(model.get(UrlBarProperties.WINDOW_DELEGATE));
+        } else if (UrlBarProperties.TEXT_CHANGE_LISTENER.equals(propertyKey)) {
+            view.setTextChangeListener(model.get(UrlBarProperties.TEXT_CHANGE_LISTENER));
+        } else if (UrlBarProperties.TYPING_STARTED_LISTENER.equals(propertyKey)) {
+            view.setTypingStartedListener(model.get(UrlBarProperties.TYPING_STARTED_LISTENER));
+        } else if (UrlBarProperties.KEY_DOWN_LISTENER.equals(propertyKey)) {
+            view.setKeyDownListener(model.get(UrlBarProperties.KEY_DOWN_LISTENER));
         } else if (UrlBarProperties.HAS_URL_SUGGESTIONS.equals(propertyKey)) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                 view.setHandwritingBoundsOffsets(
@@ -103,6 +103,12 @@ class UrlBarViewBinder {
                                 ? view.getHandwritingBoundsOffsetTop()
                                 : 0);
             }
+        } else if (UrlBarProperties.SELECT_ALL_ON_FOCUS.equals(propertyKey)) {
+            view.setSelectAllOnFocus(model.get(UrlBarProperties.SELECT_ALL_ON_FOCUS));
+        } else if (UrlBarProperties.LONG_CLICK_LISTENER.equals(propertyKey)) {
+            view.setOnLongClickListener(model.get(UrlBarProperties.LONG_CLICK_LISTENER));
+        } else if (UrlBarProperties.HINT_TEXT.equals(propertyKey)) {
+            view.setHint(view.getContext().getString(model.get(UrlBarProperties.HINT_TEXT)));
         }
     }
 

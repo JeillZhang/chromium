@@ -138,8 +138,7 @@ const char* UIElementTypeToString(ChromeClient::UIElementType ui_element_type) {
     case ChromeClient::UIElementType::kPopup:
       return "popup";
   }
-  NOTREACHED_IN_MIGRATION();
-  return "";
+  NOTREACHED();
 }
 
 const char* DismissalTypeToString(Document::PageDismissalType dismissal_type) {
@@ -153,10 +152,9 @@ const char* DismissalTypeToString(Document::PageDismissalType dismissal_type) {
     case Document::kUnloadDismissal:
       return "unload";
     case Document::kNoDismissal:
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
   }
-  NOTREACHED_IN_MIGRATION();
-  return "";
+  NOTREACHED();
 }
 
 String TruncateDialogMessage(const String& message) {
@@ -359,21 +357,6 @@ Page* ChromeClientImpl::CreateWindowDelegate(
   if (!new_view)
     return nullptr;
   return new_view->GetPage();
-}
-
-void ChromeClientImpl::DidOverscroll(
-    const gfx::Vector2dF& overscroll_delta,
-    const gfx::Vector2dF& accumulated_overscroll,
-    const gfx::PointF& position_in_viewport,
-    const gfx::Vector2dF& velocity_in_viewport) {
-  DCHECK(web_view_);
-  if (!web_view_->does_composite())
-    return;
-  // TODO(darin): Change caller to pass LocalFrame.
-  DCHECK(web_view_->MainFrameImpl());
-  web_view_->MainFrameImpl()->FrameWidgetImpl()->DidOverscroll(
-      overscroll_delta, accumulated_overscroll, position_in_viewport,
-      velocity_in_viewport);
 }
 
 void ChromeClientImpl::InjectScrollbarGestureScroll(
@@ -775,11 +758,11 @@ ColorChooser* ChromeClientImpl::OpenColorChooser(
         frame, this, chooser_client);
   } else {
 #if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
-    NOTREACHED_IN_MIGRATION()
-        << "Page popups should be enabled on all but Android or iOS";
-#endif
+    NOTREACHED() << "Page popups should be enabled on all but Android or iOS";
+#else
     controller =
         MakeGarbageCollected<ColorChooserUIController>(frame, chooser_client);
+#endif
   }
   controller->OpenUI();
   return controller;
@@ -1058,7 +1041,7 @@ viz::FrameSinkId ChromeClientImpl::GetFrameSinkId(LocalFrame* frame) {
 }
 
 void ChromeClientImpl::RequestDecode(LocalFrame* frame,
-                                     const PaintImage& image,
+                                     const cc::DrawImage& image,
                                      base::OnceCallback<void(bool)> callback) {
   FrameWidget* widget = frame->GetWidgetForLocalRoot();
   widget->RequestDecode(image, std::move(callback));
@@ -1069,8 +1052,7 @@ void ChromeClientImpl::NotifyPresentationTime(LocalFrame& frame,
   FrameWidget* widget = frame.GetWidgetForLocalRoot();
   if (!widget)
     return;
-  widget->NotifyPresentationTimeInBlink(
-      ConvertToBaseOnceCallback(std::move(callback)));
+  widget->NotifyPresentationTime(std::move(callback));
 }
 
 void ChromeClientImpl::RequestBeginMainFrameNotExpected(LocalFrame& frame,
@@ -1278,8 +1260,9 @@ void ChromeClientImpl::HandleKeyboardEventOnTextField(
 void ChromeClientImpl::DidChangeValueInTextField(
     HTMLFormControlElement& element) {
   Document& doc = element.GetDocument();
-  if (auto* fill_client = AutofillClientFromFrame(doc.GetFrame()))
-    fill_client->TextFieldDidChange(WebFormControlElement(&element));
+  if (auto* fill_client = AutofillClientFromFrame(doc.GetFrame())) {
+    fill_client->TextFieldValueChanged(WebFormControlElement(&element));
+  }
 
   // Value changes caused by |document.execCommand| calls should not be
   // interpreted as a user action. See https://crbug.com/764760.
@@ -1344,16 +1327,16 @@ void ChromeClientImpl::TextFieldDataListChanged(HTMLInputElement& input) {
 void ChromeClientImpl::DidChangeSelectionInSelectControl(
     HTMLFormControlElement& element) {
   Document& doc = element.GetDocument();
-  if (auto* fill_client = AutofillClientFromFrame(doc.GetFrame()))
-    fill_client->SelectControlDidChange(WebFormControlElement(&element));
+  if (auto* fill_client = AutofillClientFromFrame(doc.GetFrame())) {
+    fill_client->SelectControlSelectionChanged(WebFormControlElement(&element));
+  }
 }
 
-void ChromeClientImpl::SelectOrSelectListFieldOptionsChanged(
+void ChromeClientImpl::SelectFieldOptionsChanged(
     HTMLFormControlElement& element) {
   Document& doc = element.GetDocument();
   if (auto* fill_client = AutofillClientFromFrame(doc.GetFrame())) {
-    fill_client->SelectOrSelectListFieldOptionsChanged(
-        WebFormControlElement(&element));
+    fill_client->SelectFieldOptionsChanged(WebFormControlElement(&element));
   }
 }
 
@@ -1380,6 +1363,12 @@ gfx::Transform ChromeClientImpl::GetDeviceEmulationTransform() const {
 void ChromeClientImpl::DidUpdateBrowserControls() const {
   DCHECK(web_view_);
   web_view_->DidUpdateBrowserControls();
+}
+
+void ChromeClientImpl::DidUpdateMaxSafeAreaInsets(
+    const gfx::InsetsF& max_safe_area_insets) const {
+  DCHECK(web_view_);
+  web_view_->DidUpdateMaxSafeAreaInsets(max_safe_area_insets);
 }
 
 void ChromeClientImpl::RegisterPopupOpeningObserver(
@@ -1432,7 +1421,7 @@ void ChromeClientImpl::DocumentDetached(Document& document) {
 
 double ChromeClientImpl::UserZoomFactor(LocalFrame* frame) const {
   DCHECK(web_view_);
-  return PageZoomLevelToZoomFactor(
+  return ZoomLevelToZoomFactor(
       WebLocalFrameImpl::FromFrame(frame->LocalFrameRoot())
           ->FrameWidgetImpl()
           ->GetZoomLevel());
@@ -1518,6 +1507,10 @@ gfx::Rect ChromeClientImpl::AdjustWindowRectForDisplay(
   }
 
   return window;
+}
+
+void ChromeClientImpl::OnFirstContentfulPaint() {
+  web_view_->OnFirstContentfulPaint();
 }
 
 }  // namespace blink

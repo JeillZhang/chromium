@@ -12,8 +12,8 @@
 #include "mojo/public/cpp/system/platform_handle.h"
 #include "skia/ext/skia_utils_base.h"
 #include "third_party/abseil-cpp/absl/types/variant.h"
-#include "third_party/blink/public/common/browser_interface_broker_proxy.h"
 #include "third_party/blink/public/common/thread_safe_browser_interface_broker_proxy.h"
+#include "third_party/blink/public/platform/browser_interface_broker_proxy.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/public/platform/web_drag_data.h"
 #include "third_party/blink/public/platform/web_string.h"
@@ -342,7 +342,7 @@ mojom::blink::ClipboardFilesPtr SystemClipboard::ReadFiles() {
   return files;
 }
 
-String SystemClipboard::ReadCustomData(const String& type) {
+String SystemClipboard::ReadDataTransferCustomData(const String& type) {
   if (!IsValidBufferType(buffer_) || !clipboard_.is_bound())
     return String();
 
@@ -351,7 +351,7 @@ String SystemClipboard::ReadCustomData(const String& type) {
   }
 
   String data;
-  clipboard_->ReadCustomData(buffer_, NonNullString(type), &data);
+  clipboard_->ReadDataTransferCustomData(buffer_, NonNullString(type), &data);
   if (snapshot_) {
     snapshot_->SetCustomData(buffer_, type, data);
   }
@@ -389,7 +389,7 @@ void SystemClipboard::WriteDataObject(DataObject* data_object) {
     }
   }
   if (!custom_data.empty()) {
-    clipboard_->WriteCustomData(std::move(custom_data));
+    clipboard_->WriteDataTransferCustomData(std::move(custom_data));
   }
 }
 
@@ -561,7 +561,7 @@ mojo_base::BigBuffer SystemClipboard::Snapshot::Png(
     mojom::blink::ClipboardBuffer buffer) const {
   DCHECK(HasPng(buffer));
   // Make an owning copy of the png to return to user.
-  base::span<const uint8_t> span = base::make_span(png_.value());
+  base::span<const uint8_t> span = base::span(png_.value());
   return mojo_base::BigBuffer(span);
 }
 
@@ -570,7 +570,7 @@ void SystemClipboard::Snapshot::SetPng(mojom::blink::ClipboardBuffer buffer,
                                        const mojo_base::BigBuffer& png) {
   BindToBuffer(buffer);
   // Make an owning copy of the png to save locally.
-  base::span<const uint8_t> span = base::make_span(png);
+  base::span<const uint8_t> span = base::span(png);
   png_ = mojo_base::BigBuffer(span);
 }
 

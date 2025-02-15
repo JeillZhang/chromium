@@ -2,10 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/342213636): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "content/browser/cache_storage/cache_storage_cache.h"
 
 #include <stddef.h>
 
+#include <algorithm>
 #include <functional>
 #include <limits>
 #include <memory>
@@ -21,7 +27,6 @@
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/numerics/checked_math.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
@@ -107,8 +112,7 @@ network::mojom::FetchResponseType ProtoResponseTypeToFetchResponseType(
     case proto::CacheResponse::OPAQUE_REDIRECT_TYPE:
       return network::mojom::FetchResponseType::kOpaqueRedirect;
   }
-  NOTREACHED_IN_MIGRATION();
-  return network::mojom::FetchResponseType::kOpaque;
+  NOTREACHED();
 }
 
 proto::CacheResponse::ResponseType FetchResponseTypeToProtoResponseType(
@@ -127,8 +131,7 @@ proto::CacheResponse::ResponseType FetchResponseTypeToProtoResponseType(
     case network::mojom::FetchResponseType::kOpaqueRedirect:
       return proto::CacheResponse::OPAQUE_REDIRECT_TYPE;
   }
-  NOTREACHED_IN_MIGRATION();
-  return proto::CacheResponse::OPAQUE_TYPE;
+  NOTREACHED();
 }
 
 // Assert that ConnectionInfo does not change since we cast it to
@@ -253,7 +256,7 @@ bool VaryMatches(const blink::FetchAPIRequestHeadersMap& request,
   if (response_type == network::mojom::FetchResponseType::kOpaque)
     return true;
 
-  auto vary_iter = base::ranges::find_if(
+  auto vary_iter = std::ranges::find_if(
       response, [](const ResponseHeaderMap::value_type& pair) {
         return base::CompareCaseInsensitiveASCII(pair.first, "vary") == 0;
       });
@@ -909,12 +912,9 @@ void CacheStorageCache::BatchDidGetBucketSpaceRemaining(
         Delete(std::move(operation), completion_callback);
         break;
       case blink::mojom::OperationType::kUndefined:
-        NOTREACHED_IN_MIGRATION();
         // TODO(nhiroki): This should return "TypeError".
         // http://crbug.com/425505
-        completion_callback.Run(MakeErrorStorage(
-            ErrorStorageType::kBatchDidGetUsageAndQuotaUndefinedOp));
-        break;
+        NOTREACHED();
     }
   }
 }
@@ -2030,7 +2030,7 @@ void CacheStorageCache::PutWriteBlobToCache(
       break;
     }
     case INDEX_HEADERS:
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
   }
 
   ScopedWritableEntry entry(put_context->cache_entry.release());

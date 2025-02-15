@@ -2,7 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import {StringDictType, TestNode} from './web_ui_mojo_ts_test_mapped_types.js';
 import {OptionalNumericsStruct, TestEnum, WebUITsMojoTestCache} from './web_ui_ts_test.test-mojom-webui.js';
+import {StringWrapper} from './web_ui_ts_test_types.test-mojom-webui.js';
 
 const TEST_DATA: Array<{url: string, contents: string}> = [
   { url: 'https://google.com/', contents: 'i am in fact feeling lucky' },
@@ -34,10 +36,13 @@ async function doTest(): Promise<boolean> {
   const cache = WebUITsMojoTestCache.getRemote();
   for (const entry of TEST_DATA) {
     cache.put({ url: entry.url }, entry.contents);
+    let stringWrapper = StringWrapper.getRemote();
+    stringWrapper.putString(entry.contents);
+    cache.addStringWrapper(stringWrapper);
   }
 
   const {items} = await cache.getAll();
-  if (items.length != TEST_DATA.length) {
+  if (items.length !== TEST_DATA.length) {
     return false;
   }
 
@@ -55,6 +60,23 @@ async function doTest(): Promise<boolean> {
     }
   }
 
+  const {stringWrapperList} = await cache.getStringWrapperList();
+  if (stringWrapperList.length !== TEST_DATA.length) {
+    return false;
+  }
+
+  let stringsInList = [];
+  for (const stringWrapper of stringWrapperList) {
+    let {item} = await stringWrapper.getString();
+    stringsInList.push(item);
+  }
+
+  for (const entry of TEST_DATA) {
+    if (!stringsInList.includes(entry.contents)) {
+      return false;
+    }
+  }
+
   {
     const testStruct: OptionalNumericsStruct = {
       optionalBool: true,
@@ -62,12 +84,21 @@ async function doTest(): Promise<boolean> {
       optionalEnum: TestEnum.kOne,
     };
 
-    const {optionalBool, optionalUint8, optionalEnum, optionalNumerics,
-           optionalBools, optionalInts, optionalEnums,
-           boolMap, intMap, enumMap} =
-        await cache.echo(true, null, TestEnum.kOne, testStruct,
-                         [], [], [],
-                         {}, {}, {});
+    const {
+      optionalBool,
+      optionalUint8,
+      optionalEnum,
+      optionalNumerics,
+      optionalBools,
+      optionalInts,
+      optionalEnums,
+      boolMap,
+      intMap,
+      enumMap
+    } =
+        await cache.echo(
+            true, null, TestEnum.kOne, testStruct, [], [], [], {}, {}, {}, '',
+            new TestNode(), null);
     if (optionalBool !== false) {
       return false;
     }
@@ -107,12 +138,22 @@ async function doTest(): Promise<boolean> {
     const inIntMap = {0: 0, 2: null};
     const inEnumMap = {0: 0, 1: null};
 
-    const {optionalBool, optionalUint8, optionalEnum, optionalNumerics,
-           optionalBools, optionalInts, optionalEnums,
-           boolMap, intMap, enumMap} =
-        await cache.echo(null, 1, null, testStruct,
-                         inOptionalBools, inOptionalInts, inOptionalEnums,
-                         inBoolMap, inIntMap, inEnumMap);
+    const {
+      optionalBool,
+      optionalUint8,
+      optionalEnum,
+      optionalNumerics,
+      optionalBools,
+      optionalInts,
+      optionalEnums,
+      boolMap,
+      intMap,
+      enumMap
+    } =
+        await cache.echo(
+            null, 1, null, testStruct, inOptionalBools, inOptionalInts,
+            inOptionalEnums, inBoolMap, inIntMap, inEnumMap, '', new TestNode(),
+            null);
     if (optionalBool !== null) {
       return false;
     }
@@ -139,6 +180,77 @@ async function doTest(): Promise<boolean> {
     assertObjectEquals(inBoolMap, boolMap, 'bool map');
     assertObjectEquals(inIntMap, intMap, 'bool int');
     assertObjectEquals(inEnumMap, enumMap, 'enum map');
+  }
+
+  const testStruct: OptionalNumericsStruct = {
+    optionalBool: null,
+    optionalUint8: null,
+    optionalEnum: null,
+  };
+  // Test simple mapped type where a struct is mapped to a string.
+  {
+    const str = 'foobear';
+    const result = await cache.echo(
+        null, 1, null, testStruct, [], [], [], {}, {}, {}, str, new TestNode(),
+        null);
+
+    if (result.simpleMappedType !== str) {
+      return false;
+    }
+  }
+
+  // Tests an empty nested struct to test basic encoding/decoding.
+  {
+    const result = await cache.echo(
+        null, 1, null, testStruct, [], [], [], {}, {}, {}, '', new TestNode(),
+        null);
+
+    assertObjectEquals(
+        new TestNode(), result.nestedMappedType,
+        'nested mappped type: got: ' + JSON.stringify(result.nestedMappedType) +
+            ', expected: {next: null}');
+  }
+
+  // Tests a nested type where a struct includes itself.
+  {
+    const depth = 10;
+    const chain: TestNode = new TestNode();
+    let cursor = chain;
+    for (let i = 0; i < depth; ++i) {
+      cursor = cursor!.next = new TestNode();
+    }
+    const result = await cache.echo(
+        null, 1, null, testStruct, [], [], [], {}, {}, {}, '', chain, null);
+
+    if (JSON.stringify(chain) !== JSON.stringify(result.nestedMappedType)) {
+      throw new Error(
+          'nested mappped type: got: ' +
+          JSON.stringify(result.nestedMappedType) +
+          ', expected: ' + JSON.stringify(chain));
+    }
+  }
+
+  {
+    let map: StringDictType = new Map<string, string>();
+    map.set('foo', 'bear');
+    map.set('some', 'where');
+    const result = await cache.echo(
+        null, 1, null, testStruct, [], [], [], {}, {}, {}, '', new TestNode(),
+        map);
+
+    for (const key of map.keys()) {
+      assert(
+          result.otherMappedType!.get(key) === map.get(key),
+          `Expected value: ${map.get(key)} for key: ${key}, got: ${
+              result.otherMappedType!.get(key)}`);
+    }
+  }
+
+  {
+    const result = await cache.echoTypemaps(new Date(12321));
+    assert(
+        result.time.getTime() === new Date(12321).getTime(),
+        `unexpected date received ${result.time.getTime()}`);
   }
 
   return true;

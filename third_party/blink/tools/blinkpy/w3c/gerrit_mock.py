@@ -16,6 +16,7 @@ from blinkpy.w3c.gerrit import (
 
 
 class MockGerritAPI:
+
     def __init__(self, raise_error=False):
         self.exportable_cls = []
         self.request_posted = []

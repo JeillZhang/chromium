@@ -7,13 +7,14 @@
 
 #include "base/memory/weak_ptr.h"
 #include "content/browser/service_worker/service_worker_accessed_callback.h"
-#include "content/browser/service_worker/service_worker_container_host.h"
 #include "content/common/content_export.h"
 #include "services/network/public/mojom/network_context.mojom.h"
 #include "third_party/blink/public/mojom/service_worker/service_worker_provider.mojom.h"
 
 namespace content {
 
+class ScopedServiceWorkerClient;
+class ServiceWorkerClient;
 class ServiceWorkerContextWrapper;
 
 // The lifetime of the ServiceWorkerMainResourceHandle:
@@ -37,7 +38,10 @@ class CONTENT_EXPORT ServiceWorkerMainResourceHandle {
  public:
   ServiceWorkerMainResourceHandle(
       scoped_refptr<ServiceWorkerContextWrapper> context_wrapper,
-      ServiceWorkerAccessedCallback on_service_worker_accessed);
+      ServiceWorkerAccessedCallback on_service_worker_accessed,
+      std::string fetch_event_client_id,
+      base::WeakPtr<ServiceWorkerClient> parent_service_worker_client =
+          nullptr);
 
   ServiceWorkerMainResourceHandle(const ServiceWorkerMainResourceHandle&) =
       delete;
@@ -51,18 +55,16 @@ class CONTENT_EXPORT ServiceWorkerMainResourceHandle {
   }
 
   void set_service_worker_client(
-      ScopedServiceWorkerClient scoped_service_worker_client);
+      ScopedServiceWorkerClient scoped_service_worker_client,
+      const net::IsolationInfo& isolation_info);
 
   base::WeakPtr<ServiceWorkerClient> service_worker_client();
 
-  void set_parent_service_worker_client(
-      base::WeakPtr<ServiceWorkerClient> service_worker_client) {
-    DCHECK(!parent_service_worker_client_);
-    parent_service_worker_client_ = std::move(service_worker_client);
-  }
-
   base::WeakPtr<ServiceWorkerClient> parent_service_worker_client() {
     return parent_service_worker_client_;
+  }
+  const std::string& fetch_event_client_id() const {
+    return fetch_event_client_id_;
   }
 
   const ServiceWorkerAccessedCallback& service_worker_accessed_callback() {
@@ -77,15 +79,51 @@ class CONTENT_EXPORT ServiceWorkerMainResourceHandle {
     return weak_factory_.GetWeakPtr();
   }
 
+  // Updates `ServiceWorkerClient` and `isolation_info_` for the next request.
+  // Must be called on the initial request and every redirect requests.
+  void InitializeForRequest(
+      const network::ResourceRequest& tentative_resource_request);
+
  private:
+  // In term of the spec, this is the request's reserved client
+  // https://fetch.spec.whatwg.org/#concept-request-reserved-client
+  // that works as the service worker client during the main resource fetch
+  // https://w3c.github.io/ServiceWorker/#dfn-service-worker-client
+  // and subsequently passed as navigation param's reserved environment
+  // https://html.spec.whatwg.org/multipage/browsing-the-web.html#navigation-params-reserved-environment
+  //
+  // The controller of `service_worker_client` can change during navigation
+  // fetch (e.g. when controller is lost or `skipWaiting()` is called) and thus
+  // can be different from the `ServiceWorkerVersion` that intercepted the main
+  // resource request, and the latest controller should be used as the initial
+  // controller of the to-be-created global scope.
   std::unique_ptr<ScopedServiceWorkerClient> scoped_service_worker_client_;
 
-  // Only used for workers with a blob URL.
-  base::WeakPtr<ServiceWorkerClient> parent_service_worker_client_;
+  // Only set and used for workers with a blob URL.
+  const base::WeakPtr<ServiceWorkerClient> parent_service_worker_client_;
 
-  ServiceWorkerAccessedCallback service_worker_accessed_callback_;
+  // FetchEvent.clientId
+  // https://w3c.github.io/ServiceWorker/#fetch-event-clientid
+  //
+  // TODO(crbug.com/368087661): In the spec, this should be navigation request's
+  // client's ID, so `fetch_event_client_id_` and
+  // `parent_service_worker_client_` should be merged as e.g.
+  // `fetch_request_client_`.
+  // https://fetch.spec.whatwg.org/#concept-request-client
+  // But this hasn't been the case in the implementation, so currently they are
+  // plumbed separately here.
+  const std::string fetch_event_client_id_;
 
-  scoped_refptr<ServiceWorkerContextWrapper> context_wrapper_;
+  // Updated on redirects.
+  // TODO(https://crbug.com/367755492): This is managed separately from
+  // `network::ResourceRequest::TrustedParams::isolation_info` but both of the
+  // two `IsolationInfo`s are used/mixed in the code. Investigate why and
+  // clarify the logic.
+  net::IsolationInfo isolation_info_;
+
+  const ServiceWorkerAccessedCallback service_worker_accessed_callback_;
+
+  const scoped_refptr<ServiceWorkerContextWrapper> context_wrapper_;
 
   base::WeakPtrFactory<ServiceWorkerMainResourceHandle> weak_factory_{this};
 };

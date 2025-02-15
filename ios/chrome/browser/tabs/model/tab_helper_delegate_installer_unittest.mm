@@ -7,7 +7,7 @@
 #import "base/memory/raw_ptr.h"
 #import "base/test/task_environment.h"
 #import "ios/chrome/browser/shared/model/browser/test/test_browser.h"
-#import "ios/chrome/browser/shared/model/browser_state/test_chrome_browser_state.h"
+#import "ios/chrome/browser/shared/model/profile/test/test_profile_ios.h"
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_list.h"
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_list_delegate.h"
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_opener.h"
@@ -48,16 +48,18 @@ class FakeTabHelper : public web::WebStateUserData<FakeTabHelper> {
   // Accessors for the Delegate.
   void SetDelegate(Delegate* delegate) {
     delegate_ = delegate;
-    if (!set_delegate_cb_.is_null())
+    if (!set_delegate_cb_.is_null()) {
       set_delegate_cb_.Run(delegate);
+    }
   }
   Delegate* GetDelegate() const { return delegate_; }
 
   // Accessors for the SecondDelegate.
   void SetSecondDelegate(SecondDelegate* delegate) {
     second_delegate_ = delegate;
-    if (!set_second_delegate_cb_.is_null())
+    if (!set_second_delegate_cb_.is_null()) {
       set_second_delegate_cb_.Run(second_delegate_.get());
+    }
   }
   SecondDelegate* GetSecondDelegate() const { return second_delegate_; }
 
@@ -99,14 +101,14 @@ using SecondDelegateInstaller =
 class TabHelperDelegateInstallerTest : public PlatformTest {
  protected:
   TabHelperDelegateInstallerTest()
-      : browser_state_(TestChromeBrowserState::Builder().Build()),
+      : profile_(TestProfileIOS::Builder().Build()),
         browser_(std::make_unique<TestBrowser>(
-            browser_state_.get(),
+            profile_.get(),
             std::make_unique<FakeTabHelperWebStateListDelegate>())) {}
   ~TabHelperDelegateInstallerTest() override {}
 
   base::test::TaskEnvironment task_environment_;
-  std::unique_ptr<ChromeBrowserState> browser_state_;
+  std::unique_ptr<ProfileIOS> profile_;
   std::unique_ptr<Browser> browser_;
   Delegate delegate_;
   SecondDelegate second_delegate_;

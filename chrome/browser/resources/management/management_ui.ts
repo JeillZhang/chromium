@@ -5,9 +5,9 @@
 import 'chrome://resources/cr_elements/cr_icon_button/cr_icon_button.js';
 import 'chrome://resources/cr_elements/cr_icon/cr_icon.js';
 import 'chrome://resources/cr_elements/cr_toolbar/cr_toolbar.js';
-import 'chrome://resources/cr_elements/icons_lit.html.js';
+import 'chrome://resources/cr_elements/icons.html.js';
 import './icons.html.js';
-import './strings.m.js';
+import '/strings.m.js';
 
 import {I18nMixinLit} from 'chrome://resources/cr_elements/i18n_mixin_lit.js';
 import {WebUiListenerMixinLit} from 'chrome://resources/cr_elements/web_ui_listener_mixin_lit.js';
@@ -219,12 +219,13 @@ export class ManagementUiElement extends ManagementUiElementBase {
     }, {} as {[k: string]: {icon: string, messageIds: string[]}});
 
     const reportingTypeOrder: {[k: string]: number} = {
-      [ReportingType.SECURITY]: 1,
-      [ReportingType.EXTENSIONS]: 2,
-      [ReportingType.USER]: 3,
-      [ReportingType.USER_ACTIVITY]: 4,
-      [ReportingType.DEVICE]: 5,
-      [ReportingType.LEGACY_TECH]: 6,
+      [ReportingType.URL]: 1,
+      [ReportingType.SECURITY]: 2,
+      [ReportingType.EXTENSIONS]: 3,
+      [ReportingType.USER]: 4,
+      [ReportingType.USER_ACTIVITY]: 5,
+      [ReportingType.DEVICE]: 6,
+      [ReportingType.LEGACY_TECH]: 7,
     };
 
     this.browserReportingInfo_ =
@@ -362,6 +363,8 @@ export class ManagementUiElement extends ManagementUiElementBase {
         return 'management:legacy-tech';
       case DeviceReportingType.WEBSITE_INFO_AND_ACTIVITY:
         return 'management:web';
+      case DeviceReportingType.FILE_EVENTS:
+        return 'management:policy';
       default:
         return 'cr:computer';
     }
@@ -430,6 +433,8 @@ export class ManagementUiElement extends ManagementUiElementBase {
         return 'management:public';
       case ReportingType.LEGACY_TECH:
         return 'management:legacy-tech';
+      case ReportingType.URL:
+        return 'management:link';
       default:
         return 'cr:security';
     }

@@ -16,7 +16,6 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import android.app.Activity;
-import android.util.ArrayMap;
 
 import androidx.annotation.Nullable;
 import androidx.appcompat.widget.AppCompatTextView;
@@ -24,9 +23,7 @@ import androidx.recyclerview.widget.RecyclerView;
 import androidx.test.filters.SmallTest;
 
 import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
@@ -38,11 +35,9 @@ import org.robolectric.annotation.LooperMode;
 import org.robolectric.shadows.ShadowLog;
 
 import org.chromium.base.Callback;
-import org.chromium.base.FeatureList;
 import org.chromium.base.supplier.Supplier;
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.base.test.util.Features;
-import org.chromium.base.test.util.JniMocker;
+import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.chrome.browser.feed.v2.FeedUserActionType;
 import org.chromium.chrome.browser.feed.webfeed.WebFeedBridge;
 import org.chromium.chrome.browser.feed.webfeed.WebFeedBridge.FollowResults;
@@ -71,13 +66,13 @@ import org.chromium.ui.base.WindowAndroid;
 import org.chromium.url.JUnitTestGURLs;
 
 import java.nio.charset.StandardCharsets;
-import java.util.Map;
 
 /** Unit tests for {@link FeedStream}. */
 @RunWith(BaseRobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
 // TODO(crbug.com/40182398): Rewrite using paused loop. See crbug for details.
 @LooperMode(LooperMode.Mode.LEGACY)
+@EnableFeatures(ChromeFeatureList.FEED_LOADING_PLACEHOLDER)
 public class SingleWebFeedStreamTest {
     private static final int LOAD_MORE_TRIGGER_LOOKAHEAD = 5;
     private static final int LOAD_MORE_TRIGGER_SCROLL_DISTANCE_DP = 100;
@@ -124,6 +119,7 @@ public class SingleWebFeedStreamTest {
     class FeedSurfaceRendererBridgeFactory implements FeedSurfaceRendererBridge.Factory {
         @Override
         public FeedSurfaceRendererBridge create(
+                Profile profile,
                 FeedSurfaceRendererBridge.Renderer renderer,
                 FeedReliabilityLoggingBridge reliabilityLoggingBridge,
                 @StreamKind int streamKind,
@@ -133,27 +129,14 @@ public class SingleWebFeedStreamTest {
         }
     }
 
-    @Rule public JniMocker mocker = new JniMocker();
-    // Enable the Features class, so we can call code which checks to see if features are enabled
-    // without crashing.
-    @Rule public TestRule mFeaturesProcessorRule = new Features.JUnitProcessor();
-
-    private void setFeatureOverrides(boolean feedLoadingPlaceholderOn) {
-        Map<String, Boolean> overrides = new ArrayMap<>();
-        overrides.put(ChromeFeatureList.FEED_LOADING_PLACEHOLDER, feedLoadingPlaceholderOn);
-        FeatureList.setTestFeatures(overrides);
-    }
-
     @Before
     public void setUp() {
         MockitoAnnotations.initMocks(this);
         mActivity = Robolectric.buildActivity(Activity.class).get();
 
-        mocker.mock(FeedServiceBridge.getTestHooksForTesting(), mFeedServiceBridgeJniMock);
-        mocker.mock(
-                FeedReliabilityLoggingBridge.getTestHooksForTesting(),
-                mFeedReliabilityLoggingBridgeJniMock);
-        mocker.mock(WebFeedBridgeJni.TEST_HOOKS, mWebFeedBridgeJni);
+        FeedServiceBridgeJni.setInstanceForTesting(mFeedServiceBridgeJniMock);
+        FeedReliabilityLoggingBridgeJni.setInstanceForTesting(mFeedReliabilityLoggingBridgeJniMock);
+        WebFeedBridgeJni.setInstanceForTesting(mWebFeedBridgeJni);
         ProfileManager.setLastUsedProfileForTesting(mProfileMock);
 
         when(mFeedServiceBridgeJniMock.getLoadMoreTriggerLookahead())
@@ -164,14 +147,14 @@ public class SingleWebFeedStreamTest {
         mFeedStream =
                 new FeedStream(
                         mActivity,
+                        mProfileMock,
                         mSnackbarManager,
                         mBottomSheetController,
                         mWindowAndroid,
-                        /* shareSupplier= */ mShareDelegateSupplier,
+                        /* shareDelegateSupplier= */ mShareDelegateSupplier,
                         StreamKind.SINGLE_WEB_FEED,
                         mActionDelegate,
-                        /* helpAndFeedbackLauncher= */ null,
-                        /* FeedContentFirstLoadWatcher= */ null,
+                        /* feedContentFirstLoadWatcher= */ null,
                         /* streamsMediator= */ null,
                         new SingleWebFeedParameters(
                                 "WebFeedId".getBytes(), SingleWebFeedEntryPoint.OTHER),
@@ -183,8 +166,7 @@ public class SingleWebFeedStreamTest {
         mLayoutManager = new FakeLinearLayoutManager(mActivity);
         mRecyclerView.setLayoutManager(mLayoutManager);
         when(mRenderer.getListLayoutHelper()).thenReturn(mLayoutManager);
-
-        setFeatureOverrides(/* feedLoadingPlaceholderOn= */ true);
+        when(mRenderer.getAdapter()).thenReturn(mAdapter);
 
         // Print logs to stdout.
         ShadowLog.stream = System.out;
@@ -641,7 +623,7 @@ public class SingleWebFeedStreamTest {
                 mContentManager.getItemCount());
     }
 
-    class StubSnackbarController implements FeedActionsHandler.SnackbarController {
+    static class StubSnackbarController implements FeedActionsHandler.SnackbarController {
         Runnable mOnActionFinished;
         Runnable mOnDismissNoActionFinished;
 

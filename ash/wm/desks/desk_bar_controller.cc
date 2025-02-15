@@ -4,9 +4,11 @@
 
 #include "ash/wm/desks/desk_bar_controller.h"
 
+#include <algorithm>
 #include <memory>
 
 #include "ash/accessibility/accessibility_controller.h"
+#include "ash/constants/ash_features.h"
 #include "ash/public/cpp/shell_window_ids.h"
 #include "ash/shelf/desk_button_widget.h"
 #include "ash/shelf/shelf.h"
@@ -26,7 +28,6 @@
 #include "base/auto_reset.h"
 #include "base/check.h"
 #include "base/containers/contains.h"
-#include "base/ranges/algorithm.h"
 #include "base/task/single_thread_task_runner.h"
 #include "ui/compositor/layer.h"
 #include "ui/compositor/presentation_time_recorder.h"
@@ -46,8 +47,8 @@ namespace ash {
 namespace {
 
 bool ShouldProcessLocatedEvent(const ui::LocatedEvent& event) {
-  if (event.type() != ui::ET_MOUSE_PRESSED &&
-      event.type() != ui::ET_TOUCH_PRESSED) {
+  if (event.type() != ui::EventType::kMousePressed &&
+      event.type() != ui::EventType::kTouchPressed) {
     return false;
   }
 
@@ -61,6 +62,15 @@ bool ShouldProcessLocatedEvent(const ui::LocatedEvent& event) {
   }
 
   return true;
+}
+
+bool TargetsSettingsBubbleContainer(const ui::LocatedEvent& event) {
+  if (aura::Window* target = static_cast<aura::Window*>(event.target())) {
+    if (aura::Window* container = GetContainerForWindow(target)) {
+      return container->GetId() == kShellWindowId_SettingBubbleContainer;
+    }
+  }
+  return false;
 }
 
 }  // namespace
@@ -123,27 +133,15 @@ void DeskBarController::OnDeskSwitchAnimationLaunching() {
 }
 
 void DeskBarController::OnMouseEvent(ui::MouseEvent* event) {
-  if (ShouldProcessLocatedEvent(*event)) {
-    OnMaybePressOffBar(*event);
-  }
-
-  if (event->type() == ui::ET_MOUSE_PRESSED) {
-    DesksController::Get()->MaybeDismissPersistentDeskRemovalToast();
-  }
+  OnLocatedEvent(*event);
 }
 
 void DeskBarController::OnTouchEvent(ui::TouchEvent* event) {
-  if (ShouldProcessLocatedEvent(*event)) {
-    OnMaybePressOffBar(*event);
-  }
-
-  if (event->type() == ui::ET_TOUCH_PRESSED) {
-    DesksController::Get()->MaybeDismissPersistentDeskRemovalToast();
-  }
+  OnLocatedEvent(*event);
 }
 
 void DeskBarController::OnKeyEvent(ui::KeyEvent* event) {
-  const bool is_key_press = event->type() == ui::ET_KEY_PRESSED;
+  const bool is_key_press = event->type() == ui::EventType::kKeyPressed;
 
   // We return early if we are in an overview session because the overview desk
   // bar has its own predefined key event handling logic. This will handle key
@@ -195,8 +193,8 @@ void DeskBarController::OnKeyEvent(ui::KeyEvent* event) {
 
     auto* focus_manager = desk_bar.bar_widget->GetFocusManager();
     views::View* focused_view = focus_manager->GetFocusedView();
-    DeskNameView* focused_name_view =
-        views::AsViewClass<DeskNameView>(focused_view);
+    const bool focused_name_view =
+        views::IsViewClass<DeskNameView>(focused_view);
 
     // TODO(b/290651821): Consolidates arrow key behaviors for the desk bar.
     switch (event->key_code()) {
@@ -224,6 +222,11 @@ void DeskBarController::OnKeyEvent(ui::KeyEvent* event) {
         break;
       case ui::VKEY_LEFT:
       case ui::VKEY_RIGHT:
+        // Let the textfield handle left/right to move the caret, unless using
+        // ChromeVox traversal.
+        if (!event->IsCommandDown() && focused_name_view) {
+          return;
+        }
         // Control + left/right falls through to be handed by the desk preview
         // to swap desks.
         if (is_control_down) {
@@ -323,15 +326,15 @@ void DeskBarController::OnDisplayMetricsChanged(const display::Display& display,
 }
 
 DeskBarViewBase* DeskBarController::GetDeskBarView(aura::Window* root) {
-  auto it = base::ranges::find_if(desk_bars_,
-                                  [root](const BarWidgetAndView& desk_bar) {
-                                    return desk_bar.bar_view->root() == root;
-                                  });
+  auto it = std::ranges::find_if(desk_bars_,
+                                 [root](const BarWidgetAndView& desk_bar) {
+                                   return desk_bar.bar_view->root() == root;
+                                 });
   return it != desk_bars_.end() ? it->bar_view : nullptr;
 }
 
 bool DeskBarController::IsShowingDeskBar() const {
-  return base::ranges::any_of(desk_bars_, [](const BarWidgetAndView& desk_bar) {
+  return std::ranges::any_of(desk_bars_, [](const BarWidgetAndView& desk_bar) {
     return desk_bar.bar_view->GetVisible();
   });
 }
@@ -339,9 +342,14 @@ bool DeskBarController::IsShowingDeskBar() const {
 void DeskBarController::OpenDeskBar(aura::Window* root) {
   CHECK(root && root->IsRootWindow());
 
+  if (!window_occlusion_calculator_) {
+    window_occlusion_calculator_.emplace();
+  }
+
   auto presentation_time_recorder = CreatePresentationTimeHistogramRecorder(
       root->layer()->GetCompositor(), kDeskBarEnterPresentationHistogram, "",
-      kDeskBarEnterExitPresentationMaxLatency);
+      ui::PresentationTimeRecorder::BucketParams::CreateWithMaximum(
+          kDeskBarEnterExitPresentationMaxLatency));
   presentation_time_recorder->RequestNext();
 
   // It should not close all bars for the activation change when a new desk bar
@@ -362,8 +370,11 @@ void DeskBarController::OpenDeskBar(aura::Window* root) {
     // before setting the contents view to prevent the wrong layer being
     // mirrored in `DeskPreviewView`. See b/287116737#comment6 for more details.
     bar_widget->Show();
-    bar_view = bar_widget->SetContentsView(std::make_unique<DeskBarView>(root));
-    bar_view->Init();
+    bar_view = bar_widget->SetContentsView(std::make_unique<DeskBarView>(
+        root, window_occlusion_calculator_
+                  ? window_occlusion_calculator_->AsWeakPtr()
+                  : nullptr));
+    bar_view->Init(bar_widget->GetNativeWindow());
 
     // Ownership transfer and bookkeeping.
     desk_bars_.emplace_back(bar_view, std::move(bar_widget));
@@ -387,6 +398,10 @@ void DeskBarController::CloseDeskBar(aura::Window* root) {
       it++;
     }
   }
+
+  if (desk_bars_.empty()) {
+    window_occlusion_calculator_.reset();
+  }
 }
 
 void DeskBarController::CloseAllDeskBars() {
@@ -401,6 +416,7 @@ void DeskBarController::CloseAllDeskBars() {
   }
 
   desk_bars_.clear();
+  window_occlusion_calculator_.reset();
 }
 
 void DeskBarController::MoveFocus(const BarWidgetAndView& desk_bar,
@@ -445,7 +461,8 @@ void DeskBarController::CloseDeskBarInternal(BarWidgetAndView& desk_bar) {
   auto presentation_time_recorder = CreatePresentationTimeHistogramRecorder(
       desk_bar.bar_view->root()->layer()->GetCompositor(),
       kDeskBarExitPresentationHistogram, "",
-      kDeskBarEnterExitPresentationMaxLatency);
+      ui::PresentationTimeRecorder::BucketParams::CreateWithMaximum(
+          kDeskBarEnterExitPresentationMaxLatency));
   presentation_time_recorder->RequestNext();
 
   desk_bar.bar_widget->Hide();
@@ -461,6 +478,21 @@ void DeskBarController::CloseDeskBarInternal(BarWidgetAndView& desk_bar) {
 
   SetDeskButtonActivation(desk_bar.bar_view->root(),
                           /*is_activated=*/false);
+}
+
+void DeskBarController::OnLocatedEvent(ui::LocatedEvent& event) {
+  if (ShouldProcessLocatedEvent(event)) {
+    OnMaybePressOffBar(event);
+  }
+
+  // Maybe dismiss the persistent toast, unless the event might be targeting the
+  // toast itself. If that is the case, we'd better let the toast handle the
+  // event.
+  if ((event.type() == ui::EventType::kMousePressed ||
+       event.type() == ui::EventType::kTouchPressed) &&
+      !TargetsSettingsBubbleContainer(event)) {
+    DesksController::Get()->MaybeDismissPersistentDeskRemovalToast();
+  }
 }
 
 void DeskBarController::OnMaybePressOffBar(ui::LocatedEvent& event) {

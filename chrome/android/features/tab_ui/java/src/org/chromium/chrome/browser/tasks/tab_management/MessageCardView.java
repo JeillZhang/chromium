@@ -5,19 +5,21 @@
 package org.chromium.chrome.browser.tasks.tab_management;
 
 import android.content.Context;
+import android.content.res.Resources;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.util.AttributeSet;
+import android.view.View;
 import android.widget.LinearLayout;
 
 import org.chromium.base.Callback;
 import org.chromium.chrome.tab_ui.R;
 import org.chromium.components.browser_ui.styles.ChromeColors;
-import org.chromium.components.browser_ui.widget.text.TemplatePreservingTextView;
 import org.chromium.ui.widget.ButtonCompat;
 import org.chromium.ui.widget.ChromeImageView;
+import org.chromium.ui.widget.TextViewWithLeading;
 
 import java.lang.ref.WeakReference;
 
@@ -44,7 +46,7 @@ class MessageCardView extends LinearLayout {
     }
 
     private ChromeImageView mIcon;
-    private TemplatePreservingTextView mDescription;
+    private TextViewWithLeading mDescription;
     private ButtonCompat mActionButton;
     private ChromeImageView mCloseButton;
 
@@ -63,7 +65,7 @@ class MessageCardView extends LinearLayout {
 
         if (sCloseButtonBitmapWeakRef == null || sCloseButtonBitmapWeakRef.get() == null) {
             int closeButtonSize =
-                    (int) getResources().getDimension(R.dimen.tab_grid_close_button_size);
+                    (int) getResources().getDimension(R.dimen.message_card_close_button_size);
             Bitmap bitmap = BitmapFactory.decodeResource(getResources(), R.drawable.btn_close);
             sCloseButtonBitmapWeakRef =
                     new WeakReference<>(
@@ -74,15 +76,7 @@ class MessageCardView extends LinearLayout {
     }
 
     /**
-     * @see TemplatePreservingTextView#setTemplate(String), setDescriptionText() must be called
-     * after calling this method for the new template text to take effect.
-     */
-    void setDescriptionTextTemplate(String template) {
-        mDescription.setTemplate(template);
-    }
-
-    /**
-     * @see TemplatePreservingTextView#setText(CharSequence).
+     * @see TextView#setText(CharSequence).
      */
     void setDescriptionText(CharSequence text) {
         mDescription.setText(text);
@@ -98,9 +92,11 @@ class MessageCardView extends LinearLayout {
 
     /**
      * Set icon drawable.
+     *
      * @param iconDrawable Drawable to be shown.
      */
     void setIcon(Drawable iconDrawable) {
+        mIcon.setVisibility(View.VISIBLE);
         mIcon.setImageDrawable(iconDrawable);
     }
 
@@ -113,7 +109,17 @@ class MessageCardView extends LinearLayout {
     }
 
     /**
+     * Sets the action button visibility.
+     *
+     * @param visible Whether the action button is visible.
+     */
+    void setActionButtonVisible(boolean visible) {
+        mActionButton.setVisibility(visible ? View.VISIBLE : View.GONE);
+    }
+
+    /**
      * Set content description for dismiss button.
+     *
      * @param description The content description.
      */
     void setDismissButtonContentDescription(String description) {
@@ -131,23 +137,24 @@ class MessageCardView extends LinearLayout {
     /**
      * Modify the view based on the visibility of the icon. For messages that doesn't have an icon,
      * remove the icon and update the margin of the description text field.
-     * @param visible  Whether icon is visible.
+     *
+     * @param visible Whether icon is visible.
      */
     void setIconVisibility(boolean visible) {
+        Resources resources = getResources();
+        int verticalMargin =
+                resources.getDimensionPixelOffset(R.dimen.message_card_description_vertical_margin);
         MarginLayoutParams params = (MarginLayoutParams) mDescription.getLayoutParams();
         if (visible) {
             if (indexOfChild(mIcon) == -1) {
                 addView(mIcon, 0);
-                params.setMargins(0, 0, 0, 0);
+                params.setMargins(0, verticalMargin, 0, verticalMargin);
             }
         } else {
-            int margin =
-                    (int)
-                            getContext()
-                                    .getResources()
-                                    .getDimension(R.dimen.tab_grid_iph_item_description_margin);
             removeView(mIcon);
-            params.setMargins(margin, 0, 0, 0);
+            int leftMargin =
+                    resources.getDimensionPixelSize(R.dimen.tab_grid_iph_item_description_margin);
+            params.setMargins(leftMargin, verticalMargin, 0, verticalMargin);
         }
     }
 
@@ -179,5 +186,49 @@ class MessageCardView extends LinearLayout {
         MessageCardViewUtils.setActionButtonTextAppearance(
                 mActionButton, isIncognito, /* isLargeMessageCard= */ false);
         MessageCardViewUtils.setCloseButtonTint(mCloseButton, isIncognito);
+    }
+
+    /**
+     * Set left margin of the message card.
+     *
+     * @param leftMarginDp Left margin of the card in dp.
+     */
+    void setLeftMargin(int leftMarginDp) {
+        MarginLayoutParams params = (MarginLayoutParams) getLayoutParams();
+        params.leftMargin = leftMarginDp;
+        setLayoutParams(params);
+    }
+
+    /**
+     * Set top margin of the message card.
+     *
+     * @param topMarginDp Top margin of the card in dp.
+     */
+    void setTopMargin(int topMarginDp) {
+        MarginLayoutParams params = (MarginLayoutParams) getLayoutParams();
+        params.topMargin = topMarginDp;
+        setLayoutParams(params);
+    }
+
+    /**
+     * Set right margin of the message card.
+     *
+     * @param rightMarginDp Right margin of the card in dp.
+     */
+    void setRightMargin(int rightMarginDp) {
+        MarginLayoutParams params = (MarginLayoutParams) getLayoutParams();
+        params.rightMargin = rightMarginDp;
+        setLayoutParams(params);
+    }
+
+    /**
+     * Set bottom margin of the message card.
+     *
+     * @param bottomMarginDp Bottom margin of the card in dp.
+     */
+    void setBottomMargin(int bottomMarginDp) {
+        MarginLayoutParams params = (MarginLayoutParams) getLayoutParams();
+        params.bottomMargin = bottomMarginDp;
+        setLayoutParams(params);
     }
 }

@@ -30,8 +30,11 @@ constexpr base::TimeDelta kKeyFetchTimeout = base::Seconds(3);
 
 constexpr char kKeyFetchServerUrl[] =
     "https://safebrowsingohttpgateway.googleapis.com/v1/ohttp/hpkekeyconfig";
-// Key older than 7 days is considered expired and should be refetched.
-constexpr base::TimeDelta kKeyExpirationDuration = base::Days(7);
+// Key older than 3 days is considered expired and should be refetched.
+constexpr base::TimeDelta kKeyExpirationDuration = base::Days(3);
+// For slower rotated keys (the old mechanism), key older than 7 days is
+// considered expired and should be refetched.
+constexpr base::TimeDelta kSlowerKeyExpirationDuration = base::Days(7);
 
 // Async fetch will kick in if the key is close to the expiration threshold.
 constexpr base::TimeDelta kKeyCloseToExpirationThreshold = base::Days(1);
@@ -111,14 +114,24 @@ constexpr net::NetworkTrafficAnnotationTag kOhttpKeyTrafficAnnotation =
       "default."
   )");
 
-bool IsEnabled(PrefService* pref_service, std::optional<std::string> country) {
+bool IsEnabled(PrefService* pref_service,
+               std::optional<std::string> country,
+               bool are_background_lookups_allowed) {
   // If this class has been created, it is already known that the session is not
   // off-the-record, so |is_off_the_record| is passed through as false.
-  return safe_browsing::hash_realtime_utils::DetermineHashRealTimeSelection(
-             /*is_off_the_record=*/false, pref_service,
-             /*latest_country=*/country) ==
-         safe_browsing::hash_realtime_utils::HashRealTimeSelection::
-             kHashRealTimeService;
+  safe_browsing::hash_realtime_utils::HashRealTimeSelection
+      hash_realtime_selection =
+          safe_browsing::hash_realtime_utils::DetermineHashRealTimeSelection(
+              /*is_off_the_record=*/false, pref_service,
+              /*latest_country=*/country, /*log_usage_histograms=*/false,
+              /*are_background_lookups_allowed=*/
+              are_background_lookups_allowed);
+  return hash_realtime_selection ==
+             safe_browsing::hash_realtime_utils::HashRealTimeSelection::
+                 kHashRealTimeService ||
+         hash_realtime_selection ==
+             safe_browsing::hash_realtime_utils::HashRealTimeSelection::
+                 kHashRealTimeServiceBackgroundOnly;
 }
 
 GURL GetKeyFetchingUrl() {
@@ -138,7 +151,8 @@ OhttpKeyService::OhttpKeyService(
     scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
     PrefService* pref_service,
     PrefService* local_state,
-    base::RepeatingCallback<std::optional<std::string>()> country_getter)
+    base::RepeatingCallback<std::optional<std::string>()> country_getter,
+    bool are_background_lookups_allowed)
     : url_loader_factory_(url_loader_factory),
       pref_service_(pref_service),
       backoff_operator_(std::make_unique<BackoffOperator>(
@@ -147,7 +161,8 @@ OhttpKeyService::OhttpKeyService(
           kMinBackOffResetDurationInSeconds,
           /*max_backoff_reset_duration_in_seconds=*/
           kMaxBackOffResetDurationInSeconds)),
-      country_getter_(country_getter) {
+      country_getter_(country_getter),
+      are_background_lookups_allowed_(are_background_lookups_allowed) {
   // |pref_service_| can be null in tests.
   if (!pref_service_) {
     return;
@@ -172,13 +187,15 @@ OhttpKeyService::OhttpKeyService(
                                   weak_factory_.GetWeakPtr()));
   }
 
-  SetEnabled(IsEnabled(pref_service_, country_getter_.Run()));
+  SetEnabled(IsEnabled(pref_service_, country_getter_.Run(),
+                       are_background_lookups_allowed_));
 }
 
 OhttpKeyService::~OhttpKeyService() = default;
 
 void OhttpKeyService::OnConfiguringPrefsChanged() {
-  SetEnabled(IsEnabled(pref_service_, country_getter_.Run()));
+  SetEnabled(IsEnabled(pref_service_, country_getter_.Run(),
+                       are_background_lookups_allowed_));
 }
 
 void OhttpKeyService::SetEnabled(bool enable) {
@@ -192,6 +209,10 @@ void OhttpKeyService::SetEnabled(bool enable) {
     async_fetch_timer_.Stop();
     return;
   }
+  base::UmaHistogramBoolean(
+      "SafeBrowsing.HPRT.OhttpKeyService.IsFasterOhttpKeyRotationEnabled",
+      base::FeatureList::IsEnabled(
+          kHashPrefixRealTimeLookupsFasterOhttpKeyRotation));
   base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE,
       base::BindOnce(&OhttpKeyService::MaybeStartOrRescheduleAsyncFetch,
@@ -201,7 +222,8 @@ void OhttpKeyService::SetEnabled(bool enable) {
 void OhttpKeyService::GetOhttpKey(Callback callback) {
   base::UmaHistogramBoolean(
       "SafeBrowsing.HPRT.OhttpKeyService.IsEnabledFreshnessOnKeyFetch",
-      enabled_ == IsEnabled(pref_service_, country_getter_.Run()));
+      enabled_ == IsEnabled(pref_service_, country_getter_.Run(),
+                            are_background_lookups_allowed_));
   if (!enabled_) {
     std::move(callback).Run(std::nullopt);
     return;
@@ -330,7 +352,12 @@ void OhttpKeyService::OnURLLoaderComplete(
   bool is_key_fetch_successful =
       response_body && net_error == net::OK && response_code == net::HTTP_OK;
   if (is_key_fetch_successful) {
-    ohttp_key_ = {*response_body, base::Time::Now() + kKeyExpirationDuration};
+    ohttp_key_ = {*response_body,
+                  base::Time::Now() +
+                      (base::FeatureList::IsEnabled(
+                           kHashPrefixRealTimeLookupsFasterOhttpKeyRotation)
+                           ? kKeyExpirationDuration
+                           : kSlowerKeyExpirationDuration)};
     StoreKeyToPref();
     has_received_lookup_response_from_current_key_ = false;
     backoff_operator_->ReportSuccess();

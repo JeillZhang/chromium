@@ -138,7 +138,7 @@ class PartitionAllocatorWithThreadCache : public Allocator {
   }
 
  private:
-  static constexpr partition_alloc::PartitionOptions kOpts = []() {
+  static constexpr partition_alloc::PartitionOptions kOpts = [] {
     partition_alloc::PartitionOptions opts;
 #if !PA_BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
     opts.thread_cache = PartitionOptions::kEnabled;
@@ -449,7 +449,15 @@ void RunTest(int thread_count,
 }
 
 class PartitionAllocMemoryAllocationPerfTest
-    : public testing::TestWithParam<std::tuple<int, bool, AllocatorType>> {};
+    : public testing::TestWithParam<std::tuple<int, bool, AllocatorType>> {
+#if PA_CONFIG(ENABLE_SHADOW_METADATA)
+  void SetUp() override {
+    PartitionRoot::EnableShadowMetadata(
+        partition_alloc::internal::PoolHandleMask::kRegular |
+        partition_alloc::internal::PoolHandleMask::kBRP);
+  }
+#endif
+};
 
 // Only one partition with a thread cache: cannot use the thread cache when
 // PartitionAlloc is malloc().

@@ -24,6 +24,7 @@
 
 namespace skgpu::graphite {
 class TextureInfo;
+struct DawnTextureInfo;
 }
 
 namespace gpu {
@@ -201,6 +202,11 @@ GPU_GLES2_EXPORT skgpu::graphite::TextureInfo GraphitePromiseTextureInfo(
     int plane_index = 0,
     bool mipmapped = false);
 
+#if BUILDFLAG(ENABLE_VULKAN) && BUILDFLAG(SKIA_USE_DAWN)
+GPU_GLES2_EXPORT wgpu::YCbCrVkDescriptor ToDawnYCbCrVkDescriptor(
+    const VulkanYCbCrInfo& ycbcr_info);
+#endif
+
 #if BUILDFLAG(SKIA_USE_DAWN)
 GPU_GLES2_EXPORT skgpu::graphite::DawnTextureInfo DawnBackendTextureInfo(
     viz::SharedImageFormat format,
@@ -215,7 +221,7 @@ GPU_GLES2_EXPORT skgpu::graphite::DawnTextureInfo DawnBackendTextureInfo(
 #endif
 
 #if BUILDFLAG(SKIA_USE_METAL)
-GPU_GLES2_EXPORT skgpu::graphite::MtlTextureInfo GraphiteMetalTextureInfo(
+GPU_GLES2_EXPORT skgpu::graphite::TextureInfo GraphiteMetalTextureInfo(
     viz::SharedImageFormat format,
     int plane_index = 0,
     bool is_yuv_plane = false,

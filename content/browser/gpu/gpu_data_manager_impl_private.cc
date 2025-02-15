@@ -2,8 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+
 #include "content/browser/gpu/gpu_data_manager_impl_private.h"
 
+#include "base/notreached.h"
 #include "build/build_config.h"
 
 #if BUILDFLAG(IS_WIN)
@@ -13,6 +15,7 @@
 #include <sddl.h>
 #endif  // BUILDFLAG(IS_WIN)
 
+#include <algorithm>
 #include <array>
 #include <iterator>
 #include <memory>
@@ -30,13 +33,11 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/path_service.h"
 #include "base/rand_util.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/string_util.h"
 #include "base/task/bind_post_task.h"
 #include "base/trace_event/trace_event.h"
 #include "base/version.h"
 #include "build/chromecast_buildflags.h"
-#include "build/chromeos_buildflags.h"
 #include "cc/base/switches.h"
 #include "components/viz/common/features.h"
 #include "content/browser/gpu/gpu_memory_buffer_manager_singleton.h"
@@ -65,7 +66,6 @@
 #include "gpu/config/software_rendering_list_autogen.h"
 #include "gpu/ipc/common/memory_stats.h"
 #include "gpu/ipc/host/gpu_disk_cache.h"
-#include "gpu/ipc/host/gpu_memory_buffer_support.h"
 #include "gpu/vulkan/buildflags.h"
 #include "media/gpu/gpu_video_accelerator_util.h"
 #include "media/media_buildflags.h"
@@ -75,6 +75,7 @@
 #include "ui/display/screen.h"
 #include "ui/gfx/switches.h"
 #include "ui/gl/buildflags.h"
+#include "ui/gl/gl_features.h"
 #include "ui/gl/gl_implementation.h"
 #include "ui/gl/gl_switches.h"
 #include "ui/gl/gpu_preference.h"
@@ -101,18 +102,6 @@
 namespace content {
 
 namespace {
-
-// On X11, we do not know GpuMemoryBuffer configuration support until receiving
-// the initial GPUInfo.
-bool CanUpdateGmbGpuPreferences() {
-#if BUILDFLAG(IS_OZONE)
-  return !ui::OzonePlatform::GetInstance()
-              ->GetPlatformProperties()
-              .fetch_buffer_formats_for_gmb_on_gpu;
-#else
-  return true;
-#endif
-}
 
 #if BUILDFLAG(IS_ANDROID)
 // NOINLINE to ensure this function is used in crash reports.
@@ -273,6 +262,8 @@ void RecordCanvasAcceleratedOopRasterHistogram(
 
 // Send UMA histograms about the enabled features and GPU properties.
 void UpdateFeatureStats(const gpu::GpuFeatureInfo& gpu_feature_info) {
+  constexpr char kGpuBlocklistHistogram[] = "GPU.BlocklistEntriesApplied";
+
   // Update applied entry stats.
   std::unique_ptr<gpu::GpuBlocklist> blocklist(gpu::GpuBlocklist::Create());
   DCHECK(blocklist.get() && blocklist->max_entry_id() > 0);
@@ -281,8 +272,7 @@ void UpdateFeatureStats(const gpu::GpuFeatureInfo& gpu_feature_info) {
   // was recorded in this histogram in order to have a convenient
   // denominator to compute blocklist percentages for the rest of the
   // entries.
-  UMA_HISTOGRAM_EXACT_LINEAR("GPU.BlocklistTestResultsPerEntry", 0,
-                             max_entry_id + 1);
+  base::UmaHistogramSparse(kGpuBlocklistHistogram, 0);
   if (!gpu_feature_info.applied_gpu_blocklist_entries.empty()) {
     std::vector<uint32_t> entry_ids = blocklist->GetEntryIDsFromIndices(
         gpu_feature_info.applied_gpu_blocklist_entries);
@@ -290,39 +280,39 @@ void UpdateFeatureStats(const gpu::GpuFeatureInfo& gpu_feature_info) {
               entry_ids.size());
     for (auto id : entry_ids) {
       DCHECK_GE(max_entry_id, id);
-      UMA_HISTOGRAM_EXACT_LINEAR("GPU.BlocklistTestResultsPerEntry", id,
-                                 max_entry_id + 1);
+      base::UmaHistogramSparse(kGpuBlocklistHistogram, id);
     }
   }
 
   // Update feature status stats.
   const base::CommandLine& command_line =
       *base::CommandLine::ForCurrentProcess();
-  const gpu::GpuFeatureType kGpuFeatures[] = {
+  const auto kGpuFeatures = std::to_array<gpu::GpuFeatureType>({
       gpu::GPU_FEATURE_TYPE_ACCELERATED_2D_CANVAS,
       gpu::GPU_FEATURE_TYPE_ACCELERATED_GL,
       gpu::GPU_FEATURE_TYPE_GPU_TILE_RASTERIZATION,
       gpu::GPU_FEATURE_TYPE_ACCELERATED_WEBGL,
       gpu::GPU_FEATURE_TYPE_ACCELERATED_WEBGL2,
-      gpu::GPU_FEATURE_TYPE_ACCELERATED_WEBGPU};
-  const std::string kGpuBlocklistFeatureHistogramNames[] = {
+      gpu::GPU_FEATURE_TYPE_ACCELERATED_WEBGPU,
+  });
+  const auto kGpuBlocklistFeatureHistogramNames = std::to_array<std::string>({
       "GPU.BlocklistFeatureTestResults.Accelerated2dCanvas",
       "GPU.BlocklistFeatureTestResults.GpuCompositing",
       "GPU.BlocklistFeatureTestResults.GpuRasterization",
       "GPU.BlocklistFeatureTestResults.Webgl",
       "GPU.BlocklistFeatureTestResults.Webgl2",
-      "GPU.BlocklistFeatureTestResults.Webgpu"};
-  const bool kGpuFeatureUserFlags[] = {
+      "GPU.BlocklistFeatureTestResults.Webgpu",
+  });
+  const auto kGpuFeatureUserFlags = std::to_array<bool>({
       command_line.HasSwitch(switches::kDisableAccelerated2dCanvas),
       command_line.HasSwitch(switches::kDisableGpu),
       command_line.HasSwitch(switches::kDisableGpuRasterization),
       command_line.HasSwitch(switches::kDisableWebGL),
       (command_line.HasSwitch(switches::kDisableWebGL) ||
        command_line.HasSwitch(switches::kDisableWebGL2)),
-      !command_line.HasSwitch(switches::kEnableUnsafeWebGPU)};
-  const size_t kNumFeatures =
-      sizeof(kGpuFeatures) / sizeof(gpu::GpuFeatureType);
-  for (size_t i = 0; i < kNumFeatures; ++i) {
+      !command_line.HasSwitch(switches::kEnableUnsafeWebGPU),
+  });
+  for (size_t i = 0; i < kGpuFeatures.size(); ++i) {
     // We can't use UMA_HISTOGRAM_ENUMERATION here because the same name is
     // expected if the macro is used within a loop.
     gpu::GpuFeatureStatus value =
@@ -408,29 +398,10 @@ void RequestVideoMemoryUsageStats(
 
 // Determines if SwiftShader is available as a fallback for WebGL.
 bool SwiftShaderAllowed() {
-#if BUILDFLAG(ENABLE_SWIFTSHADER)
-  return !base::CommandLine::ForCurrentProcess()->HasSwitch(
-      switches::kDisableSoftwareRasterizer);
-#else
-  return false;
-#endif
-}
-
-// Determines if Vulkan is available for the GPU process.
-[[maybe_unused]] bool VulkanAllowed() {
-#if BUILDFLAG(ENABLE_VULKAN)
-  // Vulkan will be enabled if certain flags are present.
-  // --enable-features=Vulkan will cause Vulkan to be used for compositing and
-  // rasterization. --use-vulkan by itself will initialize Vulkan so that it can
-  // be used for other purposes, such as WebGPU.
   const base::CommandLine* command_line =
       base::CommandLine::ForCurrentProcess();
-  gpu::VulkanImplementationName use_vulkan =
-      gpu::gles2::ParseVulkanImplementationName(command_line);
-  return use_vulkan != gpu::VulkanImplementationName::kNone;
-#else
-  return false;
-#endif
+  return !command_line->HasSwitch(switches::kDisableSoftwareRasterizer) &&
+         features::IsSwiftShaderAllowed(command_line);
 }
 
 // These values are logged to UMA. Entries should not be renumbered and numeric
@@ -538,7 +509,7 @@ void GpuDataManagerImplPrivate::InitializeGpuModes() {
   // Android and Chrome OS can't switch to software compositing. If the GPU
   // process initialization fails or GPU process is too unstable then crash the
   // browser process to reset everything.
-#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_CHROMEOS)
   fallback_modes_.push_back(gpu::GpuMode::DISPLAY_COMPOSITOR);
   if (SwiftShaderAllowed())
     fallback_modes_.push_back(gpu::GpuMode::SWIFTSHADER);
@@ -556,8 +527,8 @@ void GpuDataManagerImplPrivate::InitializeGpuModes() {
 #endif  // BUILDFLAG(IS_CASTOS)
 
 #if (BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_CAST_ANDROID)) || \
-    BUILDFLAG(IS_CHROMEOS_ASH)
-    CHECK(false) << "GPU acceleration is required on certain platforms!";
+    BUILDFLAG(IS_CHROMEOS)
+    NOTREACHED() << "GPU acceleration is required on certain platforms!";
 #endif
   } else if (features::IsSkiaGraphiteEnabled(command_line)) {
     // If Graphite is enabled, fall back to Ganesh/GL on platforms that do not
@@ -574,9 +545,10 @@ void GpuDataManagerImplPrivate::InitializeGpuModes() {
     fallback_modes_.push_back(gpu::GpuMode::HARDWARE_VULKAN);
 #else
     fallback_modes_.push_back(gpu::GpuMode::HARDWARE_GL);
-
-    if (VulkanAllowed())
+    // Prefer Vulkan over GL if enabled.
+    if (features::IsUsingVulkan()) {
       fallback_modes_.push_back(gpu::GpuMode::HARDWARE_VULKAN);
+    }
 #endif  // BUILDFLAG(IS_FUCHSIA)
   }
 
@@ -596,6 +568,15 @@ void GpuDataManagerImplPrivate::BlocklistWebGLForTesting() {
   }
   UpdateGpuFeatureInfo(gpu_feature_info, std::nullopt);
   NotifyGpuInfoUpdate();
+}
+
+void GpuDataManagerImplPrivate::SetSkiaGraphiteEnabledForTesting(bool enabled) {
+  // Pretend that HW acceleration is enabled so that we consider GpuFeatureInfo
+  // as initialized.
+  gpu_feature_info_.status_values[gpu::GPU_FEATURE_TYPE_ACCELERATED_GL] =
+      gpu::kGpuFeatureStatusEnabled;
+  gpu_feature_info_.status_values[gpu::GPU_FEATURE_TYPE_SKIA_GRAPHITE] =
+      enabled ? gpu::kGpuFeatureStatusEnabled : gpu::kGpuFeatureStatusDisabled;
 }
 
 gpu::GPUInfo GpuDataManagerImplPrivate::GetGPUInfo() const {
@@ -1001,6 +982,17 @@ void GpuDataManagerImplPrivate::UpdateGpuInfo(
 #endif
   gpu_info_ = gpu_info;
   RecordDiscreteGpuHistograms(gpu_info_);
+#if BUILDFLAG(ENABLE_VULKAN)
+  // Remember the initial hardware_supports_vulkan value so it doesn't change
+  // if GPU process restarts as Vulkan might get disabled by GPU mode fallback.
+  if (fixed_gpu_info_.hardware_supports_vulkan.has_value()) {
+    gpu_info_.hardware_supports_vulkan =
+        *fixed_gpu_info_.hardware_supports_vulkan;
+  } else {
+    fixed_gpu_info_.hardware_supports_vulkan =
+        gpu_info.hardware_supports_vulkan;
+  }
+#endif
 #if BUILDFLAG(IS_WIN)
   if (d3d12_feature_level != 0) {
     gpu_info_.d3d12_feature_level = d3d12_feature_level;
@@ -1156,13 +1148,16 @@ void GpuDataManagerImplPrivate::TerminateInfoCollectionGpuProcess() {
 #endif
 
 void GpuDataManagerImplPrivate::PostCreateThreads() {
+  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
   // Launch the info collection GPU process to collect Dawn info.
   // Not to affect Chrome startup, this is done in a delayed mode, i.e., 120
   // seconds after Chrome startup.
-  RequestDawnInfo(/*delayed=*/true, /*collect_metrics=*/true);
+  bool delay_dawn_collection =
+      !command_line->HasSwitch(switches::kCollectDawnInfoEagerly);
+  RequestDawnInfo(/*delayed=*/delay_dawn_collection,
+                  /*collect_metrics=*/true);
 
 #if BUILDFLAG(IS_WIN)
-  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
   if (command_line->HasSwitch(switches::kNoDelayForDX12VulkanInfoCollection)) {
     // This is for the info collection test of the gpu integration tests.
     RequestDx12VulkanVideoGpuInfoIfNeeded(
@@ -1198,8 +1193,7 @@ void GpuDataManagerImplPrivate::UpdateGpuFeatureInfo(
         gpu_feature_info_for_hardware_gpu) {
   gpu_feature_info_ = gpu_feature_info;
 #if !BUILDFLAG(IS_FUCHSIA)
-  // With Vulkan or Metal, GL might be blocked, so make sure we don't fallback
-  // to it later.
+  // With Vulkan or Graphite, GL might be blocked so don't fallback to it later.
   if (HardwareAccelerationEnabled() &&
       gpu_feature_info_.status_values[gpu::GPU_FEATURE_TYPE_ACCELERATED_GL] !=
           gpu::GpuFeatureStatus::kGpuFeatureStatusEnabled) {
@@ -1333,21 +1327,7 @@ void GpuDataManagerImplPrivate::UpdateGpuPreferences(
     GpuProcessKind kind) const {
   DCHECK(gpu_preferences);
 
-  // For performance reasons, discourage storing VideoFrames in a biplanar
-  // GpuMemoryBuffer if this is not native, see https://crbug.com/791676.
-  auto* gpu_memory_buffer_manager =
-      GpuMemoryBufferManagerSingleton::GetInstance();
-  if (gpu_memory_buffer_manager && CanUpdateGmbGpuPreferences()) {
-    gpu_preferences->disable_biplanar_gpu_memory_buffers_for_video_frames =
-        !gpu_memory_buffer_manager->IsNativeGpuMemoryBufferConfiguration(
-            gfx::BufferFormat::YUV_420_BIPLANAR,
-            gfx::BufferUsage::GPU_READ_CPU_READ_WRITE);
-  }
-
   gpu_preferences->gpu_program_cache_size = gpu::GetDefaultGpuDiskCacheSize();
-
-  gpu_preferences->texture_target_exception_list =
-      gpu::CreateBufferUsageAndFormatExceptionList();
 
   gpu_preferences->watchdog_starts_backgrounded = !application_is_visible_;
 
@@ -1374,10 +1354,10 @@ void GpuDataManagerImplPrivate::UpdateGpuPreferences(
                                            .message_pump_type_for_gpu;
 #endif
 
-#if BUILDFLAG(ENABLE_VULKAN)
-  if (gpu_mode_ != gpu::GpuMode::HARDWARE_VULKAN)
+  // Disable loading VulkanImplementation if not using Ganesh/Vulkan.
+  if (gpu_mode_ != gpu::GpuMode::HARDWARE_VULKAN) {
     gpu_preferences->use_vulkan = gpu::VulkanImplementationName::kNone;
-#endif
+  }
 
   if (!HardwareAccelerationEnabled()) {
     gpu_preferences->gr_context_type = gpu::GrContextType::kNone;
@@ -1619,9 +1599,9 @@ GpuDataManagerImplPrivate::Are3DAPIsBlockedAtTime(const GURL& url,
   ExpireOldBlockedDomainsAtTime(at_time);
 
   std::string domain = GetDomainFromURL(url);
-  size_t losses_for_domain = base::ranges::count(
-      blocked_domains_, domain,
-      [](const auto& entry) { return entry.second.domain; });
+  size_t losses_for_domain =
+      std::ranges::count(blocked_domains_, domain,
+                         [](const auto& entry) { return entry.second.domain; });
   // Allow one context loss per domain, so block if there are two or more.
   if (losses_for_domain > 1)
     return DomainBlockStatus::kBlocked;

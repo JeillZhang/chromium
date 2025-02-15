@@ -330,8 +330,7 @@ void PendingScript::Trace(Visitor* visitor) const {
 bool PendingScript::IsControlledByScriptRunner() const {
   switch (scheduling_type_) {
     case ScriptSchedulingType::kNotSet:
-      NOTREACHED_IN_MIGRATION();
-      return false;
+      NOTREACHED();
 
     case ScriptSchedulingType::kDefer:
     case ScriptSchedulingType::kParserBlocking:
@@ -340,7 +339,7 @@ bool PendingScript::IsControlledByScriptRunner() const {
       return false;
 
     case ScriptSchedulingType::kDeprecatedForceDefer:
-      NOTREACHED_NORETURN()
+      NOTREACHED()
           << "kDeprecatedForceDefer is deprecated and should not be in use";
 
     case ScriptSchedulingType::kInOrder:

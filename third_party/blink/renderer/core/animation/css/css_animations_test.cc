@@ -13,7 +13,6 @@
 #include "third_party/blink/renderer/core/animation/element_animations.h"
 #include "third_party/blink/renderer/core/css/cssom/css_numeric_value.h"
 #include "third_party/blink/renderer/core/dom/dom_token_list.h"
-#include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/dom/pseudo_element.h"
 #include "third_party/blink/renderer/core/layout/layout_object.h"
 #include "third_party/blink/renderer/core/page/page_animator.h"
@@ -189,44 +188,6 @@ TEST_P(CSSAnimationsTest, IncompatibleRetargetedTransition) {
   EXPECT_EQ(0.2, GetContrastFilterAmount(element));
 }
 
-TEST_P(CSSAnimationsTest, CompositedBackgroundColorSnapshot) {
-  ScopedCompositeBGColorAnimationForTest scoped_feature(true);
-
-  SetBodyInnerHTML(R"HTML(
-    <style>
-      @keyframes anim {
-        from { background-color: red; }
-        to { background-color: green; }
-      }
-      #test {
-        animation: anim 10s linear;
-      }
-    </style>
-    <div id='test'></div>
-  )HTML");
-  Element* element = GetDocument().getElementById(AtomicString("test"));
-  ASSERT_TRUE(element);
-  UpdateAllLifecyclePhasesForTest();
-  ASSERT_TRUE(element->GetComputedStyle());
-  ASSERT_TRUE(element->parentElement());
-  EXPECT_TRUE(element->ComputedStyleRef().HasCurrentCompositableAnimation());
-
-  ElementAnimations* animations = element->GetElementAnimations();
-  ASSERT_TRUE(animations);
-  ASSERT_EQ(1u, animations->Animations().size());
-  Animation* animation = (*animations->Animations().begin()).key;
-
-  InvalidateCompositorKeyframesSnapshot(animation);
-  CSSAnimationUpdate update;
-  CSSAnimations::CalculateCompositorAnimationUpdate(
-      update, *element, *element, element->ComputedStyleRef(),
-      element->parentElement()->GetComputedStyle(),
-      /* was_window_resized */ false, /* force update */ false);
-
-  ASSERT_EQ(1u, update.UpdatedCompositorKeyframes().size());
-  EXPECT_EQ(animation, update.UpdatedCompositorKeyframes()[0].Get());
-}
-
 // Verifies that newly created/cancelled transitions are both taken into
 // account when setting the flags. (The filter property is an
 // arbitrarily chosen sample).
@@ -345,9 +306,6 @@ bool BackdropFilterFlag(const ComputedStyle& style) {
 bool BackgroundColorFlag(const ComputedStyle& style) {
   return style.HasCurrentBackgroundColorAnimation();
 }
-bool ClipPathFlag(const ComputedStyle& style) {
-  return style.HasCurrentClipPathAnimation();
-}
 
 bool CompositedOpacityFlag(const ComputedStyle& style) {
   return style.IsRunningOpacityAnimationOnCompositor();
@@ -389,7 +347,6 @@ FlagData flag_data[] = {
     {"filter", "contrast(10%)", "contrast(20%)", FilterFlag},
     {"backdrop-filter", "blur(10px)", "blur(20px)", BackdropFilterFlag},
     {"background-color", "red", "blue", BackgroundColorFlag},
-    {"clip-path", "circle(10%)", "circle(20%)", ClipPathFlag},
 };
 
 FlagData compositor_flag_data[] = {
@@ -646,24 +603,6 @@ TEST_P(CSSAnimationsTest, CompositedAnimationUpdateCausesPaintInvalidation) {
   EXPECT_FALSE(lo->ShouldDoFullPaintInvalidation());
   UpdateAllLifecyclePhasesForTest();
   EXPECT_TRUE(element->ComputedStyleRef().HasCurrentBackgroundColorAnimation());
-
-  // Change compositor snapshot values:
-  InvalidateCompositorKeyframesSnapshot(animation);
-  // Also do an "unrelated" change, to avoid IsAnimationStyleChange()==true.
-  element->classList().toggle(AtomicString("unrelated"), ASSERT_NO_EXCEPTION);
-  GetDocument().View()->UpdateLifecycleToCompositingInputsClean(
-      DocumentUpdateReason::kTest);
-  EXPECT_TRUE(lo->ShouldDoFullPaintInvalidation());
-  UpdateAllLifecyclePhasesForTest();
-  EXPECT_TRUE(element->ComputedStyleRef().HasCurrentBackgroundColorAnimation());
-
-  // Do an unrelated change to clear the flag.
-  element->classList().toggle(AtomicString("unrelated"), ASSERT_NO_EXCEPTION);
-  GetDocument().View()->UpdateLifecycleToCompositingInputsClean(
-      DocumentUpdateReason::kTest);
-  EXPECT_FALSE(lo->ShouldDoFullPaintInvalidation());
-  UpdateAllLifecyclePhasesForTest();
-  EXPECT_TRUE(element->ComputedStyleRef().HasCurrentBackgroundColorAnimation());
 }
 
 TEST_P(CSSAnimationsTest, UpdateAnimationFlags_AnimatingElement) {
@@ -887,7 +826,9 @@ class CSSAnimationsCompositorSyncTest : public CSSAnimationsTest {
     const gfx::FloatAnimationCurve* opacity_curve =
         gfx::FloatAnimationCurve::ToFloatAnimationCurve(
             keyframe_model->curve());
-    EXPECT_NEAR(expected_value, opacity_curve->GetValue(iteration_time),
+    EXPECT_NEAR(expected_value,
+                opacity_curve->GetTransformedValue(
+                    iteration_time, gfx::TimingFunction::LimitDirection::RIGHT),
                 kTolerance);
   }
 

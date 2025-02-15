@@ -65,9 +65,12 @@ class InteractiveViewsTestTest : public InteractiveViewsTest {
                 Builder<TabbedPane>()
                     .CopyAddressTo(&tabs_)
                     .SetProperty(kElementIdentifierKey, kTabbedPaneId)
-                    .AddTab(kTab1Title, std::make_unique<Label>(kTab1Contents))
-                    .AddTab(kTab2Title, std::make_unique<Label>(kTab2Contents))
-                    .AddTab(kTab3Title, std::make_unique<Label>(kTab3Contents)),
+                    .AddTab(kTab1Title, std::make_unique<Label>(kTab1Contents),
+                            nullptr)
+                    .AddTab(kTab2Title, std::make_unique<Label>(kTab2Contents),
+                            nullptr)
+                    .AddTab(kTab3Title, std::make_unique<Label>(kTab3Contents),
+                            nullptr),
                 Builder<FlexLayoutView>()
                     .SetProperty(kElementIdentifierKey, kButtonsId)
                     .SetOrientation(LayoutOrientation::kHorizontal)
@@ -101,7 +104,7 @@ class InteractiveViewsTestTest : public InteractiveViewsTest {
                                     .SetPreferredSize(gfx::Size(100, 100)))));
 
     // Create and show the test widget.
-    widget_ = CreateTestWidget(Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
+    widget_ = CreateTestWidget(Widget::InitParams::CLIENT_OWNS_WIDGET);
     widget_->SetContentsView(std::move(contents).Build());
     WidgetVisibleWaiter waiter(widget_.get());
     widget_->Show();
@@ -216,8 +219,8 @@ TEST_F(InteractiveViewsTestTest, PollView) {
   DoPost(base::BindLambdaForTesting(
       [this]() { button1_->SetText(kButton2Caption); }));
   RunTestSequence(PollView(kButtonTextState, kButton1Id,
-                           [](const LabelButton* b) -> std::u16string {
-                             return b->GetText();
+                           [](const LabelButton* b) {
+                             return std::u16string(b->GetText());
                            }),
                   WaitForState(kButtonTextState, kButton2Caption));
 }
@@ -333,7 +336,7 @@ TEST_F(InteractiveViewsTestTest, NameViewRelative) {
       SelectTab(kTabbedPaneId, 1U, InputType::kTouch),
       NameViewRelative(kTabbedPaneId, kViewName,
                        base::BindRepeating([&](TabbedPane* tabs) {
-                         return tabs->GetTabAt(1U)->contents();
+                         return tabs->GetTabContentsForTesting(1);
                        })),
       WithElement(kViewName,
                   base::BindLambdaForTesting([&](ui::TrackedElement* el) {

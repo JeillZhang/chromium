@@ -3,17 +3,19 @@
 // found in the LICENSE file.
 import 'chrome-untrusted://read-anything-side-panel.top-chrome/read_anything.js';
 
-import {BrowserProxy} from 'chrome-untrusted://read-anything-side-panel.top-chrome/read_anything.js';
-import type {ReadAnythingElement} from 'chrome-untrusted://read-anything-side-panel.top-chrome/read_anything.js';
-import {assertFalse, assertTrue} from 'chrome-untrusted://webui-test/chai_assert.js';
+import {BrowserProxy, ToolbarEvent} from 'chrome-untrusted://read-anything-side-panel.top-chrome/read_anything.js';
+import type {AppElement} from 'chrome-untrusted://read-anything-side-panel.top-chrome/read_anything.js';
+import {assertEquals, assertFalse, assertTrue} from 'chrome-untrusted://webui-test/chai_assert.js';
+import {microtasksFinished} from 'chrome-untrusted://webui-test/test_util.js';
 
-import {suppressInnocuousErrors} from './common.js';
+import {createSpeechSynthesisVoice, emitEvent} from './common.js';
 import {FakeReadingMode} from './fake_reading_mode.js';
 import {FakeTreeBuilder} from './fake_tree_builder.js';
 import {TestColorUpdaterBrowserProxy} from './test_color_updater_browser_proxy.js';
 
 suite('UpdateContent', () => {
-  let app: ReadAnythingElement;
+  let app: AppElement;
+  let readingMode: FakeReadingMode;
 
   const textNodeIds = [3, 5, 7, 9];
   const texts = [
@@ -23,13 +25,15 @@ suite('UpdateContent', () => {
     'That\'s ancient history, been there, done that!',
   ];
 
-  setup(() => {
-    suppressInnocuousErrors();
-    BrowserProxy.setInstance(new TestColorUpdaterBrowserProxy());
+  setup(async () => {
+    // Clearing the DOM should always be done first.
     document.body.innerHTML = window.trustedTypes!.emptyHTML;
-    const readingMode = new FakeReadingMode();
+    BrowserProxy.setInstance(new TestColorUpdaterBrowserProxy());
+    readingMode = new FakeReadingMode();
     chrome.readingMode = readingMode as unknown as typeof chrome.readingMode;
 
+    // Don't use await createApp() when using a FakeTree, as it seems to cause
+    // flakiness.
     app = document.createElement('read-anything-app');
     document.body.appendChild(app);
     new FakeTreeBuilder()
@@ -44,24 +48,62 @@ suite('UpdateContent', () => {
         .addText(textNodeIds[3]!, /* parentId= */ 8, texts[3]!)
         .build(readingMode);
 
-    // @ts-ignore
-    app.enabledLanguagesInPref = ['en-US'];
-    // @ts-ignore
-    app.selectedVoice = {lang: 'en', name: 'Kristi'} as SpeechSynthesisVoice;
-    app.getSpeechSynthesisVoice();
+    app.enabledLangs = ['en-US'];
+
+    const selectedVoice =
+        createSpeechSynthesisVoice({lang: 'en', name: 'Kristi'});
+    return emitEvent(app, ToolbarEvent.VOICE, {detail: {selectedVoice}});
   });
 
-  suite('after update content, read aloud is', () => {
-    test('playable if done with distillation', () => {
-      chrome.readingMode.requiresDistillation = false;
-      app.updateContent();
-      assertTrue(app.isReadAloudPlayable());
-    });
+  test('playable if done with distillation', async () => {
+    chrome.readingMode.requiresDistillation = false;
+    app.updateContent();
+    await microtasksFinished();
 
-    test('not playable if still requires distillation', () => {
-      chrome.readingMode.requiresDistillation = true;
-      app.updateContent();
-      assertFalse(app.isReadAloudPlayable());
-    });
+    assertTrue(app.$.toolbar.isReadAloudPlayable);
   });
+
+  test('not playable if still requires distillation', async () => {
+    chrome.readingMode.requiresDistillation = true;
+    app.updateContent();
+    await microtasksFinished();
+
+    assertFalse(app.$.toolbar.isReadAloudPlayable);
+  });
+
+  test('hides loading page', async () => {
+    app.updateContent();
+    await microtasksFinished();
+
+    assertTrue(!!app.shadowRoot);
+    const emptyState =
+        app.shadowRoot.querySelector<HTMLElement>('#empty-state-container');
+    assertTrue(!!emptyState);
+    assertTrue(emptyState.hidden);
+  });
+
+  test(
+      'container clears old content when it receives new content', async () => {
+        const expected1 = 'Gotta keep one jump ahead of the breadline.';
+        new FakeTreeBuilder()
+            .root(1)
+            .addText(2, /* parentId= */ 1, expected1)
+            .build(readingMode);
+        app.updateContent();
+        await microtasksFinished();
+
+        assertEquals(expected1, app.$.container.textContent);
+
+        const expected2 = 'One swing ahead of the sword.';
+        new FakeTreeBuilder()
+            .root(1)
+            .addText(2, /* parentId= */ 1, expected2)
+            .build(readingMode);
+        app.updateContent();
+        await microtasksFinished();
+
+        // There should be nothing from the first content here, we should only
+        // have the new content.
+        assertEquals(expected2, app.$.container.textContent);
+      });
 });

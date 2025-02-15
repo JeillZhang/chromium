@@ -8,11 +8,9 @@
 #include <memory>
 #include <optional>
 #include <string>
-#include <utility>
 #include <vector>
 
 #include "content/browser/loader/navigation_loader_interceptor.h"
-#include "content/browser/navigation_subresource_loader_params.h"
 #include "content/public/browser/service_worker_client_info.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
@@ -30,10 +28,6 @@
 namespace net {
 class IsolationInfo;
 }  // namespace net
-
-namespace network {
-class SharedURLLoaderFactory;
-}  // namespace network
 
 namespace content {
 
@@ -91,8 +85,6 @@ class CONTENT_EXPORT WorkerScriptLoader
       const std::optional<GURL>& new_url) override;
   void SetPriority(net::RequestPriority priority,
                    int32_t intra_priority_value) override;
-  void PauseReadingBodyFromNet() override;
-  void ResumeReadingBodyFromNet() override;
 
   // network::mojom::URLLoaderClient:
   void OnReceiveEarlyHints(network::mojom::EarlyHintsPtr early_hints) override;
@@ -109,11 +101,11 @@ class CONTENT_EXPORT WorkerScriptLoader
   void OnTransferSizeUpdated(int32_t transfer_size_diff) override;
   void OnComplete(const network::URLLoaderCompletionStatus& status) override;
 
-  SubresourceLoaderParams TakeSubresourceLoaderParams() {
-    return std::move(subresource_loader_params_);
-  }
-
   void OnFetcherCallbackCalled();
+
+  static network::mojom::URLLoaderFactory* Fallback(
+      base::WeakPtr<WorkerScriptLoader> self,
+      ResponseHeadUpdateParams);
 
   base::WeakPtr<WorkerScriptLoader> GetWeakPtr();
 
@@ -127,8 +119,6 @@ class CONTENT_EXPORT WorkerScriptLoader
   void CommitCompleted();
 
   std::unique_ptr<ServiceWorkerMainResourceLoaderInterceptor> interceptor_;
-
-  SubresourceLoaderParams subresource_loader_params_;
 
   const int32_t request_id_;
   const uint32_t options_;

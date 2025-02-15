@@ -299,33 +299,6 @@ void GraphicsContext::DrawRecord(PaintRecord record) {
   canvas_->drawPicture(std::move(record));
 }
 
-void GraphicsContext::CompositeRecord(PaintRecord record,
-                                      const gfx::RectF& dest,
-                                      const gfx::RectF& src,
-                                      SkBlendMode op) {
-  if (record.empty()) {
-    return;
-  }
-  DCHECK(canvas_);
-
-  cc::PaintFlags flags;
-  flags.setBlendMode(op);
-
-  SkSamplingOptions sampling(cc::PaintFlags::FilterQualityToSkSamplingOptions(
-      static_cast<cc::PaintFlags::FilterQuality>(ImageInterpolationQuality())));
-  canvas_->save();
-  canvas_->concat(
-      SkM44::RectToRect(gfx::RectFToSkRect(src), gfx::RectFToSkRect(dest)));
-  canvas_->drawImage(
-      PaintImageBuilder::WithDefault()
-          .set_paint_record(std::move(record), gfx::ToRoundedRect(src),
-                            PaintImage::GetNextContentId())
-          .set_id(PaintImage::GetNextId())
-          .TakePaintImage(),
-      0, 0, sampling, &flags);
-  canvas_->restore();
-}
-
 void GraphicsContext::DrawFocusRingPath(const SkPath& path,
                                         const Color& color,
                                         float width,
@@ -566,12 +539,13 @@ void GraphicsContext::DrawEmphasisMarksInternal(
   });
 }
 
+// This function is not used if TextCombineEmphasisNG flag is enabled.
 void GraphicsContext::DrawEmphasisMarks(const Font& font,
-                                        const TextRunPaintInfo& text_info,
+                                        const TextRun& run,
                                         const AtomicString& mark,
                                         const gfx::PointF& point,
                                         const AutoDarkMode& auto_dark_mode) {
-  DrawEmphasisMarksInternal(font, text_info, mark, point, auto_dark_mode);
+  DrawEmphasisMarksInternal(font, run, mark, point, auto_dark_mode);
 }
 
 void GraphicsContext::DrawEmphasisMarks(const Font& font,
@@ -582,15 +556,13 @@ void GraphicsContext::DrawEmphasisMarks(const Font& font,
   DrawEmphasisMarksInternal(font, text_info, mark, point, auto_dark_mode);
 }
 
-void GraphicsContext::DrawBidiText(
-    const Font& font,
-    const TextRunPaintInfo& run_info,
-    const gfx::PointF& point,
-    const AutoDarkMode& auto_dark_mode,
-    Font::CustomFontNotReadyAction custom_font_not_ready_action) {
+void GraphicsContext::DrawBidiText(const Font& font,
+                                   const TextRun& run,
+                                   const gfx::PointF& point,
+                                   const AutoDarkMode& auto_dark_mode) {
   DrawTextPasses([&](const cc::PaintFlags& flags) {
-    if (font.DrawBidiText(canvas_, run_info, point,
-                          custom_font_not_ready_action,
+    if (font.DrawBidiText(canvas_, TextRunPaintInfo(run), point,
+                          Font::kDoNotPaintIfFontNotReady,
                           DarkModeFlags(this, auto_dark_mode, flags),
                           printing_ ? Font::DrawType::kGlyphsAndClusters
                                     : Font::DrawType::kGlyphsOnly)) {
@@ -702,7 +674,7 @@ cc::PaintFlags::FilterQuality GraphicsContext::ComputeFilterQuality(
   if (printing_) {
     resampling = kInterpolationNone;
   } else if (image.CurrentFrameIsLazyDecoded()) {
-    resampling = kInterpolationDefault;
+    resampling = GetDefaultInterpolationQuality();
   } else {
     resampling = ComputeInterpolationQuality(
         SkScalarToFloat(src.width()), SkScalarToFloat(src.height()),
@@ -982,15 +954,6 @@ void GraphicsContext::ClipRoundedRect(const FloatRoundedRect& rrect,
   ClipRRect(SkRRect(rrect), should_antialias, clip_op);
 }
 
-void GraphicsContext::ClipOut(const Path& path_to_clip) {
-  // Use const_cast and temporarily toggle the inverse fill type instead of
-  // copying the path.
-  SkPath& path = const_cast<SkPath&>(path_to_clip.GetSkPath());
-  path.toggleInverseFillType();
-  ClipPath(path, kAntiAliased);
-  path.toggleInverseFillType();
-}
-
 void GraphicsContext::ClipOutRoundedRect(const FloatRoundedRect& rect) {
   ClipRoundedRect(rect, SkClipOp::kDifference);
 }
@@ -1014,12 +977,6 @@ void GraphicsContext::ClipRRect(const SkRRect& rect,
                                 SkClipOp op) {
   DCHECK(canvas_);
   canvas_->clipRRect(rect, op, aa == kAntiAliased);
-}
-
-void GraphicsContext::Rotate(float angle_in_radians) {
-  DCHECK(canvas_);
-  canvas_->rotate(
-      WebCoreFloatToSkScalar(angle_in_radians * (180.0f / 3.14159265f)));
 }
 
 void GraphicsContext::Translate(float x, float y) {

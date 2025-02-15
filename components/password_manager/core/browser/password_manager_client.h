@@ -21,6 +21,7 @@
 #include "components/password_manager/core/browser/http_auth_manager.h"
 #include "components/password_manager/core/browser/leak_detection_dialog_utils.h"
 #include "components/password_manager/core/browser/manage_passwords_referrer.h"
+#include "components/password_manager/core/browser/password_cross_domain_confirmation_popup_controller.h"
 #include "components/password_manager/core/browser/password_manager.h"
 #include "components/password_manager/core/browser/password_store/password_store_backend_error.h"
 #include "components/password_manager/core/browser/webauthn_credentials_delegate.h"
@@ -36,6 +37,10 @@
 #include "ui/gfx/geometry/rect_f.h"
 #endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) ||
         // BUILDFLAG(IS_CHROMEOS)
+
+#if BUILDFLAG(IS_ANDROID)
+#include "components/password_manager/core/browser/first_cct_page_load_passwords_ukm_recorder.h"
+#endif  // BUILDFLAG(IS_ANDROID)
 
 class PrefService;
 
@@ -62,7 +67,6 @@ class IdentityManager;
 
 namespace signin_metrics {
 enum class AccessPoint;
-enum class ReauthAccessPoint;
 }  // namespace signin_metrics
 
 namespace url {
@@ -71,9 +75,11 @@ class Origin;
 
 class GURL;
 
+#if BUILDFLAG(SAFE_BROWSING_AVAILABLE) || BUILDFLAG(IS_IOS)
 namespace safe_browsing {
 class PasswordProtectionService;
 }
+#endif
 
 namespace device_reauth {
 class DeviceAuthenticator;
@@ -92,9 +98,14 @@ class WebAuthnCredManDelegate;
 namespace password_manager {
 
 class FieldInfoManager;
+#if BUILDFLAG(IS_ANDROID)
+class FirstCctPageLoadPasswordsUkmRecorder;
+#endif  // BUILDFLAG(IS_ANDROID)
+class PasswordChangeServiceInterface;
 class PasswordFeatureManager;
 class PasswordFormManagerForUI;
 class PasswordManagerDriver;
+class PasswordManagerInterface;
 class PasswordManagerMetricsRecorder;
 class HttpAuthManager;
 class PasswordRequirementsService;
@@ -111,9 +122,6 @@ struct PasswordFillingParams {
   uint64_t username_field_index;
   uint64_t password_field_index;
   autofill::FieldRendererId focused_field_renderer_id_;
-  // TODO(crbug.com/40274966): Remove this param after
-  // PasswordSuggestionBottomSheetV2 is launched.
-  autofill::mojom::SubmissionReadinessState submission_readiness;
 };
 #endif  // BUILDFLAG(IS_ANDROID)
 
@@ -222,7 +230,9 @@ class PasswordManagerClient {
       base::OnceCallback<void(bool)> shown_cb);
 #endif
 
-  virtual bool CanUseBiometricAuthForFilling(
+  // Checks whether user re-authentication should be triggered before password
+  // filling.
+  virtual bool IsReauthBeforeFillingRequired(
       device_reauth::DeviceAuthenticator* authenticator);
 
   // Returns a pointer to a DeviceAuthenticator. Might be null if
@@ -276,6 +286,9 @@ class PasswordManagerClient {
   // deprecated.
   virtual void ResetSubmissionTrackingAfterTouchToFill() {}
 
+  // True if there is a Password Change ongoing in the tab.
+  virtual bool IsPasswordChangeOngoing() = 0;
+
   // Inform the embedder that the site called 'store()'.
   virtual void NotifyStorePasswordCalled() = 0;
 
@@ -312,22 +325,7 @@ class PasswordManagerClient {
                                 const PasswordFormManagerForUI* form_manager);
 
   // Informs the embedder that user credentials were leaked.
-  virtual void NotifyUserCredentialsWereLeaked(CredentialLeakType leak_type,
-                                               const GURL& origin,
-                                               const std::u16string& username,
-                                               bool in_account_store);
-
-  // Requests a reauth for the primary account with |access_point| representing
-  // where the reauth was triggered.
-  // Triggers the |reauth_callback| with ReauthSucceeded(true) if
-  // reauthentication succeeded.
-  virtual void TriggerReauthForPrimaryAccount(
-      signin_metrics::ReauthAccessPoint access_point,
-      base::OnceCallback<void(ReauthSucceeded)> reauth_callback);
-
-  // Redirects the user to a sign-in in a new tab. |access_point| is used for
-  // metrics recording and represents where the sign-in was triggered.
-  virtual void TriggerSignIn(signin_metrics::AccessPoint access_point);
+  virtual void NotifyUserCredentialsWereLeaked(LeakedPasswordDetails details);
 
   // Gets prefs associated with this embedder.
   virtual PrefService* GetPrefs() const = 0;
@@ -350,6 +348,9 @@ class PasswordManagerClient {
   // Returns the PasswordReuseManager associated with this instance.
   virtual PasswordReuseManager* GetPasswordReuseManager() const = 0;
 
+  // Returns the PasswordChangeServiceInterface associated with this instance.
+  virtual PasswordChangeServiceInterface* GetPasswordChangeService() const = 0;
+
   // Returns true if last navigation page had HTTP error i.e 5XX or 4XX
   virtual bool WasLastNavigationHTTPError() const;
 
@@ -370,8 +371,8 @@ class PasswordManagerClient {
 
   // Returns the PasswordManager associated with this client. The non-const
   // version calls the const one.
-  PasswordManager* GetPasswordManager();
-  virtual const PasswordManager* GetPasswordManager() const;
+  PasswordManagerInterface* GetPasswordManager();
+  virtual const PasswordManagerInterface* GetPasswordManager() const;
 
   // Returns the PasswordFeatureManager associated with this client. The
   // non-const version calls the const one.
@@ -399,8 +400,14 @@ class PasswordManagerClient {
   // Use this to filter credentials before handling them in password manager.
   virtual const CredentialsFilter* GetStoreResultFilter() const = 0;
 
-  // Returns a LogManager instance.
-  virtual autofill::LogManager* GetLogManager();
+  // Returns a LogManager instance (for chrome://password-manager-internals).
+  // Note that the return value may change over the lifetime of a
+  // PasswordManagerClient from null to non-null, so callers should not store
+  // the result of this function, but call GetCurrentLogManager() again instead.
+  // - May return null if logging is disabled (but a non null return value does
+  // not guarantee that logging is enabled).
+  // - May return null for platforms that don't support this.
+  virtual autofill::LogManager* GetCurrentLogManager();
 
   // Record that we saw a password field on this page.
   virtual void AnnotateNavigationEntry(bool has_password_field);
@@ -408,9 +415,11 @@ class PasswordManagerClient {
   // Returns the current best guess as to the page's display language.
   virtual autofill::LanguageCode GetPageLanguage() const;
 
+#if BUILDFLAG(SAFE_BROWSING_AVAILABLE) || BUILDFLAG(IS_IOS)
   // Return the PasswordProtectionService associated with this instance.
   virtual safe_browsing::PasswordProtectionService*
   GetPasswordProtectionService() const = 0;
+#endif
 
   // Maybe triggers a hats survey that measures the user's perception of
   // Autofill for passwords. When triggering happens, the survey dialog will be
@@ -422,7 +431,7 @@ class PasswordManagerClient {
   virtual void TriggerUserPerceptionOfPasswordManagerSurvey(
       const std::string& filling_assistance);
 
-#if defined(ON_FOCUS_PING_ENABLED)
+#if defined(ON_FOCUS_PING_ENABLED) && BUILDFLAG(SAFE_BROWSING_AVAILABLE)
   // Checks the safe browsing reputation of the webpage when the
   // user focuses on a username/password field. This is used for reporting
   // only, and won't trigger a warning.
@@ -435,7 +444,7 @@ class PasswordManagerClient {
   virtual void MaybeReportEnterpriseLoginEvent(
       const GURL& url,
       bool is_federated,
-      const url::Origin& federated_origin,
+      const url::SchemeHostPort& federated_origin,
       const std::u16string& login_user_name) const {}
 
   // If the feature is enabled send an event to the enterprise reporting
@@ -455,6 +464,21 @@ class PasswordManagerClient {
   // does not support metrics recording.
   virtual PasswordManagerMetricsRecorder* GetMetricsRecorder() = 0;
 
+#if BUILDFLAG(IS_ANDROID)
+  // Returns a metrics recorder created specifically for the first CCT page
+  // load. This can return nullptr if the current tab is not a CCT, or if
+  // the user already navigated away from the first page.
+  // It records metrics on destruction, which happens on the first navigation
+  // away from the first loaded page. Callers should  not hold on to the
+  // pointer.
+  virtual FirstCctPageLoadPasswordsUkmRecorder*
+  GetFirstCctPageLoadUkmRecorder() = 0;
+
+  // Signals that a password form eligible for saving was submitted. Note that
+  // this gets called for form submissions that might not necessarily be
+  // successful logins.
+  virtual void PotentialSaveFormSubmitted() = 0;
+#endif
   // Gets the PasswordRequirementsService associated with the client. It is
   // valid that this method returns a nullptr if the PasswordRequirementsService
   // has not been implemented for a specific platform or the context is an
@@ -516,17 +540,35 @@ class PasswordManagerClient {
   // Refreshes password manager settings stored in prefs.
   virtual void RefreshPasswordManagerSettingsIfNeeded() const;
 
+  // Display username/password options to the user in the "ambient" sign-in
+  // bubble, which can also display other credential types for sign-in.
+  // If the user selects a password from the bubble, `callback` is invoked with
+  // the selected `PasswordForm`.
+  virtual void ShowCredentialsInAmbientBubble(
+      std::vector<std::unique_ptr<password_manager::PasswordForm>> forms,
+      int credential_type_flags,
+      CredentialsCallback callback);
+
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || \
     BUILDFLAG(IS_CHROMEOS)
+  // Shows the bubble with the details of the `form`.
+  virtual void OpenPasswordDetailsBubble(
+      const password_manager::PasswordForm& form) = 0;
+#endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) ||
+        // BUILDFLAG(IS_CHROMEOS)
+
+#if !BUILDFLAG(IS_IOS)
   // Creates and show the cross domain confirmation popup.
   virtual std::unique_ptr<PasswordCrossDomainConfirmationPopupController>
   ShowCrossDomainConfirmationPopup(const gfx::RectF& element_bounds,
                                    base::i18n::TextDirection text_direction,
                                    const GURL& domain,
-                                   const std::u16string& password_origin,
+                                   const std::u16string& password_hostname,
+                                   bool show_warning_text,
                                    base::OnceClosure confirmation_callback) = 0;
-#endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) ||
-        // BUILDFLAG(IS_CHROMEOS)
+#endif  // !BUILDFLAG(IS_IOS)
+
+  virtual password_manager::LeakDetectionInitiator GetLeakDetectionInitiator();
 };
 
 }  // namespace password_manager

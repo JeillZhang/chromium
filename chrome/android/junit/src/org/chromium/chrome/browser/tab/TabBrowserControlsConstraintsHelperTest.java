@@ -7,7 +7,6 @@ package org.chromium.chrome.browser.tab;
 import android.content.Context;
 
 import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
@@ -20,7 +19,6 @@ import org.robolectric.annotation.LooperMode;
 import org.chromium.base.ObserverList;
 import org.chromium.base.UserDataHost;
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.base.test.util.JniMocker;
 import org.chromium.cc.input.BrowserControlsState;
 import org.chromium.chrome.browser.app.ChromeActivity;
 import org.chromium.components.browser_ui.util.BrowserControlsVisibilityDelegate;
@@ -36,8 +34,6 @@ import java.lang.ref.WeakReference;
 public class TabBrowserControlsConstraintsHelperTest {
     private final UserDataHost mUserDataHost = new UserDataHost();
 
-    @Rule public JniMocker mocker = new JniMocker();
-
     @Mock TabImpl mTab;
     @Mock WebContents mWebContents;
     @Mock TabDelegateFactory mDelegateFactory;
@@ -50,7 +46,7 @@ public class TabBrowserControlsConstraintsHelperTest {
     @Before
     public void setUp() {
         MockitoAnnotations.initMocks(this);
-        mocker.mock(TabBrowserControlsConstraintsHelperJni.TEST_HOOKS, mJniMock);
+        TabBrowserControlsConstraintsHelperJni.setInstanceForTesting(mJniMock);
         Mockito.when(mTab.getUserDataHost()).thenReturn(mUserDataHost);
         Mockito.when(mTab.getDelegateFactory()).thenReturn(mDelegateFactory);
         Mockito.when(mTab.getWebContents()).thenReturn(mWebContents);
@@ -156,7 +152,8 @@ public class TabBrowserControlsConstraintsHelperTest {
                         Mockito.any(),
                         Mockito.anyInt(),
                         Mockito.anyInt(),
-                        Mockito.anyBoolean());
+                        Mockito.anyBoolean(),
+                        Mockito.any());
     }
 
     @Test
@@ -209,7 +206,8 @@ public class TabBrowserControlsConstraintsHelperTest {
                         Mockito.same(mWebContents),
                         Mockito.eq(constraints),
                         Mockito.eq(current),
-                        Mockito.eq(animate));
+                        Mockito.eq(animate),
+                        Mockito.any());
         Mockito.clearInvocations(mJniMock);
     }
 

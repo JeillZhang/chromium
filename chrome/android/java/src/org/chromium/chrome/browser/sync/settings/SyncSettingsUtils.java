@@ -28,6 +28,7 @@ import org.chromium.base.Log;
 import org.chromium.base.Promise;
 import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.ChromeStringConstants;
 import org.chromium.chrome.browser.LaunchIntentDispatcher;
 import org.chromium.chrome.browser.browserservices.intents.BrowserServicesIntentDataProvider.CustomTabsUiType;
 import org.chromium.chrome.browser.customtabs.CustomTabIntentDataProvider;
@@ -51,7 +52,6 @@ import java.lang.annotation.RetentionPolicy;
 
 /** Helper methods for sync settings. */
 public class SyncSettingsUtils {
-    private static final String DASHBOARD_URL = "https://www.google.com/settings/chrome/sync";
     private static final String MY_ACCOUNT_URL = "https://myaccount.google.com/smartlink/home";
     private static final String TAG = "SyncSettingsUtils";
 
@@ -389,13 +389,13 @@ public class SyncSettingsUtils {
      */
     public static void openSyncDashboard(Activity activity) {
         // TODO(crbug.com/41450409): Create a builder for custom tab intents.
-        openCustomTabWithURL(activity, DASHBOARD_URL);
+        openCustomTabWithURL(activity, ChromeStringConstants.SYNC_DASHBOARD_URL);
     }
 
     /**
      * Opens web dashboard to manage google account in a custom tab.
      *
-     * Callers should ensure the current account has sync consent prior to calling.
+     * <p>Callers should ensure the current account has sync consent prior to calling.
      *
      * @param activity The activity to use for starting the intent.
      */
@@ -409,16 +409,12 @@ public class SyncSettingsUtils {
      * required for managing a trusted vault.
      *
      * @param fragment Fragment to use when starting the dialog.
-     * @param accountInfo Account representing the user.
      * @param requestCode Arbitrary request code that upon completion will be passed back via
-     *         Fragment.onActivityResult().
+     *     Fragment.onActivityResult().
      * @param pendingIntentPromise promise that provides the intent to be started.
      */
     private static void openTrustedVaultDialogForPendingIntent(
-            Fragment fragment,
-            CoreAccountInfo accountInfo,
-            int requestCode,
-            Promise<PendingIntent> pendingIntentPromise) {
+            Fragment fragment, int requestCode, Promise<PendingIntent> pendingIntentPromise) {
         pendingIntentPromise.then(
                 (pendingIntent) -> {
                     try {
@@ -470,7 +466,6 @@ public class SyncSettingsUtils {
                 .recordKeyRetrievalTrigger(TrustedVaultUserActionTriggerForUMA.SETTINGS);
         openTrustedVaultDialogForPendingIntent(
                 fragment,
-                accountInfo,
                 requestCode,
                 TrustedVaultClient.get().createKeyRetrievalIntent(accountInfo));
     }
@@ -491,7 +486,6 @@ public class SyncSettingsUtils {
                         TrustedVaultUserActionTriggerForUMA.SETTINGS);
         openTrustedVaultDialogForPendingIntent(
                 fragment,
-                accountInfo,
                 requestCode,
                 TrustedVaultClient.get().createRecoverabilityDegradedIntent(accountInfo));
     }
@@ -502,15 +496,12 @@ public class SyncSettingsUtils {
      * @param fragment Fragment to use when starting the dialog.
      * @param accountInfo Account representing the user.
      * @param requestCode Arbitrary request code that upon completion will be passed back via
-     *         Fragment.onActivityResult().
+     *     Fragment.onActivityResult().
      */
     public static void openTrustedVaultOptInDialog(
             Fragment fragment, CoreAccountInfo accountInfo, int requestCode) {
         openTrustedVaultDialogForPendingIntent(
-                fragment,
-                accountInfo,
-                requestCode,
-                TrustedVaultClient.get().createOptInIntent(accountInfo));
+                fragment, requestCode, TrustedVaultClient.get().createOptInIntent(accountInfo));
     }
 
     /**

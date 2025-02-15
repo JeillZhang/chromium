@@ -14,7 +14,6 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.Mockito;
@@ -27,11 +26,8 @@ import org.robolectric.annotation.Implements;
 import org.chromium.base.Callback;
 import org.chromium.base.supplier.Supplier;
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.base.test.util.Features;
 import org.chromium.base.test.util.HistogramWatcher;
-import org.chromium.base.test.util.JniMocker;
-import org.chromium.chrome.browser.AppHooks;
-import org.chromium.chrome.browser.AppHooksImpl;
+import org.chromium.chrome.browser.data_sharing.DataSharingTabManager;
 import org.chromium.chrome.browser.feature_engagement.TrackerFactory;
 import org.chromium.chrome.browser.lifecycle.ActivityLifecycleDispatcher;
 import org.chromium.chrome.browser.profiles.Profile;
@@ -43,6 +39,7 @@ import org.chromium.chrome.browser.share.ShareDelegateImplUnitTest.ShadowAndroid
 import org.chromium.chrome.browser.share.ShareDelegateImplUnitTest.ShadowShareHelper;
 import org.chromium.chrome.browser.share.ShareDelegateImplUnitTest.ShadowShareSheetCoordinator;
 import org.chromium.chrome.browser.share.android_share_sheet.AndroidShareSheetController;
+import org.chromium.chrome.browser.share.android_share_sheet.TabGroupSharingController;
 import org.chromium.chrome.browser.share.share_sheet.ShareSheetCoordinator;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
@@ -68,9 +65,7 @@ import java.util.List;
             ShadowAndroidShareSheetController.class,
         })
 public class ShareDelegateImplUnitTest {
-    @Rule public TestRule mFeatureProcessor = new Features.JUnitProcessor();
     @Rule public MockitoRule mockitoRule = MockitoJUnit.rule();
-    @Rule public JniMocker mJniMocker = new JniMocker();
 
     @Mock private BottomSheetController mBottomSheetController;
     @Mock private Profile mProfile;
@@ -80,8 +75,8 @@ public class ShareDelegateImplUnitTest {
     @Mock private WindowAndroid mWindowAndroid;
     @Mock private Activity mActivity;
     @Mock private LargeIconBridgeJni mLargeIconBridgeJni;
-    @Mock private AppHooksImpl mAppHooks;
     @Mock private Tracker mTracker;
+    @Mock private DataSharingTabManager mDataSharingTabManager;
 
     private ShareDelegateImpl mShareDelegate;
 
@@ -90,17 +85,17 @@ public class ShareDelegateImplUnitTest {
                 new ShareDelegateImpl(
                         mBottomSheetController,
                         mActivityLifecycleDispatcher,
-                        (() -> mTab),
-                        (() -> mTabModelSelector),
-                        (() -> mProfile),
+                        () -> mTab,
+                        () -> mTabModelSelector,
+                        () -> mProfile,
                         new ShareSheetDelegate(),
-                        isCustomTab);
+                        isCustomTab,
+                        mDataSharingTabManager);
     }
 
     @Before
     public void setup() {
-        mJniMocker.mock(LargeIconBridgeJni.TEST_HOOKS, mLargeIconBridgeJni);
-        AppHooks.setInstanceForTesting(mAppHooks);
+        LargeIconBridgeJni.setInstanceForTesting(mLargeIconBridgeJni);
         TrackerFactory.setTrackerForTests(mTracker);
         Mockito.doReturn(new WeakReference<>(mActivity)).when(mWindowAndroid).getActivity();
         createShareDelegate(false);
@@ -396,6 +391,7 @@ public class ShareDelegateImplUnitTest {
                 Supplier<TabModelSelector> tabModelSelectorSupplier,
                 Supplier<Profile> profileSupplier,
                 Callback<Tab> printCallback,
+                TabGroupSharingController tabGroupSharingController,
                 DeviceLockActivityLauncher deviceLockActivityLauncher) {
             sShareWithSystemShareSheetUiCalled = true;
         }

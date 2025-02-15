@@ -11,9 +11,8 @@
 #include "base/memory/raw_ptr.h"
 #include "chrome/browser/ui/bookmarks/bookmark_editor.h"
 #include "chrome/browser/ui/bookmarks/bookmark_stats.h"
-#include "chrome/browser/ui/simple_message_box.h"
-#include "chrome/browser/ui/tabs/tab_group.h"
 #include "components/page_load_metrics/browser/navigation_handle_user_data.h"
+#include "components/tab_groups/tab_group_id.h"
 #include "ui/base/window_open_disposition.h"
 #include "ui/gfx/native_widget_types.h"
 
@@ -27,7 +26,7 @@ class BookmarkNode;
 namespace content {
 class BrowserContext;
 class NavigationHandle;
-}
+}  // namespace content
 
 namespace chrome {
 
@@ -103,8 +102,7 @@ bool HasBookmarkURLs(const std::vector<raw_ptr<const bookmarks::BookmarkNode,
 // in |selection| with incognito mode.
 bool HasBookmarkURLsAllowedInIncognitoMode(
     const std::vector<
-        raw_ptr<const bookmarks::BookmarkNode, VectorExperimental>>& selection,
-    content::BrowserContext* browser_context);
+        raw_ptr<const bookmarks::BookmarkNode, VectorExperimental>>& selection);
 
 // Populates |folder_data| with all tab items and sub-folders for any open tab
 // groups.

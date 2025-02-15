@@ -7,14 +7,14 @@
 
 #include <stdint.h>
 #include <string.h>
+
 #include <compare>
 #include <iosfwd>
-#include <tuple>
+#include <string_view>
 
 #include "base/base_export.h"
 #include "base/check.h"
 #include "base/containers/span.h"
-#include "base/strings/string_piece.h"
 #include "base/token.h"
 
 namespace base {
@@ -74,7 +74,7 @@ class BASE_EXPORT UnguessableToken {
   // the given string does not represent a valid serialized `UnguessableToken`.
   // This should be handled as a security issue.
   static std::optional<UnguessableToken> DeserializeFromString(
-      StringPiece string_representation);
+      std::string_view string_representation);
 
   // Creates an empty UnguessableToken.
   // Assign to it with Create() before using it.

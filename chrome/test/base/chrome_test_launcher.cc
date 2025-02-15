@@ -17,6 +17,7 @@
 #include "base/logging.h"
 #include "base/path_service.h"
 #include "base/process/process_metrics.h"
+#include "base/profiler/thread_group_profiler.h"
 #include "base/run_loop.h"
 #include "base/sampling_heap_profiler/poisson_allocation_sampler.h"
 #include "base/strings/string_util.h"
@@ -30,6 +31,8 @@
 #include "chrome/browser/metrics/chrome_feature_list_creator.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/chrome_switches.h"
+#include "chrome/common/profiler/chrome_thread_group_profiler_client.h"
+#include "chrome/common/profiler/chrome_thread_profiler_client.h"
 #include "chrome/common/profiler/main_thread_stack_sampling_profiler.h"
 #include "chrome/install_static/test/scoped_install_details.h"
 #include "chrome/installer/util/taskbar_util.h"
@@ -37,6 +40,7 @@
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/utility/chrome_content_utility_client.h"
 #include "components/crash/core/app/crashpad.h"
+#include "components/sampling_profiler/thread_profiler.h"
 #include "content/public/app/content_main.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/test/network_service_test_helper.h"
@@ -75,31 +79,9 @@
 #endif
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
-#include "chrome/browser/ash/crosapi/crosapi_ash.h"
-#include "chrome/browser/ash/crosapi/crosapi_manager.h"
-#include "chrome/browser/ash/crosapi/test_controller_ash.h"
 #include "chrome/browser/chrome_browser_main.h"
 #include "chrome/browser/chrome_browser_main_extra_parts.h"
 #endif  // BUILDFLAG(IS_CHROMEOS_ASH)
-
-namespace {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-class TestControllerSetupMainExtraParts : public ChromeBrowserMainExtraParts {
- public:
-  TestControllerSetupMainExtraParts() = default;
-
-  void PostBrowserStart() override {
-    crosapi::CrosapiManager::Get()->crosapi_ash()->SetTestControllerForTesting(
-        std::make_unique<crosapi::TestControllerAsh>());
-  }
-
-  void PostMainMessageLoopRun() override {
-    crosapi::CrosapiManager::Get()->crosapi_ash()->SetTestControllerForTesting(
-        nullptr);
-  }
-};
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
-}  // namespace
 
 // static
 int ChromeTestSuiteRunner::RunTestSuiteInternal(ChromeTestSuite* test_suite) {
@@ -167,7 +149,7 @@ auto RunEchoService(mojo::PendingReceiver<echo::mojom::EchoService> receiver) {
 ChromeTestLauncherDelegate::ChromeTestLauncherDelegate(
     ChromeTestSuiteRunner* runner)
     : runner_(runner) {}
-ChromeTestLauncherDelegate::~ChromeTestLauncherDelegate() {}
+ChromeTestLauncherDelegate::~ChromeTestLauncherDelegate() = default;
 
 int ChromeTestLauncherDelegate::RunTestSuite(int argc, char** argv) {
   return runner_->RunTestSuite(argc, argv);
@@ -224,23 +206,33 @@ bool ChromeTestChromeMainDelegate::ShouldHandleConsoleControlEvents() {
 #endif
 
 void ChromeTestChromeMainDelegate::CreateThreadPool(std::string_view name) {
+  // The ThreadGroupProfiler client must be set before thread pool is
+  // created (below).
+  base::ThreadGroupProfiler::SetClient(
+      std::make_unique<ChromeThreadGroupProfilerClient>());
+
   base::test::TaskEnvironment::CreateThreadPool();
+
+  // The ThreadProfiler client must be set before main thread profiling is
+  // started (below).
+  sampling_profiler::ThreadProfiler::SetClient(
+      std::make_unique<ChromeThreadProfilerClient>());
+
+// `ChromeMainDelegateAndroid::PreSandboxStartup` creates the profiler a little
+// later.
+#if !BUILDFLAG(IS_ANDROID)
+  // Start the sampling profiler as early as possible - namely, once the thread
+  // pool has been created.
+  sampling_profiler_ = std::make_unique<MainThreadStackSamplingProfiler>();
+#endif
 }
 
 #if !BUILDFLAG(IS_ANDROID)
 content::ContentMainDelegate*
 ChromeTestLauncherDelegate::CreateContentMainDelegate() {
-  return new ChromeTestChromeMainDelegate(base::TimeTicks::Now());
+  return new ChromeTestChromeMainDelegate();
 }
 #endif
-
-void ChromeTestLauncherDelegate::CreatedBrowserMainParts(
-    content::BrowserMainParts* browser_main_parts) {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  static_cast<ChromeBrowserMainParts*>(browser_main_parts)
-      ->AddParts(std::make_unique<TestControllerSetupMainExtraParts>());
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
-}
 
 void ChromeTestLauncherDelegate::PreSharding() {
 #if BUILDFLAG(IS_WIN)
@@ -299,8 +291,6 @@ int LaunchChromeTests(size_t parallel_jobs,
   base::debug::HandleHooks::PatchLoadedModules();
 #endif  // BUILDFLAG(IS_WIN)
 
-  const auto& command_line = *base::CommandLine::ForCurrentProcess();
-
   // PoissonAllocationSampler's TLS slots need to be set up before
   // MainThreadStackSamplingProfiler, which can allocate TLS slots of its own.
   // On some platforms pthreads can malloc internally to access higher-numbered
@@ -309,13 +299,6 @@ int LaunchChromeTests(size_t parallel_jobs,
   // TODO(crbug.com/40062835): Clean up other paths that call this Init()
   // function, which are now redundant.
   base::PoissonAllocationSampler::Init();
-
-  // Initialize sampling profiler for tests that relaunching a browser. This
-  // mimics the behavior in standalone Chrome, where this is done in
-  // chrome/app/chrome_main.cc, which does not get called by tests.
-  std::unique_ptr<MainThreadStackSamplingProfiler> sampling_profiler;
-  if (command_line.HasSwitch(switches::kLaunchAsBrowser))
-    sampling_profiler = std::make_unique<MainThreadStackSamplingProfiler>();
 
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID)
   ChromeCrashReporterClient::Create();

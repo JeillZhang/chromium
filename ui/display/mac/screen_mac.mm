@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "ui/display/screen.h"
 
 #import <AppKit/AppKit.h>
@@ -64,7 +69,7 @@ NSScreen* GetMatchingScreen(const gfx::Rect& match_rect) {
 }
 
 const std::vector<Display> DisplaysFromDisplaysMac(
-    const std::vector<DisplayMac> displays_mac) {
+    const std::vector<DisplayMac>& displays_mac) {
   std::vector<Display> displays;
 
   for (auto const& display_mac : displays_mac) {
@@ -174,7 +179,12 @@ DisplayMac BuildDisplayForScreen(NSScreen* screen) {
   display.set_is_monochrome(CGDisplayUsesForceToGray());
 
   // Query the display's refresh rate.
-  {
+  if (@available(macos 12.0, *)) {
+    // NSScreen.minimumRefreshInterval is available on macOS 12.0+
+    double refresh_rate = 1.0 / screen.minimumRefreshInterval;
+    display.set_display_frequency(refresh_rate);
+  } else {
+    // CVDisplayLink is available on macOS 10.4–15.0.
     CVDisplayLinkRef display_link = nullptr;
     if (CVDisplayLinkCreateWithCGDisplay(display_id, &display_link) ==
         kCVReturnSuccess) {
@@ -522,6 +532,11 @@ class ScreenMac : public Screen {
       }
     }
 
+    if (NSScreen.screens.firstObject != primary_ns_screen_) {
+      primary_ns_screen_ = NSScreen.screens.firstObject;
+      change_notifier_.NotifyPrimaryDisplayChanged();
+    }
+
     // If nothing changed, do no notifications.
     if (all_displays_equal) {
       return;
@@ -565,6 +580,8 @@ class ScreenMac : public Screen {
   std::vector<DisplayMac> displays_mac_;
 
   std::vector<Display> displays_;
+
+  NSScreen* __weak primary_ns_screen_ = nil;
 
   // The observers notified by NSScreenColorSpaceDidChangeNotification and
   // NSApplicationDidChangeScreenParametersNotification.

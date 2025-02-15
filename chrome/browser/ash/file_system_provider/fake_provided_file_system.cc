@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/browser/ash/file_system_provider/fake_provided_file_system.h"
 
 #include <stddef.h>
@@ -31,7 +36,7 @@ const char kFakeFileMimeType[] = "text/plain";
 
 constexpr base::FilePath::CharType kBadFakeEntryPath1[] =
     FILE_PATH_LITERAL("/bad1");
-constexpr char kBadFakeEntryName1[] = "/bad1";
+constexpr char kBadFakeEntryName1[] = "";
 constexpr base::FilePath::CharType kBadFakeEntryPath2[] =
     FILE_PATH_LITERAL("/bad2");
 constexpr char kBadFakeEntryName2[] = "bad2";
@@ -238,7 +243,9 @@ AbortCallback FakeProvidedFileSystem::ReadDirectory(
       if (*metadata->name == kBadFakeEntryName2) {
         entry_type = static_cast<filesystem::mojom::FsFileType>(7);
       }
-      entry_list.emplace_back(base::FilePath(*metadata->name), entry_type);
+      auto name = base::SafeBaseName::Create(*metadata->name);
+      CHECK(name) << *metadata->name;
+      entry_list.emplace_back(*name, std::string(), entry_type);
     }
   }
 
@@ -401,7 +408,7 @@ base::File::Error FakeProvidedFileSystem::DoDeleteEntry(
   // path in `entries_`.
   if (!recursive) {
     const Entries::const_iterator it =
-        base::ranges::find_if(entries_, [entry_path](auto& entry_it) {
+        std::ranges::find_if(entries_, [entry_path](auto& entry_it) {
           return entry_path.IsParent(entry_it.first);
         });
     if (it != entries_.end()) {
@@ -600,8 +607,7 @@ const ProvidedFileSystemInfo& FakeProvidedFileSystem::GetFileSystemInfo()
 }
 
 OperationRequestManager* FakeProvidedFileSystem::GetRequestManager() {
-  NOTREACHED_IN_MIGRATION();
-  return nullptr;
+  NOTREACHED();
 }
 
 Watchers* FakeProvidedFileSystem::GetWatchers() {
@@ -660,8 +666,7 @@ void FakeProvidedFileSystem::Notify(
 
 void FakeProvidedFileSystem::Configure(
     storage::AsyncFileUtil::StatusCallback callback) {
-  NOTREACHED_IN_MIGRATION();
-  std::move(callback).Run(base::File::FILE_ERROR_SECURITY);
+  NOTREACHED();
 }
 
 base::WeakPtr<ProvidedFileSystemInterface>

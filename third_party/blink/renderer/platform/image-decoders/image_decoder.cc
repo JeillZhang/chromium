@@ -18,8 +18,14 @@
  *
  */
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/platform/image-decoders/image_decoder.h"
 
+#include <algorithm>
 #include <memory>
 
 #include "base/containers/heap_array.h"
@@ -38,7 +44,7 @@
 #include "third_party/blink/renderer/platform/image-decoders/gif/gif_image_decoder.h"
 #include "third_party/blink/renderer/platform/image-decoders/ico/ico_image_decoder.h"
 #include "third_party/blink/renderer/platform/image-decoders/jpeg/jpeg_image_decoder.h"
-#include "third_party/blink/renderer/platform/image-decoders/png/png_image_decoder.h"
+#include "third_party/blink/renderer/platform/image-decoders/png/png_decoder_factory.h"
 #include "third_party/blink/renderer/platform/image-decoders/webp/webp_image_decoder.h"
 #include "third_party/skia/include/core/SkColorSpace.h"
 #include "third_party/skia/include/private/SkExif.h"
@@ -46,7 +52,6 @@
 #include "ui/gfx/geometry/size_conversions.h"
 
 #if BUILDFLAG(ENABLE_AV1_DECODER)
-#include "third_party/blink/renderer/platform/image-decoders/avif/avif_image_decoder.h"
 #include "third_party/blink/renderer/platform/image-decoders/avif/crabbyavif_image_decoder.h"
 #endif
 
@@ -192,9 +197,7 @@ String SniffMimeTypeInternal(scoped_refptr<SegmentReader> reader) {
     return "image/bmp";
   }
 #if BUILDFLAG(ENABLE_AV1_DECODER)
-  if (base::FeatureList::IsEnabled(blink::features::kCrabbyAvif)
-          ? CrabbyAVIFImageDecoder::MatchesAVIFSignature(fast_reader)
-          : AVIFImageDecoder::MatchesAVIFSignature(fast_reader)) {
+  if (CrabbyAVIFImageDecoder::MatchesAVIFSignature(fast_reader)) {
     return "image/avif";
   }
 #endif
@@ -229,10 +232,12 @@ ImageDecoder::ImageDecoder(
     AlphaOption alpha_option,
     HighBitDepthDecodingOption high_bit_depth_decoding_option,
     ColorBehavior color_behavior,
+    cc::AuxImage aux_image,
     wtf_size_t max_decoded_bytes)
     : premultiply_alpha_(alpha_option == kAlphaPremultiplied),
       high_bit_depth_decoding_option_(high_bit_depth_decoding_option),
       color_behavior_(color_behavior),
+      aux_image_(aux_image),
       max_decoded_bytes_(max_decoded_bytes),
       allow_decode_to_yuv_(false),
       purge_aggressively_(false) {}
@@ -245,6 +250,7 @@ std::unique_ptr<ImageDecoder> ImageDecoder::Create(
     AlphaOption alpha_option,
     HighBitDepthDecodingOption high_bit_depth_decoding_option,
     ColorBehavior color_behavior,
+    cc::AuxImage aux_image,
     size_t platform_max_decoded_bytes,
     const SkISize& desired_size,
     AnimationOption animation_option) {
@@ -255,7 +261,7 @@ std::unique_ptr<ImageDecoder> ImageDecoder::Create(
 
   return CreateByMimeType(type, std::move(data), data_complete, alpha_option,
                           high_bit_depth_decoding_option, color_behavior,
-                          platform_max_decoded_bytes, desired_size,
+                          aux_image, platform_max_decoded_bytes, desired_size,
                           animation_option);
 }
 
@@ -266,6 +272,7 @@ std::unique_ptr<ImageDecoder> ImageDecoder::CreateByMimeType(
     AlphaOption alpha_option,
     HighBitDepthDecodingOption high_bit_depth_decoding_option,
     ColorBehavior color_behavior,
+    cc::AuxImage aux_image,
     size_t platform_max_decoded_bytes,
     const SkISize& desired_size,
     AnimationOption animation_option) {
@@ -279,12 +286,12 @@ std::unique_ptr<ImageDecoder> ImageDecoder::CreateByMimeType(
   if (mime_type == "image/jpeg" || mime_type == "image/pjpeg" ||
       mime_type == "image/jpg") {
     decoder = std::make_unique<JPEGImageDecoder>(alpha_option, color_behavior,
-                                                 max_decoded_bytes);
+                                                 aux_image, max_decoded_bytes);
   } else if (mime_type == "image/png" || mime_type == "image/x-png" ||
              mime_type == "image/apng") {
-    decoder = std::make_unique<PNGImageDecoder>(
-        alpha_option, high_bit_depth_decoding_option, color_behavior,
-        max_decoded_bytes);
+    decoder =
+        CreatePngImageDecoder(alpha_option, high_bit_depth_decoding_option,
+                              color_behavior, max_decoded_bytes);
   } else if (mime_type == "image/gif") {
     decoder = std::make_unique<GIFImageDecoder>(alpha_option, color_behavior,
                                                 max_decoded_bytes);
@@ -300,15 +307,9 @@ std::unique_ptr<ImageDecoder> ImageDecoder::CreateByMimeType(
                                                 max_decoded_bytes);
 #if BUILDFLAG(ENABLE_AV1_DECODER)
   } else if (mime_type == "image/avif") {
-    if (base::FeatureList::IsEnabled(blink::features::kCrabbyAvif)) {
-      decoder = std::make_unique<CrabbyAVIFImageDecoder>(
-          alpha_option, high_bit_depth_decoding_option, color_behavior,
-          max_decoded_bytes, animation_option);
-    } else {
-      decoder = std::make_unique<AVIFImageDecoder>(
-          alpha_option, high_bit_depth_decoding_option, color_behavior,
-          max_decoded_bytes, animation_option);
-    }
+    decoder = std::make_unique<CrabbyAVIFImageDecoder>(
+        alpha_option, high_bit_depth_decoding_option, color_behavior, aux_image,
+        max_decoded_bytes, animation_option);
 #endif
   }
 
@@ -340,15 +341,15 @@ bool ImageDecoder::HasSufficientDataToSniffMimeType(const SharedBuffer& data) {
     // 'size' and a four-byte 'type'.
     struct {
       uint8_t size[4];  // unsigned int(32) size;
-      char type[4];   // unsigned int(32) type = boxtype;
+      char type[4];     // unsigned int(32) type = boxtype;
     } box;
     static_assert(sizeof(box) == 8, "");
     static_assert(8 <= kLongestSignatureLength, "");
-    bool ok = data.GetBytes(&box, 8u);
+    bool ok = data.GetBytes(base::byte_span_from_ref(box));
     DCHECK(ok);
-    if (base::span(box.type) == base::span({'f', 't', 'y', 'p'})) {
+    if (base::span(box.type) == base::span<const char>({'f', 't', 'y', 'p'})) {
       // Returns whether we have received the File Type Box in its entirety.
-      return base::numerics::U32FromBigEndian(box.size) <= data.size();
+      return base::U32FromBigEndian(box.size) <= data.size();
     }
   }
 #endif
@@ -423,7 +424,7 @@ ImageDecoder::CompressionFormat ImageDecoder::GetCompressionFormat(
         return kUndefinedFormat;
       }
     } else {
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
     }
   }
 
@@ -502,18 +503,15 @@ cc::YUVSubsampling ImageDecoder::GetYUVSubsampling() const {
 }
 
 gfx::Size ImageDecoder::DecodedYUVSize(cc::YUVIndex) const {
-  NOTREACHED_IN_MIGRATION();
-  return gfx::Size();
+  NOTREACHED();
 }
 
 wtf_size_t ImageDecoder::DecodedYUVWidthBytes(cc::YUVIndex) const {
-  NOTREACHED_IN_MIGRATION();
-  return 0;
+  NOTREACHED();
 }
 
 SkYUVColorSpace ImageDecoder::GetYUVColorSpace() const {
-  NOTREACHED_IN_MIGRATION();
-  return SkYUVColorSpace::kIdentity_SkYUVColorSpace;
+  NOTREACHED();
 }
 
 uint8_t ImageDecoder::GetYUVBitDepth() const {
@@ -706,7 +704,7 @@ void ImageDecoder::SetMemoryAllocator(SkBitmap::Allocator* allocator) {
 }
 
 void ImageDecoder::DecodeToYUV() {
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 bool ImageDecoder::ImageHasBothStillAndAnimatedSubImages() const {
@@ -969,8 +967,7 @@ wtf_size_t ImageDecoder::FindRequiredPreviousFrame(wtf_size_t frame_index,
                  : prev_frame;
     case ImageFrame::kDisposeOverwritePrevious:
     default:
-      NOTREACHED_IN_MIGRATION();
-      return kNotFound;
+      NOTREACHED();
   }
 }
 
@@ -987,21 +984,17 @@ void ImageDecoder::ApplyExifMetadata(const SkData* exif_data,
 }
 
 ImagePlanes::ImagePlanes() {
-  color_type_ = kUnknown_SkColorType;
-  for (int i = 0; i < cc::kNumYUVPlanes; ++i) {
-    planes_[i] = nullptr;
-    row_bytes_[i] = 0;
-  }
+  std::ranges::fill(planes_, nullptr);
+  std::ranges::fill(row_bytes_, 0);
 }
 
-ImagePlanes::ImagePlanes(void* planes[cc::kNumYUVPlanes],
-                         const wtf_size_t row_bytes[cc::kNumYUVPlanes],
-                         SkColorType color_type)
+ImagePlanes::ImagePlanes(
+    base::span<void*, cc::kNumYUVPlanes> planes,
+    base::span<const wtf_size_t, cc::kNumYUVPlanes> row_bytes,
+    SkColorType color_type)
     : color_type_(color_type) {
-  for (int i = 0; i < cc::kNumYUVPlanes; ++i) {
-    planes_[i] = planes[i];
-    row_bytes_[i] = row_bytes[i];
-  }
+  base::span(planes_).copy_from(planes);
+  base::span(row_bytes_).copy_from(row_bytes);
 }
 
 void* ImagePlanes::Plane(cc::YUVIndex index) {

@@ -23,6 +23,11 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/modules/webaudio/audio_param_timeline.h"
 
 #include <algorithm>
@@ -147,8 +152,7 @@ String AudioParamTimeline::EventToString(const ParamEvent& event) const {
     // Fall through; we should never have to print out the internal
     // `kCancelValues` or `kSetValueCurveEnd` event.
     case ParamEvent::kLastType:
-      NOTREACHED_IN_MIGRATION();
-      break;
+      NOTREACHED();
   };
 
   return s + "(" + args + ")";
@@ -602,7 +606,7 @@ void AudioParamTimeline::InsertEvent(std::unique_ptr<ParamEvent> event,
   DCHECK_GT(insertion_idx, wtf_size_t{0});
   wtf_size_t ub = insertion_idx - 1;  // upper bound of events that can overlap.
   if (events_.back()->Time() > insert_time) {
-    auto* it = std::upper_bound(
+    auto it = std::upper_bound(
         events_.begin(), events_.end(), insert_time,
         [](const double value, const std::unique_ptr<ParamEvent>& entry) {
           return value < entry->Time();
@@ -764,8 +768,7 @@ bool AudioParamTimeline::HasValues(size_t current_frame,
                (current_time < curve_end_time);
       }
       case ParamEvent::kLastType:
-        NOTREACHED_IN_MIGRATION();
-        return true;
+        NOTREACHED();
     }
   }
 
@@ -928,8 +931,7 @@ void AudioParamTimeline::CancelAndHoldAtTime(double cancel_time,
       // Nothing needs to be done for a SetValue or CancelValues event.
       break;
     case ParamEvent::kLastType:
-      NOTREACHED_IN_MIGRATION();
-      break;
+      NOTREACHED();
   }
 
   // Now remove all the following events from the timeline.
@@ -1187,8 +1189,7 @@ float AudioParamTimeline::ValuesForFrameRangeImpl(
           break;
         }
         case ParamEvent::kLastType:
-          NOTREACHED_IN_MIGRATION();
-          break;
+          NOTREACHED();
       }
     }
   }
@@ -1478,12 +1479,10 @@ AudioParamTimeline::HandleCancelValues(const ParamEvent* current_event,
               // createCancelValuesEvent doesn't allow them (SetValue,
               // SetTarget, CancelValues) or cancelScheduledValues()
               // doesn't create such an event (SetValueCurve).
-              NOTREACHED_IN_MIGRATION();
-              break;
+              NOTREACHED();
             case ParamEvent::kLastType:
               // Illegal event type.
-              NOTREACHED_IN_MIGRATION();
-              break;
+              NOTREACHED();
           }
 
           // Cache the new value so we don't keep computing it over and over.
@@ -1499,8 +1498,7 @@ AudioParamTimeline::HandleCancelValues(const ParamEvent* current_event,
         // followed by CancelValues.
         break;
       case ParamEvent::kLastType:
-        NOTREACHED_IN_MIGRATION();
-        break;
+        NOTREACHED();
     }
   }
 

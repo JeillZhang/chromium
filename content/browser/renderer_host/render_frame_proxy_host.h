@@ -22,7 +22,6 @@
 #include "ipc/ipc_sender.h"
 #include "mojo/public/cpp/bindings/associated_receiver.h"
 #include "mojo/public/cpp/bindings/associated_remote.h"
-#include "third_party/blink/public/common/metrics/post_message_counter.h"
 #include "third_party/blink/public/common/tokens/tokens.h"
 #include "third_party/blink/public/mojom/frame/frame.mojom.h"
 #include "third_party/blink/public/mojom/input/focus_type.mojom-forward.h"
@@ -132,7 +131,7 @@ class CONTENT_EXPORT RenderFrameProxyHost
 
   int GetRoutingID() const { return routing_id_; }
   GlobalRoutingID GetGlobalID() const {
-    return GlobalRoutingID(GetProcess()->GetID(), routing_id_);
+    return GlobalRoutingID(GetProcess()->GetDeprecatedID(), routing_id_);
   }
 
   // Each RenderFrameProxyHost belongs to a SiteInstanceGroup, where it is a
@@ -333,6 +332,8 @@ class CONTENT_EXPORT RenderFrameProxyHost
   // placeholder for a frame in a different SiteInstanceGroup.
   scoped_refptr<SiteInstanceGroup> site_instance_group_;
 
+  // TODO(crbug.com/388998723): Remove the comment about the side effect
+  // of GetProcess() after the full migration to GetOrCreateProcess().
   // The renderer process this RenderFrameProxyHost is associated with. It is
   // equivalent to the result of site_instance_group_->GetProcess(), but that
   // method has the side effect of creating the process if it doesn't exist.
@@ -377,10 +378,6 @@ class CONTENT_EXPORT RenderFrameProxyHost
       remote_main_frame_host_receiver_{this};
 
   blink::RemoteFrameToken frame_token_;
-
-  // Tracks metrics related to postMessage usage.
-  // TODO(crbug.com/40737536): Remove when no longer needed.
-  blink::PostMessageCounter post_message_counter_;
 
   base::WeakPtrFactory<RenderFrameProxyHost> weak_factory_{this};
 };

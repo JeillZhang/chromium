@@ -2,12 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#if defined(UNSAFE_BUFFERS_BUILD)
-// TODO(https://crbug.com/344639839): fix the unsafe buffer errors in this file,
-// then remove this pragma.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "ui/views/controls/button/label_button_border.h"
 
 #include <utility>
@@ -46,8 +40,9 @@ void PaintHelper(LabelButtonAssetBorder* border,
   if (!painter && button.is_focused) {
     painter = border->GetPainter(false, Button::GetButtonStateFrom(state));
   }
-  if (painter)
+  if (painter) {
     Painter::PaintPainterAt(canvas, painter, rect);
+  }
 }
 
 }  // namespace
@@ -136,8 +131,9 @@ gfx::Size LabelButtonAssetBorder::GetMinimumSize() const {
   gfx::Size minimum_size;
   for (const auto& painters_for_focus_state : painters_) {
     for (const auto& painter_for_button_state : painters_for_focus_state) {
-      if (painter_for_button_state)
+      if (painter_for_button_state) {
         minimum_size.SetToMax(painter_for_button_state->GetMinimumSize());
+      }
     }
   }
   return minimum_size;

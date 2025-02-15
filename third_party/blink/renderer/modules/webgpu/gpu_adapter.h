@@ -20,6 +20,7 @@ class GPU;
 class GPUAdapterInfo;
 class GPUDevice;
 class GPUDeviceDescriptor;
+class GPURequestAdapterOptions;
 class GPUSupportedFeatures;
 class GPUSupportedLimits;
 class GPUMemoryHeapInfo;
@@ -30,7 +31,8 @@ class GPUAdapter final : public ScriptWrappable, DawnObject<wgpu::Adapter> {
  public:
   GPUAdapter(GPU* gpu,
              wgpu::Adapter handle,
-             scoped_refptr<DawnControlClientHolder> dawn_control_client);
+             scoped_refptr<DawnControlClientHolder> dawn_control_client,
+             const GPURequestAdapterOptions* options);
 
   GPUAdapter(const GPUAdapter&) = delete;
   GPUAdapter& operator=(const GPUAdapter&) = delete;
@@ -45,11 +47,10 @@ class GPUAdapter final : public ScriptWrappable, DawnObject<wgpu::Adapter> {
   wgpu::BackendType backendType() const;
   bool SupportsMultiPlanarFormats() const;
   bool isCompatibilityMode() const;
+  String featureLevel() const;
 
   ScriptPromise<GPUDevice> requestDevice(ScriptState* script_state,
                                          GPUDeviceDescriptor* descriptor);
-
-  ScriptPromise<GPUAdapterInfo> requestAdapterInfo(ScriptState* script_state);
 
   // Console warnings should generally be attributed to a GPUDevice, but in
   // cases where there is no device warnings can be surfaced here. It's expected
@@ -58,13 +59,17 @@ class GPUAdapter final : public ScriptWrappable, DawnObject<wgpu::Adapter> {
   void AddConsoleWarning(ExecutionContext* execution_context,
                          const char* message);
 
+  GPUAdapterInfo* CreateAdapterInfoForAdapter();
+
+  bool isXRCompatible() const { return is_xr_compatible_; }
+
  private:
-  void OnRequestDeviceCallback(ScriptState* script_state,
+  void OnRequestDeviceCallback(GPUDevice* device,
                                const GPUDeviceDescriptor* descriptor,
                                ScriptPromiseResolver<GPUDevice>* resolver,
                                wgpu::RequestDeviceStatus status,
                                wgpu::Device dawn_device,
-                               const char* error_message);
+                               wgpu::StringView error_message);
 
   void setLabelImpl(const String&) override {
     // There isn't a wgpu::Adapter::SetLabel, just skip.
@@ -76,6 +81,8 @@ class GPUAdapter final : public ScriptWrappable, DawnObject<wgpu::Adapter> {
   wgpu::AdapterType adapter_type_;
   bool is_consumed_ = false;
   bool is_compatibility_mode_;
+  String feature_level_ = "";
+  bool is_xr_compatible_ = false;
   Member<GPUSupportedLimits> limits_;
   Member<GPUSupportedFeatures> features_;
   Member<GPUAdapterInfo> info_;
@@ -84,6 +91,8 @@ class GPUAdapter final : public ScriptWrappable, DawnObject<wgpu::Adapter> {
   String architecture_;
   String device_;
   String description_;
+  uint32_t subgroup_min_size_;
+  uint32_t subgroup_max_size_;
   String driver_;
   HeapVector<Member<GPUMemoryHeapInfo>> memory_heaps_;
   std::optional<uint32_t> d3d_shader_model_;

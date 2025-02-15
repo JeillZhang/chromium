@@ -6,7 +6,6 @@ package org.chromium.chrome.browser.tab;
 
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertTrue;
 
 import androidx.test.filters.SmallTest;
 
@@ -20,22 +19,18 @@ import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
 
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.supplier.Supplier;
 import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.CriteriaHelper;
-import org.chromium.base.test.util.Features.DisableFeatures;
-import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.chrome.browser.ChromeTabbedActivity;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
-import org.chromium.chrome.browser.tasks.tab_groups.TabGroupModelFilter;
 import org.chromium.chrome.browser.ui.messages.snackbar.SnackbarManager;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.chrome.test.batch.BlankCTATabInitialStateRule;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.content_public.common.Referrer;
 import org.chromium.ui.modaldialog.DialogDismissalCause;
 import org.chromium.ui.modaldialog.ModalDialogManager;
@@ -45,7 +40,6 @@ import org.chromium.url.GURL;
 @RunWith(ChromeJUnit4ClassRunner.class)
 @CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 @Batch(Batch.PER_CLASS)
-@EnableFeatures(ChromeFeatureList.TAB_GROUP_PARITY_ANDROID)
 public class TabContextMenuItemDelegateTest {
     @ClassRule
     public static ChromeTabbedActivityTestRule sActivityTestRule =
@@ -71,7 +65,7 @@ public class TabContextMenuItemDelegateTest {
 
     @After
     public void tearDown() {
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mModalDialogManager.dismissAllDialogs(DialogDismissalCause.ACTIVITY_DESTROYED);
                 });
@@ -79,28 +73,25 @@ public class TabContextMenuItemDelegateTest {
 
     @Test
     @SmallTest
-    @EnableFeatures(ChromeFeatureList.TAB_GROUP_PARITY_ANDROID)
-    public void testOpenInNewTabInGroup_NewGroup_ParityEnabled() {
+    public void testOpenInNewTabInGroup_NewGroup_NoCreationDialog() {
         openNewTabUsingContextMenu();
 
-        assertTrue(mModalDialogManager.isShowing());
+        assertFalse(mModalDialogManager.isShowing());
     }
 
     @Test
     @SmallTest
-    @EnableFeatures(ChromeFeatureList.TAB_GROUP_PARITY_ANDROID)
     public void testOpenInNewTabInGroup_ExistingGroup_ParityEnabled() {
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     ChromeTabbedActivity cta = sActivityTestRule.getActivity();
                     var tabModelSelector = cta.getTabModelSelectorSupplier().get();
                     var filter =
-                            (TabGroupModelFilter)
-                                    tabModelSelector
-                                            .getTabModelFilterProvider()
-                                            .getTabModelFilter(false);
+                            tabModelSelector
+                                    .getTabGroupModelFilterProvider()
+                                    .getTabGroupModelFilter(false);
                     var tab = cta.getActivityTab();
-                    filter.createSingleTabGroup(tab, /* notify= */ false);
+                    filter.createSingleTabGroup(tab);
                 });
 
         openNewTabUsingContextMenu();
@@ -108,17 +99,8 @@ public class TabContextMenuItemDelegateTest {
         assertFalse(mModalDialogManager.isShowing());
     }
 
-    @Test
-    @SmallTest
-    @DisableFeatures(ChromeFeatureList.TAB_GROUP_PARITY_ANDROID)
-    public void testOpenInNewTabInGroup_NewGroup_ParityDisabled() {
-        openNewTabUsingContextMenu();
-
-        assertFalse(mModalDialogManager.isShowing());
-    }
-
     private void createContextMenuForCurrentTab() {
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     ChromeTabbedActivity cta = sActivityTestRule.getActivity();
                     var rootUiCoordinator = cta.getRootUiCoordinatorForTesting();
@@ -138,15 +120,14 @@ public class TabContextMenuItemDelegateTest {
                                     ephemeralTabCoordinatorSupplier,
                                     mContextMenuCopyLinkObserver,
                                     snackbarManagerSupplier,
-                                    bottomSheetControllerSupplier,
-                                    () -> mModalDialogManager);
+                                    bottomSheetControllerSupplier);
                 });
         assertNotNull(mContextMenuDelegate);
     }
 
     private void openNewTabUsingContextMenu() {
         createContextMenuForCurrentTab();
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mContextMenuDelegate.onOpenInNewTabInGroup(
                             new GURL("about:blank"), new Referrer("about:blank", 0));

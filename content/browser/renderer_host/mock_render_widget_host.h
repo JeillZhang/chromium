@@ -6,7 +6,7 @@
 #define CONTENT_BROWSER_RENDERER_HOST_MOCK_RENDER_WIDGET_HOST_H_
 
 #include "components/input/event_with_latency_info.h"
-#include "content/browser/renderer_host/input/mock_input_router.h"
+#include "components/input/mock_input_router.h"
 #include "content/browser/renderer_host/render_view_host_impl.h"
 #include "content/test/mock_render_input_router.h"
 #include "content/test/mock_widget_input_handler.h"
@@ -14,6 +14,7 @@
 #include "third_party/blink/public/common/input/web_input_event.h"
 #include "third_party/blink/public/mojom/input/input_event_result.mojom-shared.h"
 #include "third_party/blink/public/mojom/input/input_handler.mojom.h"
+#include "third_party/blink/public/mojom/input/pointer_lock_result.mojom-shared.h"
 
 namespace content {
 
@@ -50,8 +51,8 @@ class MockRenderWidgetHost : public RenderWidgetHostImpl {
 
   void SetupForInputRouterTest();
 
-  MockInputRouter* mock_input_router() {
-    return static_cast<MockInputRouter*>(input_router());
+  input::MockInputRouter* mock_input_router() {
+    return static_cast<input::MockInputRouter*>(input_router());
   }
 
   MockRenderInputRouter* mock_render_input_router() {
@@ -71,12 +72,18 @@ class MockRenderWidgetHost : public RenderWidgetHostImpl {
       int32_t routing_id,
       mojo::PendingAssociatedRemote<blink::mojom::Widget> pending_blink_widget);
 
-  RenderInputRouter* GetRenderInputRouter() override;
+  input::RenderInputRouter* GetRenderInputRouter() override;
+
+  void RejectPointerLockOrUnlockIfNecessary(
+      blink::mojom::PointerLockResult result) override;
+
+  bool pointer_lock_rejected() const { return pointer_lock_rejected_; }
 
  protected:
   void NotifyNewContentRenderingTimeoutForTesting() override;
 
-  bool new_content_rendering_timeout_fired_;
+  bool new_content_rendering_timeout_fired_ = false;
+  bool pointer_lock_rejected_ = false;
 
  private:
   MockRenderWidgetHost(

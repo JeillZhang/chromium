@@ -6,6 +6,8 @@
 
 #import <Foundation/Foundation.h>
 
+#import <string>
+
 #import "base/allocator/partition_alloc_support.h"
 #import "base/check_op.h"
 #import "base/feature_list.h"
@@ -19,42 +21,39 @@
 #import "base/strings/sys_string_conversions.h"
 #import "base/task/sequenced_task_runner.h"
 #import "base/task/single_thread_task_runner.h"
+#import "base/task/task_traits.h"
 #import "base/task/thread_pool.h"
 #import "base/time/default_tick_clock.h"
 #import "build/blink_buildflags.h"
-#import "components/content_settings/core/browser/cookie_settings.h"
 #import "components/content_settings/core/common/content_settings_pattern.h"
 #import "components/crash/core/common/crash_key.h"
 #import "components/crash/core/common/reporter_running_ios.h"
-#import "components/flags_ui/pref_service_flags_storage.h"
 #import "components/keyed_service/ios/browser_state_dependency_manager.h"
-#import "components/language/core/browser/language_usage_metrics.h"
-#import "components/language/core/browser/pref_names.h"
 #import "components/memory_system/initializer.h"
 #import "components/memory_system/parameters.h"
 #import "components/metrics/call_stacks/call_stack_profile_builder.h"
 #import "components/metrics/call_stacks/call_stack_profile_metrics_provider.h"
-#import "components/metrics/call_stacks/call_stack_profile_params.h"
 #import "components/metrics/clean_exit_beacon.h"
 #import "components/metrics/expired_histogram_util.h"
 #import "components/metrics/metrics_service.h"
 #import "components/metrics_services_manager/metrics_services_manager.h"
 #import "components/open_from_clipboard/clipboard_recent_content.h"
+#import "components/os_crypt/sync/os_crypt.h"
 #import "components/prefs/json_pref_store.h"
 #import "components/prefs/pref_service.h"
 #import "components/previous_session_info/previous_session_info.h"
+#import "components/sampling_profiler/process_type.h"
 #import "components/signin/public/identity_manager/tribool.h"
-#import "components/translate/core/browser/translate_download_manager.h"
-#import "components/translate/core/browser/translate_metrics_logger_impl.h"
 #import "components/variations/field_trial_config/field_trial_util.h"
 #import "components/variations/service/variations_service.h"
 #import "components/variations/synthetic_trial_registry.h"
+#import "components/variations/synthetic_trials.h"
 #import "components/variations/synthetic_trials_active_group_id_provider.h"
 #import "components/variations/variations_crash_keys.h"
 #import "components/variations/variations_ids_provider.h"
 #import "components/variations/variations_switches.h"
+#import "components/webui/flags/pref_service_flags_storage.h"
 #import "ios/chrome/browser/application_context/model/application_context_impl.h"
-#import "ios/chrome/browser/browser_state/model/browser_state_keyed_service_factories.h"
 #import "ios/chrome/browser/crash_report/model/crash_helper.h"
 #import "ios/chrome/browser/first_run/model/first_run.h"
 #import "ios/chrome/browser/flags/about_flags.h"
@@ -63,37 +62,33 @@
 #import "ios/chrome/browser/open_from_clipboard/model/create_clipboard_recent_content.h"
 #import "ios/chrome/browser/optimization_guide/model/optimization_guide_service_factory.h"
 #import "ios/chrome/browser/policy/model/browser_policy_connector_ios.h"
+#import "ios/chrome/browser/profile/model/keyed_service_factories.h"
 #import "ios/chrome/browser/promos_manager/model/promos_manager.h"
-#import "ios/chrome/browser/safe_browsing/model/safe_browsing_metrics_collector_factory.h"
 #import "ios/chrome/browser/segmentation_platform/model/ukm_database_client.h"
-#import "ios/chrome/browser/shared/model/browser_state/chrome_browser_state.h"
-#import "ios/chrome/browser/shared/model/browser_state/chrome_browser_state_manager.h"
 #import "ios/chrome/browser/shared/model/paths/paths.h"
 #import "ios/chrome/browser/shared/model/prefs/pref_names.h"
 #import "ios/chrome/browser/signin/model/signin_util.h"
-#import "ios/chrome/browser/translate/model/chrome_ios_translate_client.h"
 #import "ios/chrome/browser/translate/model/translate_service_ios.h"
 #import "ios/chrome/browser/web/model/ios_thread_profiler.h"
 #import "ios/chrome/common/channel_info.h"
-#import "ios/components/security_interstitials/safe_browsing/safe_browsing_service.h"
+#import "ios/public/provider/chrome/browser/additional_features/additional_features_controller.h"
 #import "ios/web/public/thread/web_task_traits.h"
 #import "ios/web/public/thread/web_thread.h"
 #import "net/base/network_change_notifier.h"
 #import "net/http/http_network_layer.h"
 #import "net/http/http_stream_factory.h"
 #import "net/url_request/url_request.h"
-#import "rlz/buildflags/buildflags.h"
+#import "services/network/public/cpp/shared_url_loader_factory.h"
 #import "ui/base/l10n/l10n_util.h"
 #import "ui/base/l10n/l10n_util_mac.h"
 #import "ui/base/resource/resource_bundle.h"
 
-#if BUILDFLAG(ENABLE_RLZ)
-#import "components/rlz/rlz_tracker.h"                        // nogncheck
-#import "ios/chrome/browser/rlz/rlz_tracker_delegate_impl.h"  // nogncheck
-#endif
-
 #if DCHECK_IS_ON()
 #import "ui/display/screen_base.h"
+#endif
+
+#if PA_BUILDFLAG(USE_ALLOCATOR_SHIM)
+#import "components/heap_profiling/in_process/heap_profiler_controller.h"
 #endif
 
 namespace {
@@ -109,6 +104,14 @@ void SetProtectionLevel(const base::FilePath& file_path, id level) {
                                                  forKey:NSURLFileProtectionKey
                                                   error:&error];
   DCHECK(protection_set) << base::SysNSStringToUTF8(error.localizedDescription);
+}
+
+// Initializes OSCrypt.
+void EnsureOSCryptInitialized() {
+  // There is no public API to initialize OSCrypt. It is performed one the
+  // first call to the library, so call `OSCrypt::IsEncryptionAvailable()`
+  // and discard the result to perform the initialisation.
+  std::ignore = OSCrypt::IsEncryptionAvailable();
 }
 
 }  // namespace
@@ -187,8 +190,9 @@ void IOSChromeMainParts::PreCreateThreads() {
   // Check the first run state early; this must be done before IO is disallowed
   // so that later calls can use the cached value.
   static crash_reporter::CrashKeyString<4> key("first-run");
-  if (FirstRun::IsChromeFirstRun())
+  if (FirstRun::IsChromeFirstRun()) {
     key.Set("yes");
+  }
 
   // Compute device restore flag before IO is disallowed on UI thread, so the
   // value is available from cache synchronously.
@@ -257,7 +261,7 @@ void IOSChromeMainParts::PreCreateThreads() {
   // this way.
   memory_system::Initializer()
       .SetProfilingClientParameters(
-          channel, metrics::CallStackProfileParams::Process::kBrowser)
+          channel, sampling_profiler::ProfilerProcessType::kBrowser)
       .SetDispatcherParameters(memory_system::DispatcherParameters::
                                    PoissonAllocationSamplerInclusion::kDynamic,
                                memory_system::DispatcherParameters::
@@ -297,8 +301,14 @@ void IOSChromeMainParts::PreMainMessageLoopRun() {
       FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
       base::BindOnce(&FirstRun::LoadSentinelInfo));
 
+  // Force the initialisation of the OSCrypt library early in the application
+  // startup sequence. See https://crbug.com/383661630 for why this is needed.
+  base::ThreadPool::PostTask(
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
+      base::BindOnce(&EnsureOSCryptInitialized));
+
   // ContentSettingsPattern need to be initialized before creating the
-  // ChromeBrowserState.
+  // ProfileIOS.
   ContentSettingsPattern::SetNonWildcardDomainNonPortSchemes(nullptr, 0);
 
   // Ensure ClipboadRecentContentIOS is created.
@@ -311,24 +321,6 @@ void IOSChromeMainParts::PreMainMessageLoopRun() {
       .PreProfileInit(
           /*in_memory_database=*/false);
 
-  // Ensure that the KeyedService factories are registered.
-  EnsureBrowserStateKeyedServiceFactoriesBuilt();
-  BrowserStateDependencyManager::GetInstance()
-      ->DisallowKeyedServiceFactoryRegistration(
-          "EnsureBrowserStateKeyedServiceFactoriesBuilt()");
-
-  // Ensure the ChromeBrowserState is loaded and initialized.
-  ios::ChromeBrowserStateManager* browser_state_manager =
-      application_context_->GetChromeBrowserStateManager();
-
-  // Load all BrowserStates.
-  browser_state_manager->LoadBrowserStates();
-
-  // TODO(crbug.com/325257407): Factor all of the code that uses this to instead
-  // initialize for every browser state.
-  ChromeBrowserState* last_used_browser_state =
-      browser_state_manager->GetLastUsedBrowserStateDeprecatedDoNotUse();
-
   // This must occur at PreMainMessageLoopRun because `SetupMetrics()` uses the
   // blocking pool, which is disabled until the CreateThreads phase of startup.
   // TODO(crbug.com/41356264): Investigate whether metrics recording can be
@@ -337,6 +329,12 @@ void IOSChromeMainParts::PreMainMessageLoopRun() {
 
   // Now that the file thread has been started, start recording.
   StartMetricsRecording();
+
+  // Ensure that the KeyedService factories are registered.
+  EnsureProfileKeyedServiceFactoriesBuilt();
+  BrowserStateDependencyManager::GetInstance()
+      ->DisallowKeyedServiceFactoryRegistration(
+          "EnsureProfileKeyedServiceFactoriesBuilt()");
 
   // Because the CleanExitBeacon flag takes 2 restarts to take effect, register
   // a synthetic field trial when the user defaults beacon is set. Called
@@ -357,37 +355,12 @@ void IOSChromeMainParts::PreMainMessageLoopRun() {
       "");
 #endif  // PA_BUILDFLAG(USE_PARTITION_ALLOC)
 
-#if BUILDFLAG(ENABLE_RLZ)
-  // Init the RLZ library. This just schedules a task on the file thread to be
-  // run sometime later. If this is the first run we record the installation
-  // event.
-  int ping_delay = last_used_browser_state->GetPrefs()->GetInteger(
-      FirstRun::GetPingDelayPrefName());
-  // Negative ping delay means to send ping immediately after a first search is
-  // recorded.
-  rlz::RLZTracker::SetRlzDelegate(base::WrapUnique(new RLZTrackerDelegateImpl));
-  rlz::RLZTracker::InitRlzDelayed(
-      FirstRun::IsChromeFirstRun(), ping_delay < 0,
-      base::Milliseconds(abs(ping_delay)),
-      RLZTrackerDelegateImpl::IsGoogleDefaultSearch(last_used_browser_state),
-      RLZTrackerDelegateImpl::IsGoogleHomepage(last_used_browser_state),
-      RLZTrackerDelegateImpl::IsGoogleInStartpages(last_used_browser_state));
-#endif  // BUILDFLAG(ENABLE_RLZ)
-
   TranslateServiceIOS::Initialize();
-  language::LanguageUsageMetrics::RecordAcceptLanguages(
-      last_used_browser_state->GetPrefs()->GetString(
-          language::prefs::kAcceptLanguages));
-  translate::TranslateMetricsLoggerImpl::LogApplicationStartMetrics(
-      ChromeIOSTranslateClient::CreateTranslatePrefs(
-          last_used_browser_state->GetPrefs()));
 
   // Request new variations seed information from server.
   variations::VariationsService* variations_service =
       application_context_->GetVariationsService();
   if (variations_service) {
-    variations_service->set_policy_pref_service(
-        last_used_browser_state->GetPrefs());
     variations_service->PerformPreMainMessageLoopStartup();
   }
 
@@ -398,18 +371,6 @@ void IOSChromeMainParts::PreMainMessageLoopRun() {
         application_context_->GetLocalState(),
         application_context_->GetSharedURLLoaderFactory());
   }
-
-  // Ensure that Safe Browsing is initialized.
-  SafeBrowsingService* safe_browsing_service =
-      application_context_->GetSafeBrowsingService();
-  base::FilePath user_data_path;
-  CHECK(base::PathService::Get(ios::DIR_USER_DATA, &user_data_path));
-  safe_browsing::SafeBrowsingMetricsCollector* safe_browsing_metrics_collector =
-      SafeBrowsingMetricsCollectorFactory::GetForBrowserState(
-          last_used_browser_state);
-  safe_browsing_service->Initialize(last_used_browser_state->GetPrefs(),
-                                    user_data_path,
-                                    safe_browsing_metrics_collector);
 }
 
 void IOSChromeMainParts::PostMainMessageLoopRun() {
@@ -418,9 +379,6 @@ void IOSChromeMainParts::PostMainMessageLoopRun() {
   segmentation_platform::UkmDatabaseClientHolder::GetClientInstance(nullptr)
       .PostMessageLoopRun();
 
-#if BUILDFLAG(ENABLE_RLZ)
-  rlz::RLZTracker::CleanupRlz();
-#endif  // BUILDFLAG(ENABLE_RLZ)
   application_context_->StartTearDown();
 }
 
@@ -453,12 +411,18 @@ void IOSChromeMainParts::SetUpFieldTrials(
   std::vector<std::string> variation_ids =
       RegisterAllFeatureVariationParameters(&flags_storage, feature_list.get());
 
+  // Register additional features to the feature list.
+  AdditionalFeaturesController* additional_features_controller =
+      application_context_->GetAdditionalFeaturesController();
+  additional_features_controller->RegisterFeatureList(feature_list.get());
+
 #if !BUILDFLAG(USE_BLINK)
   // TODO(crbug.com/40261735) Move variations to PostEarlyInitialization.
   application_context_->GetVariationsService()->SetUpFieldTrials(
       variation_ids, command_line_variation_ids,
       std::vector<base::FeatureList::FeatureOverrideInfo>(),
       std::move(feature_list), &ios_field_trials_);
+  additional_features_controller->FeatureListDidCompleteSetup();
 #endif
 }
 
@@ -473,6 +437,22 @@ void IOSChromeMainParts::SetupMetrics() {
 }
 
 void IOSChromeMainParts::StartMetricsRecording() {
+  // Register synthetic field trial for the sampling profiler configuration
+  // that was already chosen.
+#if PA_BUILDFLAG(USE_ALLOCATOR_SHIM)
+  // HeapProfilerController is only built when the allocator shim is enabled.
+  std::string trial_name, group_name;
+  auto* heap_profiler_controller =
+      heap_profiling::HeapProfilerController::GetInstance();
+  if (heap_profiler_controller &&
+      heap_profiler_controller->GetSyntheticFieldTrial(trial_name,
+                                                       group_name)) {
+    IOSChromeMetricsServiceAccessor::RegisterSyntheticFieldTrial(
+        trial_name, group_name,
+        variations::SyntheticTrialAnnotationMode::kCurrentLog);
+  }
+#endif
+
   // TODO(crbug.com/40894426) Add an EG2 test for cloned install detection.
   application_context_->GetMetricsService()->CheckForClonedInstall();
   application_context_->GetMetricsServicesManager()->UpdateUploadPermissions(

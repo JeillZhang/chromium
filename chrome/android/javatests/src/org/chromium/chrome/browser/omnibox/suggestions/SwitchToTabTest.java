@@ -9,6 +9,7 @@ import static org.chromium.chrome.browser.multiwindow.MultiWindowTestHelper.move
 import static org.chromium.chrome.browser.multiwindow.MultiWindowTestHelper.waitForSecondChromeTabbedActivity;
 
 import android.app.Activity;
+import android.os.Build;
 import android.text.TextUtils;
 import android.view.ViewGroup;
 import android.widget.ImageView;
@@ -29,6 +30,7 @@ import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Criteria;
 import org.chromium.base.test.util.CriteriaHelper;
 import org.chromium.base.test.util.CriteriaNotSatisfiedException;
+import org.chromium.base.test.util.DisableIf;
 import org.chromium.base.test.util.DisabledTest;
 import org.chromium.chrome.browser.ChromeTabbedActivity;
 import org.chromium.chrome.browser.ChromeTabbedActivity2;
@@ -46,7 +48,6 @@ import org.chromium.chrome.test.util.ChromeTabUtils;
 import org.chromium.chrome.test.util.MenuUtils;
 import org.chromium.chrome.test.util.OmniboxTestUtils;
 import org.chromium.components.omnibox.AutocompleteMatch;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.content_public.browser.test.util.TestTouchUtils;
 import org.chromium.net.test.EmbeddedTestServer;
 import org.chromium.net.test.ServerCertificate;
@@ -84,7 +85,7 @@ public class SwitchToTabTest {
 
         mOmnibox.requestFocus();
 
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     urlBar.setText(text);
                 });
@@ -225,13 +226,14 @@ public class SwitchToTabTest {
 
         List<ImageView> buttonsList = baseSuggestionView.getActionButtons();
         Assert.assertNotNull(buttonsList);
-        Assert.assertEquals(buttonsList.size(), 1);
+        Assert.assertEquals(1, buttonsList.size());
         TestTouchUtils.performClickOnMainSync(
                 InstrumentationRegistry.getInstrumentation(), buttonsList.get(0));
     }
 
     @Test
     @MediumTest
+    @DisableIf.Build(sdk_is_greater_than = Build.VERSION_CODES.P, message = "crbug.com/1195129")
     public void testSwitchToTabSuggestion() throws InterruptedException {
         mTestServer =
                 EmbeddedTestServer.createAndStartHTTPSServer(
@@ -291,8 +293,7 @@ public class SwitchToTabTest {
         moveActivityToFront(cta1);
 
         // Switch back to cta1, and try to switch to "about.html" in cta2.
-        LocationBarLayout locationBarLayout =
-                (LocationBarLayout) cta1.findViewById(R.id.location_bar);
+        LocationBarLayout locationBarLayout = cta1.findViewById(R.id.location_bar);
         typeAndClickMatchingTabMatchSuggestion(cta1, locationBarLayout, aboutTab);
 
         CriteriaHelper.pollUiThread(
@@ -306,6 +307,7 @@ public class SwitchToTabTest {
 
     @Test
     @MediumTest
+    @DisableIf.Build(sdk_is_greater_than = Build.VERSION_CODES.P, message = "crbug.com/1195129")
     public void testNoSwitchToIncognitoTabFromNormalModel() throws InterruptedException {
         mTestServer =
                 EmbeddedTestServer.createAndStartHTTPSServer(

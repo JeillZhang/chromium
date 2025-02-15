@@ -11,6 +11,7 @@
 
 #import "base/location.h"
 #import "base/memory/scoped_refptr.h"
+#import "base/rand_util.h"
 #import "base/strings/sys_string_conversions.h"
 #import "base/test/metrics/histogram_tester.h"
 #import "base/test/scoped_feature_list.h"
@@ -28,10 +29,13 @@
 #import "components/signin/public/identity_manager/identity_test_environment.h"
 #import "components/sync/base/user_selectable_type.h"
 #import "components/sync/test/test_sync_service.h"
+#import "components/webauthn/core/browser/test_passkey_model.h"
+#import "google_apis/gaia/gaia_id.h"
 #import "ios/chrome/browser/credential_provider/model/credential_provider_util.h"
 #import "ios/chrome/browser/credential_provider/model/features.h"
 #import "ios/chrome/browser/favicon/model/favicon_loader.h"
-#import "ios/chrome/browser/shared/model/browser_state/test_chrome_browser_state.h"
+#import "ios/chrome/browser/shared/model/profile/test/test_profile_ios.h"
+#import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/common/app_group/app_group_constants.h"
 #import "ios/chrome/common/credential_provider/constants.h"
 #import "ios/chrome/common/credential_provider/credential.h"
@@ -54,6 +58,21 @@ std::vector<std::string> GetServiceNames(NSArray<id<Credential>>* credentials) {
     service_names.push_back(base::SysNSStringToUTF8(credential.serviceName));
   }
   return service_names;
+}
+
+sync_pb::WebauthnCredentialSpecifics CreatePasskey(
+    const std::string& rp_id,
+    const std::string& user_id,
+    const std::string& user_name,
+    const std::string& user_display_name) {
+  sync_pb::WebauthnCredentialSpecifics passkey;
+  passkey.set_sync_id(base::RandBytesAsString(16));
+  passkey.set_credential_id(base::RandBytesAsString(16));
+  passkey.set_rp_id(rp_id);
+  passkey.set_user_id(user_id);
+  passkey.set_user_name(user_name);
+  passkey.set_user_display_name(user_display_name);
+  return passkey;
 }
 
 // Needed since FaviconLoader has no fake currently.
@@ -139,6 +158,8 @@ class CredentialProviderServiceTest : public PlatformTest {
                                   /*affiliated_match_helper=*/nullptr);
     testing_pref_service_.registry()->RegisterBooleanPref(
         password_manager::prefs::kCredentialsEnableService, true);
+    testing_pref_service_.registry()->RegisterBooleanPref(
+        password_manager::prefs::kCredentialsEnablePasskeys, true);
   }
 
   void TearDown() override {
@@ -151,11 +172,17 @@ class CredentialProviderServiceTest : public PlatformTest {
   }
 
   void CreateCredentialProviderService(bool with_account_store = false) {
+    // Make sure to shut down the previous instance before creating a new one.
+    if (credential_provider_service_) {
+      credential_provider_service_->Shutdown();
+    }
+
     credential_provider_service_ = std::make_unique<CredentialProviderService>(
         &testing_pref_service_, password_store_,
         with_account_store ? account_password_store_ : nullptr,
-        credential_store_, identity_test_environment_.identity_manager(),
-        &sync_service_, &affiliation_service_, &favicon_loader_);
+        test_passkey_model_.get(), credential_store_,
+        identity_test_environment_.identity_manager(), &sync_service_,
+        &affiliation_service_, &favicon_loader_);
   }
 
  protected:
@@ -167,6 +194,8 @@ class CredentialProviderServiceTest : public PlatformTest {
   scoped_refptr<password_manager::TestPasswordStore> account_password_store_ =
       base::MakeRefCounted<password_manager::TestPasswordStore>(
           password_manager::IsAccountStore(true));
+  std::unique_ptr<webauthn::TestPasskeyModel> test_passkey_model_ =
+      std::make_unique<webauthn::TestPasskeyModel>();
   MemoryCredentialStore* credential_store_ =
       [[MemoryCredentialStore alloc] init];
   signin::IdentityTestEnvironment identity_test_environment_;
@@ -194,7 +223,7 @@ TEST_F(CredentialProviderServiceTest, FirstSync) {
 
   ASSERT_EQ(credential_store_.credentials.count, 1u);
   EXPECT_NSEQ(credential_store_.credentials[0].serviceName, @"g.com");
-  EXPECT_NSEQ(credential_store_.credentials[0].user, @"user");
+  EXPECT_NSEQ(credential_store_.credentials[0].username, @"user");
   EXPECT_NSEQ(credential_store_.credentials[0].password, @"qwerty123");
 }
 
@@ -279,6 +308,8 @@ TEST_F(CredentialProviderServiceTest, AccountChange) {
   CreateCredentialProviderService();
 
   EXPECT_FALSE([app_group::GetGroupUserDefaults()
+      stringForKey:AppGroupUserDefaultsCredentialProviderManagedUserID()]);
+  EXPECT_FALSE([app_group::GetGroupUserDefaults()
       stringForKey:AppGroupUserDefaultsCredentialProviderUserID()]);
 
   // Enable sync for managed account.
@@ -295,13 +326,22 @@ TEST_F(CredentialProviderServiceTest, AccountChange) {
                                                signin::ConsentLevel::kSync);
   base::RunLoop().RunUntilIdle();
 
+  EXPECT_NSEQ(
+      [app_group::GetGroupUserDefaults()
+          stringForKey:AppGroupUserDefaultsCredentialProviderManagedUserID()],
+      core_account.gaia.ToNSString());
   EXPECT_NSEQ([app_group::GetGroupUserDefaults()
                   stringForKey:AppGroupUserDefaultsCredentialProviderUserID()],
-              base::SysUTF8ToNSString(core_account.gaia));
+              core_account.gaia.ToNSString());
 
   identity_test_environment_.ClearPrimaryAccount();
   base::RunLoop().RunUntilIdle();
 
+  sync_service_.SetSignedOut();
+  sync_service_.FireStateChanged();
+
+  EXPECT_FALSE([app_group::GetGroupUserDefaults()
+      stringForKey:AppGroupUserDefaultsCredentialProviderManagedUserID()]);
   EXPECT_FALSE([app_group::GetGroupUserDefaults()
       stringForKey:AppGroupUserDefaultsCredentialProviderUserID()]);
 }
@@ -333,7 +373,7 @@ TEST_F(CredentialProviderServiceTest, PasswordCreationPreference) {
   // NSUserDefaults value is also true.
   EXPECT_TRUE([[app_group::GetGroupUserDefaults()
       objectForKey:
-          AppGroupUserDefaulsCredentialProviderSavingPasswordsEnabled()]
+          AppGroupUserDefaultsCredentialProviderSavingPasswordsEnabled()]
       boolValue]);
 
   // Change the pref value to false.
@@ -343,7 +383,7 @@ TEST_F(CredentialProviderServiceTest, PasswordCreationPreference) {
   // Make sure the NSUserDefaults value is now false.
   EXPECT_FALSE([[app_group::GetGroupUserDefaults()
       objectForKey:
-          AppGroupUserDefaulsCredentialProviderSavingPasswordsEnabled()]
+          AppGroupUserDefaultsCredentialProviderSavingPasswordsEnabled()]
       boolValue]);
 }
 
@@ -353,10 +393,9 @@ TEST_F(CredentialProviderServiceTest, PasswordSyncStoredEmail) {
   // Start by signing in and turning sync on.
   CoreAccountInfo account;
   account.email = "foo@gmail.com";
-  account.gaia = "gaia";
-  account.account_id = CoreAccountId::FromGaiaId("gaia");
-  sync_service_.SetAccountInfo(account);
-  sync_service_.SetHasSyncConsent(true);
+  account.gaia = GaiaId("gaia");
+  account.account_id = CoreAccountId::FromGaiaId(GaiaId("gaia"));
+  sync_service_.SetSignedIn(signin::ConsentLevel::kSync, account);
 
   CreateCredentialProviderService();
 
@@ -384,10 +423,9 @@ TEST_F(CredentialProviderServiceTest, SignedInUserStoredEmail) {
   // Set up a signed in user with the flag enabled.
   CoreAccountInfo account;
   account.email = "foo@gmail.com";
-  account.gaia = "gaia";
-  account.account_id = CoreAccountId::FromGaiaId("gaia");
-  sync_service_.SetAccountInfo(account);
-  sync_service_.SetHasSyncConsent(false);
+  account.gaia = GaiaId("gaia");
+  account.account_id = CoreAccountId::FromGaiaId(GaiaId("gaia"));
+  sync_service_.SetSignedIn(signin::ConsentLevel::kSignin, account);
 
   CreateCredentialProviderService();
 
@@ -407,6 +445,32 @@ TEST_F(CredentialProviderServiceTest, SignedInUserStoredEmail) {
 
   EXPECT_FALSE([app_group::GetGroupUserDefaults()
       stringForKey:AppGroupUserDefaultsCredentialProviderUserEmail()]);
+}
+
+// Tests that the CredentialProviderService correctly stores the enabled state
+// of the Passkeys M2 feature.
+TEST_F(CredentialProviderServiceTest, PasskeysM2Availability) {
+  {
+    // Enable the `kIOSPasskeysM2` feature.
+    base::test::ScopedFeatureList feature_list(kIOSPasskeysM2);
+
+    CreateCredentialProviderService();
+
+    EXPECT_TRUE([[app_group::GetGroupUserDefaults()
+        objectForKey:AppGroupUserDefaultsCredentialProviderPasskeysM2Enabled()]
+        boolValue]);
+  }
+  {
+    // Disable the `kIOSPasskeysM2` feature.
+    base::test::ScopedFeatureList feature_list;
+    feature_list.InitAndDisableFeature(kIOSPasskeysM2);
+
+    CreateCredentialProviderService();
+
+    EXPECT_FALSE([[app_group::GetGroupUserDefaults()
+        objectForKey:AppGroupUserDefaultsCredentialProviderPasskeysM2Enabled()]
+        boolValue]);
+  }
 }
 
 TEST_F(CredentialProviderServiceTest, AddCredentialsWithValidURL) {
@@ -507,6 +571,7 @@ TEST_F(CredentialProviderServiceTest, AddCredentialsRefactored) {
 
   ASSERT_EQ(credential_store_.credentials.count, 2u);
 }
+
 TEST_F(CredentialProviderServiceTest,
        OnLoginsChanged_WithPerformanceImprovements_SingleOperation) {
   base::test::ScopedFeatureList scoped_feature_list_;
@@ -533,7 +598,7 @@ TEST_F(CredentialProviderServiceTest,
   task_environment_.RunUntilIdle();
 
   ASSERT_EQ(credential_store_.credentials.count, 1u);
-  EXPECT_NSEQ(credential_store_.credentials[0].user, @"username");
+  EXPECT_NSEQ(credential_store_.credentials[0].username, @"username");
   EXPECT_NSEQ(credential_store_.credentials[0].password, @"12345");
   histogram_tester.ExpectTotalCount(kSyncStoreHistogramName, 1);
 
@@ -623,9 +688,9 @@ TEST_F(CredentialProviderServiceTest,
   task_environment_.RunUntilIdle();
 
   ASSERT_EQ(credential_store_.credentials.count, 2u);
-  EXPECT_NSEQ(credential_store_.credentials[0].user, @"homer");
+  EXPECT_NSEQ(credential_store_.credentials[0].username, @"homer");
   EXPECT_NSEQ(credential_store_.credentials[0].password, @"JSimpson");
-  EXPECT_NSEQ(credential_store_.credentials[1].user, @"marge");
+  EXPECT_NSEQ(credential_store_.credentials[1].username, @"marge");
   EXPECT_NSEQ(credential_store_.credentials[1].password, @"bouvier");
 
   // There should have been only one write to disk.
@@ -677,10 +742,125 @@ TEST_F(
   task_environment_.RunUntilIdle();
 
   ASSERT_EQ(credential_store_.credentials.count, 1u);
-  EXPECT_NSEQ(credential_store_.credentials[0].user, @"username");
+  EXPECT_NSEQ(credential_store_.credentials[0].username, @"username");
   EXPECT_NSEQ(credential_store_.credentials[0].password, @"12345");
 
   // There should have been only one write to disk.
   histogram_tester.ExpectTotalCount(kSyncStoreHistogramName, 0);
 }
+
+TEST_F(CredentialProviderServiceTest, AddPasskeys) {
+  CreateCredentialProviderService(/*with_account_store=*/true);
+
+  ASSERT_EQ(credential_store_.credentials.count, 0u);
+
+  // Add passkey with valid URL to store.
+  EXPECT_CALL(large_icon_service_,
+              GetLargeIconRawBitmapOrFallbackStyleForPageUrl(_, _, _, _, _))
+      .Times(1);
+  sync_pb::WebauthnCredentialSpecifics valid_passkey = CreatePasskey(
+      "g.com", {1, 2, 3, 4}, "passkey_username", "passkey_display_name");
+  test_passkey_model_->AddNewPasskeyForTesting(valid_passkey);
+  task_environment_.RunUntilIdle();
+
+  ASSERT_EQ(credential_store_.credentials.count, 1u);
+
+  // Add passkey with invalid URL to store.
+  // No favicon should be fetched for invalid URLs.
+  EXPECT_CALL(large_icon_service_,
+              GetLargeIconRawBitmapOrFallbackStyleForPageUrl(_, _, _, _, _))
+      .Times(0);
+  sync_pb::WebauthnCredentialSpecifics invalid_passkey = CreatePasskey(
+      "", {1, 2, 3, 4}, "passkey_username", "passkey_display_name");
+  test_passkey_model_->AddNewPasskeyForTesting(invalid_passkey);
+  task_environment_.RunUntilIdle();
+
+  ASSERT_EQ(credential_store_.credentials.count, 2u);
+
+  // Don't add hidden passkeys to the store.
+  // No favicon should be fetched for hidden passkeys.
+  EXPECT_CALL(large_icon_service_,
+              GetLargeIconRawBitmapOrFallbackStyleForPageUrl(_, _, _, _, _))
+      .Times(0);
+  sync_pb::WebauthnCredentialSpecifics hidden_passkey = CreatePasskey(
+      "g.com", {1, 2, 3, 4}, "passkey_username", "passkey_display_name");
+  hidden_passkey.set_hidden(true);
+  test_passkey_model_->AddNewPasskeyForTesting(hidden_passkey);
+  task_environment_.RunUntilIdle();
+
+  ASSERT_EQ(credential_store_.credentials.count, 2u);
+
+  // Add 2nd passkey with valid URL to store.
+  EXPECT_CALL(large_icon_service_,
+              GetLargeIconRawBitmapOrFallbackStyleForPageUrl(_, _, _, _, _))
+      .Times(1);
+  sync_pb::WebauthnCredentialSpecifics valid_passkey2 = CreatePasskey(
+      "g.com", {1, 2, 3, 4}, "passkey_username2", "passkey_display_name2");
+  test_passkey_model_->AddNewPasskeyForTesting(valid_passkey2);
+  task_environment_.RunUntilIdle();
+
+  ASSERT_EQ(credential_store_.credentials.count, 3u);
+}
+
+TEST_F(CredentialProviderServiceTest, DeletePasskey) {
+  CreateCredentialProviderService(/*with_account_store=*/true);
+
+  ASSERT_EQ(credential_store_.credentials.count, 0u);
+
+  // Add passkey with valid URL to store.
+  EXPECT_CALL(large_icon_service_,
+              GetLargeIconRawBitmapOrFallbackStyleForPageUrl(_, _, _, _, _))
+      .Times(1);
+  sync_pb::WebauthnCredentialSpecifics passkey = CreatePasskey(
+      "g.com", {1, 2, 3, 4}, "passkey_username", "passkey_display_name");
+  test_passkey_model_->AddNewPasskeyForTesting(passkey);
+  task_environment_.RunUntilIdle();
+
+  ASSERT_EQ(credential_store_.credentials.count, 1u);
+
+  test_passkey_model_->DeletePasskey(passkey.credential_id(), FROM_HERE);
+  task_environment_.RunUntilIdle();
+
+  ASSERT_EQ(credential_store_.credentials.count, 0u);
+}
+
+TEST_F(CredentialProviderServiceTest, UpdatePasskey) {
+  CreateCredentialProviderService(/*with_account_store=*/true);
+
+  ASSERT_EQ(credential_store_.credentials.count, 0u);
+
+  // Add passkey with valid URL to store.
+  sync_pb::WebauthnCredentialSpecifics passkey = CreatePasskey(
+      "g.com", {1, 2, 3, 4}, "passkey_username", "passkey_display_name");
+  const base::Time timestamp =
+      base::Time::FromDeltaSinceWindowsEpoch(base::Microseconds(10));
+  passkey.set_last_used_time_windows_epoch_micros(
+      timestamp.ToDeltaSinceWindowsEpoch().InMicroseconds() - 1);
+  test_passkey_model_->AddNewPasskeyForTesting(passkey);
+  task_environment_.RunUntilIdle();
+
+  ASSERT_EQ(credential_store_.credentials.count, 1u);
+
+  test_passkey_model_->UpdatePasskey(
+      passkey.credential_id(),
+      {
+          .user_name = "new_passkey_username",
+          .user_display_name = "new_passkey_display_name",
+      },
+      /*updated_by_user=*/true);
+
+  test_passkey_model_->UpdatePasskeyTimestamp(passkey.credential_id(),
+                                              timestamp);
+
+  task_environment_.RunUntilIdle();
+
+  ASSERT_EQ(credential_store_.credentials.count, 1u);
+  EXPECT_NSEQ(credential_store_.credentials[0].username,
+              @"new_passkey_username");
+  EXPECT_NSEQ(credential_store_.credentials[0].userDisplayName,
+              @"new_passkey_display_name");
+  ASSERT_EQ(credential_store_.credentials[0].lastUsedTime,
+            timestamp.ToDeltaSinceWindowsEpoch().InMicroseconds());
+}
+
 }  // namespace

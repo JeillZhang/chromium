@@ -27,10 +27,10 @@
 #include "chrome/browser/history/history_service_factory.h"
 #include "chrome/browser/net/system_network_context_manager.h"
 #include "chrome/test/base/testing_profile.h"
-#include "components/autofill/core/browser/address_data_manager.h"
-#include "components/autofill/core/browser/autofill_test_utils.h"
+#include "components/autofill/core/browser/data_manager/addresses/address_data_manager.h"
+#include "components/autofill/core/browser/data_manager/personal_data_manager.h"
 #include "components/autofill/core/browser/data_model/autofill_profile.h"
-#include "components/autofill/core/browser/personal_data_manager.h"
+#include "components/autofill/core/browser/test_utils/autofill_test_utils.h"
 #include "components/browsing_data/core/browsing_data_policies_utils.h"
 #include "components/browsing_data/core/pref_names.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
@@ -353,7 +353,7 @@ IN_PROC_BROWSER_TEST_P(ChromeBrowsingDataLifetimeManagerScheduledRemovalTest,
   std::unique_ptr<content::WebContents> contents = content::WebContents::Create(
       content::WebContents::CreateParams(GetProfile()));
   auto* second_tab = contents.release();
-  tab_model->CreateTab(current_tab, second_tab);
+  tab_model->CreateTab(current_tab, second_tab, /*select=*/true);
   ASSERT_TRUE(content::NavigateToURL(second_tab, url));
 #endif
   DCHECK_NE(first_tab, second_tab);
@@ -480,14 +480,14 @@ IN_PROC_BROWSER_TEST_P(ChromeBrowsingDataLifetimeManagerScheduledRemovalTest,
 
   autofill::AutofillProfile profile(
       "01234567-89ab-cdef-fedc-ba9876543210",
-      autofill::AutofillProfile::Source::kLocalOrSyncable,
+      autofill::AutofillProfile::RecordType::kLocalOrSyncable,
       AddressCountryCode("US"));
   autofill::test::SetProfileInfo(
       &profile, "Marion", "Mitchell", "Morrison", "johnwayne@me.xyz", "Fox",
       "123 Zoo St.", "unit 5", "Hollywood", "CA", "91601", "US", "12345678910");
   autofill::AddTestProfile(GetProfile(), profile);
   auto* personal_data_manager =
-      autofill::PersonalDataManagerFactory::GetForProfile(GetProfile());
+      autofill::PersonalDataManagerFactory::GetForBrowserContext(GetProfile());
   EXPECT_EQ(profile.Compare(
                 *personal_data_manager->address_data_manager().GetProfileByGUID(
                     profile.guid())),

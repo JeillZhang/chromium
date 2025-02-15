@@ -4,13 +4,14 @@
 
 import 'chrome://resources/ash/common/cr_elements/cr_action_menu/cr_action_menu.js';
 
-import {WallpaperGridItemElement} from 'chrome://resources/ash/common/personalization/wallpaper_grid_item_element.js';
+import type {WallpaperGridItemElement} from 'chrome://resources/ash/common/personalization/wallpaper_grid_item_element.js';
 import {getSeaPenTemplates} from 'chrome://resources/ash/common/sea_pen/constants.js';
-import {SeaPenPaths, SeaPenRouterElement} from 'chrome://resources/ash/common/sea_pen/sea_pen_router_element.js';
-import {SeaPenTemplateQueryElement} from 'chrome://resources/ash/common/sea_pen/sea_pen_template_query_element.js';
+import type {SeaPenRouterElement} from 'chrome://resources/ash/common/sea_pen/sea_pen_router_element.js';
+import {SeaPenPaths} from 'chrome://resources/ash/common/sea_pen/sea_pen_router_element.js';
+import type {SeaPenTemplateQueryElement} from 'chrome://resources/ash/common/sea_pen/sea_pen_template_query_element.js';
 import {setTransitionsEnabled} from 'chrome://resources/ash/common/sea_pen/transition.js';
-import {VcBackgroundApp} from 'chrome://vc-background/js/vc_background_app.js';
-import {VcBackgroundBreadcrumbElement} from 'chrome://vc-background/js/vc_background_breadcrumb_element.js';
+import type {VcBackgroundApp} from 'chrome://vc-background/js/vc_background_app.js';
+import type {VcBackgroundBreadcrumbElement} from 'chrome://vc-background/js/vc_background_breadcrumb_element.js';
 import {assertArrayEquals, assertEquals, assertFalse, assertTrue} from 'chrome://webui-test/chai_assert.js';
 import {waitAfterNextRender} from 'chrome://webui-test/polymer_test_util.js';
 
@@ -36,7 +37,7 @@ suite('VcBackgroundUITest', () => {
 
   function getVcBackgroundBreadcrumbsText(): string[] {
     const breadcrumbElements =
-        getVcBackgroundBreadcrumbs().shadowRoot!.querySelectorAll('cr-button')!;
+        getVcBackgroundBreadcrumbs().shadowRoot!.querySelectorAll('cr-button');
     return Array.from(breadcrumbElements).map(el => el.textContent!);
   }
 
@@ -60,7 +61,7 @@ suite('VcBackgroundUITest', () => {
         'wallpaper-grid-item:not([hidden])'));
   }
 
-  test('initial breadcrumbs', async () => {
+  test('initial breadcrumbs', () => {
     assertArrayEquals(
         getVcBackgroundBreadcrumbsText(),
         [getVcBackgroundBreadcrumbs().i18n('vcBackgroundLabel')]);
@@ -121,43 +122,45 @@ suite('VcBackgroundUITest', () => {
     ]);
   });
 
-  test('verifies breadcrumbs when create button clicked', async () => {
-    const seaPenRouter = getSeaPenRouter();
-    seaPenRouter.goToRoute(SeaPenPaths.ROOT);
-    await waitAfterNextRender(seaPenRouter);
+  test(
+      'verifies breadcrumbs when create button clicked in a template page',
+      async () => {
+        const seaPenRouter = getSeaPenRouter();
+        seaPenRouter.goToRoute(SeaPenPaths.TEMPLATES);
+        await waitAfterNextRender(seaPenRouter);
 
-    const seaPenTemplateElements = getSeaPenTemplateElements();
-    await waitAfterNextRender(seaPenRouter);
+        const seaPenTemplateElements = getSeaPenTemplateElements();
+        await waitAfterNextRender(seaPenRouter);
 
-    // Click the 'Classic art' template.
-    seaPenTemplateElements
-        .find(template => {
-          const p = template.shadowRoot?.querySelector('p.primary-text');
-          return p?.textContent?.trim() === 'Classic art';
-        })!.click();
-    await waitAfterNextRender(seaPenRouter);
+        // Click the 'Classic art' template.
+        seaPenTemplateElements
+            .find(template => {
+              const p = template.shadowRoot?.querySelector('p.primary-text');
+              return p?.textContent?.trim() === 'Classic art';
+            })!.click();
+        await waitAfterNextRender(seaPenRouter);
 
-    const seaPenTemplateQuery = getSeaPenTemplateQuery();
-    assertTrue(!!seaPenTemplateQuery, 'sea-pen-template-query exists');
+        const seaPenTemplateQuery = getSeaPenTemplateQuery();
+        assertTrue(!!seaPenTemplateQuery, 'sea-pen-template-query exists');
 
-    // Click on the 'Create' button.
-    const createButton = seaPenTemplateQuery.shadowRoot?.querySelector(
-                             'cr-button#searchButton')! as HTMLElement;
-    createButton.click();
+        // Click on the 'Create' button.
+        const createButton = seaPenTemplateQuery.shadowRoot?.querySelector(
+                                 'cr-button#searchButton')! as HTMLElement;
+        createButton.click();
 
-    await waitAfterNextRender(seaPenTemplateQuery);
+        await waitAfterNextRender(seaPenTemplateQuery);
 
-    assertEquals(
-        'chrome://vc-background/results?seaPenTemplateId=104',
-        window.location.href,
-        'App is on /results and Classic art template id is added to url');
+        assertEquals(
+            'chrome://vc-background/results?seaPenTemplateId=104',
+            window.location.href,
+            'App is on /results and Classic art template id is added to url');
 
-    // Breadcrumbs should show 'Classic art'.
-    assertArrayEquals(getVcBackgroundBreadcrumbsText(), [
-      getVcBackgroundBreadcrumbs().i18n('vcBackgroundLabel'),
-      'Classic art',
-    ]);
-  });
+        // Breadcrumbs should show 'Classic art'.
+        assertArrayEquals(getVcBackgroundBreadcrumbsText(), [
+          getVcBackgroundBreadcrumbs().i18n('vcBackgroundLabel'),
+          'Classic art',
+        ]);
+      });
 
   test('allows changing templates via breadcrumbs dropdown menu', async () => {
     // Navigate directly to a results page with template in breadcrumbs.
@@ -188,8 +191,10 @@ suite('VcBackgroundUITest', () => {
         `selected template in the dropdown should be ${classicArtTitle}`);
 
     // Activate the dropdown menu.
-    const lastBreadcrumb = breadcrumbElement.shadowRoot!.querySelector(
-                               'cr-button#breadcrumb1') as HTMLElement;
+    const lastBreadcrumb =
+        breadcrumbElement.shadowRoot!.querySelector<HTMLElement>(
+            'cr-button#breadcrumb1');
+    assertTrue(!!lastBreadcrumb);
     lastBreadcrumb.click();
 
     await waitAfterNextRender(breadcrumbElement);

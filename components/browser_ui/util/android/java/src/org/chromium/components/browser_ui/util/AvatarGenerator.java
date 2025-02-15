@@ -16,12 +16,15 @@ import android.graphics.Rect;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
 
-import androidx.annotation.Nullable;
 import androidx.annotation.Px;
+
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 
 import java.util.List;
 
 /** Utilities for manipulating account avatars. */
+@NullMarked
 public class AvatarGenerator {
     // The margin around every avatar image when multiple are combined together.
     private static final int AVATAR_MARGIN_DIP = 1;
@@ -77,7 +80,7 @@ public class AvatarGenerator {
 
         // Each image has a margin of 1 dp around it.
         float margin = AVATAR_MARGIN_DIP * resources.getDisplayMetrics().density;
-        float halfSize = imageSize / 2;
+        float halfSize = imageSize / 2f;
 
         if (avatarCount == 2) {
             // +------+ +------+

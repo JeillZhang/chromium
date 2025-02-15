@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "remoting/host/curtain_mode.h"
 
 #include <ApplicationServices/ApplicationServices.h>
@@ -17,8 +22,8 @@
 #include "base/mac/login_util.h"
 #include "base/memory/ptr_util.h"
 #include "base/task/single_thread_task_runner.h"
+#include "remoting/base/errors.h"
 #include "remoting/host/client_session_control.h"
-#include "remoting/protocol/errors.h"
 
 namespace remoting {
 
@@ -88,7 +93,7 @@ class SessionWatcher : public base::RefCountedThreadSafe<SessionWatcher> {
   void RemoveEventHandler();
 
   // Disconnects the client session.
-  void DisconnectSession(protocol::ErrorCode error);
+  void DisconnectSession(ErrorCode error);
 
   // Handlers for the switch-in event.
   static OSStatus SessionActivateHandler(EventHandlerCallRef handler,
@@ -140,11 +145,27 @@ SessionWatcher::~SessionWatcher() {
 }
 
 void SessionWatcher::ActivateCurtain() {
+  if (getuid() == 0) {
+    // When curtain mode is in effect on Mac, the host process runs in the
+    // user's switched-out session, but launchd will also run an instance at
+    // the console login screen.  Even if no user is currently logged-on, we
+    // can't support remote-access to the login screen because the current host
+    // process model disconnects the client during login, which would leave
+    // the logged in session un-curtained on the console until they reconnect.
+    //
+    // In case of fast user switch, there will be two host processes running,
+    // one as the logged on user and another one as root. AgentProcessBroker
+    // will terminate the root host process in that case.
+    LOG(ERROR)
+        << "Connecting to the console login session is not yet supported.";
+    DisconnectSession(ErrorCode::LOGIN_SCREEN_NOT_SUPPORTED);
+    return;
+  }
   // Try to install the switch-in handler. Do this before switching out the
   // current session so that the console session is not affected if it fails.
   if (!InstallEventHandler()) {
     LOG(ERROR) << "Failed to install the switch-in handler.";
-    DisconnectSession(protocol::ErrorCode::HOST_CONFIGURATION_ERROR);
+    DisconnectSession(ErrorCode::HOST_CONFIGURATION_ERROR);
     return;
   }
 
@@ -179,12 +200,12 @@ void SessionWatcher::ActivateCurtain() {
       // Disconnect the session since we are unable to enter curtain mode.
       LOG(ERROR) << "SACSwitchToLoginWindow unavailable - unable to enter "
                     "curtain mode.";
-      DisconnectSession(protocol::ErrorCode::HOST_CONFIGURATION_ERROR);
+      DisconnectSession(ErrorCode::HOST_CONFIGURATION_ERROR);
       return;
     }
     if (err.value() != noErr) {
       OSSTATUS_LOG(ERROR, err.value()) << "Failed to switch to login window";
-      DisconnectSession(protocol::ErrorCode::HOST_CONFIGURATION_ERROR);
+      DisconnectSession(ErrorCode::HOST_CONFIGURATION_ERROR);
       return;
     }
     if (is_headless) {
@@ -195,7 +216,7 @@ void SessionWatcher::ActivateCurtain() {
       LOG(ERROR) << "Machine is running in headless mode (no monitors "
                  << "attached), we attempted to curtain the session but "
                  << "SACSwitchToLoginWindow is likely to fail in this mode.";
-      DisconnectSession(protocol::ErrorCode::HOST_CONFIGURATION_ERROR);
+      DisconnectSession(ErrorCode::HOST_CONFIGURATION_ERROR);
       return;
     }
   }
@@ -213,7 +234,7 @@ bool SessionWatcher::InstallEventHandler() {
       &event_handler_);
   if (result != noErr) {
     event_handler_ = nullptr;
-    DisconnectSession(protocol::ErrorCode::HOST_CONFIGURATION_ERROR);
+    DisconnectSession(ErrorCode::HOST_CONFIGURATION_ERROR);
     return false;
   }
 
@@ -229,7 +250,7 @@ void SessionWatcher::RemoveEventHandler() {
   }
 }
 
-void SessionWatcher::DisconnectSession(protocol::ErrorCode error) {
+void SessionWatcher::DisconnectSession(ErrorCode error) {
   if (!caller_task_runner_->BelongsToCurrentThread()) {
     caller_task_runner_->PostTask(
         FROM_HERE,
@@ -245,8 +266,7 @@ void SessionWatcher::DisconnectSession(protocol::ErrorCode error) {
 OSStatus SessionWatcher::SessionActivateHandler(EventHandlerCallRef handler,
                                                 EventRef event,
                                                 void* user_data) {
-  static_cast<SessionWatcher*>(user_data)->DisconnectSession(
-      protocol::ErrorCode::OK);
+  static_cast<SessionWatcher*>(user_data)->DisconnectSession(ErrorCode::OK);
   return noErr;
 }
 

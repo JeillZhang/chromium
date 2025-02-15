@@ -25,6 +25,7 @@ import android.view.View;
 import androidx.recyclerview.widget.RecyclerView.LayoutManager;
 import androidx.test.filters.MediumTest;
 
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Rule;
@@ -36,10 +37,10 @@ import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
 
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.CriteriaHelper;
-import org.chromium.base.test.util.JniMocker;
 import org.chromium.chrome.browser.ChromeTabbedActivity;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.omnibox.LocationBarLayout;
@@ -60,7 +61,6 @@ import org.chromium.components.omnibox.AutocompleteResult;
 import org.chromium.components.omnibox.GroupsProto.GroupsInfo;
 import org.chromium.components.omnibox.OmniboxSuggestionType;
 import org.chromium.components.omnibox.suggestions.OmniboxSuggestionUiType;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.net.test.EmbeddedTestServer;
 import org.chromium.ui.modaldialog.ModalDialogManager;
 import org.chromium.ui.modaldialog.ModalDialogProperties;
@@ -88,7 +88,6 @@ public class MostVisitedTilesTest {
             new ChromeTabbedActivityTestRule();
 
     public @Rule MockitoRule mMockitoRule = MockitoJUnit.rule();
-    public @Rule JniMocker mJniMocker = new JniMocker();
     private @Mock AutocompleteController.Natives mAutocompleteControllerJniMock;
     private @Mock AutocompleteController mController;
     private @Captor ArgumentCaptor<AutocompleteController.OnSuggestionsReceivedListener> mListener;
@@ -109,7 +108,7 @@ public class MostVisitedTilesTest {
 
     @Before
     public void setUp() throws Exception {
-        mJniMocker.mock(AutocompleteControllerJni.TEST_HOOKS, mAutocompleteControllerJniMock);
+        AutocompleteControllerJni.setInstanceForTesting(mAutocompleteControllerJniMock);
         doReturn(mController).when(mAutocompleteControllerJniMock).getForProfile(any());
 
         mActivityTestRule.startMainActivityOnBlankPage();
@@ -130,6 +129,11 @@ public class MostVisitedTilesTest {
         setUpSuggestionsToShow();
 
         mCarousel = mOmnibox.findSuggestionWithType(OmniboxSuggestionUiType.TILE_NAVSUGGEST);
+    }
+
+    @After
+    public void tearDown() {
+        AutocompleteControllerJni.setInstanceForTesting(null);
     }
 
     /**
@@ -193,27 +197,15 @@ public class MostVisitedTilesTest {
         doReturn(true).when(autocompleteResult).verifyCoherency(anyInt(), anyInt());
 
         mOmnibox.requestFocus();
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mListener.getValue().onSuggestionsReceived(autocompleteResult, true);
                 });
         mOmnibox.checkSuggestionsShown();
     }
 
-    private void clickTileAtPosition(int position) {
-        TestThreadUtils.runOnUiThreadBlocking(
-                () -> {
-                    LayoutManager manager = mCarousel.view.getLayoutManager();
-                    Assert.assertTrue(position < manager.getItemCount());
-                    manager.scrollToPosition(position);
-                    View view = manager.findViewByPosition(position);
-                    Assert.assertNotNull(view);
-                    view.performClick();
-                });
-    }
-
     private void longClickTileAtPosition(int position) {
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     LayoutManager manager = mCarousel.view.getLayoutManager();
                     Assert.assertTrue(position < manager.getItemCount());
@@ -233,15 +225,15 @@ public class MostVisitedTilesTest {
         mOmnibox.sendKey(KeyEvent.KEYCODE_DPAD_DOWN);
         mOmnibox.checkText(equalTo(mMatch1.getUrl().getSpec()), null);
 
-        mOmnibox.sendKey(KeyEvent.KEYCODE_DPAD_RIGHT);
+        mOmnibox.sendKey(KeyEvent.KEYCODE_TAB);
         mOmnibox.checkText(equalTo(mMatch2.getUrl().getSpec()), null);
 
-        mOmnibox.sendKey(KeyEvent.KEYCODE_DPAD_RIGHT);
+        mOmnibox.sendKey(KeyEvent.KEYCODE_TAB);
         mOmnibox.checkText(equalTo(mMatch3.getUrl().getSpec()), null);
 
-        // Note: the carousel does not wrap around.
-        mOmnibox.sendKey(KeyEvent.KEYCODE_DPAD_RIGHT);
-        mOmnibox.checkText(equalTo(mMatch3.getUrl().getSpec()), null);
+        // Note: the carousel does not wrap around, and Tab takes user to the next suggestion.
+        mOmnibox.sendKey(KeyEvent.KEYCODE_TAB);
+        mOmnibox.checkText(equalTo(SEARCH_QUERY), null);
     }
 
     @Test
@@ -253,60 +245,16 @@ public class MostVisitedTilesTest {
         mOmnibox.sendKey(KeyEvent.KEYCODE_DPAD_DOWN);
         mOmnibox.checkText(equalTo(mMatch1.getUrl().getSpec()), null);
 
-        mOmnibox.sendKey(KeyEvent.KEYCODE_DPAD_RIGHT);
+        mOmnibox.sendKey(KeyEvent.KEYCODE_TAB);
         mOmnibox.checkText(equalTo(mMatch2.getUrl().getSpec()), null);
 
-        mOmnibox.sendKey(KeyEvent.KEYCODE_DPAD_LEFT);
+        mOmnibox.sendKey(KeyEvent.KEYCODE_TAB, KeyEvent.META_SHIFT_ON);
         mOmnibox.checkText(equalTo(mMatch1.getUrl().getSpec()), null);
 
-        // Note: the carousel does not wrap around.
-        mOmnibox.sendKey(KeyEvent.KEYCODE_DPAD_LEFT);
-        mOmnibox.checkText(equalTo(mMatch1.getUrl().getSpec()), null);
-    }
-
-    @Test
-    @MediumTest
-    public void keyboardNavigation_highlightAlwaysStartsWithFirstElement()
-            throws InterruptedException {
-        // Skip past the 'what-you-typed' suggestion.
-        mOmnibox.sendKey(KeyEvent.KEYCODE_DPAD_DOWN);
-        mOmnibox.sendKey(KeyEvent.KEYCODE_DPAD_DOWN);
-        mOmnibox.checkText(equalTo(mMatch1.getUrl().getSpec()), null);
-
-        mOmnibox.sendKey(KeyEvent.KEYCODE_DPAD_RIGHT);
-        mOmnibox.checkText(equalTo(mMatch2.getUrl().getSpec()), null);
-
-        mOmnibox.sendKey(KeyEvent.KEYCODE_DPAD_RIGHT);
-        mOmnibox.checkText(equalTo(mMatch3.getUrl().getSpec()), null);
-
-        // Move to the search suggestion skipping the header.
-        mOmnibox.sendKey(KeyEvent.KEYCODE_DPAD_DOWN);
-        mOmnibox.checkText(equalTo(SEARCH_QUERY), null);
-
-        // Move back to the MV Tiles. Observe that the first element is again highlighted.
-        mOmnibox.sendKey(KeyEvent.KEYCODE_DPAD_UP);
-        mOmnibox.checkText(equalTo(mMatch1.getUrl().getSpec()), null);
-    }
-
-    @Test
-    @MediumTest
-    public void touchNavigation_clickOnFirstMVTile() throws Exception {
-        clickTileAtPosition(0);
-        ChromeTabUtils.waitForTabPageLoaded(mTab, mMatch1.getUrl().getSpec());
-    }
-
-    @Test
-    @MediumTest
-    public void touchNavigation_clickOnMiddleMVTile() throws Exception {
-        clickTileAtPosition(1);
-        ChromeTabUtils.waitForTabPageLoaded(mTab, mMatch2.getUrl().getSpec());
-    }
-
-    @Test
-    @MediumTest
-    public void touchNavigation_clickOnLastMVTile() throws Exception {
-        clickTileAtPosition(2);
-        ChromeTabUtils.waitForTabPageLoaded(mTab, mMatch3.getUrl().getSpec());
+        // Note: the carousel does not wrap around, and Shift-Tab takes user to the previous
+        // suggestion.
+        mOmnibox.sendKey(KeyEvent.KEYCODE_TAB, KeyEvent.META_SHIFT_ON);
+        mOmnibox.checkText(equalTo(START_PAGE_LOCATION), null);
     }
 
     @Test

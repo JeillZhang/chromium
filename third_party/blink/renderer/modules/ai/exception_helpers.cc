@@ -5,9 +5,13 @@
 #include "third_party/blink/renderer/modules/ai/exception_helpers.h"
 
 #include "base/debug/dump_without_crashing.h"
-#include "third_party/blink/public/mojom/ai/ai_text_session.mojom-shared.h"
+#include "base/notreached.h"
+#include "third_party/blink/public/mojom/ai/ai_manager.mojom-blink-forward.h"
+#include "third_party/blink/public/mojom/ai/ai_manager.mojom-shared.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
 #include "third_party/blink/renderer/platform/bindings/exception_code.h"
+#include "third_party/blink/renderer/platform/bindings/exception_state.h"
+#include "third_party/blink/renderer/platform/bindings/script_state.h"
 
 namespace blink {
 
@@ -19,30 +23,83 @@ const char kExceptionMessageServiceUnavailable[] =
 const char kExceptionMessagePermissionDenied[] =
     "A user permission error occurred, such as not signed-in or not "
     "allowed to execute model.";
-const char kExceptionMessageRetryableError[] =
-    "A retryable error occurred in the server.";
+const char kExceptionMessageGenericError[] = "Other generic failures occurred.";
 const char kExceptionMessageFiltered[] =
-    "The execution yielded a bad response.";
+    "The execution yielded an unsafe response.";
+const char kExceptionMessageOutputLanguageFiltered[] =
+    "The model attempted to output text in an untested language, and was "
+    "prevented from doing so.";
+const char kExceptionMessageResponseLowQuality[] =
+    "The model attempted to output text with low quality, and was prevented "
+    "from doing so.";
 const char kExceptionMessageDisabled[] = "The response was disabled.";
-const char kExceptionMessageCancelled[] = "The request was canceled.";
+const char kExceptionMessageCancelled[] = "The request was cancelled.";
 const char kExceptionMessageSessionDestroyed[] =
     "The model execution session has been destroyed.";
+const char kExceptionMessageRequestAborted[] = "The request has been aborted.";
+const char kExceptionRequestTooLarge[] = "The prompt request is too large.";
 
 const char kExceptionMessageInvalidTemperatureAndTopKFormat[] =
     "Initializing a new session must either specify both topK and temperature, "
     "or neither of them.";
 const char kExceptionMessageUnableToCreateSession[] =
     "The session cannot be created.";
+const char kExceptionMessageInitialPromptTooLarge[] =
+    "The initial prompts / system prompts are too large to fit in the "
+    "context.";
+const char kExceptionMessageUnableToCloneSession[] =
+    "The session cannot be cloned.";
+const char kExceptionMessageSystemPromptIsDefinedMultipleTimes[] =
+    "The system prompt should not be defined in both systemPrompt and "
+    "initialPrompts.";
+const char kExceptionMessageSystemPromptIsNotTheFirst[] =
+    "The prompt with 'system' role must be placed at the first entry of "
+    "initialPrompts.";
+const char kExceptionMessageUnsupportedLanguages[] =
+    "The specified languages are not supported.";
 
 void ThrowInvalidContextException(ExceptionState& exception_state) {
   exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
                                     kExceptionMessageExecutionContextInvalid);
 }
 
+void ThrowSessionDestroyedException(ExceptionState& exception_state) {
+  exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
+                                    kExceptionMessageSessionDestroyed);
+}
+
+void ThrowAbortedException(ExceptionState& exception_state) {
+  exception_state.ThrowDOMException(DOMExceptionCode::kAbortError,
+                                    kExceptionMessageRequestAborted);
+}
+
 void RejectPromiseWithInternalError(ScriptPromiseResolverBase* resolver) {
-  resolver->Reject(DOMException::Create(
+  if (resolver) {
+    resolver->Reject(CreateInternalErrorException());
+  }
+}
+
+DOMException* CreateInternalErrorException() {
+  return DOMException::Create(
       kExceptionMessageServiceUnavailable,
-      DOMException::GetErrorName(DOMExceptionCode::kOperationError)));
+      DOMException::GetErrorName(DOMExceptionCode::kOperationError));
+}
+
+bool HandleAbortSignal(AbortSignal* signal,
+                       ScriptState* script_state,
+                       ExceptionState& exception_state) {
+  if (signal && signal->aborted()) {
+    auto reason = signal->reason(script_state);
+    if (reason.IsEmpty()) {
+      ThrowAbortedException(exception_state);
+    } else {
+      V8ThrowException::ThrowException(script_state->GetIsolate(),
+                                       reason.V8Value());
+    }
+    return true;
+  }
+
+  return false;
 }
 
 namespace {
@@ -75,8 +132,8 @@ DOMException* ConvertModelStreamingResponseErrorToDOMException(
           DOMException::GetErrorName(DOMExceptionCode::kNotAllowedError));
     case ModelStreamingResponseStatus::kErrorGenericFailure:
       return DOMException::Create(
-          kExceptionMessageRetryableError,
-          DOMException::GetErrorName(DOMExceptionCode::kNotReadableError));
+          kExceptionMessageGenericError,
+          DOMException::GetErrorName(DOMExceptionCode::kUnknownError));
     case ModelStreamingResponseStatus::kErrorRetryableError:
       base::debug::DumpWithoutCrashing();
       return CreateUnknown("kErrorRetryableError");
@@ -84,8 +141,9 @@ DOMException* ConvertModelStreamingResponseErrorToDOMException(
       base::debug::DumpWithoutCrashing();
       return CreateUnknown("kErrorNonRetryableError");
     case ModelStreamingResponseStatus::kErrorUnsupportedLanguage:
-      base::debug::DumpWithoutCrashing();
-      return CreateUnknown("kErrorUnsupportedLanguage");
+      return DOMException::Create(
+          kExceptionMessageOutputLanguageFiltered,
+          DOMException::GetErrorName(DOMExceptionCode::kNotSupportedError));
     case ModelStreamingResponseStatus::kErrorFiltered:
       return DOMException::Create(
           kExceptionMessageFiltered,
@@ -93,7 +151,7 @@ DOMException* ConvertModelStreamingResponseErrorToDOMException(
     case ModelStreamingResponseStatus::kErrorDisabled:
       return DOMException::Create(
           kExceptionMessageDisabled,
-          DOMException::GetErrorName(DOMExceptionCode::kNotReadableError));
+          DOMException::GetErrorName(DOMExceptionCode::kAbortError));
     case ModelStreamingResponseStatus::kErrorCancelled:
       return DOMException::Create(
           kExceptionMessageCancelled,
@@ -102,11 +160,81 @@ DOMException* ConvertModelStreamingResponseErrorToDOMException(
       return DOMException::Create(
           kExceptionMessageSessionDestroyed,
           DOMException::GetErrorName(DOMExceptionCode::kInvalidStateError));
+    case ModelStreamingResponseStatus::kErrorPromptRequestTooLarge:
+      return DOMException::Create(
+          kExceptionRequestTooLarge,
+          DOMException::GetErrorName(DOMExceptionCode::kQuotaExceededError));
+    case ModelStreamingResponseStatus::kErrorResponseLowQuality:
+      return DOMException::Create(
+          kExceptionMessageResponseLowQuality,
+          DOMException::GetErrorName(DOMExceptionCode::kNotSupportedError));
     case ModelStreamingResponseStatus::kOngoing:
     case ModelStreamingResponseStatus::kComplete:
-      NOTREACHED_IN_MIGRATION();
-      return nullptr;
+      NOTREACHED();
   }
+  NOTREACHED();
 }
+
+// LINT.IfChange(ConvertModelAvailabilityCheckResultToDebugString)
+WTF::String ConvertModelAvailabilityCheckResultToDebugString(
+    mojom::blink::ModelAvailabilityCheckResult result) {
+  switch (result) {
+    case mojom::blink::ModelAvailabilityCheckResult::
+        kUnavailableServiceNotRunning:
+      return "Unable to create a text session because the service is not "
+             "running.";
+    case mojom::blink::ModelAvailabilityCheckResult::
+        kUnavailableUnsupportedLanguage:
+      return "The requested language options are not supported.";
+    case mojom::blink::ModelAvailabilityCheckResult::kUnavailableUnknown:
+      return "The service is unable to create new session.";
+    case mojom::blink::ModelAvailabilityCheckResult::
+        kUnavailableFeatureNotEnabled:
+      return "The feature flag gating model execution was disabled.";
+    case mojom::blink::ModelAvailabilityCheckResult::
+        kUnavailableConfigNotAvailableForFeature:
+      return "The model was available but there was not an execution config "
+             "available for the feature.";
+    case mojom::blink::ModelAvailabilityCheckResult::kUnavailableGpuBlocked:
+      return "The GPU is blocked.";
+    case mojom::blink::ModelAvailabilityCheckResult::
+        kUnavailableTooManyRecentCrashes:
+      return "The model process crashed too many times for this version.";
+    case mojom::blink::ModelAvailabilityCheckResult::
+        kUnavailableSafetyModelNotAvailable:
+      return "The safety model was required but not available.";
+    case mojom::blink::ModelAvailabilityCheckResult::
+        kUnavailableSafetyConfigNotAvailableForFeature:
+      return "The safety model was available but there was not a safety config "
+             "available for the feature.";
+    case mojom::blink::ModelAvailabilityCheckResult::
+        kUnavailableLanguageDetectionModelNotAvailable:
+      return "The language detection model was required but not available.";
+    case mojom::blink::ModelAvailabilityCheckResult::
+        kUnavailableFeatureExecutionNotEnabled:
+      return "Model execution for this feature was not enabled.";
+    case mojom::blink::ModelAvailabilityCheckResult::
+        kUnavailableValidationPending:
+      return "Model validation is still pending.";
+    case mojom::blink::ModelAvailabilityCheckResult::
+        kUnavailableValidationFailed:
+      return "Model validation failed.";
+    case mojom::blink::ModelAvailabilityCheckResult::
+        kUnavailableModelNotEligible:
+      return "The device is not eligible for running on-device model.";
+    case mojom::blink::ModelAvailabilityCheckResult::
+        kUnavailableInsufficientDiskSpace:
+      return "The device does not have enough space for downloading the "
+             "on-device model";
+    case mojom::blink::ModelAvailabilityCheckResult::kAvailable:
+    case mojom::blink::ModelAvailabilityCheckResult::kDownloadable:
+    case mojom::blink::ModelAvailabilityCheckResult::kDownloading:
+    case mojom::blink::ModelAvailabilityCheckResult::
+        kUnavailableModelAdaptationNotAvailable:
+      NOTREACHED();
+  }
+  NOTREACHED();
+}
+// LINT.ThenChange(//third_party/blink/public/mojom/ai_manager.mojom:ModelAvailabilityCheckResult)
 
 }  // namespace blink

@@ -8,7 +8,7 @@
 #include <utility>
 
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/blink/public/common/browser_interface_broker_proxy.h"
+#include "third_party/blink/public/platform/browser_interface_broker_proxy.h"
 #include "third_party/blink/renderer/bindings/core/v8/idl_types.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/core/frame/frame_test_helpers.h"
@@ -76,7 +76,6 @@ TEST_F(InstalledAppControllerTest, DestroyContextBeforeCallback) {
   auto* controller = InstalledAppController::From(*GetFrame().DomWindow());
   auto* resolver = MakeGarbageCollected<
       ScriptPromiseResolver<IDLSequence<RelatedApplication>>>(GetScriptState());
-  auto promise = resolver->Promise();
   controller->GetInstalledRelatedApps(
       std::make_unique<
           CallbackPromiseAdapter<IDLSequence<RelatedApplication>, void>>(

@@ -41,6 +41,14 @@ class FaceGazeTestSupport {
     return this.getFaceGaze_().gestureHandler_;
   }
 
+  /**
+   * @return {!WebCamFaceLandmarker}
+   * @private
+   */
+  getWebCamFaceLandmarker_() {
+    return this.getFaceGaze_().webCamFaceLandmarker_;
+  }
+
   /** Cancels the MouseController interval to increase stability in tests. */
   cancelMouseControllerInterval() {
     clearInterval(this.getMouseController_().mouseInterval_);
@@ -49,34 +57,48 @@ class FaceGazeTestSupport {
   }
 
   /**
-   * Sets the repeat delay on GestureHandler. This can be used to allow tests to
+   * Sets the repeat delay on GestureTimer. This can be used to allow tests to
    * trigger the same macro multiple times in a row without waiting.
    * @param {number} delay
    */
   setGestureRepeatDelayMs(delay) {
-    this.getGestureHandler_().repeatDelayMs_ = delay;
+    this.getGestureHandler_().gestureTimer_.repeatDelayMs_ = delay;
     this.notifyCcTests_();
   }
 
   /**
-   * Gets the WebCamFaceLandmarker object off of the camera stream window.
-   * @return {!webCamFaceLandmarker}
-   * @private
+   * Set to false to allow the GestureTimer to recognize a gesture without
+   * requiring a valid duration.
+   * @param {boolean} useDuration
    */
-  async waitForWebCamFaceLandmarker_() {
-    await this.getFaceGaze_().cameraStreamReadyPromise_;
-    const window = chrome.extension.getViews().find(
-        view => view.location.href.includes('camera_stream.html'));
-    return window.webCamFaceLandmarker;
+  setGestureDuration(useDuration) {
+    this.getGestureHandler_().gestureTimer_.setGestureDurationForTesting(
+        useDuration);
+    this.notifyCcTests_();
   }
 
-  /** Instantiates the FaceLandmarker. */
-  async createFaceLandmarker() {
-    const webCamFaceLandmarker = await this.waitForWebCamFaceLandmarker_();
-    await webCamFaceLandmarker.createFaceLandmarker_();
-    if (webCamFaceLandmarker.faceLandmarker_) {
-      this.notifyCcTests_();
-    }
+  /** @param {boolean} useWeights */
+  setLandmarkWeights(useWeights) {
+    this.getMouseController_().setLandmarkWeightsForTesting(useWeights);
+    this.notifyCcTests_();
+  }
+
+  /** @param {boolean} useThreshold */
+  setVelocityThreshold(useThreshold) {
+    this.getMouseController_().setVelocityThresholdForTesting(useThreshold);
+    this.notifyCcTests_();
+  }
+
+  /** @param {number} size */
+  setBufferSize(size) {
+    this.getMouseController_().setBufferSizeForTesting(size);
+    this.notifyCcTests_();
+  }
+
+  /** Waits for a valid instance of the FaceLandmarker. */
+  async waitForFaceLandmarker() {
+    await this.getWebCamFaceLandmarker_().readyForTesting_;
+    this.notifyCcTests_();
   }
 
   /**
@@ -126,15 +148,17 @@ class FaceGazeTestSupport {
    * camera data.
    * @param {!{x: number, y: number, z: number}} foreheadLocation
    * @param {!Array<{categoryName: string, score: number}>} recognizedGestures
+   * @param {number|undefined} latency
    */
-  async processFaceLandmarkerResult(foreheadLocation, recognizedGestures) {
+  async processFaceLandmarkerResult(
+      foreheadLocation, recognizedGestures, latency) {
     const result = {
       faceBlendshapes: [{categories: []}],
       faceLandmarks: [[null, null, null, null, null, null, null, null, null]],
     };
     result.faceBlendshapes[0].categories = recognizedGestures;
     result.faceLandmarks[0][8] = foreheadLocation;
-    this.getFaceGaze_().processFaceLandmarkerResult_(result);
+    this.getFaceGaze_().processFaceLandmarkerResult_(result, latency);
     this.notifyCcTests_();
   }
 
@@ -146,6 +170,12 @@ class FaceGazeTestSupport {
   triggerMouseControllerInterval() {
     this.getMouseController_().updateMouseLocation_();
     this.notifyCcTests_();
+  }
+
+  assertScrollMode(active) {
+    if (active === this.getMouseController_().scrollModeController_.active()) {
+      this.notifyCcTests_();
+    }
   }
 }
 

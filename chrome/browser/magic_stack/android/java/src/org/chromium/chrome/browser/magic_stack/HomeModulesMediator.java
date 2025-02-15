@@ -11,16 +11,11 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 
-import org.chromium.base.Callback;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.magic_stack.ModuleDelegate.ModuleType;
-import org.chromium.chrome.browser.util.BrowserUiUtils.HostSurface;
-import org.chromium.components.segmentation_platform.ClassificationResult;
-import org.chromium.components.segmentation_platform.InputContext;
+import org.chromium.chrome.browser.profiles.Profile;
+import org.chromium.chrome.browser.segmentation_platform.client_util.HomeModulesRankingHelper;
 import org.chromium.components.segmentation_platform.PredictionOptions;
-import org.chromium.components.segmentation_platform.ProcessedValue;
-import org.chromium.components.segmentation_platform.SegmentationPlatformService;
-import org.chromium.components.segmentation_platform.prediction_status.PredictionStatus;
 import org.chromium.ui.modelutil.MVCListAdapter.ModelList;
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.ui.modelutil.SimpleRecyclerViewAdapter;
@@ -32,10 +27,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
 
 /** The mediator which implements the logic to add, update and remove modules. */
 public class HomeModulesMediator {
-    static final String USE_FRESHNESS_SCORE_PARAM = "use_freshness_score";
     private static final int INVALID_INDEX = -1;
 
     /** Time to wait before rejecting any module response in milliseconds. */
@@ -44,6 +39,7 @@ public class HomeModulesMediator {
     // Freshness score was logged older than 24h are considered stale, and rejected.
     static final long FRESHNESS_THRESHOLD_MS = TimeUnit.HOURS.toMillis(24);
 
+    private final Supplier<Profile> mProfileSupplier;
     private final ModelList mModel;
     private final ModuleRegistry mModuleRegistry;
     private final ModuleDelegateHost mModuleDelegateHost;
@@ -78,21 +74,21 @@ public class HomeModulesMediator {
     private boolean mIsFetchingModules;
 
     private boolean mIsShown;
-    private Callback<Boolean> mSetVisibilityCallback;
+    private Runnable mOnHomeModulesChangedCallback;
     private long[] mShowModuleStartTimeMs;
     private List<Integer> mModuleListToShow;
-    private @HostSurface int mHostSurface;
-    private SegmentationPlatformService mSegmentationPlatformService;
     private Set<Integer> mEnabledModuleSet;
 
     /**
      * @param model The instance of {@link ModelList} of the RecyclerView.
      */
     public HomeModulesMediator(
+            @NonNull Supplier<Profile> profileSupplier,
             @NonNull ModelList model,
             @NonNull ModuleRegistry moduleRegistry,
             @NonNull ModuleDelegateHost moduleDelegateHost,
             @NonNull HomeModulesConfigManager homeModulesConfigManager) {
+        mProfileSupplier = profileSupplier;
         mModel = model;
         mModuleRegistry = moduleRegistry;
         mModuleDelegateHost = moduleDelegateHost;
@@ -100,50 +96,70 @@ public class HomeModulesMediator {
     }
 
     /** Shows the magic stack with profile ready. */
-    void showModules(
-            Callback<Boolean> onHomeModulesShownCallback,
-            ModuleDelegate moduleDelegate,
-            SegmentationPlatformService segmentationPlatformService) {
-        mSegmentationPlatformService = segmentationPlatformService;
-        Set<Integer> filteredEnabledModuleSet = getFilteredEnabledModuleSet();
+    void showModules(Runnable onHomeModulesChangedCallback, ModuleDelegate moduleDelegate) {
+        long segmentationServiceCallTimeMs = SystemClock.elapsedRealtime();
+        HomeModulesRankingHelper.fetchModulesRank(
+                mProfileSupplier.get(),
+                mModuleRegistry.createInputContext(),
+                (orderedLabels) -> {
+                    // It is possible that the result is received after the magic stack has been
+                    // hidden, exit now.
+                    if (mHomeModulesConfigManager == null) {
+                        return;
+                    }
+                    long durationMs = SystemClock.elapsedRealtime() - segmentationServiceCallTimeMs;
+                    buildModulesAndShow(
+                            filterEnabledModuleList(orderedLabels, getFilteredEnabledModuleSet()),
+                            moduleDelegate,
+                            onHomeModulesChangedCallback,
+                            durationMs);
+                });
+    }
 
-        if (mSegmentationPlatformService == null
-                || !ChromeFeatureList.isEnabled(
-                        ChromeFeatureList.SEGMENTATION_PLATFORM_ANDROID_HOME_MODULE_RANKER)) {
-            buildModulesAndShow(
-                    getFixedModuleList(filteredEnabledModuleSet),
-                    moduleDelegate,
-                    onHomeModulesShownCallback,
-                    /* durationMs= */ 0);
-            return;
+    /** Called to notify that a module view is created. */
+    void onModuleViewCreated(@ModuleType int moduleType) {
+        HomeModulesRankingHelper.notifyCardShown(
+                mProfileSupplier.get(), HomeModulesMetricsUtils.getModuleName(moduleType));
+
+        if (HomeModulesUtils.belongsToEducationalTipModule(moduleType)) {
+            HomeModulesUtils.increaseImpressionCountBeforeInteraction(moduleType);
         }
-        getSegmentationRanking(
-                moduleDelegate, onHomeModulesShownCallback, filteredEnabledModuleSet);
+    }
+
+    /** Called to notify that a module was clicked. */
+    void onModuleClicked(@ModuleType int moduleType) {
+        HomeModulesRankingHelper.notifyCardInteracted(
+                mProfileSupplier.get(), HomeModulesMetricsUtils.getModuleName(moduleType));
+
+        if (HomeModulesUtils.belongsToEducationalTipModule(moduleType)) {
+            HomeModulesMetricsUtils.recordEducationalTipModuleImpressionCountBeforeInteraction(
+                    moduleType,
+                    mModuleDelegateHost.isHomeSurface(),
+                    HomeModulesUtils.getImpressionCountBeforeInteraction(moduleType));
+
+            // Remove the shared preference key for impression count before interaction, as the
+            // educational tip card will no longer appear once the user interacts with it.
+            HomeModulesUtils.removeImpressionCountBeforeInteractionKey(moduleType);
+        }
     }
 
     private void buildModulesAndShow(
             List<Integer> moduleList,
             ModuleDelegate moduleDelegate,
-            Callback<Boolean> onHomeModulesShownCallback,
+            Runnable onHomeModulesChangedCallback,
             long durationMs) {
         // Record only if ranking is fetched from segmentation service.
         if (durationMs > 0) {
-            HomeModulesMetricsUtils.recordSegmentationFetchRankingDuration(
-                    mModuleDelegateHost.getHostSurfaceType(), durationMs);
+            HomeModulesMetricsUtils.recordSegmentationFetchRankingDuration(durationMs);
         }
         if (moduleList == null) {
-            onHomeModulesShownCallback.onResult(false);
+            onHomeModulesChangedCallback.run();
             return;
         }
 
         moduleDelegate.prepareBuildAndShow();
 
-        buildModulesAndShow(
-                moduleList,
-                moduleDelegate,
-                (isVisible) -> {
-                    onHomeModulesShownCallback.onResult(isVisible);
-                });
+        buildModulesAndShow(moduleList, moduleDelegate, onHomeModulesChangedCallback);
     }
 
     /**
@@ -156,17 +172,16 @@ public class HomeModulesMediator {
     void buildModulesAndShow(
             @NonNull @ModuleType List<Integer> moduleList,
             @NonNull ModuleDelegate moduleDelegate,
-            @NonNull Callback<Boolean> setVisibilityCallback) {
+            @NonNull Runnable onHomeModulesChangedCallback) {
         if (mIsShown) {
             updateModules();
             return;
         }
 
-        mSetVisibilityCallback = setVisibilityCallback;
+        mOnHomeModulesChangedCallback = onHomeModulesChangedCallback;
         assert mModel.size() == 0;
         mIsFetchingModules = true;
         mIsShown = true;
-        mHostSurface = moduleDelegate.getHostSurfaceType();
         mModuleListToShow = moduleList;
         cacheRanking(mModuleListToShow);
 
@@ -205,8 +220,8 @@ public class HomeModulesMediator {
             mHandler.postDelayed(this::onModuleFetchTimeOut, MODULE_FETCHING_TIMEOUT_MS);
         } else {
             mIsFetchingModules = false;
-            // If there isn't any module to build, hide the magic stack now to clean up data.
-            hide();
+            // If there isn't any module to build, clean up data now.
+            cleanup();
         }
     }
 
@@ -255,8 +270,7 @@ public class HomeModulesMediator {
         int index = mModuleTypeToRankingIndexMap.get(moduleType);
         long duration = SystemClock.elapsedRealtime() - mShowModuleStartTimeMs[index];
         if (!mIsFetchingModules) {
-            HomeModulesMetricsUtils.recordFetchDataTimeOutDuration(
-                    mHostSurface, moduleType, duration);
+            HomeModulesMetricsUtils.recordFetchDataTimeOutDuration(moduleType, duration);
             return;
         }
 
@@ -300,10 +314,9 @@ public class HomeModulesMediator {
                 // module to clean up.
                 hideModuleOnDataFetchFailed(moduleType);
             }
-            HomeModulesMetricsUtils.recordFetchDataFailedDuration(
-                    mHostSurface, moduleType, duration);
+            HomeModulesMetricsUtils.recordFetchDataFailedDuration(moduleType, duration);
         } else {
-            HomeModulesMetricsUtils.recordFetchDataDuration(mHostSurface, moduleType, duration);
+            HomeModulesMetricsUtils.recordFetchDataDuration(moduleType, duration);
         }
     }
 
@@ -353,8 +366,11 @@ public class HomeModulesMediator {
     /** Adds all of the cached responses to the RecyclerView after time out. */
     @VisibleForTesting
     void onModuleFetchTimeOut() {
-        // It is possible that onModuleFetchTimeOut() is called after home modules hide, early exits
-        // here.
+        finalizeModules(/* forceHide= */ false);
+    }
+
+    private void maybeFinalizeModuleFetch() {
+        // It is possible that maybeFinalizeModuleFetch() has been called before, early exits here.
         if (!mIsFetchingModules) {
             return;
         }
@@ -367,7 +383,7 @@ public class HomeModulesMediator {
             if (hasResult == null) {
                 // Case 1: no response received.
                 @ModuleType int moduleType = mModuleListToShow.get(mModuleResultsWaitingIndex);
-                HomeModulesMetricsUtils.recordFetchDataTimeOutType(mHostSurface, moduleType);
+                HomeModulesMetricsUtils.recordFetchDataTimeOutType(moduleType);
                 hideModuleOnDataFetchFailed(moduleType);
             } else if (hasResult) {
                 // Case 2: received a response with data to show.
@@ -378,12 +394,6 @@ public class HomeModulesMediator {
                 append(cachedResponse);
             }
             mModuleResultsWaitingIndex++;
-        }
-
-        if (mModel.size() == 0) {
-            // It is possible that there isn't any module has data to show, hide the magic stack
-            // now to clean up data.
-            hide();
         }
     }
 
@@ -398,14 +408,13 @@ public class HomeModulesMediator {
         mModel.add(item);
 
         HomeModulesMetricsUtils.recordModuleBuiltPosition(
-                mHostSurface, item.type, mModel.size() - 1, mModuleDelegateHost.isHomeSurface());
+                item.type, mModel.size() - 1, mModuleDelegateHost.isHomeSurface());
 
+        mOnHomeModulesChangedCallback.run();
         if (mModel.size() == 1) {
-            mSetVisibilityCallback.onResult(true);
-
             // We use the build time of the first module as the starting time.
             long duration = SystemClock.elapsedRealtime() - mShowModuleStartTimeMs[0];
-            HomeModulesMetricsUtils.recordFirstModuleShownDuration(mHostSurface, duration);
+            HomeModulesMetricsUtils.recordFirstModuleShownDuration(duration);
         }
     }
 
@@ -451,7 +460,7 @@ public class HomeModulesMediator {
         mModuleFetchResultsCache[index] = null;
 
         if (mModel.size() == 0) {
-            hide();
+            cleanup();
         }
         return true;
     }
@@ -461,17 +470,41 @@ public class HomeModulesMediator {
      * stack.
      */
     void hide() {
+        finalizeModules(/* forceHide= */ true);
+    }
+
+    /**
+     * Finalizes module fetching if hasn't completed yet and: 1) hides all showing modules and
+     * cleans up if forceHide is true; 2) cleans up when there isn't any module if forceHide is
+     * false.
+     *
+     * @param forceHide Whether to force hiding all modules if shown.
+     */
+    private void finalizeModules(boolean forceHide) {
         if (!mIsShown) {
             return;
         }
 
+        maybeFinalizeModuleFetch();
+
+        if (forceHide) {
+            for (int i = 0; i < mModel.size(); i++) {
+                int moduleType = mModel.get(i).type;
+                ModuleProvider moduleProvider = mModuleTypeToModuleProviderMap.get(moduleType);
+                moduleProvider.hideModule();
+            }
+            mModel.clear();
+            assert mModel.size() == 0;
+        }
+
+        if (mModel.size() == 0) {
+            cleanup();
+        }
+    }
+
+    private void cleanup() {
         mIsFetchingModules = false;
         mIsShown = false;
-        for (int i = 0; i < mModel.size(); i++) {
-            int moduleType = mModel.get(i).type;
-            ModuleProvider moduleProvider = mModuleTypeToModuleProviderMap.get(moduleType);
-            moduleProvider.hideModule();
-        }
 
         mModuleResultsWaitingIndex = 0;
         mModuleFetchResultsIndicator = null;
@@ -483,7 +516,7 @@ public class HomeModulesMediator {
         mModuleListToShow = null;
 
         mModel.clear();
-        mSetVisibilityCallback.onResult(false);
+        mOnHomeModulesChangedCallback.run();
     }
 
     /** Returns the instance of a module {@link ModuleProvider} of the given type. */
@@ -507,7 +540,7 @@ public class HomeModulesMediator {
         }
 
         HomeModulesMetricsUtils.recordHomeModulesScrollState(
-                mHostSurface, mModel.size() > 1, hasHomeModulesBeenScrolled);
+                mModel.size() > 1, hasHomeModulesBeenScrolled);
     }
 
     /** Asks all of the modules being shown to reload their data if necessary. */
@@ -527,7 +560,8 @@ public class HomeModulesMediator {
     void onModuleConfigChanged(@ModuleType int moduleType, boolean isEnabled) {
         // The single tab module and the tab resumption modules are controlled by the same
         // preference key. Once it is turned on or off, both modules will be enabled or disabled.
-
+        // The educational tip modules are also controlled by the same preference key. Once it is
+        // turned on or off, all of the educational tip modules will be enabled or disabled.
         if (isEnabled) {
             // If the mEnabledModuleSet hasn't been initialized yet, skip here.
             if (mEnabledModuleSet != null) {
@@ -535,6 +569,8 @@ public class HomeModulesMediator {
                         || moduleType == ModuleType.TAB_RESUMPTION) {
                     mEnabledModuleSet.add(ModuleType.SINGLE_TAB);
                     mEnabledModuleSet.add(ModuleType.TAB_RESUMPTION);
+                } else if (HomeModulesUtils.belongsToEducationalTipModule(moduleType)) {
+                    mEnabledModuleSet.addAll(HomeModulesUtils.getEducationalTipModuleList());
                 } else {
                     mEnabledModuleSet.add(moduleType);
                 }
@@ -546,36 +582,13 @@ public class HomeModulesMediator {
                         || moduleType == ModuleType.TAB_RESUMPTION) {
                     mEnabledModuleSet.remove(ModuleType.SINGLE_TAB);
                     mEnabledModuleSet.remove(ModuleType.TAB_RESUMPTION);
+                } else if (HomeModulesUtils.belongsToEducationalTipModule(moduleType)) {
+                    mEnabledModuleSet.removeAll(HomeModulesUtils.getEducationalTipModuleList());
                 } else {
                     mEnabledModuleSet.remove(moduleType);
                 }
             }
         }
-    }
-
-    /**
-     * This method returns the list of enabled modules based on surface (Start/NTP). The list
-     * returned is the intersection of modules that are enabled and available for the surface.
-     */
-    @VisibleForTesting
-    List<Integer> getFixedModuleList(Set<Integer> filteredEnabledModuleSet) {
-        List<Integer> generalModuleList = new ArrayList<>();
-        if (filteredEnabledModuleSet.contains(ModuleType.PRICE_CHANGE)) {
-            generalModuleList.add(ModuleType.PRICE_CHANGE);
-        }
-
-        if (filteredEnabledModuleSet.contains(ModuleType.SINGLE_TAB)) {
-            generalModuleList.add(ModuleType.SINGLE_TAB);
-        }
-
-        for (@ModuleType Integer moduleType : filteredEnabledModuleSet) {
-            if (moduleType == ModuleType.PRICE_CHANGE || moduleType == ModuleType.SINGLE_TAB) {
-                continue;
-            }
-
-            generalModuleList.add(moduleType);
-        }
-        return generalModuleList;
     }
 
     /**
@@ -587,11 +600,12 @@ public class HomeModulesMediator {
     Set<Integer> getFilteredEnabledModuleSet() {
         ensureEnabledModuleSetCreated();
         Set<Integer> set = new HashSet<>(mEnabledModuleSet);
+        assert !set.contains(ModuleType.DEPRECATED_EDUCATIONAL_TIP);
 
         boolean combinedTabModules =
                 combinedTabModules() && set.contains(ModuleType.TAB_RESUMPTION);
         boolean isHomeSurface = mModuleDelegateHost.isHomeSurface();
-        boolean addAll = HomeModulesMetricsUtils.HOME_MODULES_SHOW_ALL_MODULES.getValue();
+        boolean addAll = ChromeFeatureList.sMagicStackAndroidShowAllModules.getValue();
 
         if (combinedTabModules) {
             set.remove(ModuleType.SINGLE_TAB);
@@ -604,78 +618,21 @@ public class HomeModulesMediator {
         return set;
     }
 
-    private void getSegmentationRanking(
-            ModuleDelegate moduleDelegate,
-            Callback<Boolean> onHomeModulesShownCallback,
-            Set<Integer> filteredEnabledModuleSet) {
-        // TODO(b/319530611): Convert the API to use on-demand option.
-        PredictionOptions options = new PredictionOptions(false);
-        long segmentationServiceCallTimeMs = SystemClock.elapsedRealtime();
-
-        mSegmentationPlatformService.getClassificationResult(
-                "android_home_module_ranker",
-                options,
-                /* inputContext= */ createInputContext(filteredEnabledModuleSet),
-                result -> {
-                    // It is possible that the result is received after the magic stack has been
-                    // hidden, exit now.
-                    long durationMs = SystemClock.elapsedRealtime() - segmentationServiceCallTimeMs;
-                    if (mHomeModulesConfigManager == null) {
-                        HomeModulesMetricsUtils.recordSegmentationFetchRankingDuration(
-                                mModuleDelegateHost.getHostSurfaceType(), durationMs);
-                        return;
-                    }
-                    buildModulesAndShow(
-                            onGetClassificationResult(result, filteredEnabledModuleSet),
-                            moduleDelegate,
-                            onHomeModulesShownCallback,
-                            durationMs);
-                });
-    }
-
+    /**
+     * Creates an instance of PredictionOptions. If feature flag is enabled generate ondemand
+     * prediction options else will generate cache prediction options.
+     */
     @VisibleForTesting
-    InputContext createInputContext(Set<Integer> filteredEnabledModuleSet) {
-        if (!ChromeFeatureList.getFieldTrialParamByFeatureAsBoolean(
-                        ChromeFeatureList.SEGMENTATION_PLATFORM_ANDROID_HOME_MODULE_RANKER,
-                        USE_FRESHNESS_SCORE_PARAM,
-                        false)
-                || filteredEnabledModuleSet.isEmpty()) {
-            return null;
-        }
-
-        InputContext inputContext = new InputContext();
-        boolean isEntryAdded = false;
-        for (Integer moduleType : filteredEnabledModuleSet) {
-            long timeStamp = mHomeModulesConfigManager.getFreshnessScoreTimeStamp(moduleType);
-            if (timeStamp == HomeModulesConfigManager.INVALID_TIMESTAMP
-                    || SystemClock.elapsedRealtime() - timeStamp
-                            >= HomeModulesMediator.FRESHNESS_THRESHOLD_MS) {
-                continue;
-            }
-
-            int count = mHomeModulesConfigManager.getFreshnessCount(moduleType);
-            if (count != HomeModulesConfigManager.INVALID_FRESHNESS_SCORE) {
-                inputContext.addEntry(
-                        HomeModulesMetricsUtils.getFreshnessInputContextString(moduleType),
-                        ProcessedValue.fromInt(count));
-                isEntryAdded = true;
-            }
-        }
-
-        return isEntryAdded ? inputContext : null;
-    }
-
-    @VisibleForTesting
-    List<Integer> onGetClassificationResult(
-            ClassificationResult result, Set<Integer> filteredEnabledModuleSet) {
-        List<Integer> moduleList;
-        // If segmentation service fails, fallback to return fixed module list.
-        if (result.status != PredictionStatus.SUCCEEDED || result.orderedLabels.isEmpty()) {
-            moduleList = getFixedModuleList(filteredEnabledModuleSet);
+    PredictionOptions createPredictionOptions() {
+        boolean usePredictionOptions = HomeModulesUtils.isHomeModuleRankerV2Enabled();
+        if (usePredictionOptions) {
+            return new PredictionOptions(
+                    /* onDemandExecution= */ true,
+                    /* canUpdateCacheForFutureRequests= */ true,
+                    /* fallbackAllowed= */ true);
         } else {
-            moduleList = filterEnabledModuleList(result.orderedLabels, filteredEnabledModuleSet);
+            return new PredictionOptions(/* onDemandExecution= */ false);
         }
-        return moduleList;
     }
 
     /**
@@ -695,6 +652,7 @@ public class HomeModulesMediator {
                 moduleList.add(currentModuleType);
             }
         }
+
         return moduleList;
     }
 
@@ -709,7 +667,7 @@ public class HomeModulesMediator {
 
     @VisibleForTesting
     boolean combinedTabModules() {
-        return HomeModulesMetricsUtils.TAB_RESUMPTION_COMBINE_TABS.getValue()
+        return ChromeFeatureList.sTabResumptionModuleAndroidCombineTabs.getValue()
                 && ChromeFeatureList.sTabResumptionModuleAndroid.isEnabled();
     }
 

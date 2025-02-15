@@ -19,17 +19,21 @@
 
 namespace partition_alloc {
 
+namespace {
+PartitionOptions GwpAsanPartitionOptions() {
+  PartitionOptions options;
+  options.backup_ref_ptr = PartitionOptions::kEnabled;
+  return options;
+}
+}  // namespace
+
 // static
 void* GwpAsanSupport::MapRegion(size_t slot_count,
                                 std::vector<uint16_t>& free_list) {
   PA_CHECK(slot_count > 0);
 
-  constexpr PartitionOptions kConfig = []() {
-    PartitionOptions opts;
-    opts.backup_ref_ptr = PartitionOptions::kEnabled;
-    return opts;
-  }();
-  static internal::base::NoDestructor<PartitionRoot> root(kConfig);
+  static internal::base::NoDestructor<PartitionRoot> root(
+      GwpAsanPartitionOptions());
 
   const size_t kSlotSize = 2 * internal::SystemPageSize();
   uint16_t bucket_index = PartitionRoot::SizeToBucketIndex(
@@ -38,8 +42,7 @@ void* GwpAsanSupport::MapRegion(size_t slot_count,
 
   const size_t kSuperPagePayloadStartOffset =
       internal::SuperPagePayloadStartOffset(
-          /* is_managed_by_normal_buckets = */ true,
-          /* with_quarantine = */ false);
+          /* is_managed_by_normal_buckets = */ true);
   PA_CHECK(kSuperPagePayloadStartOffset % kSlotSize == 0);
   const size_t kSuperPageGwpAsanSlotAreaBeginOffset =
       kSuperPagePayloadStartOffset;
@@ -90,15 +93,16 @@ void* GwpAsanSupport::MapRegion(size_t slot_count,
            partition_page_idx += bucket->get_pages_per_slot_span()) {
         auto* slot_span_metadata =
             &page_metadata[partition_page_idx].slot_span_metadata;
-        bucket->InitializeSlotSpanForGwpAsan(slot_span_metadata);
+        bucket->InitializeSlotSpanForGwpAsan(slot_span_metadata, root.get());
         auto slot_span_start =
-            internal::SlotSpanMetadata::ToSlotSpanStart(slot_span_metadata);
+            internal::SlotSpanMetadata<internal::MetadataKind::kReadOnly>::
+                ToSlotSpanStart(slot_span_metadata);
 
         for (uintptr_t slot_idx = 0; slot_idx < kSlotsPerSlotSpan; ++slot_idx) {
           auto slot_start = slot_span_start + slot_idx * kSlotSize;
           PartitionRoot::InSlotMetadataPointerFromSlotStartAndSize(slot_start,
                                                                    kSlotSize)
-              ->InitalizeForGwpAsan();
+              ->InitializeForGwpAsan();
           size_t global_slot_idx = (slot_start - super_page_span_start -
                                     kSuperPageGwpAsanSlotAreaBeginOffset) /
                                    kSlotSize;

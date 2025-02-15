@@ -9,10 +9,12 @@ import static androidx.test.espresso.action.ViewActions.click;
 import static androidx.test.espresso.action.ViewActions.scrollTo;
 import static androidx.test.espresso.assertion.ViewAssertions.matches;
 import static androidx.test.espresso.matcher.ViewMatchers.isChecked;
+import static androidx.test.espresso.matcher.ViewMatchers.isDisplayed;
 import static androidx.test.espresso.matcher.ViewMatchers.isEnabled;
 import static androidx.test.espresso.matcher.ViewMatchers.isNotChecked;
 import static androidx.test.espresso.matcher.ViewMatchers.withEffectiveVisibility;
 import static androidx.test.espresso.matcher.ViewMatchers.withId;
+import static androidx.test.espresso.matcher.ViewMatchers.withText;
 
 import static org.hamcrest.Matchers.allOf;
 import static org.hamcrest.Matchers.not;
@@ -24,6 +26,7 @@ import android.content.res.Resources;
 import androidx.test.espresso.matcher.ViewMatchers;
 import androidx.test.filters.SmallTest;
 
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.ClassRule;
 import org.junit.Rule;
@@ -31,8 +34,11 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 
 import org.chromium.base.LocaleUtils;
+import org.chromium.base.ThreadUtils;
+import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Features.DisableFeatures;
+import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.chrome.browser.ProductConfig;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
@@ -46,13 +52,15 @@ import org.chromium.components.content_settings.CookieControlsMode;
 import org.chromium.components.content_settings.PrefNames;
 import org.chromium.components.prefs.PrefService;
 import org.chromium.components.user_prefs.UserPrefs;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
+import org.chromium.ui.text.SpanApplier;
+import org.chromium.ui.text.SpanApplier.SpanInfo;
 
 import java.util.Locale;
 
 /** Integration tests for IncognitoNewTabPage. */
 @RunWith(ChromeJUnit4ClassRunner.class)
-// TODO(crbug.com/344662664): Failing when batched, batch this again.
+@Batch(Batch.PER_CLASS)
+@EnableFeatures({ChromeFeatureList.ALWAYS_BLOCK_3PCS_INCOGNITO})
 @DisableFeatures({ChromeFeatureList.TRACKING_PROTECTION_3PCD})
 @CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 public class IncognitoNewTabPageTest {
@@ -65,7 +73,7 @@ public class IncognitoNewTabPageTest {
             new BlankCTATabInitialStateRule(sActivityTestRule, false);
 
     private void setCookieControlsMode(@CookieControlsMode int mode) {
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     PrefService prefService =
                             UserPrefs.get(ProfileManager.getLastUsedRegularProfile());
@@ -74,7 +82,7 @@ public class IncognitoNewTabPageTest {
     }
 
     private void assertCookieControlsMode(@CookieControlsMode int mode) {
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     Assert.assertEquals(
                             UserPrefs.get(ProfileManager.getLastUsedRegularProfile())
@@ -84,7 +92,7 @@ public class IncognitoNewTabPageTest {
     }
 
     private void enableTrackingProtection() {
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     PrefService prefService =
                             UserPrefs.get(ProfileManager.getLastUsedRegularProfile());
@@ -92,9 +100,23 @@ public class IncognitoNewTabPageTest {
                 });
     }
 
+    @After
+    public void tearDown() {
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    PrefService prefService =
+                            UserPrefs.get(ProfileManager.getLastUsedRegularProfile());
+
+                    prefService.clearPref(Pref.TRACKING_PROTECTION3PCD_ENABLED);
+                    prefService.clearPref(PrefNames.COOKIE_CONTROLS_MODE);
+                });
+    }
+
+    // TODO(crbug.com/370008370): Remove once AlwaysBlock3pcsIncognito launched.
     /** Test cookie controls toggle defaults to on if cookie controls mode is on. */
     @Test
     @SmallTest
+    @DisableFeatures({ChromeFeatureList.ALWAYS_BLOCK_3PCS_INCOGNITO})
     public void testCookieControlsToggleStartsOn() throws Exception {
         setCookieControlsMode(CookieControlsMode.INCOGNITO_ONLY);
         sActivityTestRule.newIncognitoTabFromMenu();
@@ -106,9 +128,11 @@ public class IncognitoNewTabPageTest {
         onView(withId(R.id.cookie_controls_card_toggle)).check(matches(isChecked()));
     }
 
+    // TODO(crbug.com/370008370): Remove once AlwaysBlock3pcsIncognito launched.
     /** Test cookie controls toggle turns on and off cookie controls mode as expected. */
     @Test
     @SmallTest
+    @DisableFeatures({ChromeFeatureList.ALWAYS_BLOCK_3PCS_INCOGNITO})
     public void testCookieControlsToggleChanges() throws Exception {
         setCookieControlsMode(CookieControlsMode.OFF);
         sActivityTestRule.newIncognitoTabFromMenu();
@@ -128,9 +152,11 @@ public class IncognitoNewTabPageTest {
         assertCookieControlsMode(CookieControlsMode.OFF);
     }
 
+    // TODO(crbug.com/370008370): Remove once AlwaysBlock3pcsIncognito launched.
     /** Test cookie controls disabled if managed by settings. */
     @Test
     @SmallTest
+    @DisableFeatures({ChromeFeatureList.ALWAYS_BLOCK_3PCS_INCOGNITO})
     public void testCookieControlsToggleManaged() throws Exception {
         setCookieControlsMode(CookieControlsMode.INCOGNITO_ONLY);
         sActivityTestRule.newIncognitoTabFromMenu();
@@ -163,7 +189,30 @@ public class IncognitoNewTabPageTest {
         enableTrackingProtection();
         sActivityTestRule.newIncognitoTabFromMenu();
         onView(withId(R.id.tracking_protection_card))
+                .perform(scrollTo())
                 .check(matches(withEffectiveVisibility(ViewMatchers.Visibility.VISIBLE)));
+    }
+
+    @Test
+    @SmallTest
+    public void incognitoNtpShowsThirdPartyCookieBlockingHeader() throws Exception {
+        sActivityTestRule.newIncognitoTabFromMenu();
+        onView(withId(R.id.tracking_protection_card))
+                .perform(scrollTo())
+                .check(matches(withEffectiveVisibility(ViewMatchers.Visibility.VISIBLE)));
+
+        String ntpDescription =
+                getIncognitoNtpDescriptionSpanned(
+                        sActivityTestRule
+                                .getActivity()
+                                .getResources()
+                                .getString(
+                                        R.string
+                                                .incognito_ntp_block_third_party_cookies_description));
+
+        onView(withText(R.string.incognito_ntp_block_third_party_cookies_header))
+                .check(matches(isDisplayed()));
+        onView(withText(ntpDescription)).check(matches(isDisplayed()));
     }
 
     private Context createContextForLocale(Context context, String languageTag) {
@@ -186,5 +235,10 @@ public class IncognitoNewTabPageTest {
             IncognitoDescriptionView.getSpannedBulletText(
                     localeContext, R.string.new_tab_otr_visible);
         }
+    }
+
+    private String getIncognitoNtpDescriptionSpanned(String description) {
+        return SpanApplier.applySpans(description, new SpanInfo("<link>", "</link>", new Object()))
+                .toString();
     }
 }

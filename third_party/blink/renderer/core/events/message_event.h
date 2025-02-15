@@ -42,6 +42,7 @@
 #include "third_party/blink/renderer/core/fileapi/blob.h"
 #include "third_party/blink/renderer/core/messaging/message_port.h"
 #include "third_party/blink/renderer/core/typed_arrays/dom_array_buffer.h"
+#include "third_party/blink/renderer/platform/bindings/v8_external_memory_accounter.h"
 #include "third_party/blink/renderer/platform/bindings/v8_private_property.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 
@@ -141,7 +142,7 @@ class CORE_EXPORT MessageEvent final : public Event {
                         const String& origin,
                         const String& last_event_id,
                         EventTarget* source,
-                        MessagePortArray& ports);
+                        MessagePortArray ports);
   void initMessageEvent(const AtomicString& type,
                         bool bubbles,
                         bool cancelable,
@@ -205,11 +206,6 @@ class CORE_EXPORT MessageEvent final : public Event {
 
   void LockToAgentCluster();
 
-  [[nodiscard]] v8::Local<v8::Object> AssociateWithWrapper(
-      v8::Isolate*,
-      const WrapperTypeInfo*,
-      v8::Local<v8::Object> wrapper) override;
-
  private:
   enum DataType {
     kDataTypeNull,  // For "messageerror" events.
@@ -222,13 +218,10 @@ class CORE_EXPORT MessageEvent final : public Event {
 
   size_t SizeOfExternalMemoryInBytes();
 
-  void RegisterAmountOfExternallyAllocatedMemory();
-
-  void UnregisterAmountOfExternallyAllocatedMemory();
-
   DataType data_type_;
   WorldSafeV8Reference<v8::Value> data_as_v8_value_;
   Member<UnpackedSerializedScriptValue> data_as_serialized_script_value_;
+  V8ExternalMemoryAccounter serialized_data_memory_accounter_;
   String data_as_string_;
   Member<Blob> data_as_blob_;
   Member<DOMArrayBuffer> data_as_array_buffer_;
@@ -244,7 +237,6 @@ class CORE_EXPORT MessageEvent final : public Event {
   Vector<MessagePortChannel> channels_;
   Member<UserActivation> user_activation_;
   mojom::blink::DelegatedCapability delegated_capability_;
-  size_t amount_of_external_memory_ = 0;
   // For serialized messages across process this attribute contains the
   // information of whether the actual original SerializedScriptValue was locked
   // to the agent cluster.

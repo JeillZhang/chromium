@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/gpu/test/raw_video.h"
 
 #include "base/files/file_util.h"
@@ -11,6 +16,7 @@
 #include "base/json/json_reader.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
+#include "base/memory/raw_ptr_exclusion.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/threading/thread.h"
@@ -24,9 +30,9 @@
 #include "media/filters/ffmpeg_glue.h"
 #include "media/filters/in_memory_url_protocol.h"
 #include "media/filters/offloading_video_decoder.h"
-#include "media/filters/vp9_parser.h"
 #include "media/filters/vpx_video_decoder.h"
 #include "media/gpu/test/video_frame_helpers.h"
+#include "media/parsers/vp9_parser.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/ffmpeg/libavformat/avformat.h"
 #include "third_party/ffmpeg/libavutil/avutil.h"
@@ -50,9 +56,15 @@ std::unique_ptr<base::MemoryMappedFile> CreateMemoryMappedFile(size_t size) {
   }
   auto mmapped_file = std::make_unique<base::MemoryMappedFile>();
   bool success = mmapped_file->Initialize(
-      base::File(tmp_file_path,
-                 base::File::FLAG_CREATE_ALWAYS | base::File::FLAG_READ |
-                     base::File::FLAG_WRITE | base::File::FLAG_APPEND),
+      base::File(
+          tmp_file_path, base::File::FLAG_CREATE_ALWAYS |
+                             base::File::FLAG_READ | base::File::FLAG_WRITE
+// On Windows FLAG_CREATE_ALWAYS will require FLAG_WRITE, and FLAG_APPEND
+// must not be specified.
+#if BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_LINUX)
+                             | base::File::FLAG_APPEND
+#endif  // BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_LINUX)
+          ),
       base::MemoryMappedFile::Region{0, size},
       base::MemoryMappedFile::READ_WRITE_EXTEND);
   base::DeleteFile(tmp_file_path);
@@ -99,7 +111,8 @@ class RawVideo::VP9Decoder {
                                     base::Unretained(this), &result, &event));
       event.Wait();
       LOG_ASSERT(result.is_ok())
-          << "Failed to initialize VpxVideoDecoder: " << MediaSerialize(result)
+          << "Failed to initialize VpxVideoDecoder: "
+          << MediaSerializeForTesting(result)
           << "with config=" << config_.AsHumanReadableString();
     }
 
@@ -130,7 +143,8 @@ class RawVideo::VP9Decoder {
           keyframe_indices(keyframe_indices),
           mmap_file_(std::move(mmap_file)) {}
 
-    const std::vector<base::span<const uint8_t>> chunks;
+    // TODO(367764863) Rewrite to base::raw_span.
+    RAW_PTR_EXCLUSION const std::vector<base::span<const uint8_t>> chunks;
     const std::vector<size_t> keyframe_indices;
 
    protected:
@@ -208,7 +222,7 @@ class RawVideo::VP9Decoder {
                          &decode_status));
       LOG_ASSERT(decode_status.is_ok())
           << "Failed to decode the " << i
-          << "-th vp9 chunk: " << MediaSerialize(decode_status);
+          << "-th vp9 chunk: " << MediaSerializeForTesting(decode_status);
       LOG_ASSERT(!!last_decoded_frame_)
           << "|last_decoded_frame_| is not filled";
       auto buffer = CreateBufferFromFrame(*last_decoded_frame_);

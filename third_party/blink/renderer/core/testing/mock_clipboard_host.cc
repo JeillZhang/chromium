@@ -13,6 +13,7 @@
 #include "third_party/blink/renderer/platform/image-encoders/image_encoder.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
 #include "third_party/skia/include/core/SkBitmap.h"
+#include "third_party/skia/include/encode/SkPngEncoder.h"
 
 namespace blink {
 
@@ -134,9 +135,10 @@ void MockClipboardHost::ReadFiles(mojom::ClipboardBuffer clipboard_buffer,
   std::move(callback).Run(std::move(files_));
 }
 
-void MockClipboardHost::ReadCustomData(mojom::ClipboardBuffer clipboard_buffer,
-                                       const String& type,
-                                       ReadCustomDataCallback callback) {
+void MockClipboardHost::ReadDataTransferCustomData(
+    mojom::ClipboardBuffer clipboard_buffer,
+    const String& type,
+    ReadDataTransferCustomDataCallback callback) {
   auto it = custom_data_.find(type);
   std::move(callback).Run(it != custom_data_.end() ? it->value
                                                    : g_empty_string);
@@ -167,7 +169,8 @@ void MockClipboardHost::WriteSmartPasteMarker() {
   write_smart_paste_ = true;
 }
 
-void MockClipboardHost::WriteCustomData(const HashMap<String, String>& data) {
+void MockClipboardHost::WriteDataTransferCustomData(
+    const HashMap<String, String>& data) {
   if (needs_reset_)
     Reset();
   for (auto& it : data)

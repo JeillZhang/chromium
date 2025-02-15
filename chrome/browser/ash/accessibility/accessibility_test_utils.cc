@@ -9,7 +9,6 @@
 #include "base/timer/timer.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/common/pref_names.h"
-#include "chrome/test/base/chromeos/ash_browser_test_starter.h"
 #include "components/prefs/pref_service.h"
 
 namespace ash {
@@ -96,7 +95,7 @@ void HistogramWaiter::Wait() {
 
 void HistogramWaiter::OnHistogramCallback(const char* metric_name,
                                           uint64_t name_hash,
-                                          base::HistogramBase::Sample sample) {
+                                          base::HistogramBase::Sample32 sample) {
   run_loop_.Quit();
   histogram_observer_.reset();
 }

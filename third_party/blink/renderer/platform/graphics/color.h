@@ -28,8 +28,10 @@
 
 #include <iosfwd>
 #include <optional>
+#include <string_view>
 #include <tuple>
 
+#include "base/containers/span.h"
 #include "base/gtest_prod_util.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
@@ -52,7 +54,7 @@ struct NamedColor {
   unsigned argb_value;
 };
 
-PLATFORM_EXPORT const NamedColor* FindColor(const char* str, unsigned len);
+PLATFORM_EXPORT const NamedColor* FindColor(std::string_view str);
 
 class PLATFORM_EXPORT Color {
   DISALLOW_NEW();
@@ -63,6 +65,9 @@ class PLATFORM_EXPORT Color {
   // of this enum, as how it's ordered helps performance (the compiler can
   // decide that the first few elements are for ColorFunctionSpace and the last
   // few elements are for RGB-like serialization.)
+  // For details on serialization, see:
+  // https://www.w3.org/TR/css-color-4/#serializing-color-values
+  // https://www.w3.org/TR/css-color-5/#serial-relative-color
   enum class ColorSpace : uint8_t {
     // All these are to be serialized with the color() syntax of a given
     // predefined color space. The
@@ -89,16 +94,20 @@ class PLATFORM_EXPORT Color {
     kLch,
     // Serializes to oklch(). Parameter meanings are the same as for kLCH.
     kOklch,
-    // All these below are to be serialized to rgb() or rgba().
+    // Serializes to rgb() or rgba().
     // The values of `params0_`, `params1_`, and `params2_` are red, green, and
     // blue sRGB values, and are guaranteed to be present and in the [0, 1]
     // interval.
     kSRGBLegacy,
+    // Serializes to rgb() or rgba() for non-relative colors and to hsl() for
+    // unresolved relative colors.
     // The values of `params0_`, `params1_`, and `params2_` are Hue, Saturation,
     // and Ligthness. These can be none. Hue is a namber in the range from 0.0
     // to 6.0, and the rest are in the rance from 0.0 to 1.0.
     // interval.
     kHSL,
+    // Serializes to rgb() or rgba() for non-relative colors and to hwb() for
+    // unresolved relative colors.
     // The values of `params0_`, `params1_`, and `params2_` are Hue, White,
     // and Black. These can be none. Hue is a namber in the range from 0.0
     // to 6.0, and the rest are in the rance from 0.0 to 1.0.
@@ -108,7 +117,11 @@ class PLATFORM_EXPORT Color {
     kNone,
   };
 
-  static bool HasRGBOrXYZComponents(ColorSpace color_space) {
+  // For testing purposes and for serializer.
+  static WTF::String ColorSpaceToString(Color::ColorSpace color_space);
+
+  // https://www.w3.org/TR/css-color-4/#predefined
+  static bool IsPredefinedColorSpace(ColorSpace color_space) {
     return color_space == ColorSpace::kSRGB ||
            color_space == ColorSpace::kSRGBLinear ||
            color_space == ColorSpace::kDisplayP3 ||
@@ -116,8 +129,7 @@ class PLATFORM_EXPORT Color {
            color_space == ColorSpace::kProPhotoRGB ||
            color_space == ColorSpace::kRec2020 ||
            color_space == ColorSpace::kXYZD50 ||
-           color_space == ColorSpace::kXYZD65 ||
-           color_space == ColorSpace::kSRGBLegacy;
+           color_space == ColorSpace::kXYZD65;
   }
 
   static bool IsLightnessFirstComponent(ColorSpace color_space) {
@@ -177,11 +189,6 @@ class PLATFORM_EXPORT Color {
     return Color(ClampInt255(a) << 24 | ClampInt255(r) << 16 |
                  ClampInt255(g) << 8 | ClampInt255(b));
   }
-
-  static Color FromRGBALegacy(std::optional<int> r,
-                              std::optional<int> g,
-                              std::optional<int> b,
-                              std::optional<int> alpha);
 
   // Create a color using the rgba() syntax, with float arguments. All
   // parameters will be clamped to the [0, 1] interval.
@@ -347,8 +354,8 @@ class PLATFORM_EXPORT Color {
   Color BlendWithWhite() const;
 
   static bool ParseHexColor(const StringView&, Color&);
-  static bool ParseHexColor(const LChar*, unsigned, Color&);
-  static bool ParseHexColor(const UChar*, unsigned, Color&);
+  static bool ParseHexColor(base::span<const LChar>, Color&);
+  static bool ParseHexColor(base::span<const UChar>, Color&);
 
   static const Color kBlack;
   static const Color kWhite;
@@ -426,9 +433,6 @@ class PLATFORM_EXPORT Color {
   // Common helper function to toSkColor4f and ToGradientStopSkColor4f.
   SkColor4f ToSkColor4fInternal(bool gamut_map_oklab_oklch) const;
 
-  // For testing purposes and for serializer.
-  static WTF::String ColorSpaceToString(Color::ColorSpace color_space);
-
   float PremultiplyColor();
   void UnpremultiplyColor();
   void ResolveMissingComponents();
@@ -475,8 +479,6 @@ class PLATFORM_EXPORT Color {
 PLATFORM_EXPORT std::ostream& operator<<(std::ostream& os, const Color& color);
 
 PLATFORM_EXPORT int DifferenceSquared(const Color&, const Color&);
-PLATFORM_EXPORT Color ColorFromPremultipliedARGB(RGBA32);
-PLATFORM_EXPORT RGBA32 PremultipliedARGBFromColor(const Color&);
 
 }  // namespace blink
 

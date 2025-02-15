@@ -60,6 +60,7 @@ ci.builder(
             "fuchsia",
             "blink_symbol",
             "minimal_symbols",
+            "x64",
         ],
     ),
     targets = targets.bundle(
@@ -84,7 +85,7 @@ ci.builder(
         consoles.console_view_entry(
             branch_selector = branches.selector.MAIN,
             console_view = "sheriff.fuchsia",
-            category = "gardener|ci|x64",
+            category = "ci|x64",
             short_name = "a11y",
         ),
     ],
@@ -109,6 +110,8 @@ ci.builder(
             "release_builder_blink",
             "remoteexec",
             "dcheck_always_on",
+            "linux",
+            "x64",
         ],
     ),
     targets = targets.bundle(
@@ -136,11 +139,21 @@ ci.builder(
                     "--flag-specific=force-renderer-accessibility",
                 ],
             ),
+            "chrome_wpt_tests": targets.mixin(
+                args = [
+                    "--flag-specific=force-renderer-accessibility",
+                ],
+            ),
+            "headless_shell_wpt_tests": targets.mixin(
+                args = [
+                    "--flag-specific=force-renderer-accessibility",
+                ],
+            ),
         },
     ),
+    gardener_rotations = gardener_rotations.CHROMIUM,
     console_view_entry = consoles.console_view_entry(
         category = "rel",
         short_name = "x64",
     ),
-    gardener_rotations = gardener_rotations.CHROMIUM,
 )

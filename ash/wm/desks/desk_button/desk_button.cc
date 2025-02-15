@@ -58,7 +58,13 @@ namespace ash {
 // DeskButton:
 DeskButton::DeskButton()
     : views::Button(base::BindRepeating(&DeskButton::OnButtonPressed,
-                                        base::Unretained(this))) {}
+                                        base::Unretained(this))) {
+  // Avoid failing accessibility checks if we don't have a name.
+  if (GetViewAccessibility().GetCachedName().empty()) {
+    GetViewAccessibility().SetName(
+        "", ax::mojom::NameFrom::kAttributeExplicitlyEmpty);
+  }
+}
 
 DeskButton::~DeskButton() {}
 
@@ -152,21 +158,8 @@ void DeskButton::Layout(PassKey) {
   }
 }
 
-void DeskButton::GetAccessibleNodeData(ui::AXNodeData* node_data) {
-  // Avoid failing accessibility checks if we don't have a name.
-  Button::GetAccessibleNodeData(node_data);
-  if (GetViewAccessibility().GetCachedName().empty()) {
-    node_data->SetNameExplicitlyEmpty();
-  }
-
-  ShelfWidget* shelf_widget =
-      Shelf::ForWindow(GetWidget()->GetNativeWindow())->shelf_widget();
-  GetViewAccessibility().SetPreviousFocus(shelf_widget->navigation_widget());
-  GetViewAccessibility().SetNextFocus(shelf_widget);
-}
-
 void DeskButton::OnMouseEvent(ui::MouseEvent* event) {
-  if (event->type() == ui::ET_MOUSE_PRESSED &&
+  if (event->type() == ui::EventType::kMousePressed &&
       event->IsOnlyRightMouseButton()) {
     desk_button_container_->MaybeShowContextMenu(this, event);
     return;
@@ -176,8 +169,8 @@ void DeskButton::OnMouseEvent(ui::MouseEvent* event) {
 }
 
 void DeskButton::OnGestureEvent(ui::GestureEvent* event) {
-  if (event->type() == ui::ET_GESTURE_LONG_PRESS ||
-      event->type() == ui::ET_GESTURE_LONG_TAP) {
+  if (event->type() == ui::EventType::kGestureLongPress ||
+      event->type() == ui::EventType::kGestureLongTap) {
     desk_button_container_->MaybeShowContextMenu(this, event);
     return;
   }
@@ -292,7 +285,8 @@ void DeskButton::UpdateAvatar(const Desk* active_desk) {
             summary->icon, skia::ImageOperations::RESIZE_BEST,
             kDeskButtonAvatarSize);
 
-        desk_avatar_view_->SetImage(desk_avatar_image_);
+        desk_avatar_view_->SetImage(
+            ui::ImageModel::FromImageSkia(desk_avatar_image_));
         desk_avatar_view_->SetImageSize(kDeskButtonAvatarSize);
         desk_avatar_view_->SetVisible(true);
         return;
@@ -322,6 +316,18 @@ void DeskButton::UpdateLocaleSpecificSettings() {
 
   // Update the button text since the default desk name can be locale specific.
   desk_name_label_->SetText(GetDeskNameLabelText(active_desk));
+}
+
+void DeskButton::UpdateAccessiblePreviousAndNextFocus() {
+  if (GetWidget() && GetWidget()->GetNativeWindow()) {
+    ShelfWidget* shelf_widget =
+        Shelf::ForWindow(GetWidget()->GetNativeWindow())->shelf_widget();
+    GetViewAccessibility().SetPreviousFocus(shelf_widget->navigation_widget());
+    GetViewAccessibility().SetNextFocus(shelf_widget);
+  } else {
+    GetViewAccessibility().SetPreviousFocus(nullptr);
+    GetViewAccessibility().SetNextFocus(nullptr);
+  }
 }
 
 void DeskButton::OnButtonPressed() {
@@ -357,7 +363,8 @@ std::u16string DeskButton::GetDeskNameLabelText(const Desk* active_desk) const {
       return std::u16string();
     }
     if (active_desk->is_name_set_by_user()) {
-      return iter.Advance() ? iter.GetString() : std::u16string();
+      return iter.Advance() ? std::u16string(iter.GetString())
+                            : std::u16string();
     }
     return u"#" + base::NumberToString16(active_desk_index + 1);
   }

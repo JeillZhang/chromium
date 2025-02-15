@@ -5,6 +5,7 @@
 // developerPrivate API.
 // This is a private API exposing developing and debugging functionalities for
 // apps and extensions.
+[implemented_in = "chrome/browser/extensions/api/developer_private/developer_private_functions.h"]
 namespace developerPrivate {
 
   // DEPRECATED: Prefer ExtensionType.
@@ -70,7 +71,8 @@ namespace developerPrivate {
     EXTENSION_SERVICE_WORKER_BACKGROUND,
     TAB_CONTENTS,
     OFFSCREEN_DOCUMENT,
-    EXTENSION_SIDE_PANEL
+    EXTENSION_SIDE_PANEL,
+    DEVELOPER_TOOLS
   };
 
   enum ErrorType {
@@ -88,7 +90,7 @@ namespace developerPrivate {
     ENABLED,
     DISABLED,
     TERMINATED,
-    BLACKLISTED
+    BLOCKLISTED
   };
 
   enum CommandScope {
@@ -153,6 +155,8 @@ namespace developerPrivate {
     boolean reloading;
     boolean custodianApprovalRequired;
     boolean parentDisabledPermissions;
+    boolean unsupportedManifestVersion;
+    boolean unsupportedDeveloperExtension;
   };
 
   dictionary OptionsPage {
@@ -240,7 +244,7 @@ namespace developerPrivate {
   };
 
   dictionary ExtensionInfo {
-    DOMString? blacklistText;
+    DOMString? blocklistText;
     SafetyCheckStrings? safetyCheckText;
     Command[] commands;
     ControlledInfo? controlledInfo;
@@ -253,7 +257,9 @@ namespace developerPrivate {
     DOMString iconUrl;
     DOMString id;
     AccessModifier incognitoAccess;
+    AccessModifier userScriptsAccess;
     DOMString[] installWarnings;
+    boolean isCommandRegistrationHandledExternally;
     DOMString? launchUrl;
     Location location;
     DOMString? locationText;
@@ -279,10 +285,10 @@ namespace developerPrivate {
     boolean showSafeBrowsingAllowlistWarning;
     SafetyCheckWarningReason? safetyCheckWarningReason;
     boolean showAccessRequestsInToolbar;
-    boolean acknowledgeSafetyCheckWarning;
     boolean? pinnedToToolbar;
     boolean isAffectedByMV2Deprecation;
-    boolean didAcknowledgeMV2DeprecationWarning;
+    boolean didAcknowledgeMV2DeprecationNotice;
+    boolean canUploadAsAccountExtension;
   };
 
   dictionary ProfileInfo {
@@ -291,7 +297,7 @@ namespace developerPrivate {
     boolean isDeveloperModeControlledByPolicy;
     boolean isIncognitoAvailable;
     boolean isChildAccount;
-    boolean isMv2DeprecationWarningDismissed;
+    boolean isMv2DeprecationNoticeDismissed;
   };
 
   // DEPRECATED: Prefer ExtensionInfo.
@@ -340,18 +346,18 @@ namespace developerPrivate {
     DOMString extensionId;
     boolean? fileAccess;
     boolean? incognitoAccess;
+    boolean? userScriptsAccess;
     boolean? errorCollection;
     HostAccess? hostAccess;
     boolean? showAccessRequestsInToolbar;
     SafetyCheckWarningReason? acknowledgeSafetyCheckWarningReason;
     boolean? acknowledgeSafetyCheckWarning;
-    boolean? acknowledgeMv2DeprecationWarning;
     boolean? pinnedToToolbar;
   };
 
   dictionary ProfileConfigurationUpdate {
     boolean? inDeveloperMode;
-    boolean? isMv2DeprecationWarningDismissed;
+    boolean? isMv2DeprecationNoticeDismissed;
   };
 
   dictionary ExtensionCommandUpdate {
@@ -871,6 +877,14 @@ namespace developerPrivate {
     // Dismisses the menu notification for the extensions module in Safety Hub
     // if one is active.
     static void dismissSafetyHubExtensionsMenuNotification();
+
+    // Triggers the dismissal of the mv2 deprecation notice for `extensionId`.
+    static void dismissMv2DeprecationNoticeForExtension(DOMString extensionId);
+
+    // Uploads an extension to the signed in user's account. If the extension is
+    // not eligible for upload or if there is no signed in user, returns an
+    // error.
+    static void uploadExtensionToAccount(DOMString extensionId);
 
     [nocompile, deprecated="Use openDevTools"]
         static void inspect(InspectOptions options,

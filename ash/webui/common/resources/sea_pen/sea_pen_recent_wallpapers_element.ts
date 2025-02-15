@@ -9,21 +9,21 @@
 
 import 'chrome://resources/ash/common/personalization/common.css.js';
 import 'chrome://resources/ash/common/personalization/wallpaper.css.js';
-import 'chrome://resources/ash/common/sea_pen/sea_pen.css.js';
-import 'chrome://resources/ash/common/sea_pen/sea_pen_icons.html.js';
+import './sea_pen.css.js';
+import './sea_pen_icons.html.js';
 import 'chrome://resources/ash/common/cr_elements/cr_action_menu/cr_action_menu.js';
 import 'chrome://resources/polymer/v3_0/iron-icon/iron-icon.js';
 
 import {AnchorAlignment} from 'chrome://resources/ash/common/cr_elements/cr_action_menu/cr_action_menu.js';
-import {WallpaperGridItemSelectedEvent} from 'chrome://resources/ash/common/personalization/wallpaper_grid_item_element.js';
+import type {WallpaperGridItemSelectedEvent} from 'chrome://resources/ash/common/personalization/wallpaper_grid_item_element.js';
 import {assert} from 'chrome://resources/js/assert.js';
 import {mojoString16ToString} from 'chrome://resources/js/mojo_type_util.js';
-import {Url} from 'chrome://resources/mojo/url/mojom/url.mojom-webui.js';
+import type {Url} from 'chrome://resources/mojo/url/mojom/url.mojom-webui.js';
 import {afterNextRender} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
-import {SeaPenImageId} from './constants.js';
-import {isSeaPenUINextEnabled} from './load_time_booleans.js';
-import {RecentSeaPenThumbnailData, SeaPenThumbnail} from './sea_pen.mojom-webui.js';
+import type {SeaPenImageId} from './constants.js';
+import {isSeaPenTextInputEnabled} from './load_time_booleans.js';
+import type {RecentSeaPenThumbnailData, SeaPenThumbnail} from './sea_pen.mojom-webui.js';
 import {deleteRecentSeaPenImage, fetchRecentSeaPenData, getSeaPenThumbnails, selectRecentSeaPenImage} from './sea_pen_controller.js';
 import {getSeaPenProvider} from './sea_pen_interface_provider.js';
 import {logRecentImageActionMenuItemClick, RecentImageActionMenuItem} from './sea_pen_metrics_logger.js';
@@ -85,10 +85,10 @@ export class SeaPenRecentWallpapersElement extends WithSeaPenStore {
 
       pendingSelected_: Object,
 
-      isSeaPenUINextEnabled_: {
+      isSeaPenTextInputEnabled_: {
         type: Boolean,
         value() {
-          return isSeaPenUINextEnabled();
+          return isSeaPenTextInputEnabled();
         },
       },
     };
@@ -102,7 +102,7 @@ export class SeaPenRecentWallpapersElement extends WithSeaPenStore {
   private currentShowWallpaperInfoDialog_: number|null;
   private currentSelected_: SeaPenImageId|null;
   private pendingSelected_: SeaPenImageId|SeaPenThumbnail|null;
-  private isSeaPenUINextEnabled_: boolean;
+  private isSeaPenTextInputEnabled_: boolean;
 
   static get observers() {
     return ['onRecentImageLoaded_(recentImageData_, recentImageDataLoading_)'];
@@ -271,7 +271,12 @@ export class SeaPenRecentWallpapersElement extends WithSeaPenStore {
 
     if (pendingSelected !== null) {
       // User just clicked on a recent image.
-      return id === pendingSelected;
+      if (isSeaPenImageId(pendingSelected)) {
+        return id === pendingSelected;
+      } else {
+        // |pendingSelected| is a SeaPenThumbnail.
+        return id === pendingSelected.id;
+      }
     }
 
     return id === currentSelected;
@@ -407,7 +412,7 @@ export class SeaPenRecentWallpapersElement extends WithSeaPenStore {
       recentImage: SeaPenImageId,
       recentImageData: Record<SeaPenImageId, RecentSeaPenThumbnailData|null>,
       recentImageDataLoading: Record<SeaPenImageId, boolean>): boolean {
-    if (!this.isSeaPenUINextEnabled_ || !recentImage ||
+    if (!this.isSeaPenTextInputEnabled_ || !recentImage ||
         this.isRecentImageLoading_(recentImage, recentImageDataLoading)) {
       return false;
     }

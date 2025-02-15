@@ -23,6 +23,7 @@
 
 #include <inttypes.h>
 
+#include "base/debug/dump_without_crashing.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "third_party/blink/public/common/features.h"
@@ -51,6 +52,7 @@
 #include "third_party/blink/renderer/core/layout/layout_embedded_content.h"
 #include "third_party/blink/renderer/core/layout/layout_result.h"
 #include "third_party/blink/renderer/core/layout/layout_view_transition_root.h"
+#include "third_party/blink/renderer/core/layout/length_utils.h"
 #include "third_party/blink/renderer/core/layout/list/layout_inline_list_item.h"
 #include "third_party/blink/renderer/core/layout/list/layout_list_item.h"
 #include "third_party/blink/renderer/core/layout/physical_box_fragment.h"
@@ -79,7 +81,7 @@
 namespace blink {
 
 LayoutView::LayoutView(ContainerNode* document)
-    : LayoutNGBlockFlow(document),
+    : LayoutBlockFlow(document),
       frame_view_(To<Document>(document)->View()),
       layout_counter_count_(0),
       hit_test_count_(0),
@@ -111,7 +113,7 @@ void LayoutView::Trace(Visitor* visitor) const {
   visitor->Trace(text_to_variable_length_transform_result_);
   visitor->Trace(hit_test_cache_);
   visitor->Trace(initial_containing_block_resize_handled_list_);
-  LayoutNGBlockFlow::Trace(visitor);
+  LayoutBlockFlow::Trace(visitor);
 }
 
 bool LayoutView::HitTest(const HitTestLocation& location,
@@ -138,7 +140,7 @@ bool LayoutView::HitTest(const HitTestLocation& location,
   // Note that if an iframe has its render pipeline throttled, it will not
   // update layout here, and it will also not propagate the hit test into the
   // iframe's inner document.
-  if (!GetFrameView()->UpdateLifecycleToPrePaintClean(
+  if (!GetFrameView()->UpdateAllLifecyclePhasesExceptPaint(
           DocumentUpdateReason::kHitTest))
     return false;
 
@@ -187,19 +189,17 @@ bool LayoutView::HitTestNoLifecycleUpdate(const HitTestLocation& location,
       // below too.
       result.SetInnerNode(nullptr);
       result.SetURLElement(nullptr);
-      ScrollableArea* scrollable_area =
-          result.GetScrollbar()->GetScrollableArea();
-      if (scrollable_area && scrollable_area->GetLayoutBox() &&
-          scrollable_area->GetLayoutBox()->GetNode()) {
-        Node* node = scrollable_area->GetLayoutBox()->GetNode();
+      if (LayoutBox* layout_box = result.GetScrollbar()->GetLayoutBox()) {
+        if (Node* node = layout_box->GetNode()) {
+          // If scrollbar belongs to Document, we should set innerNode to the
+          // <html> element to match other browser.
+          if (node->IsDocumentNode()) {
+            node = node->GetDocument().documentElement();
+          }
 
-        // If scrollbar belongs to Document, we should set innerNode to the
-        // <html> element to match other browser.
-        if (node->IsDocumentNode())
-          node = node->GetDocument().documentElement();
-
-        result.SetInnerNode(node);
-        result.SetURLElement(node->EnclosingLinkEventParentOrSelf());
+          result.SetInnerNode(node);
+          result.SetURLElement(node->EnclosingLinkEventParentOrSelf());
+        }
       }
     }
 
@@ -230,7 +230,7 @@ LayoutUnit LayoutView::ComputeMinimumWidth() {
   ConstraintSpaceBuilder builder(mode, style.GetWritingDirection(),
                                  /* is_new_fc */ true);
   return BlockNode(this)
-      .ComputeMinMaxSizes(mode, MinMaxSizesType::kIntrinsic,
+      .ComputeMinMaxSizes(mode, SizeType::kIntrinsic,
                           builder.ToConstraintSpace())
       .sizes.min_size;
 }
@@ -246,8 +246,8 @@ void LayoutView::AddChild(LayoutObject* new_child, LayoutObject* before_child) {
 
     LayoutViewTransitionRoot* snapshot_containing_block =
         MakeGarbageCollected<LayoutViewTransitionRoot>(GetDocument());
-    LayoutNGBlockFlow::AddChild(snapshot_containing_block,
-                                /*before_child=*/nullptr);
+    LayoutBlockFlow::AddChild(snapshot_containing_block,
+                              /*before_child=*/nullptr);
     snapshot_containing_block->AddChild(new_child);
 
     ViewTransition* transition =
@@ -257,7 +257,7 @@ void LayoutView::AddChild(LayoutObject* new_child, LayoutObject* before_child) {
     return;
   }
 
-  LayoutNGBlockFlow::AddChild(new_child, before_child);
+  LayoutBlockFlow::AddChild(new_child, before_child);
 }
 
 bool LayoutView::IsChildAllowed(LayoutObject* child,
@@ -306,13 +306,6 @@ bool LayoutView::ShouldPlaceBlockDirectionScrollbarOnLogicalLeft() const {
   return false;
 }
 
-PhysicalRect LayoutView::LocalVisualRectIgnoringVisibility() const {
-  NOT_DESTROYED();
-  PhysicalRect rect = VisualOverflowRect();
-  rect.Unite(PhysicalRect(rect.offset, ViewRect().size));
-  return rect;
-}
-
 void LayoutView::MapLocalToAncestor(const LayoutBoxModelObject* ancestor,
                                     TransformState& transform_state,
                                     MapCoordinatesFlags mode) const {
@@ -336,8 +329,11 @@ void LayoutView::MapLocalToAncestor(const LayoutBoxModelObject* ancestor,
                                                    mode);
     } else {
       DCHECK(!ancestor);
-      if (mode & kApplyRemoteMainFrameTransform)
-        GetFrameView()->MapLocalToRemoteMainFrame(transform_state);
+      if (mode &
+          (kApplyRemoteMainFrameTransform | kApplyRemoteViewportTransform)) {
+        GetFrameView()->MapLocalToRemoteMainFrame(
+            transform_state, mode & kApplyRemoteViewportTransform);
+      }
     }
   }
 }
@@ -359,9 +355,11 @@ void LayoutView::MapAncestorToLocal(const LayoutBoxModelObject* ancestor,
       DCHECK(!ancestor);
       // Note that MapLocalToRemoteMainFrame is correct here because
       // transform_state will be set to kUnapplyInverseTransformDirection.
-      if ((mode & kApplyRemoteMainFrameTransform) &&
+      if ((mode &
+           (kApplyRemoteMainFrameTransform | kApplyRemoteViewportTransform)) &&
           GetFrame()->IsLocalRoot()) {
-        GetFrameView()->MapLocalToRemoteMainFrame(transform_state);
+        GetFrameView()->MapLocalToRemoteMainFrame(
+            transform_state, mode & kApplyRemoteViewportTransform);
       }
     }
   } else {
@@ -430,7 +428,8 @@ bool LayoutView::MapToVisualRectInAncestorSpaceInternal(
     PhysicalRect rect = PhysicalRect::EnclosingRect(
         transform_state.LastPlanarQuad().BoundingBox());
     bool retval = GetFrameView()->MapToVisualRectInRemoteRootFrame(
-        rect, !(visual_rect_flags & kDontApplyMainFrameOverflowClip));
+        rect, !(visual_rect_flags & kDontApplyMainFrameOverflowClip),
+        visual_rect_flags & kVisualRectApplyRemoteViewportTransform);
     transform_state.SetQuad(gfx::QuadF(gfx::RectF(rect)));
     return retval;
   }
@@ -472,11 +471,13 @@ PhysicalOffset LayoutView::OffsetForFixedPosition() const {
   return IsScrollContainer() ? ScrolledContentOffset() : PhysicalOffset();
 }
 
-void LayoutView::AbsoluteQuads(Vector<gfx::QuadF>& quads,
-                               MapCoordinatesFlags mode) const {
+void LayoutView::QuadsInAncestorInternal(Vector<gfx::QuadF>& quads,
+                                         const LayoutBoxModelObject* ancestor,
+                                         MapCoordinatesFlags mode) const {
   NOT_DESTROYED();
-  quads.push_back(LocalRectToAbsoluteQuad(
-      PhysicalRect(PhysicalOffset(), GetScrollableArea()->Size()), mode));
+  quads.push_back(LocalRectToAncestorQuad(
+      PhysicalRect(PhysicalOffset(), GetScrollableArea()->Size()), ancestor,
+      mode));
 }
 
 void LayoutView::CommitPendingSelection() {
@@ -520,10 +521,18 @@ PhysicalRect LayoutView::ViewRect() const {
       // one pixel) than the frame on mobile viewport. Investigate why. Consider
       // adding `<meta name="viewport" content="width=device-width">` to the
       // HTML if this occurs.
-      CHECK_GE(transition->GetSnapshotRootSize().width(),
-               frame_view_->Size().width());
-      CHECK_GE(transition->GetSnapshotRootSize().height(),
-               frame_view_->Size().height());
+      if (transition->GetSnapshotRootSize().width() <
+              frame_view_->Size().width() ||
+          transition->GetSnapshotRootSize().height() <
+              frame_view_->Size().height()) {
+        // TODO(https://issues.chromium.org/362991812) This can happen on
+        // ChromeOS devices in portrait mode, and we need to investigate why.
+        base::debug::DumpWithoutCrashing();
+
+        transition->SkipTransitionSoon();
+        return PhysicalRect(PhysicalOffset(),
+                            PhysicalSize(frame_view_->Size()));
+      }
 
       return PhysicalRect(
           PhysicalOffset(transition->GetFrameToSnapshotRootOffset()),
@@ -829,7 +838,7 @@ void LayoutView::UpdateAfterLayout() {
       GetScrollableArea()->ClampScrollOffsetAfterOverflowChange();
     }
   }
-  LayoutNGBlockFlow::UpdateAfterLayout();
+  LayoutBlockFlow::UpdateAfterLayout();
 }
 
 void LayoutView::UpdateHitTestResult(HitTestResult& result,
@@ -894,12 +903,12 @@ void LayoutView::WillBeDestroyed() {
   // Should find and fix the root cause.
   if (PaintLayer* layer = Layer())
     layer->SetNeedsRepaint();
-  LayoutNGBlockFlow::WillBeDestroyed();
+  LayoutBlockFlow::WillBeDestroyed();
 }
 
 void LayoutView::UpdateFromStyle() {
   NOT_DESTROYED();
-  LayoutNGBlockFlow::UpdateFromStyle();
+  LayoutBlockFlow::UpdateFromStyle();
 
   // LayoutView of the main frame is responsible for painting base background.
   if (GetFrameView()->ShouldPaintBaseBackgroundColor())
@@ -909,7 +918,7 @@ void LayoutView::UpdateFromStyle() {
 void LayoutView::StyleDidChange(StyleDifference diff,
                                 const ComputedStyle* old_style) {
   NOT_DESTROYED();
-  LayoutNGBlockFlow::StyleDidChange(diff, old_style);
+  LayoutBlockFlow::StyleDidChange(diff, old_style);
 
   LocalFrame& frame = GetFrameView()->GetFrame();
   VisualViewport& visual_viewport = frame.GetPage()->GetVisualViewport();

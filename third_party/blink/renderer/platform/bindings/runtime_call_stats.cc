@@ -2,11 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/platform/bindings/runtime_call_stats.h"
 
 #include <inttypes.h>
 
 #include <algorithm>
+#include <array>
 
 #include "base/logging.h"
 #include "base/time/default_tick_clock.h"
@@ -57,7 +63,7 @@ RuntimeCallTimer* RuntimeCallTimer::Stop() {
 
 RuntimeCallStats::RuntimeCallStats(const base::TickClock* clock)
     : clock_(clock) {
-  static const char* const names[] = {
+  static const auto names = std::to_array<const char*>({
 #define BINDINGS_COUNTER_NAME(name) "Blink_Bindings_" #name,
       BINDINGS_COUNTERS(BINDINGS_COUNTER_NAME)  //
 #undef BINDINGS_COUNTER_NAME
@@ -77,7 +83,7 @@ RuntimeCallStats::RuntimeCallStats(const base::TickClock* clock)
       CALLBACK_COUNTERS(COUNTER_NAME)  //
       EXTRA_COUNTERS(COUNTER_NAME)
 #undef COUNTER_NAME
-  };
+  });
 
   for (int i = 0; i < number_of_counters_; i++) {
     counters_[i] = RuntimeCallCounter(names[i]);
@@ -203,8 +209,9 @@ void RuntimeCallStatsScopedTracer::AddBeginTraceEventIfEnabled(
   bool category_group_enabled;
   TRACE_EVENT_CATEGORY_GROUP_ENABLED(s_category_group_,
                                      &category_group_enabled);
-  if (LIKELY(!category_group_enabled))
+  if (!category_group_enabled) [[likely]] {
     return;
+  }
 
   RuntimeCallStats* stats = RuntimeCallStats::From(isolate);
   if (stats->InUse())

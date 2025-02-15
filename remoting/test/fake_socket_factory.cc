@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #include "remoting/test/fake_socket_factory.h"
 
 #include <algorithm>
@@ -111,15 +116,13 @@ rtc::SocketAddress FakeUdpSocket::GetLocalAddress() const {
 }
 
 rtc::SocketAddress FakeUdpSocket::GetRemoteAddress() const {
-  NOTREACHED_IN_MIGRATION();
-  return rtc::SocketAddress();
+  NOTREACHED();
 }
 
 int FakeUdpSocket::Send(const void* data,
                         size_t data_size,
                         const rtc::PacketOptions& options) {
-  NOTREACHED_IN_MIGRATION();
-  return EINVAL;
+  NOTREACHED();
 }
 
 int FakeUdpSocket::SendTo(const void* data,
@@ -161,7 +164,7 @@ int FakeUdpSocket::GetError() const {
 }
 
 void FakeUdpSocket::SetError(int error) {
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 }  // namespace

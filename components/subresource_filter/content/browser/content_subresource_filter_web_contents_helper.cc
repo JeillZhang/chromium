@@ -12,7 +12,7 @@
 #include "base/not_fatal_until.h"
 #include "base/supports_user_data.h"
 #include "components/subresource_filter/content/browser/content_subresource_filter_throttle_manager.h"
-#include "components/subresource_filter/content/shared/common/subresource_filter_utils.h"
+#include "components/subresource_filter/content/shared/browser/utils.h"
 #include "components/subresource_filter/core/browser/subresource_filter_features.h"
 #include "content/public/browser/frame_type.h"
 #include "content/public/browser/global_routing_id.h"
@@ -193,7 +193,7 @@ void ContentSubresourceFilterWebContentsHelper::RenderFrameDeleted(
 }
 
 void ContentSubresourceFilterWebContentsHelper::FrameDeleted(
-    int frame_tree_node_id) {
+    content::FrameTreeNodeId frame_tree_node_id) {
   navigated_frames_.erase(frame_tree_node_id);
 
   // TODO(bokan): Not sure how to go from frame tree node id to a Page. The

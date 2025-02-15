@@ -16,6 +16,8 @@
 #include "base/memory/weak_ptr.h"
 #include "build/build_config.h"
 #include "ui/aura/window_tree_host_platform.h"
+#include "ui/base/mojom/ui_base_types.mojom-shared.h"
+#include "ui/base/mojom/window_show_state.mojom-forward.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/platform_window/extensions/workspace_extension_delegate.h"
 #include "ui/views/views_export.h"
@@ -27,10 +29,6 @@ class PaintContext;
 }  // namespace ui
 
 namespace views {
-
-namespace corewm {
-class TooltipController;
-}
 
 class VIEWS_EXPORT DesktopWindowTreeHostPlatform
     : public aura::WindowTreeHostPlatform,
@@ -78,7 +76,7 @@ class VIEWS_EXPORT DesktopWindowTreeHostPlatform
   void Close() override;
   void CloseNow() override;
   aura::WindowTreeHost* AsWindowTreeHost() override;
-  void Show(ui::WindowShowState show_state,
+  void Show(ui::mojom::WindowShowState show_state,
             const gfx::Rect& restore_bounds) override;
   bool IsVisible() const override;
   void SetSize(const gfx::Size& size) override;
@@ -86,8 +84,9 @@ class VIEWS_EXPORT DesktopWindowTreeHostPlatform
   void StackAtTop() override;
   bool IsStackedAbove(aura::Window* window) override;
   void CenterWindow(const gfx::Size& size) override;
-  void GetWindowPlacement(gfx::Rect* bounds,
-                          ui::WindowShowState* show_state) const override;
+  void GetWindowPlacement(
+      gfx::Rect* bounds,
+      ui::mojom::WindowShowState* show_state) const override;
   gfx::Rect GetWindowBoundsInScreen() const override;
   gfx::Rect GetClientAreaBoundsInScreen() const override;
   gfx::Rect GetRestoredBounds() const override;
@@ -128,7 +127,7 @@ class VIEWS_EXPORT DesktopWindowTreeHostPlatform
                       const gfx::Size& excluded_margin) override;
   void SetWindowIcons(const gfx::ImageSkia& window_icon,
                       const gfx::ImageSkia& app_icon) override;
-  void InitModalType(ui::ModalType modal_type) override;
+  void InitModalType(ui::mojom::ModalType modal_type) override;
   void FlashFrame(bool flash_frame) override;
   bool IsAnimatingClosed() const override;
   void SizeConstraintsChanged() override;
@@ -176,6 +175,8 @@ class VIEWS_EXPORT DesktopWindowTreeHostPlatform
   gfx::Rect ConvertRectToDIP(const gfx::Rect& rect_in_pixels) const override;
   gfx::PointF ConvertScreenPointToLocalDIP(
       const gfx::Point& screen_in_pixels) const override;
+  gfx::Insets ConvertInsetsToPixels(
+      const gfx::Insets& insets_dip) const override;
 
   // ui::WorkspaceExtensionDelegate:
   void OnWorkspaceChanged() override;
@@ -207,8 +208,6 @@ class VIEWS_EXPORT DesktopWindowTreeHostPlatform
 
   Widget* GetWidget();
   const Widget* GetWidget() const;
-
-  views::corewm::TooltipController* tooltip_controller();
 
   void ScheduleRelayout();
 

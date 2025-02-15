@@ -6,23 +6,29 @@
 
 #include <stddef.h>
 
+#include <algorithm>
 #include <climits>
 #include <iterator>
+#include <ranges>
 #include <string>
 #include <vector>
 
-#include "base/ranges/algorithm.h"
+#include "base/notreached.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
+#include "components/history_embeddings/history_embeddings_features.h"
 #include "components/omnibox/browser/autocomplete_input.h"
 #include "components/omnibox/browser/autocomplete_match.h"
 #include "components/omnibox/browser/autocomplete_match_classification.h"
 #include "components/omnibox/browser/autocomplete_match_type.h"
 #include "components/omnibox/browser/autocomplete_provider_client.h"
+#include "components/omnibox/browser/autocomplete_result.h"
 #include "components/omnibox/browser/in_memory_url_index_types.h"
+#include "components/omnibox/browser/keyword_provider.h"
 #include "components/omnibox/browser/omnibox_field_trial.h"
 #include "components/omnibox/browser/omnibox_prefs.h"
+#include "components/optimization_guide/core/optimization_guide_features.h"
 #include "components/prefs/pref_service.h"
 #include "components/search_engines/template_url.h"
 #include "components/search_engines/template_url_data.h"
@@ -38,14 +44,73 @@
 
 namespace {
 
-constexpr bool kIsDesktop = !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS);
+// Max number of featured enterprise suggestions to show when the user types '@'
+// or '@...'. 4 is a good limit because:
+// - When the user types '@', the existing 4 starter packs, 1 trivial search,
+//   and 4 enterprise suggestions will all fit in the total limit of 9
+//   suggestions. This may change if more starter packs are launched.
+// - When the user types '@...', the at-most-1 matching starter pack (no
+//   starter packs share the same 1st character), 1 trivial search, at least 2
+//   non-trivial searches, and 4 enterprise suggestions will fit in the total
+//   limit of 8 suggestions.
+// This constant can be replaced with a function if we want to show a different
+// # of enterprise suggestions in these 2 cases.
+constexpr int kMaxEnterpriseSuggestions = 4;
 
-std::string GetShowIPHPrefNameFor(FeaturedSearchProvider::IPHType iph_type) {
+std::string GetIphDismissedPrefNameFor(IphType iph_type) {
   switch (iph_type) {
-    case FeaturedSearchProvider::IPHType::kGemini:
-      return omnibox::kShowGeminiIPH;
-    case FeaturedSearchProvider::IPHType::kFeaturedEnterpriseSearch:
-      return omnibox::kShowFeaturedEnterpriseSiteSearchIPHPrefName;
+    case IphType::kNone:
+      NOTREACHED();
+    case IphType::kGemini:
+      return omnibox::kDismissedGeminiIph;
+    case IphType::kFeaturedEnterpriseSearch:
+      return omnibox::kDismissedFeaturedEnterpriseSiteSearchIphPrefName;
+    case IphType::kHistoryEmbeddingsSettingsPromo:
+      return omnibox::kDismissedHistoryEmbeddingsSettingsPromo;
+    case IphType::kHistoryEmbeddingsDisclaimer:
+      NOTREACHED();  // This is a non-dismissible disclaimer.
+    case IphType::kHistoryScopePromo:
+      return omnibox::kDismissedHistoryScopePromo;
+    case IphType::kHistoryEmbeddingsScopePromo:
+      return omnibox::kDismissedHistoryEmbeddingsScopePromo;
+  }
+}
+
+std::string GetIphShownCountPrefNameFor(IphType iph_type) {
+  switch (iph_type) {
+    case IphType::kNone:
+      NOTREACHED();
+    case IphType::kGemini:
+      return omnibox::kShownCountGeminiIph;
+    case IphType::kFeaturedEnterpriseSearch:
+      return omnibox::kShownCountFeaturedEnterpriseSiteSearchIph;
+    case IphType::kHistoryEmbeddingsSettingsPromo:
+      return omnibox::kShownCountHistoryEmbeddingsSettingsPromo;
+    case IphType::kHistoryEmbeddingsDisclaimer:
+      NOTREACHED();  // This disclaimer has no show count limit.
+    case IphType::kHistoryScopePromo:
+      return omnibox::kShownCountHistoryScopePromo;
+    case IphType::kHistoryEmbeddingsScopePromo:
+      return omnibox::kShownCountHistoryEmbeddingsScopePromo;
+  }
+}
+
+std::string IphTypeDebugString(IphType iph_type) {
+  switch (iph_type) {
+    case IphType::kNone:
+      NOTREACHED();
+    case IphType::kGemini:
+      return "gemini";
+    case IphType::kFeaturedEnterpriseSearch:
+      return "featured enterprise search";
+    case IphType::kHistoryEmbeddingsSettingsPromo:
+      return "history embeddings settings promo";
+    case IphType::kHistoryEmbeddingsDisclaimer:
+      return "history embeddings disclaimer";
+    case IphType::kHistoryScopePromo:
+      return "history scope promo";
+    case IphType::kHistoryEmbeddingsScopePromo:
+      return "history embeddings scope promo";
   }
 }
 
@@ -56,7 +121,7 @@ std::string GetShowIPHPrefNameFor(FeaturedSearchProvider::IPHType iph_type) {
 // prefix in the input). Featured Enterprise search ranks higher than "ask
 // google" suggestions, which ranks higher than the other starter pack
 // suggestions.
-const int FeaturedSearchProvider::kAskGoogleRelevance = 1460;
+const int FeaturedSearchProvider::kGeminiRelevance = 1460;
 const int FeaturedSearchProvider::kFeaturedEnterpriseSearchRelevance = 1470;
 const int FeaturedSearchProvider::kStarterPackRelevance = 1450;
 
@@ -67,45 +132,58 @@ FeaturedSearchProvider::FeaturedSearchProvider(
   template_url_service_ = client->GetTemplateURLService();
 }
 
-// static
-FeaturedSearchProvider::IPHType FeaturedSearchProvider::GetIPHType(
-    const AutocompleteMatch& match) {
-  std::string info = match.GetAdditionalInfo(kIPHTypeAdditionalInfoKey);
-  CHECK(!info.empty());
-  int converted_value = 0;
-  CHECK(base::StringToInt(info, &converted_value));
-  CHECK_GE(converted_value, static_cast<int>(kMinIPHType));
-  CHECK_LE(converted_value, static_cast<int>(kMaxIPHType));
-  return static_cast<IPHType>(converted_value);
-}
-
 void FeaturedSearchProvider::Start(const AutocompleteInput& input,
                                    bool minimal_changes) {
   matches_.clear();
+  if (input.IsZeroSuggest())
+    iph_shown_in_omnibox_session_ = false;
+
+  AutocompleteInput keyword_input = input;
+  const TemplateURL* keyword_turl =
+      AutocompleteInput::GetSubstitutingTemplateURLForInput(
+          template_url_service_, &keyword_input);
+  bool is_history_scope =
+      keyword_turl &&
+      keyword_turl->starter_pack_id() == TemplateURLStarterPackData::kHistory;
+
+  if (is_history_scope) {
+    if (ShouldShowHistoryEmbeddingsDisclaimerIphMatch()) {
+      AddHistoryEmbeddingsDisclaimerIphMatch();
+    } else if (ShouldShowHistoryEmbeddingsSettingsPromoIphMatch()) {
+      AddHistoryEmbeddingsSettingsPromoIphMatch();
+    }
+    return;
+  }
 
   if (ShouldShowEnterpriseFeaturedSearchIPHMatch(input)) {
     AddFeaturedEnterpriseSearchIPHMatch();
   } else if (ShouldShowGeminiIPHMatch(input)) {
-    AddIPHMatch(IPHType::kGemini,
-                l10n_util::GetStringUTF16(IDS_OMNIBOX_GEMINI_IPH), u"@gemini");
+    AddIPHMatch(IphType::kGemini,
+                l10n_util::GetStringUTF16(IDS_OMNIBOX_GEMINI_IPH), u"@gemini",
+                u"", {}, true);
+  } else if (ShouldShowHistoryScopePromoIphMatch(input)) {
+    AddHistoryScopePromoIphMatch();
+  } else if (ShouldShowHistoryEmbeddingsScopePromoIphMatch(input)) {
+    AddHistoryEmbeddingsScopePromoIphMatch();
   }
 
-  if (input.focus_type() != metrics::OmniboxFocusType::INTERACTION_DEFAULT ||
+  if (input.IsZeroSuggest() ||
       (input.type() == metrics::OmniboxInputType::EMPTY)) {
     return;
   }
 
-  DoStarterPackAutocompletion(input);
+  AddFeaturedKeywordMatches(input);
 }
 
 void FeaturedSearchProvider::DeleteMatch(const AutocompleteMatch& match) {
   // Only `NULL_RESULT_MESSAGE` types from this provider are deletable.
   CHECK(match.deletable);
-  CHECK(match.type == AutocompleteMatchType::NULL_RESULT_MESSAGE);
+  CHECK_EQ(match.type, AutocompleteMatchType::NULL_RESULT_MESSAGE);
 
   // Set the pref so this provider doesn't continue to offer the suggestion.
   PrefService* prefs = client_->GetPrefs();
-  prefs->SetBoolean(GetShowIPHPrefNameFor(GetIPHType(match)), false);
+  CHECK_NE(match.iph_type, IphType::kNone);
+  prefs->SetBoolean(GetIphDismissedPrefNameFor(match.iph_type), true);
 
   // Delete `match` from `matches_`.
   std::erase_if(matches_, [&match](const auto& i) {
@@ -115,31 +193,27 @@ void FeaturedSearchProvider::DeleteMatch(const AutocompleteMatch& match) {
 
 FeaturedSearchProvider::~FeaturedSearchProvider() = default;
 
-void FeaturedSearchProvider::DoStarterPackAutocompletion(
+void FeaturedSearchProvider::AddFeaturedKeywordMatches(
     const AutocompleteInput& input) {
-  // When the user's input begins with '@', we want to prioritize providing
-  // suggestions for all active starter pack search engines.
-  bool starts_with_starter_pack_symbol = base::StartsWith(
-      input.text(), u"@", base::CompareCase::INSENSITIVE_ASCII);
-
-  if (starts_with_starter_pack_symbol) {
-    TemplateURLService::TemplateURLVector matches;
-    template_url_service_->AddMatchingKeywords(input.text(), false, &matches);
-    for (TemplateURL* match : matches) {
-      if (match->starter_pack_id() > 0 &&
-          match->is_active() == TemplateURLData::ActiveStatus::kTrue) {
+  size_t enterprise_count = 0;
+  if (input.GetFeaturedKeywordMode() !=
+      AutocompleteInput::FeaturedKeywordMode::kFalse) {
+    TemplateURLService::TemplateURLVector turls;
+    template_url_service_->AddMatchingKeywords(input.text(), &turls);
+    for (TemplateURL* turl : turls) {
+      if (turl->starter_pack_id() > 0 &&
+          turl->is_active() == TemplateURLData::ActiveStatus::kTrue) {
         // Don't add the expanded set of starter pack engines unless the feature
         // is enabled.
         if (!OmniboxFieldTrial::IsStarterPackExpansionEnabled() &&
-            match->starter_pack_id() > TemplateURLStarterPackData::kTabs) {
+            turl->starter_pack_id() > TemplateURLStarterPackData::kTabs) {
           continue;
         }
-
-        AddStarterPackMatch(*match, input);
-      } else if (base::FeatureList::IsEnabled(
-                     omnibox::kShowFeaturedEnterpriseSiteSearch) &&
-                 match->featured_by_policy()) {
-        AddFeaturedEnterpriseSearchMatch(*match, input);
+        AddStarterPackMatch(*turl, input);
+      } else if (turl->featured_by_policy() &&
+                 enterprise_count < kMaxEnterpriseSuggestions) {
+        AddFeaturedEnterpriseSearchMatch(*turl, input);
+        enterprise_count++;
       }
     }
   }
@@ -171,23 +245,21 @@ void FeaturedSearchProvider::AddStarterPackMatch(
       match.fill_into_edit.substr(input.text().length());
   match.destination_url = GURL(destination_url);
   match.transition = ui::PAGE_TRANSITION_GENERATED;
-  if (kIsDesktop &&
-      input.current_page_classification() !=
+  if (input.current_page_classification() !=
           metrics::OmniboxEventProto::NTP_REALBOX &&
       template_url.keyword().starts_with(u'@')) {
-    // The AskGoogle provider doesn't follow the "Search X" pattern and should
+    // The Gemini provider doesn't follow the "Search X" pattern and should
     // also be ranked first.
     // TODO(b/41494524): Currently templateurlservice returns the keywords in
     //  alphabetical order, which is the order we rank them. There should be a
     //  more sustainable way for specifying the order they should appear in the
     //  omnibox.
     if (OmniboxFieldTrial::IsStarterPackExpansionEnabled() &&
-        template_url.starter_pack_id() ==
-            TemplateURLStarterPackData::kAskGoogle) {
+        template_url.starter_pack_id() == TemplateURLStarterPackData::kGemini) {
       match.description = l10n_util::GetStringFUTF16(
-          IDS_OMNIBOX_INSTANT_KEYWORD_CHAT_TEXT, template_url.keyword(),
+          IDS_OMNIBOX_INSTANT_KEYWORD_ASK_TEXT, template_url.keyword(),
           template_url.short_name());
-      match.relevance = kAskGoogleRelevance;
+      match.relevance = kGeminiRelevance;
     } else {
       std::u16string short_name = template_url.short_name();
       if (template_url.short_name() == u"Tabs") {
@@ -208,6 +280,15 @@ void FeaturedSearchProvider::AddStarterPackMatch(
     match.allowed_to_be_default_match = false;
     match.keyword = template_url.keyword();
   } else {
+    // The Gemini provider should be ranked first.
+    // TODO(b/41494524): Currently templateurlservice returns the keywords in
+    //  alphabetical order, which is the order we rank them. There should be a
+    //  more sustainable way for specifying the order they should appear in the
+    //  omnibox.
+    if (OmniboxFieldTrial::IsStarterPackExpansionEnabled() &&
+        template_url.starter_pack_id() == TemplateURLStarterPackData::kGemini) {
+      match.relevance = kGeminiRelevance;
+    }
     match.description = template_url.short_name();
     match.description_class.emplace_back(0, ACMatchClassification::NONE);
     match.contents = destination_url;
@@ -217,21 +298,28 @@ void FeaturedSearchProvider::AddStarterPackMatch(
   matches_.push_back(match);
 }
 
-void FeaturedSearchProvider::AddIPHMatch(IPHType iph_type,
+void FeaturedSearchProvider::AddIPHMatch(IphType iph_type,
                                          const std::u16string& iph_contents,
-                                         const std::u16string& matched_term) {
-  // This value doesn't really matter as this suggestion is grouped after all
-  // other suggestions. Use an arbitrary constant.
-  constexpr int kRelevanceScore = 1000;
-  AutocompleteMatch match(this, kRelevanceScore, /*deletable=*/false,
+                                         const std::u16string& matched_term,
+                                         const std::u16string& iph_link_text,
+                                         const GURL& iph_link_url,
+                                         bool deletable) {
+  // IPH suggestions are grouped after all other suggestions. But they still
+  // need to score within top N suggestions to be shown.
+  constexpr int kRelevanceScore = 5000;
+  AutocompleteMatch match(this, kRelevanceScore, /*deletable=*/deletable,
                           AutocompleteMatchType::NULL_RESULT_MESSAGE);
 
   // Use this suggestion's contents field to display a message to the user that
   // cannot be acted upon.
   match.contents = iph_contents;
-  match.deletable = true;
-  match.RecordAdditionalInfo(kIPHTypeAdditionalInfoKey,
-                             static_cast<int>(iph_type));
+  CHECK_NE(iph_type, IphType::kNone);
+  match.iph_type = iph_type;
+  match.iph_link_text = iph_link_text;
+  match.iph_link_url = iph_link_url;
+  match.RecordAdditionalInfo("iph type", IphTypeDebugString(iph_type));
+  match.RecordAdditionalInfo("trailing iph link text", iph_link_text);
+  match.RecordAdditionalInfo("trailing iph link url", iph_link_url.spec());
 
   // Bolds just the portion of the IPH string corresponding to `matched_terms`.
   // The rest of the string is dimmed.
@@ -243,14 +331,36 @@ void FeaturedSearchProvider::AddIPHMatch(IPHType iph_type,
       ACMatchClassification::DIM);
 
   matches_.push_back(match);
-  iph_shown_count_++;
+}
+
+void FeaturedSearchProvider::RegisterDisplayedMatches(
+    const AutocompleteResult& result) {
+  auto iph_match = std::ranges::find_if(result, [](const auto& match) {
+    return match.iph_type != IphType::kNone;
+  });
+  IphType iph_type =
+      iph_match == result.end() ? IphType::kNone : iph_match->iph_type;
+
+  // `kHistoryEmbeddingsDisclaimer` has no shown limit.
+  if (!iph_shown_in_omnibox_session_ && iph_type != IphType::kNone &&
+      iph_type != IphType::kHistoryEmbeddingsDisclaimer) {
+    PrefService* prefs = client_->GetPrefs();
+    // `ShouldShowIPH()` shouldn't allow adding IPH matches if there is no
+    // `prefs`.
+    CHECK(prefs);
+    prefs->SetInteger(
+        GetIphShownCountPrefNameFor(iph_type),
+        prefs->GetInteger(GetIphShownCountPrefNameFor(iph_type)) + 1);
+    iph_shown_in_browser_session_count_++;
+    iph_shown_in_omnibox_session_ = true;
+  }
 }
 
 void FeaturedSearchProvider::AddFeaturedEnterpriseSearchMatch(
     const TemplateURL& template_url,
     const AutocompleteInput& input) {
-  if (!kIsDesktop || input.current_page_classification() ==
-                         metrics::OmniboxEventProto::NTP_REALBOX) {
+  if (input.current_page_classification() ==
+      metrics::OmniboxEventProto::NTP_REALBOX) {
     return;
   }
 
@@ -280,14 +390,14 @@ bool FeaturedSearchProvider::ShouldShowGeminiIPHMatch(
     const AutocompleteInput& input) const {
   // The IPH suggestion should only be shown in Zero prefix state.
   if (!OmniboxFieldTrial::IsStarterPackIPHEnabled() || !input.IsZeroSuggest() ||
-      !ShouldShowIPH(IPHType::kGemini)) {
+      !ShouldShowIPH(IphType::kGemini)) {
     return false;
   }
 
   // The @gemini IPH should no longer be shown once a user has successfully
   // used @gemini.
   TemplateURL* gemini_turl = template_url_service_->FindStarterPackTemplateURL(
-      TemplateURLStarterPackData::kAskGoogle);
+      TemplateURLStarterPackData::kGemini);
   if (gemini_turl && gemini_turl->usage_count() > 0) {
     return false;
   }
@@ -306,33 +416,133 @@ bool FeaturedSearchProvider::ShouldShowEnterpriseFeaturedSearchIPHMatch(
   // - The user has not successfully used at least one featured engine.
   TemplateURLService::TemplateURLVector featured_engines =
       template_url_service_->GetFeaturedEnterpriseSearchEngines();
-  return OmniboxFieldTrial::IsFeaturedEnterpriseSearchIPHEnabled() &&
-         input.IsZeroSuggest() && !featured_engines.empty() &&
-         ShouldShowIPH(IPHType::kFeaturedEnterpriseSearch) &&
-         base::ranges::all_of(featured_engines, [](auto turl) {
+  return input.IsZeroSuggest() && !featured_engines.empty() &&
+         ShouldShowIPH(IphType::kFeaturedEnterpriseSearch) &&
+         std::ranges::all_of(featured_engines, [](auto turl) {
            return turl->usage_count() == 0;
          });
 }
 
-bool FeaturedSearchProvider::ShouldShowIPH(IPHType iph_type) const {
+bool FeaturedSearchProvider::ShouldShowIPH(IphType iph_type) const {
   PrefService* prefs = client_->GetPrefs();
-  size_t iph_shown_limit =
-      OmniboxFieldTrial::kStarterPackIPHPerSessionLimit.Get();
-  return prefs && prefs->GetBoolean(GetShowIPHPrefNameFor(iph_type)) &&
-         ((iph_shown_limit == INT_MAX) || (iph_shown_count_ < iph_shown_limit));
+  // Check the IPH hasn't been dismissed.
+  if (!prefs || prefs->GetBoolean(GetIphDismissedPrefNameFor(iph_type)))
+    return false;
+
+  // The limit only applies once per session. E.g., when the user types
+  // '@history a', the `kHistoryEmbeddingsSettingsPromo` IPH might be shown.
+  // When they then type '@history abcdefg', the IPH should continue to be
+  // shown, and not disappear at '@history abcd', and only count as 1 shown.
+  if (iph_shown_in_omnibox_session_)
+    return true;
+
+  // Check the IPH hasn't reached its show limit. Check too many IPHs haven't
+  // been shown this session; don't want to show 3 of type 1, then 3 of type 2
+  // immediately after.
+  size_t iph_shown_count =
+      prefs->GetInteger(GetIphShownCountPrefNameFor(iph_type));
+  return iph_shown_count < 3 && iph_shown_in_browser_session_count_ < 3;
 }
 
 void FeaturedSearchProvider::AddFeaturedEnterpriseSearchIPHMatch() {
   std::vector<std::string> sites;
-  base::ranges::transform(
+  std::ranges::transform(
       template_url_service_->GetFeaturedEnterpriseSearchEngines(),
       std::back_inserter(sites), [](auto turl) {
         return url_formatter::StripWWW(GURL(turl->url()).host());
       });
-  base::ranges::sort(sites);
-  AddIPHMatch(IPHType::kFeaturedEnterpriseSearch,
+  std::ranges::sort(sites);
+  AddIPHMatch(IphType::kFeaturedEnterpriseSearch,
               l10n_util::GetStringFUTF16(
                   IDS_OMNIBOX_FEATURED_ENTERPRISE_SITE_SEARCH_IPH,
                   base::UTF8ToUTF16(base::JoinString(sites, ", "))),
-              u"");
+              u"", u"", {}, true);
+}
+
+bool FeaturedSearchProvider::ShouldShowHistoryEmbeddingsSettingsPromoIphMatch()
+    const {
+  // Assumes this is only called when the user is in @history scope.
+  // Additional conditions:
+  // - The settings is available - no need to ask the user to enable a setting
+  //   that doesn't exist.
+  // - The setting isn't already enabled - no need to the user to enable a
+  //   setting that's already enabled.
+  // - The feature is allowed in the omnibox.
+  // - The user has not deleted the IPH suggestion.
+  return client_->IsHistoryEmbeddingsSettingVisible() &&
+         !client_->IsHistoryEmbeddingsEnabled() &&
+         history_embeddings::GetFeatureParameters().omnibox_scoped &&
+         ShouldShowIPH(IphType::kHistoryEmbeddingsSettingsPromo);
+}
+
+void FeaturedSearchProvider::AddHistoryEmbeddingsSettingsPromoIphMatch() {
+  std::u16string text = l10n_util::GetStringUTF16(
+                            IDS_OMNIBOX_HISTORY_EMBEDDINGS_SETTINGS_PROMO_IPH) +
+                        u" ";
+  std::u16string link_text = l10n_util::GetStringUTF16(
+      IDS_OMNIBOX_HISTORY_EMBEDDINGS_SETTINGS_PROMO_IPH_LINK_TEXT);
+  GURL link_url =
+      GURL(optimization_guide::features::IsAiSettingsPageRefreshEnabled()
+               ? "chrome://settings/ai/historySearch"
+               : "chrome://settings/historySearch");
+  AddIPHMatch(IphType::kHistoryEmbeddingsSettingsPromo, text, u"", link_text,
+              link_url, true);
+}
+
+bool FeaturedSearchProvider::ShouldShowHistoryEmbeddingsDisclaimerIphMatch()
+    const {
+  // Assumes this is only called when the user is in @history scope. Not limited
+  // by `ShouldShowIPH()` (i.e. shown count or dismissal) because this is a
+  // disclaimer.
+  return client_->IsHistoryEmbeddingsEnabled() &&
+         history_embeddings::GetFeatureParameters().omnibox_scoped;
+}
+
+void FeaturedSearchProvider::AddHistoryEmbeddingsDisclaimerIphMatch() {
+  std::u16string text =
+      l10n_util::GetStringUTF16(IDS_OMNIBOX_HISTORY_EMBEDDINGS_DISCLAIMER_IPH) +
+      u" ";
+  std::u16string link_text = l10n_util::GetStringUTF16(
+      IDS_OMNIBOX_HISTORY_EMBEDDINGS_DISCLAIMER_IPH_LINK_TEXT);
+  GURL link_url =
+      GURL(optimization_guide::features::IsAiSettingsPageRefreshEnabled()
+               ? "chrome://settings/ai/historySearch"
+               : "chrome://settings/historySearch");
+  AddIPHMatch(IphType::kHistoryEmbeddingsDisclaimer, text, u"", link_text,
+              link_url, false);
+}
+
+bool FeaturedSearchProvider::ShouldShowHistoryScopePromoIphMatch(
+    const AutocompleteInput& input) const {
+  // Shown in the zero state when history embeddings is disabled (not opted-in),
+  // but the embeddings is enabled for the omnibox. Doesn't check if the setting
+  // is visible. We want to guard this behind some meaningful param but it's not
+  // directly related to embeddings so it's ok to show to users who can't opt-in
+  // to embeddings.
+  return input.IsZeroSuggest() && !client_->IsHistoryEmbeddingsEnabled() &&
+         history_embeddings::GetFeatureParameters().omnibox_scoped &&
+         !client_->IsOffTheRecord() &&
+         ShouldShowIPH(IphType::kHistoryScopePromo);
+}
+
+void FeaturedSearchProvider::AddHistoryScopePromoIphMatch() {
+  std::u16string text =
+      l10n_util::GetStringUTF16(IDS_OMNIBOX_HISTORY_SCOPE_PROMO_IPH);
+  AddIPHMatch(IphType::kHistoryScopePromo, text, u"@history", u"", {}, true);
+}
+
+bool FeaturedSearchProvider::ShouldShowHistoryEmbeddingsScopePromoIphMatch(
+    const AutocompleteInput& input) const {
+  // Shown in the zero state when history embeddings is enabled (& opted-in) for
+  // the omnibox.
+  return input.IsZeroSuggest() && client_->IsHistoryEmbeddingsEnabled() &&
+         history_embeddings::GetFeatureParameters().omnibox_scoped &&
+         ShouldShowIPH(IphType::kHistoryEmbeddingsScopePromo);
+}
+
+void FeaturedSearchProvider::AddHistoryEmbeddingsScopePromoIphMatch() {
+  std::u16string text =
+      l10n_util::GetStringUTF16(IDS_OMNIBOX_HISTORY_EMBEDDINGS_SCOPE_PROMO_IPH);
+  AddIPHMatch(IphType::kHistoryEmbeddingsScopePromo, text, u"@history", u"", {},
+              true);
 }

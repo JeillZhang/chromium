@@ -193,7 +193,7 @@ base::Value::List WebAppFrameToolbarTestHelper::GetXYWidthHeightListValue(
     const std::string& rect_value_list,
     const std::string& rect_var_name) {
   EXPECT_TRUE(ExecJs(web_contents->GetPrimaryMainFrame(), rect_value_list));
-  return std::move(EvalJs(web_contents, rect_var_name).ExtractList().GetList());
+  return EvalJs(web_contents, rect_var_name).ExtractList();
 }
 
 gfx::Rect WebAppFrameToolbarTestHelper::GetXYWidthHeightRect(
@@ -318,4 +318,9 @@ void WebAppFrameToolbarTestHelper::GrantWindowManagementPermission() {
 WebAppOriginText* WebAppFrameToolbarTestHelper::origin_text_view() {
   return static_cast<WebAppOriginText*>(
       web_app_frame_toolbar()->GetViewByID(VIEW_ID_WEB_APP_ORIGIN_TEXT));
+}
+
+void WebAppFrameToolbarTestHelper::SetOriginTextLabelForTesting(
+    const std::u16string& label_text) {
+  origin_text_view()->label_->SetText(label_text);
 }

@@ -14,11 +14,11 @@
 #include "base/functional/callback_helpers.h"
 #include "chrome/browser/ash/profiles/profile_helper.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/feedback/show_feedback_page.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/ui/ash/projector/projector_soda_installation_controller.h"
-#include "chrome/browser/ui/chrome_pages.h"
 #include "components/account_manager_core/account_manager_facade.h"
 #include "components/account_manager_core/chromeos/account_manager_facade_factory.h"
 #include "components/pref_registry/pref_registry_syncable.h"
@@ -100,8 +100,9 @@ ProjectorAppClientImpl::GetUrlLoaderFactory() {
 
 void ProjectorAppClientImpl::OnNewScreencastPreconditionChanged(
     const ash::NewScreencastPrecondition& precondition) {
-  for (auto& observer : observers_)
+  for (auto& observer : observers_) {
     observer.OnNewScreencastPreconditionChanged(precondition);
+  }
 }
 
 const ash::PendingScreencastContainerSet&
@@ -126,18 +127,21 @@ void ProjectorAppClientImpl::InstallSoda() {
 }
 
 void ProjectorAppClientImpl::OnSodaInstallProgress(int combined_progress) {
-  for (auto& observer : observers_)
+  for (auto& observer : observers_) {
     observer.OnSodaProgress(combined_progress);
+  }
 }
 
 void ProjectorAppClientImpl::OnSodaInstallError() {
-  for (auto& observer : observers_)
+  for (auto& observer : observers_) {
     observer.OnSodaError();
+  }
 }
 
 void ProjectorAppClientImpl::OnSodaInstalled() {
-  for (auto& observer : observers_)
+  for (auto& observer : observers_) {
     observer.OnSodaInstalled();
+  }
 }
 
 void ProjectorAppClientImpl::OpenFeedbackDialog() const {
@@ -163,8 +167,9 @@ void ProjectorAppClientImpl::GetVideo(
 
 void ProjectorAppClientImpl::NotifyAppUIActive(bool active) {
   pending_screencast_manager_.OnAppActiveStatusChanged(active);
-  if (!active)
+  if (!active) {
     screencast_manager_.ResetScopeSuppressDriveNotifications();
+  }
 }
 
 void ProjectorAppClientImpl::ToggleFileSyncingNotificationForPaths(

@@ -12,6 +12,7 @@
 #include "ash/public/cpp/app_list/app_list_client.h"
 #include "ash/public/cpp/app_list/app_list_features.h"
 #include "ash/public/cpp/app_list/app_list_types.h"
+#include "ash/session/session_controller_impl.h"
 #include "ash/shell.h"
 #include "base/metrics/histogram_functions.h"
 #include "components/prefs/pref_service.h"
@@ -81,9 +82,86 @@ AppsCollectionsController::GetUserExperimentalArmAsHistogramSuffix() {
       return ".Counterfactual";
     case ash::AppsCollectionsController::ExperimentalArm::kEnabled:
       return ".Enabled";
+    case ash::AppsCollectionsController::ExperimentalArm::kModifiedOrder:
+      return ".ModifiedOrder";
   }
 
   NOTREACHED();
+}
+
+void AppsCollectionsController::CalculateExperimentalArm() {
+  if (GetUserExperimentalArm() != ExperimentalArm::kDefaultValue) {
+    return;
+  }
+
+  const auto* const session_controller = Shell::Get()->session_controller();
+  if (const auto user_type = session_controller->GetUserType();
+      user_type != user_manager::UserType::kRegular) {
+    MaybeRecordUserExperimentStatePref(ExperimentalArm::kControl);
+    return;
+  }
+
+  if (session_controller->IsActiveAccountManaged()) {
+    MaybeRecordUserExperimentStatePref(ExperimentalArm::kControl);
+    return;
+  }
+
+  if (!session_controller->IsUserFirstLogin()) {
+    MaybeRecordUserExperimentStatePref(ExperimentalArm::kControl);
+    return;
+  }
+
+  // NOTE: Currently only supported for the primary user profile. This is a
+  // self-imposed restriction.
+  if (!session_controller->IsUserPrimary()) {
+    MaybeRecordUserExperimentStatePref(ExperimentalArm::kControl);
+    return;
+  }
+
+  // If the client was destroyed at this point, (i.e. in tests), return early to
+  // avoid segmentation fault.
+  if (!client_) {
+    MaybeRecordUserExperimentStatePref(ExperimentalArm::kControl);
+    return;
+  }
+
+  const std::optional<bool>& is_new_user =
+      client_->IsNewUser(session_controller->GetActiveAccountId());
+
+  // If it is not known whether the user is "new" or "existing" when this code
+  // is reached, the user is treated as "existing" we want to err on the side of
+  // being conservative.
+  if (!is_new_user || !is_new_user.value()) {
+    MaybeRecordUserExperimentStatePref(ExperimentalArm::kControl);
+    return;
+  }
+
+  if (client_->HasReordered()) {
+    MaybeRecordUserExperimentStatePref(ExperimentalArm::kControl);
+    return;
+  }
+
+  // To ensure the population number of the experiment groups (Counterfactual
+  // and Enabled) are similar sized, query the finch experiment state here.
+  // The counterfactual arm will serve as control group, so it should not show
+  // Apps Collections even if it belong to the experiment.
+
+  if (!app_list_features::IsAppsCollectionsEnabled()) {
+    MaybeRecordUserExperimentStatePref(ExperimentalArm::kControl);
+    return;
+  }
+
+  if (app_list_features::IsAppsCollectionsEnabledCounterfactually()) {
+    MaybeRecordUserExperimentStatePref(ExperimentalArm::kCounterfactual);
+    return;
+  }
+
+  if (app_list_features::IsAppsCollectionsEnabledWithModifiedOrder()) {
+    MaybeRecordUserExperimentStatePref(ExperimentalArm::kModifiedOrder);
+    return;
+  }
+  MaybeRecordUserExperimentStatePref(ExperimentalArm::kEnabled);
+  return;
 }
 
 bool AppsCollectionsController::ShouldShowAppsCollection() {
@@ -95,73 +173,16 @@ bool AppsCollectionsController::ShouldShowAppsCollection() {
     return false;
   }
 
-  if (app_list_features::IsForceShowAppsCollectionsEnabled()) {
+  if (force_apps_collections_) {
     return true;
   }
 
-  const auto* const session_controller = Shell::Get()->session_controller();
-
-  if (GetUserExperimentalArm() != ExperimentalArm::kDefaultValue) {
-    return GetUserExperimentalArm() == ExperimentalArm::kEnabled &&
-           session_controller->IsUserFirstLogin();
+  if (GetUserExperimentalArm() == ExperimentalArm::kDefaultValue) {
+    CalculateExperimentalArm();
   }
 
-  if (const auto user_type = session_controller->GetUserType();
-      user_type != user_manager::UserType::kRegular) {
-    MaybeRecordUserExperimentStatePref(ExperimentalArm::kControl);
-    return false;
-  }
-
-  if (session_controller->IsActiveAccountManaged()) {
-    MaybeRecordUserExperimentStatePref(ExperimentalArm::kControl);
-    return false;
-  }
-
-  if (!session_controller->IsUserFirstLogin()) {
-    MaybeRecordUserExperimentStatePref(ExperimentalArm::kControl);
-    return false;
-  }
-
-  // NOTE: Currently only supported for the primary user profile. This is a
-  // self-imposed restriction.
-  if (!session_controller->IsUserPrimary()) {
-    MaybeRecordUserExperimentStatePref(ExperimentalArm::kControl);
-    return false;
-  }
-
-  // If the client was destroyed at this point, (i.e. in tests), return early to
-  // avoid segmentation fault.
-  if (!client_) {
-    MaybeRecordUserExperimentStatePref(ExperimentalArm::kControl);
-    return false;
-  }
-
-  const std::optional<bool>& is_new_user =
-      client_->IsNewUser(session_controller->GetActiveAccountId());
-
-  // If it is not known whether the user is "new" or "existing" when this code
-  // is reached, the user is treated as "existing" we want to err on the side of
-  // being conservative.
-  if (!is_new_user || !is_new_user.value()) {
-    MaybeRecordUserExperimentStatePref(ExperimentalArm::kControl);
-    return false;
-  }
-
-  if (!app_list_features::IsAppsCollectionsEnabled()) {
-    MaybeRecordUserExperimentStatePref(ExperimentalArm::kControl);
-    return false;
-  }
-
-  MaybeRecordUserExperimentStatePref(
-      app_list_features::IsAppsCollectionsEnabledCounterfactually()
-          ? ExperimentalArm::kCounterfactual
-          : ExperimentalArm::kEnabled);
-
-  // To ensure the population number of the experiment groups (Counterfactual
-  // and Enabled) are similar sized, query the finch experiment state here.
-  // The counterfactual arm will serve as control group, so it should not show
-  // Apps Collections even if it belong to the experiment.
-  return !app_list_features::IsAppsCollectionsEnabledCounterfactually();
+  return GetUserExperimentalArm() == ExperimentalArm::kEnabled &&
+         Shell::Get()->session_controller()->IsUserFirstLogin();
 }
 
 void AppsCollectionsController::SetAppsCollectionDismissed(
@@ -194,5 +215,9 @@ void AppsCollectionsController::SetReorderCallback(ReorderCallback callback) {
   CHECK(callback);
 
   reorder_callback_ = std::move(callback);
+}
+
+void AppsCollectionsController::ForceAppsCollectionsForTesting(bool force) {
+  force_apps_collections_ = force;
 }
 }  // namespace ash

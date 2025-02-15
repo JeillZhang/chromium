@@ -6,7 +6,7 @@
 
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/metrics/user_action_tester.h"
-#include "components/autofill/core/browser/address_data_manager.h"
+#include "components/autofill/core/browser/data_manager/addresses/address_data_manager.h"
 #include "components/autofill/core/browser/metrics/autofill_metrics_test_base.h"
 #include "components/autofill/core/common/autofill_prefs.h"
 #include "components/prefs/pref_registry_simple.h"
@@ -41,6 +41,18 @@ class AutofillSettingsMetricsTest : public AutofillMetricsBaseTest,
                        "en-US");
   }
 
+  void CreatePaymentsDataManager() {
+    PaymentsDataManager(/*profile_database=*/nullptr,
+                        /*account_database=*/nullptr,
+                        /*image_fetcher=*/nullptr,
+                        /*shared_storage_handler=*/nullptr,
+                        /*pref_service=*/autofill_client_->GetPrefs(),
+                        /*sync_service=*/nullptr,
+                        /*identity_manager=*/nullptr,
+                        /*variations_country_code=*/GeoIpCountryCode("US"),
+                        "en-US");
+  }
+
  protected:
   base::HistogramTester histogram_tester_;
 };
@@ -50,7 +62,7 @@ INSTANTIATE_TEST_SUITE_P(, AutofillSettingsMetricsTest, ::testing::Bool());
 // Test that we log that Profile Autofill is enabled / disabled when filling a
 // form.
 TEST_P(AutofillSettingsMetricsTest, LogsAutofillProfileIsEnabledAtPageLoad) {
-  autofill_manager().SetAutofillProfileEnabled(*autofill_client_, GetParam());
+  autofill_client_->SetAutofillProfileEnabled(GetParam());
   autofill_manager().OnFormsSeen(/*updated_forms=*/{},
                                  /*removed_forms=*/{});
   histogram_tester_.ExpectUniqueSample("Autofill.Address.IsEnabled.PageLoad",
@@ -60,8 +72,7 @@ TEST_P(AutofillSettingsMetricsTest, LogsAutofillProfileIsEnabledAtPageLoad) {
 // Test that we log that CreditCard Autofill is enabled / disabled when filling
 // a form.
 TEST_P(AutofillSettingsMetricsTest, AutofillCreditCardIsEnabledAtPageLoad) {
-  autofill_manager().SetAutofillPaymentMethodsEnabled(*autofill_client_,
-                                                      GetParam());
+  autofill_client_->SetAutofillPaymentMethodsEnabled(GetParam());
   autofill_manager().OnFormsSeen(/*updated_forms=*/{},
                                  /*removed_forms=*/{});
   histogram_tester_.ExpectUniqueSample("Autofill.CreditCard.IsEnabled.PageLoad",
@@ -113,15 +124,8 @@ TEST_P(AutofillSettingsMetricsTest, AutofillCreditCardIsEnabledAtStartup) {
   // The constructor of `PaymentsDataManager` emits
   // `Autofill.CreditCard.IsEnabled.Startup`. Its instance is created at
   // startup.
-  PaymentsDataManager(/*profile_database=*/nullptr,
-                      /*account_database=*/nullptr,
-                      /*image_fetcher=*/nullptr,
-                      /*shared_storage_handler=*/nullptr,
-                      /*pref_service=*/autofill_client_->GetPrefs(),
-                      /*sync_service=*/nullptr,
-                      /*identity_manager=*/nullptr,
-                      /*variations_country_code=*/GeoIpCountryCode("US"),
-                      "en-US");
+  CreatePaymentsDataManager();
+
   histogram_tester_.ExpectUniqueSample("Autofill.CreditCard.IsEnabled.Startup",
                                        GetParam(), 1);
 }
@@ -193,7 +197,7 @@ TEST_P(AutofillSettingsMetricsTest,
 // Tests that Autofill Profile disabled by user setting is logged at page load.
 TEST_P(AutofillSettingsMetricsTest,
        EmitsAutofillProfileDisabledByUserAtPageLoad) {
-  autofill_manager().SetAutofillProfileEnabled(*autofill_client_, GetParam());
+  autofill_client_->SetAutofillProfileEnabled(GetParam());
   autofill_client_->GetPrefs()->SetUserPref(prefs::kAutofillProfileEnabled,
                                             base::Value(GetParam()));
 
@@ -208,7 +212,7 @@ TEST_P(AutofillSettingsMetricsTest,
 // Tests that Autofill Profile disabled by admin policy is logged at page load.
 TEST_P(AutofillSettingsMetricsTest,
        EmitsAutofillProfileDisabledByAdminPolicyAtPageLoad) {
-  autofill_manager().SetAutofillProfileEnabled(*autofill_client_, GetParam());
+  autofill_client_->SetAutofillProfileEnabled(GetParam());
   autofill_client_->GetPrefs()->SetManagedPref(prefs::kAutofillProfileEnabled,
                                                base::Value(GetParam()));
 
@@ -223,7 +227,7 @@ TEST_P(AutofillSettingsMetricsTest,
 // Tests that Autofill Profile disabled by extension is logged at page load.
 TEST_P(AutofillSettingsMetricsTest,
        EmitsAutofillProfileDisabledByExtensionAtPageLoad) {
-  autofill_manager().SetAutofillProfileEnabled(*autofill_client_, GetParam());
+  autofill_client_->SetAutofillProfileEnabled(GetParam());
   autofill_client_->GetPrefs()->SetExtensionPref(prefs::kAutofillProfileEnabled,
                                                  base::Value(GetParam()));
 
@@ -238,7 +242,7 @@ TEST_P(AutofillSettingsMetricsTest,
 // Tests that Autofill Profile disabled by custodian is logged at page load.
 TEST_P(AutofillSettingsMetricsTest,
        EmitsAutofillProfileDisabledByCustodianAtPageLoad) {
-  autofill_manager().SetAutofillProfileEnabled(*autofill_client_, GetParam());
+  autofill_client_->SetAutofillProfileEnabled(GetParam());
   autofill_client_->GetPrefs()->SetSupervisedUserPref(
       prefs::kAutofillProfileEnabled, base::Value(GetParam()));
 
@@ -250,42 +254,137 @@ TEST_P(AutofillSettingsMetricsTest,
       AutofillPreferenceSetter::kCustodian, !GetParam());
 }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-
-// [ChromeOS-only] Tests that Autofill Profile disabled by standalone browser is
-// logged at startup.
+// Tests that payment method Autofill disabled by user setting is logged at
+// startup.
 TEST_P(AutofillSettingsMetricsTest,
-       EmitsAutofillProfileDisabledByStandaloneBrowserAtStartup) {
-  autofill_client_->GetPrefs()->SetStandaloneBrowserPref(
-      prefs::kAutofillProfileEnabled, base::Value(GetParam()));
+       EmitsAutofillPaymentMethodsDisabledByUserAtStartup) {
+  autofill_client_->GetPrefs()->SetUserPref(prefs::kAutofillCreditCardEnabled,
+                                            base::Value(GetParam()));
 
-  // The constructor of `AddressDataManager` emits
-  // `Autofill.Address.DisabledReason.Startup`. Its instance is created at
+  // The constructor of `PaymentsDataManager` emits
+  // `Autofill.CreditCard.DisabledReason.Startup`. Its instance is created at
   // startup.
-  CreateAddressDataManager();
+  CreatePaymentsDataManager();
 
   histogram_tester_.ExpectUniqueSample(
-      "Autofill.Address.DisabledReason.Startup",
-      AutofillPreferenceSetter::kStandaloneBrowser, !GetParam());
+      "Autofill.CreditCard.DisabledReason.Startup",
+      AutofillPreferenceSetter::kUserSetting, !GetParam());
 }
 
-// [ChromeOS-only] Tests that Autofill Profile disabled by standalone browser is
-// logged at page load.
+// Tests that payment method Autofill disabled by admin policy is logged at
+// startup.
 TEST_P(AutofillSettingsMetricsTest,
-       EmitsAutofillProfileDisabledByStandaloneBrowserAtPageLoad) {
-  autofill_manager().SetAutofillProfileEnabled(*autofill_client_, GetParam());
-  autofill_client_->GetPrefs()->SetStandaloneBrowserPref(
-      prefs::kAutofillProfileEnabled, base::Value(GetParam()));
+       EmitsAutofillPaymentMethodsDisabledByAdminPolicyAtStartup) {
+  autofill_client_->GetPrefs()->SetManagedPref(
+      prefs::kAutofillCreditCardEnabled, base::Value(GetParam()));
+
+  // The constructor of `PaymentsDataManager` emits
+  // `Autofill.CreditCard.DisabledReason.Startup`. Its instance is created at
+  // startup.
+  CreatePaymentsDataManager();
+
+  histogram_tester_.ExpectUniqueSample(
+      "Autofill.CreditCard.DisabledReason.Startup",
+      AutofillPreferenceSetter::kAdminPolicy, !GetParam());
+}
+
+// Tests that payment method Autofill disabled by extension is logged at
+// startup.
+TEST_P(AutofillSettingsMetricsTest,
+       EmitsAutofillPaymentMethodsDisabledByExtensionAtStartup) {
+  autofill_client_->GetPrefs()->SetExtensionPref(
+      prefs::kAutofillCreditCardEnabled, base::Value(GetParam()));
+
+  // The constructor of `PaymentsDataManager` emits
+  // `Autofill.CreditCard.DisabledReason.Startup`. Its instance is created at
+  // startup.
+  CreatePaymentsDataManager();
+
+  histogram_tester_.ExpectUniqueSample(
+      "Autofill.CreditCard.DisabledReason.Startup",
+      AutofillPreferenceSetter::kExtension, !GetParam());
+}
+
+// Tests that payment method Autofill disabled by custodian is logged at
+// startup.
+TEST_P(AutofillSettingsMetricsTest,
+       EmitsAutofillPaymentMethodsDisabledByCustodianAtStartup) {
+  autofill_client_->GetPrefs()->SetSupervisedUserPref(
+      prefs::kAutofillCreditCardEnabled, base::Value(GetParam()));
+
+  // The constructor of `PaymentsDataManager` emits
+  // `Autofill.CreditCard.DisabledReason.Startup`. Its instance is created at
+  // startup.
+  CreatePaymentsDataManager();
+
+  histogram_tester_.ExpectUniqueSample(
+      "Autofill.CreditCard.DisabledReason.Startup",
+      AutofillPreferenceSetter::kCustodian, !GetParam());
+}
+
+// Tests that payment method Autofill disabled by user setting is logged at page
+// load.
+TEST_P(AutofillSettingsMetricsTest,
+       EmitsAutofillPaymentMethodsDisabledByUserAtPageLoad) {
+  autofill_client_->SetAutofillPaymentMethodsEnabled(GetParam());
+  autofill_client_->GetPrefs()->SetUserPref(prefs::kAutofillCreditCardEnabled,
+                                            base::Value(GetParam()));
 
   autofill_manager().OnFormsSeen(/*updated_forms=*/{},
                                  /*removed_forms=*/{});
 
   histogram_tester_.ExpectUniqueSample(
-      "Autofill.Address.DisabledReason.PageLoad",
-      AutofillPreferenceSetter::kStandaloneBrowser, !GetParam());
+      "Autofill.CreditCard.DisabledReason.PageLoad",
+      AutofillPreferenceSetter::kUserSetting, !GetParam());
 }
 
-#endif
+// Tests that payment method Autofill disabled by admin policy is logged at page
+// load.
+TEST_P(AutofillSettingsMetricsTest,
+       EmitsAutofillPaymentMethodsDisabledByAdminPolicyAtPageLoad) {
+  autofill_client_->SetAutofillPaymentMethodsEnabled(GetParam());
+  autofill_client_->GetPrefs()->SetManagedPref(
+      prefs::kAutofillCreditCardEnabled, base::Value(GetParam()));
+
+  autofill_manager().OnFormsSeen(/*updated_forms=*/{},
+                                 /*removed_forms=*/{});
+
+  histogram_tester_.ExpectUniqueSample(
+      "Autofill.CreditCard.DisabledReason.PageLoad",
+      AutofillPreferenceSetter::kAdminPolicy, !GetParam());
+}
+
+// Tests that payment method Autofill disabled by extension is logged at page
+// load.
+TEST_P(AutofillSettingsMetricsTest,
+       EmitsAutofillPaymentMethodsDisabledByExtensionAtPageLoad) {
+  autofill_client_->SetAutofillPaymentMethodsEnabled(GetParam());
+  autofill_client_->GetPrefs()->SetExtensionPref(
+      prefs::kAutofillCreditCardEnabled, base::Value(GetParam()));
+
+  autofill_manager().OnFormsSeen(/*updated_forms=*/{},
+                                 /*removed_forms=*/{});
+
+  histogram_tester_.ExpectUniqueSample(
+      "Autofill.CreditCard.DisabledReason.PageLoad",
+      AutofillPreferenceSetter::kExtension, !GetParam());
+}
+
+// Tests that payment method Autofill disabled by custodian is logged at page
+// load.
+TEST_P(AutofillSettingsMetricsTest,
+       EmitsAutofillPaymentMethodsDisabledByCustodianAtPageLoad) {
+  autofill_client_->SetAutofillPaymentMethodsEnabled(GetParam());
+  autofill_client_->GetPrefs()->SetSupervisedUserPref(
+      prefs::kAutofillCreditCardEnabled, base::Value(GetParam()));
+
+  autofill_manager().OnFormsSeen(/*updated_forms=*/{},
+                                 /*removed_forms=*/{});
+
+  histogram_tester_.ExpectUniqueSample(
+      "Autofill.CreditCard.DisabledReason.PageLoad",
+      AutofillPreferenceSetter::kCustodian, !GetParam());
+}
 
 TEST_P(AutofillSettingsMetricsTest,
        EmitsActionAutofillProfileDisabledOnPrefChangeByUser) {

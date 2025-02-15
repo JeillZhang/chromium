@@ -12,11 +12,14 @@ import {AutofillManagerImpl, CountryDetailManagerImpl} from 'chrome://settings/l
 import {assertEquals, assertFalse, assertGT, assertTrue} from 'chrome://webui-test/chai_assert.js';
 import type {MetricsTracker} from 'chrome://webui-test/metrics_test_support.js';
 import {fakeMetricsPrivate} from 'chrome://webui-test/metrics_test_support.js';
+import type {CrLinkRowElement} from 'chrome://settings/settings.js';
+import {OpenWindowProxyImpl} from 'chrome://settings/settings.js';
 import {eventToPromise, whenAttributeIs, isVisible} from 'chrome://webui-test/test_util.js';
 import {flushTasks} from 'chrome://webui-test/polymer_test_util.js';
+import {TestOpenWindowProxy} from 'chrome://webui-test/test_open_window_proxy.js';
 
 import {AutofillManagerExpectations, createAddressEntry, createEmptyAddressEntry, STUB_USER_ACCOUNT_INFO, TestAutofillManager} from './autofill_fake_data.js';
-import {createAutofillSection, initiateRemoving, initiateEditing, CountryDetailManagerTestImpl, createAddressDialog, createRemoveAddressDialog, expectEvent, openAddressDialog, deleteAddress, getAddressFieldValue} from './autofill_section_test_utils.js';
+import {createAutofillSection, initiateRemoving, initiateEditing, CountryDetailManagerTestImpl, createAddressDialog, createRemoveAddressDialog, expectEvent, openAddressDialog, getAddressFieldValue} from './autofill_section_test_utils.js';
 // clang-format on
 
 const FieldType = chrome.autofillPrivate.FieldType;
@@ -39,11 +42,11 @@ suite('AutofillSectionUiTest', function() {
     document.body.removeChild(section);
   });
 
-  test('verifyAddressDeleteSourceNotice', async () => {
+  test('verifyAddressDeleteRecordTypeNotice', async () => {
     const address = createAddressEntry();
     const accountAddress = createAddressEntry();
-    accountAddress.metadata!.source =
-        chrome.autofillPrivate.AddressSource.ACCOUNT;
+    accountAddress.metadata!.recordType =
+        chrome.autofillPrivate.AddressRecordType.ACCOUNT;
 
     const autofillManager = new TestAutofillManager();
     autofillManager.data.addresses = [address, accountAddress];
@@ -151,12 +154,12 @@ suite('AutofillSectionUiTest', function() {
     document.body.removeChild(section);
   });
 
-  test('verifyAddressEditSourceNotice', async () => {
+  test('verifyAddressEditRecordTypeNotice', async () => {
     const email = 'stub-user@example.com';
     const address = createAddressEntry();
     const accouontAddress = createAddressEntry();
-    accouontAddress.metadata!.source =
-        chrome.autofillPrivate.AddressSource.ACCOUNT;
+    accouontAddress.metadata!.recordType =
+        chrome.autofillPrivate.AddressRecordType.ACCOUNT;
     const section =
         await createAutofillSection([address, accouontAddress], {}, {
           ...STUB_USER_ACCOUNT_INFO,
@@ -166,7 +169,7 @@ suite('AutofillSectionUiTest', function() {
     {
       const dialog = await initiateEditing(section, 0);
       assertFalse(
-          isVisible(dialog.$.accountSourceNotice),
+          isVisible(dialog.$.accountRecordTypeNotice),
           'account notice should be invisible for non-account address');
       dialog.$.dialog.close();
       // Make sure closing clean-ups are finished.
@@ -178,55 +181,17 @@ suite('AutofillSectionUiTest', function() {
     {
       const dialog = await initiateEditing(section, 1);
       assertTrue(
-          isVisible(dialog.$.accountSourceNotice),
+          isVisible(dialog.$.accountRecordTypeNotice),
           'account notice should be visible for account address');
 
       assertEquals(
-          dialog.$.accountSourceNotice.innerText,
-          section.i18n('editAccountAddressSourceNotice', email));
+          dialog.$.accountRecordTypeNotice.innerText,
+          section.i18n('editAccountAddressRecordTypeNotice', email));
 
       dialog.$.dialog.close();
       // Make sure closing clean-ups are finished.
       await eventToPromise('close', dialog.$.dialog);
     }
-
-    document.body.removeChild(section);
-  });
-});
-
-suite('AutofillSectionFocusTest', function() {
-  // TODO(crbug.com/40279141): Fix the flakiness.
-  test.skip('verifyFocusLocationAfterRemoving', async () => {
-    const section = await createAutofillSection(
-        [
-          createAddressEntry(),
-          createAddressEntry(),
-          createAddressEntry(),
-        ],
-        {profile_enabled: {value: true}});
-    const manager = AutofillManagerImpl.getInstance() as TestAutofillManager;
-
-    await deleteAddress(section, manager, 1);
-    const addressesAfterRemovingInTheMiddle =
-        section.$.addressList.querySelectorAll('.list-item');
-    assertTrue(
-        addressesAfterRemovingInTheMiddle[1]!.matches(':focus-within'),
-        'The focus should remain on the same index on the list (but next ' +
-            'to the removed address).');
-
-    await deleteAddress(section, manager, 1);
-    const addressesAfterRemovingLastInTheList =
-        section.$.addressList.querySelectorAll('.list-item');
-    assertTrue(
-        addressesAfterRemovingLastInTheList[0]!.matches(':focus-within'),
-        'After removing the last address on the list the focus should go ' +
-            'to the preivous address.');
-
-    await deleteAddress(section, manager, 0);
-    assertTrue(
-        section.$.addAddress.matches(':focus-within'),
-        'If there are no addresses remaining after removal the focus should ' +
-            'go to the Add button.');
 
     document.body.removeChild(section);
   });
@@ -310,10 +275,6 @@ suite('AutofillSectionAddressTests', function() {
   });
 
   test('verifyAddressLocalIndication', async () => {
-    loadTimeData.overrideValues({
-      syncEnableContactInfoDataTypeInTransportMode: false,
-    });
-
     const autofillManager = new TestAutofillManager();
     autofillManager.data.addresses = [createAddressEntry()];
     autofillManager.data.accountInfo = {
@@ -337,21 +298,12 @@ suite('AutofillSectionAddressTests', function() {
     const changeListener =
         autofillManager.lastCallback.setPersonalDataManagerListener!;
 
-    changeListener(autofillManager.data.addresses, [], [], STUB_USER_ACCOUNT_INFO);
-    assertFalse(
-        isVisible(addressList.children[0]!.querySelector('[icon*=cloud-off]')),
-        'Sync is disabled but the feature is off, the icon should be hidden.');
-
     changeListener(autofillManager.data.addresses, [], [], undefined);
     assertFalse(
         isVisible(section.$.addressList.children[0]!.querySelector(
             '[icon*=cloud-off]')),
         'The local indicator should not be shown to logged-out users');
 
-
-    loadTimeData.overrideValues({
-      syncEnableContactInfoDataTypeInTransportMode: true,
-    });
     changeListener(
         autofillManager.data.addresses, [], [], STUB_USER_ACCOUNT_INFO);
     assertTrue(
@@ -538,8 +490,7 @@ suite('AutofillSectionAddressTests', function() {
         emailAddress, getAddressFieldValue(address, FieldType.EMAIL_ADDRESS));
   });
 
-  // TODO(crbug.com/40279141): Fix the flakiness.
-  test.skip('verifyPhoneAndEmailAreRemoved', function() {
+  test('verifyPhoneAndEmailAreRemoved', function() {
     const address = createEmptyAddressEntry();
 
     const phoneNumber = '(555) 555-5555';
@@ -555,7 +506,7 @@ suite('AutofillSectionAddressTests', function() {
     });
     address.fields.push({type: FieldType.EMAIL_ADDRESS, value: emailAddress});
 
-    return createAddressDialog(address).then(function(dialog) {
+    return createAddressDialog(address).then(async function(dialog) {
       const rows = dialog.$.dialog.querySelectorAll('.address-row');
       assertGT(rows.length, 0, 'dialog should contain address rows');
 
@@ -568,18 +519,26 @@ suite('AutofillSectionAddressTests', function() {
       assertTrue(!!phoneInput, 'phone element should be the first cr-input');
       assertTrue(!!emailInput, 'email element should be the second cr-input');
 
-      assertEquals(phoneNumber, phoneInput.value);
-      assertEquals(emailAddress, emailInput.value);
+      assertEquals(
+          phoneNumber, phoneInput.value,
+          'The input should have the corresponding address field value.');
+      assertEquals(
+          emailAddress, emailInput.value,
+          'The input should have the corresponding address field value.');
 
       phoneInput.value = '';
       emailInput.value = '';
+      await flushTasks();
 
       return expectEvent(dialog, 'save-address', function() {
                dialog.$.saveButton.click();
              }).then(function() {
         assertFalse(
-            !!getAddressFieldValue(address, FieldType.PHONE_HOME_WHOLE_NUMBER));
-        assertFalse(!!getAddressFieldValue(address, FieldType.EMAIL_ADDRESS));
+            !!getAddressFieldValue(address, FieldType.PHONE_HOME_WHOLE_NUMBER),
+            'The phone field should be empty.');
+        assertFalse(
+            !!getAddressFieldValue(address, FieldType.EMAIL_ADDRESS),
+            'The email field should be empty.');
       });
     });
   });
@@ -709,8 +668,7 @@ suite('AutofillSectionAddressTests', function() {
     });
   });
 
-  // TODO(crbug.com/40279141): Fix the flakiness.
-  test.skip('verifySyncSourceNoticeForNewAddress', async () => {
+  test('verifySyncRecordTypeNoticeForNewAddress', async () => {
     const section = await createAutofillSection([], {}, {
       ...STUB_USER_ACCOUNT_INFO,
       email: 'stub-user@example.com',
@@ -721,13 +679,13 @@ suite('AutofillSectionAddressTests', function() {
     const dialog = await openAddressDialog(section);
 
     assertTrue(
-        !isVisible(dialog.$.accountSourceNotice),
+        !isVisible(dialog.$.accountRecordTypeNotice),
         'account notice should be invisible for non-account address');
 
     document.body.removeChild(section);
   });
 
-  test('verifyAccountSourceNoticeForNewAddress', async () => {
+  test('verifyAccountRecordTypeNoticeForNewAddress', async () => {
     const email = 'stub-user@example.com';
     const section = await createAutofillSection([], {}, {
       ...STUB_USER_ACCOUNT_INFO,
@@ -739,12 +697,12 @@ suite('AutofillSectionAddressTests', function() {
     const dialog = await openAddressDialog(section);
 
     assertTrue(
-        isVisible(dialog.$.accountSourceNotice),
+        isVisible(dialog.$.accountRecordTypeNotice),
         'account notice should be visible as the user is eligible');
 
     assertEquals(
-        dialog.$.accountSourceNotice.innerText,
-        section.i18n('newAccountAddressSourceNotice', email));
+        dialog.$.accountRecordTypeNotice.innerText,
+        section.i18n('newAccountAddressRecordTypeNotice', email));
 
     document.body.removeChild(section);
   });
@@ -1220,4 +1178,66 @@ suite('AutofillSectionAddressLocaleTests', function() {
           });
     });
   });
+});
+
+suite('PlusAddressesTest', function() {
+  const fakeUrl = 'https://foo.bar';
+  let metrics: MetricsTracker;
+  let openWindowProxy: TestOpenWindowProxy;
+
+  setup(function() {
+    metrics = fakeMetricsPrivate();
+    openWindowProxy = new TestOpenWindowProxy();
+    OpenWindowProxyImpl.setInstance(openWindowProxy);
+    loadTimeData.overrideValues({
+      // Required to show the plus address management entry.
+      plusAddressEnabled: true,
+      plusAddressManagementUrl: fakeUrl,
+    });
+  });
+
+  test('verifyPlusAddressManagementEntryExistence', async function() {
+    const autofillSection = await createAutofillSection([], {});
+
+    const plusAddressButton =
+        autofillSection.shadowRoot!.querySelector<CrLinkRowElement>(
+            '#plusAddressSettingsButton');
+    assertTrue(!!plusAddressButton);
+
+    autofillSection.remove();
+  });
+
+  test(
+      'verifyPlusAddressManagementEntryExistenceWhenNotEnabled',
+      async function() {
+        loadTimeData.overrideValues({
+          plusAddressEnabled: false,
+        });
+        const autofillSection = await createAutofillSection([], {});
+
+        const plusAddressButton =
+            autofillSection.shadowRoot!.querySelector<CrLinkRowElement>(
+                '#plusAddressSettingsButton');
+        assertFalse(!!plusAddressButton);
+
+        autofillSection.remove();
+      });
+
+  test(
+      'verifyClickingPlusAddressManagementEntryOpensWebsite', async function() {
+        const autofillSection = await createAutofillSection([], {});
+
+        const plusAddressButton =
+            autofillSection.shadowRoot!.querySelector<CrLinkRowElement>(
+                '#plusAddressSettingsButton');
+        assertTrue(!!plusAddressButton);
+        // Validate that, when present, the button results in opening the URL
+        // passed in via the `loadTimeData` override.
+        plusAddressButton.click();
+        const url = await openWindowProxy.whenCalled('openUrl');
+        assertEquals(url, fakeUrl);
+        assertEquals(
+            1, metrics.count('Settings.ManageOptionOnSettingsSelected'));
+        autofillSection.remove();
+      });
 });

@@ -187,13 +187,16 @@ class NotificationGroupingControllerTest : public AshTestBase {
 
   void GenerateSwipe(int swipe_amount,
                      views::SlideOutController* slide_out_controller) {
-    GenerateGestureEvent(ui::GestureEventDetails(ui::ET_GESTURE_SCROLL_BEGIN),
-                         slide_out_controller);
     GenerateGestureEvent(
-        ui::GestureEventDetails(ui::ET_GESTURE_SCROLL_UPDATE, swipe_amount, 0),
+        ui::GestureEventDetails(ui::EventType::kGestureScrollBegin),
         slide_out_controller);
-    GenerateGestureEvent(ui::GestureEventDetails(ui::ET_GESTURE_SCROLL_END),
-                         slide_out_controller);
+    GenerateGestureEvent(
+        ui::GestureEventDetails(ui::EventType::kGestureScrollUpdate,
+                                swipe_amount, 0),
+        slide_out_controller);
+    GenerateGestureEvent(
+        ui::GestureEventDetails(ui::EventType::kGestureScrollEnd),
+        slide_out_controller);
   }
 
   views::SlideOutController* GetSlideOutController(AshNotificationView* view) {
@@ -386,14 +389,13 @@ TEST_F(NotificationGroupingControllerTest, ParentNotificationMetadata) {
   auto* message_center = MessageCenter::Get();
   std::string id0, id1, id2;
   const GURL url(u"http://test-url.com/");
-  const auto icon = gfx::VectorIcon();
   const auto small_image = gfx::Image();
   const std::u16string display_source0 = u"test_display_source0";
 
   auto notification = MakeNotification(id0, url);
   notification->set_accent_color_id(ui::kColorAshSystemUIMenuIcon);
   notification->set_accent_color(SK_ColorRED);
-  notification->set_parent_vector_small_image(icon);
+  notification->set_parent_vector_small_image(gfx::VectorIcon::EmptyIcon());
   notification->SetSmallImage(small_image);
   notification->set_display_source(display_source0);
   message_center->AddNotification(std::move(notification));
@@ -410,7 +412,8 @@ TEST_F(NotificationGroupingControllerTest, ParentNotificationMetadata) {
   EXPECT_EQ(ui::kColorAshSystemUIMenuIcon,
             parent_notification->accent_color_id());
   EXPECT_EQ(SK_ColorRED, parent_notification->accent_color());
-  EXPECT_EQ(&icon, &parent_notification->vector_small_image());
+  EXPECT_EQ(&gfx::VectorIcon::EmptyIcon(),
+            &parent_notification->vector_small_image());
   EXPECT_EQ(small_image, parent_notification->small_image());
   EXPECT_EQ(display_source0, parent_notification->display_source());
 }

@@ -374,23 +374,6 @@ NSAttributedString* TextForTabGroupCount(int count, CGFloat font_size) {
                                       attributes:@{NSFontAttributeName : font}];
 }
 
-#if !defined(__IPHONE_16_0) || __IPHONE_OS_VERSION_MIN_REQUIRED < __IPHONE_16_0
-void RegisterEditMenuItem(UIMenuItem* item) {
-  UIMenuController* menu = [UIMenuController sharedMenuController];
-  NSArray<UIMenuItem*>* items = [menu menuItems];
-
-  for (UIMenuItem* existingItem in items) {
-    if ([existingItem action] == [item action]) {
-      return;
-    }
-  }
-
-  items = items ? [items arrayByAddingObject:item] : @[ item ];
-
-  [menu setMenuItems:items];
-}
-#endif
-
 UIView* ViewHierarchyRootForView(UIView* view) {
   if (view.window) {
     return view.window;
@@ -435,4 +418,41 @@ CGFloat DeviceCornerRadius() {
 
 bool IsBottomOmniboxAvailable() {
   return ui::GetDeviceFormFactor() == ui::DEVICE_FORM_FACTOR_PHONE;
+}
+
+NSArray<UITrait>* TraitCollectionSetForTraits(NSArray<UITrait>* traits) {
+  if (base::FeatureList::IsEnabled(kEnableTraitCollectionRegistration) &&
+      traits) {
+    return traits;
+  }
+
+  static dispatch_once_t once;
+  static NSArray<UITrait>* everyUIMutableTrait = nil;
+  dispatch_once(&once, ^{
+    // This is a list of all the UITraits provided by iOS. This was generated
+    // from Apple's documentation on UIMutableTraits and is subject to change
+    // with subsequent releases of iOS. See
+    // https://developer.apple.com/documentation/uikit/uimutabletraits?language=objc
+    NSMutableArray<UITrait>* mutableTraits = [@[
+      UITraitAccessibilityContrast.class, UITraitActiveAppearance.class,
+      UITraitDisplayGamut.class, UITraitDisplayScale.class,
+      UITraitForceTouchCapability.class, UITraitHorizontalSizeClass.class,
+      UITraitImageDynamicRange.class, UITraitLayoutDirection.class,
+      UITraitLegibilityWeight.class, UITraitPreferredContentSizeCategory.class,
+      UITraitSceneCaptureState.class, UITraitToolbarItemPresentationSize.class,
+      UITraitTypesettingLanguage.class, UITraitUserInterfaceIdiom.class,
+      UITraitUserInterfaceLevel.class, UITraitUserInterfaceStyle.class,
+      UITraitVerticalSizeClass.class
+    ] mutableCopy];
+
+#if defined(__IPHONE_18_0) && __IPHONE_OS_VERSION_MAX_ALLOWED >= __IPHONE_18_0
+    if (@available(iOS 18, *)) {
+      [mutableTraits addObject:UITraitListEnvironment.class];
+    }
+#endif
+
+    everyUIMutableTrait = [NSArray arrayWithArray:mutableTraits];
+  });
+
+  return everyUIMutableTrait;
 }

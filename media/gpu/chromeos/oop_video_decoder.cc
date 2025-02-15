@@ -7,14 +7,14 @@
 #include "base/memory/ptr_util.h"
 #include "base/task/bind_post_task.h"
 #include "base/task/sequenced_task_runner.h"
-#include "build/chromeos_buildflags.h"
+#include "build/build_config.h"
 #include "chromeos/components/cdm_factory_daemon/stable_cdm_context_impl.h"
 #include "gpu/ipc/common/gpu_memory_buffer_support.h"
 #include "media/base/format_utils.h"
 #include "media/base/video_util.h"
 #include "media/gpu/buffer_validation.h"
+#include "media/gpu/chromeos/native_pixmap_frame_resource.h"
 #include "media/gpu/chromeos/platform_video_frame_utils.h"
-#include "media/gpu/chromeos/video_frame_resource.h"
 #include "media/gpu/macros.h"
 #include "media/mojo/common/mojo_decoder_buffer_converter.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
@@ -98,9 +98,9 @@ scoped_refptr<FrameResource> MojoVideoFrameToFrameResource(
     stable::mojom::VideoFramePtr mojo_frame) {
   if (mojo_frame->metadata.protected_video &&
       mojo_frame->metadata.needs_detiling &&
-      mojo_frame->format == PIXEL_FORMAT_P016LE) {
+      mojo_frame->format == PIXEL_FORMAT_P010LE) {
     // This is a tiled, protected MTK format that is true 10bpp so it will
-    // not pass the tests in VerifyGpuMemoryBufferHandle for P016. Instead just
+    // not pass the tests in VerifyGpuMemoryBufferHandle for P010. Instead just
     // do the basic tests that would be done in that call here. This is safe to
     // do because the buffers for this will only go into the secure video
     // decoder which will fail on invalid buffer parameters.
@@ -114,8 +114,8 @@ scoped_refptr<FrameResource> MojoVideoFrameToFrameResource(
               << mojo_frame->coded_size.ToString();
       return nullptr;
     }
-    constexpr size_t kNumP016Planes = 2;
-    if (kNumP016Planes != mojo_frame->gpu_memory_buffer_handle
+    constexpr size_t kNumP010Planes = 2;
+    if (kNumP010Planes != mojo_frame->gpu_memory_buffer_handle
                               .native_pixmap_handle.planes.size()) {
       VLOGF(1) << "Invalid number of dmabuf planes passed: "
                << mojo_frame->gpu_memory_buffer_handle.native_pixmap_handle
@@ -139,35 +139,24 @@ scoped_refptr<FrameResource> MojoVideoFrameToFrameResource(
     return nullptr;
   }
 
-  mojo_frame->gpu_memory_buffer_handle.id = GetNextGpuMemoryBufferId();
-
-  gpu::GpuMemoryBufferSupport support;
-  std::unique_ptr<gfx::GpuMemoryBuffer> gpu_memory_buffer =
-      support.CreateGpuMemoryBufferImplFromHandle(
-          std::move(mojo_frame->gpu_memory_buffer_handle),
-          mojo_frame->coded_size, *buffer_format,
-          gfx::BufferUsage::SCANOUT_VDA_WRITE, base::NullCallback());
-  if (!gpu_memory_buffer) {
-    VLOGF(2) << "Could not create a GpuMemoryBuffer for the incoming frame";
-    return nullptr;
-  }
-
-  scoped_refptr<gpu::ClientSharedImage> dummy_shared_image;
-  scoped_refptr<media::FrameResource> gmb_frame =
-      VideoFrameResource::Create(media::VideoFrame::WrapExternalGpuMemoryBuffer(
+  scoped_refptr<media::NativePixmapFrameResource> native_pixmap_frame =
+      NativePixmapFrameResource::Create(
           mojo_frame->visible_rect, mojo_frame->natural_size,
-          std::move(gpu_memory_buffer), dummy_shared_image, gpu::SyncToken(), 0,
-          base::NullCallback(), mojo_frame->timestamp));
-  if (!gmb_frame) {
-    VLOGF(2) << "Could not create a GpuMemoryBuffer-backed VideoFrame";
+          mojo_frame->timestamp, gfx::BufferUsage::SCANOUT_VDA_WRITE,
+          base::MakeRefCounted<gfx::NativePixmapDmaBuf>(
+              mojo_frame->coded_size, *buffer_format,
+              std::move(
+                  mojo_frame->gpu_memory_buffer_handle.native_pixmap_handle)));
+  if (!native_pixmap_frame) {
+    VLOGF(2) << "Could not create a NativePixmap-backed FrameResource";
     return nullptr;
   }
 
-  gmb_frame->set_metadata(mojo_frame->metadata);
-  gmb_frame->set_color_space(mojo_frame->color_space);
-  gmb_frame->set_hdr_metadata(mojo_frame->hdr_metadata);
+  native_pixmap_frame->set_metadata(mojo_frame->metadata);
+  native_pixmap_frame->set_color_space(mojo_frame->color_space);
+  native_pixmap_frame->set_hdr_metadata(mojo_frame->hdr_metadata);
 
-  return gmb_frame;
+  return native_pixmap_frame;
 }
 
 // A singleton helper class that makes it easy to manage requests to wait until
@@ -921,7 +910,7 @@ void OOPVideoDecoder::ReleaseVideoFrame(
 }
 
 void OOPVideoDecoder::ApplyResolutionChange() {
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 bool OOPVideoDecoder::NeedsBitstreamConversion() const {
@@ -965,7 +954,7 @@ VideoDecoderType OOPVideoDecoder::GetDecoderType() const {
 }
 
 bool OOPVideoDecoder::IsPlatformDecoder() const {
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 bool OOPVideoDecoder::NeedsTranscryption() {
@@ -1074,7 +1063,7 @@ void OOPVideoDecoder::OnVideoFrameDecoded(
             current_visible_rect_size_from_origin ||
         metadata.hw_protected != currently_uses_protected) {
       received_id_to_decoded_frame_map_.clear();
-      generated_id_to_decoded_frame_map_.clear();
+      generated_token_to_decoded_frame_map_.clear();
     }
   }
 
@@ -1089,16 +1078,17 @@ void OOPVideoDecoder::OnVideoFrameDecoded(
              GetRectSizeFromOrigin(visible_rect));
     CHECK_EQ(frame_to_wrap->metadata().hw_protected, metadata.hw_protected);
   } else {
-    scoped_refptr<FrameResource> gmb_frame =
+    scoped_refptr<FrameResource> native_pixmap_frame =
         MojoVideoFrameToFrameResource(std::move(frame));
-    if (!gmb_frame) {
+    if (!native_pixmap_frame) {
       Stop();
       return;
     }
-    received_id_to_decoded_frame_map_[received_gmb_id] = gmb_frame;
-    generated_id_to_decoded_frame_map_[gmb_frame->GetSharedMemoryId()] =
-        gmb_frame.get();
-    frame_to_wrap = std::move(gmb_frame);
+    received_id_to_decoded_frame_map_[received_gmb_id] = native_pixmap_frame;
+    generated_token_to_decoded_frame_map_[native_pixmap_frame
+                                              ->tracking_token()] =
+        native_pixmap_frame.get();
+    frame_to_wrap = std::move(native_pixmap_frame);
   }
 
   // If |frame_to_wrap| was cached in |received_id_to_decoded_frame_map_|, then
@@ -1109,7 +1099,7 @@ void OOPVideoDecoder::OnVideoFrameDecoded(
   scoped_refptr<FrameResource> wrapped_frame =
       frame_to_wrap->CreateWrappingFrame(visible_rect, natural_size);
   if (!wrapped_frame) {
-    VLOGF(2) << "Could not wrap the GpuMemoryBuffer-backed FrameResource";
+    VLOGF(2) << "Could not wrap the frame";
     Stop();
     return;
   }
@@ -1165,13 +1155,13 @@ void OOPVideoDecoder::AddLogRecord(const MediaLogRecord& event) {
 }
 
 FrameResource* OOPVideoDecoder::GetOriginalFrame(
-    gfx::GenericSharedMemoryId frame_id) {
+    const base::UnguessableToken& tracking_token) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  CHECK(frame_id.is_valid());
-  auto it = generated_id_to_decoded_frame_map_.find(frame_id);
-  return (it == generated_id_to_decoded_frame_map_.end()) ? nullptr
-                                                          : it->second;
+  CHECK(!tracking_token.is_empty());
+  auto it = generated_token_to_decoded_frame_map_.find(tracking_token);
+  return (it == generated_token_to_decoded_frame_map_.end()) ? nullptr
+                                                             : it->second;
 }
 
 }  // namespace media

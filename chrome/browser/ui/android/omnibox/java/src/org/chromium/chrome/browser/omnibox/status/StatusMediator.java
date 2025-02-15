@@ -43,6 +43,7 @@ import org.chromium.components.content_settings.ContentSettingsType;
 import org.chromium.components.content_settings.CookieBlocking3pcdStatus;
 import org.chromium.components.content_settings.CookieControlsBridge;
 import org.chromium.components.content_settings.CookieControlsObserver;
+import org.chromium.components.metrics.OmniboxEventProtos.OmniboxEventProto.PageClassification;
 import org.chromium.components.page_info.PageInfoController;
 import org.chromium.components.permissions.PermissionDialogController;
 import org.chromium.components.search_engines.TemplateUrlService;
@@ -90,7 +91,6 @@ public class StatusMediator
     private @StringRes int mSecurityIconDescriptionRes;
     private @ColorRes int mNavigationIconTintRes;
 
-    private Resources mResources;
     private Context mContext;
 
     private LocationBarDataProvider mLocationBarDataProvider;
@@ -100,7 +100,7 @@ public class StatusMediator
     private final Handler mPermissionTaskHandler = new Handler();
     private final Handler mStoreIconHandler = new Handler();
     private @ContentSettingsType.EnumType int mLastPermission = ContentSettingsType.DEFAULT;
-    private final PageInfoIPHController mPageInfoIPHController;
+    private final PageInfoIphController mPageInfoIphController;
     private final WindowAndroid mWindowAndroid;
 
     private boolean mUrlBarTextIsSearch = true;
@@ -120,7 +120,6 @@ public class StatusMediator
 
     /**
      * @param model The {@link PropertyModel} for this mediator.
-     * @param resources Used to load resources.
      * @param context The {@link Context} for this Status component.
      * @param urlBarEditingTextStateProvider Provides url bar text state.
      * @param isTablet Whether the current device is a tablet.
@@ -128,7 +127,7 @@ public class StatusMediator
      * @param permissionDialogController Controls showing permission dialogs.
      * @param templateUrlServiceSupplier Supplies the {@link TemplateUrlService}.
      * @param profileSupplier Supplies the current {@link Profile}.
-     * @param pageInfoIPHController Manages when an IPH bubble for PageInfo is shown.
+     * @param pageInfoIphController Manages when an IPH bubble for PageInfo is shown.
      * @param windowAndroid The current {@link WindowAndroid}.
      * @param merchantTrustSignalsCoordinatorSupplier Supplier of {@link
      *     MerchantTrustSignalsCoordinator}. Can be null if a store icon shouldn't be shown, such as
@@ -136,7 +135,6 @@ public class StatusMediator
      */
     public StatusMediator(
             PropertyModel model,
-            Resources resources,
             Context context,
             UrlBarEditingTextStateProvider urlBarEditingTextStateProvider,
             boolean isTablet,
@@ -144,7 +142,7 @@ public class StatusMediator
             PermissionDialogController permissionDialogController,
             OneshotSupplier<TemplateUrlService> templateUrlServiceSupplier,
             Supplier<Profile> profileSupplier,
-            PageInfoIPHController pageInfoIPHController,
+            PageInfoIphController pageInfoIphController,
             WindowAndroid windowAndroid,
             @Nullable
                     Supplier<MerchantTrustSignalsCoordinator>
@@ -159,10 +157,9 @@ public class StatusMediator
                 });
 
         mProfileSupplier = profileSupplier;
-        mResources = resources;
         mContext = context;
         mUrlBarEditingTextStateProvider = urlBarEditingTextStateProvider;
-        mPageInfoIPHController = pageInfoIPHController;
+        mPageInfoIphController = pageInfoIphController;
         mWindowAndroid = windowAndroid;
         mMerchantTrustSignalsCoordinatorSupplier = merchantTrustSignalsCoordinatorSupplier;
 
@@ -173,7 +170,7 @@ public class StatusMediator
         mPermissionDialogController.addObserver(this);
 
         updateColorTheme();
-        setStatusIconShown(/* show= */ !mLocationBarDataProvider.isIncognito());
+        setStatusIconShown(/* show= */ !mLocationBarDataProvider.isIncognitoBranded());
         updateLocationBarIcon(IconTransitionType.CROSSFADE);
     }
 
@@ -238,7 +235,7 @@ public class StatusMediator
         }
 
         if (didUpdate) {
-            updateVerbaseStatusTextVisibility();
+            updateVerboseStatusTextVisibility();
             updateLocationBarIcon(IconTransitionType.CROSSFADE);
             updateColorTheme();
         }
@@ -281,7 +278,7 @@ public class StatusMediator
 
         if (hasSpaceForStatus != mVerboseStatusSpaceAvailable) {
             mVerboseStatusSpaceAvailable = hasSpaceForStatus;
-            updateVerbaseStatusTextVisibility();
+            updateVerboseStatusTextVisibility();
         }
     }
 
@@ -290,7 +287,7 @@ public class StatusMediator
         if (mUrlHasFocus == urlHasFocus) return;
 
         mUrlHasFocus = urlHasFocus;
-        updateVerbaseStatusTextVisibility();
+        updateVerboseStatusTextVisibility();
         updateStatusVisibility();
         updateLocationBarIcon(IconTransitionType.CROSSFADE);
 
@@ -300,7 +297,8 @@ public class StatusMediator
     }
 
     void setStatusIconShown(boolean show) {
-        mModel.set(StatusProperties.SHOW_STATUS_ICON, show);
+        applyStatusIconAndTooltipProperties(
+                show, mModel.get(StatusProperties.VERBOSE_STATUS_TEXT_VISIBLE));
     }
 
     void setStatusIconAlpha(float alpha) {
@@ -311,11 +309,11 @@ public class StatusMediator
         // This logic doesn't apply to tablets.
         if (mIsTablet) return;
 
-        boolean shouldShowLogo = !mLocationBarDataProvider.isIncognito();
+        boolean shouldShowLogo = !mLocationBarDataProvider.isIncognitoBranded();
         setShowIconsWhenUrlFocused(shouldShowLogo);
         if (!shouldShowLogo) return;
 
-        if (mProfileSupplier.hasValue() && isNTPOrStartSurfaceVisible()) {
+        if (mProfileSupplier.hasValue() && isNtpVisible()) {
             setStatusIconShown(shouldShowLogo && (mUrlHasFocus || mUrlFocusPercent > 0));
         } else {
             setStatusIconShown(true);
@@ -346,8 +344,8 @@ public class StatusMediator
         mUrlFocusPercent = percent;
         updateStatusVisibility();
 
-        // Only fade the animation on the new tab page or start surface.
-        if (mProfileSupplier.hasValue() && isNTPOrStartSurfaceVisible()) {
+        // Only fade the animation on the new tab page.
+        if (mProfileSupplier.hasValue() && isNtpVisible()) {
             setStatusIconAlpha(percent);
         } else {
             setStatusIconAlpha(1f);
@@ -377,7 +375,7 @@ public class StatusMediator
     }
 
     /** Update visibility of the verbose status text field. */
-    private void updateVerbaseStatusTextVisibility() {
+    private void updateVerboseStatusTextVisibility() {
         int statusText = 0;
 
         if (mPageIsPaintPreview) {
@@ -390,7 +388,7 @@ public class StatusMediator
         boolean newVisibility =
                 shouldShowVerboseStatusText()
                         && mVerboseStatusSpaceAvailable
-                        && (!mUrlHasFocus)
+                        && !mUrlHasFocus
                         && (statusText != 0);
 
         // Update status content only if it is visible.
@@ -400,7 +398,8 @@ public class StatusMediator
             mModel.set(StatusProperties.VERBOSE_STATUS_TEXT_STRING_RES, statusText);
         }
 
-        mModel.set(StatusProperties.VERBOSE_STATUS_TEXT_VISIBLE, newVisibility);
+        applyStatusIconAndTooltipProperties(
+                mModel.get(StatusProperties.SHOW_STATUS_ICON), newVisibility);
     }
 
     /** Update color theme for all status components. */
@@ -451,9 +450,8 @@ public class StatusMediator
         return mPageIsOffline || mPageIsPaintPreview;
     }
 
-    private boolean isNTPOrStartSurfaceVisible() {
-        return mLocationBarDataProvider.getNewTabPageDelegate().isCurrentlyVisible()
-                || mLocationBarDataProvider.isInOverviewAndShowingOmnibox();
+    private boolean isNtpVisible() {
+        return mLocationBarDataProvider.getNewTabPageDelegate().isCurrentlyVisible();
     }
 
     /**
@@ -477,8 +475,6 @@ public class StatusMediator
         mLastPermission = ContentSettingsType.DEFAULT;
         // Reset the store icon status.
         mIsStoreIconShowing = false;
-        // Update the accessibility description before continuing since we need it either way.
-        mModel.set(StatusProperties.STATUS_ICON_DESCRIPTION_RES, getAccessibilityDescriptionRes());
 
         // No need to proceed further if we've already updated it for the search engine icon.
         if (maybeUpdateStatusIconForSearchEngineIcon()) return;
@@ -486,9 +482,21 @@ public class StatusMediator
         int icon = 0;
         int tint = 0;
         int toast = 0;
+        @StringRes int doubleTapDescriptionRes = R.string.accessibility_toolbar_view_site_info;
 
         mIsSecurityViewShown = false;
-        if (mUrlHasFocus) {
+
+        if (mLocationBarDataProvider.getPageClassification(false)
+                == PageClassification.ANDROID_HUB_VALUE) {
+            // Show the status icon primarily for incognito since it is defaulted off there.
+            setStatusIconShown(/* show= */ true);
+            icon = R.drawable.ic_arrow_back_24dp;
+            tint = ThemeUtils.getThemedToolbarIconTintRes(mBrandedColorScheme);
+            doubleTapDescriptionRes = R.string.accessibility_toolbar_exit_hub_search;
+            applyStatusIconAndTooltipProperties(
+                    mModel.get(StatusProperties.SHOW_STATUS_ICON),
+                    mModel.get(StatusProperties.VERBOSE_STATUS_TEXT_VISIBLE));
+        } else if (mUrlHasFocus) {
             if (mShowStatusIconWhenUrlFocused) {
                 icon =
                         mUrlBarTextIsSearch
@@ -509,11 +517,13 @@ public class StatusMediator
             statusIcon.setTransitionType(transitionType);
         }
 
+        // Update the accessibility description before continuing since we need it either way.
+        mModel.set(StatusProperties.STATUS_ICON_DESCRIPTION_RES, getAccessibilityDescriptionRes());
         mModel.set(StatusProperties.STATUS_ICON_RESOURCE, statusIcon);
         mModel.set(StatusProperties.STATUS_ACCESSIBILITY_TOAST_RES, toast);
         mModel.set(
                 StatusProperties.STATUS_ACCESSIBILITY_DOUBLE_TAP_DESCRIPTION_RES,
-                R.string.accessibility_toolbar_view_site_info);
+                doubleTapDescriptionRes);
     }
 
     /**
@@ -534,7 +544,12 @@ public class StatusMediator
      * independent from alpha/visibility.
      */
     boolean shouldDisplaySearchEngineIcon() {
-        if (mLocationBarDataProvider.isIncognito()) {
+        if (mLocationBarDataProvider.getPageClassification(false)
+                == PageClassification.ANDROID_HUB_VALUE) {
+            return false;
+        }
+
+        if (mLocationBarDataProvider.isIncognitoBranded()) {
             return false;
         }
 
@@ -543,7 +558,7 @@ public class StatusMediator
         }
 
         return (mUrlHasFocus || mUrlFocusPercent > 0)
-                && isNTPOrStartSurfaceVisible()
+                && isNtpVisible()
                 && mProfileSupplier.hasValue();
     }
 
@@ -564,7 +579,12 @@ public class StatusMediator
 
     /** Return the resource id for the accessibility description or 0 if none apply. */
     private int getAccessibilityDescriptionRes() {
-        if (mUrlHasFocus && !mLocationBarDataProvider.isIncognito()) {
+        if (mLocationBarDataProvider.getPageClassification(false)
+                == PageClassification.ANDROID_HUB_VALUE) {
+            return R.string.hub_search_status_view_back_button_icon_description;
+        }
+
+        if (mUrlHasFocus && !mLocationBarDataProvider.isIncognitoBranded()) {
             return 0;
         }
         return (mSecurityIconRes != 0) ? mSecurityIconDescriptionRes : 0;
@@ -602,7 +622,7 @@ public class StatusMediator
     }
 
     public void onIncognitoStateChanged() {
-        boolean incognitoBadgeVisible = mLocationBarDataProvider.isIncognito();
+        boolean incognitoBadgeVisible = mLocationBarDataProvider.isIncognitoBranded();
         mModel.set(StatusProperties.INCOGNITO_BADGE_VISIBLE, incognitoBadgeVisible);
         mModel.set(StatusProperties.STATUS_ICON_RESOURCE, null);
         setStatusIconAlpha(1f);
@@ -625,17 +645,17 @@ public class StatusMediator
         resetCustomIconsStatus();
         mLastPermission = permission;
 
-        boolean isIncognito = mLocationBarDataProvider.isIncognito();
+        boolean isIncognitoBranded = mLocationBarDataProvider.isIncognitoBranded();
         Drawable permissionDrawable =
                 ContentSettingsResources.getIconForOmnibox(
-                        mContext, mLastPermission, result, isIncognito);
+                        mContext, mLastPermission, result, isIncognitoBranded);
         PermissionIconResource permissionIconResource =
-                new PermissionIconResource(permissionDrawable, isIncognito);
+                new PermissionIconResource(permissionDrawable, isIncognitoBranded);
         permissionIconResource.setTransitionType(IconTransitionType.ROTATE);
         // We only want to notify the IPH controller after the icon transition is finished.
         // IPH is controlled by the FeatureEngagement system through finch with a field trial
         // testing configuration.
-        permissionIconResource.setAnimationFinishedCallback(this::startIPH);
+        permissionIconResource.setAnimationFinishedCallback(this::startIph);
         // Set the timer to switch the icon back afterwards.
         mPermissionTaskHandler.removeCallbacksAndMessages(null);
         mModel.set(StatusProperties.STATUS_ICON_RESOURCE, permissionIconResource);
@@ -650,8 +670,8 @@ public class StatusMediator
             animateCookieControlsIcon(
                     () -> {
                         if (mBlockingStatus3pcd == CookieBlocking3pcdStatus.NOT_IN3PCD) {
-                            mPageInfoIPHController.showCookieControlsIPH(
-                                    getIPHTimeout(), R.string.cookie_controls_iph_message);
+                            mPageInfoIphController.showCookieControlsIph(
+                                    getIphTimeout(), R.string.cookie_controls_iph_message);
                         }
                     });
         }
@@ -676,17 +696,18 @@ public class StatusMediator
         }
         resetCustomIconsStatus();
 
-        boolean isIncognito = mLocationBarDataProvider.isIncognito();
+        boolean isIncognitoBranded = mLocationBarDataProvider.isIncognitoBranded();
         Drawable eyeCrossedIcon =
                 SettingsUtils.getTintedIcon(
                         mContext,
                         R.drawable.ic_eye_crossed,
-                        isIncognito
+                        isIncognitoBranded
                                 ? R.color.default_icon_color_blue_light
                                 : R.color.default_icon_color_accent1_tint_list);
 
         PermissionIconResource permissionIconResource =
-                new PermissionIconResource(eyeCrossedIcon, isIncognito, COOKIE_CONTROLS_ICON);
+                new PermissionIconResource(
+                        eyeCrossedIcon, isIncognitoBranded, COOKIE_CONTROLS_ICON);
         permissionIconResource.setTransitionType(IconTransitionType.ROTATE);
         permissionIconResource.setAnimationFinishedCallback(
                 () -> {
@@ -704,9 +725,9 @@ public class StatusMediator
                 mPermissionIconDisplayTimeoutMs);
     }
 
-    private void startIPH() {
+    private void startIph() {
         if (!mProfileSupplier.hasValue()) return;
-        mPageInfoIPHController.onPermissionDialogShown(mProfileSupplier.get(), getIPHTimeout());
+        mPageInfoIphController.onPermissionDialogShown(mProfileSupplier.get(), getIphTimeout());
     }
 
     void setStoreIconController() {
@@ -725,8 +746,8 @@ public class StatusMediator
             @StringRes int stringId,
             boolean canShowIph) {
         if ((window != mWindowAndroid)
-                || (!url.equals(mLocationBarDataProvider.getCurrentGurl().getSpec()))
-                || (mLocationBarDataProvider.isIncognito())) {
+                || !url.equals(mLocationBarDataProvider.getCurrentGurl().getSpec())
+                || mLocationBarDataProvider.isOffTheRecord()) {
             return;
         }
         resetCustomIconsStatus();
@@ -737,7 +758,7 @@ public class StatusMediator
         storeIconResource.setAnimationFinishedCallback(
                 () -> {
                     if (canShowIph) {
-                        mPageInfoIPHController.showStoreIconIPH(getIPHTimeout(), stringId);
+                        mPageInfoIphController.showStoreIconIph(getIphTimeout(), stringId);
                     }
                 });
         mModel.set(StatusProperties.STATUS_ICON_RESOURCE, storeIconResource);
@@ -762,7 +783,7 @@ public class StatusMediator
      * @return A timeout for the IPH bubble. The bubble is shown after the permission icon animation
      *     finishes and should disappear when it animates out.
      */
-    private int getIPHTimeout() {
+    private int getIphTimeout() {
         return mPermissionIconDisplayTimeoutMs - (2 * StatusView.ICON_ROTATION_DURATION_MS);
     }
 
@@ -804,11 +825,15 @@ public class StatusMediator
     }
 
     void setTooltipText(@StringRes int tooltipTextResId) {
-        mModel.set(StatusProperties.STATUS_VIEW_TOOLTIP_TEXT, tooltipTextResId);
+        applyStatusIconAndTooltipProperties(
+                mModel.get(StatusProperties.SHOW_STATUS_ICON),
+                mModel.get(StatusProperties.VERBOSE_STATUS_TEXT_VISIBLE));
     }
 
     void setHoverHighlight(@DrawableRes int hoverHighlightResId) {
-        mModel.set(StatusProperties.STATUS_VIEW_HOVER_HIGHLIGHT, hoverHighlightResId);
+        applyStatusIconAndTooltipProperties(
+                mModel.get(StatusProperties.SHOW_STATUS_ICON),
+                mModel.get(StatusProperties.VERBOSE_STATUS_TEXT_VISIBLE));
     }
 
     public void onUrlChanged() {
@@ -822,9 +847,14 @@ public class StatusMediator
                         profile.isOffTheRecord() ? profile.getOriginalProfile() : null;
                 if (mCookieControlsBridge == null) {
                     mCookieControlsBridge =
-                            new CookieControlsBridge(this, webContents, originalBrowserContext);
+                            new CookieControlsBridge(
+                                    this,
+                                    webContents,
+                                    originalBrowserContext,
+                                    profile.isIncognitoBranded());
                 } else if (mLastTabId != currentTab.getId() || mCurrentTabCrashed) {
-                    mCookieControlsBridge.updateWebContents(webContents, originalBrowserContext);
+                    mCookieControlsBridge.updateWebContents(
+                            webContents, originalBrowserContext, profile.isIncognitoBranded());
                     mCurrentTabCrashed = false;
                 }
             }
@@ -854,5 +884,28 @@ public class StatusMediator
 
     public void onTabCrashed() {
         mCurrentTabCrashed = true;
+    }
+
+    void setShowStatusView(boolean show) {
+        mModel.set(StatusProperties.SHOW_STATUS_VIEW, show);
+    }
+
+    private void applyStatusIconAndTooltipProperties(
+            boolean showIcon, boolean verboseStatusTextVisible) {
+        boolean isHubSearch =
+                mLocationBarDataProvider.getPageClassification(false)
+                        == PageClassification.ANDROID_HUB_VALUE;
+        mModel.set(StatusProperties.SHOW_STATUS_ICON, showIcon);
+        if (showIcon && !isHubSearch) {
+            mModel.set(
+                    StatusProperties.STATUS_VIEW_HOVER_HIGHLIGHT,
+                    verboseStatusTextVisible
+                            ? R.drawable.status_view_verbose_ripple
+                            : R.drawable.status_view_ripple);
+            mModel.set(StatusProperties.STATUS_VIEW_TOOLTIP_TEXT, R.string.accessibility_menu_info);
+        } else {
+            mModel.set(StatusProperties.STATUS_VIEW_TOOLTIP_TEXT, Resources.ID_NULL);
+            mModel.set(StatusProperties.STATUS_VIEW_HOVER_HIGHLIGHT, Resources.ID_NULL);
+        }
     }
 }

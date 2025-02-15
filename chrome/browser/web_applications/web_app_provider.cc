@@ -31,11 +31,13 @@
 #include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_installation_manager.h"
 #include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_update_manager.h"
 #include "chrome/browser/web_applications/manifest_update_manager.h"
+#include "chrome/browser/web_applications/navigation_capturing_log.h"
 #include "chrome/browser/web_applications/os_integration/os_integration_manager.h"
 #include "chrome/browser/web_applications/os_integration/web_app_file_handler_manager.h"
 #include "chrome/browser/web_applications/os_integration/web_app_protocol_handler_manager.h"
 #include "chrome/browser/web_applications/policy/web_app_policy_manager.h"
 #include "chrome/browser/web_applications/preinstalled_web_app_manager.h"
+#include "chrome/browser/web_applications/visited_manifest_manager.h"
 #include "chrome/browser/web_applications/web_app.h"
 #include "chrome/browser/web_applications/web_app_audio_focus_id_map.h"
 #include "chrome/browser/web_applications/web_app_command_manager.h"
@@ -45,6 +47,7 @@
 #include "chrome/browser/web_applications/web_app_install_finalizer.h"
 #include "chrome/browser/web_applications/web_app_install_manager.h"
 #include "chrome/browser/web_applications/web_app_origin_association_manager.h"
+#include "chrome/browser/web_applications/web_app_profile_deletion_manager.h"
 #include "chrome/browser/web_applications/web_app_provider_factory.h"
 #include "chrome/browser/web_applications/web_app_registrar.h"
 #include "chrome/browser/web_applications/web_app_sync_bridge.h"
@@ -56,12 +59,9 @@
 #include "content/public/browser/web_contents.h"
 
 #if BUILDFLAG(IS_CHROMEOS)
-#include "base/feature_list.h"
+#include "chrome/browser/web_applications/ash/migrations/adobe_express_oem_to_default_migration.h"
 #include "chrome/browser/web_applications/isolated_web_apps/policy/isolated_web_app_policy_manager.h"
-#include "chrome/browser/web_applications/migrations/adobe_express_oem_to_default_migration.h"
-#include "chrome/browser/web_applications/migrations/migrate_preinstalls_to_aps.h"
 #include "chrome/browser/web_applications/web_app_run_on_os_login_manager.h"
-#include "chromeos/constants/chromeos_features.h"
 #endif
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
@@ -82,18 +82,6 @@ WebAppProvider* WebAppProvider::GetDeprecated(Profile* profile) {
 
 // static
 WebAppProvider* WebAppProvider::GetForWebApps(Profile* profile) {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  // If features::kWebAppsCrosapi is enabled, Ash browser only manages system
-  // web apps (return nullptr here). Otherwise, Ash browser manages all web apps
-  // (return WebAppProvider).
-  // An exception is that Shimless RMA app always requires loading IWA on Ash.
-  // TODO(b/292227137): Migrate Shimless RMA app to LaCrOS.
-  if (IsWebAppsCrosapiEnabled() &&
-      (!::ash::features::IsShimlessRMA3pDiagnosticsEnabled() ||
-       !::ash::IsShimlessRmaAppBrowserContext(profile))) {
-    return nullptr;
-  }
-#endif
   return WebAppProviderFactory::GetForProfile(profile);
 }
 
@@ -229,12 +217,12 @@ WebAppRunOnOsLoginManager& WebAppProvider::run_on_os_login_manager() {
   CheckIsConnected();
   return *web_app_run_on_os_login_manager_;
 }
+#endif
 
 IsolatedWebAppPolicyManager& WebAppProvider::iwa_policy_manager() {
   CheckIsConnected();
   return *isolated_web_app_policy_manager_;
 }
-#endif
 
 WebAppUiManager& WebAppProvider::ui_manager() {
   CheckIsConnected();
@@ -295,6 +283,16 @@ AbstractWebAppDatabaseFactory& WebAppProvider::database_factory() {
   return *database_factory_;
 }
 
+VisitedManifestManager& WebAppProvider::visited_manifest_manager() {
+  CheckIsConnected();
+  return *visited_manifest_manager_;
+}
+
+NavigationCapturingLog& WebAppProvider::navigation_capturing_log() {
+  CheckIsConnected();
+  return *navigation_capturing_log_;
+}
+
 void WebAppProvider::Shutdown() {
   command_scheduler_->Shutdown();
   command_manager_->Shutdown();
@@ -306,7 +304,7 @@ void WebAppProvider::Shutdown() {
   web_app_policy_manager_->Shutdown();
   icon_manager_->Shutdown();
   install_finalizer_->Shutdown();
-  os_integration_manager_->Shutdown();
+  profile_deletion_manager_->Shutdown();
   is_registry_ready_ = false;
 }
 
@@ -335,6 +333,8 @@ void WebAppProvider::CreateSubsystems(Profile* profile) {
   isolated_web_app_installation_manager_ =
       std::make_unique<IsolatedWebAppInstallationManager>(*profile);
   iwa_update_manager_ = std::make_unique<IsolatedWebAppUpdateManager>(*profile);
+  isolated_web_app_policy_manager_ =
+      std::make_unique<IsolatedWebAppPolicyManager>(profile);
   extensions_manager_ = std::make_unique<ExtensionsManager>(profile);
   generated_icon_fix_manager_ = std::make_unique<GeneratedIconFixManager>();
 
@@ -367,11 +367,13 @@ void WebAppProvider::CreateSubsystems(Profile* profile) {
 #if BUILDFLAG(IS_CHROMEOS)
   web_app_run_on_os_login_manager_ =
       std::make_unique<WebAppRunOnOsLoginManager>(profile);
-  isolated_web_app_policy_manager_ =
-      std::make_unique<IsolatedWebAppPolicyManager>(profile);
 #endif
 
   web_contents_manager_ = std::make_unique<WebContentsManager>();
+  visited_manifest_manager_ = std::make_unique<VisitedManifestManager>();
+  navigation_capturing_log_ = std::make_unique<NavigationCapturingLog>();
+  profile_deletion_manager_ =
+      std::make_unique<WebAppProfileDeletionManager>(profile);
 }
 
 void WebAppProvider::ConnectSubsystems() {
@@ -395,13 +397,14 @@ void WebAppProvider::ConnectSubsystems() {
   command_scheduler_->SetProvider(pass_key, *this);
   isolated_web_app_installation_manager_->SetProvider(pass_key, *this);
   iwa_update_manager_->SetProvider(pass_key, *this);
+  isolated_web_app_policy_manager_->SetProvider(pass_key, *this);
 #if BUILDFLAG(IS_CHROMEOS)
   web_app_run_on_os_login_manager_->SetProvider(pass_key, *this);
-  isolated_web_app_policy_manager_->SetProvider(pass_key, *this);
 #endif
   icon_manager_->SetProvider(pass_key, *this);
   translation_manager_->SetProvider(pass_key, *this);
   generated_icon_fix_manager_->SetProvider(pass_key, *this);
+  profile_deletion_manager_->SetProvider(pass_key, *this);
 
   connected_ = true;
 }
@@ -420,10 +423,6 @@ void WebAppProvider::OnSyncBridgeReady() {
 #if BUILDFLAG(IS_CHROMEOS)
   web_app::migrations::MigrateAdobeExpressFromOemInstallToDefault(
       sync_bridge_.get());
-  if (base::FeatureList::IsEnabled(
-          chromeos::features::kPreinstalledWebAppsCoreOnly)) {
-    web_app::migrations::MigratePreinstallsToAps(sync_bridge_.get());
-  }
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
   base::ConcurrentClosures concurrent;
@@ -446,16 +445,14 @@ void WebAppProvider::OnSyncBridgeReady() {
   web_app_policy_manager_->Start(
       std::move(on_web_app_policy_manager_done_callback));
   isolated_web_app_installation_manager_->Start();
-
   iwa_update_manager_->Start();
+  isolated_web_app_policy_manager_->Start(concurrent.CreateClosure());
   manifest_update_manager_->Start();
   os_integration_manager_->Start();
   ui_manager_->Start();
   generated_icon_fix_manager_->Start();
   command_manager_->Start();
-#if BUILDFLAG(IS_CHROMEOS)
-  isolated_web_app_policy_manager_->Start(concurrent.CreateClosure());
-#endif  // BUILDFLAG(IS_CHROMEOS)
+  profile_deletion_manager_->Start();
 
   // Note: This does not wait for the call from the ChromeOS
   // SystemWebAppManager, which is a separate keyed service.

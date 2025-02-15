@@ -18,10 +18,11 @@
 #include "chrome/browser/ui/ui_features.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "components/browser_sync/browser_sync_switches.h"
+#include "components/commerce/core/commerce_feature_list.h"
 #include "components/power_bookmarks/core/power_bookmark_features.h"
 #include "components/sync/base/command_line_switches.h"
+#include "components/sync/base/data_type.h"
 #include "components/sync/base/features.h"
-#include "components/sync/base/model_type.h"
 #include "components/sync/service/sync_service_impl.h"
 #include "content/public/test/browser_test.h"
 #include "crypto/ec_private_key.h"
@@ -94,17 +95,13 @@ IN_PROC_BROWSER_TEST_F(LocalSyncTest, ShouldStart) {
   // If this test fails after adding a new data type, carefully consider whether
   // the type should be enabled in Local Sync mode, i.e. for roaming profiles on
   // Windows.
-  // TODO(crbug.com/40708107): Consider whether all of these types should really
-  // be enabled in Local Sync mode.
-  syncer::ModelTypeSet expected_active_data_types = {
+  syncer::DataTypeSet expected_active_data_types = {
       syncer::BOOKMARKS,
       syncer::READING_LIST,
       syncer::PREFERENCES,
       syncer::PASSWORDS,
       syncer::AUTOFILL_PROFILE,
       syncer::AUTOFILL,
-      syncer::AUTOFILL_WALLET_DATA,
-      syncer::AUTOFILL_WALLET_METADATA,
       syncer::THEMES,
       syncer::EXTENSIONS,
       syncer::SAVED_TAB_GROUP,
@@ -113,9 +110,9 @@ IN_PROC_BROWSER_TEST_F(LocalSyncTest, ShouldStart) {
       syncer::APPS,
       syncer::APP_SETTINGS,
       syncer::EXTENSION_SETTINGS,
-      syncer::HISTORY_DELETE_DIRECTIVES,
       syncer::DEVICE_INFO,
       syncer::PRIORITY_PREFERENCES,
+      syncer::WEBAUTHN_CREDENTIAL,
       syncer::WEB_APPS,
       syncer::NIGORI};
 
@@ -123,12 +120,12 @@ IN_PROC_BROWSER_TEST_F(LocalSyncTest, ShouldStart) {
     expected_active_data_types.Put(syncer::POWER_BOOKMARK);
   }
 
-  if (base::FeatureList::IsEnabled(syncer::kSyncWebauthnCredentials)) {
-    expected_active_data_types.Put(syncer::WEBAUTHN_CREDENTIAL);
-  }
-
   if (base::FeatureList::IsEnabled(syncer::kSyncAutofillWalletCredentialData)) {
     expected_active_data_types.Put(syncer::AUTOFILL_WALLET_CREDENTIAL);
+  }
+
+  if (base::FeatureList::IsEnabled(commerce::kProductSpecifications)) {
+    expected_active_data_types.Put(syncer::PRODUCT_COMPARISON);
   }
 
 #if BUILDFLAG(IS_CHROMEOS_LACROS)

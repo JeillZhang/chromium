@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/gpu/v4l2/legacy/v4l2_video_decode_accelerator.h"
 
 #include <dlfcn.h>
@@ -14,12 +19,13 @@
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 
+#include <algorithm>
+
 #include "base/command_line.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/posix/eintr_wrapper.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/stringprintf.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
@@ -30,8 +36,11 @@
 #include "media/base/video_frame_layout.h"
 #include "media/base/video_types.h"
 #include "media/gpu/chromeos/fourcc.h"
+#include "media/gpu/chromeos/native_pixmap_frame_resource.h"
 #include "media/gpu/chromeos/platform_video_frame_utils.h"
+#ifdef SUPPORT_MT21_PIXEL_FORMAT_SOFTWARE_DECOMPRESSION
 #include "media/gpu/chromeos/video_frame_resource.h"
+#endif
 #include "media/gpu/macros.h"
 #include "media/gpu/v4l2/v4l2_image_processor_backend.h"
 #include "media/gpu/v4l2/v4l2_utils.h"
@@ -75,7 +84,7 @@ namespace {
 bool IsVp9KSVCStream(uint32_t input_format_fourcc,
                      const DecoderBuffer& decoder_buffer) {
   return input_format_fourcc == V4L2_PIX_FMT_VP9 &&
-         decoder_buffer.has_side_data() &&
+         decoder_buffer.side_data() &&
          !decoder_buffer.side_data()->spatial_layers.empty();
 }
 
@@ -185,16 +194,12 @@ bool V4L2VideoDecodeAccelerator::Initialize(const Config& config,
   }
 
   if (config.is_encrypted()) {
-    NOTREACHED_IN_MIGRATION()
-        << "Encrypted streams are not supported for this VDA";
-    return false;
+    NOTREACHED() << "Encrypted streams are not supported for this VDA";
   }
 
   if (config.output_mode != Config::OutputMode::kAllocate &&
       config.output_mode != Config::OutputMode::kImport) {
-    NOTREACHED_IN_MIGRATION()
-        << "Only ALLOCATE and IMPORT OutputModes are supported";
-    return false;
+    NOTREACHED() << "Only ALLOCATE and IMPORT OutputModes are supported";
   }
 
   client_ptr_factory_.reset(new base::WeakPtrFactory<Client>(client));
@@ -518,8 +523,8 @@ void V4L2VideoDecodeAccelerator::ImportBufferForPictureTask(
   if (IsDestroyPending())
     return;
 
-  const auto iter = base::ranges::find(output_buffer_map_, picture_buffer_id,
-                                       &OutputRecord::picture_id);
+  const auto iter = std::ranges::find(output_buffer_map_, picture_buffer_id,
+                                      &OutputRecord::picture_id);
   if (iter == output_buffer_map_.end()) {
     // It's possible that we've already posted a DismissPictureBuffer for this
     // picture, but it has not yet executed when this ImportBufferForPicture was
@@ -620,12 +625,9 @@ void V4L2VideoDecodeAccelerator::ImportBufferForPictureTask(
       return;
     }
 
-    // TODO(nhebert): switch to NativePixmap-based FrameResource when it is
-    // available.
-    iter->output_frame =
-        VideoFrameResource::Create(VideoFrame::WrapExternalDmabufs(
-            *layout, gfx::Rect(visible_size_), visible_size_,
-            std::move(duped_fds), base::TimeDelta()));
+    iter->output_frame = NativePixmapFrameResource::Create(
+        *layout, gfx::Rect(visible_size_), visible_size_, std::move(duped_fds),
+        base::TimeDelta());
   }
 
   // The buffer can now be used for decoding
@@ -1125,10 +1127,12 @@ void V4L2VideoDecodeAccelerator::Enqueue() {
   DCHECK(decoder_thread_.task_runner()->BelongsToCurrentThread());
   DCHECK_NE(decoder_state_, kUninitialized);
 
+  if (IsDestroyPending()) {
+    return;
+  }
+
   // There's no reason why this class should attempt to enqueue buffers while
-  // it's in the process of destruction or while it's in the process of a
-  // resolution change.
-  CHECK(!IsDestroyPending());
+  // it's in the process of a resolution change.
   CHECK_NE(decoder_state_, kChangingResolution);
 
   DCHECK(input_queue_);
@@ -1370,7 +1374,7 @@ bool V4L2VideoDecodeAccelerator::EnqueueOutputRecord(
       ret = std::move(buffer).QueueDMABuf(output_record.output_frame);
       break;
     default:
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
   }
 
   if (!ret) {
@@ -2226,17 +2230,14 @@ bool V4L2VideoDecodeAccelerator::ProcessFrame(int32_t bitstream_buffer_id,
       return false;
     }
 
-    // We should never need Intel media compressed buffers with V4L2.
     std::unique_ptr<VideoFrameMapper> output_frame_mapper;
     output_frame_mapper = VideoFrameMapperFactory::CreateMapper(
         PIXEL_FORMAT_NV12, VideoFrame::STORAGE_DMABUFS,
-        /*force_linear_buffer_mapper=*/true,
-        /*must_support_intel_media_compressed_buffers=*/false);
+        /*force_linear_buffer_mapper=*/true);
     if (!output_frame_mapper) {
       output_frame_mapper = VideoFrameMapperFactory::CreateMapper(
           PIXEL_FORMAT_NV12, VideoFrame::STORAGE_GPU_MEMORY_BUFFER,
-          /*force_linear_buffer_mapper=*/true,
-          /*must_support_intel_media_compressed_buffers=*/false);
+          /*force_linear_buffer_mapper=*/true);
     }
     if (!output_frame_mapper) {
       LOG(ERROR) << "Failed to instantiate MT21 frame mapper!";
@@ -2429,10 +2430,8 @@ void V4L2VideoDecodeAccelerator::SendBufferToClient(
   buffers_at_client_.emplace(
       output_record.picture_id,
       std::make_pair(std::move(vda_buffer), std::move(frame)));
-  // TODO(b/214190092): Get color space from the v4l2 buffer.
-  const Picture picture(
-      output_record.picture_id, bitstream_buffer_id, gfx::Rect(visible_size_),
-      container_color_space_.ToGfxColorSpace(), /*allow_overlay=*/true);
+  const Picture picture(output_record.picture_id, bitstream_buffer_id,
+                        gfx::Rect(visible_size_));
   pending_picture_ready_.emplace(output_record.cleared, picture);
   SendPictureReady();
   // This picture will be cleared next time we see it.

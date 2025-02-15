@@ -8,14 +8,15 @@ import android.view.View;
 import android.view.ViewGroup.MarginLayoutParams;
 import android.view.animation.Animation;
 import android.view.animation.AnimationUtils;
+import android.widget.LinearLayout;
+import android.widget.LinearLayout.LayoutParams;
 
 import androidx.annotation.Nullable;
 
 import org.chromium.base.ResettersForTesting;
 import org.chromium.content_public.browser.BrowserContextHandle;
-import org.chromium.content_public.browser.ContentFeatureList;
-import org.chromium.content_public.browser.ContentFeatureMap;
 import org.chromium.content_public.browser.LoadCommittedDetails;
+import org.chromium.content_public.browser.Visibility;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.content_public.browser.WebContentsObserver;
 import org.chromium.ui.modelutil.PropertyModel;
@@ -84,14 +85,10 @@ public class PageZoomCoordinator {
                 PageZoomUtils.getDefaultZoomLevelAsZoomFactor(mBrowserContextHandle));
 
         adjustPadding();
+        adjustResetSymmetry();
 
         // Consume hover events so screen readers do not select web contents behind slider.
         mView.setOnHoverListener((v, event) -> true);
-
-        mModel.set(
-                PageZoomProperties.RESET_ZOOM_VISIBLE,
-                ContentFeatureMap.isEnabled(
-                        ContentFeatureList.ACCESSIBILITY_PAGE_ZOOM_ENHANCEMENTS));
 
         // Adjust bottom margin for any bottom controls
         setBottomMargin(mBottomControlsOffset);
@@ -108,10 +105,12 @@ public class PageZoomCoordinator {
                     }
 
                     @Override
-                    public void wasHidden() {
-                        // When the web contents are hidden (i.e. navigate to another tab), hide the
-                        // dialog
-                        hide();
+                    public void onVisibilityChanged(@Visibility int visibility) {
+                        if (visibility != Visibility.VISIBLE) {
+                            // When the web contents are hidden or occluded (i.e. navigate to
+                            // another tab), hide the dialog
+                            hide();
+                        }
                     }
 
                     @Override
@@ -159,7 +158,7 @@ public class PageZoomCoordinator {
     /** Clean-up views and children during destruction. */
     public void destroy() {
         if (mWebContentsObserver != null) {
-            mWebContentsObserver.destroy();
+            mWebContentsObserver.observe(null);
         }
 
         if (mView != null) {
@@ -231,5 +230,24 @@ public class PageZoomCoordinator {
                 mView.setPadding(defaultPadding, defaultPadding, defaultPadding, defaultPadding);
             }
         }
+    }
+
+    private void adjustResetSymmetry() {
+        // Both the 'Reset' button and current zoom value text have wrap_content LayoutParams,
+        // and we want to set them each to the max of the two to maintain symmetry.
+        LayoutParams text_params =
+                (LinearLayout.LayoutParams)
+                        mView.findViewById(R.id.page_zoom_current_zoom_level).getLayoutParams();
+        LayoutParams reset_params =
+                (LinearLayout.LayoutParams)
+                        mView.findViewById(R.id.page_zoom_reset_zoom_button).getLayoutParams();
+
+        LayoutParams bounding_params =
+                new LayoutParams(
+                        Math.max(text_params.width, reset_params.width),
+                        Math.max(text_params.height, reset_params.height));
+
+        mView.findViewById(R.id.page_zoom_current_zoom_level).setLayoutParams(bounding_params);
+        mView.findViewById(R.id.page_zoom_reset_zoom_button).setLayoutParams(bounding_params);
     }
 }

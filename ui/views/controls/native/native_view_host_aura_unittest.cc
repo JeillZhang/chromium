@@ -58,10 +58,7 @@ class NativeViewHostWindowObserver : public aura::WindowObserver {
     EventType type;
     int window_id;
     gfx::Rect bounds;
-    bool operator!=(const EventDetails& rhs) {
-      return type != rhs.type || window_id != rhs.window_id ||
-             bounds != rhs.bounds;
-    }
+    bool operator==(const EventDetails& rhs) const = default;
   };
 
   NativeViewHostWindowObserver() = default;
@@ -81,8 +78,9 @@ class NativeViewHostWindowObserver : public aura::WindowObserver {
 
     // Dedupe events as a single Hide() call can result in several
     // notifications.
-    if (events_.size() == 0u || events_.back() != event)
+    if (events_.size() == 0u || events_.back() != event) {
       events_.push_back(event);
+    }
   }
 
   void OnWindowBoundsChanged(aura::Window* window,
@@ -126,9 +124,8 @@ class NativeViewHostAuraTest : public test::NativeViewHostTestBase {
   void CreateHost() {
     CreateTopLevel();
     CreateTestingHost();
-    child_.reset(CreateChildForHost(toplevel()->GetNativeView(),
-                                    toplevel()->client_view(), new View,
-                                    host()));
+    child_ = CreateChildForHost(toplevel()->GetNativeView(),
+                                toplevel()->client_view(), new View, host());
   }
 
   // test::NativeViewHostTestBase:
@@ -184,7 +181,7 @@ TEST_F(NativeViewHostAuraTest, CursorForNativeView) {
 
   toplevel()->SetCursor(ui::mojom::CursorType::kHand);
   child()->SetCursor(ui::mojom::CursorType::kWait);
-  ui::MouseEvent move_event(ui::ET_MOUSE_MOVED, gfx::Point(0, 0),
+  ui::MouseEvent move_event(ui::EventType::kMouseMoved, gfx::Point(0, 0),
                             gfx::Point(0, 0), ui::EventTimeForNow(), 0, 0);
 
   EXPECT_EQ(ui::mojom::CursorType::kWait, host()->GetCursor(move_event).type());
@@ -550,7 +547,7 @@ ui::EventTarget* GetTarget(aura::Window* window, const gfx::Point& location) {
   gfx::Point root_location = location;
   aura::Window::ConvertPointToTarget(window, window->GetRootWindow(),
                                      &root_location);
-  ui::MouseEvent event(ui::ET_MOUSE_MOVED, root_location, root_location,
+  ui::MouseEvent event(ui::EventType::kMouseMoved, root_location, root_location,
                        base::TimeTicks::Now(), 0, 0);
   return window->GetHost()->dispatcher()->event_targeter()->FindTargetForEvent(
       window->GetRootWindow(), &event);

@@ -20,14 +20,13 @@ ChromeAccountManagerServiceObserverBridge::
 ChromeAccountManagerServiceObserverBridge::
     ~ChromeAccountManagerServiceObserverBridge() {}
 
-void ChromeAccountManagerServiceObserverBridge::OnIdentityListChanged(
-    bool notify_user) {
+void ChromeAccountManagerServiceObserverBridge::OnIdentitiesInProfileChanged() {
   if ([observer_ respondsToSelector:@selector(identityListChanged)]) {
     [observer_ identityListChanged];
   }
 }
 
-void ChromeAccountManagerServiceObserverBridge::OnIdentityUpdated(
+void ChromeAccountManagerServiceObserverBridge::OnIdentityInProfileUpdated(
     id<SystemIdentity> identity) {
   if ([observer_ respondsToSelector:@selector(identityUpdated:)]) {
     [observer_ identityUpdated:identity];

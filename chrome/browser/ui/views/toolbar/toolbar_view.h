@@ -11,7 +11,6 @@
 
 #include "base/memory/raw_ptr.h"
 #include "base/scoped_observation.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/command_observer.h"
 #include "chrome/browser/ui/page_action/page_action_icon_type.h"
 #include "chrome/browser/ui/toolbar/app_menu_icon_controller.h"
@@ -26,6 +25,7 @@
 #include "chrome/browser/ui/views/toolbar/overflow_button.h"
 #include "components/prefs/pref_member.h"
 #include "ui/base/accelerators/accelerator.h"
+#include "ui/base/interaction/element_identifier.h"
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/base/pointer/touch_ui_controller.h"
 #include "ui/views/accessible_pane_view.h"
@@ -34,10 +34,10 @@
 #include "ui/views/view.h"
 #include "url/origin.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-#include "ash/components/arc/mojom/intent_helper.mojom-forward.h"  // nogncheck https://crbug.com/784179
-#include "components/arc/intent_helper/arc_intent_helper_bridge.h"
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
+#include "chromeos/ash/experiences/arc/intent_helper/arc_intent_helper_bridge.h"
+#include "chromeos/ash/experiences/arc/mojom/intent_helper.mojom-forward.h"  // nogncheck https://crbug.com/784179
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 class AppMenuButton;
 class AvatarToolbarButton;
@@ -57,11 +57,16 @@ class PinnedToolbarActionsContainer;
 class ToolbarButton;
 class AvatarToolbarButtonBrowserTest;
 class ToolbarController;
+class OverflowButton;
 class PerformanceInterventionButton;
 
 namespace media_router {
 class CastToolbarButton;
 }
+
+namespace page_actions {
+class PageActionView;
+}  // namespace page_actions
 
 namespace send_tab_to_self {
 class SendTabToSelfToolbarIconView;
@@ -92,6 +97,9 @@ class ToolbarView : public views::AccessiblePaneView,
                 // needs to be displayed.
   };
 
+  DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kToolbarElementId);
+  DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kToolbarContainerElementId);
+
   ToolbarView(Browser* browser, BrowserView* browser_view);
   ToolbarView(const ToolbarView&) = delete;
   ToolbarView& operator=(const ToolbarView&) = delete;
@@ -105,6 +113,10 @@ class ToolbarView : public views::AccessiblePaneView,
   // and should restore any previous location bar state (such as user editing)
   // as well.
   void Update(content::WebContents* tab);
+
+  // Updates the toolbar's visible security state if the state has changed
+  // since the last update. Returns true if the toolbar was updated.
+  bool UpdateSecurityState();
 
   // Updates the visibility of the custom tab bar, potentially animating the
   // transition.
@@ -138,6 +150,11 @@ class ToolbarView : public views::AccessiblePaneView,
 
   // Accessors.
   Browser* browser() const { return browser_; }
+  views::Button* GetChromeLabsButton() const;
+
+  // NOTE: Use of the above method `GetChromeLabsButton` is preferred while the
+  // Chrome Labs button is migrated to PinnedActionToolbarButton.
+  // TODO(b/353385180): Remove once Chrome Labs button migration is complete.
   ChromeLabsButton* chrome_labs_button() const { return chrome_labs_button_; }
   ChromeLabsModel* chrome_labs_model() const {
     return chrome_labs_model_.get();
@@ -159,7 +176,7 @@ class ToolbarView : public views::AccessiblePaneView,
   PerformanceInterventionButton* performance_intervention_button() const {
     return performance_intervention_button_;
   }
-  media_router::CastToolbarButton* cast_button() const { return cast_; }
+  ToolbarButton* GetCastButton() const;
   PinnedToolbarActionsContainer* pinned_toolbar_actions_container() const {
     return pinned_toolbar_actions_container_;
   }
@@ -216,7 +233,6 @@ class ToolbarView : public views::AccessiblePaneView,
 
   // AccessiblePaneView:
   views::View* GetDefaultFocusableChild() override;
-  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
 
   // AnimationDelegateViews:
   void AnimationEnded(const gfx::Animation* animation) override;
@@ -234,25 +250,28 @@ class ToolbarView : public views::AccessiblePaneView,
 
   // ToolbarButtonProvider:
   ExtensionsToolbarContainer* GetExtensionsToolbarContainer() override;
+  PinnedToolbarActionsContainer* GetPinnedToolbarActionsContainer() override;
   gfx::Size GetToolbarButtonSize() const override;
   views::View* GetDefaultExtensionDialogAnchorView() override;
   PageActionIconView* GetPageActionIconView(PageActionIconType type) override;
+  page_actions::PageActionView* GetPageActionView(
+      actions::ActionId action_id) override;
   AppMenuButton* GetAppMenuButton() override;
   gfx::Rect GetFindBarBoundingBox(int contents_bottom) override;
   void FocusToolbar() override;
   views::AccessiblePaneView* GetAsAccessiblePaneView() override;
-  views::View* GetAnchorView(std::optional<PageActionIconType> type) override;
+  views::View* GetAnchorView(
+      std::optional<actions::ActionId> action_id) override;
   void ZoomChangedForActiveTab(bool can_show_bubble) override;
   AvatarToolbarButton* GetAvatarToolbarButton() override;
   ToolbarButton* GetBackButton() override;
   ReloadButton* GetReloadButton() override;
   IntentChipButton* GetIntentChipButton() override;
-  DownloadToolbarButtonView* GetDownloadButton() override;
+  ToolbarButton* GetDownloadButton() override;
 
   // BrowserRootView::DropTarget
   std::optional<BrowserRootView::DropIndex> GetDropIndex(
-      const ui::DropTargetEvent& event,
-      bool allow_replacement) override;
+      const ui::DropTargetEvent& event) override;
   BrowserRootView::DropTarget* GetDropTarget(
       gfx::Point loc_in_local_coords) override;
   views::View* GetViewForDrop() override;
@@ -359,5 +378,7 @@ class ToolbarView : public views::AccessiblePaneView,
   // background_view_left_, as their background depends on active state.
   base::CallbackListSubscription active_state_subscription_;
 };
+
+extern const ui::ClassProperty<bool>* const kActionItemUnderlineIndicatorKey;
 
 #endif  // CHROME_BROWSER_UI_VIEWS_TOOLBAR_TOOLBAR_VIEW_H_

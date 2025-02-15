@@ -19,8 +19,8 @@
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/text/text_direction.h"
 #include "third_party/blink/renderer/platform/text/writing_mode.h"
+#include "ui/base/mojom/window_show_state.mojom-blink-forward.h"
 #include "ui/base/pointer/pointer_device.h"
-#include "ui/base/ui_base_types.h"
 
 namespace blink {
 
@@ -80,7 +80,7 @@ class CORE_EXPORT MediaValues : public GarbageCollected<MediaValues>,
   virtual bool ThreeDEnabled() const = 0;
   virtual const String MediaType() const = 0;
   virtual blink::mojom::DisplayMode DisplayMode() const = 0;
-  virtual ui::WindowShowState WindowShowState() const = 0;
+  virtual ui::mojom::blink::WindowShowState WindowShowState() const = 0;
   virtual bool Resizable() const = 0;
   virtual bool StrictMode() const = 0;
   virtual Document* GetDocument() const = 0;
@@ -106,13 +106,13 @@ class CORE_EXPORT MediaValues : public GarbageCollected<MediaValues>,
   virtual ContainerStuckPhysical StuckVertical() const {
     return ContainerStuckPhysical::kNo;
   }
-  // For evaluating scroll-state(stuck: inset-inline-start),
-  // scroll-state(stuck: inset-inline-end)
+  // For evaluating scroll-state(stuck: inline-start),
+  // scroll-state(stuck: inline-end)
   virtual ContainerStuckLogical StuckInline() const {
     return ContainerStuckLogical::kNo;
   }
-  // For evaluating scroll-state(stuck: inset-block-start),
-  // scroll-state(stuck: inset-block-end)
+  // For evaluating scroll-state(stuck: block-start),
+  // scroll-state(stuck: block-end)
   virtual ContainerStuckLogical StuckBlock() const {
     return ContainerStuckLogical::kNo;
   }
@@ -124,16 +124,46 @@ class CORE_EXPORT MediaValues : public GarbageCollected<MediaValues>,
   virtual ContainerSnappedFlags SnappedFlags() const {
     return static_cast<ContainerSnappedFlags>(ContainerSnapped::kNone);
   }
+  // For evaluating scroll-state(snapped: x/y)
+  bool SnappedX() const {
+    return SnappedFlags() &
+           static_cast<ContainerSnappedFlags>(ContainerSnapped::kX);
+  }
+  bool SnappedY() const {
+    return SnappedFlags() &
+           static_cast<ContainerSnappedFlags>(ContainerSnapped::kY);
+  }
   // For evaluating scroll-state(snapped: block/inline)
-  bool SnappedBlock() const {
-    return SnappedFlags() &
-           static_cast<ContainerSnappedFlags>(ContainerSnapped::kBlock);
+  bool SnappedBlock() const;
+  bool SnappedInline() const;
+  // For boolean context evaluation.
+  bool Snapped() const {
+    return SnappedFlags() !=
+           static_cast<ContainerSnappedFlags>(ContainerSnapped::kNone);
   }
-  bool SnappedInline() const {
-    return SnappedFlags() &
-           static_cast<ContainerSnappedFlags>(ContainerSnapped::kInline);
+  // For evaluating scroll-state(overflowing: left/right)
+  virtual ContainerScrollableFlags ScrollableHorizontal() const {
+    return static_cast<ContainerScrollableFlags>(ContainerScrollable::kNone);
   }
-  bool Snapped() const { return SnappedBlock() || SnappedInline(); }
+  // For evaluating scroll-state(overflowing: top/bottom)
+  virtual ContainerScrollableFlags ScrollableVertical() const {
+    return static_cast<ContainerScrollableFlags>(ContainerScrollable::kNone);
+  }
+  // For evaluating scroll-state(overflowing: inline-start/inline-end)
+  virtual ContainerScrollableFlags ScrollableInline() const {
+    return static_cast<ContainerScrollableFlags>(ContainerScrollable::kNone);
+  }
+  // For evaluating scroll-state(overflowing: block-start/block-end)
+  virtual ContainerScrollableFlags ScrollableBlock() const {
+    return static_cast<ContainerScrollableFlags>(ContainerScrollable::kNone);
+  }
+  // For boolean context evaluation
+  bool Scrollable() const {
+    return ScrollableHorizontal() != static_cast<ContainerScrollableFlags>(
+                                         ContainerScrollable::kNone) ||
+           ScrollableVertical() != static_cast<ContainerScrollableFlags>(
+                                       ContainerScrollable::kNone);
+  }
   // Returns the container element used to retrieve base style and parent style
   // when computing the computed value of a style() container query.
   virtual Element* ContainerElement() const { return nullptr; }
@@ -143,6 +173,9 @@ class CORE_EXPORT MediaValues : public GarbageCollected<MediaValues>,
   // CSSLengthResolver override.
   void ReferenceTreeScope() const override {}
   void ReferenceAnchor() const override {}
+  void ReferenceSibling() const override {}
+
+  Element* GetElement() const override { NOTREACHED(); }
 
  protected:
   static double CalculateViewportWidth(LocalFrame*);
@@ -169,7 +202,8 @@ class CORE_EXPORT MediaValues : public GarbageCollected<MediaValues>,
   static bool CalculateInvertedColors(LocalFrame*);
   static const String CalculateMediaType(LocalFrame*);
   static blink::mojom::DisplayMode CalculateDisplayMode(LocalFrame*);
-  static ui::WindowShowState CalculateWindowShowState(LocalFrame*);
+  static ui::mojom::blink::WindowShowState CalculateWindowShowState(
+      LocalFrame*);
   static bool CalculateResizable(LocalFrame*);
   static bool CalculateThreeDEnabled(LocalFrame*);
   static mojom::blink::PointerType CalculatePrimaryPointerType(LocalFrame*);

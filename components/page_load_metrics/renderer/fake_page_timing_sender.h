@@ -80,7 +80,6 @@ class FakePageTimingSender : public PageTimingSender {
 
     void UpdateExpectedInteractionTiming(
         const base::TimeDelta interaction_duration,
-        mojom::UserInteractionType interaction_type,
         uint64_t interaction_offset,
         const base::TimeTicks interaction_time);
 
@@ -169,6 +168,8 @@ class FakePageTimingSender : public PageTimingSender {
 
   void SetUpSmoothnessReporting(
       base::ReadOnlySharedMemoryRegion shared_memory) override;
+
+  void SendCustomUserTiming(mojom::CustomUserTimingMarkPtr timing) override;
 
  private:
   const raw_ptr<PageTimingValidator> validator_;

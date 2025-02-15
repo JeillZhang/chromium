@@ -6,11 +6,11 @@
 #define IOS_CHROME_TEST_EARL_GREY_CHROME_ACTIONS_APP_INTERFACE_H_
 
 #import <Foundation/Foundation.h>
-
 #import <UIKit/UIKit.h>
 
 @class ElementSelector;
 @protocol GREYAction;
+typedef NS_ENUM(NSInteger, GREYDirection);
 
 // Helper class to return actions for EG tests.  These helpers are compiled
 // into the app binary and can be called from either app or test code.
@@ -43,6 +43,11 @@
 // when the effect of the tap is on the browser side (e.g. showing a popup).
 + (id<GREYAction>)tapWebElementUnverified:(ElementSelector*)selector;
 
+// Action to long press on the center of an element. This is mostly to be used
+// when the element is occulted by something and so the grey_longPress action
+// would fail.
++ (id<GREYAction>)longPressOnHiddenElement;
+
 // Action to scroll to top of a collection.
 // On iOS 13 the settings menu appears as a card that can be dismissed with a
 // downward swipe, for this reason we need to swipe up programatically to
@@ -64,6 +69,11 @@
 // triggering scroll view delegate methods as there is no way to actually
 // trigger the gesture.
 + (id<GREYAction>)accessibilitySwipeRight;
+
+// Swipes down and to the left or right depending on the given `direction`.
+// Use `kGREYDirectionDown` to indicate that the swipe should only be down and
+// not have a horizontal component.
++ (id<GREYAction>)overscrollSwipe:(GREYDirection)direction;
 
 @end
 

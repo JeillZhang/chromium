@@ -16,12 +16,15 @@
 #include "chrome/browser/ui/browser_element_identifiers.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/user_education/browser_user_education_interface.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/content_settings/browser/ui/cookie_controls_controller.h"
 #include "components/content_settings/core/common/cookie_blocking_3pcd_status.h"
 #include "components/feature_engagement/public/event_constants.h"
 #include "components/omnibox/browser/vector_icons.h"
+#include "components/privacy_sandbox/privacy_sandbox_features.h"
 #include "components/privacy_sandbox/tracking_protection_settings.h"
+#include "components/user_education/common/feature_promo/feature_promo_controller.h"
 #include "content/public/browser/web_contents.h"
 #include "cookie_controls_bubble_coordinator.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -60,7 +63,7 @@ CookieControlsIconView::CookieControlsIconView(
       browser_(browser) {
   CHECK(browser_);
   SetUpForInOutAnimation(/*duration=*/base::Seconds(12));
-  SetPaintLabelOverSolidBackground(true);
+  SetBackgroundVisibility(BackgroundVisibility::kWithLabel);
   SetProperty(views::kElementIdentifierKey, kCookieControlsIconElementId);
   bubble_coordinator_ = std::make_unique<CookieControlsBubbleCoordinator>();
 }
@@ -98,7 +101,8 @@ void CookieControlsIconView::UpdateImpl() {
                                               profile->GetOriginalProfile())
                                         : nullptr,
               HostContentSettingsMapFactory::GetForProfile(profile),
-              TrackingProtectionSettingsFactory::GetForProfile(profile));
+              TrackingProtectionSettingsFactory::GetForProfile(profile),
+              profile->IsIncognitoProfile());
       controller_observation_.Observe(controller_.get());
     }
     // Reset animation and tracker when URL changes.
@@ -111,25 +115,54 @@ void CookieControlsIconView::UpdateImpl() {
   }
 }
 
-bool CookieControlsIconView::MaybeShowIPH() {
-  CHECK(browser_->window());
-  // Need to make element visible or calls to show IPH will fail.
-  SetVisible(true);
+void CookieControlsIconView::UpdateTooltipText() {
+  if (!custom_tooltip_text_.empty()) {
+    SetTooltipText(custom_tooltip_text_);
+  } else {
+    PageActionIconView::UpdateTooltipText();
+  }
+}
 
-  if (blocking_status_ != CookieBlocking3pcdStatus::kNotIn3pcd ||
-      !should_highlight_) {
-    return false;
+std::u16string CookieControlsIconView::GetAlternativeAccessibleName() const {
+  if (!custom_tooltip_text_.empty()) {
+    return custom_tooltip_text_;
   }
 
+  return PageActionIconView::GetAlternativeAccessibleName();
+}
+
+void CookieControlsIconView::MaybeShowIPH() {
+  CHECK(browser_->window());
   user_education::FeaturePromoParams params(
       feature_engagement::kIPHCookieControlsFeature);
+  params.show_promo_result_callback =
+      base::BindOnce(&CookieControlsIconView::OnShowPromoResult,
+                     weak_ptr_factory_.GetWeakPtr());
   params.close_callback = base::BindOnce(&CookieControlsIconView::OnIPHClosed,
                                          weak_ptr_factory_.GetWeakPtr());
-  if (!browser_->window()->MaybeShowFeaturePromo(std::move(params))) {
-    return false;
+  browser_->window()->MaybeShowFeaturePromo(std::move(params));
+  // Note: originally we would animate here based on whether the promo showed,
+  // but since promos are show asynchronously, the options are:
+  //  - Always animate; if the IPH shows it shows
+  //  - Always wait until we get a yes or no answer from the promo system before
+  //    deciding whether to animate
+  // Since most of the time the result should come back quickly, and if it
+  // doesn't, it's because the user is doing something else or there is another
+  // promo showing, for now, we choose the later option.
+}
+
+void CookieControlsIconView::OnShowPromoResult(
+    user_education::FeaturePromoResult result) {
+  if (result) {
+    SetHighlighted(true);
+    return;
   }
-  SetHighlighted(true);
-  return true;
+  // If we attempted to show the IPH but failed, instead try animating.
+  MaybeAnimateIcon();
+}
+
+void CookieControlsIconView::OnIPHClosed() {
+  SetHighlighted(false);
 }
 
 bool CookieControlsIconView::IsManagedIPHActive() const {
@@ -138,25 +171,9 @@ bool CookieControlsIconView::IsManagedIPHActive() const {
       feature_engagement::kIPHCookieControlsFeature);
 }
 
-void CookieControlsIconView::OnIPHClosed() {
-  SetHighlighted(false);
-}
-
-void CookieControlsIconView::SetLabelAndTooltip() {
-  int icon_label = GetLabelForStatus();
-  // Only use "Tracking Protection" and verbose accessibility description if the
-  // label is hidden.
-  if (blocking_status_ != CookieBlocking3pcdStatus::kNotIn3pcd &&
-      !label()->GetVisible()) {
-    // Set the accessible description to whatever the 3PC blocking state is.
-    GetViewAccessibility().SetDescription(
-        l10n_util::GetStringUTF16(icon_label));
-    icon_label = IDS_TRACKING_PROTECTION_PAGE_ACTION_LABEL;
-  } else {
-    GetViewAccessibility().SetDescription(u"");
-  }
-  SetTooltipText(l10n_util::GetStringUTF16(icon_label));
-  SetLabel(l10n_util::GetStringUTF16(icon_label));
+void CookieControlsIconView::SetLabelForStatus() {
+  GetViewAccessibility().SetDescription(u"");
+  SetLabel(l10n_util::GetStringUTF16(GetLabelForStatus()));
 }
 
 int CookieControlsIconView::GetLabelForStatus() const {
@@ -177,6 +194,7 @@ void CookieControlsIconView::OnCookieControlsIconStatusChanged(
   if (icon_visible != icon_visible_ || protections_on != protections_on_ ||
       blocking_status != blocking_status_ || should_highlight_) {
     icon_visible_ = icon_visible;
+    protections_changed_ = protections_on != protections_on_;
     protections_on_ = protections_on;
     blocking_status_ = blocking_status;
     should_highlight_ = should_highlight;
@@ -184,10 +202,10 @@ void CookieControlsIconView::OnCookieControlsIconStatusChanged(
   }
 }
 
-bool CookieControlsIconView::MaybeAnimateIcon() {
-  if (!should_highlight_ || GetAssociatedBubble() || IsManagedIPHActive() ||
+void CookieControlsIconView::MaybeAnimateIcon() {
+  if (GetAssociatedBubble() || IsManagedIPHActive() ||
       slide_animation_.is_animating()) {
-    return false;
+    return;
   }
 
   int label = blocking_status_ == CookieBlocking3pcdStatus::kNotIn3pcd
@@ -203,7 +221,9 @@ bool CookieControlsIconView::MaybeAnimateIcon() {
   } else {
     CHECK_IS_TEST();
   }
-  return true;
+  did_animate_ = true;
+  base::RecordAction(
+      base::UserMetricsAction("TrackingProtection.UserBypass.Animated"));
 }
 
 void CookieControlsIconView::UpdateIcon() {
@@ -214,11 +234,19 @@ void CookieControlsIconView::UpdateIcon() {
   }
   UpdateIconImage();
   SetVisible(true);
-  SetLabelAndTooltip();
-  if (protections_on_ && !MaybeShowIPH() && MaybeAnimateIcon()) {
-    did_animate_ = true;
-    base::RecordAction(
-        base::UserMetricsAction("TrackingProtection.UserBypass.Animated"));
+  if (protections_changed_ || label()->GetText().empty()) {
+    SetLabelForStatus();
+  }
+
+  custom_tooltip_text_ = l10n_util::GetStringUTF16(GetLabelForStatus());
+  SetTooltipText(custom_tooltip_text_);
+
+  if (protections_on_ && should_highlight_) {
+    if (blocking_status_ == CookieBlocking3pcdStatus::kNotIn3pcd) {
+      MaybeShowIPH();
+    } else {
+      MaybeAnimateIcon();
+    }
   } else {
     base::RecordAction(
         base::UserMetricsAction("TrackingProtection.UserBypass.Shown"));
@@ -265,10 +293,9 @@ void CookieControlsIconView::ShowCookieControlsBubble() {
   // Need to close IPH before opening bubble view, as on some platforms closing
   // the IPH bubble can cause activation to move between windows, and cookie
   // control bubble is close-on-deactivate.
-  browser_->window()->CloseFeaturePromo(
-      feature_engagement::kIPHCookieControlsFeature);
-  browser_->window()->NotifyFeatureEngagementEvent(
-      feature_engagement::events::kCookieControlsBubbleShown);
+  browser_->window()->NotifyFeaturePromoFeatureUsed(
+      feature_engagement::kIPHCookieControlsFeature,
+      FeaturePromoFeatureUsedAction::kClosePromoIfPresent);
   bubble_coordinator_->ShowBubble(
       delegate()->GetWebContentsForPageActionIconView(), controller_.get());
   CHECK(ShouldBeVisible());
@@ -292,8 +319,8 @@ views::BubbleDialogDelegate* CookieControlsIconView::GetBubble() const {
 }
 
 const gfx::VectorIcon& CookieControlsIconView::GetVectorIcon() const {
-    return protections_on_ ? views::kEyeCrossedRefreshIcon
-                           : views::kEyeRefreshIcon;
+  return protections_on_ ? views::kEyeCrossedRefreshIcon
+                         : views::kEyeRefreshIcon;
 }
 
 void CookieControlsIconView::UpdateTooltipForFocus() {}

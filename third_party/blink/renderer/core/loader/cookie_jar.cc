@@ -3,18 +3,19 @@
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/core/loader/cookie_jar.h"
+
 #include <cstdint>
 
 #include "base/debug/dump_without_crashing.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/strcat.h"
-#include "third_party/blink/public/common/browser_interface_broker_proxy.h"
+#include "third_party/blink/public/platform/browser_interface_broker_proxy.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/web_feature.h"
-#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
+#include "third_party/blink/renderer/core/probe/core_probes.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl_hash.h"
 #include "third_party/blink/renderer/platform/wtf/hash_functions.h"
@@ -32,6 +33,10 @@ enum class CookieCacheLookupResult {
   kCacheMissAfterSet = 4,
   kMaxValue = kCacheMissAfterSet,
 };
+
+// Histogram for tracking first cookie requests.
+constexpr char kFirstCookieRequestHistogram[] =
+    "Blink.Experimental.Cookies.FirstCookieRequest";
 
 // TODO(crbug.com/1276520): Remove after truncating characters are fully
 // deprecated.
@@ -61,9 +66,13 @@ void CookieJar::SetCookie(const String& value) {
   RequestRestrictedCookieManagerIfNeeded();
   backend_->SetCookieFromString(
       cookie_url, document_->SiteForCookies(), document_->TopFrameOrigin(),
-      document_->GetExecutionContext()->HasStorageAccess(), value);
+      document_->GetExecutionContext()->GetStorageAccessApiStatus(),
+      ShouldApplyDevtoolsOverrides(), value);
   last_operation_was_set_ = true;
   base::UmaHistogramTimes("Blink.SetCookieTime", timer.Elapsed());
+  if (is_first_operation_) {
+    LogFirstCookieRequest(FirstCookieRequest::kFirstOperationWasSet);
+  }
 
   // TODO(crbug.com/1276520): Remove after truncating characters are fully
   // deprecated
@@ -94,15 +103,19 @@ String CookieJar::Cookies() {
   // to get the string. Will get updated once more by GetCookiesString() if an
   // ipc is required.
   uint64_t new_version = last_version_;
-  if (IPCNeeded()) {
+  bool should_apply_devtools_overrides = ShouldApplyDevtoolsOverrides();
+  const bool ipc_needed = IPCNeeded(should_apply_devtools_overrides);
+  base::UmaHistogramBoolean("Blink.Experimental.Cookies.IpcNeeded", ipc_needed);
+  if (ipc_needed) {
     bool is_ad_tagged =
         document_->GetFrame() ? document_->GetFrame()->IsAdFrame() : false;
 
     if (!backend_->GetCookiesString(
             cookie_url, document_->SiteForCookies(),
             document_->TopFrameOrigin(),
-            document_->GetExecutionContext()->HasStorageAccess(),
+            document_->GetExecutionContext()->GetStorageAccessApiStatus(),
             get_version_shared_memory, is_ad_tagged,
+            should_apply_devtools_overrides,
             /*force_disable_third_party_cookies=*/false, &new_version,
             &new_mapped_region, &value)) {
       // On IPC failure invalidate cached values and return empty string since
@@ -120,6 +133,9 @@ String CookieJar::Cookies() {
   UpdateCacheAfterGetRequest(cookie_url, value, new_version);
 
   last_operation_was_set_ = false;
+  if (is_first_operation_) {
+    LogFirstCookieRequest(FirstCookieRequest::kFirstOperationWasGet);
+  }
   return last_cookies_;
 }
 
@@ -133,8 +149,12 @@ bool CookieJar::CookiesEnabled() {
   bool cookies_enabled = false;
   backend_->CookiesEnabledFor(
       cookie_url, document_->SiteForCookies(), document_->TopFrameOrigin(),
-      document_->GetExecutionContext()->HasStorageAccess(), &cookies_enabled);
+      document_->GetExecutionContext()->GetStorageAccessApiStatus(),
+      ShouldApplyDevtoolsOverrides(), &cookies_enabled);
   base::UmaHistogramTimes("Blink.CookiesEnabledTime", timer.Elapsed());
+  if (is_first_operation_) {
+    LogFirstCookieRequest(FirstCookieRequest::kFirstOperationWasCookiesEnabled);
+  }
   return cookies_enabled;
 }
 
@@ -152,9 +172,10 @@ void CookieJar::InvalidateCache() {
   last_version_ = mojo::shared_memory_version::kInvalidVersion;
 }
 
-bool CookieJar::IPCNeeded() {
-  // Not under the experiment, always use IPCs.
-  if (!RuntimeEnabledFeatures::ReduceCookieIPCsEnabled()) {
+bool CookieJar::IPCNeeded(bool should_apply_devtools_overrides) {
+  // IPC needed if devtools overrides is different
+  if (should_apply_devtools_overrides != last_devtools_overrides_were_applied) {
+    last_devtools_overrides_were_applied = should_apply_devtools_overrides;
     return true;
   }
 
@@ -231,6 +252,20 @@ void CookieJar::UpdateCacheAfterGetRequest(const KURL& cookie_url,
   // IPCs when not desired.
   last_version_ = new_version;
   last_cookies_hash_ = new_hash;
+}
+
+void CookieJar::LogFirstCookieRequest(FirstCookieRequest first_cookie_request) {
+  is_first_operation_ = false;
+  base::UmaHistogramEnumeration(kFirstCookieRequestHistogram,
+                                first_cookie_request);
+}
+
+bool CookieJar::ShouldApplyDevtoolsOverrides() const {
+  bool should_apply_devtools_overrides = false;
+  probe::ShouldApplyDevtoolsCookieSettingOverrides(
+      document_->GetExecutionContext(), &should_apply_devtools_overrides);
+
+  return should_apply_devtools_overrides;
 }
 
 }  // namespace blink

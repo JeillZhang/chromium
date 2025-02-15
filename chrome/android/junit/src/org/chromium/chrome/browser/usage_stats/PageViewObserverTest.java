@@ -78,7 +78,7 @@ public final class PageViewObserverTest {
     private UserDataHost mDestroyedUserDataHost;
     private WeakReference<Activity> mActivityRef;
 
-    private class MockTabViewManager implements TabViewManager {
+    private static class MockTabViewManager implements TabViewManager {
         private TabViewProvider mTabViewProvider;
 
         @Override
@@ -286,7 +286,7 @@ public final class PageViewObserverTest {
         doReturn(true).when(mSuspensionTracker).isWebsiteSuspended(STARTING_FQDN);
         changeTab(mTab2);
 
-        assertEquals(SuspendedTab.from(mTab2, mTabContentManagerSupplier).getFqdn(), STARTING_FQDN);
+        assertEquals(STARTING_FQDN, SuspendedTab.from(mTab2, mTabContentManagerSupplier).getFqdn());
     }
 
     // TODO(pnoland): add test for platform reporting once the System API is available in Q.
@@ -313,7 +313,7 @@ public final class PageViewObserverTest {
         updateUrl(mTab, DIFFERENT_URL, observer);
 
         SuspendedTab suspendedTab = SuspendedTab.from(mTab, mTabContentManagerSupplier);
-        assertEquals(suspendedTab.getFqdn(), DIFFERENT_FQDN);
+        assertEquals(DIFFERENT_FQDN, suspendedTab.getFqdn());
     }
 
     @Test

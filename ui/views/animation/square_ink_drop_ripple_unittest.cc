@@ -2,12 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#if defined(UNSAFE_BUFFERS_BUILD)
-// TODO(https://crbug.com/344639839): fix the unsafe buffer errors in this file,
-// then remove this pragma.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "ui/views/animation/square_ink_drop_ripple.h"
 
 #include <memory>
@@ -236,9 +230,9 @@ TEST_F(SquareInkDropRippleCalculateTransformsTest, RippleIsPixelAligned) {
   // Add to a widget so we can control the DSF.
   auto* widget = CreateTopLevelPlatformWidget();
   widget->SetBounds(gfx::Rect(0, 0, 100, 100));
-  auto* host_view = new View();
+  auto* host_view =
+      widget->GetContentsView()->AddChildView(std::make_unique<View>());
   host_view->SetPaintToLayer();
-  widget->GetContentsView()->AddChildView(host_view);
   host_view->layer()->Add(ink_drop_ripple.GetRootLayer());
 
   // Test a variety of scale factors and target transform sizes.

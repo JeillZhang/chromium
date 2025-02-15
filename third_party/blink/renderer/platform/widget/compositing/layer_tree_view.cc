@@ -5,6 +5,7 @@
 #include "third_party/blink/renderer/platform/widget/compositing/layer_tree_view.h"
 
 #include <stddef.h>
+
 #include <string>
 #include <utility>
 
@@ -22,13 +23,12 @@
 #include "base/values.h"
 #include "cc/animation/animation_host.h"
 #include "cc/animation/animation_timeline.h"
-#include "cc/base/features.h"
 #include "cc/base/region.h"
 #include "cc/benchmarks/micro_benchmark.h"
 #include "cc/debug/layer_tree_debug_state.h"
 #include "cc/input/layer_selection_bound.h"
 #include "cc/layers/layer.h"
-#include "cc/metrics/web_vital_metrics.h"
+#include "cc/metrics/ukm_manager.h"
 #include "cc/tiles/raster_dark_mode_filter.h"
 #include "cc/trees/layer_tree_host.h"
 #include "cc/trees/layer_tree_mutator.h"
@@ -36,7 +36,6 @@
 #include "cc/trees/presentation_time_callback_buffer.h"
 #include "cc/trees/render_frame_metadata_observer.h"
 #include "cc/trees/swap_promise.h"
-#include "cc/trees/ukm_manager.h"
 #include "components/viz/common/frame_sinks/begin_frame_args.h"
 #include "components/viz/common/frame_sinks/begin_frame_source.h"
 #include "components/viz/common/quads/compositor_frame_metadata.h"
@@ -135,11 +134,21 @@ void LayerTreeView::Disconnect() {
   delegate_ = nullptr;
 }
 
-void LayerTreeView::ReattachTo(
+void LayerTreeView::ClearPreviousDelegateAndReattachIfNeeded(
     LayerTreeViewDelegate* delegate,
     scoped_refptr<scheduler::WidgetScheduler> scheduler) {
   // Reset state tied to the previous `delegate_`.
   layer_tree_host_->WaitForProtectedSequenceCompletion();
+
+  if (!delegate) {
+    // If we're not reattaching to a new delegate, ensure that the LayerTreeHost
+    // is no longer visible. Note that this should be done before calling
+    // `LayerTreeHost::DetachInputDelegateAndRenderFrameObserver()` to avoid
+    // having a gap in time in the compositor where the LayerTreeHost is already
+    // detached but is still marked as visible. This is done to stop the compositor from producing frames which require an input delegate. See also
+    // https://crbug,com/41496745 for more details.
+    layer_tree_host_->SetVisible(false);
+  }
   layer_tree_host_->DetachInputDelegateAndRenderFrameObserver();
   layer_tree_host_->StopDeferringCommits(
       cc::PaintHoldingCommitTrigger::kWidgetSwapped);
@@ -160,6 +169,10 @@ void LayerTreeView::ReattachTo(
 
   // Invalidate weak ptrs so callbacks from the previous delegate are dropped.
   weak_factory_for_delegate_.InvalidateWeakPtrs();
+
+  if (!delegate) {
+    return;
+  }
 
   switch (frame_sink_state_) {
     case FrameSinkState::kNoFrameSink:
@@ -260,7 +273,7 @@ void LayerTreeView::BeginMainFrame(const viz::BeginFrameArgs& args) {
   if (!delegate_)
     return;
   widget_scheduler_->WillBeginFrame(args);
-  delegate_->BeginMainFrame(args.frame_time);
+  delegate_->BeginMainFrame(args);
 }
 
 void LayerTreeView::OnDeferMainFrameUpdatesChanged(bool status) {
@@ -368,18 +381,23 @@ void LayerTreeView::DidFailToInitializeLayerTreeFrameSink() {
   }
 
   frame_sink_state_ = FrameSinkState::kNoFrameSink;
-  layer_tree_host_->GetTaskRunnerProvider()->MainThreadTaskRunner()->PostTask(
-      FROM_HERE, base::BindOnce(&LayerTreeView::RequestNewLayerTreeFrameSink,
-                                weak_factory_.GetWeakPtr()));
+  // The GPU channel cannot be established when gpu_remote is disconnected. Stop
+  // calling RequestNewLayerTreeFrameSink because it's going to fail again and
+  // it will be stuck in a forever loop of retries. This makes the processes
+  // unable to be killed after Chrome is closed.
+  // https://issues.chromium.org/336164423
+  if (!Platform::Current()->IsGpuRemoteDisconnected()) {
+    layer_tree_host_->GetTaskRunnerProvider()->MainThreadTaskRunner()->PostTask(
+        FROM_HERE, base::BindOnce(&LayerTreeView::RequestNewLayerTreeFrameSink,
+                                  weak_factory_.GetWeakPtr()));
+  }
 }
 
 void LayerTreeView::WillCommit(const cc::CommitState&) {
   if (!delegate_)
     return;
   delegate_->WillCommitCompositorFrame();
-  if (base::FeatureList::IsEnabled(features::kNonBlockingCommit)) {
-    widget_scheduler_->DidCommitFrameToCompositor();
-  }
+  widget_scheduler_->DidCommitFrameToCompositor();
 }
 
 void LayerTreeView::DidCommit(int source_frame_number,
@@ -390,9 +408,6 @@ void LayerTreeView::DidCommit(int source_frame_number,
     return;
   }
   delegate_->DidCommitCompositorFrame(commit_start_time, commit_finish_time);
-  if (!base::FeatureList::IsEnabled(features::kNonBlockingCommit)) {
-    widget_scheduler_->DidCommitFrameToCompositor();
-  }
 }
 
 void LayerTreeView::DidCommitAndDrawFrame(int source_frame_number) {
@@ -467,15 +482,9 @@ LayerTreeView::GetBeginMainFrameMetrics() {
   return delegate_->GetBeginMainFrameMetrics();
 }
 
-std::unique_ptr<cc::WebVitalMetrics> LayerTreeView::GetWebVitalMetrics() {
-  if (!delegate_)
-    return nullptr;
-  return delegate_->GetWebVitalMetrics();
-}
-
-void LayerTreeView::NotifyThroughputTrackerResults(
+void LayerTreeView::NotifyCompositorMetricsTrackerResults(
     cc::CustomTrackerResults results) {
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 void LayerTreeView::DidObserveFirstScrollDelay(

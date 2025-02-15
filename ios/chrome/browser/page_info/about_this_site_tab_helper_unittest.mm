@@ -17,7 +17,8 @@
 #import "ios/chrome/browser/optimization_guide/model/optimization_guide_service.h"
 #import "ios/chrome/browser/optimization_guide/model/optimization_guide_service_factory.h"
 #import "ios/chrome/browser/optimization_guide/model/optimization_guide_test_utils.h"
-#import "ios/chrome/browser/shared/model/browser_state/test_chrome_browser_state.h"
+#import "ios/chrome/browser/shared/model/profile/test/test_profile_ios.h"
+#import "ios/chrome/test/ios_chrome_scoped_testing_local_state.h"
 #import "ios/web/public/test/fakes/fake_navigation_context.h"
 #import "ios/web/public/test/fakes/fake_web_state.h"
 #import "ios/web/public/test/web_task_environment.h"
@@ -85,36 +86,35 @@ class AboutThisSiteTabHelperTest : public PlatformTest {
   // Initializes the OptimizationGuide service as well as the
   // `AboutThisSiteTabHelper` to be tested and the test browser and web state.
   void InitService() {
-    TestChromeBrowserState::Builder builder;
+    TestProfileIOS::Builder builder;
     builder.AddTestingFactory(
         OptimizationGuideServiceFactory::GetInstance(),
         OptimizationGuideServiceFactory::GetDefaultFactory());
-    browser_state_ = builder.Build();
+    profile_ = std::move(builder).Build();
     optimization_guide_service_ =
-        OptimizationGuideServiceFactory::GetForBrowserState(
-            browser_state_.get());
-    optimization_guide_service_->DoFinalInit();
-    web_state_.SetBrowserState(browser_state_.get());
+        OptimizationGuideServiceFactory::GetForProfile(profile_.get());
+    web_state_.SetBrowserState(profile_.get());
 
-    AboutThisSiteTabHelper::CreateForWebState(&web_state_);
+    AboutThisSiteTabHelper::CreateForWebState(&web_state_,
+                                              optimization_guide_service_);
   }
 
   // Initializes the OptimizationGuide service as well as the
   // `AboutThisSiteTabHelper`, the test browser and web state for an off the
   // record session. Should only be called after `InitService()` so the
-  // `browser_state_` has been initialized.
+  // `profile_` has been initialized.
   void InitOTRService() {
-    ChromeBrowserState* otr_browser_state =
-        browser_state_->CreateOffTheRecordBrowserStateWithTestingFactories(
-            {std::make_pair(
+    ProfileIOS* otr_profile =
+        profile_->CreateOffTheRecordProfileWithTestingFactories(
+            {TestProfileIOS::TestingFactory{
                 OptimizationGuideServiceFactory::GetInstance(),
-                OptimizationGuideServiceFactory::GetDefaultFactory())});
+                OptimizationGuideServiceFactory::GetDefaultFactory()}});
     optimization_guide_service_otr_ =
-        OptimizationGuideServiceFactory::GetForBrowserState(otr_browser_state);
-    optimization_guide_service_otr_->DoFinalInit();
-    web_state_otr_.SetBrowserState(otr_browser_state);
+        OptimizationGuideServiceFactory::GetForProfile(otr_profile);
+    web_state_otr_.SetBrowserState(otr_profile);
 
-    AboutThisSiteTabHelper::CreateForWebState(&web_state_otr_);
+    AboutThisSiteTabHelper::CreateForWebState(&web_state_otr_,
+                                              optimization_guide_service_otr_);
   }
 
   void CommitToUrlAndNavigate(const GURL& url, bool is_off_the_record = false) {
@@ -154,10 +154,11 @@ class AboutThisSiteTabHelperTest : public PlatformTest {
   }
 
  protected:
+  IOSChromeScopedTestingLocalState scoped_testing_local_state_;
   web::WebTaskEnvironment task_environment_;
   base::test::ScopedFeatureList scoped_feature_list_;
   base::HistogramTester histogram_tester_;
-  std::unique_ptr<TestChromeBrowserState> browser_state_;
+  std::unique_ptr<TestProfileIOS> profile_;
   web::FakeWebState web_state_;
   web::FakeWebState web_state_otr_;
   web::FakeNavigationContext context_;

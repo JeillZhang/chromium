@@ -16,7 +16,7 @@
 # with guards against non-Clang compilers; see the definition of NO_SANITIZE in
 # Chromium), e.g.
 #
-# __attribute__((no_sanitize("cfi-unrelated-cast")))
+# [[clang::no_sanitize("cfi-unrelated-cast")]]
 
 [cfi-unrelated-cast|cfi-derived-cast]
 
@@ -48,6 +48,10 @@ fun:*internal_default_instance*
 
 # CAtlArray<T> casts to uninitialized T*.
 src:*atlcoll.h
+
+# Temporarily disable CFI check in std::__allocate_unique_temporary_buffer
+# until upstream adds an annotation, crbug.com/367439556
+fun:*__allocate_unique_temporary_buffer*
 
 # https://github.com/grpc/grpc/issues/19375
 src:*third_party/grpc/src/src/core/lib/gprpp/inlined_vector.h
@@ -191,8 +195,6 @@ src:*media/gpu/vaapi/va_stubs.cc
 
 # Calls to auto-generated stubs by generate_library_loader.py
 src:*content/browser/speech/tts_linux.cc
-src:*device/udev_linux/udev0_loader.cc
-src:*device/udev_linux/udev1_loader.cc
 
 # Calls to auto-generated stubs by ui/gl/generate_bindings.py
 src:*ui/gl/gl_bindings_autogen_*
@@ -206,7 +208,7 @@ src:*third_party/angle/src/common/vulkan/vulkan_icd.cpp
 
 src:*components/os_crypt/sync/*
 
-src:*content/browser/accessibility/browser_accessibility_auralinux.cc
+src:*ui/accessibility/platform/browser_accessibility_auralinux.cc
 src:*ui/accessibility/platform/ax_platform_node_auralinux.cc
 src:*ui/accessibility/platform/ax_platform_atk_hyperlink.cc
 src:*ui/accessibility/platform/ax_platform_node_auralinux_unittest.cc
@@ -249,6 +251,10 @@ src:*net/http/http_auth_gssapi_posix.cc
 src:*third_party/breakpad/breakpad/src/common/linux/libcurl_wrapper.cc
 src:*third_party/crashpad/crashpad/snapshot/crashpad_info_client_options_test.cc
 src:*third_party/skia/src/ports/SkFontHost_FreeType.cpp
+
+# WebRTC / PipeWire
+fun:*pw_registry_bind*
+fun:*pw_core_get_registry*
 
 ######### Function pointers cast to incorrect type signatures
 

@@ -13,8 +13,7 @@
 namespace {
 
 #if BUILDFLAG(IS_MAC)
-constexpr char kKeychainAccessGroup[] = MAC_TEAM_IDENTIFIER_STRING
-    "." MAC_BUNDLE_IDENTIFIER_STRING ".unexportable-keys";
+// TODO(crbug.com/384055845): Use the correct value for Secure Enclave
 constexpr char kKeychainAccessGroup[] =
     ".org.chromium.Chromium.unexportable-keys";
 #endif  // BUILDFLAG(IS_MAC)
@@ -51,9 +50,11 @@ unexportable_keys::UnexportableKeyTaskManager* GetSharedTaskManagerInstance() {
   return instance->get();
 }
 
+unexportable_keys::UnexportableKeyService* (*g_mock_factory)() = nullptr;
+
 }  // namespace
 
-namespace net {
+namespace net::device_bound_sessions {
 
 // Currently there is another UnexportableKeyServiceFactory in the
 // chrome/browser/signin code in the browser process. They do not share code,
@@ -66,8 +67,22 @@ UnexportableKeyServiceFactory* UnexportableKeyServiceFactory::GetInstance() {
   return instance.get();
 }
 
+void UnexportableKeyServiceFactory::SetUnexportableKeyFactoryForTesting(
+    unexportable_keys::UnexportableKeyService* (*func)()) {
+  if (g_mock_factory) {
+    CHECK(!func);
+    g_mock_factory = nullptr;
+  } else {
+    g_mock_factory = func;
+  }
+}
+
 unexportable_keys::UnexportableKeyService*
 UnexportableKeyServiceFactory::GetShared() {
+  if (g_mock_factory) {
+    return g_mock_factory();
+  }
+
   if (!has_created_service_) {
     has_created_service_ = true;
     unexportable_keys::UnexportableKeyTaskManager* task_manager =
@@ -78,10 +93,16 @@ UnexportableKeyServiceFactory::GetShared() {
               *task_manager);
     }
   }
+
   return unexportable_key_service_.get();
+}
+
+UnexportableKeyServiceFactory*
+UnexportableKeyServiceFactory::GetInstanceForTesting() {
+  return new UnexportableKeyServiceFactory();
 }
 
 UnexportableKeyServiceFactory::UnexportableKeyServiceFactory() = default;
 UnexportableKeyServiceFactory::~UnexportableKeyServiceFactory() = default;
 
-}  // namespace net
+}  // namespace net::device_bound_sessions

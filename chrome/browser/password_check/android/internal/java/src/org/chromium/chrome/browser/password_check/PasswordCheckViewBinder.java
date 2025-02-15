@@ -52,7 +52,7 @@ import org.chromium.ui.modelutil.PropertyKey;
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.ui.modelutil.RecyclerViewAdapter;
 import org.chromium.ui.modelutil.SimpleRecyclerViewMcp;
-import org.chromium.ui.text.NoUnderlineClickableSpan;
+import org.chromium.ui.text.ChromeClickableSpan;
 import org.chromium.ui.text.SpanApplier;
 import org.chromium.ui.widget.ButtonCompat;
 
@@ -426,8 +426,8 @@ class PasswordCheckViewBinder {
             case PasswordCheckUIStatus.ERROR_QUOTA_LIMIT:
                 return getString(view, R.string.password_check_status_message_error_quota_limit);
             case PasswordCheckUIStatus.ERROR_QUOTA_LIMIT_ACCOUNT_CHECK:
-                NoUnderlineClickableSpan linkSpan =
-                        new NoUnderlineClickableSpan(
+                ChromeClickableSpan linkSpan =
+                        new ChromeClickableSpan(
                                 view.getContext(), unusedView -> launchCheckupInAccount.run());
                 return SpanApplier.applySpans(
                         getString(
@@ -535,16 +535,12 @@ class PasswordCheckViewBinder {
         // TODO(crbug.com/40710602): Set default values for header properties.
         if (status == PasswordCheckUIStatus.IDLE && compromisedCredentialsCount == null) return;
         TextView statusSubtitle = view.findViewById(R.id.check_status_subtitle);
-        statusSubtitle.setText(
-                getSubtitleText(view, status, showStatusSubtitle, compromisedCredentialsCount));
+        statusSubtitle.setText(getSubtitleText(view, status, compromisedCredentialsCount));
         statusSubtitle.setVisibility(showStatusSubtitle ? View.VISIBLE : View.GONE);
     }
 
     private static String getSubtitleText(
-            View view,
-            @PasswordCheckUIStatus int status,
-            boolean showStatusSubtitle,
-            Integer compromisedCredentialsCount) {
+            View view, @PasswordCheckUIStatus int status, Integer compromisedCredentialsCount) {
         switch (status) {
             case PasswordCheckUIStatus.IDLE:
                 assert compromisedCredentialsCount != null;

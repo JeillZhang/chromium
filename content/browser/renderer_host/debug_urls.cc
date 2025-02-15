@@ -8,9 +8,11 @@
 
 #include "base/command_line.h"
 #include "base/compiler_specific.h"
+#include "base/debug/alias.h"
 #include "base/debug/asan_invalid_access.h"
 #include "base/debug/profiler.h"
 #include "base/functional/bind.h"
+#include "base/immediate_crash.h"
 #include "base/memory/memory_pressure_listener.h"
 #include "base/sanitizer_buildflags.h"
 #include "base/strings/utf_string_conversions.h"
@@ -112,8 +114,11 @@ NOINLINE void HangCurrentThread() {
 }
 
 NOINLINE void CrashBrowserProcessIntentionally() {
+  // Don't fold so that crash reports will clearly show this method. This helps
+  // with crash triage.
+  NO_CODE_FOLDING();
   // Induce an intentional crash in the browser process.
-  CHECK(false);
+  base::ImmediateCrash();
 }
 
 }  // namespace
@@ -125,7 +130,7 @@ bool HandleDebugURL(const GURL& url,
   // URL, unless kEnableGpuBenchmarking is enabled by Telemetry.
   bool is_telemetry_navigation =
       base::CommandLine::ForCurrentProcess()->HasSwitch(
-          cc::switches::kEnableGpuBenchmarking) &&
+          switches::kEnableGpuBenchmarking) &&
       (PageTransitionCoreTypeIs(transition, ui::PAGE_TRANSITION_TYPED));
 
   if (!is_explicit_navigation && !is_telemetry_navigation)

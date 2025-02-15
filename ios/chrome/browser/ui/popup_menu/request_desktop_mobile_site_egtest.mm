@@ -8,9 +8,9 @@
 #import "base/time/time.h"
 #import "components/strings/grit/components_strings.h"
 #import "components/version_info/version_info.h"
+#import "ios/chrome/browser/settings/ui_bundled/settings_table_view_controller_constants.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/ui/popup_menu/popup_menu_constants.h"
-#import "ios/chrome/browser/ui/settings/settings_table_view_controller_constants.h"
 #import "ios/chrome/grit/ios_strings.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey_ui.h"
@@ -105,13 +105,13 @@ class UserAgentResponseProvider : public web::DataResponseProvider {
     }
 
     *headers = web::ResponseProvider::GetDefaultResponseHeaders();
-    std::string userAgent;
+    std::optional<std::string> userAgent =
+        request.headers.GetHeader("User-Agent");
     std::string desktop_product =
         "CriOS/" + version_info::GetMajorVersionNumber();
     std::string desktop_user_agent =
         web::BuildDesktopUserAgent(desktop_product);
-    if (request.headers.GetHeader("User-Agent", &userAgent) &&
-        userAgent == desktop_user_agent) {
+    if (userAgent == desktop_user_agent) {
       response_body->assign(std::string(kDesktopSiteLabel) + "\n" +
                             purge_additions);
     } else {
@@ -228,7 +228,6 @@ class UserAgentResponseProvider : public web::DataResponseProvider {
 // Tests that when requesting desktop on another page and coming back to a page
 // that has been purged from memory, we still display the mobile page.
 - (void)testRequestDesktopSiteGoBackToMobilePurged {
-
   std::unique_ptr<web::DataResponseProvider> provider(
       new UserAgentResponseProvider());
   web::test::SetUpHttpServer(std::move(provider));

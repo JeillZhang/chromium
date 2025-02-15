@@ -26,7 +26,8 @@
 #define PAGE_ALLOCATOR_CONSTANTS_DECLARE_CONSTEXPR __attribute__((const))
 
 #elif (PA_BUILDFLAG(IS_ANDROID) && PA_BUILDFLAG(PA_ARCH_CPU_64_BITS)) || \
-    (PA_BUILDFLAG(IS_LINUX) && PA_BUILDFLAG(PA_ARCH_CPU_ARM64))
+    (PA_BUILDFLAG(IS_LINUX) && PA_BUILDFLAG(PA_ARCH_CPU_ARM64)) ||       \
+    (PA_BUILDFLAG(IS_LINUX) && PA_BUILDFLAG(PA_ARCH_CPU_PPC64))
 // This should work for all POSIX (if needed), but currently all other
 // supported OS/architecture combinations use either hard-coded values
 // (such as x86) or have means to determine these values without needing
@@ -38,6 +39,7 @@
 #define PAGE_ALLOCATOR_CONSTANTS_DECLARE_CONSTEXPR __attribute__((const))
 
 #include <unistd.h>
+
 #include <atomic>
 
 namespace partition_alloc::internal {
@@ -68,8 +70,29 @@ extern PageCharacteristics page_characteristics;
 
 // Ability to name anonymous VMAs is available on some, but not all Linux-based
 // systems.
-#if PA_BUILDFLAG(IS_ANDROID) || PA_BUILDFLAG(IS_LINUX)
+#if PA_BUILDFLAG(IS_ANDROID) || PA_BUILDFLAG(IS_LINUX) || \
+    PA_BUILDFLAG(IS_CHROMEOS)
 #include <sys/prctl.h>
+
+#if (PA_BUILDFLAG(IS_LINUX) || PA_BUILDFLAG(IS_CHROMEOS)) && \
+    !(defined(PR_SET_VMA) && defined(PR_SET_VMA_ANON_NAME))
+
+// The PR_SET_VMA* symbols are originally from
+// https://android.googlesource.com/platform/bionic/+/lollipop-release/libc/private/bionic_prctl.h
+// and were subsequently added to mainline Linux in Jan 2022, see
+// https://github.com/torvalds/linux/commit/9a10064f5625d5572c3626c1516e0bebc6c9fe9b.
+//
+// Define them to support compiling with older headers.
+#if !defined(PR_SET_VMA)
+#define PR_SET_VMA 0x53564d41
+#endif
+
+#if !defined(PR_SET_VMA_ANON_NAME)
+#define PR_SET_VMA_ANON_NAME 0
+#endif
+
+#endif  // (PA_BUILDFLAG(IS_LINUX) || PA_BUILDFLAG(IS_CHROMEOS)) &&
+        // !(defined(PR_SET_VMA) && defined(PR_SET_VMA_ANON_NAME))
 
 #if defined(PR_SET_VMA) && defined(PR_SET_VMA_ANON_NAME)
 #define LINUX_NAME_REGION 1
@@ -86,7 +109,17 @@ PageAllocationGranularity();
 
 PA_ALWAYS_INLINE PAGE_ALLOCATOR_CONSTANTS_DECLARE_CONSTEXPR size_t
 PageAllocationGranularityShift() {
-#if PA_BUILDFLAG(IS_WIN) || PA_BUILDFLAG(PA_ARCH_CPU_PPC64)
+#if defined(PARTITION_ALLOCATOR_CONSTANTS_POSIX_NONCONST_PAGE_SIZE)
+  // arm64 supports 4kb (shift = 12), 16kb (shift = 14), and 64kb (shift = 16)
+  // page sizes. Retrieve from or initialize cache.
+  size_t shift = page_characteristics.shift.load(std::memory_order_relaxed);
+  if (shift == 0) [[unlikely]] {
+    shift = static_cast<size_t>(
+        __builtin_ctz((unsigned int)PageAllocationGranularity()));
+    page_characteristics.shift.store(shift, std::memory_order_relaxed);
+  }
+  return shift;
+#elif PA_BUILDFLAG(IS_WIN) || PA_BUILDFLAG(PA_ARCH_CPU_PPC64)
   // Modern ppc64 systems support 4kB (shift = 12) and 64kB (shift = 16) page
   // sizes.  Since 64kB is the de facto standard on the platform and binaries
   // compiled for 64kB are likely to work on 4kB systems, 64kB is a good choice
@@ -96,16 +129,16 @@ PageAllocationGranularityShift() {
   return 14;  // 16kB
 #elif PA_BUILDFLAG(IS_APPLE) && PA_BUILDFLAG(PA_ARCH_CPU_64_BITS)
   return static_cast<size_t>(vm_page_shift);
-#elif defined(PARTITION_ALLOCATOR_CONSTANTS_POSIX_NONCONST_PAGE_SIZE)
-  // arm64 supports 4kb (shift = 12), 16kb (shift = 14), and 64kb (shift = 16)
-  // page sizes. Retrieve from or initialize cache.
-  size_t shift = page_characteristics.shift.load(std::memory_order_relaxed);
-  if (PA_UNLIKELY(shift == 0)) {
-    shift = static_cast<size_t>(
-        __builtin_ctz((unsigned int)PageAllocationGranularity()));
-    page_characteristics.shift.store(shift, std::memory_order_relaxed);
-  }
-  return shift;
+#elif PA_BUILDFLAG(IS_WIN) || PA_BUILDFLAG(PA_ARCH_CPU_PPC64)
+  // Modern ppc64 systems support 4kB (shift = 12) and 64kB (shift = 16) page
+  // sizes.  Since 64kB is the de facto standard on the platform and binaries
+  // compiled for 64kB are likely to work on 4kB systems, 64kB is a good choice
+  // here.
+  return 16;  // 64kB
+#elif defined(_MIPS_ARCH_LOONGSON) || PA_BUILDFLAG(PA_ARCH_CPU_LOONGARCH64)
+  return 14;  // 16kB
+#elif PA_BUILDFLAG(IS_APPLE) && PA_BUILDFLAG(PA_ARCH_CPU_64_BITS)
+  return static_cast<size_t>(vm_page_shift);
 #else
   return 12;  // 4kB
 #endif
@@ -121,7 +154,7 @@ PageAllocationGranularity() {
   // arm64 supports 4kb, 16kb, and 64kb page sizes. Retrieve from or
   // initialize cache.
   size_t size = page_characteristics.size.load(std::memory_order_relaxed);
-  if (PA_UNLIKELY(size == 0)) {
+  if (size == 0) [[unlikely]] {
     size = static_cast<size_t>(getpagesize());
     page_characteristics.size.store(size, std::memory_order_relaxed);
   }

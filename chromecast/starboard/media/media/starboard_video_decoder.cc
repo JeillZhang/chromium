@@ -10,6 +10,7 @@
 #include "chromecast/public/graphics_types.h"
 #include "chromecast/public/media/cast_decoder_buffer.h"
 #include "chromecast/starboard/media/media/drm_util.h"
+#include "chromecast/starboard/media/media/mime_utils.h"
 #include "chromecast/starboard/media/media/starboard_api_wrapper.h"
 
 namespace chromecast {
@@ -32,12 +33,12 @@ static StarboardVideoCodec VideoCodecToStarboardCodec(VideoCodec codec) {
     case kCodecVP9:
       return kStarboardVideoCodecVp9;
     case kCodecHEVC:
+    case kCodecDolbyVisionHEVC:
       return kStarboardVideoCodecH265;
     case kCodecAV1:
       return kStarboardVideoCodecAv1;
     case kCodecDolbyVisionH264:
     case kCodecMPEG4:
-    case kCodecDolbyVisionHEVC:
     case kVideoCodecUnknown:
     default:
       LOG(ERROR) << "Unsupported video codec: " << codec;
@@ -45,6 +46,9 @@ static StarboardVideoCodec VideoCodecToStarboardCodec(VideoCodec codec) {
   }
 }
 
+// Converts a cast VideoConfig to a StarboardVideoSampleInfo. MIME type is not
+// properly set, since it stores a c string pointing to data that could go out
+// of scope. Instead, it is hardcoded to the empty string.
 static StarboardVideoSampleInfo ToVideoSampleInfo(const VideoConfig& config) {
   StarboardVideoSampleInfo sample_info = {};
 
@@ -160,6 +164,10 @@ bool StarboardVideoDecoder::SetConfig(const VideoConfig& config) {
   config_ = config;
   video_sample_info_ = ToVideoSampleInfo(config_);
 
+  codec_mime_ =
+      GetMimeType(config.codec, config.profile, config.codec_profile_level);
+  video_sample_info_->mime = codec_mime_.c_str();
+
   return IsValidConfig(config_);
 }
 
@@ -196,7 +204,7 @@ BufferStatus StarboardVideoDecoder::PushBuffer(CastDecoderBuffer* buffer) {
 
   decoded_bytes_ += copy_size;
 
-  return PushBufferInternal(std::move(sample), GetDrmInfo(*buffer),
+  return PushBufferInternal(std::move(sample), DrmInfoWrapper::Create(*buffer),
                             std::move(data_copy), copy_size);
 }
 
@@ -207,7 +215,10 @@ void StarboardVideoDecoder::GetStatistics(Statistics* statistics) {
   }
 
   StarboardPlayerInfo player_info = {};
-  GetStarboardApi().GetPlayerInfo(GetPlayer(), &player_info);
+  auto* player = GetPlayer();
+  if (player) {
+    GetStarboardApi().GetPlayerInfo(player, &player_info);
+  }
 
   statistics->decoded_bytes = decoded_bytes_;
   statistics->decoded_frames = player_info.total_video_frames;

@@ -8,10 +8,11 @@
 #include <memory>
 
 #include "base/memory/raw_ptr.h"
+#include "base/memory/scoped_refptr.h"
+#include "components/input/render_widget_host_input_event_router.h"
 #include "content/browser/renderer_host/render_widget_host_delegate.h"
 #include "content/browser/renderer_host/text_input_manager.h"
 #include "content/browser/renderer_host/visible_time_request_trigger.h"
-#include "content/common/input/render_widget_host_input_event_router.h"
 #include "content/public/browser/keyboard_event_processing_result.h"
 #include "content/test/stub_render_view_host_delegate_view.h"
 
@@ -21,7 +22,7 @@ class RenderWidgetHostImpl;
 
 class MockRenderWidgetHostDelegate
     : public RenderWidgetHostDelegate,
-      public RenderWidgetHostInputEventRouter::Delegate {
+      public input::RenderWidgetHostInputEventRouter::Delegate {
  public:
   MockRenderWidgetHostDelegate();
 
@@ -61,7 +62,7 @@ class MockRenderWidgetHostDelegate
   void Paste() override;
   void PasteAndMatchStyle() override;
   void SelectAll() override;
-  RenderWidgetHostInputEventRouter* GetInputEventRouter() override;
+  input::RenderWidgetHostInputEventRouter* GetInputEventRouter() override;
   RenderWidgetHostImpl* GetFocusedRenderWidgetHost(
       RenderWidgetHostImpl* widget_host) override;
   void SendScreenRects() override;
@@ -71,14 +72,16 @@ class MockRenderWidgetHostDelegate
   VisibleTimeRequestTrigger& GetVisibleTimeRequestTrigger() override;
   gfx::mojom::DelegatedInkPointRenderer* GetDelegatedInkRenderer(
       ui::Compositor* compositor) override;
+  void OnInputIgnored(const blink::WebInputEvent& event) override;
 
   //  RenderWidgetHostInputEventRouter::Delegate
-  TouchEmulator* GetTouchEmulator(bool create_if_necessary) override;
+  input::TouchEmulator* GetTouchEmulator(bool create_if_necessary) override;
 
  private:
   std::unique_ptr<input::NativeWebKeyboardEvent> last_event_;
   raw_ptr<RenderWidgetHostImpl, DanglingUntriaged> rwh_ = nullptr;
-  std::unique_ptr<RenderWidgetHostInputEventRouter> rwh_input_event_router_;
+  scoped_refptr<input::RenderWidgetHostInputEventRouter>
+      rwh_input_event_router_;
   mojo::Remote<gfx::mojom::DelegatedInkPointRenderer>
       delegated_ink_point_renderer_;
   bool is_fullscreen_ = false;

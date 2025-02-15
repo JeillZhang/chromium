@@ -208,12 +208,12 @@ public abstract class PageInfoControllerDelegate {
     /**
      * @return Whether the Tracking Protection UI should be shown instead of the cookies one.
      */
-    public abstract boolean showTrackingProtectionUI();
+    public abstract boolean showTrackingProtectionUi();
 
     /**
-     * @return Whether the 3PCD 100% Tracking Protection UI should be shown.
+     * @return Whether the Tracking Protection with ACT Features UI should be shown.
      */
-    public abstract boolean showTrackingProtectionLaunchUI();
+    public abstract boolean showTrackingProtectionActFeaturesUi();
 
     /**
      * @return Whether all 3PCs are blocked when Tracking Protection is on.

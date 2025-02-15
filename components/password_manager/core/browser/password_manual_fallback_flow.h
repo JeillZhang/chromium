@@ -7,12 +7,11 @@
 
 #include "base/functional/callback_forward.h"
 #include "base/memory/weak_ptr.h"
-#include "components/autofill/core/browser/filling_product.h"
+#include "components/autofill/core/browser/filling/filling_product.h"
+#include "components/autofill/core/browser/suggestions/suggestion.h"
+#include "components/autofill/core/browser/suggestions/suggestion_type.h"
 #include "components/autofill/core/browser/ui/autofill_suggestion_delegate.h"
-#include "components/autofill/core/browser/ui/suggestion.h"
-#include "components/autofill/core/browser/ui/suggestion_type.h"
 #include "components/password_manager/core/browser/form_fetcher_impl.h"
-#include "components/password_manager/core/browser/password_manual_fallback_metrics_recorder.h"
 #include "components/password_manager/core/browser/password_suggestion_flow.h"
 #include "components/password_manager/core/browser/password_suggestion_generator.h"
 #include "components/password_manager/core/browser/ui/saved_passwords_presenter.h"
@@ -37,6 +36,7 @@ class FormFetcherImpl;
 class PasswordFormCache;
 class PasswordManagerDriver;
 class PasswordManagerClient;
+class PasswordManualFallbackMetricsRecorder;
 
 // Displays all available passwords password suggestions on password and
 // non-password forms for all available passwords.
@@ -49,6 +49,7 @@ class PasswordManualFallbackFlow : public autofill::AutofillSuggestionDelegate,
       PasswordManagerDriver* password_manager_driver,
       autofill::AutofillClient* autofill_client,
       PasswordManagerClient* password_client,
+      PasswordManualFallbackMetricsRecorder* manual_fallback_metrics_recorder,
       const PasswordFormCache* password_form_cache,
       std::unique_ptr<SavedPasswordsPresenter> passwords_presenter);
   PasswordManualFallbackFlow(const PasswordManualFallbackFlow&) = delete;
@@ -68,13 +69,15 @@ class PasswordManualFallbackFlow : public autofill::AutofillSuggestionDelegate,
   // AutofillSuggestionDelegate:
   absl::variant<autofill::AutofillDriver*, PasswordManagerDriver*> GetDriver()
       override;
-  void OnSuggestionsShown() override;
+  void OnSuggestionsShown(
+      base::span<const autofill::Suggestion> suggestions) override;
   void OnSuggestionsHidden() override;
   void DidSelectSuggestion(const autofill::Suggestion& suggestion) override;
   void DidAcceptSuggestion(const autofill::Suggestion& suggestion,
-                           const SuggestionPosition& position) override;
+                           const SuggestionMetadata& metadata) override;
   void DidPerformButtonActionForSuggestion(
-      const autofill::Suggestion& suggestion) override;
+      const autofill::Suggestion&,
+      const autofill::SuggestionButtonAction&) override;
   bool RemoveSuggestion(const autofill::Suggestion& suggestion) override;
   void ClearPreviewedForm() override;
   autofill::FillingProduct GetMainFillingProduct() const override;
@@ -119,11 +122,27 @@ class PasswordManualFallbackFlow : public autofill::AutofillSuggestionDelegate,
   // Cancels an ongoing biometric re-authentication.
   void CancelBiometricReauthIfOngoing();
 
-  const PasswordManualFallbackMetricsRecorder metrics_recorder_;
+  // For credentials not originated from the current domain (defined by
+  // `payload.is_cross_domain`), this method makes sure that the `on_allowed`
+  // callback is called only after receiving user's explicit consent (through
+  // a bubble dialog).
+  // For non cross domain usages the `on_allowed` is called immediately.
+  void EnsureCrossDomainPasswordUsageGetsConsent(
+      const autofill::Suggestion::PasswordSuggestionDetails& payload,
+      base::OnceClosure on_allowed);
+
+  // Returns whether `field_id_` represents a username or password field in
+  // `password_form_`. This only considers the username and password fields
+  // stored in the `PasswordForm` object.
+  bool IsTriggerFieldRelevantInPasswordForm(
+      const PasswordForm* password_form) const;
+
   const PasswordSuggestionGenerator suggestion_generator_;
   const raw_ptr<PasswordManagerDriver> password_manager_driver_;
   const raw_ptr<autofill::AutofillClient> autofill_client_;
   const raw_ptr<PasswordManagerClient> password_client_;
+  const raw_ptr<PasswordManualFallbackMetricsRecorder>
+      manual_fallback_metrics_recorder_;
   const raw_ptr<const PasswordFormCache> password_form_cache_;
 
   // Flow state changes the following way:

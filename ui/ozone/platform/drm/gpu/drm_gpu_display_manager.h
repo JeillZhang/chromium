@@ -13,7 +13,6 @@
 
 #include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
-#include "ui/display/types/display_configuration_params.h"
 #include "ui/display/types/display_constants.h"
 #include "ui/ozone/platform/drm/common/display_types.h"
 #include "ui/ozone/platform/drm/gpu/drm_gpu_util.h"
@@ -23,6 +22,7 @@ using drmModeModeInfo = struct _drmModeModeInfo;
 namespace display {
 struct ColorCalibration;
 struct ColorTemperatureAdjustment;
+struct DisplayConfigurationParams;
 struct GammaAdjustment;
 }  // namespace display
 
@@ -61,7 +61,8 @@ class DrmGpuDisplayManager {
 
   bool ConfigureDisplays(
       const std::vector<display::DisplayConfigurationParams>& config_requests,
-      display::ModesetFlags modeset_flags);
+      display::ModesetFlags modeset_flags,
+      std::vector<display::DisplayConfigurationParams>& out_requests);
   bool SetHdcpKeyProp(int64_t display_id, const std::string& key);
   bool GetHDCPState(int64_t display_id,
                     display::HDCPState* state,
@@ -109,6 +110,17 @@ class DrmGpuDisplayManager {
   // successful test configuration before the commit modeset call.
   std::vector<ControllerConfigParams> GetLatestModesetTestConfig(
       const std::vector<display::DisplayConfigurationParams>& config_requests);
+
+  // Finds a mode that matches the size and timing specified by |request_mode|
+  // and returns an owned copy. Prioritizes choosing modes natively belonging to
+  // |display|, and attempts panel-fitting from |all_displays| if needed. If
+  // |is_seamless| is true, performs additional verification that the returned
+  // mode can be configured seamlessly. Returns nullptr if no matching mode was
+  // found.
+  std::unique_ptr<drmModeModeInfo> FindModeForDisplay(
+      const display::DisplayMode& request_mode,
+      const DrmDisplay& display,
+      bool is_seamless);
 
   const raw_ptr<ScreenManager> screen_manager_;         // Not owned.
   const raw_ptr<DrmDeviceManager> drm_device_manager_;  // Not owned.

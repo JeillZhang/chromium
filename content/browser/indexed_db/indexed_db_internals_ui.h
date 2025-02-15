@@ -23,7 +23,7 @@ namespace download {
 class DownloadItem;
 }
 
-namespace content {
+namespace content::indexed_db {
 
 class IndexedDBInternalsUI;
 
@@ -62,6 +62,8 @@ class IndexedDBInternalsUI : public WebUIController,
                               StartMetadataRecordingCallback callback) override;
   void StopMetadataRecording(storage::BucketId bucket_id,
                              StopMetadataRecordingCallback callback) override;
+  void InspectClient(const storage::BucketClientInfo& client_info,
+                     InspectClientCallback callback) override;
 
  private:
   void OnDownloadDataReady(DownloadBucketDataCallback callback,
@@ -77,6 +79,7 @@ class IndexedDBInternalsUI : public WebUIController,
       storage::BucketId bucket_id);
 
   std::map<storage::BucketId, base::FilePath> bucket_to_partition_path_map_;
+  bool devtools_agent_hosts_created_ = false;
 
   std::unique_ptr<mojo::Receiver<storage::mojom::IdbInternalsHandler>>
       receiver_;
@@ -84,6 +87,6 @@ class IndexedDBInternalsUI : public WebUIController,
   WEB_UI_CONTROLLER_TYPE_DECL();
 };
 
-}  // namespace content
+}  // namespace content::indexed_db
 
 #endif  // CONTENT_BROWSER_INDEXED_DB_INDEXED_DB_INTERNALS_UI_H_

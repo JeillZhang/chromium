@@ -7,7 +7,7 @@
 
 #include "ash/app_list/app_list_metrics.h"
 #include "ash/ash_export.h"
-#include "ash/focus_cycler.h"
+#include "ash/focus/focus_cycler.h"
 #include "ash/public/cpp/accelerators.h"
 #include "ash/public/cpp/session/session_types.h"
 
@@ -73,8 +73,6 @@ ASH_EXPORT bool CanCreateSnapGroup();
 
 ASH_EXPORT void CreateSnapGroup();
 
-ASH_EXPORT bool CanMinimizeSnapGroupWindows();
-
 ASH_EXPORT bool CanMinimizeTopWindowOnBack();
 
 ASH_EXPORT bool CanPerformMagnifierZoom();
@@ -101,8 +99,6 @@ ASH_EXPORT bool CanToggleMultitaskMenu();
 
 ASH_EXPORT bool CanToggleOverview();
 
-ASH_EXPORT bool CanTogglePicker();
-
 ASH_EXPORT bool CanTogglePrivacyScreen();
 
 ASH_EXPORT bool CanToggleProjectorMarker();
@@ -112,6 +108,10 @@ ASH_EXPORT bool CanToggleResizeLockMenu();
 ASH_EXPORT bool CanUnpinWindow();
 
 ASH_EXPORT bool CanWindowSnap();
+
+ASH_EXPORT bool CanResizePipWindow();
+
+ASH_EXPORT bool CanToggleGeminiApp();
 
 //////////////////////////////////////////////////////////////////////////////
 // Accelerator commands.
@@ -321,13 +321,22 @@ ASH_EXPORT void ToggleCalendar();
 // Turns caps lock on and off.
 ASH_EXPORT void ToggleCapsLock();
 
+// Enables or disables camera access in privacy settings.
+ASH_EXPORT void ToggleCameraAllowed();
+
 // Toggles the clipboard history.
 ASH_EXPORT void ToggleClipboardHistory(bool is_plain_text_paste);
 
-// Toggles Picker.
+// Toggles do not disturb functionality.
+ASH_EXPORT void ToggleDoNotDisturb();
+
+// Toggles Quick Insert.
 // `accelerator_timestamp` is the timestamp associated with the accelerator that
-// triggered Picker.
-ASH_EXPORT void TogglePicker(base::TimeTicks accelerator_timestamp);
+// triggered Quick Insert.
+ASH_EXPORT void ToggleQuickInsert(base::TimeTicks accelerator_timestamp);
+
+// Toggles Gemini.
+ASH_EXPORT void ToggleGeminiApp();
 
 // Enables Select to Speak if the feature is currently disabled. Does nothing if
 // the feature is currently enabled.
@@ -374,8 +383,13 @@ ASH_EXPORT void ToggleMessageCenterBubble();
 // restored.
 ASH_EXPORT bool ToggleMinimized();
 
+// Turns on or off Mouse Keys.
+ASH_EXPORT void ToggleMouseKeys();
+
 // Minimizes the topmost unminimized snap groups. If there is no such snap
 // group, restores the most recently used minimized snap group.
+// TODO(b/333772909): Remove this API when the mojom conversion is disabled for
+// deprecated shortcuts.
 ASH_EXPORT void ToggleSnapGroupsMinimize();
 
 // Turns the mirror mode on or off.
@@ -445,6 +459,9 @@ ASH_EXPORT void WindowSnap(AcceleratorAction action);
 
 // Changes the display zooming up or down.
 ASH_EXPORT bool ZoomDisplay(bool up);
+
+// Resize the pip window.
+ASH_EXPORT void ResizePipWindow();
 
 }  // namespace accelerators
 }  // namespace ash

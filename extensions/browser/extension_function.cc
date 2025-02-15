@@ -19,6 +19,7 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
 #include "base/no_destructor.h"
+#include "base/not_fatal_until.h"
 #include "base/synchronization/lock.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/threading/thread_checker.h"
@@ -87,7 +88,7 @@ class ExtensionFunctionMemoryDumpProvider
     DCHECK(thread_checker_.CalledOnValidThread());
     DCHECK(function_name);
     auto it = function_map_.find(function_name);
-    DCHECK(it != function_map_.end());
+    CHECK(it != function_map_.end(), base::NotFatalUntil::M130);
     DCHECK_GE(it->second, static_cast<uint64_t>(1));
     if (it->second == 1) {
       function_map_.erase(it);
@@ -281,7 +282,7 @@ class BrowserContextShutdownNotifierFactory
   content::BrowserContext* GetBrowserContextToUse(
       content::BrowserContext* context) const override {
     return extensions::ExtensionsBrowserClient::Get()->GetContextOwnInstance(
-        context, /*force_guest_profile=*/true);
+        context);
   }
 };
 
@@ -610,7 +611,7 @@ bool ExtensionFunction::ShouldKeepWorkerAliveIndefinitely() {
 void ExtensionFunction::OnResponseAck() {
   // Derived classes must override this if they require and implement an
   // ACK from the renderer.
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 ExtensionFunction::ResponseValue ExtensionFunction::NoArguments() {

@@ -28,7 +28,7 @@ namespace {
 
 class MockDelegate : public apps::AppShimManager::Delegate {
  public:
-  MockDelegate() {}
+  MockDelegate() = default;
   MockDelegate(const MockDelegate&) = delete;
   MockDelegate& operator=(const MockDelegate&) = delete;
   ~MockDelegate() override = default;
@@ -83,7 +83,7 @@ class MockDelegate : public apps::AppShimManager::Delegate {
 
 class WebAppShimManagerDelegateTest : public WebAppTest {
  public:
-  WebAppShimManagerDelegateTest() {}
+  WebAppShimManagerDelegateTest() = default;
   WebAppShimManagerDelegateTest(const WebAppShimManagerDelegateTest&) = delete;
   WebAppShimManagerDelegateTest& operator=(
       const WebAppShimManagerDelegateTest&) = delete;
@@ -467,7 +467,7 @@ TEST_F(WebAppShimManagerDelegateTest, GetAppShortcutsMenuItemInfos) {
     auto web_app_info = WebAppInstallInfo::CreateWithStartUrlForTesting(
         GURL("https://mytestpwa.com/"));
     web_app_info->title = u"WebAppTestWithShortcutMenuItems";
-    web_app_info->scope = web_app_info->start_url;
+    web_app_info->scope = web_app_info->start_url();
     web_app_info->description = web_app_info->title;
     web_app_info->user_display_mode =
         web_app::mojom::UserDisplayMode::kStandalone;

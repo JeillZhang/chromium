@@ -5,10 +5,15 @@
 #ifndef SERVICES_WEBNN_TFLITE_CONTEXT_IMPL_TFLITE_H_
 #define SERVICES_WEBNN_TFLITE_CONTEXT_IMPL_TFLITE_H_
 
-#include "mojo/public/cpp/bindings/unique_associated_receiver_set.h"
+#include "mojo/public/cpp/bindings/pending_associated_receiver.h"
 #include "services/webnn/webnn_context_impl.h"
+#include "services/webnn/webnn_graph_impl.h"
 
-namespace webnn::tflite {
+namespace webnn {
+
+class WebNNConstantOperand;
+
+namespace tflite {
 
 // `ContextImplTflite` is created by `WebNNContextProviderImpl` and responsible
 // for creating a `GraphImplTflite` which uses TFLite for inference.
@@ -23,21 +28,26 @@ class ContextImplTflite final : public WebNNContextImpl {
 
   ~ContextImplTflite() override;
 
-  const mojom::CreateContextOptions& options() const { return *options_; }
+  // WebNNContextImpl:
+  base::WeakPtr<WebNNContextImpl> AsWeakPtr() override;
 
  private:
-  void CreateGraphImpl(mojom::GraphInfoPtr graph_info,
-                       CreateGraphCallback callback) override;
+  void CreateGraphImpl(
+      mojom::GraphInfoPtr graph_info,
+      WebNNGraphImpl::ComputeResourceInfo compute_resource_info,
+      base::flat_map<uint64_t, std::unique_ptr<WebNNConstantOperand>>
+          constant_operands,
+      CreateGraphImplCallback callback) override;
 
-  std::unique_ptr<WebNNBufferImpl> CreateBufferImpl(
-      mojo::PendingAssociatedReceiver<mojom::WebNNBuffer> receiver,
-      mojom::BufferInfoPtr buffer_info,
-      const base::UnguessableToken& buffer_handle) override;
+  void CreateTensorImpl(
+      mojo::PendingAssociatedReceiver<mojom::WebNNTensor> receiver,
+      mojom::TensorInfoPtr tensor_info,
+      CreateTensorImplCallback callback) override;
 
-  mojom::CreateContextOptionsPtr options_;
-  mojo::UniqueAssociatedReceiverSet<mojom::WebNNGraph> graph_receivers_;
+  base::WeakPtrFactory<ContextImplTflite> weak_factory_{this};
 };
 
-}  // namespace webnn::tflite
+}  // namespace tflite
+}  // namespace webnn
 
 #endif  // SERVICES_WEBNN_TFLITE_CONTEXT_IMPL_TFLITE_H_

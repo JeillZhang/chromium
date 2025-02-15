@@ -26,8 +26,8 @@
 #include "third_party/blink/renderer/core/frame/use_counter_impl.h"
 
 #include "base/metrics/histogram_macros.h"
+#include "services/network/public/mojom/permissions_policy/permissions_policy_feature.mojom-blink.h"
 #include "third_party/blink/public/common/scheme_registry.h"
-#include "third_party/blink/public/mojom/permissions_policy/permissions_policy_feature.mojom-blink.h"
 #include "third_party/blink/public/mojom/use_counter/use_counter_feature.mojom-blink.h"
 #include "third_party/blink/public/mojom/use_counter/use_counter_feature.mojom-shared.h"
 #include "third_party/blink/renderer/core/css/css_style_sheet.h"
@@ -98,8 +98,8 @@ bool UseCounterImpl::IsCounted(WebFeature web_feature) const {
     return false;
 
   // PageVisits is reserved as a scaling factor.
-  DCHECK_NE(WebFeature::kPageVisits, web_feature);
-  DCHECK_GE(WebFeature::kNumberOfFeatures, web_feature);
+  DCHECK_NE(web_feature, WebFeature::kPageVisits);
+  DCHECK_LE(web_feature, WebFeature::kMaxValue);
 
   return feature_tracker_.Test(
       {mojom::blink::UseCounterFeatureType::kWebFeature,
@@ -118,8 +118,8 @@ bool UseCounterImpl::IsWebDXFeatureCounted(WebDXFeature webdx_feature) const {
   }
 
   // PageDestruction is reserved as a scaling factor.
-  DCHECK_NE(WebDXFeature::kPageVisits, webdx_feature);
-  DCHECK_GE(WebDXFeature::kNumberOfFeatures, webdx_feature);
+  DCHECK_NE(webdx_feature, WebDXFeature::kPageVisits);
+  DCHECK_LE(webdx_feature, WebDXFeature::kMaxValue);
 
   return feature_tracker_.Test(
       {mojom::blink::UseCounterFeatureType::kWebDXFeature,
@@ -222,8 +222,8 @@ void UseCounterImpl::Count(CSSPropertyID property,
 void UseCounterImpl::Count(WebFeature web_feature,
                            const LocalFrame* source_frame) {
   // PageVisits is reserved as a scaling factor.
-  DCHECK_NE(WebFeature::kPageVisits, web_feature);
-  DCHECK_GE(WebFeature::kNumberOfFeatures, web_feature);
+  DCHECK_NE(web_feature, WebFeature::kPageVisits);
+  DCHECK_LE(web_feature, WebFeature::kMaxValue);
 
   Count({mojom::blink::UseCounterFeatureType::kWebFeature,
          static_cast<uint32_t>(web_feature)},
@@ -233,8 +233,8 @@ void UseCounterImpl::Count(WebFeature web_feature,
 void UseCounterImpl::CountWebDXFeature(WebDXFeature web_feature,
                                        const LocalFrame* source_frame) {
   // PageVisits is reserved as a scaling factor.
-  DCHECK_NE(WebDXFeature::kPageVisits, web_feature);
-  DCHECK_GE(WebDXFeature::kNumberOfFeatures, web_feature);
+  DCHECK_NE(web_feature, WebDXFeature::kPageVisits);
+  DCHECK_LE(web_feature, WebDXFeature::kMaxValue);
 
   Count({mojom::blink::UseCounterFeatureType::kWebDXFeature,
          static_cast<uint32_t>(web_feature)},
@@ -242,10 +242,10 @@ void UseCounterImpl::CountWebDXFeature(WebDXFeature web_feature,
 }
 
 void UseCounterImpl::CountPermissionsPolicyUsage(
-    mojom::blink::PermissionsPolicyFeature feature,
+    network::mojom::PermissionsPolicyFeature feature,
     PermissionsPolicyUsageType usage_type,
     const LocalFrame& source_frame) {
-  DCHECK_NE(mojom::blink::PermissionsPolicyFeature::kNotFound, feature);
+  DCHECK_NE(network::mojom::PermissionsPolicyFeature::kNotFound, feature);
 
   Count({ToFeatureType(usage_type), static_cast<uint32_t>(feature)},
         &source_frame);
@@ -267,21 +267,18 @@ void UseCounterImpl::CountFeature(WebFeature feature) const {
     case kDefaultContext:
       // Feature usage for the default context is recorded on the browser side.
       // components/page_load_metrics/browser/observers/use_counter_page_load_metrics_observer
-      NOTREACHED_IN_MIGRATION();
-      return;
+      NOTREACHED();
     case kExtensionContext:
-      UMA_HISTOGRAM_ENUMERATION("Blink.UseCounter.Extensions.Features", feature,
-                                WebFeature::kNumberOfFeatures);
+      UMA_HISTOGRAM_ENUMERATION("Blink.UseCounter.Extensions.Features",
+                                feature);
       return;
     case kFileContext:
-      UMA_HISTOGRAM_ENUMERATION("Blink.UseCounter.File.Features", feature,
-                                WebFeature::kNumberOfFeatures);
+      UMA_HISTOGRAM_ENUMERATION("Blink.UseCounter.File.Features", feature);
       return;
     case kDisabledContext:
-      NOTREACHED_IN_MIGRATION();
-      return;
+      NOTREACHED();
   }
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 bool UseCounterImpl::ReportMeasurement(const UseCounterFeature& feature,

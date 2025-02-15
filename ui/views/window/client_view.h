@@ -36,6 +36,8 @@ class VIEWS_EXPORT ClientView : public View {
   // ClientView subclasses can override this default behavior to allow the
   // close to be blocked until the user corrects mistakes, accepts a warning
   // dialog, etc.
+  //
+  // DEPRECATED. Don't use this. See Widget::MakeCloseSynchronous().
   virtual CloseRequestResult OnWindowCloseRequested();
 
   // Notification that the widget is closing.
@@ -63,13 +65,11 @@ class VIEWS_EXPORT ClientView : public View {
   // Overridden from View:
   gfx::Size CalculatePreferredSize(
       const SizeBounds& available_size) const override;
-  int GetHeightForWidth(int width) const override;
   gfx::Size GetMinimumSize() const override;
   gfx::Size GetMaximumSize() const override;
 
  protected:
   // Overridden from View:
-  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
   void OnBoundsChanged(const gfx::Rect& previous_bounds) override;
   void ViewHierarchyChanged(
       const ViewHierarchyChangedDetails& details) override;

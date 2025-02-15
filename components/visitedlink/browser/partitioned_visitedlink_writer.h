@@ -42,7 +42,7 @@ class PartitionedVisitedLinkWriter : public VisitedLinkCommon {
   // event as a constructor argument and dispatches events using it.
   class Listener {
    public:
-    virtual ~Listener() {}
+    virtual ~Listener() = default;
 
     // Called when link coloring database has been created or replaced. The
     // argument is a memory region containing the new table.
@@ -59,6 +59,16 @@ class PartitionedVisitedLinkWriter : public VisitedLinkCommon {
     // database file. In this case we use |invalidate_hashes| to inform that
     // all cached visitedlink hashes need to be recalculated.
     virtual void Reset(bool invalidate_hashes) = 0;
+
+    // This function determines the per-origin salts required for
+    // any navigations that took place during the hashtable build (and as a
+    // result did not send a per-origin salt in the navigation params - see
+    // PartitionedVisitedLinkWriter::salts_ for more information). The
+    // per-origin salts are sent via IPC to their respective VisitedLinkReader
+    // instances.
+    // NOTE: this is called on the main thread once the hashtable has
+    // completed building on the DB thread.
+    virtual void UpdateOriginSalts() = 0;
   };
 
   PartitionedVisitedLinkWriter(content::BrowserContext* browser_context,
@@ -92,7 +102,7 @@ class PartitionedVisitedLinkWriter : public VisitedLinkCommon {
     virtual bool HasNextVisitedLink() const = 0;
 
    protected:
-    virtual ~VisitedLinkIterator() {}
+    virtual ~VisitedLinkIterator() = default;
   };
 
   // Deletes the specified VisitedLinks from the hashtable.
@@ -231,7 +241,7 @@ class PartitionedVisitedLinkWriter : public VisitedLinkCommon {
   // Returns a pointer to the start of the hash table, given the mapping
   // containing the hash table.
   static Fingerprint* GetHashTableFromMapping(
-      const base::WritableSharedMemoryMapping& hash_table_mapping);
+      base::WritableSharedMemoryMapping& hash_table_mapping);
 
   // Returns the default table size. It can be overridden in unit tests.
   uint32_t DefaultTableSize() const;

@@ -13,9 +13,11 @@
 #include "chrome/browser/media/router/media_router_feature.h"
 #include "chrome/browser/ui/browser_command_controller.h"
 #include "chrome/browser/ui/browser_commands.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #import "chrome/browser/ui/cocoa/browser_window_command_handler.h"
 #import "chrome/browser/ui/cocoa/chrome_command_dispatcher_delegate.h"
 #import "chrome/browser/ui/cocoa/touchbar/browser_window_touch_bar_controller.h"
+#include "chrome/browser/ui/lens/lens_overlay_entry_point_controller.h"
 #include "chrome/browser/ui/views/frame/browser_frame.h"
 #include "chrome/browser/ui/views/frame/browser_non_client_frame_view.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
@@ -27,6 +29,7 @@
 #include "components/dom_distiller/content/browser/distillable_page_utils.h"
 #include "components/dom_distiller/core/url_utils.h"
 #include "components/input/native_web_keyboard_event.h"
+#include "components/lens/lens_features.h"
 #include "components/omnibox/browser/omnibox_prefs.h"
 #import "components/remote_cocoa/app_shim/native_widget_mac_nswindow.h"
 #import "components/remote_cocoa/app_shim/native_widget_ns_window_bridge.h"
@@ -38,14 +41,16 @@
 #include "ui/accessibility/platform/ax_platform_node.h"
 #import "ui/base/cocoa/window_size_constants.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/base/mojom/window_show_state.mojom.h"
 #import "ui/views/cocoa/native_widget_mac_ns_window_host.h"
 
 namespace {
 
 AppShimHost* GetHostForBrowser(Browser* browser) {
   auto* const shim_manager = apps::AppShimManager::Get();
-  if (!shim_manager)
+  if (!shim_manager) {
     return nullptr;
+  }
   return shim_manager->GetHostForRemoteCocoaBrowser(browser);
 }
 
@@ -66,11 +71,9 @@ bool ShouldHandleKeyboardEvent(const input::NativeWebKeyboardEvent& event) {
     return false;
   }
 
-  // If the event was not synthesized it should have an os_event.
-  DCHECK(event.os_event);
-
-  // Do not fire shortcuts on key up.
-  return event.os_event.Get().type == NSEventTypeKeyDown;
+  // Do not fire shortcuts on key up, and only forward shortcuts if we have an
+  // underlying os event.
+  return event.os_event && event.os_event.Get().type == NSEventTypeKeyDown;
 }
 
 }  // namespace
@@ -259,6 +262,17 @@ void BrowserFrameMac::ValidateUserInterfaceItem(
                ->IsManaged();
       break;
     }
+    case IDC_SHOW_GOOGLE_LENS_SHORTCUT: {
+      PrefService* prefs = browser->profile()->GetPrefs();
+      result->new_toggle_state =
+          prefs->GetBoolean(omnibox::kShowGoogleLensShortcut);
+      // Disable this menu option if the LensOverlay feature is not enabled.
+      result->enable = lens::features::IsOmniboxEntryPointEnabled() &&
+                       browser->GetFeatures()
+                           .lens_overlay_entry_point_controller()
+                           ->IsEnabled();
+      break;
+    }
     case IDC_TOGGLE_JAVASCRIPT_APPLE_EVENTS: {
       PrefService* prefs = browser->profile()->GetPrefs();
       result->new_toggle_state =
@@ -300,7 +314,8 @@ bool BrowserFrameMac::WillExecuteCommand(
     // The specification for this private extensions API is incredibly vague.
     // For now, we avoid triggering chrome commands prior to giving the
     // firstResponder a chance to handle the event.
-    if (extensions::GlobalShortcutListener::GetInstance()
+    if (ui::GlobalAcceleratorListener::GetInstance() &&
+        ui::GlobalAcceleratorListener::GetInstance()
             ->IsShortcutHandlingSuspended()) {
       return false;
     }
@@ -327,8 +342,9 @@ bool BrowserFrameMac::ExecuteCommand(
     WindowOpenDisposition window_open_disposition,
     bool is_before_first_responder) {
   if (!WillExecuteCommand(command, window_open_disposition,
-                          is_before_first_responder))
+                          is_before_first_responder)) {
     return false;
+  }
 
   Browser* browser = browser_view_->browser();
 
@@ -360,8 +376,9 @@ void BrowserFrameMac::PopulateCreateWindowParams(
     params->titlebar_appears_transparent = true;
 
     // Hosted apps draw their own window title.
-    if (browser_view_->GetIsWebAppType())
+    if (browser_view_->GetIsWebAppType()) {
       params->window_title_hidden = true;
+    }
   } else {
     params->window_class = remote_cocoa::mojom::WindowClass::kDefault;
   }
@@ -381,8 +398,9 @@ NativeWidgetMacNSWindow* BrowserFrameMac::CreateNSWindow(
 
 remote_cocoa::ApplicationHost*
 BrowserFrameMac::GetRemoteCocoaApplicationHost() {
-  if (auto* host = GetHostForBrowser(browser_view_->browser()))
+  if (auto* host = GetHostForBrowser(browser_view_->browser())) {
     return host->GetRemoteCocoaApplicationHost();
+  }
   return nullptr;
 }
 
@@ -421,7 +439,7 @@ void BrowserFrameMac::EnabledStateChangedForCommand(int id, bool enabled) {
       GetNSWindowHost()->CanGoForward(enabled);
       break;
     default:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }
 
@@ -449,7 +467,7 @@ bool BrowserFrameMac::ShouldSaveWindowPlacement() const {
 
 void BrowserFrameMac::GetWindowPlacement(
     gfx::Rect* bounds,
-    ui::WindowShowState* show_state) const {
+    ui::mojom::WindowShowState* show_state) const {
   return NativeWidgetMac::GetWindowPlacement(bounds, show_state);
 }
 

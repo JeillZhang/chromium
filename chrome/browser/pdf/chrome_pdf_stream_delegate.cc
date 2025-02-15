@@ -27,6 +27,7 @@
 #include "extensions/browser/guest_view/mime_handler_view/mime_handler_view_guest.h"
 #include "extensions/common/api/mime_handler.mojom.h"
 #include "extensions/common/constants.h"
+#include "net/http/http_response_headers.h"
 #include "pdf/pdf_features.h"
 #include "printing/buildflags/buildflags.h"
 #include "ui/base/resource/resource_bundle.h"
@@ -119,7 +120,8 @@ std::optional<GURL> ChromePdfStreamDelegate::MapToOriginalUrl(
     }
   } else {
     extensions::MimeHandlerViewGuest* guest =
-        extensions::MimeHandlerViewGuest::FromWebContents(contents);
+        extensions::MimeHandlerViewGuest::FromNavigationHandle(
+            &navigation_handle);
     if (guest) {
       stream = guest->GetStreamWeakPtr();
     }
@@ -142,6 +144,17 @@ std::optional<GURL> ChromePdfStreamDelegate::MapToOriginalUrl(
     info.full_frame = !stream->embedded();
     info.allow_javascript = stream->pdf_plugin_attributes()->allow_javascript;
     info.use_skia = ShouldEnableSkiaRenderer(contents);
+    if (chrome_pdf::features::IsOopifPdfEnabled()) {
+      net::HttpResponseHeaders* response_headers = stream->response_headers();
+      if (response_headers) {
+        std::optional<std::string> coep_header =
+            response_headers->GetNormalizedHeader(
+                "Cross-Origin-Embedder-Policy");
+        if (coep_header.has_value()) {
+          info.coep_header = coep_header.value();
+        }
+      }
+    }
 #if BUILDFLAG(ENABLE_PRINT_PREVIEW)
   } else if (stream_url.GetWithEmptyPath() ==
              chrome::kChromeUIUntrustedPrintURL) {
@@ -190,7 +203,8 @@ ChromePdfStreamDelegate::GetStreamInfo(
   return helper->TakeStreamInfo();
 }
 
-void ChromePdfStreamDelegate::OnPdfEmbedderSandboxed(int frame_tree_node_id) {
+void ChromePdfStreamDelegate::OnPdfEmbedderSandboxed(
+    content::FrameTreeNodeId frame_tree_node_id) {
   // Clean up the stream for a sandboxed embedder frame, as sandboxed frames
   // should be unable to instantiate the PDF viewer.
   CHECK(chrome_pdf::features::IsOopifPdfEnabled());
@@ -243,7 +257,8 @@ bool ChromePdfStreamDelegate::ShouldAllowPdfFrameNavigation(
   // extension frame.
   base::WeakPtr<extensions::StreamContainer> stream =
       pdf_viewer_stream_manager->GetStreamContainer(parent_frame);
-  int frame_tree_node_id = navigation_handle->GetFrameTreeNodeId();
+  content::FrameTreeNodeId frame_tree_node_id =
+      navigation_handle->GetFrameTreeNodeId();
   if (stream) {
     // Allow navigations for unrelated frames, which might be injected by
     // unrelated extensions. Only allow the PDF extension frame to navigate to

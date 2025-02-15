@@ -12,6 +12,7 @@
 #import "components/component_updater/component_updater_paths.h"
 #import "ios/chrome/app/startup/ios_chrome_main.h"
 #import "ios/chrome/app/startup/ios_enable_sandbox_dump_buildflags.h"
+#import "ios/chrome/app/tests_hook.h"
 #import "ios/chrome/browser/crash_report/model/crash_helper.h"
 #import "ios/chrome/browser/shared/model/paths/paths.h"
 #import "ios/public/provider/chrome/browser/primes/primes_api.h"
@@ -24,8 +25,9 @@
 extern "C" {
 // This function must be marked with NO_STACK_PROTECTOR or it may crash on
 // return, see the --change-stack-guard-on-fork command line flag.
-__attribute__((visibility("default"))) int NO_STACK_PROTECTOR
-ChromeMain(int argc, char* argv[]);
+NO_STACK_PROTECTOR __attribute__((visibility("default"))) int ChromeMain(
+    int argc,
+    char* argv[]);
 }
 #endif
 
@@ -86,6 +88,8 @@ int ChromeMain(int argc, char* argv[]) {
   // This is a blocking call.
   DumpSandboxIfRequested();
 #endif  // BUILDFLAG(IOS_ENABLE_SANDBOX_DUMP)
+
+  tests_hook::WipeProfileIfRequested(argc, argv);
 
   // Set NSUserDefaults keys to force pseudo-RTL if needed.
   SetTextDirectionIfPseudoRTLEnabled();

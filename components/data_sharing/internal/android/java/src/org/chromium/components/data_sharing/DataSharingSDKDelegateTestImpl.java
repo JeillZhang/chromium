@@ -5,10 +5,13 @@
 package org.chromium.components.data_sharing;
 
 import org.chromium.base.Callback;
+import org.chromium.components.data_sharing.protocol.AddAccessTokenParams;
+import org.chromium.components.data_sharing.protocol.AddAccessTokenResult;
 import org.chromium.components.data_sharing.protocol.AddMemberParams;
 import org.chromium.components.data_sharing.protocol.CreateGroupParams;
 import org.chromium.components.data_sharing.protocol.CreateGroupResult;
 import org.chromium.components.data_sharing.protocol.DeleteGroupParams;
+import org.chromium.components.data_sharing.protocol.LeaveGroupParams;
 import org.chromium.components.data_sharing.protocol.LookupGaiaIdByEmailParams;
 import org.chromium.components.data_sharing.protocol.LookupGaiaIdByEmailResult;
 import org.chromium.components.data_sharing.protocol.ReadGroupsParams;
@@ -18,6 +21,9 @@ import org.chromium.components.sync.protocol.GroupData;
 
 /** Implementation of {@link DataSharingSDKDelegate}. */
 public class DataSharingSDKDelegateTestImpl implements DataSharingSDKDelegate {
+
+    @Override
+    public void initialize(DataSharingNetworkLoader networkLoader) {}
 
     @Override
     public void createGroup(
@@ -48,17 +54,22 @@ public class DataSharingSDKDelegateTestImpl implements DataSharingSDKDelegate {
 
     @Override
     public void addMember(AddMemberParams params, Callback<Integer> callback) {
-        callback.onResult(/* status= */ 0);
+        callback.onResult(/* result= */ 0);
     }
 
     @Override
     public void removeMember(RemoveMemberParams params, Callback<Integer> callback) {
-        callback.onResult(/* status= */ 1);
+        callback.onResult(/* result= */ 1);
+    }
+
+    @Override
+    public void leaveGroup(LeaveGroupParams params, Callback<Integer> callback) {
+        callback.onResult(/* result= */ 0);
     }
 
     @Override
     public void deleteGroup(DeleteGroupParams params, Callback<Integer> callback) {
-        callback.onResult(/* status= */ 0);
+        callback.onResult(/* result= */ 0);
     }
 
     @Override
@@ -68,5 +79,14 @@ public class DataSharingSDKDelegateTestImpl implements DataSharingSDKDelegate {
         LookupGaiaIdByEmailResult.Builder lookupGaiaIdByEmailResult =
                 LookupGaiaIdByEmailResult.newBuilder().setGaiaId(params.getEmail());
         callback.run(lookupGaiaIdByEmailResult.build().toByteArray(), /* status= */ 0);
+    }
+
+    @Override
+    public void addAccessToken(
+            AddAccessTokenParams params, DataSharingSDKDelegateProtoResponseCallback callback) {
+        GroupData.Builder groupData = GroupData.newBuilder().setGroupId("test_group_id");
+        AddAccessTokenResult.Builder addTokenResult =
+                AddAccessTokenResult.newBuilder().setGroupData(groupData.build());
+        callback.run(addTokenResult.build().toByteArray(), /* status= */ 0);
     }
 }

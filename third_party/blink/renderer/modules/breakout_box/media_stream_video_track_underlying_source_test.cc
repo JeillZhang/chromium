@@ -6,6 +6,7 @@
 
 #include <optional>
 
+#include "base/feature_list.h"
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
 #include "base/test/gmock_callback_support.h"
@@ -19,6 +20,7 @@
 #include "third_party/blink/public/web/web_heap.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_tester.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_testing.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_readable_stream_read_result.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/streams/readable_stream.h"
 #include "third_party/blink/renderer/core/streams/readable_stream_default_controller_with_script_scope.h"
@@ -615,18 +617,21 @@ TEST_F(MediaStreamVideoTrackUnderlyingSourceTest,
   VideoFrame* web_video_frame3 =
       ReadObjectFromStream<VideoFrame>(v8_scope, reader);
 
-  scoped_refptr<media::VideoFrame> wrapped_video_frame3 =
-      web_video_frame3->frame();
-  ASSERT_TRUE(wrapped_video_frame3->metadata().capture_begin_time.has_value());
-  EXPECT_EQ(
-      web_video_frame3->timestamp(),
-      (*wrapped_video_frame3->metadata().capture_begin_time - base::TimeTicks())
-          .InMicroseconds());
-  ASSERT_TRUE(wrapped_video_frame3->metadata().reference_time.has_value());
-  EXPECT_EQ(
-      web_video_frame3->timestamp(),
-      (*wrapped_video_frame3->metadata().reference_time - base::TimeTicks())
-          .InMicroseconds());
+  if (base::FeatureList::IsEnabled(kBreakoutBoxInsertVideoCaptureTimestamp)) {
+    scoped_refptr<media::VideoFrame> wrapped_video_frame3 =
+        web_video_frame3->frame();
+    ASSERT_TRUE(
+        wrapped_video_frame3->metadata().capture_begin_time.has_value());
+    EXPECT_EQ(web_video_frame3->timestamp(),
+              (*wrapped_video_frame3->metadata().capture_begin_time -
+               base::TimeTicks())
+                  .InMicroseconds());
+    ASSERT_TRUE(wrapped_video_frame3->metadata().reference_time.has_value());
+    EXPECT_EQ(
+        web_video_frame3->timestamp(),
+        (*wrapped_video_frame3->metadata().reference_time - base::TimeTicks())
+            .InMicroseconds());
+  }
 
   source->Close();
   track->stopTrack(v8_scope.GetExecutionContext());

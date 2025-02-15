@@ -2,10 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import {assert, assertNotReached} from '../assert.js';
+import {assert, assertInstanceof, assertNotReached} from '../assert.js';
 import {reportError} from '../error.js';
 import {Point} from '../geometry.js';
 import * as localDev from '../local_dev.js';
+import {getCanUseBigBuffer} from '../models/load_time_data.js';
 import {
   ErrorLevel,
   ErrorType,
@@ -14,6 +15,7 @@ import {
 import {windowController} from '../window_controller.js';
 
 import {
+  AspectRatio,
   BigBuffer,
   CameraAppHelper,
   CameraAppHelperRemote,
@@ -31,8 +33,8 @@ import {
   ScreenStateMonitorCallbackRouter,
   StorageMonitorCallbackRouter,
   StorageMonitorStatus,
+  SWPrivacySwitchMonitorCallbackRouter,
   TabletModeMonitorCallbackRouter,
-  ToteMetricFormat,
   WifiConfig,
 } from './type.js';
 import {wrapEndpoint} from './util.js';
@@ -80,10 +82,12 @@ export async function createBigBufferFromBlob(blob: Blob): Promise<BigBuffer> {
   const size = bytes.byteLength;
 
   const sharedBuffer = Mojo.createSharedBuffer(size);
-  assert(sharedBuffer.result === Mojo.RESULT_OK);
+  assert(
+      sharedBuffer.result === Mojo.RESULT_OK,
+      'Failed to create shared buffer.');
 
   const mapBuffer = sharedBuffer.handle.mapBuffer(0, size);
-  assert(mapBuffer.result === Mojo.RESULT_OK);
+  assert(mapBuffer.result === Mojo.RESULT_OK, 'Failed to map buffer.');
 
   const uint8View = new Uint8Array(mapBuffer.buffer);
   uint8View.set(bytes);
@@ -101,6 +105,39 @@ export async function createBigBufferFromBlob(blob: Blob): Promise<BigBuffer> {
   delete bigBuffer.bytes;
 
   return bigBuffer;
+}
+
+/**
+ * Creates a number array from `blob` for Mojo's `array<uint8>`.
+ */
+export async function createNumArrayFromBlob(blob: Blob): Promise<number[]> {
+  const buffer = await blob.arrayBuffer();
+  return castToNumberArray(new Uint8Array(buffer));
+}
+
+/**
+ * When BigBuffer fails, set this flag to `true` and fallback to inline buffer
+ * for further calls.
+ */
+let bigBufferFailed = false;
+
+/**
+ * Returns if BigBuffer should be used.
+ */
+export function shouldUseBigBuffer(): boolean {
+  return getCanUseBigBuffer() && !bigBufferFailed;
+}
+
+/**
+ * Sets the `bigBufferFailed` flag and reports the error.
+ */
+export function handleBigBufferError(e: unknown): void {
+  bigBufferFailed = true;
+  reportError(
+      ErrorType.BIG_BUFFER_FAILURE,
+      ErrorLevel.WARNING,
+      assertInstanceof(e, Error),
+  );
 }
 
 export abstract class ChromeHelper {
@@ -203,11 +240,6 @@ export abstract class ChromeHelper {
       void;
 
   /**
-   * Notifies Tote client when a photo/pdf/video/gif is captured.
-   */
-  abstract notifyTote(format: ToteMetricFormat, name: string): void;
-
-  /**
    * Monitors for the file deletion of the file given by its `name` and
    * triggers `callback` when the file is deleted. Note that a previous
    * monitor request will be canceled once another monitor request is sent.
@@ -260,6 +292,9 @@ export abstract class ChromeHelper {
   abstract initLidStateMonitor(onChange: (lidStatus: LidState) => void):
       Promise<LidState>;
 
+  abstract initSwPrivacySwitchMonitor(
+      onChange: (is_sw_privacy_switch_on: boolean) => void): Promise<boolean>;
+
   abstract getEventsSender(): Promise<EventsSenderRemote>;
 
   abstract initScreenLockedMonitor(onChange: (isScreenLocked: boolean) => void):
@@ -270,6 +305,8 @@ export abstract class ChromeHelper {
   abstract performOcr(jpeg: Blob): Promise<OcrResult>;
 
   abstract createPdfBuilder(): PdfBuilderRemote;
+
+  abstract getAspectRatioOrder(): Promise<AspectRatio[]>;
 
   /**
    * Creates a new instance of ChromeHelper if it is not set. Returns the
@@ -400,10 +437,6 @@ class ChromeHelperImpl extends ChromeHelper {
     this.remote.sendNewCaptureBroadcast(isVideo, name);
   }
 
-  override notifyTote(format: ToteMetricFormat, name: string): void {
-    this.remote.notifyTote(format, name);
-  }
-
   override async monitorFileDeletion(name: string, callback: () => void):
       Promise<void> {
     const {result} = await this.remote.monitorFileDeletion(name);
@@ -503,6 +536,17 @@ class ChromeHelperImpl extends ChromeHelper {
     return lidStatus;
   }
 
+  override async initSwPrivacySwitchMonitor(
+      onChange: (is_sw_privacy_switch_on: boolean) => void): Promise<boolean> {
+    const monitorCallbackRouter =
+        wrapEndpoint(new SWPrivacySwitchMonitorCallbackRouter());
+    monitorCallbackRouter.update.addListener(onChange);
+
+    const {isSwPrivacySwitchOn} = await this.remote.setSWPrivacySwitchMonitor(
+        monitorCallbackRouter.$.bindNewPipeAndPassRemote());
+    return isSwPrivacySwitchOn;
+  }
+
   override async getEventsSender(): Promise<EventsSenderRemote> {
     const {eventsSender} = await this.remote.getEventsSender();
     return wrapEndpoint(eventsSender);
@@ -527,8 +571,17 @@ class ChromeHelperImpl extends ChromeHelper {
   }
 
   override async performOcr(jpeg: Blob): Promise<OcrResult> {
-    const bigBuffer = await createBigBufferFromBlob(jpeg);
-    const {ocrResult} = await this.remote.performOcr(bigBuffer);
+    try {
+      if (shouldUseBigBuffer()) {
+        const bigBuffer = await createBigBufferFromBlob(jpeg);
+        const {ocrResult} = await this.remote.performOcr(bigBuffer);
+        return ocrResult;
+      }
+    } catch (e) {
+      handleBigBufferError(e);
+    }
+    const numArray = await createNumArrayFromBlob(jpeg);
+    const {ocrResult} = await this.remote.performOcrInline(numArray);
     return ocrResult;
   }
 
@@ -537,5 +590,10 @@ class ChromeHelperImpl extends ChromeHelper {
     const pdfBuilderReceiver = pdfBuilderRemote.$.bindNewPipeAndPassReceiver();
     this.remote.createPdfBuilder(pdfBuilderReceiver);
     return wrapEndpoint(pdfBuilderRemote);
+  }
+
+  override async getAspectRatioOrder(): Promise<AspectRatio[]> {
+    const {order} = await this.remote.getAspectRatioOrder();
+    return order;
   }
 }

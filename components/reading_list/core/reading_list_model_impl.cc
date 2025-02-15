@@ -4,6 +4,7 @@
 
 #include "components/reading_list/core/reading_list_model_impl.h"
 
+#include "base/auto_reset.h"
 #include "base/check_is_test.h"
 #include "base/check_op.h"
 #include "base/functional/bind.h"
@@ -19,7 +20,7 @@
 #include "base/time/clock.h"
 #include "components/reading_list/core/reading_list_model_storage.h"
 #include "components/reading_list/core/reading_list_sync_bridge.h"
-#include "components/sync/model/client_tag_based_model_type_processor.h"
+#include "components/sync/model/client_tag_based_data_type_processor.h"
 #include "google_apis/gaia/core_account_id.h"
 #include "url/gurl.h"
 
@@ -74,7 +75,7 @@ ReadingListModelImpl::ReadingListModelImpl(
           sync_storage_type_for_uma,
           wipe_model_upon_sync_disabled_behavior,
           clock,
-          std::make_unique<syncer::ClientTagBasedModelTypeProcessor>(
+          std::make_unique<syncer::ClientTagBasedDataTypeProcessor>(
               syncer::READING_LIST,
               /*dump_stack=*/base::DoNothing())) {}
 
@@ -84,7 +85,7 @@ ReadingListModelImpl::ReadingListModelImpl(
     syncer::WipeModelUponSyncDisabledBehavior
         wipe_model_upon_sync_disabled_behavior,
     base::Clock* clock,
-    std::unique_ptr<syncer::ModelTypeChangeProcessor> change_processor)
+    std::unique_ptr<syncer::DataTypeLocalChangeProcessor> change_processor)
     : storage_layer_(std::move(storage_layer)),
       clock_(clock),
       sync_bridge_(sync_storage_type_for_uma,
@@ -410,11 +411,6 @@ void ReadingListModelImpl::SetReadStatusIfExists(const GURL& url, bool read) {
     observer.ReadingListDidMoveEntry(this, url);
     observer.ReadingListDidApplyChanges(this);
   }
-
-  if (read) {
-    base::UmaHistogramEnumeration("ReadingList.MarkEntryRead",
-                                  GetStorageStateForUma());
-  }
 }
 
 void ReadingListModelImpl::SetEntryTitleIfExists(const GURL& url,
@@ -652,7 +648,7 @@ std::unique_ptr<ReadingListModelImpl> ReadingListModelImpl::BuildNewForTest(
     syncer::WipeModelUponSyncDisabledBehavior
         wipe_model_upon_sync_disabled_behavior,
     base::Clock* clock,
-    std::unique_ptr<syncer::ModelTypeChangeProcessor> change_processor) {
+    std::unique_ptr<syncer::DataTypeLocalChangeProcessor> change_processor) {
   CHECK_IS_TEST();
   return base::WrapUnique(
       new ReadingListModelImpl(std::move(storage_layer), sync_storage_type,
@@ -674,7 +670,7 @@ ReadingListModelImpl::GetStorageStateForUma() const {
                  ? StorageStateForUma::kSyncEnabled
                  : StorageStateForUma::kLocalOnly;
   }
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 std::string ReadingListModelImpl::GetStorageStateSuffixForUma() const {
@@ -686,7 +682,7 @@ std::string ReadingListModelImpl::GetStorageStateSuffixForUma() const {
     case StorageStateForUma::kSyncEnabled:
       return ".LocalStorageSyncing";
   }
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 void ReadingListModelImpl::StoreLoaded(
@@ -738,12 +734,12 @@ void ReadingListModelImpl::EndBatchUpdates() {
   }
 }
 
-base::WeakPtr<syncer::ModelTypeControllerDelegate>
+base::WeakPtr<syncer::DataTypeControllerDelegate>
 ReadingListModelImpl::GetSyncControllerDelegate() {
   return sync_bridge_.change_processor()->GetControllerDelegate();
 }
 
-base::WeakPtr<syncer::ModelTypeControllerDelegate>
+base::WeakPtr<syncer::DataTypeControllerDelegate>
 ReadingListModelImpl::GetSyncControllerDelegateForTransportMode() {
   // ReadingListModelImpl doesn't directly implement account storage. Upper
   // layers are responsible for maintaining two instances of

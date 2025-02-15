@@ -6,8 +6,8 @@
 #import "base/strings/stringprintf.h"
 #import "base/strings/sys_string_conversions.h"
 #import "components/feature_engagement/public/feature_constants.h"
+#import "ios/chrome/browser/bubble/ui_bundled/bubble_constants.h"
 #import "ios/chrome/browser/find_in_page/model/util.h"
-#import "ios/chrome/browser/ui/bubble/bubble_constants.h"
 #import "ios/chrome/browser/ui/popup_menu/popup_menu_constants.h"
 #import "ios/chrome/grit/ios_strings.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
@@ -34,9 +34,9 @@ const char kPDFURL[] = "http://ios/testing/data/http_server_files/testpage.pdf";
 
 // Rotate the device back to portrait if needed, since some tests attempt to run
 // in landscape.
-- (void)tearDown {
+- (void)tearDownHelper {
   [EarlGrey rotateDeviceToOrientation:UIDeviceOrientationPortrait error:nil];
-  [super tearDown];
+  [super tearDownHelper];
 }
 
 #pragma mark - TabHistory
@@ -139,8 +139,9 @@ const char kPDFURL[] = "http://ios/testing/data/http_server_files/testpage.pdf";
 }
 
 - (void)testNewWindowFromToolsMenu {
-  if (![ChromeEarlGrey areMultipleWindowsSupported])
+  if (![ChromeEarlGrey areMultipleWindowsSupported]) {
     EARL_GREY_TEST_DISABLED(@"Multiple windows can't be opened.");
+  }
 
   [ChromeEarlGreyUI openToolsMenu];
   [ChromeEarlGreyUI

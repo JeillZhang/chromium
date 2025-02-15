@@ -226,12 +226,7 @@ std::optional<int> ShellMainDelegate::BasicStartupComplete() {
 
 #if BUILDFLAG(IS_MAC)
   // Needs to happen before InitializeResourceBundle().
-  OverrideFrameworkBundlePath();
-  OverrideOuterBundlePath();
-  OverrideChildProcessPath();
-  OverrideSourceRootPath();
   EnsureCorrectResolutionSettings();
-  OverrideBundleID();
 #endif  // BUILDFLAG(IS_MAC)
 
   InitLogging(command_line);
@@ -261,13 +256,6 @@ bool ShellMainDelegate::ShouldInitializeMojo(InvokedIn invoked_in) {
 }
 
 void ShellMainDelegate::PreSandboxStartup() {
-#if defined(ARCH_CPU_ARM_FAMILY) && \
-    (BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS))
-  // Create an instance of the CPU class to parse /proc/cpuinfo and cache
-  // cpu_brand info.
-  base::CPU cpu_info;
-#endif
-
 // Disable platform crash handling and initialize the crash reporter, if
 // requested.
 // TODO(crbug.com/40188745): Implement crash reporter integration for Fuchsia.
@@ -303,8 +291,6 @@ absl::variant<int, MainFunctionParams> ShellMainDelegate::RunProcess(
 
   base::CurrentProcess::GetInstance().SetProcessType(
       base::CurrentProcessType::PROCESS_BROWSER);
-  base::trace_event::TraceLog::GetInstance()->SetProcessSortIndex(
-      kTraceEventBrowserProcessSortIndex);
 
 #if !BUILDFLAG(IS_ANDROID)
   if (switches::IsRunWebTestsSwitchPresent()) {

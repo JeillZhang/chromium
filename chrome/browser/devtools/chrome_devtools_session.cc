@@ -83,13 +83,14 @@ ChromeDevToolsSession::ChromeDevToolsSession(
           std::make_unique<AutofillHandler>(&dispatcher_, agent_host->GetId());
     }
   }
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          ::switches::kEnableUnsafeExtensionDebugging) &&
-      agent_host->GetType() == content::DevToolsAgentHost::kTypeBrowser &&
-      channel->GetClient()->AllowUnsafeOperations() &&
-      (IsDomainAvailableToUntrustedClient<ExtensionsHandler>() ||
-       channel->GetClient()->IsTrusted())) {
-    extensions_handler_ = std::make_unique<ExtensionsHandler>(&dispatcher_);
+  if (IsDomainAvailableToUntrustedClient<ExtensionsHandler>() ||
+      channel->GetClient()->IsTrusted()) {
+    extensions_handler_ = std::make_unique<ExtensionsHandler>(
+        &dispatcher_, agent_host->GetId(),
+        channel->GetClient()->AllowUnsafeOperations() &&
+            base::CommandLine::ForCurrentProcess()->HasSwitch(
+                ::switches::kEnableUnsafeExtensionDebugging) &&
+            agent_host->GetType() == content::DevToolsAgentHost::kTypeBrowser);
   }
   if (IsDomainAvailableToUntrustedClient<EmulationHandler>() ||
       channel->GetClient()->IsTrusted()) {
@@ -99,7 +100,8 @@ ChromeDevToolsSession::ChromeDevToolsSession(
   if (IsDomainAvailableToUntrustedClient<TargetHandler>() ||
       channel->GetClient()->IsTrusted()) {
     target_handler_ = std::make_unique<TargetHandler>(
-        &dispatcher_, channel->GetClient()->IsTrusted());
+        &dispatcher_, channel->GetClient()->IsTrusted(),
+        channel->GetClient()->MayReadLocalFiles());
   }
   if (IsDomainAvailableToUntrustedClient<BrowserHandler>() ||
       channel->GetClient()->IsTrusted()) {
@@ -127,9 +129,8 @@ ChromeDevToolsSession::ChromeDevToolsSession(
 
 ChromeDevToolsSession::~ChromeDevToolsSession() = default;
 
-base::HistogramBase::Sample GetCommandUmaId(
-    const std::string_view command_name) {
-  return static_cast<base::HistogramBase::Sample>(
+base::HistogramBase::Sample32 GetCommandUmaId(std::string_view command_name) {
+  return static_cast<base::HistogramBase::Sample32>(
       base::HashMetricName(command_name));
 }
 
@@ -142,7 +143,7 @@ void ChromeDevToolsSession::HandleCommand(
       dispatcher_.Dispatch(dispatchable);
 
   auto command_uma_id = GetCommandUmaId(std::string_view(
-      reinterpret_cast<const char*>(dispatchable.Method().begin()),
+      reinterpret_cast<const char*>(dispatchable.Method().data()),
       dispatchable.Method().size()));
   std::string client_type = client_channel_->GetClient()->GetTypeForMetrics();
   DCHECK(client_type == "DevTools" || client_type == "Extension" ||

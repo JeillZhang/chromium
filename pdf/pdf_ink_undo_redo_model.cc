@@ -41,7 +41,7 @@ PdfInkUndoRedoModel::StartDraw() {
   return StartImpl<DrawCommands>();
 }
 
-bool PdfInkUndoRedoModel::Draw(size_t id) {
+bool PdfInkUndoRedoModel::Draw(InkStrokeId id) {
   CHECK(!commands_stack_.empty());
 
   if (!IsAtTopOfStackWithGivenCommandType(CommandsType::kDraw)) {
@@ -84,7 +84,7 @@ PdfInkUndoRedoModel::StartErase() {
   return StartImpl<EraseCommands>();
 }
 
-bool PdfInkUndoRedoModel::Erase(size_t id) {
+bool PdfInkUndoRedoModel::EraseStroke(InkStrokeId id) {
   CHECK(!commands_stack_.empty());
 
   if (!IsAtTopOfStackWithGivenCommandType(CommandsType::kErase)) {
@@ -94,6 +94,22 @@ bool PdfInkUndoRedoModel::Erase(size_t id) {
   }
   if (!HasIdInDrawCommands(id)) {
     return false;  // Failed invariant 6.
+  }
+  if (HasIdInEraseCommands(id)) {
+    return false;  // Failed invariant 5.
+  }
+
+  GetModifiableEraseCommands(commands_stack_.back())->insert(id);
+  return true;
+}
+
+bool PdfInkUndoRedoModel::EraseShape(InkModeledShapeId id) {
+  CHECK(!commands_stack_.empty());
+
+  if (!IsAtTopOfStackWithGivenCommandType(CommandsType::kErase)) {
+    // Can only erase at top of the stack, and the entry there must be for
+    // erasing.
+    return false;
   }
   if (HasIdInEraseCommands(id)) {
     return false;  // Failed invariant 5.
@@ -136,23 +152,24 @@ PdfInkUndoRedoModel::Commands PdfInkUndoRedoModel::Undo() {
   const auto& commands = commands_stack_[stack_position_];
   switch (GetCommandsType(commands)) {
     case CommandsType::kNone: {
-      NOTREACHED_NORETURN();  // Invariant 2.
+      NOTREACHED();  // Invariant 2.
     }
     case CommandsType::kDraw: {
       EraseCommands result;
-      for (size_t id : GetDrawCommands(commands).value()) {
+      for (IdType id : GetDrawCommands(commands).value()) {
         result->insert(id);
       }
       return result;
     }
     case CommandsType::kErase: {
       DrawCommands result;
-      for (size_t id : GetEraseCommands(commands).value()) {
+      for (IdType id : GetEraseCommands(commands).value()) {
         result->insert(id);
       }
       return result;
     }
   }
+  NOTREACHED();
 }
 
 PdfInkUndoRedoModel::Commands PdfInkUndoRedoModel::Redo() {
@@ -168,7 +185,7 @@ PdfInkUndoRedoModel::Commands PdfInkUndoRedoModel::Redo() {
   ++stack_position_;
   switch (GetCommandsType(commands)) {
     case CommandsType::kNone: {
-      NOTREACHED_NORETURN();  // Invariant 2.
+      NOTREACHED();  // Invariant 2.
     }
     case CommandsType::kDraw: {
       return GetDrawCommands(commands);
@@ -177,6 +194,7 @@ PdfInkUndoRedoModel::Commands PdfInkUndoRedoModel::Redo() {
       return GetEraseCommands(commands);
     }
   }
+  NOTREACHED();
 }
 
 // static
@@ -224,8 +242,9 @@ PdfInkUndoRedoModel::StartImpl() {
     // Record the draw commands to discard.
     for (size_t i = stack_position_; i < commands_stack_.size(); ++i) {
       if (GetCommandsType(commands_stack_[i]) == CommandsType::kDraw) {
-        for (size_t id : GetDrawCommands(commands_stack_[i]).value()) {
-          bool inserted = discarded_commands.insert(id).second;
+        for (IdType id : GetDrawCommands(commands_stack_[i]).value()) {
+          bool inserted =
+              discarded_commands.insert(absl::get<InkStrokeId>(id)).second;
           CHECK(inserted);
         }
       }
@@ -255,7 +274,7 @@ bool PdfInkUndoRedoModel::IsAtTopOfStackWithGivenCommandType(
   return GetCommandsType(commands_stack_.back()) == type;
 }
 
-bool PdfInkUndoRedoModel::HasIdInDrawCommands(size_t id) const {
+bool PdfInkUndoRedoModel::HasIdInDrawCommands(IdType id) const {
   for (const auto& commands : commands_stack_) {
     if (GetCommandsType(commands) == CommandsType::kDraw &&
         GetDrawCommands(commands)->contains(id)) {
@@ -265,7 +284,7 @@ bool PdfInkUndoRedoModel::HasIdInDrawCommands(size_t id) const {
   return false;
 }
 
-bool PdfInkUndoRedoModel::HasIdInEraseCommands(size_t id) const {
+bool PdfInkUndoRedoModel::HasIdInEraseCommands(IdType id) const {
   for (const auto& commands : commands_stack_) {
     if (GetCommandsType(commands) == CommandsType::kErase &&
         GetEraseCommands(commands)->contains(id)) {

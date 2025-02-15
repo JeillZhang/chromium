@@ -4,12 +4,16 @@
 
 source_set("public") {
   sources = [
+    "decoration.cc",
+    "decoration.h",
     "features.cc",
     "features.h",
     "fetch_options.cc",
     "fetch_options.h",
     "fetch_result.cc",
     "fetch_result.h",
+    "fetcher_config.cc",
+    "fetcher_config.h",
     "url_visit.cc",
     "url_visit.h",
     "url_visit_aggregates_transformer.h",
@@ -26,7 +30,10 @@ source_set("public") {
     "//components/history/core/browser",
     "//components/keyed_service/core",
     "//components/segmentation_platform/public",
+    "//components/strings",
     "//components/sync_device_info",
+    "//components/url_deduplication",
+    "//ui/base",
     "//url",
   ]
 }

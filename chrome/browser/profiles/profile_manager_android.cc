@@ -32,8 +32,7 @@ ScopedJavaLocalRef<jobject> JNI_ProfileManager_GetLastUsedRegularProfile(
     JNIEnv* env) {
   Profile* profile = ProfileManager::GetLastUsedProfile();
   if (!profile) {
-    NOTREACHED_IN_MIGRATION() << "Profile not found.";
-    return nullptr;
+    NOTREACHED() << "Profile not found.";
   }
   return profile->GetJavaObject();
 }
@@ -41,6 +40,14 @@ ScopedJavaLocalRef<jobject> JNI_ProfileManager_GetLastUsedRegularProfile(
 // static
 std::vector<Profile*> JNI_ProfileManager_GetLoadedProfiles(JNIEnv* env) {
   return g_browser_process->profile_manager()->GetLoadedProfiles();
+}
+
+// static
+void JNI_ProfileManager_OnProfileActivated(JNIEnv* env, Profile* profile) {
+  if (!profile) {
+    return;
+  }
+  g_browser_process->profile_manager()->SetProfileAsLastUsed(profile);
 }
 
 // static

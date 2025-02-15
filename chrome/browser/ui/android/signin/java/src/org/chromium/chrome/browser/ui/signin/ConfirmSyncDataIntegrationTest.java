@@ -21,12 +21,15 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import android.app.Activity;
+
 import androidx.test.filters.MediumTest;
 
 import org.junit.Before;
+import org.junit.BeforeClass;
+import org.junit.ClassRule;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnit;
@@ -34,11 +37,10 @@ import org.mockito.junit.MockitoRule;
 import org.mockito.quality.Strictness;
 
 import org.chromium.base.Callback;
+import org.chromium.base.ThreadUtils;
+import org.chromium.base.test.BaseActivityTestRule;
 import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.CommandLineFlags;
-import org.chromium.base.test.util.Features;
-import org.chromium.base.test.util.Features.EnableFeatures;
-import org.chromium.base.test.util.JniMocker;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.password_manager.PasswordManagerUtilBridge;
 import org.chromium.chrome.browser.password_manager.PasswordManagerUtilBridgeJni;
@@ -48,13 +50,11 @@ import org.chromium.chrome.browser.signin.services.SigninManager;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.components.browser_ui.modaldialog.AppModalPresenter;
 import org.chromium.components.prefs.PrefService;
-import org.chromium.components.signin.SigninFeatures;
 import org.chromium.components.user_prefs.UserPrefs;
 import org.chromium.components.user_prefs.UserPrefsJni;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.ui.modaldialog.ModalDialogManager;
 import org.chromium.ui.modaldialog.ModalDialogManager.ModalDialogType;
-import org.chromium.ui.test.util.BlankUiTestActivityTestCase;
+import org.chromium.ui.test.util.BlankUiTestActivity;
 
 /**
  * This class regroups the integration tests for {@link ConfirmSyncDataStateMachine}.
@@ -68,19 +68,20 @@ import org.chromium.ui.test.util.BlankUiTestActivityTestCase;
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
 @CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
-@EnableFeatures(SigninFeatures.ENTERPRISE_POLICY_ON_SIGNIN)
 @Batch(Batch.PER_CLASS)
-public class ConfirmSyncDataIntegrationTest extends BlankUiTestActivityTestCase {
+public class ConfirmSyncDataIntegrationTest {
+    @ClassRule
+    public static BaseActivityTestRule<BlankUiTestActivity> sActivityTestRule =
+            new BaseActivityTestRule<>(BlankUiTestActivity.class);
+
+    private static Activity sActivity;
+
     private static final String OLD_ACCOUNT_NAME = "test.account.old@gmail.com";
     private static final String NEW_ACCOUNT_NAME = "test.account.new@gmail.com";
     private static final String MANAGED_DOMAIN = "managed-domain.com";
 
     @Rule
     public final MockitoRule mMockitoRule = MockitoJUnit.rule().strictness(Strictness.LENIENT);
-
-    @Rule public final JniMocker mJniMocker = new JniMocker();
-
-    @Rule public TestRule mProcessor = new Features.JUnitProcessor();
 
     @Mock private SigninManager mSigninManagerMock;
 
@@ -98,23 +99,26 @@ public class ConfirmSyncDataIntegrationTest extends BlankUiTestActivityTestCase 
 
     private ConfirmSyncDataStateMachineDelegate mDelegate;
 
+    @BeforeClass
+    public static void setupSuite() {
+        sActivity = sActivityTestRule.launchActivity(null);
+    }
+
     @Before
     public void setUp() {
         IdentityServicesProvider.setInstanceForTests(mIdentityServicesProviderMock);
-        mJniMocker.mock(
-                PasswordManagerUtilBridgeJni.TEST_HOOKS, mPasswordManagerUtilBridgeNativeMock);
-        mJniMocker.mock(UserPrefsJni.TEST_HOOKS, mUserPrefsNativeMock);
+        PasswordManagerUtilBridgeJni.setInstanceForTesting(mPasswordManagerUtilBridgeNativeMock);
+        UserPrefsJni.setInstanceForTesting(mUserPrefsNativeMock);
         when(mUserPrefsNativeMock.get(mProfile)).thenReturn(mPrefService);
         when(IdentityServicesProvider.get().getSigninManager(any())).thenReturn(mSigninManagerMock);
         mDelegate =
-                TestThreadUtils.runOnUiThreadBlockingNoException(
+                ThreadUtils.runOnUiThreadBlocking(
                         () -> {
                             return new ConfirmSyncDataStateMachineDelegate(
-                                    getActivity(),
+                                    sActivity,
                                     mProfile,
                                     new ModalDialogManager(
-                                            new AppModalPresenter(getActivity()),
-                                            ModalDialogType.APP));
+                                            new AppModalPresenter(sActivity), ModalDialogType.APP));
                         });
     }
 
@@ -195,7 +199,7 @@ public class ConfirmSyncDataIntegrationTest extends BlankUiTestActivityTestCase 
     }
 
     private void startConfirmSyncFlow(String oldAccountName, String newAccountName) {
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     ConfirmSyncDataStateMachine stateMachine =
                             new ConfirmSyncDataStateMachine(

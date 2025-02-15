@@ -13,7 +13,9 @@
 #include <utility>
 #include <vector>
 
+#include "base/containers/span.h"
 #include "base/feature_list.h"
+#include "base/notreached.h"
 #include "base/run_loop.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/task/thread_pool.h"
@@ -72,14 +74,15 @@ static constexpr char kTestData[] = "Hello world";
 constexpr size_t kDataPipeCapacity = 4096;
 
 std::string ReadOneChunk(mojo::ScopedDataPipeConsumerHandle* handle) {
-  char buffer[kDataPipeCapacity];
-  size_t read_bytes = kDataPipeCapacity;
-  MojoResult result =
-      (*handle)->ReadData(buffer, &read_bytes, MOJO_READ_DATA_FLAG_NONE);
+  std::string buffer(kDataPipeCapacity, '\0');
+  size_t actually_read_bytes = 0;
+  MojoResult result = (*handle)->ReadData(MOJO_READ_DATA_FLAG_NONE,
+                                          base::as_writable_byte_span(buffer),
+                                          actually_read_bytes);
   if (result != MOJO_RESULT_OK) {
     return "";
   }
-  return std::string(buffer, read_bytes);
+  return buffer.substr(0, actually_read_bytes);
 }
 
 // Returns a fake TimeTicks based on the given microsecond offset.
@@ -242,8 +245,6 @@ class MockLoader : public network::mojom::URLLoader {
   }
   void SetPriority(net::RequestPriority priority,
                    int32_t intra_priority_value) override {}
-  void PauseReadingBodyFromNet() override {}
-  void ResumeReadingBodyFromNet() override {}
 
   void SetFollowRedirectCallback(RepeatingFollowRedirectCallback callback) {
     follow_redirect_callback_ = std::move(callback);
@@ -328,7 +329,7 @@ class ResourceRequestSenderTest : public testing::Test,
 
   void Clone(mojo::PendingReceiver<network::mojom::URLLoaderFactory> receiver)
       override {
-    NOTREACHED_IN_MIGRATION();
+    NOTREACHED();
   }
 
  protected:
@@ -532,7 +533,7 @@ TEST_F(ResourceRequestSenderTest, RedirectSyncCancel) {
       base::BindRepeating([](const std::vector<std::string>& removed_headers,
                              const net::HttpRequestHeaders& modified_headers) {
         // FollowRedirect() must not be called.
-        CHECK(false);
+        NOTREACHED();
       }));
 
   mock_client_->SetOnReceivedRedirectCallback(base::BindLambdaForTesting(
@@ -721,7 +722,7 @@ TEST_F(ResourceRequestSenderTest, RedirectAsyncFollowAfterCancel) {
       base::BindRepeating([](const std::vector<std::string>& removed_headers,
                              const net::HttpRequestHeaders& modified_headers) {
         // FollowRedirect() must not be called.
-        CHECK(false);
+        NOTREACHED();
       }));
 
   net::RedirectInfo redirect_info;
@@ -1654,7 +1655,7 @@ TEST_F(ResourceRequestSenderTest, KeepaliveRequest) {
       std::make_unique<DummyCodeCacheHost>(base::BindLambdaForTesting(
           [&](mojom::blink::CodeCacheType cache_type, const KURL& url,
               FetchCachedCodeCallback callback) {
-            CHECK(false) << "FetchCachedCode shouold not be called";
+            NOTREACHED() << "FetchCachedCode shouold not be called";
           }));
 
   StartAsync(std::move(request), mock_client_,
@@ -1969,7 +1970,7 @@ TEST_F(ResourceRequestSenderSyncTest, SendSyncRedirectCancel) {
                    const std::vector<std::string>& removed_headers,
                    const net::HttpRequestHeaders& modified_headers) {
                   // FollowRedirect() must not be called.
-                  CHECK(false);
+                  NOTREACHED();
                 },
                 std::move(refcounted_client)));
           }));

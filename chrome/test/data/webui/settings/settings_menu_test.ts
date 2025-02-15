@@ -7,16 +7,19 @@
 // clang-format off
 import {flush} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 import type {SettingsMenuElement, SettingsRoutes} from 'chrome://settings/settings.js';
-import {resetRouterForTesting, loadTimeData, pageVisibility, Router} from 'chrome://settings/settings.js';
+import {resetRouterForTesting, loadTimeData, MetricsBrowserProxyImpl, pageVisibility, Router} from 'chrome://settings/settings.js';
 import {assertEquals, assertFalse, assertTrue} from 'chrome://webui-test/chai_assert.js';
-import {isVisible} from 'chrome://webui-test/test_util.js';
+import {isVisible, microtasksFinished} from 'chrome://webui-test/test_util.js';
 import {flushTasks} from 'chrome://webui-test/polymer_test_util.js';
+
+import {TestMetricsBrowserProxy} from './test_metrics_browser_proxy.js';
 
 // clang-format on
 
 suite('SettingsMenu', function() {
   let settingsMenu: SettingsMenuElement;
   let routes: SettingsRoutes;
+  let metricsBrowserProxy: TestMetricsBrowserProxy;
 
   function createSettingsMenu() {
     routes = Router.getInstance().getRoutes();
@@ -27,6 +30,8 @@ suite('SettingsMenu', function() {
   }
 
   setup(function() {
+    metricsBrowserProxy = new TestMetricsBrowserProxy();
+    MetricsBrowserProxyImpl.setInstance(metricsBrowserProxy);
     createSettingsMenu();
   });
 
@@ -77,21 +82,6 @@ suite('SettingsMenu', function() {
     assertFalse(!!selector.selected);
   });
 
-  // <if expr="_google_chrome">
-  test('navigateToGetMostChrome', function() {
-    loadTimeData.overrideValues({showGetTheMostOutOfChromeSection: true});
-    resetRouterForTesting();
-    createSettingsMenu();
-    Router.getInstance().navigateTo(routes.GET_MOST_CHROME);
-    flush();
-
-    // GET_MOST_CHROME should select the 'About Chrome' entry.
-    const selector = settingsMenu.$.menu;
-    assertTrue(!!selector.selected);
-    assertEquals('/help', selector.selected.toString());
-  });
-  // </if>
-
   test('noExperimental', async function() {
     loadTimeData.overrideValues({showAdvancedFeaturesMainControl: false});
     resetRouterForTesting();
@@ -119,6 +109,35 @@ suite('SettingsMenu', function() {
     assertEquals('/ai', selector.selected.toString());
   });
 
+  // <if expr="enable_glic">
+  test('noGlic', async function() {
+    loadTimeData.overrideValues({showGlicSettings: false});
+    resetRouterForTesting();
+    createSettingsMenu();
+    await flushTasks();
+
+    const entry = settingsMenu.shadowRoot!.querySelector('a[href=\'/glic\']');
+    assertTrue(!!entry);
+    assertFalse(isVisible(entry));
+  });
+
+  test('navigateToGlic', async function() {
+    loadTimeData.overrideValues({showGlicSettings: true});
+    resetRouterForTesting();
+    createSettingsMenu();
+    Router.getInstance().navigateTo(routes.GLIC);
+    await flushTasks();
+
+    const entry = settingsMenu.shadowRoot!.querySelector('a[href=\'/glic\']');
+    assertTrue(!!entry);
+    assertTrue(isVisible(entry));
+
+    const selector = settingsMenu.$.menu;
+    assertTrue(!!selector.selected);
+    assertEquals('/glic', selector.selected.toString());
+  });
+  // </if>
+
   test('pageVisibility', function() {
     function assertPagesHidden(expectedHidden: boolean) {
       const ids = [
@@ -127,7 +146,7 @@ suite('SettingsMenu', function() {
         'defaultBrowser',
         // </if>
         'downloads', 'languages', 'onStartup', 'people', 'reset',
-        // <if expr="not chromeos_ash">
+        // <if expr="not is_chromeos">
         'system',
         // </if>
       ];
@@ -162,5 +181,29 @@ suite('SettingsMenu', function() {
 
     // Now, the menu items should be hidden.
     assertPagesHidden(true);
+  });
+
+  test('aiPageMenuClick', async function() {
+    loadTimeData.overrideValues({
+      showAdvancedFeaturesMainControl: true,
+      enableAiSettingsPageRefresh: true,
+    });
+    resetRouterForTesting();
+    createSettingsMenu();
+    await flushTasks();
+
+    const entry =
+        settingsMenu.shadowRoot!.querySelector<HTMLElement>('a[href=\'/ai\']');
+    assertTrue(!!entry);
+    assertTrue(isVisible(entry));
+
+    // Ensure UMA is logged.
+    entry.click();
+    assertEquals(
+        'SettingsMenu_AiPageEntryPointClicked',
+        await metricsBrowserProxy.whenCalled('recordAction'));
+
+    await microtasksFinished();
+    assertEquals(routes.AI, Router.getInstance().getCurrentRoute());
   });
 });

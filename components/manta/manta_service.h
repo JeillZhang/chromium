@@ -6,14 +6,13 @@
 #define COMPONENTS_MANTA_MANTA_SERVICE_H_
 
 #include <memory>
+#include <string>
 
 #include "base/component_export.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
-#include "build/chromeos_buildflags.h"
+#include "base/version_info/channel.h"
 #include "components/keyed_service/core/keyed_service.h"
-#include "components/manta/sparky/sparky_delegate.h"
-#include "components/manta/sparky/system_info_delegate.h"
 
 namespace signin {
 class IdentityManager;
@@ -33,8 +32,9 @@ enum class FeatureSupportStatus {
 class AnchovyProvider;
 class MahiProvider;
 class OrcaProvider;
+class ScannerProvider;
 class SnapperProvider;
-class SparkyProvider;
+class WalrusProvider;
 
 // The MantaService class is a KeyedService for the Chrome/ChromeOS Manta
 // project. It serves two main functions:
@@ -50,6 +50,7 @@ class COMPONENT_EXPORT(MANTA) MantaService : public KeyedService {
       bool is_demo_mode,
       bool is_otr_profile,
       const std::string& chrome_version,
+      version_info::Channel chrome_channel,
       const std::string& locale);
 
   MantaService(const MantaService&) = delete;
@@ -62,14 +63,15 @@ class COMPONENT_EXPORT(MANTA) MantaService : public KeyedService {
   // is called.
   std::unique_ptr<AnchovyProvider> CreateAnchovyProvider();
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  std::unique_ptr<MahiProvider> CreateMahiProvider();
+#if BUILDFLAG(IS_CHROMEOS)
+  // Virtual for testing.
+  virtual std::unique_ptr<MahiProvider> CreateMahiProvider();
+  virtual std::unique_ptr<WalrusProvider> CreateWalrusProvider();
+
   std::unique_ptr<OrcaProvider> CreateOrcaProvider();
+  std::unique_ptr<ScannerProvider> CreateScannerProvider();
   virtual std::unique_ptr<SnapperProvider> CreateSnapperProvider();
-  std::unique_ptr<SparkyProvider> CreateSparkyProvider(
-      std::unique_ptr<SparkyDelegate> sparky_delegate,
-      std::unique_ptr<SystemInfoDelegate> system_info_delegate);
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
   // Determines whether the profile for this KeyedService support Orca feature.
   FeatureSupportStatus SupportsOrca();
@@ -87,9 +89,21 @@ class COMPONENT_EXPORT(MANTA) MantaService : public KeyedService {
  private:
   scoped_refptr<network::SharedURLLoaderFactory> shared_url_loader_factory_;
   raw_ptr<signin::IdentityManager> identity_manager_;
+
+  // A particular provider needs some of these attributes as its
+  // ProviderParams, e.g. FooProvider may want to use API key for requests
+  // on demo mode, and doesn't need version and local info, its
+  // ProviderParams is created as
+  // {.use_api_key = is_demo_mode_,
+  //  .chrome_version = std::string(),
+  //  .chrome_channel = chrome_channel_,
+  //  .locale = std::string()};
+  // Fields like version, channel and locale passed to a provider can be sent to
+  // the server.
   const bool is_demo_mode_;
   const bool is_otr_profile_;
   const std::string chrome_version_;
+  const version_info::Channel chrome_channel_;
   const std::string locale_;
 };
 

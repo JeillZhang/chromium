@@ -30,7 +30,6 @@
 
 #include "third_party/blink/renderer/core/svg/svg_geometry_element.h"
 
-#include "third_party/blink/renderer/core/css/style_change_reason.h"
 #include "third_party/blink/renderer/core/layout/svg/layout_svg_path.h"
 #include "third_party/blink/renderer/core/layout/svg/layout_svg_shape.h"
 #include "third_party/blink/renderer/core/layout/svg/svg_layout_support.h"
@@ -49,7 +48,7 @@ class SVGAnimatedPathLength final : public SVGAnimatedNumber {
                           svg_names::kPathLengthAttr,
                           MakeGarbageCollected<SVGNumber>()) {}
 
-  SVGParsingError AttributeChanged(const AtomicString& value) override {
+  SVGParsingError AttributeChanged(const String& value) override {
     SVGParsingError parse_status = SVGAnimatedNumber::AttributeChanged(value);
     if (parse_status == SVGParseStatus::kNoError && BaseValue()->Value() < 0)
       parse_status = SVGParseStatus::kNegativeValue;
@@ -67,7 +66,6 @@ void SVGGeometryElement::SvgAttributeChanged(
     const SvgAttributeChangedParams& params) {
   const QualifiedName& attr_name = params.name;
   if (attr_name == svg_names::kPathLengthAttr) {
-    SVGElement::InvalidationGuard invalidation_guard(this);
     if (LayoutObject* layout_object = GetLayoutObject())
       MarkForLayoutAndParentResourceInvalidation(*layout_object);
     return;
@@ -232,15 +230,12 @@ float SVGGeometryElement::PathLengthScaleFactor(float computed_path_length,
 }
 
 void SVGGeometryElement::GeometryPresentationAttributeChanged(
-    const QualifiedName& attr_name) {
-  InvalidateSVGPresentationAttributeStyle();
-  SetNeedsStyleRecalc(kLocalStyleChange,
-                      StyleChangeReasonForTracing::FromAttribute(attr_name));
+    const SVGAnimatedPropertyBase& property) {
+  UpdatePresentationAttributeStyle(property);
   GeometryAttributeChanged();
 }
 
 void SVGGeometryElement::GeometryAttributeChanged() {
-  SVGElement::InvalidationGuard invalidation_guard(this);
   if (auto* layout_object = To<LayoutSVGShape>(GetLayoutObject())) {
     layout_object->SetNeedsShapeUpdate();
     MarkForLayoutAndParentResourceInvalidation(*layout_object);

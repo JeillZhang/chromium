@@ -12,18 +12,18 @@
 #include <wrl/client.h>
 
 #include <array>
-#include <map>
 #include <string>
 #include <vector>
 
 #include "base/component_export.h"
-#include "base/gtest_prod_util.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/observer_list.h"
+#include "base/timer/elapsed_timer.h"
 #include "base/win/atl.h"
+#include "third_party/abseil-cpp/absl/cleanup/cleanup.h"
 #include "third_party/iaccessible2/ia2_api_all.h"
 #include "ui/accessibility/ax_enums.mojom-forward.h"
-#include "ui/accessibility/ax_text_utils.h"
 #include "ui/accessibility/platform/ax_platform_node_base.h"
 #include "ui/accessibility/platform/ax_platform_text_boundary.h"
 #include "ui/accessibility/platform/ichromeaccessible.h"
@@ -43,6 +43,8 @@ const GUID GUID_IAccessibleContentDocument = {
 // IMPORTANT!
 // These values are written to logs.  Do not renumber or delete
 // existing items; add new entries to the end of the list.
+//
+// LINT.IfChange
 enum {
   UMA_API_ACC_DO_DEFAULT_ACTION = 0,
   UMA_API_ACC_HIT_TEST = 1,
@@ -305,6 +307,7 @@ enum {
   // increase, but none of the other enum values may change.
   UMA_API_MAX
 };
+// LINT.ThenChange(/tools/metrics/histograms/metadata/accessibility/enums.xml:AccessibilityWinAPIEnum)
 
 #define WIN_ACCESSIBILITY_API_HISTOGRAM(enum_value) \
   UMA_HISTOGRAM_ENUMERATION("Accessibility.WinAPIs", enum_value, UMA_API_MAX)
@@ -313,24 +316,20 @@ enum {
   SCOPED_UMA_HISTOGRAM_TIMER_MICROS(                     \
       "Accessibility.Performance.WinAPIs." #enum_value)
 
-#define StringForSource_WebContents "WebContents."
-#define StringForSource_Views "Views."
-
-#define WIN_ACCESSIBILITY_SOURCE_API_PERF_HISTOGRAM(api_enum)                  \
-  if (GetDelegate() && GetDelegate()->node()) {                                \
-    if (!GetDelegate()->node()->IsView()) {                                    \
-      SCOPED_UMA_HISTOGRAM_TIMER_MICROS(                                       \
-          "Accessibility.Performance."                                         \
-          "WinAPIs." StringForSource_WebContents #api_enum);                   \
-    } else {                                                                   \
-      SCOPED_UMA_HISTOGRAM_TIMER_MICROS(                                       \
-          "Accessibility.Performance."                                         \
-          "WinAPIs." StringForSource_Views #api_enum);                         \
-    }                                                                          \
-  } else {                                                                     \
-    SCOPED_UMA_HISTOGRAM_TIMER_MICROS(                                         \
-        "Accessibility.Performance.WinAPIs." StringForSource_Views #api_enum); \
-  }
+// Macro to record performance metrics for Windows Accessibility APIs.
+#define WIN_ACCESSIBILITY_SOURCE_API_PERF_HISTOGRAM(enum_value)          \
+  DCHECK(GetDelegate());                                                 \
+  absl::Cleanup record_metric =                                          \
+      [node = (GetDelegate() ? GetDelegate()->node() : nullptr),         \
+       timer = base::ElapsedTimer()] {                                   \
+        base::UmaHistogramMicrosecondsTimes(                             \
+            node && !node->IsView()                                      \
+                ? std::string_view("Accessibility.Performance.WinAPIs2." \
+                                   "WebContents." #enum_value)           \
+                : std::string_view("Accessibility.Performance.WinAPIs2." \
+                                   "View." #enum_value),                 \
+            timer.Elapsed());                                            \
+      }
 
 //
 // Macros to use at the top of any AXPlatformNodeWin (or derived class) method
@@ -378,7 +377,6 @@ class COMPONENT_EXPORT(AX_PLATFORM) WinAccessibilityAPIUsageObserver {
   virtual void OnAccNameCalled() = 0;
   virtual void OnBasicUIAutomationUsed() = 0;
   virtual void OnAdvancedUIAutomationUsed() = 0;
-  virtual void OnUIAutomationIdRequested() = 0;
   virtual void OnProbableUIAutomationScreenReaderDetected() = 0;
   virtual void OnTextPatternRequested() = 0;
   virtual void StartFiringUIAEvents() = 0;
@@ -499,8 +497,10 @@ class COMPONENT_EXPORT(AX_PLATFORM) __declspec(
   // consumer.
   virtual void OnReferenced();
 
-  // Invoked when the instance is fully dereferenced. This generally means that
-  // an accessibility consumer has released its last reference to the instance.
+  // Invoked when the instance loses its last reference before being disposed.
+  // This generally means that an accessibility consumer has released its last
+  // reference to the instance. This method will not be called if external
+  // references are held when the instance is disposed.
   virtual void OnDereferenced();
 
   //

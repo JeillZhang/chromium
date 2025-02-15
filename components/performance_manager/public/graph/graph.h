@@ -11,7 +11,10 @@
 
 #include "base/dcheck_is_on.h"
 #include "base/memory/ptr_util.h"
+#include "base/memory/raw_ptr.h"
 #include "base/observer_list_types.h"
+#include "base/scoped_observation_traits.h"
+#include "base/sequence_checker.h"
 #include "components/performance_manager/public/graph/node_set_view.h"
 
 namespace ukm {
@@ -24,7 +27,6 @@ class GraphOwned;
 class GraphRegistered;
 class FrameNode;
 class FrameNodeObserver;
-class InitializingFrameNodeObserver;
 class NodeDataDescriberRegistry;
 class PageNode;
 class PageNodeObserver;
@@ -145,14 +147,6 @@ class Graph {
   virtual bool IsOnGraphSequence() const = 0;
 #endif
 
-  // Adds/removes a special type of FrameNodeObserver that needs to initialize
-  // a property on frame nodes before other observers are notified of their
-  // existence. This should be used sparingly.
-  virtual void AddInitializingFrameNodeObserver(
-      InitializingFrameNodeObserver* frame_node_observer) = 0;
-  virtual void RemoveInitializingFrameNodeObserver(
-      InitializingFrameNodeObserver* frame_node_observer) = 0;
-
  private:
   // Retrieves the object with the given |type_id|, returning nullptr if none
   // exists. Clients must use the GetRegisteredObjectAs wrapper instead.
@@ -182,6 +176,32 @@ class GraphOwned {
   // Called when the object is removed from the graph, either via an explicit
   // call to Graph::TakeFromGraph, or prior to the Graph being destroyed.
   virtual void OnTakenFromGraph(Graph* graph) = 0;
+
+  // Returns a pointer to the owning Graph. The will return nullptr before
+  // OnPassedToGraph() and after OnTakenFromGraph(), and a valid pointer at all
+  // other times.
+  Graph* GetOwningGraph() const;
+
+ private:
+  // GraphImpl is allowed to call PassToGraphImpl and TakeFromGraphImpl.
+  friend class GraphImpl;
+
+  // GraphOwnedAndRegistered overrides PassToGraphImpl and TakeFromGraphImpl.
+  template <typename SelfType>
+  friend class GraphOwnedAndRegistered;
+
+  // Only friends can override these. The default implementations just call
+  // OnPassedToGraph() and OnTakenFromGraph(). Helper classes like
+  // GraphOwnedAndRegistered can override these to add actions, while their
+  // subclasses continue to override OnPassedToGraph and OnTakenFromGraph
+  // without having to remember to call the inherited methods.
+  virtual void PassToGraphImpl(Graph* graph);
+  virtual void TakeFromGraphImpl(Graph* graph);
+
+  SEQUENCE_CHECKER(sequence_checker_);
+
+  // Pointer back to the owning graph.
+  raw_ptr<Graph> graph_ GUARDED_BY_CONTEXT(sequence_checker_) = nullptr;
 };
 
 // A default implementation of GraphOwned.
@@ -200,5 +220,81 @@ class GraphOwnedDefaultImpl : public GraphOwned {
 };
 
 }  // namespace performance_manager
+
+namespace base {
+
+// Specialize ScopedObservation to invoke the correct add and remove methods for
+// each node observer type. These must be in the same namespace as
+// base::ScopedObservationTraits.
+
+template <>
+struct ScopedObservationTraits<performance_manager::Graph,
+                               performance_manager::FrameNodeObserver> {
+  static void AddObserver(performance_manager::Graph* graph,
+                          performance_manager::FrameNodeObserver* observer) {
+    graph->AddFrameNodeObserver(observer);
+  }
+  static void RemoveObserver(performance_manager::Graph* graph,
+                             performance_manager::FrameNodeObserver* observer) {
+    graph->RemoveFrameNodeObserver(observer);
+  }
+};
+
+template <>
+struct ScopedObservationTraits<performance_manager::Graph,
+                               performance_manager::PageNodeObserver> {
+  static void AddObserver(performance_manager::Graph* graph,
+                          performance_manager::PageNodeObserver* observer) {
+    graph->AddPageNodeObserver(observer);
+  }
+  static void RemoveObserver(performance_manager::Graph* graph,
+                             performance_manager::PageNodeObserver* observer) {
+    graph->RemovePageNodeObserver(observer);
+  }
+};
+
+template <>
+struct ScopedObservationTraits<performance_manager::Graph,
+                               performance_manager::ProcessNodeObserver> {
+  static void AddObserver(performance_manager::Graph* graph,
+                          performance_manager::ProcessNodeObserver* observer) {
+    graph->AddProcessNodeObserver(observer);
+  }
+  static void RemoveObserver(
+      performance_manager::Graph* graph,
+      performance_manager::ProcessNodeObserver* observer) {
+    graph->RemoveProcessNodeObserver(observer);
+  }
+};
+
+template <>
+struct ScopedObservationTraits<performance_manager::Graph,
+                               performance_manager::SystemNodeObserver> {
+  static void AddObserver(performance_manager::Graph* graph,
+                          performance_manager::SystemNodeObserver* observer) {
+    graph->AddSystemNodeObserver(observer);
+  }
+  static void RemoveObserver(
+      performance_manager::Graph* graph,
+      performance_manager::SystemNodeObserver* observer) {
+    graph->RemoveSystemNodeObserver(observer);
+  }
+};
+
+template <>
+struct ScopedObservationTraits<performance_manager::Graph,
+                               performance_manager::WorkerNodeObserver> {
+  static void AddObserver(performance_manager::Graph* graph,
+                          performance_manager::WorkerNodeObserver* observer) {
+    graph->AddWorkerNodeObserver(observer);
+  }
+  static void RemoveObserver(
+      performance_manager::Graph* graph,
+      performance_manager::WorkerNodeObserver* observer) {
+    graph->RemoveWorkerNodeObserver(observer);
+  }
+};
+
+}  // namespace base
 
 #endif  // COMPONENTS_PERFORMANCE_MANAGER_PUBLIC_GRAPH_GRAPH_H_

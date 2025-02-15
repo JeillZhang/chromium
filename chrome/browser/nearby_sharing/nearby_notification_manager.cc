@@ -39,6 +39,7 @@
 #include "chrome/browser/ui/ash/holding_space/holding_space_keyed_service_factory.h"
 #include "chrome/browser/ui/settings_window_manager_chromeos.h"
 #include "chrome/grit/generated_resources.h"
+#include "chromeos/ash/services/nearby/public/mojom/nearby_share_settings.mojom.h"
 #include "components/cross_device/logging/logging.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/browser_thread.h"
@@ -449,8 +450,7 @@ class ConnectionRequestNotificationDelegate
         manager_->RejectTransfer();
         break;
       default:
-        NOTREACHED_IN_MIGRATION();
-        break;
+        NOTREACHED();
     }
   }
 
@@ -555,8 +555,7 @@ class SuccessNotificationDelegate : public NearbyNotificationDelegate {
             CopyTextToClipboard();
             break;
           default:
-            NOTREACHED_IN_MIGRATION();
-            break;
+            NOTREACHED();
         }
         break;
       case NearbyNotificationManager::ReceivedContentType::kSingleImage:
@@ -572,8 +571,7 @@ class SuccessNotificationDelegate : public NearbyNotificationDelegate {
             CopyImageToClipboard();
             break;
           default:
-            NOTREACHED_IN_MIGRATION();
-            break;
+            NOTREACHED();
         }
         break;
       case NearbyNotificationManager::ReceivedContentType::kFiles:
@@ -683,8 +681,7 @@ class NearbyDeviceTryingToShareNotificationDelegate
             /*did_click_dismiss=*/true);
         break;
       default:
-        NOTREACHED_IN_MIGRATION();
-        break;
+        NOTREACHED();
     }
   }
 
@@ -721,8 +718,7 @@ class NearbyVisibilityReminderNotificationDelegate
         manager_->OnNearbyVisibilityReminderDismissed();
         break;
       default:
-        NOTREACHED_IN_MIGRATION();
-        break;
+        NOTREACHED();
     }
   }
 
@@ -1205,7 +1201,7 @@ void NearbyNotificationManager::ShowCancelled(const ShareTarget& share_target) {
 
   notification.set_title(base::ReplaceStringPlaceholders(
       l10n_util::GetStringUTF16(IDS_NEARBY_NOTIFICATION_SENDER_CANCELLED),
-      {base::UTF8ToUTF16(share_target.device_name)}, /*offsets=*/nullptr));
+      base::UTF8ToUTF16(share_target.device_name), nullptr));
 
   delegate_map_.erase(notification_id);
 

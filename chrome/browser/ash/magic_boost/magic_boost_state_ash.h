@@ -13,6 +13,10 @@
 
 namespace ash {
 
+namespace input_method {
+class EditorPanelManager;
+}  // namespace input_method
+
 class SessionController;
 class Shell;
 
@@ -29,15 +33,32 @@ class MagicBoostStateAsh : public chromeos::MagicBoostState,
   ~MagicBoostStateAsh() override;
 
   // MagicBoostState:
+  bool IsMagicBoostAvailable() override;
+  bool CanShowNoticeBannerForHMR() override;
   int32_t AsyncIncrementHMRConsentWindowDismissCount() override;
   void AsyncWriteConsentStatus(
       chromeos::HMRConsentStatus consent_status) override;
+  void AsyncWriteHMREnabled(bool enabled) override;
+  void ShouldIncludeOrcaInOptIn(
+      base::OnceCallback<void(bool)> callback) override;
+  void DisableOrcaFeature() override;
+  void DisableLobsterSettings() override;
+
+  // Virtual for testing.
+  virtual void EnableOrcaFeature();
+
+  input_method::EditorPanelManager* GetEditorPanelManager();
+
+  void set_editor_panel_manager_for_test(
+      input_method::EditorPanelManager* editor_manager) {
+    editor_manager_for_test_ = editor_manager;
+  }
 
  private:
   friend class MagicBoostStateAshTest;
 
   // ash::SessionObserver:
-  void OnFirstSessionStarted() override;
+  void OnActiveUserPrefServiceChanged(PrefService* pref_service) override;
 
   // ash::ShellObserver:
   void OnShellDestroying() override;
@@ -46,6 +67,8 @@ class MagicBoostStateAsh : public chromeos::MagicBoostState,
   void RegisterPrefChanges(PrefService* pref_service);
 
   // Called when the related preferences are updated from the pref service.
+  void OnMagicBoostEnabledUpdated();
+  void OnHMREnabledUpdated();
   void OnHMRConsentStatusUpdated();
   void OnHMRConsentWindowDismissCountUpdated();
 
@@ -54,6 +77,8 @@ class MagicBoostStateAsh : public chromeos::MagicBoostState,
 
   base::ScopedObservation<ash::SessionController, ash::SessionObserver>
       session_observation_{this};
+
+  raw_ptr<input_method::EditorPanelManager> editor_manager_for_test_ = nullptr;
 
   base::ScopedObservation<ash::Shell, ash::ShellObserver> shell_observation_{
       this};

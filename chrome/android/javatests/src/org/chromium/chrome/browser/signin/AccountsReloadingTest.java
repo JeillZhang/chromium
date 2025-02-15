@@ -15,6 +15,7 @@ import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
 
 import org.chromium.base.Callback;
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.CriteriaHelper;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
@@ -24,10 +25,8 @@ import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.chrome.test.util.browser.signin.SigninTestRule;
 import org.chromium.chrome.test.util.browser.signin.SigninTestUtil;
-import org.chromium.chrome.test.util.browser.sync.SyncTestUtil;
 import org.chromium.components.signin.base.CoreAccountInfo;
 import org.chromium.components.signin.identitymanager.IdentityManager;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
 
 import java.util.Arrays;
 import java.util.Collections;
@@ -73,7 +72,7 @@ public class AccountsReloadingTest {
     @Before
     public void setUp() {
         mActivityTestRule.startMainActivityOnBlankPage();
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mIdentityManager =
                             IdentityServicesProvider.get()
@@ -94,31 +93,12 @@ public class AccountsReloadingTest {
     @Test
     @MediumTest
     public void testRefreshTokenUpdateWhenDefaultAccountSignsinWithoutSync() {
-        final CoreAccountInfo account1 = mSigninTestRule.addAccountAndWaitForSeeding(TEST_EMAIL1);
-        final CoreAccountInfo account2 = mSigninTestRule.addAccountAndWaitForSeeding(TEST_EMAIL2);
+        final CoreAccountInfo account1 = mSigninTestRule.addAccount(TEST_EMAIL1);
+        final CoreAccountInfo account2 = mSigninTestRule.addAccount(TEST_EMAIL2);
         CriteriaHelper.pollUiThread(() -> mObserver.mCallCount == 0);
         Assert.assertEquals(Collections.emptySet(), mObserver.mAccountsUpdated);
 
         SigninTestUtil.signin(account1);
-
-        CriteriaHelper.pollUiThread(
-                () -> mObserver.mCallCount == 2,
-                "Refresh token should only be updated when user signs in. "
-                        + "Adding account when user is signed out shouldn't trigger refresh "
-                        + "token update.");
-        Assert.assertEquals(
-                new HashSet<>(Arrays.asList(account1, account2)), mObserver.mAccountsUpdated);
-    }
-
-    @Test
-    @MediumTest
-    public void testRefreshTokenUpdateWhenDefaultAccountSignsinWithSync() {
-        final CoreAccountInfo account1 = mSigninTestRule.addAccountAndWaitForSeeding(TEST_EMAIL1);
-        final CoreAccountInfo account2 = mSigninTestRule.addAccountAndWaitForSeeding(TEST_EMAIL2);
-        CriteriaHelper.pollUiThread(() -> mObserver.mCallCount == 0);
-        Assert.assertEquals(Collections.emptySet(), mObserver.mAccountsUpdated);
-        SigninTestUtil.signinAndEnableSync(
-                account1, SyncTestUtil.getSyncServiceForLastUsedProfile());
 
         CriteriaHelper.pollUiThread(
                 () -> mObserver.mCallCount == 2,
@@ -173,7 +153,7 @@ public class AccountsReloadingTest {
         Assert.assertEquals(new HashSet<>(Arrays.asList(account1)), mObserver.mAccountsUpdated);
         mObserver.mAccountsUpdated.clear();
 
-        final CoreAccountInfo account2 = mSigninTestRule.addAccountAndWaitForSeeding(TEST_EMAIL2);
+        final CoreAccountInfo account2 = mSigninTestRule.addAccount(TEST_EMAIL2);
 
         CriteriaHelper.pollUiThread(
                 () -> mObserver.mCallCount == 3,
@@ -192,7 +172,7 @@ public class AccountsReloadingTest {
         Assert.assertEquals(new HashSet<>(Arrays.asList(account1)), mObserver.mAccountsUpdated);
         mObserver.mAccountsUpdated.clear();
 
-        final CoreAccountInfo account2 = mSigninTestRule.addAccountAndWaitForSeeding(TEST_EMAIL2);
+        final CoreAccountInfo account2 = mSigninTestRule.addAccount(TEST_EMAIL2);
 
         CriteriaHelper.pollUiThread(
                 () -> mObserver.mCallCount == 3,

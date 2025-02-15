@@ -4,6 +4,7 @@
 
 #include "components/trusted_vault/trusted_vault_connection_impl.h"
 
+#include <algorithm>
 #include <string>
 #include <utility>
 
@@ -84,7 +85,7 @@ trusted_vault_pb::SharedMemberKey CreateSharedMemberKey(
 }
 
 trusted_vault_pb::SharedMemberKey CreateSharedMemberKey(
-    const PrecomputedMemberKeys& precomputed) {
+    const MemberKeys& precomputed) {
   trusted_vault_pb::SharedMemberKey shared_member_key;
   shared_member_key.set_epoch(precomputed.version);
 
@@ -93,6 +94,30 @@ trusted_vault_pb::SharedMemberKey CreateSharedMemberKey(
   AssignBytesToProtoString(precomputed.proof,
                            shared_member_key.mutable_member_proof());
   return shared_member_key;
+}
+
+trusted_vault_pb::PhysicalDeviceMetadata::DeviceType
+GetLocalPhysicalDeviceType() {
+  // Note that some of the below are unreachable in practice as this code isn't
+  // currently used or even built on all platforms.
+#if BUILDFLAG(IS_CHROMEOS)
+  return trusted_vault_pb::PhysicalDeviceMetadata::DEVICE_TYPE_CHROMEOS;
+#elif BUILDFLAG(IS_LINUX)
+  return trusted_vault_pb::PhysicalDeviceMetadata::DEVICE_TYPE_LINUX;
+#elif BUILDFLAG(IS_ANDROID)
+  return trusted_vault_pb::PhysicalDeviceMetadata::DEVICE_TYPE_ANDROID;
+#elif BUILDFLAG(IS_IOS)
+  return trusted_vault_pb::PhysicalDeviceMetadata::DEVICE_TYPE_IOS;
+#elif BUILDFLAG(IS_MAC)
+  return trusted_vault_pb::PhysicalDeviceMetadata::DEVICE_TYPE_MAC_OS;
+#elif BUILDFLAG(IS_WIN)
+  return trusted_vault_pb::PhysicalDeviceMetadata::DEVICE_TYPE_WINDOWS;
+#elif BUILDFLAG(IS_FUCHSIA)
+  // Not used in Fuchsia.
+  return trusted_vault_pb::PhysicalDeviceMetadata::DEVICE_TYPE_UNKNOWN;
+#else
+#error Please handle your new device OS here.
+#endif
 }
 
 trusted_vault_pb::SecurityDomainMember CreateSecurityDomainMember(
@@ -114,9 +139,14 @@ trusted_vault_pb::SecurityDomainMember CreateSecurityDomainMember(
 
   absl::visit(
       base::Overloaded{
-          [&member](const PhysicalDevice&) {
+          [&member](const LocalPhysicalDevice&) {
             member.set_member_type(trusted_vault_pb::SecurityDomainMember::
                                        MEMBER_TYPE_PHYSICAL_DEVICE);
+            auto* member_metadata = member.mutable_member_metadata();
+            auto* physical_device_metadata =
+                member_metadata->mutable_physical_device_metadata();
+            physical_device_metadata->set_device_type(
+                GetLocalPhysicalDeviceType());
           },
           [&member](const LockScreenKnowledgeFactor&) {
             member.set_member_type(trusted_vault_pb::SecurityDomainMember::
@@ -125,8 +155,8 @@ trusted_vault_pb::SecurityDomainMember CreateSecurityDomainMember(
           [&member](const UnspecifiedAuthenticationFactorType&) {
             member.set_member_type(trusted_vault_pb::SecurityDomainMember::
                                        MEMBER_TYPE_UNSPECIFIED);
-            // The type hint field is in the request protobuf, not the security
-            // domain member, and so is set in
+            // The type hint field is in the request protobuf, not the
+            // security domain member, and so is set in
             // `CreateJoinSecurityDomainsRequest`.
           },
           [&member](const GpmPinMetadata& gpm_pin_metadata) {
@@ -159,7 +189,7 @@ void AddSharedMemberKeysFromSource(
                   trusted_vault_key_and_version, public_key);
             }
           },
-          [request](const PrecomputedMemberKeys& precomputed) {
+          [request](const MemberKeys& precomputed) {
             *request->add_shared_member_key() =
                 CreateSharedMemberKey(precomputed);
           }},
@@ -325,13 +355,15 @@ class DownloadAuthenticationFactorsRegistrationStateRequest
       scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
       std::unique_ptr<TrustedVaultAccessTokenFetcher> access_token_fetcher,
       TrustedVaultConnection::
-          DownloadAuthenticationFactorsRegistrationStateCallback callback)
+          DownloadAuthenticationFactorsRegistrationStateCallback callback,
+      base::RepeatingClosure keep_alive_callback)
       : security_domain_(security_domain),
         base_url_(request_url),
         account_id_(account_id),
         url_loader_factory_(std::move(url_loader_factory)),
         access_token_fetcher_(std::move(access_token_fetcher)),
-        callback_(std::move(callback)) {
+        callback_(std::move(callback)),
+        keep_alive_callback_(std::move(keep_alive_callback)) {
     result_.state =
         DownloadAuthenticationFactorsRegistrationStateResult::State::kEmpty;
     StartOrContinueRequest();
@@ -340,7 +372,7 @@ class DownloadAuthenticationFactorsRegistrationStateRequest
  private:
   void StartOrContinueRequest(const std::string* next_page_token = nullptr) {
     request_ = std::make_unique<TrustedVaultRequest>(
-        account_id_, TrustedVaultRequest::HttpMethod::kGet,
+        security_domain_, account_id_, TrustedVaultRequest::HttpMethod::kGet,
         next_page_token ? net::AppendQueryParameter(base_url_, "page_token",
                                                     *next_page_token)
                         : base_url_,
@@ -423,9 +455,28 @@ class DownloadAuthenticationFactorsRegistrationStateRequest
         std::unique_ptr<SecureBoxPublicKey> public_key =
             SecureBoxPublicKey::CreateByImport(
                 ProtoStringToBytes(member.public_key()));
-        if (public_key) {
-          result_.icloud_keys.push_back(std::move(public_key));
+        if (!public_key) {
+          continue;
         }
+        const auto& membership = std::ranges::find_if(
+            member.memberships(),
+            [&security_domain_name](const auto& membership) {
+              return membership.security_domain() == security_domain_name;
+            });
+        CHECK(membership != member.memberships().end())
+            << "iCloud member should have been tested for membership above";
+        std::vector<MemberKeys> member_keys;
+        std::ranges::transform(
+            membership->keys(), std::back_inserter(member_keys),
+            [](const auto& key) {
+              return MemberKeys(key.epoch(),
+                                std::vector<uint8_t>(key.wrapped_key().begin(),
+                                                     key.wrapped_key().end()),
+                                std::vector<uint8_t>(key.member_proof().begin(),
+                                                     key.member_proof().end()));
+            });
+        result_.icloud_keys.emplace_back(std::move(public_key),
+                                         std::move(member_keys));
       } else if (member.member_type() ==
                      trusted_vault_pb::SecurityDomainMember::
                          MEMBER_TYPE_LOCKSCREEN_KNOWLEDGE_FACTOR &&
@@ -437,6 +488,9 @@ class DownloadAuthenticationFactorsRegistrationStateRequest
 
     if (!response.next_page_token().empty()) {
       StartOrContinueRequest(&response.next_page_token());
+      if (keep_alive_callback_) {
+        keep_alive_callback_.Run();
+      }
       return;
     }
 
@@ -458,6 +512,7 @@ class DownloadAuthenticationFactorsRegistrationStateRequest
   const std::unique_ptr<TrustedVaultAccessTokenFetcher> access_token_fetcher_;
   TrustedVaultConnection::DownloadAuthenticationFactorsRegistrationStateCallback
       callback_;
+  base::RepeatingClosure keep_alive_callback_;
   std::unique_ptr<TrustedVaultRequest> request_;
   DownloadAuthenticationFactorsRegistrationStateResult result_;
 };
@@ -467,7 +522,7 @@ GetURLFetchReasonForUMAForJoinSecurityDomainsRequest(
     AuthenticationFactorType authentication_factor_type) {
   return absl::visit(
       base::Overloaded{
-          [](const PhysicalDevice&) {
+          [](const LocalPhysicalDevice&) {
             return TrustedVaultURLFetchReasonForUMA::kRegisterDevice;
           },
           [](const LockScreenKnowledgeFactor&) {
@@ -536,12 +591,13 @@ TrustedVaultConnectionImpl::RegisterAuthenticationFactor(
 }
 
 std::unique_ptr<TrustedVaultConnection::Request>
-TrustedVaultConnectionImpl::RegisterDeviceWithoutKeys(
+TrustedVaultConnectionImpl::RegisterLocalDeviceWithoutKeys(
     const CoreAccountInfo& account_info,
     const SecureBoxPublicKey& device_public_key,
     RegisterAuthenticationFactorCallback callback) {
   return SendJoinSecurityDomainsRequest(
-      account_info, ConstantKeySource(), device_public_key, PhysicalDevice(),
+      account_info, ConstantKeySource(), device_public_key,
+      LocalPhysicalDevice(),
       base::BindOnce(&RunRegisterAuthenticationFactorCallback,
                      std::move(callback)));
 }
@@ -555,7 +611,8 @@ TrustedVaultConnectionImpl::DownloadNewKeys(
   // TODO(crbug.com/40255601): consider retries for keys downloading after
   // initial failure returned to the upper layers.
   auto request = std::make_unique<TrustedVaultRequest>(
-      account_info.account_id, TrustedVaultRequest::HttpMethod::kGet,
+      security_domain_, account_info.account_id,
+      TrustedVaultRequest::HttpMethod::kGet,
       GetGetSecurityDomainMemberURL(
           trusted_vault_service_url_,
           device_key_pair->public_key().ExportToBytes()),
@@ -581,7 +638,8 @@ TrustedVaultConnectionImpl::DownloadIsRecoverabilityDegraded(
     const CoreAccountInfo& account_info,
     IsRecoverabilityDegradedCallback callback) {
   auto request = std::make_unique<TrustedVaultRequest>(
-      account_info.account_id, TrustedVaultRequest::HttpMethod::kGet,
+      security_domain_, account_info.account_id,
+      TrustedVaultRequest::HttpMethod::kGet,
       GetGetSecurityDomainURL(trusted_vault_service_url_, security_domain_),
       /*serialized_request_proto=*/std::nullopt,
       /*max_retry_duration=*/base::Seconds(0), GetOrCreateURLLoaderFactory(),
@@ -599,13 +657,15 @@ TrustedVaultConnectionImpl::DownloadIsRecoverabilityDegraded(
 std::unique_ptr<TrustedVaultConnection::Request>
 TrustedVaultConnectionImpl::DownloadAuthenticationFactorsRegistrationState(
     const CoreAccountInfo& account_info,
-    DownloadAuthenticationFactorsRegistrationStateCallback callback) {
+    DownloadAuthenticationFactorsRegistrationStateCallback callback,
+    base::RepeatingClosure keep_alive_callback) {
   return std::make_unique<
       DownloadAuthenticationFactorsRegistrationStateRequest>(
       security_domain_,
       GetGetSecurityDomainMembersURL(trusted_vault_service_url_),
       account_info.account_id, GetOrCreateURLLoaderFactory(),
-      access_token_fetcher_->Clone(), std::move(callback));
+      access_token_fetcher_->Clone(), std::move(callback),
+      std::move(keep_alive_callback));
 }
 
 std::unique_ptr<TrustedVaultConnection::Request>
@@ -616,7 +676,8 @@ TrustedVaultConnectionImpl::SendJoinSecurityDomainsRequest(
     AuthenticationFactorType authentication_factor_type,
     JoinSecurityDomainsCallback callback) {
   auto request = std::make_unique<TrustedVaultRequest>(
-      account_info.account_id, TrustedVaultRequest::HttpMethod::kPost,
+      security_domain_, account_info.account_id,
+      TrustedVaultRequest::HttpMethod::kPost,
       GetJoinSecurityDomainURL(trusted_vault_service_url_, security_domain_),
       /*serialized_request_proto=*/
       CreateJoinSecurityDomainsRequest(security_domain_, member_keys_source,

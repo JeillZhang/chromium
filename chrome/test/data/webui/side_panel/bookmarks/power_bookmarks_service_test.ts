@@ -4,9 +4,10 @@
 
 import 'chrome://bookmarks-side-panel.top-chrome/power_bookmarks_list.js';
 
+import type {BookmarkProductInfo} from '//resources/cr_components/commerce/shared.mojom-webui.js';
 import {BookmarksApiProxyImpl} from 'chrome://bookmarks-side-panel.top-chrome/bookmarks_api_proxy.js';
 import {PowerBookmarksService} from 'chrome://bookmarks-side-panel.top-chrome/power_bookmarks_service.js';
-import {BrowserProxyImpl as ShoppingServiceApiProxyImpl} from 'chrome://resources/cr_components/commerce/browser_proxy.js';
+import {ShoppingServiceBrowserProxyImpl} from 'chrome://resources/cr_components/commerce/shopping_service_browser_proxy.js';
 import {PageImageServiceBrowserProxy} from 'chrome://resources/cr_components/page_image_service/browser_proxy.js';
 import {PageImageServiceHandlerRemote} from 'chrome://resources/cr_components/page_image_service/page_image_service.mojom-webui.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
@@ -21,9 +22,31 @@ import {TestBookmarksApiProxy} from './test_bookmarks_api_proxy.js';
 import {TestPowerBookmarksDelegate} from './test_power_bookmarks_delegate.js';
 
 class ServiceTestPowerBookmarksDelegate extends TestPowerBookmarksDelegate {
-  override isPriceTracked(bookmark: chrome.bookmarks.BookmarkTreeNode) {
-    this.methodCalled('isPriceTracked', bookmark);
-    return bookmark.id === '3';
+  override getTrackedProductInfos() {
+    const productInfo = {
+      title: 'Sample Product',
+      clusterTitle: 'Sample Cluster',
+      domain: 'sampledomain.com',
+      imageUrl: {url: 'http://example.com/sample.jpg'},
+      productUrl: {url: 'http://example.com/sample-product'},
+      currentPrice: '29.99',
+      previousPrice: '39.99',
+      clusterId: BigInt(1),
+      categoryLabels: ['electronics', 'gadgets'],
+      price: '29.99',
+      rating: '4.5',
+      description: 'This is a sample product description.',
+      priceSummary: '',
+    };
+
+    const bookmarkProductInfo: BookmarkProductInfo = {
+      bookmarkId: BigInt(3),
+      info: productInfo,
+    };
+    this.methodCalled('getTrackedProductInfos');
+
+    const trackedProductInfos = {'3': bookmarkProductInfo};
+    return trackedProductInfos;
   }
 }
 
@@ -175,7 +198,7 @@ suite('SidePanelPowerBookmarksServiceTest', () => {
     BookmarksApiProxyImpl.setInstance(bookmarksApi);
 
     shoppingServiceApi = new TestShoppingServiceApiProxy();
-    ShoppingServiceApiProxyImpl.setInstance(shoppingServiceApi);
+    ShoppingServiceBrowserProxyImpl.setInstance(shoppingServiceApi);
 
     const pluralString = new TestPluralStringProxy();
     PluralStringProxyImpl.setInstance(pluralString);
@@ -325,7 +348,7 @@ suite('SidePanelPowerBookmarksServiceTest', () => {
     assertEquals(delegate.getCallCount('onBookmarkChanged'), 1);
   });
 
-  test('CallsOnBookmarkCreated', async () => {
+  test('CallsOnBookmarkCreated', () => {
     bookmarksApi.callbackRouter.onCreated.callListeners('999', {
       id: '999',
       title: 'New bookmark',

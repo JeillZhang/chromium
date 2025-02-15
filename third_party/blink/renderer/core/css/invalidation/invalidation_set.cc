@@ -34,6 +34,7 @@
 #include <utility>
 
 #include "base/memory/values_equivalent.h"
+#include "third_party/blink/renderer/core/css/invalidation/invalidation_tracing_flag.h"
 #include "third_party/blink/renderer/core/css/resolver/style_resolver.h"
 #include "third_party/blink/renderer/core/dom/element.h"
 #include "third_party/blink/renderer/core/inspector/inspector_trace_events.h"
@@ -61,19 +62,11 @@ bool BackingEqual(const InvalidationSet::BackingFlags& a_flags,
   return true;
 }
 
-const unsigned char* GetCachedTracingFlags() {
-  DEFINE_STATIC_LOCAL(
-      const unsigned char*, tracing_enabled,
-      (TRACE_EVENT_API_GET_CATEGORY_GROUP_ENABLED(TRACE_DISABLED_BY_DEFAULT(
-          "devtools.timeline.invalidationTracking"))));
-  return tracing_enabled;
-}
-
 }  // namespace
 
 #define TRACE_STYLE_INVALIDATOR_INVALIDATION_SELECTORPART_IF_ENABLED( \
     element, reason, invalidationSet, singleSelectorPart)             \
-  if (UNLIKELY(*GetCachedTracingFlags()))                             \
+  if (InvalidationTracingFlag::IsEnabled()) [[unlikely]]              \
     TRACE_STYLE_INVALIDATOR_INVALIDATION_SELECTORPART(                \
         element, reason, invalidationSet, singleSelectorPart);
 
@@ -213,6 +206,10 @@ void InvalidationSet::Combine(const InvalidationSet& other) {
     }
   }
 
+  if (other.InvalidatesNth()) {
+    SetInvalidatesNth();
+  }
+
   if (other.InvalidatesSelf()) {
     SetInvalidatesSelf();
     if (other.IsSelfInvalidationSet()) {
@@ -269,6 +266,7 @@ void InvalidationSet::Combine(const InvalidationSet& other) {
 }
 
 void InvalidationSet::Destroy() const {
+  InvalidationSetToSelectorMap::RemoveEntriesForInvalidationSet(this);
   if (auto* invalidation_set = DynamicTo<DescendantInvalidationSet>(this)) {
     delete invalidation_set;
   } else {
@@ -332,9 +330,6 @@ void InvalidationSet::AddClass(const AtomicString& class_name) {
     return;
   }
   CHECK(!class_name.empty());
-  InvalidationSetToSelectorMap::RecordInvalidationSetEntry(
-      this, InvalidationSetToSelectorMap::SelectorFeatureType::kClass,
-      class_name);
   classes_.Add(backing_flags_, class_name);
 }
 
@@ -343,8 +338,6 @@ void InvalidationSet::AddId(const AtomicString& id) {
     return;
   }
   CHECK(!id.empty());
-  InvalidationSetToSelectorMap::RecordInvalidationSetEntry(
-      this, InvalidationSetToSelectorMap::SelectorFeatureType::kId, id);
   ids_.Add(backing_flags_, id);
 }
 
@@ -353,9 +346,6 @@ void InvalidationSet::AddTagName(const AtomicString& tag_name) {
     return;
   }
   CHECK(!tag_name.empty());
-  InvalidationSetToSelectorMap::RecordInvalidationSetEntry(
-      this, InvalidationSetToSelectorMap::SelectorFeatureType::kTagName,
-      tag_name);
   tag_names_.Add(backing_flags_, tag_name);
 }
 
@@ -364,9 +354,6 @@ void InvalidationSet::AddAttribute(const AtomicString& attribute) {
     return;
   }
   CHECK(!attribute.empty());
-  InvalidationSetToSelectorMap::RecordInvalidationSetEntry(
-      this, InvalidationSetToSelectorMap::SelectorFeatureType::kAttribute,
-      attribute);
   attributes_.Add(backing_flags_, attribute);
 }
 
@@ -375,9 +362,6 @@ void InvalidationSet::SetWholeSubtreeInvalid() {
     return;
   }
 
-  InvalidationSetToSelectorMap::RecordInvalidationSetEntry(
-      this, InvalidationSetToSelectorMap::SelectorFeatureType::kWholeSubtree,
-      g_empty_atom);
   invalidation_flags_.SetWholeSubtreeInvalid(true);
   invalidation_flags_.SetInvalidateCustomPseudo(false);
   invalidation_flags_.SetTreeBoundaryCrossing(false);
@@ -512,6 +496,7 @@ String InvalidationSet::ToString() const {
 
   StringBuilder metadata;
   metadata.Append(InvalidatesSelf() ? "$" : "");
+  metadata.Append(InvalidatesNth() ? "N" : "");
   metadata.Append(invalidation_flags_.WholeSubtreeInvalid() ? "W" : "");
   metadata.Append(invalidation_flags_.InvalidateCustomPseudo() ? "C" : "");
   metadata.Append(invalidation_flags_.TreeBoundaryCrossing() ? "T" : "");

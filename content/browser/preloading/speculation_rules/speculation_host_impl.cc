@@ -94,19 +94,17 @@ void SpeculationHostImpl::OnLCPPredicted() {
   preloading_decider->OnLCPPredicted();
 }
 
-void SpeculationHostImpl::EnableNoVarySearchSupport() {
-  auto* prefetch_document_manager =
-      PrefetchDocumentManager::GetOrCreateForCurrentDocument(
-          &render_frame_host());
-  CHECK(prefetch_document_manager);
-  prefetch_document_manager->EnableNoVarySearchSupportFromOriginTrial();
-}
-
 void SpeculationHostImpl::InitiatePreview(const GURL& url) {
   if (!base::FeatureList::IsEnabled(blink::features::kLinkPreview)) {
     mojo::ReportBadMessage("SH_PREVIEW");
     return;
   }
+
+  // Link Preview is not allowed in a frame with untrusted network disabled.
+  if (render_frame_host().IsUntrustedNetworkDisabled()) {
+    return;
+  }
+
   WebContents* web_contents =
       WebContents::FromRenderFrameHost(&render_frame_host());
   CHECK(web_contents);

@@ -11,13 +11,13 @@
 #import "components/prefs/pref_member.h"
 #import "components/strings/grit/components_strings.h"
 #import "components/translate/core/browser/translate_pref_names.h"
+#import "ios/chrome/browser/browser_container/ui_bundled/browser_edit_menu_utils.h"
+#import "ios/chrome/browser/browser_container/ui_bundled/edit_menu_alert_delegate.h"
+#import "ios/chrome/browser/fullscreen/ui_bundled/fullscreen_controller.h"
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_list.h"
 #import "ios/chrome/browser/shared/public/commands/browser_coordinator_commands.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/shared/ui/symbols/symbols.h"
-#import "ios/chrome/browser/ui/browser_container/browser_edit_menu_utils.h"
-#import "ios/chrome/browser/ui/browser_container/edit_menu_alert_delegate.h"
-#import "ios/chrome/browser/ui/fullscreen/fullscreen_controller.h"
 #import "ios/chrome/browser/web_selection/model/web_selection_response.h"
 #import "ios/chrome/browser/web_selection/model/web_selection_tab_helper.h"
 #import "ios/chrome/grit/ios_strings.h"
@@ -114,7 +114,7 @@ const NSUInteger kPartialTranslateCharactersLimit = 1000;
                          prefService:(PrefService*)prefs
                 fullscreenController:(FullscreenController*)fullscreenController
                            incognito:(BOOL)incognito {
-  if (self = [super init]) {
+  if ((self = [super init])) {
     DCHECK(webStateList);
     DCHECK(baseViewController);
     _webStateList = webStateList->AsWeakPtr();
@@ -132,7 +132,6 @@ const NSUInteger kPartialTranslateCharactersLimit = 1000;
 }
 
 - (void)handlePartialTranslateSelection {
-  DCHECK(base::FeatureList::IsEnabled(kIOSEditMenuPartialTranslate));
   WebSelectionTabHelper* tabHelper = [self webSelectionTabHelper];
   if (!tabHelper) {
     return;
@@ -145,7 +144,6 @@ const NSUInteger kPartialTranslateCharactersLimit = 1000;
 }
 
 - (BOOL)canHandlePartialTranslateSelection {
-  DCHECK(base::FeatureList::IsEnabled(kIOSEditMenuPartialTranslate));
   WebSelectionTabHelper* tabHelper = [self webSelectionTabHelper];
   if (!tabHelper) {
     return NO;
@@ -157,15 +155,6 @@ const NSUInteger kPartialTranslateCharactersLimit = 1000;
 - (BOOL)shouldInstallPartialTranslate {
   if (ios::provider::PartialTranslateLimitMaxCharacters() == 0u) {
     // Feature is not available.
-    return NO;
-  }
-  if (!IsPartialTranslateEnabled()) {
-    // Feature is not enabled.
-    return NO;
-  }
-  if (self.incognito && !ShouldShowPartialTranslateInIncognito()) {
-    // Feature is enabled, but disabled in incognito, and the current tab is in
-    // incognito.
     return NO;
   }
   if (!_translateEnabled.GetValue() && _translateEnabled.IsManaged()) {

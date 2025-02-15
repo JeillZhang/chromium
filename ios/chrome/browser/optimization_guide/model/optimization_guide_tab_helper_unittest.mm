@@ -16,8 +16,9 @@
 #import "ios/chrome/browser/optimization_guide/model/optimization_guide_service.h"
 #import "ios/chrome/browser/optimization_guide/model/optimization_guide_service_factory.h"
 #import "ios/chrome/browser/optimization_guide/model/optimization_guide_test_utils.h"
-#import "ios/chrome/browser/shared/model/browser_state/chrome_browser_state.h"
-#import "ios/chrome/browser/shared/model/browser_state/test_chrome_browser_state.h"
+#import "ios/chrome/browser/shared/model/profile/profile_ios.h"
+#import "ios/chrome/browser/shared/model/profile/test/test_profile_ios.h"
+#import "ios/chrome/test/ios_chrome_scoped_testing_local_state.h"
 #import "ios/web/public/test/fakes/fake_navigation_context.h"
 #import "ios/web/public/test/fakes/fake_web_state.h"
 #import "testing/gmock/include/gmock/gmock.h"
@@ -106,20 +107,18 @@ class OptimizationGuideTabHelperTest : public PlatformTest {
     scoped_feature_list_.InitWithFeatures(
         {optimization_guide::features::kOptimizationHints}, {});
 
-    TestChromeBrowserState::Builder builder;
+    TestProfileIOS::Builder builder;
     builder.AddTestingFactory(
         OptimizationGuideServiceFactory::GetInstance(),
         OptimizationGuideServiceFactory::GetDefaultFactory());
-    browser_state_ = builder.Build();
+    profile_ = std::move(builder).Build();
     optimization_guide_service_ =
-        OptimizationGuideServiceFactory::GetForBrowserState(
-            browser_state_.get());
+        OptimizationGuideServiceFactory::GetForProfile(profile_.get());
     optimization_guide_service_->DoFinalInit();
 
-    web_state_.SetBrowserState(browser_state_.get());
+    web_state_.SetBrowserState(profile_.get());
     optimization_guide_service_ =
-        OptimizationGuideServiceFactory::GetForBrowserState(
-            browser_state_.get());
+        OptimizationGuideServiceFactory::GetForProfile(profile_.get());
 
     OptimizationGuideTabHelper::CreateForWebState(&web_state_);
 
@@ -131,10 +130,11 @@ class OptimizationGuideTabHelperTest : public PlatformTest {
   void RunUntilIdle() { base::RunLoop().RunUntilIdle(); }
 
  protected:
+  IOSChromeScopedTestingLocalState scoped_testing_local_state_;
   base::test::TaskEnvironment task_environment_;
   base::test::ScopedFeatureList scoped_feature_list_;
   base::HistogramTester histogram_tester_;
-  std::unique_ptr<TestChromeBrowserState> browser_state_;
+  std::unique_ptr<TestProfileIOS> profile_;
   raw_ptr<OptimizationGuideService> optimization_guide_service_;
   web::FakeWebState web_state_;
 };

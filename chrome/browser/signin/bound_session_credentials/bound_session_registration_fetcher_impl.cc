@@ -2,12 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #include "chrome/browser/signin/bound_session_credentials/bound_session_registration_fetcher_impl.h"
 
 #include <string_view>
 
 #include "base/base64.h"
 #include "base/containers/span.h"
+#include "base/containers/to_vector.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/metrics/histogram_functions.h"
@@ -73,15 +79,17 @@ void BoundSessionRegistrationFetcherImpl::Start(
   CHECK(!registration_token_helper_);
   registration_duration_.emplace();  // Starts the timer.
   callback_ = std::move(callback);
+  registration_token_helper_ = std::make_unique<RegistrationTokenHelper>(
+      key_service_.get(),
+      base::ToVector(registration_params_.supported_algos()));
   // base::Unretained() is safe since `this` owns
   // `registration_token_helper_`.
-  registration_token_helper_ = RegistrationTokenHelper::CreateForSessionBinding(
-      key_service_.get(), registration_params_.challenge(),
+  registration_token_helper_->GenerateForSessionBinding(
+      registration_params_.challenge(),
       registration_params_.registration_endpoint(),
       base::BindOnce(
           &BoundSessionRegistrationFetcherImpl::OnRegistrationTokenCreated,
           base::Unretained(this), base::ElapsedTimer()));
-  registration_token_helper_->Start();
 }
 
 void BoundSessionRegistrationFetcherImpl::OnURLLoaderComplete(
@@ -133,7 +141,8 @@ void BoundSessionRegistrationFetcherImpl::OnURLLoaderComplete(
       std::move(params_or_error).value();
   params.set_site(
       net::SchemefulSite(registration_params_.registration_endpoint())
-          .Serialize());
+          .GetURL()
+          .spec());
   params.set_wrapped_key(wrapped_key_str_);
   *params.mutable_creation_time() =
       bound_session_credentials::TimeToTimestamp(base::Time::Now());
@@ -284,7 +293,7 @@ BoundSessionRegistrationFetcherImpl::ParseJsonResponse(
   std::string* session_id = maybe_root->FindString(kSessionIdentifier);
   base::Value::List* credentials_list = maybe_root->FindList(kCredentials);
   std::string* refresh_url = maybe_root->FindString(kRefreshUrl);
-  if (!session_id || !credentials_list) {
+  if (!session_id || !credentials_list || !refresh_url) {
     // Incorrect registration params.
     return base::unexpected(RegistrationError::kRequiredFieldMissing);
   }
@@ -302,16 +311,13 @@ BoundSessionRegistrationFetcherImpl::ParseJsonResponse(
     *params.add_credentials() = std::move(credential);
   }
 
-  // The refresh URL is optional, with fallback to a hardcoded URL. If a value
-  // is provided, it must be a correct, same-site URL.
-  if (refresh_url) {
-    GURL refresh_endpoint = bound_session_credentials::ResolveEndpointPath(
-        request_url, *refresh_url);
-    if (!refresh_endpoint.is_valid()) {
-      return base::unexpected(RegistrationError::kInvalidSessionParams);
-    }
-    params.set_refresh_url(refresh_endpoint.spec());
+  // The refresh URL must be a correct, same-site URL.
+  GURL refresh_endpoint =
+      bound_session_credentials::ResolveEndpointPath(request_url, *refresh_url);
+  if (!refresh_endpoint.is_valid()) {
+    return base::unexpected(RegistrationError::kInvalidSessionParams);
   }
+  params.set_refresh_url(refresh_endpoint.spec());
 
   return params;
 }

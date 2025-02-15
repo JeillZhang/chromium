@@ -36,7 +36,7 @@ public class PaymentAppService implements PaymentAppFactoryInterface {
      * @param factory The factory to add.
      */
     public void addFactory(PaymentAppFactoryInterface factory) {
-        String id = UNTRACKED_FACTORY_ID_PREFIX + (mIdMax++);
+        String id = UNTRACKED_FACTORY_ID_PREFIX + mIdMax++;
         mFactories.put(id, factory);
     }
 
@@ -149,6 +149,16 @@ public class PaymentAppService implements PaymentAppFactoryInterface {
         @Override
         public CSPChecker getCSPChecker() {
             return mDelegate.getCSPChecker();
+        }
+
+        @Override
+        public DialogController getDialogController() {
+            return mDelegate.getDialogController();
+        }
+
+        @Override
+        public AndroidIntentLauncher getAndroidIntentLauncher() {
+            return mDelegate.getAndroidIntentLauncher();
         }
     }
 

@@ -5,9 +5,9 @@
 import {assert} from 'chrome://resources/js/assert.js';
 
 import {DestinationProviderComposite} from '../data/destination_provider_composite.js';
-import {FakePrintPreviewPageHandler} from '../fakes/fake_print_preview_page_handler.js';
+import {PrintPreviewPageHandlerComposite} from '../data/print_preview_page_handler_composite.js';
 
-import {DestinationProviderCompositeInterface, type PrintPreviewPageHandler} from './print_preview_cros_app_types.js';
+import type {DestinationProviderCompositeInterface, PrintPreviewPageHandlerCompositeInterface} from './print_preview_cros_app_types.js';
 
 /**
  * @fileoverview
@@ -16,13 +16,15 @@ import {DestinationProviderCompositeInterface, type PrintPreviewPageHandler} fro
  */
 
 let useFakeProviders: boolean = false;
-let printPreviewPageHandler: PrintPreviewPageHandler|null = null;
+let printPreviewPageHandler: PrintPreviewPageHandlerCompositeInterface|null =
+    null;
 let destinationProvider: DestinationProviderCompositeInterface|null = null;
 
 // Returns shared instance of PrintPreviewPageHandler.
-export function getPrintPreviewPageHandler(): PrintPreviewPageHandler {
-  if (printPreviewPageHandler === null && useFakeProviders) {
-    printPreviewPageHandler = new FakePrintPreviewPageHandler();
+export function getPrintPreviewPageHandler():
+    PrintPreviewPageHandlerCompositeInterface {
+  if (printPreviewPageHandler === null) {
+    printPreviewPageHandler = new PrintPreviewPageHandlerComposite();
   }
 
   assert(printPreviewPageHandler);

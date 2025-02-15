@@ -99,7 +99,7 @@ const char kWebViewForceCrashNative[] = "webview-force-crash-native";
 const char kWebViewUseSeparateResourceContext[] =
     "webview-use-separate-resource-context";
 
-// Override and enable features useful for blindauth testing/debugging.
-const char kDebugBlindauth[] = "debug-blindauth";
+// Override and enable features useful for BSA library testing/debugging.
+const char kDebugBsa[] = "debug-bsa";
 
 }  // namespace switches

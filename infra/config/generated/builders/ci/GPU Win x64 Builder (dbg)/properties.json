@@ -80,7 +80,8 @@
           "builder": "gpu-try-win-nvidia-dbg",
           "group": "tryserver.chromium.win"
         }
-      ]
+      ],
+      "targets_spec_directory": "src/infra/config/generated/builders/ci/GPU Win x64 Builder (dbg)/targets"
     }
   },
   "$build/reclient": {
@@ -96,7 +97,7 @@
     "enable_cloud_trace": true,
     "experiments": [],
     "project": "rbe-chromium-trusted",
-    "remote_jobs": 80
+    "remote_jobs": 250
   },
   "$recipe_engine/resultdb/test_presentation": {
     "column_keys": [],

@@ -19,7 +19,7 @@ class OpaqueBrowserFrameViewLayoutDelegate;
 namespace views {
 class Button;
 class Label;
-}
+}  // namespace views
 
 // Calculates the position of the widgets in the opaque browser frame view.
 //
@@ -136,14 +136,10 @@ class OpaqueBrowserFrameViewLayout : public views::LayoutManager {
   // the other overrides.
   gfx::Size GetMinimumSize(const views::View* host) const override;
 
-
  protected:
   // Whether a specific button should be inserted on the leading or trailing
   // side.
-  enum ButtonAlignment {
-    ALIGN_LEADING,
-    ALIGN_TRAILING
-  };
+  enum ButtonAlignment { ALIGN_LEADING, ALIGN_TRAILING };
 
   struct TopAreaPadding {
     int leading;
@@ -237,12 +233,10 @@ class OpaqueBrowserFrameViewLayout : public views::LayoutManager {
   int forced_window_caption_spacing_ = -1;
 
   // Window controls.
-  // These fields are not raw_ptr<> because they are assigned to |auto*| in
-  // ranged loop on an array initializer literal comprising of those pointers.
-  RAW_PTR_EXCLUSION views::Button* minimize_button_ = nullptr;
-  RAW_PTR_EXCLUSION views::Button* maximize_button_ = nullptr;
-  RAW_PTR_EXCLUSION views::Button* restore_button_ = nullptr;
-  RAW_PTR_EXCLUSION views::Button* close_button_ = nullptr;
+  raw_ptr<views::Button> minimize_button_ = nullptr;
+  raw_ptr<views::Button> maximize_button_ = nullptr;
+  raw_ptr<views::Button> restore_button_ = nullptr;
+  raw_ptr<views::Button> close_button_ = nullptr;
 
   raw_ptr<views::View> window_icon_ = nullptr;
   raw_ptr<views::Label, DanglingUntriaged> window_title_ = nullptr;

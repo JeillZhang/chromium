@@ -16,22 +16,19 @@
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/time/time.h"
-#include "build/chromeos_buildflags.h"
+#include "build/build_config.h"
 #include "chromeos/constants/chromeos_features.h"
 #include "device/base/features.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #include <string_view>
 
 #include "ash/constants/ash_features.h"
+#include "ash/constants/ash_pref_names.h"
 #include "ash/constants/ash_switches.h"
 #include "chromeos/ash/services/nearby/public/cpp/nearby_client_uuids.h"
 #include "chromeos/ash/services/secure_channel/public/cpp/shared/ble_constants.h"
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
-
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-#include "chromeos/startup/browser_params_proxy.h"
-#endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 namespace device {
 
@@ -45,6 +42,10 @@ const char kSecurityKeyServiceUUID[] = "FFFD";
 
 constexpr base::TimeDelta kMaxDeviceSelectionDuration = base::Seconds(30);
 constexpr base::TimeDelta kConnectionTimeIntervalThreshold = base::Minutes(15);
+#if BUILDFLAG(IS_CHROMEOS)
+constexpr base::TimeDelta kToastShownCountTimeIntervalThreshold =
+    base::Hours(24);
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 constexpr uint8_t kLimitedDiscoveryFlag = 0x01;
 constexpr uint8_t kGeneralDiscoveryFlag = 0x02;
@@ -55,24 +56,29 @@ BluetoothAdapter::DeviceList GetLimitedNumDevices(
     size_t max_device_num,
     const BluetoothAdapter::DeviceList& devices) {
   // If |max_device_num| is 0, it means there's no limit.
-  if (max_device_num == 0)
+  if (max_device_num == 0) {
     return devices;
+  }
 
   BluetoothAdapter::DeviceList result;
   for (BluetoothDevice* device : devices) {
-    if (result.size() == max_device_num)
+    if (result.size() == max_device_num) {
       break;
+    }
 
-    if (device->IsPaired() || device->IsConnecting())
+    if (device->IsPaired() || device->IsConnecting()) {
       result.push_back(device);
+    }
   }
 
   for (BluetoothDevice* device : devices) {
-    if (result.size() == max_device_num)
+    if (result.size() == max_device_num) {
       break;
+    }
 
-    if (!device->IsPaired() && !device->IsConnecting())
+    if (!device->IsPaired() && !device->IsConnecting()) {
       result.push_back(device);
+    }
   }
 
   return result;
@@ -81,22 +87,17 @@ BluetoothAdapter::DeviceList GetLimitedNumDevices(
 // Filter out unknown devices from the list.
 BluetoothAdapter::DeviceList FilterUnknownDevices(
     const BluetoothAdapter::DeviceList& devices) {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  if (ash::switches::IsUnfilteredBluetoothDevicesEnabled())
-    return devices;
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
-
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-  if (chromeos::BrowserParamsProxy::Get()
-          ->IsUnfilteredBluetoothDeviceEnabled()) {
+#if BUILDFLAG(IS_CHROMEOS)
+  if (ash::switches::IsUnfilteredBluetoothDevicesEnabled()) {
     return devices;
   }
-#endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
   BluetoothAdapter::DeviceList result;
   for (BluetoothDevice* device : devices) {
-    if (device::IsUnsupportedDevice(device))
+    if (device::IsUnsupportedDevice(device)) {
       continue;
+    }
 
     result.push_back(device);
   }
@@ -158,6 +159,64 @@ std::string GetTransportName(BluetoothTransport transport) {
   }
 }
 
+bool IsUserError(std::optional<ConnectionFailureReason> failure_reason) {
+  if (!failure_reason.has_value()) {
+    return false;
+  }
+
+  switch (failure_reason.value()) {
+    case ConnectionFailureReason::kInprogress:
+      [[fallthrough]];
+    case ConnectionFailureReason::kNotFound:
+      [[fallthrough]];
+    case ConnectionFailureReason::kAuthCanceled:
+      return true;
+    case ConnectionFailureReason::kAuthRejected:
+      [[fallthrough]];
+    case ConnectionFailureReason::kUnknownError:
+      [[fallthrough]];
+    case ConnectionFailureReason::kAuthFailed:
+      [[fallthrough]];
+    case ConnectionFailureReason::kAuthTimeout:
+      [[fallthrough]];
+    case ConnectionFailureReason::kUnknownConnectionError:
+      [[fallthrough]];
+    case ConnectionFailureReason::kUnsupportedDevice:
+      [[fallthrough]];
+    case ConnectionFailureReason::kNotConnectable:
+      [[fallthrough]];
+    case ConnectionFailureReason::kSystemError:
+      [[fallthrough]];
+    case ConnectionFailureReason::kFailed:
+      [[fallthrough]];
+    case ConnectionFailureReason::kBluetoothDisabled:
+      [[fallthrough]];
+    case ConnectionFailureReason::kDeviceNotReady:
+      [[fallthrough]];
+    case ConnectionFailureReason::kAlreadyConnected:
+      [[fallthrough]];
+    case ConnectionFailureReason::kDeviceAlreadyExists:
+      [[fallthrough]];
+    case ConnectionFailureReason::kInvalidArgs:
+      [[fallthrough]];
+    case ConnectionFailureReason::kNonAuthTimeout:
+      [[fallthrough]];
+    case ConnectionFailureReason::kNoMemory:
+      [[fallthrough]];
+    case ConnectionFailureReason::kJniEnvironment:
+      [[fallthrough]];
+    case ConnectionFailureReason::kJniThreadAttach:
+      [[fallthrough]];
+    case ConnectionFailureReason::kWakelock:
+      [[fallthrough]];
+    case ConnectionFailureReason::kUnexpectedState:
+      [[fallthrough]];
+    case ConnectionFailureReason::kSocketError:
+      return false;
+  }
+  NOTREACHED();
+}
+
 void EmitFilteredFailureReason(ConnectionFailureReason failure_reason,
                                const std::string& transport_name) {
   switch (failure_reason) {
@@ -204,6 +263,10 @@ void EmitFilteredFailureReason(ConnectionFailureReason failure_reason,
     case ConnectionFailureReason::kJniThreadAttach:
       [[fallthrough]];
     case ConnectionFailureReason::kWakelock:
+      [[fallthrough]];
+    case ConnectionFailureReason::kUnexpectedState:
+      [[fallthrough]];
+    case ConnectionFailureReason::kSocketError:
       const std::string result_histogram_name_prefix =
           "Bluetooth.ChromeOS.Pairing.Result";
       base::UmaHistogramEnumeration(
@@ -215,17 +278,21 @@ void EmitFilteredFailureReason(ConnectionFailureReason failure_reason,
                                     failure_reason);
       return;
   }
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-bool IsPolyDevice(const device::BluetoothDevice* device) {
+#if BUILDFLAG(IS_CHROMEOS)
+bool IsNonPhonePolyDevice(const device::BluetoothDevice* device) {
   // OUI portions of Bluetooth addresses for devices manufactured by Poly. See
-  // https://standards-oui.ieee.org/.
-  constexpr auto kPolyOuis = base::MakeFixedFlatSet<std::string_view>(
-      {"64:16:7F", "48:25:67", "00:04:F2"});
+  // https://standards-oui.ieee.org/. This also includes acquisitions by Poly,
+  // namely ViaVideo and PictureTel.
+  // Actually there are still others belonging in this category, but they are
+  // truly phones, e.g. Voyant and Spectralink, so we omit those here.
+  constexpr auto kNonPhonePolyOuis = base::MakeFixedFlatSet<std::string_view>(
+      {"64:16:7F", "48:25:67", "00:04:F2", "00:E0:DB", "00:10:1A"});
 
-  return base::Contains(kPolyOuis, device->GetOuiPortionOfBluetoothAddress());
+  return base::Contains(kNonPhonePolyOuis,
+                        device->GetOuiPortionOfBluetoothAddress());
 }
 #endif
 
@@ -298,8 +365,12 @@ ConnectionFailureReason GetConnectionFailureReason(
       return device::ConnectionFailureReason::kJniThreadAttach;
     case device::BluetoothDevice::ConnectErrorCode::ERROR_WAKELOCK:
       return device::ConnectionFailureReason::kWakelock;
+    case device::BluetoothDevice::ConnectErrorCode::ERROR_UNEXPECTED_STATE:
+      return device::ConnectionFailureReason::kUnexpectedState;
+    case device::BluetoothDevice::ConnectErrorCode::ERROR_SOCKET:
+      return device::ConnectionFailureReason::kSocketError;
     case device::BluetoothDevice::ConnectErrorCode::NUM_CONNECT_ERROR_CODES:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }
 
@@ -314,34 +385,23 @@ device::BluetoothAdapter::DeviceList FilterBluetoothDeviceList(
 }
 
 bool IsUnsupportedDevice(const device::BluetoothDevice* device) {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   if (ash::switches::IsUnfilteredBluetoothDevicesEnabled()) {
     return false;
   }
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-  if (chromeos::BrowserParamsProxy::Get()
-          ->IsUnfilteredBluetoothDeviceEnabled()) {
-    return false;
-  }
-#endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
-
-#if BUILDFLAG(IS_CHROMEOS_ASH)
   // Never filter out Poly devices; this requires a special case since these
   // devices often identify themselves as phones, which are disallowed below.
   // See b/228118615.
-  if (IsPolyDevice(device)) {
+  if (IsNonPhonePolyDevice(device)) {
     return false;
   }
-#endif
 
-#if BUILDFLAG(IS_CHROMEOS)
   // Always allow bonded devices to appear in the UI.
   if (device->IsBonded()) {
     return false;
   }
-#endif
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
   // Always filter out laptops, etc. There is no intended use case or
   // Bluetooth profile in this context.
@@ -351,12 +411,11 @@ bool IsUnsupportedDevice(const device::BluetoothDevice* device) {
 
   // Always filter out phones. There is no intended use case or Bluetooth
   // profile in this context.
-  if (base::FeatureList::IsEnabled(chromeos::features::kBluetoothPhoneFilter) &&
-      device->GetDeviceType() == BluetoothDeviceType::PHONE) {
+  if (device->GetDeviceType() == BluetoothDeviceType::PHONE) {
     return true;
   }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   const BluetoothDevice::UUIDSet& uuids = device->GetUUIDs();
 
   // These UUIDs are specific to Nearby Share and Phone Hub and are used to
@@ -371,9 +430,7 @@ bool IsUnsupportedDevice(const device::BluetoothDevice* device) {
   if (uuids.contains(BluetoothUUID(ash::secure_channel::kGattServerUuid))) {
     return true;
   }
-#endif
-
-#if !BUILDFLAG(IS_CHROMEOS)
+#else
   // Allow paired devices which are not filtered above to appear in the UI.
   if (device->IsPaired()) {
     return false;
@@ -428,10 +485,16 @@ void RecordPairingResult(std::optional<ConnectionFailureReason> failure_reason,
   bool success = !failure_reason.has_value();
   std::string result_histogram_name_prefix =
       "Bluetooth.ChromeOS.Pairing.Result";
+  std::string result_histogram_user_errors_filtered_name =
+      result_histogram_name_prefix + "." + "UserErrorsFiltered2";
 
   base::UmaHistogramBoolean(result_histogram_name_prefix, success);
   base::UmaHistogramBoolean(result_histogram_name_prefix + "." + transport_name,
                             success);
+  if (!IsUserError(failure_reason)) {
+    base::UmaHistogramBoolean(result_histogram_user_errors_filtered_name,
+                              success);
+  }
 
   std::string duration_histogram_name_prefix =
       "Bluetooth.ChromeOS.Pairing.Duration";
@@ -458,6 +521,13 @@ void RecordUserInitiatedReconnectionAttemptResult(
   bool success = !failure_reason.has_value();
   std::string base_histogram_name =
       "Bluetooth.ChromeOS.UserInitiatedReconnectionAttempt.Result";
+  std::string result_histogram_user_errors_filtered_name =
+      base_histogram_name + ".UserErrorsFiltered";
+
+  if (!IsUserError(failure_reason)) {
+    base::UmaHistogramBoolean(result_histogram_user_errors_filtered_name,
+                              success);
+  }
 
   base::UmaHistogramBoolean(base_histogram_name, success);
 
@@ -484,8 +554,9 @@ void RecordDeviceSelectionDuration(base::TimeDelta duration,
   // |kMaxDeviceSelectionDuration|. Assume that these thrown out results reflect
   // the user not being actively engaged with device connection: leaving the
   // page open for a long time, walking away from computer, etc.
-  if (duration > kMaxDeviceSelectionDuration)
+  if (duration > kMaxDeviceSelectionDuration) {
     return;
+  }
 
   std::string base_histogram_name =
       "Bluetooth.ChromeOS.DeviceSelectionDuration";
@@ -593,6 +664,55 @@ void RecordTimeIntervalBetweenConnections(
       time_interval_since_last_connection,
       /*min=*/base::Milliseconds(0),
       /*max=*/kConnectionTimeIntervalThreshold, 100);
+}
+
+#if BUILDFLAG(IS_CHROMEOS)
+void MaybeRecordConnectionToastShownCount(PrefService* local_state_pref,
+                                          bool triggered_by_connect) {
+  bool is_within_24_hrs =
+      base::Time::Now() -
+          local_state_pref->GetTime(ash::prefs::kBluetoothToastCountStartTime) <
+      kToastShownCountTimeIntervalThreshold;
+  int toast_shown_count = local_state_pref->GetInteger(
+      ash::prefs::kBluetoothConnectionToastShownCount);
+
+  if (is_within_24_hrs && triggered_by_connect) {
+    // Increment the count if within 24 hours and it is triggered by connect.
+    local_state_pref->SetInteger(
+        ash::prefs::kBluetoothConnectionToastShownCount, toast_shown_count + 1);
+    return;
+  }
+
+  if (is_within_24_hrs) {
+    // Do nothing since we haven't exceeded the time interval.
+    return;
+  }
+
+  // Emit metric and reset count and timestamp if 24 hours have passed.
+  base::UmaHistogramCounts100(
+      "Bluetooth.ChromeOS.ConnectionToastShownIn24Hours.Count",
+      toast_shown_count);
+  // Reset the count, and update the start time.
+  local_state_pref->SetInteger(ash::prefs::kBluetoothConnectionToastShownCount,
+                               triggered_by_connect ? 1 : 0);
+  local_state_pref->SetTime(ash::prefs::kBluetoothToastCountStartTime,
+                            base::Time::Now().LocalMidnight());
+}
+#endif  // BUILDFLAG(IS_CHROMEOS)
+
+void RecordFlossManagerClientInit(bool success, base::TimeDelta duration) {
+  static constexpr char kSuccessHistogramSuffix[] = "Success";
+  static constexpr char kFailureHistogramSuffix[] = "Failure";
+  std::string success_histogram_name =
+      success ? kSuccessHistogramSuffix : kFailureHistogramSuffix;
+
+  base::UmaHistogramTimes(
+      base::StrCat({"Bluetooth.ChromeOS.FlossManagerClientInit.Duration.",
+                    success_histogram_name}),
+      duration);
+
+  base::UmaHistogramBoolean("Bluetooth.ChromeOS.FlossManagerClientInit.Result",
+                            success);
 }
 
 }  // namespace device

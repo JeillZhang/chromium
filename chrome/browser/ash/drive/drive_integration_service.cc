@@ -31,8 +31,6 @@
 #include "base/time/default_clock.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
-#include "chrome/browser/ash/crosapi/browser_manager.h"
-#include "chrome/browser/ash/crosapi/browser_util.h"
 #include "chrome/browser/ash/drive/file_system_util.h"
 #include "chrome/browser/ash/extensions/file_manager/system_notification_manager.h"
 #include "chrome/browser/ash/file_manager/path_util.h"
@@ -51,13 +49,12 @@
 #include "chrome/common/pref_names.h"
 #include "chromeos/ash/components/drivefs/drivefs_bootstrap.h"
 #include "chromeos/ash/components/drivefs/drivefs_pinning_manager.h"
+#include "chromeos/ash/components/drivefs/drivefs_search_query.h"
 #include "chromeos/ash/components/drivefs/mojom/drivefs.mojom-shared.h"
 #include "chromeos/ash/components/drivefs/mojom/drivefs.mojom.h"
 #include "chromeos/ash/components/drivefs/mojom/notifications.mojom-forward.h"
 #include "chromeos/ash/components/drivefs/mojom/notifications.mojom.h"
-#include "chromeos/components/drivefs/mojom/drivefs_native_messaging.mojom.h"
 #include "chromeos/constants/chromeos_features.h"
-#include "chromeos/crosapi/mojom/drive_integration_service.mojom.h"
 #include "components/drive/drive_api_util.h"
 #include "components/drive/drive_pref_names.h"
 #include "components/drive/file_errors.h"
@@ -77,7 +74,6 @@
 #include "google_apis/gaia/gaia_constants.h"
 #include "mojo/public/cpp/bindings/callback_helpers.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
-#include "mojo/public/cpp/bindings/remote.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "storage/browser/file_system/external_mount_points.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -323,7 +319,7 @@ DriveMountStatus ConvertMountFailure(
     case drivefs::DriveFsHost::MountObserver::MountFailure::kUnknown:
       return DriveMountStatus::kUnknownFailure;
   }
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 void UmaEmitMountStatus(DriveMountStatus status) {
@@ -335,11 +331,13 @@ void UmaEmitMountStatus(DriveMountStatus status) {
 void UmaEmitMountTime(DriveMountStatus status,
                       const base::TimeTicks& time_started) {
   if (status == DriveMountStatus::kSuccess) {
-    UMA_HISTOGRAM_MEDIUM_TIMES("DriveCommon.Lifecycle.MountTime.SuccessTime",
-                               base::TimeTicks::Now() - time_started);
+    DEPRECATED_UMA_HISTOGRAM_MEDIUM_TIMES(
+        "DriveCommon.Lifecycle.MountTime.SuccessTime",
+        base::TimeTicks::Now() - time_started);
   } else {
-    UMA_HISTOGRAM_MEDIUM_TIMES("DriveCommon.Lifecycle.MountTime.FailTime",
-                               base::TimeTicks::Now() - time_started);
+    DEPRECATED_UMA_HISTOGRAM_MEDIUM_TIMES(
+        "DriveCommon.Lifecycle.MountTime.FailTime",
+        base::TimeTicks::Now() - time_started);
   }
 }
 
@@ -356,8 +354,8 @@ void UmaEmitUnmountOutcome(DriveMountStatus status) {
 }
 
 void UmaEmitFirstLaunch(const base::TimeTicks& time_started) {
-  UMA_HISTOGRAM_MEDIUM_TIMES("DriveCommon.Lifecycle.FirstLaunchTime",
-                             base::TimeTicks::Now() - time_started);
+  DEPRECATED_UMA_HISTOGRAM_MEDIUM_TIMES("DriveCommon.Lifecycle.FirstLaunchTime",
+                                        base::TimeTicks::Now() - time_started);
 }
 
 // Clears the cache folder at |cache_path|, but preserve |logs_path|.
@@ -420,7 +418,7 @@ std::optional<PersistedMessage> ConvertNotificationToMessage(
       LOG(ERROR) << "unknown notification received";
       return std::nullopt;
   }
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 std::optional<PersistedMessage> ConvertSyncErrorToMessage(
@@ -493,23 +491,6 @@ class DriveIntegrationService::DriveFsHolder
   DriveFsHolder& operator=(const DriveFsHolder&) = delete;
 
   drivefs::DriveFsHost* drivefs_host() { return &drivefs_host_; }
-
-  void RegisterDriveFsNativeMessageHostBridge(
-      mojo::PendingRemote<crosapi::mojom::DriveFsNativeMessageHostBridge>
-          bridge) {
-    if (native_message_host_bridge_) {
-      // We only accept one registered bridge at a time as it doesn't make sense
-      // for DriveFS to talk to multiple extensions at the same time.
-      return;
-    }
-    native_message_host_bridge_.Bind(std::move(bridge));
-    native_message_host_bridge_.reset_on_disconnect();
-
-    if (pending_connect_to_extension_request_) {
-      std::move(pending_connect_to_extension_request_).Run();
-    }
-    native_message_keep_alive_.reset();
-  }
 
  private:
   // drivefs::DriveFsHost::Delegate:
@@ -595,37 +576,8 @@ class DriveIntegrationService::DriveFsHolder
       mojo::PendingRemote<drivefs::mojom::NativeMessagingHost> host,
       drivefs::mojom::DriveFsDelegate::ConnectToExtensionCallback callback)
       override {
-    if (crosapi::browser_util::IsLacrosEnabled()) {
-      if (!native_message_host_bridge_) {
-        auto* browser_manager = crosapi::BrowserManager::Get();
-        if (!native_message_keep_alive_ && browser_manager) {
-          native_message_keep_alive_ = browser_manager->KeepAlive(
-              crosapi::BrowserManager::Feature::kDriveFsNativeMessaging);
-        }
-
-        // DriveFS only sends one ConnectToExtension request at a time, so if
-        // there is already an existing request, it means that DriveFS has
-        // restarted and we can just drop the previous request.
-        //
-        // Unretained is fine here because this callback is owned and only
-        // called by `this`.
-        pending_connect_to_extension_request_ = base::BindOnce(
-            &DriveFsHolder::ConnectToExtension, base::Unretained(this),
-            std::move(params), std::move(port), std::move(host),
-            mojo::WrapCallbackWithDefaultInvokeIfNotRun(
-                std::move(callback),
-                drivefs::mojom::ExtensionConnectionStatus::kUnknownError));
-        return;
-      }
-      native_message_host_bridge_->ConnectToExtension(
-          std::move(params), std::move(port), std::move(host),
-          mojo::WrapCallbackWithDefaultInvokeIfNotRun(
-              std::move(callback),
-              drivefs::mojom::ExtensionConnectionStatus::kUnknownError));
-    } else {
-      std::move(callback).Run(ConnectToDriveFsNativeMessageExtension(
-          profile_, params->extension_id, std::move(port), std::move(host)));
-    }
+    std::move(callback).Run(ConnectToDriveFsNativeMessageExtension(
+        profile_, params->extension_id, std::move(port), std::move(host)));
   }
 
   const std::string GetMachineRootID() override {
@@ -682,11 +634,6 @@ class DriveIntegrationService::DriveFsHolder
 
   std::string profile_salt_;
 
-  std::unique_ptr<crosapi::BrowserManagerScopedKeepAlive>
-      native_message_keep_alive_;
-  mojo::Remote<crosapi::mojom::DriveFsNativeMessageHostBridge>
-      native_message_host_bridge_;
-  base::OnceClosure pending_connect_to_extension_request_;
   // Notifications/Errors received from DriveFS which requires persistence.
   std::unordered_map<PersistedMessage::Type, std::vector<PersistedMessage>>
       persisted_messages_;
@@ -782,7 +729,7 @@ void DriveIntegrationService::SetEnabled(bool enabled) {
         AddDriveMountPoint();
         return;
     }
-    NOTREACHED_IN_MIGRATION();
+    NOTREACHED();
   } else {
     RemoveDriveMountPoint();
     enabled_ = false;
@@ -1054,8 +1001,7 @@ void DriveIntegrationService::MaybeRemountFileSystem(
 
   if (!remount_delay) {
     if (failed_to_mount && !is_online_) {
-      logger_.Log(logging::LOGGING_WARNING,
-                  "DriveFs failed to start; will retry when online");
+      LOG(WARNING) << "DriveFs failed to start; will retry when online";
       remount_when_online_ = true;
       return;
     }
@@ -1065,8 +1011,7 @@ void DriveIntegrationService::MaybeRemountFileSystem(
     ++drivefs_total_failures_count_;
     if (drivefs_total_failures_count_ > 10) {
       mount_failed_ = true;
-      logger_.Log(logging::LOGGING_ERROR,
-                  "DriveFs is too crashy. Leaving it alone.");
+      LOG(ERROR) << "DriveFs is too crashy. Leaving it alone";
       RecordBulkPinningMountFailureReason(
           profile_, BulkPinningMountFailureReason::kMoreThanTenTotalFailures);
       for (Observer& observer : observers_) {
@@ -1077,8 +1022,7 @@ void DriveIntegrationService::MaybeRemountFileSystem(
     }
     if (drivefs_consecutive_failures_count_ > 3) {
       mount_failed_ = true;
-      logger_.Log(logging::LOGGING_ERROR,
-                  "DriveFs keeps failing at start. Giving up.");
+      LOG(ERROR) << "DriveFs keeps failing at start. Giving up";
       RecordBulkPinningMountFailureReason(
           profile_, BulkPinningMountFailureReason::kThreeConsecutiveFailures);
       for (Observer& observer : observers_) {
@@ -1089,8 +1033,7 @@ void DriveIntegrationService::MaybeRemountFileSystem(
     }
     remount_delay =
         Seconds(5 * (1 << (drivefs_consecutive_failures_count_ - 1)));
-    logger_.Log(logging::LOGGING_WARNING, "DriveFs died, retry in %d seconds",
-                static_cast<int>(remount_delay.value().InSeconds()));
+    LOG(WARNING) << "DriveFs died, retry in " << remount_delay.value();
   }
 
   SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
@@ -1153,7 +1096,10 @@ void DriveIntegrationService::CreateOrDeleteBulkPinningManager() {
 
   pinning_manager_->AddObserver(this);
   pinning_manager_->SetDriveFsHost(GetDriveFsHost());
-  pinning_manager_->SetOnline(is_online_);
+
+  const ConnectionStatus status = util::GetDriveConnectionStatus(profile_);
+  pinning_manager_->SetOnline(status == util::ConnectionStatus::kConnected ||
+                              status == util::ConnectionStatus::kMetered);
 
   OnProgress(pinning_manager_->GetProgress());
   StartOrStopBulkPinning();
@@ -1377,11 +1323,7 @@ void DriveIntegrationService::GetQuickAccessItems(
       base::BindOnce(&DriveIntegrationService::OnGetQuickAccessItems,
                      weak_ptr_factory_.GetWeakPtr(), std::move(callback));
 
-  GetDriveFsHost()->PerformSearch(
-      std::move(query),
-      mojo::WrapCallbackWithDefaultInvokeIfNotRun(
-          std::move(on_response), FILE_ERROR_ABORT,
-          std::optional<std::vector<drivefs::mojom::QueryItemPtr>>()));
+  GetDriveFsHost()->PerformSearch(std::move(query), std::move(on_response));
 }
 
 void DriveIntegrationService::OnGetQuickAccessItems(
@@ -1420,27 +1362,28 @@ void DriveIntegrationService::SearchDriveByFileName(
   drive_query->sort_direction = sort_direction;
   drive_query->query_source = query_source;
 
-  auto on_response = base::BindOnce(
-      &DriveIntegrationService::OnSearchDriveByFileName,
-      weak_ptr_factory_.GetMutableWeakPtr(), std::move(callback));
-
-  GetDriveFsHost()->PerformSearch(
-      std::move(drive_query),
-      mojo::WrapCallbackWithDefaultInvokeIfNotRun(
-          std::move(on_response), FILE_ERROR_ABORT,
-          std::optional<std::vector<drivefs::mojom::QueryItemPtr>>()));
+  GetDriveFsHost()->PerformSearch(std::move(drive_query), std::move(callback));
 }
 
-void DriveIntegrationService::OnSearchDriveByFileName(
-    SearchDriveByFileNameCallback callback,
-    FileError error,
-    std::optional<std::vector<drivefs::mojom::QueryItemPtr>> items) {
-  if (error != FILE_ERROR_OK || !items.has_value()) {
-    std::move(callback).Run(error, {});
-    return;
+std::unique_ptr<drivefs::DriveFsSearchQuery>
+DriveIntegrationService::CreateSearchQueryByFileName(
+    std::string query,
+    int max_results,
+    drivefs::mojom::QueryParameters::SortField sort_field,
+    drivefs::mojom::QueryParameters::SortDirection sort_direction,
+    drivefs::mojom::QueryParameters::QuerySource query_source) const {
+  if (!GetDriveFsHost()) {
+    return nullptr;
   }
 
-  std::move(callback).Run(error, std::move(items.value()));
+  auto drive_query = drivefs::mojom::QueryParameters::New();
+  drive_query->title = query;
+  drive_query->page_size = max_results;
+  drive_query->sort_field = sort_field;
+  drive_query->sort_direction = sort_direction;
+  drive_query->query_source = query_source;
+
+  return GetDriveFsHost()->CreateSearchQuery(std::move(drive_query));
 }
 
 void DriveIntegrationService::OnEnableMirroringStatusUpdate(
@@ -1697,9 +1640,8 @@ void DriveIntegrationService::PollHostedFilePinStates() {
 void DriveIntegrationService::ForceReSyncFile(const base::FilePath& local_path,
                                               base::OnceClosure callback) {
   base::FilePath drive_path;
-  bool is_feature_enabled = ash::features::IsForceReSyncDriveEnabled() &&
-                            chromeos::features::IsUploadOfficeToCloudEnabled();
-  if (!is_feature_enabled || !IsMounted() || !GetDriveFsInterface() ||
+  if (!chromeos::features::IsUploadOfficeToCloudEnabled() || !IsMounted() ||
+      !GetDriveFsInterface() ||
       !GetRelativeDrivePath(local_path, &drive_path)) {
     std::move(callback).Run();
     return;
@@ -1763,12 +1705,6 @@ PinningManager* DriveIntegrationService::GetPinningManager() const {
   return pinning_manager_.get();
 }
 
-void DriveIntegrationService::RegisterDriveFsNativeMessageHostBridge(
-    mojo::PendingRemote<crosapi::mojom::DriveFsNativeMessageHostBridge>
-        bridge) {
-  drivefs_holder_->RegisterDriveFsNativeMessageHostBridge(std::move(bridge));
-}
-
 void DriveIntegrationService::GetDocsOfflineStats(
     DriveFs::GetDocsOfflineStatsCallback callback) {
   if (!IsMounted() || !GetDriveFsInterface()) {
@@ -1804,11 +1740,12 @@ void DriveIntegrationService::GetMirrorSyncStatusForDirectory(
 }
 
 void DriveIntegrationService::OnNetworkChanged() {
-  const ConnectionStatus status = util::GetDriveConnectionStatus(profile_);
-  VLOG(1) << "OnNetworkChanged: " << status;
+  const ConnectionStatus status =
+      util::GetDriveConnectionStatus(profile_, &is_online_);
+  VLOG(1) << "OnNetworkChanged: status=" << status
+          << " is_online_=" << is_online_;
 
   using enum ConnectionStatus;
-  is_online_ = status == kMetered || status == kConnected;
 
   if (DriveFs* const drivefs = GetDriveFsInterface()) {
     const bool pause_syncing = status == kMetered;
@@ -1827,7 +1764,7 @@ void DriveIntegrationService::OnNetworkChanged() {
   }
 
   if (pinning_manager_) {
-    pinning_manager_->SetOnline(is_online_);
+    pinning_manager_->SetOnline(status == kMetered || status == kConnected);
   }
 }
 
@@ -1945,6 +1882,9 @@ DriveIntegrationServiceFactory::DriveIntegrationServiceFactory()
               // TODO(crbug.com/40257657): Check if this service is needed in
               // Guest mode.
               .WithGuest(ProfileSelection::kRedirectedToOriginal)
+              // TODO(crbug.com/41488885): Check if this service is needed for
+              // Ash Internals.
+              .WithAshInternals(ProfileSelection::kRedirectedToOriginal)
               .Build()) {
   DependsOn(IdentityManagerFactory::GetInstance());
   DependsOn(DownloadCoreServiceFactory::GetInstance());

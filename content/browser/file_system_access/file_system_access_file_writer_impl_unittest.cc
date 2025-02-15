@@ -67,6 +67,7 @@ class MockQuarantine : public quarantine::mojom::Quarantine {
   void QuarantineFile(const base::FilePath& full_path,
                       const GURL& source_url,
                       const GURL& referrer_url,
+                      const std::optional<url::Origin>& request_initiator,
                       const std::string& client_guid,
                       QuarantineFileCallback callback) override {
     paths.push_back(full_path);
@@ -395,7 +396,7 @@ class FileSystemAccessFileWriterImplTest : public testing::Test {
   scoped_refptr<FixedFileSystemAccessPermissionGrant> permission_grant_ =
       base::MakeRefCounted<FixedFileSystemAccessPermissionGrant>(
           FixedFileSystemAccessPermissionGrant::PermissionStatus::GRANTED,
-          base::FilePath());
+          PathInfo());
 
   mojo::PendingRemote<blink::mojom::FileSystemAccessFileWriter> remote_;
   base::WeakPtr<FileSystemAccessFileWriterImpl> handle_;

@@ -7,15 +7,14 @@
 
 #include <memory>
 
-#import <Foundation/Foundation.h>
+#include "base/memory/raw_ptr.h"
+#include "base/memory/weak_ptr.h"
+#include "ios/chrome/browser/download/model/download_manager_tab_helper_delegate.h"
+#include "ios/web/public/download/download_task_observer.h"
+#include "ios/web/public/web_state_observer.h"
+#include "ios/web/public/web_state_user_data.h"
 
-#import "base/memory/raw_ptr.h"
-#import "ios/web/public/download/download_task_observer.h"
-#import "ios/web/public/web_state_observer.h"
-#import "ios/web/public/web_state_user_data.h"
-
-@protocol DownloadManagerTabHelperDelegate;
-@protocol SystemIdentity;
+@protocol SnackbarCommands;
 
 namespace web {
 class DownloadTask;
@@ -33,6 +32,15 @@ class DownloadManagerTabHelper
 
   ~DownloadManagerTabHelper() override;
 
+  // Returns whether downloads should be restricted. It checks if downloads
+  // should be restricted based on the download restriction policy for files,
+  // save to drive policy, and incognito.
+  static bool ShouldRestrictDownload(web::WebState* web_state);
+
+  // Returns whether downloads to file should be restricted. It checks if
+  // downloads should be restricted based on the download restriction policy.
+  static bool ShouldRestrictDownloadToFile(web::WebState* web_state);
+
   // Set the current download task for this tab.
   virtual void SetCurrentDownload(std::unique_ptr<web::DownloadTask> task);
 
@@ -45,6 +53,9 @@ class DownloadManagerTabHelper
 
   // Sets the delegate. The tab helper will no-op if the delegate is nil.
   void SetDelegate(id<DownloadManagerTabHelperDelegate> delegate);
+
+  // Sets the snackbar handler.
+  void SetSnackbarHandler(id<SnackbarCommands> snackbar_handler);
 
   // Starts the current download task. Asserts that `task == task_`.
   virtual void StartDownload(web::DownloadTask* task);
@@ -74,10 +85,22 @@ class DownloadManagerTabHelper
   // instructs the delegate that download has started.
   void DidCreateDownload(std::unique_ptr<web::DownloadTask> task);
 
+  // When a new download is started while another is in progress, the delegate
+  // is queried to know how to proceed. This method is passed as callback to
+  // the delegate and is invoked with the decision made by the user.
+  void OnDownloadPolicyDecision(std::unique_ptr<web::DownloadTask> task,
+                                NewDownloadPolicy policy);
+
+  // Displays a snackbar when download is restricted.
+  void ShowRestrictDownloadSnackbar();
+
   raw_ptr<web::WebState> web_state_ = nullptr;
   __weak id<DownloadManagerTabHelperDelegate> delegate_ = nil;
+  __weak id<SnackbarCommands> snackbar_handler_ = nil;
   std::unique_ptr<web::DownloadTask> task_;
   bool delegate_started_ = false;
+
+  base::WeakPtrFactory<DownloadManagerTabHelper> weak_ptr_factory_{this};
 
   WEB_STATE_USER_DATA_KEY_DECL();
 };

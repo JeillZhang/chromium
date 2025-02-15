@@ -61,11 +61,10 @@ class NotificationChannelsBridgeImpl
     JNIEnv* env = AttachCurrentThread();
     ScopedJavaLocalRef<jobject> jchannel =
         Java_NotificationSettingsBridge_createChannel(
-            env, ConvertUTF8ToJavaString(env, origin),
-            timestamp.ToInternalValue(), enabled);
+            env, origin, timestamp.ToInternalValue(), enabled);
     return NotificationChannel(
-        ConvertJavaStringToUTF8(Java_SiteChannel_getId(env, jchannel)),
-        ConvertJavaStringToUTF8(Java_SiteChannel_getOrigin(env, jchannel)),
+        Java_SiteChannel_getId(env, jchannel),
+        Java_SiteChannel_getOrigin(env, jchannel),
         base::Time::FromInternalValue(
             Java_SiteChannel_getTimestamp(env, jchannel)),
         static_cast<NotificationChannelStatus>(
@@ -74,8 +73,7 @@ class NotificationChannelsBridgeImpl
 
   void DeleteChannel(const std::string& origin) override {
     JNIEnv* env = AttachCurrentThread();
-    Java_NotificationSettingsBridge_deleteChannel(
-        env, ConvertUTF8ToJavaString(env, origin));
+    Java_NotificationSettingsBridge_deleteChannel(env, origin);
   }
 
   void GetChannels(NotificationChannelsProviderAndroid::GetChannelsCallback
@@ -108,7 +106,7 @@ ContentSetting ChannelStatusToContentSetting(NotificationChannelStatus status) {
     case NotificationChannelStatus::BLOCKED:
       return CONTENT_SETTING_BLOCK;
     case NotificationChannelStatus::UNAVAILABLE:
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
   }
   return CONTENT_SETTING_DEFAULT;
 }
@@ -145,19 +143,6 @@ class ChannelsRuleIterator : public content_settings::RuleIterator {
   size_t index_ = 0;
 };
 
-// This copies the logic of
-// SearchPermissionsService::IsPermissionControlledByDSE, which cannot be
-// called from this class as it would introduce a circular dependency between
-// the HostContentSettingsMap and the SearchPermissionsService factories.
-bool OriginMatchesDefaultSearchEngine(const GURL& default_search_engine_url,
-                                      const std::string& origin) {
-  if (default_search_engine_url.is_empty()) {
-    return false;
-  }
-
-  return url::IsSameOriginWith(GURL(origin), default_search_engine_url);
-}
-
 }  // anonymous namespace
 
 static void JNI_NotificationSettingsBridge_OnGetSiteChannelsDone(
@@ -166,13 +151,12 @@ static void JNI_NotificationSettingsBridge_OnGetSiteChannelsDone(
     const JavaParamRef<jobjectArray>& j_channels) {
   std::vector<NotificationChannel> channels;
   for (auto jchannel : j_channels.ReadElements<jobject>()) {
-    channels.emplace_back(
-        ConvertJavaStringToUTF8(Java_SiteChannel_getId(env, jchannel)),
-        ConvertJavaStringToUTF8(Java_SiteChannel_getOrigin(env, jchannel)),
-        base::Time::FromInternalValue(
-            Java_SiteChannel_getTimestamp(env, jchannel)),
-        static_cast<NotificationChannelStatus>(
-            Java_SiteChannel_getStatus(env, jchannel)));
+    channels.emplace_back(Java_SiteChannel_getId(env, jchannel),
+                          Java_SiteChannel_getOrigin(env, jchannel),
+                          base::Time::FromInternalValue(
+                              Java_SiteChannel_getTimestamp(env, jchannel)),
+                          static_cast<NotificationChannelStatus>(
+                              Java_SiteChannel_getStatus(env, jchannel)));
   }
 
   // Convert java long long int to c++ pointer, take ownership.
@@ -288,19 +272,16 @@ void NotificationChannelsProviderAndroid::ClearBlockedChannelsIfNecessary(
 void NotificationChannelsProviderAndroid::ClearBlockedChannelsIfNecessaryImpl(
     TemplateURLService* template_url_service,
     const std::vector<NotificationChannel>& channels) {
-  GURL default_search_engine_url;
-  if (template_url_service &&
-      template_url_service->GetDefaultSearchProvider()) {
-    default_search_engine_url =
-        template_url_service->GetDefaultSearchProvider()->GenerateSearchURL(
-            template_url_service->search_terms_data());
+  url::Origin default_search_engine_origin;
+  if (template_url_service) {
+    default_search_engine_origin =
+        template_url_service->GetDefaultSearchProviderOrigin();
   }
 
   for (const NotificationChannel& channel : channels) {
     if (channel.status != NotificationChannelStatus::BLOCKED)
       continue;
-    if (OriginMatchesDefaultSearchEngine(default_search_engine_url,
-                                         channel.origin)) {
+    if (default_search_engine_origin.IsSameOriginWith(GURL(channel.origin))) {
       // Do not clear the DSE permission, as it should always be ALLOW or BLOCK.
       continue;
     }
@@ -418,8 +399,7 @@ void NotificationChannelsProviderAndroid::UpdateChannelForWebsiteImpl(
     }
     default:
       // We rely on notification settings being one of ALLOW/BLOCK/DEFAULT.
-      NOTREACHED_IN_MIGRATION();
-      break;
+      NOTREACHED();
   }
 }
 
@@ -495,7 +475,7 @@ NotificationChannelsProviderAndroid::RenewContentSetting(
 }
 
 void NotificationChannelsProviderAndroid::SetClockForTesting(
-    base::Clock* clock) {
+    const base::Clock* clock) {
   clock_ = clock;
 }
 
@@ -538,8 +518,7 @@ void NotificationChannelsProviderAndroid::CreateChannelForRule(
       break;
     default:
       // We assume notification preferences are either ALLOW/BLOCK.
-      NOTREACHED_IN_MIGRATION();
-      break;
+      NOTREACHED();
   }
 }
 

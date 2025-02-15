@@ -18,8 +18,13 @@ enum ErrorCode : int;
 // If this enum is modified, please also modify the enums in these file:
 // * chrome/browser/ash/policy/remote_commands/crd/crd_remote_command_utils.h:
 //     ExtendedStartCrdSessionResultCode
+// * chrome/browser/ash/policy/remote_commands/crd/crd_remote_command_utils.cc:
+//     ToExtendedStartCrdSessionResultCode, ToStartCrdSessionResultCode
 // * remoting/base/errors.cc: kErrorCodeNames
 // * remoting/host/mojom/desktop_session.mojom: ProtocolErrorCode
+// * remoting/host/mojom/remoting_mojom_traits.h:
+//     EnumTraits<remoting::mojom::ProtocolErrorCode,
+//                ::remoting::protocol::ErrorCode>
 // * tools/metrics/histograms/metadata/enterprise/enums.xml:
 //     EnterpriseCrdSessionResultCode
 //
@@ -48,7 +53,10 @@ enum class ErrorCode {
   LOCATION_AUTHZ_POLICY_CHECK_FAILED = 19,
   UNAUTHORIZED_ACCOUNT = 20,
   REAUTHZ_POLICY_CHECK_FAILED = 21,
-  ERROR_CODE_MAX = REAUTHZ_POLICY_CHECK_FAILED,
+  NO_COMMON_AUTH_METHOD = 22,
+  LOGIN_SCREEN_NOT_SUPPORTED = 23,
+  SESSION_POLICIES_CHANGED = 24,
+  ERROR_CODE_MAX = SESSION_POLICIES_CHANGED,
 };
 
 bool ParseErrorCode(const std::string& name, ErrorCode* result);

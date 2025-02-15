@@ -14,8 +14,7 @@
 #include "base/functional/callback_forward.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
-#include "base/scoped_observation.h"
-#include "chrome/browser/profiles/profile_manager_observer.h"
+#include "base/types/pass_key.h"
 #include "chrome/browser/web_applications/os_integration/os_integration_sub_manager.h"
 #include "chrome/browser/web_applications/os_integration/web_app_file_handler_manager.h"
 #include "chrome/browser/web_applications/os_integration/web_app_protocol_handler_manager.h"
@@ -30,7 +29,6 @@
 #include "components/services/app_service/public/cpp/file_handler.h"
 #include "components/webapps/common/web_app_id.h"
 
-class ProfileManager;
 class Profile;
 class ScopedProfileKeepAlive;
 
@@ -38,6 +36,7 @@ namespace web_app {
 
 class FakeOsIntegrationManager;
 class WebAppProvider;
+class WebAppProfileDeletionManager;
 
 using ShortcutLocationCallback =
     base::OnceCallback<void(ShortcutLocations shortcut_locations)>;
@@ -50,7 +49,7 @@ using GetShortcutInfoCallback =
 // all OS hooks during Web App lifecycle.
 // It contains individual OS integration managers and takes
 // care of inter-dependencies among them.
-class OsIntegrationManager : public ProfileManagerObserver {
+class OsIntegrationManager {
  public:
   using UpdateShortcutsForAllAppsCallback =
       base::RepeatingCallback<void(Profile*, base::OnceClosure)>;
@@ -77,11 +76,11 @@ class OsIntegrationManager : public ProfileManagerObserver {
 
   static base::OnceClosure& OnSetCurrentAppShortcutsVersionCallbackForTesting();
 
-  explicit OsIntegrationManager(
+  OsIntegrationManager(
       Profile* profile,
       std::unique_ptr<WebAppFileHandlerManager> file_handler_manager,
       std::unique_ptr<WebAppProtocolHandlerManager> protocol_handler_manager);
-  ~OsIntegrationManager() override;
+  virtual ~OsIntegrationManager();
 
   // Sets internal WebAppProvider reference and threads it through to all sub
   // managers.
@@ -89,14 +88,10 @@ class OsIntegrationManager : public ProfileManagerObserver {
                            WebAppProvider& provider);
 
   virtual void Start();
-  void Shutdown();
 
   // Start OS Integration synchronization from external callsites. This should
   // be the only point of call into OsIntegrationManager from external places
   // after the OS integration sub managers have been implemented.
-  // TODO(crbug.com/40250591): Remove all install, uninstall and update
-  // functions from this file once all OS Integration sub managers have been
-  // implemented, connected to the web_app system and tested.
   virtual void Synchronize(
       const webapps::AppId& app_id,
       base::OnceClosure callback,
@@ -110,11 +105,19 @@ class OsIntegrationManager : public ProfileManagerObserver {
       std::unique_ptr<ShortcutInfo> shortcut_info);
 
   // Asynchronously gets the information required to create a shortcut for
-  // |app_id| including all the icon bitmaps. Returns nullptr if app_id is
-  // uninstalled or becomes uninstalled during the asynchronous read of icons.
-  // virtual for testing.
-  virtual void GetShortcutInfoForApp(const webapps::AppId& app_id,
-                                     GetShortcutInfoCallback callback);
+  // `app_id` from the WebAppRegistrar along with the icon bitmaps. Do note that
+  // this information is obtained from fields other than the web app's
+  // `current_os_integration_state_` field, so there is still a slight chance
+  // that the information returned from the registrar might not match the web
+  // app's current OS integration state (for example if this API is triggered in
+  // between the registrar being updated and OS integration being completed).
+  //
+  // If ShortcutInfo creation requires using the current OS integration state of
+  // the web_app, prefer calling `web_app::BuildShortcutInfoWithoutFavicon()`
+  // instead.
+  virtual void GetShortcutInfoForAppFromRegistrar(
+      const webapps::AppId& app_id,
+      GetShortcutInfoCallback callback);
 
   // Proxy calls for WebAppFileHandlerManager.
   bool IsFileHandlingAPIAvailable(const webapps::AppId& app_id);
@@ -142,10 +145,11 @@ class OsIntegrationManager : public ProfileManagerObserver {
   void SetForceUnregisterCalledForTesting(
       base::RepeatingCallback<void(const webapps::AppId&)> on_force_unregister);
 
-  // ProfileManagerObserver:
-  void OnProfileMarkedForPermanentDeletion(
-      Profile* profile_to_be_deleted) override;
-  void OnProfileManagerDestroying() override;
+  // If a profile is marked for deletion, remove all OS integration for an app
+  // installed for that profile.
+  void UnregisterOsIntegrationOnProfileMarkedForDeletion(
+      base::PassKey<WebAppProfileDeletionManager>,
+      const webapps::AppId& app_id);
 
  protected:
   WebAppProtocolHandlerManager* protocol_handler_manager() {
@@ -186,11 +190,6 @@ class OsIntegrationManager : public ProfileManagerObserver {
       std::unique_ptr<proto::WebAppOsIntegrationState> desired_states,
       base::OnceClosure callback);
 
-  // If a profile is marked for deletion, remove all OS integration for an app
-  // installed for that profile.
-  void UnregisterOsIntegrationOnProfileMarkedForDeletion(
-      const webapps::AppId& app_id);
-
   // Called when ForceUnregisterOsIntegrationSubManager has finished
   // unregistering sub managers. `keep_alive` is reset to allow the
   // profile to be deleted.
@@ -230,9 +229,6 @@ class OsIntegrationManager : public ProfileManagerObserver {
 
   base::RepeatingCallback<void(const webapps::AppId&)>
       force_unregister_callback_for_testing_ = base::DoNothing();
-
-  base::ScopedObservation<ProfileManager, ProfileManagerObserver>
-      profile_manager_observation_{this};
 
   base::WeakPtrFactory<OsIntegrationManager> weak_ptr_factory_{this};
 };

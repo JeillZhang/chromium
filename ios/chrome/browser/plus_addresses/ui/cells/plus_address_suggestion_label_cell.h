@@ -30,11 +30,16 @@
 // Sets the `trailingButtonImage` (and its tint `tintColor`) that should be
 // displayed at the trailing edge of the cell.
 - (void)setTrailingButtonImage:(UIImage*)trailingButtonImage
-                 withTintColor:(UIColor*)tintColor;
+                 withTintColor:(UIColor*)tintColor
+       accessibilityIdentifier:(NSString*)accessibilityIdentifier;
 
 // Sets the `image` that should be displayed at the leading edge of the cell
 // with a `tintColor`.
 - (void)setLeadingIconImage:(UIImage*)image withTintColor:(UIColor*)tintColor;
+
+// Called to show or hide the activity indicators.
+- (void)showActivityIndicator;
+- (void)hideActivityIndicator;
 
 @end
 

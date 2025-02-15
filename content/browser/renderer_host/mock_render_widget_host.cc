@@ -17,8 +17,8 @@ MockRenderWidgetHost::~MockRenderWidgetHost() {}
 void MockRenderWidgetHost::ExpectForceEnableZoom(bool enable) {
   EXPECT_EQ(enable, render_input_router_->GetForceEnableZoom());
 
-  InputRouterImpl* input_router_impl =
-      static_cast<InputRouterImpl*>(input_router());
+  input::InputRouterImpl* input_router_impl =
+      static_cast<input::InputRouterImpl*>(input_router());
   EXPECT_EQ(enable, input_router_impl->touch_action_filter_.force_enable_zoom_);
 }
 
@@ -49,12 +49,18 @@ std::unique_ptr<MockRenderWidgetHost> MockRenderWidgetHost::Create(
       std::move(pending_blink_widget)));
 }
 
-RenderInputRouter* MockRenderWidgetHost::GetRenderInputRouter() {
+input::RenderInputRouter* MockRenderWidgetHost::GetRenderInputRouter() {
   return render_input_router_.get();
 }
 
 void MockRenderWidgetHost::NotifyNewContentRenderingTimeoutForTesting() {
   new_content_rendering_timeout_fired_ = true;
+}
+
+void MockRenderWidgetHost::RejectPointerLockOrUnlockIfNecessary(
+    blink::mojom::PointerLockResult result) {
+  pointer_lock_rejected_ = true;
+  RenderWidgetHostImpl::RejectPointerLockOrUnlockIfNecessary(result);
 }
 
 MockRenderWidgetHost::MockRenderWidgetHost(
@@ -71,8 +77,7 @@ MockRenderWidgetHost::MockRenderWidgetHost(
                            routing_id,
                            /*hidden=*/false,
                            /*renderer_initiated_creation=*/false,
-                           std::make_unique<FrameTokenMessageQueue>()),
-      new_content_rendering_timeout_fired_(false) {
+                           std::make_unique<FrameTokenMessageQueue>()) {
   SetupMockRenderInputRouter();
   mojo::AssociatedRemote<blink::mojom::WidgetHost> blink_widget_host;
   BindWidgetInterfaces(
@@ -82,7 +87,7 @@ MockRenderWidgetHost::MockRenderWidgetHost(
 
 void MockRenderWidgetHost::SetupMockRenderInputRouter() {
   render_input_router_ = std::make_unique<MockRenderInputRouter>(
-      this, this, MakeFlingScheduler(), this,
+      this, MakeFlingScheduler(), this,
       base::SingleThreadTaskRunner::GetCurrentDefault());
   SetupInputRouter();
 }

@@ -19,16 +19,6 @@ namespace data_sharing {
 // Utility for JNI conversion of the data types used by the service.
 class DataSharingConversionBridge {
  public:
-  // Creates an object of org.chromium.components.data_sharing.GroupMember.
-  static ScopedJavaLocalRef<jobject> CreateJavaGroupMember(
-      JNIEnv* env,
-      const GroupMember& member);
-
-  // Creates an object of org.chromium.components.data_sharing.GroupData.
-  static ScopedJavaLocalRef<jobject> CreateJavaGroupData(
-      JNIEnv* env,
-      const GroupData& result);
-
   // Creates an object of
   // org.chromium.components.data_sharing.DataSharingService.
   //   GroupDataOrFailureOutcome.
@@ -48,6 +38,19 @@ class DataSharingConversionBridge {
   // support primitive type int.
   static ScopedJavaLocalRef<jobject> CreatePeopleGroupActionOutcome(JNIEnv* env,
                                                                     int value);
+
+  // Creates an object of
+  // org.chromium.components.data_sharing.DataSharingService.ParseUrlResult.
+  static ScopedJavaLocalRef<jobject> CreateParseUrlResult(
+      JNIEnv* env,
+      const DataSharingService::ParseUrlResult& data);
+
+  // Creates an object of
+  // org.chromium.components.data_sharing.DataSharingService.
+  //   SharedDataPreviewOrFailureOutcome.
+  static ScopedJavaLocalRef<jobject> CreateSharedDataPreviewOrFailureOutcome(
+      JNIEnv* env,
+      const DataSharingService::SharedDataPreviewOrFailureOutcome& data);
 };
 
 }  // namespace data_sharing

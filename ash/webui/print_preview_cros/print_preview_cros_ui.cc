@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "ash/webui/print_preview_cros/print_preview_cros_ui.h"
 
 #include <memory>
@@ -18,8 +23,8 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_data_source.h"
-#include "ui/resources/grit/webui_resources.h"
 #include "ui/webui/color_change_listener/color_change_handler.h"
+#include "ui/webui/resources/grit/webui_resources.h"
 
 namespace ash::printing::print_preview {
 
@@ -37,9 +42,7 @@ void ConfigurePolicies(content::WebUIDataSource* source) {
 // Setup app resources and ensure default resource is the app index page.
 void ConfigureResources(content::WebUIDataSource* source,
                         int default_resource) {
-  const auto resources = base::make_span(kAshPrintPreviewCrosAppResources,
-                                         kAshPrintPreviewCrosAppResourcesSize);
-  source->AddResourcePaths(resources);
+  source->AddResourcePaths(kAshPrintPreviewCrosAppResources);
   source->SetDefaultResource(default_resource);
   source->AddResourcePath("", default_resource);
 }

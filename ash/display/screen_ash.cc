@@ -83,7 +83,7 @@ class ScreenForShutdown : public display::Screen {
     return primary_display_;
   }
   void AddObserver(display::DisplayObserver* observer) override {
-    NOTREACHED_IN_MIGRATION() << "Observer should not be added during shutdown";
+    NOTREACHED() << "Observer should not be added during shutdown";
   }
   void RemoveObserver(display::DisplayObserver* observer) override {}
 
@@ -220,11 +220,11 @@ display::Display ScreenAsh::GetPrimaryDisplay() const {
 }
 
 void ScreenAsh::AddObserver(display::DisplayObserver* observer) {
-  GetDisplayManager()->AddObserver(observer);
+  GetDisplayManager()->AddDisplayObserver(observer);
 }
 
 void ScreenAsh::RemoveObserver(display::DisplayObserver* observer) {
-  GetDisplayManager()->RemoveObserver(observer);
+  GetDisplayManager()->RemoveDisplayObserver(observer);
 }
 
 display::TabletState ScreenAsh::GetTabletState() const {

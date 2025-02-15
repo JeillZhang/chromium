@@ -13,8 +13,11 @@
 #include "ash/accelerators/accelerator_launcher_state_machine.h"
 #include "ash/accelerators/accelerator_notifications.h"
 #include "ash/accelerators/accelerator_shift_disable_capslock_state_machine.h"
+#include "ash/accelerators/accelerator_table.h"
 #include "ash/accelerators/debug_commands.h"
 #include "ash/accelerators/suspend_state_machine.h"
+#include "ash/accelerators/system_shortcut_behavior_policy.h"
+#include "ash/accelerators/top_row_key_usage_recorder.h"
 #include "ash/accessibility/accessibility_controller.h"
 #include "ash/constants/ash_features.h"
 #include "ash/constants/devicetype.h"
@@ -24,6 +27,8 @@
 #include "ash/public/cpp/accelerator_actions.h"
 #include "ash/public/cpp/accelerators.h"
 #include "ash/public/cpp/debug_delegate.h"
+#include "ash/public/mojom/input_device_settings.mojom-shared.h"
+#include "ash/session/session_controller_impl.h"
 #include "ash/shell.h"
 #include "ash/system/input_device_settings/input_device_settings_notification_controller.h"
 #include "ash/system/power/power_button_controller.h"
@@ -32,14 +37,17 @@
 #include "ash/wm/window_state.h"
 #include "base/check.h"
 #include "base/containers/contains.h"
+#include "base/containers/fixed_flat_set.h"
 #include "base/feature_list.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
+#include "base/metrics/user_metrics_action.h"
 #include "base/strings/strcat.h"
 #include "base/system/sys_info.h"
 #include "chromeos/ash/components/audio/cras_audio_handler.h"
 #include "chromeos/ash/components/dbus/biod/fake_biod_client.h"
+#include "chromeos/ash/services/assistant/public/cpp/features.h"
 #include "ui/accessibility/accessibility_features.h"
 #include "ui/aura/env.h"
 #include "ui/base/accelerators/accelerator.h"
@@ -53,6 +61,8 @@
 #include "ui/events/keycodes/keyboard_codes_posix.h"
 #include "ui/events/types/event_type.h"
 #include "ui/ozone/public/ozone_platform.h"
+#include "ui/wm/core/focus_controller.h"
+#include "ui/wm/core/window_util.h"
 
 namespace ash {
 
@@ -61,6 +71,8 @@ namespace {
 using ::base::UserMetricsAction;
 using ::chromeos::WindowStateType;
 using input_method::InputMethodManager;
+using OverviewBasedScreenshotKeyboardType =
+    AcceleratorControllerImpl::OverviewBasedScreenshotKeyboardType;
 
 static_assert(AcceleratorAction::kDesksActivate0 ==
                       AcceleratorAction::kDesksActivate1 - 1 &&
@@ -77,6 +89,32 @@ static_assert(AcceleratorAction::kDesksActivate0 ==
                   AcceleratorAction::kDesksActivate6 ==
                       AcceleratorAction::kDesksActivate7 - 1,
               "DESKS_ACTIVATE* actions must be consecutive");
+
+// This is a predetermined, fixed list of accelerators and should never be
+// appended to with new accelerators.
+constexpr auto kSystemShortcutPolicyBlockedAccelerators =
+    base::MakeFixedFlatSet<std::pair<ui::KeyboardCode, ui::EventFlags>>(
+        {{ui::VKEY_D, ui::EF_COMMAND_DOWN},
+         {ui::VKEY_E, ui::EF_COMMAND_DOWN},
+         {ui::VKEY_F, ui::EF_COMMAND_DOWN},
+         {ui::VKEY_K, ui::EF_COMMAND_DOWN},
+         {ui::VKEY_M, ui::EF_COMMAND_DOWN},
+         {ui::VKEY_R, ui::EF_COMMAND_DOWN},
+         {ui::VKEY_S, ui::EF_COMMAND_DOWN},
+         {ui::VKEY_S, ui::EF_COMMAND_DOWN | ui::EF_CONTROL_DOWN},
+         {ui::VKEY_T, ui::EF_COMMAND_DOWN},
+         {ui::VKEY_U, ui::EF_COMMAND_DOWN},
+         {ui::VKEY_X, ui::EF_COMMAND_DOWN},
+         {ui::VKEY_0, ui::EF_COMMAND_DOWN},
+         {ui::VKEY_1, ui::EF_COMMAND_DOWN},
+         {ui::VKEY_2, ui::EF_COMMAND_DOWN},
+         {ui::VKEY_3, ui::EF_COMMAND_DOWN},
+         {ui::VKEY_4, ui::EF_COMMAND_DOWN},
+         {ui::VKEY_5, ui::EF_COMMAND_DOWN},
+         {ui::VKEY_6, ui::EF_COMMAND_DOWN},
+         {ui::VKEY_7, ui::EF_COMMAND_DOWN},
+         {ui::VKEY_8, ui::EF_COMMAND_DOWN},
+         {ui::VKEY_9, ui::EF_COMMAND_DOWN}});
 
 ui::Accelerator CreateAccelerator(ui::KeyboardCode keycode,
                                   int modifiers,
@@ -104,6 +142,49 @@ void RecordActionUmaHistogram(AcceleratorAction action,
       GetEncodedShortcut(accelerator.modifiers(), accelerator.key_code()));
 }
 
+void RecordOverviewBasedScreenshotUmaHistogram(
+    AcceleratorAction action,
+    const ui::Accelerator& accelerator) {
+  // Only interested in tracking screenshot related actions.
+  switch (action) {
+    case ash::AcceleratorAction::kTakeScreenshot:
+    case ash::AcceleratorAction::kTakePartialScreenshot:
+    case ash::AcceleratorAction::kTakeWindowScreenshot:
+      break;
+    default:
+      return;
+  }
+
+  // Only interested in triggers via the overview key.
+  if (accelerator.key_code() != ui::VKEY_MEDIA_LAUNCH_APP1) {
+    return;
+  }
+
+  const OverviewBasedScreenshotKeyboardType keyboard_type = [&]() {
+    auto* keyboard_capability = Shell::Get()->keyboard_capability();
+    CHECK(keyboard_capability);
+
+    if (!keyboard_capability->IsChromeOSKeyboard(
+            accelerator.source_device_id())) {
+      return OverviewBasedScreenshotKeyboardType::kNonChromeOSKeyboard;
+    }
+
+    if (keyboard_capability->HasTopRowActionKey(
+            accelerator.source_device_id(), ui::TopRowActionKey::kScreenshot)) {
+      return OverviewBasedScreenshotKeyboardType::
+          kChromeOSKeyboardWithScreenshot;
+    } else {
+      return OverviewBasedScreenshotKeyboardType::
+          kChromeOSKeyboardWithoutScreenshot;
+    }
+  }();
+
+  base::UmaHistogramEnumeration(
+      base::StrCat({"Ash.Accelerators.OverviewBasedScreenshot.",
+                    GetAcceleratorActionName(action)}),
+      keyboard_type);
+}
+
 void RecordImeSwitchByAccelerator() {
   UMA_HISTOGRAM_ENUMERATION("InputMethod.ImeSwitch",
                             ImeSwitchType::kAccelerator);
@@ -125,6 +206,12 @@ void RecordCycleForwardMru(const ui::Accelerator& accelerator) {
 }
 
 void RecordToggleAssistant(const ui::Accelerator& accelerator) {
+  if (assistant::features::IsNewEntryPointEnabled()) {
+    base::RecordAction(
+        base::UserMetricsAction("Assistant.NewEntryPoint.AssistantKey"));
+    return;
+  }
+
   if (accelerator.IsCmdDown() && accelerator.key_code() == ui::VKEY_SPACE) {
     base::RecordAction(
         base::UserMetricsAction("VoiceInteraction.Started.Search_Space"));
@@ -341,6 +428,40 @@ bool CanHandleToggleCapsLock(
   return false;
 }
 
+bool IsShortcutBlockedByPolicy(ui::Accelerator accelerator) {
+  auto system_shortcut_behavior = GetSystemShortcutBehavior();
+  switch (system_shortcut_behavior) {
+    case SystemShortcutBehaviorType::kNormalShortcutBehavior:
+    case SystemShortcutBehaviorType::kAllowSearchBasedPassthrough:
+    case SystemShortcutBehaviorType::kAllowSearchBasedPassthroughFullscreenOnly:
+      return false;
+    // Common VDI shortcuts should always be blocked for this case.
+    case SystemShortcutBehaviorType::kIgnoreCommonVdiShortcuts:
+      break;
+    // Common VDI shortcuts should only be blocked if the focused window is
+    // fullscreen.
+    case SystemShortcutBehaviorType::kIgnoreCommonVdiShortcutsFullscreenOnly: {
+      auto* focused_window =
+          Shell::Get()->focus_controller()->GetFocusedWindow();
+      if (!focused_window) {
+        return false;
+      }
+
+      auto* top_level_window = wm::GetToplevelWindow(focused_window);
+      if (!top_level_window) {
+        return false;
+      }
+
+      if (!WindowState::Get(top_level_window)->IsFullscreen()) {
+        return false;
+      }
+    }
+  }
+
+  return kSystemShortcutPolicyBlockedAccelerators.contains(
+      {accelerator.key_code(), accelerator.modifiers()});
+}
+
 }  // namespace
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -439,6 +560,7 @@ AcceleratorControllerImpl::AcceleratorControllerImpl(
               ui::OzonePlatform::GetInstance()->GetInputController())),
       suspend_state_machine_(std::make_unique<SuspendStateMachine>(
           ui::OzonePlatform::GetInstance()->GetInputController())),
+      top_row_key_usage_recorder_(std::make_unique<TopRowKeyUsageRecorder>()),
       accelerator_configuration_(config),
       output_volume_metric_delay_timer_(
           FROM_HERE,
@@ -485,6 +607,9 @@ AcceleratorControllerImpl::AcceleratorControllerImpl(
         suspend_state_machine_.get(),
         ui::EventTarget::Priority::kAccessibility);
   }
+  aura::Env::GetInstance()->AddPreTargetHandler(
+      top_row_key_usage_recorder_.get(),
+      ui::EventTarget::Priority::kAccessibility);
 }
 
 AcceleratorControllerImpl::~AcceleratorControllerImpl() {
@@ -515,6 +640,8 @@ AcceleratorControllerImpl::~AcceleratorControllerImpl() {
     aura::Env::GetInstance()->RemovePreTargetHandler(
         suspend_state_machine_.get());
   }
+  aura::Env::GetInstance()->RemovePreTargetHandler(
+      top_row_key_usage_recorder_.get());
 }
 
 void AcceleratorControllerImpl::InputMethodChanged(InputMethodManager* manager,
@@ -680,52 +807,59 @@ bool AcceleratorControllerImpl::CanHandleAccelerators() const {
 // AcceleratorControllerImpl, private:
 
 void AcceleratorControllerImpl::Init() {
-  for (size_t i = 0; i < kActionsAllowedAtLoginOrLockScreenLength; ++i) {
-    actions_allowed_at_login_screen_.insert(
-        kActionsAllowedAtLoginOrLockScreen[i]);
-    actions_allowed_at_lock_screen_.insert(
-        kActionsAllowedAtLoginOrLockScreen[i]);
+  for (const AcceleratorAction& action : kActionsAllowedAtLoginOrLockScreen) {
+    actions_allowed_at_login_screen_.insert(action);
+    actions_allowed_at_lock_screen_.insert(action);
   }
-  for (size_t i = 0; i < kActionsAllowedAtLockScreenLength; ++i)
-    actions_allowed_at_lock_screen_.insert(kActionsAllowedAtLockScreen[i]);
-  for (size_t i = 0; i < kActionsAllowedAtPowerMenuLength; ++i)
-    actions_allowed_at_power_menu_.insert(kActionsAllowedAtPowerMenu[i]);
-  for (size_t i = 0; i < kActionsAllowedAtModalWindowLength; ++i)
-    actions_allowed_at_modal_window_.insert(kActionsAllowedAtModalWindow[i]);
-  for (size_t i = 0; i < kPreferredActionsLength; ++i)
-    preferred_actions_.insert(kPreferredActions[i]);
-  for (size_t i = 0; i < kReservedActionsLength; ++i)
-    reserved_actions_.insert(kReservedActions[i]);
-  for (size_t i = 0; i < kRepeatableActionsLength; ++i)
-    repeatable_actions_.insert(kRepeatableActions[i]);
-  for (size_t i = 0; i < kActionsAllowedInAppModeOrPinnedModeLength; ++i) {
-    actions_allowed_in_app_mode_.insert(
-        kActionsAllowedInAppModeOrPinnedMode[i]);
-    actions_allowed_in_pinned_mode_.insert(
-        kActionsAllowedInAppModeOrPinnedMode[i]);
+  for (const AcceleratorAction& action : kActionsAllowedAtLockScreen) {
+    actions_allowed_at_lock_screen_.insert(action);
+  }
+  for (const AcceleratorAction& action : kActionsAllowedAtPowerMenu) {
+    actions_allowed_at_power_menu_.insert(action);
+  }
+  for (const AcceleratorAction& action : kActionsAllowedAtModalWindow) {
+    actions_allowed_at_modal_window_.insert(action);
+  }
+  for (const AcceleratorAction& action : kPreferredActions) {
+    preferred_actions_.insert(action);
+  }
+  for (const AcceleratorAction& action : kReservedActions) {
+    reserved_actions_.insert(action);
+  }
+  for (const AcceleratorAction& action : kRepeatableActions) {
+    repeatable_actions_.insert(action);
+  }
+  for (const AcceleratorAction& action : kActionsAllowedInAppModeOrPinnedMode) {
+    actions_allowed_in_app_mode_.insert(action);
+    actions_allowed_in_pinned_mode_.insert(action);
   }
 
-  for (size_t i = 0; i < kActionsAllowedInPinnedModeLength; ++i)
-    actions_allowed_in_pinned_mode_.insert(kActionsAllowedInPinnedMode[i]);
-  for (size_t i = 0; i < kActionsAllowedInAppModeLength; ++i)
-    actions_allowed_in_app_mode_.insert(kActionsAllowedInAppMode[i]);
-  for (size_t i = 0; i < kActionsNeedingWindowLength; ++i)
-    actions_needing_window_.insert(kActionsNeedingWindow[i]);
-  for (size_t i = 0; i < kActionsKeepingMenuOpenLength; ++i)
-    actions_keeping_menu_open_.insert(kActionsKeepingMenuOpen[i]);
-
+  for (const AcceleratorAction& action : kActionsAllowedInPinnedMode) {
+    actions_allowed_in_pinned_mode_.insert(action);
+  }
+  for (const AcceleratorAction& action : kActionsAllowedInAppMode) {
+    actions_allowed_in_app_mode_.insert(action);
+  }
+  for (const AcceleratorAction& action : kActionsNeedingWindow) {
+    actions_needing_window_.insert(action);
+  }
+  for (const AcceleratorAction& action : kActionsKeepingMenuOpen) {
+    actions_keeping_menu_open_.insert(action);
+  }
   RegisterAccelerators(accelerator_configuration_->GetAllAccelerators());
 
   if (debug::DebugAcceleratorsEnabled()) {
     // All debug accelerators are reserved.
-    for (size_t i = 0; i < kDebugAcceleratorDataLength; ++i)
-      reserved_actions_.insert(kDebugAcceleratorData[i].action);
+    for (const AcceleratorData& data : kDebugAcceleratorData) {
+      reserved_actions_.insert(data.action);
+    }
   }
 
   if (debug::DeveloperAcceleratorsEnabled()) {
     // Developer accelerators are also reserved.
-    for (size_t i = 0; i < kDeveloperAcceleratorDataLength; ++i)
-      reserved_actions_.insert(kDeveloperAcceleratorData[i].action);
+    for (const AcceleratorData& data : kDeveloperAcceleratorData) {
+      reserved_actions_.insert(data.action);
+    }
   }
 
   if (features::IsModifierSplitEnabled()) {
@@ -764,6 +898,10 @@ bool AcceleratorControllerImpl::IsActionForAcceleratorEnabled(
 bool AcceleratorControllerImpl::CanPerformAction(
     AcceleratorAction action,
     const ui::Accelerator& accelerator) const {
+  if (IsShortcutBlockedByPolicy(accelerator)) {
+    return false;
+  }
+
   if (accelerator.IsRepeat() && !base::Contains(repeatable_actions_, action))
     return false;
 
@@ -812,6 +950,7 @@ bool AcceleratorControllerImpl::CanPerformAction(
     case AcceleratorAction::kDebugShowToast:
     case AcceleratorAction::kDebugShowSystemNudge:
     case AcceleratorAction::kDebugSystemUiStyleViewer:
+    case AcceleratorAction::kDebugStartSunfishSession:
     case AcceleratorAction::kDebugToggleDarkMode:
     case AcceleratorAction::kDebugToggleDynamicColor:
     case AcceleratorAction::kDebugClearUseKMeansPref:
@@ -856,8 +995,6 @@ bool AcceleratorControllerImpl::CanPerformAction(
     case AcceleratorAction::kScaleUiReset:
     case AcceleratorAction::kScaleUiUp:
       return true;
-    case AcceleratorAction::kTogglePicker:
-      return accelerators::CanTogglePicker();
     case AcceleratorAction::kToggleStylusTools:
       return accelerators::CanShowStylusTools();
     case AcceleratorAction::kStartAssistant:
@@ -887,6 +1024,8 @@ bool AcceleratorControllerImpl::CanPerformAction(
           launcher_state_machine_.get());
     case AcceleratorAction::kToggleCalendar:
       return true;
+    case AcceleratorAction::kToggleCameraAllowed:
+      return features::IsToggleCameraShortcutEnabled();
     case AcceleratorAction::kToggleCapsLock:
       return CanHandleToggleCapsLock(
           accelerator, previous_accelerator,
@@ -894,8 +1033,10 @@ bool AcceleratorControllerImpl::CanPerformAction(
           *capslock_state_machine_, notification_controller_.get());
     case AcceleratorAction::kToggleClipboardHistory:
       return true;
+    case AcceleratorAction::kToggleDoNotDisturb:
+      return features::IsDoNotDisturbShortcutEnabled();
     case AcceleratorAction::kEnableSelectToSpeak:
-      return ::features::IsAccessibilitySelectToSpeakShortcutEnabled();
+      return true;
     case AcceleratorAction::kEnableOrToggleDictation:
       return accelerators::CanEnableOrToggleDictation();
     case AcceleratorAction::kToggleDockedMagnifier:
@@ -910,12 +1051,14 @@ bool AcceleratorControllerImpl::CanPerformAction(
       return true;
     case AcceleratorAction::kToggleMirrorMode:
       return true;
+    case AcceleratorAction::kToggleMouseKeys:
+      return ::features::IsAccessibilityMouseKeysEnabled();
     case AcceleratorAction::kToggleOverview:
       return accelerators::CanToggleOverview();
     case AcceleratorAction::kCreateSnapGroup:
       return accelerators::CanCreateSnapGroup();
     case AcceleratorAction::kToggleSnapGroupWindowsMinimizeAndRestore:
-      return accelerators::CanMinimizeSnapGroupWindows();
+      return false;
     case AcceleratorAction::kToggleMultitaskMenu:
       return accelerators::CanToggleMultitaskMenu();
     case AcceleratorAction::kTouchHudClear:
@@ -946,6 +1089,10 @@ bool AcceleratorControllerImpl::CanPerformAction(
     case AcceleratorAction::kLockPressed:
     case AcceleratorAction::kLockReleased:
       return CanHandleLockButton(accelerator);
+    case AcceleratorAction::kResizePipWindow:
+      return accelerators::CanResizePipWindow();
+    case AcceleratorAction::kToggleGeminiApp:
+      return accelerators::CanToggleGeminiApp();
 
     // The following are always enabled.
     case AcceleratorAction::kBrightnessDown:
@@ -989,6 +1136,7 @@ bool AcceleratorControllerImpl::CanPerformAction(
     case AcceleratorAction::kRotateWindow:
     case AcceleratorAction::kShowEmojiPicker:
     case AcceleratorAction::kToggleImeMenuBubble:
+    case AcceleratorAction::kTogglePicker:
     case AcceleratorAction::kShowShortcutViewer:
     case AcceleratorAction::kShowTaskManager:
     case AcceleratorAction::kSuspend:
@@ -1115,6 +1263,7 @@ void AcceleratorControllerImpl::PerformAction(
     case AcceleratorAction::kDebugShowInformedRestore:
     case AcceleratorAction::kDebugShowToast:
     case AcceleratorAction::kDebugShowSystemNudge:
+    case AcceleratorAction::kDebugStartSunfishSession:
     case AcceleratorAction::kDebugToggleDarkMode:
     case AcceleratorAction::kDebugToggleDynamicColor:
     case AcceleratorAction::kDebugClearUseKMeansPref:
@@ -1182,10 +1331,8 @@ void AcceleratorControllerImpl::PerformAction(
       accelerators::FocusPip();
       break;
     case AcceleratorAction::kKeyboardBacklightToggle:
-      if (ash::features::IsKeyboardBacklightToggleEnabled()) {
-        base::RecordAction(base::UserMetricsAction("Accel_Keyboard_Backlight"));
-        accelerators::ToggleKeyboardBacklight();
-      }
+      base::RecordAction(base::UserMetricsAction("Accel_Keyboard_Backlight"));
+      accelerators::ToggleKeyboardBacklight();
       break;
     case AcceleratorAction::kKeyboardBrightnessDown: {
       base::RecordAction(UserMetricsAction("Accel_KeyboardBrightnessDown_F6"));
@@ -1372,7 +1519,7 @@ void AcceleratorControllerImpl::PerformAction(
       accelerators::ToggleImeMenuBubble();
       break;
     case AcceleratorAction::kTogglePicker:
-      accelerators::TogglePicker(accelerator.time_stamp());
+      accelerators::ToggleQuickInsert(accelerator.time_stamp());
       break;
     case AcceleratorAction::kToggleProjectorMarker:
       accelerators::ToggleProjectorMarker();
@@ -1450,6 +1597,9 @@ void AcceleratorControllerImpl::PerformAction(
                                   base::TimeTicks());
       break;
     }
+    case AcceleratorAction::kToggleCameraAllowed:
+      accelerators::ToggleCameraAllowed();
+      break;
     case AcceleratorAction::kToggleCalendar:
       accelerators::ToggleCalendar();
       break;
@@ -1459,6 +1609,9 @@ void AcceleratorControllerImpl::PerformAction(
       break;
     case AcceleratorAction::kToggleClipboardHistory:
       accelerators::ToggleClipboardHistory(/*is_plain_text_paste=*/false);
+      break;
+    case AcceleratorAction::kToggleDoNotDisturb:
+      accelerators::ToggleDoNotDisturb();
       break;
     case AcceleratorAction::kEnableSelectToSpeak:
       accelerators::EnableSelectToSpeak();
@@ -1503,6 +1656,11 @@ void AcceleratorControllerImpl::PerformAction(
       base::RecordAction(UserMetricsAction("Accel_Toggle_Mirror_Mode"));
       accelerators::ToggleMirrorMode();
       break;
+    case AcceleratorAction::kToggleMouseKeys:
+      if (::features::IsAccessibilityMouseKeysEnabled()) {
+        accelerators::ToggleMouseKeys();
+      }
+      break;
     case AcceleratorAction::kToggleMultitaskMenu:
       accelerators::ToggleMultitaskMenu();
       return;
@@ -1514,8 +1672,6 @@ void AcceleratorControllerImpl::PerformAction(
       accelerators::CreateSnapGroup();
       break;
     case AcceleratorAction::kToggleSnapGroupWindowsMinimizeAndRestore:
-      base::RecordAction(base::UserMetricsAction(
-          "Accel_Toggle_Snap_Group_Windows_Minimize_Restore"));
       accelerators::ToggleSnapGroupsMinimize();
       break;
     case AcceleratorAction::kToggleResizeLockMenu:
@@ -1588,9 +1744,16 @@ void AcceleratorControllerImpl::PerformAction(
     case kTouchFingerprintSensor3:
       accelerators::TouchFingerprintSensor(3);
       break;
+    case AcceleratorAction::kResizePipWindow:
+      accelerators::ResizePipWindow();
+      break;
+    case AcceleratorAction::kToggleGeminiApp:
+      accelerators::ToggleGeminiApp();
+      break;
   }
 
   RecordActionUmaHistogram(action, accelerator);
+  RecordOverviewBasedScreenshotUmaHistogram(action, accelerator);
   NotifyActionPerformed(action);
 
   // Reset any in progress composition.
@@ -1684,7 +1847,8 @@ AcceleratorControllerImpl::MaybeDeprecatedAcceleratorPressed(
   MaybeShowDeprecatedAcceleratorNotification(
       deprecated_data->uma_histogram_name,
       deprecated_data->notification_message_id,
-      deprecated_data->new_shortcut_id, deprecated_data->replacement, action);
+      deprecated_data->new_shortcut_id, deprecated_data->replacement, action,
+      deprecated_data->pref_name);
 
   if (!deprecated_data->deprecated_enabled)
     return AcceleratorProcessingStatus::STOP;

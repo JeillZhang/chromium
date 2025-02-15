@@ -5,8 +5,12 @@
 #ifndef COMPONENTS_DATA_SHARING_INTERNAL_ANDROID_DATA_SHARING_SDK_DELEGATE_ANDROID_H_
 #define COMPONENTS_DATA_SHARING_INTERNAL_ANDROID_DATA_SHARING_SDK_DELEGATE_ANDROID_H_
 
+#include <memory>
+
 #include "base/android/jni_android.h"
 #include "base/android/scoped_java_ref.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/supports_user_data.h"
@@ -17,6 +21,7 @@ using base::android::ScopedJavaGlobalRef;
 using base::android::ScopedJavaLocalRef;
 
 namespace data_sharing {
+class DataSharingNetworkLoaderAndroid;
 
 // Helper class responsible for bridging the DataSharingSDKDelegate between
 // C++ and Java.
@@ -32,9 +37,16 @@ class DataSharingSDKDelegateAndroid : public DataSharingSDKDelegate {
       const base::expected<data_sharing_pb::LookupGaiaIdByEmailResult,
                            absl::Status>&)>;
 
+  using AddAccessTokenCallback = base::OnceCallback<void(
+      const base::expected<data_sharing_pb::AddAccessTokenResult,
+                           absl::Status>&)>;
+
   using GetStatusCallback = base::OnceCallback<void(const absl::Status&)>;
 
-  DataSharingSDKDelegateAndroid();
+  // Callback to create the java object. The java object is created only when
+  // the sdk is used to avoid overhead of library loading.
+  explicit DataSharingSDKDelegateAndroid(
+      CreateJavaDelegateCallback sdk_delegate_callback);
   ~DataSharingSDKDelegateAndroid() override;
 
   // Disallow copy/assign.
@@ -50,6 +62,10 @@ class DataSharingSDKDelegateAndroid : public DataSharingSDKDelegate {
   ScopedJavaLocalRef<jobject> GetJavaObject();
 
   // DataSharingSDKDelegate implementation.
+  void Initialize(
+      DataSharingNetworkLoader* data_sharing_network_loader) override;
+  void ForceInitialize(
+      DataSharingNetworkLoader* data_sharing_network_loader) override;
   void CreateGroup(const data_sharing_pb::CreateGroupParams& params,
                    CreateGroupCallback callback) override;
   void ReadGroups(const data_sharing_pb::ReadGroupsParams& params,
@@ -58,16 +74,26 @@ class DataSharingSDKDelegateAndroid : public DataSharingSDKDelegate {
                  GetStatusCallback callback) override;
   void RemoveMember(const data_sharing_pb::RemoveMemberParams& params,
                     GetStatusCallback callback) override;
+  void LeaveGroup(const data_sharing_pb::LeaveGroupParams& params,
+                  GetStatusCallback callback) override;
   void DeleteGroup(const data_sharing_pb::DeleteGroupParams& params,
                    GetStatusCallback callback) override;
   void LookupGaiaIdByEmail(
       const data_sharing_pb::LookupGaiaIdByEmailParams& params,
       LookupGaiaIdByEmailCallback callback) override;
+  void AddAccessToken(const data_sharing_pb::AddAccessTokenParams& params,
+                      AddAccessTokenCallback callback) override;
 
  private:
+  void LazyInitializeIfNeeded();
+
+  std::unique_ptr<DataSharingNetworkLoaderAndroid> network_loader_;
+
   // A reference to the Java counterpart of this class.  See
   // DataSharingSDKDelegateAndroid.java.
   ScopedJavaGlobalRef<jobject> java_obj_;
+
+  CreateJavaDelegateCallback sdk_delegate_callback_;
 
   base::WeakPtrFactory<DataSharingSDKDelegateAndroid> weak_ptr_factory_{this};
 };

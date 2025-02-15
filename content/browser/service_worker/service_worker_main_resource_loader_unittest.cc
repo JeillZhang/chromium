@@ -19,7 +19,7 @@
 #include "content/browser/service_worker/embedded_worker_test_helper.h"
 #include "content/browser/service_worker/fake_embedded_worker_instance_client.h"
 #include "content/browser/service_worker/fake_service_worker.h"
-#include "content/browser/service_worker/service_worker_container_host.h"
+#include "content/browser/service_worker/service_worker_client.h"
 #include "content/browser/service_worker/service_worker_context_core.h"
 #include "content/browser/service_worker/service_worker_fetch_dispatcher.h"
 #include "content/browser/service_worker/service_worker_registration.h"
@@ -426,6 +426,8 @@ network::mojom::URLResponseHeadPtr CreateResponseInfoFromServiceWorker() {
   head->response_type = network::mojom::FetchResponseType::kDefault;
   head->cache_storage_cache_name = std::string();
   head->did_service_worker_navigation_preload = false;
+  head->initial_service_worker_status =
+      network::mojom::ServiceWorkerStatus::kRunning;
   return head;
 }
 
@@ -531,21 +533,23 @@ class ServiceWorkerMainResourceLoaderTest : public testing::Test {
     loader_ = std::make_unique<ServiceWorkerMainResourceLoader>(
         base::BindOnce(&ServiceWorkerMainResourceLoaderTest::Fallback,
                        base::Unretained(this)),
-        service_worker_client()->AsWeakPtr(),
-        /*frame_tree_node_id=*/RenderFrameHost::kNoFrameTreeNodeId,
+        /*fetch_event_client_id=*/"", service_worker_client()->AsWeakPtr(),
         /*find_registration_start_time=*/base::TimeTicks::Now());
 
     // Load |request.url|.
-    loader_->StartRequest(*request, loader_remote_.BindNewPipeAndPassReceiver(),
-                          client_.CreateRemote());
+    loader_->StartRequest(loader_remote_.BindNewPipeAndPassReceiver(),
+                          /*request_id=*/0, /*options=*/0, *request,
+                          client_.CreateRemote(),
+                          net::MutableNetworkTrafficAnnotationTag());
   }
 
   // The |fallback_callback| passed to the ServiceWorkerMainResourceLoader in
   // StartRequest().
-  void Fallback(ResponseHeadUpdateParams) {
+  network::mojom::URLLoaderFactory* Fallback(ResponseHeadUpdateParams) {
     did_call_fallback_callback_ = true;
     if (quit_closure_for_fallback_callback_)
       std::move(quit_closure_for_fallback_callback_).Run();
+    return nullptr;
   }
 
   // Runs until the ServiceWorkerMainResourceLoader created in StartRequest()
@@ -585,6 +589,8 @@ class ServiceWorkerMainResourceLoaderTest : public testing::Test {
               info.cache_storage_cache_name);
     EXPECT_EQ(expected_info.did_service_worker_navigation_preload,
               info.did_service_worker_navigation_preload);
+    EXPECT_EQ(expected_info.initial_service_worker_status,
+              info.initial_service_worker_status);
     // TODO(crbug.com/40944544): Write tests about Static Routing API, in
     // particular, checking the correctness of `service_worker_router_info`.
   }
@@ -684,7 +690,7 @@ TEST_F(ServiceWorkerMainResourceLoaderTest, RequestBody) {
 
   // Create a request with a body.
   auto request_body = base::MakeRefCounted<network::ResourceRequestBody>();
-  request_body->AppendBytes(kData.c_str(), kData.length());
+  request_body->AppendCopyOfBytes(base::as_byte_span(kData));
   std::unique_ptr<network::ResourceRequest> request = CreateRequest();
   request->method = "POST";
   request->request_body = request_body;
@@ -801,7 +807,7 @@ TEST_F(ServiceWorkerMainResourceLoaderTest, StreamResponse) {
   base::HistogramTester histogram_tester;
 
   // Construct the Stream to respond with.
-  const char kResponseBody[] = "Here is sample text for the Stream.";
+  const std::string_view kResponseBody = "Here is sample text for the Stream.";
   mojo::Remote<blink::mojom::ServiceWorkerStreamCallback> stream_callback;
   mojo::ScopedDataPipeProducerHandle producer_handle;
   mojo::ScopedDataPipeConsumerHandle consumer_handle;
@@ -821,11 +827,12 @@ TEST_F(ServiceWorkerMainResourceLoaderTest, StreamResponse) {
   EXPECT_FALSE(version_->HasNoWork());
 
   // Write the body stream.
-  size_t written_bytes = sizeof(kResponseBody) - 1;
+  size_t actually_written_bytes = 0;
   MojoResult mojo_result = producer_handle->WriteData(
-      kResponseBody, &written_bytes, MOJO_WRITE_DATA_FLAG_NONE);
+      base::as_byte_span(kResponseBody), MOJO_WRITE_DATA_FLAG_NONE,
+      actually_written_bytes);
   ASSERT_EQ(MOJO_RESULT_OK, mojo_result);
-  EXPECT_EQ(sizeof(kResponseBody) - 1, written_bytes);
+  EXPECT_EQ(kResponseBody.size(), actually_written_bytes);
   stream_callback->OnCompleted();
   producer_handle.reset();
 
@@ -853,7 +860,7 @@ TEST_F(ServiceWorkerMainResourceLoaderTest, StreamResponse_Abort) {
   base::HistogramTester histogram_tester;
 
   // Construct the Stream to respond with.
-  const char kResponseBody[] = "Here is sample text for the Stream.";
+  const std::string_view kResponseBody = "Here is sample text for the Stream.";
   mojo::Remote<blink::mojom::ServiceWorkerStreamCallback> stream_callback;
   mojo::ScopedDataPipeProducerHandle producer_handle;
   mojo::ScopedDataPipeConsumerHandle consumer_handle;
@@ -871,11 +878,12 @@ TEST_F(ServiceWorkerMainResourceLoaderTest, StreamResponse_Abort) {
   ExpectResponseInfo(*info, *CreateResponseInfoFromServiceWorker());
 
   // Start writing the body stream, then abort before finishing.
-  size_t written_bytes = sizeof(kResponseBody) - 1;
+  size_t actually_written_bytes = 0;
   MojoResult mojo_result = producer_handle->WriteData(
-      kResponseBody, &written_bytes, MOJO_WRITE_DATA_FLAG_NONE);
+      base::as_byte_span(kResponseBody), MOJO_WRITE_DATA_FLAG_NONE,
+      actually_written_bytes);
   ASSERT_EQ(MOJO_RESULT_OK, mojo_result);
-  EXPECT_EQ(sizeof(kResponseBody) - 1, written_bytes);
+  EXPECT_EQ(kResponseBody.size(), actually_written_bytes);
   stream_callback->OnAborted();
   producer_handle.reset();
 
@@ -907,7 +915,7 @@ TEST_F(ServiceWorkerMainResourceLoaderTest, StreamResponseAndCancel) {
   base::HistogramTester histogram_tester;
 
   // Construct the Stream to respond with.
-  const char kResponseBody[] = "Here is sample text for the Stream.";
+  const std::string_view kResponseBody = "Here is sample text for the Stream.";
   mojo::Remote<blink::mojom::ServiceWorkerStreamCallback> stream_callback;
   mojo::ScopedDataPipeProducerHandle producer_handle;
   mojo::ScopedDataPipeConsumerHandle consumer_handle;
@@ -926,11 +934,12 @@ TEST_F(ServiceWorkerMainResourceLoaderTest, StreamResponseAndCancel) {
 
   // Start writing the body stream, then break the Mojo connection to the loader
   // before finishing.
-  size_t written_bytes = sizeof(kResponseBody) - 1;
+  size_t actually_written_bytes = 0;
   MojoResult mojo_result = producer_handle->WriteData(
-      kResponseBody, &written_bytes, MOJO_WRITE_DATA_FLAG_NONE);
+      base::as_byte_span(kResponseBody), MOJO_WRITE_DATA_FLAG_NONE,
+      actually_written_bytes);
   ASSERT_EQ(MOJO_RESULT_OK, mojo_result);
-  EXPECT_EQ(sizeof(kResponseBody) - 1, written_bytes);
+  EXPECT_EQ(kResponseBody.size(), actually_written_bytes);
   EXPECT_TRUE(producer_handle.is_valid());
   loader_remote_.reset();
   base::RunLoop().RunUntilIdle();
@@ -939,8 +948,9 @@ TEST_F(ServiceWorkerMainResourceLoaderTest, StreamResponseAndCancel) {
   // on connection error, the URLLoaderClient still exists. In this test, it is
   // |client_| which owns the data pipe, so it's still valid to write data to
   // it.
-  mojo_result = producer_handle->WriteData(kResponseBody, &written_bytes,
-                                           MOJO_WRITE_DATA_FLAG_NONE);
+  mojo_result = producer_handle->WriteData(base::as_byte_span(kResponseBody),
+                                           MOJO_WRITE_DATA_FLAG_NONE,
+                                           actually_written_bytes);
   // TODO(falken): This should probably be an error.
   EXPECT_EQ(MOJO_RESULT_OK, mojo_result);
 

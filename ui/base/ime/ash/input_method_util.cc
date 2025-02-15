@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "ui/base/ime/ash/input_method_util.h"
 
 #include <stddef.h>
@@ -437,7 +442,7 @@ std::string InputMethodUtil::GetLocalizedDisplayName(
     const InputMethodDescriptor& descriptor) {
   // Localizes the input method name.
   const std::string& disp = descriptor.name();
-  if (base::StartsWith(disp, "__MSG_", base::CompareCase::SENSITIVE)) {
+  if (disp.starts_with("__MSG_")) {
     const InputMethodNameMap* map = kInputMethodNameMap;
     size_t map_size = std::size(kInputMethodNameMap);
     std::string name = base::ToUpperASCII(disp);

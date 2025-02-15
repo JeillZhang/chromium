@@ -7,6 +7,8 @@
 
 #import <UIKit/UIKit.h>
 
+#import "base/memory/scoped_refptr.h"
+#import "base/task/sequenced_task_runner.h"
 #import "ios/chrome/common/ui/promo_style/promo_style_view_controller_delegate.h"
 
 enum class PromoStyleImageType {
@@ -17,6 +19,7 @@ enum class PromoStyleImageType {
 };
 
 enum class BannerImageSizeType {
+  kExtraShort,
   kShort,
   kStandard,
   kTall,
@@ -39,9 +42,13 @@ enum class ActionButtonsVisibility {
 // Style screens.
 @interface PromoStyleViewController : UIViewController <UITextViewDelegate>
 
+- (instancetype)initWithTaskRunner:
+    (scoped_refptr<base::SequencedTaskRunner>)taskRunner;
+
+- (instancetype)init;
+
 - (instancetype)initWithNibName:(NSString*)nibNameOrNil
-                         bundle:(NSBundle*)nibBundleOrNil
-    NS_DESIGNATED_INITIALIZER;
+                         bundle:(NSBundle*)nibBundleOrNil NS_UNAVAILABLE;
 
 - (instancetype)initWithCoder:(NSCoder*)coder NS_UNAVAILABLE;
 
@@ -49,6 +56,8 @@ enum class ActionButtonsVisibility {
 @property(nonatomic, strong) NSString* bannerName;
 
 // The ratio of the view covered by the banner.
+// - kExtraShort: 15%,
+// - kShort: 20%,
 // - kStandard: 25%,
 // - kTall: 35%,
 // - kExtraTall: 50%.
@@ -214,6 +223,9 @@ enum class ActionButtonsVisibility {
 // Whether the primary button should be disabled and have its button text
 // replaced with a spinner. Should be set only after the view is loaded.
 @property(nonatomic, assign) BOOL primaryButtonSpinnerEnabled;
+
+// Determines the font text style to use for the title.
+- (UIFontTextStyle)titleLabelFontTextStyle;
 
 @end
 

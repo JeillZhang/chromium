@@ -207,9 +207,25 @@ public interface Tab extends TabLifecycle {
     boolean isThemingAllowed();
 
     /**
+     * TODO(crbug.com/350654700): clean up usages and remove isIncognito.
+     *
      * @return {@code true} if the Tab is in incognito mode.
+     * @deprecated Use {@link #isIncognitoBranded()} or {@link #isOffTheRecord()}.
      */
+    @Deprecated
     boolean isIncognito();
+
+    /**
+     * @return {@code true} if the Tab is in an off-the-record profile.
+     * @see {@link Profile#isOffTheRecord()}
+     */
+    boolean isOffTheRecord();
+
+    /**
+     * @return {@code true} if the Tab is in Incognito branded profile.
+     * @see {@link Profile#isIncognitoBranded()}
+     */
+    boolean isIncognitoBranded();
 
     /**
      * @return Whether the {@link Tab} is currently showing an error page.
@@ -322,14 +338,26 @@ public interface Tab extends TabLifecycle {
 
     /**
      * @return the last time this tab was shown or the time of its initialization if it wasn't yet
-     *         shown.
+     *     shown.
      */
     long getTimestampMillis();
+
+    /**
+     * Sets the last time this tab was shown. Used for declutter to mark the tab as "active" after
+     * it's restored, but not immediately shown.
+     */
+    void setTimestampMillis(long timestampMillis);
 
     /**
      * @return parent identifier for the {@link Tab}
      */
     int getParentId();
+
+    /**
+     * Set the parent identifier for the {@link Tab}. This method is only used as a temporary
+     * workaround for invalid parent ids being present in the tab state file.
+     */
+    void setParentId(int parentId);
 
     // TODO(crbug.com/41497290): deprecate RootId once TabGroupId has finished replacing it.
     /**
@@ -380,12 +408,9 @@ public interface Tab extends TabLifecycle {
      */
     long getLastNavigationCommittedTimestampMillis();
 
-    /**
-     * @return launch type at creation
-     */
-    @Nullable
+    /** Returns launch type at creation. May be {@link TabLaunchType.UNSET} if unknown. */
     @TabLaunchType
-    Integer getTabLaunchTypeAtCreation();
+    int getTabLaunchTypeAtCreation();
 
     /** Sets the TabLaunchType for tabs launched with an unset launch type. */
     void setTabLaunchType(@TabLaunchType int launchType);
@@ -398,4 +423,27 @@ public interface Tab extends TabLifecycle {
      *     page transitions.
      */
     boolean isDisplayingBackForwardAnimation();
+
+    /**
+     * @return True if we have a WebContents that's navigated to a trusted origin of a TWA.
+     */
+    boolean isTrustedWebActivity();
+
+    /**
+     * @return True if the current tab has embedded media experience enabled.
+     */
+    boolean shouldEnableEmbeddedMediaExperience();
+
+    /** Returns the content sensitivity of the tab. */
+    boolean getTabHasSensitiveContent();
+
+    /**
+     * Sets the content sensitivity of the tab.
+     *
+     * @param contentIsSensitive True if the content is sensitive.
+     */
+    void setTabHasSensitiveContent(boolean contentIsSensitive);
+
+    /** Called when the tab is restored from the archived tab model. */
+    void onTabRestoredFromArchivedTabModel();
 }

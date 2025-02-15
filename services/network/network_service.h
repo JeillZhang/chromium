@@ -24,7 +24,7 @@
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
+#include "components/ip_protection/common/masked_domain_list_manager.h"
 #include "components/privacy_sandbox/masked_domain_list/masked_domain_list.pb.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
@@ -43,7 +43,6 @@
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "services/network/first_party_sets/first_party_sets_manager.h"
 #include "services/network/keepalive_statistics_recorder.h"
-#include "services/network/masked_domain_list/network_service_proxy_allow_list.h"
 #include "services/network/network_change_manager.h"
 #include "services/network/network_quality_estimator_manager.h"
 #include "services/network/public/cpp/network_service_buildflags.h"
@@ -297,8 +296,8 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) NetworkService
     return tpcd_metadata_manager_.get();
   }
 
-  NetworkServiceProxyAllowList* network_service_proxy_allow_list() const {
-    return network_service_proxy_allow_list_.get();
+  ip_protection::MaskedDomainListManager* masked_domain_list_manager() const {
+    return masked_domain_list_manager_.get();
   }
 
   void set_host_resolver_factory_for_testing(
@@ -355,6 +354,18 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) NetworkService
     return metrics_updater_.get();
   }
 
+  // For tests to clear the metrics updater to avoid time out due to its poor
+  // interaction with TaskEnvironment::FastForward*() methods with long delays.
+  void ResetMetricsUpdaterForTesting();
+
+  void disable_exclusive_cookie_database_locking_for_testing() {
+    exclusive_cookie_database_locking_ = false;
+  }
+
+  bool exclusive_cookie_database_locking() const {
+    return exclusive_cookie_database_locking_;
+  }
+
   static NetworkService* GetNetworkServiceForTesting();
 
  private:
@@ -396,6 +407,10 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) NetworkService
   std::unique_ptr<NetLogProxySink> net_log_proxy_sink_;
 
   std::unique_ptr<net::FileNetLogObserver> file_net_log_observer_;
+  // When capturing NetLog events, this keeps a NetworkContext's polled data
+  // on the destruction of the NetworkContext.
+  base::Value::List net_log_polled_data_list_;
+
   net::TraceNetLogObserver trace_net_log_observer_;
 
   KeepaliveStatisticsRecorder keepalive_statistics_recorder_;
@@ -451,8 +466,8 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) NetworkService
   // this with |owned_network_contexts_|.
   std::set<raw_ptr<NetworkContext, SetExperimental>> network_contexts_;
 
-  std::unique_ptr<NetworkServiceProxyAllowList>
-      network_service_proxy_allow_list_;
+  std::unique_ptr<ip_protection::MaskedDomainListManager>
+      masked_domain_list_manager_;
 
   // A per-process_id map of origins that are white-listed to allow
   // them to request raw headers for resources they request.
@@ -499,6 +514,8 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) NetworkService
 #endif  // BUILDFLAG(IS_LINUX)
 
   std::unique_ptr<network::tpcd::metadata::Manager> tpcd_metadata_manager_;
+
+  bool exclusive_cookie_database_locking_ = true;
 
   base::WeakPtrFactory<NetworkService> weak_factory_{this};
 };

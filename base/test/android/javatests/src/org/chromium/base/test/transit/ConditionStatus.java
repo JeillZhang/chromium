@@ -20,7 +20,7 @@ import java.lang.annotation.RetentionPolicy;
  */
 public class ConditionStatus {
 
-    private static final int TRUNCATE_STATUS_UPDATE = 300;
+    private static final int TRUNCATE_STATUS_UPDATE = 1000;
 
     /** Lifecycle phases of ConditionalState. */
     @IntDef({
@@ -103,5 +103,24 @@ public class ConditionStatus {
         }
         fullMessage.append(">");
         return fullMessage.toString();
+    }
+
+    /**
+     * Create a {@link ConditionStatusWithResult} to return a status with a result from {@link
+     * ConditionWithResult#resolveWithSuppliers()}.
+     *
+     * <p>All statuses exception AWAITING can return a result.
+     */
+    public <T> ConditionStatusWithResult<T> withResult(T result) {
+        assert mStatus != Status.AWAITING;
+        return new ConditionStatusWithResult<>(this, result);
+    }
+
+    /**
+     * Create a {@link ConditionStatusWithResult} to return a status without a result from {@link
+     * ConditionWithResult#resolveWithSuppliers()}.
+     */
+    public <T> ConditionStatusWithResult<T> withoutResult() {
+        return new ConditionStatusWithResult<>(this, /* result= */ null);
     }
 }

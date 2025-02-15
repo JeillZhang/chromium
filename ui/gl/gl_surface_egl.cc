@@ -13,6 +13,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/compiler_specific.h"
 #include "base/containers/heap_array.h"
 #include "base/lazy_instance.h"
 #include "base/logging.h"
@@ -339,7 +340,10 @@ GLDisplayEGL* GLSurfaceEGL::GetGLDisplayEGL() {
       GpuPreference::kDefault);
 }
 
-GLSurfaceEGL::~GLSurfaceEGL() = default;
+GLSurfaceEGL::~GLSurfaceEGL() {
+  // InvalidateWeakPtrs should be called from the concrete dtors.
+  CHECK(!HasWeakPtrs());
+}
 
 #if BUILDFLAG(IS_ANDROID)
 NativeViewGLSurfaceEGL::NativeViewGLSurfaceEGL(
@@ -380,6 +384,11 @@ bool NativeViewGLSurfaceEGL::Initialize(GLSurfaceFormat format) {
   // the platform-dependant quirks, if any, before creating the surface.
   if (!InitializeNativeWindow()) {
     LOG(ERROR) << "Error trying to initialize the native window.";
+    return false;
+  }
+
+  if (!GetConfig()) {
+    LOG(ERROR) << "No suitable EGL configs found for initialization.";
     return false;
   }
 
@@ -703,7 +712,7 @@ void NativeViewGLSurfaceEGL::TraceSwapEvents(EGLuint64KHR oldFrameId) {
 
   const char* pending_symbols = valid_symbols.c_str();
   for (size_t i = 1; i < tracePairs.size(); i++) {
-    pending_symbols++;
+    UNSAFE_TODO(pending_symbols++);
     TRACE_EVENT_COPY_NESTABLE_ASYNC_BEGIN_WITH_TIMESTAMP0(
         kSwapEventTraceCategories, pending_symbols, trace_id,
         tracePairs[i - 1].time);
@@ -981,6 +990,7 @@ void NativeViewGLSurfaceEGL::SetVSyncEnabled(bool enabled) {
 }
 
 NativeViewGLSurfaceEGL::~NativeViewGLSurfaceEGL() {
+  InvalidateWeakPtrs();
   Destroy();
 }
 
@@ -997,6 +1007,11 @@ bool PbufferGLSurfaceEGL::Initialize(GLSurfaceFormat format) {
   if (display_->GetDisplay() == EGL_NO_DISPLAY) {
     LOG(ERROR) << "Trying to create PbufferGLSurfaceEGL with invalid "
                << "display.";
+    return false;
+  }
+
+  if (!GetConfig()) {
+    LOG(ERROR) << "No suitable EGL configs found for initialization.";
     return false;
   }
 
@@ -1065,9 +1080,7 @@ bool PbufferGLSurfaceEGL::IsOffscreen() {
 
 gfx::SwapResult PbufferGLSurfaceEGL::SwapBuffers(PresentationCallback callback,
                                                  gfx::FrameData data) {
-  NOTREACHED_IN_MIGRATION()
-      << "Attempted to call SwapBuffers on a PbufferGLSurfaceEGL.";
-  return gfx::SwapResult::SWAP_FAILED;
+  NOTREACHED() << "Attempted to call SwapBuffers on a PbufferGLSurfaceEGL.";
 }
 
 gfx::Size PbufferGLSurfaceEGL::GetSize() {
@@ -1111,8 +1124,7 @@ EGLSurface PbufferGLSurfaceEGL::GetHandle() {
 
 void* PbufferGLSurfaceEGL::GetShareHandle() {
 #if BUILDFLAG(IS_ANDROID)
-  NOTREACHED_IN_MIGRATION();
-  return nullptr;
+  NOTREACHED();
 #else
   if (!display_->ext->b_EGL_ANGLE_query_surface_pointer)
     return nullptr;
@@ -1132,6 +1144,7 @@ void* PbufferGLSurfaceEGL::GetShareHandle() {
 }
 
 PbufferGLSurfaceEGL::~PbufferGLSurfaceEGL() {
+  InvalidateWeakPtrs();
   Destroy();
 }
 
@@ -1181,6 +1194,7 @@ void* SurfacelessEGL::GetShareHandle() {
 }
 
 SurfacelessEGL::~SurfacelessEGL() {
+  InvalidateWeakPtrs();
 }
 
 }  // namespace gl

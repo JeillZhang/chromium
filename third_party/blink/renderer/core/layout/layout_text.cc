@@ -54,7 +54,7 @@
 #include "third_party/blink/renderer/core/layout/inline/inline_node.h"
 #include "third_party/blink/renderer/core/layout/inline/offset_mapping.h"
 #include "third_party/blink/renderer/core/layout/layout_block.h"
-#include "third_party/blink/renderer/core/layout/layout_ng_block_flow.h"
+#include "third_party/blink/renderer/core/layout/layout_block_flow.h"
 #include "third_party/blink/renderer/core/layout/layout_object_inlines.h"
 #include "third_party/blink/renderer/core/layout/layout_text_combine.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
@@ -69,6 +69,7 @@
 #include "third_party/blink/renderer/platform/text/hyphenation.h"
 #include "third_party/blink/renderer/platform/text/text_break_iterator.h"
 #include "third_party/blink/renderer/platform/wtf/size_assertions.h"
+#include "third_party/blink/renderer/platform/wtf/text/character_visitor.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_buffer.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
 #include "third_party/blink/renderer/platform/wtf/text/text_offset_map.h"
@@ -174,14 +175,6 @@ LayoutText::LayoutText(Node* node, String str)
 
   if (node)
     GetFrameView()->IncrementVisuallyNonEmptyCharacterCount(text_.length());
-
-  // Call GetSecureTextTimers() and GetSelectionDisplayItemClientMap() to ensure
-  // map exists. They are called in pre-finalizer where allocation is not
-  // allowed.
-  // TODO(yukiy): Remove these if FormattedTextRun::Dispose() can be
-  // removed.
-  GetSecureTextTimers();
-  GetSelectionDisplayItemClientMap();
 }
 
 void LayoutText::Trace(Visitor* visitor) const {
@@ -195,17 +188,6 @@ LayoutText* LayoutText::CreateEmptyAnonymous(Document& doc,
   text->SetDocumentForAnonymous(&doc);
   text->SetStyle(style);
   return text;
-}
-
-LayoutText* LayoutText::CreateAnonymousForFormattedText(
-    Document& doc,
-    const ComputedStyle* style,
-    String text) {
-  auto* layout_text =
-      MakeGarbageCollected<LayoutText>(nullptr, std::move(text));
-  layout_text->SetDocumentForAnonymous(&doc);
-  layout_text->SetStyleInternal(std::move(style));
-  return layout_text;
 }
 
 bool LayoutText::IsWordBreak() const {
@@ -256,7 +238,7 @@ void LayoutText::StyleDidChange(StyleDifference diff,
 
   // This is an optimization that kicks off font load before layout.
   if (!TransformedText().ContainsOnlyWhitespaceOrEmpty()) {
-    new_style.GetFont().WillUseFontData(TransformedText());
+    new_style.GetFont()->WillUseFontData(TransformedText());
   }
 
   TextAutosizer* text_autosizer = GetDocument().GetTextAutosizer();
@@ -278,12 +260,12 @@ void LayoutText::RemoveAndDestroyTextBoxes() {
       Parent()->DirtyLinesFromChangedChild(this);
     }
     if (FirstInlineFragmentItemIndex()) {
-      DetachAbstractInlineTextBoxesIfNeeded();
+      DetachAxHooksIfNeeded();
       FragmentItems::LayoutObjectWillBeDestroyed(*this);
       ClearFirstInlineFragmentItemIndex();
     }
   } else if (FirstInlineFragmentItemIndex()) {
-    DetachAbstractInlineTextBoxesIfNeeded();
+    DetachAxHooksIfNeeded();
     ClearFirstInlineFragmentItemIndex();
   }
   DeleteTextBoxes();
@@ -315,10 +297,10 @@ void LayoutText::WillBeDestroyed() {
 
 void LayoutText::DeleteTextBoxes() {
   NOT_DESTROYED();
-  DetachAbstractInlineTextBoxesIfNeeded();
+  DetachAxHooksIfNeeded();
 }
 
-void LayoutText::DetachAbstractInlineTextBoxes() {
+void LayoutText::DetachAxHooks() {
   NOT_DESTROYED();
   // TODO(layout-dev): Because We should call |WillDestroy()| once for
   // associated fragments, when you reuse fragments, you should construct
@@ -328,14 +310,21 @@ void LayoutText::DetachAbstractInlineTextBoxes() {
   // TODO(yosin): Make sure we call this function within valid containg block
   // of |this|.
   InlineCursor cursor;
-  for (cursor.MoveTo(*this); cursor; cursor.MoveToNextForSameLayoutObject())
+  for (cursor.MoveTo(*this); cursor; cursor.MoveToNextForSameLayoutObject()) {
     AbstractInlineTextBox::WillDestroy(cursor);
+  }
+}
+
+void LayoutText::ClearBlockFlowCachedData(const LayoutBlockFlow* block_flow) {
+  if (AXObjectCache* cache = GetDocument().ExistingAXObjectCache()) {
+    cache->ClearBlockFlowCachedData(FragmentItemsContainer());
+  }
 }
 
 void LayoutText::ClearFirstInlineFragmentItemIndex() {
   NOT_DESTROYED();
   CHECK(IsInLayoutNGInlineFormattingContext()) << *this;
-  DetachAbstractInlineTextBoxesIfNeeded();
+  DetachAxHooksIfNeeded();
   first_fragment_item_index_ = 0u;
 }
 
@@ -344,7 +333,7 @@ void LayoutText::SetFirstInlineFragmentItemIndex(wtf_size_t index) {
   CHECK(IsInLayoutNGInlineFormattingContext());
   // TODO(yosin): Call |AbstractInlineTextBox::WillDestroy()|.
   DCHECK_NE(index, 0u);
-  DetachAbstractInlineTextBoxesIfNeeded();
+  DetachAxHooksIfNeeded();
   // Changing the first fragment item index causes
   // LayoutText::FirstAbstractInlineTextBox to return a box,
   // so notify the AX object for this LayoutText that it might need to
@@ -427,8 +416,7 @@ Vector<LayoutText::TextBoxInfo> LayoutText::GetTextBoxInfo() const {
             results.push_back(TextBoxInfo{rect, *box_start, box_length});
             continue;
           }
-          NOTREACHED_IN_MIGRATION();
-          continue;
+          NOTREACHED();
         }
         // Handle CSS generated content, e.g. ::before/::after
         const OffsetMappingUnit* const mapping_unit =
@@ -513,7 +501,7 @@ void LayoutText::CollectLineBoxRects(const PhysicalRectCollector& yield,
     InlineCursor cursor;
     cursor.MoveTo(*this);
     for (; cursor; cursor.MoveToNextForSameLayoutObject()) {
-      if (UNLIKELY(option != ClippingOption::kNoClipping)) {
+      if (option != ClippingOption::kNoClipping) [[unlikely]] {
         DCHECK_EQ(option, ClippingOption::kClipToEllipsis);
         if (cursor.Current().IsHiddenForPaint())
           continue;
@@ -524,11 +512,12 @@ void LayoutText::CollectLineBoxRects(const PhysicalRectCollector& yield,
   }
 }
 
-void LayoutText::AbsoluteQuads(Vector<gfx::QuadF>& quads,
-                               MapCoordinatesFlags mode) const {
+void LayoutText::QuadsInAncestorInternal(Vector<gfx::QuadF>& quads,
+                                         const LayoutBoxModelObject* ancestor,
+                                         MapCoordinatesFlags mode) const {
   NOT_DESTROYED();
-  CollectLineBoxRects([this, &quads, mode](const PhysicalRect& r) {
-    quads.push_back(LocalRectToAbsoluteQuad(r, mode));
+  CollectLineBoxRects([this, &quads, ancestor, mode](const PhysicalRect& r) {
+    quads.push_back(LocalRectToAncestorQuad(r, ancestor, mode));
   });
 }
 
@@ -639,8 +628,9 @@ void LayoutText::AbsoluteQuadsForRange(Vector<gfx::QuadF>& quads,
           continue;
         rect = item.LocalRect();
       }
-      if (UNLIKELY(text_combine))
+      if (text_combine) [[unlikely]] {
         rect = text_combine->AdjustRectForBoundingBox(rect);
+      }
       gfx::QuadF quad;
       if (const SvgFragmentData* svg_data = item.GetSvgFragmentData()) {
         gfx::RectF float_rect(rect);
@@ -708,7 +698,7 @@ PositionWithAffinity LayoutText::PositionForPoint(
         container_fragment = &cursor.ContainerFragment();
         point_in_container_fragment =
             point_in_contents - container_fragment->OffsetFromOwnerLayoutBox();
-        if (UNLIKELY(text_combine)) {
+        if (text_combine) [[unlikely]] {
           point_in_container_fragment =
               text_combine->AdjustOffsetForHitTest(point_in_container_fragment);
         }
@@ -730,30 +720,18 @@ PositionWithAffinity LayoutText::PositionForPoint(
   return CreatePositionWithAffinity(0);
 }
 
-PhysicalRect LayoutText::LocalCaretRect(
-    int caret_offset,
-    LayoutUnit* extra_width_to_end_of_line) const {
+PhysicalRect LayoutText::LocalCaretRect(int caret_offset) const {
   NOT_DESTROYED();
   return PhysicalRect();
 }
 
 bool LayoutText::IsAllCollapsibleWhitespace() const {
   NOT_DESTROYED();
-  unsigned length = text_.length();
-  if (text_.Is8Bit()) {
-    for (unsigned i = 0; i < length; ++i) {
-      if (!StyleRef().IsCollapsibleWhiteSpace(text_.Characters8()[i])) {
-        return false;
-      }
-    }
-    return true;
-  }
-  for (unsigned i = 0; i < length; ++i) {
-    if (!StyleRef().IsCollapsibleWhiteSpace(text_.Characters16()[i])) {
-      return false;
-    }
-  }
-  return true;
+  const ComputedStyle& style = StyleRef();
+  return WTF::VisitCharacters(text_, [&style](auto chars) {
+    return std::ranges::all_of(
+        chars, [&style](auto ch) { return style.IsCollapsibleWhiteSpace(ch); });
+  });
 }
 
 UChar32 LayoutText::FirstCharacterAfterWhitespaceCollapsing() const {
@@ -787,8 +765,9 @@ PhysicalOffset LayoutText::FirstLineBoxTopLeft() const {
   if (IsInLayoutNGInlineFormattingContext()) {
     // TODO(kojii): Some clients call this against dirty-tree, but NG fragments
     // are not safe to read for dirty-tree. crbug.com/963103
-    if (UNLIKELY(!IsFirstInlineFragmentSafe()))
+    if (!IsFirstInlineFragmentSafe()) [[unlikely]] {
       return PhysicalOffset();
+    }
     InlineCursor cursor;
     cursor.MoveTo(*this);
     return cursor ? cursor.Current().OffsetInContainerFragment()
@@ -927,7 +906,9 @@ String LayoutText::TransformAndSecureText(const String& original,
     }
     auto [masked, secure_map] = SecureText(transformed, mask);
     if (!secure_map.IsEmpty()) {
-      offset_map = TextOffsetMap(offset_map, secure_map);
+      offset_map = TextOffsetMap(
+          offset_map, secure_map,
+          RuntimeEnabledFeatures::TextTransformAndSecurityFixEnabled());
     }
     return masked;
   }
@@ -1017,7 +998,7 @@ void LayoutText::ForceSetText(String text) {
 void LayoutText::SetNeedsLayoutAndIntrinsicWidthsRecalcAndFullPaintInvalidation(
     LayoutInvalidationReasonForTracing reason) {
   auto* const text_combine = DynamicTo<LayoutTextCombine>(Parent());
-  if (UNLIKELY(text_combine)) {
+  if (text_combine) [[unlikely]] {
     // Number of characters in text may change compressed font or scaling of
     // text combine. So, we should invalidate |LayoutNGTextCombine| to repaint.
     text_combine
@@ -1092,8 +1073,9 @@ PhysicalRect LayoutText::PhysicalLinesBoundingBox() const {
     result.offset = FirstLineBoxTopLeft();
   // Note: |result.offset| is relative to container fragment.
   const auto* const text_combine = DynamicTo<LayoutTextCombine>(Parent());
-  if (UNLIKELY(text_combine))
+  if (text_combine) [[unlikely]] {
     return text_combine->AdjustRectForBoundingBox(result);
+  }
   return result;
 }
 
@@ -1101,11 +1083,6 @@ PhysicalRect LayoutText::VisualOverflowRect() const {
   NOT_DESTROYED();
   DCHECK(IsInLayoutNGInlineFormattingContext());
   return FragmentItem::LocalVisualRectFor(*this);
-}
-
-PhysicalRect LayoutText::LocalVisualRectIgnoringVisibility() const {
-  NOT_DESTROYED();
-  return UnionRect(VisualOverflowRect(), LocalSelectionVisualRect());
 }
 
 PhysicalRect LayoutText::LocalSelectionVisualRect() const {
@@ -1402,13 +1379,16 @@ void LayoutText::InvalidateDisplayItemClients(
 
 const DisplayItemClient* LayoutText::GetSelectionDisplayItemClient() const {
   NOT_DESTROYED();
-  if (UNLIKELY(!IsInLayoutNGInlineFormattingContext()))
+  if (!IsInLayoutNGInlineFormattingContext()) [[unlikely]] {
     return nullptr;
+  }
   // When |this| is in text-combine box, we should use text-combine box as
   // display client item to paint caret with affine transform.
   const auto* const text_combine = DynamicTo<LayoutTextCombine>(Parent());
-  if (UNLIKELY(text_combine) && text_combine->NeedsAffineTransformInPaint())
+  if (text_combine && text_combine->NeedsAffineTransformInPaint())
+      [[unlikely]] {
     return text_combine;
+  }
   if (!IsSelected())
     return nullptr;
   auto it = GetSelectionDisplayItemClientMap().find(this);
@@ -1453,7 +1433,7 @@ void LayoutText::SetInlineItems(InlineItemsData* data,
   NOT_DESTROYED();
 #if DCHECK_IS_ON()
   for (wtf_size_t i = begin; i < begin + size; i++) {
-    DCHECK_EQ(data->items[i].GetLayoutObject(), this);
+    DCHECK_EQ(data->items[i]->GetLayoutObject(), this);
   }
 #endif
   auto* items = GetInlineItems();
@@ -1486,8 +1466,9 @@ void LayoutText::RecalcVisualOverflow() {
   // |RecalcVisualOverflow| for each layer, and the containing |LayoutObject|
   // should recalculate its |FragmentItem|s without traversing descendant
   // |LayoutObject|s.
-  if (IsInline() && IsInLayoutNGInlineFormattingContext())
-    NOTREACHED_IN_MIGRATION();
+  if (IsInline() && IsInLayoutNGInlineFormattingContext()) {
+    NOTREACHED();
+  }
 
   LayoutObject::RecalcVisualOverflow();
 }

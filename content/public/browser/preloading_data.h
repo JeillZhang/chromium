@@ -5,6 +5,8 @@
 #ifndef CONTENT_PUBLIC_BROWSER_PRELOADING_DATA_H_
 #define CONTENT_PUBLIC_BROWSER_PRELOADING_DATA_H_
 
+#include <optional>
+
 #include "base/functional/callback.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/preloading.h"
@@ -150,6 +152,18 @@ class CONTENT_EXPORT PreloadingData {
   // This flag will be true if there's been at least 1 attempt to do a
   // speculation-rules based prerender.
   virtual bool HasSpeculationRulesPrerender() = 0;
+
+  // Called when the embedder is making a prediction with an ML model about
+  // whether a navigation to `url` will occur. The provided callback will be
+  // invoked on navigation with the result of whether the prediction would be
+  // accurate. If downsampling occurs, some callbacks may not be invoked, and
+  // the ones that are invoked will have the amount of sampling indicated in the
+  // `sampling_likelihood`.
+  virtual void OnPreloadingHeuristicsModelInput(
+      const GURL& url,
+      base::OnceCallback<void(std::optional<double> sampling_likelihood,
+                              bool is_accurate_prediction)>
+          on_record_outcome) = 0;
 
  protected:
   virtual ~PreloadingData() = default;

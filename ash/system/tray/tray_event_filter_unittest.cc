@@ -63,9 +63,6 @@ class TestTrayBackgroundView : public TrayBackgroundView {
   }
 
   void UpdateTrayItemColor(bool is_active) override {}
-  std::u16string GetAccessibleNameForTray() override {
-    return u"TestTrayBackgroundView";
-  }
 
   void HandleLocaleChange() override {}
 
@@ -90,7 +87,7 @@ class TestTrayBackgroundView : public TrayBackgroundView {
     bubble_->ShowBubble(std::move(bubble_view));
   }
 
-  void CloseBubble() override { bubble_.reset(); }
+  void CloseBubbleInternal() override { bubble_.reset(); }
 
   TrayBubbleWrapper* bubble() { return bubble_.get(); }
 

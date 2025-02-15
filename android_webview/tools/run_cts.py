@@ -11,6 +11,7 @@ import contextlib
 import json
 import logging
 import os
+import os.path
 import shutil
 import subprocess
 import sys
@@ -47,7 +48,7 @@ _DEFAULT_CTS_GCS_PATH_FILE = os.path.join(os.path.dirname(__file__),
                                           'cts_config',
                                           'webview_cts_gcs_path.json')
 _DEFAULT_CTS_ARCHIVE_DIR = os.path.join(os.path.dirname(__file__),
-                                        'cts_archive')
+                                        'cts_archive', 'cipd')
 _DEFAULT_TRADEFED_AAPT_PATH = ANDROID_SDK_TOOLS
 _DEFAULT_TRADEFED_ADB_PATH = os.path.join(ANDROID_SDK_ROOT, 'platform-tools')
 
@@ -65,6 +66,7 @@ SDK_PLATFORM_DICT = {
     version_codes.S_V2: 'S',
     version_codes.TIRAMISU: 'T',
     version_codes.UPSIDE_DOWN_CAKE: 'U',
+    version_codes.VANILLA_ICE_CREAM: 'V',
 }
 
 # The test apks are apparently compatible across all architectures, the
@@ -460,9 +462,7 @@ def GetDevice(args):
       # Start the emulator w/ -writable-system s.t. we can remount the system
       # partition r/w and install our own webview provider. Require fast start
       # to avoid startup regressions.
-      emulator_instance.Start(writable_system=True,
-                              require_fast_start=True,
-                              enable_network=True)
+      emulator_instance.Start(writable_system=True, enable_network=True)
 
     devices = script_common.GetDevices(args.devices, args.denylist_file)
     device = devices[0]
@@ -499,9 +499,7 @@ def main():
       '--cts-release',
       # TODO(aluo): --platform is deprecated (the meaning is unclear).
       '--platform',
-      # TODO: crbug.com/1454486 - Remove 'U' once added to SDK_PLATFORM_DICT,
-      # added Android U CTS to CIPD and configured webview_cts_gcs_path.json.
-      choices=sorted(set(SDK_PLATFORM_DICT.values()) | {'U'}),
+      choices=sorted(set(SDK_PLATFORM_DICT.values())),
       required=False,
       default=None,
       help='Which CTS release to use for the run. This should generally be <= '

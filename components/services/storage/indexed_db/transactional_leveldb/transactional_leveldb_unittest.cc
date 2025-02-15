@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #include <stddef.h>
 
 #include <algorithm>
@@ -30,8 +35,8 @@
 #include "third_party/leveldatabase/leveldb_chrome.h"
 #include "third_party/leveldatabase/src/include/leveldb/comparator.h"
 
-namespace content {
-namespace leveldb_unittest {
+namespace content::indexed_db {
+namespace {
 
 static const size_t kDefaultMaxOpenIteratorsPerDatabase = 50;
 
@@ -165,5 +170,5 @@ TEST(LevelDB, Locking) {
   EXPECT_TRUE(status.ok());
 }
 
-}  // namespace leveldb_unittest
-}  // namespace content
+}  // namespace
+}  // namespace content::indexed_db

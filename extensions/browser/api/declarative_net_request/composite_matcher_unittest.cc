@@ -4,6 +4,7 @@
 
 #include "extensions/browser/api/declarative_net_request/composite_matcher.h"
 
+#include <array>
 #include <string>
 #include <utility>
 #include <vector>
@@ -50,18 +51,20 @@ TestRule CreateModifyHeadersRule(
   rule.id = id;
   rule.priority = priority;
 
-  if (url_filter)
+  if (url_filter) {
     rule.condition->url_filter = url_filter;
-  else if (regex_filter) {
+  } else if (regex_filter) {
     rule.condition->url_filter.reset();
     rule.condition->regex_filter = regex_filter;
   }
 
   rule.action->type = std::string("modifyHeaders");
-  if (request_headers_list)
+  if (request_headers_list) {
     rule.action->request_headers = std::move(request_headers_list);
-  if (response_headers_list)
+  }
+  if (response_headers_list) {
     rule.action->response_headers = std::move(response_headers_list);
+  }
   return rule;
 }
 
@@ -529,12 +532,13 @@ TEST_F(CompositeMatcherTest, HostPermissionsAlwaysRequired) {
       std::move(matchers), /*extension_id=*/"",
       HostPermissionsAlwaysRequired::kTrue);
 
-  struct TestCases {
+  struct TestCase {
     const char* url;
     const PageAccess access;
     const bool expected_notify_withheld;
     std::optional<int> expected_matched_rule_id;
-  } cases[] = {
+  };
+  const auto cases = std::to_array<TestCase>({
       {"https://example.com", PageAccess::kAllowed, false, block_rule.id},
       {"https://example.com", PageAccess::kWithheld, true, std::nullopt},
       {"https://foo.com", PageAccess::kAllowed, false, allow_rule.id},
@@ -545,7 +549,7 @@ TEST_F(CompositeMatcherTest, HostPermissionsAlwaysRequired) {
       {"http://upgrade.com", PageAccess::kWithheld, true, std::nullopt},
       {"http://nomatch.com", PageAccess::kAllowed, false, std::nullopt},
       {"http://nomatch.com", PageAccess::kWithheld, false, std::nullopt},
-  };
+  });
 
   for (size_t i = 0; i < std::size(cases); i++) {
     SCOPED_TRACE(base::StringPrintf("Testing case %zu", i));
@@ -559,8 +563,9 @@ TEST_F(CompositeMatcherTest, HostPermissionsAlwaysRequired) {
     EXPECT_EQ(cases[i].expected_notify_withheld, info.notify_request_withheld);
 
     std::optional<int> rule_matched_id;
-    if (info.action)
+    if (info.action) {
       rule_matched_id = info.action->rule_id;
+    }
 
     EXPECT_EQ(cases[i].expected_matched_rule_id, rule_matched_id);
   }

@@ -1,7 +1,8 @@
 // Copyright 2023 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
-import {EmojiGroupElement, EmojiPickerApiProxy, EmojiPickerApp, GIF_VALIDATION_DATE, TRENDING} from 'chrome://emoji-picker/emoji_picker.js';
+import type {EmojiGroupElement, EmojiPickerApp} from 'chrome://emoji-picker/emoji_picker.js';
+import {EmojiPickerApiProxy, GIF_VALIDATION_DATE, TRENDING} from 'chrome://emoji-picker/emoji_picker.js';
 import {assert} from 'chrome://resources/js/assert.js';
 import {flush} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 import {assertEquals} from 'chrome://webui-test/chai_assert.js';
@@ -153,7 +154,7 @@ suite(`emoji-picker-validation-gif`, () => {
       `recently used gif group should contain the ` +
           `correct gifs after it is has been validated.`,
       async () => {
-        emojiPicker.updateIncognitoState(false);
+        await emojiPicker.updateIncognitoState(false);
 
         // Whilst history originally had 5 GIFs, there should now only be 3
         // valid GIFs.
@@ -183,7 +184,7 @@ suite(`emoji-picker-validation-gif`, () => {
       'Trending appends GIFs correctly via scrolling when' +
           ' recently used group exists',
       async () => {
-        emojiPicker.updateIncognitoState(false);
+        await emojiPicker.updateIncognitoState(false);
 
         const categoryButton =
             findInEmojiPicker('emoji-search')!.shadowRoot!
@@ -275,7 +276,7 @@ suite(`emoji-picker-validation-gif`, () => {
       'Trending appends GIFs correctly via selecting group' +
           ' when recently used group exists',
       async () => {
-        emojiPicker.updateIncognitoState(false);
+        await emojiPicker.updateIncognitoState(false);
 
         const categoryButton =
             findInEmojiPicker('emoji-search')!.shadowRoot!

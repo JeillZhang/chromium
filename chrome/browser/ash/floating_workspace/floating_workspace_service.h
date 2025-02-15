@@ -21,6 +21,7 @@
 #include "chrome/browser/ash/floating_workspace/floating_workspace_util.h"
 #include "chrome/browser/ui/ash/desks/desks_client.h"
 #include "chromeos/ash/components/network/network_state_handler_observer.h"
+#include "chromeos/ash/services/device_sync/public/cpp/device_sync_client.h"
 #include "chromeos/dbus/power/power_manager_client.h"
 #include "components/desks_storage/core/desk_model.h"
 #include "components/desks_storage/core/desk_sync_bridge.h"
@@ -30,6 +31,8 @@
 #include "components/services/app_service/public/cpp/app_registry_cache_wrapper.h"
 #include "components/sync/service/sync_service.h"
 #include "components/sync/service/sync_service_observer.h"
+#include "components/sync_device_info/device_info_sync_service.h"
+#include "components/sync_device_info/device_info_tracker.h"
 #include "ui/message_center/public/cpp/notification.h"
 
 class Profile;
@@ -74,10 +77,9 @@ class FloatingWorkspaceService : public KeyedService,
                                  public ash::SessionObserver,
                                  public NetworkStateHandlerObserver,
                                  public ash::SystemTrayObserver,
-                                 public chromeos::PowerManagerClient::Observer {
+                                 public chromeos::PowerManagerClient::Observer,
+                                 public syncer::DeviceInfoTracker::Observer {
  public:
-  static FloatingWorkspaceService* GetForProfile(Profile* profile);
-
   explicit FloatingWorkspaceService(
       Profile* profile,
       floating_workspace_util::FloatingWorkspaceVersion version);
@@ -86,7 +88,8 @@ class FloatingWorkspaceService : public KeyedService,
 
   // Used in constructor for initializations
   void Init(syncer::SyncService* sync_service,
-            desks_storage::DeskSyncService* desk_sync_service);
+            desks_storage::DeskSyncService* desk_sync_service,
+            syncer::DeviceInfoSyncService* device_info_sync_service);
 
   // Add subscription to foreign session changes.
   void SubscribeToForeignSessionUpdates();
@@ -128,6 +131,10 @@ class FloatingWorkspaceService : public KeyedService,
   void SuspendImminent(power_manager::SuspendImminent::Reason reason) override;
   void SuspendDone(base::TimeDelta sleep_duration) override;
 
+  // syncer::DeviceInfoTracker::Observer:
+  void OnDeviceInfoChange() override;
+  void OnDeviceInfoShutdown() override;
+
   void MaybeCloseNotification();
 
   std::vector<const ash::DeskTemplate*> GetFloatingWorkspaceTemplateEntries();
@@ -137,7 +144,8 @@ class FloatingWorkspaceService : public KeyedService,
   // active user session is changed back to the first logged in user.
   void SetUpServiceAndObservers(
       syncer::SyncService* sync_service,
-      desks_storage::DeskSyncService* desk_sync_service);
+      desks_storage::DeskSyncService* desk_sync_service,
+      syncer::DeviceInfoSyncService* device_info_sync_service);
 
   // Shuts down the observers and dependent services.
   // This will be called when the user session changes to a different user or
@@ -163,7 +171,8 @@ class FloatingWorkspaceService : public KeyedService,
 
   void InitForV1();
   void InitForV2(syncer::SyncService* sync_service,
-                 desks_storage::DeskSyncService* desk_sync_service);
+                 desks_storage::DeskSyncService* desk_sync_service,
+                 syncer::DeviceInfoSyncService* device_info_sync_service);
 
   const sync_sessions::SyncedSession* GetMostRecentlyUsedRemoteSession();
 
@@ -285,6 +294,22 @@ class FloatingWorkspaceService : public KeyedService,
   // consideration for either sign out or restore.
   bool ShouldExcludeTemplate(const DeskTemplate* floating_workspace_template);
 
+  // Called by local_device_info_provider when it is ready.
+  void OnLocalDeviceInfoProviderReady();
+
+  // Updates the local device info with the new floating workspace recent signin
+  // time.
+  void UpdateLocalDeviceInfo();
+
+  // Check if we should wait for cookies to be synced before restoring the
+  // workspace. If yes, it will set the callback for Floating SSO code to
+  // restore the workspace once cookies are ready.
+  bool ShouldWaitForCookies();
+
+  // Schedule restoration of floating workspace on app cache being ready. Will
+  // restore immediately if cache is ready at the moment of the call.
+  void LaunchWhenAppCacheIsReady();
+
   const raw_ptr<Profile> profile_;
 
   const floating_workspace_util::FloatingWorkspaceVersion version_;
@@ -330,7 +355,7 @@ class FloatingWorkspaceService : public KeyedService,
   std::optional<base::Time> timestamp_before_suspend_;
 
   // The in memory cache of the latest workspace desk datatype download status.
-  std::optional<syncer::SyncService::ModelTypeDownloadStatus>
+  std::optional<syncer::SyncService::DataTypeDownloadStatus>
       download_status_cache_;
 
   // Timer used for periodic capturing and uploading.
@@ -348,6 +373,10 @@ class FloatingWorkspaceService : public KeyedService,
   raw_ptr<desks_storage::DeskSyncService> desk_sync_service_ = nullptr;
 
   raw_ptr<syncer::SyncService> sync_service_ = nullptr;
+
+  raw_ptr<syncer::DeviceInfoSyncService> device_info_sync_service_ = nullptr;
+
+  base::CallbackListSubscription local_device_info_ready_subscription_;
 
   // The uuid associated with this device's floating workspace template. This is
   // populated when we first capture a floating workspace template.

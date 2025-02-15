@@ -10,9 +10,7 @@ import static org.mockito.Mockito.doReturn;
 
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
@@ -20,8 +18,6 @@ import org.mockito.stubbing.Answer;
 import org.robolectric.annotation.Config;
 
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.base.test.util.Features;
-import org.chromium.base.test.util.JniMocker;
 import org.chromium.chrome.browser.commerce.ShoppingServiceFactory;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.profiles.ProfileManager;
@@ -37,11 +33,8 @@ import java.util.concurrent.TimeoutException;
 @Config(manifest = Config.NONE)
 @SuppressWarnings("DoNotMock") // Mocking GURL
 public class MerchantTrustSignalsDataProviderTest {
-    @Rule public TestRule mProcessor = new Features.JUnitProcessor();
 
     @Mock private GURL mMockDestinationGurl;
-
-    @Rule public JniMocker mMocker = new JniMocker();
 
     @Mock private Profile mMockProfile;
     @Mock private ShoppingService mMockShoppingService;

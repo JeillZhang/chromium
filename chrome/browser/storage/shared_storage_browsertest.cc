@@ -17,6 +17,7 @@
 #include "base/run_loop.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
+#include "base/strings/to_string.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/bind.h"
 #include "base/test/metrics/histogram_tester.h"
@@ -32,6 +33,7 @@
 #include "chrome/browser/privacy_sandbox/privacy_sandbox_settings_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/test/base/chrome_test_utils.h"
+#include "chrome/test/base/platform_browser_test.h"
 #include "components/content_settings/core/browser/content_settings_pref_provider.h"
 #include "components/content_settings/core/browser/cookie_settings.h"
 #include "components/content_settings/core/common/content_settings.h"
@@ -55,10 +57,12 @@
 #include "content/public/test/back_forward_cache_util.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
+#include "content/public/test/fenced_frame_test_util.h"
 #include "content/public/test/shared_storage_test_utils.h"
 #include "content/public/test/test_navigation_observer.h"
 #include "content/public/test/test_select_url_fenced_frame_config_observer.h"
 #include "content/public/test/test_shared_storage_header_observer.h"
+#include "extensions/buildflags/buildflags.h"
 #include "net/base/schemeful_site.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/test/embedded_test_server/controllable_http_response.h"
@@ -73,10 +77,14 @@
 #if BUILDFLAG(IS_ANDROID)
 #include "chrome/browser/ui/android/tab_model/tab_model.h"
 #include "chrome/browser/ui/android/tab_model/tab_model_list.h"
-#include "chrome/test/base/android/android_browser_test.h"
 #else
 #include "chrome/browser/ui/browser.h"
-#include "chrome/test/base/in_process_browser_test.h"
+#endif
+
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+#include "chrome/browser/extensions/extension_browsertest.h"
+#include "chrome/browser/extensions/extension_service.h"
+#include "extensions/test/test_extension_dir.h"
 #endif
 
 namespace storage {
@@ -85,15 +93,9 @@ namespace {
 
 using OperationResult = SharedStorageManager::OperationResult;
 
-const auto& SetOperation =
-    content::SharedStorageWriteOperationAndResult::SetOperation;
-const auto& AppendOperation =
-    content::SharedStorageWriteOperationAndResult::AppendOperation;
-const auto& ClearOperation =
-    content::SharedStorageWriteOperationAndResult::ClearOperation;
-
 constexpr char kMainHost[] = "a.test";
 constexpr char kSimplePagePath[] = "/simple.html";
+constexpr char kFencedFramePagePath[] = "/fenced_frames/title1.html";
 constexpr char kTitle1Path[] = "/title1.html";
 constexpr char kCrossOriginHost[] = "b.test";
 constexpr char kThirdOriginHost[] = "c.test";
@@ -117,6 +119,8 @@ constexpr char kTimingDocumentAppendHistogram[] =
     "Storage.SharedStorage.Document.Timing.Append";
 constexpr char kTimingDocumentSetHistogram[] =
     "Storage.SharedStorage.Document.Timing.Set";
+constexpr char kTimingDocumentGetHistogram[] =
+    "Storage.SharedStorage.Document.Timing.Get";
 constexpr char kTimingDocumentDeleteHistogram[] =
     "Storage.SharedStorage.Document.Timing.Delete";
 constexpr char kTimingDocumentClearHistogram[] =
@@ -150,6 +154,12 @@ constexpr char
         "PrivacySandbox.PrivateAggregation.Host."
         "TimeToGenerateReportRequestWithContextId";
 
+constexpr char kFencedStorageReadAttestationErrorPrefix[] =
+    "Attestation check for fenced storage read on";
+constexpr char kFencedStorageReadDisabledBy3pcSettingError[] =
+    "Fenced storage read is disabled because all third-party cookies are "
+    "blocked.";
+
 const double kBudgetAllowed = 5.0;
 
 // In order to cut back on the total number of tests run, we deliberately only
@@ -164,12 +174,6 @@ enum class EnforcementAndEnrollmentStatus {
   kAttestationsEnforcedMainHostUnenrolled = 1,
   kAttestationsEnforcedMainHostEnrolled = 2,
 };
-
-#if BUILDFLAG(IS_ANDROID)
-base::FilePath GetChromeTestDataDir() {
-  return base::FilePath(FILE_PATH_LITERAL("chrome/test/data"));
-}
-#endif
 
 // With `WebContentsConsoleObserver`, we can only wait for the last message in a
 // group.
@@ -190,18 +194,29 @@ MakeFilter(std::vector<std::string> possible_last_messages) {
       std::move(possible_last_messages));
 }
 
+std::string GetFencedStorageReadDisabledMessage() {
+  return base::StrCat({"a JavaScript error: \"OperationError: ",
+                       content::GetFencedStorageReadDisabledMessage()});
+}
+
+std::string GetFencedStorageReadWithoutRevokeNetworkMessage() {
+  return base::StrCat(
+      {"a JavaScript error: \"OperationError: ",
+       content::GetFencedStorageReadWithoutRevokeNetworkMessage()});
+}
+
 std::string GetSharedStorageDisabledErrorMessage() {
-  return base::StrCat({"a JavaScript error: \"Error: ",
+  return base::StrCat({"a JavaScript error: \"OperationError: ",
                        content::GetSharedStorageDisabledMessage()});
 }
 
 std::string GetSharedStorageSelectURLDisabledErrorMessage() {
-  return base::StrCat({"a JavaScript error: \"Error: ",
+  return base::StrCat({"a JavaScript error: \"OperationError: ",
                        content::GetSharedStorageSelectURLDisabledMessage()});
 }
 
 std::string GetSharedStorageAddModuleDisabledErrorMessage() {
-  return base::StrCat({"a JavaScript error: \"Error: ",
+  return base::StrCat({"a JavaScript error: \"OperationError: ",
                        content::GetSharedStorageAddModuleDisabledMessage()});
 }
 
@@ -508,23 +523,23 @@ class SharedStorageChromeBrowserTestBase : public PlatformBrowserTest {
 
   void
   Set3rdPartyCookieAndMainHostAttestationSettingsThenNavigateToMainHostPage() {
-    GURL main_url = https_server()->GetURL(kMainHost, kSimplePagePath);
-    SetThirdPartyCookieSetting(main_url);
-    MaybeEnrollMainHost(main_url);
-    EXPECT_TRUE(NavigateToURL(GetActiveWebContents(), main_url));
+    main_url_ = https_server()->GetURL(kMainHost, kSimplePagePath);
+    SetThirdPartyCookieSetting(main_url_);
+    MaybeEnrollMainHost(main_url_);
+    EXPECT_TRUE(NavigateToURL(GetActiveWebContents(), main_url_));
   }
 
   void
   Set3PCSettingAndAttestMainHostPlusAdditionalSitesThenNavigateToMainHostPage(
       const std::vector<std::string>& additional_site_hosts) {
-    GURL main_url = https_server()->GetURL(kMainHost, kSimplePagePath);
-    std::vector<GURL> urls({main_url});
+    main_url_ = https_server()->GetURL(kMainHost, kSimplePagePath);
+    std::vector<GURL> urls({main_url_});
     for (const auto& host : additional_site_hosts) {
       urls.push_back(https_server()->GetURL(host, kSimplePagePath));
     }
-    SetThirdPartyCookieSetting(main_url);
+    SetThirdPartyCookieSetting(main_url_);
     SetAttestationsMap(MakeSharedStoragePrivacySandboxAttestationsMap(urls));
-    EXPECT_TRUE(NavigateToURL(GetActiveWebContents(), main_url));
+    EXPECT_TRUE(NavigateToURL(GetActiveWebContents(), main_url_));
   }
 
   void SetSiteException(const GURL& url, ContentSetting content_setting) {
@@ -730,7 +745,7 @@ class SharedStorageChromeBrowserTestBase : public PlatformBrowserTest {
   }
   virtual bool EnableDebugMessages() const { return false; }
 
-  bool SuccessExpected() {
+  bool SuccessExpected() const {
     return GetEnforcementAndEnrollmentStatus() !=
                EnforcementAndEnrollmentStatus::
                    kAttestationsEnforcedMainHostUnenrolled &&
@@ -738,13 +753,14 @@ class SharedStorageChromeBrowserTestBase : public PlatformBrowserTest {
   }
 
   std::string ExpectedSharedStorageDisabledMessage() {
-    return "Error: " + content::GetSharedStorageDisabledMessage();
+    return "OperationError: " + content::GetSharedStorageDisabledMessage();
   }
 
  protected:
   base::HistogramTester histogram_tester_;
   std::unique_ptr<MockChromeContentBrowserClient>
       mock_chrome_content_browser_client_;
+  GURL main_url_;
 
  private:
   base::test::ScopedFeatureList scoped_feature_list_;
@@ -805,7 +821,7 @@ class SharedStoragePrefBrowserTest
   SharedStoragePrefBrowserTest() {
     base::FieldTrialParams params;
     params["ExposeDebugMessageForSettingsStatus"] =
-        EnableDebugMessages() ? "true" : "false";
+        base::ToString(EnableDebugMessages());
     shared_storage_feature_.InitAndEnableFeatureWithParameters(
         blink::features::kSharedStorageAPI, params);
     fenced_frame_api_change_feature_.InitWithFeatureState(
@@ -835,7 +851,7 @@ class SharedStoragePrefBrowserTest
 #endif
   }
 
-  void VerifyDebugErrorMessage(const std::string& error_message) {
+  virtual void VerifyDebugErrorMessage(const std::string& error_message) {
     ASSERT_FALSE(SuccessExpected());
     size_t found_pos = error_message.find("Debug");
     if (!EnableDebugMessages()) {
@@ -2229,36 +2245,11 @@ IN_PROC_BROWSER_TEST_P(SharedStorageChromeBrowserTest,
       content::JsReplace("sharedStorage.worklet.addModule($1)", invalid_url));
 
   EXPECT_EQ(
-      base::StrCat(
-          {"a JavaScript error: \"Error: The module script url is invalid.\n",
-           "    at __const_std::string&_script__:1:24):\n",
-           "        {sharedStorage.worklet.addModule(\"", invalid_url, "\")\n",
-           "                               ^^^^^\n"}),
-      result.error);
-
-  WaitForHistograms({kErrorTypeHistogram});
-  histogram_tester_.ExpectUniqueSample(
-      kErrorTypeHistogram,
-      blink::SharedStorageWorkletErrorType::kAddModuleWebVisible, 1);
-}
-
-IN_PROC_BROWSER_TEST_P(SharedStorageChromeBrowserTest,
-                       AddModule_CrossOriginScriptError) {
-  Set3rdPartyCookieAndMainHostAttestationSettingsThenNavigateToMainHostPage();
-
-  GURL script_url = https_server()->GetURL(kCrossOriginHost,
-                                           "/shared_storage/simple_module.js");
-  content::EvalJsResult result = content::EvalJs(
-      GetActiveWebContents(),
-      content::JsReplace("sharedStorage.worklet.addModule($1)", script_url));
-
-  EXPECT_EQ(
-      base::StrCat({"a JavaScript error: \"Error: Only same origin module ",
-                    "script is allowed.",
-                    "\n    at __const_std::string&_script__:1:24):\n        ",
-                    "{sharedStorage.worklet.addModule(\"",
-                    script_url.spec().substr(0, 38),
-                    "\n                               ^^^^^\n"}),
+      base::StrCat({"a JavaScript error: \"DataError: The module script url is "
+                    "invalid.\n",
+                    "    at __const_std::string&_script__:1:24):\n",
+                    "        {sharedStorage.worklet.addModule(\"", invalid_url,
+                    "\")\n", "                               ^^^^^\n"}),
       result.error);
 
   WaitForHistograms({kErrorTypeHistogram});
@@ -2278,7 +2269,7 @@ IN_PROC_BROWSER_TEST_P(SharedStorageChromeBrowserTest,
       content::JsReplace("sharedStorage.worklet.addModule($1)", script_url));
 
   EXPECT_EQ(
-      base::StrCat({"a JavaScript error: \"Error: Failed to load ",
+      base::StrCat({"a JavaScript error: \"OperationError: Failed to load ",
                     script_url.spec(), " HTTP status = 404 Not Found.\"\n"}),
       result.error);
 
@@ -2299,8 +2290,9 @@ IN_PROC_BROWSER_TEST_P(SharedStorageChromeBrowserTest,
       content::JsReplace("sharedStorage.worklet.addModule($1)", script_url));
 
   EXPECT_EQ(
-      base::StrCat({"a JavaScript error: \"Error: Unexpected redirect on ",
-                    script_url.spec(), ".\"\n"}),
+      base::StrCat(
+          {"a JavaScript error: \"OperationError: Unexpected redirect on ",
+           script_url.spec(), ".\"\n"}),
       result.error);
 
   WaitForHistograms({kErrorTypeHistogram});
@@ -2939,7 +2931,7 @@ IN_PROC_BROWSER_TEST_P(SharedStorageChromeBrowserTest,
 
 IN_PROC_BROWSER_TEST_P(
     SharedStorageChromeBrowserTest,
-    CrossOriginWorklet_CreateWorklet_PrefsError_PrivacySandbox) {
+    CrossOriginWorkletScript_CreateWorkletScriptDataOrigin_PrefsError_PrivacySandbox) {
   Set3PCSettingAndAttestMainHostPlusAdditionalSitesThenNavigateToMainHostPage(
       {kCrossOriginHost});
 
@@ -2957,7 +2949,9 @@ IN_PROC_BROWSER_TEST_P(
 
   content::EvalJsResult result = content::EvalJs(
       GetActiveWebContents(),
-      content::JsReplace("sharedStorage.createWorklet($1)", script_url));
+      content::JsReplace(
+          "sharedStorage.createWorklet($1, {dataOrigin: 'script-origin'})",
+          script_url));
 
   EXPECT_TRUE(base::StartsWith(
       result.error, GetSharedStorageAddModuleDisabledErrorMessage()));
@@ -2977,7 +2971,7 @@ IN_PROC_BROWSER_TEST_P(
 // preferences/attestation check for cross-origin worklets.
 IN_PROC_BROWSER_TEST_P(
     SharedStorageChromeBrowserTest,
-    CrossOriginWorklet_CreateWorklet_PrefsError_SiteSettings) {
+    CrossOriginWorkletScript_CreateWorkletScriptDataOrigin_PrefsError_SiteSettings) {
   Set3PCSettingAndAttestMainHostPlusAdditionalSitesThenNavigateToMainHostPage(
       {kCrossOriginHost});
 
@@ -2997,7 +2991,7 @@ IN_PROC_BROWSER_TEST_P(
   EXPECT_TRUE(
       content::ExecJs(GetActiveWebContents(), content::JsReplace(R"(
         (async function() {
-          await sharedStorage.createWorklet($1);
+          await sharedStorage.createWorklet($1, {dataOrigin: 'script-origin'});
         })()
       )",
                                                                  script_url)));
@@ -3017,8 +3011,9 @@ IN_PROC_BROWSER_TEST_P(
 
 // This test also shows that the correct origin is used for the
 // preferences/attestation check for cross-origin worklets.
-IN_PROC_BROWSER_TEST_P(SharedStorageChromeBrowserTest,
-                       CrossOriginWorklet_CreateWorklet_AttestationError) {
+IN_PROC_BROWSER_TEST_P(
+    SharedStorageChromeBrowserTest,
+    CrossOriginWorkletScript_CreateWorkletScriptDataOrigin_AttestationError) {
   // Only the main frame site will be attested.
   Set3rdPartyCookieAndMainHostAttestationSettingsThenNavigateToMainHostPage();
 
@@ -3032,7 +3027,9 @@ IN_PROC_BROWSER_TEST_P(SharedStorageChromeBrowserTest,
 
   content::EvalJsResult result = content::EvalJs(
       GetActiveWebContents(),
-      content::JsReplace("sharedStorage.createWorklet($1)", script_url));
+      content::JsReplace(
+          "sharedStorage.createWorklet($1, {dataOrigin: 'script-origin'})",
+          script_url));
 
   EXPECT_TRUE(base::StartsWith(
       result.error, GetSharedStorageAddModuleDisabledErrorMessage()));
@@ -3064,7 +3061,8 @@ IN_PROC_BROWSER_TEST_P(SharedStorageChromeBrowserTest,
   EXPECT_TRUE(
       content::ExecJs(GetActiveWebContents(), content::JsReplace(R"(
         (async function() {
-          window.testWorklet = await sharedStorage.createWorklet($1);
+          window.testWorklet = await sharedStorage.createWorklet($1,
+            {dataOrigin: 'script-origin'});
         })()
       )",
                                                                  script_url)));
@@ -3114,7 +3112,8 @@ IN_PROC_BROWSER_TEST_P(SharedStorageChromeBrowserTest,
   EXPECT_TRUE(
       content::ExecJs(GetActiveWebContents(), content::JsReplace(R"(
         (async function() {
-          window.testWorklet = await sharedStorage.createWorklet($1);
+          window.testWorklet = await sharedStorage.createWorklet($1,
+            {dataOrigin: 'script-origin'});
         })()
       )",
                                                                  script_url)));
@@ -3173,7 +3172,8 @@ IN_PROC_BROWSER_TEST_P(SharedStorageChromeBrowserTest,
   EXPECT_TRUE(
       content::ExecJs(GetActiveWebContents(), content::JsReplace(R"(
         (async function() {
-          window.testWorklet = await sharedStorage.createWorklet($1);
+          window.testWorklet = await sharedStorage.createWorklet($1,
+            {dataOrigin: 'script-origin'});
         })()
       )",
                                                                  script_url)));
@@ -3213,7 +3213,8 @@ IN_PROC_BROWSER_TEST_P(SharedStorageChromeBrowserTest,
   EXPECT_TRUE(
       content::ExecJs(GetActiveWebContents(), content::JsReplace(R"(
         (async function() {
-          window.testWorklet = await sharedStorage.createWorklet($1);
+          window.testWorklet = await sharedStorage.createWorklet($1,
+            {dataOrigin: 'script-origin'});
         })()
       )",
                                                                  script_url)));
@@ -3248,19 +3249,23 @@ IN_PROC_BROWSER_TEST_P(SharedStorageChromeBrowserTest,
 
 IN_PROC_BROWSER_TEST_P(
     SharedStorageChromeBrowserTest,
-    CrossOriginWorklet_CreateWorklet_NetworkError_MissingHeaders) {
+    CrossOriginWorkletScript_CreateWorkletScriptDataOrigin_NetworkError_NoAllowOriginResponseHeader) {
   Set3PCSettingAndAttestMainHostPlusAdditionalSitesThenNavigateToMainHostPage(
       {kCrossOriginHost});
 
-  // simple_module.js does not have the correct headers to be used to register
-  // cross-origin shared storage worklet.
-  GURL script_url = https_server()->GetURL(kCrossOriginHost,
-                                           "/shared_storage/simple_module.js");
+  // The module does not have the "Access-Control-Allow-Origin" response header.
+  GURL script_url = https_server()->GetURL(
+      kCrossOriginHost,
+      net::test_server::GetFilePathWithReplacements(
+          "/shared_storage/module_with_custom_header.js",
+          content::SharedStorageCrossOriginWorkletResponseHeaderReplacement(
+              "", "Shared-Storage-Cross-Origin-Worklet-Allowed: ?1")));
 
   content::EvalJsResult result =
       content::EvalJs(GetActiveWebContents(), content::JsReplace(R"(
         (async function() {
-          window.testWorklet = await sharedStorage.createWorklet($1);
+          window.testWorklet = await sharedStorage.createWorklet($1,
+            {dataOrigin: 'script-origin'});
         })()
       )",
                                                                  script_url));
@@ -3273,8 +3278,41 @@ IN_PROC_BROWSER_TEST_P(
       blink::SharedStorageWorkletErrorType::kAddModuleWebVisible, 1);
 }
 
-IN_PROC_BROWSER_TEST_P(SharedStorageChromeBrowserTest,
-                       CrossOriginWorklet_CreateWorklet_NetworkError_404) {
+IN_PROC_BROWSER_TEST_P(
+    SharedStorageChromeBrowserTest,
+    CrossOriginWorkletScript_CreateWorkletScriptDataOrigin_NetworkError_NoCrossOriginWorkletResponseHeader) {
+  Set3PCSettingAndAttestMainHostPlusAdditionalSitesThenNavigateToMainHostPage(
+      {kCrossOriginHost});
+
+  // The module does not have the "Shared-Storage-Cross-Origin-Worklet-Allowed"
+  // response header.
+  GURL script_url = https_server()->GetURL(
+      kCrossOriginHost,
+      net::test_server::GetFilePathWithReplacements(
+          "/shared_storage/module_with_custom_header.js",
+          content::SharedStorageCrossOriginWorkletResponseHeaderReplacement(
+              "Access-Control-Allow-Origin: *", "")));
+
+  content::EvalJsResult result =
+      content::EvalJs(GetActiveWebContents(), content::JsReplace(R"(
+        (async function() {
+          window.testWorklet = await sharedStorage.createWorklet($1,
+            {dataOrigin: 'script-origin'});
+        })()
+      )",
+                                                                 script_url));
+
+  EXPECT_THAT(result.error, testing::HasSubstr("Error: Failed to load"));
+
+  WaitForHistograms({kErrorTypeHistogram});
+  histogram_tester_.ExpectUniqueSample(
+      kErrorTypeHistogram,
+      blink::SharedStorageWorkletErrorType::kAddModuleWebVisible, 1);
+}
+
+IN_PROC_BROWSER_TEST_P(
+    SharedStorageChromeBrowserTest,
+    CrossOriginWorkletScript_CreateWorkletScriptDataOrigin_NetworkError_404) {
   Set3PCSettingAndAttestMainHostPlusAdditionalSitesThenNavigateToMainHostPage(
       {kCrossOriginHost});
 
@@ -3286,7 +3324,8 @@ IN_PROC_BROWSER_TEST_P(SharedStorageChromeBrowserTest,
   content::EvalJsResult result =
       content::EvalJs(GetActiveWebContents(), content::JsReplace(R"(
         (async function() {
-          window.testWorklet = await sharedStorage.createWorklet($1);
+          window.testWorklet = await sharedStorage.createWorklet($1,
+            {dataOrigin: 'script-origin'});
         })()
       )",
                                                                  script_url));
@@ -3299,8 +3338,9 @@ IN_PROC_BROWSER_TEST_P(SharedStorageChromeBrowserTest,
       blink::SharedStorageWorkletErrorType::kAddModuleWebVisible, 1);
 }
 
-IN_PROC_BROWSER_TEST_P(SharedStorageChromeBrowserTest,
-                       CrossOriginWorklet_CreateWorklet_Success) {
+IN_PROC_BROWSER_TEST_P(
+    SharedStorageChromeBrowserTest,
+    CrossOriginWorkletScript_CreateWorkletScriptDataOrigin_Success) {
   Set3PCSettingAndAttestMainHostPlusAdditionalSitesThenNavigateToMainHostPage(
       {kCrossOriginHost});
 
@@ -3322,10 +3362,496 @@ IN_PROC_BROWSER_TEST_P(SharedStorageChromeBrowserTest,
   EXPECT_TRUE(
       content::ExecJs(GetActiveWebContents(), content::JsReplace(R"(
         (async function() {
+          window.testWorklet = await sharedStorage.createWorklet($1,
+            {dataOrigin: 'script-origin'});
+        })()
+      )",
+                                                                 script_url)));
+
+  ASSERT_TRUE(console_observer.Wait());
+  EXPECT_EQ(1u, console_observer.messages().size());
+  EXPECT_EQ("Finish executing module_with_custom_header.js",
+            base::UTF16ToUTF8(console_observer.messages()[0].message));
+
+  EXPECT_EQ(1u, content::GetAttachedSharedStorageWorkletHostsCount(
+                    GetActiveWebContents()
+                        ->GetPrimaryMainFrame()
+                        ->GetStoragePartition()));
+
+  WaitForHistograms({kErrorTypeHistogram});
+  histogram_tester_.ExpectUniqueSample(
+      kErrorTypeHistogram, blink::SharedStorageWorkletErrorType::kSuccess, 1);
+}
+
+IN_PROC_BROWSER_TEST_P(
+    SharedStorageChromeBrowserTest,
+    CrossOriginWorkletScript_CreateWorkletDefaultDataOrigin_PrefsError_PrivacySandbox) {
+  Set3rdPartyCookieAndMainHostAttestationSettingsThenNavigateToMainHostPage();
+
+  // Disable Privacy Sandbox.
+  SetPrefs(/*enable_privacy_sandbox=*/false,
+           /*allow_third_party_cookies=*/true);
+
+  GURL script_url = https_server()->GetURL(
+      kCrossOriginHost,
+      net::test_server::GetFilePathWithReplacements(
+          "/shared_storage/module_with_custom_header.js",
+          content::SharedStorageCrossOriginWorkletResponseHeaderReplacement(
+              "Access-Control-Allow-Origin: *", "")));
+
+  content::EvalJsResult result = content::EvalJs(
+      GetActiveWebContents(),
+      content::JsReplace("sharedStorage.createWorklet($1)", script_url));
+
+  EXPECT_TRUE(base::StartsWith(
+      result.error, GetSharedStorageAddModuleDisabledErrorMessage()));
+
+  EXPECT_EQ(0u, content::GetAttachedSharedStorageWorkletHostsCount(
+                    GetActiveWebContents()
+                        ->GetPrimaryMainFrame()
+                        ->GetStoragePartition()));
+
+  WaitForHistograms({kErrorTypeHistogram});
+  histogram_tester_.ExpectUniqueSample(
+      kErrorTypeHistogram,
+      blink::SharedStorageWorkletErrorType::kAddModuleWebVisible, 1);
+}
+
+// This test shows that the correct origin is used for the
+// preferences/attestation check for cross-origin worklets.
+IN_PROC_BROWSER_TEST_P(
+    SharedStorageChromeBrowserTest,
+    CrossOriginWorkletScript_CreateWorkletDefaultDataOrigin_PrefsError_SiteSettings) {
+  Set3rdPartyCookieAndMainHostAttestationSettingsThenNavigateToMainHostPage();
+
+  GURL script_url = https_server()->GetURL(
+      kCrossOriginHost,
+      net::test_server::GetFilePathWithReplacements(
+          "/shared_storage/module_with_custom_header.js",
+          content::SharedStorageCrossOriginWorkletResponseHeaderReplacement(
+              "Access-Control-Allow-Origin: *", "")));
+
+  // Set a site exception blocking `script_url`.
+  SetSiteException(main_url_, ContentSetting::CONTENT_SETTING_BLOCK);
+
+  content::EvalJsResult result =
+      content::EvalJs(GetActiveWebContents(), content::JsReplace(R"(
+        (async function() {
+          await sharedStorage.createWorklet($1);
+        })()
+      )",
+                                                                 script_url));
+
+  EXPECT_TRUE(base::StartsWith(
+      result.error, GetSharedStorageAddModuleDisabledErrorMessage()));
+
+  EXPECT_EQ(0u, content::GetAttachedSharedStorageWorkletHostsCount(
+                    GetActiveWebContents()
+                        ->GetPrimaryMainFrame()
+                        ->GetStoragePartition()));
+
+  WaitForHistograms({kErrorTypeHistogram});
+  histogram_tester_.ExpectUniqueSample(
+      kErrorTypeHistogram,
+      blink::SharedStorageWorkletErrorType::kAddModuleWebVisible, 1);
+}
+
+IN_PROC_BROWSER_TEST_P(
+    SharedStorageChromeBrowserTest,
+    CrossOriginWorkletScript_CreateWorkletDefaultDataOrigin_NoAllowOriginResponseHeader_Failure) {
+  Set3rdPartyCookieAndMainHostAttestationSettingsThenNavigateToMainHostPage();
+
+  // The module does not have the "Access-Control-Allow-Origin" response header.
+  GURL script_url = https_server()->GetURL(
+      kCrossOriginHost,
+      net::test_server::GetFilePathWithReplacements(
+          "/shared_storage/module_with_custom_header.js",
+          content::SharedStorageCrossOriginWorkletResponseHeaderReplacement(
+              "", "")));
+
+  content::EvalJsResult result =
+      content::EvalJs(GetActiveWebContents(), content::JsReplace(R"(
+        (async function() {
+          await sharedStorage.createWorklet($1);
+        })()
+      )",
+                                                                 script_url));
+
+  EXPECT_THAT(result.error, testing::HasSubstr("Error: Failed to load"));
+
+  WaitForHistograms({kErrorTypeHistogram});
+  histogram_tester_.ExpectUniqueSample(
+      kErrorTypeHistogram,
+      blink::SharedStorageWorkletErrorType::kAddModuleWebVisible, 1);
+}
+
+IN_PROC_BROWSER_TEST_P(
+    SharedStorageChromeBrowserTest,
+    CrossOriginWorkletScript_CreateWorkletDefaultDataOrigin_NoCrossOriginWorkletResponseHeader_Success) {
+  Set3rdPartyCookieAndMainHostAttestationSettingsThenNavigateToMainHostPage();
+
+  // The module does not have the "Shared-Storage-Cross-Origin-Worklet-Allowed"
+  // response header, but the worklet won't need it because it will use the
+  // context origin as data origin.
+  GURL script_url = https_server()->GetURL(
+      kCrossOriginHost,
+      net::test_server::GetFilePathWithReplacements(
+          "/shared_storage/module_with_custom_header.js",
+          content::SharedStorageCrossOriginWorkletResponseHeaderReplacement(
+              "Access-Control-Allow-Origin: *", "")));
+
+  content::WebContentsConsoleObserver console_observer(GetActiveWebContents());
+  console_observer.SetFilter(
+      MakeFilter({"Finish executing module_with_custom_header.js"}));
+
+  EXPECT_TRUE(
+      content::ExecJs(GetActiveWebContents(), content::JsReplace(R"(
+        (async function() {
           window.testWorklet = await sharedStorage.createWorklet($1);
         })()
       )",
                                                                  script_url)));
+
+  ASSERT_TRUE(console_observer.Wait());
+  EXPECT_EQ(1u, console_observer.messages().size());
+  EXPECT_EQ("Finish executing module_with_custom_header.js",
+            base::UTF16ToUTF8(console_observer.messages()[0].message));
+
+  EXPECT_EQ(1u, content::GetAttachedSharedStorageWorkletHostsCount(
+                    GetActiveWebContents()
+                        ->GetPrimaryMainFrame()
+                        ->GetStoragePartition()));
+
+  WaitForHistograms({kErrorTypeHistogram});
+  histogram_tester_.ExpectUniqueSample(
+      kErrorTypeHistogram, blink::SharedStorageWorkletErrorType::kSuccess, 1);
+}
+
+IN_PROC_BROWSER_TEST_P(
+    SharedStorageChromeBrowserTest,
+    CrossOriginWorkletScript_CreateWorkletContextDataOrigin_PrefsError_PrivacySandbox) {
+  Set3rdPartyCookieAndMainHostAttestationSettingsThenNavigateToMainHostPage();
+
+  // Disable Privacy Sandbox.
+  SetPrefs(/*enable_privacy_sandbox=*/false,
+           /*allow_third_party_cookies=*/true);
+
+  GURL script_url = https_server()->GetURL(
+      kCrossOriginHost,
+      net::test_server::GetFilePathWithReplacements(
+          "/shared_storage/module_with_custom_header.js",
+          content::SharedStorageCrossOriginWorkletResponseHeaderReplacement(
+              "Access-Control-Allow-Origin: *", "")));
+
+  content::EvalJsResult result = content::EvalJs(
+      GetActiveWebContents(),
+      content::JsReplace(
+          "sharedStorage.createWorklet($1, {dataOrigin: 'context-origin'})",
+          script_url));
+
+  EXPECT_TRUE(base::StartsWith(
+      result.error, GetSharedStorageAddModuleDisabledErrorMessage()));
+
+  EXPECT_EQ(0u, content::GetAttachedSharedStorageWorkletHostsCount(
+                    GetActiveWebContents()
+                        ->GetPrimaryMainFrame()
+                        ->GetStoragePartition()));
+
+  WaitForHistograms({kErrorTypeHistogram});
+  histogram_tester_.ExpectUniqueSample(
+      kErrorTypeHistogram,
+      blink::SharedStorageWorkletErrorType::kAddModuleWebVisible, 1);
+}
+
+// This test shows that the correct origin is used for the
+// preferences/attestation check for cross-origin worklets.
+IN_PROC_BROWSER_TEST_P(
+    SharedStorageChromeBrowserTest,
+    CrossOriginWorkletScript_CreateWorkletContextDataOrigin_PrefsError_SiteSettings) {
+  Set3rdPartyCookieAndMainHostAttestationSettingsThenNavigateToMainHostPage();
+
+  GURL script_url = https_server()->GetURL(
+      kCrossOriginHost,
+      net::test_server::GetFilePathWithReplacements(
+          "/shared_storage/module_with_custom_header.js",
+          content::SharedStorageCrossOriginWorkletResponseHeaderReplacement(
+              "Access-Control-Allow-Origin: *", "")));
+
+  // Set a site exception blocking `script_url`.
+  SetSiteException(main_url_, ContentSetting::CONTENT_SETTING_BLOCK);
+
+  content::EvalJsResult result =
+      content::EvalJs(GetActiveWebContents(), content::JsReplace(R"(
+        (async function() {
+          await sharedStorage.createWorklet($1, {dataOrigin: 'context-origin'});
+        })()
+      )",
+                                                                 script_url));
+
+  EXPECT_TRUE(base::StartsWith(
+      result.error, GetSharedStorageAddModuleDisabledErrorMessage()));
+
+  EXPECT_EQ(0u, content::GetAttachedSharedStorageWorkletHostsCount(
+                    GetActiveWebContents()
+                        ->GetPrimaryMainFrame()
+                        ->GetStoragePartition()));
+
+  WaitForHistograms({kErrorTypeHistogram});
+  histogram_tester_.ExpectUniqueSample(
+      kErrorTypeHistogram,
+      blink::SharedStorageWorkletErrorType::kAddModuleWebVisible, 1);
+}
+
+IN_PROC_BROWSER_TEST_P(
+    SharedStorageChromeBrowserTest,
+    CrossOriginWorkletScript_CreateWorkletContextDataOrigin_NoAllowOriginResponseHeader_Failure) {
+  Set3rdPartyCookieAndMainHostAttestationSettingsThenNavigateToMainHostPage();
+
+  // The module does not have the "Access-Control-Allow-Origin" response header.
+  GURL script_url = https_server()->GetURL(
+      kCrossOriginHost,
+      net::test_server::GetFilePathWithReplacements(
+          "/shared_storage/module_with_custom_header.js",
+          content::SharedStorageCrossOriginWorkletResponseHeaderReplacement(
+              "", "")));
+
+  content::EvalJsResult result =
+      content::EvalJs(GetActiveWebContents(), content::JsReplace(R"(
+        (async function() {
+          await sharedStorage.createWorklet($1, {dataOrigin: 'context-origin'});
+        })()
+      )",
+                                                                 script_url));
+
+  EXPECT_THAT(result.error, testing::HasSubstr("Error: Failed to load"));
+
+  WaitForHistograms({kErrorTypeHistogram});
+  histogram_tester_.ExpectUniqueSample(
+      kErrorTypeHistogram,
+      blink::SharedStorageWorkletErrorType::kAddModuleWebVisible, 1);
+}
+
+IN_PROC_BROWSER_TEST_P(
+    SharedStorageChromeBrowserTest,
+    CrossOriginWorkletScript_CreateWorkletContextDataOrigin_NoCrossOriginWorkletResponseHeader_Success) {
+  Set3rdPartyCookieAndMainHostAttestationSettingsThenNavigateToMainHostPage();
+
+  // The module does not have the "Shared-Storage-Cross-Origin-Worklet-Allowed"
+  // response header, but the worklet won't need it because it will use the
+  // context origin as data origin.
+  GURL script_url = https_server()->GetURL(
+      kCrossOriginHost,
+      net::test_server::GetFilePathWithReplacements(
+          "/shared_storage/module_with_custom_header.js",
+          content::SharedStorageCrossOriginWorkletResponseHeaderReplacement(
+              "Access-Control-Allow-Origin: *", "")));
+
+  content::WebContentsConsoleObserver console_observer(GetActiveWebContents());
+  console_observer.SetFilter(
+      MakeFilter({"Finish executing module_with_custom_header.js"}));
+
+  EXPECT_TRUE(
+      content::ExecJs(GetActiveWebContents(), content::JsReplace(R"(
+        (async function() {
+          window.testWorklet = await sharedStorage.createWorklet($1,
+            {dataOrigin: 'context-origin'});
+        })()
+      )",
+                                                                 script_url)));
+
+  ASSERT_TRUE(console_observer.Wait());
+  EXPECT_EQ(1u, console_observer.messages().size());
+  EXPECT_EQ("Finish executing module_with_custom_header.js",
+            base::UTF16ToUTF8(console_observer.messages()[0].message));
+
+  EXPECT_EQ(1u, content::GetAttachedSharedStorageWorkletHostsCount(
+                    GetActiveWebContents()
+                        ->GetPrimaryMainFrame()
+                        ->GetStoragePartition()));
+
+  WaitForHistograms({kErrorTypeHistogram});
+  histogram_tester_.ExpectUniqueSample(
+      kErrorTypeHistogram, blink::SharedStorageWorkletErrorType::kSuccess, 1);
+}
+
+IN_PROC_BROWSER_TEST_P(SharedStorageChromeBrowserTest,
+                       CrossOriginScript_AddModule_PrefsError_PrivacySandbox) {
+  Set3PCSettingAndAttestMainHostPlusAdditionalSitesThenNavigateToMainHostPage(
+      {kCrossOriginHost});
+
+  // Disable Privacy Sandbox.
+  SetPrefs(/*enable_privacy_sandbox=*/false,
+           /*allow_third_party_cookies=*/true);
+
+  GURL script_url = https_server()->GetURL(
+      kCrossOriginHost,
+      net::test_server::GetFilePathWithReplacements(
+          "/shared_storage/module_with_custom_header.js",
+          content::SharedStorageCrossOriginWorkletResponseHeaderReplacement(
+              "Access-Control-Allow-Origin: *", "")));
+
+  content::EvalJsResult result = content::EvalJs(
+      GetActiveWebContents(),
+      content::JsReplace("sharedStorage.worklet.addModule($1)", script_url));
+
+  EXPECT_TRUE(base::StartsWith(
+      result.error, GetSharedStorageAddModuleDisabledErrorMessage()));
+
+  EXPECT_EQ(0u, content::GetAttachedSharedStorageWorkletHostsCount(
+                    GetActiveWebContents()
+                        ->GetPrimaryMainFrame()
+                        ->GetStoragePartition()));
+
+  WaitForHistograms({kErrorTypeHistogram});
+  histogram_tester_.ExpectUniqueSample(
+      kErrorTypeHistogram,
+      blink::SharedStorageWorkletErrorType::kAddModuleWebVisible, 1);
+}
+
+// This test shows that the correct origin is used for the
+// preferences/attestation check for cross-origin worklets.
+IN_PROC_BROWSER_TEST_P(SharedStorageChromeBrowserTest,
+                       CrossOriginScript_AddModule_PrefsError_SiteSettings) {
+  Set3PCSettingAndAttestMainHostPlusAdditionalSitesThenNavigateToMainHostPage(
+      {kThirdOriginHost});
+
+  GURL script_url = https_server()->GetURL(
+      kCrossOriginHost,
+      net::test_server::GetFilePathWithReplacements(
+          "/shared_storage/module_with_custom_header.js",
+          content::SharedStorageCrossOriginWorkletResponseHeaderReplacement(
+              "Access-Control-Allow-Origin: *", "")));
+
+  GURL iframe_url = https_server()->GetURL(kThirdOriginHost, kSimplePagePath);
+  content::RenderFrameHost* iframe =
+      CreateIframe(GetActiveWebContents()->GetPrimaryMainFrame(), iframe_url);
+
+  // Set a site exception blocking `iframe_url`.
+  SetSiteException(iframe_url, ContentSetting::CONTENT_SETTING_BLOCK);
+
+  content::EvalJsResult result = content::EvalJs(
+      iframe,
+      content::JsReplace("sharedStorage.worklet.addModule($1)", script_url));
+
+  EXPECT_TRUE(base::StartsWith(
+      result.error, GetSharedStorageAddModuleDisabledErrorMessage()));
+
+  EXPECT_EQ(0u, content::GetAttachedSharedStorageWorkletHostsCount(
+                    GetActiveWebContents()
+                        ->GetPrimaryMainFrame()
+                        ->GetStoragePartition()));
+
+  WaitForHistograms({kErrorTypeHistogram});
+  histogram_tester_.ExpectUniqueSample(
+      kErrorTypeHistogram,
+      blink::SharedStorageWorkletErrorType::kAddModuleWebVisible, 1);
+}
+
+// This test also shows that the correct origin is used for the
+// preferences/attestation check for cross-origin worklets.
+IN_PROC_BROWSER_TEST_P(SharedStorageChromeBrowserTest,
+                       CrossOriginScript_AddModule_AttestationError) {
+  // Only the main frame site will be attested.
+  Set3rdPartyCookieAndMainHostAttestationSettingsThenNavigateToMainHostPage();
+
+  GURL script_url = https_server()->GetURL(
+      kCrossOriginHost,
+      net::test_server::GetFilePathWithReplacements(
+          "/shared_storage/module_with_custom_header.js",
+          content::SharedStorageCrossOriginWorkletResponseHeaderReplacement(
+              "Access-Control-Allow-Origin: *", "")));
+
+  GURL iframe_url = https_server()->GetURL(kThirdOriginHost, kSimplePagePath);
+  content::RenderFrameHost* iframe =
+      CreateIframe(GetActiveWebContents()->GetPrimaryMainFrame(), iframe_url);
+
+  content::EvalJsResult result = content::EvalJs(
+      iframe,
+      content::JsReplace("sharedStorage.worklet.addModule($1)", script_url));
+
+  EXPECT_TRUE(base::StartsWith(
+      result.error, GetSharedStorageAddModuleDisabledErrorMessage()));
+
+  EXPECT_EQ(0u, content::GetAttachedSharedStorageWorkletHostsCount(
+                    GetActiveWebContents()
+                        ->GetPrimaryMainFrame()
+                        ->GetStoragePartition()));
+
+  WaitForHistograms({kErrorTypeHistogram});
+  histogram_tester_.ExpectUniqueSample(
+      kErrorTypeHistogram,
+      blink::SharedStorageWorkletErrorType::kAddModuleWebVisible, 1);
+}
+
+IN_PROC_BROWSER_TEST_P(SharedStorageChromeBrowserTest,
+                       CrossOriginScript_AddModule_NetworkError_MissingHeader) {
+  Set3PCSettingAndAttestMainHostPlusAdditionalSitesThenNavigateToMainHostPage(
+      {kCrossOriginHost});
+
+  // "Access-Control-Allow-Origin" header is missing.
+  GURL script_url = https_server()->GetURL(
+      kCrossOriginHost,
+      net::test_server::GetFilePathWithReplacements(
+          "/shared_storage/module_with_custom_header.js",
+          content::SharedStorageCrossOriginWorkletResponseHeaderReplacement(
+              "", "")));
+
+  content::EvalJsResult result = content::EvalJs(
+      GetActiveWebContents(),
+      content::JsReplace("sharedStorage.worklet.addModule($1)", script_url));
+
+  EXPECT_THAT(result.error, testing::HasSubstr("Error: Failed to load"));
+
+  WaitForHistograms({kErrorTypeHistogram});
+  histogram_tester_.ExpectUniqueSample(
+      kErrorTypeHistogram,
+      blink::SharedStorageWorkletErrorType::kAddModuleWebVisible, 1);
+}
+
+IN_PROC_BROWSER_TEST_P(SharedStorageChromeBrowserTest,
+                       CrossOriginScript_AddModule_NetworkError_404) {
+  Set3PCSettingAndAttestMainHostPlusAdditionalSitesThenNavigateToMainHostPage(
+      {kCrossOriginHost});
+
+  // nonexistent_module.js does not exist and should produce a 404 network
+  // error.
+  GURL script_url = https_server()->GetURL(
+      kCrossOriginHost, "/shared_storage/nonexistent_module.js");
+
+  content::EvalJsResult result = content::EvalJs(
+      GetActiveWebContents(),
+      content::JsReplace("sharedStorage.worklet.addModule($1)", script_url));
+
+  EXPECT_THAT(result.error, testing::HasSubstr("Error: Failed to load"));
+
+  WaitForHistograms({kErrorTypeHistogram});
+  histogram_tester_.ExpectUniqueSample(
+      kErrorTypeHistogram,
+      blink::SharedStorageWorkletErrorType::kAddModuleWebVisible, 1);
+}
+
+IN_PROC_BROWSER_TEST_P(SharedStorageChromeBrowserTest,
+                       CrossOriginScript_AddModule_Success) {
+  Set3PCSettingAndAttestMainHostPlusAdditionalSitesThenNavigateToMainHostPage(
+      {kCrossOriginHost});
+
+  GURL script_url = https_server()->GetURL(
+      kCrossOriginHost,
+      net::test_server::GetFilePathWithReplacements(
+          "/shared_storage/module_with_custom_header.js",
+          content::SharedStorageCrossOriginWorkletResponseHeaderReplacement(
+              "Access-Control-Allow-Origin: *", "")));
+
+  content::WebContentsConsoleObserver console_observer(GetActiveWebContents());
+  console_observer.SetFilter(
+      MakeFilter({"Finish executing module_with_custom_header.js"}));
+
+  // The success for `addModule()` won't be revealed to the cross-origin
+  // caller definitively. But we can verify the success indirectly, by checking
+  // the console.
+  EXPECT_TRUE(content::ExecJs(
+      GetActiveWebContents(),
+      content::JsReplace("sharedStorage.worklet.addModule($1)", script_url)));
 
   ASSERT_TRUE(console_observer.Wait());
   EXPECT_EQ(1u, console_observer.messages().size());
@@ -3358,7 +3884,8 @@ IN_PROC_BROWSER_TEST_P(SharedStorageChromeBrowserTest,
   EXPECT_TRUE(
       content::ExecJs(GetActiveWebContents(), content::JsReplace(R"(
         (async function() {
-          window.testWorklet = await sharedStorage.createWorklet($1);
+          window.testWorklet = await sharedStorage.createWorklet($1,
+            {dataOrigin: 'script-origin'});
         })()
       )",
                                                                  script_url)));
@@ -3394,7 +3921,7 @@ IN_PROC_BROWSER_TEST_P(SharedStorageChromeBrowserTest,
   EXPECT_EQ("Finish executing 'test-url-selection-operation'",
             base::UTF16ToUTF8(console_observer.messages()[0].message));
 
-  WaitForHistograms({kErrorTypeHistogram});
+  WaitForHistogramsWithSampleCounts({std::make_tuple(kErrorTypeHistogram, 2)});
   histogram_tester_.ExpectUniqueSample(
       kErrorTypeHistogram, blink::SharedStorageWorkletErrorType::kSuccess, 2);
 }
@@ -3415,7 +3942,8 @@ IN_PROC_BROWSER_TEST_P(SharedStorageChromeBrowserTest,
   EXPECT_TRUE(
       content::ExecJs(GetActiveWebContents(), content::JsReplace(R"(
         (async function() {
-          window.testWorklet = await sharedStorage.createWorklet($1);
+          window.testWorklet = await sharedStorage.createWorklet($1,
+            {dataOrigin: 'script-origin'});
         })()
       )",
                                                                  script_url)));
@@ -3445,7 +3973,7 @@ IN_PROC_BROWSER_TEST_P(SharedStorageChromeBrowserTest,
   EXPECT_EQ("Finish executing 'test-operation'",
             base::UTF16ToUTF8(console_observer.messages()[0].message));
 
-  WaitForHistograms({kErrorTypeHistogram});
+  WaitForHistogramsWithSampleCounts({std::make_tuple(kErrorTypeHistogram, 2)});
   histogram_tester_.ExpectUniqueSample(
       kErrorTypeHistogram, blink::SharedStorageWorkletErrorType::kSuccess, 2);
 }
@@ -3555,7 +4083,14 @@ IN_PROC_BROWSER_TEST_P(SharedStorageChromeBrowserTest, WorkletTiming) {
   histogram_tester_.ExpectUniqueSample(kWorkletNumPerPageHistogram, 1, 1);
 }
 
-IN_PROC_BROWSER_TEST_P(SharedStorageChromeBrowserTest, WorkletNumPerPage_Two) {
+// TODO(crbug.com/382530217): Test is flaky on Android.
+#if BUILDFLAG(IS_ANDROID)
+#define MAYBE_WorkletNumPerPage_Two DISABLED_WorkletNumPerPage_Two
+#else
+#define MAYBE_WorkletNumPerPage_Two WorkletNumPerPage_Two
+#endif
+IN_PROC_BROWSER_TEST_P(SharedStorageChromeBrowserTest,
+                       MAYBE_WorkletNumPerPage_Two) {
   base::test::ScopedRunLoopTimeout timeout(FROM_HERE, base::Seconds(60));
 
   // The test assumes pages get deleted after navigation. To ensure this,
@@ -3600,8 +4135,9 @@ IN_PROC_BROWSER_TEST_P(SharedStorageChromeBrowserTest, WorkletNumPerPage_Two) {
   histogram_tester_.ExpectUniqueSample(kWorkletNumPerPageHistogram, 2, 1);
 }
 
+// See crbug.com/350110056. The test is flaky on multiple builders.
 IN_PROC_BROWSER_TEST_P(SharedStorageChromeBrowserTest,
-                       WorkletNumPerPage_Three) {
+                       DISABLED_WorkletNumPerPage_Three) {
   base::test::ScopedRunLoopTimeout timeout(FROM_HERE, base::Seconds(60));
 
   // The test assumes pages get deleted after navigation. To ensure this,
@@ -3810,9 +4346,14 @@ class SharedStorageFencedFrameChromeBrowserTest
   base::test::ScopedFeatureList fenced_frame_feature_;
   base::test::ScopedFeatureList attestation_feature_;
 };
-
+// TODO(https://crbug.com/396718068): Test is flaky on Android.
+#if BUILDFLAG(IS_ANDROID)
+#define MAYBE_FencedFrameNavigateTop_BudgetWithdrawal DISABLED_FencedFrameNavigateTop_BudgetWithdrawal
+#else
+#define MAYBE_FencedFrameNavigateTop_BudgetWithdrawal FencedFrameNavigateTop_BudgetWithdrawal
+#endif
 IN_PROC_BROWSER_TEST_F(SharedStorageFencedFrameChromeBrowserTest,
-                       FencedFrameNavigateTop_BudgetWithdrawal) {
+                       MAYBE_FencedFrameNavigateTop_BudgetWithdrawal) {
   // The test assumes pages get deleted after navigation. To ensure this,
   // disable back/forward cache.
   content::DisableBackForwardCacheForTesting(
@@ -3864,9 +4405,10 @@ IN_PROC_BROWSER_TEST_F(SharedStorageFencedFrameChromeBrowserTest,
   EXPECT_EQ(2, histogram_tester_.GetTotalSum(kWorkletNumPerPageHistogram));
 }
 
+// See crbug.com/377398196. The test is flaky on multiple builders.
 IN_PROC_BROWSER_TEST_F(
     SharedStorageFencedFrameChromeBrowserTest,
-    TwoFencedFrames_DifferentURNs_EachNavigateOnce_BudgetWithdrawalTwice) {
+    DISABLED_TwoFencedFrames_DifferentURNs_EachNavigateOnce_BudgetWithdrawalTwice) {
   // The test assumes pages get deleted after navigation. To ensure this,
   // disable back/forward cache.
   content::DisableBackForwardCacheForTesting(
@@ -4120,13 +4662,291 @@ IN_PROC_BROWSER_TEST_P(SharedStoragePrivateAggregationChromeBrowserTest,
   histogram_tester_.ExpectUniqueSample(kWorkletNumPerPageHistogram, 1, 1);
 }
 
-class SharedStorageHeaderPrefBrowserTest : public SharedStoragePrefBrowserTest {
+class FencedStorageReadBrowserTest : public SharedStoragePrefBrowserTest {
  public:
-  SharedStorageHeaderPrefBrowserTest() {
-    shared_storage_m118_feature_.InitAndEnableFeature(
-        blink::features::kSharedStorageAPIM118);
+  FencedStorageReadBrowserTest() = default;
+  ~FencedStorageReadBrowserTest() override = default;
+
+  void SetUpOnMainThread() override {
+    // Fenced frame test helper should enable the feature
+    // "FencedFramesLocalUnpartitionedDataAccess" in its constructor, which is
+    // required for the tests.
+    ASSERT_TRUE(base::FeatureList::IsEnabled(
+        blink::features::kFencedFramesLocalUnpartitionedDataAccess));
+
+    SharedStoragePrefBrowserTest::SetUpOnMainThread();
   }
 
+  // This always enrolls the host for Shared Storage, but only enrolls the host
+  // for fenced storage read exactly when enforcement and enrollment status is
+  // `kAttestationsEnforcedMainHostEnrolled`.
+  void MaybeEnrollMainHost(const GURL& main_url) override {
+    auto attestations_set =
+        privacy_sandbox::PrivacySandboxAttestationsGatedAPISet(
+            {privacy_sandbox::PrivacySandboxAttestationsGatedAPI::
+                 kSharedStorage});
+    if (GetEnforcementAndEnrollmentStatus() ==
+        EnforcementAndEnrollmentStatus::kAttestationsEnforcedMainHostEnrolled) {
+      attestations_set.Put(privacy_sandbox::PrivacySandboxAttestationsGatedAPI::
+                               kFencedStorageRead);
+    }
+
+    privacy_sandbox::PrivacySandboxAttestationsMap attestations_map{
+        {net::SchemefulSite(main_url), attestations_set}};
+    SetAttestationsMap(attestations_map);
+  }
+
+  void VerifyDebugErrorMessage(const std::string& error_message) override {
+    ASSERT_FALSE(SuccessExpected());
+    size_t found_pos = error_message.find("Debug");
+    if (!EnableDebugMessages()) {
+      EXPECT_EQ(found_pos, std::string::npos);
+      return;
+    }
+    EXPECT_NE(found_pos, std::string::npos);
+
+    // The accessing site is always enrolled for Shared Storage. So the status
+    // only depends on Privacy Sandbox status.
+    int status = EnablePrivacySandbox() ? 4 : 1;
+    if (status == 4) {
+      ASSERT_FALSE(AllowThirdPartyCookies());
+    }
+
+    found_pos = error_message.find("status " + base::NumberToString(status));
+    EXPECT_NE(found_pos, std::string::npos);
+  }
+
+  content::RenderFrameHost*
+  CreateFencedFrameAndSet3rdPartyCookieAndFencedFrameHostAttestationSettings() {
+    EXPECT_TRUE(
+        NavigateToURL(GetActiveWebContents(),
+                      https_server()->GetURL(kMainHost, kSimplePagePath)));
+    fenced_frame_url_ = https_server()->GetURL("a.test", kFencedFramePagePath);
+
+    content::RenderFrameHost* fenced_frame_rfh = content::CreateFencedFrame(
+        GetActiveWebContents()->GetPrimaryMainFrame(), fenced_frame_url_);
+
+    SetThirdPartyCookieSetting(fenced_frame_url_);
+    MaybeEnrollMainHost(fenced_frame_url_);
+
+    return fenced_frame_rfh;
+  }
+
+  bool SharedStorageSuccessExpected() const {
+    // This test suite always has the fenced frame URL enrolled for Shared
+    // Storage.
+    return EnablePrivacySandbox() && AllowThirdPartyCookies();
+  }
+
+  bool SuccessExpectedForFencedStorageReadWhenUntrustedNetworkAccessRevoked()
+      const {
+    return SuccessExpected();
+  }
+
+  GURL fenced_frame_url() const { return fenced_frame_url_; }
+
+ private:
+  // Enables the required features for fenced frame.
+  content::test::FencedFrameTestHelper fenced_frame_test_helper_;
+
+  GURL fenced_frame_url_;
+};
+
+IN_PROC_BROWSER_TEST_P(
+    FencedStorageReadBrowserTest,
+    FencedStorageReadAttestationWithoutUntrustedNetworkDisabled) {
+  // This always enrolls the fenced frame host for Shared Storage, but only
+  // enrolls the host for fenced frame fenced storage read exactly
+  // when `ShouldEnrollMainHost()` is true.
+  content::RenderFrameHost* fenced_frame_rfh =
+      CreateFencedFrameAndSet3rdPartyCookieAndFencedFrameHostAttestationSettings();
+
+  content::EvalJsResult set_result = content::EvalJs(fenced_frame_rfh, R"(
+      sharedStorage.set('customKey', 'customValue');
+    )");
+
+  if (!AllowThirdPartyCookies()) {
+    // Enable block of all third party cookies in the tracking protection
+    // setting.
+    GetProfile()->GetPrefs()->SetBoolean(prefs::kBlockAll3pcToggleEnabled,
+                                         true);
+  }
+
+  if (SharedStorageSuccessExpected()) {
+    EXPECT_TRUE(set_result.error.empty());
+    WaitForHistograms({kTimingDocumentSetHistogram});
+    histogram_tester_.ExpectTotalCount(kTimingDocumentSetHistogram, 1);
+  } else {
+    // Shared Storage will be disabled.
+    EXPECT_TRUE(base::StartsWith(set_result.error,
+                                 GetSharedStorageDisabledErrorMessage()));
+    VerifyDebugErrorMessage(set_result.error);
+  }
+
+  // Set up console observer.
+  content::WebContentsConsoleObserver console_observer(GetActiveWebContents());
+  console_observer.SetFilter(
+      MakeFilter({kFencedStorageReadAttestationErrorPrefix,
+                  kFencedStorageReadDisabledBy3pcSettingError}));
+
+  // Attempt to access local unpartitioned data without revoking fenced frame
+  // untrusted network access.
+  content::EvalJsResult get_result = content::EvalJs(fenced_frame_rfh, R"(
+      sharedStorage.get('customKey');
+    )");
+
+  if (SuccessExpectedForFencedStorageReadWhenUntrustedNetworkAccessRevoked()) {
+    // Fenced storage read is disabled when untrusted network access is not
+    // revoked.
+    ASSERT_FALSE(get_result.error.empty());
+    EXPECT_TRUE(base::StartsWith(
+        get_result.error, GetFencedStorageReadWithoutRevokeNetworkMessage()));
+    EXPECT_TRUE(console_observer.messages().empty());
+  } else if (!AllowThirdPartyCookies()) {
+    // Fenced storage read is disabled. A JavaScript error is shown.
+    EXPECT_TRUE(base::StartsWith(get_result.error,
+                                 GetFencedStorageReadDisabledMessage()));
+
+    // Fenced storage read is disabled when all third party cookies are blocked.
+    // Site cookie setting does not have effect.
+    ASSERT_TRUE(console_observer.Wait());
+    EXPECT_EQ(1u, console_observer.messages().size());
+    EXPECT_EQ(kFencedStorageReadDisabledBy3pcSettingError,
+              base::UTF16ToUTF8(console_observer.messages()[0].message));
+  } else if (GetEnforcementAndEnrollmentStatus() ==
+             EnforcementAndEnrollmentStatus::
+                 kAttestationsEnforcedMainHostUnenrolled) {
+    // Fenced storage read is disabled. A JavaScript error is shown.
+    EXPECT_TRUE(base::StartsWith(get_result.error,
+                                 GetFencedStorageReadDisabledMessage()));
+
+    // Fenced storage read is disabled when the accessing site is not enrolled.
+    // A console message is shown.
+    ASSERT_TRUE(console_observer.Wait());
+    EXPECT_EQ(1u, console_observer.messages().size());
+    EXPECT_EQ(base::StrCat({kFencedStorageReadAttestationErrorPrefix, " ",
+                            url::Origin::Create(fenced_frame_url()).Serialize(),
+                            " failed."}),
+              base::UTF16ToUTF8(console_observer.messages()[0].message));
+  } else {
+    // Fenced storage read is disabled. A JavaScript error is shown.
+    ASSERT_FALSE(EnablePrivacySandbox());
+    EXPECT_TRUE(base::StartsWith(get_result.error,
+                                 GetFencedStorageReadDisabledMessage()));
+  }
+}
+
+IN_PROC_BROWSER_TEST_P(
+    FencedStorageReadBrowserTest,
+    FencedStorageReadAttestationWithUntrustedNetworkDisabled) {
+  // This always enrolls the fenced frame host for Shared Storage, but only
+  // enrolls the host for fenced storage read exactly when
+  // `ShouldEnrollMainHost()` is true.
+  content::RenderFrameHost* fenced_frame_rfh =
+      CreateFencedFrameAndSet3rdPartyCookieAndFencedFrameHostAttestationSettings();
+
+  content::EvalJsResult set_result = content::EvalJs(fenced_frame_rfh, R"(
+      sharedStorage.set('customKey', 'customValue');
+    )");
+
+  if (!AllowThirdPartyCookies()) {
+    // Enable block of all third party cookies in the tracking protection
+    // setting.
+    GetProfile()->GetPrefs()->SetBoolean(prefs::kBlockAll3pcToggleEnabled,
+                                         true);
+  }
+
+  if (SharedStorageSuccessExpected()) {
+    EXPECT_TRUE(set_result.error.empty());
+    WaitForHistograms({kTimingDocumentSetHistogram});
+    histogram_tester_.ExpectTotalCount(kTimingDocumentSetHistogram, 1);
+  } else {
+    // Shared Storage will be disabled.
+    EXPECT_TRUE(base::StartsWith(set_result.error,
+                                 GetSharedStorageDisabledErrorMessage()));
+    VerifyDebugErrorMessage(set_result.error);
+  }
+
+  // Set up console observer.
+  content::WebContentsConsoleObserver console_observer(GetActiveWebContents());
+  console_observer.SetFilter(
+      MakeFilter({kFencedStorageReadAttestationErrorPrefix,
+                  kFencedStorageReadDisabledBy3pcSettingError}));
+
+  // Disable untrusted network access.
+  EXPECT_TRUE(ExecJs(fenced_frame_rfh, R"(
+                window.fence.disableUntrustedNetwork();
+              )"));
+
+  // Access local unpartitioned data with fenced frame untrusted network access
+  // revoked.
+  content::EvalJsResult get_result = content::EvalJs(fenced_frame_rfh, R"(
+      sharedStorage.get('customKey');
+    )");
+
+  if (SuccessExpectedForFencedStorageReadWhenUntrustedNetworkAccessRevoked()) {
+    // Fenced storage read is allowed when untrusted network access is revoked.
+    ASSERT_TRUE(get_result.error.empty());
+    EXPECT_EQ(get_result.ExtractString(), "customValue");
+    EXPECT_TRUE(console_observer.messages().empty());
+    WaitForHistograms({kTimingDocumentGetHistogram});
+    histogram_tester_.ExpectTotalCount(kTimingDocumentGetHistogram, 1);
+  } else if (!AllowThirdPartyCookies()) {
+    // Fenced storage read is disabled. A JavaScript error is shown.
+    EXPECT_TRUE(base::StartsWith(get_result.error,
+                                 GetFencedStorageReadDisabledMessage()));
+
+    // Fenced storage read is disabled when all third party cookies are blocked.
+    // Site cookie setting does not have effect.
+    ASSERT_TRUE(console_observer.Wait());
+    EXPECT_EQ(1u, console_observer.messages().size());
+    EXPECT_EQ(kFencedStorageReadDisabledBy3pcSettingError,
+              base::UTF16ToUTF8(console_observer.messages()[0].message));
+  } else if (GetEnforcementAndEnrollmentStatus() ==
+             EnforcementAndEnrollmentStatus::
+                 kAttestationsEnforcedMainHostUnenrolled) {
+    // Fenced storage read is disabled. A JavaScript error is shown.
+    EXPECT_TRUE(base::StartsWith(get_result.error,
+                                 GetFencedStorageReadDisabledMessage()));
+
+    // Fenced storage read is disabled when the accessing site is not enrolled.
+    // A console message is shown.
+    ASSERT_TRUE(console_observer.Wait());
+    EXPECT_EQ(1u, console_observer.messages().size());
+    EXPECT_EQ(base::StrCat({kFencedStorageReadAttestationErrorPrefix, " ",
+                            url::Origin::Create(fenced_frame_url()).Serialize(),
+                            " failed."}),
+              base::UTF16ToUTF8(console_observer.messages()[0].message));
+  } else {
+    // Fenced storage read is disabled. A JavaScript
+    // error is shown.
+    ASSERT_FALSE(EnablePrivacySandbox());
+    EXPECT_TRUE(base::StartsWith(get_result.error,
+                                 GetFencedStorageReadDisabledMessage()));
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    All,
+    FencedStorageReadBrowserTest,
+    testing::Combine(
+        testing::Bool(),
+        testing::Bool(),
+        testing::Values(EnforcementAndEnrollmentStatus::kAttestationsUnenforced,
+                        EnforcementAndEnrollmentStatus::
+                            kAttestationsEnforcedMainHostUnenrolled,
+#if BUILDFLAG(IS_ANDROID)
+                        EnforcementAndEnrollmentStatus::
+                            kAttestationsEnforcedMainHostEnrolled)),
+#else
+                        EnforcementAndEnrollmentStatus::
+                            kAttestationsEnforcedMainHostEnrolled),
+        testing::Bool()),
+#endif
+    DescribePrefBrowserTestParams);
+
+class SharedStorageHeaderPrefBrowserTest : public SharedStoragePrefBrowserTest {
+ public:
   void FinishSetUp() override {
     observer_ = content::CreateAndOverrideSharedStorageHeaderObserver(
         GetStoragePartition());
@@ -4134,9 +4954,6 @@ class SharedStorageHeaderPrefBrowserTest : public SharedStoragePrefBrowserTest {
 
  protected:
   base::WeakPtr<content::TestSharedStorageHeaderObserver> observer_;
-
- private:
-  base::test::ScopedFeatureList shared_storage_m118_feature_;
 };
 
 INSTANTIATE_TEST_SUITE_P(
@@ -4198,20 +5015,23 @@ IN_PROC_BROWSER_TEST_P(SharedStorageHeaderPrefBrowserTest, Basic) {
 
   // Shared Storage is enabled.
 
-  observer_->WaitForOperations(3);
+  observer_->WaitForOperations(1);
 
   url::Origin fetch_origin = url::Origin::Create(fetch_url);
   EXPECT_EQ(observer_->header_results().size(), 1u);
-  EXPECT_EQ(observer_->header_results().front().first, fetch_origin);
-  EXPECT_THAT(observer_->header_results().front().second,
-              testing::ElementsAre(true, true, true));
-  EXPECT_THAT(observer_->operations(),
-              testing::ElementsAre(
-                  ClearOperation(fetch_origin, OperationResult::kSuccess),
-                  SetOperation(fetch_origin, "hello", "world", true,
-                               OperationResult::kSet),
-                  AppendOperation(fetch_origin, "hello", "there",
-                                  OperationResult::kSet)));
+  EXPECT_EQ(observer_->header_results().front(), fetch_origin);
+  EXPECT_EQ(observer_->operations().size(), 1u);
+
+  std::vector<content::MethodWithOptionsPtr> methods_with_options;
+  methods_with_options.push_back(content::MojomClearMethod());
+  methods_with_options.push_back(
+      content::MojomSetMethod(/*key=*/u"hello", /*value=*/u"world",
+                              /*ignore_if_present=*/true));
+  methods_with_options.push_back(
+      content::MojomAppendMethod(/*key=*/u"hello", /*value=*/u"there"));
+  EXPECT_EQ(observer_->operations()[0],
+            content::HeaderOperationSuccess(fetch_origin,
+                                            std::move(methods_with_options)));
 
   response.Done();
 
@@ -4234,5 +5054,653 @@ IN_PROC_BROWSER_TEST_P(SharedStorageHeaderPrefBrowserTest, Basic) {
   EXPECT_EQ("Finished script",
             base::UTF16ToUTF8(console_observer.messages()[4].message));
 }
+
+class SharedStorageChromeNoParamsBrowserTest
+    : public SharedStorageChromeBrowserTestBase {
+ public:
+  SharedStorageChromeNoParamsBrowserTest() {
+    fenced_frame_api_change_feature_.InitWithFeatureState(
+        blink::features::kFencedFramesAPIChanges, ResolveSelectURLToConfig());
+
+    fenced_frame_feature_.InitAndEnableFeature(blink::features::kFencedFrames);
+    attestation_feature_.InitWithFeatureState(
+        privacy_sandbox::kEnforcePrivacySandboxAttestations,
+        GetEnforcementAndEnrollmentStatus() !=
+            EnforcementAndEnrollmentStatus::kAttestationsUnenforced);
+  }
+  ~SharedStorageChromeNoParamsBrowserTest() override = default;
+
+  bool ResolveSelectURLToConfig() const override { return true; }
+
+  EnforcementAndEnrollmentStatus GetEnforcementAndEnrollmentStatus()
+      const override {
+    return EnforcementAndEnrollmentStatus::
+        kAttestationsEnforcedMainHostEnrolled;
+  }
+
+ private:
+  base::test::ScopedFeatureList fenced_frame_api_change_feature_;
+  base::test::ScopedFeatureList fenced_frame_feature_;
+  base::test::ScopedFeatureList attestation_feature_;
+};
+
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+namespace {
+
+constexpr char kBackgroundJSTemplate[] = R"(
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.declarativeNetRequest.updateDynamicRules({
+    addRules: $1,
+    removeRuleIds: [1]
+  });
+});
+)";
+
+constexpr char kModulePath[] = "/module.js";
+
+constexpr char kModuleMessage[] = "finished adding module";
+
+constexpr char kModuleTemplate[] = R"(
+class Operation {
+  async run(urls, data) {
+    return 1;
+  }
+}
+register("operation", Operation);
+console.log($1);
+)";
+
+constexpr char kLoadFailedMessagePrefix[] =
+    "Uncaught (in promise) OperationError: Failed to load";
+
+}  // namespace
+
+class SharedStorageExtensionBrowserTest
+    : public extensions::ExtensionBrowserTest {
+ public:
+  SharedStorageExtensionBrowserTest() {
+    base::test::TaskEnvironment task_environment;
+
+    scoped_feature_list_.InitWithFeatures(
+        /*enabled_features=*/
+        {blink::features::kSharedStorageAPI,
+         features::kPrivacySandboxAdsAPIsOverride,
+         privacy_sandbox::kOverridePrivacySandboxSettingsLocalTesting,
+         blink::features::kFencedFrames,
+         blink::features::kFencedFramesAPIChanges,
+         privacy_sandbox::kEnforcePrivacySandboxAttestations},
+        /*disabled_features=*/{});
+  }
+
+  ~SharedStorageExtensionBrowserTest() override = default;
+
+  void SetUpOnMainThread() override {
+    // `PrivacySandboxAttestations` has a member of type
+    // `scoped_refptr<base::SequencedTaskRunner>`, its initialization must be
+    // done after a browser process is created.
+    extensions::ExtensionBrowserTest::SetUpOnMainThread();
+    scoped_attestations_ =
+        std::make_unique<privacy_sandbox::ScopedPrivacySandboxAttestations>(
+            privacy_sandbox::PrivacySandboxAttestations::CreateForTesting());
+
+    host_resolver()->AddRule("*", "127.0.0.1");
+
+    https_server()->AddDefaultHandlers(GetChromeTestDataDir());
+    https_server()->SetSSLConfig(net::EmbeddedTestServer::CERT_TEST_NAMES);
+    content::SetupCrossSiteRedirector(https_server());
+
+    // Allow 3rd-party cookies.
+    GetProfile()->GetPrefs()->SetInteger(
+        prefs::kCookieControlsMode,
+        static_cast<int>(content_settings::CookieControlsMode::kOff));
+
+    // Enable privacy sandbox.
+    auto* privacy_sandbox_settings =
+        PrivacySandboxSettingsFactory::GetForProfile(GetProfile());
+    privacy_sandbox_settings->SetAllPrivacySandboxAllowedForTesting();
+    auto privacy_sandbox_delegate = std::make_unique<testing::NiceMock<
+        privacy_sandbox_test_util::MockPrivacySandboxSettingsDelegate>>();
+    privacy_sandbox_delegate->SetUpIsPrivacySandboxRestrictedResponse(
+        /*restricted=*/false);
+    privacy_sandbox_delegate->SetUpIsIncognitoProfileResponse(
+        /*incognito=*/GetProfile()->IsIncognitoProfile());
+    privacy_sandbox_settings->SetDelegateForTesting(
+        std::move(privacy_sandbox_delegate));
+  }
+
+  void TearDownOnMainThread() override {
+    if (extension_) {
+      // Prevent dangling pointer.
+      extensions::ExtensionId id = extension_->id();
+      extension_ = nullptr;
+      UninstallExtension(id);
+    }
+    extensions::ExtensionBrowserTest::TearDownOnMainThread();
+  }
+
+  net::EmbeddedTestServer* https_server() { return &https_server_; }
+
+  content::WebContents* GetActiveWebContents() {
+    return chrome_test_utils::GetActiveWebContents(this);
+  }
+
+  Profile* GetProfile() { return browser()->profile(); }
+
+  const extensions::Extension* InstallExtension(
+      std::optional<std::string> value_to_set) {
+    extensions::TestExtensionDir test_dir;
+
+    auto manifest =
+        base::Value::Dict()
+            .Set("name", "Shared Storage Header Modifier")
+            .Set("version", "1")
+            .Set("manifest_version", 3)
+            .Set("permissions",
+                 base::Value::List()
+                     .Append("declarativeNetRequest")
+                     .Append("declarativeNetRequestWithHostAccess"))
+            .Set("host_permissions", base::Value::List().Append("<all_urls>"))
+            .Set("background",
+                 base::Value::Dict().Set("service_worker", "background.js"));
+
+    test_dir.WriteManifest(manifest);
+
+    std::string operation = value_to_set ? "set" : "remove";
+
+    auto request_header_dict =
+        base::Value::Dict()
+            .Set("header", "Sec-Shared-Storage-Data-Origin")
+            .Set("operation", operation);
+
+    if (value_to_set) {
+      request_header_dict.Set("value", *value_to_set);
+    }
+
+    auto rules = base::Value::List().Append(
+        base::Value::Dict()
+            .Set("id", 1)
+            .Set("priority", 1)
+            .Set("condition",
+                 base::Value::Dict().Set(
+                     "resourceTypes",
+                     base::Value::List().Append("script").Append("other")))
+            .Set("action", base::Value::Dict()
+                               .Set("type", "modifyHeaders")
+                               .Set("requestHeaders",
+                                    base::Value::List().Append(
+                                        std::move(request_header_dict)))));
+
+    std::string background_js =
+        content::JsReplace(kBackgroundJSTemplate, std::move(rules));
+
+    test_dir.WriteFile(FILE_PATH_LITERAL("background.js"), background_js);
+
+    extension_ = LoadExtension(test_dir.UnpackedPath(),
+                               {.wait_for_registration_stored = true});
+    return extension_;
+  }
+
+  void AttestMainHostPlusAdditionalSitesThenNavigateToMainHostPage(
+      const std::vector<std::string>& additional_site_hosts) {
+    main_url_ = https_server()->GetURL(kMainHost, kSimplePagePath);
+    std::vector<GURL> urls({main_url_});
+    for (const auto& host : additional_site_hosts) {
+      urls.push_back(https_server()->GetURL(host, kSimplePagePath));
+    }
+    CookieSettingsFactory::GetForProfile(GetProfile())
+        ->SetThirdPartyCookieSetting(main_url_,
+                                     ContentSetting::CONTENT_SETTING_ALLOW);
+    privacy_sandbox::PrivacySandboxAttestations::GetInstance()
+        ->SetAttestationsForTesting(
+            MakeSharedStoragePrivacySandboxAttestationsMap(urls));
+    EXPECT_TRUE(NavigateToURL(GetActiveWebContents(), main_url_));
+  }
+
+ protected:
+  GURL main_url_;
+  raw_ptr<const extensions::Extension> extension_ = nullptr;
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+  net::EmbeddedTestServer https_server_{net::EmbeddedTestServer::TYPE_HTTPS};
+  std::unique_ptr<privacy_sandbox::ScopedPrivacySandboxAttestations>
+      scoped_attestations_;
+};
+
+IN_PROC_BROWSER_TEST_F(
+    SharedStorageExtensionBrowserTest,
+    CrossOrigin_ExtensionRemovesRequestHeader_CORSRetainsRequestHeader_NoResponseHeader_Failure) {
+  net::test_server::ControllableHttpResponse response(https_server(),
+                                                      kModulePath);
+  ASSERT_TRUE(https_server()->Start());
+
+  // Install extension that will remove the "Sec-Shared-Storage-Data-Origin"
+  // request header.
+  ASSERT_TRUE(InstallExtension(/*value_to_set=*/std::nullopt));
+  ASSERT_TRUE(extension_service()->IsExtensionEnabled(extension_->id()));
+
+  AttestMainHostPlusAdditionalSitesThenNavigateToMainHostPage(
+      {kCrossOriginHost});
+
+  GURL script_url = https_server()->GetURL(kCrossOriginHost, kModulePath);
+
+  content::WebContentsConsoleObserver console_observer(GetActiveWebContents());
+  console_observer.SetFilter(MakeFilter({kLoadFailedMessagePrefix}));
+
+  // Load worklet with cross-origin data origin.
+  EXPECT_TRUE(content::ExecJs(
+      GetActiveWebContents(),
+      content::JsReplace(R"(
+        (async function() {
+          window.testWorklet = await sharedStorage.createWorklet($1,
+                                       {dataOrigin: 'script-origin'});
+        })()
+      )",
+                         script_url),
+      content::EvalJsOptions::EXECUTE_SCRIPT_NO_RESOLVE_PROMISES));
+
+  response.WaitForRequest();
+
+  if (base::Contains(response.http_request()->headers,
+                     "Sec-Shared-Storage-Data-Origin")) {
+    // There is a race condition that still sometimes prevents the extension
+    // from operating on the request before it is sent. Since the effect of the
+    // extension is needed to test the shared storage code path, we bail out
+    // with an early return in this case. TODO: Determine the cause and fix.
+    return;
+  }
+
+  // "Sec-Shared-Storage-Data-Origin" request header was removed by the
+  // extension before the request was sent to the server.
+  ASSERT_FALSE(base::Contains(response.http_request()->headers,
+                              "Sec-Shared-Storage-Data-Origin"));
+
+  // The "Shared-Storage-Cross-Origin-Worklet-Allowed: ?1" response header is
+  // missing, while the CorsURLLoader still sees the original
+  // "Sec-Shared-Storage-Data-Origin" request header.
+  response.Send(
+      /*http_status=*/net::HTTP_OK,
+      /*content_type=*/"application/javascript;charset=UTF-8",
+      /*content=*/content::JsReplace(kModuleTemplate, kModuleMessage),
+      /*cookies=*/{}, /*extra_headers=*/
+      {"Access-Control-Allow-Origin: *"});
+  response.Done();
+
+  ASSERT_TRUE(console_observer.Wait());
+  EXPECT_EQ(1u, console_observer.messages().size());
+  EXPECT_THAT(base::UTF16ToUTF8(console_observer.messages()[0].message),
+              testing::HasSubstr(kLoadFailedMessagePrefix));
+}
+
+IN_PROC_BROWSER_TEST_F(
+    SharedStorageExtensionBrowserTest,
+    CrossOrigin_ExtensionRemovesRequestHeader_CORSRetainsRequestHeader_ResponseHeader_Success) {
+  net::test_server::ControllableHttpResponse response(https_server(),
+                                                      kModulePath);
+  ASSERT_TRUE(https_server()->Start());
+
+  // Install extension that will remove the "Sec-Shared-Storage-Data-Origin"
+  // request header.
+  ASSERT_TRUE(InstallExtension(/*value_to_set=*/std::nullopt));
+  ASSERT_TRUE(extension_service()->IsExtensionEnabled(extension_->id()));
+
+  AttestMainHostPlusAdditionalSitesThenNavigateToMainHostPage(
+      {kCrossOriginHost});
+
+  GURL script_url = https_server()->GetURL(kCrossOriginHost, kModulePath);
+
+  content::WebContentsConsoleObserver console_observer(GetActiveWebContents());
+  console_observer.SetFilter(MakeFilter({kModuleMessage}));
+
+  // Load worklet with cross-origin data origin.
+  EXPECT_TRUE(content::ExecJs(
+      GetActiveWebContents(),
+      content::JsReplace(R"(
+        (async function() {
+          window.testWorklet = await sharedStorage.createWorklet($1,
+                                       {dataOrigin: 'script-origin'});
+        })()
+      )",
+                         script_url),
+      content::EvalJsOptions::EXECUTE_SCRIPT_NO_RESOLVE_PROMISES));
+
+  response.WaitForRequest();
+
+  if (base::Contains(response.http_request()->headers,
+                     "Sec-Shared-Storage-Data-Origin")) {
+    // There is a race condition that still sometimes prevents the extension
+    // from operating on the request before it is sent. Since the effect of the
+    // extension is needed to test the shared storage code path, we bail out
+    // with an early return in this case. TODO: Determine the cause and fix.
+    return;
+  }
+
+  // "Sec-Shared-Storage-Data-Origin" request header was removed by the
+  // extension before the request was sent to the server.
+  ASSERT_FALSE(base::Contains(response.http_request()->headers,
+                              "Sec-Shared-Storage-Data-Origin"));
+
+  response.Send(
+      /*http_status=*/net::HTTP_OK,
+      /*content_type=*/"application/javascript;charset=UTF-8",
+      /*content=*/content::JsReplace(kModuleTemplate, kModuleMessage),
+      /*cookies=*/{}, /*extra_headers=*/
+      {"Access-Control-Allow-Origin: *",
+       "Shared-Storage-Cross-Origin-Worklet-Allowed: ?1"});
+  response.Done();
+
+  ASSERT_TRUE(console_observer.Wait());
+  EXPECT_EQ(1u, console_observer.messages().size());
+  EXPECT_EQ(kModuleMessage,
+            base::UTF16ToUTF8(console_observer.messages()[0].message));
+
+  EXPECT_EQ(1u, content::GetAttachedSharedStorageWorkletHostsCount(
+                    GetActiveWebContents()
+                        ->GetPrimaryMainFrame()
+                        ->GetStoragePartition()));
+}
+
+IN_PROC_BROWSER_TEST_F(
+    SharedStorageExtensionBrowserTest,
+    CrossOrigin_ExtensionModifiesRequestHeader_CORSRetainsRequestHeader_NoResponseHeader_Failure) {
+  net::test_server::ControllableHttpResponse response(https_server(),
+                                                      kModulePath);
+  ASSERT_TRUE(https_server()->Start());
+
+  // Install extension that will modify the "Sec-Shared-Storage-Data-Origin"
+  // request header value to "https://google.com".
+  ASSERT_TRUE(InstallExtension(/*value_to_set=*/"https://google.com"));
+  ASSERT_TRUE(extension_service()->IsExtensionEnabled(extension_->id()));
+
+  AttestMainHostPlusAdditionalSitesThenNavigateToMainHostPage(
+      {kCrossOriginHost});
+
+  GURL script_url = https_server()->GetURL(kCrossOriginHost, kModulePath);
+
+  content::WebContentsConsoleObserver console_observer(GetActiveWebContents());
+  console_observer.SetFilter(MakeFilter({kLoadFailedMessagePrefix}));
+
+  // Load worklet with cross-origin data origin.
+  EXPECT_TRUE(content::ExecJs(
+      GetActiveWebContents(),
+      content::JsReplace(R"(
+        (async function() {
+          window.testWorklet = await sharedStorage.createWorklet($1,
+                                       {dataOrigin: 'script-origin'});
+        })()
+      )",
+                         script_url),
+      content::EvalJsOptions::EXECUTE_SCRIPT_NO_RESOLVE_PROMISES));
+
+  response.WaitForRequest();
+
+  if (!base::Contains(response.http_request()->headers,
+                      "Sec-Shared-Storage-Data-Origin") ||
+      response.http_request()
+              ->headers.find("Sec-Shared-Storage-Data-Origin")
+              ->second != "https://google.com") {
+    // There is a race condition that still sometimes prevents the extension
+    // from operating on the request before it is sent. Since the effect of the
+    // extension is needed to test the shared storage code path, we bail out
+    // with an early return in this case. TODO: Determine the cause and fix.
+    return;
+  }
+
+  // "Sec-Shared-Storage-Data-Origin" request header was modified by the
+  // extension before the request was sent to the server.
+  ASSERT_TRUE(base::Contains(response.http_request()->headers,
+                             "Sec-Shared-Storage-Data-Origin"));
+  ASSERT_EQ(response.http_request()
+                ->headers.find("Sec-Shared-Storage-Data-Origin")
+                ->second,
+            "https://google.com");
+
+  // The "Shared-Storage-Cross-Origin-Worklet-Allowed: ?1" response header is
+  // missing, while the CorsURLLoader still sees the original
+  // "Sec-Shared-Storage-Data-Origin" request header.
+  response.Send(
+      /*http_status=*/net::HTTP_OK,
+      /*content_type=*/"application/javascript;charset=UTF-8",
+      /*content=*/content::JsReplace(kModuleTemplate, kModuleMessage),
+      /*cookies=*/{}, /*extra_headers=*/
+      {"Access-Control-Allow-Origin: *"});
+  response.Done();
+
+  ASSERT_TRUE(console_observer.Wait());
+  EXPECT_EQ(1u, console_observer.messages().size());
+  EXPECT_THAT(base::UTF16ToUTF8(console_observer.messages()[0].message),
+              testing::HasSubstr(kLoadFailedMessagePrefix));
+}
+
+IN_PROC_BROWSER_TEST_F(
+    SharedStorageExtensionBrowserTest,
+    CrossOrigin_ExtensionModifiesRequestHeader_CORSRetainsRequestHeader_ResponseHeader_Success) {
+  net::test_server::ControllableHttpResponse response(https_server(),
+                                                      kModulePath);
+  ASSERT_TRUE(https_server()->Start());
+
+  // Install extension that will modify the "Sec-Shared-Storage-Data-Origin"
+  // request header value to "https://google.com".
+  ASSERT_TRUE(InstallExtension(/*value_to_set=*/"https://google.com"));
+  ASSERT_TRUE(extension_service()->IsExtensionEnabled(extension_->id()));
+
+  AttestMainHostPlusAdditionalSitesThenNavigateToMainHostPage(
+      {kCrossOriginHost});
+
+  GURL script_url = https_server()->GetURL(kCrossOriginHost, kModulePath);
+
+  content::WebContentsConsoleObserver console_observer(GetActiveWebContents());
+  console_observer.SetFilter(MakeFilter({kModuleMessage}));
+
+  // Load worklet with cross-origin data origin.
+  EXPECT_TRUE(content::ExecJs(
+      GetActiveWebContents(),
+      content::JsReplace(R"(
+        (async function() {
+          window.testWorklet = await sharedStorage.createWorklet($1,
+                                       {dataOrigin: 'script-origin'});
+        })()
+      )",
+                         script_url),
+      content::EvalJsOptions::EXECUTE_SCRIPT_NO_RESOLVE_PROMISES));
+
+  response.WaitForRequest();
+
+  if (!base::Contains(response.http_request()->headers,
+                      "Sec-Shared-Storage-Data-Origin") ||
+      response.http_request()
+              ->headers.find("Sec-Shared-Storage-Data-Origin")
+              ->second != "https://google.com") {
+    // There is a race condition that still sometimes prevents the extension
+    // from operating on the request before it is sent. Since the effect of the
+    // extension is needed to test the shared storage code path, we bail out
+    // with an early return in this case. TODO: Determine the cause and fix.
+    return;
+  }
+
+  // "Sec-Shared-Storage-Data-Origin" request header was modified by the
+  // extension before the request was sent to the server.
+  ASSERT_TRUE(base::Contains(response.http_request()->headers,
+                             "Sec-Shared-Storage-Data-Origin"));
+  ASSERT_EQ(response.http_request()
+                ->headers.find("Sec-Shared-Storage-Data-Origin")
+                ->second,
+            "https://google.com");
+
+  response.Send(
+      /*http_status=*/net::HTTP_OK,
+      /*content_type=*/"application/javascript;charset=UTF-8",
+      /*content=*/content::JsReplace(kModuleTemplate, kModuleMessage),
+      /*cookies=*/{}, /*extra_headers=*/
+      {"Access-Control-Allow-Origin: *",
+       "Shared-Storage-Cross-Origin-Worklet-Allowed: ?1"});
+  response.Done();
+
+  ASSERT_TRUE(console_observer.Wait());
+  EXPECT_EQ(1u, console_observer.messages().size());
+  EXPECT_EQ(kModuleMessage,
+            base::UTF16ToUTF8(console_observer.messages()[0].message));
+
+  EXPECT_EQ(1u, content::GetAttachedSharedStorageWorkletHostsCount(
+                    GetActiveWebContents()
+                        ->GetPrimaryMainFrame()
+                        ->GetStoragePartition()));
+}
+
+IN_PROC_BROWSER_TEST_F(
+    SharedStorageExtensionBrowserTest,
+    SameOrigin_ExtensionAddsRequestHeader_CORSRetainsRequestHeader_NoResponseHeader_Success) {
+  net::test_server::ControllableHttpResponse response(https_server(),
+                                                      kModulePath);
+  ASSERT_TRUE(https_server()->Start());
+  std::string origin_str = https_server()->GetOrigin(kMainHost).Serialize();
+
+  // Install extension that will add the "Sec-Shared-Storage-Data-Origin"
+  // request header.
+  ASSERT_TRUE(InstallExtension(/*value_to_set=*/origin_str));
+  ASSERT_TRUE(extension_service()->IsExtensionEnabled(extension_->id()));
+
+  AttestMainHostPlusAdditionalSitesThenNavigateToMainHostPage({});
+
+  GURL script_url = https_server()->GetURL(kMainHost, kModulePath);
+
+  content::WebContentsConsoleObserver console_observer(GetActiveWebContents());
+  console_observer.SetFilter(MakeFilter({kModuleMessage}));
+
+  // Load worklet with same-origin script and data origin.
+  EXPECT_TRUE(content::ExecJs(
+      GetActiveWebContents(),
+      content::JsReplace(R"(
+        (async function() {
+          window.testWorklet = await sharedStorage.createWorklet($1,
+                                       {dataOrigin: 'context-origin'});
+        })()
+      )",
+                         script_url),
+      content::EvalJsOptions::EXECUTE_SCRIPT_NO_RESOLVE_PROMISES));
+
+  response.WaitForRequest();
+
+  if (!base::Contains(response.http_request()->headers,
+                      "Sec-Shared-Storage-Data-Origin") ||
+      response.http_request()
+              ->headers.find("Sec-Shared-Storage-Data-Origin")
+              ->second != origin_str) {
+    // There is a race condition that still sometimes prevents the extension
+    // from operating on the request before it is sent. Since the effect of the
+    // extension is needed to test the shared storage code path, we bail out
+    // with an early return in this case. TODO: Determine the cause and fix.
+    return;
+  }
+
+  // "Sec-Shared-Storage-Data-Origin" request header was added by the
+  // extension before the request was sent to the server.
+  ASSERT_TRUE(base::Contains(response.http_request()->headers,
+                             "Sec-Shared-Storage-Data-Origin"));
+  ASSERT_EQ(response.http_request()
+                ->headers.find("Sec-Shared-Storage-Data-Origin")
+                ->second,
+            origin_str);
+
+  // The "Shared-Storage-Cross-Origin-Worklet-Allowed: ?1" response header is
+  // not included, but the CorsURLLoader does not see the
+  // "Sec-Shared-Storage-Data-Origin" request header, so the response header is
+  // not needed.
+  response.Send(
+      /*http_status=*/net::HTTP_OK,
+      /*content_type=*/"application/javascript;charset=UTF-8",
+      /*content=*/content::JsReplace(kModuleTemplate, kModuleMessage),
+      /*cookies=*/{}, /*extra_headers=*/
+      {"Access-Control-Allow-Origin: *"});
+  response.Done();
+
+  ASSERT_TRUE(console_observer.Wait());
+  EXPECT_EQ(1u, console_observer.messages().size());
+  EXPECT_EQ(kModuleMessage,
+            base::UTF16ToUTF8(console_observer.messages()[0].message));
+
+  EXPECT_EQ(1u, content::GetAttachedSharedStorageWorkletHostsCount(
+                    GetActiveWebContents()
+                        ->GetPrimaryMainFrame()
+                        ->GetStoragePartition()));
+}
+
+IN_PROC_BROWSER_TEST_F(
+    SharedStorageExtensionBrowserTest,
+    SameOrigin_ExtensionAddsRequestHeader_CORSRetainsRequestHeader_ResponseHeader_Success) {
+  net::test_server::ControllableHttpResponse response(https_server(),
+                                                      kModulePath);
+  ASSERT_TRUE(https_server()->Start());
+  std::string origin_str = https_server()->GetOrigin(kMainHost).Serialize();
+
+  // Install extension that will add the "Sec-Shared-Storage-Data-Origin"
+  // request header.
+  ASSERT_TRUE(InstallExtension(/*value_to_set=*/origin_str));
+  ASSERT_TRUE(extension_service()->IsExtensionEnabled(extension_->id()));
+
+  AttestMainHostPlusAdditionalSitesThenNavigateToMainHostPage({});
+
+  GURL script_url = https_server()->GetURL(kMainHost, kModulePath);
+
+  content::WebContentsConsoleObserver console_observer(GetActiveWebContents());
+  console_observer.SetFilter(MakeFilter({kModuleMessage}));
+
+  // Load worklet with same-origin script and data origin.
+  EXPECT_TRUE(content::ExecJs(
+      GetActiveWebContents(),
+      content::JsReplace(R"(
+        (async function() {
+          window.testWorklet = await sharedStorage.createWorklet($1,
+                                       {dataOrigin: 'context-origin'});
+        })()
+      )",
+                         script_url),
+      content::EvalJsOptions::EXECUTE_SCRIPT_NO_RESOLVE_PROMISES));
+
+  response.WaitForRequest();
+
+  if (!base::Contains(response.http_request()->headers,
+                      "Sec-Shared-Storage-Data-Origin") ||
+      response.http_request()
+              ->headers.find("Sec-Shared-Storage-Data-Origin")
+              ->second != origin_str) {
+    // There is a race condition that still sometimes prevents the extension
+    // from operating on the request before it is sent. Since the effect of the
+    // extension is needed to test the shared storage code path, we bail out
+    // with an early return in this case. TODO: Determine the cause and fix.
+    return;
+  }
+
+  // "Sec-Shared-Storage-Data-Origin" request header was added by the
+  // extension before the request was sent to the server.
+  ASSERT_TRUE(base::Contains(response.http_request()->headers,
+                             "Sec-Shared-Storage-Data-Origin"));
+  ASSERT_EQ(response.http_request()
+                ->headers.find("Sec-Shared-Storage-Data-Origin")
+                ->second,
+            origin_str);
+
+  // An extraneous "Shared-Storage-Cross-Origin-Worklet-Allowed: ?1" response
+  // header will not affect the outcome.
+  response.Send(
+      /*http_status=*/net::HTTP_OK,
+      /*content_type=*/"application/javascript;charset=UTF-8",
+      /*content=*/content::JsReplace(kModuleTemplate, kModuleMessage),
+      /*cookies=*/{}, /*extra_headers=*/
+      {"Access-Control-Allow-Origin: *",
+       "Shared-Storage-Cross-Origin-Worklet-Allowed: ?1"});
+  response.Done();
+
+  ASSERT_TRUE(console_observer.Wait());
+  EXPECT_EQ(1u, console_observer.messages().size());
+  EXPECT_EQ(kModuleMessage,
+            base::UTF16ToUTF8(console_observer.messages()[0].message));
+
+  EXPECT_EQ(1u, content::GetAttachedSharedStorageWorkletHostsCount(
+                    GetActiveWebContents()
+                        ->GetPrimaryMainFrame()
+                        ->GetStoragePartition()));
+}
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
 }  // namespace storage

@@ -27,19 +27,23 @@ export function getHtml(this: AppElement) {
       <cr-button id="toolbarButton" class="section sp-card"
           @click="${this.onToolbarCustomizationButtonClick_}">
         <sp-heading hide-back-button id="toolbar-customization-heading">
-          <h2 slot="heading">$i18n{toolbarHeader}</h2>
+          <h2 slot="heading" id="toolbar-customization-inner-heading"
+              aria-label="$i18n{toolbarButtonA11yLabel}">
+            $i18n{toolbarHeader}
+            <new-badge></new-badge>
+          </h2>
         </sp-heading>
         <cr-icon icon="cr:chevron-right" slot="suffix-icon"></cr-icon>
       </cr-button>
     ` : ''}
-    <hr class="sp-cards-separator">
+     ${this.isSourceTabFirstPartyNtp_ ? html`<hr class="sp-cards-separator">
     <div id="shortcuts" class="section sp-card">
       <sp-heading hide-back-button>
         <h2 slot="heading">$i18n{shortcutsHeader}</h2>
       </sp-heading>
       <customize-chrome-shortcuts></customize-chrome-shortcuts>
-    </div>
-    ${this.modulesEnabled_ ? html`
+    </div>`: ''}
+    ${(this.modulesEnabled_ && this.isSourceTabFirstPartyNtp_) ? html`
       <hr class="sp-cards-separator">
       <div id="modules" class="section sp-card">
         <sp-heading hide-back-button>
@@ -52,7 +56,7 @@ export function getHtml(this: AppElement) {
       <hr class="sp-cards-separator">
       <div id="extensions" class="section sp-card">
         <sp-heading hide-back-button>
-          <h2 slot="heading">Extensions</h2>
+          <h2 slot="heading">$i18n{extensionsHeader}</h2>
         </sp-heading>
         <div class="description" @click="${this.onChromeWebStoreLinkClick_}">
           $i18nRaw{customizeWithChromeWebstoreLabel}
@@ -77,16 +81,18 @@ export function getHtml(this: AppElement) {
       </div>
     ` : ''}
   </div>
+  ${(this.isSourceTabFirstPartyNtp_) ? html`
   <customize-chrome-categories @back-click="${this.onBackClick_}"
       @collection-select="${this.onCollectionSelect_}" page-name="categories"
       id="categoriesPage" @local-image-upload="${this.onLocalImageUpload_}"
       @wallpaper-search-select="${this.onWallpaperSearchSelect_}">
-  </customize-chrome-categories>
+  </customize-chrome-categories>`: ''}
+  ${(this.isSourceTabFirstPartyNtp_) ? html`
   <customize-chrome-themes @back-click="${this.onBackClick_}"
       page-name="themes" id="themesPage"
       .selectedCollection="${this.selectedCollection_}">
-  </customize-chrome-themes>
-  ${this.wallpaperSearchEnabled_ ? html`
+  </customize-chrome-themes>`: ''}
+  ${(this.wallpaperSearchEnabled_ && this.isSourceTabFirstPartyNtp_) ? html`
     <customize-chrome-wallpaper-search @back-click="${this.onBackClick_}"
         page-name="wallpaper-search" id="wallpaperSearchPage">
     </customize-chrome-wallpaper-search>

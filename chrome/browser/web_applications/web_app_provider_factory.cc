@@ -8,10 +8,11 @@
 #include "chrome/browser/enterprise/browser_management/management_service_factory.h"
 #include "chrome/browser/metrics/ukm_background_recorder_service.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/sync/model_type_store_service_factory.h"
+#include "chrome/browser/sync/data_type_store_service_factory.h"
 #include "chrome/browser/web_applications/daily_metrics_helper.h"
 #include "chrome/browser/web_applications/extensions_manager.h"
 #include "chrome/browser/web_applications/install_bounce_metric.h"
+#include "chrome/browser/web_applications/isolated_web_apps/policy/isolated_web_app_policy_manager.h"
 #include "chrome/browser/web_applications/os_integration/os_integration_manager.h"
 #include "chrome/browser/web_applications/policy/web_app_policy_manager.h"
 #include "chrome/browser/web_applications/preinstalled_web_app_manager.h"
@@ -48,7 +49,7 @@ WebAppProviderFactory::WebAppProviderFactory()
     : BrowserContextKeyedServiceFactory(
           "WebAppProvider",
           BrowserContextDependencyManager::GetInstance()) {
-  DependsOn(ModelTypeStoreServiceFactory::GetInstance());
+  DependsOn(DataTypeStoreServiceFactory::GetInstance());
   DependsOn(ukm::UkmBackgroundRecorderFactory::GetInstance());
   // Required to listen to file handling settings change in
   // `WebAppInstallFinalizer::OnContentSettingChanged()`
@@ -85,6 +86,8 @@ void WebAppProviderFactory::RegisterProfilePrefs(
   PreinstalledWebAppManager::RegisterProfilePrefs(registry);
   WebAppPrefGuardrails::RegisterProfilePrefs(registry);
   WebAppPolicyManager::RegisterProfilePrefs(registry);
+  IsolatedWebAppPolicyManager::RegisterProfilePrefs(registry);
+
   registry->RegisterBooleanPref(prefs::kShouldGarbageCollectStoragePartitions,
                                 false);
   RegisterInstallBounceMetricProfilePrefs(registry);

@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/core/css/parser/css_property_parser.h"
 
 #include "third_party/blink/renderer/core/css/css_pending_substitution_value.h"
@@ -40,8 +45,10 @@ bool IsPropertyAllowedInRule(const CSSProperty& property,
   DCHECK(property.IsProperty());
   switch (rule_type) {
     case StyleRule::kStyle:
+    case StyleRule::kScope:
       return true;
     case StyleRule::kPage:
+    case StyleRule::kPageMargin:
       // TODO(sesse): Limit the allowed properties here.
       // https://www.w3.org/TR/css-page-3/#page-property-list
       // https://www.w3.org/TR/css-page-3/#margin-property-list
@@ -51,8 +58,7 @@ bool IsPropertyAllowedInRule(const CSSProperty& property,
     case StyleRule::kPositionTry:
       return property.IsValidForPositionTry();
     default:
-      NOTREACHED_IN_MIGRATION();
-      return false;
+      NOTREACHED();
   }
 }
 
@@ -94,7 +100,7 @@ bool CSSPropertyParser::ParseValue(
   return parse_success;
 }
 
-// NOTE: “range” cannot include !important; this is for setting properties
+// NOTE: “stream” cannot include !important; this is for setting properties
 // from CSSOM or similar.
 const CSSValue* CSSPropertyParser::ParseSingleValue(
     CSSPropertyID property,
@@ -125,7 +131,7 @@ StringView StripInitialWhitespace(StringView value) {
 bool CSSPropertyParser::ParseValueStart(CSSPropertyID unresolved_property,
                                         bool allow_important_annotation,
                                         StyleRule::RuleType rule_type) {
-  if (ConsumeCSSWideKeyword(unresolved_property, rule_type)) {
+  if (ParseCSSWideKeyword(unresolved_property, rule_type)) {
     return true;
   }
 
@@ -204,42 +210,32 @@ bool CSSPropertyParser::ParseValueStart(CSSPropertyID unresolved_property,
   stream_.EnsureLookAhead();
   stream_.Restore(savepoint);
 
-  CSSTokenizedValue value =
-      CSSParserImpl::ConsumeRestrictedPropertyValue(stream_);
-  if (!stream_.AtEnd()) {
+  bool important = false;
+  CSSVariableData* variable_data =
+      CSSVariableParser::ConsumeUnparsedDeclaration(
+          stream_,
+          /*allow_important_annotation=*/true,
+          /*is_animation_tainted=*/false,
+          /*must_contain_variable_reference=*/true,
+          /*restricted_value=*/true, /*comma_ends_declaration=*/false,
+          important, *context_);
+  if (!variable_data) {
     return false;
   }
 
-  const bool important =
-      CSSParserImpl::RemoveImportantAnnotationIfPresent(value);
-  value.text =
-      CSSVariableParser::StripTrailingWhitespaceAndComments(value.text);
-
-  if (CSSVariableParser::ContainsValidVariableReferences(
-          value.range, context_->GetExecutionContext())) {
-    if (value.text.length() > CSSVariableData::kMaxVariableBytes) {
-      return false;
-    }
-
-    bool is_animation_tainted = false;
-    auto* variable = MakeGarbageCollected<CSSUnparsedDeclarationValue>(
-        CSSVariableData::Create(std::move(value), is_animation_tainted, true),
-        context_);
-
-    if (is_shorthand) {
-      const cssvalue::CSSPendingSubstitutionValue& pending_value =
-          *MakeGarbageCollected<cssvalue::CSSPendingSubstitutionValue>(
-              property_id, variable);
-      css_parsing_utils::AddExpandedPropertyForValue(
-          property_id, pending_value, important, *parsed_properties_);
-    } else {
-      AddProperty(property_id, CSSPropertyID::kInvalid, *variable, important,
-                  IsImplicitProperty::kNotImplicit, *parsed_properties_);
-    }
-    return true;
+  auto* variable = MakeGarbageCollected<CSSUnparsedDeclarationValue>(
+      variable_data, context_);
+  if (is_shorthand) {
+    const cssvalue::CSSPendingSubstitutionValue& pending_value =
+        *MakeGarbageCollected<cssvalue::CSSPendingSubstitutionValue>(
+            property_id, variable);
+    css_parsing_utils::AddExpandedPropertyForValue(
+        property_id, pending_value, important, *parsed_properties_);
+  } else {
+    AddProperty(property_id, CSSPropertyID::kInvalid, *variable, important,
+                IsImplicitProperty::kNotImplicit, *parsed_properties_);
   }
-
-  return false;
+  return true;
 }
 
 static inline bool IsExposedInMode(const ExecutionContext* execution_context,
@@ -266,7 +262,6 @@ static inline bool QuasiLowercaseIntoBuffer(const UChar* src,
     }
     dst[i] = ToASCIILower(c);
   }
-  dst[length] = '\0';
   return true;
 }
 
@@ -297,7 +292,6 @@ static inline bool QuasiLowercaseIntoBuffer(const LChar* src,
     LChar c = src[i];
     dst[i] = c | ((c & 0x40) >> 1);
   }
-  dst[length] = '\0';
   return true;
 }
 
@@ -344,7 +338,7 @@ static CSSPropertyID UnresolvedCSSPropertyID(
     return CSSPropertyID::kInvalid;
   }
 
-  char buffer[kMaxCSSPropertyNameLength + 1];  // 1 for null character
+  char buffer[kMaxCSSPropertyNameLength];
   if (!QuasiLowercaseIntoBuffer(property_name, length, buffer)) {
     return CSSPropertyID::kInvalid;
   }
@@ -362,31 +356,35 @@ static CSSPropertyID UnresolvedCSSPropertyID(
     return CSSPropertyID::kInvalid;
   }
 
-  CSSPropertyID property_id = static_cast<CSSPropertyID>(hash_table_entry->id);
-  if (kKnownExposedProperties.Has(property_id)) {
+  int id_and_exposed_bit = hash_table_entry->id_and_exposed_bit;
+  if (id_and_exposed_bit & kNotKnownExposedPropertyBit) {
+    // The property is behind a runtime flag, so we need to go ahead
+    // and actually do the resolution to see if that flag is on or not.
+    // This should happen only occasionally.
+    CSSPropertyID property_id = static_cast<CSSPropertyID>(
+        id_and_exposed_bit & ~kNotKnownExposedPropertyBit);
+    return ExposedProperty(property_id, execution_context, mode);
+  } else {
+    CSSPropertyID property_id = static_cast<CSSPropertyID>(id_and_exposed_bit);
     DCHECK_EQ(property_id,
               ExposedProperty(property_id, execution_context, mode));
     return property_id;
   }
-
-  // The property is behind a runtime flag, so we need to go ahead
-  // and actually do the resolution to see if that flag is on or not.
-  // This should happen only occasionally.
-  return ExposedProperty(property_id, execution_context, mode);
 }
 
 CSSPropertyID UnresolvedCSSPropertyID(const ExecutionContext* execution_context,
                                       StringView string,
                                       CSSParserMode mode) {
-  return WTF::VisitCharacters(string, [&](const auto* chars, unsigned length) {
-    return UnresolvedCSSPropertyID(execution_context, chars, length, mode);
+  return WTF::VisitCharacters(string, [&](auto chars) {
+    return UnresolvedCSSPropertyID(execution_context, chars.data(),
+                                   chars.size(), mode);
   });
 }
 
 template <typename CharacterType>
 static CSSValueID CssValueKeywordID(const CharacterType* value_keyword,
                                     unsigned length) {
-  char buffer[maxCSSValueKeywordLength + 1];  // 1 for null character
+  char buffer[kMaxCSSValueKeywordLength];
   if (!QuasiLowercaseIntoBuffer(value_keyword, length, buffer)) {
     return CSSValueID::kInvalid;
   }
@@ -408,7 +406,7 @@ CSSValueID CssValueKeywordID(StringView string) {
   if (!length) {
     return CSSValueID::kInvalid;
   }
-  if (length > maxCSSValueKeywordLength) {
+  if (length > kMaxCSSValueKeywordLength) {
     return CSSValueID::kInvalid;
   }
 
@@ -416,22 +414,36 @@ CSSValueID CssValueKeywordID(StringView string) {
                          : CssValueKeywordID(string.Characters16(), length);
 }
 
-bool CSSPropertyParser::ConsumeCSSWideKeyword(CSSPropertyID unresolved_property,
-                                              bool allow_important_annotation) {
-  CSSParserTokenStream::State savepoint = stream_.Save();
+const CSSValue* CSSPropertyParser::ConsumeCSSWideKeyword(
+    CSSParserTokenStream& stream,
+    bool allow_important_annotation,
+    bool& important) {
+  CSSParserTokenStream::State savepoint = stream.Save();
 
-  const CSSValue* value = css_parsing_utils::ConsumeCSSWideKeyword(stream_);
+  const CSSValue* value = css_parsing_utils::ConsumeCSSWideKeyword(stream);
   if (!value) {
     // No need to Restore(), we are at the right spot anyway.
     // (We do this instead of relying on CSSParserTokenStream's
     // Restore() optimization, as this path is so hot.)
-    return false;
+    return nullptr;
   }
 
-  bool important = css_parsing_utils::MaybeConsumeImportant(
-      stream_, allow_important_annotation);
-  if (!stream_.AtEnd()) {
-    stream_.Restore(savepoint);
+  important = css_parsing_utils::MaybeConsumeImportant(
+      stream, allow_important_annotation);
+  if (!stream.AtEnd()) {
+    stream.Restore(savepoint);
+    return nullptr;
+  }
+
+  return value;
+}
+
+bool CSSPropertyParser::ParseCSSWideKeyword(CSSPropertyID unresolved_property,
+                                            bool allow_important_annotation) {
+  bool important;
+  const CSSValue* value =
+      ConsumeCSSWideKeyword(stream_, allow_important_annotation, important);
+  if (!value) {
     return false;
   }
 
@@ -459,22 +471,8 @@ bool CSSPropertyParser::ParseFontFaceDescriptor(
     return false;
   }
 
-  // ParseFontFaceDescriptor() could want the original text,
-  // for re-tokenization for the specific case of the “unicode-range”
-  // property (which is the only property where UnicodeRange productions
-  // are allowed). Thus, we need to keep track of exactly what
-  // we tokenized, so that we can also send in the original text.
-  //
-  // This should obviously go away when everything uses
-  // the streaming parser.
-  wtf_size_t start_offset = stream_.LookAheadOffset();
-  CSSParserTokenRange range = stream_.ConsumeUntilPeekedTypeIs();
-  wtf_size_t end_offset = stream_.Offset();
-  StringView original_text =
-      stream_.StringRangeAt(start_offset, end_offset - start_offset);
-
-  CSSValue* parsed_value = AtRuleDescriptorParser::ParseFontFaceDescriptor(
-      id, {range, original_text}, *context_);
+  CSSValue* parsed_value =
+      AtRuleDescriptorParser::ParseFontFaceDescriptor(id, stream_, *context_);
   if (!parsed_value) {
     return false;
   }

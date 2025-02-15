@@ -7,6 +7,11 @@
 // work is done by the local functions defined in anonymous namespace in
 // this class.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/installer/util/shell_util.h"
 
 #include <objbase.h>
@@ -34,7 +39,6 @@
 #include "base/lazy_instance.h"
 #include "base/logging.h"
 #include "base/path_service.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
@@ -111,22 +115,26 @@ std::wstring LegalizeNewProgId(std::wstring prog_id,
   std::wstring new_style_suffix;
   if (ShellUtil::GetUserSpecificRegistrySuffix(&new_style_suffix) &&
       suffix == new_style_suffix && prog_id.length() > 39) {
-    NOTREACHED_IN_MIGRATION();
-    prog_id.erase(39);
+    NOTREACHED();
   }
   return prog_id;
 }
 
 // Returns the current (or installed) browser's ProgId (e.g.
 // "ChromeHTML|suffix|").
-// suffix| can be the empty string.
+// `suffix` can be the empty string.
 std::wstring GetBrowserProgId(const std::wstring& suffix) {
   return LegalizeNewProgId(
       base::StrCat({install_static::GetBrowserProgIdPrefix(), suffix}), suffix);
 }
 
-// TODO(crbug.com/40384442): Add method to get the PDF viewer's ProgId,
-// which will also require LegalizeNewProgId.
+// Returns the current (or installed) PDF viewer's ProgId (e.g.
+// "ChromePDF|suffix|").
+// `suffix` can be the empty string.
+std::wstring GetPDFProgId(const std::wstring& suffix) {
+  return LegalizeNewProgId(
+      base::StrCat({install_static::GetPDFProgIdPrefix(), suffix}), suffix);
+}
 
 // Returns the browser's application name. This application name will be
 // suffixed as is appropriate for the current install. This is the name that is
@@ -165,8 +173,7 @@ class UserSpecificRegistrySuffix {
 UserSpecificRegistrySuffix::UserSpecificRegistrySuffix() {
   std::wstring user_sid;
   if (!base::win::GetUserSidString(&user_sid)) {
-    NOTREACHED_IN_MIGRATION();
-    return;
+    NOTREACHED();
   }
   static_assert(sizeof(base::MD5Digest) == 16, "size of MD5 not as expected");
   base::MD5Digest md5_digest;
@@ -183,8 +190,7 @@ UserSpecificRegistrySuffix::UserSpecificRegistrySuffix() {
 
 bool UserSpecificRegistrySuffix::GetSuffix(std::wstring* suffix) {
   if (suffix_.empty()) {
-    NOTREACHED_IN_MIGRATION();
-    return false;
+    NOTREACHED();
   }
   suffix->assign(suffix_);
   return true;
@@ -340,14 +346,15 @@ void GetChromeProgIdEntries(
     const base::FilePath& chrome_exe,
     const std::wstring& suffix,
     std::vector<std::unique_ptr<RegistryEntry>>* entries) {
-  int chrome_html_icon_index = install_static::GetHTMLIconResourceIndex();
+  const int chrome_icon_index = install_static::GetAppIconResourceIndex();
 
   ShellUtil::ApplicationInfo app_info;
   app_info.prog_id = GetBrowserProgId(suffix);
   app_info.file_type_name = install_static::GetBrowserProgIdDescription();
-  // File types associated with Chrome are just given the Chrome icon.
   app_info.file_type_icon_path = chrome_exe;
-  app_info.file_type_icon_index = chrome_html_icon_index;
+  // File types associated with Chrome are given the Chrome html icon, except
+  // for PDF files, which are given a Chrome PDF icon.
+  app_info.file_type_icon_index = install_static::GetHTMLIconResourceIndex();
   app_info.command_line = ShellUtil::GetChromeShellOpenCmd(chrome_exe);
   // For user-level installs: entries for the app id will be in HKCU; thus we
   // do not need a suffix on those entries.
@@ -358,11 +365,18 @@ void GetChromeProgIdEntries(
   // resource for name, description, and company.
   app_info.application_name = InstallUtil::GetDisplayName();
   app_info.application_icon_path = chrome_exe;
-  app_info.application_icon_index = chrome_html_icon_index;
+  app_info.application_icon_index = chrome_icon_index;
   app_info.application_description = InstallUtil::GetAppDescription();
   app_info.publisher_name = InstallUtil::GetPublisherName();
   app_info.delegate_clsid = install_static::GetLegacyCommandExecuteImplClsid();
 
+  GetProgIdEntries(app_info, entries);
+
+  // Get ProgId entries for PDF documents.
+  app_info.prog_id = GetPDFProgId(suffix);
+  app_info.file_type_name = install_static::GetPDFProgIdDescription();
+  app_info.file_type_icon_index = install_static ::GetPDFIconResourceIndex();
+  app_info.application_icon_index = chrome_icon_index;
   GetProgIdEntries(app_info, entries);
 
   if (!app_info.delegate_clsid.empty()) {
@@ -458,10 +472,15 @@ void GetShellIntegrationEntries(
       capabilities + L"\\Startmenu", L"StartMenuInternet", reg_app_name));
 
   const std::wstring html_prog_id(GetBrowserProgId(suffix));
+  // Register HTML and PDF Prog IDs (e.g., ChromePDF) with the corresponding
+  // file association.
   for (int i = 0; ShellUtil::kPotentialFileAssociations[i] != nullptr; i++) {
     entries->push_back(std::make_unique<RegistryEntry>(
         capabilities + L"\\FileAssociations",
-        ShellUtil::kPotentialFileAssociations[i], html_prog_id));
+        ShellUtil::kPotentialFileAssociations[i],
+        wcscmp(ShellUtil::kPotentialFileAssociations[i], L".pdf") == 0
+            ? GetPDFProgId(suffix)
+            : html_prog_id));
   }
   for (int i = 0; ShellUtil::kPotentialProtocolAssociations[i] != nullptr;
        i++) {
@@ -740,8 +759,7 @@ bool QuickIsChromeRegisteredForMode(
       reg_key = GetBrowserClientKey(suffix);
       break;
     default:
-      NOTREACHED_IN_MIGRATION();
-      break;
+      NOTREACHED();
   }
   reg_key += ShellUtil::kRegShellOpen;
 
@@ -808,8 +826,7 @@ bool GetInstallationSpecificSuffix(const base::FilePath& chrome_exe,
 
   // Get the old suffix for the check below.
   if (!ShellUtil::GetOldUserSpecificRegistrySuffix(suffix)) {
-    NOTREACHED_IN_MIGRATION();
-    return false;
+    NOTREACHED();
   }
   if (QuickIsChromeRegistered(chrome_exe, *suffix,
                               CONFIRM_SHELL_REGISTRATION)) {
@@ -908,8 +925,7 @@ base::win::ShortcutOperation TranslateShortcutOperation(
       return base::win::ShortcutOperation::kReplaceExisting;
 
     default:
-      NOTREACHED_IN_MIGRATION();
-      return base::win::ShortcutOperation::kReplaceExisting;
+      NOTREACHED();
   }
 }
 
@@ -971,9 +987,7 @@ ShellUtil::DefaultState ProbeCurrentDefaultHandlers(
     const wchar_t* const* protocols,
     size_t num_protocols) {
   Microsoft::WRL::ComPtr<IApplicationAssociationRegistration> registration;
-  HRESULT hr =
-      ::CoCreateInstance(CLSID_ApplicationAssociationRegistration, nullptr,
-                         CLSCTX_INPROC, IID_PPV_ARGS(&registration));
+  HRESULT hr = ::SHCreateAssociationRegistration(IID_PPV_ARGS(&registration));
   if (FAILED(hr))
     return ShellUtil::UNKNOWN_DEFAULT;
 
@@ -1001,19 +1015,19 @@ ShellUtil::DefaultState ProbeCurrentDefaultHandlers(
         &install_static::kInstallModes[install_static::NUM_INSTALL_MODES],
         [current_install_mode_index, &current_app,
          current_app_len](const install_static::InstallConstants& mode) {
-          if (mode.index == current_install_mode_index)
+          if (mode.index == current_install_mode_index) {
             return false;
+          }
           const std::wstring mode_prog_id_prefix(mode.browser_prog_id_prefix);
           // Does the current app either match this mode's ProgID or contain
           // this mode's ProgID as a prefix followed by the '.' separator for a
           // per-user install's suffix?
-          return mode_prog_id_prefix.compare(current_app) == 0 ||
-                 (InstallUtil::IsPerUserInstall() &&
-                  current_app_len > mode_prog_id_prefix.length() &&
-                  current_app[mode_prog_id_prefix.length()] == L'.' &&
-                  std::char_traits<wchar_t>::compare(
-                      mode_prog_id_prefix.c_str(), current_app,
-                      mode_prog_id_prefix.length()) == 0);
+          if (!base::StartsWith(current_app.get(), mode_prog_id_prefix,
+                                base::CompareCase::SENSITIVE)) {
+            return false;
+          }
+          return current_app_len == mode_prog_id_prefix.length() ||
+                 current_app[mode_prog_id_prefix.length()] == L'.';
         });
     if (it == &install_static::kInstallModes[install_static::NUM_INSTALL_MODES])
       return ShellUtil::NOT_DEFAULT;
@@ -1098,10 +1112,10 @@ FilterTargetContains::FilterTargetContains(
 
 bool FilterTargetContains::Match(const base::FilePath& target_path,
                                  const std::wstring& args) const {
-  if (base::ranges::none_of(desired_target_compare_,
-                            [&target_path](const auto& target_compare) {
-                              return target_compare.EvaluatePath(target_path);
-                            })) {
+  if (std::ranges::none_of(desired_target_compare_,
+                           [&target_path](const auto& target_compare) {
+                             return target_compare.EvaluatePath(target_path);
+                           })) {
     return false;
   }
   if (require_args_ && args.empty())
@@ -1260,8 +1274,7 @@ bool RemoveShortcutFolderIfEmpty(ShellUtil::ShortcutLocation location,
           ShellUtil::SHORTCUT_LOCATION_START_MENU_CHROME_DIR_DEPRECATED &&
       location != ShellUtil::SHORTCUT_LOCATION_START_MENU_CHROME_APPS_DIR &&
       location != ShellUtil::SHORTCUT_LOCATION_APP_SHORTCUTS) {
-    NOTREACHED_IN_MIGRATION();
-    return false;
+    NOTREACHED();
   }
 
   base::FilePath shortcut_folder;
@@ -1361,6 +1374,7 @@ bool RegisterChromeBrowserImpl(const base::FilePath& chrome_exe,
     GetChromeAppRegistrationEntries(chrome_exe, suffix,
                                     &progid_and_appreg_entries);
     GetShellIntegrationEntries(chrome_exe, suffix, &shell_entries);
+    const std::wstring html_prog_id = GetBrowserProgId(suffix);
     return ShellUtil::AddRegistryEntries(root, progid_and_appreg_entries,
                                          best_effort_no_rollback) &&
            ShellUtil::AddRegistryEntries(root, shell_entries,
@@ -1521,8 +1535,8 @@ const wchar_t* ShellUtil::kAppPathsRegistryPathName = L"Path";
 const wchar_t* ShellUtil::kDefaultFileAssociations[] = {
     L".htm", L".html", L".shtml", L".xht", L".xhtml", nullptr};
 const wchar_t* ShellUtil::kPotentialFileAssociations[] = {
-    L".htm", L".html",  L".pdf",  L".shtml", L".svg",
-    L".xht", L".xhtml", L".webp", nullptr};
+    L".htm", L".html", L".mhtml", L".pdf",  L".shtml",
+    L".svg", L".xht",  L".xhtml", L".webp", nullptr};
 const wchar_t* ShellUtil::kBrowserProtocolAssociations[] = {L"http", L"https",
                                                             nullptr};
 const wchar_t* ShellUtil::kPotentialProtocolAssociations[] = {
@@ -1577,8 +1591,7 @@ bool ShellUtil::ShortcutLocationIsSupported(ShortcutLocation location) {
     case SHORTCUT_LOCATION_APP_SHORTCUTS:
       return true;
     default:
-      NOTREACHED_IN_MIGRATION();
-      return false;
+      NOTREACHED();
   }
 }
 
@@ -1664,8 +1677,7 @@ bool ShellUtil::MoveExistingShortcut(ShortcutLocation old_location,
   // Explicitly allow locations to which this is applicable.
   if (old_location != SHORTCUT_LOCATION_START_MENU_CHROME_DIR_DEPRECATED ||
       new_location != SHORTCUT_LOCATION_START_MENU_ROOT) {
-    NOTREACHED_IN_MIGRATION();
-    return false;
+    NOTREACHED();
   }
 
   std::wstring shortcut_name(ExtractShortcutNameFromProperties(properties));
@@ -1876,8 +1888,9 @@ std::wstring ShellUtil::GetCurrentInstallationSuffix(
                                CONFIRM_PROGID_REGISTRATION)) {
     // If Chrome is not registered under any of the possible suffixes (e.g.
     // tests, Canary, etc.): use the new-style suffix at run-time.
-    if (!GetUserSpecificRegistrySuffix(&tested_suffix))
-      NOTREACHED_IN_MIGRATION();
+    if (!GetUserSpecificRegistrySuffix(&tested_suffix)) {
+      NOTREACHED();
+    }
   }
   return tested_suffix;
 }
@@ -1894,7 +1907,7 @@ std::wstring ShellUtil::GetBrowserModelId(bool is_per_user_install) {
     suffix = command_line.GetSwitchValueNative(
         installer::switches::kRegisterChromeBrowserSuffix);
   } else if (is_per_user_install && !GetUserSpecificRegistrySuffix(&suffix)) {
-    NOTREACHED_IN_MIGRATION();
+    NOTREACHED();
   }
   app_id += suffix;
   if (app_id.length() <= installer::kMaxAppModelIdLength)
@@ -1915,8 +1928,7 @@ std::wstring ShellUtil::BuildAppUserModelId(
   // |max_component_length| should be at least 2; otherwise the truncation logic
   // below breaks.
   if (max_component_length < 2U) {
-    NOTREACHED_IN_MIGRATION();
-    return (*components.begin()).substr(0, installer::kMaxAppModelIdLength);
+    NOTREACHED();
   }
 
   std::wstring app_id;
@@ -1942,8 +1954,7 @@ std::wstring ShellUtil::BuildAppUserModelId(
 ShellUtil::DefaultState ShellUtil::GetChromeDefaultState() {
   base::FilePath app_path;
   if (!base::PathService::Get(base::FILE_EXE, &app_path)) {
-    NOTREACHED_IN_MIGRATION();
-    return UNKNOWN_DEFAULT;
+    NOTREACHED();
   }
 
   return GetChromeDefaultStateFromPath(app_path);
@@ -1974,8 +1985,7 @@ ShellUtil::DefaultState ShellUtil::GetChromeDefaultProtocolClientState(
 
   base::FilePath chrome_exe;
   if (!base::PathService::Get(base::FILE_EXE, &chrome_exe)) {
-    NOTREACHED_IN_MIGRATION();
-    return UNKNOWN_DEFAULT;
+    NOTREACHED();
   }
 
   const wchar_t* const protocols[] = {protocol.c_str()};
@@ -2408,8 +2418,7 @@ bool ShellUtil::GetOldUserSpecificRegistrySuffix(std::wstring* suffix) {
   wchar_t user_name[256];
   DWORD size = std::size(user_name);
   if (::GetUserName(user_name, &size) == 0 || size < 1) {
-    NOTREACHED_IN_MIGRATION();
-    return false;
+    NOTREACHED();
   }
   suffix->reserve(size);
   suffix->assign(1, L'.');
@@ -2528,8 +2537,7 @@ bool ShellUtil::AddAppProtocolAssociations(
     const std::wstring& prog_id) {
   base::FilePath chrome_exe;
   if (!base::PathService::Get(base::FILE_EXE, &chrome_exe)) {
-    NOTREACHED_IN_MIGRATION();
-    return false;
+    NOTREACHED();
   }
 
   if (!RegisterApplicationForProtocols(protocols, prog_id, chrome_exe))

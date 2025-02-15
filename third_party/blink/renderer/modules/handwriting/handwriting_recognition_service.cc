@@ -7,7 +7,7 @@
 #include <utility>
 
 #include "base/notreached.h"
-#include "third_party/blink/public/common/browser_interface_broker_proxy.h"
+#include "third_party/blink/public/platform/browser_interface_broker_proxy.h"
 #include "third_party/blink/public/platform/task_type.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_handwriting_model_constraint.h"
@@ -50,8 +50,7 @@ void OnCreateHandwritingRecognizer(
     }
   }
 
-  NOTREACHED_IN_MIGRATION()
-      << "CreateHandwritingRecognizer returns an invalid result.";
+  NOTREACHED() << "CreateHandwritingRecognizer returns an invalid result.";
 }
 
 void OnQueryHandwritingRecognizer(

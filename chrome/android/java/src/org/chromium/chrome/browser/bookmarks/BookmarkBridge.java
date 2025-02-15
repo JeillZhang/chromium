@@ -5,7 +5,6 @@
 package org.chromium.chrome.browser.bookmarks;
 
 import android.text.TextUtils;
-import android.util.Pair;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -21,6 +20,7 @@ import org.chromium.base.ContextUtils;
 import org.chromium.base.ObserverList;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.metrics.RecordUserAction;
+import org.chromium.base.supplier.OneshotSupplierImpl;
 import org.chromium.chrome.browser.partnerbookmarks.PartnerBookmarksShim;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.components.bookmarks.BookmarkId;
@@ -38,12 +38,16 @@ import java.util.List;
  * in native.
  */
 class BookmarkBridge {
+    private static OneshotSupplierImpl<BookmarkModel.PartnerBookmarkIteratorProvider>
+            sPartnerBookmarkIteratorSupplier = new OneshotSupplierImpl<>();
+
     private final ObserverList<BookmarkModelObserver> mObservers = new ObserverList<>();
+    private final Profile mProfile;
 
     private long mNativeBookmarkBridge;
-    private boolean mIsDestroyed;
     private boolean mIsDoingExtensiveChanges;
     private boolean mIsNativeBookmarkModelLoaded;
+    private boolean mInitializedPartnerBookmarks;
 
     // Lazily set pseudo-constants. These should never change at runtime. Used to avoid crossing
     // JNI to fetch information.
@@ -70,30 +74,31 @@ class BookmarkBridge {
     }
 
     @CalledByNative
-    static BookmarkModel createBookmarkModel(long nativeBookmarkBridge) {
-        return new BookmarkModel(nativeBookmarkBridge);
+    static BookmarkModel createBookmarkModel(long nativeBookmarkBridge, Profile profile) {
+        return new BookmarkModel(nativeBookmarkBridge, profile);
     }
 
-    BookmarkBridge(long nativeBookmarkBridge) {
+    /** Sets a pre-configured runnable which loads the parter bookmarks shim. */
+    public static void setPartnerBookmarkIteratorProvider(
+            @NonNull BookmarkModel.PartnerBookmarkIteratorProvider provider) {
+        sPartnerBookmarkIteratorSupplier.set(provider);
+    }
+
+    BookmarkBridge(long nativeBookmarkBridge, Profile profile) {
         mNativeBookmarkBridge = nativeBookmarkBridge;
+        mProfile = profile;
         mIsDoingExtensiveChanges =
                 BookmarkBridgeJni.get().isDoingExtensiveChanges(mNativeBookmarkBridge);
     }
 
     /** Destroys this instance so no further calls can be executed. */
     void destroy() {
-        mIsDestroyed = true;
         if (mNativeBookmarkBridge != 0) {
             BookmarkBridgeJni.get().destroy(mNativeBookmarkBridge);
             mNativeBookmarkBridge = 0;
             mIsNativeBookmarkModelLoaded = false;
         }
         mObservers.clear();
-    }
-
-    /** Returns whether the bridge has been destroyed. */
-    private boolean isDestroyed() {
-        return mIsDestroyed;
     }
 
     /** Returns the most recently added BookmarkId */
@@ -172,10 +177,26 @@ class BookmarkBridge {
                     public void bookmarkModelChanged() {}
                 });
 
-        // Start reading as a fail-safe measure to avoid waiting forever if the caller forgets to
-        // call kickOffReading().
-        PartnerBookmarksShim.kickOffReading(ContextUtils.getApplicationContext());
+        initializePartnerBookmarksIfNeeded();
         return false;
+    }
+
+    private void initializePartnerBookmarksIfNeeded() {
+        if (mInitializedPartnerBookmarks) return;
+
+        mInitializedPartnerBookmarks = true;
+        assert sPartnerBookmarkIteratorSupplier.hasValue();
+        sPartnerBookmarkIteratorSupplier.runSyncOrOnAvailable(
+                (provider) -> {
+                    // Don't attempt to load partner bookmarks if the bridge has been deleted.
+                    if (mNativeBookmarkBridge == 0) return;
+
+                    provider.getIterator(
+                            (iterator) -> {
+                                PartnerBookmarksShim.kickOffReading(
+                                        ContextUtils.getApplicationContext(), mProfile, iterator);
+                            });
+                });
     }
 
     /**
@@ -899,7 +920,8 @@ class BookmarkBridge {
     }
 
     @CalledByNative
-    private void bookmarkNodeMoved(
+    @VisibleForTesting
+    void bookmarkNodeMoved(
             BookmarkItem oldParent, int oldIndex, BookmarkItem newParent, int newIndex) {
         if (mIsDoingExtensiveChanges) return;
 
@@ -909,7 +931,8 @@ class BookmarkBridge {
     }
 
     @CalledByNative
-    private void bookmarkNodeAdded(BookmarkItem parent, int index) {
+    @VisibleForTesting
+    void bookmarkNodeAdded(BookmarkItem parent, int index) {
         if (mIsDoingExtensiveChanges) return;
 
         for (BookmarkModelObserver observer : mObservers) {
@@ -918,7 +941,8 @@ class BookmarkBridge {
     }
 
     @CalledByNative
-    private void bookmarkNodeRemoved(BookmarkItem parent, int oldIndex, BookmarkItem node) {
+    @VisibleForTesting
+    void bookmarkNodeRemoved(BookmarkItem parent, int oldIndex, BookmarkItem node) {
         for (BookmarkModelObserver observer : mObservers) {
             observer.bookmarkNodeRemoved(parent, oldIndex, node, mIsDoingExtensiveChanges);
         }
@@ -932,7 +956,8 @@ class BookmarkBridge {
     }
 
     @CalledByNative
-    private void bookmarkNodeChanged(BookmarkItem node) {
+    @VisibleForTesting
+    void bookmarkNodeChanged(BookmarkItem node) {
         if (mIsDoingExtensiveChanges) return;
 
         for (BookmarkModelObserver observer : mObservers) {
@@ -950,12 +975,14 @@ class BookmarkBridge {
     }
 
     @CalledByNative
-    private void extensiveBookmarkChangesBeginning() {
+    @VisibleForTesting
+    void extensiveBookmarkChangesBeginning() {
         mIsDoingExtensiveChanges = true;
     }
 
     @CalledByNative
-    private void extensiveBookmarkChangesEnded() {
+    @VisibleForTesting
+    void extensiveBookmarkChangesEnded() {
         mIsDoingExtensiveChanges = false;
         bookmarkModelChanged();
     }
@@ -1030,14 +1057,6 @@ class BookmarkBridge {
     @CalledByNative
     private static void clearLastUsedParent() {
         BookmarkUtils.clearLastUsedPrefs();
-    }
-
-    private static List<Pair<Integer, Integer>> createPairsList(int[] left, int[] right) {
-        List<Pair<Integer, Integer>> pairList = new ArrayList<>();
-        for (int i = 0; i < left.length; i++) {
-            pairList.add(new Pair<>(left[i], right[i]));
-        }
-        return pairList;
     }
 
     @VisibleForTesting(otherwise = VisibleForTesting.PACKAGE_PRIVATE)

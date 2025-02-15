@@ -6,6 +6,7 @@
 
 #include <climits>
 #include <memory>
+#include <string_view>
 
 #include "ash/calendar/calendar_client.h"
 #include "ash/calendar/calendar_controller.h"
@@ -98,7 +99,9 @@ class CalendarViewTest : public AshTestBase {
   CalendarViewTest() {
     features_.InitWithFeatures(
         /*enabled_features=*/{},
-        /*disabled_features=*/{features::kGlanceablesTimeManagementTasksView});
+        /*disabled_features=*/{
+            features::kGlanceablesTimeManagementClassroomStudentView,
+            features::kGlanceablesTimeManagementTasksView});
   }
   CalendarViewTest(const CalendarViewTest&) = delete;
   CalendarViewTest& operator=(const CalendarViewTest&) = delete;
@@ -213,18 +216,18 @@ class CalendarViewTest : public AshTestBase {
            next_label()->GetPreferredSize().height();
   }
 
-  std::u16string GetPreviousLabelText() {
+  std::u16string_view GetPreviousLabelText() {
     return static_cast<views::Label*>(previous_label()->children()[0])
         ->GetText();
   }
-  std::u16string GetCurrentLabelText() {
+  std::u16string_view GetCurrentLabelText() {
     return static_cast<views::Label*>(current_label()->children()[0])
         ->GetText();
   }
-  std::u16string GetNextLabelText() {
+  std::u16string_view GetNextLabelText() {
     return static_cast<views::Label*>(next_label()->children()[0])->GetText();
   }
-  std::u16string GetNextNextLabelText() {
+  std::u16string_view GetNextNextLabelText() {
     return static_cast<views::Label*>(next_next_label()->children()[0])
         ->GetText();
   }
@@ -601,8 +604,8 @@ TEST_F(CalendarViewTest, HeaderFocusing) {
 
   auto* focus_manager = calendar_view()->GetFocusManager();
   // Todays DateCellView should be focused on open.
-  EXPECT_STREQ(focus_manager->GetFocusedView()->GetClassName(),
-               "CalendarDateCellView");
+  EXPECT_EQ(focus_manager->GetFocusedView()->GetClassName(),
+            "CalendarDateCellView");
   EXPECT_EQ(
       static_cast<const views::LabelButton*>(focus_manager->GetFocusedView())
           ->GetText(),
@@ -882,7 +885,7 @@ TEST_F(CalendarViewTest, FocusAfterClosingEventListView) {
             close_button());
 
   PressEnter();
-  EXPECT_STREQ(
+  EXPECT_EQ(
       calendar_view()->GetFocusManager()->GetFocusedView()->GetClassName(),
       "CalendarDateCellView");
 }
@@ -1376,7 +1379,6 @@ TEST_F(CalendarViewTest, AdminDisabledTest) {
 
   auto* focus_manager = calendar_view()->GetFocusManager();
   // Todays `DateCellView` should be focused on open.
-  ASSERT_TRUE(focus_manager->GetFocusedView()->GetClassName());
   ASSERT_TRUE(focus_manager->GetFocusedView());
 
   // Moves to the next focusable view - managed icon button.
@@ -1426,6 +1428,7 @@ class CalendarViewAnimationTest
       : AshTestBase(base::test::TaskEnvironment::TimeSource::MOCK_TIME) {
     scoped_feature_list_.InitWithFeatureStates(
         {{features::kMultiCalendarSupport, IsMultiCalendarEnabled()},
+         {features::kGlanceablesTimeManagementClassroomStudentView, false},
          {features::kGlanceablesTimeManagementTasksView, false}});
   }
   CalendarViewAnimationTest(const CalendarViewAnimationTest&) = delete;

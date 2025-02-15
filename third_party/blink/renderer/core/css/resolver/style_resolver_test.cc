@@ -17,6 +17,7 @@
 #include "third_party/blink/renderer/core/css/css_image_value.h"
 #include "third_party/blink/renderer/core/css/css_test_helpers.h"
 #include "third_party/blink/renderer/core/css/css_value_list.h"
+#include "third_party/blink/renderer/core/css/media_feature_names.h"
 #include "third_party/blink/renderer/core/css/out_of_flow_data.h"
 #include "third_party/blink/renderer/core/css/parser/css_parser_local_context.h"
 #include "third_party/blink/renderer/core/css/post_style_update_scope.h"
@@ -29,7 +30,6 @@
 #include "third_party/blink/renderer/core/css/style_engine.h"
 #include "third_party/blink/renderer/core/css/style_sheet_contents.h"
 #include "third_party/blink/renderer/core/dom/document.h"
-#include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/dom/pseudo_element.h"
 #include "third_party/blink/renderer/core/dom/shadow_root.h"
 #include "third_party/blink/renderer/core/dom/text.h"
@@ -76,6 +76,25 @@ class StyleResolverTest : public PageTestBase {
                      ElementRuleCollector& collector) {
     GetDocument().GetStyleEngine().GetStyleResolver().MatchAllRules(
         state, collector, false /* include_smil_properties */);
+  }
+
+  MatchedPropertiesVector MatchedAuthorProperties(Document& document,
+                                                  Element& element) {
+    StyleResolverState state(GetDocument(), element);
+    SelectorFilter filter;
+    MatchResult match_result;
+    ElementRuleCollector collector(state.ElementContext(), StyleRecalcContext(),
+                                   filter, match_result,
+                                   EInsideLink::kNotInsideLink);
+    MatchAllRules(state, collector);
+
+    MatchedPropertiesVector matched_properties =
+        match_result.GetMatchedProperties();
+    EraseIf(matched_properties,
+            [](const MatchedProperties& matched_properties) {
+              return matched_properties.data_.origin != CascadeOrigin::kAuthor;
+            });
+    return matched_properties;
   }
 
   bool IsUseCounted(mojom::WebFeature feature) {
@@ -857,6 +876,9 @@ TEST_F(StyleResolverTest, CSSMarkerPseudoElement) {
       #marker ::marker {
         color: blue;
       }
+      #before-marker ::before::marker {
+        color: blue;
+      }
     </style>
     <ul>
       <li style="list-style: decimal outside"><b></b></li>
@@ -886,6 +908,9 @@ TEST_F(StyleResolverTest, CSSMarkerPseudoElement) {
     const ComputedStyle* li_style = li->GetComputedStyle();
     EXPECT_FALSE(li_style->HasPseudoElementStyle(kPseudoIdMarker));
     EXPECT_FALSE(li_style->HasAnyPseudoElementStyles());
+    // Check that UA's ::before::marker rule doesn't set HasPseudoElementStyle.
+    // For performance reason we do not SetHasPseudoElementStyle() for ::marker
+    // pseudo element selectors from UA stylesheets for now.
     const ComputedStyle* before_style = before->GetComputedStyle();
     EXPECT_FALSE(before_style->HasPseudoElementStyle(kPseudoIdMarker));
     EXPECT_FALSE(before_style->HasAnyPseudoElementStyles());
@@ -917,11 +942,21 @@ TEST_F(StyleResolverTest, CSSMarkerPseudoElement) {
     EXPECT_TRUE(li_style->HasPseudoElementStyle(kPseudoIdMarker));
     EXPECT_TRUE(li_style->HasAnyPseudoElementStyles());
 
-    // But ::marker styles don't match a ::before::marker
+    // But #marker ::marker styles don't match a ::before::marker
     const ComputedStyle* before_style = before->GetComputedStyle();
     EXPECT_FALSE(before_style->HasPseudoElementStyle(kPseudoIdMarker));
     EXPECT_FALSE(before_style->HasAnyPseudoElementStyles());
   }
+
+  GetDocument().body()->SetIdAttribute(AtomicString("before-marker"));
+  UpdateAllLifecyclePhasesForTest();
+  Element* li = lis->item(0);
+  PseudoElement* before =
+      li->QuerySelector(AtomicString("b"))->GetPseudoElement(kPseudoIdBefore);
+  // And #before-marker ::before::marker styles match a ::before::marker
+  const ComputedStyle* before_style = before->GetComputedStyle();
+  EXPECT_TRUE(before_style->HasPseudoElementStyle(kPseudoIdMarker));
+  EXPECT_TRUE(before_style->HasAnyPseudoElementStyles());
 }
 
 TEST_F(StyleResolverTest, ApplyInheritedOnlyCustomPropertyChange) {
@@ -1246,11 +1281,8 @@ const CSSValue* ParseCustomProperty(Document& document,
                                     const String& value) {
   const auto* context = MakeGarbageCollected<CSSParserContext>(document);
   CSSParserLocalContext local_context;
-  auto tokens = CSSTokenizer(value).TokenizeToEOF();
-  CSSParserTokenRange range(tokens);
 
-  return property.Parse(CSSTokenizedValue{range, value}, *context,
-                        local_context);
+  return property.Parse(value, *context, local_context);
 }
 
 }  // namespace
@@ -1327,19 +1359,19 @@ TEST_F(StyleResolverTest, TreeScopedReferences) {
     ASSERT_EQ(properties.size(), 4u);
 
     // div { display: block }
-    EXPECT_EQ(properties[0].types_.origin, CascadeOrigin::kUserAgent);
+    EXPECT_EQ(properties[0].data_.origin, CascadeOrigin::kUserAgent);
 
     // div { unicode-bidi: isolate; }
-    EXPECT_EQ(properties[1].types_.origin, CascadeOrigin::kUserAgent);
+    EXPECT_EQ(properties[1].data_.origin, CascadeOrigin::kUserAgent);
 
     // :host { font-family: myfont }
-    EXPECT_EQ(match_result.ScopeFromTreeOrder(properties[2].types_.tree_order),
+    EXPECT_EQ(match_result.ScopeFromTreeOrder(properties[2].data_.tree_order),
               root.GetTreeScope());
-    EXPECT_EQ(properties[2].types_.origin, CascadeOrigin::kAuthor);
+    EXPECT_EQ(properties[2].data_.origin, CascadeOrigin::kAuthor);
 
     // #host { animation-name: anim }
-    EXPECT_EQ(properties[3].types_.origin, CascadeOrigin::kAuthor);
-    EXPECT_EQ(match_result.ScopeFromTreeOrder(properties[3].types_.tree_order),
+    EXPECT_EQ(properties[3].data_.origin, CascadeOrigin::kAuthor);
+    EXPECT_EQ(match_result.ScopeFromTreeOrder(properties[3].data_.tree_order),
               host->GetTreeScope());
   }
 
@@ -1357,14 +1389,79 @@ TEST_F(StyleResolverTest, TreeScopedReferences) {
     ASSERT_EQ(properties.size(), 2u);
 
     // ::slotted(span) { animation-name: anim-inner-slotted }
-    EXPECT_EQ(properties[0].types_.origin, CascadeOrigin::kAuthor);
-    EXPECT_EQ(match_result.ScopeFromTreeOrder(properties[0].types_.tree_order),
+    EXPECT_EQ(properties[0].data_.origin, CascadeOrigin::kAuthor);
+    EXPECT_EQ(match_result.ScopeFromTreeOrder(properties[0].data_.tree_order),
               inner_root.GetTreeScope());
 
     // ::slotted(span) { animation-name: anim-slotted }
-    EXPECT_EQ(properties[1].types_.origin, CascadeOrigin::kAuthor);
-    EXPECT_EQ(match_result.ScopeFromTreeOrder(properties[1].types_.tree_order),
+    EXPECT_EQ(properties[1].data_.origin, CascadeOrigin::kAuthor);
+    EXPECT_EQ(match_result.ScopeFromTreeOrder(properties[1].data_.tree_order),
               root.GetTreeScope());
+  }
+}
+
+TEST_F(StyleResolverTest, QuietlySwapActiveStyleSheets) {
+  GetDocument().body()->setInnerHTML(R"HTML(
+    <style>
+      div { z-index: 1; }
+    </style>
+    <div id=div>Test</div>
+  )HTML");
+  UpdateAllLifecyclePhasesForTest();
+
+  Element* div = GetDocument().getElementById(AtomicString("div"));
+  ASSERT_TRUE(div);
+
+  // Before swap:
+  {
+    MatchedPropertiesVector matched_properties =
+        MatchedAuthorProperties(GetDocument(), *div);
+    ASSERT_EQ(1u, matched_properties.size());
+    EXPECT_EQ("1", matched_properties.back().properties->GetPropertyValue(
+                       CSSPropertyID::kZIndex));
+  }
+
+  ScopedStyleResolver* scoped_resolver = GetDocument().GetScopedStyleResolver();
+  ASSERT_TRUE(scoped_resolver);
+
+  RuleSet* alt_rule_set = css_test_helpers::CreateRuleSet(GetDocument(), R"CSS(
+    div { z-index: 2; }
+    div:is(div) { z-index: 3; }
+  )CSS");
+
+  ActiveStyleSheetVector active_stylesheets =
+      scoped_resolver->GetActiveStyleSheets();
+  ASSERT_EQ(1u, active_stylesheets.size());
+  active_stylesheets.front().second = alt_rule_set;
+
+  // Quietly swapping out the active stylesheets should not make anything dirty.
+  EXPECT_FALSE(GetDocument().NeedsLayoutTreeUpdate());
+  scoped_resolver->QuietlySwapActiveStyleSheets(active_stylesheets);
+  EXPECT_FALSE(GetDocument().NeedsLayoutTreeUpdate());
+
+  // After the swap, we should be able to match rules against the swapped
+  // stylesheet vector.
+  {
+    MatchedPropertiesVector matched_properties =
+        MatchedAuthorProperties(GetDocument(), *div);
+    ASSERT_EQ(2u, matched_properties.size());
+    EXPECT_EQ("2", matched_properties[0].properties->GetPropertyValue(
+                       CSSPropertyID::kZIndex));
+    EXPECT_EQ("3", matched_properties[1].properties->GetPropertyValue(
+                       CSSPropertyID::kZIndex));
+  }
+
+  // Restore the original active stylesheets:
+  EXPECT_FALSE(GetDocument().NeedsLayoutTreeUpdate());
+  scoped_resolver->QuietlySwapActiveStyleSheets(active_stylesheets);
+  EXPECT_FALSE(GetDocument().NeedsLayoutTreeUpdate());
+
+  {
+    MatchedPropertiesVector matched_properties =
+        MatchedAuthorProperties(GetDocument(), *div);
+    ASSERT_EQ(1u, matched_properties.size());
+    EXPECT_EQ("1", matched_properties.back().properties->GetPropertyValue(
+                       CSSPropertyID::kZIndex));
   }
 }
 
@@ -1789,6 +1886,37 @@ TEST_F(StyleResolverTestCQ, DependsOnStyleContainerQueries) {
   EXPECT_FALSE(e->ComputedStyleRef().DependsOnSizeContainerQueries());
 }
 
+TEST_F(StyleResolverTest, AffectedByFunctionalMedia) {
+  GetDocument().documentElement()->setInnerHTML(R"HTML(
+    <style>
+      @function --a() {
+        result: 10px;
+      }
+      @function --b() {
+        result: 10px;
+        @media (width) {
+          result: 20px;
+        }
+      }
+      #a { width: --a(); }
+      #b { width: --b(); }
+    </style>
+    <div id=a></div>
+    <div id=b></div>
+  )HTML");
+
+  UpdateAllLifecyclePhasesForTest();
+
+  Element* a = GetDocument().getElementById(AtomicString("a"));
+  Element* b = GetDocument().getElementById(AtomicString("b"));
+
+  ASSERT_TRUE(a);
+  ASSERT_TRUE(b);
+
+  EXPECT_FALSE(a->ComputedStyleRef().AffectedByFunctionalMedia());
+  EXPECT_TRUE(b->ComputedStyleRef().AffectedByFunctionalMedia());
+}
+
 TEST_F(StyleResolverTest, AnchorQueriesMPC) {
   GetDocument().documentElement()->setInnerHTML(R"HTML(
     <style>
@@ -1919,24 +2047,24 @@ TEST_F(StyleResolverTest, NoCascadeLayers) {
 
   // div { display: block; }
   EXPECT_TRUE(properties[0].properties->HasProperty(CSSPropertyID::kDisplay));
-  EXPECT_EQ(kImplicitOuterLayerOrder, properties[0].types_.layer_order);
-  EXPECT_EQ(properties[0].types_.origin, CascadeOrigin::kUserAgent);
+  EXPECT_EQ(kImplicitOuterLayerOrder, properties[0].data_.layer_order);
+  EXPECT_EQ(properties[0].data_.origin, CascadeOrigin::kUserAgent);
 
   // div { unicode-bidi: isolate; }
   EXPECT_TRUE(
       properties[1].properties->HasProperty(CSSPropertyID::kUnicodeBidi));
-  EXPECT_EQ(kImplicitOuterLayerOrder, properties[1].types_.layer_order);
-  EXPECT_EQ(properties[1].types_.origin, CascadeOrigin::kUserAgent);
+  EXPECT_EQ(kImplicitOuterLayerOrder, properties[1].data_.layer_order);
+  EXPECT_EQ(properties[1].data_.origin, CascadeOrigin::kUserAgent);
 
   // .b { font-size: 16px; }
   EXPECT_TRUE(properties[2].properties->HasProperty(CSSPropertyID::kFontSize));
-  EXPECT_EQ(kImplicitOuterLayerOrder, properties[2].types_.layer_order);
-  EXPECT_EQ(properties[2].types_.origin, CascadeOrigin::kAuthor);
+  EXPECT_EQ(kImplicitOuterLayerOrder, properties[2].data_.layer_order);
+  EXPECT_EQ(properties[2].data_.origin, CascadeOrigin::kAuthor);
 
   // #a { color: green; }
   EXPECT_TRUE(properties[3].properties->HasProperty(CSSPropertyID::kColor));
-  EXPECT_EQ(kImplicitOuterLayerOrder, properties[3].types_.layer_order);
-  EXPECT_EQ(properties[3].types_.origin, CascadeOrigin::kAuthor);
+  EXPECT_EQ(kImplicitOuterLayerOrder, properties[3].data_.layer_order);
+  EXPECT_EQ(properties[3].data_.origin, CascadeOrigin::kAuthor);
 }
 
 TEST_F(StyleResolverTest, CascadeLayersInDifferentSheets) {
@@ -1973,30 +2101,30 @@ TEST_F(StyleResolverTest, CascadeLayersInDifferentSheets) {
 
   // div { display: block; }
   EXPECT_TRUE(properties[0].properties->HasProperty(CSSPropertyID::kDisplay));
-  EXPECT_EQ(kImplicitOuterLayerOrder, properties[0].types_.layer_order);
-  EXPECT_EQ(properties[0].types_.origin, CascadeOrigin::kUserAgent);
+  EXPECT_EQ(kImplicitOuterLayerOrder, properties[0].data_.layer_order);
+  EXPECT_EQ(properties[0].data_.origin, CascadeOrigin::kUserAgent);
 
   // div { unicode-bidi: isolate; }
   EXPECT_TRUE(
       properties[1].properties->HasProperty(CSSPropertyID::kUnicodeBidi));
-  EXPECT_EQ(kImplicitOuterLayerOrder, properties[1].types_.layer_order);
-  EXPECT_EQ(properties[1].types_.origin, CascadeOrigin::kUserAgent);
+  EXPECT_EQ(kImplicitOuterLayerOrder, properties[1].data_.layer_order);
+  EXPECT_EQ(properties[1].data_.origin, CascadeOrigin::kUserAgent);
 
   // @layer foo { #a { font-size: 16px } }"
   EXPECT_TRUE(properties[2].properties->HasProperty(CSSPropertyID::kFontSize));
-  EXPECT_EQ(0u, properties[2].types_.layer_order);
-  EXPECT_EQ(properties[2].types_.origin, CascadeOrigin::kAuthor);
+  EXPECT_EQ(0u, properties[2].data_.layer_order);
+  EXPECT_EQ(properties[2].data_.origin, CascadeOrigin::kAuthor);
 
   // @layer bar { .b { color: green } }"
   EXPECT_TRUE(properties[3].properties->HasProperty(CSSPropertyID::kColor));
-  EXPECT_EQ(1u, properties[3].types_.layer_order);
-  EXPECT_EQ(properties[3].types_.origin, CascadeOrigin::kAuthor);
+  EXPECT_EQ(1u, properties[3].data_.layer_order);
+  EXPECT_EQ(properties[3].data_.origin, CascadeOrigin::kAuthor);
 
   // style="font-family: custom"
   EXPECT_TRUE(
       properties[4].properties->HasProperty(CSSPropertyID::kFontFamily));
-  EXPECT_TRUE(properties[4].types_.is_inline_style);
-  EXPECT_EQ(properties[4].types_.origin, CascadeOrigin::kAuthor);
+  EXPECT_TRUE(properties[4].data_.is_inline_style);
+  EXPECT_EQ(properties[4].data_.origin, CascadeOrigin::kAuthor);
   // There's no layer order for inline style; it's always above all layers.
 }
 
@@ -2036,27 +2164,27 @@ TEST_F(StyleResolverTest, CascadeLayersInDifferentTreeScopes) {
 
   // div { display: block }
   EXPECT_TRUE(properties[0].properties->HasProperty(CSSPropertyID::kDisplay));
-  EXPECT_EQ(kImplicitOuterLayerOrder, properties[0].types_.layer_order);
-  EXPECT_EQ(properties[0].types_.origin, CascadeOrigin::kUserAgent);
+  EXPECT_EQ(kImplicitOuterLayerOrder, properties[0].data_.layer_order);
+  EXPECT_EQ(properties[0].data_.origin, CascadeOrigin::kUserAgent);
 
   // div { unicode-bidi: isolate; }
   EXPECT_TRUE(
       properties[1].properties->HasProperty(CSSPropertyID::kUnicodeBidi));
-  EXPECT_EQ(kImplicitOuterLayerOrder, properties[1].types_.layer_order);
-  EXPECT_EQ(properties[1].types_.origin, CascadeOrigin::kUserAgent);
+  EXPECT_EQ(kImplicitOuterLayerOrder, properties[1].data_.layer_order);
+  EXPECT_EQ(properties[1].data_.origin, CascadeOrigin::kUserAgent);
 
   // @layer bar { :host { font-size: 16px } }
   EXPECT_TRUE(properties[2].properties->HasProperty(CSSPropertyID::kFontSize));
-  EXPECT_EQ(0u, properties[2].types_.layer_order);
-  EXPECT_EQ(properties[2].types_.origin, CascadeOrigin::kAuthor);
+  EXPECT_EQ(0u, properties[2].data_.layer_order);
+  EXPECT_EQ(properties[2].data_.origin, CascadeOrigin::kAuthor);
   EXPECT_EQ(
-      match_result.ScopeFromTreeOrder(properties[2].types_.tree_order),
+      match_result.ScopeFromTreeOrder(properties[2].data_.tree_order),
       GetDocument().getElementById(AtomicString("host"))->GetShadowRoot());
 
   // @layer foo { #host { color: green } }
   EXPECT_TRUE(properties[3].properties->HasProperty(CSSPropertyID::kColor));
-  EXPECT_EQ(0u, properties[3].types_.layer_order);
-  EXPECT_EQ(match_result.ScopeFromTreeOrder(properties[3].types_.tree_order),
+  EXPECT_EQ(0u, properties[3].data_.layer_order);
+  EXPECT_EQ(match_result.ScopeFromTreeOrder(properties[3].data_.tree_order),
             &GetDocument());
 }
 
@@ -2099,13 +2227,13 @@ TEST_F(StyleResolverTest, CascadeLayersAfterModifyingAnotherSheet) {
 
   // @layer { target { color: red } }"
   EXPECT_TRUE(properties[0].properties->HasProperty(CSSPropertyID::kColor));
-  EXPECT_EQ(0u, properties[0].types_.layer_order);
-  EXPECT_EQ(properties[0].types_.origin, CascadeOrigin::kAuthor);
+  EXPECT_EQ(0u, properties[0].data_.layer_order);
+  EXPECT_EQ(properties[0].data_.origin, CascadeOrigin::kAuthor);
 
   // target { font-size: 10px }
   EXPECT_TRUE(properties[1].properties->HasProperty(CSSPropertyID::kFontSize));
-  EXPECT_EQ(kImplicitOuterLayerOrder, properties[1].types_.layer_order);
-  EXPECT_EQ(properties[1].types_.origin, CascadeOrigin::kAuthor);
+  EXPECT_EQ(kImplicitOuterLayerOrder, properties[1].data_.layer_order);
+  EXPECT_EQ(properties[1].data_.origin, CascadeOrigin::kAuthor);
 }
 
 // https://crbug.com/1326791
@@ -2144,8 +2272,8 @@ TEST_F(StyleResolverTest, CascadeLayersAddLayersWithImportantDeclarations) {
       properties[0].properties->PropertyIsImportant(CSSPropertyID::kFontSize));
   EXPECT_EQ("20px", properties[0].properties->GetPropertyValue(
                         CSSPropertyID::kFontSize));
-  EXPECT_EQ(0u, properties[0].types_.layer_order);
-  EXPECT_EQ(properties[0].types_.origin, CascadeOrigin::kAuthor);
+  EXPECT_EQ(0u, properties[0].data_.layer_order);
+  EXPECT_EQ(properties[0].data_.origin, CascadeOrigin::kAuthor);
 
   // @layer { target { font-size: 10px !important } }
   EXPECT_TRUE(properties[1].properties->HasProperty(CSSPropertyID::kFontSize));
@@ -2153,8 +2281,8 @@ TEST_F(StyleResolverTest, CascadeLayersAddLayersWithImportantDeclarations) {
       properties[1].properties->PropertyIsImportant(CSSPropertyID::kFontSize));
   EXPECT_EQ("10px", properties[1].properties->GetPropertyValue(
                         CSSPropertyID::kFontSize));
-  EXPECT_EQ(1u, properties[1].types_.layer_order);
-  EXPECT_EQ(properties[1].types_.origin, CascadeOrigin::kAuthor);
+  EXPECT_EQ(1u, properties[1].data_.layer_order);
+  EXPECT_EQ(properties[1].data_.origin, CascadeOrigin::kAuthor);
 }
 
 TEST_F(StyleResolverTest, BodyPropagationLayoutImageContain) {
@@ -2472,8 +2600,6 @@ TEST_F(StyleResolverTest, IsInertWithFrameAndFullscreen) {
 }
 
 TEST_F(StyleResolverTest, IsInertWithBackdrop) {
-  ScopedBackdropInheritOriginatingForTest backdrop_inherit(true);
-
   Document& document = GetDocument();
   NonThrowableExceptionState exception_state;
 
@@ -2984,8 +3110,6 @@ TEST_F(StyleResolverTest, LegacyOverlapBorderImageWidth_Last_Style) {
 }
 
 TEST_F(StyleResolverTest, PositionTryStylesBasic_Cascade) {
-  ScopedCSSAnchorPositioningForTest enabled(true);
-
   SetBodyInnerHTML(R"HTML(
     <style>
       @position-try --f1 { left: 100px; }
@@ -2993,7 +3117,7 @@ TEST_F(StyleResolverTest, PositionTryStylesBasic_Cascade) {
       @position-try --f3 { inset: 50px; }
       #target {
         position: absolute;
-        position-try-options: --f1, --f2, --f3;
+        position-try-fallbacks: --f1, --f2, --f3;
       }
     </style>
     <div id="target"></div>
@@ -3030,8 +3154,6 @@ TEST_F(StyleResolverTest, PositionTryStylesBasic_Cascade) {
 }
 
 TEST_F(StyleResolverTest, PositionTryStylesResolveLogicalProperties_Cascade) {
-  ScopedCSSAnchorPositioningForTest enabled(true);
-
   SetBodyInnerHTML(R"HTML(
     <style>
       @position-try --f1 { inset-inline-start: 100px; }
@@ -3041,7 +3163,7 @@ TEST_F(StyleResolverTest, PositionTryStylesResolveLogicalProperties_Cascade) {
         writing-mode: vertical-rl;
         direction: rtl;
         inset: 50px;
-        position-try-options: --f1, --f2;
+        position-try-fallbacks: --f1, --f2;
       }
     </style>
     <div id="target"></div>
@@ -3077,15 +3199,13 @@ TEST_F(StyleResolverTest, PositionTryStylesResolveLogicalProperties_Cascade) {
 }
 
 TEST_F(StyleResolverTest, PositionTryStylesResolveRelativeLengthUnits_Cascade) {
-  ScopedCSSAnchorPositioningForTest enabled(true);
-
   SetBodyInnerHTML(R"HTML(
     <style>
       @position-try --f1 { top: 2em; }
       #target {
         position: absolute;
         font-size: 20px;
-        position-try-options: --f1;
+        position-try-fallbacks: --f1;
       }
     </style>
     <div id="target"></div>
@@ -3106,8 +3226,6 @@ TEST_F(StyleResolverTest, PositionTryStylesResolveRelativeLengthUnits_Cascade) {
 }
 
 TEST_F(StyleResolverTest, PositionTryStylesInBeforePseudoElement_Cascade) {
-  ScopedCSSAnchorPositioningForTest enabled(true);
-
   SetBodyInnerHTML(R"HTML(
     <style>
       @position-try --f1 { top: 50px; }
@@ -3115,7 +3233,7 @@ TEST_F(StyleResolverTest, PositionTryStylesInBeforePseudoElement_Cascade) {
         display: block;
         content: 'before';
         position: absolute;
-        position-try-options: --f1;
+        position-try-fallbacks: --f1;
       }
     </style>
     <div id="target"></div>
@@ -3131,7 +3249,7 @@ TEST_F(StyleResolverTest, PositionTryStylesInBeforePseudoElement_Cascade) {
   ASSERT_TRUE(base_style);
   EXPECT_EQ(Length::Auto(), GetTop(*base_style));
 
-  // 'position-try-options' applies to ::before pseudo-element.
+  // 'position-try-fallbacks' applies to ::before pseudo-element.
   UpdateStyleForOutOfFlow(*before, AtomicString("--f1"));
   const ComputedStyle* try1 = before->GetComputedStyle();
   ASSERT_TRUE(try1);
@@ -3139,8 +3257,6 @@ TEST_F(StyleResolverTest, PositionTryStylesInBeforePseudoElement_Cascade) {
 }
 
 TEST_F(StyleResolverTest, PositionTryStylesCSSWideKeywords_Cascade) {
-  ScopedCSSAnchorPositioningForTest enabled(true);
-
   SetBodyInnerHTML(R"HTML(
     <style>
       /* 'revert' and 'revert-layer' are already rejected by parser */
@@ -3150,7 +3266,7 @@ TEST_F(StyleResolverTest, PositionTryStylesCSSWideKeywords_Cascade) {
       #target {
         position: absolute;
         inset: 50px;
-        position-try-options: --f1, --f2, --f3;
+        position-try-fallbacks: --f1, --f2, --f3;
       }
       #container {
         position: absolute;
@@ -3198,15 +3314,13 @@ TEST_F(StyleResolverTest, PositionTryStylesCSSWideKeywords_Cascade) {
 }
 
 TEST_F(StyleResolverTest, PositionTryPropertyValueChange_Cascade) {
-  ScopedCSSAnchorPositioningForTest enabled(true);
-
   SetBodyInnerHTML(R"HTML(
     <style>
       @position-try --foo { top: 100px }
       @position-try --bar { left: 100px }
       #target {
         position: absolute;
-        position-try-options: --foo;
+        position-try-fallbacks: --foo;
       }
     </style>
     <div id="target"></div>
@@ -3229,7 +3343,7 @@ TEST_F(StyleResolverTest, PositionTryPropertyValueChange_Cascade) {
     EXPECT_EQ(Length::Auto(), GetLeft(*fallback));
   }
 
-  target->SetInlineStyleProperty(CSSPropertyID::kPositionTryOptions, "--bar");
+  target->SetInlineStyleProperty(CSSPropertyID::kPositionTryFallbacks, "--bar");
   UpdateAllLifecyclePhasesForTest();
 
   {
@@ -3248,8 +3362,6 @@ TEST_F(StyleResolverTest, PositionTryPropertyValueChange_Cascade) {
 }
 
 TEST_F(StyleResolverTest, PositionTry_PaintInvalidation) {
-  ScopedCSSAnchorPositioningForTest enabled(true);
-
   SetBodyInnerHTML(R"HTML(
     <style>
       @position-try --f1 { left: 2222222px; }
@@ -3258,7 +3370,7 @@ TEST_F(StyleResolverTest, PositionTry_PaintInvalidation) {
       #target {
         position: absolute;
         left: 1111111px;
-        position-try-options: --f1, --f2, --f3;
+        position-try-fallbacks: --f1, --f2, --f3;
       }
     </style>
     <div id="target"></div>

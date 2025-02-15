@@ -12,12 +12,24 @@ dictionary IdentityProviderConfig {
   // Not marked as required to allow implementation of digital credentials.
   // See crbug.com/1416939.
   USVString clientId;
+  // The type of Identity Provider that is compatible with the RP.
+  // Used to only use compatible providers.
+  [RuntimeEnabled=FedCmIdPRegistration] DOMString type;
+};
+
+enum IdentityProviderRequestOptionsFormat {
+  "vc+sd-jwt",
+};
+
+dictionary IdentityProviderField {
+  required USVString name;
 };
 
 dictionary IdentityProviderRequestOptions : IdentityProviderConfig {
   USVString nonce;
   DOMString loginHint;
   [RuntimeEnabled=FedCmDomainHint] DOMString domainHint;
-  [RuntimeEnabled=FedCmAuthz] sequence<USVString> fields;
-  [RuntimeEnabled=FedCmAuthz] record<USVString, USVString> params;
+  [RuntimeEnabled=FedCmAuthz] sequence<(USVString or IdentityProviderField)> fields;
+  [RuntimeEnabled=FedCmAuthz] any params;
+  [RuntimeEnabled=FedCmDelegation] IdentityProviderRequestOptionsFormat format;
 };

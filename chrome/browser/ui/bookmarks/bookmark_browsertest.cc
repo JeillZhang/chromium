@@ -12,10 +12,10 @@
 #include "base/test/scoped_feature_list.h"
 #include "base/timer/timer.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/interstitials/security_interstitial_page_test_utils.h"
 #include "chrome/browser/platform_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
@@ -58,14 +58,6 @@ const char16_t kPersistBookmarkTitle[] = u"CNN";
 const base::Time kPersistLastUsedTime =
     base::Time() + base::Days(7) + base::Hours(2) + base::Minutes(55) +
     base::Seconds(24) + base::Milliseconds(133);
-
-bool IsShowingInterstitial(content::WebContents* tab) {
-  security_interstitials::SecurityInterstitialTabHelper* helper =
-      security_interstitials::SecurityInterstitialTabHelper::FromWebContents(
-          tab);
-  return helper &&
-         helper->GetBlockingPageForCurrentlyCommittedNavigationForTesting();
-}
 
 }  // namespace
 
@@ -111,8 +103,9 @@ class BookmarkBrowsertest : public InProcessBrowserTest {
   }
 
   static void CheckAnimation(Browser* browser, base::RunLoop* loop) {
-    if (!browser->window()->IsBookmarkBarAnimating())
+    if (!browser->window()->IsBookmarkBarAnimating()) {
       loop->Quit();
+    }
   }
 
   base::TimeDelta WaitForBookmarkBarAnimationToFinish() {
@@ -189,7 +182,7 @@ IN_PROC_BROWSER_TEST_F(BookmarkBrowsertest, MAYBE_Persist) {
   EXPECT_EQ(kPersistLastUsedTime, nodes[0]->date_last_used());
 }
 
-#if !BUILDFLAG(IS_CHROMEOS_ASH)  // No multi-profile on ChromeOS.
+#if !BUILDFLAG(IS_CHROMEOS)  // No multi-profile on ChromeOS.
 
 // Sanity check that bookmarks from different profiles are separate.
 IN_PROC_BROWSER_TEST_F(BookmarkBrowsertest, MultiProfile) {
@@ -324,8 +317,9 @@ IN_PROC_BROWSER_TEST_F(BookmarkBrowsertest, OpenAllBookmarks) {
       Browser* regular_browser2 = nullptr;
       for (Browser* browser_instance : *BrowserList::GetInstance()) {
         if (browser_instance != incognito_browser &&
-            browser_instance != regular_browser)
+            browser_instance != regular_browser) {
           regular_browser2 = browser_instance;
+        }
       }
       // new browser needs to be opened
       EXPECT_NE(regular_browser2, nullptr);
@@ -376,8 +370,9 @@ IN_PROC_BROWSER_TEST_F(BookmarkBrowsertest, OpenAllBookmarks) {
       Browser* incognito_browser2 = nullptr;
       for (Browser* browser_instance : *BrowserList::GetInstance()) {
         if (browser_instance != incognito_browser &&
-            browser_instance != regular_browser)
+            browser_instance != regular_browser) {
           incognito_browser2 = browser_instance;
+        }
       }
       // new browser needs to be opened
       EXPECT_NE(incognito_browser2, nullptr);
@@ -442,14 +437,16 @@ IN_PROC_BROWSER_TEST_F(BookmarkBrowsertest,
 
   // Go to a bookmarked url. Bookmark star should show.
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), bookmark_url));
-  EXPECT_FALSE(IsShowingInterstitial(web_contents));
+  EXPECT_FALSE(
+      chrome_browser_interstitials::IsShowingInterstitial(web_contents));
   EXPECT_TRUE(bookmark_observer.is_starred());
   // Now go to a non-bookmarked url which triggers an SSL warning. Bookmark
   // star should disappear.
   GURL error_url = https_server.GetURL("/");
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), error_url));
   web_contents = browser()->tab_strip_model()->GetActiveWebContents();
-  EXPECT_TRUE(IsShowingInterstitial(web_contents));
+  EXPECT_TRUE(
+      chrome_browser_interstitials::IsShowingInterstitial(web_contents));
   EXPECT_FALSE(bookmark_observer.is_starred());
 }
 
@@ -838,7 +835,8 @@ IN_PROC_BROWSER_TEST_F(BookmarkPrerenderBrowsertest,
 
   // Load a prerender page and prerendering should not notify to
   // URLStarredChanged listener.
-  const int host_id = prerender_test_helper().AddPrerender(bookmark_url);
+  const content::FrameTreeNodeId host_id =
+      prerender_test_helper().AddPrerender(bookmark_url);
   content::test::PrerenderHostObserver host_observer(*GetWebContents(),
                                                      host_id);
   EXPECT_FALSE(host_observer.was_activated());

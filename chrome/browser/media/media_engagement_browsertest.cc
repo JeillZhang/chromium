@@ -57,10 +57,10 @@
 #include "third_party/blink/public/mojom/autoplay/autoplay.mojom-test-utils.h"
 #include "third_party/blink/public/mojom/autoplay/autoplay.mojom.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #include "chrome/browser/sessions/session_service_factory.h"
 #include "chrome/browser/sessions/session_service_test_helper.h"
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 namespace {
 
@@ -355,7 +355,7 @@ IN_PROC_BROWSER_TEST_F(MediaEngagementBrowserTest, RecordEngagement) {
 }
 
 // Flaky tests on CrOS: http://crbug.com/1020131.
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #define MAYBE_RecordEngagement_AudioOnly DISABLED_RecordEngagement_AudioOnly
 #else
 #define MAYBE_RecordEngagement_AudioOnly RecordEngagement_AudioOnly
@@ -377,7 +377,7 @@ IN_PROC_BROWSER_TEST_F(MediaEngagementBrowserTest,
 }
 
 // Flaky tests on CrOS: http://crbug.com/1019671.
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #define MAYBE_DoNotRecordEngagement_NotTime_AudioOnly \
   DISABLED_DoNotRecordEngagement_NotTime_AudioOnly
 #else
@@ -401,7 +401,7 @@ IN_PROC_BROWSER_TEST_F(MediaEngagementBrowserTest,
 }
 
 // Flaky tests on CrOS: http://crbug.com/1019671.
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #define MAYBE_DoNotRecordEngagement_TabMuted_AudioOnly \
   DISABLED_DoNotRecordEngagement_TabMuted_AudioOnly
 #else
@@ -446,7 +446,7 @@ IN_PROC_BROWSER_TEST_F(MediaEngagementBrowserTest,
 }
 
 // Flaky tests on CrOS: http://crbug.com/1019671.
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #define MAYBE_DoNotRecordEngagement_PlaybackStopped_AudioOnly \
   DISABLED_DoNotRecordEngagement_PlaybackStopped_AudioOnly
 #else
@@ -473,7 +473,7 @@ IN_PROC_BROWSER_TEST_F(MediaEngagementBrowserTest,
 }
 
 // Flaky tests on CrOS: http://crbug.com/1019671.
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #define MAYBE_RecordEngagement_NotVisible_AudioOnly \
   DISABLED_RecordEngagement_NotVisible_AudioOnly
 #else
@@ -565,7 +565,7 @@ IN_PROC_BROWSER_TEST_F(MediaEngagementBrowserTest,
 }
 
 // Flaky tests on CrOS: http://crbug.com/1019671.
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #define MAYBE_DoNotRecordEngagement_SilentAudioTrack_AudioOnly \
   DISABLED_DoNotRecordEngagement_SilentAudioTrack_AudioOnly
 #else
@@ -620,7 +620,7 @@ IN_PROC_BROWSER_TEST_F(MediaEngagementBrowserTest,
 }
 
 // Flaky tests on CrOS: http://crbug.com/1019671.
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #define MAYBE_MultipleElements DISABLED_MultipleElements
 #else
 #define MAYBE_MultipleElements MultipleElements
@@ -847,10 +847,10 @@ class MediaEngagementSessionRestoreBrowserTest
 
     SessionStartupPref::SetStartupPref(
         profile, SessionStartupPref(SessionStartupPref::LAST));
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
     SessionServiceTestHelper helper(profile);
     helper.SetForceBrowserNotAliveWithNoWindows(true);
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
     std::unique_ptr<ScopedKeepAlive> keep_alive(new ScopedKeepAlive(
         KeepAliveOrigin::SESSION_RESTORE, KeepAliveRestartOption::DISABLED));
@@ -1042,7 +1042,8 @@ IN_PROC_BROWSER_TEST_F(
 
   // Loads a page in a prerendered page.
   GURL prerender_url = embedded_test_server()->GetURL("/title1.html");
-  const int host_id = prerender_helper().AddPrerender(prerender_url);
+  const content::FrameTreeNodeId host_id =
+      prerender_helper().AddPrerender(prerender_url);
   content::RenderFrameHost* prerender_rfh =
       prerender_helper().GetPrerenderedMainFrameHost(host_id);
   MockAutoplayConfigurationClient prerendered_client;
@@ -1091,8 +1092,16 @@ class MediaEngagementContentsObserverFencedFrameBrowserTest
   std::unique_ptr<content::test::FencedFrameTestHelper> fenced_frame_helper_;
 };
 
+// TODO(crbug.com/349253812): Flaky on Linux.
+#if BUILDFLAG(IS_LINUX)
+#define MAYBE_SendEngagementLevelToRenderFrameOnFencedFrame \
+  DISABLED_SendEngagementLevelToRenderFrameOnFencedFrame
+#else
+#define MAYBE_SendEngagementLevelToRenderFrameOnFencedFrame \
+  SendEngagementLevelToRenderFrameOnFencedFrame
+#endif
 IN_PROC_BROWSER_TEST_F(MediaEngagementContentsObserverFencedFrameBrowserTest,
-                       SendEngagementLevelToRenderFrameOnFencedFrame) {
+                       MAYBE_SendEngagementLevelToRenderFrameOnFencedFrame) {
   ASSERT_TRUE(embedded_test_server()->Start());
 
   const GURL& initial_url =

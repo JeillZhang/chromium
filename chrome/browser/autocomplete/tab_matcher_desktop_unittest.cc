@@ -4,6 +4,7 @@
 
 #include "chrome/browser/autocomplete/tab_matcher_desktop.h"
 
+#include "chrome/browser/search_engines/template_url_service_test_util.h"
 #include "chrome/test/base/browser_with_test_window_test.h"
 #include "chrome/test/base/testing_profile_manager.h"
 #include "components/search_engines/template_url_service.h"
@@ -17,8 +18,10 @@ const TemplateURLService::Initializer kServiceInitializers[] = {
 };
 
 TEST_F(TabMatcherDesktopTest, IsTabOpenWithURLNeverReturnsActiveTab) {
-  TemplateURLService service(kServiceInitializers, 2);
-  TabMatcherDesktop matcher(&service, profile());
+  std::unique_ptr<TemplateURLService> service =
+      TemplateURLServiceTestUtil::CreateTemplateURLServiceForTesting(
+          profile(), kServiceInitializers);
+  TabMatcherDesktop matcher(service.get(), profile());
 
   GURL foo("http://foo.chromium.org");
   GURL bar("http://bar.chromium.org");
@@ -48,33 +51,38 @@ TEST_F(TabMatcherDesktopTest, GetOpenTabsOnlyWithinProfile) {
   AddTab(browser(), GURL("http://active.chromium.org"));
   AddTab(other_browser.get(), GURL("http://baz.chromium.org"));
 
-  TemplateURLService service(kServiceInitializers, 2);
-  TabMatcherDesktop matcher(&service, profile());
+  std::unique_ptr<TemplateURLService> service =
+      TemplateURLServiceTestUtil::CreateTemplateURLServiceForTesting(
+          profile(), kServiceInitializers);
+  TabMatcherDesktop matcher(service.get(), profile());
 
-  const auto tabs = matcher.GetOpenTabs();
+  AutocompleteInput input;
+  const auto tabs = matcher.GetOpenTabs(&input);
   ASSERT_EQ(tabs.size(), 2U);
-  EXPECT_EQ(tabs[0]->GetURL(), GURL("http://bar.chromium.org"));
-  EXPECT_EQ(tabs[1]->GetURL(), GURL("http://foo.chromium.org"));
+  EXPECT_EQ(tabs[0].url, GURL("http://bar.chromium.org"));
+  EXPECT_EQ(tabs[1].url, GURL("http://foo.chromium.org"));
 
   other_browser->tab_strip_model()->CloseAllTabs();
 }
 
 TEST_F(TabMatcherDesktopTest, IsTabOpenUsesCanonicalSearchURL) {
-  TemplateURLService turl_service(kServiceInitializers, 2);
-  TabMatcherDesktop matcher(&turl_service, profile());
+  std::unique_ptr<TemplateURLService> turl_service =
+      TemplateURLServiceTestUtil::CreateTemplateURLServiceForTesting(
+          profile(), kServiceInitializers);
+  TabMatcherDesktop matcher(turl_service.get(), profile());
 
   TemplateURLData data;
   data.SetURL("http://example.com/search?q={searchTerms}");
   data.search_intent_params = {"intent"};
   TemplateURL turl(data);
-  auto* default_turl = turl_service.Add(std::make_unique<TemplateURL>(data));
-  turl_service.SetUserSelectedDefaultSearchProvider(default_turl);
+  auto* default_turl = turl_service->Add(std::make_unique<TemplateURL>(data));
+  turl_service->SetUserSelectedDefaultSearchProvider(default_turl);
 
   {
     TemplateURLRef::SearchTermsArgs search_terms_args(u"foo");
     search_terms_args.additional_query_params = "wiz=baz";
     std::string foo_url = default_turl->url_ref().ReplaceSearchTerms(
-        search_terms_args, turl_service.search_terms_data());
+        search_terms_args, turl_service->search_terms_data());
     EXPECT_EQ("http://example.com/search?wiz=baz&q=foo", foo_url);
     AddTab(browser(), GURL(foo_url));
     // The last tab is active. IsTabOpenWithURL() does not match the active tab.
@@ -92,7 +100,7 @@ TEST_F(TabMatcherDesktopTest, IsTabOpenUsesCanonicalSearchURL) {
     TemplateURLRef::SearchTermsArgs search_terms_args(u"bar");
     search_terms_args.additional_query_params = "intent=INTENT";
     std::string bar_url = default_turl->url_ref().ReplaceSearchTerms(
-        search_terms_args, turl_service.search_terms_data());
+        search_terms_args, turl_service->search_terms_data());
     EXPECT_EQ("http://example.com/search?intent=INTENT&q=bar", bar_url);
     AddTab(browser(), GURL(bar_url));
     // The last tab is active. IsTabOpenWithURL() does not match the active tab.

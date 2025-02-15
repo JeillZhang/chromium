@@ -5,9 +5,12 @@
 #include "chrome/browser/ash/policy/skyvault/policy_utils.h"
 
 #include "ash/constants/ash_pref_names.h"
+#include "base/check_is_test.h"
 #include "base/feature_list.h"
+#include "base/files/file_path.h"
 #include "chrome/browser/ash/policy/skyvault/file_location_utils.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/download/download_dir_util.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/pref_names.h"
@@ -48,8 +51,31 @@ bool LocalUserFilesAllowed() {
   if (!base::FeatureList::IsEnabled(features::kSkyVault)) {
     return true;
   }
+  // In tests, `g_browser_process` is null.
+  if (!g_browser_process || !g_browser_process->local_state()) {
+    CHECK_IS_TEST();
+    return true;
+  }
   return g_browser_process->local_state()->GetBoolean(
       prefs::kLocalUserFilesAllowed);
+}
+
+CloudProvider GetMigrationDestination() {
+  if (!base::FeatureList::IsEnabled(features::kSkyVault) ||
+      !base::FeatureList::IsEnabled(features::kSkyVaultV2)) {
+    return CloudProvider::kNotSpecified;
+  }
+
+  const std::string destination = g_browser_process->local_state()->GetString(
+      prefs::kLocalUserFilesMigrationDestination);
+
+  if (destination == download_dir_util::kLocationGoogleDrive) {
+    return CloudProvider::kGoogleDrive;
+  }
+  if (destination == download_dir_util::kLocationOneDrive) {
+    return CloudProvider::kOneDrive;
+  }
+  return CloudProvider::kNotSpecified;
 }
 
 FileSaveDestination GetDownloadsDestination(Profile* profile) {
@@ -58,6 +84,15 @@ FileSaveDestination GetDownloadsDestination(Profile* profile) {
 
 FileSaveDestination GetScreenCaptureDestination(Profile* profile) {
   return GetDestinationForPref(profile, ash::prefs::kCaptureModePolicySavePath);
+}
+
+bool DownloadToTemp(Profile* profile) {
+  return base::FeatureList::IsEnabled(features::kSkyVault) &&
+         GetDownloadsDestination(profile) == FileSaveDestination::kOneDrive;
+}
+
+base::FilePath GetMyFilesPath(Profile* profile) {
+  return profile->GetPath().Append("MyFiles");
 }
 
 }  // namespace policy::local_user_files

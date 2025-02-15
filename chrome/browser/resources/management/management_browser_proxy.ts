@@ -23,6 +23,7 @@ export enum ReportingType {
   USER_ACTIVITY = 'user-activity',
   EXTENSIONS = 'extensions',
   LEGACY_TECH = 'legacy-tech',
+  URL = 'url',
 }
 
 export interface BrowserReportingResponse {
@@ -81,6 +82,7 @@ export enum DeviceReportingType {
   PERIPHERALS = 'peripherals',
   LEGACY_TECH = 'legacy-tech',
   WEBSITE_INFO_AND_ACTIVITY = 'website info and activity',
+  FILE_EVENTS = 'file events',
 }
 
 

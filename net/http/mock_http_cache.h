@@ -253,7 +253,8 @@ class MockDiskCache : public disk_cache::Backend {
   const std::vector<std::string>& GetExternalCacheHits() const;
 
  private:
-  using EntryMap = std::map<std::string, MockDiskEntry*>;
+  using EntryMap =
+      std::map<std::string, raw_ptr<MockDiskEntry, CtnExperimental>>;
   class NotImplementedIterator;
 
   void CallbackLater(base::OnceClosure callback);
@@ -390,6 +391,27 @@ class MockBlockingBackendFactory : public HttpCache::BackendFactory {
   disk_cache::BackendResultCallback callback_;
   bool block_ = true;
   bool fail_ = false;
+};
+
+struct GetBackendResultIsPendingHelper {
+  bool operator()(const HttpCache::GetBackendResult& result) const {
+    return result.first == net::ERR_IO_PENDING;
+  }
+};
+using TestGetBackendCompletionCallbackBase =
+    net::internal::TestCompletionCallbackTemplate<
+        HttpCache::GetBackendResult,
+        GetBackendResultIsPendingHelper>;
+
+class TestGetBackendCompletionCallback
+    : public TestGetBackendCompletionCallbackBase {
+ public:
+  TestGetBackendCompletionCallback() = default;
+
+  HttpCache::GetBackendCallback callback() {
+    return base::BindOnce(&TestGetBackendCompletionCallback::SetResult,
+                          base::Unretained(this));
+  }
 };
 
 }  // namespace net

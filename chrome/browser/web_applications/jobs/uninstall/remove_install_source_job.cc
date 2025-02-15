@@ -11,6 +11,7 @@
 #include "chrome/browser/web_applications/web_app.h"
 #include "chrome/browser/web_applications/web_app_install_manager.h"
 #include "chrome/browser/web_applications/web_app_install_utils.h"
+#include "chrome/browser/web_applications/web_app_management_type.h"
 #include "chrome/browser/web_applications/web_app_registrar.h"
 #include "chrome/browser/web_applications/web_app_registry_update.h"
 #include "chrome/browser/web_applications/web_app_sync_bridge.h"
@@ -138,9 +139,10 @@ void RemoveInstallSourceJob::
 
   lock_->install_manager().NotifyWebAppSourceRemoved(app_id_);
   lock_->os_integration_manager().Synchronize(
-      app_id_, base::BindOnce(&RemoveInstallSourceJob::CompleteAndSelfDestruct,
-                              weak_ptr_factory_.GetWeakPtr(),
-                              webapps::UninstallResultCode::kSuccess));
+      app_id_,
+      base::BindOnce(&RemoveInstallSourceJob::CompleteAndSelfDestruct,
+                     weak_ptr_factory_.GetWeakPtr(),
+                     webapps::UninstallResultCode::kInstallSourceRemoved));
 }
 
 void RemoveInstallSourceJob::CompleteAndSelfDestruct(

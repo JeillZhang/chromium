@@ -13,6 +13,7 @@
 #include "content/common/content_export.h"
 #include "content/services/auction_worklet/auction_v8_helper.h"
 #include "content/services/auction_worklet/lazy_filler.h"
+#include "content/services/auction_worklet/public/mojom/auction_shared_storage_host.mojom-forward.h"
 #include "v8/include/v8-context.h"
 #include "v8/include/v8-forward.h"
 
@@ -29,6 +30,7 @@ class RealTimeReportingBindings;
 class RegisterAdBeaconBindings;
 class RegisterAdMacroBindings;
 class ReportBindings;
+class PrivateModelTrainingBindings;
 class SetBidBindings;
 class SetPriorityBindings;
 class SetPrioritySignalsOverrideBindings;
@@ -36,6 +38,7 @@ class SharedStorageBindings;
 class AuctionConfigLazyFiller;
 class BiddingBrowserSignalsLazyFiller;
 class InterestGroupLazyFiller;
+class ReportWinBrowserSignalsLazyFiller;
 class SellerBrowserSignalsLazyFiller;
 
 // Base class for bindings used with contexts used with ContextRecycler.
@@ -93,7 +96,8 @@ class CONTENT_EXPORT ContextRecycler {
   }
 
   void AddPrivateAggregationBindings(
-      bool private_aggregation_permissions_policy_allowed);
+      bool private_aggregation_permissions_policy_allowed,
+      bool reserved_once_allowed);
   PrivateAggregationBindings* private_aggregation_bindings() {
     return private_aggregation_bindings_.get();
   }
@@ -113,9 +117,13 @@ class CONTENT_EXPORT ContextRecycler {
     return register_ad_macro_bindings_.get();
   }
 
-  void AddReportBindings();
+  void AddReportBindings(bool queue_report_aggregate_win_allowed);
   ReportBindings* report_bindings() { return report_bindings_.get(); }
 
+  void AddPrivateModelTrainingBindings();
+  PrivateModelTrainingBindings* private_model_training_bindings() {
+    return private_model_training_bindings_.get();
+  }
   void AddSetBidBindings();
   SetBidBindings* set_bid_bindings() { return set_bid_bindings_.get(); }
 
@@ -131,6 +139,7 @@ class CONTENT_EXPORT ContextRecycler {
 
   void AddSharedStorageBindings(
       mojom::AuctionSharedStorageHost* shared_storage_host,
+      mojom::AuctionWorkletFunction source_auction_worklet_function,
       bool shared_storage_permissions_policy_allowed);
   SharedStorageBindings* shared_storage_bindings() {
     return shared_storage_bindings_.get();
@@ -149,6 +158,11 @@ class CONTENT_EXPORT ContextRecycler {
   void AddSellerBrowserSignalsLazyFiller();
   SellerBrowserSignalsLazyFiller* seller_browser_signals_lazy_filler() {
     return seller_browser_signals_lazy_filler_.get();
+  }
+
+  void AddReportWinBrowserSignalsLazyFiller();
+  ReportWinBrowserSignalsLazyFiller* report_win_lazy_filler() {
+    return report_win_browser_signals_lazy_filler_.get();
   }
 
   void EnsureAuctionConfigLazyFillers(size_t required);
@@ -183,6 +197,8 @@ class CONTENT_EXPORT ContextRecycler {
   std::unique_ptr<RegisterAdBeaconBindings> register_ad_beacon_bindings_;
   std::unique_ptr<RegisterAdMacroBindings> register_ad_macro_bindings_;
   std::unique_ptr<ReportBindings> report_bindings_;
+  std::unique_ptr<PrivateModelTrainingBindings>
+      private_model_training_bindings_;
   std::unique_ptr<SetBidBindings> set_bid_bindings_;
   std::unique_ptr<SetPriorityBindings> set_priority_bindings_;
   std::unique_ptr<SetPrioritySignalsOverrideBindings>
@@ -201,6 +217,8 @@ class CONTENT_EXPORT ContextRecycler {
 
   std::unique_ptr<SellerBrowserSignalsLazyFiller>
       seller_browser_signals_lazy_filler_;
+  std::unique_ptr<ReportWinBrowserSignalsLazyFiller>
+      report_win_browser_signals_lazy_filler_;
 };
 
 // Helper to enter a context scope on creation and reset all bindings

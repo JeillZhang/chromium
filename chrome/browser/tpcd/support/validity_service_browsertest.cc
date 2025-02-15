@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/tpcd/support/validity_service.h"
+
 #include "base/strings/strcat.h"
 #include "base/test/bind.h"
 #include "base/test/scoped_feature_list.h"
@@ -13,8 +15,8 @@
 #include "chrome/browser/tpcd/support/tpcd_support_service.h"
 #include "chrome/browser/tpcd/support/tpcd_support_service_factory.h"
 #include "chrome/browser/tpcd/support/trial_test_utils.h"
-#include "chrome/browser/tpcd/support/validity_service.h"
 #include "chrome/test/base/chrome_test_utils.h"
+#include "chrome/test/base/platform_browser_test.h"
 #include "components/content_settings/core/browser/content_settings_observer.h"
 #include "components/content_settings/core/browser/cookie_settings.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
@@ -56,8 +58,7 @@ class ValidityServiceBrowserTestBase : public PlatformBrowserTest {
 
   void SetUp() override {
     features_.InitWithFeaturesAndParameters(
-        {{::features::kPersistentOriginTrials, {}},
-         {net::features::kTpcdTrialSettings, {}},
+        {{net::features::kTpcdTrialSettings, {}},
          {content_settings::features::kTrackingProtection3pcd, {}}},
         {});
 
@@ -239,8 +240,7 @@ class ValidityService3pTrialBrowserTest
     : public ValidityServiceBrowserTestBase {
   void SetUp() override {
     features_.InitWithFeaturesAndParameters(
-        {{::features::kPersistentOriginTrials, {}},
-         {net::features::kTpcdTrialSettings, {}},
+        {{net::features::kTpcdTrialSettings, {}},
          {content_settings::features::kTrackingProtection3pcd, {}}},
         {});
 
@@ -631,8 +631,7 @@ class ValidityService1pTrialBrowserTest
     : public ValidityServiceBrowserTestBase {
   void SetUp() override {
     features_.InitWithFeaturesAndParameters(
-        {{::features::kPersistentOriginTrials, {}},
-         {net::features::kTopLevelTpcdTrialSettings, {}},
+        {{net::features::kTopLevelTpcdTrialSettings, {}},
          {content_settings::features::kTrackingProtection3pcd, {}}},
         {});
 
@@ -650,7 +649,7 @@ class ValidityService1pTrialBrowserTest
 
     URLLoaderInterceptor::WriteResponse(
         base::StrCat({"HTTP/1.1 200 OK\n", "Content-type: text/html\n",
-                      "Origin-Trial: ", kTopLevelTrialToken, "\n", "\n"}),
+                      "Origin-Trial: ", k1pDeprecationTrialToken, "\n", "\n"}),
         ("<html><head><title>Trial enabled page with iframe</title></head>"
          "<body>"
          "<iframe id='test'></iframe>"

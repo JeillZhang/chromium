@@ -21,6 +21,7 @@ namespace content {
 class BrowserContext;
 enum class FedCmDisconnectStatus;
 enum class FedCmIdpSigninStatusMode;
+enum class FedCmRequesterFrameType;
 class FederatedIdentityApiPermissionContextDelegate;
 class FederatedIdentityPermissionContextDelegate;
 enum class IdpSigninStatus;
@@ -35,7 +36,7 @@ bool IsSameSiteWithAncestors(const url::Origin& origin,
                              RenderFrameHost* render_frame_host);
 
 void SetIdpSigninStatus(BrowserContext* context,
-                        int frame_tree_node_id,
+                        FrameTreeNodeId frame_tree_node_id,
                         const url::Origin& origin,
                         blink::mojom::IdpSigninStatus status);
 
@@ -86,9 +87,6 @@ CONTENT_EXPORT std::string GetConsoleErrorMessageFromResult(
 CONTENT_EXPORT std::string GetDisconnectConsoleErrorMessage(
     FedCmDisconnectStatus disconnect_status_for_metrics);
 
-FedCmIdpSigninStatusMode GetIdpSigninStatusMode(RenderFrameHost& host,
-                                                const url::Origin& idp_origin);
-
 // Returns the eTLD+1 for a given url. For localhost, returns the host.
 std::string FormatUrlForDisplay(const GURL& url);
 
@@ -107,11 +105,16 @@ bool HasSharingPermissionOrIdpHasThirdPartyCookiesAccess(
 
 bool IsFedCmAuthzEnabled(RenderFrameHost& host, const url::Origin& idp_origin);
 
-FederatedAuthRequestPageData* GetPageData(RenderFrameHost* render_frame_host);
+FederatedAuthRequestPageData* GetPageData(Page& page);
 
 // Returns a new session ID. Used to record UKM metrics corresponding to a new
 // API invocation, like get() or disconnect().
 int GetNewSessionID();
+
+// Returns the frame type of the requester.
+FedCmRequesterFrameType ComputeRequesterFrameType(const RenderFrameHost& rfh,
+                                                  const url::Origin& requester,
+                                                  const url::Origin& embedder);
 }  // namespace webid
 
 }  // namespace content

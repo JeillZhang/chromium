@@ -17,7 +17,6 @@ import 'chrome://resources/cr_components/theme_color_picker/theme_hue_slider_dia
 
 import type {SpHeadingElement} from 'chrome://customize-chrome-side-panel.top-chrome/shared/sp_heading.js';
 import type {ThemeHueSliderDialogElement} from 'chrome://resources/cr_components/theme_color_picker/theme_hue_slider_dialog.js';
-import type {CrA11yAnnouncerElement} from 'chrome://resources/cr_elements/cr_a11y_announcer/cr_a11y_announcer.js';
 import {getInstance as getAnnouncerInstance} from 'chrome://resources/cr_elements/cr_a11y_announcer/cr_a11y_announcer.js';
 import type {CrButtonElement} from 'chrome://resources/cr_elements/cr_button/cr_button.js';
 import type {CrFeedbackButtonsElement} from 'chrome://resources/cr_elements/cr_feedback_buttons/cr_feedback_buttons.js';
@@ -33,7 +32,7 @@ import type {Token} from 'chrome://resources/mojo/mojo/public/mojom/base/token.m
 import {CustomizeChromeAction, recordCustomizeChromeAction} from '../common.js';
 import type {CustomizeChromePageCallbackRouter, CustomizeChromePageHandlerInterface, Theme} from '../customize_chrome.mojom-webui.js';
 import {CustomizeChromeApiProxy} from '../customize_chrome_api_proxy.js';
-import type {DescriptorA, DescriptorB, DescriptorDValue, Descriptors, InspirationGroup, ResultDescriptors, WallpaperSearchClientCallbackRouter, WallpaperSearchHandlerInterface, WallpaperSearchResult} from '../wallpaper_search.mojom-webui.js';
+import type {DescriptorB, DescriptorDValue, Descriptors, Group, InspirationDescriptors, InspirationGroup, ResultDescriptors, WallpaperSearchClientCallbackRouter, WallpaperSearchHandlerInterface, WallpaperSearchResult} from '../wallpaper_search.mojom-webui.js';
 import {DescriptorDName, UserFeedback, WallpaperSearchStatus} from '../wallpaper_search.mojom-webui.js';
 import {WindowProxy} from '../window_proxy.js';
 
@@ -111,11 +110,10 @@ export interface WallpaperSearchElement {
   };
 }
 
-function getRandomDescriptorA(descriptorArrayA: DescriptorA[]): string {
-  const randomLabels =
-      descriptorArrayA[Math.floor(Math.random() * descriptorArrayA.length)]!
-          .labels;
-  return randomLabels[Math.floor(Math.random() * randomLabels.length)]!;
+function getRandomDescriptorA(groups: Group[]): string {
+  const descriptorAs =
+      groups[Math.floor(Math.random() * groups.length)]!.descriptorAs;
+  return descriptorAs[Math.floor(Math.random() * descriptorAs.length)]!.key;
 }
 
 function recordStatusChange(status: WallpaperSearchStatus) {
@@ -149,8 +147,6 @@ export class WallpaperSearchElement extends WallpaperSearchElementBase {
       descriptors_: {type: Object},
       descriptorD_: {type: Array},
       errorState_: {type: Object},
-      emptyHistoryContainers_: {type: Object},
-      emptyResultContainers_: {type: Object},
       expandedCategories_: {type: Object},
       loading_: {type: Boolean},
       history_: {type: Array},
@@ -180,8 +176,6 @@ export class WallpaperSearchElement extends WallpaperSearchElementBase {
   };
   private descriptors_: Descriptors|null = null;
   protected descriptorD_: string[] = DESCRIPTOR_D_VALUE.map(value => value.hex);
-  protected emptyHistoryContainers_: number[] = [];
-  protected emptyResultContainers_: number[] = [];
   private errorCallback_: (() => void)|undefined;
   protected errorState_: ErrorState|null = null;
   private expandedCategories_: {[categoryIndex: number]: boolean} = {};
@@ -243,7 +237,6 @@ export class WallpaperSearchElement extends WallpaperSearchElementBase {
         this.wallpaperSearchCallbackRouter_.setHistory.addListener(
             (history: WallpaperSearchResult[]) => {
               this.history_ = history;
-              this.emptyHistoryContainers_ = this.calculateEmptyTiles(history);
               this.openInspirations_ = !this.computeShouldShowHistory_();
             });
     this.wallpaperSearchHandler_.updateHistory();
@@ -286,11 +279,6 @@ export class WallpaperSearchElement extends WallpaperSearchElementBase {
 
   focusOnBackButton() {
     this.$.heading.getBackButton().focus();
-  }
-
-  private calculateEmptyTiles(filledTiles: WallpaperSearchResult[]): number[] {
-    return Array.from(
-        {length: filledTiles.length > 0 ? 6 - filledTiles.length : 0}, () => 0);
   }
 
   private computeErrorState_() {
@@ -350,35 +338,40 @@ export class WallpaperSearchElement extends WallpaperSearchElementBase {
     return !!this.inspirationGroups_ && this.inspirationGroups_.length > 0;
   }
 
-  private expandCategoryForDescriptorA_(label: string) {
+  private expandCategoryForDescriptorA_(key: string) {
     if (!this.descriptors_) {
       return;
     }
-    const categoryGroupIndex = this.descriptors_.descriptorA.findIndex(
-        group => group.labels.includes(label));
+    const categoryGroupIndex = this.descriptors_.groups.findIndex(
+        group => group.descriptorAs.some(descriptor => descriptor.key === key));
     if (categoryGroupIndex >= 0) {
       this.expandedCategories_[categoryGroupIndex] = true;
       this.requestUpdate();
     }
   }
 
-  private async fetchDescriptors_() {
+  private fetchDescriptors_() {
     this.wallpaperSearchHandler_.getDescriptors().then(({descriptors}) => {
       if (descriptors) {
+        // Order the descriptors so they appear alphabetically in all languages.
+        descriptors.groups.sort((a, b) => a.category.localeCompare(b.category));
+        descriptors.groups.forEach(
+            (group) => group.descriptorAs.sort(
+                (a, b) => a.label.localeCompare(b.label)));
+        descriptors.descriptorB.sort((a, b) => a.label.localeCompare(b.label));
+        descriptors.descriptorC.sort((a, b) => a.label.localeCompare(b.label));
+
         this.descriptors_ = descriptors;
         this.comboboxItems_ = {
-          a: descriptors.descriptorA.map((group) => {
+          a: descriptors.groups.map((group) => {
             return {
+              key: group.category,
               label: group.category,
-              items: group.labels.map((label) => {
-                return {label};
-              }),
+              items: group.descriptorAs,
             };
           }),
           b: descriptors.descriptorB,
-          c: descriptors.descriptorC.map((label) => {
-            return {label};
-          }),
+          c: descriptors.descriptorC,
         };
         this.errorCallback_ = undefined;
         recordStatusChange(WallpaperSearchStatus.kOk);
@@ -445,19 +438,23 @@ export class WallpaperSearchElement extends WallpaperSearchElementBase {
   }
 
   protected getInspirationDescriptorsCheckedStatus_(
-      groupDescriptors: ResultDescriptors): string {
+      groupDescriptors: InspirationDescriptors): string {
     const groupDescriptorColor = groupDescriptors.color?.name !== undefined ?
-        descriptorDNameToHex(groupDescriptors.color!.name) :
+        descriptorDNameToHex(groupDescriptors.color.name) :
         undefined;
-    return (groupDescriptors.subject || null) === this.selectedDescriptorA_ &&
-            (groupDescriptors.style || null) === this.selectedDescriptorB_ &&
-            (groupDescriptors.mood || null) === this.selectedDescriptorC_ &&
+    return (groupDescriptors.subject?.key || null) ===
+                this.selectedDescriptorA_ &&
+            (groupDescriptors.style?.key || null) ===
+                this.selectedDescriptorB_ &&
+            (groupDescriptors.mood?.key || null) ===
+                this.selectedDescriptorC_ &&
             groupDescriptorColor === this.selectedDefaultColor_ ?
         'true' :
         'false';
   }
 
-  protected getInspirationGroupTitle_(descriptors: ResultDescriptors): string {
+  protected getInspirationGroupTitle_(descriptors: InspirationDescriptors):
+      string {
     // Filter out undefined or null values, then join the rest into a comma
     // separated string.
     let colorName;
@@ -468,12 +465,12 @@ export class WallpaperSearchElement extends WallpaperSearchElementBase {
       }
     }
     return [
-      descriptors.subject,
-      descriptors.style,
-      descriptors.mood,
+      descriptors.subject?.label,
+      descriptors.style?.label,
+      descriptors.mood?.label,
       colorName,
     ].filter(Boolean)
-        .join(', ');
+        .join(this.i18n('separator'));
   }
 
   protected getHistoryResultAriaLabel_(
@@ -534,7 +531,7 @@ export class WallpaperSearchElement extends WallpaperSearchElementBase {
   }
 
   protected isOptionSelectedInDescriptorB_(option: DescriptorB): boolean {
-    return option.label === this.selectedDescriptorB_;
+    return option.key === this.selectedDescriptorB_;
   }
 
   protected onBackClick_() {
@@ -691,21 +688,20 @@ export class WallpaperSearchElement extends WallpaperSearchElementBase {
       return;
     }
 
-    const announcer = getAnnouncerInstance() as CrA11yAnnouncerElement;
+    const announcer = getAnnouncerInstance();
     recordCustomizeChromeAction(
         CustomizeChromeAction.WALLPAPER_SEARCH_PROMPT_SUBMITTED);
 
     assert(this.descriptors_);
     const selectedDescriptorA = this.selectedDescriptorA_ ||
-        getRandomDescriptorA(this.descriptors_.descriptorA);
+        getRandomDescriptorA(this.descriptors_.groups);
     this.expandCategoryForDescriptorA_(selectedDescriptorA);
     this.selectedDescriptorA_ = selectedDescriptorA;
     this.loading_ = true;
     this.results_ = [];
-    this.emptyResultContainers_ = [];
     announcer.announce(this.i18n('wallpaperSearchLoadingA11yMessage'));
     const descriptors: ResultDescriptors = {
-      subject: this.selectedDescriptorA_!,
+      subject: this.selectedDescriptorA_,
       style: this.selectedDescriptorB_ ?? null,
       mood: this.selectedDescriptorC_ ?? null,
       color: this.selectedDescriptorD_ ?? null,
@@ -733,7 +729,6 @@ export class WallpaperSearchElement extends WallpaperSearchElementBase {
           }
           recordStatusChange(status);
           this.selectedFeedbackOption_ = CrFeedbackOption.UNSPECIFIED;
-          this.emptyResultContainers_ = this.calculateEmptyTiles(results);
         }
       }
     } else {
@@ -762,18 +757,18 @@ export class WallpaperSearchElement extends WallpaperSearchElementBase {
     if (this.status_ === WallpaperSearchStatus.kOk) {
       this.$.wallpaperSearch.focus();
     } else {
-      const error = this.shadowRoot!.querySelector<HTMLElement>('#error');
+      const error = this.shadowRoot.querySelector<HTMLElement>('#error');
       assert(error);
       error.focus();
     }
   }
 
   private selectDescriptorsFromInspirationGroup_(group: InspirationGroup) {
-    const announcer = getAnnouncerInstance() as CrA11yAnnouncerElement;
+    const announcer = getAnnouncerInstance();
     const groupDescriptors = group.descriptors;
-    this.selectedDescriptorA_ = groupDescriptors.subject || null;
-    this.selectedDescriptorB_ = groupDescriptors.style || null;
-    this.selectedDescriptorC_ = groupDescriptors.mood || null;
+    this.selectedDescriptorA_ = groupDescriptors.subject?.key || null;
+    this.selectedDescriptorB_ = groupDescriptors.style?.key || null;
+    this.selectedDescriptorC_ = groupDescriptors.mood?.key || null;
 
     if (groupDescriptors.color?.name !== undefined) {
       const hex = descriptorDNameToHex(groupDescriptors.color.name);
@@ -797,10 +792,6 @@ export class WallpaperSearchElement extends WallpaperSearchElementBase {
 
   protected shouldShowFeedbackButtons_() {
     return !this.loading_ && this.results_.length > 0;
-  }
-
-  protected shouldShowGrid_(): boolean {
-    return this.results_.length > 0 || this.emptyResultContainers_.length > 0;
   }
 }
 

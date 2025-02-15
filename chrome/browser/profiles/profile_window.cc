@@ -32,14 +32,14 @@
 #include "chrome/browser/signin/signin_ui_util.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_dialogs.h"
-#include "chrome/browser/ui/startup/launch_mode_recorder.h"
+#include "chrome/browser/ui/startup/startup_types.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
-#include "components/flags_ui/pref_service_flags_storage.h"
 #include "components/prefs/pref_service.h"
 #include "components/signin/public/base/signin_pref_names.h"
 #include "components/signin/public/identity_manager/account_info.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
+#include "components/webui/flags/pref_service_flags_storage.h"
 #include "content/public/browser/browser_thread.h"
 #include "extensions/buildflags/buildflags.h"
 #include "third_party/abseil-cpp/absl/cleanup/cleanup.h"
@@ -60,13 +60,9 @@
 #include "chrome/browser/ui/startup/startup_browser_creator.h"
 #endif  // !defined (OS_ANDROID)
 
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_CHROMEOS)
 #include "chrome/browser/ui/profiles/profile_picker.h"
-#endif  // !BUILDFLAG(IS_CHROMEOS_ASH)
-
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-#include "chrome/browser/profiles/profiles_state.h"
-#endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
+#endif  // !BUILDFLAG(IS_CHROMEOS)
 
 using base::UserMetricsAction;
 using content::BrowserThread;
@@ -118,9 +114,9 @@ void FindOrCreateNewWindowForProfile(
   base::CommandLine command_line(base::CommandLine::NO_PROGRAM);
   StartupBrowserCreator browser_creator;
   // This is not a browser launch from the user; don't record the launch mode.
-  browser_creator.LaunchBrowser(
-      command_line, profile, base::FilePath(), process_startup, is_first_run,
-      /*launch_mode_recorder=*/nullptr, /*restore_tabbed_browser=*/true);
+  browser_creator.LaunchBrowser(command_line, profile, base::FilePath(),
+                                process_startup, is_first_run,
+                                /*restore_tabbed_browser=*/true);
 }
 
 void OpenBrowserWindowForProfile(base::OnceCallback<void(Browser*)> callback,
@@ -150,7 +146,7 @@ void OpenBrowserWindowForProfile(base::OnceCallback<void(Browser*)> callback,
     is_first_run = chrome::startup::IsFirstRun::kYes;
   }
 
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_CHROMEOS)
   if (!profile->IsGuestSession()) {
     ProfileAttributesEntry* entry =
         g_browser_process->profile_manager()
@@ -162,15 +158,7 @@ void OpenBrowserWindowForProfile(base::OnceCallback<void(Browser*)> callback,
       return;
     }
   }
-#endif  // !BUILDFLAG(IS_CHROMEOS_ASH)
-
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-  if (!AreSecondaryProfilesAllowed() && !profile->IsMainProfile()) {
-    ProfilePicker::Show(ProfilePicker::Params::FromEntryPoint(
-        ProfilePicker::EntryPoint::kProfileLocked));
-    return;
-  }
-#endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
+#endif  // !BUILDFLAG(IS_CHROMEOS)
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
   if (unblock_extensions) {
@@ -262,7 +250,7 @@ BrowserAddedForProfileObserver::BrowserAddedForProfileObserver(
   browser_list_observation_.Observe(BrowserList::GetInstance());
 }
 
-BrowserAddedForProfileObserver::~BrowserAddedForProfileObserver() {}
+BrowserAddedForProfileObserver::~BrowserAddedForProfileObserver() = default;
 
 void BrowserAddedForProfileObserver::OnBrowserAdded(Browser* browser) {
   if (browser_) {

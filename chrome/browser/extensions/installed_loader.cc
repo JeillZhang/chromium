@@ -37,11 +37,13 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/common/url_constants.h"
 #include "extensions/browser/allowlist_state.h"
+#include "extensions/browser/disable_reason.h"
 #include "extensions/browser/event_router.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/browser/extension_util.h"
+#include "extensions/browser/install_prefs_helper.h"
 #include "extensions/browser/management_policy.h"
 #include "extensions/browser/permissions_manager.h"
 #include "extensions/browser/pref_types.h"
@@ -58,10 +60,10 @@
 #include "extensions/common/permissions/api_permission.h"
 #include "extensions/common/permissions/permissions_data.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #include "chrome/browser/ash/profiles/profile_helper.h"
 #include "components/user_manager/user.h"
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 using content::BrowserThread;
 
@@ -164,17 +166,15 @@ void RecordDisbleReasonHistogram(int reason) {
 
 // Records the disable reasons for a single extension grouped by
 // disable_reason::DisableReason.
-void RecordDisableReasons(int reasons) {
+void RecordDisableReasons(const DisableReasonSet& reasons) {
   // |reasons| is a bitmask with values from ExtensionDisabledReason
   // which are increasing powers of 2.
-  if (reasons == disable_reason::DISABLE_NONE) {
+  if (reasons.empty()) {
     RecordDisbleReasonHistogram(disable_reason::DISABLE_NONE);
     return;
   }
-  for (int reason = 1; reason < disable_reason::DISABLE_REASON_LAST;
-       reason <<= 1) {
-    if (reasons & reason)
-      RecordDisbleReasonHistogram(reason);
+  for (int reason : reasons) {
+    RecordDisbleReasonHistogram(reason);
   }
 }
 
@@ -286,8 +286,7 @@ InstalledLoader::InstalledLoader(ExtensionService* extension_service)
       extension_registry_(ExtensionRegistry::Get(extension_service->profile())),
       extension_prefs_(ExtensionPrefs::Get(extension_service->profile())) {}
 
-InstalledLoader::~InstalledLoader() {
-}
+InstalledLoader::~InstalledLoader() = default;
 
 void InstalledLoader::Load(const ExtensionInfo& info, bool write_to_prefs) {
   // TODO(asargent): add a test to confirm that we can't load extensions if
@@ -326,19 +325,21 @@ void InstalledLoader::Load(const ExtensionInfo& info, bool write_to_prefs) {
       ExtensionSystem::Get(extension_service_->profile())->management_policy();
 
   if (extension_prefs_->IsExtensionDisabled(extension->id())) {
-    int disable_reasons = extension_prefs_->GetDisableReasons(extension->id());
+    DisableReasonSet disable_reasons =
+        extension_prefs_->GetDisableReasons(extension->id());
 
     // Update the extension prefs to reflect if the extension is no longer
     // blocked due to admin policy.
-    if ((disable_reasons & disable_reason::DISABLE_BLOCKED_BY_POLICY) &&
-        !policy->MustRemainDisabled(extension.get(), nullptr, nullptr)) {
-      disable_reasons &= (~disable_reason::DISABLE_BLOCKED_BY_POLICY);
+    if (disable_reasons.contains(disable_reason::DISABLE_BLOCKED_BY_POLICY) &&
+        !policy->MustRemainDisabled(extension.get(), nullptr)) {
+      disable_reasons.erase(disable_reason::DISABLE_BLOCKED_BY_POLICY);
       extension_prefs_->ReplaceDisableReasons(extension->id(), disable_reasons);
-      if (disable_reasons == disable_reason::DISABLE_NONE)
+      if (disable_reasons.empty()) {
         extension_prefs_->SetExtensionEnabled(extension->id());
+      }
     }
 
-    if ((disable_reasons & disable_reason::DISABLE_CORRUPTED)) {
+    if ((disable_reasons.contains(disable_reason::DISABLE_CORRUPTED))) {
       CorruptedExtensionReinstaller* corrupted_extension_reinstaller =
           extension_service_->corrupted_extension_reinstaller();
       if (policy->MustRemainEnabled(extension.get(), nullptr)) {
@@ -366,8 +367,9 @@ void InstalledLoader::Load(const ExtensionInfo& info, bool write_to_prefs) {
     // Extension is enabled. Check management policy to verify if it should
     // remain so.
     disable_reason::DisableReason disable_reason = disable_reason::DISABLE_NONE;
-    if (policy->MustRemainDisabled(extension.get(), &disable_reason, nullptr)) {
-      extension_prefs_->SetExtensionDisabled(extension->id(), disable_reason);
+    if (policy->MustRemainDisabled(extension.get(), &disable_reason)) {
+      DCHECK_NE(disable_reason, disable_reason::DISABLE_NONE);
+      extension_prefs_->SetExtensionDisabled(extension->id(), {disable_reason});
     }
   }
 
@@ -564,11 +566,11 @@ void InstalledLoader::RecordExtensionsMetrics(Profile* profile,
         // status.
         if (dev_mode_enabled) {
           base::UmaHistogramEnumeration(
-              "Extensions.NonWebstoreLocationWithDeveloperModeOn.Enabled2",
+              "Extensions.NonWebstoreLocationWithDeveloperModeOn.Enabled3",
               location);
         } else {
           base::UmaHistogramEnumeration(
-              "Extensions.NonWebstoreLocationWithDeveloperModeOff.Enabled2",
+              "Extensions.NonWebstoreLocationWithDeveloperModeOff.Enabled3",
               location);
         }
       }
@@ -653,7 +655,7 @@ void InstalledLoader::RecordExtensionsMetrics(Profile* profile,
           manifest_version_counts = &unpacked_manifest_version_counts;
           break;
         case mojom::ManifestLocation::kInvalidLocation:
-          NOTREACHED_NORETURN();
+          NOTREACHED();
       }
       base::UmaHistogramExactLinear(location_histogram_name,
                                     extension->manifest_version(),
@@ -662,6 +664,24 @@ void InstalledLoader::RecordExtensionsMetrics(Profile* profile,
         manifest_version_counts->version_2_count++;
       } else if (extension->manifest_version() == 3) {
         manifest_version_counts->version_3_count++;
+      }
+      // Report the days since the extension was installed.
+      base::Time time_since_install =
+          GetFirstInstallTime(extension_prefs_, extension->id());
+      if (!time_since_install.is_null()) {
+        int days_since_install =
+            (base::Time::Now() - time_since_install).InDays();
+        UMA_HISTOGRAM_CUSTOM_COUNTS("Extensions.DaysSinceInstall",
+                                    days_since_install, 0, 5000, 91);
+      }
+      // Report the days since the extension was last updated.
+      base::Time time_since_last_update =
+          GetLastUpdateTime(extension_prefs_, extension->id());
+      if (!time_since_last_update.is_null()) {
+        int days_since_updated =
+            (base::Time::Now() - time_since_last_update).InDays();
+        UMA_HISTOGRAM_CUSTOM_COUNTS("Extensions.DaysSinceLastUpdate",
+                                    days_since_updated, 0, 5000, 91);
       }
     }
 
@@ -910,11 +930,11 @@ void InstalledLoader::RecordExtensionsMetrics(Profile* profile,
         !disabled_extension->from_webstore()) {
       if (dev_mode_enabled) {
         base::UmaHistogramEnumeration(
-            "Extensions.NonWebstoreLocationWithDeveloperModeOn.Disabled2",
+            "Extensions.NonWebstoreLocationWithDeveloperModeOn.Disabled3",
             location);
       } else {
         base::UmaHistogramEnumeration(
-            "Extensions.NonWebstoreLocationWithDeveloperModeOff.Disabled2",
+            "Extensions.NonWebstoreLocationWithDeveloperModeOff.Disabled3",
             location);
       }
     }
@@ -1077,26 +1097,17 @@ void InstalledLoader::RecordExtensionsMetrics(Profile* profile,
   if (incognito_allowed_count + incognito_not_allowed_count > 0) {
     base::UmaHistogramCounts100("Extensions.IncognitoAllowed",
                                 incognito_allowed_count);
-    base::UmaHistogramCounts100("Extensions.IncognitoNotAllowed",
-                                incognito_not_allowed_count);
     if (should_record_incremented_metrics) {
       base::UmaHistogramCounts100("Extensions.IncognitoAllowed2",
                                   incognito_allowed_count);
-      base::UmaHistogramCounts100("Extensions.IncognitoNotAllowed2",
-                                  incognito_not_allowed_count);
     }
   }
-  if (file_access_allowed_count + file_access_not_allowed_count > 0) {
-    base::UmaHistogramCounts100("Extensions.FileAccessAllowed",
+  if (file_access_allowed_count + file_access_not_allowed_count > 0 &&
+      should_record_incremented_metrics) {
+    base::UmaHistogramCounts100("Extensions.FileAccessAllowed2",
                                 file_access_allowed_count);
-    base::UmaHistogramCounts100("Extensions.FileAccessNotAllowed",
+    base::UmaHistogramCounts100("Extensions.FileAccessNotAllowed2",
                                 file_access_not_allowed_count);
-    if (should_record_incremented_metrics) {
-      base::UmaHistogramCounts100("Extensions.FileAccessAllowed2",
-                                  file_access_allowed_count);
-      base::UmaHistogramCounts100("Extensions.FileAccessNotAllowed2",
-                                  file_access_not_allowed_count);
-    }
   }
   base::UmaHistogramCounts100(
       "Extensions.CorruptExtensionTotalDisables",

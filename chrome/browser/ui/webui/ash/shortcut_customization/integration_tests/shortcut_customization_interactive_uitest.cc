@@ -10,6 +10,7 @@
 #include "ash/webui/settings/public/constants/routes.mojom-forward.h"
 #include "ash/webui/shortcut_customization_ui/url_constants.h"
 #include "base/json/json_writer.h"
+#include "base/strings/stringprintf.h"
 #include "base/test/scoped_feature_list.h"
 #include "chrome/browser/ui/chrome_pages.h"
 #include "chrome/test/base/ash/interactive/interactive_ash_test.h"
@@ -50,8 +51,7 @@ class ShortcutCustomizationInteractiveUiTest : public InteractiveAshTest {
     webcontents_id_ = kShortcutAppWebContentsId;
 
     feature_list_.InitWithFeatures(
-        {::features::kShortcutCustomization,
-         ash::features::kInputDeviceSettingsSplit,
+        {ash::features::kInputDeviceSettingsSplit,
          ash::features::kEnableKeyboardBacklightControlInSettings},
         {});
   }
@@ -69,11 +69,8 @@ class ShortcutCustomizationInteractiveUiTest : public InteractiveAshTest {
       "shortcut-customization-app",
       "navigation-view-panel#navigationPanel",
       "#category-0",
-      "#container",
-      "accelerator-subsection",
-      "tbody#rowList",
-      // Action 93 corresponds to the "Open/Close Calendar" shortcut.
-      "accelerator-row[action='93']",
+      "#contentWrapper > accelerator-subsection:nth-child(1)",
+      "#open-close-calendar",
   };
 
   const DeepQuery kAddShortcutButtonQuery{
@@ -114,7 +111,7 @@ class ShortcutCustomizationInteractiveUiTest : public InteractiveAshTest {
       "#category-3",
       // Text editing subsection
       "#contentWrapper > accelerator-subsection:nth-child(2)",
-      "#rowList > accelerator-row:nth-child(10)",
+      "#redo-last-action",
   };
 
   auto FocusSearchBox() {
@@ -218,13 +215,13 @@ class ShortcutCustomizationInteractiveUiTest : public InteractiveAshTest {
 
   auto SendShortcutAccelerator(ui::Accelerator accel) {
     CHECK(webcontents_id_);
-    return Steps(SendAccelerator(webcontents_id_, accel), FlushEvents());
+    return Steps(SendAccelerator(webcontents_id_, accel));
   }
 
   auto AddKeyboard(bool is_external) {
     return Steps(
-        Log(std::format("Adding {0} keyboard",
-                        is_external ? "external" : "internal")),
+        Log(base::StringPrintf("Adding %s keyboard",
+                               is_external ? "external" : "internal")),
         Do([is_external, this]() {
           int id = kDeviceId1++;
           const auto id_string = base::NumberToString(id);
@@ -264,15 +261,14 @@ class ShortcutCustomizationInteractiveUiTest : public InteractiveAshTest {
               /*subsystem=*/"input", /*devnode=*/std::nullopt,
               /*devtype=*/std::nullopt, std::move(sysfs_attributes),
               std::move(sysfs_properties));
-        }),
-        FlushEvents());
+        }));
   }
 
   auto WaitForShortcutToContainNumAcceleartors(const DeepQuery& query,
                                                const int expected) {
     return Steps(
-        Log(std::format("Expecting shortcut to contain {0} accelerators",
-                        expected)),
+        Log(base::StringPrintf("Expecting shortcut to contain %d accelerators",
+                               expected)),
         CheckJsResultAt(webcontents_id_, query,
                         "e => e.querySelectorAll('accelerator-view').length",
                         expected));
@@ -318,13 +314,15 @@ class ShortcutCustomizationInteractiveUiTest : public InteractiveAshTest {
       int category_index,
       const std::vector<std::string>& expected_subcategories) {
     return Steps(
-        Log(std::format("Verifying that '{0}' is the active category when "
-                        "the Shortcut Customization app is first launched",
-                        category)),
+        Log(base::StringPrintf(
+            "Verifying that '%s' is the active category when "
+            "the Shortcut Customization app is first launched",
+            category.c_str())),
         WaitForElementTextContains(webcontents_id_, kActiveNavTabQuery,
                                    category),
-        Log(std::format("Verifying subcategories within the '{0}' category",
-                        category)),
+        Log(base::StringPrintf(
+            "Verifying subcategories within the '%s' category",
+            category.c_str())),
         CheckJsResult(
             webcontents_id_,
             base::StringPrintf(
@@ -463,6 +461,26 @@ IN_PROC_BROWSER_TEST_F(ShortcutCustomizationInteractiveUiTest,
 }
 
 IN_PROC_BROWSER_TEST_F(ShortcutCustomizationInteractiveUiTest,
+                       SearchShortcutUsingCtrlF) {
+  const DeepQuery kSearchRowActionQuery{
+      "shortcut-customization-app",
+      "#searchBoxWrapper > search-box",
+      "#frb0",
+      "#searchResultRowInner",
+  };
+
+  RunTestSequence(
+      LaunchShortcutCustomizationApp(),
+      InAnyContext(Steps(
+          Log("Use Ctrl + F to focus search box"),
+          SendKeyPressEvent(ui::VKEY_F, ui::EF_CONTROL_DOWN),
+          Log("Searching for 'Redo last action' shortcut"),
+          EnterLowerCaseText("redo"),
+          Log("Verifying that 'Redo last action' search result row is visible"),
+          WaitForElementExists(webcontents_id_, kSearchRowActionQuery))));
+}
+
+IN_PROC_BROWSER_TEST_F(ShortcutCustomizationInteractiveUiTest,
                        OpenKeyboardSettings) {
   const DeepQuery kKeyboardSettingsLink{
       "shortcut-customization-app",
@@ -514,18 +532,6 @@ IN_PROC_BROWSER_TEST_F(ShortcutCustomizationInteractiveUiTest,
   ui::Accelerator new_accel(ui::VKEY_N,
                             ui::EF_COMMAND_DOWN | ui::EF_CONTROL_DOWN);
 
-  const DeepQuery kCustomAcceleratorViewQuery{
-      "shortcut-customization-app",
-      "navigation-view-panel#navigationPanel",
-      "#category-0",
-      "#container",
-      "accelerator-subsection",
-      "tbody#rowList",
-      // Action 93 corresponds to the "Open/Close Calendar" shortcut.
-      "accelerator-row[action='93']",
-      "#container > td > accelerator-view:nth-child(2)",
-  };
-
   RunTestSequence(
       LaunchShortcutCustomizationApp(),
       InAnyContext(Steps(
@@ -538,7 +544,7 @@ IN_PROC_BROWSER_TEST_F(ShortcutCustomizationInteractiveUiTest,
           EnsureAcceleratorsAreProcessed(),
           Log("Adding Search + Ctrl + n as a custom open/close calendar "
               "shortcut"),
-          EnsurePresent(webcontents_id_, kCustomAcceleratorViewQuery),
+          EnsurePresent(webcontents_id_, kCalendarAcceleratorRowQuery),
           Log("New shortcut is present in the UI"),
           SendShortcutAccelerator(new_accel),
           WaitForShow(kCalendarViewElementId),
@@ -648,8 +654,6 @@ IN_PROC_BROWSER_TEST_F(ShortcutCustomizationInteractiveUiTest,
 
 IN_PROC_BROWSER_TEST_F(ShortcutCustomizationInteractiveUiTest,
                        AddAcceleratorDisruptive) {
-  ui::Accelerator default_accel =
-      GetDefaultAcceleratorForAction(AcceleratorAction::kToggleCalendar);
   ui::Accelerator feedback_accel =
       GetDefaultAcceleratorForAction(AcceleratorAction::kOpenFeedbackPage);
 
@@ -700,11 +704,8 @@ IN_PROC_BROWSER_TEST_F(ShortcutCustomizationInteractiveUiTest,
       "shortcut-customization-app",
       "#navigationPanel",
       "#category-0",
-      "#container",
-      "accelerator-subsection",
-      "tbody#rowList",
-      // Action 113 corresponds to the "Open Quick Settings" shortcut.
-      "accelerator-row[action='113']",
+      "#contentWrapper > accelerator-subsection:nth-child(1)",
+      "#open-quick-settings",
   };
   ui::Accelerator custom_calendar_accel(
       ui::VKEY_N, ui::EF_COMMAND_DOWN | ui::EF_CONTROL_DOWN);

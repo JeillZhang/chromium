@@ -10,9 +10,9 @@
 #include "base/debug/alias.h"
 #include "base/functional/callback_helpers.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/notreached.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "gpu/command_buffer/service/feature_info.h"
 #include "gpu/command_buffer/service/shared_context_state.h"
 #include "gpu/command_buffer/service/texture_manager.h"
@@ -20,17 +20,16 @@
 #include "third_party/skia/include/core/SkColorType.h"
 #include "third_party/skia/include/core/SkSurface.h"
 #include "third_party/skia/include/core/SkSurfaceProps.h"
-#include "third_party/skia/include/gpu/GrBackendSurface.h"
-#include "third_party/skia/include/gpu/GrDirectContext.h"
+#include "third_party/skia/include/gpu/ganesh/GrBackendSurface.h"
+#include "third_party/skia/include/gpu/ganesh/GrDirectContext.h"
 #include "third_party/skia/include/gpu/ganesh/SkSurfaceGanesh.h"
 #include "third_party/skia/include/gpu/ganesh/gl/GrGLBackendSurface.h"
-#include "third_party/skia/include/gpu/gl/GrGLTypes.h"
+#include "third_party/skia/include/gpu/ganesh/gl/GrGLTypes.h"
 #include "ui/gl/gl_bindings.h"
 #include "ui/gl/gl_context.h"
 #include "ui/gl/gl_features.h"
 #include "ui/gl/gl_implementation.h"
 #include "ui/gl/gl_surface.h"
-#include "ui/gl/gl_version_info.h"
 
 namespace viz {
 
@@ -42,7 +41,7 @@ NOINLINE void CheckForLoopFailures() {
   auto now = base::TimeTicks::Now();
   if (!g_last_reshape_failure.is_null() &&
       now - g_last_reshape_failure < threshold) {
-    CHECK(false);
+    NOTREACHED();
   }
   g_last_reshape_failure = now;
 }
@@ -123,12 +122,12 @@ SkiaOutputDeviceGL::SkiaOutputDeviceGL(
   capabilities_.supports_surfaceless = gl_surface_->IsSurfaceless();
 #endif
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   // If Chrome OS is run on Linux for development purposes, we need to
   // advertise a hardware orientation mode since Ash manages a separate device
   // rotation independent of the host's native windowing system.
   capabilities_.orientation_mode = OutputSurface::OrientationMode::kHardware;
-#endif  // IS_CHROMEOS_ASH
+#endif  // IS_CHROMEOS
 
   DCHECK(context_state_);
   DCHECK(gl_surface_);
@@ -137,20 +136,12 @@ SkiaOutputDeviceGL::SkiaOutputDeviceGL(
   DCHECK(context_state_->context());
 
   GrDirectContext* gr_context = context_state_->gr_context();
-  gl::CurrentGL* current_gl = context_state_->context()->GetCurrentGL();
 
   // Get alpha bits from the default frame buffer.
   int alpha_bits = 0;
   glBindFramebufferEXT(GL_FRAMEBUFFER, 0);
   gr_context->resetContext(kRenderTarget_GrGLBackendState);
-  const auto* version = current_gl->Version.get();
-  if (version->is_desktop_core_profile) {
-    glGetFramebufferAttachmentParameterivEXT(
-        GL_FRAMEBUFFER, GL_BACK_LEFT, GL_FRAMEBUFFER_ATTACHMENT_ALPHA_SIZE,
-        &alpha_bits);
-  } else {
-    glGetIntegerv(GL_ALPHA_BITS, &alpha_bits);
-  }
+  glGetIntegerv(GL_ALPHA_BITS, &alpha_bits);
   CHECK_GL_ERROR();
 
   auto color_type = kRGBA_8888_SkColorType;
@@ -168,20 +159,15 @@ SkiaOutputDeviceGL::SkiaOutputDeviceGL(
     }
   }
   // SRGB
-  capabilities_.sk_color_types[static_cast<int>(gfx::BufferFormat::RGBA_8888)] =
-      color_type;
-  capabilities_.sk_color_types[static_cast<int>(gfx::BufferFormat::RGBX_8888)] =
-      color_type;
-  capabilities_.sk_color_types[static_cast<int>(gfx::BufferFormat::BGRA_8888)] =
-      color_type;
-  capabilities_.sk_color_types[static_cast<int>(gfx::BufferFormat::BGRX_8888)] =
-      color_type;
+  capabilities_.sk_color_type_map[SinglePlaneFormat::kRGBA_8888] = color_type;
+  capabilities_.sk_color_type_map[SinglePlaneFormat::kRGBX_8888] = color_type;
+  capabilities_.sk_color_type_map[SinglePlaneFormat::kBGRA_8888] = color_type;
+  capabilities_.sk_color_type_map[SinglePlaneFormat::kBGRX_8888] = color_type;
   // HDR10
-  capabilities_
-      .sk_color_types[static_cast<int>(gfx::BufferFormat::RGBA_1010102)] =
+  capabilities_.sk_color_type_map[SinglePlaneFormat::kRGBA_1010102] =
       kRGBA_1010102_SkColorType;
   // scRGB linear
-  capabilities_.sk_color_types[static_cast<int>(gfx::BufferFormat::RGBA_F16)] =
+  capabilities_.sk_color_type_map[SinglePlaneFormat::kRGBA_F16] =
       kRGBA_F16_SkColorType;
 
   if (features::UseGpuVsync()) {
@@ -204,9 +190,9 @@ SkiaOutputDeviceGL::~SkiaOutputDeviceGL() {
 }
 
 bool SkiaOutputDeviceGL::Reshape(const ReshapeParams& params) {
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_CHROMEOS)
   DCHECK_EQ(params.transform, gfx::OVERLAY_TRANSFORM_NONE);
-#endif  // !BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // !BUILDFLAG(IS_CHROMEOS)
 
   const gfx::Size size = params.GfxSize();
   const SkColorType color_type = params.image_info.colorType();
@@ -323,14 +309,6 @@ void SkiaOutputDeviceGL::DoFinishSwapBuffers(const gfx::Size& size,
                                              gfx::SwapCompletionResult result) {
   DCHECK(result.release_fence.is_null());
   FinishSwapBuffers(std::move(result), size, std::move(frame));
-}
-
-void SkiaOutputDeviceGL::EnsureBackbuffer() {
-  gl_surface_->SetBackbufferAllocation(true);
-}
-
-void SkiaOutputDeviceGL::DiscardBackbuffer() {
-  gl_surface_->SetBackbufferAllocation(false);
 }
 
 SkSurface* SkiaOutputDeviceGL::BeginPaint(

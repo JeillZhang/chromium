@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "ui/base/webui/web_ui_util.h"
 
 #include <string_view>
@@ -15,7 +20,6 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
@@ -24,8 +28,8 @@
 #include "ui/base/window_open_disposition_utils.h"
 #include "ui/gfx/codec/png_codec.h"
 #include "ui/gfx/font.h"
-#include "ui/resources/grit/webui_resources.h"
 #include "ui/strings/grit/app_locale_settings.h"
+#include "ui/webui/resources/grit/webui_resources.h"
 #include "url/gurl.h"
 
 #if BUILDFLAG(IS_WIN)
@@ -60,14 +64,14 @@ std::string GetWebUiCssTextDefaults(const std::string& css_template) {
 std::string GetBitmapDataUrl(const SkBitmap& bitmap) {
   TRACE_EVENT2("ui", "GetBitmapDataUrl", "width", bitmap.width(), "height",
                bitmap.height());
-  std::vector<unsigned char> output;
-  gfx::PNGCodec::EncodeBGRASkBitmap(bitmap, false, &output);
-  return GetPngDataUrl(output.data(), output.size());
+  std::optional<std::vector<uint8_t>> output =
+      gfx::PNGCodec::EncodeBGRASkBitmap(bitmap, /*discard_transparency=*/false);
+  return GetPngDataUrl(output.value_or(std::vector<uint8_t>()));
 }
 
-std::string GetPngDataUrl(const unsigned char* data, size_t size) {
+std::string GetPngDataUrl(base::span<const uint8_t> data) {
   std::string output = "data:image/png;base64,";
-  base::Base64EncodeAppend(base::make_span(data, size), &output);
+  base::Base64EncodeAppend(data, &output);
   return output;
 }
 
@@ -214,16 +218,14 @@ void AppendWebUiCssTextDefaults(std::string* html) {
 std::string GetFontFamily() {
   std::string font_family = l10n_util::GetStringUTF8(IDS_WEB_FONT_FAMILY);
 
-// TODO(crbug.com/40118868): Revisit the macro expression once build flag switch
-// of lacros-chrome is complete.
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS)
+#if BUILDFLAG(IS_LINUX)
   std::string font_name = ui::ResourceBundle::GetSharedInstance()
                               .GetFont(ui::ResourceBundle::BaseFont)
                               .GetFontName();
   // Wrap |font_name| with quotes to ensure it will always be parsed correctly
   // in CSS.
   font_family = "\"" + font_name + "\", " + font_family;
-#endif
+#endif  // BUILDFLAG(IS_LINUX)
 
   return font_family;
 }

@@ -105,23 +105,26 @@ void TraceParserBlockingScript(const PendingScript* pending_script,
   if (!element)
     return;
   bool waiting_for_resources = !document.IsScriptExecutionReady();
-  std::unique_ptr<TracedValue> args =
-      GetTraceArgsForScriptElement(document, pending_script->StartingPosition(),
-                                   pending_script->UrlForTracing());
+
+  auto script_element_trace_lambda = [&]() {
+    return GetTraceArgsForScriptElement(document,
+                                        pending_script->StartingPosition(),
+                                        pending_script->UrlForTracing());
+  };
   if (!pending_script->IsReady()) {
     if (waiting_for_resources) {
       TRACE_EVENT_WITH_FLOW1(
           "blink", "YieldParserForScriptLoadAndBlockingResources", element,
-          TRACE_EVENT_FLAG_FLOW_OUT, "data", std::move(args));
+          TRACE_EVENT_FLAG_FLOW_OUT, "data", script_element_trace_lambda());
     } else {
       TRACE_EVENT_WITH_FLOW1("blink", "YieldParserForScriptLoad", element,
                              TRACE_EVENT_FLAG_FLOW_OUT, "data",
-                             std::move(args));
+                             script_element_trace_lambda());
     }
   } else if (waiting_for_resources) {
     TRACE_EVENT_WITH_FLOW1("blink", "YieldParserForScriptBlockingResources",
                            element, TRACE_EVENT_FLAG_FLOW_OUT, "data",
-                           std::move(args));
+                           script_element_trace_lambda());
   }
 }
 
@@ -447,18 +450,6 @@ bool HTMLParserScriptRunner::ExecuteScriptsWaitingForParsing() {
       return false;
   }
 
-  // Block the DOMContentLoaded event if there are pending async scripts, just
-  // like pending defer scripts do so by returning false here. The
-  // DOMContentLoaded event will be unblocked when this method is called from
-  // |NotifyNoRemainingAsyncScripts()| after all pending async scripts are
-  // evaluated.
-  if (base::FeatureList::IsEnabled(
-          features::kDOMContentLoadedWaitForAsyncScript) &&
-      document_ && document_->GetScriptRunner() &&
-      document_->GetScriptRunner()->HasAsyncScripts()) {
-    return false;
-  }
-
   return true;
 }
 
@@ -544,8 +535,7 @@ void HTMLParserScriptRunner::ProcessScriptElementInternal(
       case ScriptSchedulingType::kImmediate:
       case ScriptSchedulingType::kNotSet:
       case ScriptSchedulingType::kDeprecatedForceDefer:
-        NOTREACHED_IN_MIGRATION();
-        break;
+        NOTREACHED();
     }
 
     // <spec>... Decrement the parser's script nesting level by one. If the

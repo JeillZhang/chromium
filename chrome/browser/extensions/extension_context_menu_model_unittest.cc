@@ -18,7 +18,6 @@
 #include "base/values.h"
 #include "build/chromeos_buildflags.h"
 #include "chrome/app/chrome_command_ids.h"
-#include "chrome/browser/extensions/chrome_extension_browser_constants.h"
 #include "chrome/browser/extensions/context_menu_matcher.h"
 #include "chrome/browser/extensions/extension_action_runner.h"
 #include "chrome/browser/extensions/extension_action_test_util.h"
@@ -30,6 +29,7 @@
 #include "chrome/browser/extensions/permissions/permissions_updater.h"
 #include "chrome/browser/extensions/permissions/scripting_permissions_modifier.h"
 #include "chrome/browser/extensions/permissions/site_permissions_helper.h"
+#include "chrome/browser/extensions/permissions_url_constants.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/toolbar/toolbar_actions_model.h"
 #include "chrome/common/extensions/api/context_menus.h"
@@ -145,7 +145,7 @@ class MenuBuilder {
   MenuBuilder(const MenuBuilder&) = delete;
   MenuBuilder& operator=(const MenuBuilder&) = delete;
 
-  ~MenuBuilder() {}
+  ~MenuBuilder() = default;
 
   std::unique_ptr<ExtensionContextMenuModel> BuildMenu() {
     return std::make_unique<ExtensionContextMenuModel>(
@@ -298,7 +298,7 @@ class ExtensionContextMenuModelTest : public ExtensionServiceTestBase {
   display::test::TestScreen test_screen_;
 };
 
-ExtensionContextMenuModelTest::ExtensionContextMenuModelTest() {}
+ExtensionContextMenuModelTest::ExtensionContextMenuModelTest() = default;
 
 const Extension* ExtensionContextMenuModelTest::AddExtension(
     const std::string& name,
@@ -1468,7 +1468,7 @@ TEST_F(ExtensionContextMenuModelTest,
   InitializeEmptyExtensionService();
 
   scoped_refptr<const Extension> extension =
-      ExtensionBuilder("extension").AddPermissions({"activeTab"}).Build();
+      ExtensionBuilder("extension").AddAPIPermission("activeTab").Build();
   InitializeAndAddExtension(*extension);
 
   // Navigate to a url that should have "customize by extension" site
@@ -1561,7 +1561,7 @@ TEST_F(ExtensionContextMenuModelTest,
 
   // Add an extension that wants access to a.com.
   scoped_refptr<const Extension> extension =
-      ExtensionBuilder("extension").AddPermission("*://a.com/*").Build();
+      ExtensionBuilder("extension").AddHostPermission("*://a.com/*").Build();
   InitializeAndAddExtension(*extension);
 
   // Additionally, grant it the (unrequested) access to b.com.
@@ -1674,7 +1674,7 @@ TEST_F(ExtensionContextMenuModelTest,
   // Add an extension that wants access to a.com and b.com.
   scoped_refptr<const Extension> extension =
       ExtensionBuilder("extension")
-          .AddPermissions({"*://a.com/*", "*://b.com/*"})
+          .AddHostPermissions({"*://a.com/*", "*://b.com/*"})
           .Build();
   InitializeAndAddExtension(*extension);
 
@@ -1725,7 +1725,7 @@ TEST_F(ExtensionContextMenuModelTest, TestClickingPageAccessLearnMore) {
 
   // Add an extension that wants access to a.com.
   scoped_refptr<const Extension> extension =
-      ExtensionBuilder("extension").AddPermission("*://a.com/*").Build();
+      ExtensionBuilder("extension").AddHostPermission("*://a.com/*").Build();
   InitializeAndAddExtension(*extension);
 
   PermissionsManager* permissions_manager = PermissionsManager::Get(profile());
@@ -1753,8 +1753,9 @@ TEST_F(ExtensionContextMenuModelTest, TestClickingPageAccessLearnMore) {
   content::NavigationController& controller = web_contents->GetController();
   content::RenderFrameHostTester::CommitPendingLoad(&controller);
 
-  EXPECT_EQ(GURL(chrome_extension_constants::kRuntimeHostPermissionsHelpURL),
-            web_contents->GetLastCommittedURL());
+  EXPECT_EQ(
+      GURL(extension_permissions_constants::kRuntimeHostPermissionsHelpURL),
+      web_contents->GetLastCommittedURL());
 }
 
 TEST_F(ExtensionContextMenuModelTest, HistogramTest_Basic) {
@@ -1814,7 +1815,7 @@ TEST_F(ExtensionContextMenuModelTest, HistogramTest_CustomCommand) {
   InitializeEmptyExtensionService();
   scoped_refptr<const Extension> extension =
       ExtensionBuilder("extension")
-          .SetAction(ActionInfo::Type::kBrowser)
+          .SetAction(ActionInfo::Type::kAction)
           .Build();
   InitializeAndAddExtension(*extension);
 
@@ -1822,7 +1823,7 @@ TEST_F(ExtensionContextMenuModelTest, HistogramTest_CustomCommand) {
   ASSERT_TRUE(manager);
 
   MenuBuilder builder(extension, GetBrowser(), manager);
-  builder.AddContextItem(MenuItem::BROWSER_ACTION);
+  builder.AddContextItem(MenuItem::ACTION);
   std::unique_ptr<ExtensionContextMenuModel> menu = builder.BuildMenu();
   EXPECT_EQ(1, CountExtensionItems(*menu));
 
@@ -2299,7 +2300,7 @@ TEST_P(ExtensionContextMenuModelWithUserHostControlsTest,
 
   // Add an extension that wants access to a.com.
   scoped_refptr<const Extension> extension =
-      ExtensionBuilder("extension").AddPermission("*://a.com/*").Build();
+      ExtensionBuilder("extension").AddHostPermission("*://a.com/*").Build();
   InitializeAndAddExtension(*extension);
 
   EXPECT_FALSE(PermissionsManager::Get(profile())->HasWithheldHostPermissions(
@@ -2334,8 +2335,9 @@ TEST_P(ExtensionContextMenuModelWithUserHostControlsTest,
   content::NavigationController& controller = web_contents->GetController();
   content::RenderFrameHostTester::CommitPendingLoad(&controller);
 
-  EXPECT_EQ(web_contents->GetLastCommittedURL(),
-            GURL(chrome_extension_constants::kExtensionsSitePermissionsURL));
+  EXPECT_EQ(
+      web_contents->GetLastCommittedURL(),
+      GURL(extension_permissions_constants::kExtensionsSitePermissionsURL));
 }
 
 class ExtensionContextMenuModelWithUserHostControlsAndPermittedSitesTest

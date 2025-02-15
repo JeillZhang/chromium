@@ -2,11 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/formats/common/offset_byte_queue.h"
 
 #include <stdint.h>
 #include <string.h>
 
+#include <array>
 #include <memory>
 
 #include "testing/gtest/include/gtest/gtest.h"
@@ -16,7 +22,7 @@ namespace media {
 class OffsetByteQueueTest : public testing::Test {
  public:
   void SetUp() override {
-    uint8_t buf[256];
+    std::array<uint8_t, 256> buf;
     for (int i = 0; i < 256; i++) {
       buf[i] = i;
     }

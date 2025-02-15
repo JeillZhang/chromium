@@ -85,7 +85,9 @@ static StarboardAudioSampleInfo ToAudioSampleInfo(const AudioConfig& config) {
 }
 
 StarboardAudioDecoder::StarboardAudioDecoder(StarboardApiWrapper* starboard)
-    : StarboardDecoder(starboard, kStarboardMediaTypeAudio) {}
+    : StarboardDecoder(starboard, kStarboardMediaTypeAudio),
+      format_to_decode_to_(
+          StarboardPcmSampleFormat::kStarboardPcmSampleFormatS16) {}
 
 StarboardAudioDecoder::~StarboardAudioDecoder() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
@@ -99,13 +101,6 @@ void StarboardAudioDecoder::InitializeInternal() {
     GetStarboardApi().SetVolume(GetPlayer(), *volume_);
     volume_ = std::nullopt;
   }
-
-  // This might not be the correct location for this, so this is subject to
-  // change. We may eventually want to get this value from
-  // CastStarboardApiAdapter::GetInstance() (e.g. by adding a
-  // CastStarboardApiAdapterGetStarboardPcmSampleFormat() function to the
-  // adapter).
-  format_to_decode_to_ = StarboardPcmSampleFormat::kStarboardPcmSampleFormatS16;
 }
 
 const std::optional<StarboardAudioSampleInfo>&
@@ -191,7 +186,7 @@ BufferStatus StarboardAudioDecoder::PushBuffer(CastDecoderBuffer* buffer) {
 
   decoded_bytes_ += size_of_buffer;
 
-  return PushBufferInternal(std::move(sample), GetDrmInfo(*buffer),
+  return PushBufferInternal(std::move(sample), DrmInfoWrapper::Create(*buffer),
                             std::move(data_copy), size_of_buffer);
 }
 

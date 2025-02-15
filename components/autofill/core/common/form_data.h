@@ -21,6 +21,9 @@
 namespace autofill {
 
 class LogBuffer;
+namespace internal {
+class FormForest;
+}
 
 // Pair of a button title (e.g. "Register") and its type (e.g.
 // INPUT_ELEMENT_SUBMIT_TYPE).
@@ -118,9 +121,6 @@ struct FrameTokenWithPredecessor {
 // The input B is an unassociated and unowned field.
 // The input C is an unassociated but an owned field.
 //
-// TODO(crbug.com/40195555): Currently, Autofill ignores unowned fields in
-// shadow DOMs.
-//
 // The unowned fields of the frame constitute that frame's *unowned form*.
 //
 // Forms from different frames of the same WebContents may furthermore be
@@ -132,7 +132,8 @@ struct FrameTokenWithPredecessor {
 // [3] https://html.spec.whatwg.org/multipage/custom-elements.html#custom-elements-face-example
 // [4] https://html.spec.whatwg.org/multipage/input.html#attr-input-type
 // clang-format on
-struct FormData {
+class FormData {
+ public:
   struct FillData;
   // Returns true if many members of forms |a| and |b| are identical.
   //
@@ -148,7 +149,6 @@ struct FormData {
   // - FormData::submission_event,
   // - FormData::username_predictions,
   // - FormData::is_gaia_with_skip_save_password_form,
-  // - FormData::frame_id,
   // - some fields of FormFieldData (see FormFieldData::Equal()).
   static bool DeepEqual(const FormData& a, const FormData& b);
 
@@ -167,20 +167,11 @@ struct FormData {
   // Must not be leaked to renderer process. See FormGlobalId for details.
   FormGlobalId global_id() const { return {host_frame(), renderer_id()}; }
 
-  // TODO(crbug.com/40183094): This function is deprecated. Use
-  // FormData::DeepEqual() instead. Returns true if two forms are the same, not
-  // counting the values of the form elements.
-  bool SameFormAs(const FormData& other) const;
-
   // Returns a pointer to the field if found, otherwise returns nullptr.
   // Note that FormFieldData::global_id() is not guaranteed to be unique among
   // FormData::fields.
   const FormFieldData* FindFieldByGlobalId(
       const FieldGlobalId& global_id) const;
-
-  // Finds a field in the FormData by its name or id.
-  // Returns a pointer to the field if found, otherwise returns nullptr.
-  FormFieldData* FindFieldByName(std::u16string_view name_or_id);
 
   // The id attribute of the form.
   const std::u16string& id_attribute() const { return id_attribute_; }
@@ -194,8 +185,8 @@ struct FormData {
     name_attribute_ = std::move(name_attribute);
   }
 
-  // NOTE: Update `SameFormAs()` and `FormDataAndroid::SimilarFormAs()` if
-  // needed when adding new a member.
+  // NOTE: Update `FormDataAndroid::SimilarFormAs()` if needed when adding new a
+  // member.
 
   // The name by which autofill knows this form. This is generally either the
   // name attribute or the id_attribute value, which-ever is non-empty with
@@ -218,8 +209,8 @@ struct FormData {
   void set_url(GURL url) { url_ = std::move(url); }
 
   // The full URL, including query parameters and fragment.
-  // This value should be set only for password forms.
-  // This value should not be sent via mojo.
+  // If `kAutofillIncludeUrlInCrowdsourcing` is disabled, this value should only
+  // be set for password forms. This value should not be sent via mojo.
   const GURL& full_url() const { return full_url_; }
   void set_full_url(GURL full_url) { full_url_ = std::move(full_url); }
 
@@ -310,7 +301,22 @@ struct FormData {
   //   come from subframes, they're flattened into the same FormData, which then
   //   contains two representations of F; that is, FormData::fields contains two
   //   fields with the same FormFieldData::global_id().
-  std::vector<FormFieldData> fields;
+  const std::vector<FormFieldData>& fields() const { return fields_; }
+  void set_fields(std::vector<FormFieldData> new_fields) {
+    fields_ = std::move(new_fields);
+  }
+  [[nodiscard]] std::vector<FormFieldData> ExtractFields() {
+    return std::exchange(fields_, std::vector<FormFieldData>());
+  }
+  class MutableFieldsPassKey {
+    constexpr MutableFieldsPassKey() = default;
+    friend class FormDataAndroid;
+    friend class internal::FormForest;
+  };
+  // Use `ExtractFields()` and `set_fields()` instead if possible.
+  std::vector<FormFieldData>& mutable_fields(MutableFieldsPassKey pass_key) {
+    return fields_;
+  }
 
   // Contains unique renderer IDs of text elements which are predicted to be
   // usernames. The order matters: elements are sorted in descending likelihood
@@ -332,15 +338,19 @@ struct FormData {
   void set_is_gaia_with_skip_save_password_form(
       bool is_gaia_with_skip_save_password_form) {
     is_gaia_with_skip_save_password_form_ =
-        std::move(is_gaia_with_skip_save_password_form);
+        is_gaia_with_skip_save_password_form;
   }
 
-#if BUILDFLAG(IS_IOS)
-  const std::string& frame_id() const { return frame_id_; }
-  void set_frame_id(std::string frame_id) { frame_id_ = std::move(frame_id); }
-#endif
+  // Currently likely_contains_captcha_ is initialized only on Android platform.
+  // For all other platforms its value is always `false`.
+  bool likely_contains_captcha() const { return likely_contains_captcha_; }
+  void set_likely_contains_captcha(bool likely_contains_captcha) {
+    likely_contains_captcha_ = likely_contains_captcha;
+  }
 
  private:
+  friend class FormDataTestApi;
+
   std::u16string id_attribute_;
   std::u16string name_attribute_;
   std::u16string name_;
@@ -356,11 +366,10 @@ struct FormData {
   std::vector<FrameTokenWithPredecessor> child_frames_;
   mojom::SubmissionIndicatorEvent submission_event_ =
       mojom::SubmissionIndicatorEvent::NONE;
+  std::vector<FormFieldData> fields_;
   std::vector<FieldRendererId> username_predictions_;
   bool is_gaia_with_skip_save_password_form_ = false;
-#if BUILDFLAG(IS_IOS)
-  std::string frame_id_;
-#endif
+  bool likely_contains_captcha_ = false;
 };
 
 // Whether any of the fields in |form| is a non-empty password field.
@@ -368,6 +377,12 @@ bool FormHasNonEmptyPasswordField(const FormData& form);
 
 // For testing.
 std::ostream& operator<<(std::ostream& os, const FormData& form);
+
+#if defined(UNIT_TEST)
+inline bool operator==(const FormData& lhs, const FormData& rhs) {
+  return FormData::DeepEqual(lhs, rhs);
+}
+#endif  // defined(UNIT_TEST)
 
 // Serialize FormData. Used by the PasswordManager to persist FormData
 // pertaining to password forms. Serialized data is appended to |pickle|.

@@ -131,7 +131,7 @@ enum class NotificationCatalogName {
   kVMCameraMic = 112,
   kSecurityToken = 113,
   kCrostiniExportImport = 114,
-  kLacrosCannotLaunch = 115,
+  // [Deprecated] kLacrosCannotLaunch = 115,
   kRequestFileSystem = 116,
   kNetworkPortalDetector = 117,
   kCrostiniPackage = 118,
@@ -199,7 +199,20 @@ enum class NotificationCatalogName {
   kGrowthFramework = 180,
   kAudioSelection = 181,
   kExtendedUpdatesAvailable = 182,
-  kMaxValue = kExtendedUpdatesAvailable
+  kOnDeviceAppControls = 183,
+  kFaceGazeAssetsDownloaded = 184,
+  kFaceGazeAssetsFailed = 185,
+  kDeviceRestrictionScheduleUpcomingLogout = 186,
+  kDeviceRestrictionSchedulePostLogout = 187,
+  kTouchpadDisabled = 188,
+  kOnTaskEnterLockedMode = 189,
+  kOnTaskSessionEnd = 190,
+  kOnTaskAddContentToBundle = 191,
+  kOnTaskRemoveContentFromBundle = 192,
+  kScannerAction = 193,
+  kChromeAppDeprecation = 194,
+  kDownloadImageFromLobster = 195,
+  kMaxValue = kDownloadImageFromLobster
 };
 
 // A living catalog that registers system nudges.
@@ -237,14 +250,20 @@ enum class NudgeCatalogName {
   kCaptureModeEducationQuickSettingsNudge = 24,
   kGameDashboardControlsNudge = 25,
   // [Deprecated] kWebsiteTelemetryReportingNudge = 26,
-  kStandaloneWindowMigrationUx = 27,
+  // [Deprecated] kStandaloneWindowMigrationUx = 27,
   kFocusModeEndingMomentNudge = 28,
-  kPineEducationNudge = 29,
+  kInformedRestoreEducationNudge = 29,
   kGrowthCampaignNudge = 30,
   kSearchTopRowKeyPressed = 31,
   kSixPackRemappingPressed = 32,
   kCapsLockShortcutPressed = 33,
-  kMaxValue = kCapsLockShortcutPressed
+  kMahi = 34,
+  kBirchPrivacy = 35,
+  kVideoConferenceTraySidetoneNotSupported = 36,
+  kVideoConferenceTraySidetoneEnabled = 37,
+  kGraduationAppEnabled = 38,
+  kSunfishLauncherNudge = 39,
+  kMaxValue = kSunfishLauncherNudge
 };
 
 // A living catalog that registers toasts.
@@ -303,8 +322,20 @@ enum class ToastCatalogName {
   kVideoConferenceTraySpeakOnMuteOptInConfirmation = 48,
   kAppNotClosable = 49,
   kGameDashboardEnterTablet = 50,
-  kPineOnboarding = 51,
-  kMaxValue = kPineOnboarding
+  kInformedRestoreOnboarding = 51,
+  kTouchpadDisabled = 52,
+  // [Deprecated] kOnTaskEnterLockedMode = 53,
+  // [Deprecated] kOnTaskSessionEnd = 54,
+  kOnTaskUrlBlocked = 55,
+  kCopyImageToClipboardAction = 56,
+  kCaptureModeTextCopied = 57,
+  kCoralSavedGroupLimitMax = 58,
+  kScannerActionSuccess = 59,
+  kScannerActionFailure = 60,
+  kCameraNowAllowed = 61,
+  kCameraNowDisallowed = 62,
+  kCameraForceDisabled = 63,
+  kMaxValue = kCameraForceDisabled
 };
 
 }  // namespace ash

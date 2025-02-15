@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/342213636): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "content/web_test/renderer/test_runner.h"
 
 #include <stddef.h>
@@ -1123,7 +1128,7 @@ void TestRunnerBindings::SetEffectiveConnectionType(
   else if (connection_type == "Type4G")
     web_type = blink::WebEffectiveConnectionType::kType4G;
   else
-    NOTREACHED_IN_MIGRATION();
+    NOTREACHED();
 
   if (runner_)
     runner_->SetEffectiveConnectionType(web_type);
@@ -1139,7 +1144,7 @@ std::string TestRunnerBindings::GetWritableDirectory() {
 }
 
 void TestRunnerBindings::SetFilePathForMockFileDialog(const std::string& path) {
-  if (frame_) {
+  if (!frame_) {
     return;
   }
   frame_->GetWebTestControlHostRemote()->SetFilePathForMockFileDialog(
@@ -2174,7 +2179,7 @@ void TestRunnerBindings::CopyImageThen(int x,
     return;
   }
   mojo::Remote<blink::mojom::ClipboardHost> remote_clipboard;
-  frame_->GetBrowserInterfaceBroker()->GetInterface(
+  frame_->GetBrowserInterfaceBroker().GetInterface(
       remote_clipboard.BindNewPipeAndPassReceiver());
 
   blink::ClipboardSequenceNumberToken sequence_number_before;
@@ -2191,8 +2196,7 @@ void TestRunnerBindings::CopyImageThen(int x,
 
   mojo_base::BigBuffer png_data;
   remote_clipboard->ReadPng(ui::ClipboardBuffer::kCopyPaste, &png_data);
-  SkBitmap bitmap;
-  gfx::PNGCodec::Decode(png_data.data(), png_data.size(), &bitmap);
+  SkBitmap bitmap = gfx::PNGCodec::Decode(png_data);
 
   blink::WebLocalFrame* web_frame = GetWebFrame();
   v8::Isolate* isolate = web_frame->GetAgentGroupScheduler()->Isolate();
@@ -2399,7 +2403,7 @@ void TestRunnerBindings::SetPageZoomFactor(double zoom_factor) {
   // for the operation to complete, if it can tell which number to use in
   // min-resolution.
   frame_->GetLocalRootWebFrameWidget()->SetZoomLevelForTesting(
-      blink::PageZoomFactorToZoomLevel(zoom_factor));
+      blink::ZoomFactorToZoomLevel(zoom_factor));
 }
 
 std::string TestRunnerBindings::TooltipText() {
@@ -2590,8 +2594,7 @@ bool TestRunner::WorkQueue::ProcessWorkItemInternal(
       source.GetWebTestControlHostRemote()->Reload();
       return true;
   }
-  NOTREACHED_IN_MIGRATION();
-  return false;
+  NOTREACHED();
 }
 
 void TestRunner::WorkQueue::ReplicateStates(const base::Value::Dict& values,
@@ -2889,7 +2892,7 @@ SkBitmap TestRunner::PrintFrameToBitmap(blink::WebLocalFrame* frame) {
   uint32_t page_count = frame->PrintBegin(print_params, blink::WebNode());
 
   const printing::PageRanges& page_ranges = GetPrintingPageRanges(frame);
-  blink::WebVector<uint32_t> pages(
+  std::vector<uint32_t> pages(
       printing::PageNumber::GetPages(page_ranges, page_count));
   gfx::Size spool_size = frame->SpoolSizeInPixelsForTesting(pages);
 
@@ -2941,8 +2944,7 @@ SkBitmap TestRunner::DumpPixelsInRenderer(blink::WebLocalFrame* main_frame) {
 
   return PrintFrameToBitmap(target_frame);
 #else
-  NOTREACHED_IN_MIGRATION();
-  return SkBitmap();
+  NOTREACHED();
 #endif
 }
 
@@ -3154,16 +3156,6 @@ void TestRunner::FinishTestIfReady(WebFrameTestProxy& source) {
 
 void TestRunner::TestFinishedFromSecondaryRenderer(WebFrameTestProxy& source) {
   NotifyDone(source);
-}
-
-void TestRunner::ResetRendererAfterWebTest() {
-  WebFrameTestProxy* main_frame = FindInProcessMainWindowMainFrame();
-  // When the about:blank navigation happens in a new process, the new
-  // WebFrameTestProxy is not designated to be the "MainWindowMainFrame" one
-  // yet. It will be tracked later after receiving the SetTestConfiguration IPC.
-  if (main_frame)
-    main_frame->Reset();
-  Reset();
 }
 
 void TestRunner::AddMainFrame(WebFrameTestProxy& frame) {

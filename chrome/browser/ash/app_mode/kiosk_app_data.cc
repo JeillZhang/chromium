@@ -36,7 +36,6 @@
 #include "components/prefs/scoped_user_pref_update.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
-#include "extensions/browser/api/declarative_net_request/ruleset_install_pref.h"
 #include "extensions/browser/crx_file_info.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_util.h"
@@ -119,8 +118,7 @@ class KioskAppData::CrxLoader : public extensions::SandboxedUnpackerClient {
                        std::unique_ptr<base::Value::Dict> original_manifest,
                        const extensions::Extension* extension,
                        const SkBitmap& install_icon,
-                       extensions::declarative_net_request::RulesetInstallPrefs
-                           ruleset_install_prefs) override {
+                       base::Value::Dict ruleset_install_prefs) override {
     DCHECK(task_runner_->RunsTasksInCurrentSequence());
 
     const extensions::KioskModeInfo* info =
@@ -269,7 +267,7 @@ class KioskAppData::WebstoreDataParser
 ////////////////////////////////////////////////////////////////////////////////
 // KioskAppData
 
-KioskAppData::KioskAppData(KioskAppDataDelegate* delegate,
+KioskAppData::KioskAppData(KioskAppDataDelegate& delegate,
                            const std::string& app_id,
                            const AccountId& account_id,
                            const GURL& update_url,
@@ -342,7 +340,7 @@ void KioskAppData::SetStatusForTest(Status status) {
 
 // static
 std::unique_ptr<KioskAppData> KioskAppData::CreateForTest(
-    KioskAppDataDelegate* delegate,
+    KioskAppDataDelegate& delegate,
     const std::string& app_id,
     const AccountId& account_id,
     const GURL& update_url,
@@ -360,10 +358,6 @@ void KioskAppData::SetStatus(Status status) {
   }
 
   status_ = status;
-
-  if (!delegate_) {
-    return;
-  }
 
   switch (status_) {
     case Status::kInit:
@@ -415,12 +409,7 @@ void KioskAppData::SetCache(const std::string& name,
   icon_ = gfx::ImageSkia::CreateFrom1xBitmap(icon);
   icon_.MakeThreadSafe();
 
-  base::FilePath cache_dir;
-  if (delegate_) {
-    delegate_->GetKioskAppIconCacheDir(&cache_dir);
-  }
-
-  SaveIcon(icon, cache_dir);
+  SaveIcon(icon, delegate_->GetKioskAppIconCacheDir());
 
   PrefService* local_state = g_browser_process->local_state();
   ScopedDictPrefUpdate dict_update(local_state, dictionary_name());
@@ -615,9 +604,7 @@ void KioskAppData::OnCrxLoadFinished(const CrxLoader* crx_loader) {
                << app_id();
     // If after unpacking the cached extension we received an error, schedule
     // a redownload upon next session start(kiosk or login).
-    if (delegate_) {
-      delegate_->OnExternalCacheDamaged(app_id());
-    }
+    delegate_->OnExternalCacheDamaged(app_id());
 
     SetStatus(Status::kInit);
     return;

@@ -14,9 +14,9 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/gmock_callback_support.h"
 #include "base/time/time.h"
-#include "base/uuid.h"
 #include "base/values.h"
 #include "components/attribution_reporting/aggregatable_debug_reporting_config.h"
+#include "components/attribution_reporting/aggregatable_named_budget_defs.h"
 #include "components/attribution_reporting/aggregation_keys.h"
 #include "components/attribution_reporting/filters.h"
 #include "components/attribution_reporting/os_registration.h"
@@ -58,7 +58,6 @@
 #include "content/shell/browser/shell.h"
 #include "net/base/net_errors.h"
 #include "net/base/schemeful_site.h"
-#include "services/network/public/cpp/trigger_verification.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "third_party/blink/public/mojom/aggregation_service/aggregatable_report.mojom.h"
 #include "url/origin.h"
@@ -74,6 +73,8 @@ using ::attribution_reporting::SuitableOrigin;
 using ::attribution_reporting::mojom::SourceType;
 
 using ::base::test::RunOnceCallback;
+
+using SentResult = ::content::SendResult::Sent::Result;
 
 using ::testing::_;
 using ::testing::ElementsAre;
@@ -298,7 +299,6 @@ IN_PROC_BROWSER_TEST_F(
   ASSERT_TRUE(ExecJsInWebUI(JsReplace(kScript, kCompleteTitle)));
 
   TitleWatcher title_watcher(shell()->web_contents(), kCompleteTitle);
-  ClickRefreshButton();
   EXPECT_EQ(kCompleteTitle, title_watcher.WaitAndGetTitle());
 }
 
@@ -320,7 +320,7 @@ IN_PROC_BROWSER_TEST_F(AttributionInternalsWebUiBrowserTest,
               .SetSourceEventId(std::numeric_limits<uint64_t>::max())
               .SetAttributionLogic(StoredSource::AttributionLogic::kNever)
               .SetDebugKey(19)
-              .SetDebugCookieSet(true)
+              .SetCookieBasedDebugAllowed(true)
               .SetDestinationSites({
                   net::SchemefulSite::Deserialize("https://a.test"),
                   net::SchemefulSite::Deserialize("https://b.test"),
@@ -344,6 +344,15 @@ IN_PROC_BROWSER_TEST_F(AttributionInternalsWebUiBrowserTest,
                                   /*key_piece=*/15, /*debug_data=*/{},
                                   /*aggregation_coordinator_origin=*/
                                   std::nullopt)))
+              .SetAttributionScopesData(
+                  *attribution_reporting::AttributionScopesData::Create(
+                      attribution_reporting::AttributionScopesSet({"a"}),
+                      /*attribution_scope_limit=*/3, /*max_event_states=*/3))
+              .SetAggregatableNamedBudgetDefs(
+                  *attribution_reporting::AggregatableNamedBudgetDefs::
+                      FromBudgetMap({
+                          {"a", 65536},
+                      }))
               .BuildStored(),
           SourceBuilder(now + base::Hours(1))
               .SetSourceId(StoredSource::Id(2))
@@ -434,7 +443,7 @@ IN_PROC_BROWSER_TEST_F(AttributionInternalsWebUiBrowserTest,
       JsReplace(kScript, kMaxUint64String, kCompleteTitle)));
 
   TitleWatcher title_watcher(shell()->web_contents(), kCompleteTitle);
-  ClickRefreshButton();
+  manager()->NotifySourcesChanged();
   ASSERT_EQ(kCompleteTitle, title_watcher.WaitAndGetTitle());
 
   const std::u16string kDetailedTitle = u"Detailed";
@@ -453,24 +462,28 @@ IN_PROC_BROWSER_TEST_F(AttributionInternalsWebUiBrowserTest,
         tds[10]?.innerText === '{\n "a": [\n  "b",\n  "c"\n ]\n}' &&
         // Debug Cookie Set
         tds[11]?.innerText === 'true' &&
-        // Max Reports
-        tds[12]?.innerText === '3' &&
+        // Attribution Scopes Data
+        tds[12]?.innerText === '{\n   "limit": 3,\n   "max_event_states": 3,\n   "values": [ "a" ]\n}\n' &&
+        // Remaining Aggregatable Debug Budget
+        tds[13]?.innerText === '100 / 65536' &&
+        // Aggregatable Debug Key Piece
+        tds[14]?.innerText === '0xf' &&
         // Epsilon
-        tds[13]?.innerText === '14.000' &&
+        tds[15]?.innerText === '14.000' &&
         // Trigger Data Matching
-        tds[14]?.innerText === 'modulus' &&
+        tds[16]?.innerText === 'modulus' &&
         // Event-Level Dedup Keys
-        tds[16]?.children[0]?.children[0]?.innerText === '13' &&
-        tds[16]?.children[0]?.children[1]?.innerText === '17' &&
-        // Budget Consumed
-        tds[18]?.innerText === '1300 / 65536' &&
+        tds[18]?.children[0]?.children[0]?.innerText === '13' &&
+        tds[18]?.children[0]?.children[1]?.innerText === '17' &&
+        // Remaining Aggregatable Attribution Budget
+        tds[20]?.innerText === '1300 / 65536' &&
+        // Aggregatable Named Budgets
+        tds[21]?.innerText === '{\n   \"a\": {\n      \"original_budget\": 65536,\n      \"remaining_budget\": 65536\n   }\n}\n' &&
         // Aggregation Keys
-        tds[19]?.innerText === '{\n "a": "0x1"\n}' &&
+        tds[22]?.innerText === '{\n "a": "0x1"\n}' &&
         // Aggregatable Dedup Keys
-        tds[20]?.children[0]?.children[0]?.innerText === '14' &&
-        tds[20]?.children[0]?.children[1]?.innerText === '18' &&
-        tds[21]?.innerText === '100 / 65536' &&
-        tds[22]?.innerText === '0xf'
+        tds[23]?.children[0]?.children[0]?.innerText === '14' &&
+        tds[23]?.children[0]?.children[1]?.innerText === '18'
       ) {
         if (obs) {
           obs.disconnect();
@@ -546,79 +559,74 @@ IN_PROC_BROWSER_TEST_F(AttributionInternalsWebUiBrowserTest,
 
   TitleWatcher title_watcher(shell()->web_contents(), kCompleteTitle);
   SetTitleOnReportsTableEmpty(kCompleteTitle);
-  ClickRefreshButton();
   ASSERT_EQ(kCompleteTitle, title_watcher.WaitAndGetTitle());
 }
 
 IN_PROC_BROWSER_TEST_F(AttributionInternalsWebUiBrowserTest,
-                       WebUIShownWithManager_DebugModeDisabled) {
+                       WebUIShownWithManager_DebugModeChanged) {
   NavigateAndWaitForObserver();
 
   // Create a mutation observer to wait for the content to render to the dom.
   // Waiting on calls to `MockAttributionManager` is not sufficient because the
   // results are returned in promises.
-  static constexpr char kScript[] = R"(
-    const reportDelays = document.getElementById('report-delays');
-    const noise = document.getElementById('noise');
-    const setTitleIfDone = (_, obs) => {
-      if (reportDelays.innerText === 'enabled' &&
-          noise.innerText === 'enabled') {
-        if (obs) {
-          obs.disconnect();
+  {
+    static constexpr char kScript[] = R"(
+      const reportDelays = document.getElementById('report-delays');
+      const noise = document.getElementById('noise');
+      const setTitleIfDone = (_, obs) => {
+        if (reportDelays.innerText === 'enabled' &&
+            noise.innerText === 'enabled') {
+          if (obs) {
+            obs.disconnect();
+          }
+          document.title = $1;
+          return true;
         }
-        document.title = $1;
-        return true;
+        return false;
+      };
+      if (!setTitleIfDone()) {
+        const obs = new MutationObserver(setTitleIfDone);
+        obs.observe(reportDelays, {childList: true, subtree: true, characterData: true});
+        obs.observe(noise, {childList: true, subtree: true, characterData: true});
       }
-      return false;
-    };
-    if (!setTitleIfDone()) {
-      const obs = new MutationObserver(setTitleIfDone);
-      obs.observe(reportDelays, {childList: true, subtree: true, characterData: true});
-      obs.observe(noise, {childList: true, subtree: true, characterData: true});
-    }
-  )";
-  ASSERT_TRUE(ExecJsInWebUI(JsReplace(kScript, kCompleteTitle)));
+    )";
+    ASSERT_TRUE(ExecJsInWebUI(JsReplace(kScript, kCompleteTitle)));
 
-  TitleWatcher title_watcher(shell()->web_contents(), kCompleteTitle);
-  ClickRefreshButton();
-  EXPECT_EQ(kCompleteTitle, title_watcher.WaitAndGetTitle());
-}
+    TitleWatcher title_watcher(shell()->web_contents(), kCompleteTitle);
+    ASSERT_EQ(kCompleteTitle, title_watcher.WaitAndGetTitle());
+  }
 
-IN_PROC_BROWSER_TEST_F(AttributionInternalsWebUiBrowserTest,
-                       WebUIShownWithManager_DebugModeEnabled) {
-  base::CommandLine::ForCurrentProcess()->AppendSwitch(
-      switches::kAttributionReportingDebugMode);
-
-  NavigateAndWaitForObserver();
+  manager()->NotifyDebugModeChanged(/*debug_mode=*/true);
 
   // Create a mutation observer to wait for the content to render to the dom.
   // Waiting on calls to `MockAttributionManager` is not sufficient because the
   // results are returned in promises.
-  static constexpr char kScript[] = R"(
-    const reportDelays = document.getElementById('report-delays');
-    const noise = document.getElementById('noise');
-    const setTitleIfDone = (_, obs) => {
-      if (reportDelays.innerText === 'disabled' &&
-          noise.innerText === 'disabled') {
-        if (obs) {
-          obs.disconnect();
+  {
+    static constexpr char kScript[] = R"(
+      const reportDelays = document.getElementById('report-delays');
+      const noise = document.getElementById('noise');
+      const setTitleIfDone = (_, obs) => {
+        if (reportDelays.innerText === 'disabled' &&
+            noise.innerText === 'disabled') {
+          if (obs) {
+            obs.disconnect();
+          }
+          document.title = $1;
+          return true;
         }
-        document.title = $1;
-        return true;
+        return false;
+      };
+      if (!setTitleIfDone()) {
+        const obs = new MutationObserver(setTitleIfDone);
+        obs.observe(reportDelays, {childList: true, subtree: true, characterData: true});
+        obs.observe(noise, {childList: true, subtree: true, characterData: true});
       }
-      return false;
-    };
-    if (!setTitleIfDone()) {
-      const obs = new MutationObserver(setTitleIfDone);
-      obs.observe(reportDelays, {childList: true, subtree: true, characterData: true});
-      obs.observe(noise, {childList: true, subtree: true, characterData: true});
-    }
-  )";
-  ASSERT_TRUE(ExecJsInWebUI(JsReplace(kScript, kCompleteTitle)));
+    )";
+    ASSERT_TRUE(ExecJsInWebUI(JsReplace(kScript, kCompleteTitle)));
 
-  TitleWatcher title_watcher(shell()->web_contents(), kCompleteTitle);
-  ClickRefreshButton();
-  EXPECT_EQ(kCompleteTitle, title_watcher.WaitAndGetTitle());
+    TitleWatcher title_watcher(shell()->web_contents(), kCompleteTitle);
+    EXPECT_EQ(kCompleteTitle, title_watcher.WaitAndGetTitle());
+  }
 }
 
 IN_PROC_BROWSER_TEST_F(AttributionInternalsWebUiBrowserTest,
@@ -686,20 +694,20 @@ IN_PROC_BROWSER_TEST_F(AttributionInternalsWebUiBrowserTest,
 
   const base::Time now = base::Time::Now();
 
-  manager()->NotifyReportSent(ReportBuilder(AttributionInfoBuilder().Build(),
-                                            SourceBuilder(now).BuildStored())
-                                  .SetReportTime(now + base::Hours(3))
-                                  .Build(),
-                              /*is_debug_report=*/false,
-                              SendResult(SendResult::Status::kSent, net::OK,
-                                         /*http_response_code=*/200));
+  manager()->NotifyReportSent(
+      ReportBuilder(AttributionInfoBuilder().Build(),
+                    SourceBuilder(now).BuildStored())
+          .SetReportTime(now + base::Hours(3))
+          .Build(),
+      /*is_debug_report=*/false,
+      SendResult(SendResult::Sent(SentResult::kSent, /*status=*/200)));
   manager()->NotifyReportSent(ReportBuilder(AttributionInfoBuilder().Build(),
                                             SourceBuilder(now).BuildStored())
                                   .SetReportTime(now + base::Hours(4))
                                   .SetPriority(-1)
                                   .Build(),
                               /*is_debug_report=*/false,
-                              SendResult(SendResult::Status::kDropped));
+                              SendResult(SendResult::Dropped()));
   manager()->NotifyReportSent(
       ReportBuilder(AttributionInfoBuilder().Build(),
                     SourceBuilder(now).BuildStored())
@@ -707,7 +715,8 @@ IN_PROC_BROWSER_TEST_F(AttributionInternalsWebUiBrowserTest,
           .SetPriority(-2)
           .Build(),
       /*is_debug_report=*/false,
-      SendResult(SendResult::Status::kFailure, net::ERR_METHOD_NOT_SUPPORTED));
+      SendResult(SendResult::Sent(SentResult::kFailure,
+                                  net::ERR_METHOD_NOT_SUPPORTED)));
 
   ON_CALL(*manager(), GetPendingReportsForInternalUse)
       .WillByDefault(base::test::RunOnceCallbackRepeatedly<1>(
@@ -723,17 +732,17 @@ IN_PROC_BROWSER_TEST_F(AttributionInternalsWebUiBrowserTest,
                   .Build()}));
   manager()->NotifyTriggerHandled(CreateReportResult(
       /*trigger_time=*/base::Time::Now(), DefaultTrigger(),
-      AttributionTrigger::EventLevelResult::kSuccessDroppedLowerPriority,
-      AttributionTrigger::AggregatableResult::kNoHistograms,
-      /*replaced_event_level_report=*/
-      ReportBuilder(AttributionInfoBuilder().Build(),
-                    SourceBuilder(now).BuildStored())
-          .SetReportTime(now + base::Hours(1))
-          .SetPriority(11)
-          .Build(),
-      /*new_event_level_report=*/IrreleventEventLevelReport(),
-      /*new_aggregatable_report=*/std::nullopt,
-      /*source=*/SourceBuilder().BuildStored()));
+      CreateReportResult::EventLevelSuccess(
+          /*new_event_level_report=*/IrreleventEventLevelReport(),
+          /*replaced_event_level_report=*/
+          ReportBuilder(AttributionInfoBuilder().Build(),
+                        SourceBuilder(now).BuildStored())
+              .SetReportTime(now + base::Hours(1))
+              .SetPriority(11)
+              .Build()),
+      /*aggregatable_result=*/CreateReportResult::NoHistograms(),
+      /*source=*/SourceBuilder().BuildStored(),
+      /*min_null_aggregatable_report_time=*/std::nullopt));
 
   {
     static constexpr char kScript[] = R"(
@@ -778,7 +787,7 @@ IN_PROC_BROWSER_TEST_F(AttributionInternalsWebUiBrowserTest,
     ASSERT_TRUE(ExecJsInWebUI(JsReplace(kScript, kCompleteTitle)));
 
     TitleWatcher title_watcher(shell()->web_contents(), kCompleteTitle);
-    ClickRefreshButton();
+    manager()->NotifyReportsChanged();
     ASSERT_EQ(kCompleteTitle, title_watcher.WaitAndGetTitle());
   }
 
@@ -934,11 +943,11 @@ IN_PROC_BROWSER_TEST_F(AttributionInternalsWebUiBrowserTest,
 
   // Wait for the table to rendered.
   TitleWatcher title_watcher(shell()->web_contents(), kCompleteTitle);
-  ClickRefreshButton();
+  manager()->NotifyReportsChanged();
   manager()->NotifyReportSent(report,
                               /*is_debug_report=*/false,
-                              SendResult(SendResult::Status::kSent, net::OK,
-                                         /*http_response_code=*/200));
+                              SendResult(SendResult::Sent(SentResult::kSent,
+                                                          /*status=*/200)));
   ASSERT_EQ(kCompleteTitle, title_watcher.WaitAndGetTitle());
 
   // Click the clear storage button and expect that the report table is emptied.
@@ -1011,7 +1020,7 @@ IN_PROC_BROWSER_TEST_F(AttributionInternalsWebUiBrowserTest,
 
   // Wait for the table to rendered.
   TitleWatcher title_watcher(shell()->web_contents(), kCompleteTitle);
-  ClickRefreshButton();
+  manager()->NotifySourcesChanged();
   ASSERT_EQ(kCompleteTitle, title_watcher.WaitAndGetTitle());
 
   // Click the clear storage button and expect that the source table is emptied.
@@ -1139,25 +1148,24 @@ IN_PROC_BROWSER_TEST_F(
 
   std::vector<blink::mojom::AggregatableReportHistogramContribution>
       contributions{blink::mojom::AggregatableReportHistogramContribution(
-          1, 2, /*filtering_id=*/std::nullopt)};
+          /*bucket=*/1, /*value=*/2, /*filtering_id=*/3)};
 
   manager()->NotifyReportSent(
       ReportBuilder(AttributionInfoBuilder().Build(),
                     SourceBuilder(now).BuildStored())
           .SetReportTime(now + base::Hours(3))
           .SetAggregatableHistogramContributions(contributions)
-          .SetVerificationToken("abc")
           .BuildAggregatableAttribution(),
       /*is_debug_report=*/false,
-      SendResult(SendResult::Status::kSent, net::OK,
-                 /*http_response_code=*/200));
+      SendResult(SendResult::Sent(SentResult::kSent,
+                                  /*status=*/200)));
   manager()->NotifyReportSent(
       ReportBuilder(AttributionInfoBuilder().Build(),
                     SourceBuilder(now).BuildStored())
           .SetReportTime(now + base::Hours(4))
           .SetAggregatableHistogramContributions(contributions)
           .BuildAggregatableAttribution(),
-      /*is_debug_report=*/false, SendResult(SendResult::Status::kDropped));
+      /*is_debug_report=*/false, SendResult(SendResult::Dropped()));
   manager()->NotifyReportSent(
       ReportBuilder(AttributionInfoBuilder().Build(),
                     SourceBuilder(now).BuildStored())
@@ -1165,7 +1173,7 @@ IN_PROC_BROWSER_TEST_F(
           .SetAggregatableHistogramContributions(contributions)
           .BuildAggregatableAttribution(),
       /*is_debug_report=*/false,
-      SendResult(SendResult::Status::kAssemblyFailure));
+      SendResult(SendResult::AssemblyFailure(/*transient=*/false)));
   manager()->NotifyReportSent(
       ReportBuilder(AttributionInfoBuilder().Build(),
                     SourceBuilder(now).BuildStored())
@@ -1173,14 +1181,15 @@ IN_PROC_BROWSER_TEST_F(
           .SetAggregatableHistogramContributions(contributions)
           .BuildAggregatableAttribution(),
       /*is_debug_report=*/false,
-      SendResult(SendResult::Status::kFailure, net::ERR_INVALID_REDIRECT));
+      SendResult(
+          SendResult::Sent(SentResult::kFailure, net::ERR_INVALID_REDIRECT)));
   manager()->NotifyReportSent(ReportBuilder(AttributionInfoBuilder().Build(),
                                             SourceBuilder(now).BuildStored())
                                   .SetReportTime(now + base::Hours(11))
                                   .BuildNullAggregatable(),
                               /*is_debug_report=*/false,
-                              SendResult(SendResult::Status::kSent, net::OK,
-                                         /*http_response_code=*/200));
+                              SendResult(SendResult::Sent(SentResult::kSent,
+                                                          /*status=*/200)));
   ON_CALL(*manager(), GetPendingReportsForInternalUse)
       .WillByDefault(base::test::RunOnceCallbackRepeatedly<1>(
           std::vector<AttributionReport>{
@@ -1203,17 +1212,15 @@ IN_PROC_BROWSER_TEST_F(
             table.rows[0].cells[1]?.innerText ===
               'https://report.test/.well-known/attribution-reporting/report-aggregate-attribution' &&
             table.rows[0].cells[0]?.innerText === 'Pending' &&
-            table.rows[0].cells[4]?.innerText === '[ {  "key": "0x1",  "value": 2 }]' &&
-            table.rows[0].cells[5]?.innerText === '' &&
-            table.rows[0].cells[6]?.innerText === 'https://aws.example.test' &&
-            table.rows[0].cells[7]?.innerText === 'false' &&
+            table.rows[0].cells[4]?.innerText === '[ {  "key": "0x1",  "value": 2,  "filteringId": "3" }]' &&
+            table.rows[0].cells[5]?.innerText === 'https://aws.example.test' &&
+            table.rows[0].cells[6]?.innerText === 'false' &&
             table.rows[1].cells[0]?.innerText === 'Sent: HTTP 200' &&
-            table.rows[1].cells[5]?.innerText === 'abc' &&
             table.rows[2].cells[0]?.innerText === 'Prohibited by browser policy' &&
             table.rows[3].cells[0]?.innerText === 'Dropped due to assembly failure' &&
             table.rows[4].cells[0]?.innerText === 'Network error: ERR_INVALID_REDIRECT' &&
-            table.rows[5].cells[4]?.innerText === '[ {  "key": "0x0",  "value": 0 }]' &&
-            table.rows[5].cells[7]?.innerText === 'true') {
+            table.rows[5].cells[4]?.innerText === '[ {  "key": "0x0",  "value": 0,  "filteringId": "0" }]' &&
+            table.rows[5].cells[6]?.innerText === 'true') {
           if (obs) {
             obs.disconnect();
           }
@@ -1230,7 +1237,7 @@ IN_PROC_BROWSER_TEST_F(
     ASSERT_TRUE(ExecJsInWebUI(JsReplace(kScript, kCompleteTitle)));
 
     TitleWatcher title_watcher(shell()->web_contents(), kCompleteTitle);
-    ClickRefreshButton();
+    manager()->NotifyReportsChanged();
     ASSERT_EQ(kCompleteTitle, title_watcher.WaitAndGetTitle());
   }
 }
@@ -1240,21 +1247,15 @@ IN_PROC_BROWSER_TEST_F(AttributionInternalsWebUiBrowserTest,
   NavigateAndWaitForObserver();
 
   const auto create_trigger =
-      [](std::vector<network::TriggerVerification> verifications) {
+      []() {
         return AttributionTrigger(
             /*reporting_origin=*/*SuitableOrigin::Deserialize("https://r.test"),
             attribution_reporting::TriggerRegistration(),
             *SuitableOrigin::Deserialize("https://d.test"),
-            std::move(verifications),
             /*is_within_fenced_frame=*/false);
       };
 
   static constexpr char kScript[] = R"(
-    const expectedVerification =
-      '<dl><dt>Token</dt><dd>abc</dd>' +
-      '<dt>Report ID</dt><dd>aaab30b9-d664-4dfc-a9db-85f9729b9a30</dd></dl>' +
-      '<dl><dt>Token</dt><dd>def</dd>' +
-      '<dt>Report ID</dt><dd>bbab30b9-d664-4dfc-a9db-85f9729b9a30</dd></dl>';
 
     const table = document.querySelector('#trigger-registration-panel attribution-internals-table')
         .shadowRoot.querySelector('tbody');
@@ -1265,8 +1266,7 @@ IN_PROC_BROWSER_TEST_F(AttributionInternalsWebUiBrowserTest,
           table.rows[0].cells[1]?.innerText === 'https://d.test' &&
           table.rows[0].cells[2]?.innerText === 'https://r.test' &&
           table.rows[0].cells[3]?.innerText === '' &&
-          table.rows[1].cells[3]?.innerText === '123' &&
-          table.rows[1].cells[6]?.innerHTML === expectedVerification) {
+          table.rows[1].cells[3]?.innerText === '123') {
         if (obs) {
           obs.disconnect();
         }
@@ -1286,41 +1286,35 @@ IN_PROC_BROWSER_TEST_F(AttributionInternalsWebUiBrowserTest,
 
   auto notify_trigger_handled =
       [&](const AttributionTrigger& trigger,
-          AttributionTrigger::EventLevelResult event_status,
-          AttributionTrigger::AggregatableResult aggregatable_status,
+          CreateReportResult::EventLevel event_level_result,
+          CreateReportResult::Aggregatable aggregatable_result,
           std::optional<uint64_t> cleared_debug_key = std::nullopt) {
         static int offset_hours = 0;
         manager()->NotifyTriggerHandled(
             CreateReportResult(
                 /*trigger_time=*/now + base::Hours(++offset_hours), trigger,
-                event_status, aggregatable_status,
-                /*replaced_event_level_report=*/std::nullopt,
-                /*new_event_level_report=*/IrreleventEventLevelReport(),
-                /*new_aggregatable_report=*/IrreleventAggregatableReport(),
-                /*source=*/SourceBuilder().BuildStored()),
+                std::move(event_level_result), std::move(aggregatable_result),
+                /*source=*/SourceBuilder().BuildStored(),
+                /*min_null_aggregatable_report_time=*/std::nullopt),
             cleared_debug_key);
       };
 
-  notify_trigger_handled(create_trigger(/*verifications=*/{}),
-                         AttributionTrigger::EventLevelResult::kSuccess,
-                         AttributionTrigger::AggregatableResult::kSuccess);
+  notify_trigger_handled(
+      create_trigger(),
+      CreateReportResult::EventLevelSuccess(IrreleventEventLevelReport(),
+                                            /*replaced_report=*/std::nullopt),
+      CreateReportResult::AggregatableSuccess(IrreleventAggregatableReport()));
 
-  std::vector<network::TriggerVerification> verifications;
-  verifications.push_back(*network::TriggerVerification::Create(
-      "abc",
-      base::Uuid::ParseLowercase("aaab30b9-d664-4dfc-a9db-85f9729b9a30")));
-  verifications.push_back(*network::TriggerVerification::Create(
-      "def",
-      base::Uuid::ParseLowercase("bbab30b9-d664-4dfc-a9db-85f9729b9a30")));
-  notify_trigger_handled(create_trigger(std::move(verifications)),
-                         AttributionTrigger::EventLevelResult::kSuccess,
-                         AttributionTrigger::AggregatableResult::kSuccess,
-                         /*cleared_debug_key=*/123);
+  notify_trigger_handled(
+      create_trigger(),
+      CreateReportResult::EventLevelSuccess(IrreleventEventLevelReport(),
+                                            /*replaced_report=*/std::nullopt),
+      CreateReportResult::AggregatableSuccess(IrreleventAggregatableReport()),
+      /*cleared_debug_key=*/123);
 
   // TODO(apaseltiner): Add tests for other statuses.
 
   TitleWatcher title_watcher(shell()->web_contents(), kCompleteTitle);
-  ClickRefreshButton();
   EXPECT_EQ(kCompleteTitle, title_watcher.WaitAndGetTitle());
 }
 
@@ -1413,9 +1407,10 @@ IN_PROC_BROWSER_TEST_F(AttributionInternalsWebUiBrowserTest, DebugReports) {
       /*is_operation_allowed=*/[]() { return true; },
       StoreSourceResult(SourceBuilder()
                             .SetDebugReporting(true)
-                            .SetDebugCookieSet(true)
+                            .SetCookieBasedDebugAllowed(true)
                             .Build(),
                         /*is_noised=*/false, /*source_time=*/base::Time::Now(),
+                        /*destination_limit=*/std::nullopt,
                         StoreSourceResult::InternalError()));
   ASSERT_TRUE(report);
 
@@ -1464,7 +1459,8 @@ IN_PROC_BROWSER_TEST_F(AttributionInternalsWebUiBrowserTest, DebugReports) {
           .SetReportTime(now + base::Hours(1))
           .Build(),
       /*is_debug_report=*/true,
-      SendResult(SendResult::Status::kTransientFailure, net::ERR_TIMED_OUT));
+      SendResult(
+          SendResult::Sent(SentResult::kTransientFailure, net::ERR_TIMED_OUT)));
 
   manager()->NotifyReportSent(
       ReportBuilder(AttributionInfoBuilder().Build(),
@@ -1472,8 +1468,8 @@ IN_PROC_BROWSER_TEST_F(AttributionInternalsWebUiBrowserTest, DebugReports) {
           .SetReportTime(now + base::Hours(2))
           .BuildAggregatableAttribution(),
       /*is_debug_report=*/true,
-      SendResult(SendResult::Status::kTransientFailure,
-                 net::ERR_INTERNET_DISCONNECTED));
+      SendResult(SendResult::Sent(SentResult::kTransientFailure,
+                                  net::ERR_INTERNET_DISCONNECTED)));
 
   manager()->NotifyAggregatableDebugReportSent(
       AggregatableDebugReport::CreateForTesting(

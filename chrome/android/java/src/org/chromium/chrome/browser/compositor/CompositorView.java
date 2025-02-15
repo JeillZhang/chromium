@@ -13,29 +13,37 @@ import android.graphics.PixelFormat;
 import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
 import android.os.Build;
+import android.view.AttachedSurfaceControl;
 import android.view.Surface;
 import android.view.View;
 import android.widget.FrameLayout;
+import android.window.InputTransferToken;
 
 import org.jni_zero.CalledByNative;
 import org.jni_zero.JNINamespace;
+import org.jni_zero.JniType;
 import org.jni_zero.NativeMethods;
 
 import org.chromium.base.ContextUtils;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.TraceEvent;
+import org.chromium.chrome.browser.ActivityTabProvider;
 import org.chromium.chrome.browser.compositor.layouts.Layout;
 import org.chromium.chrome.browser.compositor.layouts.LayoutProvider;
 import org.chromium.chrome.browser.compositor.layouts.LayoutRenderHost;
 import org.chromium.chrome.browser.compositor.resources.StaticResourcePreloads;
 import org.chromium.chrome.browser.compositor.resources.SystemResourcePreloads;
 import org.chromium.chrome.browser.externalnav.IntentWithRequestMetadataHandler;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.layouts.scene_layer.SceneLayer;
 import org.chromium.chrome.browser.multiwindow.MultiWindowUtils;
 import org.chromium.chrome.browser.tab_ui.TabContentManager;
 import org.chromium.components.browser_ui.styles.ChromeColors;
+import org.chromium.content_public.browser.InputTransferHandler;
 import org.chromium.content_public.browser.SelectionPopupController;
+import org.chromium.content_public.browser.SurfaceInputTransferHandlerMap;
 import org.chromium.content_public.browser.WebContents;
+import org.chromium.content_public.common.InputUtils;
 import org.chromium.ui.base.WindowAndroid;
 import org.chromium.ui.resources.AndroidResourceType;
 import org.chromium.ui.resources.ResourceManager;
@@ -53,6 +61,7 @@ public class CompositorView extends FrameLayout
     private CompositorSurfaceManager mCompositorSurfaceManager;
     private boolean mOverlayVideoEnabled;
     private boolean mAlwaysTranslucent;
+    private boolean mIsXrFullSpaceMode;
 
     // Are we waiting to hide the outgoing surface until the foreground has something to display?
     // If == 0, then no.  If > 0, then yes.  We'll hide when it transitions from one to zero.
@@ -61,6 +70,7 @@ public class CompositorView extends FrameLayout
     private long mNativeCompositorView;
     private final LayoutRenderHost mRenderHost;
     private int mPreviousWindowTop = -1;
+    private ActivityTabProvider mActivityTabProvider;
 
     // Resource Management
     private ResourceManager mResourceManager;
@@ -83,6 +93,8 @@ public class CompositorView extends FrameLayout
     private boolean mRenderHostNeedsDidSwapBuffersCallback;
 
     private boolean mHaveSwappedFramesSinceSurfaceCreated;
+
+    private Integer mSurfaceId;
 
     // On P and above, toggling the screen off gets us in a state where the Surface is destroyed but
     // it is never recreated when it is turned on again. This is the only workaround that seems to
@@ -181,6 +193,10 @@ public class CompositorView extends FrameLayout
             initializeIfOnUiThread();
         }
         mRootView = view;
+    }
+
+    public void setActivityTabProvider(ActivityTabProvider provider) {
+        mActivityTabProvider = provider;
     }
 
     @Override
@@ -334,15 +350,6 @@ public class CompositorView extends FrameLayout
         CompositorViewJni.get().setNeedsComposite(mNativeCompositorView, CompositorView.this);
     }
 
-    private void setWindowAndroid(WindowAndroid windowAndroid) {
-        assert mWindowAndroid != null;
-        mWindowAndroid.removeSelectionHandlesObserver(this);
-
-        mWindowAndroid = windowAndroid;
-        mWindowAndroid.addSelectionHandlesObserver(this);
-        onWindowVisibilityChangedInternal(getWindowVisibility());
-    }
-
     /**
      * Enables/disables overlay video mode. Affects alpha blending on this view.
      * @param enabled Whether to enter or leave overlay video mode.
@@ -417,6 +424,25 @@ public class CompositorView extends FrameLayout
         return !mIsInXr && !mSelectionHandlesActive;
     }
 
+    /**
+     * Enables/disables full space mode on Android XR device, a variant of overlay video mode.
+     *
+     * @param enabled Whether to enter or leave overlay full space mode on XR device.
+     */
+    public void setXrFullSpaceMode(boolean enabled) {
+        if (mIsXrFullSpaceMode != enabled) {
+            mIsXrFullSpaceMode = enabled;
+            // Request the new surface as mode has changed. We'll get a synthetic destroy / create /
+            // changed callback in that case, possibly before this returns.
+            mCompositorSurfaceManager.requestSurface(
+                    mIsXrFullSpaceMode ? PixelFormat.TRANSLUCENT : PixelFormat.OPAQUE);
+            // Set space mode environment.
+            CompositorViewJni.get()
+                    .setOverlayXrFullScreenMode(
+                            mNativeCompositorView, CompositorView.this, enabled);
+        }
+    }
+
     @Override
     public void surfaceRedrawNeededAsync(Runnable drawingFinished) {
         // Do not hold onto more than one draw callback, to prevent deadlock.
@@ -454,16 +480,39 @@ public class CompositorView extends FrameLayout
     public void surfaceChanged(Surface surface, int format, int width, int height) {
         if (mNativeCompositorView == 0) return;
 
-        CompositorViewJni.get()
-                .surfaceChanged(
-                        mNativeCompositorView,
-                        CompositorView.this,
-                        format,
-                        width,
-                        height,
-                        canUseSurfaceControl(),
-                        surface);
+        InputTransferToken browserInputToken = null;
+        if (InputUtils.isTransferInputToVizSupported()) {
+            AttachedSurfaceControl rootSurfaceControl =
+                    ((Activity) getContext()).getWindow().getRootSurfaceControl();
+            browserInputToken = rootSurfaceControl.getInputTransferToken();
+        }
+
+        Integer surfaceId =
+                CompositorViewJni.get()
+                        .surfaceChanged(
+                                mNativeCompositorView,
+                                CompositorView.this,
+                                format,
+                                width,
+                                height,
+                                canUseSurfaceControl(),
+                                surface,
+                                browserInputToken);
         mRenderHost.onSurfaceResized(width, height);
+
+        if (InputUtils.isTransferInputToVizSupported()
+                && surfaceId != null
+                && browserInputToken != null) {
+
+            InputTransferHandlerDelegate delegate =
+                    new InputTransferHandlerDelegate(mActivityTabProvider);
+            InputTransferHandler handler =
+                    new InputTransferHandler(browserInputToken, delegate, mWindowAndroid);
+
+            assert mSurfaceId == null;
+            mSurfaceId = surfaceId;
+            SurfaceInputTransferHandlerMap.getMap().put(mSurfaceId, handler);
+        }
     }
 
     @Override
@@ -495,6 +544,10 @@ public class CompositorView extends FrameLayout
 
         if (mScreenStateReceiver != null) {
             mScreenStateReceiver.maybeResetCompositorSurfaceManager();
+        }
+        if (InputUtils.isTransferInputToVizSupported() && mSurfaceId != null) {
+            SurfaceInputTransferHandlerMap.remove(mSurfaceId);
+            mSurfaceId = null;
         }
     }
 
@@ -655,12 +708,21 @@ public class CompositorView extends FrameLayout
     @CalledByNative
     private void notifyWillUseSurfaceControl() {
         mIsSurfaceControlEnabled = true;
+
+        // mIsSurfaceControlEnabled can change the output of `getSurfacePixelFormat`. Re-request
+        // the current surface format to keep it up-to-date.
+        if (ChromeFeatureList.isEnabled(ChromeFeatureList.UPDATE_COMPOSTIROR_FOR_SURFACE_CONTROL)
+                && mCompositorSurfaceManager != null
+                && mCompositorSurfaceManager.getFormatOfOwnedSurface() != getSurfacePixelFormat()) {
+            mCompositorSurfaceManager.requestSurface(getSurfacePixelFormat());
+        }
     }
 
     /**
-     * Converts the layout into compositor layers. This is to be called on every frame the layout
-     * is changing.
-     * @param provider               Provides the layout to be rendered.
+     * Converts the layout into compositor layers. This is to be called on every frame the layout is
+     * changing.
+     *
+     * @param provider Provides the layout to be rendered.
      */
     public void finalizeLayers(final LayoutProvider provider) {
         TraceEvent.begin("CompositorView:finalizeLayers");
@@ -766,14 +828,16 @@ public class CompositorView extends FrameLayout
 
         void surfaceDestroyed(long nativeCompositorView, CompositorView caller);
 
-        void surfaceChanged(
+        @JniType("std::optional<int>")
+        Integer surfaceChanged(
                 long nativeCompositorView,
                 CompositorView caller,
                 int format,
                 int width,
                 int height,
                 boolean backedBySurfaceTexture,
-                Surface surface);
+                Surface surface,
+                InputTransferToken browserInputToken);
 
         void onPhysicalBackingSizeChanged(
                 long nativeCompositorView,
@@ -806,6 +870,9 @@ public class CompositorView extends FrameLayout
         void setOverlayVideoMode(long nativeCompositorView, CompositorView caller, boolean enabled);
 
         void setOverlayImmersiveArMode(
+                long nativeCompositorView, CompositorView caller, boolean enabled);
+
+        void setOverlayXrFullScreenMode(
                 long nativeCompositorView, CompositorView caller, boolean enabled);
 
         void setSceneLayer(long nativeCompositorView, CompositorView caller, SceneLayer sceneLayer);

@@ -13,13 +13,14 @@
 #include "chrome/test/base/in_process_browser_test.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/test/browser_test.h"
+#include "ui/base/mojom/window_show_state.mojom.h"
 #include "ui/color/color_provider_key.h"
 #include "ui/color/color_provider_manager.h"
 #include "ui/ozone/public/ozone_platform.h"
 
 using DesktopBrowserFrameAuraLinuxTest = InProcessBrowserTest;
-using SupportsSsdForTest =
-    ui::OzonePlatform::PlatformRuntimeProperties::SupportsSsdForTest;
+using SupportsForTest =
+    ui::OzonePlatform::PlatformRuntimeProperties::SupportsForTest;
 
 namespace {
 
@@ -29,7 +30,7 @@ gfx::Size GetWindowSize(Browser* browser) {
   const NativeBrowserFrame* const frame =
       browser_view->frame()->native_browser_frame();
   gfx::Rect bounds;
-  ui::WindowShowState show_state;
+  ui::mojom::WindowShowState show_state;
   frame->GetWindowPlacement(&bounds, &show_state);
   return bounds.size();
 }
@@ -78,7 +79,7 @@ IN_PROC_BROWSER_TEST_F(DesktopBrowserFrameAuraLinuxTest, UseCustomFrame) {
   // finally.
   auto* const platform = ui::OzonePlatform::GetInstance();
   for (const auto ssd_support_override :
-       {SupportsSsdForTest::kYes, SupportsSsdForTest::kNo}) {
+       {SupportsForTest::kYes, SupportsForTest::kNo}) {
     ui::OzonePlatform::PlatformRuntimeProperties::
         override_supports_ssd_for_test = ssd_support_override;
 
@@ -107,7 +108,7 @@ IN_PROC_BROWSER_TEST_F(DesktopBrowserFrameAuraLinuxTest, UseCustomFrame) {
 
   // Reset the override.
   ui::OzonePlatform::PlatformRuntimeProperties::override_supports_ssd_for_test =
-      SupportsSsdForTest::kNotSet;
+      SupportsForTest::kNotSet;
 }
 
 // Tests that the new browser window restores the bounds properly: its size must

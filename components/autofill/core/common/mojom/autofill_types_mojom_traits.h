@@ -13,6 +13,7 @@
 
 #include "base/i18n/rtl.h"
 #include "components/autofill/core/common/aliases.h"
+#include "components/autofill/core/common/autocomplete_parsing_util.h"
 #include "components/autofill/core/common/form_data.h"
 #include "components/autofill/core/common/form_data_predictions.h"
 #include "components/autofill/core/common/form_field_data_predictions.h"
@@ -84,8 +85,8 @@ struct StructTraits<autofill::mojom::SelectOptionDataView,
     return r.value;
   }
 
-  static const std::u16string& content(const autofill::SelectOption& r) {
-    return r.content;
+  static const std::u16string& text(const autofill::SelectOption& r) {
+    return r.text;
   }
 
   static bool Read(autofill::mojom::SelectOptionDataView data,
@@ -183,6 +184,10 @@ struct StructTraits<autofill::mojom::AutocompleteParsingResultDataView,
     return r.field_type;
   }
 
+  static bool webauthn(const autofill::AutocompleteParsingResult& r) {
+    return r.webauthn;
+  }
+
   static bool Read(autofill::mojom::AutocompleteParsingResultDataView data,
                    autofill::AutocompleteParsingResult* out);
 };
@@ -228,6 +233,10 @@ struct StructTraits<autofill::mojom::FormFieldDataDataView,
   static const std::optional<autofill::AutocompleteParsingResult>&
   parsed_autocomplete(const autofill::FormFieldData& r) {
     return r.parsed_autocomplete();
+  }
+
+  static const std::u16string& pattern(const autofill::FormFieldData& r) {
+    return r.pattern();
   }
 
   static const std::u16string& placeholder(const autofill::FormFieldData& r) {
@@ -438,7 +447,7 @@ struct StructTraits<autofill::mojom::FormDataDataView, autofill::FormData> {
 
   static const std::vector<autofill::FormFieldData>& fields(
       const autofill::FormData& r) {
-    return r.fields;
+    return r.fields();
   }
 
   static const std::vector<autofill::FieldRendererId>& username_predictions(
@@ -449,6 +458,10 @@ struct StructTraits<autofill::mojom::FormDataDataView, autofill::FormData> {
   static bool is_gaia_with_skip_save_password_form(
       const autofill::FormData& d) {
     return d.is_gaia_with_skip_save_password_form();
+  }
+
+  static bool likely_contains_captcha(const autofill::FormData& d) {
+    return d.likely_contains_captcha();
   }
 
   static bool Read(autofill::mojom::FormDataDataView data,
@@ -491,6 +504,11 @@ struct StructTraits<autofill::mojom::FormFieldDataPredictionsDataView,
   static const std::string& parseable_name(
       const autofill::FormFieldDataPredictions& r) {
     return r.parseable_name;
+  }
+
+  static const std::string& parseable_label(
+      const autofill::FormFieldDataPredictions& r) {
+    return r.parseable_label;
   }
 
   static const std::string& section(
@@ -566,6 +584,9 @@ struct StructTraits<autofill::mojom::PasswordAndMetadataDataView,
   static bool uses_account_store(const autofill::PasswordAndMetadata& r) {
     return r.uses_account_store;
   }
+  static bool is_grouped_affiliation(const autofill::PasswordAndMetadata& r) {
+    return r.is_grouped_affiliation;
+  }
 
   static bool Read(autofill::mojom::PasswordAndMetadataDataView data,
                    autofill::PasswordAndMetadata* out);
@@ -610,6 +631,16 @@ struct StructTraits<autofill::mojom::PasswordFormFillDataDataView,
 
   static bool wait_for_username(const autofill::PasswordFormFillData& r) {
     return r.wait_for_username;
+  }
+
+  static std::vector<autofill::FieldRendererId> suggestion_banned_fields(
+      const autofill::PasswordFormFillData& r) {
+    return r.suggestion_banned_fields;
+  }
+
+  static bool notify_browser_of_successful_filling(
+      const autofill::PasswordFormFillData& r) {
+    return r.notify_browser_of_successful_filling;
   }
 
   static bool Read(autofill::mojom::PasswordFormFillDataDataView data,
@@ -671,9 +702,9 @@ struct StructTraits<autofill::mojom::PasswordGenerationUIDataDataView,
     return r.form_data;
   }
 
-  static bool input_field_empty(
+  static bool generation_rejected(
       const autofill::password_generation::PasswordGenerationUIData& r) {
-    return r.input_field_empty;
+    return r.generation_rejected;
   }
 
   static bool Read(

@@ -63,8 +63,7 @@ String DeprecatedFencedFrameModeToString(
       return "opaque-ads";
   }
 
-  NOTREACHED_IN_MIGRATION();
-  return "";
+  NOTREACHED();
 }
 
 // Helper function that returns whether the mode of the parent tree is different
@@ -256,6 +255,9 @@ bool HTMLFencedFrameElement::canLoadOpaqueURL(ScriptState* script_state) {
           "removed. Please use navigator.canLoadAdAuctionFencedFrame() "
           "instead."));
 
+  UseCounter::Count(LocalDOMWindow::From(script_state)->document(),
+                    WebFeature::kFencedFrameCanLoadOpaqueURL);
+
   LocalFrame* frame_to_check = LocalDOMWindow::From(script_state)->GetFrame();
   ExecutionContext* context = ExecutionContext::From(script_state);
   DCHECK(frame_to_check && context);
@@ -341,9 +343,8 @@ void HTMLFencedFrameElement::ParseAttribute(
         GetDocument().AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
             mojom::blink::ConsoleMessageSource::kOther,
             mojom::blink::ConsoleMessageLevel::kError,
-            WebString::FromUTF8(
-                "Error while parsing the 'sandbox' attribute: " +
-                parsed.error_message)));
+            "Error while parsing the 'sandbox' attribute: " +
+                String::FromUTF8(parsed.error_message)));
       }
     }
     SetSandboxFlags(current_flags);
@@ -371,7 +372,7 @@ bool HTMLFencedFrameElement::IsPresentationAttribute(
 void HTMLFencedFrameElement::CollectStyleForPresentationAttribute(
     const QualifiedName& name,
     const AtomicString& value,
-    MutableCSSPropertyValueSet* style) {
+    HeapVector<CSSPropertyValue, 8>& style) {
   if (name == html_names::kWidthAttr) {
     AddHTMLLengthToStyle(style, CSSPropertyID::kWidth, value);
   } else if (name == html_names::kHeightAttr) {
@@ -575,8 +576,10 @@ LayoutObject* HTMLFencedFrameElement::CreateLayoutObject(const ComputedStyle&) {
   return MakeGarbageCollected<LayoutIFrame>(this);
 }
 
-bool HTMLFencedFrameElement::SupportsFocus(UpdateBehavior) const {
-  return frame_delegate_ && frame_delegate_->SupportsFocus();
+FocusableState HTMLFencedFrameElement::SupportsFocus(UpdateBehavior) const {
+  return (frame_delegate_ && frame_delegate_->SupportsFocus())
+             ? FocusableState::kFocusable
+             : FocusableState::kNotFocusable;
 }
 
 PhysicalSize HTMLFencedFrameElement::CoerceFrameSize(
@@ -746,10 +749,10 @@ void HTMLFencedFrameElement::FreezeCurrentFrameSize() {
 }
 
 void HTMLFencedFrameElement::SetContainerSize(const gfx::Size& size) {
-  setAttribute(html_names::kWidthAttr, String::Format("%dpx", size.width()),
-               ASSERT_NO_EXCEPTION);
-  setAttribute(html_names::kHeightAttr, String::Format("%dpx", size.height()),
-               ASSERT_NO_EXCEPTION);
+  setAttribute(html_names::kWidthAttr,
+               AtomicString(String::Format("%dpx", size.width())));
+  setAttribute(html_names::kHeightAttr,
+               AtomicString(String::Format("%dpx", size.height())));
 
   frame_delegate_->MarkContainerSizeStale();
 }

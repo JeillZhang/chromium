@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
@@ -42,6 +47,22 @@ class BluetoothRemoteGattDescriptorTest :
     if (!PlatformSupportsLowEnergy()) {
       GTEST_SKIP() << "Bluetooth Low Energy unavailable.";
     }
+  }
+
+  void TearDown() override {
+    // Reset raw pointers before the teardown process destroys the objects they
+    // refer to.
+    device_ = nullptr;
+    service_ = nullptr;
+    characteristic_ = nullptr;
+    descriptor1_ = nullptr;
+    descriptor2_ = nullptr;
+
+#if BUILDFLAG(IS_WIN)
+    BluetoothTestWinrt::TearDown();
+#else
+    BluetoothTest::TearDown();
+#endif
   }
 
   // Creates adapter_, device_, service_, characteristic_,

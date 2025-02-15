@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #ifndef GL_GLEXT_PROTOTYPES
 #define GL_GLEXT_PROTOTYPES
 #endif
@@ -199,9 +204,7 @@ void getExpectedColorAndMask(GLenum src_internal_format,
       break;
     }
     default:
-      NOTREACHED_IN_MIGRATION()
-          << gl::GLEnums::GetStringEnum(src_internal_format);
-      break;
+      NOTREACHED() << gl::GLEnums::GetStringEnum(src_internal_format);
   }
 
   switch (dest_internal_format) {
@@ -276,9 +279,7 @@ void getExpectedColorAndMask(GLenum src_internal_format,
       setColor(1, 1, 1, 0, expected_mask);
       break;
     default:
-      NOTREACHED_IN_MIGRATION()
-          << gl::GLEnums::GetStringEnum(dest_internal_format);
-      break;
+      NOTREACHED() << gl::GLEnums::GetStringEnum(dest_internal_format);
   }
 }
 
@@ -367,8 +368,7 @@ void getTextureDataAndExpectedRGBAs(FormatType src_format_type,
     }
     return;
   }
-  NOTREACHED_IN_MIGRATION() << gl::GLEnums::GetStringEnum(src_format_type.type);
-  return;
+  NOTREACHED() << gl::GLEnums::GetStringEnum(src_format_type.type);
 }
 
 }  // namespace
@@ -435,8 +435,7 @@ class GLCopyTextureCHROMIUMTest
       case GL_BGRA8_EXT:
         return GL_BGRA_EXT;
       default:
-        NOTREACHED_IN_MIGRATION();
-        return GL_NONE;
+        NOTREACHED();
     }
   }
 
@@ -650,10 +649,9 @@ class GLCopyTextureCHROMIUMES3Test : public GLCopyTextureCHROMIUMTest {
     DCHECK(!ShouldSkipTest());
     const gl::GLVersionInfo& gl_version_info =
         gl_.decoder()->GetFeatureInfo()->gl_version_info();
-    // XB30 support was introduced in GLES 3.0/ OpenGL 3.3, before that it was
-    // signalled via a specific extension.
+    // XB30 support was introduced in GLES 3.0, before that it was signalled
+    // via a specific extension.
     const bool supports_rgb10_a2 =
-        gl_version_info.IsAtLeastGL(3, 3) ||
         gl_version_info.IsAtLeastGLES(3, 0) ||
         GLTestHelper::HasExtension("GL_EXT_texture_type_2_10_10_10_REV");
     EXPECT_TRUE(supports_rgb10_a2);
@@ -1647,7 +1645,10 @@ TEST_P(GLCopyTextureCHROMIUMTest, UninitializedSource) {
   }
   EXPECT_TRUE(GL_NO_ERROR == glGetError());
 
-  uint8_t pixels[kHeight][kWidth][4] = {{{1}}};
+  uint8_t pixels[kHeight][kWidth][4] = {};
+  pixels[0][0][0] = 1;  // Set a pixel to a non-zero value, to ensure the zeroes
+                        // are indeed written by `glReadPixels`.
+
   glReadPixels(0, 0, kWidth, kHeight, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
   for (int x = 0; x < kWidth; ++x) {
     for (int y = 0; y < kHeight; ++y) {

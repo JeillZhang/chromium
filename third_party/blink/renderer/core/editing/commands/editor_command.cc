@@ -27,6 +27,7 @@
 
 #include "third_party/blink/renderer/core/editing/commands/editor_command.h"
 
+#include <array>
 #include <iterator>
 
 #include "base/metrics/histogram_functions.h"
@@ -148,9 +149,7 @@ InputEvent::InputType InputTypeFromCommandType(EditingCommandType command_type,
     case CommandType::kInsertUnorderedList:
       return InputType::kInsertUnorderedList;
     case CommandType::kCreateLink:
-      return RuntimeEnabledFeatures::InputTypeSupportInsertLinkEnabled()
-                 ? InputType::kInsertLink
-                 : InputType::kNone;
+      return InputType::kInsertLink;
 
     // Deletion.
     case CommandType::kDelete:
@@ -289,8 +288,7 @@ static bool ExecuteApplyParagraphStyle(LocalFrame& frame,
       frame.GetEditor().ApplyParagraphStyle(style, input_type);
       return true;
   }
-  NOTREACHED_IN_MIGRATION();
-  return false;
+  NOTREACHED();
 }
 
 bool ExpandSelectionToGranularity(LocalFrame& frame,
@@ -438,8 +436,7 @@ static bool ExecuteDelete(LocalFrame& frame,
               : 0);
       return true;
   }
-  NOTREACHED_IN_MIGRATION();
-  return false;
+  NOTREACHED();
 }
 
 static bool DeleteWithDirection(LocalFrame& frame,
@@ -451,42 +448,33 @@ static bool DeleteWithDirection(LocalFrame& frame,
   if (!editor.CanEdit())
     return false;
 
-  EditingState editing_state;
   if (frame.Selection()
           .ComputeVisibleSelectionInDOMTreeDeprecated()
-          .IsRange()) {
-    if (is_typing_action) {
-      DCHECK(frame.GetDocument());
-      TypingCommand::DeleteKeyPressed(
-          *frame.GetDocument(),
-          CanSmartCopyOrDelete(frame) ? TypingCommand::kSmartDelete : 0,
-          granularity);
-      editor.RevealSelectionAfterEditingOperation();
-    } else {
-      if (kill_ring)
-        editor.AddToKillRing(editor.SelectedRange());
-      editor.DeleteSelectionWithSmartDelete(
-          CanSmartCopyOrDelete(frame) ? DeleteMode::kSmart
-                                      : DeleteMode::kSimple,
-          DeletionInputTypeFromTextGranularity(direction, granularity));
-      // Implicitly calls revealSelectionAfterEditingOperation().
+          .IsRange() &&
+      !is_typing_action) {
+    if (kill_ring) {
+      editor.AddToKillRing(editor.SelectedRange());
     }
+    editor.DeleteSelectionWithSmartDelete(
+        CanSmartCopyOrDelete(frame) ? DeleteMode::kSmart : DeleteMode::kSimple,
+        DeletionInputTypeFromTextGranularity(direction, granularity));
+    // Implicitly calls revealSelectionAfterEditingOperation().
   } else {
+    EditingState editing_state;
     TypingCommand::Options options = 0;
     if (CanSmartCopyOrDelete(frame))
       options |= TypingCommand::kSmartDelete;
     if (kill_ring)
       options |= TypingCommand::kKillRing;
+    DCHECK(frame.GetDocument());
     switch (direction) {
       case DeleteDirection::kForward:
-        DCHECK(frame.GetDocument());
         TypingCommand::ForwardDeleteKeyPressed(
             *frame.GetDocument(), &editing_state, options, granularity);
         if (editing_state.IsAborted())
           return false;
         break;
       case DeleteDirection::kBackward:
-        DCHECK(frame.GetDocument());
         TypingCommand::DeleteKeyPressed(*frame.GetDocument(), options,
                                         granularity);
         break;
@@ -623,7 +611,9 @@ static bool ExecuteFindString(LocalFrame& frame,
                               Event*,
                               EditorCommandSource,
                               const String& value) {
-  return Editor::FindString(frame, value, kCaseInsensitive | kWrapAround);
+  return Editor::FindString(
+      frame, value,
+      FindOptions().SetCaseInsensitive(true).SetWrappingAround(true));
 }
 
 static bool ExecuteFormatBlock(LocalFrame& frame,
@@ -670,8 +660,7 @@ static bool ExecuteForwardDelete(LocalFrame& frame,
         return false;
       return true;
   }
-  NOTREACHED_IN_MIGRATION();
-  return false;
+  NOTREACHED();
 }
 
 static bool ExecuteIgnoreSpelling(LocalFrame& frame,
@@ -1180,8 +1169,7 @@ static bool EnabledDelete(LocalFrame& frame,
       // range if non-empty, otherwise removes a character
       return EnabledInEditableText(frame, event, source);
   }
-  NOTREACHED_IN_MIGRATION();
-  return false;
+  NOTREACHED();
 }
 
 static bool EnabledInRichlyEditableText(LocalFrame& frame,
@@ -1370,8 +1358,7 @@ static String ValueDefaultParagraphSeparator(const EditorInternalCommand&,
       return html_names::kPTag.LocalName();
   }
 
-  NOTREACHED_IN_MIGRATION();
-  return String();
+  NOTREACHED();
 }
 
 static String ValueFormatBlock(const EditorInternalCommand&,
@@ -1400,7 +1387,7 @@ static bool CanNotExecuteWhenDisabled(LocalFrame&, EditorCommandSource) {
 
 static const EditorInternalCommand* InternalCommand(
     const String& command_name) {
-  static const EditorInternalCommand kEditorCommands[] = {
+  static const auto kEditorCommands = std::to_array<EditorInternalCommand>({
       // Lists all commands in blink::EditingCommandType.
       // Must be ordered by |commandType| for index lookup.
       // Covered by unit tests in editing_command_test.cc
@@ -1907,7 +1894,7 @@ static const EditorInternalCommand* InternalCommand(
        ClipboardCommands::ExecutePasteFromImageURL,
        SupportedFromMenuOrKeyBinding, EnabledInEditableText, StateNone,
        ValueStateOrNull, kNotTextInsertion, CanNotExecuteWhenDisabled},
-  };
+  });
   // Handles all commands except EditingCommandType::Invalid.
   static_assert(
       std::size(kEditorCommands) + 1 ==
@@ -2140,8 +2127,7 @@ bool EditorCommand::IsSupported() const {
     case EditorCommandSource::kDOM:
       return command_->is_supported_from_dom(frame_);
   }
-  NOTREACHED_IN_MIGRATION();
-  return false;
+  NOTREACHED();
 }
 
 bool EditorCommand::IsEnabled(Event* triggering_event) const {

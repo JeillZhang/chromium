@@ -4,8 +4,10 @@
 
 #include "ash/system/focus_mode/focus_mode_task_view.h"
 
+#include "ash/accessibility/accessibility_controller.h"
 #include "ash/api/tasks/tasks_types.h"
 #include "ash/resources/vector_icons/vector_icons.h"
+#include "ash/shell.h"
 #include "ash/strings/grit/ash_strings.h"
 #include "ash/style/system_textfield.h"
 #include "ash/style/system_textfield_controller.h"
@@ -53,6 +55,11 @@ void ClearFocusForTextfield(views::Textfield* textfield) {
   focus_manager->SetStoredFocusView(nullptr);
 }
 
+// Returns true if ChromeVox (spoken feedback) is enabled.
+bool IsSpokenFeedbackEnabled() {
+  return Shell::Get()->accessibility_controller()->spoken_feedback().enabled();
+}
+
 }  // namespace
 
 //---------------------------------------------------------------------
@@ -85,38 +92,17 @@ class FocusModeTaskView::TaskTextfield : public SystemTextfield {
   static constexpr size_t kMaxLength = 1023;
 
   void set_show_selected_state(bool show_selected_state) {
+    if (show_selected_state_ && !show_selected_state) {
+      // If transitioning from selected to unselected, remove the focus ring.
+      SetShowFocusRing(false);
+    }
     show_selected_state_ = show_selected_state;
   }
 
+  bool show_selected() const { return show_selected_state_; }
+
   void UpdateElideBehavior(bool active) {
     GetRenderText()->SetElideBehavior(active ? gfx::NO_ELIDE : gfx::ELIDE_TAIL);
-  }
-
-  // SystemTextfield:
-  void OnFocus() override {
-    if (show_selected_state_) {
-      // If we are in a selected state, we want to make the textfield focused
-      // but not active, so that we can allow the user to press the `Enter` key
-      // to activate the textfield. Thus, we only need to show its focus ring.
-      SetShowFocusRing(true);
-      return;
-    }
-
-    SystemTextfield::OnFocus();
-  }
-
-  void OnBlur() override {
-    SystemTextfield::OnBlur();
-    // Remove the focus ring for the state that the textfield was focused but
-    // not active.
-    if (show_selected_state_) {
-      SetShowFocusRing(false);
-    }
-  }
-
-  // views::View:
-  std::u16string GetTooltipText(const gfx::Point& p) const override {
-    return show_selected_state_ ? GetText() : std::u16string();
   }
 
  private:
@@ -158,7 +144,7 @@ class FocusModeTaskView::TaskTextfieldController
 
   bool HandleKeyEvent(views::Textfield* sender,
                       const ui::KeyEvent& key_event) override {
-    if (key_event.type() == ui::ET_KEY_PRESSED &&
+    if (key_event.type() == ui::EventType::kKeyPressed &&
         key_event.key_code() == ui::VKEY_RETURN) {
       // If the textfield is focused but not active, activate the textfield and
       // highlight all the text.
@@ -179,7 +165,7 @@ class FocusModeTaskView::TaskTextfieldController
 
   // views::ViewObserver:
   void OnViewBlurred(views::View* view) override {
-    owner_->AddOrUpdateTask(textfield_->GetText());
+    owner_->CommitTextfieldContents(std::u16string(textfield_->GetText()));
   }
 
  private:
@@ -192,7 +178,8 @@ class FocusModeTaskView::TaskTextfieldController
 //---------------------------------------------------------------------
 // FocusModeTaskView:
 
-FocusModeTaskView::FocusModeTaskView(bool is_network_connected) {
+FocusModeTaskView::FocusModeTaskView(bool is_network_connected)
+    : is_network_connected_(is_network_connected) {
   SetOrientation(views::BoxLayout::Orientation::kVertical);
 
   textfield_container_ = AddChildView(std::make_unique<views::BoxLayoutView>());
@@ -200,19 +187,16 @@ FocusModeTaskView::FocusModeTaskView(bool is_network_connected) {
       views::BoxLayout::CrossAxisAlignment::kCenter);
   textfield_container_->SetOrientation(
       views::BoxLayout::Orientation::kHorizontal);
-  textfield_container_->SetProperty(views::kBoxLayoutFlexKey,
-                                    views::BoxLayoutFlexSpecification());
-  radio_button_ =
-      textfield_container_->AddChildView(std::make_unique<views::ImageButton>(
-          base::BindRepeating(&FocusModeTaskView::OnCompleteTask,
-                              base::Unretained(this), /*update=*/true)));
+  complete_button_ = textfield_container_->AddChildView(
+      std::make_unique<views::ImageButton>(base::BindRepeating(
+          &FocusModeTaskView::OnCompleteTask, base::Unretained(this))));
   const std::u16string radio_text = l10n_util::GetStringUTF16(
       IDS_ASH_STATUS_TRAY_FOCUS_MODE_TASK_VIEW_RADIO_BUTTON);
-  radio_button_->GetViewAccessibility().SetName(radio_text);
-  radio_button_->SetTooltipText(radio_text);
+  complete_button_->GetViewAccessibility().SetName(radio_text);
+  complete_button_->SetTooltipText(radio_text);
 
-  views::FocusRing::Install(radio_button_);
-  views::FocusRing::Get(radio_button_)
+  views::FocusRing::Install(complete_button_);
+  views::FocusRing::Get(complete_button_)
       ->SetColorId(cros_tokens::kCrosSysFocusRing);
 
   add_task_button_ = textfield_container_->AddChildView(
@@ -225,7 +209,10 @@ FocusModeTaskView::FocusModeTaskView(bool is_network_connected) {
                                          ? cros_tokens::kCrosSysSecondary
                                          : cros_tokens::kCrosSysDisabled,
                                      kIconSize));
+  add_task_button_->SetFlipCanvasOnPaintForRTLUI(false);
   add_task_button_->SetFocusBehavior(View::FocusBehavior::NEVER);
+  // Ignore `add_task_button_`for accessibility purposes.
+  add_task_button_->GetViewAccessibility().SetRole(ax::mojom::Role::kNone);
   add_task_button_->SetEnabled(is_network_connected);
 
   textfield_ =
@@ -244,6 +231,8 @@ FocusModeTaskView::FocusModeTaskView(bool is_network_connected) {
   if (!is_network_connected) {
     textfield_->SetEnabled(false);
     textfield_->SetPaintToLayer();
+    // Make the layer transparent.
+    textfield_->layer()->SetFillsBoundsOpaquely(false);
     textfield_->layer()->SetOpacity(kOfflineStateOpacity);
   }
   // Shrink the inactive `textfield_` ring so it's not touching the other views
@@ -262,9 +251,12 @@ FocusModeTaskView::FocusModeTaskView(bool is_network_connected) {
       views::FocusRing::Get(textfield_container_);
   textfield_container_focus_ring->SetColorId(cros_tokens::kCrosSysFocusRing);
   textfield_container_focus_ring->SetOutsetFocusRingDisabled(true);
+  // `textfield_container_` has the focus ring only when `textfield_` is active
+  // and isn't in selected state.
   textfield_container_focus_ring->SetHasFocusPredicate(base::BindRepeating(
       [](const TaskTextfield* textfield, const views::View* view) {
-        return textfield && textfield->IsActive();
+        return textfield && textfield->IsActive() &&
+               !textfield->show_selected();
       },
       textfield_));
 
@@ -286,125 +278,72 @@ FocusModeTaskView::FocusModeTaskView(bool is_network_connected) {
   views::FocusRing::Get(deselect_button_)
       ->SetColorId(cros_tokens::kCrosSysFocusRing);
 
-  chip_carousel_ =
-      AddChildView(std::make_unique<FocusModeChipCarousel>(base::BindRepeating(
-          &FocusModeTaskView::OnTaskSelected, base::Unretained(this))));
-  auto* controller = FocusModeController::Get();
-  const bool has_selected_task = controller->HasSelectedTask();
-  const std::string& selected_task_title = controller->selected_task_title();
-  if (has_selected_task) {
-    // There is a chance that we have a selected task but the title isn't
-    // updated yet, since we do not save that to user prefs.
-    if (!selected_task_title.empty()) {
-      task_title_ = base::UTF8ToUTF16(selected_task_title);
-    }
+  chip_carousel_ = AddChildView(std::make_unique<FocusModeChipCarousel>(
+      base::BindRepeating(&FocusModeTaskView::OnTaskSelectedFromCarousel,
+                          base::Unretained(this))));
 
-    if (is_network_connected) {
-      // Fetch the selected task to verify if it is still in the uncompleted
-      // state.
-      controller->tasks_provider().GetTask(
-          controller->selected_task_list_id(), controller->selected_task_id(),
-          base::BindOnce(&FocusModeTaskView::OnTaskFetched,
-                         weak_factory_.GetWeakPtr()));
-    }
-  } else if (is_network_connected) {
-    controller->tasks_provider().GetSortedTaskList(base::BindOnce(
-        &FocusModeTaskView::OnTasksFetched, weak_factory_.GetWeakPtr()));
-  }
-
-  UpdateStyle(/*show_selected_state=*/(has_selected_task &&
-                                       !selected_task_title.empty()),
-              /*is_network_connected=*/is_network_connected);
+  // Initialize styling as unselected.
+  UpdateStyle(/*show_selected_state=*/false, is_network_connected);
 
   textfield_controller_ =
       std::make_unique<TaskTextfieldController>(textfield_, this);
+
+  auto* controller = FocusModeController::Get();
+  tasks_observation_.Observe(&controller->tasks_model());
+
+  controller->tasks_model().RequestUpdate();
 }
 
 FocusModeTaskView::~FocusModeTaskView() = default;
 
-void FocusModeTaskView::AddOrUpdateTask(const std::u16string& task_title) {
-  if (task_title.empty()) {
-    OnClearTask();
+void FocusModeTaskView::OnSelectedTaskChanged(
+    const std::optional<FocusModeTask>& task) {
+  if (!task) {
+    task_id_.reset();
+
+    // Apply the UI updates if the completion animation is not running.
+    // Otherwise, it'll be updated by `OnClearTask()`.
+    if (!complete_animation_running_) {
+      textfield_->SetText(std::u16string());
+      if (textfield_->HasFocus()) {
+        textfield_->SetActive(true);
+      }
+      UpdateStyle(/*show_selected_state=*/false, is_network_connected_);
+    }
     return;
   }
 
-  auto* controller = FocusModeController::Get();
-  if (controller->HasSelectedTask()) {
-    controller->tasks_provider().UpdateTask(
-        controller->selected_task_list_id(), controller->selected_task_id(),
-        base::UTF16ToUTF8(task_title), /*completed=*/false,
-        base::BindOnce(&FocusModeTaskView::OnTaskSelected,
-                       weak_factory_.GetWeakPtr()));
-  } else {
-    controller->tasks_provider().AddTask(
-        base::UTF16ToUTF8(task_title),
-        base::BindOnce(&FocusModeTaskView::OnTaskSelected,
-                       weak_factory_.GetWeakPtr()));
+  const bool show_selected_state = !task->title.empty();
+  if (show_selected_state) {
+    task_id_ = std::make_optional(task->task_id);
+    textfield_->SetText(base::UTF8ToUTF16(task->title));
   }
+
+  UpdateStyle(/*show_selected_state=*/show_selected_state,
+              /*is_network_connected=*/is_network_connected_);
 }
 
-void FocusModeTaskView::OnTaskSelected(const FocusModeTask& task_entry) {
-  if (task_entry.task_id.empty() || task_entry.title.empty()) {
-    OnClearTask();
+void FocusModeTaskView::OnTasksUpdated(
+    const std::vector<FocusModeTask>& tasks) {
+  chip_carousel_->SetTasks(tasks);
+  chip_carousel_->SetVisible(!textfield_->show_selected() && !tasks.empty());
+}
+
+void FocusModeTaskView::OnTaskCompleted(const FocusModeTask& task) {
+  // If there was no task selected, update to the default state.
+  if (!task_id_.has_value()) {
+    OnSelectedTaskChanged(std::nullopt);
     return;
   }
 
-  task_title_ = base::UTF8ToUTF16(task_entry.title);
-  textfield_->SetText(task_title_);
-  FocusModeController::Get()->SetSelectedTask(task_entry);
-  UpdateStyle(/*show_selected_state=*/true);
-}
+  // Save that the complete animation is running so we can skip the selected
+  // task change event.
+  complete_animation_running_ = true;
 
-void FocusModeTaskView::OnClearTask() {
-  task_title_.clear();
-  textfield_->SetText(std::u16string());
-  auto* controller = FocusModeController::Get();
-  controller->SetSelectedTask({});
-  // Only update `chip_carousel_` when it's invisible to avoid the crash when
-  // moving focus to it by tabbing from an empty text of `textfield_` to the
-  // `chip_carousel_`.
-  if (!chip_carousel_->GetVisible()) {
-    controller->tasks_provider().GetSortedTaskList(base::BindOnce(
-        &FocusModeTaskView::OnTasksFetched, weak_factory_.GetWeakPtr()));
-  }
-  UpdateStyle(/*show_selected_state=*/false);
-}
-
-void FocusModeTaskView::PaintFocusRingAndUpdateStyle() {
-  const bool is_active = textfield_->IsActive();
-  if (is_active) {
-    UpdateStyle(false);
-    // `SystemTextfield::SetActive` will show focus ring when `textfield_` is
-    // active. But in our case, we don't want the textfield to show the focus
-    // ring, but show its parent focus ring. Thus, we need to hide
-    // `textfield_`'s focus ring.
-    textfield_->SetShowFocusRing(false);
-  } else if (textfield_->HasFocus()) {
-    // TODO(b/312226702): Remove the call for clearing the focus for the
-    // `textfield_` after this bug resolved.
-    // Commit changes if `textfield_` is inactive but still has the focus. This
-    // case happens when the user types something in `textfield_` and clicks
-    // outside of `textfield_` to commit changes.
-    ClearFocusForTextfield(textfield_);
-  }
-  textfield_->UpdateElideBehavior(is_active);
-}
-
-void FocusModeTaskView::OnCompleteTask(bool update) {
-  FocusModeController::Get()->CompleteTask(update);
-
-  // Not having a populated `task_title_` means that the UI is not in the
-  // selected state, so we don't need to update the styling and can immediately
-  // clear the task. This can only happen when we initialize the focus panel for
-  // the first time and we have a selected task without a title, since we do not
-  // save that to user prefs.
-  if (task_title_.empty()) {
-    OnClearTask();
-    return;
-  }
-
-  radio_button_->SetEnabled(false);
-  radio_button_->SetImageModel(
+  // Implement completed task styling before removing the task with an
+  // animation.
+  complete_button_->SetEnabled(false);
+  complete_button_->SetImageModel(
       views::Button::STATE_NORMAL,
       ui::ImageModel::FromVectorIcon(kDoneIcon, cros_tokens::kCrosSysPrimary,
                                      kIconSize));
@@ -421,8 +360,122 @@ void FocusModeTaskView::OnCompleteTask(bool update) {
       kStartAnimationDelay);
 }
 
+void FocusModeTaskView::OnTaskSelectedFromCarousel(
+    const FocusModeTask& task_entry) {
+  if (task_entry.task_id.empty() || task_entry.title.empty()) {
+    OnClearTask();
+    return;
+  }
+
+  FocusModeController::Get()->tasks_model().SetSelectedTask(task_entry.task_id);
+
+  // When ChromeVox is on, after selecting a task from the chip carousel we
+  // should set focus on the `complete_button_`.
+  if (IsSpokenFeedbackEnabled()) {
+    complete_button_->RequestFocus();
+  }
+}
+
+void FocusModeTaskView::OnClearTask() {
+  // Clear the complete animation.
+  complete_animation_running_ = false;
+  if (!task_id_.has_value()) {
+    // If a task is not already selected, there is no event for the change in
+    // selected task (because it was already cleared). Trigger the UI update
+    // manually.
+    OnSelectedTaskChanged(std::nullopt);
+    return;
+  }
+  FocusModeController::Get()->tasks_model().ClearSelectedTask();
+}
+
+SystemTextfield* FocusModeTaskView::GetTaskTextfieldForTesting() {
+  return textfield_;
+}
+
+void FocusModeTaskView::CommitTextfieldContents(
+    const std::u16string& contents) {
+  // Textfield blur is triggered before we know if a chip has been clicked. If a
+  // chip was clicked, we ignore what was in the textfield. Post the update so
+  // it runs after the click would be processed.
+  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
+      FROM_HERE,
+      base::BindOnce(&FocusModeTaskView::AddOrUpdateTask,
+                     weak_factory_.GetWeakPtr(), task_id_, contents));
+}
+
+void FocusModeTaskView::AddOrUpdateTask(const std::optional<TaskId>& task_id,
+                                        const std::u16string& task_title) {
+  if (task_id_ != task_id) {
+    // Since the event was queued, the selected task has changed. Discard this
+    // update in favor of the other event.
+    return;
+  }
+
+  if (task_title.empty()) {
+    OnClearTask();
+    return;
+  }
+
+  const bool prev_complete_button_visibility = complete_button_->GetVisible();
+
+  FocusModeTasksModel::TaskUpdate update;
+  if (task_id_ && !task_id_->empty()) {
+    update.task_id = std::make_optional(*task_id_);
+  }
+  update.title = base::UTF16ToUTF8(task_title);
+
+  // UI is updated via `OnSelectedTaskChanged()` once the update has been made
+  // to the model.
+  FocusModeController::Get()->tasks_model().UpdateTask(update);
+
+  // When ChromeVox is on, we want to set the focus onto `complete_button_`
+  // except for the case that we have already pressed TAB key to focus on
+  // `deselect_button_`.
+  if (IsSpokenFeedbackEnabled() &&
+      (!prev_complete_button_visibility || !deselect_button_->HasFocus())) {
+    complete_button_->RequestFocus();
+  }
+}
+
+void FocusModeTaskView::PaintFocusRingAndUpdateStyle() {
+  const bool is_active = textfield_->IsActive();
+  if (is_active) {
+    // `SystemTextfield::SetActive` will show focus ring when `textfield_` is
+    // active. But in our case, we don't want the textfield to show the focus
+    // ring except for when it's in selected state, but show its parent's focus
+    // ring. Thus, we need to hide `textfield_`'s focus ring.
+    if (!textfield_->show_selected()) {
+      textfield_->SetShowFocusRing(false);
+    }
+  } else if (textfield_->HasFocus()) {
+    // TODO(b/312226702): Remove the call for clearing the focus for the
+    // `textfield_` after this bug resolved.
+    // Commit changes if `textfield_` is inactive but still has the focus. This
+    // case happens when the user types something in `textfield_` and clicks
+    // outside of `textfield_` to commit changes.
+    ClearFocusForTextfield(textfield_);
+  }
+  textfield_->UpdateElideBehavior(is_active);
+  views::FocusRing::Get(textfield_container_)->SchedulePaint();
+}
+
+void FocusModeTaskView::OnCompleteTask() {
+  FocusModeController::Get()->CompleteTask();
+}
+
 void FocusModeTaskView::OnDeselectButtonPressed() {
   OnClearTask();
+
+  // When ChromeVox is on, we want to focus on the textfield_ after removing the
+  // selected task.
+  if (!IsSpokenFeedbackEnabled()) {
+    return;
+  }
+  textfield_->RequestFocus();
+  if (textfield_->HasFocus()) {
+    textfield_->SetActive(true);
+  }
 }
 
 void FocusModeTaskView::OnAddTaskButtonPressed() {
@@ -445,45 +498,8 @@ void FocusModeTaskView::OnAddTaskButtonPressed() {
   }
 }
 
-void FocusModeTaskView::OnTasksFetched(
-    const std::vector<FocusModeTask>& tasks) {
-  chip_carousel_->SetTasks(tasks);
-  chip_carousel_->SetVisible(!tasks.empty());
-}
-
-void FocusModeTaskView::OnTaskFetched(const FocusModeTask& task_entry) {
-  // If the selected task could not be found, then an error has occurred.
-  if (task_entry.task_id.empty()) {
-    return;
-  }
-
-  if (task_entry.completed) {
-    OnCompleteTask(/*update=*/false);
-  } else {
-    OnTaskSelected(task_entry);
-  }
-}
-
 void FocusModeTaskView::UpdateStyle(bool show_selected_state,
                                     bool is_network_connected) {
-  textfield_->SetText(task_title_);
-  // Unfocus the textfield if a task is selected.
-  if (show_selected_state) {
-    auto* focus_manager = textfield_->GetFocusManager();
-    // If a task was selected from a chip, the textfield will still be focused.
-    // Unfocus it in this case.
-    if (focus_manager && focus_manager->GetFocusedView() == textfield_) {
-      textfield_->GetFocusManager()->AdvanceFocus(/*reverse=*/false);
-      // If the textfield is focused, unfocusing it will end up calling this
-      // method again.
-      return;
-    }
-  } else {
-    // Clear `task_title_` if no task is selected so that if a list of tasks is
-    // returned while editing the textfield, the chip carousel is shown.
-    task_title_.clear();
-  }
-
   textfield_container_->SetBorder(views::CreateEmptyBorder(
       show_selected_state ? kSelectedStateBoxInsets
                           : kUnselectedStateBoxInsets));
@@ -493,16 +509,30 @@ void FocusModeTaskView::UpdateStyle(bool show_selected_state,
                                 cros_tokens::kCrosSysInputFieldOnShaded,
                                 kTextfieldCornerRadius));
 
-  radio_button_->SetEnabled(is_network_connected);
-  radio_button_->SetVisible(show_selected_state);
+  complete_button_->SetEnabled(is_network_connected);
+  complete_button_->SetVisible(show_selected_state);
+  if (show_selected_state) {
+    complete_button_->GetViewAccessibility().SetDescription(
+        std::u16string(textfield_->GetText()));
+  } else {
+    complete_button_->GetViewAccessibility().SetDescription(
+        std::u16string(),
+        ax::mojom::DescriptionFrom::kAttributeExplicitlyEmpty);
+  }
+
   deselect_button_->SetVisible(show_selected_state);
   add_task_button_->SetVisible(!show_selected_state);
+
   // Note: don't show the carousel if we are editing a previously selected task.
   chip_carousel_->SetVisible(!show_selected_state &&
-                             !FocusModeController::Get()->HasSelectedTask() &&
                              chip_carousel_->HasTasks());
+  // Request a update for the scroll view and gradient for `chip_carousel_` when
+  // it's visible.
+  if (chip_carousel_->GetVisible()) {
+    chip_carousel_->InvalidateLayout();
+  }
 
-  radio_button_->SetImageModel(
+  complete_button_->SetImageModel(
       views::Button::STATE_NORMAL,
       ui::ImageModel::FromVectorIcon(kRadioButtonUncheckedIcon,
                                      is_network_connected
@@ -511,11 +541,17 @@ void FocusModeTaskView::UpdateStyle(bool show_selected_state,
                                      kIconSize));
 
   textfield_->set_show_selected_state(show_selected_state);
+  textfield_->SetTooltipText(
+      is_network_connected
+          ? (show_selected_state ? std::u16string(textfield_->GetText())
+                                 : std::u16string())
+          : l10n_util::GetStringUTF16(
+                IDS_ASH_STATUS_TRAY_FOCUS_MODE_TASK_OFFLINE_TOOLTIP));
   textfield_->GetViewAccessibility().SetName(
       show_selected_state
           ? l10n_util::GetStringFUTF16(
                 IDS_ASH_STATUS_TRAY_FOCUS_MODE_TASK_TEXTFIELD_SELECTED_ACCESSIBLE_NAME,
-                task_title_)
+                std::u16string(textfield_->GetText()))
           : l10n_util::GetStringUTF16(
                 IDS_ASH_STATUS_TRAY_FOCUS_MODE_TASK_TEXTFIELD_UNSELECTED_ACCESSIBLE_NAME));
   textfield_->SetBorder(views::CreateEmptyBorder(

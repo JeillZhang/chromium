@@ -2,16 +2,22 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/342213636): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "content/browser/loader/merkle_integrity_source_stream.h"
 
 #include <string.h>
 
+#include <algorithm>
 #include <string_view>
+#include <tuple>
 
 #include "base/base64.h"
 #include "base/numerics/byte_conversions.h"
 #include "base/numerics/safe_conversions.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/string_util.h"
 #include "net/base/io_buffer.h"
 
@@ -29,7 +35,7 @@ constexpr size_t kMiSha256HeaderLength = sizeof(kMiSha256Header) - 1;
 // Copies as many bytes from |input| as will fit in |output| and advances both.
 size_t CopyClamped(base::span<const char>* input, base::span<char>* output) {
   size_t size = std::min(output->size(), input->size());
-  base::ranges::copy(input->first(size), output->data());
+  std::ranges::copy(input->first(size), output->data());
   *output = output->subspan(size);
   *input = input->subspan(size);
   return size;
@@ -66,10 +72,9 @@ base::expected<size_t, net::Error> MerkleIntegritySourceStream::FilterData(
     return base::unexpected(net::ERR_CONTENT_DECODING_FAILED);
   }
 
-  base::span<const char> remaining_input =
-      base::make_span(input_buffer->data(), input_buffer_size);
-  base::span<char> remaining_output =
-      base::make_span(output_buffer->data(), output_buffer_size);
+  base::span<const char> remaining_input(input_buffer->data(),
+                                         input_buffer_size);
+  base::span<char> remaining_output(output_buffer->data(), output_buffer_size);
   bool ok =
       FilterDataImpl(&remaining_output, &remaining_input, upstream_eof_reached);
   *consumed_bytes = input_buffer_size - remaining_input.size();
@@ -106,7 +111,7 @@ bool MerkleIntegritySourceStream::FilterDataImpl(base::span<char>* output,
       return false;
     }
     uint64_t record_size =
-        base::numerics::U64FromBigEndian(base::as_bytes(bytes).first<8u>());
+        base::U64FromBigEndian(base::as_bytes(bytes).first<8u>());
     if (record_size == 0u) {
       return false;
     }
@@ -160,7 +165,7 @@ bool MerkleIntegritySourceStream::CopyPartialOutput(base::span<char>* output) {
     return true;
   }
   base::span<const char> partial =
-      base::make_span(partial_output_).subspan(partial_output_offset_);
+      base::span(partial_output_).subspan(partial_output_offset_);
   partial_output_offset_ += CopyClamped(&partial, output);
   if (partial_output_offset_ < partial_output_.size()) {
     return false;
@@ -180,8 +185,7 @@ bool MerkleIntegritySourceStream::ConsumeBytes(base::span<const char>* input,
 
   // Return data directly from |input| if possible.
   if (partial_input_.empty() && input->size() >= len) {
-    *result = input->subspan(0, len);
-    *input = input->subspan(len);
+    std::tie(*result, *input) = input->split_at(len);
     return true;
   }
 

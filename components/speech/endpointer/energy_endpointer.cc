@@ -6,6 +6,11 @@
 // based of, see
 // https://wiki.corp.google.com/twiki/bin/view/Main/ChromeGoogleCodeXRef
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "components/speech/endpointer/energy_endpointer.h"
 
 #include <math.h>
@@ -151,7 +156,7 @@ EnergyEndpointer::EnergyEndpointer()
       end_lag_(0),
       user_input_start_time_us_(0) {}
 
-EnergyEndpointer::~EnergyEndpointer() {}
+EnergyEndpointer::~EnergyEndpointer() = default;
 
 int EnergyEndpointer::TimeToFrame(float time) const {
   return static_cast<int32_t>(0.5 + (time / params_.frame_period()));

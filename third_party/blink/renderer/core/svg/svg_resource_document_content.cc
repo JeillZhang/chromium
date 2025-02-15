@@ -22,6 +22,7 @@
 
 #include "third_party/blink/renderer/core/svg/svg_resource_document_content.h"
 
+#include "base/notreached.h"
 #include "base/task/single_thread_task_runner.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/loader/resource/svg_document_resource.h"
@@ -91,8 +92,7 @@ void SVGResourceDocumentContent::NotifyStartLoad() {
   // Check previous status.
   switch (status_) {
     case ResourceStatus::kPending:
-      CHECK(false);
-      break;
+      NOTREACHED();
 
     case ResourceStatus::kNotStarted:
       // Normal load start.
@@ -123,8 +123,7 @@ void SVGResourceDocumentContent::UpdateStatus(ResourceStatus new_status) {
       break;
 
     case ResourceStatus::kNotStarted:
-      CHECK(false);
-      break;
+      NOTREACHED();
   }
   status_ = new_status;
 }
@@ -132,14 +131,13 @@ void SVGResourceDocumentContent::UpdateStatus(ResourceStatus new_status) {
 SVGResourceDocumentContent::UpdateResult
 SVGResourceDocumentContent::UpdateDocument(scoped_refptr<SharedBuffer> data,
                                            const KURL& request_url) {
-  if (data->empty()) {
+  if (data->empty() || was_disposed_) {
     return UpdateResult::kError;
   }
+  CHECK(!document_host_);
   auto* chrome_client = MakeGarbageCollected<ChromeClient>(this);
   document_host_ = MakeGarbageCollected<IsolatedSVGDocumentHost>(
-      *chrome_client, *agent_group_scheduler_);
-  document_host_->InstallDocument(
-      std::move(data),
+      *chrome_client, *agent_group_scheduler_, std::move(data),
       WTF::BindOnce(&SVGResourceDocumentContent::AsyncLoadingFinished,
                     WrapWeakPersistent(this)),
       nullptr, IsolatedSVGDocumentHost::ProcessingMode::kStatic);
@@ -167,6 +165,7 @@ void SVGResourceDocumentContent::AsyncLoadingFinished() {
 
 void SVGResourceDocumentContent::Dispose() {
   ClearDocument();
+  was_disposed_ = true;
 }
 
 void SVGResourceDocumentContent::ClearDocument() {

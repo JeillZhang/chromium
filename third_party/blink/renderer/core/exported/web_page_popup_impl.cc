@@ -35,7 +35,7 @@
 #include "cc/animation/animation_timeline.h"
 #include "cc/base/features.h"
 #include "cc/layers/picture_layer.h"
-#include "cc/trees/ukm_manager.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
 #include "third_party/blink/public/common/storage_key/storage_key.h"
 #include "third_party/blink/public/common/tokens/tokens.h"
 #include "third_party/blink/public/mojom/input/input_handler.mojom-blink.h"
@@ -44,7 +44,6 @@
 #include "third_party/blink/renderer/core/css/media_feature_overrides.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/events/event_dispatch_forbidden_scope.h"
-#include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/events/message_event.h"
 #include "third_party/blink/renderer/core/events/web_input_event_conversion.h"
 #include "third_party/blink/renderer/core/exported/web_settings_impl.h"
@@ -123,7 +122,8 @@ Page* CreatePage(ChromeClient& chrome_client, WebViewImpl& opener_web_view) {
   Settings& main_settings = opener_web_view.GetPage()->GetSettings();
   Page* page = Page::CreateNonOrdinary(
       chrome_client,
-      opener_web_view.GetPage()->GetPageScheduler()->GetAgentGroupScheduler());
+      opener_web_view.GetPage()->GetPageScheduler()->GetAgentGroupScheduler(),
+      &opener_web_view.GetPage()->GetColorProviderColorMaps());
   page->GetSettings().SetAcceleratedCompositingEnabled(true);
   page->GetSettings().SetScriptEnabled(true);
   page->GetSettings().SetAllowScriptsToCloseWindows(true);
@@ -373,7 +373,8 @@ WebPagePopupImpl::WebPagePopupImpl(
       /* Frame* previous_sibling */ nullptr,
       FrameInsertType::kInsertInConstructor, LocalFrameToken(),
       window_agent_factory,
-      /* InterfaceRegistry* */ nullptr);
+      /* InterfaceRegistry* */ nullptr,
+      /* BrowserInterfaceBroker */ mojo::NullRemote());
   frame->SetPagePopupOwner(popup_client_->OwnerElement());
   frame->SetView(MakeGarbageCollected<LocalFrameView>(*frame));
 
@@ -406,7 +407,7 @@ WebPagePopupImpl::WebPagePopupImpl(
 
   SegmentedBuffer data;
   popup_client_->WriteDocument(data);
-  frame->SetPageZoomFactor(popup_client_->ZoomFactor());
+  frame->SetLayoutZoomFactor(popup_client_->ZoomFactor());
   frame->ForceSynchronousDocumentInstall(AtomicString("text/html"),
                                          std::move(data));
 
@@ -469,6 +470,14 @@ void WebPagePopupImpl::ProcessInputEventSynchronouslyForTesting(
     const WebCoalescedInputEvent& event) {
   widget_base_->input_handler().HandleInputEvent(event, nullptr,
                                                  base::DoNothing());
+}
+
+void WebPagePopupImpl::DispatchNonBlockingEventForTesting(
+    std::unique_ptr<WebCoalescedInputEvent> event) {
+  widget_base_->widget_input_handler_manager()
+      ->DispatchEventOnInputThreadForTesting(
+          std::move(event),
+          mojom::blink::WidgetInputHandler::DispatchEventCallback());
 }
 
 void WebPagePopupImpl::UpdateTextInputState() {
@@ -535,8 +544,8 @@ void WebPagePopupImpl::SetScreenRects(const gfx::Rect& widget_screen_rect,
   widget_base_->SetScreenRects(widget_screen_rect, window_screen_rect);
 }
 
-gfx::Size WebPagePopupImpl::VisibleViewportSizeInDIPs() {
-  return widget_base_->VisibleViewportSizeInDIPs();
+gfx::Size WebPagePopupImpl::VisibleViewportSize() {
+  return widget_base_->VisibleViewportSize();
 }
 
 bool WebPagePopupImpl::IsHidden() const {
@@ -677,7 +686,7 @@ WebInputEventResult WebPagePopupImpl::HandleKeyEvent(
   if (WebInputEvent::Type::kRawKeyDown == event.GetType()) {
     Element* focused_element = FocusedElement();
     if (event.windows_key_code == VKEY_TAB && focused_element &&
-        focused_element->IsKeyboardFocusable()) {
+        focused_element->IsKeyboardFocusableSlow()) {
       // If the tab key is pressed while a keyboard focusable element is
       // focused, we should not send a corresponding keypress event.
       suppress_next_keypress_event_ = true;
@@ -700,7 +709,7 @@ void WebPagePopupImpl::OnCommitRequested() {
   }
 }
 
-void WebPagePopupImpl::BeginMainFrame(base::TimeTicks last_frame_time) {
+void WebPagePopupImpl::BeginMainFrame(const viz::BeginFrameArgs& args) {
   if (!page_)
     return;
   // FIXME: This should use lastFrameTimeMonotonic but doing so
@@ -906,8 +915,8 @@ void WebPagePopupImpl::UpdateVisualProperties(
       visual_properties.local_surface_id.value_or(viz::LocalSurfaceId()),
       visual_properties.compositor_viewport_pixel_rect,
       visual_properties.screen_infos);
-  widget_base_->SetVisibleViewportSizeInDIPs(
-      visual_properties.visible_viewport_size);
+  widget_base_->SetVisibleViewportSize(
+      visual_properties.visible_viewport_size_device_px);
 
   // TODO(crbug.com/1155388): Popups are a single "global" object that don't
   // inherit the scale factor of the frame containing the corresponding element
@@ -917,7 +926,7 @@ void WebPagePopupImpl::UpdateVisualProperties(
   widget_base_->LayerTreeHost()->SetExternalPageScaleFactor(
       combined_scale_factor, visual_properties.is_pinch_gesture_active);
 
-  Resize(widget_base_->DIPsToCeiledBlinkSpace(visual_properties.new_size));
+  Resize(visual_properties.new_size_device_px);
 }
 
 gfx::Rect WebPagePopupImpl::ViewportVisibleRect() {
@@ -954,7 +963,7 @@ void WebPagePopupImpl::Close() {
   // TODO(dtapuska): WidgetBase shutdown should happen before Page is
   // disposed if the PageScheduler get used more. See crbug.com/1340914
   // for a crash.
-  widget_base_->Shutdown();
+  widget_base_->Shutdown(/*delay_release=*/false);
   widget_base_.reset();
 
   // Self-delete on Close().

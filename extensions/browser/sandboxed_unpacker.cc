@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "base/command_line.h"
+#include "base/containers/to_vector.h"
 #include "base/files/file_enumerator.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
@@ -39,6 +40,7 @@
 #include "extensions/browser/install/crx_install_error.h"
 #include "extensions/browser/install/sandboxed_unpacker_failure_reason.h"
 #include "extensions/browser/install_stage.h"
+#include "extensions/browser/ruleset_parse_result.h"
 #include "extensions/browser/verified_contents.h"
 #include "extensions/browser/zipfile_installer.h"
 #include "extensions/common/api/declarative_net_request/dnr_manifest_data.h"
@@ -66,11 +68,23 @@ using content::BrowserThread;
 namespace extensions {
 namespace {
 
+// Normalize the file path. If the call to base::NormalizeFilePath fails then we
+// return the original path.
+base::FilePath NormalizeFilePath(const base::FilePath& path) {
+  base::FilePath normalized;
+  if (!base::NormalizeFilePath(path, &normalized)) {
+    LOG(WARNING) << path.value() << " couldn't be normalized.";
+    return path;
+  }
+  return normalized;
+}
+
 // Work horse for FindWritableTempLocation. Creates a temp file in the folder
-// and uses NormalizeFilePath to check if the path is junction free.
-bool VerifyJunctionFreeLocation(base::FilePath* temp_dir) {
-  if (temp_dir->empty())
+// tries to normalize the path.
+bool VerifyWritableTempLocation(base::FilePath* temp_dir) {
+  if (temp_dir->empty()) {
     return false;
+  }
 
   base::FilePath temp_file;
   if (!base::CreateTemporaryFileInDir(*temp_dir, &temp_file)) {
@@ -86,26 +100,16 @@ bool VerifyJunctionFreeLocation(base::FilePath* temp_dir) {
     return false;
   }
 
-  base::FilePath normalized_temp_file;
-  bool normalized = base::NormalizeFilePath(temp_file, &normalized_temp_file);
-  if (!normalized) {
-    // If |temp_file| contains a link, the sandbox will block all file
-    // system operations, and the install will fail.
-    LOG(ERROR) << temp_dir->value() << " seem to be on remote drive.";
-  } else {
-    *temp_dir = normalized_temp_file.DirName();
-  }
-
+  *temp_dir = NormalizeFilePath(temp_file).DirName();
   // Clean up the temp file.
   base::DeleteFile(temp_file);
 
-  return normalized;
+  return true;
 }
 
 // This function tries to find a location for unpacking the extension archive
-// that is writable and does not lie on a shared drive so that the sandboxed
-// unpacking process can write there. If no such location exists we can not
-// proceed and should fail.
+// that is writable. If no such location exists we can not proceed and should
+// fail.
 // The result will be written to |temp_dir|. The function will write to this
 // parameter even if it returns false.
 bool FindWritableTempLocation(const base::FilePath& extensions_dir,
@@ -113,15 +117,17 @@ bool FindWritableTempLocation(const base::FilePath& extensions_dir,
 // On ChromeOS, we will only attempt to unpack extension in cryptohome (profile)
 // directory to provide additional security/privacy and speed up the rest of
 // the extension install process.
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_CHROMEOS)
   base::PathService::Get(base::DIR_TEMP, temp_dir);
-  if (VerifyJunctionFreeLocation(temp_dir))
+  if (VerifyWritableTempLocation(temp_dir)) {
     return true;
+  }
 #endif
 
   *temp_dir = file_util::GetInstallTempDir(extensions_dir);
-  if (VerifyJunctionFreeLocation(temp_dir))
+  if (VerifyWritableTempLocation(temp_dir)) {
     return true;
+  }
   // Neither paths is link free chances are good installation will fail.
   LOG(ERROR) << "Both the %TEMP% folder and the profile seem to be on "
              << "remote drives or read-only. Installation can not complete!";
@@ -247,8 +253,7 @@ void SandboxedUnpackerClient::ShouldComputeHashesForOffWebstoreExtension(
 
 void SandboxedUnpackerClient::GetContentVerifierKey(
     base::OnceCallback<void(ContentVerifierKey)> callback) {
-  std::move(callback).Run(ContentVerifierKey(kWebstoreSignaturesPublicKey,
-                                             kWebstoreSignaturesPublicKeySize));
+  std::move(callback).Run(kWebstoreSignaturesPublicKey);
 }
 
 SandboxedUnpacker::ScopedVerifierFormatOverrideForTest::
@@ -318,8 +323,9 @@ void SandboxedUnpacker::StartWithCrx(const CRXFileInfo& crx_info) {
     expected_hash = base::ToLowerASCII(crx_info.expected_hash);
   }
 
-  if (!CreateTempDirectory())
+  if (!CreateTempDirectory()) {
     return;  // ReportFailure() already called.
+  }
 
   // Initialize the path that will eventually contain the unpacked extension.
   extension_root_ = temp_dir_.GetPath().AppendASCII(kTempExtensionName);
@@ -346,25 +352,12 @@ void SandboxedUnpacker::StartWithCrx(const CRXFileInfo& crx_info) {
     return;
   }
 
-  // The utility process will have access to the directory passed to
-  // SandboxedUnpacker.  That directory should not contain a symlink or NTFS
-  // reparse point.  When the path is used, following the link/reparse point
-  // will cause file system access outside the sandbox path, and the sandbox
-  // will deny the operation.
-  base::FilePath link_free_crx_path;
-  if (!base::NormalizeFilePath(temp_crx_path, &link_free_crx_path)) {
-    LOG(ERROR) << "Could not get the normalized path of "
-               << temp_crx_path.value();
-    ReportFailure(
-        SandboxedUnpackerFailureReason::COULD_NOT_GET_SANDBOX_FRIENDLY_PATH,
-        l10n_util::GetStringUTF16(IDS_EXTENSION_UNPACK_FAILED));
-    return;
-  }
+  base::FilePath normalized_crx_path = NormalizeFilePath(temp_crx_path);
   client_->OnStageChanged(InstallationStage::kUnpacking);
   // Make sure to create the directory where the extension will be unzipped, as
   // the unzipper service requires it.
   base::FilePath unzipped_dir =
-      link_free_crx_path.DirName().AppendASCII(kTempExtensionName);
+      normalized_crx_path.DirName().AppendASCII(kTempExtensionName);
   base::File::Error error;
   if (!base::CreateDirectoryAndGetError(unzipped_dir, &error)) {
     LOG(ERROR) << "Failed to created directory " << unzipped_dir.value()
@@ -374,7 +367,7 @@ void SandboxedUnpacker::StartWithCrx(const CRXFileInfo& crx_info) {
     return;
   }
 
-  Unzip(link_free_crx_path, unzipped_dir);
+  Unzip(normalized_crx_path, unzipped_dir);
 }
 
 void SandboxedUnpacker::StartWithDirectory(const ExtensionId& extension_id,
@@ -386,8 +379,9 @@ void SandboxedUnpacker::StartWithDirectory(const ExtensionId& extension_id,
 
   extension_id_ = extension_id;
   public_key_ = public_key;
-  if (!CreateTempDirectory())
+  if (!CreateTempDirectory()) {
     return;  // ReportFailure() already called.
+  }
 
   extension_root_ = temp_dir_.GetPath().AppendASCII(kTempExtensionName);
 
@@ -464,8 +458,7 @@ void SandboxedUnpacker::OnVerifiedContentsUncompressed(
   }
   // Make a copy, since |result| may store data in shared memory, accessible by
   // some other processes.
-  std::vector<uint8_t> verified_contents(result->data(),
-                                         result->data() + result->size());
+  std::vector<uint8_t> verified_contents = base::ToVector(*result);
 
   client_->GetContentVerifierKey(
       base::BindOnce(&SandboxedUnpacker::StoreVerifiedContentsInExtensionDir,
@@ -561,8 +554,9 @@ void SandboxedUnpacker::UnpackExtensionSucceeded(base::Value::Dict manifest) {
 
   std::optional<base::Value::Dict> final_manifest(
       RewriteManifestFile(manifest));
-  if (!final_manifest)
+  if (!final_manifest) {
     return;
+  }
 
   // Create an extension object that refers to the temporary location the
   // extension was unpacked to. We use this until the extension is finally
@@ -625,8 +619,9 @@ data_decoder::DataDecoder* SandboxedUnpacker::GetDataDecoder() {
 
 void SandboxedUnpacker::OnImageDecoded(const base::FilePath& path,
                                        SkBitmap image) {
-  if (path == install_icon_path_)
+  if (path == install_icon_path_) {
     install_icon_ = image;
+  }
 }
 
 void SandboxedUnpacker::OnImageSanitizationDone(
@@ -673,8 +668,7 @@ void SandboxedUnpacker::OnImageSanitizationDone(
                                          u"ERROR_SAVING_THEME_IMAGE");
       break;
     default:
-      NOTREACHED_IN_MIGRATION();
-      break;
+      NOTREACHED();
   }
 
   ReportFailure(failure_reason, error);
@@ -739,8 +733,7 @@ void SandboxedUnpacker::MessageCatalogsSanitized(
                                          u"ERROR_SAVING_CATALOG");
       break;
     default:
-      NOTREACHED_IN_MIGRATION();
-      break;
+      NOTREACHED();
   }
 
   ReportFailure(failure_reason, error);
@@ -764,8 +757,7 @@ void SandboxedUnpacker::IndexAndPersistJSONRulesetsIfNeeded() {
       base::BindOnce(&SandboxedUnpacker::OnJSONRulesetsIndexed, this));
 }
 
-void SandboxedUnpacker::OnJSONRulesetsIndexed(
-    declarative_net_request::InstallIndexHelper::Result result) {
+void SandboxedUnpacker::OnJSONRulesetsIndexed(RulesetParseResult result) {
   if (result.error) {
     ReportFailure(
         SandboxedUnpackerFailureReason::ERROR_INDEXING_DNR_RULESET,
@@ -774,8 +766,9 @@ void SandboxedUnpacker::OnJSONRulesetsIndexed(
     return;
   }
 
-  if (!result.warnings.empty())
+  if (!result.warnings.empty()) {
     extension_->AddInstallWarnings(std::move(result.warnings));
+  }
 
   ruleset_install_prefs_ = std::move(result.ruleset_install_prefs);
 
@@ -924,8 +917,7 @@ std::u16string SandboxedUnpacker::FailureReasonToString16(
     case SandboxedUnpackerFailureReason::DEPRECATED_ERROR_PARSING_DNR_RULESET:
     case SandboxedUnpackerFailureReason::NUM_FAILURE_REASONS:
     default:
-      NOTREACHED_IN_MIGRATION();
-      return std::u16string();
+      NOTREACHED();
   }
 }
 

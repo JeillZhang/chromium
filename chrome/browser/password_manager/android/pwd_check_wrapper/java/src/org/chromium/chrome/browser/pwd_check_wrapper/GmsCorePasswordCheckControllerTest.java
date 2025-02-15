@@ -14,14 +14,11 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
 import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
 import org.robolectric.annotation.Config;
 
-import org.chromium.base.CollectionUtil;
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.base.test.util.JniMocker;
 import org.chromium.chrome.browser.password_manager.CredentialManagerLauncher.CredentialManagerError;
 import org.chromium.chrome.browser.password_manager.FakePasswordCheckupClientHelper;
 import org.chromium.chrome.browser.password_manager.FakePasswordCheckupClientHelperFactoryImpl;
@@ -30,6 +27,7 @@ import org.chromium.chrome.browser.password_manager.PasswordCheckupClientHelper.
 import org.chromium.chrome.browser.password_manager.PasswordCheckupClientHelperFactory;
 import org.chromium.chrome.browser.password_manager.PasswordManagerBackendSupportHelper;
 import org.chromium.chrome.browser.password_manager.PasswordManagerHelper;
+import org.chromium.chrome.browser.password_manager.PasswordManagerHelperJni;
 import org.chromium.chrome.browser.password_manager.PasswordManagerUtilBridge;
 import org.chromium.chrome.browser.password_manager.PasswordManagerUtilBridgeJni;
 import org.chromium.chrome.browser.password_manager.PasswordStoreBridge;
@@ -39,12 +37,14 @@ import org.chromium.chrome.browser.pwd_check_wrapper.PasswordCheckController.Pas
 import org.chromium.chrome.browser.sync.SyncServiceFactory;
 import org.chromium.components.prefs.PrefService;
 import org.chromium.components.signin.base.CoreAccountInfo;
+import org.chromium.components.signin.base.GaiaId;
 import org.chromium.components.sync.SyncService;
 import org.chromium.components.sync.UserSelectableType;
 import org.chromium.components.user_prefs.UserPrefs;
 import org.chromium.components.user_prefs.UserPrefsJni;
 
 import java.util.OptionalInt;
+import java.util.Set;
 import java.util.concurrent.ExecutionException;
 
 /** Unit tests for {@link GmsCorePasswordCheckController}. */
@@ -54,7 +54,6 @@ public class GmsCorePasswordCheckControllerTest {
     private static final String TEST_EMAIL_ADDRESS = "test@example.com";
 
     @Rule public MockitoRule mMockitoRule = MockitoJUnit.rule();
-    @Rule public JniMocker mJniMocker = new JniMocker();
 
     @Mock private SyncService mSyncService;
     @Mock private PasswordStoreBridge mPasswordStoreBridge;
@@ -62,14 +61,13 @@ public class GmsCorePasswordCheckControllerTest {
     @Mock private UserPrefs.Natives mUserPrefsJniMock;
     @Mock private PrefService mPrefService;
     @Mock private PasswordManagerUtilBridge.Natives mPasswordManagerUtilBridgeNativeMock;
+    @Mock private PasswordManagerHelper.Natives mPasswordManagerHelperNativeMock;
     FakePasswordCheckupClientHelper mPasswordCheckupClientHelper;
 
     private GmsCorePasswordCheckController mController;
 
     @Before
     public void setUp() {
-        MockitoAnnotations.openMocks(this);
-
         setupUserProfileWithMockPrefService();
         configureMockSyncServiceToSyncPasswords();
         configurePasswordManagerBackendSupport();
@@ -83,8 +81,8 @@ public class GmsCorePasswordCheckControllerTest {
     }
 
     private void configurePasswordManagerBackendSupport() {
-        mJniMocker.mock(
-                PasswordManagerUtilBridgeJni.TEST_HOOKS, mPasswordManagerUtilBridgeNativeMock);
+        PasswordManagerUtilBridgeJni.setInstanceForTesting(mPasswordManagerUtilBridgeNativeMock);
+        PasswordManagerHelperJni.setInstanceForTesting(mPasswordManagerHelperNativeMock);
         when(mPasswordManagerUtilBridgeNativeMock.shouldUseUpmWiring(mSyncService, mPrefService))
                 .thenReturn(true);
         when(mPasswordManagerUtilBridgeNativeMock.usesSplitStoresAndUPMForLocal(mPrefService))
@@ -100,10 +98,13 @@ public class GmsCorePasswordCheckControllerTest {
     private void configureMockSyncServiceToSyncPasswords() {
         SyncServiceFactory.setInstanceForTesting(mSyncService);
         when(mSyncService.isSyncFeatureEnabled()).thenReturn(true);
-        when(mSyncService.getSelectedTypes())
-                .thenReturn(CollectionUtil.newHashSet(UserSelectableType.PASSWORDS));
+        when(mSyncService.getSelectedTypes()).thenReturn(Set.of(UserSelectableType.PASSWORDS));
         when(mSyncService.getAccountInfo())
-                .thenReturn(CoreAccountInfo.createFromEmailAndGaiaId(TEST_EMAIL_ADDRESS, "0"));
+                .thenReturn(
+                        CoreAccountInfo.createFromEmailAndGaiaId(
+                                TEST_EMAIL_ADDRESS, new GaiaId("0")));
+        when(mPasswordManagerHelperNativeMock.hasChosenToSyncPasswords(mSyncService))
+                .thenReturn(true);
     }
 
     private void setFakePasswordCheckupClientHelper() {
@@ -116,7 +117,7 @@ public class GmsCorePasswordCheckControllerTest {
 
     private void setupUserProfileWithMockPrefService() {
         when(mProfile.getOriginalProfile()).thenReturn(mProfile);
-        mJniMocker.mock(UserPrefsJni.TEST_HOOKS, mUserPrefsJniMock);
+        UserPrefsJni.setInstanceForTesting(mUserPrefsJniMock);
         when(mUserPrefsJniMock.get(mProfile)).thenReturn(mPrefService);
     }
 

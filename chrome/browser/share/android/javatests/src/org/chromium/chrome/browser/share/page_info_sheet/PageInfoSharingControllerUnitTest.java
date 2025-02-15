@@ -43,7 +43,6 @@ import org.hamcrest.MatcherAssert;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
@@ -54,18 +53,16 @@ import org.robolectric.shadows.ShadowActivity;
 import org.robolectric.shadows.ShadowLooper;
 
 import org.chromium.base.Callback;
-import org.chromium.base.FeatureList;
-import org.chromium.base.FeatureList.TestValues;
+import org.chromium.base.FeatureOverrides;
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.base.test.util.Features;
 import org.chromium.base.test.util.Features.DisableFeatures;
 import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.base.test.util.HistogramWatcher;
-import org.chromium.base.test.util.JniMocker;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.content_extraction.InnerTextBridge;
 import org.chromium.chrome.browser.content_extraction.InnerTextBridgeJni;
 import org.chromium.chrome.browser.feedback.HelpAndFeedbackLauncher;
+import org.chromium.chrome.browser.feedback.HelpAndFeedbackLauncherFactory;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.model_execution.ExecutionResult;
 import org.chromium.chrome.browser.model_execution.ExecutionResult.ExecutionError;
@@ -96,10 +93,6 @@ import java.util.Optional;
 public class PageInfoSharingControllerUnitTest {
     @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
 
-    @Rule public TestRule mFeatureProcessor = new Features.JUnitProcessor();
-
-    @Rule public JniMocker mJniMocker = new JniMocker();
-
     @Rule
     public ActivityScenarioRule<TestActivity> mActivityScenarioRule =
             new ActivityScenarioRule<>(TestActivity.class);
@@ -126,9 +119,10 @@ public class PageInfoSharingControllerUnitTest {
     @Before
     public void setUp() {
         PageInfoSharingControllerImpl.resetForTesting();
-        mJniMocker.mock(InnerTextBridgeJni.TEST_HOOKS, mInnerTextJniMock);
-        mJniMocker.mock(DomDistillerUrlUtilsJni.TEST_HOOKS, mDomDistillerUrlUtilsJni);
-        mJniMocker.mock(PageInfoSharingBridgeJni.TEST_HOOKS, mPageInfoSharingBridgeJni);
+        HelpAndFeedbackLauncherFactory.setInstanceForTesting(mMockFeedbackLauncher);
+        InnerTextBridgeJni.setInstanceForTesting(mInnerTextJniMock);
+        DomDistillerUrlUtilsJni.setInstanceForTesting(mDomDistillerUrlUtilsJni);
+        PageInfoSharingBridgeJni.setInstanceForTesting(mPageInfoSharingBridgeJni);
         when(mDomDistillerUrlUtilsJni.getOriginalUrlFromDistillerUrl(anyString()))
                 .thenAnswer(
                         (invocation) -> {
@@ -167,12 +161,7 @@ public class PageInfoSharingControllerUnitTest {
         setInnerTextExtractionResult("Inner text of web page");
 
         PageInfoSharingControllerImpl.getInstance()
-                .sharePageInfo(
-                        context,
-                        mBottomSheetController,
-                        mChromeOptionShareCallback,
-                        mMockFeedbackLauncher,
-                        tab);
+                .sharePageInfo(context, mBottomSheetController, mChromeOptionShareCallback, tab);
 
         verify(mBottomSheetController)
                 .requestShowContent(bottomSheetContentCaptor.capture(), anyBoolean());
@@ -307,7 +296,6 @@ public class PageInfoSharingControllerUnitTest {
                                     activity,
                                     mBottomSheetController,
                                     mChromeOptionShareCallback,
-                                    mMockFeedbackLauncher,
                                     firstTab);
                     assertFalse(
                             "Page sharing process should only happen for one tab at a time",
@@ -336,7 +324,6 @@ public class PageInfoSharingControllerUnitTest {
                                     activity,
                                     mBottomSheetController,
                                     mChromeOptionShareCallback,
-                                    mMockFeedbackLauncher,
                                     tab);
                     verify(mBottomSheetController).requestShowContent(any(), anyBoolean());
                     histogramWatcher.assertExpected();
@@ -370,7 +357,6 @@ public class PageInfoSharingControllerUnitTest {
                                     activity,
                                     mBottomSheetController,
                                     mChromeOptionShareCallback,
-                                    mMockFeedbackLauncher,
                                     tab);
 
                     verify(mBottomSheetController)
@@ -416,7 +402,6 @@ public class PageInfoSharingControllerUnitTest {
                                     activity,
                                     mBottomSheetController,
                                     mChromeOptionShareCallback,
-                                    mMockFeedbackLauncher,
                                     tab);
 
                     verify(mBottomSheetController)
@@ -473,7 +458,6 @@ public class PageInfoSharingControllerUnitTest {
                                     activity,
                                     mBottomSheetController,
                                     mChromeOptionShareCallback,
-                                    mMockFeedbackLauncher,
                                     tab);
 
                     verify(mBottomSheetController)
@@ -554,7 +538,6 @@ public class PageInfoSharingControllerUnitTest {
                                     activity,
                                     mBottomSheetController,
                                     mChromeOptionShareCallback,
-                                    mMockFeedbackLauncher,
                                     tab);
 
                     // Verify page text extraction was requested.
@@ -593,7 +576,6 @@ public class PageInfoSharingControllerUnitTest {
                                     activity,
                                     mBottomSheetController,
                                     mChromeOptionShareCallback,
-                                    mMockFeedbackLauncher,
                                     tab);
 
                     verify(mBottomSheetController)
@@ -667,7 +649,6 @@ public class PageInfoSharingControllerUnitTest {
                                     activity,
                                     mBottomSheetController,
                                     mChromeOptionShareCallback,
-                                    mMockFeedbackLauncher,
                                     tab);
 
                     verify(mBottomSheetController)
@@ -862,13 +843,10 @@ public class PageInfoSharingControllerUnitTest {
     @Test
     public void testOpenLearnMoreLink() {
         String testLearnMoreUrl = "https://google.com/learn_more";
-        TestValues testValues = new TestValues();
-        testValues.addFeatureFlagOverride(ChromeFeatureList.CHROME_SHARE_PAGE_INFO, true);
-        testValues.addFieldTrialParamOverride(
-                ChromeFeatureList.CHROME_SHARE_PAGE_INFO,
-                PageSummarySharingRequest.LEARN_MORE_URL_PARAM,
-                testLearnMoreUrl);
-        FeatureList.setTestValues(testValues);
+        FeatureOverrides.newBuilder()
+                .enable(ChromeFeatureList.CHROME_SHARE_PAGE_INFO)
+                .param(PageSummarySharingRequest.LEARN_MORE_URL_PARAM, testLearnMoreUrl)
+                .apply();
 
         ArgumentCaptor<BottomSheetContent> sheetContentCaptor =
                 ArgumentCaptor.forClass(BottomSheetContent.class);
@@ -898,7 +876,9 @@ public class PageInfoSharingControllerUnitTest {
                                     .findViewById(R.id.learn_more_text);
                     var learnMoreTextLinks = learnMoreText.getClickableSpans();
                     assertNotEquals(
-                            "TextView should contain clickable spans", 0, learnMoreTextLinks);
+                            "TextView should contain clickable spans",
+                            0,
+                            learnMoreTextLinks.length);
                     // Click first span, which should contain a "learn more" text and link to a web
                     // page.
                     learnMoreTextLinks[0].onClick(learnMoreText);

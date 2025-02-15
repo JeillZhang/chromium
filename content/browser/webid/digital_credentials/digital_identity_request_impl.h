@@ -12,7 +12,6 @@
 #include "base/memory/weak_ptr.h"
 #include "base/types/expected.h"
 #include "content/common/content_export.h"
-#include "content/public/browser/content_browser_client.h"
 #include "content/public/browser/digital_identity_provider.h"
 #include "content/public/browser/document_service.h"
 #include "content/public/browser/web_contents_observer.h"
@@ -36,13 +35,17 @@ class RenderFrameHost;
 class CONTENT_EXPORT DigitalIdentityRequestImpl
     : public DocumentService<blink::mojom::DigitalIdentityRequest> {
  public:
-  static void Create(
+  // The return value is only intended to be used in tests.
+  static base::WeakPtr<DigitalIdentityRequestImpl> CreateInstance(
       RenderFrameHost&,
       mojo::PendingReceiver<blink::mojom::DigitalIdentityRequest>);
 
-  // Returns true is the passed-in OpenId4Vp request is solely requesting an
-  // mdoc age_over_xx assertion.
-  static bool IsOnlyRequestingAge(const base::Value& request);
+  // Returns the type of interstitial to show based on the request contents.
+  static std::optional<DigitalIdentityInterstitialType> ComputeInterstitialType(
+      const url::Origin& rp_origin,
+      const DigitalIdentityProvider* provider,
+      const std::string& protocol,
+      const data_decoder::DataDecoder::ValueOrError& request_data);
 
   DigitalIdentityRequestImpl(const DigitalIdentityRequestImpl&) = delete;
   DigitalIdentityRequestImpl& operator=(const DigitalIdentityRequestImpl&) =
@@ -51,44 +54,32 @@ class CONTENT_EXPORT DigitalIdentityRequestImpl
   ~DigitalIdentityRequestImpl() override;
 
   // blink::mojom::DigitalIdentityRequest:
-  void Request(blink::mojom::DigitalCredentialProviderPtr provider,
-               RequestCallback) override;
+  void Get(std::vector<blink::mojom::DigitalCredentialRequestPtr>
+               digital_credential_requests,
+           blink::mojom::GetRequestFormat format,
+           GetCallback) override;
+
+  void Create(
+      blink::mojom::DigitalCredentialRequestPtr digital_credential_request,
+      CreateCallback) override;
+
   void Abort() override;
 
  private:
-  // Notifies callback if the passed-in WebContents no longer uses the
-  // passed-in RenderFrameHost or the passed-in RenderFrameHost becomes
-  // inactive.
-  class RenderFrameHostLifecycleObserver : public WebContentsObserver {
-   public:
-    RenderFrameHostLifecycleObserver(
-        const raw_ptr<WebContents> web_contents,
-        raw_ptr<RenderFrameHost> render_frame_host,
-        ContentBrowserClient::DigitalIdentityInterstitialAbortCallback
-            abort_callback);
-    ~RenderFrameHostLifecycleObserver() override;
-
-   private:
-    // WebContentsObserver:
-    void RenderFrameHostChanged(RenderFrameHost* old_host,
-                                RenderFrameHost* new_host) override;
-    void RenderFrameHostStateChanged(
-        content::RenderFrameHost* rfh,
-        content::RenderFrameHost::LifecycleState old_state,
-        content::RenderFrameHost::LifecycleState new_state) override;
-
-    const raw_ptr<RenderFrameHost> render_frame_host_;
-    ContentBrowserClient::DigitalIdentityInterstitialAbortCallback
-        abort_callback_;
-  };
-
   DigitalIdentityRequestImpl(
       RenderFrameHost&,
       mojo::PendingReceiver<blink::mojom::DigitalIdentityRequest>);
 
-  // Called when the request JSON has been parsed.
-  void OnRequestJsonParsed(
-      std::string request_to_send,
+  // Called when the get request JSON has been parsed.
+  void OnGetRequestJsonParsed(
+      std::string protocol,
+      base::Value request_to_send,
+      data_decoder::DataDecoder::ValueOrError parsed_result);
+
+  // Called when the create request JSON has been parsed.
+  void OnCreateRequestJsonParsed(
+      std::string protocol,
+      base::Value request_to_send,
       data_decoder::DataDecoder::ValueOrError parsed_result);
 
   // Called after fetching the user's identity. Shows an interstitial if needed.
@@ -99,37 +90,38 @@ class CONTENT_EXPORT DigitalIdentityRequestImpl
           response);
 
   // Called when the user has fulfilled the interstitial requirement. Will be
-  // called immediately after ShowInterstitialIfNeeded() if no interstitial is
+  // called immediately after OnGetRequestJsonParsed() if no interstitial is
   // needed.
-  void OnInterstitialDone(const std::string& response,
+  void OnInterstitialDone(std::string protocol,
+                          base::Value request_to_send,
                           DigitalIdentityProvider::RequestStatusForMetrics
                               status_after_interstitial);
 
-  // Infers one of [kError, kSuccess] for RequestDigitalIdentityStatus based on
+  // Infers blink::mojom::RequestDigitalIdentityStatus based on
   // `status_for_metrics`.
   void CompleteRequest(
+      std::optional<std::string> protocol,
       const base::expected<std::string,
                            DigitalIdentityProvider::RequestStatusForMetrics>&
           status_for_metrics);
 
+  void CompleteRequestWithError(
+      DigitalIdentityProvider::RequestStatusForMetrics status_for_metrics);
+
   void CompleteRequestWithStatus(
+      std::optional<std::string> protocol,
       blink::mojom::RequestDigitalIdentityStatus status,
       const base::expected<std::string,
                            DigitalIdentityProvider::RequestStatusForMetrics>&
           response);
 
   std::unique_ptr<DigitalIdentityProvider> provider_;
-  RequestCallback callback_;
+  GetCallback callback_;
 
   // Callback which updates interstitial to inform user that the credential
   // request has been aborted.
-  ContentBrowserClient::DigitalIdentityInterstitialAbortCallback
+  DigitalIdentityProvider::DigitalIdentityInterstitialAbortCallback
       update_interstitial_on_abort_callback_;
-
-  // Updates interstitial to indicate that credential request was canceled when
-  // page navigation occurs.
-  std::unique_ptr<RenderFrameHostLifecycleObserver>
-      render_frame_host_lifecycle_observer_;
 
   base::WeakPtrFactory<DigitalIdentityRequestImpl> weak_ptr_factory_{this};
 };

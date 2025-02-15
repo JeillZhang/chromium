@@ -11,6 +11,8 @@
 #include "base/metrics/histogram_functions.h"
 #include "base/strings/strcat.h"
 #include "ui/events/ash/keyboard_capability.h"
+#include "ui/events/ash/keyboard_info_metrics.h"
+#include "ui/events/ash/mojom/modifier_key.mojom-shared.h"
 
 namespace ui {
 namespace {
@@ -31,6 +33,36 @@ constexpr auto kModifierKeyUsageMappings =
         {DomCode::LAUNCH_ASSISTANT, ModifierKeyUsageMetric::kAssistant},
         {DomCode::FN, ModifierKeyUsageMetric::kFunction},
     });
+
+std::optional<std::string> GetModifierNameFromModifierKeyUsage(
+    ModifierKeyUsageMetric val) {
+  switch (val) {
+    case ModifierKeyUsageMetric::kMetaLeft:
+    case ModifierKeyUsageMetric::kMetaRight:
+      return "Meta";
+    case ModifierKeyUsageMetric::kControlLeft:
+    case ModifierKeyUsageMetric::kControlRight:
+      return "Control";
+    case ModifierKeyUsageMetric::kAltLeft:
+    case ModifierKeyUsageMetric::kAltRight:
+      return "Alt";
+    case ModifierKeyUsageMetric::kShiftLeft:
+    case ModifierKeyUsageMetric::kShiftRight:
+      return std::nullopt;
+    case ModifierKeyUsageMetric::kCapsLock:
+      return "CapsLock";
+    case ModifierKeyUsageMetric::kBackspace:
+      return "Backspace";
+    case ModifierKeyUsageMetric::kEscape:
+      return "Escape";
+    case ModifierKeyUsageMetric::kAssistant:
+      return "Assistant";
+    case ModifierKeyUsageMetric::kFunction:
+      return "Function";
+    case ModifierKeyUsageMetric::kQuickInsert:
+      return "RightAlt";
+  }
+}
 
 // Returns the name to be used as a part of histogram name.
 // If empty, no histogram is expected.
@@ -59,6 +91,36 @@ std::string_view GetDeviceNameForHistogram(
   }
 }
 
+void RecordKeyUsageMetric(const KeyboardCapability& keyboard_capability,
+                          KeyboardCapability::DeviceType device_type,
+                          int device_id,
+                          DomCode dom_code,
+                          DomCode original_dom_code,
+                          ui::ModifierKeyUsageMetric modifier_key) {
+  if (device_type != KeyboardCapability::DeviceType::kDeviceInternalKeyboard) {
+    return;
+  }
+
+  auto modifier_name = GetModifierNameFromModifierKeyUsage(modifier_key);
+  if (!modifier_name) {
+    return;
+  }
+
+  const bool dom_codes_match = dom_code == original_dom_code;
+  const bool rewritten_to_quick_insert =
+      dom_codes_match && modifier_key == ModifierKeyUsageMetric::kQuickInsert &&
+      !keyboard_capability.HasQuickInsertKey(device_id);
+  const bool rewritten_to_assistant =
+      dom_codes_match && modifier_key == ModifierKeyUsageMetric::kAssistant &&
+      !keyboard_capability.HasAssistantKey(device_id);
+  const bool modifier_was_rewritten =
+      !dom_codes_match || rewritten_to_assistant || rewritten_to_quick_insert;
+  base::UmaHistogramEnumeration(
+      base::StrCat({"ChromeOS.Inputs.KeyUsage.Internal.", *modifier_name}),
+      modifier_was_rewritten ? KeyUsageCategory::kVirtuallyPressed
+                             : KeyUsageCategory::kPhysicallyPressed);
+}
+
 }  // namespace
 
 void RecordModifierKeyPressedBeforeRemapping(
@@ -79,13 +141,13 @@ void RecordModifierKeyPressedBeforeRemapping(
   auto modifier_key = it->second;
 
   if (modifier_key == ModifierKeyUsageMetric::kAssistant &&
-      keyboard_capability.HasRightAltKey(device_id)) {
-    modifier_key = ModifierKeyUsageMetric::kRightAlt;
+      keyboard_capability.HasQuickInsertKey(device_id)) {
+    modifier_key = ModifierKeyUsageMetric::kQuickInsert;
   }
 
   if ((modifier_key == ModifierKeyUsageMetric::kFunction ||
-       modifier_key == ModifierKeyUsageMetric::kRightAlt) &&
-      !keyboard_capability.HasRightAltKey(device_id)) {
+       modifier_key == ModifierKeyUsageMetric::kQuickInsert) &&
+      !keyboard_capability.HasQuickInsertKey(device_id)) {
     return;
   }
 
@@ -98,28 +160,31 @@ void RecordModifierKeyPressedAfterRemapping(
     const KeyboardCapability& keyboard_capability,
     int device_id,
     DomCode dom_code,
-    bool is_right_alt_key) {
+    DomCode original_dom_code,
+    bool is_quick_insert_key) {
   auto it = kModifierKeyUsageMappings.find(dom_code);
   if (it == kModifierKeyUsageMappings.end()) {
     return;
   }
 
-  auto device_name =
-      GetDeviceNameForHistogram(keyboard_capability.GetDeviceType(device_id));
+  const auto device_type = keyboard_capability.GetDeviceType(device_id);
+  auto device_name = GetDeviceNameForHistogram(device_type);
   if (device_name.empty()) {
     return;
   }
 
   auto modifier_key = it->second;
-
-  if (modifier_key == ModifierKeyUsageMetric::kAssistant && is_right_alt_key) {
-    modifier_key = ModifierKeyUsageMetric::kRightAlt;
+  if (modifier_key == ModifierKeyUsageMetric::kAssistant &&
+      is_quick_insert_key) {
+    modifier_key = ModifierKeyUsageMetric::kQuickInsert;
   }
 
   base::UmaHistogramEnumeration(
       base::StrCat(
           {"ChromeOS.Inputs.Keyboard.RemappedModifierPressed.", device_name}),
       modifier_key);
+  RecordKeyUsageMetric(keyboard_capability, device_type, device_id, dom_code,
+                       original_dom_code, modifier_key);
 }
 
 }  // namespace ui

@@ -19,6 +19,7 @@
 #include "third_party/blink/renderer/bindings/modules/v8/v8_cookie_list_item.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_cookie_store_delete_options.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_cookie_store_get_options.h"
+#include "third_party/blink/renderer/core/core_probes_inl.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
@@ -87,7 +88,7 @@ std::unique_ptr<net::CanonicalCookie> ToCanonicalCookie(
                                  options->expiresNonNull())
                            : base::Time();
 
-  String cookie_url_host = cookie_url.Host();
+  String cookie_url_host = cookie_url.Host().ToString();
   String domain;
   if (!options->domain().IsNull()) {
     if (name.StartsWith("__Host-")) {
@@ -298,6 +299,10 @@ ScriptPromise<IDLSequence<CookieListItem>> CookieStore::getAll(
          WTF::BindOnce(&CookieStore::GetAllForUrlToGetAllResult,
                        WrapPersistent(resolver)),
          exception_state);
+  if (exception_state.HadException()) {
+    resolver->Detach();
+    return EmptyPromise();
+  }
   return promise;
 }
 
@@ -330,6 +335,10 @@ ScriptPromise<IDLNullable<CookieListItem>> CookieStore::get(
          WTF::BindOnce(&CookieStore::GetAllForUrlToGetResult,
                        WrapPersistent(resolver)),
          exception_state);
+  if (exception_state.HadException()) {
+    resolver->Detach();
+    return EmptyPromise();
+  }
   return promise;
 }
 
@@ -461,11 +470,17 @@ void CookieStore::DoRead(ScriptState* script_state,
       is_ad_tagged = local_frame->IsAdFrame();
     }
   }
-  backend_->GetAllForUrl(cookie_url, default_site_for_cookies_,
-                         default_top_frame_origin_, context->HasStorageAccess(),
-                         std::move(backend_options), is_ad_tagged,
-                         /*force_disable_third_party_cookies=*/false,
-                         std::move(backend_result_converter));
+
+  bool should_apply_devtools_overrides = false;
+  probe::ShouldApplyDevtoolsCookieSettingOverrides(
+      GetExecutionContext(), &should_apply_devtools_overrides);
+
+  backend_->GetAllForUrl(
+      cookie_url, default_site_for_cookies_, default_top_frame_origin_,
+      context->GetStorageAccessApiStatus(), std::move(backend_options),
+      is_ad_tagged, should_apply_devtools_overrides,
+      /*force_disable_third_party_cookies=*/false,
+      std::move(backend_result_converter));
 }
 
 // static
@@ -542,12 +557,17 @@ ScriptPromise<IDLUndefined> CookieStore::DoWrite(
     return EmptyPromise();
   }
 
+  bool should_apply_devtools_overrides = false;
+  probe::ShouldApplyDevtoolsCookieSettingOverrides(
+      GetExecutionContext(), &should_apply_devtools_overrides);
+
   auto* resolver = MakeGarbageCollected<ScriptPromiseResolver<IDLUndefined>>(
       script_state, exception_state.GetContext());
   backend_->SetCanonicalCookie(
       *std::move(canonical_cookie), default_cookie_url_,
       default_site_for_cookies_, default_top_frame_origin_,
-      context->HasStorageAccess(), status,
+      context->GetStorageAccessApiStatus(), status,
+      should_apply_devtools_overrides,
       WTF::BindOnce(&CookieStore::OnSetCanonicalCookieResult,
                     WrapPersistent(resolver)));
   return resolver->Promise();
@@ -575,7 +595,7 @@ void CookieStore::StartObserving() {
       GetExecutionContext()->GetTaskRunner(TaskType::kDOMManipulation);
   backend_->AddChangeListener(
       default_cookie_url_, default_site_for_cookies_, default_top_frame_origin_,
-      GetExecutionContext()->HasStorageAccess(),
+      GetExecutionContext()->GetStorageAccessApiStatus(),
       change_listener_receiver_.BindNewPipeAndPassRemote(task_runner), {});
 }
 

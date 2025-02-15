@@ -7,20 +7,27 @@
 
 #include <memory>
 
+#include "base/functional/callback_forward.h"
+#include "components/signin/public/base/signin_buildflags.h"
+
 namespace content {
 class WebContents;
 }
 
+namespace autofill_ai {
+class SaveAutofillAiDataController;
+}
+
 namespace autofill {
+class AutofillProfile;
 class AutofillBubbleBase;
 class LocalCardMigrationBubbleController;
 class OfferNotificationBubbleController;
 class SaveAddressBubbleController;
 class UpdateAddressBubbleController;
-class AddNewAddressBubbleController;
 class SaveCardBubbleController;
 class IbanBubbleController;
-class VirtualCardManualFallbackBubbleController;
+class FilledCardInformationBubbleController;
 class VirtualCardEnrollBubbleController;
 class MandatoryReauthBubbleController;
 enum class IbanBubbleType;
@@ -61,6 +68,10 @@ class AutofillBubbleHandler {
       OfferNotificationBubbleController* controller,
       bool is_user_gesture) = 0;
 
+  virtual AutofillBubbleBase* ShowSaveAutofillAiDataBubble(
+      content::WebContents* web_contents,
+      autofill_ai::SaveAutofillAiDataController* controller) = 0;
+
   // Opens a save address bubble. The bubble's lifecycle is controlled by its
   // widget, and the controller must handle the widget closing to invalidate
   // the returned pointer, see `SaveAddressBubbleController::OnBubbleClosed()`.
@@ -69,6 +80,15 @@ class AutofillBubbleHandler {
       content::WebContents* web_contents,
       std::unique_ptr<SaveAddressBubbleController> controller,
       bool is_user_gesture) = 0;
+
+  // Opens a promo bubble after an address save or update, offering to move the
+  // address to account store if the user signs in through the bubble. This move
+  // will be performed by the `move_address_callback`.
+#if BUILDFLAG(ENABLE_DICE_SUPPORT)
+  virtual AutofillBubbleBase* ShowAddressSignInPromo(
+      content::WebContents* web_contents,
+      const AutofillProfile& autofill_profile) = 0;
+#endif  // BUILDFLAG(ENABLE_DICE_SUPPORT)
 
   // Opens an update address bubble. The bubble's lifecycle is controlled by its
   // widget, and the controller must handle the widget closing to invalidate
@@ -80,19 +100,9 @@ class AutofillBubbleHandler {
       std::unique_ptr<UpdateAddressBubbleController> controller,
       bool is_user_gesture) = 0;
 
-  // Opens an add new address bubble. The bubble's lifecycle is controlled by
-  // its widget, and the controller must handle the widget closing to invalidate
-  // the returned pointer, see
-  // `AddNewAddressBubbleController::OnBubbleClosed()`. The bubble view takes
-  // ownership of the `controller`.
-  virtual AutofillBubbleBase* ShowAddNewAddressProfileBubble(
+  virtual AutofillBubbleBase* ShowFilledCardInformationBubble(
       content::WebContents* web_contents,
-      std::unique_ptr<AddNewAddressBubbleController> controller,
-      bool is_user_gesture) = 0;
-
-  virtual AutofillBubbleBase* ShowVirtualCardManualFallbackBubble(
-      content::WebContents* web_contents,
-      VirtualCardManualFallbackBubbleController* controller,
+      FilledCardInformationBubbleController* controller,
       bool is_user_gesture) = 0;
 
   virtual AutofillBubbleBase* ShowVirtualCardEnrollBubble(
@@ -113,6 +123,10 @@ class AutofillBubbleHandler {
   virtual AutofillBubbleBase* ShowSaveCardConfirmationBubble(
       content::WebContents* web_contents,
       SaveCardBubbleController* controller) = 0;
+
+  virtual AutofillBubbleBase* ShowSaveIbanConfirmationBubble(
+      content::WebContents* web_contents,
+      IbanBubbleController* controller) = 0;
 };
 
 }  // namespace autofill

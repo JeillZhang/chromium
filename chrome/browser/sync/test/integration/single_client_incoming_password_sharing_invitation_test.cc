@@ -11,7 +11,6 @@
 #include "base/memory/raw_ptr.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/metrics/histogram_tester.h"
-#include "base/test/scoped_feature_list.h"
 #include "base/uuid.h"
 #include "build/build_config.h"
 #include "chrome/browser/sync/test/integration/encryption_helper.h"
@@ -21,18 +20,19 @@
 #include "chrome/browser/sync/test/integration/single_client_status_change_checker.h"
 #include "chrome/browser/sync/test/integration/sync_service_impl_harness.h"
 #include "chrome/browser/sync/test/integration/sync_test.h"
-#include "components/password_manager/core/browser/features/password_features.h"
 #include "components/password_manager/core/browser/features/password_manager_features_util.h"
 #include "components/password_manager/core/browser/password_form.h"
 #include "components/password_manager/core/browser/password_manager_metrics_util.h"
 #include "components/signin/public/base/signin_switches.h"
-#include "components/sync/base/features.h"
-#include "components/sync/base/model_type.h"
+#include "components/sync/base/data_type.h"
+#include "components/sync/base/user_selectable_type.h"
 #include "components/sync/engine/nigori/cross_user_sharing_public_key.h"
 #include "components/sync/engine/nigori/cross_user_sharing_public_private_key_pair.h"
 #include "components/sync/protocol/nigori_specifics.pb.h"
 #include "components/sync/protocol/password_sharing_invitation_specifics.pb.h"
 #include "components/sync/protocol/sync_entity.pb.h"
+#include "components/sync/service/sync_service.h"
+#include "components/sync/service/sync_user_settings.h"
 #include "components/sync/test/fake_server_nigori_helper.h"
 #include "content/public/test/browser_test.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -117,7 +117,7 @@ class ServerPasswordInvitationChecker
         << expected_count_ << ". ";
 
     size_t actual_count = fake_server()
-                              ->GetSyncEntitiesByModelType(
+                              ->GetSyncEntitiesByDataType(
                                   syncer::INCOMING_PASSWORD_SHARING_INVITATION)
                               .size();
     *os << "Actual count: " << actual_count;
@@ -152,11 +152,6 @@ class SingleClientIncomingPasswordSharingInvitationTest : public SyncTest {
  public:
   SingleClientIncomingPasswordSharingInvitationTest()
       : SyncTest(SINGLE_CLIENT) {
-    override_features_.InitWithFeatures(
-        /*enabled_features=*/
-        {password_manager::features::kPasswordManagerEnableReceiverService,
-         syncer::kSharingOfferKeyPairBootstrap},
-        /*disabled_features=*/{});
   }
 
   sync_pb::CrossUserSharingPublicKey GetPublicKeyFromServer() const {
@@ -195,17 +190,14 @@ class SingleClientIncomingPasswordSharingInvitationTest : public SyncTest {
 
 #if !BUILDFLAG(IS_ANDROID)
     // Explicitly opt out of account storage when signin is explicit.
-    if (switches::IsExplicitBrowserSigninUIOnDesktopEnabled()) {
-      password_manager::features_util::OptOutOfAccountStorage(
-          GetProfile(0)->GetPrefs(), GetSyncService(0));
-    }
+    // TODO(crbug.com/375024026): Revisit.
+    GetSyncService(0)->GetUserSettings()->SetSelectedType(
+        syncer::UserSelectableType::kPasswords, false);
+
 #endif
 
     return true;
   }
-
- private:
-  base::test::ScopedFeatureList override_features_;
 };
 
 IN_PROC_BROWSER_TEST_F(SingleClientIncomingPasswordSharingInvitationTest,
@@ -412,8 +404,8 @@ IN_PROC_BROWSER_TEST_F(
 #endif  // !BUILDFLAG(IS_CHROMEOS_ASH)
 
 // The unconsented primary account isn't supported on ChromeOS.
-// TODO(crbug.com/40233581): enable on Android once transport mode for Passwords
-// is supported.
+// TODO(crbug.com/358053884): enable on Android once transport mode for
+// Passwords is supported.
 #if !BUILDFLAG(IS_CHROMEOS_ASH) && !BUILDFLAG(IS_ANDROID)
 IN_PROC_BROWSER_TEST_F(SingleClientIncomingPasswordSharingInvitationTest,
                        ShouldStoreIncomingPasswordIntoAccountDB) {
@@ -425,8 +417,8 @@ IN_PROC_BROWSER_TEST_F(SingleClientIncomingPasswordSharingInvitationTest,
 
   // Let the user opt in to the account-scoped password storage, and wait for it
   // to become active.
-  password_manager::features_util::OptInToAccountStorage(
-      GetProfile(0)->GetPrefs(), GetSyncService(0));
+  GetSyncService(0)->GetUserSettings()->SetSelectedType(
+      syncer::UserSelectableType::kPasswords, true);
   PasswordSyncActiveChecker(GetSyncService(0)).Wait();
   ASSERT_THAT(GetAllLogins(GetAccountPasswordStoreInterface(0)), IsEmpty());
 
@@ -461,8 +453,8 @@ IN_PROC_BROWSER_TEST_F(SingleClientIncomingPasswordSharingInvitationTest,
 
   // Let the user opt in to the account-scoped password storage, and wait for it
   // to become active.
-  password_manager::features_util::OptInToAccountStorage(
-      GetProfile(0)->GetPrefs(), GetSyncService(0));
+  GetSyncService(0)->GetUserSettings()->SetSelectedType(
+      syncer::UserSelectableType::kPasswords, true);
   PasswordSyncActiveChecker(GetSyncService(0)).Wait();
 
   // Double check that both Passwords and Sharing Invitations are enabled.
@@ -470,8 +462,8 @@ IN_PROC_BROWSER_TEST_F(SingleClientIncomingPasswordSharingInvitationTest,
   ASSERT_TRUE(GetSyncService(0)->GetActiveDataTypes().Has(
       syncer::INCOMING_PASSWORD_SHARING_INVITATION));
 
-  password_manager::features_util::OptOutOfAccountStorageAndClearSettings(
-      GetProfile(0)->GetPrefs(), GetSyncService(0));
+  GetSyncService(0)->GetUserSettings()->SetSelectedType(
+      syncer::UserSelectableType::kPasswords, false);
   EXPECT_TRUE(
       IncomingPasswordSharingInvitationInactiveChecker(GetSyncService(0))
           .Wait());

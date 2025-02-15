@@ -3,7 +3,9 @@
 // found in the LICENSE file.
 
 #include "test_trace_processor_impl.h"
+
 #include <sstream>
+
 #include "third_party/perfetto/include/perfetto/trace_processor/trace_processor.h"
 
 namespace base::test {
@@ -82,7 +84,11 @@ absl::Status TestTraceProcessorImpl::ParseTrace(
   // TODO(rasikan): Add DCHECK that the trace is well-formed and parsing doesn't
   // have any errors (e.g. to catch the cases when someone emits overlapping
   // trace events on the same track).
-  trace_processor_->NotifyEndOfFile();
+  if (!status.ok()) {
+    return absl::UnknownError(status.message());
+  }
+
+  status = trace_processor_->NotifyEndOfFile();
   return status.ok() ? absl::OkStatus() : absl::UnknownError(status.message());
 }
 

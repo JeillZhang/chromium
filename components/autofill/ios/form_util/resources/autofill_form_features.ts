@@ -16,15 +16,29 @@ import {gCrWeb} from '//ios/web/public/js_messaging/resources/gcrweb.js';
  * Corresponds to autofill::feature::AutofillAcrossIframesIos.
  */
 let autofillAcrossIframes: boolean = false;
+
+/**
+ * True if the throttling of child frames for autofill across iframes is
+ * enabled.
+ */
+let autofillAcrossIframesThrottling: boolean = false;
 // LINT.ThenChange(//components/autofill/core/common/autofill_features.cc:autofill_across_iframes_ios)
 
-// LINT.IfChange(autofill_xhr_submission_detection_ios)
+// LINT.IfChange(autofill_isolated_content_world)
 /**
- * Enables sending all form removal events to the browser for submission detection.
- * Corresponds to autofill::feature::AutofillEnableXHRSubmissionDetectionIOS.
+ Enables the logic necessary for Autofill to work from an isolated content world
+ without breaking the features that need to be in the page content world.
  */
-let autofillXHRSubmissionDetection: boolean = false;
-// LINT.ThenChange(//components/autofill/core/common/autofill_features.cc:autofill_xhr_submission_detection_ios)
+let autofillIsolatedContentWorld: boolean = false;
+// LINT.ThenChange(//components/autofill/ios/common/features.mm:autofill_isolated_content_world)
+
+// LINT.IfChange(autofill_fix_post_filling_payment_sheet)
+/**
+Enables fixing the issue where the payment sheet spams after dismissing a
+modal dialog that was triggered from the KA (e.g. filling a suggestion).
+ */
+let autofillFixPaymentSheetSpam: boolean = false;
+// LINT.ThenChange(//components/autofill/ios/common/features.mm:autofill_fix_post_filling_payment_sheet)
 
 /**
  * @see autofillAcrossIframes
@@ -41,17 +55,45 @@ function isAutofillAcrossIframesEnabled(): boolean {
 }
 
 /**
- * @see autofillXHRSubmissionDetectionEnabled
+ * @see autofillAcrossIframesThrottling
  */
-function setAutofillXHRSubmissionDetection(enabled: boolean): void {
-  autofillXHRSubmissionDetection = enabled;
+function setAutofillAcrossIframesThrottling(enabled: boolean): void {
+  autofillAcrossIframesThrottling = enabled;
 }
 
 /**
- * @see autofillXHRSubmissionDetection
+ * @see setAutofillAcrossIframesThrottling
  */
-function isAutofillXHRSubmissionDetectionEnabled(): boolean {
-  return autofillXHRSubmissionDetection;
+function isAutofillAcrossIframesThrottlingEnabled(): boolean {
+  return autofillAcrossIframesThrottling;
+}
+
+/**
+ * @see autofillIsolatedContentWorld
+ */
+function setAutofillIsolatedContentWorld(enabled: boolean): void {
+  autofillIsolatedContentWorld = enabled;
+}
+
+/**
+ * @see autofillIsolatedContentWorld
+ */
+function isAutofillIsolatedContentWorldEnabled(): boolean {
+  return autofillIsolatedContentWorld;
+}
+
+/**
+ * @see autofillFixPaymentSheetSpam
+ */
+function setAutofillFixPaymentSheetSpam(enabled: boolean): void {
+  autofillFixPaymentSheetSpam = enabled;
+}
+
+/**
+ * @see autofillFixPaymentSheetSpam
+ */
+function isAutofillFixPaymentSheetSpamEnabled(): boolean {
+  return autofillFixPaymentSheetSpam;
 }
 
 // Expose globally via `gCrWeb` instead of `export` to ensure state (feature
@@ -59,6 +101,10 @@ function isAutofillXHRSubmissionDetectionEnabled(): boolean {
 gCrWeb.autofill_form_features = {
   setAutofillAcrossIframes,
   isAutofillAcrossIframesEnabled,
-  setAutofillXHRSubmissionDetection,
-  isAutofillXHRSubmissionDetectionEnabled,
+  setAutofillAcrossIframesThrottling,
+  isAutofillAcrossIframesThrottlingEnabled,
+  setAutofillIsolatedContentWorld,
+  isAutofillIsolatedContentWorldEnabled,
+  setAutofillFixPaymentSheetSpam,
+  isAutofillFixPaymentSheetSpamEnabled,
 };

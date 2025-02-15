@@ -15,6 +15,7 @@
 namespace tabs {
 
 class TabModel;
+class TabInterface;
 class TabCollection;
 
 using ChildrenVector = std::vector<
@@ -28,10 +29,10 @@ using ChildrenVector = std::vector<
 // collection tree
 // - MaybeRemoveTab/MaybeRemoveCollection - the storage layer doesn't get to say
 // no
-class TabCollectionStorage {
+class TabCollectionStorage final {
  public:
   explicit TabCollectionStorage(TabCollection& owner);
-  virtual ~TabCollectionStorage();
+  ~TabCollectionStorage();
   TabCollectionStorage(const TabCollectionStorage&) = delete;
   TabCollectionStorage& operator=(const TabCollectionStorage&) = delete;
 
@@ -70,15 +71,15 @@ class TabCollectionStorage {
   // contains. This frees the memory as well.
   void CloseCollection(TabCollection* collection);
 
-  // Returns true if the `tab_model` is owned by the `children_`.
-  bool ContainsTab(TabModel* tab_model) const;
+  // Returns true if the `tab` is owned by the `children_`.
+  bool ContainsTab(const TabInterface* tab) const;
 
   // Returns true if the `tab_collection` is owned by the `children_`.
   bool ContainsCollection(TabCollection* tab_collection) const;
 
   // Returns the index of the `tab_model` in `children_`. It returns a nullopt
   // if the `tab_model` is not present in the `children_`.
-  std::optional<size_t> GetIndexOfTab(const TabModel* tab_model) const;
+  std::optional<size_t> GetIndexOfTab(const TabInterface* tab) const;
 
   // Returns the tab at a direct index if the child at the direct index is a
   // tab.

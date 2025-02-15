@@ -19,12 +19,13 @@
 #include "base/task/single_thread_task_runner_thread_mode.h"
 #include "base/task/task_traits.h"
 #include "base/task/thread_pool.h"
+#include "base/time/time.h"
 #include "build/buildflag.h"
 #include "net/base/load_flags.h"
 #include "net/base/mime_util.h"
 #include "net/base/net_errors.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
-#include "remoting/base/breakpad_utils.h"
+#include "remoting/base/crash/breakpad_utils.h"
 #include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "services/network/public/cpp/simple_url_loader.h"
@@ -53,6 +54,10 @@ constexpr char kProductNameValue[] = "Chromoting_Mac";
 
 const base::FilePath::CharType kDumpExtension[] = FILE_PATH_LITERAL("dmp");
 const base::FilePath::CharType kJsonExtension[] = FILE_PATH_LITERAL("json");
+const base::FilePath::CharType kLastUploadTimeFilePath[] =
+    FILE_PATH_LITERAL("last_upload_time.txt");
+const base::FilePath::CharType kUploadResultFilePath[] =
+    FILE_PATH_LITERAL("upload_result.txt");
 
 constexpr char kCrashReportUploadUrl[] =
     "https://clients2.google.com/cr/report";
@@ -66,6 +71,9 @@ constexpr int kPostFormReservationSize = 4096;
 // value and will ensure we don't reject the response if the format changes in
 // the future.
 constexpr size_t kMaxResponseSize = 1024;
+
+// Throttle uploads to 1 per hour.
+constexpr base::TimeDelta kUploadRateLimitWindow = base::Hours(1);
 
 constexpr net::NetworkTrafficAnnotationTag kTrafficAnnotation =
     net::DefineNetworkTrafficAnnotation("crash_file_uploader",
@@ -98,6 +106,10 @@ constexpr net::NetworkTrafficAnnotationTag kTrafficAnnotation =
           policy_exception_justification:
             "Not implemented."
         })");
+
+base::FilePath GetLastUploadTimeFilePath() {
+  return GetMinidumpDirectoryPath().Append(kLastUploadTimeFilePath);
+}
 
 base::FilePath GetCrashDirectoryPath(const base::FilePath& crash_guid) {
   return GetMinidumpDirectoryPath().Append(crash_guid);
@@ -154,7 +166,7 @@ bool RetrieveCrashReportDetails(const base::FilePath& crash_guid,
   // file may contain additional fields (e.g. for troubleshooting or manual
   // uploading) but there are only a few which are required for the upload.
   const std::string* version =
-      opt_metadata->FindString(kBreakpadHostVersionKey);
+      opt_metadata->FindString(kBreakpadProductVersionKey);
   if (version == nullptr || version->empty()) {
     error_reason = "Metadata file is missing the product version field";
     return false;
@@ -178,7 +190,7 @@ void DeleteDumpFileAndWriteResult(const base::FilePath& crash_file,
   }
 
   base::FilePath result_file =
-      crash_file.DirName().Append(FILE_PATH_LITERAL("upload_result.txt"));
+      crash_file.DirName().Append(kUploadResultFilePath);
   if (!base::WriteFile(result_file, result + "\r\n")) {
     LOG(WARNING) << "Failed to write upload result to: " << result_file;
   }
@@ -219,7 +231,7 @@ void GenerateMultiPartPostData(const base::Value::Dict& metadata,
   net::AddMultipartValueForUpload(kProductNameKey, kProductNameValue,
                                   mime_boundary, std::string(), &post_data);
   // Add the product version.
-  const std::string* version = metadata.FindString(kBreakpadHostVersionKey);
+  const std::string* version = metadata.FindString(kBreakpadProductVersionKey);
   net::AddMultipartValueForUpload(kProductVersionKey, *version, mime_boundary,
                                   std::string(), &post_data);
   // Add the process uptime.
@@ -235,6 +247,47 @@ void GenerateMultiPartPostData(const base::Value::Dict& metadata,
   post_data.shrink_to_fit();
 
   content_type = "multipart/form-data; boundary=" + mime_boundary;
+}
+
+void DeleteFileWithLogging(const base::FilePath& file_to_delete) {
+  if (!base::DeleteFile(file_to_delete)) {
+    LOG(WARNING) << "Failed to delete file: " << file_to_delete;
+  }
+}
+
+bool SkipUploadDueToRateLimiting() {
+  base::FilePath last_upload_time_file = GetLastUploadTimeFilePath();
+  if (!base::PathExists(last_upload_time_file)) {
+    return false;
+  }
+
+  std::string last_upload_time_str;
+  if (!base::ReadFileToString(last_upload_time_file, &last_upload_time_str)) {
+    LOG(WARNING) << "Failed to read file: " << last_upload_time_file;
+    DeleteFileWithLogging(last_upload_time_file);
+    return false;
+  }
+
+  time_t last_upload_time_t = 0;
+  if (!base::StringToInt64(last_upload_time_str, &last_upload_time_t)) {
+    LOG(WARNING) << "Failed to convert last_upload_time: "
+                 << last_upload_time_str;
+    DeleteFileWithLogging(last_upload_time_file);
+    return false;
+  }
+
+  auto time_since_last_upload = base::Time::NowFromSystemTime() -
+                                base::Time::FromTimeT(last_upload_time_t);
+  return time_since_last_upload < kUploadRateLimitWindow;
+}
+
+void UpdateLastUploadTimeFile() {
+  std::string now =
+      base::NumberToString(base::Time::NowFromSystemTime().ToTimeT());
+  if (!base::WriteFile(GetLastUploadTimeFilePath(), now)) {
+    LOG(WARNING) << "Failed to write current time to upload rate limiting file "
+                 << ", crash reporting will not be rate limited correctly";
+  }
 }
 
 }  // namespace
@@ -282,6 +335,13 @@ void CrashFileUploader::Core::Upload(const base::FilePath& crash_guid) {
 
   if (!base::DirectoryExists(crash_report_directory)) {
     LOG(ERROR) << "Upload directory does not exist for report: " << crash_guid;
+    return;
+  }
+
+  if (SkipUploadDueToRateLimiting()) {
+    std::string rate_limit_error("Upload skipped due to rate limiting");
+    LOG(WARNING) << rate_limit_error;
+    DeleteDumpFileAndWriteResult(GetDumpFilePath(crash_guid), rate_limit_error);
     return;
   }
 
@@ -335,12 +395,17 @@ void CrashFileUploader::Core::OnUploadComplete(
               << "    http://go/crash/" << report_id << "\r\n"
               << "    Please note that it may take a few minutes to finish "
               << "processing the report.";
+    UpdateLastUploadTimeFile();
   } else {
-    auto response_code = (*it)->ResponseInfo()->headers->response_code();
+    std::string response_code = "<unknown>";
+    auto* response_info = (*it)->ResponseInfo();
+    if (response_info && response_info->headers) {
+      response_code =
+          base::NumberToString(response_info->headers->response_code());
+    }
     LOG(ERROR) << "Failed to upload crash report: " << crash_dump
                << ", response_code: " << response_code;
-    upload_result =
-        "Upload failed, response code: " + base::NumberToString(response_code);
+    upload_result = "Upload failed, response code: " + response_code;
   }
 
   simple_url_loaders_.erase(it);
@@ -348,12 +413,11 @@ void CrashFileUploader::Core::OnUploadComplete(
 }
 
 CrashFileUploader::CrashFileUploader(
-    scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory) {
+    scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
+    scoped_refptr<base::SingleThreadTaskRunner> core_task_runner)
+    : core_(std::make_unique<CrashFileUploader::Core>(url_loader_factory)),
+      core_task_runner_(core_task_runner) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
-  core_task_runner_ = base::ThreadPool::CreateSingleThreadTaskRunner(
-      {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
-      base::SingleThreadTaskRunnerThreadMode::DEDICATED);
-  core_ = std::make_unique<CrashFileUploader::Core>(url_loader_factory);
 }
 
 CrashFileUploader::~CrashFileUploader() {

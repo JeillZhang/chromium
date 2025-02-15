@@ -108,9 +108,11 @@ class FakePlatformWindow : public ui::PlatformWindow, public ui::WmDragHandler {
                  DragEventSource source,
                  gfx::NativeCursor cursor,
                  bool can_grab_pointer,
-                 WmDragHandler::DragFinishedCallback callback,
+                 base::OnceClosure drag_started_callback,
+                 WmDragHandler::DragFinishedCallback drag_finished_callback,
                  WmDragHandler::LocationDelegate* delegate) override {
-    drag_finished_callback_ = std::move(callback);
+    drag_started_callback_ = std::move(drag_started_callback);
+    drag_finished_callback_ = std::move(drag_finished_callback);
     source_data_ = std::make_unique<OSExchangeData>(data.provider().Clone());
     base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE,
@@ -132,31 +134,35 @@ class FakePlatformWindow : public ui::PlatformWindow, public ui::WmDragHandler {
                    std::unique_ptr<OSExchangeData> data,
                    int operation) {
     ui::WmDropHandler* drop_handler = ui::GetWmDropHandler(*this);
-    if (!drop_handler)
+    if (!drop_handler) {
       return;
+    }
     drop_handler->OnDragEnter(point, operation, modifiers_);
     drop_handler->OnDragDataAvailable(std::move(data));
   }
 
   int OnDragMotion(const gfx::PointF& point, int operation) {
     ui::WmDropHandler* drop_handler = ui::GetWmDropHandler(*this);
-    if (!drop_handler)
+    if (!drop_handler) {
       return 0;
+    }
 
     return drop_handler->OnDragMotion(point, operation, modifiers_);
   }
 
   void OnDragDrop() {
     ui::WmDropHandler* drop_handler = ui::GetWmDropHandler(*this);
-    if (!drop_handler)
+    if (!drop_handler) {
       return;
+    }
     drop_handler->OnDragDrop(modifiers_);
   }
 
   void OnDragLeave() {
     ui::WmDropHandler* drop_handler = ui::GetWmDropHandler(*this);
-    if (!drop_handler)
+    if (!drop_handler) {
       return;
+    }
     drop_handler->OnDragLeave();
   }
 
@@ -166,6 +172,7 @@ class FakePlatformWindow : public ui::PlatformWindow, public ui::WmDragHandler {
   }
 
   void ProcessDrag(std::unique_ptr<OSExchangeData> data, int operation) {
+    std::move(drag_started_callback_).Run();
     OnDragEnter(kStartDragLocation, std::move(data), operation);
     int updated_operation = OnDragMotion(kStartDragLocation, operation);
     OnDragDrop();
@@ -174,6 +181,7 @@ class FakePlatformWindow : public ui::PlatformWindow, public ui::WmDragHandler {
   }
 
  private:
+  base::OnceClosure drag_started_callback_;
   WmDragHandler::DragFinishedCallback drag_finished_callback_;
   std::unique_ptr<ui::OSExchangeData> source_data_;
   base::RepeatingClosure drag_loop_quit_closure_;

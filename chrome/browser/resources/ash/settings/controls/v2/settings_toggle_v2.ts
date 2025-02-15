@@ -63,7 +63,7 @@ import 'chrome://resources/ash/common/cr_elements/cr_toggle/cr_toggle.js';
 import 'chrome://resources/ash/common/cr_elements/cros_color_overrides.css.js';
 import 'chrome://resources/ash/common/cr_elements/policy/cr_policy_pref_indicator.js';
 
-import {CrToggleElement} from 'chrome://resources/ash/common/cr_elements/cr_toggle/cr_toggle.js';
+import type {CrToggleElement} from 'chrome://resources/ash/common/cr_elements/cr_toggle/cr_toggle.js';
 import {assert} from 'chrome://resources/js/assert.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
@@ -130,12 +130,6 @@ export class SettingsToggleV2Element extends SettingsToggleV2ElementBase {
     chrome.settingsPrivate.PrefType.BOOLEAN,
   ];
 
-  override ready(): void {
-    super.ready();
-
-    this.addEventListener('click', this.onClick_);
-  }
-
   override focus(): void {
     this.$.control.focus();
   }
@@ -152,7 +146,7 @@ export class SettingsToggleV2Element extends SettingsToggleV2ElementBase {
    * Event handler for when toggle has been toggled by user action. Dispatches a
    * `change` event containing the checked value.
    */
-  private onClick_(): void {
+  private onChange_(): void {
     if (this.disabled) {
       return;
     }

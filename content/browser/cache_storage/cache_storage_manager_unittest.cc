@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "content/browser/cache_storage/cache_storage_manager.h"
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -11,6 +13,7 @@
 #include <vector>
 
 #include "base/containers/flat_map.h"
+#include "base/containers/span.h"
 #include "base/files/file_enumerator.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
@@ -42,7 +45,6 @@
 #include "content/browser/cache_storage/cache_storage.pb.h"
 #include "content/browser/cache_storage/cache_storage_cache_handle.h"
 #include "content/browser/cache_storage/cache_storage_context_impl.h"
-#include "content/browser/cache_storage/cache_storage_manager.h"
 #include "content/browser/cache_storage/cache_storage_quota_client.h"
 #include "content/browser/cache_storage/cache_storage_scheduler.h"
 #include "content/common/background_fetch/background_fetch_types.h"
@@ -122,10 +124,11 @@ class DelayedBlob : public storage::FakeBlob {
 
     // This should always succeed immediately because we size the pipe to
     // hold the entire blob for tiny data lengths.
-    size_t num_bytes = data_.length();
-    producer_handle_->WriteData(data_.data(), &num_bytes,
-                                MOJO_WRITE_DATA_FLAG_NONE);
-    ASSERT_EQ(data_.length(), num_bytes);
+    size_t actually_written_bytes = 0;
+    producer_handle_->WriteData(base::as_byte_span(data_),
+                                MOJO_WRITE_DATA_FLAG_NONE,
+                                actually_written_bytes);
+    ASSERT_EQ(data_.length(), actually_written_bytes);
 
     // Signal that ReadAll() was called.
     std::move(read_closure_).Run();
@@ -189,7 +192,7 @@ class MockCacheStorageQuotaManagerProxy
   void RegisterClient(
       mojo::PendingRemote<storage::mojom::QuotaClient> client,
       storage::QuotaClientType client_type,
-      const std::vector<blink::mojom::StorageType>& storage_types) override {
+      const base::flat_set<blink::mojom::StorageType>& storage_types) override {
     registered_clients_.emplace_back(std::move(client));
   }
 
@@ -648,7 +651,7 @@ class CacheStorageManagerTest : public testing::Test {
     auto& str = request->url.spec();
     blob_storage_context_->context()->RegisterFromMemory(
         blob->blob.InitWithNewPipeAndPassReceiver(), blob_uuid,
-        std::vector<uint8_t>(str.begin(), str.end()));
+        base::as_byte_span(str));
 
     base::RunLoop loop;
     CachePutWithStatusCodeAndBlobInternal(cache, std::move(request),

@@ -19,6 +19,7 @@
 #include "ash/style/ash_color_provider.h"
 #include "ash/style/pill_button.h"
 #include "ash/system/toast/system_toast_view.h"
+#include "ash/wm/window_properties.h"
 #include "ash/wm/work_area_insets.h"
 #include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
@@ -38,7 +39,7 @@
 #include "ui/views/animation/ink_drop_highlight.h"
 #include "ui/views/background.h"
 #include "ui/views/border.h"
-#include "ui/views/controls/button/label_button.h"
+#include "ui/views/controls/button/button.h"
 #include "ui/views/controls/highlight_path_generator.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/event_monitor.h"
@@ -71,6 +72,20 @@ void AdjustWorkAreaBoundsForHotseatState(gfx::Rect& bounds,
   }
   if (hotseat_widget->state() == HotseatState::kShownHomeLauncher)
     bounds.set_height(hotseat_widget->GetTargetBounds().y() - bounds.y());
+}
+
+// Gets the `SystemToastView::ButtonType` corresponding to the provided
+// `ToastData::ButtonType`.
+SystemToastView::ButtonType GetToastViewButtonType(
+    ToastData::ButtonType button_type) {
+  switch (button_type) {
+    case ToastData::ButtonType::kNone:
+      return SystemToastView::ButtonType::kNone;
+    case ToastData::ButtonType::kTextButton:
+      return SystemToastView::ButtonType::kTextButton;
+    case ToastData::ButtonType::kIconButton:
+      return SystemToastView::ButtonType::kIconButton;
+  }
 }
 
 }  // namespace
@@ -109,7 +124,7 @@ class ToastOverlay::ToastHoverObserver : public ui::EventObserver {
       : event_monitor_(views::EventMonitor::CreateWindowMonitor(
             /*event_observer=*/this,
             widget_window,
-            {ui::ET_MOUSE_ENTERED, ui::ET_MOUSE_EXITED})),
+            {ui::EventType::kMouseEntered, ui::EventType::kMouseExited})),
         on_hover_state_changed_(std::move(on_hover_state_changed)) {}
 
   ToastHoverObserver(const ToastHoverObserver&) = delete;
@@ -120,22 +135,21 @@ class ToastOverlay::ToastHoverObserver : public ui::EventObserver {
   // ui::EventObserver:
   void OnEvent(const ui::Event& event) override {
     switch (event.type()) {
-      case ui::ET_MOUSE_ENTERED:
+      case ui::EventType::kMouseEntered:
         on_hover_state_changed_.Run(/*is_hovering=*/true);
         break;
-      case ui::ET_MOUSE_EXITED:
+      case ui::EventType::kMouseExited:
         on_hover_state_changed_.Run(/*is_hovering=*/false);
         break;
       default:
-        NOTREACHED_IN_MIGRATION();
-        break;
+        NOTREACHED();
     }
   }
 
  private:
   // While this `EventMonitor` object exists, this object will only look for
-  // `ui::ET_MOUSE_ENTERED` and `ui::ET_MOUSE_EXITED` events that occur in the
-  // `widget_window` indicated in the constructor.
+  // `ui::EventType::kMouseEntered` and `ui::EventType::kMouseExited` events
+  // that occur in the `widget_window` indicated in the constructor.
   std::unique_ptr<views::EventMonitor> event_monitor_;
 
   // This is run whenever the mouse enters or exits the observed window with a
@@ -150,19 +164,19 @@ ToastOverlay::ToastOverlay(Delegate* delegate,
                            aura::Window* root_window)
     : delegate_(delegate),
       text_(toast_data.text),
-      dismiss_text_(toast_data.dismiss_text),
       overlay_widget_(new views::Widget),
       display_observer_(std::make_unique<ToastDisplayObserver>(this)),
       root_window_(root_window),
-      dismiss_callback_(std::move(toast_data.dismiss_callback)) {
-  // The provided callback is stored in the overlay's `dismiss_callback_`.
+      button_callback_(std::move(toast_data.button_callback)) {
+  // The provided callback is stored in the overlay's `button_callback_`.
   overlay_view_ = std::make_unique<SystemToastView>(
-      toast_data.text, toast_data.dismiss_text, /*dismiss_callback=*/
+      toast_data.text, GetToastViewButtonType(toast_data.button_type),
+      toast_data.button_text, toast_data.button_icon, /*button_callback=*/
       base::BindRepeating(
           &ToastOverlay::OnButtonClicked,
           // Unretained is safe because `this` owns `overlay_view_`.
           base::Unretained(this)),
-      toast_data.leading_icon, /*use_custom_focus=*/!toast_data.activatable);
+      toast_data.leading_icon);
 
   views::Widget::InitParams params(
       views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET,
@@ -177,6 +191,8 @@ ToastOverlay::ToastOverlay(Delegate* delegate,
   params.activatable = toast_data.activatable
                            ? views::Widget::InitParams::Activatable::kYes
                            : views::Widget::InitParams::Activatable::kNo;
+  params.init_properties_container.SetProperty(kStayInOverviewOnActivationKey,
+                                               true);
   overlay_widget_->Init(std::move(params));
   overlay_widget_->SetVisibilityChangedAnimationsEnabled(true);
   overlay_widget_->SetContentsView(overlay_view_.get());
@@ -238,7 +254,8 @@ void ToastOverlay::Show(bool visible) {
     overlay_widget_->ShowInactive();
 
     // Notify accessibility about the overlay.
-    overlay_view_->NotifyAccessibilityEvent(ax::mojom::Event::kAlert, false);
+    overlay_view_->NotifyAccessibilityEventDeprecated(ax::mojom::Event::kAlert,
+                                                      false);
   } else {
     overlay_widget_->Hide();
   }
@@ -252,23 +269,19 @@ const std::u16string ToastOverlay::GetText() const {
   return text_;
 }
 
-bool ToastOverlay::RequestFocusOnActiveToastDismissButton() {
-  overlay_view_->dismiss_button()->RequestFocus();
-  return overlay_view_->dismiss_button()->HasFocus();
-}
-
-bool ToastOverlay::MaybeToggleA11yHighlightOnDismissButton() {
-  overlay_view_->ToggleButtonA11yFocus();
-  return overlay_view_->is_dismiss_button_highlighted();
-}
-
-bool ToastOverlay::MaybeActivateHighlightedDismissButton() {
-  if (!overlay_view_->is_dismiss_button_highlighted()) {
-    return false;
+bool ToastOverlay::RequestFocusOnActiveToastButton() {
+  if (views::Button* button = overlay_view_->button()) {
+    button->RequestFocus();
+    return button->HasFocus();
   }
+  return false;
+}
 
-  OnButtonClicked();
-  return true;
+bool ToastOverlay::IsButtonFocused() const {
+  if (auto* button = overlay_view_->button()) {
+    return button->HasFocus();
+  }
+  return false;
 }
 
 void ToastOverlay::OnSliderBubbleHeightChanged() {
@@ -276,16 +289,6 @@ void ToastOverlay::OnSliderBubbleHeightChanged() {
   if (features::AreSideAlignedToastsEnabled()) {
     UpdateOverlayBounds();
   }
-}
-
-bool ToastOverlay::IsDismissButtonFocused() const {
-  if (overlay_view_->is_dismiss_button_highlighted()) {
-    return true;
-  }
-  if (auto* dismiss_button = overlay_view_->dismiss_button()) {
-    return dismiss_button->HasFocus();
-  }
-  return false;
 }
 
 gfx::Rect ToastOverlay::CalculateOverlayBounds() {
@@ -369,8 +372,8 @@ int ToastOverlay::CalculateSliderBubbleOffset() {
 }
 
 void ToastOverlay::OnButtonClicked() {
-  if (dismiss_callback_) {
-    dismiss_callback_.Run();
+  if (button_callback_) {
+    button_callback_.Run();
   }
   Show(/*visible=*/false);
 }
@@ -413,8 +416,8 @@ views::Widget* ToastOverlay::widget_for_testing() {
   return overlay_widget_.get();
 }
 
-views::LabelButton* ToastOverlay::dismiss_button_for_testing() {
-  return overlay_view_->dismiss_button();
+views::Button* ToastOverlay::button_for_testing() {
+  return overlay_view_->button();
 }
 
 }  // namespace ash

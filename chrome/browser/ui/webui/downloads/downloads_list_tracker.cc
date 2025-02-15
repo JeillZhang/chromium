@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ui/webui/downloads/downloads_list_tracker.h"
 
+#include <algorithm>
 #include <iterator>
 #include <optional>
 #include <string>
@@ -16,7 +17,6 @@
 #include "base/i18n/rtl.h"
 #include "base/i18n/unicodestring.h"
 #include "base/metrics/histogram_functions.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/escape.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
@@ -34,6 +34,7 @@
 #include "chrome/browser/ui/webui/downloads/downloads.mojom.h"
 #include "components/download/public/common/download_danger_type.h"
 #include "components/download/public/common/download_item.h"
+#include "components/download/public/common/download_item_rename_handler.h"
 #include "components/safe_browsing/core/common/features.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
 #include "components/url_formatter/elide_url.h"
@@ -195,11 +196,12 @@ DownloadsListTracker::DownloadsListTracker(
   Init();
 }
 
-DownloadsListTracker::~DownloadsListTracker() {}
+DownloadsListTracker::~DownloadsListTracker() = default;
 
 void DownloadsListTracker::Reset() {
-  if (sending_updates_)
+  if (sending_updates_) {
     page_->ClearAll();
+  }
   sent_to_page_ = 0u;
 }
 
@@ -208,11 +210,13 @@ bool DownloadsListTracker::SetSearchTerms(
   std::vector<std::u16string> new_terms;
   new_terms.resize(search_terms.size());
 
-  for (const auto& t : search_terms)
+  for (const auto& t : search_terms) {
     new_terms.push_back(base::UTF8ToUTF16(t));
+  }
 
-  if (new_terms == search_terms_)
+  if (new_terms == search_terms_) {
     return false;
+  }
 
   search_terms_.swap(new_terms);
   RebuildSortedItems();
@@ -247,7 +251,7 @@ int DownloadsListTracker::NumDangerousItemsSent() const {
   auto sent_items_end_it = sorted_items_.begin();
   std::advance(sent_items_end_it, sent_to_page_);
 
-  return base::ranges::count_if(
+  return std::ranges::count_if(
       sorted_items_.begin(), sent_items_end_it,
       [](download::DownloadItem* item) { return item->IsDangerous(); });
 }
@@ -256,7 +260,7 @@ download::DownloadItem* DownloadsListTracker::GetFirstActiveWarningItem() {
   auto sent_items_end_it = sorted_items_.begin();
   std::advance(sent_items_end_it, sent_to_page_);
 
-  auto iter = base::ranges::find_if(
+  auto iter = std::ranges::find_if(
       sorted_items_.begin(), sent_items_end_it,
       [](download::DownloadItem* item) {
         return item->GetState() != download::DownloadItem::CANCELLED &&
@@ -279,8 +283,9 @@ DownloadManager* DownloadsListTracker::GetOriginalNotifierManager() const {
 void DownloadsListTracker::OnDownloadCreated(DownloadManager* manager,
                                              DownloadItem* download_item) {
   DCHECK_EQ(0u, sorted_items_.count(download_item));
-  if (should_show_.Run(*download_item))
+  if (should_show_.Run(*download_item)) {
     InsertItem(sorted_items_.insert(download_item).first);
+  }
 }
 
 void DownloadsListTracker::OnDownloadUpdated(DownloadManager* manager,
@@ -289,19 +294,21 @@ void DownloadsListTracker::OnDownloadUpdated(DownloadManager* manager,
   bool is_showing = current_position != sorted_items_.end();
   bool should_show = should_show_.Run(*download_item);
 
-  if (!is_showing && should_show)
+  if (!is_showing && should_show) {
     InsertItem(sorted_items_.insert(download_item).first);
-  else if (is_showing && !should_show)
+  } else if (is_showing && !should_show) {
     RemoveItem(current_position);
-  else if (is_showing)
+  } else if (is_showing) {
     UpdateItem(current_position);
+  }
 }
 
 void DownloadsListTracker::OnDownloadRemoved(DownloadManager* manager,
                                              DownloadItem* download_item) {
   auto current_position = sorted_items_.find(download_item);
-  if (current_position != sorted_items_.end())
+  if (current_position != sorted_items_.end()) {
     RemoveItem(current_position);
+  }
 }
 
 DownloadsListTracker::DownloadsListTracker(
@@ -356,8 +363,9 @@ downloads::mojom::DataPtr DownloadsListTracker::CreateDownloadData(
     auto* registry = extensions::ExtensionRegistry::Get(profile);
     const extensions::Extension* extension = registry->GetExtensionById(
         by_ext->id(), extensions::ExtensionRegistry::EVERYTHING);
-    if (extension)
+    if (extension) {
       by_ext_name = extension->name();
+    }
   }
   file_value->by_ext_id = by_ext_id;
   file_value->by_ext_name = by_ext_name;
@@ -370,8 +378,10 @@ downloads::mojom::DataPtr DownloadsListTracker::CreateDownloadData(
   file_value->file_name = base::UTF16ToUTF8(file_name);
   FillUrlFields(download_item->GetURL(), file_value->url,
                 file_value->display_url);
-  FillUrlFields(download_item->GetReferrerUrl(), file_value->referrer_url,
-                file_value->display_referrer_url);
+  if (download_item->HasUserGesture()) {
+    FillUrlFields(download_item->GetReferrerUrl(), file_value->referrer_url,
+                  file_value->display_referrer_url);
+  }
   file_value->total = download_item->GetTotalBytes();
   file_value->file_externally_removed =
       download_item->GetFileExternallyRemoved();
@@ -408,7 +418,7 @@ downloads::mojom::DataPtr DownloadsListTracker::CreateDownloadData(
         state = downloads::mojom::State::kInProgress;
       }
       progress_status_text = download_model.GetTabProgressStatusText();
-      percent = download_item->PercentComplete();
+      percent = GetPercentComplete(download_item);
       break;
     }
 
@@ -416,8 +426,9 @@ downloads::mojom::DataPtr DownloadsListTracker::CreateDownloadData(
       state = downloads::mojom::State::kInterrupted;
       progress_status_text = download_model.GetTabProgressStatusText();
 
-      if (download_item->CanResume())
-        percent = download_item->PercentComplete();
+      if (download_item->CanResume()) {
+        percent = GetPercentComplete(download_item);
+      }
 
       // TODO(crbug.com/40467967): GetHistoryPageStatusText() is using
       // GetStatusText() as a temporary measure until the layout is fixed to
@@ -442,7 +453,7 @@ downloads::mojom::DataPtr DownloadsListTracker::CreateDownloadData(
       break;
 
     case download::DownloadItem::MAX_DOWNLOAD_STATE:
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
   }
 
   CHECK(state);
@@ -456,10 +467,14 @@ downloads::mojom::DataPtr DownloadsListTracker::CreateDownloadData(
   file_value->is_dangerous = download_item->IsDangerous();
   file_value->is_insecure = download_item->IsInsecure();
   file_value->is_reviewable =
+#if BUILDFLAG(ENTERPRISE_CONTENT_ANALYSIS)
       enterprise_connectors::ShouldPromptReviewForDownload(
           Profile::FromBrowserContext(
               content::DownloadItemUtils::GetBrowserContext(download_item)),
           download_item);
+#else
+      false;
+#endif  // BUILDFLAG(ENTERPRISE_CONTENT_ANALYSIS)
 
   file_value->last_reason_text = base::UTF16ToUTF8(last_reason_text);
   file_value->percent = percent;
@@ -515,8 +530,9 @@ bool DownloadsListTracker::IsIncognito(const DownloadItem& item) const {
 
 const DownloadItem* DownloadsListTracker::GetItemForTesting(
     size_t index) const {
-  if (index >= sorted_items_.size())
+  if (index >= sorted_items_.size()) {
     return nullptr;
+  }
 
   auto it = sorted_items_.begin();
   std::advance(it, index);
@@ -564,8 +580,9 @@ void DownloadsListTracker::RebuildSortedItems() {
 
   GetMainNotifierManager()->GetAllDownloads(&all_items);
 
-  if (GetOriginalNotifierManager())
+  if (GetOriginalNotifierManager()) {
     GetOriginalNotifierManager()->GetAllDownloads(&all_items);
+  }
 
   DownloadQuery query;
   query.AddFilter(should_show_);
@@ -576,12 +593,14 @@ void DownloadsListTracker::RebuildSortedItems() {
 }
 
 void DownloadsListTracker::InsertItem(const SortedSet::iterator& insert) {
-  if (!sending_updates_)
+  if (!sending_updates_) {
     return;
+  }
 
   size_t index = GetIndex(insert);
-  if (index >= chunk_size_ && index >= sent_to_page_)
+  if (index >= chunk_size_ && index >= sent_to_page_) {
     return;
+  }
 
   std::vector<downloads::mojom::DataPtr> list;
   list.push_back(CreateDownloadData(*insert));
@@ -592,8 +611,9 @@ void DownloadsListTracker::InsertItem(const SortedSet::iterator& insert) {
 }
 
 void DownloadsListTracker::UpdateItem(const SortedSet::iterator& update) {
-  if (!sending_updates_ || GetIndex(update) >= sent_to_page_)
+  if (!sending_updates_ || GetIndex(update) >= sent_to_page_) {
     return;
+  }
 
   page_->UpdateItem(static_cast<int>(GetIndex(update)),
                     CreateDownloadData(*update));
@@ -614,4 +634,17 @@ void DownloadsListTracker::RemoveItem(const SortedSet::iterator& remove) {
     }
   }
   sorted_items_.erase(remove);
+}
+
+int DownloadsListTracker::GetPercentComplete(
+    download::DownloadItem* download_item) const {
+  auto* renamer = download_item->GetRenameHandler();
+  if (renamer && renamer->ShowRenameProgress()) {
+    return static_cast<int>(((download_item->GetReceivedBytes() +
+                              download_item->GetUploadedBytes()) *
+                             0.5 * 100.0) /
+                            download_item->GetTotalBytes());
+  } else {
+    return download_item->PercentComplete();
+  }
 }

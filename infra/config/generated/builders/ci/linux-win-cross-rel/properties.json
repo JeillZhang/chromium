@@ -22,6 +22,7 @@
                 ],
                 "build_config": "Release",
                 "config": "chromium",
+                "host_platform": "linux",
                 "target_bits": 64,
                 "target_platform": "win"
               },
@@ -75,5 +76,11 @@
     ]
   },
   "builder_group": "chromium.win",
-  "recipe": "chromium"
+  "gardener_rotations": [
+    "chromium"
+  ],
+  "recipe": "chromium",
+  "sheriff_rotations": [
+    "chromium"
+  ]
 }

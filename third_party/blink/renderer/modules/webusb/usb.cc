@@ -10,9 +10,9 @@
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "services/device/public/mojom/usb_device.mojom-blink.h"
 #include "services/device/public/mojom/usb_enumeration_options.mojom-blink.h"
-#include "third_party/blink/public/common/browser_interface_broker_proxy.h"
-#include "third_party/blink/public/mojom/permissions_policy/permissions_policy.mojom-blink.h"
+#include "services/network/public/mojom/permissions_policy/permissions_policy_feature.mojom-blink.h"
 #include "third_party/blink/public/mojom/service_worker/service_worker.mojom-blink.h"
+#include "third_party/blink/public/platform/browser_interface_broker_proxy.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_usb_device_filter.h"
@@ -142,7 +142,7 @@ bool ShouldBlockUsbServiceCall(LocalDOMWindow* window,
   } else if (context->IsServiceWorkerGlobalScope()) {
     security_origin = context->GetSecurityOrigin();
   } else {
-    NOTREACHED_NORETURN();
+    NOTREACHED();
   }
   if (security_origin->IsOpaque()) {
     if (exception_state) {
@@ -153,7 +153,7 @@ bool ShouldBlockUsbServiceCall(LocalDOMWindow* window,
     return true;
   }
 
-  if (!context->IsFeatureEnabled(mojom::blink::PermissionsPolicyFeature::kUsb,
+  if (!context->IsFeatureEnabled(network::mojom::PermissionsPolicyFeature::kUsb,
                                  ReportOptions::kReportOnFailure)) {
     if (exception_state) {
       exception_state->ThrowSecurityError(kFeaturePolicyBlocked);
@@ -433,7 +433,7 @@ void USB::EnsureServiceConnection() {
 
 bool USB::IsFeatureEnabled(ReportOptions report_options) const {
   return GetExecutionContext()->IsFeatureEnabled(
-      mojom::blink::PermissionsPolicyFeature::kUsb, report_options);
+      network::mojom::PermissionsPolicyFeature::kUsb, report_options);
 }
 
 void USB::Trace(Visitor* visitor) const {

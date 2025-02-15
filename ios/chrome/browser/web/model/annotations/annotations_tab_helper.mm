@@ -20,10 +20,12 @@
 #import "ios/chrome/browser/parcel_tracking/features.h"
 #import "ios/chrome/browser/parcel_tracking/parcel_tracking_prefs.h"
 #import "ios/chrome/browser/shared/model/application_context/application_context.h"
-#import "ios/chrome/browser/shared/model/browser_state/chrome_browser_state.h"
+#import "ios/chrome/browser/shared/model/profile/profile_ios.h"
 #import "ios/chrome/browser/shared/public/commands/parcel_tracking_opt_in_commands.h"
+#import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/text_selection/model/text_classifier_model_service.h"
 #import "ios/chrome/browser/text_selection/model/text_classifier_model_service_factory.h"
+#import "ios/chrome/browser/text_selection/model/text_classifier_util.h"
 #import "ios/public/provider/chrome/browser/context_menu/context_menu_api.h"
 #import "ios/web/common/annotations_utils.h"
 #import "ios/web/common/features.h"
@@ -102,13 +104,9 @@ void AnnotationsTabHelper::OnTextExtracted(web::WebState* web_state,
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK_EQ(web_state_, web_state);
 
-  if (!base::FeatureList::IsEnabled(web::features::kEnableViewportIntents)) {
-    // Check if this page requested "nointentdetection".
-    std::optional<bool> has_no_intent_detection =
-        metadata.FindBool("hasNoIntentDetection");
-    if (!has_no_intent_detection || has_no_intent_detection.value()) {
-      return;
-    }
+  // TODO: 367770207 - Move the checks before the text is extracted.
+  if (!IsEntitySelectionAllowedForURL(web_state)) {
+    return;
   }
 
   NSTextCheckingType handled_types =
@@ -129,13 +127,17 @@ void AnnotationsTabHelper::OnTextExtracted(web::WebState* web_state,
   if (has_no_date && has_no_date.value()) {
     handled_types = handled_types & ~NSTextCheckingTypeDate;
   }
+  std::optional<bool> has_no_unit = metadata.FindBool("wkNoUnit");
+  if (has_no_unit && has_no_unit.value()) {
+    handled_types = handled_types & ~TCTextCheckingTypeMeasurement;
+  }
 
   // Keep latest copy.
   metadata_ = std::make_unique<base::Value::Dict>(metadata.Clone());
 
   TextClassifierModelService* service =
-      TextClassifierModelServiceFactory::GetForBrowserState(
-          ChromeBrowserState::FromBrowserState(web_state->GetBrowserState()));
+      TextClassifierModelServiceFactory::GetForProfile(
+          ProfileIOS::FromBrowserState(web_state->GetBrowserState()));
   base::FilePath model_path =
       service ? service->GetModelPath() : base::FilePath();
 
@@ -201,8 +203,7 @@ void AnnotationsTabHelper::ApplyDeferredProcessing(
   auto* manager = web::AnnotationsTextManager::FromWebState(web_state_);
   DCHECK(manager);
 
-  if (!deferred &&
-      base::FeatureList::IsEnabled(web::features::kEnableViewportIntents)) {
+  if (!deferred) {
     base::Value::List decorations_list;
     base::Value decorations(std::move(decorations_list));
     manager->DecorateAnnotations(web_state_, decorations, seq_id);
@@ -215,8 +216,14 @@ void AnnotationsTabHelper::ApplyDeferredProcessing(
       web_state_->GetWebFramesManager(content_world)->GetMainWebFrame();
   if (main_frame && deferred) {
     std::vector<web::TextAnnotation> annotations(std::move(deferred.value()));
-    if (IsIOSParcelTrackingEnabled() &&
-        !IsParcelTrackingDisabled(GetApplicationContext()->GetLocalState())) {
+
+    PrefService* prefs =
+        IsHomeCustomizationEnabled()
+            ? ProfileIOS::FromBrowserState(web_state_->GetBrowserState())
+                  ->GetPrefs()
+            : GetApplicationContext()->GetLocalState();
+
+    if (IsIOSParcelTrackingEnabled() && !IsParcelTrackingDisabled(prefs)) {
       parcel_number_tracker_.ProcessAnnotations(annotations);
       // Show UI only if this is the currently active WebState.
       if (parcel_number_tracker_.HasNewTrackingNumbers() &&

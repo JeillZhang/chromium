@@ -210,16 +210,13 @@ public class LayoutTab extends PropertyModel {
     }
 
     /**
-     * Initializes the {@link LayoutTab} from data extracted from a {@link Tab}.
-     * As this function may be expensive and can be delayed we initialize it as a separately.
+     * Initializes the {@link LayoutTab} from data extracted from a {@link Tab}. As this function
+     * may be expensive and can be delayed we initialize it as a separately.
      *
-     * @param backgroundColor       The color of the page background.
-     * @param fallbackThumbnailId   The id of a cached thumbnail to show if the current
-     *                              thumbnail is unavailable, or {@link Tab.INVALID_TAB_ID}
-     *                              if none exists.
-     * @param shouldStall           Whether the tab should display a desaturated thumbnail and
-     *                              wait for the content layer to load.
-     * @param canUseLiveTexture     Whether the tab can use a live texture when being displayed.
+     * @param backgroundColor The color of the page background.
+     * @param shouldStall Whether the tab should display a desaturated thumbnail and wait for the
+     *     content layer to load.
+     * @param canUseLiveTexture Whether the tab can use a live texture when being displayed.
      */
     public void initFromHost(
             int backgroundColor,
@@ -321,38 +318,10 @@ public class LayoutTab extends PropertyModel {
     }
 
     /**
-     * @return The original unclamped width (not scaled) of the tab contents texture.
-     */
-    public float getUnclampedOriginalContentHeight() {
-        return get(ORIGINAL_CONTENT_HEIGHT_IN_DP);
-    }
-
-    /**
      * @return The width of the drawn content (clipped and scaled).
      */
     public float getFinalContentWidth() {
         return Math.min(get(CLIPPED_WIDTH), getScaledContentWidth());
-    }
-
-    /**
-     * @return The maximum height the content can be.
-     */
-    public float getMaxContentHeight() {
-        return get(MAX_CONTENT_HEIGHT);
-    }
-
-    /**
-     * @param width The maximum width the content can be.
-     */
-    public void setMaxContentWidth(float width) {
-        set(MAX_CONTENT_WIDTH, width);
-    }
-
-    /**
-     * @param height The maximum height the content can be.
-     */
-    public void setMaxContentHeight(float height) {
-        set(MAX_CONTENT_HEIGHT, height);
     }
 
     /**

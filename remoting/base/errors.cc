@@ -35,6 +35,9 @@ const NameMapElement<ErrorCode> kErrorCodeNames[] = {
      "LOCATION_AUTHZ_POLICY_CHECK_FAILED"},
     {ErrorCode::UNAUTHORIZED_ACCOUNT, "UNAUTHORIZED_ACCOUNT"},
     {ErrorCode::REAUTHZ_POLICY_CHECK_FAILED, "REAUTHZ_POLICY_CHECK_FAILED"},
+    {ErrorCode::NO_COMMON_AUTH_METHOD, "NO_COMMON_AUTH_METHOD"},
+    {ErrorCode::LOGIN_SCREEN_NOT_SUPPORTED, "LOGIN_SCREEN_NOT_SUPPORTED"},
+    {ErrorCode::SESSION_POLICIES_CHANGED, "SESSION_POLICIES_CHANGED"},
 };
 
 }  // namespace
@@ -93,6 +96,12 @@ proto::ErrorCode ErrorCodeToProtoEnum(ErrorCode error) {
       return proto::ErrorCode::UNAUTHORIZED_ACCOUNT;
     case ErrorCode::REAUTHZ_POLICY_CHECK_FAILED:
       return proto::ErrorCode::REAUTHORIZATION_FAILED;
+    case ErrorCode::NO_COMMON_AUTH_METHOD:
+      return proto::ErrorCode::NO_COMMON_AUTH_METHOD;
+    case ErrorCode::LOGIN_SCREEN_NOT_SUPPORTED:
+      return proto::ErrorCode::LOGIN_SCREEN_NOT_SUPPORTED;
+    case ErrorCode::SESSION_POLICIES_CHANGED:
+      return proto::ErrorCode::SESSION_POLICIES_CHANGED;
   }
 }
 

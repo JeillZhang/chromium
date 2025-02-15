@@ -9,6 +9,7 @@
 
 #include "ash/public/cpp/login_screen_test_api.h"
 #include "ash/public/cpp/reauth_reason.h"
+#include "ash/shell.h"
 #include "base/auto_reset.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
@@ -20,6 +21,7 @@
 #include "chrome/browser/ash/login/reauth_stats.h"
 #include "chrome/browser/ash/login/session/user_session_manager.h"
 #include "chrome/browser/ash/login/signin/signin_error_notifier.h"
+#include "chrome/browser/ash/login/signin/token_handle_store_factory.h"
 #include "chrome/browser/ash/login/signin/token_handle_util.h"
 #include "chrome/browser/ash/login/test/auth_ui_utils.h"
 #include "chrome/browser/ash/login/test/cryptohome_mixin.h"
@@ -28,14 +30,13 @@
 #include "chrome/browser/ash/login/test/oobe_screen_waiter.h"
 #include "chrome/browser/ash/login/test/oobe_window_visibility_waiter.h"
 #include "chrome/browser/ash/login/test/user_auth_config.h"
-#include "chrome/browser/ash/login/ui/login_display_host.h"
-#include "chrome/browser/ash/net/delay_network_call.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/lifetime/termination_notification.h"
 #include "chrome/browser/notifications/notification_display_service_tester.h"
 #include "chrome/browser/notifications/notification_handler.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/profiles/profile_manager_observer.h"
+#include "chrome/browser/ui/ash/login/login_display_host.h"
 #include "chrome/browser/ui/webui/ash/login/gaia_screen_handler.h"
 #include "chrome/browser/ui/webui/ash/login/oobe_ui.h"
 #include "chrome/test/base/fake_gaia_mixin.h"
@@ -50,14 +51,16 @@
 #include "components/user_manager/user_manager.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/test_launcher.h"
+#include "google_apis/gaia/gaia_id.h"
 #include "ui/events/keycodes/keyboard_codes_posix.h"
+#include "ui/events/test/event_generator.h"
 
 namespace ash {
 
 namespace {
 
 constexpr char kUserEmail[] = "test-user@gmail.com";
-constexpr char kGaiaID[] = "111111";
+constexpr GaiaId::Literal kGaiaID("111111");
 constexpr char kTokenHandle[] = "test_token_handle";
 constexpr char kTestingFileName[] = "testing-file.txt";
 
@@ -105,6 +108,7 @@ class PasswordChangeTest : public PasswordChangeTestBase {
     // password change UI flow.
     FakeUserDataAuthClient::TestApi::Get()->set_enable_auth_check(true);
     PasswordChangeTestBase::SetUpOnMainThread();
+    fake_gaia_.SetupFakeGaiaForLoginWithDefaults();
   }
 
   bool TestingFileExists() const {
@@ -192,9 +196,9 @@ IN_PROC_BROWSER_TEST_F(PasswordChangeTest, SubmitOnEnterKeyPressed) {
   // Fill out and submit the old password, using "ENTER" key.
   test::PasswordChangedTypeOldPassword(
       test_user_info_.auth_config.online_password);
-  ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(
-      nullptr, ui::VKEY_RETURN, false /* control */, false /* shift */,
-      false /* alt */, false /* command */));
+
+  ui::test::EventGenerator generator(ash::Shell::GetPrimaryRootWindow());
+  generator.PressKey(ui::VKEY_RETURN, 0);
 
   test::CreatePasswordUpdateNoticePageWaiter()->Wait();
   test::PasswordUpdateNoticeExpectDone();
@@ -241,9 +245,6 @@ IN_PROC_BROWSER_TEST_F(PasswordChangeTest, RetryOnWrongPassword) {
 }
 
 IN_PROC_BROWSER_TEST_F(PasswordChangeTest, SkipDataRecovery) {
-  // TODO(b/333450354): Determine why this is necessary and fix.
-  SetDelayNetworkCallsForTesting(true);
-
   CreateTestingFile();
   OpenGaiaDialog(test_account_id_);
   SetGaiaScreenCredentials(test_account_id_, test::kNewPassword);
@@ -337,25 +338,29 @@ class PasswordChangeTokenCheck : public PasswordChangeTest {
     user_with_invalid_token_ = login_mixin_.users().back().account_id;
     ignore_sync_errors_for_test_ =
         SigninErrorNotifier::IgnoreSyncErrorsForTesting();
+    UserDataAuthClient::InitializeFake();
+    token_handle_store_ = TokenHandleStoreFactory::Get()->GetTokenHandleStore();
   }
 
  protected:
   // PasswordChangeTest:
   void SetUpInProcessBrowserTestFixture() override {
     PasswordChangeTest::SetUpInProcessBrowserTestFixture();
-    TokenHandleUtil::SetInvalidTokenForTesting(kTokenHandle);
+    token_handle_store_->SetInvalidTokenForTesting(kTokenHandle);
   }
+
   void TearDownInProcessBrowserTestFixture() override {
-    TokenHandleUtil::SetInvalidTokenForTesting(nullptr);
+    token_handle_store_->SetInvalidTokenForTesting(nullptr);
     PasswordChangeTest::TearDownInProcessBrowserTestFixture();
   }
 
   AccountId user_with_invalid_token_;
+  raw_ptr<TokenHandleStore> token_handle_store_;
   std::unique_ptr<base::AutoReset<bool>> ignore_sync_errors_for_test_;
 };
 
 IN_PROC_BROWSER_TEST_F(PasswordChangeTokenCheck, LoginScreenPasswordChange) {
-  TokenHandleUtil::StoreTokenHandle(user_with_invalid_token_, kTokenHandle);
+  token_handle_store_->StoreTokenHandle(user_with_invalid_token_, kTokenHandle);
 
   EXPECT_FALSE(
       LoginScreenTestApi::IsForcedOnlineSignin(user_with_invalid_token_));
@@ -377,7 +382,7 @@ IN_PROC_BROWSER_TEST_F(PasswordChangeTokenCheck, LoginScreenPasswordChange) {
 }
 
 IN_PROC_BROWSER_TEST_F(PasswordChangeTokenCheck, LoginScreenNoPasswordChange) {
-  TokenHandleUtil::StoreTokenHandle(user_with_invalid_token_, kTokenHandle);
+  token_handle_store_->StoreTokenHandle(user_with_invalid_token_, kTokenHandle);
   // Focus triggers token check.
   LoginScreenTestApi::FocusUser(user_with_invalid_token_);
 
@@ -421,11 +426,11 @@ IN_PROC_BROWSER_TEST_F(PasswordChangeTokenCheck, PRE_Session) {
   ASSERT_FALSE(
       LoginScreenTestApi::IsForcedOnlineSignin(user_with_invalid_token_));
 
-  // Store invalid token to triger notification in the session.
-  TokenHandleUtil::StoreTokenHandle(user_with_invalid_token_, kTokenHandle);
+  // Store invalid token to trigger notification in the session.
+  token_handle_store_->StoreTokenHandle(user_with_invalid_token_, kTokenHandle);
   // Make token not "checked recently".
-  TokenHandleUtil::SetLastCheckedPrefForTesting(user_with_invalid_token_,
-                                                base::Time());
+  token_handle_store_->SetLastCheckedPrefForTesting(user_with_invalid_token_,
+                                                    base::Time());
 
   ProfileWaiter waiter;
   login_mixin_.LoginWithDefaultContext(login_mixin_.users().back());
@@ -469,7 +474,7 @@ IN_PROC_BROWSER_TEST_F(PasswordChangeTokenCheck, Session) {
 // Notification should not be triggered because token was checked on the login
 // screen - recently.
 IN_PROC_BROWSER_TEST_F(PasswordChangeTokenCheck, TokenRecentlyChecked) {
-  TokenHandleUtil::StoreTokenHandle(user_with_invalid_token_, kTokenHandle);
+  token_handle_store_->StoreTokenHandle(user_with_invalid_token_, kTokenHandle);
 
   // Focus triggers token check and opens online
   LoginScreenTestApi::FocusUser(user_with_invalid_token_);
@@ -495,10 +500,13 @@ class TokenAfterCrash : public MixinBasedInProcessBrowserTest {
     login_mixin_.set_session_restore_enabled();
     login_mixin_.SetShouldObtainHandle(true);
     login_mixin_.AppendRegularUsers(1);
+    UserDataAuthClient::InitializeFake();
+    token_handle_store_ = TokenHandleStoreFactory::Get()->GetTokenHandleStore();
   }
 
  protected:
   LoginManagerMixin login_mixin_{&mixin_host_};
+  raw_ptr<TokenHandleStore> token_handle_store_;
 };
 
 // Test that token handle is downloaded on browser crash.
@@ -510,7 +518,7 @@ IN_PROC_BROWSER_TEST_F(TokenAfterCrash, PRE_NoToken) {
   EXPECT_TRUE(UserSessionManager::GetInstance()
                   ->token_handle_backfill_tried_for_testing());
   // Token should not be there as there are no real auth data.
-  EXPECT_TRUE(TokenHandleUtil::ShouldObtainHandle(user_info.account_id));
+  EXPECT_TRUE(token_handle_store_->ShouldObtainHandle(user_info.account_id));
 }
 
 IN_PROC_BROWSER_TEST_F(TokenAfterCrash, NoToken) {
@@ -518,7 +526,7 @@ IN_PROC_BROWSER_TEST_F(TokenAfterCrash, NoToken) {
   EXPECT_TRUE(UserSessionManager::GetInstance()
                   ->token_handle_backfill_tried_for_testing());
   // Token should not be there as there are no real auth data.
-  EXPECT_TRUE(TokenHandleUtil::ShouldObtainHandle(user_info.account_id));
+  EXPECT_TRUE(token_handle_store_->ShouldObtainHandle(user_info.account_id));
 }
 
 // Test that token handle is not downloaded on browser crash because it's
@@ -531,11 +539,11 @@ IN_PROC_BROWSER_TEST_F(TokenAfterCrash, PRE_ValidToken) {
   EXPECT_TRUE(UserSessionManager::GetInstance()
                   ->token_handle_backfill_tried_for_testing());
   // Token should not be there as there are no real auth data.
-  EXPECT_TRUE(TokenHandleUtil::ShouldObtainHandle(user_info.account_id));
+  EXPECT_TRUE(token_handle_store_->ShouldObtainHandle(user_info.account_id));
 
   // Emulate successful token fetch.
-  TokenHandleUtil::StoreTokenHandle(user_info.account_id, kTokenHandle);
-  EXPECT_FALSE(TokenHandleUtil::ShouldObtainHandle(user_info.account_id));
+  token_handle_store_->StoreTokenHandle(user_info.account_id, kTokenHandle);
+  EXPECT_FALSE(token_handle_store_->ShouldObtainHandle(user_info.account_id));
 }
 
 IN_PROC_BROWSER_TEST_F(TokenAfterCrash, ValidToken) {
@@ -556,11 +564,13 @@ class IgnoreOldTokenTest
       login_mixin_.AppendRegularUsers(1);
 
     account_id_ = login_mixin_.users()[0].account_id;
+    UserDataAuthClient::InitializeFake();
+    token_handle_store_ = TokenHandleStoreFactory::Get()->GetTokenHandleStore();
   }
 
   // LocalStateMixin::Delegate:
   void SetUpLocalState() override {
-    TokenHandleUtil::StoreTokenHandle(account_id_, kTokenHandle);
+    token_handle_store_->StoreTokenHandle(account_id_, kTokenHandle);
 
     if (content::IsPreTest()) {
       // Keep `TokenHandleRotated` flag to disable logic of neglecting not
@@ -572,11 +582,11 @@ class IgnoreOldTokenTest
   // LoginManagerTest:
   void SetUpInProcessBrowserTestFixture() override {
     LoginManagerTest::SetUpInProcessBrowserTestFixture();
-    TokenHandleUtil::SetInvalidTokenForTesting(kTokenHandle);
+    token_handle_store_->SetInvalidTokenForTesting(kTokenHandle);
   }
 
   void TearDownInProcessBrowserTestFixture() override {
-    TokenHandleUtil::SetInvalidTokenForTesting(nullptr);
+    token_handle_store_->SetInvalidTokenForTesting(nullptr);
     LoginManagerTest::TearDownInProcessBrowserTestFixture();
   }
 
@@ -586,6 +596,7 @@ class IgnoreOldTokenTest
   LoginManagerMixin login_mixin_{&mixin_host_};
   AccountId account_id_;
 
+  raw_ptr<TokenHandleStore> token_handle_store_;
   LocalStateMixin local_state_mixin_{&mixin_host_, this};
 };
 
@@ -599,7 +610,7 @@ IN_PROC_BROWSER_TEST_P(IgnoreOldTokenTest, PRE_IgnoreNotRotated) {
 // If any pre-rotated token handle is still left for either regular or managed
 // user it will verified as invalid and lead to online re-authenication.
 IN_PROC_BROWSER_TEST_P(IgnoreOldTokenTest, IgnoreNotRotated) {
-  ASSERT_TRUE(TokenHandleUtil::HasToken(account_id_));
+  ASSERT_TRUE(token_handle_store_->HasToken(account_id_));
   ASSERT_TRUE(LoginScreenTestApi::IsForcedOnlineSignin(account_id_));
 }
 

@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/browser/ash/login/quick_unlock/quick_unlock_utils.h"
 
 #include <string>
@@ -193,8 +198,7 @@ base::TimeDelta PasswordConfirmationFrequencyToTimeDelta(
     case PasswordConfirmationFrequency::WEEK:
       return base::Days(7);
   }
-  NOTREACHED_IN_MIGRATION();
-  return base::TimeDelta();
+  NOTREACHED();
 }
 
 void RegisterProfilePrefs(PrefRegistrySimple* registry) {
@@ -261,8 +265,7 @@ FingerprintLocation GetFingerprintLocation() {
     return FingerprintLocation::LEFT_SIDE;
   if (location_info == "left-of-power-button-top-right")
     return FingerprintLocation::LEFT_OF_POWER_BUTTON_TOP_RIGHT;
-  NOTREACHED_IN_MIGRATION() << "Not handled value: " << location_info;
-  return default_location;
+  NOTREACHED() << "Not handled value: " << location_info;
 }
 
 bool IsFingerprintSupported() {

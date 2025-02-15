@@ -23,7 +23,6 @@ import type {CrButtonElement} from 'chrome://resources/cr_elements/cr_button/cr_
 import type {CrIconButtonElement} from 'chrome://resources/cr_elements/cr_icon_button/cr_icon_button.js';
 import type {CrInputElement} from 'chrome://resources/cr_elements/cr_input/cr_input.js';
 import {I18nMixin} from 'chrome://resources/cr_elements/i18n_mixin.js';
-import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import type {PasswordsMovedEvent, ValueCopiedEvent} from '../password_manager_app.js';
@@ -62,6 +61,7 @@ export interface PasswordDetailsCardElement {
     showPasswordButton: CrIconButtonElement,
     usernameValue: CredentialFieldElement,
     shareButton: CrButtonElement,
+    shareButtonContainer: HTMLElement,
   };
 }
 
@@ -85,6 +85,11 @@ export class PasswordDetailsCardElement extends PasswordDetailsCardElementBase {
       },
       groupName: String,
       iconUrl: String,
+      shouldRegisterSharingPromo: {
+        type: Boolean,
+        value: false,
+      },
+
       usernameCopyInteraction_: {
         type: PasswordViewPageInteractions,
         value() {
@@ -101,8 +106,8 @@ export class PasswordDetailsCardElement extends PasswordDetailsCardElementBase {
         type: Boolean,
         value: false,
         // <if expr="_google_chrome">
-        computed: 'computeShowShareButton_(enableSendPasswords_, ' +
-            'isOptedInForAccountStorage, isSyncingPasswords)',
+        computed: 'computeShowShareButton_(isAccountStoreUser, ' +
+            'isSyncingPasswords)',
         // </if>
       },
 
@@ -118,20 +123,6 @@ export class PasswordDetailsCardElement extends PasswordDetailsCardElementBase {
         value: false,
       },
 
-      enableSendPasswords_: {
-        type: Boolean,
-        value() {
-          return loadTimeData.getBoolean('enableSendPasswords');
-        },
-      },
-
-      enableButterOnDesktopFollowup_: {
-        type: Boolean,
-        value() {
-          return loadTimeData.getBoolean('enableButterOnDesktopFollowup');
-        },
-      },
-
       isUsingAccountStore: Boolean,
     };
   }
@@ -140,14 +131,20 @@ export class PasswordDetailsCardElement extends PasswordDetailsCardElementBase {
   groupName: string;
   iconUrl: string;
   isUsingAccountStore: boolean;
+  /* This is set by the parent element, to only show help buble on the first
+   * card on the page. */
+  shouldRegisterSharingPromo = false;
   private showEditPasswordDialog_: boolean;
   private passwordSharingDisabled_: boolean;
   private showDeletePasswordDialog_: boolean;
   private showShareFlow_: boolean;
   private showShareButton_: boolean;
-  private enableSendPasswords_: boolean;
   private showMovePasswordDialog_: boolean;
-  private enableButterOnDesktopFollowup_: boolean;
+
+  override connectedCallback() {
+    super.connectedCallback();
+    this.maybeRegisterSharingHelpBubble_();
+  }
 
   private isFederated_(): boolean {
     return !!this.password.federationText;
@@ -261,8 +258,8 @@ export class PasswordDetailsCardElement extends PasswordDetailsCardElementBase {
   }
 
   private computeShowShareButton_(): boolean {
-    return this.enableSendPasswords_ && !this.isFederated_() &&
-        (this.isSyncingPasswords || this.isOptedInForAccountStorage);
+    return !this.isFederated_() &&
+        (this.isSyncingPasswords || this.isAccountStoreUser);
   }
 
   private computePasswordSharingDisabled_(): boolean {
@@ -316,7 +313,7 @@ export class PasswordDetailsCardElement extends PasswordDetailsCardElementBase {
   }
 
   private showMovePasswordEntry_(): boolean {
-    return this.enableButterOnDesktopFollowup_ && this.isUsingAccountStore &&
+    return this.isUsingAccountStore &&
         this.password.storedIn ===
         chrome.passwordsPrivate.PasswordStoreSet.DEVICE;
   }
@@ -329,13 +326,17 @@ export class PasswordDetailsCardElement extends PasswordDetailsCardElementBase {
     this.isPasswordVisible = false;
   }
 
-  maybeRegisterSharingHelpBubble(): void {
-    if (!this.showShareButton_ && !this.passwordSharingDisabled_) {
+  private maybeRegisterSharingHelpBubble_(): void {
+    // Register the help bubble only if this is the first card in the list
+    // (`shouldRegisterSharingPromo` is true), and the share button is visible
+    // and not disabled.
+    if (!this.shouldRegisterSharingPromo ||
+        (!this.showShareButton_ && !this.passwordSharingDisabled_)) {
       return;
     }
 
     this.registerHelpBubble(
-        PASSWORD_SHARE_BUTTON_BUTTON_ELEMENT_ID, this.$.shareButton);
+        PASSWORD_SHARE_BUTTON_BUTTON_ELEMENT_ID, this.$.shareButtonContainer);
   }
 }
 

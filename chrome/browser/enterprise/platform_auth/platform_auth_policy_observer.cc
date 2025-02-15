@@ -8,11 +8,19 @@
 
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
+#include "base/logging.h"
 #include "chrome/browser/enterprise/platform_auth/platform_auth_provider_manager.h"
 #include "chrome/common/pref_names.h"
 #include "components/prefs/pref_change_registrar.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
+
+#if BUILDFLAG(IS_MAC)
+#include "base/feature_list.h"
+#include "chrome/browser/enterprise/browser_management/management_service_factory.h"
+#include "chrome/browser/enterprise/platform_auth/platform_auth_features.h"
+#include "components/policy/core/common/management/management_service.h"
+#endif  //  BUILFLAG(IS_MAC)
 
 PlatformAuthPolicyObserver::PlatformAuthPolicyObserver(
     PrefService* local_state) {
@@ -52,7 +60,14 @@ void PlatformAuthPolicyObserver::OnPrefChanged() {
   // 0 == Disabled
   // 1 == Enabled
   const bool enabled =
+#if BUILDFLAG(IS_MAC)
+      base::FeatureList::IsEnabled(
+          enterprise_auth::kEnableExtensibleEnterpriseSSO) &&
+      policy::ManagementServiceFactory::GetForPlatform()->IsManaged() &&
+#endif
       pref_change_registrar_.prefs()->GetInteger(GetPrefName()) != 0;
+
+  VLOG(1) << "PlatformAuthProviderManager enabled: " << enabled;
   enterprise_auth::PlatformAuthProviderManager::GetInstance().SetEnabled(
       enabled, base::OnceClosure());
 }

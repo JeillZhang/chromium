@@ -2,14 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "ui/color/color_mixers.h"
-
 #import <Cocoa/Cocoa.h>
 
 #include "base/containers/fixed_flat_set.h"
 #import "skia/ext/skia_utils_mac.h"
 #include "ui/color/color_id.h"
 #include "ui/color/color_mixer.h"
+#include "ui/color/color_mixers.h"
 #include "ui/color/color_provider.h"
 #include "ui/color/color_provider_key.h"
 #include "ui/color/color_recipe.h"
@@ -78,14 +77,7 @@ void AddNativeCoreColorMixer(ColorProvider* provider,
         0x66)};
   };
 
-  if (@available(macOS 11, *)) {
-    [AppearanceForKey(key) performAsCurrentDrawingAppearance:load_colors];
-  } else {
-    NSAppearance* saved_appearance = NSAppearance.currentAppearance;
-    NSAppearance.currentAppearance = AppearanceForKey(key);
-    load_colors();
-    NSAppearance.currentAppearance = saved_appearance;
-  }
+  [AppearanceForKey(key) performAsCurrentDrawingAppearance:load_colors];
 }
 
 void AddNativeColorSetInColorMixer(ColorMixer& mixer) {
@@ -130,16 +122,11 @@ void AddNativeUiColorMixer(ColorProvider* provider,
         properties.dark ? SK_ColorLTGRAY : SK_ColorDKGRAY};
     mixer[kColorMenuItemForegroundSelected] = {properties.dark ? SK_ColorBLACK
                                                                : SK_ColorWHITE};
+
+    mixer[kColorTableRowHighlight] = {kColorSysStateHoverOnSubtle};
   };
 
-  if (@available(macOS 11, *)) {
-    [AppearanceForKey(key) performAsCurrentDrawingAppearance:load_colors];
-  } else {
-    NSAppearance* saved_appearance = NSAppearance.currentAppearance;
-    NSAppearance.currentAppearance = AppearanceForKey(key);
-    load_colors();
-    NSAppearance.currentAppearance = saved_appearance;
-  }
+  [AppearanceForKey(key) performAsCurrentDrawingAppearance:load_colors];
 }
 
 void AddNativePostprocessingMixer(ColorProvider* provider,
@@ -156,8 +143,9 @@ void AddNativePostprocessingMixer(ColorProvider* provider,
 
   for (ColorId id = kUiColorsStart; id < kUiColorsEnd; ++id) {
     // Apply system tint to non-OS colors.
-    if (!kNativeOSColorIds.contains(id))
+    if (!kNativeOSColorIds.contains(id)) {
       mixer[id] += ApplySystemControlTintIfNeeded();
+    }
   }
 }
 

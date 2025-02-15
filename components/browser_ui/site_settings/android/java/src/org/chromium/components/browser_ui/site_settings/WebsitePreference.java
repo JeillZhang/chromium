@@ -38,9 +38,6 @@ class WebsitePreference extends ChromeImageViewPreference {
     protected final SiteSettingsCategory mCategory;
     private Runnable mRefreshZoomsListFunction;
 
-    // TODO(crbug.com/40688291): Move these constants to dimens.xml
-    private static final int TEXT_SIZE_SP = 13;
-
     // Whether the favicon has been fetched already.
     private boolean mFaviconFetched;
 
@@ -140,17 +137,17 @@ class WebsitePreference extends ChromeImageViewPreference {
     }
 
     protected String buildSummary() {
-        if (mSiteSettingsDelegate.isPrivacySandboxFirstPartySetsUIFeatureEnabled()
-                && mSiteSettingsDelegate.isFirstPartySetsDataAccessEnabled()
-                && mSite.getFPSCookieInfo() != null) {
-            var fpsInfo = mSite.getFPSCookieInfo();
+        if (mSiteSettingsDelegate.isPrivacySandboxFirstPartySetsUiFeatureEnabled()
+                && mSiteSettingsDelegate.isRelatedWebsiteSetsDataAccessEnabled()
+                && mSite.getRwsCookieInfo() != null) {
+            var rwsInfo = mSite.getRwsCookieInfo();
             return getContext()
                     .getResources()
                     .getQuantityString(
-                            R.plurals.allsites_fps_list_summary,
-                            fpsInfo.getMembersCount(),
-                            Integer.toString(fpsInfo.getMembersCount()),
-                            fpsInfo.getOwner());
+                            R.plurals.allsites_rws_list_summary,
+                            rwsInfo.getMembersCount(),
+                            Integer.toString(rwsInfo.getMembersCount()),
+                            rwsInfo.getOwner());
         }
 
         if (hasSubPage()) {
@@ -203,8 +200,11 @@ class WebsitePreference extends ChromeImageViewPreference {
         if (mCategory.getType() == SiteSettingsCategory.Type.ZOOM) {
             // Create and set the delete button for this preference.
             setImageView(
-                    R.drawable.btn_close,
-                    R.string.webstorage_delete_data_dialog_title,
+                    R.drawable.ic_delete_white_24dp,
+                    getContext()
+                            .getString(
+                                    R.string.site_settings_delete_zoom_level_content_description,
+                                    buildTitle()),
                     (OnClickListener)
                             view -> {
                                 SiteSettingsUtil.resetZoomLevel(
@@ -219,7 +219,10 @@ class WebsitePreference extends ChromeImageViewPreference {
         if (hasSubPage()) {
             setImageView(
                     R.drawable.ic_expand_more_horizontal_black_24dp,
-                    R.string.webstorage_delete_data_dialog_title,
+                    getContext()
+                            .getString(
+                                    R.string.webstorage_delete_data_content_description,
+                                    buildTitle()),
                     (OnClickListener)
                             view -> {
                                 mStorageAccessSettingsPageListener
@@ -259,19 +262,19 @@ class WebsitePreference extends ChromeImageViewPreference {
             long totalUsage = mSite.getTotalUsage();
             if (totalUsage > 0) {
                 usageText.setText(Formatter.formatShortFileSize(getContext(), totalUsage));
-                usageText.setTextSize(TEXT_SIZE_SP);
                 usageText.setVisibility(View.VISIBLE);
             }
         }
         if (mCategory.getType() == SiteSettingsCategory.Type.ZOOM) {
+            TextView summaryText = (TextView) holder.findViewById(android.R.id.summary);
             long readableZoomLevel =
                     Math.round(
                             100
                                     * PageZoomUtils.convertZoomFactorToZoomLevel(
                                             mSite.getZoomFactor()));
-            usageText.setText(getContext().getString(R.string.page_zoom_level, readableZoomLevel));
-            usageText.setTextSize(TEXT_SIZE_SP);
-            usageText.setVisibility(View.VISIBLE);
+            summaryText.setText(
+                    getContext().getString(R.string.page_zoom_level, readableZoomLevel));
+            summaryText.setVisibility(View.VISIBLE);
             setViewClickable(false);
         }
 

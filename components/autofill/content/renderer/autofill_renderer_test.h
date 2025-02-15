@@ -44,7 +44,6 @@ class MockAutofillDriver : public mojom::AutofillDriver {
   MOCK_METHOD(void,
               FormSubmitted,
               (const FormData& form,
-               bool known_success,
                mojom::SubmissionSource source),
               (override));
   MOCK_METHOD(void,
@@ -54,7 +53,7 @@ class MockAutofillDriver : public mojom::AutofillDriver {
                const gfx::Rect& caret_bounds),
               (override));
   MOCK_METHOD(void,
-              TextFieldDidChange,
+              TextFieldValueChanged,
               (const FormData& form,
                FieldRendererId field_id,
                base::TimeTicks timestamp),
@@ -64,11 +63,11 @@ class MockAutofillDriver : public mojom::AutofillDriver {
               (const FormData& form, FieldRendererId field_id),
               (override));
   MOCK_METHOD(void,
-              SelectControlDidChange,
+              SelectControlSelectionChanged,
               (const FormData& form, FieldRendererId field_id),
               (override));
   MOCK_METHOD(void,
-              SelectOrSelectListFieldOptionsDidChange,
+              SelectFieldOptionsDidChange,
               (const FormData& form),
               (override));
   MOCK_METHOD(void,
@@ -86,10 +85,7 @@ class MockAutofillDriver : public mojom::AutofillDriver {
                AutofillSuggestionTriggerSource trigger_source),
               (override));
   MOCK_METHOD(void, HidePopup, (), (override));
-  MOCK_METHOD(void,
-              FocusOnNonFormField,
-              (bool had_interacted_form),
-              (override));
+  MOCK_METHOD(void, FocusOnNonFormField, (), (override));
   MOCK_METHOD(void,
               FocusOnFormField,
               (const FormData& form, FieldRendererId field_id),
@@ -115,10 +111,23 @@ class AutofillRendererTest : public content::RenderViewTest {
 
   virtual std::unique_ptr<AutofillAgent> CreateAutofillAgent(
       content::RenderFrame* render_frame,
-      const AutofillAgent::Config& config,
       std::unique_ptr<PasswordAutofillAgent> password_autofill_agent,
       std::unique_ptr<PasswordGenerationAgent> password_generation_agent,
       blink::AssociatedInterfaceRegistry* associated_interfaces);
+
+  blink::WebDocument GetDocument() { return GetMainFrame()->GetDocument(); }
+
+  blink::WebElement GetWebElementById(std::string_view id) {
+    return GetDocument().GetElementById(blink::WebString::FromUTF8(id));
+  }
+
+  blink::WebFormControlElement GetFormControlElementById(std::string_view id) {
+    return GetWebElementById(id).DynamicTo<blink::WebFormControlElement>();
+  }
+
+  blink::WebInputElement GetInputElementById(std::string_view id) {
+    return GetWebElementById(id).DynamicTo<blink::WebInputElement>();
+  }
 
   // Simulates a click on the element with id `element_id` and, if, successful,
   // runs until the task environment is idle. Waits until the `TaskEnvironment`

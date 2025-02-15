@@ -2,21 +2,27 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/browser/enterprise/signals/device_info_fetcher_win.h"
 
 #include <windows.h>
+
 // SECURITY_WIN32 must be defined in order to get
 // EXTENDED_NAME_FORMAT enumeration.
 #define SECURITY_WIN32 1
 #include <security.h>
 #undef SECURITY_WIN32
+
 #include <shobjidl.h>
 
 #include <DSRole.h>
 #include <iphlpapi.h>
 #include <powersetting.h>
 #include <propsys.h>
-#include <wincred.h>
 
 #include "base/files/file_path.h"
 #include "base/path_service.h"
@@ -27,6 +33,7 @@
 #include "base/system/sys_info.h"
 #include "base/win/registry.h"
 #include "base/win/win_util.h"
+#include "base/win/wincred_shim.h"
 #include "base/win/windows_version.h"
 #include "base/win/wmi.h"
 #include "chrome/browser/enterprise/signals/signals_common.h"

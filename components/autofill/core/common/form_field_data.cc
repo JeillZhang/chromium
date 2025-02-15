@@ -32,7 +32,7 @@ const int kFormFieldDataPickleVersion = 9;
 
 void WriteSelectOption(const SelectOption& option, base::Pickle* pickle) {
   pickle->WriteString16(option.value);
-  pickle->WriteString16(option.content);
+  pickle->WriteString16(option.text);
 }
 
 bool ReadSelectOption(base::PickleIterator* iter, SelectOption* option) {
@@ -40,7 +40,7 @@ bool ReadSelectOption(base::PickleIterator* iter, SelectOption* option) {
   std::u16string content;
   if (!iter->ReadString16(&value) || !iter->ReadString16(&content))
     return false;
-  *option = {.value = value, .content = content};
+  *option = {.value = value, .text = content};
   return true;
 }
 
@@ -116,8 +116,9 @@ bool DeserializeSection1(base::PickleIterator* iter,
     // TODO(crbug.com/1353392,crbug.com/1482526): Why does the Password Manager
     // (de)serialize form control types? Remove it or migrate it to the enum
     // values.
-    field_data->set_form_control_type(StringToFormControlTypeDiscouraged(
-        form_control_type, /*fallback=*/FormControlType::kInputText));
+    field_data->set_form_control_type(
+        StringToFormControlTypeDiscouraged(form_control_type)
+            .value_or(FormControlType::kInputText));
   }
   return success;
 }
@@ -161,19 +162,19 @@ bool DeserializeSection7(base::PickleIterator* iter,
 bool DeserializeSection3(base::PickleIterator* iter,
                          FormFieldData* field_data) {
   std::vector<std::u16string> option_values;
-  std::vector<std::u16string> option_contents;
+  std::vector<std::u16string> option_texts;
   base::i18n::TextDirection text_direction = base::i18n::UNKNOWN_DIRECTION;
   if (!ReadAsInt(iter, &text_direction) ||
       !ReadStringVector(iter, &option_values) ||
-      !ReadStringVector(iter, &option_contents) ||
-      option_values.size() != option_contents.size()) {
+      !ReadStringVector(iter, &option_texts) ||
+      option_values.size() != option_texts.size()) {
     return false;
   }
   field_data->set_text_direction(text_direction);
   std::vector<SelectOption> options;
   for (size_t i = 0; i < option_values.size(); ++i) {
     options.push_back({.value = std::move(option_values[i]),
-                       .content = std::move(option_contents[i])});
+                       .text = std::move(option_texts[i])});
   }
   field_data->set_options(std::move(options));
   return true;
@@ -355,6 +356,15 @@ FormFieldData& FormFieldData::operator=(FormFieldData&&) = default;
 
 FormFieldData::~FormFieldData() = default;
 
+base::optional_ref<const SelectOption> FormFieldData::selected_option() const {
+  for (const SelectOption& option : options()) {
+    if (option.value == value()) {
+      return option;
+    }
+  }
+  return std::nullopt;
+}
+
 bool FormFieldData::SameFieldAs(const FormFieldData& field) const {
   auto equality_tuple = [](const FormFieldData& f) {
     return std::tuple_cat(
@@ -384,26 +394,6 @@ bool FormFieldData::IsPasswordInputElement() const {
 
 bool FormFieldData::IsSelectElement() const {
   return form_control_type() == FormControlType::kSelectOne;
-}
-
-bool FormFieldData::IsSelectListElement() const {
-  return form_control_type() == FormControlType::kSelectList;
-}
-
-bool FormFieldData::IsSelectOrSelectListElement() const {
-  return IsSelectElement() || IsSelectListElement();
-}
-
-bool FormFieldData::DidUserType() const {
-  return properties_mask() & kUserTyped;
-}
-
-bool FormFieldData::HadFocus() const {
-  return properties_mask() & kHadFocus;
-}
-
-bool FormFieldData::WasPasswordAutofilled() const {
-  return properties_mask() & kAutofilled;
 }
 
 // static
@@ -454,30 +444,23 @@ std::string_view FormControlTypeToString(FormControlType type) {
       return "url";
     case FormControlType::kSelectOne:
       return "select-one";
-    case FormControlType::kSelectMultiple:
-      return "select-multiple";
-    case FormControlType::kSelectList:
-      return "selectlist";
     case FormControlType::kTextArea:
       return "textarea";
   }
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
-FormControlType StringToFormControlTypeDiscouraged(
-    std::string_view type_string,
-    std::optional<FormControlType> fallback) {
+std::optional<FormControlType> StringToFormControlTypeDiscouraged(
+    std::string_view type_string) {
   for (auto i = base::to_underlying(FormControlType::kMinValue);
        i <= base::to_underlying(FormControlType::kMaxValue); ++i) {
     FormControlType type = static_cast<FormControlType>(i);
-    if (type_string == autofill::FormControlTypeToString(type)) {
+    if (mojom::IsKnownEnumValue(type) &&
+        type_string == FormControlTypeToString(type)) {
       return type;
     }
   }
-  if (fallback) {
-    return *fallback;
-  }
-  NOTREACHED_NORETURN();
+  return std::nullopt;
 }
 
 void SerializeFormFieldData(const FormFieldData& field_data,
@@ -702,6 +685,7 @@ LogBuffer& operator<<(LogBuffer& buffer, const FormFieldData& field) {
   buffer << Tr{} << "Is enabled:" << field.is_enabled();
   buffer << Tr{} << "Is readonly:" << field.is_readonly();
   buffer << Tr{} << "Is empty:" << (field.value().empty() ? "Yes" : "No");
+  buffer << Tr{} << "Value:" << field.value() << SetParentTagContainsPII{};
   buffer << CTag{"table"};
   return buffer;
 }

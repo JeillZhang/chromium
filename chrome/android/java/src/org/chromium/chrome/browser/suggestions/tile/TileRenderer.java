@@ -13,6 +13,7 @@ import android.view.ViewGroup;
 
 import androidx.annotation.DrawableRes;
 import androidx.annotation.LayoutRes;
+import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 import androidx.core.content.res.ResourcesCompat;
@@ -24,9 +25,9 @@ import org.chromium.base.task.PostTask;
 import org.chromium.base.task.TaskTraits;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.feature_engagement.TrackerFactory;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.omnibox.suggestions.mostvisited.SuggestTileType;
 import org.chromium.chrome.browser.profiles.Profile;
-import org.chromium.chrome.browser.search_engines.TemplateUrlServiceFactory;
 import org.chromium.chrome.browser.suggestions.ImageFetcher;
 import org.chromium.chrome.browser.suggestions.SiteSuggestion;
 import org.chromium.chrome.browser.suggestions.SuggestionsConfig.TileStyle;
@@ -36,11 +37,11 @@ import org.chromium.components.favicon.IconType;
 import org.chromium.components.favicon.LargeIconBridge;
 import org.chromium.components.feature_engagement.EventConstants;
 import org.chromium.components.feature_engagement.Tracker;
-import org.chromium.components.search_engines.TemplateUrlService;
 import org.chromium.ui.base.ViewUtils;
 
 import java.lang.ref.WeakReference;
 import java.util.HashMap;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 
@@ -50,7 +51,6 @@ import java.util.Map;
  */
 public class TileRenderer {
     private final Context mContext;
-    private final Resources.Theme mTheme;
     private RoundedIconGenerator mIconGenerator;
     private ImageFetcher mImageFetcher;
 
@@ -63,8 +63,6 @@ public class TileRenderer {
     private Profile mProfile;
 
     @LayoutRes private final int mLayout;
-
-    @LayoutRes private final int mTopSitesLayout;
 
     private class LargeIconCallbackImpl implements LargeIconBridge.LargeIconCallback {
         private final WeakReference<Tile> mTile;
@@ -96,6 +94,34 @@ public class TileRenderer {
         }
     }
 
+    /** Simple multimap from SiteSuggestion to SuggestionsTileView. */
+    private static class SuggestionsTileViewCache {
+        private final Map<SiteSuggestion, LinkedList<SuggestionsTileView>> mStorage =
+                new HashMap<SiteSuggestion, LinkedList<SuggestionsTileView>>();
+
+        void put(SiteSuggestion key, @NonNull SuggestionsTileView value) {
+            LinkedList<SuggestionsTileView> bucket = mStorage.get(key);
+            if (bucket == null) {
+                bucket = new LinkedList<SuggestionsTileView>();
+                mStorage.put(key, bucket);
+            }
+            bucket.addLast(value);
+        }
+
+        @Nullable
+        SuggestionsTileView remove(SiteSuggestion key) {
+            SuggestionsTileView ret = null;
+            LinkedList<SuggestionsTileView> bucket = mStorage.get(key);
+            if (bucket != null) {
+                ret = bucket.removeFirst(); // FIFO, for consistecy.
+                if (bucket.isEmpty()) {
+                    mStorage.remove(key);
+                }
+            }
+            return ret;
+        }
+    }
+
     public TileRenderer(
             Context context, @TileStyle int style, int titleLines, ImageFetcher imageFetcher) {
         mImageFetcher = imageFetcher;
@@ -104,7 +130,6 @@ public class TileRenderer {
 
         mContext = context;
         Resources res = context.getResources();
-        mTheme = context.getTheme();
         mDesiredIconSize = res.getDimensionPixelSize(R.dimen.tile_view_icon_size);
         mIconCornerRadius = res.getDimension(R.dimen.tile_view_icon_corner_radius);
         int minIconSize = res.getDimensionPixelSize(R.dimen.tile_view_icon_min_size);
@@ -113,7 +138,6 @@ public class TileRenderer {
         mMinIconSize = Math.min(mDesiredIconSize, minIconSize);
 
         mLayout = getLayout();
-        mTopSitesLayout = getTopSitesLayout();
 
         int iconColor = context.getColor(R.color.default_favicon_background_color);
         int iconTextSize = res.getDimensionPixelSize(R.dimen.tile_view_icon_text_size);
@@ -137,7 +161,7 @@ public class TileRenderer {
             List<Tile> sectionTiles, ViewGroup parent, TileGroup.TileSetupDelegate setupDelegate) {
         try (TraceEvent e = TraceEvent.scoped("TileRenderer.renderTileSection")) {
             // Map the old tile views by url so they can be reused later.
-            Map<SiteSuggestion, SuggestionsTileView> oldTileViews = new HashMap<>();
+            SuggestionsTileViewCache oldTileViews = new SuggestionsTileViewCache();
             int childCount = parent.getChildCount();
             for (int i = 0; i < childCount; i++) {
                 SuggestionsTileView tileView = (SuggestionsTileView) parent.getChildAt(i);
@@ -149,11 +173,10 @@ public class TileRenderer {
             parent.removeAllViews();
 
             for (Tile tile : sectionTiles) {
-                SuggestionsTileView tileView = oldTileViews.get(tile.getData());
+                SuggestionsTileView tileView = oldTileViews.remove(tile.getData());
                 if (tileView == null) {
                     tileView = buildTileView(tile, parent, setupDelegate);
                 }
-
                 parent.addView(tileView);
             }
         }
@@ -172,7 +195,7 @@ public class TileRenderer {
     }
 
     /** Record that a tile was clicked for IPH reasons. */
-    private void recordTileClickedForIPH(String eventName) {
+    private void recordTileClickedForIph(String eventName) {
         assert mProfile != null;
         Tracker tracker = TrackerFactory.getTrackerForProfile(mProfile);
         tracker.notifyEvent(eventName);
@@ -209,7 +232,7 @@ public class TileRenderer {
         if (tile.getSource() == TileSource.HOMEPAGE) {
             delegate.setOnClickRunnable(
                     () -> {
-                        recordTileClickedForIPH(EventConstants.HOMEPAGE_TILE_CLICKED);
+                        recordTileClickedForIph(EventConstants.HOMEPAGE_TILE_CLICKED);
                         RecordHistogram.recordEnumeratedHistogram(
                                 "NewTabPage.SuggestTiles.SelectedTileType",
                                 SuggestTileType.OTHER,
@@ -248,19 +271,18 @@ public class TileRenderer {
         }
 
         tileView.setOnClickListener(delegate);
-        tileView.setOnCreateContextMenuListener(delegate);
+        if (ChromeFeatureList.isEnabled(ChromeFeatureList.TILE_CONTEXT_MENU_REFACTOR)) {
+            tileView.setOnLongClickListener(delegate);
+        } else {
+            tileView.setOnCreateContextMenuListener(delegate);
+        }
 
         return tileView;
     }
 
-    /**
-     * @return True, if the tile represents a Search query.
-     */
+    /** Returns whether the tile represents a Search query. */
     private boolean isSearchTile(Tile tile) {
-        assert mProfile != null;
-        TemplateUrlService searchService = TemplateUrlServiceFactory.getForProfile(mProfile);
-        return searchService != null
-                && searchService.isSearchResultsPageFromDefaultSearchProvider(tile.getUrl());
+        return TileUtils.isSearchTile(mProfile, tile);
     }
 
     /**
@@ -336,7 +358,8 @@ public class TileRenderer {
 
     public void setTileIconFromRes(Tile tile, @DrawableRes int res) {
         tile.setIcon(ResourcesCompat.getDrawable(mContext.getResources(), res, null));
-        tile.setIconTint(ChromeColors.getSecondaryIconTint(mContext, /* isIncognito= */ false));
+        tile.setIconTint(
+                ChromeColors.getSecondaryIconTint(mContext, /* forceLightIconTint= */ false));
         tile.setType(TileVisualType.ICON_DEFAULT);
     }
 
@@ -355,17 +378,6 @@ public class TileRenderer {
                 return R.layout.suggestions_tile_view;
             case TileStyle.MODERN_CONDENSED:
                 return R.layout.suggestions_tile_view_condensed;
-        }
-        assert false;
-        return 0;
-    }
-
-    private @LayoutRes int getTopSitesLayout() {
-        switch (mStyle) {
-            case TileStyle.MODERN:
-                return R.layout.top_sites_tile_view;
-            case TileStyle.MODERN_CONDENSED:
-                return R.layout.top_sites_tile_view_condensed;
         }
         assert false;
         return 0;

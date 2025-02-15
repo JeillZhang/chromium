@@ -13,7 +13,6 @@
 #include "ash/test/pixel/ash_pixel_differ.h"
 #include "ash/test/pixel/ash_pixel_test_init_params.h"
 #include "base/memory/raw_ptr.h"
-#include "base/test/scoped_feature_list.h"
 #include "base/time/time.h"
 #include "chromeos/ash/components/settings/scoped_timezone_settings.h"
 #include "google_apis/calendar/calendar_api_requests.h"
@@ -39,17 +38,8 @@ std::unique_ptr<google_apis::calendar::CalendarEvent> CreateEvent(
 
 }  // namespace
 
-class CalendarUpNextViewPixelTest
-    : public AshTestBase,
-      public testing::WithParamInterface</*glanceables_v2_enabled=*/bool> {
+class CalendarUpNextViewPixelTest : public AshTestBase {
  public:
-  CalendarUpNextViewPixelTest() {
-    scoped_feature_list_.InitWithFeatureStates(
-        {{features::kGlanceablesV2, AreGlanceablesV2Enabled()},
-         {features::kGlanceablesTimeManagementTasksView,
-          AreGlanceablesV2Enabled()}});
-  }
-
   // AshTestBase:
   void SetUp() override {
     AshTestBase::SetUp();
@@ -64,8 +54,6 @@ class CalendarUpNextViewPixelTest
 
     AshTestBase::TearDown();
   }
-
-  bool AreGlanceablesV2Enabled() { return GetParam(); }
 
   // AshTestBase:
   std::optional<pixel_test::InitParams> CreatePixelTestInitParams()
@@ -118,17 +106,12 @@ class CalendarUpNextViewPixelTest
     EndScrollingAnimation();
   }
 
-  base::test::ScopedFeatureList scoped_feature_list_;
   std::unique_ptr<views::Widget> widget_;
   raw_ptr<CalendarUpNextView, DanglingUntriaged> up_next_view_ = nullptr;
   std::unique_ptr<CalendarViewController> controller_;
 };
 
-INSTANTIATE_TEST_SUITE_P(GlanceablesV2,
-                         CalendarUpNextViewPixelTest,
-                         testing::Bool());
-
-TEST_P(CalendarUpNextViewPixelTest,
+TEST_F(CalendarUpNextViewPixelTest,
        ShouldShowSingleEventTakingUpFullWidthOfParentView) {
   // Set time and timezone override.
   ash::system::ScopedTimezoneSettings timezone_settings(u"America/Los_Angeles");
@@ -153,7 +136,7 @@ TEST_P(CalendarUpNextViewPixelTest,
       /*revision_number=*/9, Widget()));
 }
 
-TEST_P(CalendarUpNextViewPixelTest,
+TEST_F(CalendarUpNextViewPixelTest,
        ShouldShowMultipleEventsInHorizontalScrollView) {
   // Set time and timezone override.
   ash::system::ScopedTimezoneSettings timezone_settings(u"America/Los_Angeles");
@@ -180,7 +163,7 @@ TEST_P(CalendarUpNextViewPixelTest,
       /*revision_number=*/9, Widget()));
 }
 
-TEST_P(
+TEST_F(
     CalendarUpNextViewPixelTest,
     ShouldMakeSecondEventFullyVisibleAndLeftAligned_WhenScrollRightButtonIsPressed) {
   // Set time and timezone override.
@@ -211,7 +194,7 @@ TEST_P(
       /*revision_number=*/8, Widget()));
 }
 
-TEST_P(CalendarUpNextViewPixelTest, ShouldShowJoinMeetingButton) {
+TEST_F(CalendarUpNextViewPixelTest, ShouldShowJoinMeetingButton) {
   // Set time and timezone override.
   ash::system::ScopedTimezoneSettings timezone_settings(u"America/Los_Angeles");
   calendar_test_utils::ScopedLibcTimeZone scoped_libc_timezone(

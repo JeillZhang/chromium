@@ -7,6 +7,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <array>
 #include <memory>
 #include <string_view>
 
@@ -103,7 +104,7 @@ class P2PSocketTcpTestBase : public testing::Test {
 
   std::string IntToSize(int size) {
     return std::string(base::as_string_view(
-        base::numerics::U16ToBigEndian(base::checked_cast<uint16_t>(size))));
+        base::U16ToBigEndian(base::checked_cast<uint16_t>(size))));
   }
 
   base::test::TaskEnvironment task_environment_;
@@ -191,7 +192,7 @@ TEST_F(P2PSocketTcpTest, ReceiveStun) {
   EXPECT_CALL(*this, SinglePacketReceptionHelper(_, SpanEq(packet3), _));
 
   size_t pos = 0;
-  size_t step_sizes[] = {3, 2, 1};
+  auto step_sizes = std::to_array<size_t>({3, 2, 1});
   size_t step = 0;
   while (pos < received_data.size()) {
     size_t step_size = std::min(step_sizes[step], received_data.size() - pos);
@@ -331,7 +332,7 @@ TEST_F(P2PSocketTcpTest, SendDataWithPacketOptions) {
   CreateRandomPacket(&packet);
   // Make it a RTP packet.
   base::span(packet).first<2>().copy_from(
-      base::numerics::U16ToBigEndian(uint16_t{0x8000}));
+      base::U16ToBigEndian(uint16_t{0x8000}));
   socket_impl_->Send(packet, P2PPacketInfo(dest_.ip_address, options, 0));
 
   std::string expected_data;
@@ -419,7 +420,7 @@ TEST_F(P2PSocketStunTcpTest, ReceiveStun) {
   EXPECT_CALL(*this, SinglePacketReceptionHelper(_, SpanEq(packet3), _));
 
   size_t pos = 0;
-  size_t step_sizes[] = {3, 2, 1};
+  auto step_sizes = std::to_array<size_t>({3, 2, 1});
   size_t step = 0;
   while (pos < received_data.size()) {
     size_t step_size = std::min(step_sizes[step], received_data.size() - pos);

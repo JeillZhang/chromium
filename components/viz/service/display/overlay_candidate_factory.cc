@@ -14,7 +14,6 @@
 #include "components/viz/common/quads/texture_draw_quad.h"
 #include "components/viz/common/quads/tile_draw_quad.h"
 #include "components/viz/common/quads/video_hole_draw_quad.h"
-#include "components/viz/common/quads/yuv_video_draw_quad.h"
 #include "components/viz/common/resources/resource_id.h"
 #include "components/viz/common/viz_utils.h"
 #include "components/viz/service/debugger/viz_debugger.h"
@@ -33,11 +32,11 @@ namespace viz {
 
 namespace {
 
-const gfx::BufferFormat kOverlayFormats[] = {
-    gfx::BufferFormat::RGBX_8888, gfx::BufferFormat::RGBA_8888,
-    gfx::BufferFormat::BGRX_8888, gfx::BufferFormat::BGRA_8888,
-    gfx::BufferFormat::BGR_565,   gfx::BufferFormat::YUV_420_BIPLANAR,
-    gfx::BufferFormat::P010};
+const SharedImageFormat kOverlayFormats[] = {
+    SinglePlaneFormat::kRGBX_8888, SinglePlaneFormat::kRGBA_8888,
+    SinglePlaneFormat::kBGRX_8888, SinglePlaneFormat::kBGRA_8888,
+    SinglePlaneFormat::kBGR_565,   MultiPlaneFormat::kNV12,
+    MultiPlaneFormat::kP010};
 
 enum Axis { NONE, AXIS_POS_X, AXIS_NEG_X, AXIS_POS_Y, AXIS_NEG_Y };
 
@@ -174,6 +173,14 @@ OverlayCandidate::CandidateStatus OverlayCandidateFactory::FromDrawQuad(
   candidate.overlay_damage_index =
       sqs->overlay_damage_index.value_or(OverlayCandidate::kInvalidDamageIndex);
 
+  static_assert(
+      std::is_same<decltype(SharedQuadState::layer_id), uint32_t>::value);
+  static_assert(std::is_same<decltype(SharedQuadState::layer_namespace_id),
+                             uint32_t>::value);
+  candidate.aggregated_layer_id =
+      static_cast<uint64_t>(sqs->layer_id) |
+      (static_cast<uint64_t>(sqs->layer_namespace_id) << 32);
+
   auto status = CandidateStatus::kFailQuadNotSupported;
   switch (quad->material) {
     case DrawQuad::Material::kTextureContent:
@@ -278,14 +285,17 @@ float OverlayCandidateFactory::EstimateVisibleDamage(
       0.f, quad_damage.size().GetArea() - occluded_damage_estimate_total);
 }
 
+// static
 bool OverlayCandidateFactory::IsOccludedByFilteredQuad(
-    const OverlayCandidate& candidate,
+    const DrawQuad& quad,
     QuadList::ConstIterator quad_list_begin,
     QuadList::ConstIterator quad_list_end,
-    const base::flat_map<AggregatedRenderPassId, cc::FilterOperations*>&
-        render_pass_backdrop_filters) const {
-  gfx::RectF target_rect =
-      OverlayCandidate::DisplayRectInTargetSpace(candidate);
+    const base::flat_map<AggregatedRenderPassId,
+                         raw_ptr<cc::FilterOperations, CtnExperimental>>&
+        render_pass_backdrop_filters) {
+  const gfx::RectF target_rect =
+      quad.shared_quad_state->quad_to_target_transform.MapRect(
+          gfx::RectF(quad.visible_rect));
   for (auto overlap_iter = quad_list_begin; overlap_iter != quad_list_end;
        ++overlap_iter) {
     if (auto* render_pass_draw_quad =
@@ -304,14 +314,16 @@ bool OverlayCandidateFactory::IsOccludedByFilteredQuad(
   return false;
 }
 
+// static
 bool OverlayCandidateFactory::IsOccluded(
-    const OverlayCandidate& candidate,
+    const DrawQuad& quad,
     QuadList::ConstIterator quad_list_begin,
-    QuadList::ConstIterator quad_list_end) const {
+    QuadList::ConstIterator quad_list_end) {
   // The rects are rounded as they're snapped by the compositor to pixel unless
   // it is AA'ed, in which case, it won't be overlaid.
-  gfx::Rect target_rect =
-      gfx::ToRoundedRect(OverlayCandidate::DisplayRectInTargetSpace(candidate));
+  const gfx::Rect target_rect = gfx::ToRoundedRect(
+      quad.shared_quad_state->quad_to_target_transform.MapRect(
+          gfx::RectF(quad.visible_rect)));
 
   // Check that no visible quad overlaps the candidate.
   for (auto overlap_iter = quad_list_begin; overlap_iter != quad_list_end;
@@ -333,8 +345,7 @@ OverlayCandidate::CandidateStatus OverlayCandidateFactory::FromDrawQuadResource(
     ResourceId resource_id,
     bool y_flipped,
     OverlayCandidate& candidate) const {
-  if (!context_.allow_non_overlay_resources &&
-      resource_id != kInvalidResourceId &&
+  if (resource_id != kInvalidResourceId &&
       !resource_provider_->IsOverlayCandidate(resource_id)) {
     return CandidateStatus::kFailNotOverlay;
   }
@@ -343,7 +354,7 @@ OverlayCandidate::CandidateStatus OverlayCandidateFactory::FromDrawQuadResource(
     return CandidateStatus::kFailVisible;
 
   if (resource_id != kInvalidResourceId) {
-    candidate.format = resource_provider_->GetBufferFormat(resource_id);
+    candidate.format = resource_provider_->GetSharedImageFormat(resource_id);
     candidate.color_space = resource_provider_->GetColorSpace(resource_id);
     candidate.needs_detiling =
         resource_provider_->GetNeedsDetiling(resource_id);
@@ -396,7 +407,7 @@ OverlayCandidate::CandidateStatus OverlayCandidateFactory::FromDrawQuadResource(
       // Intentionally throwing away the high bits (assuming that hash entropy
       // is uniformly spread across all the bits).
       size_t original_hash =
-          base::FastHash(base::as_bytes(base::span_from_ref(track_data)));
+          base::FastHash(base::byte_span_from_ref(track_data));
       uint32_t narrow_hash = static_cast<uint32_t>(original_hash);
       candidate.tracking_id = narrow_hash;
     }
@@ -409,9 +420,6 @@ OverlayCandidate::CandidateStatus OverlayCandidateFactory::FromDrawQuadResource(
     const bool transform_supports_clipping =
         context_.supports_arbitrary_transform ||
         absl::holds_alternative<gfx::OverlayTransform>(candidate.transform);
-    // Out of window clipping is enabled on Lacros only when it is supported.
-    // TODO(crbug.com/40246811): Remove the condition on `quad_within_window`
-    // when M117 becomes widely supported.
     bool can_delegate_clipping =
         context_.supports_clip_rect &&
         (quad_within_window || context_.supports_out_of_window_clip_rect) &&
@@ -612,12 +620,12 @@ OverlayCandidate::CandidateStatus OverlayCandidateFactory::FromTileQuad(
     return CandidateStatus::kFailNearFilter;
 
   candidate.resource_size_in_pixels =
-      resource_provider_->GetResourceBackedSize(quad->resource_id());
+      resource_provider_->GetResourceBackedSize(quad->resource_id);
   candidate.uv_rect = gfx::ScaleRect(
       quad->tex_coord_rect, 1.f / candidate.resource_size_in_pixels.width(),
       1.f / candidate.resource_size_in_pixels.height());
 
-  auto rtn = FromDrawQuadResource(quad, quad->resource_id(), false, candidate);
+  auto rtn = FromDrawQuadResource(quad, quad->resource_id, false, candidate);
   return rtn;
 }
 
@@ -660,8 +668,10 @@ OverlayCandidate::CandidateStatus OverlayCandidateFactory::FromTextureQuad(
 
   candidate.uv_rect = BoundingRect(quad->uv_top_left, quad->uv_bottom_right);
 
-  auto rtn = FromDrawQuadResource(quad, quad->resource_id(), quad->y_flipped,
-                                  candidate);
+  const bool y_flipped = resource_provider_->GetOrigin(quad->resource_id) ==
+                         kBottomLeft_GrSurfaceOrigin;
+  auto rtn =
+      FromDrawQuadResource(quad, quad->resource_id, y_flipped, candidate);
   if (rtn == CandidateStatus::kSuccess) {
     // Only handle clip rect for required overlays
     if (!context_.is_delegated_context && candidate.requires_overlay) {
@@ -684,7 +694,7 @@ OverlayCandidate::CandidateStatus OverlayCandidateFactory::FromTextureQuad(
 #if BUILDFLAG(IS_ANDROID)
     candidate.is_video_in_surface_view =
         quad->is_stream_video &&
-        !resource_provider_->IsBackedBySurfaceTexture(quad->resource_id());
+        !resource_provider_->IsBackedBySurfaceTexture(quad->resource_id);
     if (quad->is_stream_video) {
       // StreamVideoDrawQuad used to set the resource_size_in_pixels directly
       // from the quad rather than from the resource.
@@ -710,8 +720,8 @@ void OverlayCandidateFactory::HandleClipAndSubsampling(
     return;
 
   // Make sure it's in a format we can deal with, we only support YUV and P010.
-  if (candidate.format != gfx::BufferFormat::YUV_420_BIPLANAR &&
-      candidate.format != gfx::BufferFormat::P010) {
+  if (candidate.format != MultiPlaneFormat::kNV12 &&
+      candidate.format != MultiPlaneFormat::kP010) {
     return;
   }
   // Clip the clip rect to the primary plane. An overlay will only be shown on

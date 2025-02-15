@@ -22,11 +22,11 @@ import org.chromium.chrome.browser.logo.LogoBridge.LogoObserver;
 import org.chromium.chrome.browser.logo.LogoCoordinator.VisibilityObserver;
 import org.chromium.chrome.browser.preferences.ChromeSharedPreferences;
 import org.chromium.chrome.browser.profiles.Profile;
-import org.chromium.chrome.browser.profiles.ProfileManager;
 import org.chromium.chrome.browser.search_engines.TemplateUrlServiceFactory;
 import org.chromium.components.image_fetcher.ImageFetcher;
 import org.chromium.components.image_fetcher.ImageFetcherConfig;
 import org.chromium.components.image_fetcher.ImageFetcherFactory;
+import org.chromium.components.search_engines.TemplateUrl;
 import org.chromium.components.search_engines.TemplateUrlService.TemplateUrlServiceObserver;
 import org.chromium.content_public.browser.LoadUrlParams;
 import org.chromium.ui.base.PageTransition;
@@ -77,7 +77,6 @@ public class LogoMediator implements TemplateUrlServiceObserver {
     private ImageFetcher mImageFetcher;
     private final Callback<LoadUrlParams> mLogoClickedCallback;
     private boolean mHasLogoLoadedForCurrentSearchEngine;
-    private final boolean mShouldFetchDoodle;
     private final LogoCoordinator.VisibilityObserver mVisibilityObserver;
     private final CachedTintedBitmap mDefaultGoogleLogo;
     private boolean mShouldShowLogo;
@@ -85,6 +84,7 @@ public class LogoMediator implements TemplateUrlServiceObserver {
     private String mOnLogoClickUrl;
     private String mAnimatedLogoUrl;
     private boolean mShouldRecordLoadTime = true;
+    private String mSearchEngineKeyword;
 
     private final ObserverList<LogoCoordinator.VisibilityObserver> mVisibilityObservers =
             new ObserverList<>();
@@ -95,7 +95,6 @@ public class LogoMediator implements TemplateUrlServiceObserver {
      * @param context Used to load colors and resources.
      * @param logoClickedCallback Supplies the StartSurface's parent tab.
      * @param logoModel The model that is required to build the logo on start surface or ntp.
-     * @param shouldFetchDoodle Whether to fetch doodle if there is.
      * @param onLogoAvailableCallback The callback for when logo is available.
      * @param visibilityObserver Observer object monitoring logo visibility.
      * @param defaultGoogleLogo The google logo shared across all NTPs when Google is the default
@@ -105,14 +104,12 @@ public class LogoMediator implements TemplateUrlServiceObserver {
             Context context,
             Callback<LoadUrlParams> logoClickedCallback,
             PropertyModel logoModel,
-            boolean shouldFetchDoodle,
             Callback<Logo> onLogoAvailableCallback,
             VisibilityObserver visibilityObserver,
             CachedTintedBitmap defaultGoogleLogo) {
         mContext = context;
         mLogoModel = logoModel;
         mLogoClickedCallback = logoClickedCallback;
-        mShouldFetchDoodle = shouldFetchDoodle;
         mVisibilityObserver = visibilityObserver;
         mVisibilityObservers.addObserver(mVisibilityObserver);
         mDefaultGoogleLogo = defaultGoogleLogo;
@@ -122,11 +119,16 @@ public class LogoMediator implements TemplateUrlServiceObserver {
     /**
      * Initialize the mediator with the components that had native initialization dependencies, i.e.
      * Profile..
+     *
+     * @param profile The Profile associated with this Logo component.
      */
-    void initWithNative() {
-        if (mProfile != null) return;
+    void initWithNative(Profile profile) {
+        if (mProfile != null) {
+            assert false : "Attempting to initialize LogoMediator twice";
+            return;
+        }
 
-        mProfile = ProfileManager.getLastUsedRegularProfile();
+        mProfile = profile;
         updateVisibility();
 
         if (mShouldShowLogo) {
@@ -137,9 +139,21 @@ public class LogoMediator implements TemplateUrlServiceObserver {
         TemplateUrlServiceFactory.getForProfile(mProfile).addObserver(this);
     }
 
-    /** Update the logo based on default search engine changes.*/
+    /** Update the logo based on default search engine changes. */
     @Override
     public void onTemplateURLServiceChanged() {
+        TemplateUrl defaultSearchEngineTemplateUrl =
+                TemplateUrlServiceFactory.getForProfile(mProfile)
+                        .getDefaultSearchEngineTemplateUrl();
+        if (defaultSearchEngineTemplateUrl != null) {
+            String currentSearchEngineKeyword = defaultSearchEngineTemplateUrl.getKeyword();
+            if (mSearchEngineKeyword != null
+                    && mSearchEngineKeyword.equals(currentSearchEngineKeyword)) {
+                return;
+            }
+            mSearchEngineKeyword = currentSearchEngineKeyword;
+        }
+
         mHasLogoLoadedForCurrentSearchEngine = false;
         loadSearchProviderLogoWithAnimation();
     }
@@ -206,13 +220,6 @@ public class LogoMediator implements TemplateUrlServiceObserver {
         mHasLogoLoadedForCurrentSearchEngine = true;
         mLogoModel.set(LogoProperties.ANIMATION_ENABLED, animationEnabled);
         showSearchProviderInitialView();
-
-        // If default search engine is google and doodle is not supported, doesn't bother to fetch
-        // logo image.
-        if (TemplateUrlServiceFactory.getForProfile(mProfile).isDefaultSearchEngineGoogle()
-                && !mShouldFetchDoodle) {
-            return;
-        }
 
         if (mLogoBridge == null) {
             mLogoBridge = new LogoBridge(mProfile);
@@ -329,7 +336,7 @@ public class LogoMediator implements TemplateUrlServiceObserver {
                             }
                             if (mShouldRecordLoadTime) {
                                 long loadTime = System.currentTimeMillis() - loadTimeStart;
-                                RecordHistogram.recordMediumTimesHistogram(
+                                RecordHistogram.deprecatedRecordMediumTimesHistogram(
                                         LOGO_SHOWN_TIME_UMA_NAME, loadTime);
                                 // Only record the load time once per NTP, for the first logo we
                                 // got, whether that came from cache or not.
@@ -371,6 +378,10 @@ public class LogoMediator implements TemplateUrlServiceObserver {
 
     void setOnLogoClickUrlForTesting(String onLogoClickUrl) {
         mOnLogoClickUrl = onLogoClickUrl;
+    }
+
+    void resetSearchEngineKeywordForTesting() {
+        mSearchEngineKeyword = null;
     }
 
     ImageFetcher getImageFetcherForTesting() {

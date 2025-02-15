@@ -4,9 +4,15 @@
 
 package org.chromium.chrome.browser.tab_group_sync;
 
+import android.text.TextUtils;
+
 import androidx.annotation.NonNull;
 
+import org.chromium.base.Callback;
+import org.chromium.components.tab_group_sync.ClosingSource;
+import org.chromium.components.tab_group_sync.EventDetails;
 import org.chromium.components.tab_group_sync.LocalTabGroupId;
+import org.chromium.components.tab_group_sync.OpeningSource;
 import org.chromium.components.tab_group_sync.SavedTabGroup;
 import org.chromium.components.tab_group_sync.TabGroupSyncService;
 import org.chromium.url.GURL;
@@ -17,6 +23,7 @@ import java.util.List;
 /** Test implementation of {@link TabGroupSyncService} that can be used for unit tests. */
 class TestTabGroupSyncService implements TabGroupSyncService {
     public static final String SYNC_ID_1 = "SYNC_ID_1";
+    public static final String LOCAL_DEVICE_CACHE_GUID = "LocalDevice";
 
     private List<SavedTabGroup> mTabGroups = new ArrayList<>();
 
@@ -27,12 +34,8 @@ class TestTabGroupSyncService implements TabGroupSyncService {
     public void removeObserver(Observer observer) {}
 
     @Override
-    public String createGroup(LocalTabGroupId groupId) {
-        SavedTabGroup savedTabGroup = new SavedTabGroup();
-        savedTabGroup.syncId = SYNC_ID_1;
-        savedTabGroup.localId = groupId;
+    public void addGroup(SavedTabGroup savedTabGroup) {
         mTabGroups.add(savedTabGroup);
-        return savedTabGroup.syncId;
     }
 
     @Override
@@ -59,6 +62,18 @@ class TestTabGroupSyncService implements TabGroupSyncService {
     public void moveTab(LocalTabGroupId tabGroupId, int tabId, int newIndexInGroup) {}
 
     @Override
+    public void onTabSelected(LocalTabGroupId tabGroupId, int tabId, String tabTitle) {}
+
+    @Override
+    public void makeTabGroupShared(LocalTabGroupId tabGroupId, @NonNull String collaborationId) {}
+
+    @Override
+    public void aboutToUnShareTabGroup(LocalTabGroupId tabGroupId, Callback<Boolean> callback) {}
+
+    @Override
+    public void onTabGroupUnShareComplete(LocalTabGroupId tabGroupId, boolean success) {}
+
+    @Override
     public String[] getAllGroupIds() {
         return new String[0];
     }
@@ -80,10 +95,12 @@ class TestTabGroupSyncService implements TabGroupSyncService {
     }
 
     @Override
-    public void updateLocalTabGroupMapping(String syncId, LocalTabGroupId localId) {}
+    public void updateLocalTabGroupMapping(
+            String syncId, LocalTabGroupId localId, @OpeningSource int openingSource) {}
 
     @Override
-    public void removeLocalTabGroupMapping(LocalTabGroupId localId) {}
+    public void removeLocalTabGroupMapping(
+            LocalTabGroupId localId, @ClosingSource int closingSource) {}
 
     @Override
     public List<LocalTabGroupId> getDeletedGroupIds() {
@@ -92,4 +109,23 @@ class TestTabGroupSyncService implements TabGroupSyncService {
 
     @Override
     public void updateLocalTabId(LocalTabGroupId localGroupId, String syncTabId, int localTabId) {}
+
+    @Override
+    public void setLocalObservationMode(boolean observeLocalChanges) {}
+
+    @Override
+    public boolean isObservingLocalChanges() {
+        return true;
+    }
+
+    @Override
+    public boolean isRemoteDevice(String syncCacheGuid) {
+        boolean isLocal =
+                TextUtils.isEmpty(syncCacheGuid)
+                        || TextUtils.equals(LOCAL_DEVICE_CACHE_GUID, syncCacheGuid);
+        return !isLocal;
+    }
+
+    @Override
+    public void recordTabGroupEvent(EventDetails eventDetails) {}
 }

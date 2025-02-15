@@ -116,7 +116,7 @@ class IdentifiabilityStudyHelper final {
   // avoid unnecessary copies of parameters and hashing when GetToken() won't be
   // called.
   ALWAYS_INLINE bool ShouldUpdateBuilder() {
-    if (LIKELY(!is_canvas_type_allowed_)) {
+    if (!is_canvas_type_allowed_) [[likely]] {
       return false;
     }
     if (!execution_context_ ||
@@ -222,7 +222,7 @@ class IdentifiabilityStudyHelper final {
   bool encountered_partially_digested_image_ = false;
 
   std::array<int64_t, 8> partial_;
-  int position_ = 0;
+  wtf_size_t position_ = 0;
   uint64_t chaining_value_ = IdentifiableTokenBuilder::kChainingValueSeed;
 };
 

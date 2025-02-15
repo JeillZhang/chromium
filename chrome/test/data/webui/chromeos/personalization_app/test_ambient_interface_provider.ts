@@ -2,8 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import {AmbientModeAlbum, AmbientObserverInterface, AmbientObserverRemote, AmbientProviderInterface, AmbientTheme, TemperatureUnit, TopicSource} from 'chrome://personalization/js/personalization_app.js';
-import {Url} from 'chrome://resources/mojo/url/mojom/url.mojom-webui.js';
+import type {AmbientModeAlbum, AmbientObserverInterface, AmbientObserverRemote, AmbientProviderInterface} from 'chrome://personalization/js/personalization_app.js';
+import {AmbientTheme, TemperatureUnit, TopicSource} from 'chrome://personalization/js/personalization_app.js';
+import type {Url} from 'chrome://resources/mojo/url/mojom/url.mojom-webui.js';
 import {TestBrowserProxy} from 'chrome://webui-test/test_browser_proxy.js';
 
 export class TestAmbientProvider extends TestBrowserProxy implements
@@ -67,6 +68,7 @@ export class TestAmbientProvider extends TestBrowserProxy implements
 
   shouldShowBanner: boolean = true;
   geolocationEnabled: boolean = true;
+  geolocationIsUserModifiable: boolean = true;
 
   previews: Url[] = [
     {url: 'http://preview0'},
@@ -91,6 +93,7 @@ export class TestAmbientProvider extends TestBrowserProxy implements
       'shouldShowTimeOfDayBanner',
       'handleTimeOfDayBannerDismissed',
       'isGeolocationEnabledForSystemServices',
+      'isGeolocationUserModifiable',
       'enableGeolocationForSystemServices',
     ]);
   }
@@ -169,6 +172,13 @@ export class TestAmbientProvider extends TestBrowserProxy implements
       Promise<{geolocationEnabled: boolean}> {
     this.methodCalled('isGeolocationEnabledForSystemServices');
     return Promise.resolve({geolocationEnabled: this.geolocationEnabled});
+  }
+
+  isGeolocationUserModifiable():
+      Promise<{geolocationIsUserModifiable: boolean}> {
+    this.methodCalled('isGeolocationUserModifiable');
+    return Promise.resolve(
+        {geolocationIsUserModifiable: this.geolocationIsUserModifiable});
   }
 
   enableGeolocationForSystemServices() {

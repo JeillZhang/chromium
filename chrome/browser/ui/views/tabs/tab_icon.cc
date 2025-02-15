@@ -24,7 +24,6 @@
 #include "chrome/common/webui_url_constants.h"
 #include "components/feature_engagement/public/feature_constants.h"
 #include "components/grit/components_scaled_resources.h"
-#include "components/performance_manager/public/user_tuning/prefs.h"
 #include "content/public/common/url_constants.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/base/resource/resource_bundle.h"
@@ -39,6 +38,7 @@
 #include "ui/gfx/color_utils.h"
 #include "ui/gfx/favicon_size.h"
 #include "ui/gfx/image/image_skia_operations.h"
+#include "ui/gfx/paint_throbber.h"
 #include "ui/gfx/scoped_canvas.h"
 #include "ui/native_theme/native_theme.h"
 #include "ui/resources/grit/ui_resources.h"
@@ -53,8 +53,6 @@ namespace {
 
 constexpr int kAttentionIndicatorRadius = 3;
 constexpr int kLoadingAnimationStrokeWidthDp = 2;
-
-constexpr double kDiscardedIconFinalOpacity = 0.8;
 
 bool NetworkStateIsAnimated(TabNetworkState network_state) {
   return network_state != TabNetworkState::kNone &&
@@ -96,11 +94,7 @@ TabIcon::TabIcon()
     : AnimationDelegateViews(this),
       clock_(base::DefaultTickClock::GetInstance()),
       favicon_size_animation_(this),
-      tab_discard_animation_(base::Seconds(1),
-                             gfx::LinearAnimation::kDefaultFrameRate,
-                             this) {
-  favicon_size_animation_.SetSlideDuration(base::Milliseconds(250));
-
+      tab_discard_animation_(this) {
   SetCanProcessEventsWithinSubtree(false);
 
   // Add padding to avoid clipping the attention indicator and the increased
@@ -114,11 +108,6 @@ TabIcon::TabIcon()
 
   // Initial state (before any data) should not be animating.
   DCHECK(!GetShowingLoadingAnimation());
-
-  if (!gfx::Animation::ShouldRenderRichAnimation()) {
-    tab_discard_animation_.SetDuration(base::TimeDelta());
-    favicon_size_animation_.SetSlideDuration(base::TimeDelta());
-  }
 
   SetProperty(views::kElementIdentifierKey, kTabIconElementId);
 }
@@ -143,7 +132,6 @@ void TabIcon::SetData(const TabRendererData& data) {
   if (was_showing_load && !showing_load) {
     // Loading animation transitioning from on to off.
     loading_animation_start_time_ = base::TimeTicks();
-    waiting_state_ = gfx::ThrobberWaitingState();
     SchedulePaint();
   } else if (!was_showing_load && showing_load) {
     // Loading animation transitioning from off to on. The animation painting
@@ -197,11 +185,6 @@ void TabIcon::SetCanPaintToLayer(bool can_paint_to_layer) {
 }
 
 void TabIcon::StepLoadingAnimation(const base::TimeDelta& elapsed_time) {
-  // Only update elapsed time in the kWaiting state. This is later used as a
-  // starting point for PaintThrobberSpinningAfterWaiting().
-  if (network_state_ == TabNetworkState::kWaiting) {
-    waiting_state_.elapsed_time = elapsed_time;
-  }
   if (GetShowingLoadingAnimation()) {
     SchedulePaint();
   }
@@ -340,25 +323,15 @@ void TabIcon::PaintLoadingAnimation(gfx::Canvas* canvas, gfx::Rect bounds) {
   TRACE_EVENT0("views", "TabIcon::PaintLoadingAnimation");
 
   const SkColor spinning_color = views::GetCascadingAccentColor(this);
-  const SkColor waiting_color = color_utils::AlphaBlend(
-      spinning_color, views::GetCascadingBackgroundColor(this),
-      gfx::kGoogleGreyAlpha400);
-  if (network_state_ == TabNetworkState::kWaiting) {
-    gfx::PaintThrobberWaiting(canvas, bounds, waiting_color,
-                              waiting_state_.elapsed_time,
-                              kLoadingAnimationStrokeWidthDp);
-  } else {
-    const base::TimeTicks current_time = clock_->NowTicks();
-    if (loading_animation_start_time_.is_null()) {
-      loading_animation_start_time_ = current_time;
-    }
-
-    waiting_state_.color = waiting_color;
-    gfx::PaintThrobberSpinningAfterWaiting(
-        canvas, bounds, spinning_color,
-        current_time - loading_animation_start_time_, &waiting_state_,
-        kLoadingAnimationStrokeWidthDp);
+  const base::TimeTicks current_time = clock_->NowTicks();
+  if (loading_animation_start_time_.is_null()) {
+    loading_animation_start_time_ = current_time;
   }
+
+  gfx::PaintThrobberSpinningWithSweepEasedIn(
+      canvas, bounds, spinning_color,
+      current_time - loading_animation_start_time_,
+      kLoadingAnimationStrokeWidthDp);
 }
 
 gfx::ImageSkia TabIcon::GetIconToPaint() {
@@ -445,19 +418,9 @@ void TabIcon::MaybePaintFavicon(gfx::Canvas* canvas,
     canvas->Translate(gfx::Vector2d(-bounds.x(), -bounds.y()));
   }
 
-  cc::PaintFlags opacity_flag;
-  if (!base::FeatureList::IsEnabled(
-          performance_manager::features::kDiscardRingImprovements) &&
-      was_discard_indicator_shown_) {
-    opacity_flag.setAlphaf(gfx::Tween::FloatValueBetween(
-        gfx::Tween::CalculateValue(gfx::Tween::EASE_OUT,
-                                   tab_discard_animation_.GetCurrentValue()),
-        1.0, kDiscardedIconFinalOpacity));
-  }
-
   canvas->DrawImageInt(icon, 0, 0, bounds.width(), bounds.height(), bounds.x(),
                        bounds.y(), bounds.width(), bounds.height(),
-                       use_scale_filter, opacity_flag);
+                       use_scale_filter);
 
   // Emits a custom event when the favicon finishes shrinking and the discard
   // ring gets painted
@@ -491,7 +454,11 @@ void TabIcon::SetDiscarded(bool discarded) {
   bool show_discard_indicator = is_discarded_ && should_show_discard_indicator_;
   if (was_discard_indicator_shown_ != show_discard_indicator) {
     was_discard_indicator_shown_ = show_discard_indicator;
+    favicon_size_animation_.SetSlideDuration(
+        gfx::Animation::RichAnimationDuration(base::Milliseconds(250)));
     if (show_discard_indicator) {
+      tab_discard_animation_.SetDuration(
+          gfx::Animation::RichAnimationDuration(base::Seconds(1)));
       tab_discard_animation_.Start();
       favicon_size_animation_.Hide();
 
@@ -512,6 +479,8 @@ void TabIcon::SetNetworkState(TabNetworkState network_state) {
   network_state_ = network_state;
   const bool is_animated = NetworkStateIsAnimated(network_state_);
   if (was_animated != is_animated) {
+    favicon_size_animation_.SetSlideDuration(
+        gfx::Animation::RichAnimationDuration(base::Milliseconds(250)));
     if (was_animated && GetNonDefaultFavicon()) {
       favicon_size_animation_.Show();
     } else {

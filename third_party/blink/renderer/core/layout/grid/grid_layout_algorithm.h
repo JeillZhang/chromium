@@ -8,15 +8,15 @@
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/layout/block_break_token.h"
 #include "third_party/blink/renderer/core/layout/box_fragment_builder.h"
-#include "third_party/blink/renderer/core/layout/constraint_space.h"
-#include "third_party/blink/renderer/core/layout/grid/grid_break_token_data.h"
 #include "third_party/blink/renderer/core/layout/grid/grid_node.h"
-#include "third_party/blink/renderer/core/layout/grid/grid_placement.h"
 #include "third_party/blink/renderer/core/layout/grid/grid_sizing_tree.h"
 #include "third_party/blink/renderer/core/layout/layout_algorithm.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
 namespace blink {
+
+class ConstraintSpace;
+struct GridItemPlacementData;
 
 // This enum corresponds to each step used to accommodate grid items across
 // intrinsic tracks according to their min and max track sizing functions, as
@@ -29,6 +29,8 @@ enum class GridItemContributionType {
   kForMaxContentMaximums,
   kForFreeSpace,
 };
+
+enum class SizingConstraint { kLayout, kMinContent, kMaxContent };
 
 using GridItemDataPtrVector = Vector<GridItemData*, 16>;
 using GridSetPtrVector = Vector<GridSet*, 16>;
@@ -204,11 +206,6 @@ class CORE_EXPORT GridLayoutAlgorithm
                             GridTrackSizingDirection track_direction,
                             SizingConstraint sizing_constraint) const;
 
-  // Gets the specified [column|row]-gap of the grid.
-  LayoutUnit GutterSize(
-      GridTrackSizingDirection track_direction,
-      LayoutUnit parent_grid_gutter_size = LayoutUnit()) const;
-
   LayoutUnit DetermineFreeSpace(
       SizingConstraint sizing_constraint,
       const GridSizingTrackCollection& track_collection) const;
@@ -220,8 +217,7 @@ class CORE_EXPORT GridLayoutAlgorithm
       const LogicalSize& fixed_available_size,
       GridLayoutSubtree&& opt_layout_subtree = GridLayoutSubtree(),
       bool min_block_size_should_encompass_intrinsic_size = false,
-      std::optional<LayoutUnit> opt_fragment_relative_block_offset =
-          std::nullopt) const;
+      std::optional<LayoutUnit> opt_child_block_offset = std::nullopt) const;
 
   // `containing_grid_area` is an optional out parameter that holds the computed
   // grid area (offset and size) of the specified grid item.
@@ -232,8 +228,7 @@ class CORE_EXPORT GridLayoutAlgorithm
       LogicalRect* containing_grid_area = nullptr,
       LayoutUnit unavailable_block_size = LayoutUnit(),
       bool min_block_size_should_encompass_intrinsic_size = false,
-      std::optional<LayoutUnit> opt_fragment_relative_block_offset =
-          std::nullopt) const;
+      std::optional<LayoutUnit> opt_child_block_offset = std::nullopt) const;
 
   ConstraintSpace CreateConstraintSpaceForMeasure(
       const SubgriddedItemData& subgridded_item,
@@ -264,13 +259,31 @@ class CORE_EXPORT GridLayoutAlgorithm
       Vector<GridItemPlacementData>* grid_item_placement_data,
       Vector<LayoutUnit>* row_offset_adjustments,
       LayoutUnit* intrinsic_block_size,
-      LayoutUnit* consumed_grid_block_size);
+      LayoutUnit* offset_in_stitched_container);
+
+  // Constructs gap geometry for Gap Decorations. Each gap boundary is
+  // determined by its start and end offsets and stored in `gap_geometry`.
+  // For column gaps, the offsets correspond to inline coordinates;
+  // for row gaps, they correspond to block coordinates. The first track,
+  // midpoint of each gap boundary, and last track are stored in
+  // `intersection_points`, which will be used to determine pairs for painting
+  // gap decorations.
+  void BuildGapGeometry(GridTrackSizingDirection track_direction,
+                        const GridLayoutData& layout_data,
+                        HeapVector<LayoutUnit>& intersection_points,
+                        GapFragmentData::GapGeometry* gap_geometry) const;
+  void PopulateGapIntersectionPoints(
+      const HeapVector<LayoutUnit>& intersection_points,
+      GapFragmentData::GapBoundaries& gap_boundaries) const;
 
   // Computes the static position, grid area and its offset of out of flow
   // elements in the grid (as provided by `oof_children`).
   void PlaceOutOfFlowItems(const GridLayoutData& layout_data,
                            const LayoutUnit block_size,
                            HeapVector<Member<LayoutBox>>& oof_children);
+
+  // Set reading flow nodes so they can be accessed by LayoutBox.
+  void SetReadingFlowNodes(const GridSizingTree& sizing_tree);
 
   LayoutUnit ComputeGridItemAvailableSize(
       const GridItemData& grid_item,

@@ -17,7 +17,7 @@ class TickClock;
 
 namespace net {
 
-class FileNetLogObserver;
+class TestNetLogManager;
 
 // Inherit from this class if a TaskEnvironment is needed in a test.
 // Use in class hierachies where inheritance from ::testing::Test at the same
@@ -40,6 +40,12 @@ class WithTaskEnvironment {
   [[nodiscard]] bool MainThreadIsIdle() const {
     return task_environment_.MainThreadIsIdle();
   }
+
+  [[nodiscard]] base::RepeatingClosure QuitClosure() {
+    return task_environment_.QuitClosure();
+  }
+
+  void RunUntilQuit() { task_environment_.RunUntilQuit(); }
 
   void RunUntilIdle() { task_environment_.RunUntilIdle(); }
 
@@ -72,7 +78,7 @@ class WithTaskEnvironment {
   void MaybeStartNetLog();
 
   base::test::TaskEnvironment task_environment_;
-  std::unique_ptr<FileNetLogObserver> file_net_log_observer_;
+  std::unique_ptr<TestNetLogManager> net_log_manager_;
 };
 
 // Inherit from this class instead of ::testing::Test directly if a

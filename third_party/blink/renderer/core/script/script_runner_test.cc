@@ -4,6 +4,8 @@
 
 #include "third_party/blink/renderer/core/script/script_runner.h"
 
+#include <array>
+
 #include "base/test/null_task_runner.h"
 #include "base/time/time.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -301,7 +303,7 @@ TEST_F(ScriptRunnerTest, QueueReentrantScript_InOrder) {
 }
 
 TEST_F(ScriptRunnerTest, QueueReentrantScript_ManyAsyncScripts) {
-  MockPendingScript* pending_scripts[20];
+  std::array<MockPendingScript*, 20> pending_scripts;
   for (int i = 0; i < 20; i++)
     pending_scripts[i] = nullptr;
 

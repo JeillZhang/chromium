@@ -172,12 +172,6 @@ NSAttributedString* TextForTabCount(int count, CGFloat font_size);
 // trailing view of a group cell with the correct font.
 NSAttributedString* TextForTabGroupCount(int count, CGFloat font_size);
 
-#if !defined(__IPHONE_16_0) || __IPHONE_OS_VERSION_MIN_REQUIRED < __IPHONE_16_0
-// Adds `item` to the global Edit Menu configuration (UIMenuController). No-op
-// if a UIMenuItem with the same selector as `item` has already been registered.
-void RegisterEditMenuItem(UIMenuItem* item);
-#endif
-
 // Finds the root of `view`'s view hierarchy -- its window if it has one, or
 // the first (recursive) superview with no superview.
 UIView* ViewHierarchyRootForView(UIView* view);
@@ -199,5 +193,11 @@ CGFloat DeviceCornerRadius();
 
 // Returns whether bottom omnibox is an available option.
 bool IsBottomOmniboxAvailable();
+
+// Returns the `traits` array provided in the function's parameter if the
+// feature flag for the 'traitCollectionDidChange' refactor work is enabled.
+// Otherwise, return an array containing every iOS UITrait.
+NSArray<UITrait>* TraitCollectionSetForTraits(NSArray<UITrait>* traits)
+    API_AVAILABLE(ios(17.0));
 
 #endif  // IOS_CHROME_BROWSER_SHARED_UI_UTIL_UIKIT_UI_UTIL_H_

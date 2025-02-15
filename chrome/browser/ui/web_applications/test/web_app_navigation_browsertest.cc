@@ -199,19 +199,19 @@ void WebAppNavigationBrowserTest::SetUp() {
   https_server_.AddDefaultHandlers(GetChromeTestDataDir());
   // Register a request handler that will return empty pages. Tests are
   // responsible for adding elements and firing events on these empty pages.
-  https_server_.RegisterRequestHandler(
-      base::BindRepeating([](const net::test_server::HttpRequest& request) {
+  https_server_.RegisterRequestHandler(base::BindRepeating(
+      [](const net::test_server::HttpRequest& request)
+          -> std::unique_ptr<net::test_server::HttpResponse> {
         // Let the default request handlers handle redirections.
         if (request.GetURL().path() == "/server-redirect" ||
             request.GetURL().path() == "/client-redirect") {
-          return std::unique_ptr<net::test_server::HttpResponse>();
+          return {};
         }
         auto response = std::make_unique<net::test_server::BasicHttpResponse>();
         response->set_content_type("text/html");
         response->AddCustomHeader("Access-Control-Allow-Origin", "*");
         response->AddCustomHeader("Supports-Loading-Mode", "fenced-frame");
-        return static_cast<std::unique_ptr<net::test_server::HttpResponse>>(
-            std::move(response));
+        return response;
       }));
 
   WebAppBrowserTestBase::SetUp();
@@ -250,7 +250,7 @@ void WebAppNavigationBrowserTest::TearDownOnMainThread() {
   const WebAppRegistrar& registrar = provider->registrar_unsafe();
   std::vector<webapps::AppId> app_ids = registrar.GetAppIds();
   for (const auto& app_id : app_ids) {
-    if (!registrar.IsInstalled(app_id)) {
+    if (!registrar.IsInRegistrar(app_id)) {
       continue;
     }
     const WebApp* app = registrar.GetAppById(app_id);
@@ -261,7 +261,7 @@ void WebAppNavigationBrowserTest::TearDownOnMainThread() {
     provider->scheduler().RemoveUserUninstallableManagements(
         app_id, webapps::WebappUninstallSource::kAppsPage,
         base::BindLambdaForTesting([&](webapps::UninstallResultCode code) {
-          EXPECT_EQ(code, webapps::UninstallResultCode::kSuccess);
+          EXPECT_EQ(code, webapps::UninstallResultCode::kAppRemoved);
           run_loop.Quit();
         }));
     run_loop.Run();

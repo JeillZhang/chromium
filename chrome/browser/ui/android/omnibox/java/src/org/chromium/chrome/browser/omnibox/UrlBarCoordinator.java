@@ -6,21 +6,23 @@ package org.chromium.chrome.browser.omnibox;
 
 import android.content.Context;
 import android.view.ActionMode;
+import android.view.View;
+import android.view.View.OnLongClickListener;
 import android.view.inputmethod.InputMethodManager;
 
 import androidx.annotation.IntDef;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.annotation.StringRes;
 
 import org.chromium.base.Callback;
 import org.chromium.chrome.browser.omnibox.UrlBar.ScrollType;
 import org.chromium.chrome.browser.omnibox.UrlBar.UrlBarDelegate;
-import org.chromium.chrome.browser.omnibox.UrlBar.UrlTextChangeListener;
 import org.chromium.chrome.browser.ui.theme.BrandedColorScheme;
 import org.chromium.ui.KeyboardVisibilityDelegate;
-import org.chromium.ui.base.WindowDelegate;
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.ui.modelutil.PropertyModelChangeProcessor;
+import org.chromium.ui.widget.ViewRectProvider;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -63,18 +65,19 @@ public class UrlBarCoordinator
      * @param delegate The primary delegate for the UrlBar view.
      * @param keyboardVisibilityDelegate Delegate that allows querying and changing the keyboard's
      *     visibility.
-     * @param isIncognito Whether incognito mode is initially enabled. This can later be changed
-     *     using {@link #setIncognitoColorsEnabled(boolean)}.
+     * @param isIncognitoBranded Whether incognito mode is initially enabled. This can later be
+     *     changed using {@link #setIncognitoColorsEnabled(boolean)}. @{@link OnLongClickListener}
+     *     for the url bar.
      */
     public UrlBarCoordinator(
             @NonNull Context context,
             @NonNull UrlBar urlBar,
-            @Nullable WindowDelegate windowDelegate,
             @NonNull ActionMode.Callback actionModeCallback,
             @NonNull Callback<Boolean> focusChangeCallback,
             @NonNull UrlBarDelegate delegate,
             @NonNull KeyboardVisibilityDelegate keyboardVisibilityDelegate,
-            boolean isIncognito) {
+            boolean isIncognitoBranded,
+            @Nullable OnLongClickListener onLongClickListener) {
         mUrlBar = urlBar;
         mKeyboardVisibilityDelegate = keyboardVisibilityDelegate;
         mFocusChangeCallback = focusChangeCallback;
@@ -82,9 +85,9 @@ public class UrlBarCoordinator
         PropertyModel model =
                 new PropertyModel.Builder(UrlBarProperties.ALL_KEYS)
                         .with(UrlBarProperties.ACTION_MODE_CALLBACK, actionModeCallback)
-                        .with(UrlBarProperties.WINDOW_DELEGATE, windowDelegate)
                         .with(UrlBarProperties.DELEGATE, delegate)
-                        .with(UrlBarProperties.INCOGNITO_COLORS_ENABLED, isIncognito)
+                        .with(UrlBarProperties.INCOGNITO_COLORS_ENABLED, isIncognitoBranded)
+                        .with(UrlBarProperties.LONG_CLICK_LISTENER, onLongClickListener)
                         .build();
         PropertyModelChangeProcessor.create(model, urlBar, UrlBarViewBinder::bind);
 
@@ -100,10 +103,33 @@ public class UrlBarCoordinator
     }
 
     /**
-     * @see UrlBarMediator#addUrlTextChangeListener(UrlTextChangeListener)
+     * Install a listener called when the user begins typing in the Omnibox for the first time.
+     *
+     * <p>This callback is particularly relevant on Tablet devices, where the New Tab Page shows
+     * focused Omnibox, but the suggestions list is delayed until after user starts typing.
+     *
+     * <p>This callback gets invoked both when the user types text, and when content is pasted using
+     * keyboard shortcuts (Ctrl+V, Shift+Insert, Paste key etc).
      */
-    public void addUrlTextChangeListener(UrlTextChangeListener listener) {
-        mMediator.addUrlTextChangeListener(listener);
+    public void setTypingStartedListener(Runnable listener) {
+        mMediator.setTypingStartedListener(listener);
+    }
+
+    /** Set the callback that will be invoked each time the content of the Omnibox changes. */
+    public void setTextChangeListener(Callback<String> listener) {
+        mMediator.setTextChangeListener(listener);
+    }
+
+    /**
+     * Set the callback that will be invoked for:
+     *
+     * <ul>
+     *   <li>All hardware keyboard sourced key events,
+     *   <li>All enter key events, regardless of source.
+     * </ul>
+     */
+    public void setKeyDownListener(View.OnKeyListener listener) {
+        mMediator.setKeyDownListener(listener);
     }
 
     /**
@@ -114,7 +140,7 @@ public class UrlBarCoordinator
         return mMediator.setUrlBarData(data, scrollType, state);
     }
 
-    /** Returns the UrlBarData representing the current contents of the UrsssdddsssslBar. */
+    /** Returns the UrlBarData representing the current contents of the UrlBar. */
     public @NonNull UrlBarData getUrlBarData() {
         return mMediator.getUrlBarData();
     }
@@ -151,10 +177,24 @@ public class UrlBarCoordinator
     }
 
     /**
+     * @see UrlBarMediator#setSelectAllOnFocus(boolean)
+     */
+    public void setSelectAllOnFocus(boolean selectAllOnFocus) {
+        mMediator.setSelectAllOnFocus(selectAllOnFocus);
+    }
+
+    /**
      * @see UrlBarMediator#setUrlDirectionListener(Callback<Integer>)
      */
     public void setUrlDirectionListener(Callback<Integer> listener) {
         mMediator.setUrlDirectionListener(listener);
+    }
+
+    /**
+     * @see UrlBarMediator#setIsInCct(boolean)
+     */
+    public void setIsInCct(boolean isInCct) {
+        mMediator.setIsInCct(isInCct);
     }
 
     /** Selects all of the text of the UrlBar. */
@@ -190,6 +230,11 @@ public class UrlBarCoordinator
     @Override
     public String getTextWithoutAutocomplete() {
         return mUrlBar.getTextWithoutAutocomplete();
+    }
+
+    /** Returns the {@link ViewRectProvider} for the UrlBar. */
+    public ViewRectProvider getViewRectProvider() {
+        return new ViewRectProvider(mUrlBar);
     }
 
     /**
@@ -306,16 +351,16 @@ public class UrlBarCoordinator
     }
 
     /**
-     * @see UrlBarMediator#setUrlBarHintTextColorForSurfacePolish()
+     * @see UrlBarMediator#setUrlBarHintTextColorForNtp()
      */
-    public void setUrlBarHintTextColorForSurfacePolish() {
-        mMediator.setUrlBarHintTextColorForSurfacePolish();
+    public void setUrlBarHintTextColorForNtp() {
+        mMediator.setUrlBarHintTextColorForNtp();
     }
 
     /**
-     * @see UrlBarMediator#updateUrlBarTypeface(boolean)
+     * @see UrlBarMediator#setUrlBarHintText(int)
      */
-    public void updateUrlBarTypeface(boolean useDefaultUrlBarTypeface) {
-        mMediator.updateUrlBarTypeface(useDefaultUrlBarTypeface);
+    public void setUrlBarHintText(@StringRes int hintTextRes) {
+        mMediator.setUrlBarHintText(hintTextRes);
     }
 }

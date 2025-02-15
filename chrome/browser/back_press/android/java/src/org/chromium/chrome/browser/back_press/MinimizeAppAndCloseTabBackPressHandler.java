@@ -20,7 +20,6 @@ import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.base.supplier.Supplier;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.layouts.LayoutStateProvider;
 import org.chromium.chrome.browser.layouts.LayoutType;
 import org.chromium.chrome.browser.tab.Tab;
@@ -30,6 +29,7 @@ import org.chromium.components.browser_ui.widget.gesture.BackPressHandler;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.ui.UiUtils;
 
+import java.util.Locale;
 import java.util.Objects;
 import java.util.function.Predicate;
 
@@ -39,6 +39,8 @@ import java.util.function.Predicate;
  */
 public class MinimizeAppAndCloseTabBackPressHandler implements BackPressHandler, Destroyable {
     private static final String TAG = "MinimizeAppCloseTab";
+    private static final String HANDLE_BACK_STARTED = "handleOnBackStarted";
+    private static final String HANDLE_BACK_PRESSED = "handleBackPress";
     static final String HISTOGRAM = "Android.BackPress.MinimizeAppAndCloseTab";
     static final String HISTOGRAM_CUSTOM_TAB_SAME_TASK =
             "Android.BackPress.MinimizeAppAndCloseTab.CustomTab.SameTask";
@@ -183,7 +185,7 @@ public class MinimizeAppAndCloseTabBackPressHandler implements BackPressHandler,
                 /* minimizeApp= */ backPressAction.first,
                 /* shouldCloseTab= */ backPressAction.second,
                 mActivityTabSupplier.get(),
-                "handleOnBackStarted");
+                HANDLE_BACK_STARTED);
     }
 
     @Override
@@ -198,9 +200,6 @@ public class MinimizeAppAndCloseTabBackPressHandler implements BackPressHandler,
             // minimizing app and closing tab.
             if (currentTab.canGoBack()) {
                 assert false : "Tab should be navigated back before closing or exiting app";
-                if (BackPressManager.correctTabNavigationOnFallback()) {
-                    return BackPressResult.FAILURE;
-                }
             }
             // At this point we know either the tab will close or the app will minimize.
             NativePage nativePage = currentTab.getNativePage();
@@ -211,7 +210,7 @@ public class MinimizeAppAndCloseTabBackPressHandler implements BackPressHandler,
 
         mCallbackOnBackPress.run();
 
-        assertBackPressState(minimizeApp, shouldCloseTab, currentTab, "handleBackPress");
+        assertBackPressState(minimizeApp, shouldCloseTab, currentTab, HANDLE_BACK_PRESSED);
 
         if (minimizeApp) {
             record(
@@ -262,6 +261,7 @@ public class MinimizeAppAndCloseTabBackPressHandler implements BackPressHandler,
                 && !minimizeAppWithoutClosingTab) {
             String msg =
                     String.format(
+                            Locale.US,
                             "%s - system back arm %s; should close %s; minimize %s; current tab %s,"
                                     + " observed tab %s; tab on start %s; open from external %s; "
                                     + "system back arm supplier %s, non back supplier %s; layout on"
@@ -287,6 +287,7 @@ public class MinimizeAppAndCloseTabBackPressHandler implements BackPressHandler,
         if (minimizeAppWithoutClosingTab && mSystemBackPressSupplier.get()) {
             String msg =
                     String.format(
+                            Locale.US,
                             "%s - system back arm should not consume back event for minimizing app"
                                     + " only. system back arm %s; currentTab %s; mObservedTab %s;"
                                     + " mTabOnStart %s; open from external %s; layout on start: %s,"
@@ -303,6 +304,37 @@ public class MinimizeAppAndCloseTabBackPressHandler implements BackPressHandler,
                             getNavigationMode());
             assert false : msg;
             Log.i(TAG, msg);
+        }
+
+        // mLayoutTypeOnStart should not be NONE if handleOnBackStarted is called.
+        if (mTabOnStart != currentTab
+                && (VERSION.SDK_INT > VERSION_CODES.TIRAMISU
+                        || mLayoutTypeOnStart != LayoutType.NONE)) {
+            final var actionOnStart = determineBackPressAction(mTabOnStart);
+            if (actionOnStart.first != minimizeApp || actionOnStart.second != shouldCloseTab) {
+                var msg =
+                        String.format(
+                                Locale.US,
+                                "%s - tab is changed during gesture. system back arm %s;"
+                                        + " currentTab %s minimize %s close %s;  mTabOnStart %s"
+                                        + " minimize %s close %s; open from external %s; layout on"
+                                        + " start: %s, on pressed: %s; nav mode %s",
+                                caller,
+                                mUseSystemBack,
+                                currentTab,
+                                minimizeApp,
+                                shouldCloseTab,
+                                mTabOnStart,
+                                actionOnStart.first,
+                                actionOnStart.second,
+                                currentTab != null
+                                        && TabAssociatedApp.isOpenedFromExternalApp(currentTab),
+                                mLayoutTypeOnStart,
+                                getLayoutType(),
+                                getNavigationMode());
+                assert false : msg;
+                Log.i(TAG, msg);
+            }
         }
     }
 
@@ -344,7 +376,7 @@ public class MinimizeAppAndCloseTabBackPressHandler implements BackPressHandler,
         boolean isAtLeastT =
                 (sVersionForTesting == null ? VERSION.SDK_INT : sVersionForTesting)
                         >= VERSION_CODES.TIRAMISU;
-        return isAtLeastT && ChromeFeatureList.sBackToHomeAnimation.isEnabled();
+        return isAtLeastT;
     }
 
     static void setVersionForTesting(Integer version) {

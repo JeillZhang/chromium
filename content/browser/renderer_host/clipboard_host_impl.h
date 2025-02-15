@@ -35,30 +35,17 @@ namespace content {
 
 class ClipboardHostImplTest;
 
-// Helpers to check if an `rfh`/`seqno` pair was the last to write to the
-// clipboard.
-bool IsLastClipboardWrite(const RenderFrameHost& rfh,
-                          ui::ClipboardSequenceNumberToken seqno);
-
-// Helper to set the last rfh-seqno pair that wrote to the clipboard.
-void SetLastClipboardWrite(const RenderFrameHost& rfh,
-                           ui::ClipboardSequenceNumberToken seqno);
-
 // Returns a representation of the last source ClipboardEndpoint. This will
-// either match the last clipboard write if `seqno` matches the last browser tab
-// write, or an endpoint built from `Clipboard::GetSource()` called with
+// either match the last clipboard write if there is an RFH token in the
+// clipboard, or an endpoint built from `Clipboard::GetSource()` called with
 // `clipboard_buffer` otherwise.
 //
 // //content maintains additional metadata on top of what the //ui layer already
 // tracks about clipboard data's source, e.g. the WebContents that provided the
 // data. This function allows retrieving both the //ui metadata and the
 // //content metadata in a single call.
-//
-// To avoid returning stale //content metadata if the writer has changed, the
-// sequence number is used to validate if the writer has changed or not since
-// the //content metadata was last updated.
 CONTENT_EXPORT ClipboardEndpoint
-GetSourceClipboardEndpoint(ui::ClipboardSequenceNumberToken seqno,
+GetSourceClipboardEndpoint(const ui::DataTransferEndpoint* data_dst,
                            ui::ClipboardBuffer clipboard_buffer);
 
 class CONTENT_EXPORT ClipboardHostImpl
@@ -102,8 +89,10 @@ class CONTENT_EXPORT ClipboardHostImpl
   FRIEND_TEST_ALL_PREFIXES(ClipboardHostImplWriteTest, WriteSvg_Empty);
   FRIEND_TEST_ALL_PREFIXES(ClipboardHostImplWriteTest, WriteBitmap);
   FRIEND_TEST_ALL_PREFIXES(ClipboardHostImplWriteTest, WriteBitmap_Empty);
-  FRIEND_TEST_ALL_PREFIXES(ClipboardHostImplWriteTest, WriteCustomData);
-  FRIEND_TEST_ALL_PREFIXES(ClipboardHostImplWriteTest, WriteCustomData_Empty);
+  FRIEND_TEST_ALL_PREFIXES(ClipboardHostImplWriteTest,
+                           WriteDataTransferCustomData);
+  FRIEND_TEST_ALL_PREFIXES(ClipboardHostImplWriteTest,
+                           WriteDataTransferCustomData_Empty);
   FRIEND_TEST_ALL_PREFIXES(ClipboardHostImplWriteTest,
                            PerformPasteIfAllowed_EmptyData);
   FRIEND_TEST_ALL_PREFIXES(ClipboardHostImplWriteTest, MainFrameURL);
@@ -133,9 +122,10 @@ class CONTENT_EXPORT ClipboardHostImpl
                ReadPngCallback callback) override;
   void ReadFiles(ui::ClipboardBuffer clipboard_buffer,
                  ReadFilesCallback callback) override;
-  void ReadCustomData(ui::ClipboardBuffer clipboard_buffer,
-                      const std::u16string& type,
-                      ReadCustomDataCallback callback) override;
+  void ReadDataTransferCustomData(
+      ui::ClipboardBuffer clipboard_buffer,
+      const std::u16string& type,
+      ReadDataTransferCustomDataCallback callback) override;
   void ReadAvailableCustomAndStandardFormats(
       ReadAvailableCustomAndStandardFormatsCallback callback) override;
   void ReadUnsanitizedCustomFormat(
@@ -147,7 +137,7 @@ class CONTENT_EXPORT ClipboardHostImpl
   void WriteHtml(const std::u16string& markup, const GURL& url) override;
   void WriteSvg(const std::u16string& markup) override;
   void WriteSmartPasteMarker() override;
-  void WriteCustomData(
+  void WriteDataTransferCustomData(
       const base::flat_map<std::u16string, std::u16string>& data) override;
   void WriteBookmark(const std::string& url,
                      const std::u16string& title) override;
@@ -193,6 +183,10 @@ class CONTENT_EXPORT ClipboardHostImpl
   void OnReadPng(ui::ClipboardBuffer clipboard_buffer,
                  ReadPngCallback callback,
                  const std::vector<uint8_t>& data);
+
+  // Resets `clipboard_writer_` to write its data to the clipboard, and
+  // reinitialize it in preparation for the next write.
+  void ResetClipboardWriter();
 
   // Creates a `ui::DataTransferEndpoint` representing the last committed URL.
   std::unique_ptr<ui::DataTransferEndpoint> CreateDataEndpoint();

@@ -11,6 +11,7 @@
 #include "third_party/blink/renderer/core/layout/box_fragment_builder.h"
 #include "third_party/blink/renderer/core/layout/constraint_space_builder.h"
 #include "third_party/blink/renderer/core/layout/inline/inline_node.h"
+#include "third_party/blink/renderer/core/layout/inline/line_box_fragment_builder.h"
 #include "third_party/blink/renderer/core/layout/inline/logical_line_item.h"
 #include "third_party/blink/renderer/core/layout/layout_algorithm.h"
 #include "third_party/blink/renderer/core/layout/unpositioned_float.h"
@@ -57,8 +58,7 @@ class CORE_EXPORT InlineLayoutAlgorithm final
   const LayoutResult* Layout();
 
   MinMaxSizesResult ComputeMinMaxSizes(const MinMaxSizesFloatInput&) {
-    NOTREACHED_IN_MIGRATION();
-    return MinMaxSizesResult();
+    NOTREACHED();
   }
 
 #if EXPENSIVE_DCHECKS_ARE_ON()
@@ -67,6 +67,18 @@ class CORE_EXPORT InlineLayoutAlgorithm final
   void PlaceBlockInInline(const InlineItem&,
                           InlineItemResult*,
                           LogicalLineItems* line_box);
+
+  struct LineClampEllipsis {
+    STACK_ALLOCATED();
+
+   public:
+    String text;
+    const ShapeResult* shape_result;
+    FontHeight text_metrics;
+  };
+  const std::optional<LineClampEllipsis>& GetLineClampEllipsis() {
+    return line_clamp_ellipsis_;
+  }
 
  private:
   friend class LineWidthsTest;
@@ -103,8 +115,16 @@ class CORE_EXPORT InlineLayoutAlgorithm final
       const FontHeight& line_box_metrics,
       std::optional<FontHeight> annotation_font_height);
 
-  bool ShouldLineClamp(const LineInfo*, LayoutUnit line_height) const;
-  bool ShouldHideLine(LayoutUnit line_height) const;
+  LayoutUnit SetupLineClampEllipsis();
+
+  enum class LineClampState {
+    kShow,
+    kLineClampEllipsis,
+    kTextOverflowEllipsis,
+    kHide,
+  };
+  LineClampState GetLineClampState(const LineInfo*,
+                                   LayoutUnit line_box_height) const;
 
   InlineLayoutStateStack* box_states_;
   InlineChildLayoutContext* context_;
@@ -113,6 +133,8 @@ class CORE_EXPORT InlineLayoutAlgorithm final
 
   MarginStrut end_margin_strut_;
   std::optional<int> lines_until_clamp_;
+
+  std::optional<LineClampEllipsis> line_clamp_ellipsis_;
 
   FontBaseline baseline_type_ = FontBaseline::kAlphabeticBaseline;
 

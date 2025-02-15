@@ -30,6 +30,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/time/time.h"
+#include "chromeos/constants/chromeos_features.h"
 #include "ui/aura/window.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
@@ -99,6 +100,9 @@ constexpr base::TimeDelta kContainerSlideDuration = base::Milliseconds(120);
 // modes.
 constexpr base::TimeDelta kToggleModeScaleDuration = base::Milliseconds(150);
 
+constexpr base::TimeDelta kOcclusionTrackerPauseTimeout =
+    base::Milliseconds(300);
+
 // Builds the item view for window cycling for the given `window` with the
 // correct parent. If the given `window` is a free-form window, the direct
 // parent will be `mirror_container`. For `window` that belongs to a snap group,
@@ -149,21 +153,25 @@ WindowCycleView::WindowCycleView(aura::Window* root_window,
   // the fade in but we also create windows here which may occlude other
   // windows.
   Shell::Get()->occlusion_tracker_pauser()->PauseUntilAnimationsEnd(
-      /*timeout*/ base::Seconds(2));
+      kOcclusionTrackerPauseTimeout);
 
   // The layer for `this` is responsible for showing background blur and fade
   // and clip animations.
   SetPaintToLayer();
-  layer()->SetFillsBoundsOpaquely(false);
   layer()->SetName("WindowCycleView");
   layer()->SetMasksToBounds(true);
-  if (features::IsBackgroundBlurEnabled()) {
+  if (features::IsBackgroundBlurEnabled() &&
+      chromeos::features::IsSystemBlurEnabled()) {
+    layer()->SetFillsBoundsOpaquely(false);
     layer()->SetBackgroundBlur(ColorProvider::kBackgroundBlurSigma);
     layer()->SetBackdropFilterQuality(ColorProvider::kBackgroundBlurQuality);
   }
 
   SetBackground(views::CreateThemedRoundedRectBackground(
-      cros_tokens::kCrosSysScrim2, kBackgroundCornerRadius));
+      chromeos::features::IsSystemBlurEnabled()
+          ? cros_tokens::kCrosSysScrim2
+          : cros_tokens::kCrosSysSystemBaseElevatedOpaque,
+      kBackgroundCornerRadius));
   SetBorder(std::make_unique<views::HighlightBorder>(
       kBackgroundCornerRadius,
       views::HighlightBorder::Type::kHighlightBorderOnShadow));

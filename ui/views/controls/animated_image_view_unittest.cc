@@ -31,14 +31,16 @@ template <typename T>
 const T* FindPaintOp(const cc::PaintRecord& paint_record,
                      cc::PaintOpType paint_op_type) {
   for (const cc::PaintOp& op : paint_record) {
-    if (op.GetType() == paint_op_type)
+    if (op.GetType() == paint_op_type) {
       return static_cast<const T*>(&op);
+    }
 
     if (op.GetType() == cc::PaintOpType::kDrawRecord) {
       const T* record_op_result = FindPaintOp<T>(
           static_cast<const cc::DrawRecordOp&>(op).record, paint_op_type);
-      if (record_op_result)
+      if (record_op_result) {
         return static_cast<const T*>(record_op_result);
+      }
     }
   }
   return nullptr;
@@ -54,7 +56,7 @@ class AnimatedImageViewTest : public ViewsTestBase {
     ViewsTestBase::SetUp();
 
     Widget::InitParams params =
-        CreateParams(Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET,
+        CreateParams(Widget::InitParams::CLIENT_OWNS_WIDGET,
                      Widget::InitParams::TYPE_WINDOW_FRAMELESS);
     params.bounds = gfx::Rect(kDefaultSize);
     widget_.Init(std::move(params));
@@ -84,7 +86,7 @@ class AnimatedImageViewTest : public ViewsTestBase {
     view()->Paint(PaintInfo::CreateRootPaintInfo(paint_context,
                                                  invalidation_rect.size()));
     RunPendingMessages();
-    return display_list->FinalizeAndReleaseAsRecord();
+    return display_list->FinalizeAndReleaseAsRecordForTesting();
   }
 
   AnimatedImageView* view() {

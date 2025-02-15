@@ -20,6 +20,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/strings/pattern.h"
 #include "base/strings/stringprintf.h"
+#include "base/strings/to_string.h"
 #include "base/time/time.h"
 #include "base/values.h"
 #include "chrome/test/chromedriver/chrome/devtools_client.h"
@@ -40,7 +41,6 @@ using testing::Optional;
 using testing::Pointee;
 
 const char kTestMapperScript[] = "Lorem ipsum dolor sit amet";
-const base::Value::Dict empty_mapper_options;
 
 template <int Code>
 testing::AssertionResult StatusCodeIs(const Status& status) {
@@ -151,7 +151,7 @@ Status CreateBidiCommand(int cmd_id,
   dict.Set("method", std::move(method));
   dict.Set("params", std::move(params));
   if (channel) {
-    dict.Set("channel", *channel);
+    dict.Set("goog:channel", *channel);
   }
   *cmd = std::move(dict);
   return Status{kOk};
@@ -235,6 +235,7 @@ struct SessionState {
   bool handshake_runtime_eval_handled = false;
   bool handshake_page_enable_handled_ = false;
   bool connect_complete = false;
+  bool handshake_target_set_autoattach_handled_ = false;
 };
 
 class MultiSessionMockSyncWebSocket : public SyncWebSocket {
@@ -354,6 +355,13 @@ class MultiSessionMockSyncWebSocket : public SyncWebSocket {
       } else {
         return false;
       }
+    } else if (method == "Target.setAutoAttach") {
+      EXPECT_FALSE(session_state->handshake_target_set_autoattach_handled_);
+      if (!session_state->handshake_target_set_autoattach_handled_) {
+        session_state->handshake_target_set_autoattach_handled_ = true;
+      } else {
+        return false;
+      }
     } else {
       // Unexpected handshake command
       VLOG(0) << "unexpected handshake method: " << method;
@@ -362,8 +370,9 @@ class MultiSessionMockSyncWebSocket : public SyncWebSocket {
     }
 
     session_state->connect_complete =
-        session_state->handshake_add_script_handled &&
-        session_state->handshake_runtime_eval_handled;
+        session_state->handshake_target_set_autoattach_handled_ ||
+        (session_state->handshake_add_script_handled &&
+         session_state->handshake_runtime_eval_handled);
 
     base::Value::Dict result;
     result.Set("param", 1);
@@ -417,6 +426,7 @@ TEST_F(DevToolsClientImplTest, Ctor) {
   EXPECT_EQ(expected_session_id, client.SessionId());
   EXPECT_EQ(std::string(), client.TunnelSessionId());
   EXPECT_FALSE(client.IsMainPage());
+  EXPECT_FALSE(client.IsTabTarget());
   EXPECT_FALSE(client.IsConnected());
   EXPECT_TRUE(client.IsNull());
   EXPECT_FALSE(client.WasCrashed());
@@ -434,6 +444,11 @@ TEST_F(DevToolsClientImplTest, Ctor) {
   ASSERT_STREQ("old type", type.c_str());
   ASSERT_TRUE(
       StatusCodeIs<kNoSuchAlert>(client.HandleDialog(false, std::nullopt)));
+}
+
+TEST_F(DevToolsClientImplTest, CtorTabTarget) {
+  DevToolsClientImpl client("E2F4", "BC80031", /*is_tab=*/true);
+  EXPECT_TRUE(client.IsTabTarget());
 }
 
 TEST_F(DevToolsClientImplTest, SendCommand) {
@@ -1071,13 +1086,13 @@ TEST(ParseInspectorMessage, TunneledCdpEvent) {
   cdp_params.Set("data", "hello");
   // payload_params.
   base::Value::Dict params;
-  params.Set("cdpMethod", "event");
-  params.Set("cdpSession", "ABC");
-  params.Set("cdpParams", std::move(cdp_params));
+  params.Set("method", "event");
+  params.Set("session", "ABC");
+  params.Set("params", std::move(cdp_params));
   base::Value::Dict payload;
-  payload.Set("method", "cdp.eventReceived");
+  payload.Set("method", "goog:cdp.event");
   payload.Set("params", std::move(params));
-  payload.Set("channel", DevToolsClientImpl::kCdpTunnelChannel);
+  payload.Set("goog:channel", DevToolsClientImpl::kCdpTunnelChannel);
   base::Value::Dict evt;
   ASSERT_TRUE(
       StatusOk(WrapBidiEventInCdpEvent(std::move(payload), "333", &evt)));
@@ -1101,12 +1116,12 @@ TEST(ParseInspectorMessage, TunneledCdpEventNoCdpSession) {
   cdp_params.Set("data", "hello");
   // payload_params.
   base::Value::Dict params;
-  params.Set("cdpMethod", "event");
-  params.Set("cdpParams", std::move(cdp_params));
+  params.Set("method", "event");
+  params.Set("params", std::move(cdp_params));
   base::Value::Dict payload;
-  payload.Set("method", "cdp.eventReceived");
+  payload.Set("method", "goog:cdp.event");
   payload.Set("params", std::move(params));
-  payload.Set("channel", DevToolsClientImpl::kCdpTunnelChannel);
+  payload.Set("goog:channel", DevToolsClientImpl::kCdpTunnelChannel);
   base::Value::Dict evt;
   ASSERT_TRUE(
       StatusOk(WrapBidiEventInCdpEvent(std::move(payload), "333", &evt)));
@@ -1128,12 +1143,12 @@ TEST(ParseInspectorMessage, TunneledCdpEventNoCdpSession) {
 TEST(ParseInspectorMessage, TunneledCdpEventNoCdpParams) {
   // payload_params.
   base::Value::Dict params;
-  params.Set("cdpMethod", "event");
-  params.Set("cdpSession", "ABC");
+  params.Set("method", "event");
+  params.Set("session", "ABC");
   base::Value::Dict payload;
-  payload.Set("method", "cdp.eventReceived");
+  payload.Set("method", "goog:cdp.event");
   payload.Set("params", std::move(params));
-  payload.Set("channel", DevToolsClientImpl::kCdpTunnelChannel);
+  payload.Set("goog:channel", DevToolsClientImpl::kCdpTunnelChannel);
   base::Value::Dict evt;
   ASSERT_TRUE(
       StatusOk(WrapBidiEventInCdpEvent(std::move(payload), "333", &evt)));
@@ -1154,11 +1169,11 @@ TEST(ParseInspectorMessage, TunneledCdpEventNoCdpParams) {
 TEST(ParseInspectorMessage, TunneledCdpEventNoCdpMethod) {
   // payload_params.
   base::Value::Dict params;
-  params.Set("cdpSession", "ABC");
+  params.Set("session", "ABC");
   base::Value::Dict payload;
-  payload.Set("method", "cdp.eventReceived");
+  payload.Set("method", "goog:cdp.event");
   payload.Set("params", std::move(params));
-  payload.Set("channel", DevToolsClientImpl::kCdpTunnelChannel);
+  payload.Set("goog:channel", DevToolsClientImpl::kCdpTunnelChannel);
   base::Value::Dict evt;
   ASSERT_TRUE(
       StatusOk(WrapBidiEventInCdpEvent(std::move(payload), "333", &evt)));
@@ -1174,8 +1189,8 @@ TEST(ParseInspectorMessage, TunneledCdpEventNoCdpMethod) {
 
 TEST(ParseInspectorMessage, TunneledCdpEventNoPayloadParams) {
   base::Value::Dict payload;
-  payload.Set("method", "cdp.eventReceived");
-  payload.Set("channel", DevToolsClientImpl::kCdpTunnelChannel);
+  payload.Set("method", "goog:cdp.event");
+  payload.Set("goog:channel", DevToolsClientImpl::kCdpTunnelChannel);
   base::Value::Dict evt;
   ASSERT_TRUE(
       StatusOk(WrapBidiEventInCdpEvent(std::move(payload), "333", &evt)));
@@ -1194,9 +1209,9 @@ TEST(ParseInspectorMessage, TunneledCdpResponse) {
   result.Set("data", "hola");
   base::Value::Dict payload;
   payload.Set("id", 11);
-  payload.Set("cdpSession", "ABC");
+  payload.Set("session", "ABC");
   payload.Set("result", std::move(result));
-  payload.Set("channel", DevToolsClientImpl::kCdpTunnelChannel);
+  payload.Set("goog:channel", DevToolsClientImpl::kCdpTunnelChannel);
   base::Value::Dict resp;
   ASSERT_TRUE(
       StatusOk(WrapBidiResponseInCdpEvent(std::move(payload), "333", &resp)));
@@ -1221,7 +1236,7 @@ TEST(ParseInspectorMessage, TunneledCdpResponseNoSession) {
   base::Value::Dict payload;
   payload.Set("id", 11);
   payload.Set("result", std::move(result));
-  payload.Set("channel", DevToolsClientImpl::kCdpTunnelChannel);
+  payload.Set("goog:channel", DevToolsClientImpl::kCdpTunnelChannel);
   base::Value::Dict resp;
   ASSERT_TRUE(
       StatusOk(WrapBidiResponseInCdpEvent(std::move(payload), "333", &resp)));
@@ -1244,9 +1259,9 @@ TEST(ParseInspectorMessage, TunneledCdpResponseNoId) {
   base::Value::Dict result;
   result.Set("data", "hola");
   base::Value::Dict payload;
-  payload.Set("cdpSession", "ABC");
+  payload.Set("session", "ABC");
   payload.Set("result", std::move(result));
-  payload.Set("channel", DevToolsClientImpl::kCdpTunnelChannel);
+  payload.Set("goog:channel", DevToolsClientImpl::kCdpTunnelChannel);
   base::Value::Dict resp;
   ASSERT_TRUE(
       StatusOk(WrapBidiResponseInCdpEvent(std::move(payload), "333", &resp)));
@@ -1263,8 +1278,8 @@ TEST(ParseInspectorMessage, TunneledCdpResponseNoId) {
 TEST(ParseInspectorMessage, TunneledCdpResponseNoResult) {
   base::Value::Dict payload;
   payload.Set("id", 11);
-  payload.Set("cdpSession", "ABC");
-  payload.Set("channel", DevToolsClientImpl::kCdpTunnelChannel);
+  payload.Set("session", "ABC");
+  payload.Set("goog:channel", DevToolsClientImpl::kCdpTunnelChannel);
   base::Value::Dict resp;
   ASSERT_TRUE(
       StatusOk(WrapBidiResponseInCdpEvent(std::move(payload), "333", &resp)));
@@ -1287,9 +1302,9 @@ TEST(ParseInspectorMessage, TunneledCdpResponseError) {
   error.Set("data", "hola");
   base::Value::Dict payload;
   payload.Set("id", 11);
-  payload.Set("cdpSession", "ABC");
+  payload.Set("session", "ABC");
   payload.Set("error", std::move(error));
-  payload.Set("channel", DevToolsClientImpl::kCdpTunnelChannel);
+  payload.Set("goog:channel", DevToolsClientImpl::kCdpTunnelChannel);
   base::Value::Dict resp;
   ASSERT_TRUE(
       StatusOk(WrapBidiResponseInCdpEvent(std::move(payload), "333", &resp)));
@@ -1376,20 +1391,27 @@ TEST(ParseInspectorError, ExecutionContextWasDestroyed) {
   const std::string error(
       "{\"code\":-32000,\"message\":\"Execution context was destroyed.\"}");
   Status status = internal::ParseInspectorError(error);
-  ASSERT_EQ(kNavigationDetectedByRemoteEnd, status.code());
-  ASSERT_EQ(
-      "navigation detected by remote end: Execution context was destroyed.",
-      status.message());
+  ASSERT_EQ(kAbortedByNavigation, status.code());
+  ASSERT_EQ("aborted by navigation: Execution context was destroyed.",
+            status.message());
 }
 
 TEST(ParseInspectorError, InspectedTargetNavigatedOrClosed) {
   const std::string error(
       "{\"code\":-32000,\"message\":\"Inspected target navigated or closed\"}");
   Status status = internal::ParseInspectorError(error);
-  ASSERT_EQ(kNavigationDetectedByRemoteEnd, status.code());
-  ASSERT_EQ(
-      "navigation detected by remote end: Inspected target navigated or closed",
-      status.message());
+  ASSERT_EQ(kAbortedByNavigation, status.code());
+  ASSERT_EQ("aborted by navigation: Inspected target navigated or closed",
+            status.message());
+}
+
+TEST(ParseInspectorError, NotAttachedToActivePage) {
+  const std::string error(
+      "{\"code\":-32000,\"message\":\"Not attached to an active page\"}");
+  Status status = internal::ParseInspectorError(error);
+  ASSERT_EQ(kAbortedByNavigation, status.code());
+  ASSERT_EQ("aborted by navigation: Not attached to an active page",
+            status.message());
 }
 
 TEST_F(DevToolsClientImplTest, HandleEventsUntil) {
@@ -1571,6 +1593,21 @@ class OnConnectedSyncWebSocket : public StubSyncWebSocket {
 TEST_F(DevToolsClientImplTest, ProcessOnConnectedFirstOnCommand) {
   SocketHolder<OnConnectedSyncWebSocket> socket_holder;
   DevToolsClientImpl client("onconnected-id", "");
+  OnConnectedListener listener1("DOM.getDocument", &client);
+  OnConnectedListener listener2("Runtime.enable", &client);
+  OnConnectedListener listener3("Page.enable", &client);
+  ASSERT_TRUE(socket_holder.ConnectSocket());
+  ASSERT_TRUE(StatusOk(client.SetSocket(socket_holder.Wrapper())));
+  base::Value::Dict params;
+  EXPECT_TRUE(StatusOk(client.SendCommand("Runtime.execute", params)));
+  listener1.VerifyCalled();
+  listener2.VerifyCalled();
+  listener3.VerifyCalled();
+}
+
+TEST_F(DevToolsClientImplTest, ProcessOnConnectedTabFirstOnCommand) {
+  SocketHolder<OnConnectedSyncWebSocket> socket_holder;
+  DevToolsClientImpl client("onconnected-id", "", /*is_tab=*/true);
   OnConnectedListener listener1("DOM.getDocument", &client);
   OnConnectedListener listener2("Runtime.enable", &client);
   OnConnectedListener listener3("Page.enable", &client);
@@ -1773,7 +1810,7 @@ std::string JavaScriptDialogClosedEvent(bool result,
       "\"result\": %s,"
       "\"userInput\": \"%s\""
       "}}",
-      (result ? "true" : "false"), user_input.c_str());
+      base::ToString(result), user_input.c_str());
 }
 
 }  // namespace
@@ -2494,7 +2531,7 @@ class BidiMockSyncWebSocket : public MultiSessionMockSyncWebSocket {
     dict.Set("id", std::move(cmd_id));
     dict.Set("result", std::move(result));
     if (channel) {
-      dict.Set("channel", *channel);
+      dict.Set("goog:channel", *channel);
     }
     *response = std::move(dict);
     return Status{kOk};
@@ -2528,10 +2565,10 @@ class BidiMockSyncWebSocket : public MultiSessionMockSyncWebSocket {
     dict.Set("id", cmd_id);
     dict.Set("result", std::move(result));
     if (channel) {
-      dict.Set("channel", *channel);
+      dict.Set("goog:channel", *channel);
     }
     if (!cdp_session.empty()) {
-      dict.Set("cdpSession", std::move(cdp_session));
+      dict.Set("session", std::move(cdp_session));
     }
     *response = std::move(dict);
     return Status{kOk};
@@ -2610,10 +2647,10 @@ class BidiMockSyncWebSocket : public MultiSessionMockSyncWebSocket {
                              std::string method,
                              base::Value::Dict params,
                              const std::string* channel) {
-    if (method == "cdp.sendCommand") {
-      const std::string* cdp_method = params.FindString("cdpMethod");
-      const std::string* cdp_session = params.FindString("cdpSession");
-      const base::Value::Dict* cdp_params = params.FindDict("cdpParams");
+    if (method == "goog:cdp.sendCommand") {
+      const std::string* cdp_method = params.FindString("method");
+      const std::string* cdp_session = params.FindString("session");
+      const base::Value::Dict* cdp_params = params.FindDict("params");
       EXPECT_NE(cdp_method, nullptr);
       EXPECT_NE(cdp_session, nullptr);
       EXPECT_TRUE(cdp_params);
@@ -2689,7 +2726,7 @@ class BidiMockSyncWebSocket : public MultiSessionMockSyncWebSocket {
     std::optional<int> bidi_cmd_id = bidi_dict.FindInt("id");
     const std::string* bidi_method = bidi_dict.FindString("method");
     const base::Value::Dict* bidi_params = bidi_dict.FindDict("params");
-    const std::string* bidi_channel = bidi_dict.FindString("channel");
+    const std::string* bidi_channel = bidi_dict.FindString("goog:channel");
     EXPECT_TRUE(bidi_cmd_id);
     EXPECT_NE(bidi_method, nullptr);
     EXPECT_NE(bidi_params, nullptr);
@@ -2752,10 +2789,10 @@ class MultiSessionMockSyncWebSocket3 : public BidiMockSyncWebSocket {
     dict.Set("id", cmd_id);
     dict.Set("result", std::move(result));
     if (channel) {
-      dict.Set("channel", *channel);
+      dict.Set("goog:channel", *channel);
     }
     if (!cdp_session.empty()) {
-      dict.Set("cdpSession", std::move(cdp_session));
+      dict.Set("session", std::move(cdp_session));
     }
     *response = std::move(dict);
     return Status{kOk};
@@ -2904,14 +2941,14 @@ class MultiSessionMockSyncWebSocket4 : public BidiMockSyncWebSocket {
     base::Value::Dict cdp_evt_params;
     cdp_evt_params.Set("source", "cdp-over-bidi");
     base::Value::Dict bidi_params;
-    bidi_params.Set("cdpParams", std::move(cdp_evt_params));
-    bidi_params.Set("cdpSession", cdp_session);
-    bidi_params.Set("cdpMethod", "event");
+    bidi_params.Set("params", std::move(cdp_evt_params));
+    bidi_params.Set("session", cdp_session);
+    bidi_params.Set("method", "event");
     base::Value::Dict bidi_evt;
-    bidi_evt.Set("method", "cdp.eventReceived");
+    bidi_evt.Set("method", "goog:cdp.event");
     bidi_evt.Set("params", std::move(bidi_params));
     if (channel) {
-      bidi_evt.Set("channel", *channel);
+      bidi_evt.Set("goog:channel", *channel);
     }
     base::Value::Dict evt;
     Status status = WrapBidiEventInCdpEvent(bidi_evt, mapper_session_, &evt);
@@ -2966,7 +3003,7 @@ class MultiSessionMockSyncWebSocket4 : public BidiMockSyncWebSocket {
     bidi_evt_params.Set("source", "bidi");
     bidi_evt.Set("params", std::move(bidi_evt_params));
     if (channel) {
-      bidi_evt.Set("channel", *channel);
+      bidi_evt.Set("goog:channel", *channel);
     }
     base::Value::Dict evt;
     Status status = WrapBidiEventInCdpEvent(bidi_evt, mapper_session_, &evt);
@@ -3068,7 +3105,7 @@ TEST_F(DevToolsClientImplTest, BidiEventCrossRouting) {
   base::Value::Dict bidi_cmd;
   ASSERT_TRUE(StatusOk(CreateBidiCommand(414, "method", base::Value::Dict(),
                                          nullptr, &bidi_cmd)));
-  // The messasge is dispatched from a non-BiDiMapper client
+  // The message is dispatched from a non-BiDiMapper client
   ASSERT_TRUE(StatusOk(page_client.PostBidiCommand(std::move(bidi_cmd))));
   ASSERT_TRUE(StatusOk(page_client.HandleReceivedEvents()));
 
@@ -3131,7 +3168,7 @@ TEST_F(DevToolsClientImplTest, BidiChannels) {
     ASSERT_TRUE(StatusOk(mapper_client.HandleReceivedEvents()));
     ASSERT_EQ(static_cast<size_t>(2), mapper_bidi_listener.payload_list.size());
     for (const base::Value::Dict& payload : mapper_bidi_listener.payload_list) {
-      EXPECT_THAT(payload.FindString("channel"), Pointee(Eq(channel)));
+      EXPECT_THAT(payload.FindString("goog:channel"), Pointee(Eq(channel)));
     }
     mapper_bidi_listener.payload_list.clear();
   }
@@ -3145,7 +3182,7 @@ TEST_F(DevToolsClientImplTest, BidiChannels) {
     ASSERT_TRUE(StatusOk(mapper_client.HandleReceivedEvents()));
     ASSERT_EQ(static_cast<size_t>(2), mapper_bidi_listener.payload_list.size());
     for (const base::Value::Dict& payload : mapper_bidi_listener.payload_list) {
-      EXPECT_EQ(nullptr, payload.FindString("channel"));
+      EXPECT_EQ(nullptr, payload.FindString("goog:channel"));
     }
     mapper_bidi_listener.payload_list.clear();
   }
@@ -3166,7 +3203,6 @@ struct BidiMapperState {
   bool mapper_is_initiated = false;
   bool mapper_instance_is_running = false;
   bool subscribed_to_cdp = false;
-  bool mapper_is_started_with_options = false;
 };
 
 class BidiServerMockSyncWebSocket : public BidiMockSyncWebSocket {
@@ -3200,22 +3236,14 @@ class BidiServerMockSyncWebSocket : public BidiMockSyncWebSocket {
       if (expression == nullptr) {
         return false;
       }
+
       if (*expression == kTestMapperScript) {
         mapper_state_->mapper_is_initiated = true;
         if (mapper_state_->fail_on_mapper_init) {
           return false;
         }
-      } else if (*expression ==
-                 "window.runMapperInstance(\"mapper_client\", {})") {
+      } else if (*expression == "window.runMapperInstance(\"mapper_client\")") {
         mapper_state_->mapper_instance_is_running = true;
-        if (mapper_state_->fail_on_mapper_run_instnace) {
-          return false;
-        }
-      } else if (base::MatchPattern(
-                     *expression,
-                     "window\\.runMapperInstance(\"mapper_client\", {?*})")) {
-        mapper_state_->mapper_instance_is_running = true;
-        mapper_state_->mapper_is_started_with_options = true;
         if (mapper_state_->fail_on_mapper_run_instnace) {
           return false;
         }
@@ -3241,7 +3269,7 @@ class BidiServerMockSyncWebSocket : public BidiMockSyncWebSocket {
     }
     EXPECT_EQ(DevToolsClientImpl::kCdpTunnelChannel, *channel);
     EXPECT_EQ("session.subscribe", method);
-    EXPECT_THAT(params.FindString("events"), Pointee(Eq("cdp.eventReceived")));
+    EXPECT_THAT(params.FindString("events"), Pointee(Eq("goog:cdp")));
     mapper_state_->subscribed_to_cdp = true;
     return !mapper_state_->fail_on_subscribe_to_cdp;
   }
@@ -3262,14 +3290,12 @@ TEST_F(DevToolsClientImplTest, StartBidiServer) {
   mapper_client.SetMainPage(true);
   ASSERT_TRUE(StatusOk(mapper_client.AttachTo(&root_client)));
 
-  EXPECT_TRUE(StatusOk(
-      mapper_client.StartBidiServer(kTestMapperScript, empty_mapper_options)));
+  EXPECT_TRUE(StatusOk(mapper_client.StartBidiServer(kTestMapperScript)));
   EXPECT_TRUE(mapper_state.devtools_exposed);
   EXPECT_TRUE(mapper_state.mapper_is_initiated);
   EXPECT_TRUE(mapper_state.mapper_instance_is_running);
   EXPECT_TRUE(mapper_state.send_bidi_response_binding_added);
   EXPECT_TRUE(mapper_state.subscribed_to_cdp);
-  EXPECT_FALSE(mapper_state.mapper_is_started_with_options);
 }
 
 TEST_F(DevToolsClientImplTest, StartBidiServerNotConnected) {
@@ -3281,9 +3307,7 @@ TEST_F(DevToolsClientImplTest, StartBidiServerNotConnected) {
   mapper_client.SetMainPage(true);
   ASSERT_TRUE(mapper_client.AttachTo(&root_client).IsError());
 
-  EXPECT_TRUE(
-      mapper_client.StartBidiServer(kTestMapperScript, empty_mapper_options)
-          .IsError());
+  EXPECT_TRUE(mapper_client.StartBidiServer(kTestMapperScript).IsError());
 }
 
 TEST_F(DevToolsClientImplTest, StartBidiServerNotAPageClient) {
@@ -3296,9 +3320,7 @@ TEST_F(DevToolsClientImplTest, StartBidiServerNotAPageClient) {
   mapper_client.EnableEventTunnelingForTesting();
   ASSERT_TRUE(StatusOk(mapper_client.AttachTo(&root_client)));
 
-  EXPECT_TRUE(
-      mapper_client.StartBidiServer(kTestMapperScript, empty_mapper_options)
-          .IsError());
+  EXPECT_TRUE(mapper_client.StartBidiServer(kTestMapperScript).IsError());
 }
 
 TEST_F(DevToolsClientImplTest, StartBidiServerTunnelIsAlreadySet) {
@@ -3315,9 +3337,7 @@ TEST_F(DevToolsClientImplTest, StartBidiServerTunnelIsAlreadySet) {
   ASSERT_TRUE(StatusOk(mapper_client.AttachTo(&root_client)));
   mapper_client.SetTunnelSessionId(pink_client.SessionId());
 
-  EXPECT_TRUE(
-      mapper_client.StartBidiServer(kTestMapperScript, empty_mapper_options)
-          .IsError());
+  EXPECT_TRUE(mapper_client.StartBidiServer(kTestMapperScript).IsError());
 }
 
 TEST_F(DevToolsClientImplTest, StartBidiServerFailOnAddBidiResponseBinding) {
@@ -3332,9 +3352,7 @@ TEST_F(DevToolsClientImplTest, StartBidiServerFailOnAddBidiResponseBinding) {
   mapper_client.SetMainPage(true);
   ASSERT_TRUE(StatusOk(mapper_client.AttachTo(&root_client)));
 
-  EXPECT_TRUE(
-      mapper_client.StartBidiServer(kTestMapperScript, empty_mapper_options)
-          .IsError());
+  EXPECT_TRUE(mapper_client.StartBidiServer(kTestMapperScript).IsError());
 }
 
 TEST_F(DevToolsClientImplTest, StartBidiServerFailOnRunMapperInstnace) {
@@ -3349,9 +3367,7 @@ TEST_F(DevToolsClientImplTest, StartBidiServerFailOnRunMapperInstnace) {
   mapper_client.SetMainPage(true);
   ASSERT_TRUE(StatusOk(mapper_client.AttachTo(&root_client)));
 
-  EXPECT_TRUE(
-      mapper_client.StartBidiServer(kTestMapperScript, empty_mapper_options)
-          .IsError());
+  EXPECT_TRUE(mapper_client.StartBidiServer(kTestMapperScript).IsError());
 }
 
 TEST_F(DevToolsClientImplTest, StartBidiServerFailOnExposeDevTools) {
@@ -3366,9 +3382,7 @@ TEST_F(DevToolsClientImplTest, StartBidiServerFailOnExposeDevTools) {
   mapper_client.SetMainPage(true);
   ASSERT_TRUE(StatusOk(mapper_client.AttachTo(&root_client)));
 
-  EXPECT_TRUE(
-      mapper_client.StartBidiServer(kTestMapperScript, empty_mapper_options)
-          .IsError());
+  EXPECT_TRUE(mapper_client.StartBidiServer(kTestMapperScript).IsError());
 }
 
 TEST_F(DevToolsClientImplTest, StartBidiServerFailOnMapperInit) {
@@ -3383,9 +3397,7 @@ TEST_F(DevToolsClientImplTest, StartBidiServerFailOnMapperInit) {
   mapper_client.SetMainPage(true);
   ASSERT_TRUE(StatusOk(mapper_client.AttachTo(&root_client)));
 
-  EXPECT_TRUE(
-      mapper_client.StartBidiServer(kTestMapperScript, empty_mapper_options)
-          .IsError());
+  EXPECT_TRUE(mapper_client.StartBidiServer(kTestMapperScript).IsError());
 }
 
 TEST_F(DevToolsClientImplTest, StartBidiServerFailOnSubscribeToCdp) {
@@ -3400,30 +3412,5 @@ TEST_F(DevToolsClientImplTest, StartBidiServerFailOnSubscribeToCdp) {
   mapper_client.SetMainPage(true);
   ASSERT_TRUE(StatusOk(mapper_client.AttachTo(&root_client)));
 
-  EXPECT_TRUE(
-      mapper_client.StartBidiServer(kTestMapperScript, empty_mapper_options)
-          .IsError());
-}
-
-TEST_F(DevToolsClientImplTest, StartBidiServerWithOptions) {
-  BidiMapperState mapper_state;
-  SocketHolder<BidiServerMockSyncWebSocket> socket_holder{&mapper_state};
-  DevToolsClientImpl root_client("root", "root_session");
-  ASSERT_TRUE(socket_holder.ConnectSocket());
-  ASSERT_TRUE(StatusOk(root_client.SetSocket(socket_holder.Wrapper())));
-  DevToolsClientImpl mapper_client("mapper_client", "mapper_session");
-  mapper_client.EnableEventTunnelingForTesting();
-  mapper_client.SetMainPage(true);
-  ASSERT_TRUE(StatusOk(mapper_client.AttachTo(&root_client)));
-
-  base::Value::Dict mapper_options;
-  mapper_options.Set("divide_by_zero", true);
-  EXPECT_TRUE(StatusOk(
-      mapper_client.StartBidiServer(kTestMapperScript, mapper_options)));
-  EXPECT_TRUE(mapper_state.devtools_exposed);
-  EXPECT_TRUE(mapper_state.mapper_is_initiated);
-  EXPECT_TRUE(mapper_state.mapper_instance_is_running);
-  EXPECT_TRUE(mapper_state.send_bidi_response_binding_added);
-  EXPECT_TRUE(mapper_state.subscribed_to_cdp);
-  EXPECT_TRUE(mapper_state.mapper_is_started_with_options);
+  EXPECT_TRUE(mapper_client.StartBidiServer(kTestMapperScript).IsError());
 }

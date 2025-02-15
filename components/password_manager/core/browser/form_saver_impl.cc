@@ -28,16 +28,19 @@ namespace {
 // calculation.
 void SanitizeFormData(FormData* form) {
   form->set_main_frame_origin(url::Origin());
-  for (FormFieldData& field : form->fields) {
+  std::vector<FormFieldData> fields = form->ExtractFields();
+  for (FormFieldData& field : fields) {
     field.set_label({});
     field.set_value({});
     field.set_autocomplete_attribute({});
     field.set_options({});
+    field.set_pattern({});
     field.set_placeholder({});
     field.set_css_classes({});
     field.set_id_attribute({});
     field.set_name_attribute({});
   }
+  form->set_fields(std::move(fields));
 }
 
 // Do the clean up of |matches| after |pending| was just pushed to the store.

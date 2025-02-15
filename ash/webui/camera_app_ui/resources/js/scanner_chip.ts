@@ -6,7 +6,6 @@ import {assert, assertExists, checkEnumVariant} from './assert.js';
 import {showPreviewOCRToast} from './custom_effect.js';
 import * as dom from './dom.js';
 import {reportError} from './error.js';
-import {Flag} from './flag.js';
 import {I18nString} from './i18n_string.js';
 import {
   BarcodeContentType,
@@ -25,6 +24,7 @@ import {
   WifiEapPhase2Method,
   WifiSecurityType,
 } from './mojo/type.js';
+import {isTopMostView} from './nav.js';
 import * as snackbar from './snackbar.js';
 import {speak} from './spoken_msg.js';
 import * as state from './state.js';
@@ -33,6 +33,7 @@ import {
   ErrorLevel,
   ErrorType,
   LocalStorageKey,
+  ViewName,
 } from './type.js';
 import {getKeyboardShortcut} from './util.js';
 
@@ -380,12 +381,14 @@ function showText(text: string, onCopy?: () => void): ChipMethods {
         I18nString.TEXT_DETECTED_DESCRIPTION_EXPANDABLE);
     expandEl.classList.remove('hidden');
     expandEl.onclick = () => {
+      const chipTimer = assertExists(currentChip).timer;
       if (isChipExpanded()) {
         collapseChip();
+        chipTimer.start();
       } else {
         expandChip();
+        chipTimer.stop();
       }
-      assertExists(currentChip).timer.resetTimeout();
     };
   } else {
     descriptionEl.textContent =
@@ -449,7 +452,7 @@ export function showBarcodeContent(content: string): void {
   function setupChip() {
     let chipMethods: ChipMethods|null = null;
     const wifiConfig = parseWifi(content);
-    if (loadTimeData.getChromeFlag(Flag.AUTO_QR) && wifiConfig !== null) {
+    if (wifiConfig !== null) {
       chipMethods = showWifi(wifiConfig);
     } else if (isSafeUrl(content)) {
       sendBarcodeDetectedEvent({contentType: BarcodeContentType.URL});
@@ -528,8 +531,8 @@ function showChip({setupChip, content, source}: ShowChipParams): void {
   dismiss();
   const chipMethods = setupChip();
 
-  // Only focus on chip when newly shown.
-  if (!isShowing) {
+  // Only focus on chip when newly shown and camera view is the top view.
+  if (!isShowing && isTopMostView(ViewName.CAMERA)) {
     chipMethods.focus();
   }
 

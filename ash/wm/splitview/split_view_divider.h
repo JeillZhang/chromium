@@ -75,8 +75,13 @@ class ASH_EXPORT SplitViewDivider : public aura::WindowObserver,
     return previous_event_location_;
   }
 
+  // Returns the divider widget's native window, or nullptr if none exists.
+  aura::Window* GetDividerWindow();
+
   // Returns true if the divider widget is created.
   bool HasDividerWidget() const;
+
+  bool IsDividerWidgetVisible() const;
 
   // Updates the divider's target visibility.
   void SetVisible(bool visible);
@@ -92,7 +97,8 @@ class ASH_EXPORT SplitViewDivider : public aura::WindowObserver,
   aura::Window* GetRootWindow() const;
 
   // Resizing functions used when resizing with `split_view_divider_` in the
-  // tablet split view mode or clamshell mode if `kSnapGroup` is enabled.
+  // tablet split view mode or clamshell mode when two windows are in a Snap
+  // Group.
   void StartResizeWithDivider(const gfx::Point& location_in_screen);
   void ResizeWithDivider(const gfx::Point& location_in_screen);
   void EndResizeWithDivider(const gfx::Point& location_in_screen);

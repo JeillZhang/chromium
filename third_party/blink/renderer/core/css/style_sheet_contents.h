@@ -96,6 +96,9 @@ class CORE_EXPORT StyleSheetContents final
   Document* SingleOwnerDocument() const;
   bool HasSingleOwnerDocument() const { return has_single_owner_document_; }
 
+  // Gets the first registered client, or nullptr if there are none.
+  CSSStyleSheet* AnyClient() const;
+
   // Gets the first owner document in the list of registered clients, or nullptr
   // if there are none.
   Document* AnyOwnerDocument() const;
@@ -114,9 +117,6 @@ class CORE_EXPORT StyleSheetContents final
 
   void SetHasFontFaceRule() { has_font_face_rule_ = true; }
   bool HasFontFaceRule() const { return has_font_face_rule_; }
-
-  void SetHasViewportRule() { has_viewport_rule_ = true; }
-  bool HasViewportRule() const { return has_viewport_rule_; }
 
   void ParserAddNamespace(const AtomicString& prefix, const AtomicString& uri);
   void ParserAppendRule(StyleRuleBase*);
@@ -239,6 +239,10 @@ class CORE_EXPORT StyleSheetContents final
   bool HasRuleSet() { return rule_set_.Get(); }
   RuleSet& EnsureRuleSet(const MediaQueryEvaluator&);
   void ClearRuleSet();
+  // Create a RuleSet which is not associated (i.e. not owned)
+  // by this StyleSheetContents. This is useful for matching rules
+  // in  an "alternate reality", which is the case for InspectorGhostRules.
+  RuleSet* CreateUnconnectedRuleSet(const MediaQueryEvaluator&) const;
 
   String SourceMapURL() const { return source_map_url_; }
 
@@ -275,7 +279,6 @@ class CORE_EXPORT StyleSheetContents final
   bool did_load_error_occur_ : 1;
   bool is_mutable_ : 1;
   bool has_font_face_rule_ : 1;
-  bool has_viewport_rule_ : 1;
   bool has_media_queries_ : 1;
   bool has_single_owner_document_ : 1;
   bool is_used_from_text_cache_ : 1;

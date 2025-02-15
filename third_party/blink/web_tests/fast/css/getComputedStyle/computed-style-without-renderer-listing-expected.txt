@@ -56,6 +56,12 @@ animation-range-end: normal
 animation-range-start: normal
 animation-timeline: auto
 animation-timing-function: ease
+animation-trigger-exit-range-end: normal
+animation-trigger-exit-range-start: normal
+animation-trigger-range-end: normal
+animation-trigger-range-start: normal
+animation-trigger-timeline: auto
+animation-trigger-type: once
 app-region: none
 appearance: none
 backdrop-filter: none
@@ -114,6 +120,7 @@ border-top-right-radius: 0px
 border-top-style: none
 border-top-width: 0px
 bottom: auto
+box-decoration-break: slice
 box-shadow: none
 box-sizing: content-box
 break-after: auto
@@ -121,6 +128,7 @@ break-before: auto
 break-inside: auto
 buffered-rendering: auto
 caption-side: top
+caret-animation: auto
 caret-color: rgb(0, 0, 0)
 clear: none
 clip: auto
@@ -145,6 +153,14 @@ contain-intrinsic-width: none
 container-name: none
 container-type: normal
 content: normal
+corner-bottom-left-shape: round
+corner-bottom-right-shape: round
+corner-end-end-shape: round
+corner-end-start-shape: round
+corner-start-end-shape: round
+corner-start-start-shape: round
+corner-top-left-shape: round
+corner-top-right-shape: round
 cursor: auto
 cx: 0px
 cy: 0px
@@ -181,6 +197,7 @@ font-variant: normal
 font-variant-alternates: normal
 font-variant-caps: normal
 font-variant-east-asian: normal
+font-variant-emoji: normal
 font-variant-ligatures: normal
 font-variant-numeric: normal
 font-variant-position: normal
@@ -203,11 +220,14 @@ image-orientation: from-image
 image-rendering: auto
 initial-letter: normal
 inline-size: auto
-inset-area: none
 inset-block-end: auto
 inset-block-start: auto
 inset-inline-end: auto
 inset-inline-start: auto
+interactivity: auto
+interest-target-hide-delay: 0.5s
+interest-target-show-delay: 0.5s
+interpolate-size: numeric-only
 isolation: auto
 justify-content: normal
 justify-items: normal
@@ -216,6 +236,7 @@ left: auto
 letter-spacing: normal
 lighting-color: rgb(255, 255, 255)
 line-break: auto
+line-clamp: none
 line-height: normal
 list-style-image: none
 list-style-position: outside
@@ -240,6 +261,13 @@ mask-position: 0% 0%
 mask-repeat: repeat
 mask-size: auto
 mask-type: luminance
+masonry-auto-tracks: auto
+masonry-direction: column
+masonry-fill: normal
+masonry-slack: normal
+masonry-template-tracks: auto
+masonry-track-end: auto
+masonry-track-start: auto
 math-depth: 0
 math-shift: normal
 math-style: normal
@@ -290,15 +318,15 @@ paint-order: normal
 perspective: none
 perspective-origin: 50% 50%
 pointer-events: auto
-popover-hide-delay: infinity * 1s
-popover-show-delay: 0.5s
 position: static
 position-anchor: auto
-position-try-options: none
+position-area: none
+position-try-fallbacks: none
 position-try-order: normal
 position-visibility: always
 r: 0px
-reading-order-items: normal
+reading-flow: normal
+reading-order: 0
 resize: none
 right: auto
 rotate: none
@@ -309,21 +337,18 @@ rx: auto
 ry: auto
 scale: none
 scroll-behavior: auto
+scroll-initial-target: none
 scroll-margin-block-end: 0px
 scroll-margin-block-start: 0px
 scroll-margin-inline-end: 0px
 scroll-margin-inline-start: 0px
-scroll-markers: none
+scroll-marker-group: none
 scroll-padding-block-end: auto
 scroll-padding-block-start: auto
 scroll-padding-inline-end: auto
 scroll-padding-inline-start: auto
 scroll-start-block: auto
 scroll-start-inline: auto
-scroll-start-target-block: none
-scroll-start-target-inline: none
-scroll-start-target-x: none
-scroll-start-target-y: none
 scroll-start-x: auto
 scroll-start-y: auto
 scroll-timeline-axis: block
@@ -352,7 +377,7 @@ text-align: start
 text-align-last: auto
 text-anchor: start
 text-autospace: normal
-text-box-edge: leading
+text-box-edge: auto
 text-box-trim: none
 text-decoration: none solid rgb(0, 0, 0)
 text-decoration-color: rgb(0, 0, 0)
@@ -370,7 +395,8 @@ text-size-adjust: auto
 text-spacing-trim: normal
 text-transform: none
 text-underline-position: auto
-text-wrap: wrap
+text-wrap-mode: wrap
+text-wrap-style: auto
 timeline-scope: none
 top: auto
 touch-action: auto
@@ -391,6 +417,7 @@ view-timeline-axis: block
 view-timeline-inset: auto
 view-timeline-name: none
 view-transition-class: none
+view-transition-group: normal
 view-transition-name: none
 visibility: visible
 white-space-collapse: collapse

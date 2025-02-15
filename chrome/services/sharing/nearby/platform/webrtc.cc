@@ -26,8 +26,7 @@
 #include "third_party/webrtc_overrides/task_queue_factory.h"
 #include "unicode/locid.h"
 
-namespace nearby {
-namespace chrome {
+namespace nearby::chrome {
 
 namespace {
 
@@ -377,6 +376,13 @@ void WebRtcMedium::CreatePeerConnection(
                                 std::move(callback)));
 }
 
+void WebRtcMedium::CreatePeerConnection(
+    std::optional<webrtc::PeerConnectionFactoryInterface::Options> options,
+    webrtc::PeerConnectionObserver* observer,
+    PeerConnectionCallback callback) {
+  NOTIMPLEMENTED();
+}
+
 void WebRtcMedium::FetchIceServers(webrtc::PeerConnectionObserver* observer,
                                    PeerConnectionCallback callback) {
   ice_config_fetcher_->GetIceServers(base::BindOnce(
@@ -532,14 +538,12 @@ void WebRtcMedium::OnIceServersFetched(
   // causing battery drain for Phone Hub's persistent connection.
   // Ideally these options should be configurable per connection, but right now
   // we have a single share factory for all peer connections.
-  if (ash::features::IsNearbyKeepAliveFixEnabled()) {
-    rtc_config.ice_connection_receiving_timeout =
-        kIceConnectionReceivingTimeout.InMilliseconds();
-    rtc_config.ice_check_interval_strong_connectivity =
-        kIceCheckIntervalStrongConnectivity.InMilliseconds();
-    rtc_config.stable_writable_connection_ping_interval_ms =
-        kStableWritableConnectionPingInterval.InMilliseconds();
-  }
+  rtc_config.ice_connection_receiving_timeout =
+      kIceConnectionReceivingTimeout.InMilliseconds();
+  rtc_config.ice_check_interval_strong_connectivity =
+      kIceCheckIntervalStrongConnectivity.InMilliseconds();
+  rtc_config.stable_writable_connection_ping_interval_ms =
+      kStableWritableConnectionPingInterval.InMilliseconds();
 
   webrtc::PeerConnectionDependencies dependencies(observer);
   sharing::P2PPortAllocator::Config port_config;
@@ -568,5 +572,4 @@ WebRtcMedium::GetSignalingMessenger(
       std::string(self_id), location_hint, webrtc_signaling_messenger_);
 }
 
-}  // namespace chrome
-}  // namespace nearby
+}  // namespace nearby::chrome

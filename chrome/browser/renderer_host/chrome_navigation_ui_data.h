@@ -49,7 +49,7 @@ class ChromeNavigationUIData : public content::NavigationUIData {
       content::WebContents* web_contents,
       WindowOpenDisposition disposition,
       bool is_using_https_as_default_scheme,
-      bool url_is_typed_with_http_scheme);
+      bool force_no_https_upgrade);
 
   // Creates a new ChromeNavigationUIData that is a deep copy of the original.
   // Any changes to the original after the clone is created will not be
@@ -80,12 +80,17 @@ class ChromeNavigationUIData : public content::NavigationUIData {
   bool is_using_https_as_default_scheme() const {
     return is_using_https_as_default_scheme_;
   }
-  bool url_is_typed_with_http_scheme() const {
-    return url_is_typed_with_http_scheme_;
-  }
+  bool force_no_https_upgrade() const { return force_no_https_upgrade_; }
 
   std::optional<int64_t> bookmark_id() { return bookmark_id_; }
   void set_bookmark_id(std::optional<int64_t> id) { bookmark_id_ = id; }
+
+  bool navigation_initiated_from_sync() {
+    return navigation_initiated_from_sync_;
+  }
+  void set_navigation_initiated_from_sync(bool navigation_initiated_from_sync) {
+    navigation_initiated_from_sync_ = navigation_initiated_from_sync;
+  }
 
  private:
 #if BUILDFLAG(ENABLE_EXTENSIONS)
@@ -109,13 +114,22 @@ class ChromeNavigationUIData : public content::NavigationUIData {
   // observed and fall back to using http scheme if necessary.
   bool is_using_https_as_default_scheme_ = false;
 
-  // True if the navigation was initiated by typing in the omnibox, and the
-  // typed text had an explicit http scheme. This is used to opt-out of https
-  // upgrades.
-  bool url_is_typed_with_http_scheme_ = false;
+  // True if the navigation should be excluded from HTTPS upgrades.
+  // This can happen in the following cases:
+  // - the navigatioon was initiated by typing in the omnibox, and the
+  // typed text had an explicit http scheme.
+  // - the navigation was initiated as a captive portal login.
+  bool force_no_https_upgrade_ = false;
 
   // Id of the bookmark which started this navigation.
   std::optional<int64_t> bookmark_id_ = std::nullopt;
+
+  // True if the navigation was initiated in response to a sync message. This is
+  // used in tab group sync to identify the sync initiated navigations and
+  // blocking them from sending back to sync which would otherwise cause
+  // ping-pong issue. They will still be allowed to load locally like a normal
+  // navigation.
+  bool navigation_initiated_from_sync_ = false;
 };
 
 #endif  // CHROME_BROWSER_RENDERER_HOST_CHROME_NAVIGATION_UI_DATA_H_

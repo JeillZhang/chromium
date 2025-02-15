@@ -120,7 +120,8 @@ class WaylandDataDragController : public WaylandDataDevice::DragDelegate,
 
   // Updates the drag image. An empty |image| may be used to hide a previously
   // set non-empty drag image, and a non-empty |image| shows the drag image
-  // again if it was previously hidden.
+  // again if it was previously hidden. It is also explicitly allowed to use
+  // this to set a drag image after starting the drag session without one.
   //
   // This must be called during an active drag session.
   void UpdateDragImage(const gfx::ImageSkia& image,
@@ -156,6 +157,8 @@ class WaylandDataDragController : public WaylandDataDevice::DragDelegate,
                            StartDragWithWrongMimeType);
   FRIEND_TEST_ALL_PREFIXES(WaylandDataDragControllerTest,
                            OutgoingSessionWithoutDndFinished);
+  FRIEND_TEST_ALL_PREFIXES(WaylandWindowDragControllerTest,
+                           OutgoingSessionWithoutDndFinished);
 
   enum class DragResult {
     kCancelled,
@@ -174,7 +177,6 @@ class WaylandDataDragController : public WaylandDataDevice::DragDelegate,
                     base::TimeTicks timestamp) override;
   void OnDragLeave(base::TimeTicks timestamp) override;
   void OnDragDrop(base::TimeTicks timestamp) override;
-  const WaylandWindow* GetDragTarget() const override;
 
   // WaylandDataSource::Delegate:
   void OnDataSourceFinish(WaylandDataSource* source,
@@ -214,7 +216,6 @@ class WaylandDataDragController : public WaylandDataDevice::DragDelegate,
   std::optional<wl::Serial> GetAndValidateSerialForDrag(
       mojom::DragEventSource source);
 
-  void SetOfferedExchangeDataProvider(const OSExchangeData& data);
   const WaylandExchangeDataProvider* GetOfferedExchangeDataProvider() const;
 
   // Checks whether |data| holds information about a window dragging session.
@@ -226,9 +227,9 @@ class WaylandDataDragController : public WaylandDataDevice::DragDelegate,
   // before calling this.
   void SetUpWindowDraggingSessionIfNeeded(const ui::OSExchangeData& data);
 
-  // Sends an ET_MOUSE_RELEASED event to the window that currently has capture.
-  // Must only be called if |pointer_grabber_for_window_drag_| is valid. This
-  // resets |pointer_grabber_for_window_drag_|.
+  // Sends an EventType::kMouseReleased event to the window that currently has
+  // capture. Must only be called if |pointer_grabber_for_window_drag_| is
+  // valid. This resets |pointer_grabber_for_window_drag_|.
   void DispatchPointerRelease(base::TimeTicks timestamp);
 
   // PlatformEventDispatcher:
@@ -276,6 +277,8 @@ class WaylandDataDragController : public WaylandDataDevice::DragDelegate,
   // The window that initiated the drag session. Can be null when the session
   // has been started by an external Wayland client.
   raw_ptr<WaylandWindow> origin_window_ = nullptr;
+
+  std::unique_ptr<WaylandSurface> origin_surface_;
 
   // Current window under pointer.
   raw_ptr<WaylandWindow, DanglingUntriaged> window_ = nullptr;

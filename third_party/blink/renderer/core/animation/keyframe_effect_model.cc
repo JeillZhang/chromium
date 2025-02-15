@@ -122,6 +122,7 @@ void KeyframeEffectModelBase::SetComposite(CompositeOperation composite) {
 bool KeyframeEffectModelBase::Sample(
     int iteration,
     double fraction,
+    TimingFunction::LimitDirection limit_direction,
     AnimationTimeDelta iteration_duration,
     HeapVector<Member<Interpolation>>& result) const {
   DCHECK_GE(iteration, 0);
@@ -133,22 +134,22 @@ bool KeyframeEffectModelBase::Sample(
   last_iteration_ = iteration;
   last_fraction_ = fraction;
   last_iteration_duration_ = iteration_duration;
-  interpolation_effect_->GetActiveInterpolations(fraction, result);
+  interpolation_effect_->GetActiveInterpolations(fraction, limit_direction,
+                                                 result);
   return changed;
 }
 
 namespace {
 
-static const size_t num_compositable_properties = 9;
+using CompositablePropertiesArray = std::array<const CSSProperty*, 9>;
 
-const CSSProperty** CompositableProperties() {
-  static const CSSProperty*
-      kCompositableProperties[num_compositable_properties] = {
-          &GetCSSPropertyOpacity(),        &GetCSSPropertyRotate(),
-          &GetCSSPropertyScale(),          &GetCSSPropertyTransform(),
-          &GetCSSPropertyTranslate(),      &GetCSSPropertyFilter(),
-          &GetCSSPropertyBackdropFilter(), &GetCSSPropertyBackgroundColor(),
-          &GetCSSPropertyClipPath()};
+const CompositablePropertiesArray& CompositableProperties() {
+  static const CompositablePropertiesArray kCompositableProperties{
+      &GetCSSPropertyOpacity(),        &GetCSSPropertyRotate(),
+      &GetCSSPropertyScale(),          &GetCSSPropertyTransform(),
+      &GetCSSPropertyTranslate(),      &GetCSSPropertyFilter(),
+      &GetCSSPropertyBackdropFilter(), &GetCSSPropertyBackgroundColor(),
+      &GetCSSPropertyClipPath()};
   return kCompositableProperties;
 }
 
@@ -173,11 +174,12 @@ bool KeyframeEffectModelBase::SnapshotNeutralCompositorKeyframes(
     const ComputedStyle& old_style,
     const ComputedStyle& new_style,
     const ComputedStyle* parent_style) const {
-  auto should_snapshot_property =
-      [&old_style, &new_style](const PropertyHandle& property) {
-        return !CSSPropertyEquality::PropertiesEqual(property, old_style,
-                                                     new_style);
-      };
+  auto should_snapshot_property = [&old_style,
+                                   &new_style](const PropertyHandle& property) {
+    return !CSSPropertyEquality::PropertiesEqual(property, old_style,
+                                                 new_style) &&
+           CompositorAnimations::CompositedPropertyRequiresSnapshot(property);
+  };
   auto should_snapshot_keyframe = [](const PropertySpecificKeyframe& keyframe) {
     return keyframe.IsNeutral();
   };
@@ -225,10 +227,9 @@ bool KeyframeEffectModelBase::SnapshotCompositableProperties(
     ShouldSnapshotKeyframeFunction should_snapshot_keyframe) const {
   EnsureKeyframeGroups();
   bool updated = false;
-  static const CSSProperty** compositable_properties = CompositableProperties();
-  for (size_t i = 0; i < num_compositable_properties; i++) {
+  for (const auto* compositable_property : CompositableProperties()) {
     updated |= SnapshotCompositorKeyFrames(
-        PropertyHandle(*compositable_properties[i]), element, computed_style,
+        PropertyHandle(*compositable_property), element, computed_style,
         parent_style, should_snapshot_property, should_snapshot_keyframe);
   }
 
@@ -396,14 +397,12 @@ bool KeyframeEffectModelBase::IsTransformRelatedEffect() const {
 }
 
 bool KeyframeEffectModelBase::SetLogicalPropertyResolutionContext(
-    TextDirection text_direction,
-    WritingMode writing_mode) {
+    WritingDirectionMode writing_direction) {
   bool changed = false;
   for (wtf_size_t i = 0; i < keyframes_.size(); i++) {
     if (auto* string_keyframe = DynamicTo<StringKeyframe>(*keyframes_[i])) {
       if (string_keyframe->HasLogicalProperty()) {
-        string_keyframe->SetLogicalPropertyResolutionContext(text_direction,
-                                                             writing_mode);
+        string_keyframe->SetLogicalPropertyResolutionContext(writing_direction);
         changed = true;
       }
     }

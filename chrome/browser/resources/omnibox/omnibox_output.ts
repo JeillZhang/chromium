@@ -4,14 +4,12 @@
 
 import {assert} from 'chrome://resources/js/assert.js';
 
-import type {ACMatchClassification, AutocompleteControllerType, AutocompleteMatch, DictionaryEntry, OmniboxResponse, Signals} from './omnibox.mojom-webui.js';
 import {OmniboxElement} from './omnibox_element.js';
 import type {DisplayInputs} from './omnibox_input.js';
 import {OmniboxInput} from './omnibox_input.js';
-// @ts-ignore:next-line
+import type {ACMatchClassification, AutocompleteControllerType, AutocompleteMatch, DictionaryEntry, OmniboxResponse, Signals} from './omnibox_internals.mojom-webui.js';
 import outputColumnWidthSheet from './omnibox_output_column_widths.css' with {type : 'css'};
 import {clearChildren, createEl} from './omnibox_util.js';
-// @ts-ignore:next-line
 import outputResultsGroupSheet from './output_results_group.css' with {type : 'css'};
 
 interface ResultsDetails {
@@ -353,7 +351,7 @@ class OutputMatch extends HTMLTableRowElement {
     COLUMNS.forEach(({displayAlways}, i) => {
       const outputProperty = this.outputProperties[i];
       assert(outputProperty);
-      return outputProperty!.hidden = !showDetails && !displayAlways;
+      return outputProperty.hidden = !showDetails && !displayAlways;
     });
   }
 
@@ -535,7 +533,7 @@ class OutputDictionaryProperty extends OutputProperty {
 class OutputScoringSignalsProperty extends OutputDictionaryProperty {
   constructor(value: Signals) {
     super(Object.entries(value)
-              .filter(([, value]) => value)
+              .filter(([, value]) => value !== null)
               .map(([key, value]) => ({
                      key,
                      value,

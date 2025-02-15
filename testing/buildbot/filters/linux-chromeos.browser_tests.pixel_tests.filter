@@ -2,7 +2,6 @@
 # In order for pixel tests to work, you *must* include your test here.
 
 All/CurtainModeChromeOsPixelTest.*
-KioskPixelTest.*
 
 # TODO(b/305779741) re-enable this test.
 # *PersonalizationAppIntegrationPixelBrowserTest.*
@@ -10,3 +9,5 @@ KioskPixelTest.*
 *MahiMenuPixelBrowserTest*
 
 *QuickAnswersPixelTest*
+
+*CandidateWindowViewPixelBrowserTest*

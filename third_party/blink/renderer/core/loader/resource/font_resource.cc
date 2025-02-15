@@ -51,6 +51,7 @@
 #include "third_party/blink/renderer/platform/loader/fetch/resource_loader.h"
 #include "third_party/blink/renderer/platform/scheduler/public/post_cross_thread_task.h"
 #include "third_party/blink/renderer/platform/scheduler/public/worker_pool.h"
+#include "third_party/blink/renderer/platform/wtf/cross_thread_copier.h"
 #include "third_party/blink/renderer/platform/wtf/cross_thread_copier_base.h"
 #include "third_party/blink/renderer/platform/wtf/cross_thread_copier_mojo.h"
 #include "third_party/blink/renderer/platform/wtf/cross_thread_functional.h"
@@ -72,13 +73,6 @@ template <>
 struct CrossThreadCopier<ResultOrError> {
   STATIC_ONLY(CrossThreadCopier);
   using Type = ResultOrError;
-  static Type Copy(Type&& value) { return std::move(value); }
-};
-
-template <>
-struct CrossThreadCopier<SegmentedBuffer> {
-  STATIC_ONLY(CrossThreadCopier);
-  using Type = SegmentedBuffer;
   static Type Copy(Type&& value) { return std::move(value); }
 };
 
@@ -151,7 +145,7 @@ class FontResource::BackgroundFontProcessor final
       BackgroundResponseProcessor::Client* client) override;
 
   // Implements mojo::DataPipeDrainer::Client interface.
-  void OnDataAvailable(const void* data, size_t num_bytes) override;
+  void OnDataAvailable(base::span<const uint8_t> data) override;
   void OnDataComplete() override;
 
  private:
@@ -210,11 +204,9 @@ bool FontResource::BackgroundFontProcessor::MaybeStartProcessingResponse(
   return true;
 }
 
-void FontResource::BackgroundFontProcessor::OnDataAvailable(const void* data,
-                                                            size_t num_bytes) {
-  buffer_.Append(
-      Vector<char>(base::span(static_cast<const char*>(data),
-                              base::checked_cast<wtf_size_t>(num_bytes))));
+void FontResource::BackgroundFontProcessor::OnDataAvailable(
+    base::span<const uint8_t> data) {
+  buffer_.Append(Vector<char>(data));
 }
 
 void FontResource::BackgroundFontProcessor::OnDataComplete() {

@@ -177,11 +177,13 @@ enum class PrefetchStatus {
   kPrefetchIneligibleExistingProxy = 38,
 
   // Prefetch not supported in Guest or Incognito mode.
-  kPrefetchIneligibleBrowserContextOffTheRecord = 39,
+  // OBSOLETE: kPrefetchIneligibleBrowserContextOffTheRecord = 39,
 
   // Whether this prefetch is heldback for counterfactual logging.
   kPrefetchHeldback = 40,
-  kPrefetchAllowed = 41,
+
+  // DEPRECATED
+  // kPrefetchAllowed = 41,
 
   // The response of the prefetch is used for the next navigation. This is the
   // final successful state.
@@ -194,9 +196,12 @@ enum class PrefetchStatus {
   // prefetch.
   kPrefetchFailedIneligibleRedirect = 44,
 
+  // Deprecated; prefetches are now queued until other prefetches are evicted
+  // when the limit is reached.
+  //
   // The prefetch was not made because prefetches exceeded the limit per
   // page.
-  kPrefetchFailedPerPageLimitExceeded = 45,
+  // kPrefetchFailedPerPageLimitExceeded = 45,
 
   // The prefetch needed to fetch a same-site cross-origin URL and required the
   // use of the prefetch proxy. These prefetches are blocked since the default
@@ -221,7 +226,7 @@ enum class PrefetchStatus {
   // The max value of the PrefetchStatus. Update this when new enums are added.
   kMaxValue = kPrefetchEvictedForNewerPrefetch,
 };
-// LINT.ThenChange()
+// LINT.ThenChange(/tools/metrics/histograms/enums.xml)
 
 // Mapping from `PrefetchStatus` to `PreloadingFailureReason`.
 static_assert(

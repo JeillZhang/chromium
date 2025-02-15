@@ -15,13 +15,13 @@ import * as localDev from './local_dev.js';
 import {getCameraDirectory, getObjectURL} from './models/file_system.js';
 import {ChromeHelper, getInstanceImpl} from './mojo/chrome_helper.js';
 import {
+  AspectRatio,
   EventsSenderRemote,
   LidState,
   OcrResult,
   PdfBuilderRemote,
   ScreenState,
   StorageMonitorStatus,
-  ToteMetricFormat,
   WifiConfig,
 } from './mojo/type.js';
 import {fakeEndpoint} from './mojo/util.js';
@@ -69,14 +69,14 @@ export class ChromeHelperFake extends ChromeHelper {
     if (file === null) {
       return;
     }
-    const objectURL = await getObjectURL(file);
-    const newTabWindow = window.open(objectURL, '_blank');
+    const objectUrl = await getObjectURL(file);
+    const newTabWindow = window.open(objectUrl, '_blank');
     newTabWindow?.addEventListener('load', () => {
       // The unload handler is fired immediately since the window.open
       // triggered unload event on the initial empty page. See
       // https://stackoverflow.com/q/7476660
       newTabWindow?.addEventListener('unload', () => {
-        URL.revokeObjectURL(objectURL);
+        URL.revokeObjectURL(objectUrl);
       });
     });
   }
@@ -108,10 +108,6 @@ export class ChromeHelperFake extends ChromeHelper {
 
   override sendNewCaptureBroadcast(_args: {isVideo: boolean, name: string}):
       void {
-    /* Do nothing. */
-  }
-
-  override notifyTote(_format: ToteMetricFormat, _name: string): void {
     /* Do nothing. */
   }
 
@@ -165,6 +161,11 @@ export class ChromeHelperFake extends ChromeHelper {
     return LidState.kNotPresent;
   }
 
+  override async initSwPrivacySwitchMonitor(
+      _onChange: (is_sw_privacy_switch_on: boolean) => void): Promise<boolean> {
+    return false;
+  }
+
   override async getEventsSender(): Promise<EventsSenderRemote> {
     return fakeEndpoint();
   }
@@ -184,6 +185,14 @@ export class ChromeHelperFake extends ChromeHelper {
 
   override createPdfBuilder(): PdfBuilderRemote {
     assertNotReached();
+  }
+
+  override async getAspectRatioOrder(): Promise<AspectRatio[]> {
+    return [
+      AspectRatio.k4To3,
+      AspectRatio.k16To9,
+      AspectRatio.kOthers,
+    ];
   }
   /* eslint-enable @typescript-eslint/require-await */
 }

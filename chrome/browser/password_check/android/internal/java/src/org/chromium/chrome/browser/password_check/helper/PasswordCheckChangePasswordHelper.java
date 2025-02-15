@@ -16,7 +16,6 @@ import org.chromium.chrome.browser.password_check.CompromisedCredential;
 import org.chromium.chrome.browser.password_check.PasswordChangeType;
 import org.chromium.chrome.browser.password_check.PasswordCheckComponentUi;
 import org.chromium.chrome.browser.password_check.PasswordCheckUkmRecorder;
-import org.chromium.components.browser_ui.settings.SettingsLauncher;
 
 import java.util.Objects;
 
@@ -26,17 +25,14 @@ import java.util.Objects;
  */
 public class PasswordCheckChangePasswordHelper {
     private final Context mContext;
-    private final SettingsLauncher mSettingsLauncher;
     private final PasswordCheckComponentUi.CustomTabIntentHelper mCustomTabIntentHelper;
     private final PasswordCheckComponentUi.TrustedIntentHelper mTrustedIntentHelper;
 
     public PasswordCheckChangePasswordHelper(
             Context context,
-            SettingsLauncher settingsLauncher,
             PasswordCheckComponentUi.CustomTabIntentHelper customTabIntentHelper,
             PasswordCheckComponentUi.TrustedIntentHelper trustedIntentHelper) {
         mContext = context;
-        mSettingsLauncher = settingsLauncher;
         mCustomTabIntentHelper = customTabIntentHelper;
         mTrustedIntentHelper = trustedIntentHelper;
     }
@@ -48,8 +44,6 @@ public class PasswordCheckChangePasswordHelper {
      */
     public void launchAppOrCctWithChangePasswordUrl(CompromisedCredential credential) {
         if (!canManuallyChangeCredential(credential)) return;
-        // TODO(crbug.com/40134591): Always launch the URL if possible and let Android handle the
-        // match to open it.
         IntentUtils.safeStartActivity(
                 mContext,
                 credential.getAssociatedApp().isEmpty()

@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -22,6 +23,7 @@
 #include "base/location.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/metrics/user_metrics.h"
+#include "base/not_fatal_until.h"
 #include "base/observer_list.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
@@ -103,10 +105,8 @@ DatabaseTracker::DatabaseTracker(
       db_dir_(is_incognito_
                   ? profile_path_.Append(kIncognitoDatabaseDirectoryName)
                   : profile_path_.Append(kDatabaseDirectoryName)),
-      db_(std::make_unique<sql::Database>(sql::DatabaseOptions{
-          .page_size = 4096,
-          .cache_size = 500,
-      })),
+      db_(std::make_unique<sql::Database>(
+          sql::Database::Tag("DatabaseTracker"))),
       quota_manager_proxy_(std::move(quota_manager_proxy)),
       task_runner_(base::ThreadPool::CreateSequencedTaskRunner(
           {base::MayBlock(), base::TaskPriority::USER_VISIBLE,
@@ -541,8 +541,6 @@ bool DatabaseTracker::LazyInit() {
       }
     }
 
-    db_->set_histogram_tag("DatabaseTracker");
-
     // If the tracker database exists, but it's corrupt or doesn't
     // have a meta table, delete the database directory.
     const base::FilePath kTrackerDatabaseFullPath =
@@ -664,10 +662,7 @@ int64_t DatabaseTracker::GetDBFileSize(const std::string& origin_identifier,
   DCHECK(task_runner_->RunsTasksInCurrentSequence());
   base::FilePath db_file_name = GetFullDBFilePath(origin_identifier,
                                                   database_name);
-  int64_t db_file_size = 0;
-  if (!base::GetFileSize(db_file_name, &db_file_size))
-    db_file_size = 0;
-  return db_file_size;
+  return base::GetFileSize(db_file_name).value_or(0);
 }
 
 int64_t DatabaseTracker::SeedOpenDatabaseInfo(
@@ -883,8 +878,9 @@ void DatabaseTracker::CloseIncognitoFileHandle(
     const std::u16string& vfs_file_name) {
   DCHECK(task_runner_->RunsTasksInCurrentSequence());
   DCHECK(is_incognito_);
-  DCHECK(incognito_file_handles_.find(vfs_file_name) !=
-         incognito_file_handles_.end());
+  CHECK(incognito_file_handles_.find(vfs_file_name) !=
+            incognito_file_handles_.end(),
+        base::NotFatalUntil::M130);
 
   auto it = incognito_file_handles_.find(vfs_file_name);
   if (it != incognito_file_handles_.end()) {
@@ -916,8 +912,7 @@ void DatabaseTracker::DeleteIncognitoDBDirectory() {
 void DatabaseTracker::Shutdown() {
   DCHECK(task_runner_->RunsTasksInCurrentSequence());
   if (shutting_down_) {
-    NOTREACHED_IN_MIGRATION();
-    return;
+    NOTREACHED();
   }
   shutting_down_ = true;
 

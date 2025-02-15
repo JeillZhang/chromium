@@ -32,17 +32,6 @@ using promos_manager::Promo;
 
 namespace {
 
-// Killswitch to control the hard-coded DockingPromo and
-// DockingPromoRemindMeLater sort injections in `SortPromos()`.
-BASE_FEATURE(kPromosManagerDockingPromoSortKillswitch,
-             "PromosManagerDockingPromoSortKillswitch",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
-// Killswitch to control new DockingPromo histograms.
-BASE_FEATURE(kPromosManagerDockingPromoHistogramsKillswitch,
-             "PromosManagerDockingPromoHistogramsKillswitch",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
 // Conditionally appends `promo` to the list pref `pref_path`. If `promo`
 // already exists in the list pref `pref_path`, does nothing. If `promo` doesn't
 // exist in the list pref `pref_path`, appends `promo` to the list.
@@ -230,26 +219,6 @@ std::optional<promos_manager::Promo> PromosManagerImpl::NextPromoForDisplay() {
                                 valid_promo_count,
                                 static_cast<int>(Promo::kMaxValue) + 1);
 
-  promos_manager::Promo promo = first_promo_opt.value();
-
-  // TODO(crbug.com/330387623): Cleanup Docking Promo histograms.
-  if (base::FeatureList::IsEnabled(
-          kPromosManagerDockingPromoHistogramsKillswitch)) {
-    if (active_promos_with_context.contains(Promo::DockingPromo) &&
-        promo != Promo::DockingPromo &&
-        CanShowPromoWithoutTrigger(Promo::DockingPromo)) {
-      base::UmaHistogramEnumeration("IOS.DockingPromo.LostToCompetingPromo",
-                                    promo);
-    }
-
-    if (active_promos_with_context.contains(Promo::DockingPromoRemindMeLater) &&
-        promo != Promo::DockingPromoRemindMeLater &&
-        CanShowPromoWithoutTrigger(Promo::DockingPromoRemindMeLater)) {
-      base::UmaHistogramEnumeration(
-          "IOS.DockingPromoRemindMeLater.LostToCompetingPromo", promo);
-    }
-  }
-
   return first_promo_opt;
 }
 
@@ -262,8 +231,9 @@ std::set<promos_manager::Promo> PromosManagerImpl::ActivePromos(
         promos_manager::PromoForName(stored_active_promos[i].GetString());
 
     // Skip malformed active promos data. (This should almost never happen.)
-    if (!promo.has_value())
+    if (!promo.has_value()) {
       continue;
+    }
 
     active_promos.insert(promo.value());
   }
@@ -365,24 +335,6 @@ std::vector<promos_manager::Promo> PromosManagerImpl::SortPromos(
     }
     if (rhs.first == Promo::PostDefaultAbandonment) {
       return false;
-    }
-    // TODO(crbug.com/330387623): Cleanup hard-coded Docking Promo sort logic.
-    if (base::FeatureList::IsEnabled(
-            kPromosManagerDockingPromoSortKillswitch)) {
-      // Docking Promo comes next.
-      if (lhs.first == Promo::DockingPromo) {
-        return true;
-      }
-      if (rhs.first == Promo::DockingPromo) {
-        return false;
-      }
-      // Docking Promo (Remind Me Later) comes next.
-      if (lhs.first == Promo::DockingPromoRemindMeLater) {
-        return true;
-      }
-      if (rhs.first == Promo::DockingPromoRemindMeLater) {
-        return false;
-      }
     }
     // prefer the promo with pending state to the other without.
     if (lhs.second.was_pending && !rhs.second.was_pending) {

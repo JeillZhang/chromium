@@ -18,6 +18,7 @@
 #include "ui/color/color_provider.h"
 #include "ui/compositor/compositor.h"
 #include "ui/gfx/canvas.h"
+#include "ui/views/accessibility/view_accessibility.h"
 
 VideoStreamView::VideoStreamView()
     : targeted_aspect_ratio_(video_format_comparison::kDefaultAspectRatio),
@@ -26,10 +27,9 @@ VideoStreamView::VideoStreamView()
       // Placeholder initialization. OnThemeChanged() is expected to be called
       // to re-assign `preview_base_color_` value.
       preview_base_color_(SK_ColorBLACK) {
-  SetAccessibilityProperties(
-      ax::mojom::Role::kImage,
-      l10n_util::GetStringUTF16(
-          IDS_MEDIA_PREVIEW_VIDEO_STREAM_ACCESSIBLE_NAME));
+  GetViewAccessibility().SetRole(ax::mojom::Role::kImage);
+  GetViewAccessibility().SetName(l10n_util::GetStringUTF16(
+      IDS_MEDIA_PREVIEW_VIDEO_STREAM_ACCESSIBLE_NAME));
 
   raster_context_provider_ =
       content::GetContextFactory()->SharedMainThreadRasterContextProvider();
@@ -92,27 +92,22 @@ void VideoStreamView::OnPaint(gfx::Canvas* canvas) {
 
   ++rendered_frame_count_;
 
-  const gfx::RectF dest_rect(media::ComputeLetterboxRegion(
+  media::PaintCanvasVideoRenderer::PaintParams paint_params;
+  paint_params.dest_rect = gfx::RectF(media::ComputeLetterboxRegion(
       {width(), height()}, latest_frame_->natural_size()));
+  paint_params.transformation.mirrored = true;
 
   cc::PaintFlags flags;
   // Select high quality frame scaling.
   flags.setFilterQuality(cc::PaintFlags::FilterQuality::kHigh);
   flags.setAntiAlias(true);
-  media::VideoTransformation transformation;
-  transformation.mirrored = true;
-  video_renderer_.Paint(std::move(latest_frame_), canvas->sk_canvas(),
-                        dest_rect, flags, transformation,
-                        raster_context_provider_.get());
-}
-
-int VideoStreamView::GetHeightForWidth(int w) const {
-  return w / targeted_aspect_ratio_;
+  video_renderer_.Paint(std::move(latest_frame_), canvas->sk_canvas(), flags,
+                        paint_params, raster_context_provider_.get());
 }
 
 gfx::Size VideoStreamView::CalculatePreferredSize(
     const views::SizeBounds& /*available_size*/) const {
-  return gfx::Size(width(), GetHeightForWidth(width()));
+  return gfx::Size(width(), width() / targeted_aspect_ratio_);
 }
 
 void VideoStreamView::OnThemeChanged() {

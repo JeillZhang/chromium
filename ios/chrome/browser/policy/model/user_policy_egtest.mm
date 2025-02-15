@@ -2,8 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#import "ios/testing/earl_grey/earl_grey_test.h"
-
 #import <memory>
 
 #import "base/functional/bind.h"
@@ -25,16 +23,16 @@
 #import "components/policy/test_support/signature_provider.h"
 #import "components/strings/grit/components_strings.h"
 #import "google_apis/gaia/gaia_switches.h"
+#import "ios/chrome/browser/authentication/ui_bundled/signin/signin_constants.h"
+#import "ios/chrome/browser/authentication/ui_bundled/signin_earl_grey.h"
+#import "ios/chrome/browser/authentication/ui_bundled/signin_earl_grey_ui_test_util.h"
+#import "ios/chrome/browser/authentication/ui_bundled/signin_matchers.h"
+#import "ios/chrome/browser/authentication/ui_bundled/views/views_constants.h"
 #import "ios/chrome/browser/policy/model/cloud/user_policy_constants.h"
 #import "ios/chrome/browser/policy/model/policy_app_interface.h"
 #import "ios/chrome/browser/policy/model/policy_earl_grey_utils.h"
 #import "ios/chrome/browser/shared/model/url/chrome_url_constants.h"
 #import "ios/chrome/browser/signin/model/fake_system_identity.h"
-#import "ios/chrome/browser/ui/authentication/signin/signin_constants.h"
-#import "ios/chrome/browser/ui/authentication/signin_earl_grey.h"
-#import "ios/chrome/browser/ui/authentication/signin_earl_grey_ui_test_util.h"
-#import "ios/chrome/browser/ui/authentication/signin_matchers.h"
-#import "ios/chrome/browser/ui/authentication/views/views_constants.h"
 #import "ios/chrome/common/ui/confirmation_alert/constants.h"
 #import "ios/chrome/grit/ios_branded_strings.h"
 #import "ios/chrome/grit/ios_strings.h"
@@ -46,6 +44,7 @@
 #import "ios/chrome/test/scoped_eg_synchronization_disabler.h"
 #import "ios/testing/earl_grey/app_launch_configuration.h"
 #import "ios/testing/earl_grey/app_launch_manager.h"
+#import "ios/testing/earl_grey/earl_grey_test.h"
 #import "net/test/embedded_test_server/embedded_test_server.h"
 #import "net/test/embedded_test_server/http_request.h"
 #import "net/test/embedded_test_server/http_response.h"
@@ -98,16 +97,16 @@ void SetUpPolicyServer(policy::EmbeddedPolicyTestServer* policy_server) {
                                    settings.SerializeAsString());
 
   policy_storage->add_managed_user("*");
-  policy_storage->set_policy_user(GetTestEmail().c_str());
+  policy_storage->set_policy_user(GetTestEmail());
   policy_storage->signature_provider()->set_current_key_version(1);
   policy_storage->set_policy_invalidation_topic("test_policy_topic");
 }
 
-// Waits on user policy data to be accessible from the browser state.
+// Waits on user policy data to be accessible from the Profile.
 void WaitOnUserPolicy(base::TimeDelta timeout) {
   // Wait for user policy fetch.
   ConditionBlock condition = ^{
-    return [PolicyAppInterface hasUserPolicyDataInCurrentBrowserState];
+    return [PolicyAppInterface hasUserPolicyDataInCurrentProfile];
   };
   GREYAssert(base::test::ios::WaitUntilConditionOrTimeout(timeout, condition),
              @"No user policy data found");
@@ -118,17 +117,16 @@ void VerifyThatPoliciesAreSet() {
   WaitOnUserPolicy(kWaitOnScheduledUserPolicyFetchInterval);
 
   // Verify that the policy is set.
-  GREYAssertTrue(
-      [PolicyAppInterface
-          hasUserPolicyInCurrentBrowserState:@"IncognitoModeAvailability"
-                            withIntegerValue:1],
-      @"No policy data for IncognitoModeAvailability");
+  GREYAssertTrue([PolicyAppInterface
+                     hasUserPolicyInCurrentProfile:@"IncognitoModeAvailability"
+                                  withIntegerValue:1],
+                 @"No policy data for IncognitoModeAvailability");
 }
 
 // Verifies from the UI and the policy store that the user policies are not set.
 void VerifyThatPoliciesAreNotSet() {
   // Verify that there is no policy data in the store.
-  GREYAssertFalse([PolicyAppInterface hasUserPolicyDataInCurrentBrowserState],
+  GREYAssertFalse([PolicyAppInterface hasUserPolicyDataInCurrentProfile],
                   @"There should not be user policy data in the store");
 }
 
@@ -203,7 +201,7 @@ void WaitForVisibleChromeManagementURL() {
   if (!policy_test_server_->Start()) {
     // Use NOTREACHED() instead of GREYAssertTrue because GREYAssertTrue can
     // only be used after calling the -setUp method of the super class.
-    NOTREACHED_IN_MIGRATION();
+    NOTREACHED();
   }
 
   // Set up and start the local test server for other services.
@@ -215,16 +213,16 @@ void WaitForVisibleChromeManagementURL() {
   if (!embedded_test_server_->Start()) {
     // Use NOTREACHED() instead of GREYAssertTrue because GREYAssertTrue can
     // only be used after calling the -setUp method of the super class.
-    NOTREACHED_IN_MIGRATION();
+    NOTREACHED();
   }
 
   [super setUp];
 }
 
-- (void)tearDown {
+- (void)tearDownHelper {
   ClearUserPolicyPrefs();
   [PolicyAppInterface clearPolicies];
-  [super tearDown];
+  [super tearDownHelper];
 }
 
 - (AppLaunchConfiguration)appConfigurationForTestCase {
@@ -258,9 +256,7 @@ void WaitForVisibleChromeManagementURL() {
 - (void)DISABLED_testThatPoliciesAreFetchedOnSignIn {
   // Sign in with managed account to fetch user policies.
   FakeSystemIdentity* fakeManagedIdentity = [FakeSystemIdentity
-      identityWithEmail:base::SysUTF8ToNSString(GetTestEmail().c_str())
-                 gaiaID:@"exampleManagedID"
-                   name:@"Fake Managed"];
+      identityWithEmail:base::SysUTF8ToNSString(GetTestEmail())];
   [SigninEarlGreyUI signinWithFakeIdentity:fakeManagedIdentity];
 
   VerifyThatPoliciesAreSet();
@@ -271,9 +267,7 @@ void WaitForVisibleChromeManagementURL() {
 - (void)DISABLED_testThatPoliciesAreClearedOnSignOut {
   // Sign in with managed account to fetch user policies.
   FakeSystemIdentity* fakeManagedIdentity = [FakeSystemIdentity
-      identityWithEmail:base::SysUTF8ToNSString(GetTestEmail().c_str())
-                 gaiaID:@"exampleManagedID"
-                   name:@"Fake Managed"];
+      identityWithEmail:base::SysUTF8ToNSString(GetTestEmail())];
   [SigninEarlGreyUI signinWithFakeIdentity:fakeManagedIdentity];
   VerifyThatPoliciesAreSet();
 
@@ -288,9 +282,7 @@ void WaitForVisibleChromeManagementURL() {
 - (void)DISABLED_testThatPoliciesAreLoadedFromStoreWhenSignedInAtStartup {
   // Sign in with managed account to fetch user policies.
   FakeSystemIdentity* fakeManagedIdentity = [FakeSystemIdentity
-      identityWithEmail:base::SysUTF8ToNSString(GetTestEmail().c_str())
-                 gaiaID:@"exampleManagedID"
-                   name:@"Fake Managed"];
+      identityWithEmail:base::SysUTF8ToNSString(GetTestEmail())];
   [SigninEarlGreyUI signinWithFakeIdentity:fakeManagedIdentity];
 
   VerifyThatPoliciesAreSet();
@@ -302,8 +294,6 @@ void WaitForVisibleChromeManagementURL() {
   config.features_enabled.push_back(
       policy::kUserPolicyForSigninAndNoSyncConsentLevel);
   config.relaunch_policy = ForceRelaunchByCleanShutdown;
-  config.additional_args.push_back(
-      base::StrCat({"--", test_switches::kSignInAtStartup}));
   config.additional_args.push_back(
       std::string("-") + test_switches::kAddFakeIdentitiesAtStartup + "=" +
       [FakeSystemIdentity encodeIdentitiesToBase64:@[ fakeManagedIdentity ]]);
@@ -332,9 +322,7 @@ void WaitForVisibleChromeManagementURL() {
 
   // Sign in with the managed account. This won't trigger the user policy fetch.
   FakeSystemIdentity* fakeManagedIdentity = [FakeSystemIdentity
-      identityWithEmail:base::SysUTF8ToNSString(GetTestEmail().c_str())
-                 gaiaID:@"exampleManagedID"
-                   name:@"Fake Managed"];
+      identityWithEmail:base::SysUTF8ToNSString(GetTestEmail())];
   [SigninEarlGreyUI signinWithFakeIdentity:fakeManagedIdentity];
 
   [ChromeEarlGrey commitPendingUserPrefsWrite];
@@ -343,8 +331,6 @@ void WaitForVisibleChromeManagementURL() {
   // the managed account.
   config = [self appConfigurationForTestCase];
   config.relaunch_policy = ForceRelaunchByCleanShutdown;
-  config.additional_args.push_back(
-      base::StrCat({"--", test_switches::kSignInAtStartup}));
   config.additional_args.push_back(
       std::string("-") + test_switches::kAddFakeIdentitiesAtStartup + "=" +
       [FakeSystemIdentity encodeIdentitiesToBase64:@[ fakeManagedIdentity ]]);
@@ -389,17 +375,13 @@ void WaitForVisibleChromeManagementURL() {
 
   // Sign in with the managed account. This won't trigger the user policy fetch.
   FakeSystemIdentity* fakeManagedIdentity = [FakeSystemIdentity
-      identityWithEmail:base::SysUTF8ToNSString(GetTestEmail().c_str())
-                 gaiaID:@"exampleManagedID"
-                   name:@"Fake Managed"];
+      identityWithEmail:base::SysUTF8ToNSString(GetTestEmail())];
   [SigninEarlGrey signinWithFakeIdentity:fakeManagedIdentity];
 
   // Restart the browser while keeping sign-in by preserving the identity of the
   // managed account.
   config = [self appConfigurationForTestCase];
   config.relaunch_policy = ForceRelaunchByCleanShutdown;
-  config.additional_args.push_back(
-      base::StrCat({"--", test_switches::kSignInAtStartup}));
   config.additional_args.push_back(
       std::string("-") + test_switches::kAddFakeIdentitiesAtStartup + "=" +
       [FakeSystemIdentity encodeIdentitiesToBase64:@[ fakeManagedIdentity ]]);
@@ -431,9 +413,7 @@ void WaitForVisibleChromeManagementURL() {
       policy::kUserPolicyForSigninAndNoSyncConsentLevel);
   [[AppLaunchManager sharedManager] ensureAppLaunchedWithConfiguration:config];
   FakeSystemIdentity* fakeManagedIdentity = [FakeSystemIdentity
-      identityWithEmail:base::SysUTF8ToNSString(GetTestEmail().c_str())
-                 gaiaID:@"exampleManagedID"
-                   name:@"Fake Managed"];
+      identityWithEmail:base::SysUTF8ToNSString(GetTestEmail())];
 
   [SigninEarlGrey addFakeIdentity:fakeManagedIdentity];
 
@@ -478,9 +458,7 @@ void WaitForVisibleChromeManagementURL() {
 // popup isn't shown after cancelling the managed accout confirmation dialog.
 - (void)testCancelSigninFlowConfirmationDialogWhenUserPolicyAndSignin {
   FakeSystemIdentity* fakeManagedIdentity = [FakeSystemIdentity
-      identityWithEmail:base::SysUTF8ToNSString(GetTestEmail().c_str())
-                 gaiaID:@"exampleManagedID"
-                   name:@"Fake Managed"];
+      identityWithEmail:base::SysUTF8ToNSString(GetTestEmail())];
 
   [SigninEarlGrey addFakeIdentity:fakeManagedIdentity];
 
@@ -533,9 +511,7 @@ void WaitForVisibleChromeManagementURL() {
   [[AppLaunchManager sharedManager] ensureAppLaunchedWithConfiguration:config];
 
   FakeSystemIdentity* fakeManagedIdentity = [FakeSystemIdentity
-      identityWithEmail:base::SysUTF8ToNSString(GetTestEmail().c_str())
-                 gaiaID:@"exampleManagedID"
-                   name:@"Fake Managed"];
+      identityWithEmail:base::SysUTF8ToNSString(GetTestEmail())];
   [SigninEarlGrey addFakeIdentity:fakeManagedIdentity];
 
   // Set a policy to put the browser under management before signing in with the

@@ -7,17 +7,22 @@
 
 #include <memory>
 #include <string>
-#include <utility>
 
 #include "base/containers/flat_map.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/types/expected.h"
 #include "mojo/public/cpp/base/big_buffer.h"
+#include "services/webnn/public/mojom/webnn_error.mojom-forward.h"
 #include "services/webnn/public/mojom/webnn_graph.mojom-forward.h"
+#include "services/webnn/queueable_resource_state.h"
 #include "services/webnn/webnn_graph_impl.h"
 
-namespace webnn::tflite {
+namespace webnn {
+
+class WebNNConstantOperand;
+
+namespace tflite {
 
 class ContextImplTflite;
 
@@ -28,47 +33,43 @@ class ContextImplTflite;
 class GraphImplTflite final : public WebNNGraphImpl {
  public:
   static base::expected<std::unique_ptr<GraphImplTflite>, mojom::ErrorPtr>
-  CreateAndBuild(mojom::GraphInfoPtr graph_info, ContextImplTflite* context);
+  CreateAndBuild(mojom::GraphInfoPtr graph_info,
+                 ComputeResourceInfo compute_resource_info,
+                 base::flat_map<uint64_t, std::unique_ptr<WebNNConstantOperand>>
+                     constant_operands,
+                 ContextImplTflite* context);
 
   GraphImplTflite(const GraphImplTflite&) = delete;
   GraphImplTflite& operator=(const GraphImplTflite&) = delete;
   ~GraphImplTflite() override;
 
  private:
-  class GraphResources;
   class ComputeResources;
 
   using NamedBuffers = base::flat_map<std::string, mojo_base::BigBuffer>;
-  using AsyncComputeResult =
-      std::pair<mojom::ComputeResultPtr, std::unique_ptr<ComputeResources>>;
 
   GraphImplTflite(ComputeResourceInfo compute_resource_info,
-                  scoped_refptr<GraphResources> graph_resources,
-                  std::unique_ptr<ComputeResources> compute_resources,
+                  base::flat_map<std::string, int> input_name_to_index,
+                  base::flat_map<std::string, int> output_name_to_index,
+                  scoped_refptr<QueueableResourceState<ComputeResources>>
+                      compute_resources_state,
                   ContextImplTflite* context);
 
-  // Execute the compiled platform graph asynchronously. The `named_inputs` were
-  // validated in base class so we can use them to compute directly, the result
-  // of execution will be returned to renderer process with the `callback`.
-  void ComputeImpl(NamedBuffers named_inputs,
-                   mojom::WebNNGraph::ComputeCallback callback) override;
-
-  void OnComputeComplete(ComputeCallback callback, AsyncComputeResult result);
-
+  // Execute the compiled platform graph asynchronously. The inputs were
+  // validated in base class so we can use them to compute directly.
   void DispatchImpl(
-      const base::flat_map<std::string_view, WebNNBufferImpl*>& named_inputs,
-      const base::flat_map<std::string_view, WebNNBufferImpl*>& named_outputs)
+      const base::flat_map<std::string_view, WebNNTensorImpl*>& named_inputs,
+      const base::flat_map<std::string_view, WebNNTensorImpl*>& named_outputs)
       override;
 
-  // This class is owned by the `UniqueAssociatedReceiverSet` in
-  // `ContextImplTflite`.
-  raw_ptr<ContextImplTflite> context_;
-
-  scoped_refptr<GraphResources> graph_resources_;
-  std::unique_ptr<ComputeResources> compute_resources_;
+  scoped_refptr<QueueableResourceState<ComputeResources>>
+      compute_resources_state_;
+  base::flat_map<std::string, int> input_name_to_index_;
+  base::flat_map<std::string, int> output_name_to_index_;
   base::WeakPtrFactory<GraphImplTflite> weak_factory_{this};
 };
 
-}  // namespace webnn::tflite
+}  // namespace tflite
+}  // namespace webnn
 
 #endif  // SERVICES_WEBNN_TFLITE_GRAPH_IMPL_TFLITE_H_

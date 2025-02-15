@@ -19,7 +19,7 @@ public interface DataSharingNetworkLoader {
      * @param url URL to send the request.
      * @param scopes OAuth scopes of the request.
      * @param postData Data to be sent with the POST request.
-     * @param annotationTag Network annotation tag of the request.
+     * @param requestType Network annotation tag of the request.
      * @param callback Callback to be invoked once the response is received.
      */
     void loadUrl(
@@ -27,5 +27,5 @@ public interface DataSharingNetworkLoader {
             String[] scopes,
             byte[] postData,
             @DataSharingRequestType int requestType,
-            Callback<String> callback);
+            Callback<DataSharingNetworkResult> callback);
 }

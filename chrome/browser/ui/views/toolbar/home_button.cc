@@ -26,6 +26,7 @@
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/base/models/menu_model.h"
+#include "ui/base/mojom/dialog_button.mojom.h"
 #include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/bubble/bubble_dialog_delegate_view.h"
 #include "ui/views/controls/styled_label.h"
@@ -70,7 +71,7 @@ HomePageUndoBubble::HomePageUndoBubble(views::View* anchor_view,
       undo_url_(undo_url),
       undo_value_is_ntp_(undo_value_is_ntp) {
   DCHECK(prefs_);
-  SetButtons(ui::DIALOG_BUTTON_NONE);
+  SetButtons(static_cast<int>(ui::mojom::DialogButton::kNone));
   set_margins(
       ChromeLayoutProvider::Get()->GetInsetsMetric(views::INSETS_DIALOG));
 }
@@ -120,8 +121,9 @@ HomePageUndoBubbleCoordinator::~HomePageUndoBubbleCoordinator() = default;
 
 void HomePageUndoBubbleCoordinator::Show(const GURL& undo_url,
                                          bool undo_value_is_ntp) {
-  if (tracker_.view())
+  if (tracker_.view()) {
     tracker_.view()->GetWidget()->Close();
+  }
 
   auto undo_bubble = std::make_unique<HomePageUndoBubble>(
       anchor_view_, prefs_, undo_url, undo_value_is_ntp);

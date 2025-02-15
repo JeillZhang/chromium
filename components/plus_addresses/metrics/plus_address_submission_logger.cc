@@ -10,15 +10,17 @@
 #include "base/check_deref.h"
 #include "base/containers/flat_map.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/notreached.h"
 #include "base/scoped_multi_source_observation.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/types/cxx23_to_underlying.h"
-#include "components/autofill/core/browser/autofill_client.h"
 #include "components/autofill/core/browser/autofill_field.h"
-#include "components/autofill/core/browser/autofill_manager.h"
-#include "components/autofill/core/browser/autofill_plus_address_delegate.h"
-#include "components/autofill/core/browser/data_model/borrowed_transliterator.h"
+#include "components/autofill/core/browser/data_model/transliterator.h"
 #include "components/autofill/core/browser/form_structure.h"
+#include "components/autofill/core/browser/foundations/autofill_client.h"
+#include "components/autofill/core/browser/foundations/autofill_manager.h"
+#include "components/autofill/core/browser/integrators/autofill_plus_address_delegate.h"
+#include "components/autofill/core/browser/suggestions/suggestion_type.h"
 #include "components/autofill/core/common/unique_ids.h"
 #include "components/commerce/core/heuristics/commerce_heuristics_provider.h"
 #include "components/signin/public/base/consent_level.h"
@@ -63,7 +65,27 @@ bool IsCartOrCheckoutUrl(const GURL& url) {
          commerce_heuristics::IsVisitCart(url);
 }
 
+bool IsPlusAddressCreationSuggestion(SuggestionType suggestion_type) {
+  return suggestion_type == SuggestionType::kCreateNewPlusAddress ||
+         suggestion_type == SuggestionType::kCreateNewPlusAddressInline;
+}
+
 }  // namespace
+
+PlusAddressSubmissionLogger::Record::Record(
+    ukm::SourceId source_id,
+    bool is_single_field_in_renderer_form,
+    bool is_first_time_user)
+    : ukm_builder(source_id),
+      is_single_field_in_renderer_form(is_single_field_in_renderer_form),
+      is_first_time_user(is_first_time_user) {}
+
+PlusAddressSubmissionLogger::Record::Record(Record&&) = default;
+
+PlusAddressSubmissionLogger::Record&
+PlusAddressSubmissionLogger::Record::operator=(Record&&) = default;
+
+PlusAddressSubmissionLogger::Record::~Record() = default;
 
 PlusAddressSubmissionLogger::PlusAddressSubmissionLogger(
     signin::IdentityManager* identity_manager,
@@ -78,7 +100,7 @@ void PlusAddressSubmissionLogger::OnPlusAddressSuggestionShown(
     FormGlobalId form,
     FieldGlobalId field,
     autofill::AutofillPlusAddressDelegate::SuggestionContext suggestion_context,
-    autofill::AutofillClient::PasswordFormType form_type,
+    autofill::PasswordFormClassification::Type form_type,
     SuggestionType suggestion_type,
     size_t plus_address_count) {
   const CoreAccountInfo core_account_info =
@@ -96,10 +118,10 @@ void PlusAddressSubmissionLogger::OnPlusAddressSuggestionShown(
     return;
   }
   auto it =
-      base::ranges::find_if(form_structure->fields(),
-                            [&field](const std::unique_ptr<AutofillField>& f) {
-                              return f->global_id() == field;
-                            });
+      std::ranges::find_if(form_structure->fields(),
+                           [&field](const std::unique_ptr<AutofillField>& f) {
+                             return f->global_id() == field;
+                           });
   if (it == form_structure->fields().end()) {
     return;
   }
@@ -109,38 +131,50 @@ void PlusAddressSubmissionLogger::OnPlusAddressSuggestionShown(
     managers_observation_.AddObservation(&manager);
   }
 
-  const size_t field_count_in_renderer_form = base::ranges::count_if(
+  const size_t field_count_in_renderer_form = std::ranges::count_if(
       form_structure->fields(),
       [renderer_form_id](
           const std::unique_ptr<autofill::AutofillField>& field) {
         return field->renderer_form_id() == renderer_form_id;
       });
-  auto record = std::make_unique<Record>(manager.client().GetUkmSourceId());
-  record
-      ->SetCheckoutOrCartPage(IsCartOrCheckoutUrl(
+  Record record(manager.driver().GetPageUkmSourceId(),
+                field_count_in_renderer_form == 1,
+                /*is_first_time_user=*/plus_address_count == 0);
+  record.ukm_builder
+      .SetCheckoutOrCartPage(IsCartOrCheckoutUrl(
           manager.client().GetLastCommittedPrimaryMainFrameURL()))
       .SetFieldCountBrowserForm(ukm::GetExponentialBucketMinForCounts1000(
           form_structure->fields().size()))
       .SetFieldCountRendererForm(ukm::GetExponentialBucketMinForCounts1000(
           field_count_in_renderer_form))
       .SetManagedProfile(account_info.IsManaged())
-      .SetNewlyCreatedPlusAddress(suggestion_type ==
-                                  SuggestionType::kCreateNewPlusAddress)
+      // NewlyCreatedPlusAddress may be reset during submission if no plus
+      // address was submitted.
+      .SetNewlyCreatedPlusAddress(
+          IsPlusAddressCreationSuggestion(suggestion_type))
       .SetPasswordFormType(base::to_underlying(form_type))
       .SetPlusAddressCount(
           base::to_underlying(ToPlusAddressCountBucket(plus_address_count)))
-      .SetSuggestionContext(base::to_underlying(suggestion_context));
+      .SetSuggestionContext(base::to_underlying(suggestion_context))
+      .SetWasShownCreateSuggestion(
+          IsPlusAddressCreationSuggestion(suggestion_type));
   records_[&manager].insert_or_assign(field, std::move(record));
 }
 
-void PlusAddressSubmissionLogger::OnAutofillManagerDestroyed(
-    autofill::AutofillManager& manager) {
-  RemoveManagerObservation(manager);
-}
-
-void PlusAddressSubmissionLogger::OnAutofillManagerReset(
-    autofill::AutofillManager& manager) {
-  RemoveManagerObservation(manager);
+void PlusAddressSubmissionLogger::OnAutofillManagerStateChanged(
+    autofill::AutofillManager& manager,
+    autofill::AutofillManager::LifecycleState old_state,
+    autofill::AutofillManager::LifecycleState new_state) {
+  using enum autofill::AutofillManager::LifecycleState;
+  switch (new_state) {
+    case kInactive:
+    case kActive:
+      break;
+    case kPendingReset:
+    case kPendingDeletion:
+      RemoveManagerObservation(manager);
+      break;
+  }
 }
 
 void PlusAddressSubmissionLogger::OnFormSubmitted(
@@ -151,10 +185,12 @@ void PlusAddressSubmissionLogger::OnFormSubmitted(
   if (core_account_info.IsEmpty()) {
     return;
   }
+  const AccountInfo account_info =
+      identity_manager_->FindExtendedAccountInfo(core_account_info);
 
   bool gaia_email_submitted = false;
   bool plus_address_submitted = false;
-  for (const FormFieldData& field : form.fields) {
+  for (const FormFieldData& field : form.fields()) {
     // TODO: crbug.com/343124027 - Consider removing whitespace.
     const std::string normalized_value = base::UTF16ToUTF8(
         autofill::RemoveDiacriticsAndConvertToLowerCase(field.value()));
@@ -172,10 +208,10 @@ void PlusAddressSubmissionLogger::OnFormSubmitted(
     return;
   }
 
-  base::flat_map<FieldGlobalId, std::unique_ptr<Record>>& records_for_manager =
+  base::flat_map<FieldGlobalId, Record>& records_for_manager =
       records_[&manager];
   bool has_recorded_submission = false;
-  for (const FormFieldData& field : form.fields) {
+  for (const FormFieldData& field : form.fields()) {
     auto it = records_for_manager.find(field.global_id());
     if (it == records_for_manager.end()) {
       continue;
@@ -184,17 +220,36 @@ void PlusAddressSubmissionLogger::OnFormSubmitted(
     // general, there will be multiple fields for which suggestions were shown
     // and we pick an arbitrary one.
     if (!has_recorded_submission) {
-      Record& record = *it->second;
+      Record& record = it->second;
       if (!plus_address_submitted) {
-        record.SetNewlyCreatedPlusAddress(false);
+        record.ukm_builder.SetNewlyCreatedPlusAddress(false);
       }
-      record.SetSubmittedPlusAddress(plus_address_submitted);
-      record.Record(manager.client().GetUkmRecorder());
+      record.ukm_builder.SetSubmittedPlusAddress(plus_address_submitted);
+      record.ukm_builder.Record(manager.client().GetUkmRecorder());
       has_recorded_submission = true;
 
       // Record a subset of the data also in form of UMAs.
-      base::UmaHistogramBoolean("PlusAddresses.Submission",
-                                plus_address_submitted);
+      base::UmaHistogramBoolean(kUmaSubmissionPrefix, plus_address_submitted);
+      base::UmaHistogramBoolean(
+          base::StrCat({kUmaSubmissionPrefix, ".FirstTimeUser",
+                        account_info.IsManaged() ? ".Yes" : ".No"}),
+          plus_address_submitted);
+      base::UmaHistogramBoolean(
+          base::StrCat({kUmaSubmissionPrefix, ".ManagedUser",
+                        account_info.IsManaged() ? ".Yes" : ".No"}),
+          plus_address_submitted);
+      if (record.is_single_field_in_renderer_form) {
+        base::UmaHistogramBoolean(
+            base::StrCat({kUmaSubmissionPrefix, ".SingleFieldRendererForm"}),
+            plus_address_submitted);
+      }
+      if (record.is_single_field_in_renderer_form &&
+          !account_info.IsManaged()) {
+        base::UmaHistogramBoolean(
+            base::StrCat({kUmaSubmissionPrefix,
+                          ".SingleFieldRendererForm.ManagedUser.No"}),
+            plus_address_submitted);
+      }
     }
     records_for_manager.erase(it);
   }

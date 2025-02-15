@@ -9,8 +9,10 @@ assert(is_chromeos_ash, "Projector App is ash-chrome only")
 
 static_library("annotator") {
   sources = [
-    "annotator_client.cc",
-    "annotator_client.h",
+    "annotations_overlay_view_impl.cc",
+    "annotations_overlay_view_impl.h",
+    "annotator_client_impl.cc",
+    "annotator_client_impl.h",
     "untrusted_annotator_page_handler_impl.cc",
     "untrusted_annotator_page_handler_impl.h",
     "untrusted_annotator_ui.cc",
@@ -18,21 +20,27 @@ static_library("annotator") {
   ]
 
   deps = [
+    "//ash",
     "//ash/public/cpp",
     "//ash/strings",
     "//ash/webui/annotator/mojom:annotator_mojo_bindings",
     "//ash/webui/annotator/public/mojom:annotator_mojo_bindings",
+    "//ash/webui/annotator/resources/untrusted:resources",
     "//ash/webui/media_app_ui:buildflags",
-    "//ash/webui/resources:annotator_untrusted_resources",
     "//ash/webui/resources:media_app_bundle_resources",
     "//ash/webui/resources:projector_app_bundle_resources",
     "//ash/webui/resources:projector_common_resources",
+    "//chromeos/ash/components/browser_context_helper",
     "//content/public/browser",
     "//mojo/public/cpp/bindings",
+    "//ui/views/controls/webview",
     "//ui/webui",
   ]
 
-  public_deps = [ "//ash/webui/projector_app/public/cpp" ]
+  public_deps = [
+    "//ash/webui/annotator/public/cpp",
+    "//ash/webui/projector_app/public/cpp",
+  ]
 }
 
 source_set("test_support") {
@@ -45,10 +53,10 @@ source_set("test_support") {
   ]
 
   public_deps = [
-    ":annotator",
     "//ash/public/cpp:cpp",
     "//ash/public/cpp:test_support",
     "//ash/webui/annotator/mojom:annotator_mojo_bindings",
+    "//ash/webui/annotator/public/cpp",
     "//ash/webui/annotator/public/mojom:annotator_mojo_bindings",
     "//base/test:test_support",
     "//testing/gmock",
@@ -57,9 +65,13 @@ source_set("test_support") {
 
 source_set("unit_tests") {
   testonly = true
-  sources = [ "test/untrusted_annotator_page_handler_impl_unittest.cc" ]
+  sources = [
+    "test/annotator_client_impl_unittest.cc",
+    "test/untrusted_annotator_page_handler_impl_unittest.cc",
+  ]
 
   deps = [
+    ":annotator",
     ":test_support",
     "//ash/webui/annotator/mojom:annotator_mojo_bindings",
     "//ash/webui/annotator/public/mojom:annotator_mojo_bindings",

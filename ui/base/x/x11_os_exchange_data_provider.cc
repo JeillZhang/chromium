@@ -5,6 +5,7 @@
 #include "ui/base/x/x11_os_exchange_data_provider.h"
 
 #include <optional>
+#include <string_view>
 #include <utility>
 
 #include "base/containers/contains.h"
@@ -131,7 +132,7 @@ bool XOSExchangeDataProvider::IsFromPrivileged() const {
   return format_map_.find(x11::GetAtom(kFromPrivileged)) != format_map_.end();
 }
 
-void XOSExchangeDataProvider::SetString(const std::u16string& text_data) {
+void XOSExchangeDataProvider::SetString(std::u16string_view text_data) {
   if (HasString()) {
     return;
   }
@@ -147,7 +148,7 @@ void XOSExchangeDataProvider::SetString(const std::u16string& text_data) {
 }
 
 void XOSExchangeDataProvider::SetURL(const GURL& url,
-                                     const std::u16string& title) {
+                                     std::u16string_view title) {
   // TODO(dcheng): The original GTK code tries very hard to avoid writing out an
   // empty title. Is this necessary?
   if (url.is_valid()) {
@@ -158,8 +159,7 @@ void XOSExchangeDataProvider::SetURL(const GURL& url,
     ui::AddString16ToVector(spec, &data);
     ui::AddString16ToVector(u"\n", &data);
     ui::AddString16ToVector(title, &data);
-    scoped_refptr<base::RefCountedMemory> mem(
-        base::RefCountedBytes::TakeVector(&data));
+    auto mem = base::MakeRefCounted<base::RefCountedBytes>(std::move(data));
 
     format_map_.Insert(x11::GetAtom(kMimeTypeMozillaURL), mem);
 
@@ -213,14 +213,8 @@ void XOSExchangeDataProvider::SetFilenames(
 
 void XOSExchangeDataProvider::SetPickledData(const ClipboardFormatType& format,
                                              const base::Pickle& pickle) {
-  const unsigned char* data =
-      reinterpret_cast<const unsigned char*>(pickle.data());
-
-  std::vector<unsigned char> bytes;
-  bytes.insert(bytes.end(), data, data + pickle.size());
-  scoped_refptr<base::RefCountedMemory> mem(
-      base::RefCountedBytes::TakeVector(&bytes));
-
+  auto mem = base::MakeRefCounted<base::RefCountedBytes>(
+      std::vector<unsigned char>(pickle.begin(), pickle.end()));
   format_map_.Insert(x11::GetAtom(format.GetName().c_str()), mem);
 }
 
@@ -359,7 +353,7 @@ std::optional<base::Pickle> XOSExchangeDataProvider::GetPickledData(
     return std::nullopt;
   }
 
-  return base::Pickle::WithData(base::span(data.GetData(), data.GetSize()));
+  return base::Pickle::WithData(data.GetSpan());
 }
 
 bool XOSExchangeDataProvider::HasString() const {
@@ -476,8 +470,7 @@ XOSExchangeDataProvider::GetFileContents() const {
     return std::nullopt;
   }
 
-  base::FilePath filename =
-      base::FilePath(base::FilePath::StringPieceType(str.data(), str.size()));
+  base::FilePath filename(base::as_string_view(str));
   if (filename.empty()) {
     return std::nullopt;
   }
@@ -488,13 +481,14 @@ XOSExchangeDataProvider::GetFileContents() const {
   GetAtomIntersection(file_contents_atoms, GetTargets(), &requested_types);
 
   ui::SelectionData data = format_map_.GetFirstOf(requested_types);
-  if (data.IsValid()) {
-    std::string file_contents;
-    data.AssignTo(&file_contents);
-    return FileContentsInfo{.filename = filename,
-                            .file_contents = std::move(file_contents)};
+  if (!data.IsValid()) {
+    return std::nullopt;
   }
-  return std::nullopt;
+
+  std::string file_contents;
+  data.AssignTo(&file_contents);
+  return FileContentsInfo{.filename = filename,
+                          .file_contents = std::move(file_contents)};
 }
 
 bool XOSExchangeDataProvider::HasFileContents() const {
@@ -510,8 +504,7 @@ void XOSExchangeDataProvider::SetHtml(const std::u16string& html,
   bytes.push_back(0xFF);
   bytes.push_back(0xFE);
   ui::AddString16ToVector(html, &bytes);
-  scoped_refptr<base::RefCountedMemory> mem(
-      base::RefCountedBytes::TakeVector(&bytes));
+  auto mem = base::MakeRefCounted<base::RefCountedBytes>(std::move(bytes));
 
   format_map_.Insert(x11::GetAtom(kMimeTypeHTML), mem);
 }

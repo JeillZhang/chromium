@@ -14,6 +14,8 @@ import android.widget.AdapterView.OnItemClickListener;
 import android.widget.ListView;
 import android.widget.TextView;
 
+import androidx.annotation.NonNull;
+
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.profiles.Profile;
@@ -127,8 +129,8 @@ class DevicePickerBottomSheetContent implements BottomSheetContent, OnItemClickL
     }
 
     @Override
-    public int getSheetContentDescriptionStringId() {
-        return R.string.send_tab_to_self_content_description;
+    public @NonNull String getSheetContentDescription(Context context) {
+        return context.getString(R.string.send_tab_to_self_content_description);
     }
 
     @Override
@@ -148,7 +150,7 @@ class DevicePickerBottomSheetContent implements BottomSheetContent, OnItemClickL
 
     @Override
     public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
-        MetricsRecorder.recordSendingEvent(SendingEvent.CLICK_ITEM);
+        MetricsRecorder.recordCrossDeviceTabJourney();
         TargetDeviceInfo targetDeviceInfo = mAdapter.getItem(position);
 
         SendTabToSelfAndroidBridge.addEntry(mProfile, mUrl, mTitle, targetDeviceInfo.cacheGuid);

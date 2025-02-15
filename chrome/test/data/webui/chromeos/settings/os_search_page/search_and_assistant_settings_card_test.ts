@@ -5,11 +5,10 @@
 /**
  * @fileoverview
  * Suite of browser tests for the Search and Assistant settings card element.
- * This suite of tests runs when the OsSettingsRevampWayfinding feature flag is
- * both enabled and disabled.
  */
 
-import {OsSettingsRoutes, Router, routes, SearchAndAssistantSettingsCardElement, settingMojom, SettingsToggleButtonElement} from 'chrome://os-settings/os_settings.js';
+import type {IronCollapseElement, OsSettingsRoutes, SearchAndAssistantSettingsCardElement, SettingsToggleButtonElement} from 'chrome://os-settings/os_settings.js';
+import {Router, routes, settingMojom} from 'chrome://os-settings/os_settings.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 import {getDeepActiveElement} from 'chrome://resources/js/util.js';
 import {flush} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
@@ -23,10 +22,7 @@ interface SubpageTriggerData {
 }
 
 suite('<search-and-assistant-settings-card>', () => {
-  const isRevampWayfindingEnabled =
-      loadTimeData.getBoolean('isRevampWayfindingEnabled');
-  const defaultRoute =
-      isRevampWayfindingEnabled ? routes.SYSTEM_PREFERENCES : routes.OS_SEARCH;
+  const defaultRoute = routes.SYSTEM_PREFERENCES;
 
   let searchAndAssistantSettingsCard: SearchAndAssistantSettingsCardElement;
 
@@ -71,34 +67,35 @@ suite('<search-and-assistant-settings-card>', () => {
     });
   });
 
-  suite('Mahi setting toggle', () => {
-    test('should appear if isMahiEnabled flag is true.', () => {
+  suite('Magic Boost setting toggle', () => {
+    test('should appear if is isMagicBoostFeatureEnabled flag is true', () => {
       loadTimeData.overrideValues({
-        isMahiEnabled: true,
+        isMagicBoostFeatureEnabled: true,
       });
       createSearchAndAssistantCard();
       assertTrue(
           isVisible(searchAndAssistantSettingsCard.shadowRoot!.querySelector(
-              '#mahiToggle')));
+              '#magicBoostToggle')));
     });
 
-    test('should be hidden if isMahiEnabled flag is false.', () => {
-      loadTimeData.overrideValues({
-        isMahiEnabled: false,
-      });
-      createSearchAndAssistantCard();
-      assertNull(searchAndAssistantSettingsCard.shadowRoot!.querySelector(
-          '#mahiToggle'));
-    });
+    test(
+        'should be hidden if isMagicBoostFeatureEnabled flag is false.', () => {
+          loadTimeData.overrideValues({
+            isMagicBoostFeatureEnabled: false,
+          });
+          createSearchAndAssistantCard();
+          assertNull(searchAndAssistantSettingsCard.shadowRoot!.querySelector(
+              '#magicBoostToggle'));
+        });
 
-    test('Mahi toggle reflects pref value', () => {
+    test('reflects pref value and collapse the sub items', () => {
       loadTimeData.overrideValues({
-        isMahiEnabled: true,
+        isMagicBoostFeatureEnabled: true,
       });
       createSearchAndAssistantCard();
       const fakePrefs = {
         settings: {
-          mahi_enabled: {
+          magic_boost_enabled: {
             value: true,
           },
         },
@@ -106,33 +103,43 @@ suite('<search-and-assistant-settings-card>', () => {
       searchAndAssistantSettingsCard.prefs = fakePrefs;
       flush();
 
-      const mahiToggle =
+      const magicBoostToggle =
           searchAndAssistantSettingsCard.shadowRoot!
-              .querySelector<SettingsToggleButtonElement>('#mahiToggle');
-      assertTrue(!!mahiToggle);
+              .querySelector<SettingsToggleButtonElement>('#magicBoostToggle');
 
-      assertTrue(mahiToggle.checked);
+      assertTrue(!!magicBoostToggle);
+      assertTrue(magicBoostToggle.checked);
       assertTrue(searchAndAssistantSettingsCard.get(
-          'prefs.settings.mahi_enabled.value'));
+          'prefs.settings.magic_boost_enabled.value'));
 
-      // Click the toggle change the value of the pref
-      mahiToggle.click();
-      assertFalse(mahiToggle.checked);
+      const magicBoostCollapse =
+          searchAndAssistantSettingsCard.shadowRoot!
+              .querySelector<IronCollapseElement>('#magicBoostCollapse');
+      assertTrue(!!magicBoostCollapse);
+      assertTrue(magicBoostCollapse.opened);
+
+      // Click the toggle change the value of the pref, and fold the collapse.
+      magicBoostToggle.click();
+      assertFalse(magicBoostToggle.checked);
       assertFalse(searchAndAssistantSettingsCard.get(
-          'prefs.settings.mahi_enabled.value'));
+          'prefs.settings.magic_boost_enabled.value'));
+      assertFalse(magicBoostCollapse.opened);
     });
 
-    test('Mahi Toggle is deep linkable', async () => {
+    test('Magic Boost toggle is deep-linkable', async () => {
+      loadTimeData.overrideValues({
+        isMagicBoostFeatureEnabled: true,
+      });
       createSearchAndAssistantCard();
 
-      const setting = settingMojom.Setting.kMahiOnOff;
+      const setting = settingMojom.Setting.kMagicBoostOnOff;
       const params = new URLSearchParams();
       params.append('settingId', setting.toString());
       Router.getInstance().navigateTo(defaultRoute, params);
 
       const deepLinkElement =
           searchAndAssistantSettingsCard.shadowRoot!.querySelector<HTMLElement>(
-              '#mahiToggle');
+              '#magicBoostToggle');
       assertTrue(!!deepLinkElement);
 
       await waitAfterNextRender(deepLinkElement);
@@ -140,6 +147,408 @@ suite('<search-and-assistant-settings-card>', () => {
           deepLinkElement,
           searchAndAssistantSettingsCard.shadowRoot!.activeElement,
           `Element should be focused for settingId=${setting}.'`);
+    });
+
+    test('sub items are deep-linkable', async () => {
+      loadTimeData.overrideValues({
+        isMagicBoostFeatureEnabled: true,
+        isLobsterSettingsToggleVisible: true,
+      });
+      createSearchAndAssistantCard();
+      const fakePrefs = {
+        settings: {
+          magic_boost_enabled: {
+            value: true,
+          },
+        },
+      };
+      searchAndAssistantSettingsCard.prefs = fakePrefs;
+      flush();
+
+      const subItems = new Map<settingMojom.Setting, string>([
+        [settingMojom.Setting.kMahiOnOff, '#helpMeReadToggle'],
+        [settingMojom.Setting.kShowOrca, '#helpMeWriteToggle'],
+        // <if expr="_google_chrome" >
+        [settingMojom.Setting.kLobsterOnOff, '#lobsterToggle'],
+        // </if>
+      ]);
+
+      for (const [setting, element] of subItems) {
+        const params = new URLSearchParams();
+        params.append('settingId', setting.toString());
+        Router.getInstance().navigateTo(defaultRoute, params);
+
+        const deepLinkElement = searchAndAssistantSettingsCard.shadowRoot!
+                                    .querySelector<HTMLElement>(element);
+        assertTrue(!!deepLinkElement);
+
+        await waitAfterNextRender(deepLinkElement);
+        assertEquals(
+            deepLinkElement,
+            searchAndAssistantSettingsCard.shadowRoot!.activeElement,
+            `Element should be focused for settingId=${setting}.'`);
+      }
+    });
+
+    suite('Lobster setting toggle', () => {
+      [{
+        isMagicBoostFeatureEnabled: false,
+        isLobsterSettingsToggleVisible: false,
+        expectedVisibility: false,
+      },
+       {
+         isMagicBoostFeatureEnabled: false,
+         isLobsterSettingsToggleVisible: true,
+         expectedVisibility: false,
+       },
+       {
+         isMagicBoostFeatureEnabled: true,
+         isLobsterSettingsToggleVisible: false,
+         expectedVisibility: false,
+       },
+       {
+         isMagicBoostFeatureEnabled: true,
+         isLobsterSettingsToggleVisible: true,
+         expectedVisibility: true,
+       },
+      ].forEach(({
+                  isMagicBoostFeatureEnabled,
+                  isLobsterSettingsToggleVisible,
+                  expectedVisibility,
+                }) => {
+        test(
+            `should ${
+                expectedVisibility ?
+                    '' :
+                    'not'} show if isMagicBoostFeatureEnabled is ${
+                isMagicBoostFeatureEnabled ?
+                    'true' :
+                    'false'} and isLobsterSettingsToggleVisible is ${
+                isLobsterSettingsToggleVisible ? 'true' : 'false'}`,
+            () => {
+              loadTimeData.overrideValues({
+                isMagicBoostFeatureEnabled,
+                isLobsterSettingsToggleVisible,
+              });
+              createSearchAndAssistantCard();
+              const fakePrefs = {
+                settings: {
+                  magic_boost_enabled: {
+                    value: true,
+                  },
+                },
+              };
+              searchAndAssistantSettingsCard.prefs = fakePrefs;
+              flush();
+              // <if expr="_google_chrome" >
+              assertEquals(
+                  isVisible(
+                      searchAndAssistantSettingsCard.shadowRoot!.querySelector(
+                          '#lobsterToggle')),
+                  expectedVisibility);
+              // </if>
+              // <if expr="not _google_chrome" >
+              assertFalse(isVisible(
+                  searchAndAssistantSettingsCard.shadowRoot!.querySelector(
+                      '#lobsterToggle')));
+              // </if>
+            });
+      });
+    });
+  });
+
+  test(
+      'when isSunfishSettingsToggleVisible flag is false, ' +
+          'Sunfish toggle is hidden',
+      () => {
+        loadTimeData.overrideValues({
+          isSunfishSettingsToggleVisible: false,
+        });
+        createSearchAndAssistantCard();
+        assertFalse(
+            isVisible(searchAndAssistantSettingsCard.shadowRoot!.querySelector(
+                '#sunfishToggle')));
+      });
+
+  suite(
+      'when isSunfishSettingsToggleVisible flag is true, Sunfish toggle',
+      () => {
+        let sunfishToggle: SettingsToggleButtonElement;
+
+        setup(() => {
+          loadTimeData.overrideValues({
+            isSunfishSettingsToggleVisible: true,
+          });
+          createSearchAndAssistantCard();
+
+          const nullableSunfishToggle =
+              searchAndAssistantSettingsCard.shadowRoot!
+                  .querySelector<SettingsToggleButtonElement>('#sunfishToggle');
+          assertTrue(nullableSunfishToggle !== null);
+          sunfishToggle = nullableSunfishToggle;
+        });
+
+        test('should appear', () => {
+          assertTrue(isVisible(sunfishToggle));
+        });
+
+        test('reflects pref value', () => {
+          searchAndAssistantSettingsCard.prefs = {
+            ash: {
+              capture_mode: {
+                sunfish_enabled: {
+                  value: true,
+                },
+              },
+            },
+          };
+          flush();
+
+          assertTrue(isVisible(sunfishToggle));
+          assertTrue(sunfishToggle.checked);
+          assertTrue(searchAndAssistantSettingsCard.get(
+              'prefs.ash.capture_mode.sunfish_enabled.value'));
+
+          sunfishToggle.click();
+          assertFalse(sunfishToggle.checked);
+          assertFalse(searchAndAssistantSettingsCard.get(
+              'prefs.ash.capture_mode.sunfish_enabled.value'));
+        });
+
+        test('is deep-linkable', async () => {
+          const setting = settingMojom.Setting.kSunfishOnOff;
+          const params = new URLSearchParams();
+          params.append('settingId', setting.toString());
+          Router.getInstance().navigateTo(defaultRoute, params);
+
+          await waitAfterNextRender(sunfishToggle);
+          assertEquals(
+              sunfishToggle,
+              searchAndAssistantSettingsCard.shadowRoot!.activeElement,
+              `Element should be focused for settingId=${setting}.'`);
+        });
+      });
+
+  test(
+      'when isScannerSettingsToggleVisible flag is false, ' +
+          'Scanner toggles are hidden',
+      () => {
+        loadTimeData.overrideValues({
+          isScannerSettingsToggleVisible: false,
+        });
+        createSearchAndAssistantCard();
+        assertFalse(
+            isVisible(searchAndAssistantSettingsCard.shadowRoot!.querySelector(
+                '#scannerToggle')));
+        assertFalse(
+            isVisible(searchAndAssistantSettingsCard.shadowRoot!.querySelector(
+                '#scannerEnterpriseToggle')));
+      });
+
+  suite('when isScannerSettingsToggleVisible flag is true', () => {
+    setup(() => {
+      loadTimeData.overrideValues({
+        isScannerSettingsToggleVisible: true,
+      });
+    });
+
+    const ALLOWED_ENTERPRISE_POLICIES = [
+      {desc: 'allowed with model improvement', value: 0},
+      {desc: 'allowed without model improvement', value: 1},
+      {desc: 'an invalid value', value: 3},
+    ] as const satisfies ReadonlyArray<{desc: string, value: number}>;
+
+    for (const {desc, value} of ALLOWED_ENTERPRISE_POLICIES) {
+      suite(`and enterprise policy is ${desc}`, () => {
+        let scannerToggle: SettingsToggleButtonElement;
+
+        setup(() => {
+          createSearchAndAssistantCard();
+          searchAndAssistantSettingsCard.prefs = {
+            ash: {
+              scanner: {
+                enabled: {
+                  value: true,
+                  type: chrome.settingsPrivate.PrefType.BOOLEAN,
+                },
+                enterprise_policy_allowed: {
+                  value,
+                  type: chrome.settingsPrivate.PrefType.NUMBER,
+                },
+              },
+            },
+          };
+          flush();
+
+          const nullableScannerToggle =
+              searchAndAssistantSettingsCard.shadowRoot!
+                  .querySelector<SettingsToggleButtonElement>('#scannerToggle');
+          assertTrue(nullableScannerToggle !== null);
+          scannerToggle = nullableScannerToggle;
+        });
+
+        test('Scanner toggle should appear', () => {
+          assertTrue(isVisible(scannerToggle));
+        });
+
+        test('Scanner enterprise toggle should not appear', () => {
+          const scannerEnterpriseToggle =
+              searchAndAssistantSettingsCard.shadowRoot!
+                  .querySelector<SettingsToggleButtonElement>(
+                      '#scannerEnterpriseToggle');
+          assertTrue(!isVisible(scannerEnterpriseToggle));
+        });
+
+        test('Scanner toggle reflects pref value', () => {
+          assertTrue(isVisible(scannerToggle));
+          assertTrue(scannerToggle.checked);
+          assertTrue(searchAndAssistantSettingsCard.get(
+              'prefs.ash.scanner.enabled.value'));
+
+          scannerToggle.click();
+          assertFalse(scannerToggle.checked);
+          assertFalse(searchAndAssistantSettingsCard.get(
+              'prefs.ash.scanner.enabled.value'));
+        });
+
+        test('Scanner toggle is deep-linkable', async () => {
+          const setting = settingMojom.Setting.kScannerOnOff;
+          const params = new URLSearchParams();
+          params.append('settingId', setting.toString());
+          Router.getInstance().navigateTo(defaultRoute, params);
+
+          await waitAfterNextRender(scannerToggle);
+          assertEquals(
+              scannerToggle,
+              searchAndAssistantSettingsCard.shadowRoot!.activeElement,
+              `Element should be focused for settingId=${setting}.'`);
+        });
+
+        test(
+            'then changes to disallowed, ' +
+                'Scanner enterprise toggle is deep-linkable',
+            async () => {
+              searchAndAssistantSettingsCard.set(
+                  'prefs.ash.scanner.enterprise_policy_allowed.value', 2);
+              flush();
+
+              const scannerEnterpriseToggle =
+                  searchAndAssistantSettingsCard.shadowRoot!
+                      .querySelector<SettingsToggleButtonElement>(
+                          '#scannerEnterpriseToggle');
+              assertTrue(scannerEnterpriseToggle !== null);
+
+              const setting = settingMojom.Setting.kScannerOnOff;
+              const params = new URLSearchParams();
+              params.append('settingId', setting.toString());
+              Router.getInstance().navigateTo(defaultRoute, params);
+
+              await waitAfterNextRender(scannerEnterpriseToggle);
+              assertEquals(
+                  scannerEnterpriseToggle,
+                  searchAndAssistantSettingsCard.shadowRoot!.activeElement,
+                  `Element should be focused for settingId=${setting}.'`);
+            });
+      });
+    }
+
+    suite('and enterprise policy is disallowed', () => {
+      let scannerEnterpriseToggle: SettingsToggleButtonElement;
+
+      setup(() => {
+        createSearchAndAssistantCard();
+        searchAndAssistantSettingsCard.prefs = {
+          ash: {
+            scanner: {
+              enabled: {
+                value: true,
+                type: chrome.settingsPrivate.PrefType.BOOLEAN,
+              },
+              enterprise_policy_allowed: {
+                value: 2,
+                type: chrome.settingsPrivate.PrefType.NUMBER,
+              },
+            },
+          },
+        };
+        flush();
+
+        const nullableScannerEnterpriseToggle =
+            searchAndAssistantSettingsCard.shadowRoot!
+                .querySelector<SettingsToggleButtonElement>(
+                    '#scannerEnterpriseToggle');
+        assertTrue(nullableScannerEnterpriseToggle !== null);
+        scannerEnterpriseToggle = nullableScannerEnterpriseToggle;
+      });
+
+      test('Scanner enterprise toggle should appear', () => {
+        assertTrue(isVisible(scannerEnterpriseToggle));
+      });
+
+      test('Scanner toggle should not appear', () => {
+        const scannerToggle =
+            searchAndAssistantSettingsCard.shadowRoot!
+                .querySelector<SettingsToggleButtonElement>('#scannerToggle');
+        assertTrue(!isVisible(scannerToggle));
+      });
+
+      test('Scanner enterprise toggle appears unchecked', () => {
+        assertTrue(isVisible(scannerEnterpriseToggle));
+        assertFalse(scannerEnterpriseToggle.checked);
+      });
+
+      test('Scanner enterprise toggle does not respond to clicks', () => {
+        assertTrue(isVisible(scannerEnterpriseToggle));
+        scannerEnterpriseToggle.click();
+
+        assertFalse(scannerEnterpriseToggle.checked);
+        assertTrue(searchAndAssistantSettingsCard.get(
+            'prefs.ash.scanner.enabled.value'));
+        assertEquals(
+            searchAndAssistantSettingsCard.get(
+                'prefs.ash.scanner.enterprise_policy_allowed.value'),
+            2);
+      });
+
+      test('Scanner enterprise toggle is deep-linkable', async () => {
+        const setting = settingMojom.Setting.kScannerOnOff;
+        const params = new URLSearchParams();
+        params.append('settingId', setting.toString());
+        Router.getInstance().navigateTo(defaultRoute, params);
+
+        await waitAfterNextRender(scannerEnterpriseToggle);
+        assertEquals(
+            scannerEnterpriseToggle,
+            searchAndAssistantSettingsCard.shadowRoot!.activeElement,
+            `Element should be focused for settingId=${setting}.'`);
+      });
+
+      for (const {desc, value} of ALLOWED_ENTERPRISE_POLICIES) {
+        test(
+            `then changes to ${desc}, Scanner toggle is deep-linkable`,
+            async () => {
+              searchAndAssistantSettingsCard.set(
+                  'prefs.ash.scanner.enterprise_policy_allowed.value', value);
+              flush();
+
+              const scannerToggle =
+                  searchAndAssistantSettingsCard.shadowRoot!
+                      .querySelector<SettingsToggleButtonElement>(
+                          '#scannerToggle');
+              assertTrue(scannerToggle !== null);
+
+              const setting = settingMojom.Setting.kScannerOnOff;
+              const params = new URLSearchParams();
+              params.append('settingId', setting.toString());
+              Router.getInstance().navigateTo(defaultRoute, params);
+
+              await waitAfterNextRender(scannerToggle);
+              assertEquals(
+                  scannerToggle,
+                  searchAndAssistantSettingsCard.shadowRoot!.activeElement,
+                  `Element should be focused for settingId=${setting}.'`);
+            });
+      }
     });
   });
 
@@ -256,49 +665,39 @@ suite('<search-and-assistant-settings-card>', () => {
         });
   });
 
-  if (isRevampWayfindingEnabled) {
-    test('Content recommendations toggle is visible', () => {
-      createSearchAndAssistantCard();
-      const contentRecommendationsToggle =
-          searchAndAssistantSettingsCard.shadowRoot!.querySelector(
-              '#contentRecommendationsToggle');
-      assertTrue(isVisible(contentRecommendationsToggle));
-    });
+  test('Content recommendations toggle is visible', () => {
+    createSearchAndAssistantCard();
+    const contentRecommendationsToggle =
+        searchAndAssistantSettingsCard.shadowRoot!.querySelector(
+            '#contentRecommendationsToggle');
+    assertTrue(isVisible(contentRecommendationsToggle));
+  });
 
-    test('Content recommendations toggle reflects pref value', () => {
-      createSearchAndAssistantCard();
-      const fakePrefs = {
-        settings: {
-          suggested_content_enabled: {
-            value: true,
-          },
+  test('Content recommendations toggle reflects pref value', () => {
+    createSearchAndAssistantCard();
+    const fakePrefs = {
+      settings: {
+        suggested_content_enabled: {
+          value: true,
         },
-      };
-      searchAndAssistantSettingsCard.prefs = fakePrefs;
-      flush();
+      },
+    };
+    searchAndAssistantSettingsCard.prefs = fakePrefs;
+    flush();
 
-      const contentRecommendationsToggle =
-          searchAndAssistantSettingsCard.shadowRoot!
-              .querySelector<SettingsToggleButtonElement>(
-                  '#contentRecommendationsToggle');
-      assertTrue(!!contentRecommendationsToggle);
+    const contentRecommendationsToggle =
+        searchAndAssistantSettingsCard.shadowRoot!
+            .querySelector<SettingsToggleButtonElement>(
+                '#contentRecommendationsToggle');
+    assertTrue(!!contentRecommendationsToggle);
 
-      assertTrue(contentRecommendationsToggle.checked);
-      assertTrue(searchAndAssistantSettingsCard.get(
-          'prefs.settings.suggested_content_enabled.value'));
+    assertTrue(contentRecommendationsToggle.checked);
+    assertTrue(searchAndAssistantSettingsCard.get(
+        'prefs.settings.suggested_content_enabled.value'));
 
-      contentRecommendationsToggle.click();
-      assertFalse(contentRecommendationsToggle.checked);
-      assertFalse(searchAndAssistantSettingsCard.get(
-          'prefs.settings.suggested_content_enabled.value'));
-    });
-  } else {
-    test('Content recommendations toggle is not stamped', () => {
-      createSearchAndAssistantCard();
-      const contentRecommendationsToggle =
-          searchAndAssistantSettingsCard.shadowRoot!.querySelector(
-              '#contentRecommendationsToggle');
-      assertNull(contentRecommendationsToggle);
-    });
-  }
+    contentRecommendationsToggle.click();
+    assertFalse(contentRecommendationsToggle.checked);
+    assertFalse(searchAndAssistantSettingsCard.get(
+        'prefs.settings.suggested_content_enabled.value'));
+  });
 });

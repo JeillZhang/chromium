@@ -4,16 +4,29 @@
 
 package org.chromium.chrome.browser.compositor.overlays.strip;
 
-import android.graphics.RectF;
+import android.content.Context;
+import android.graphics.Rect;
 import android.util.FloatProperty;
+import android.view.View;
 
 import androidx.annotation.ColorInt;
 import androidx.annotation.Nullable;
 
+import org.chromium.base.Callback;
 import org.chromium.base.MathUtils;
+import org.chromium.base.Token;
+import org.chromium.chrome.R;
+import org.chromium.chrome.browser.data_sharing.ui.shared_image_tiles.SharedImageTilesColor;
+import org.chromium.chrome.browser.data_sharing.ui.shared_image_tiles.SharedImageTilesCoordinator;
+import org.chromium.chrome.browser.data_sharing.ui.shared_image_tiles.SharedImageTilesType;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.tasks.tab_management.TabBubbler;
+import org.chromium.chrome.browser.tasks.tab_management.TabUiThemeUtil;
+import org.chromium.components.collaboration.CollaborationService;
+import org.chromium.components.data_sharing.DataSharingService;
 import org.chromium.ui.base.LocalizationUtils;
+import org.chromium.ui.resources.dynamics.ViewResourceAdapter;
 
 /**
  * {@link StripLayoutGroupTitle} is used to keep track of the strip position and rendering
@@ -21,8 +34,11 @@ import org.chromium.ui.base.LocalizationUtils;
  * onto the GL canvas.
  */
 public class StripLayoutGroupTitle extends StripLayoutView {
+
+    private final Context mContext;
+
     /** Delegate for additional group title functionality. */
-    public interface StripLayoutGroupTitleDelegate {
+    public interface StripLayoutGroupTitleDelegate extends StripLayoutViewOnClickHandler {
         /**
          * Releases the resources associated with this group indicator.
          *
@@ -31,11 +47,11 @@ public class StripLayoutGroupTitle extends StripLayoutView {
         void releaseResourcesForGroupTitle(int rootId);
 
         /**
-         * Handles group title click action.
+         * Rebuilds the resources associated with this group indicator.
          *
-         * @param groupTitle The group title that was clicked.
+         * @param groupTitle This group indicator.
          */
-        void handleGroupTitleClick(StripLayoutGroupTitle groupTitle);
+        void rebuildResourcesForGroupTitle(StripLayoutGroupTitle groupTitle);
     }
 
     /** A property for animations to use for changing the width of the bottom indicator. */
@@ -60,37 +76,55 @@ public class StripLayoutGroupTitle extends StripLayoutView {
     private static final int MARGIN_BOTTOM_DP = 9;
     private static final int MARGIN_START_DP = 13;
     private static final int MARGIN_END_DP = 9;
-
     private static final int TEXT_PADDING_DP = 8;
-    private static final int CORNER_RADIUS_DP = 7;
+
+    // The padding between the start of the indicator and the avatar when the group is shared. If no
+    // avatar is present, the start padding should match the end padding, using `TEXT_PADDING_DP`.
+    private static final int AVATAR_START_PADDING_DP = 4;
+    private static final int CORNER_RADIUS_DP = 9;
     private static final float BOTTOM_INDICATOR_HEIGHT_DP = 2.f;
+    private static final float NOTIFICATION_BUBBLE_SIZE_DP = 6.f;
+    private static final float NOTIFICATION_BUBBLE_PADDING_DP = 4.f;
 
     private static final int WIDTH_MARGINS_DP = MARGIN_START_DP + MARGIN_END_DP;
     private static final int EFFECTIVE_MIN_WIDTH = MIN_VISUAL_WIDTH_DP + WIDTH_MARGINS_DP;
     private static final int EFFECTIVE_MAX_WIDTH = MAX_VISUAL_WIDTH_DP + WIDTH_MARGINS_DP;
 
+    // Reorder background constants.
+    public static final float REORDER_BACKGROUND_TOP_MARGIN = StripLayoutTab.TOP_MARGIN_DP;
+    public static final float REORDER_BACKGROUND_BOTTOM_MARGIN =
+            StripLayoutUtils.FOLIO_DETACHED_BOTTOM_MARGIN_DP;
+    public static final float REORDER_BACKGROUND_PADDING_START = 5.f;
+    public static final float REORDER_BACKGROUND_PADDING_END = 10.f;
+    public static final float REORDER_BACKGROUND_CORNER_RADIUS = 12.f;
+
+    public static final int TOTAL_MARGIN_HEIGHT = MARGIN_TOP_DP + MARGIN_BOTTOM_DP;
+
     // External influences.
     private final StripLayoutGroupTitleDelegate mDelegate;
 
-    // State variables.
-    private final boolean mIncognito;
-
-    // Position variables.
-    private float mDrawX;
-    private float mDrawY;
-    private float mWidth;
-    private float mHeight;
-    private final RectF mTouchTarget = new RectF();
-
     // Tab group variables.
+    // Tab group's root Id this view refers to.
+    // @TODO(crbug.com/379941150) Deprecate rootId and transition to using tabGroupId
     private int mRootId;
+    private final Token mTabGroupId;
     private String mTitle;
     @ColorInt private int mColor;
 
-    private String mAccessibilityDescription = "";
-
     // Bottom indicator variables
     private float mBottomIndicatorWidth;
+
+    // Shared state
+    private boolean mIsShared;
+    @Nullable private SharedImageTilesCoordinator mSharedImageTilesCoordinator;
+    @Nullable private ViewResourceAdapter mAvatarResource;
+    private float mAvatarWidthWithPadding;
+    @ColorInt private final int mBubbleTint;
+    private boolean mShowBubble;
+    @Nullable private TabBubbler mTabBubbler;
+
+    // Reorder state
+    @ColorInt private final int mReorderBackgroundTint;
 
     /**
      * Create a {@link StripLayoutGroupTitle} that represents the TabGroup for the {@code rootId}.
@@ -98,97 +132,36 @@ public class StripLayoutGroupTitle extends StripLayoutView {
      * @param delegate The delegate for additional strip group title functionality.
      * @param incognito Whether or not this tab group is Incognito.
      * @param rootId The root ID for the tab group.
-     * @param title The title of the tab group, if it is set. Null otherwise.
-     * @param textWidth The width of the title text in px.
-     * @param color The color of the tab group.
+     * @param tabGroupId The tab group ID for the tab group.
      */
     public StripLayoutGroupTitle(
+            Context context,
             StripLayoutGroupTitleDelegate delegate,
             boolean incognito,
             int rootId,
-            @Nullable String title,
-            float textWidth,
-            @ColorInt int color) {
+            Token tabGroupId) {
+        super(incognito, delegate);
         assert rootId != Tab.INVALID_TAB_ID : "Tried to create a group title for an invalid group.";
-
+        mRootId = rootId;
+        mContext = context;
         mDelegate = delegate;
-        mIncognito = incognito;
-
-        updateRootId(rootId);
-        updateTitle(title, textWidth);
-        updateTint(color);
+        mTabGroupId = tabGroupId;
+        mBubbleTint = TabUiThemeUtil.getGroupTitleBubbleColor(mContext);
+        mReorderBackgroundTint = TabUiThemeUtil.getReorderBackgroundColor(mContext, incognito);
     }
 
     @Override
-    public float getDrawX() {
-        return mDrawX;
+    void onVisibilityChanged(boolean newVisibility) {
+        if (newVisibility) {
+            mDelegate.rebuildResourcesForGroupTitle(this);
+        } else {
+            mDelegate.releaseResourcesForGroupTitle(mRootId);
+        }
     }
 
     @Override
-    public void setDrawX(float x) {
-        mDrawX = x;
-        mTouchTarget.left = x;
-        mTouchTarget.right = x + mWidth;
-    }
-
-    @Override
-    public float getDrawY() {
-        return mDrawY;
-    }
-
-    @Override
-    public void setDrawY(float y) {
-        mDrawY = y;
-        mTouchTarget.top = y;
-        mTouchTarget.bottom = y + mHeight;
-    }
-
-    @Override
-    public float getWidth() {
-        return mWidth;
-    }
-
-    @Override
-    public void setWidth(float width) {
-        mWidth = width;
-        mTouchTarget.right = mDrawX + mWidth;
-    }
-
-    @Override
-    public float getHeight() {
-        return mHeight;
-    }
-
-    @Override
-    public void setHeight(float height) {
-        mHeight = height;
-        mTouchTarget.bottom = mDrawY + mHeight;
-    }
-
-    @Override
-    public void setVisible(boolean visible) {
-        super.setVisible(visible);
-
-        if (!visible) mDelegate.releaseResourcesForGroupTitle(mRootId);
-    }
-
-    @Override
-    public String getAccessibilityDescription() {
-        return mAccessibilityDescription;
-    }
-
-    protected void setAccessibilityDescription(String accessibilityDescription) {
-        mAccessibilityDescription = accessibilityDescription;
-    }
-
-    @Override
-    public void getTouchTarget(RectF outTarget) {
-        outTarget.set(mTouchTarget);
-    }
-
-    @Override
-    public boolean checkClickedOrHovered(float x, float y) {
-        return mTouchTarget.contains(x, y);
+    public void setIncognito(boolean incognito) {
+        assert false : "Incognito state of a group title cannot change";
     }
 
     @Override
@@ -196,50 +169,46 @@ public class StripLayoutGroupTitle extends StripLayoutView {
         return ChromeFeatureList.sTabStripGroupCollapse.isEnabled();
     }
 
-    @Override
-    public boolean hasLongClickAction() {
-        // TODO(https://crbug.com/333777015): Implement long press to drag tab group.
-        return false;
-    }
-
-    @Override
-    public void handleClick(long time) {
-        mDelegate.handleGroupTitleClick(this);
-    }
-
-    /**
-     * @return Whether the tab group this represents is Incognito or not.
-     */
-    public boolean isIncognito() {
-        return mIncognito;
-    }
-
     /**
      * @return DrawX accounting for padding.
      */
     public float getPaddedX() {
-        return mDrawX + (LocalizationUtils.isLayoutRtl() ? MARGIN_END_DP : MARGIN_START_DP);
+        return getDrawX() + (LocalizationUtils.isLayoutRtl() ? MARGIN_END_DP : MARGIN_START_DP);
     }
 
     /**
      * @return DrawY accounting for padding.
      */
     public float getPaddedY() {
-        return mDrawY + MARGIN_TOP_DP;
+        return getDrawY() + MARGIN_TOP_DP;
     }
 
     /**
      * @return Width accounting for padding.
      */
     public float getPaddedWidth() {
-        return mWidth - MARGIN_START_DP - MARGIN_END_DP;
+        return getWidth() - MARGIN_START_DP - MARGIN_END_DP;
     }
 
     /**
      * @return Height accounting for padding.
      */
     public float getPaddedHeight() {
-        return mHeight - MARGIN_TOP_DP - MARGIN_BOTTOM_DP;
+        return getHeight() - MARGIN_TOP_DP - MARGIN_BOTTOM_DP;
+    }
+
+    /**
+     * Get padded bounds for this view.
+     *
+     * @param out Rect to set the bounds.
+     */
+    public void getPaddedBoundsPx(Rect out) {
+        float dpToPx = mContext.getResources().getDisplayMetrics().density;
+        out.set(
+                (int) (getPaddedX() * dpToPx),
+                (int) (getPaddedY() * dpToPx),
+                (int) ((getPaddedX() + getPaddedWidth()) * dpToPx),
+                (int) ((getPaddedY() + getPaddedHeight()) * dpToPx));
     }
 
     /**
@@ -254,6 +223,12 @@ public class StripLayoutGroupTitle extends StripLayoutView {
      */
     public void updateTint(@ColorInt int color) {
         mColor = color;
+
+        // Update the shared group avatar border color if a shared image tiles coordinator exists.
+        if (mSharedImageTilesCoordinator != null) {
+            mSharedImageTilesCoordinator.updateColorStyle(
+                    new SharedImageTilesColor(SharedImageTilesColor.Style.TAB_GROUP, mColor));
+        }
     }
 
     /**
@@ -266,9 +241,17 @@ public class StripLayoutGroupTitle extends StripLayoutView {
     protected void updateTitle(String title, float textWidth) {
         mTitle = title;
 
-        // Account for view padding & margins. Increment to prevent off-by-one rounding errors
+        // Account for view padding, margins and width of the avatar and its padding, if applicable.
+        // Increment to prevent off-by-one rounding errors
         // adding a title fade when unnecessary.
-        float viewWidth = textWidth + (TEXT_PADDING_DP * 2) + WIDTH_MARGINS_DP + 1;
+        float viewWidth =
+                getAvatarWidthWithPadding()
+                        + getBubbleWidthWithPadding()
+                        + textWidth
+                        + getTitleStartPadding()
+                        + getTitleEndPadding()
+                        + WIDTH_MARGINS_DP
+                        + 1;
         setWidth(MathUtils.clamp(viewWidth, EFFECTIVE_MIN_WIDTH, EFFECTIVE_MAX_WIDTH));
     }
 
@@ -280,17 +263,31 @@ public class StripLayoutGroupTitle extends StripLayoutView {
     }
 
     /**
+     * @return The group's tab group ID.
+     */
+    public Token getTabGroupId() {
+        return mTabGroupId;
+    }
+
+    /**
      * @param rootId The tab group's new rootId. Should be synced with the {@link
-     *     org.chromium.chrome.browser.tasks.tab_groups.TabGroupModelFilter}.
+     *     org.chromium.chrome.browser.tabmodel.TabGroupModelFilter}.
      */
     protected void updateRootId(int rootId) {
         mRootId = rootId;
     }
 
     /**
-     * @return The padding for the title text.
+     * @return The start padding for the title.
      */
-    public int getTitleTextPadding() {
+    public int getTitleStartPadding() {
+        return mAvatarWidthWithPadding > 0 ? AVATAR_START_PADDING_DP : TEXT_PADDING_DP;
+    }
+
+    /**
+     * @return The end padding for the title.
+     */
+    public int getTitleEndPadding() {
         return TEXT_PADDING_DP;
     }
 
@@ -321,5 +318,216 @@ public class StripLayoutGroupTitle extends StripLayoutView {
      */
     public float getBottomIndicatorHeight() {
         return BOTTOM_INDICATOR_HEIGHT_DP;
+    }
+
+    /**
+     * Returns {@code true} if the reorder background should be visible. This is the case when the
+     * group indicator is foregrounded for reorder and is not collapsed.
+     */
+    public boolean shouldShowReorderBackground() {
+        return isForegrounded() && !isCollapsed();
+    }
+
+    /** Returns the {@link ColorInt} for the reorder background. */
+    public @ColorInt int getReorderBackgroundTint() {
+        return mReorderBackgroundTint;
+    }
+
+    /**
+     * Updates the shared tab group state by fetching the group avatar from the PeopleKit service,
+     * capturing the avatar view as a bitmap, and updating the group title with the captured avatar.
+     * *
+     *
+     * @param collaborationId The id to identify a shared tab group.
+     * @param dataSharingService Used to fetch and observe current share data.
+     * @param collaborationService Used to fetch collaboration group data.
+     * @param registerAvatarResource A callback to register the avatar resource once it is captured.
+     * @param updateGroupTitleBitmap A {@link Runnable} to update the group title bitmap after the
+     *     avatar is captured.
+     */
+    public void updateSharedTabGroup(
+            String collaborationId,
+            DataSharingService dataSharingService,
+            CollaborationService collaborationService,
+            Callback<ViewResourceAdapter> registerAvatarResource,
+            Runnable updateGroupTitleBitmap) {
+        // Mark the group as shared.
+        mIsShared = true;
+
+        // Initialize the shared image tiles coordinator if it doesn't exist.
+        if (mSharedImageTilesCoordinator == null) {
+            mSharedImageTilesCoordinator =
+                    new SharedImageTilesCoordinator(
+                            mContext,
+                            SharedImageTilesType.SMALL,
+                            new SharedImageTilesColor(
+                                    SharedImageTilesColor.Style.TAB_GROUP, mColor),
+                            dataSharingService,
+                            collaborationService);
+        }
+
+        // Update the collaboration ID and fetch group data from the data sharing service.
+        mSharedImageTilesCoordinator.fetchImagesForCollaborationId(
+                collaborationId,
+                (result) -> {
+                    if (result) {
+                        // Capture and register the avatar bitmap if the group data is successfully
+                        // fetched.
+                        View avatarView = mSharedImageTilesCoordinator.getView();
+                        if (LocalizationUtils.isLayoutRtl()) {
+                            avatarView.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+                        }
+                        captureSharedAvatarBitmap(
+                                avatarView, registerAvatarResource, updateGroupTitleBitmap);
+                    }
+                });
+    }
+
+    /**
+     * This method measures and lays out the avatar view, registers the avatar resource and triggers
+     * an update to the group title bitmap
+     *
+     * @params view The Android view of the avatar.
+     * @param registerAvatarResource A callback to register the avatar resource once it is captured.
+     * @param updateGroupTitleBitmap A {@link Runnable} to update the group title bitmap after the
+     *     avatar is captured.
+     */
+    private void captureSharedAvatarBitmap(
+            View view,
+            Callback<ViewResourceAdapter> registerAvatarResource,
+            Runnable updateGroupTitleBitmap) {
+        view.measure(
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+        view.layout(0, 0, view.getMeasuredWidth(), view.getMeasuredHeight());
+
+        // Register the avatar resource if it does not already exist.
+        if (mAvatarResource == null) {
+            mAvatarResource = new ViewResourceAdapter(view);
+            registerAvatarResource.onResult(mAvatarResource);
+        }
+
+        // Calculate the avatar width including padding.
+        int avatarWidthPx =
+                view.getWidth()
+                        + mContext.getResources()
+                                .getDimensionPixelSize(R.dimen.tablet_shared_group_avatar_padding);
+        mAvatarWidthWithPadding =
+                avatarWidthPx / mContext.getResources().getDisplayMetrics().density;
+
+        // Trigger an update to the group title bitmap.
+        updateGroupTitleBitmap.run();
+    }
+
+    public void clearSharedTabGroup() {
+        mIsShared = false;
+        mAvatarResource = null;
+        mAvatarWidthWithPadding = 0;
+        if (mSharedImageTilesCoordinator != null) {
+            mSharedImageTilesCoordinator.destroy();
+            mSharedImageTilesCoordinator = null;
+        }
+    }
+
+    /**
+     * @return The width of the shared group avatar and padding.
+     */
+    public float getAvatarWidthWithPadding() {
+        return mAvatarWidthWithPadding;
+    }
+
+    /**
+     * @param showBubble Whether the tab notification bubble should show.
+     */
+    public void setShowBubble(boolean showBubble) {
+        mShowBubble = showBubble;
+    }
+
+    /**
+     * @return Whether the notification bubble should show.
+     */
+    public boolean shouldShowBubble() {
+        return mShowBubble;
+    }
+
+    /**
+     * @param tabBubbler The {@link TabBubbler} that responsible for managing shared group
+     *     notification bubbles. The current {@link TabBubbler} is destroyed if set null.
+     */
+    public void setTabBubbler(TabBubbler tabBubbler) {
+        if (mTabBubbler != null && tabBubbler == null) {
+            mTabBubbler.destroy();
+        }
+        mTabBubbler = tabBubbler;
+    }
+
+    /**
+     * @return The {@link TabBubbler} that responsible for managing shared group notification
+     *     bubbles.
+     */
+    public TabBubbler getTabBubbler() {
+        return mTabBubbler;
+    }
+
+    /**
+     * @return The total horizontal space needed for the notification bubble and its padding, or 0
+     *     if the bubble is not shown.
+     */
+    public float getBubbleWidthWithPadding() {
+        return shouldShowBubble()
+                ? NOTIFICATION_BUBBLE_PADDING_DP + NOTIFICATION_BUBBLE_SIZE_DP
+                : 0;
+    }
+
+    /**
+     * @return Notification bubble drawX accounting for padding.
+     */
+    public float getBubbleDrawX() {
+        assert mShowBubble;
+        return LocalizationUtils.isLayoutRtl()
+                ? getPaddedX() + getTitleEndPadding()
+                : getPaddedX() + getPaddedWidth() - getTitleEndPadding() - getBubbleSize();
+    }
+
+    /**
+     * @return The tint of the notification bubble.
+     */
+    public @ColorInt int getBubbleTint() {
+        return mBubbleTint;
+    }
+
+    /**
+     * @return The size of the notification bubble circle.
+     */
+    public float getBubbleSize() {
+        return NOTIFICATION_BUBBLE_SIZE_DP;
+    }
+
+    /**
+     * @return The padding between title text end and bubble.
+     */
+    public float getBubblePadding() {
+        return NOTIFICATION_BUBBLE_PADDING_DP;
+    }
+
+    /**
+     * @return Whether the group is shared.
+     */
+    public boolean isGroupSharedForTesting() {
+        return mIsShared;
+    }
+
+    /**
+     * @return The coordinator to retrieve the avatar face pile for shared group.
+     */
+    public SharedImageTilesCoordinator getSharedImageTilesCoordinatorForTesting() {
+        return mSharedImageTilesCoordinator;
+    }
+
+    /**
+     * @return The avatar face pile resource displayed on the tab group title for shared group.
+     */
+    public ViewResourceAdapter getAvatarResourceForTesting() {
+        return mAvatarResource;
     }
 }

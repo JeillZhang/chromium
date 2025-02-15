@@ -8,9 +8,9 @@
 #include <vector>
 
 #include "base/command_line.h"
+#include "base/not_fatal_until.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
-#include "ui/display/tablet_state.h"
 #include "ui/ozone/public/ozone_switches.h"
 
 namespace ui {
@@ -69,7 +69,7 @@ const std::vector<display::Display>& HeadlessScreen::GetAllDisplays() const {
 
 display::Display HeadlessScreen::GetPrimaryDisplay() const {
   auto iter = display_list_.GetPrimaryDisplayIterator();
-  DCHECK(iter != display_list_.displays().end());
+  CHECK(iter != display_list_.displays().end(), base::NotFatalUntil::M130);
   return *iter;
 }
 
@@ -104,11 +104,5 @@ void HeadlessScreen::AddObserver(display::DisplayObserver* observer) {
 void HeadlessScreen::RemoveObserver(display::DisplayObserver* observer) {
   display_list_.RemoveObserver(observer);
 }
-
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-display::TabletState HeadlessScreen::GetTabletState() const {
-  return display::TabletState::kInClamshellMode;
-}
-#endif
 
 }  // namespace ui

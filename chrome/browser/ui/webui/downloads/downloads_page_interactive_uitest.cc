@@ -37,10 +37,7 @@ using ::testing::Eq;
 class DownloadsPageInteractiveUitest
     : public InteractiveBrowserTestT<DownloadTestBase> {
  public:
-  DownloadsPageInteractiveUitest() {
-    feature_list_.InitAndEnableFeature(
-        safe_browsing::kImprovedDownloadPageWarnings);
-  }
+  DownloadsPageInteractiveUitest() = default;
   ~DownloadsPageInteractiveUitest() override = default;
 
   void SetUp() override {
@@ -133,7 +130,7 @@ class DownloadsPageInteractiveUitest
     const DeepQuery kPathToClearAllButton{
         "downloads-manager",
         "downloads-toolbar",
-        ".clear-all",
+        "#clearAll",
     };
     return ExecuteJsAt(kDownloadsPageTabId, kPathToClearAllButton, kClickFn);
   }
@@ -316,7 +313,7 @@ class DownloadsPageInteractiveUitestWithDangerType
     DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kReadyEvent);
     const DeepQuery kPathToDialog{
         "downloads-manager",
-        "download-bypass-warning-confirmation-dialog",
+        "downloads-bypass-warning-confirmation-dialog",
     };
     StateChange dialog_visible;
     dialog_visible.type = StateChange::Type::kExists;
@@ -329,7 +326,7 @@ class DownloadsPageInteractiveUitestWithDangerType
     DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kReadyEvent);
     const DeepQuery path_to_button{
         "downloads-manager",
-        "download-bypass-warning-confirmation-dialog",
+        "downloads-bypass-warning-confirmation-dialog",
         button_selector,
     };
     StateChange button_visible;

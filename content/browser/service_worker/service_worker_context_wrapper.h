@@ -195,10 +195,10 @@ class CONTENT_EXPORT ServiceWorkerContextWrapper
       StatusCodeCallback callback) override;
   void UnregisterServiceWorker(const GURL& scope,
                                const blink::StorageKey& key,
-                               ResultCallback callback) override;
+                               StatusCodeCallback callback) override;
   void UnregisterServiceWorkerImmediately(const GURL& scope,
                                           const blink::StorageKey& key,
-                                          ResultCallback callback) override;
+                                          StatusCodeCallback callback) override;
   ServiceWorkerExternalRequestResult StartingExternalRequest(
       int64_t service_worker_version_id,
       ServiceWorkerExternalRequestTimeoutType timeout_type,
@@ -218,15 +218,13 @@ class CONTENT_EXPORT ServiceWorkerContextWrapper
   void CheckHasServiceWorker(const GURL& url,
                              const blink::StorageKey& key,
                              CheckHasServiceWorkerCallback callback) override;
-  void CheckOfflineCapability(const GURL& url,
-                              const blink::StorageKey& key,
-                              CheckOfflineCapabilityCallback callback) override;
 
   void ClearAllServiceWorkersForTest(base::OnceClosure callback) override;
-  void StartWorkerForScope(const GURL& scope,
-                           const blink::StorageKey& key,
-                           StartWorkerCallback info_callback,
-                           StatusCodeCallback failure_callback) override;
+  void StartWorkerForScope(
+      const GURL& scope,
+      const blink::StorageKey& key,
+      StartWorkerCallback info_callback,
+      StatusCodeResponseCallback failure_callback) override;
   void StartServiceWorkerAndDispatchMessage(
       const GURL& scope,
       const blink::StorageKey& key,
@@ -250,6 +248,10 @@ class CONTENT_EXPORT ServiceWorkerContextWrapper
       int64_t service_worker_version_id) override;
   blink::AssociatedInterfaceProvider& GetRemoteAssociatedInterfaces(
       int64_t service_worker_version_id) override;
+
+  // Returns the running info for a worker with `version_id`, if found.
+  std::optional<ServiceWorkerRunningInfo> GetRunningServiceWorkerInfo(
+      int64_t version_id);
 
   scoped_refptr<ServiceWorkerRegistration> GetLiveRegistration(
       int64_t registration_id);
@@ -473,12 +475,17 @@ class CONTENT_EXPORT ServiceWorkerContextWrapper
                                     bool include_installing_version,
                                     FindRegistrationCallback callback);
 
-  // Helper method for `UnregisterServiceWorker()` and
-  // `UnregisterServiceWorkerImmediately()`.
+  // Helper methods for `UnregisterServiceWorker()` and
+  // `UnregisterServiceWorkerImmediately()`. `callback` provides the status that
+  // was encountered. `blink::ServiceWorkerStatusCode::kOk` means the request to
+  // unregister was sent. It does not mean the worker has been fully
+  // unregistered though.
   void UnregisterServiceWorkerImpl(const GURL& scope,
                                    const blink::StorageKey& key,
-                                   bool is_immediate,
-                                   ResultCallback callback);
+                                   StatusCodeCallback callback);
+  void UnregisterServiceWorkerImmediatelyImpl(const GURL& scope,
+                                              const blink::StorageKey& key,
+                                              StatusCodeCallback callback);
 
   void MaybeProcessPendingWarmUpRequest();
 

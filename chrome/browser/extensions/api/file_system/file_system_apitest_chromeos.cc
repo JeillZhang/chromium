@@ -38,6 +38,7 @@
 #include "extensions/browser/event_router.h"
 #include "extensions/common/api/file_system.h"
 #include "storage/browser/file_system/external_mount_points.h"
+#include "ui/base/mojom/dialog_button.mojom.h"
 #include "ui/base/ui_base_types.h"
 
 // TODO(michaelpg): Port these tests to app_shell: crbug.com/505926.
@@ -63,7 +64,7 @@ const char kTestingExtensionId[] = "pkplfbidichfdicaijlchgnapepdginl";
 // simulates clicking of the specified dialog button.
 class ScopedSkipRequestFileSystemDialog {
  public:
-  explicit ScopedSkipRequestFileSystemDialog(ui::DialogButton button) {
+  explicit ScopedSkipRequestFileSystemDialog(ui::mojom::DialogButton button) {
     file_system_api::ConsentProviderDelegate::SetAutoDialogButtonForTest(
         button);
   }
@@ -75,7 +76,7 @@ class ScopedSkipRequestFileSystemDialog {
 
   ~ScopedSkipRequestFileSystemDialog() {
     file_system_api::ConsentProviderDelegate::SetAutoDialogButtonForTest(
-        ui::DIALOG_BUTTON_NONE);
+        ui::mojom::DialogButton::kNone);
   }
 };
 
@@ -122,7 +123,7 @@ class ScopedAddListenerObserver : public EventRouter::Observer {
 // the integrated Google Drive support.
 class FileSystemApiTestForDrive : public PlatformAppBrowserTest {
  public:
-  FileSystemApiTestForDrive() {}
+  FileSystemApiTestForDrive() = default;
 
   bool SetUpUserDataDirectory() override {
     return drive::SetUpUserDataDirectoryForDriveFsTest();
@@ -158,8 +159,7 @@ class FileSystemApiTestForDrive : public PlatformAppBrowserTest {
   drive::DriveIntegrationService* CreateDriveIntegrationService(
       Profile* profile) {
     // Ignore signin and lock screen apps profile.
-    if (ash::IsSigninBrowserContext(profile) ||
-        ash::IsLockScreenAppBrowserContext(profile)) {
+    if (ash::IsSigninBrowserContext(profile)) {
       return nullptr;
     }
 
@@ -282,8 +282,7 @@ class FileSystemApiTestForRequestFileSystem : public PlatformAppBrowserTest {
   drive::DriveIntegrationService* CreateDriveIntegrationService(
       Profile* profile) {
     // Ignore signin and lock screen apps profile.
-    if (ash::IsSigninBrowserContext(profile) ||
-        ash::IsLockScreenAppBrowserContext(profile)) {
+    if (ash::IsSigninBrowserContext(profile)) {
       return nullptr;
     }
 
@@ -472,7 +471,8 @@ IN_PROC_BROWSER_TEST_F(FileSystemApiTestForDrive,
 
 IN_PROC_BROWSER_TEST_F(FileSystemApiTestForRequestFileSystem, Background) {
   EnterKioskSession();
-  ScopedSkipRequestFileSystemDialog dialog_skipper(ui::DIALOG_BUTTON_OK);
+  ScopedSkipRequestFileSystemDialog dialog_skipper(
+      ui::mojom::DialogButton::kOk);
   ASSERT_TRUE(
       RunExtensionTest("api_test/file_system/request_file_system_background",
                        {.launch_as_platform_app = true}))
@@ -481,7 +481,8 @@ IN_PROC_BROWSER_TEST_F(FileSystemApiTestForRequestFileSystem, Background) {
 
 IN_PROC_BROWSER_TEST_F(FileSystemApiTestForRequestFileSystem, ReadOnly) {
   EnterKioskSession();
-  ScopedSkipRequestFileSystemDialog dialog_skipper(ui::DIALOG_BUTTON_OK);
+  ScopedSkipRequestFileSystemDialog dialog_skipper(
+      ui::mojom::DialogButton::kOk);
   ASSERT_TRUE(
       RunExtensionTest("api_test/file_system/request_file_system_read_only",
                        {.launch_as_platform_app = true}))
@@ -490,7 +491,8 @@ IN_PROC_BROWSER_TEST_F(FileSystemApiTestForRequestFileSystem, ReadOnly) {
 
 IN_PROC_BROWSER_TEST_F(FileSystemApiTestForRequestFileSystem, Writable) {
   EnterKioskSession();
-  ScopedSkipRequestFileSystemDialog dialog_skipper(ui::DIALOG_BUTTON_OK);
+  ScopedSkipRequestFileSystemDialog dialog_skipper(
+      ui::mojom::DialogButton::kOk);
   ASSERT_TRUE(
       RunExtensionTest("api_test/file_system/request_file_system_writable",
                        {.launch_as_platform_app = true}))
@@ -499,7 +501,8 @@ IN_PROC_BROWSER_TEST_F(FileSystemApiTestForRequestFileSystem, Writable) {
 
 IN_PROC_BROWSER_TEST_F(FileSystemApiTestForRequestFileSystem, UserReject) {
   EnterKioskSession();
-  ScopedSkipRequestFileSystemDialog dialog_skipper(ui::DIALOG_BUTTON_CANCEL);
+  ScopedSkipRequestFileSystemDialog dialog_skipper(
+      ui::mojom::DialogButton::kCancel);
   ASSERT_TRUE(
       RunExtensionTest("api_test/file_system/request_file_system_user_reject",
                        {.launch_as_platform_app = true}))
@@ -507,7 +510,8 @@ IN_PROC_BROWSER_TEST_F(FileSystemApiTestForRequestFileSystem, UserReject) {
 }
 
 IN_PROC_BROWSER_TEST_F(FileSystemApiTestForRequestFileSystem, NotKioskSession) {
-  ScopedSkipRequestFileSystemDialog dialog_skipper(ui::DIALOG_BUTTON_OK);
+  ScopedSkipRequestFileSystemDialog dialog_skipper(
+      ui::mojom::DialogButton::kOk);
   ASSERT_TRUE(RunExtensionTest(
       "api_test/file_system/request_file_system_not_kiosk_session",
       {.launch_as_platform_app = true}))
@@ -516,7 +520,8 @@ IN_PROC_BROWSER_TEST_F(FileSystemApiTestForRequestFileSystem, NotKioskSession) {
 
 IN_PROC_BROWSER_TEST_F(FileSystemApiTestForRequestFileSystem,
                        AllowlistedComponent) {
-  ScopedSkipRequestFileSystemDialog dialog_skipper(ui::DIALOG_BUTTON_CANCEL);
+  ScopedSkipRequestFileSystemDialog dialog_skipper(
+      ui::mojom::DialogButton::kCancel);
   ASSERT_TRUE(RunExtensionTest(
       "api_test/file_system/request_file_system_allowed_component",
       {.launch_as_platform_app = true}, {.load_as_component = true}))
@@ -525,7 +530,8 @@ IN_PROC_BROWSER_TEST_F(FileSystemApiTestForRequestFileSystem,
 
 IN_PROC_BROWSER_TEST_F(FileSystemApiTestForRequestFileSystem,
                        NotAllowlistedComponent) {
-  ScopedSkipRequestFileSystemDialog dialog_skipper(ui::DIALOG_BUTTON_OK);
+  ScopedSkipRequestFileSystemDialog dialog_skipper(
+      ui::mojom::DialogButton::kOk);
   ASSERT_TRUE(RunExtensionTest(
       "api_test/file_system/request_file_system_not_allowed_component",
       {.launch_as_platform_app = true}, {.load_as_component = true}))
@@ -657,7 +663,8 @@ IN_PROC_BROWSER_TEST_F(FileSystemApiTestForRequestFileSystem,
       .WillOnce(base::test::RunOnceCallback<1>(
           file_access::ScopedFileAccess(true, base::ScopedFD())));
 
-  ScopedSkipRequestFileSystemDialog dialog_skipper(ui::DIALOG_BUTTON_CANCEL);
+  ScopedSkipRequestFileSystemDialog dialog_skipper(
+      ui::mojom::DialogButton::kCancel);
   const base::FilePath test_file = temp_dir_.GetPath()
                                        .Append(kReadOnlyMountPointName)
                                        .AppendASCII("open_existing.txt");
@@ -690,7 +697,8 @@ IN_PROC_BROWSER_TEST_F(FileSystemApiTestForRequestFileSystem,
       .WillOnce(base::test::RunOnceCallback<1>(
           file_access::ScopedFileAccess(false, base::ScopedFD())));
 
-  ScopedSkipRequestFileSystemDialog dialog_skipper(ui::DIALOG_BUTTON_CANCEL);
+  ScopedSkipRequestFileSystemDialog dialog_skipper(
+      ui::mojom::DialogButton::kCancel);
   const base::FilePath test_file = temp_dir_.GetPath()
                                        .Append(kReadOnlyMountPointName)
                                        .AppendASCII("open_existing.txt");

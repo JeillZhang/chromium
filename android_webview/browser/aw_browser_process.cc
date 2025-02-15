@@ -174,8 +174,8 @@ AwBrowserProcess::GetSafeBrowsingDBManager() {
   if (!safe_browsing_db_manager_started_) {
     // V4ProtocolConfig is not used. Just create one with empty values..
     safe_browsing::V4ProtocolConfig config("", false, "", "");
-    safe_browsing_db_manager_->StartOnSBThread(
-        GetSafeBrowsingUIManager()->GetURLLoaderFactoryOnSBThread(), config);
+    safe_browsing_db_manager_->StartOnUIThread(
+        GetSafeBrowsingUIManager()->GetURLLoaderFactory(), config);
     safe_browsing_db_manager_started_ = true;
   }
 
@@ -267,10 +267,10 @@ ApkType AwBrowserProcess::GetApkType() {
 
 static void JNI_AwBrowserProcess_SetProcessNameCrashKey(
     JNIEnv* env,
-    const base::android::JavaParamRef<jstring>& processName) {
+    std::string& processName) {
   static ::crash_reporter::CrashKeyString<64> crash_key(
       crash_keys::kAppProcessName);
-  crash_key.Set(base::android::ConvertJavaStringToUTF8(env, processName));
+  crash_key.Set(processName);
 }
 
 static base::android::ScopedJavaLocalRef<jobjectArray>

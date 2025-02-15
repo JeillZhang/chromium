@@ -27,15 +27,16 @@ through `builders.cpu` and `builders.os` respectively.
 
 load("//project.star", "settings")
 load("./args.star", "args")
-load("./branches.star", "branches")
-load("./consoles.star", "register_builder_to_console_view")
-load("./gn_args.star", "register_gn_args")
 load("./bootstrap.star", "register_bootstrap")
+load("./branches.star", "branches")
 load("./builder_config.star", "register_builder_config")
+load("./builder_exemptions.star", "exempted_from_description_builders")
 load("./builder_health_indicators.star", "register_health_spec")
+load("./consoles.star", "consoles", "register_builder_to_console_view")
+load("./gn_args.star", "register_gn_args")
+load("./nodes.star", "nodes")
 load("./recipe_experiments.star", "register_recipe_experiments_ref")
 load("./sheriff_rotations.star", "register_gardener_builder")
-load("./description_exceptions.star", "exempted_from_description_builders")
 
 ################################################################################
 # Constants for use with the builder function                                  #
@@ -78,6 +79,7 @@ os = struct(
     # A migration off of bionic is in progress, builders identified in
     # linux-default.json will have a different os dimension
     LINUX_DEFAULT = os_enum(os_category.LINUX, "Ubuntu-22.04", json.decode(io.read_file("./linux-default.json"))),
+    LINUX_NOBLE = os_enum(os_category.LINUX, "Ubuntu-24.04"),
     LINUX_UBUNTU_ANY = os_enum(os_category.LINUX, "Ubuntu"),
     LINUX_ANY = os_enum(os_category.LINUX, "Linux"),
     MAC_10_15 = os_enum(os_category.MAC, "Mac-10.15"),
@@ -86,7 +88,7 @@ os = struct(
     MAC_14 = os_enum(os_category.MAC, "Mac-14"),
     MAC_DEFAULT = os_enum(os_category.MAC, "Mac-14"),
     MAC_ANY = os_enum(os_category.MAC, "Mac"),
-    MAC_BETA = os_enum(os_category.MAC, "Mac-14"),
+    MAC_BETA = os_enum(os_category.MAC, "Mac-14|Mac-15"),
     WINDOWS_10 = os_enum(os_category.WINDOWS, "Windows-10"),
     # TODO(crbug.com/41492657): remove after slow compile issue resolved.
     WINDOWS_10_1909 = os_enum(os_category.WINDOWS, "Windows-10-18363"),
@@ -101,6 +103,11 @@ siso = struct(
         TEST_TRUSTED = "rbe-chromium-trusted-test",
         DEFAULT_UNTRUSTED = "rbe-chromium-untrusted",
         TEST_UNTRUSTED = "rbe-chromium-untrusted-test",
+    ) if settings.project.startswith("chromium") else struct(
+        DEFAULT_TRUSTED = "rbe-chrome-trusted",
+        TEST_TRUSTED = "rbe-chrome-trusted-test",
+        DEFAULT_UNTRUSTED = "rbe-chrome-untrusted",
+        TEST_UNTRUSTED = "rbe-chrome-untrusted-test",
     ),
     remote_jobs = struct(
         DEFAULT = 250,
@@ -108,7 +115,7 @@ siso = struct(
         HIGH_JOBS_FOR_CI = 500,
         LOW_JOBS_FOR_CQ = 150,
         # Calculated based on the number of CPUs inside Siso.
-        HIGH_JOBS_FOR_CQ = -1,
+        HIGH_JOBS_FOR_CQ = -1 if settings.project.startswith("chromium") else 300,
     ),
 )
 
@@ -117,6 +124,9 @@ def _rotation(name):
         branch_selector = branches.selector.MAIN,
         value = [name],
     )
+
+def _gardener_rotation_name(rotation):
+    return rotation + " rotation"
 
 # Gardener rotations that a builder can be added to (only takes effect on trunk)
 # New rotations can be added, but won't automatically show up in SoM without
@@ -154,6 +164,20 @@ _DEFAULT_BUILDERLESS_OS_CATEGORIES = [os_category.LINUX, os_category.WINDOWS]
 # Macs all have SSDs, so it doesn't make sense to use the default behavior of
 # setting ssd:0 dimension
 _EXCLUDE_BUILDERLESS_SSD_OS_CATEGORIES = [os_category.MAC]
+
+# TODO(crbug.com/394945600): Remove this after migrating existing builders and
+# the short name is a required parameter for gardened builders.
+def _default_short_name(name):
+    words = [name]
+    for s in (" ", "-", "_"):
+        parts = [word.replace("(", "").split(s) for word in words]
+        words = []
+        for new_parts in parts:
+            words = args.listify(
+                words,
+                new_parts,
+            )
+    return "".join([part[0].upper() + part[1:3] for part in words])
 
 def _code_coverage_property(
         *,
@@ -323,7 +347,7 @@ defaults = args.defaults(
     free_space = None,
     cores = None,
     cpu = None,
-    disallow_gce = False,
+    gce = None,
     fully_qualified_builder_dimension = False,
     console_view = args.COMPUTE,
     list_view = args.COMPUTE,
@@ -355,13 +379,20 @@ defaults = args.defaults(
     reclient_cache_silo = None,
     reclient_ensure_verified = None,
     reclient_disable_bq_upload = None,
+    reclient_enabled = True,
     siso_enabled = None,
     siso_project = None,
     siso_configs = ["builder"],
     siso_enable_cloud_profiler = True,
     siso_enable_cloud_trace = True,
+    siso_enable_cloud_monitoring = True,
     siso_experiments = [],
     siso_remote_jobs = None,
+    siso_fail_if_reapi_used = None,
+    siso_remote_linking = None,
+    siso_output_local_strategy = None,
+    siso_limits = None,
+    siso_keep_going = None,
     health_spec = None,
     builder_config_settings = None,
 
@@ -380,7 +411,25 @@ defaults = args.defaults(
     notifies = None,
     triggered_by = args.COMPUTE,
     contact_team_email = None,
+
+    # Custom Metrics
+    custom_metrics = None,
 )
+
+# This node won't actually be accessed, but creating it for builders that have
+# builder_group set will enforce that there can't be builders with the same name
+# in different buckets that use the same builder group since lucicfg will check
+# that there aren't two graphs with the same ID
+_BUILDER_GROUP_ID_NODE = nodes.create_unscoped_node_type("builder-group-id")
+
+# For staging, we specifically want to reuse the same builder group so that the
+# staging builders look up the same GN args and targets that the prod official
+# builders use
+_BUILDER_GROUP_REUSE_BUCKET_ALLOWLIST = [
+    "official.diffs.staging",
+    "official.infra.staging",
+    "official.staging",
+] if settings.project.startswith("chrome") else []
 
 def builder(
         *,
@@ -397,7 +446,7 @@ def builder(
         override_builder_dimension = None,
         auto_builder_dimension = args.DEFAULT,
         fully_qualified_builder_dimension = args.DEFAULT,
-        disallow_gce = args.DEFAULT,
+        gce = args.DEFAULT,
         cores = args.DEFAULT,
         cpu = args.DEFAULT,
         bootstrap = args.DEFAULT,
@@ -408,6 +457,8 @@ def builder(
         pool = args.DEFAULT,
         ssd = args.DEFAULT,
         gardener_rotations = None,
+        gardener_rotation_console_category = None,
+        gardener_rotation_console_short_name = None,
         xcode = args.DEFAULT,
         console_view_entry = None,
         list_view = args.DEFAULT,
@@ -433,13 +484,20 @@ def builder(
         reclient_cache_silo = None,
         reclient_ensure_verified = None,
         reclient_disable_bq_upload = None,
+        reclient_enabled = args.DEFAULT,
         siso_enabled = args.DEFAULT,
         siso_project = args.DEFAULT,
         siso_configs = args.DEFAULT,
         siso_enable_cloud_profiler = args.DEFAULT,
         siso_enable_cloud_trace = args.DEFAULT,
+        siso_enable_cloud_monitoring = args.DEFAULT,
         siso_experiments = args.DEFAULT,
         siso_remote_jobs = args.DEFAULT,
+        siso_fail_if_reapi_used = None,
+        siso_output_local_strategy = args.DEFAULT,
+        siso_remote_linking = args.DEFAULT,
+        siso_limits = args.DEFAULT,
+        siso_keep_going = args.DEFAULT,
         skip_profile_upload = args.DEFAULT,
         health_spec = args.DEFAULT,
         shadow_builderless = args.DEFAULT,
@@ -452,6 +510,7 @@ def builder(
         targets = None,
         targets_settings = None,
         contact_team_email = args.DEFAULT,
+        experiments = None,
         **kwargs):
     """Define a builder.
 
@@ -553,6 +612,12 @@ def builder(
         gardener_rotations: A string or list of strings identifying the gardener
             rotations that the builder should be included in. Will be merged
             with the module-level default.
+        gardener_rotation_console_category: A string to use as the category in
+            the gardener rotation console. This value is only used when a
+            gardener_rotations value is present.
+        gardener_rotation_console_short_name: A string to use as the short name
+            in the gardener rotation console. This value is only used when a
+            gardener_rotations value is present.
         xcode: a member of the `xcode` enum indicating the xcode version the
             builder requires. Emits a cache declaration of the form
             ```{
@@ -567,9 +632,10 @@ def builder(
         list_view: A string or a list of strings identifying the ID(s) of the
             list view(s) to add an entry to. Supports a module-level default
             that defaults to no list views.
-        disallow_gce: A boolean indicating whether the builder can run on GCE
-            machines. If True, emits a 'gce:0' dimension. By default, gce is
-            allowed.
+        gce: A boolean indicating whether the builder runs on GCE machines.
+            If True, emits a 'gce:1' dimension. If False, emits a 'gce:0'
+            dimension. If None, 'gce' dimension is not emitted, meaning don't
+            care if running on GCE machines or not. By default, considered None.
         coverage_gs_bucket: a string specifying the GS bucket to upload
             coverage data to. Will be copied to '$build/code_coverage' property.
             By default, considered None.
@@ -634,17 +700,31 @@ def builder(
             effect if reclient_instance is not set.
         reclient_disable_bq_upload: If True, rbe_metrics will not be uploaded to
             BigQuery after each build
+        reclient_enabled: If True, $build/reclient properties will be set.
+            Otherwise, Siso's builtin RBE client will be used.
         siso_enabled: If True, $build/siso properties will be set, and Siso will
             be used at compile step.
         siso_project: a string indicating the GCP project hosting the RBE
             instance and Cloud logging/trace/profile for Siso to use.
         siso_configs: a list of siso configs to enable. available values are defined in
             //build/config/siso/config.star.
-        siso_enable_cloud_profiler: If True, enable cloud profiler in siso.
-        siso_enable_cloud_trace: If True, enable cloud trace in siso.
+        siso_enable_cloud_profiler: If True, enable cloud profiler in Siso.
+        siso_enable_cloud_trace: If True, enable cloud trace in Siso.
+        siso_enable_cloud_monitoring: If true, enable cloud monitoring in Siso.
+            When Siso uses Reclient for remote executions, this flag is noop because
+            Reclient already sends metrics to Cloud monitoring.
         siso_experiments: a list of experiment flags for siso.
         siso_remote_jobs: an integer indicating the number of concurrent remote jobs
             to run when building with Siso.
+        siso_fail_if_reapi_used: If True, check siso_metrics.json to see if the build
+            used remote execution and fail the build if any step used it.
+        siso_output_local_strategy: a string indicating the output strategy
+            for `--output_local_strategy`. full, greedy or minimum.
+        siso_remote_linking: If True, enable remote linking. Siso has to use the
+            builtin RBE client instead of Reclient. Relevant configs and GN args
+            will be adjusted accordingly.
+        siso_limits: a string to override sito limits.
+        siso_keep_going: Bool flag whether to pass '-k 0' or not.
         health_spec: a health spec instance describing the threshold for when
             the builder should be considered unhealthy.
         shadow_builderless: If set to True, then led builds created for this
@@ -681,6 +761,7 @@ def builder(
             builder.
         contact_team_email: The e-mail of the team responsible for the health of
             the builder.
+        experiments: Buildbucket experiments for the builder.
         **kwargs: Additional keyword arguments to forward on to `luci.builder`.
 
     Returns:
@@ -723,6 +804,11 @@ def builder(
     # fail without bucket being set
     bucket = defaults.get_value("bucket", bucket)
 
+    experiments = experiments or {}
+
+    # TODO(crbug.com/380434968): Remove when the experiment is the default.
+    experiments.setdefault("chromium.use_per_builder_build_dir_name", 100)
+
     os = defaults.get_value("os", os)
     if os:
         dimensions["os"] = os.get_dimension(bucket, name)
@@ -755,8 +841,10 @@ def builder(
             else:
                 dimensions["builder"] = name
 
-    if not kwargs.get("description_html", "").strip() and name not in exempted_from_description_builders.get(bucket, []):
+    if not kwargs.get("description_html", "").strip() and name not in exempted_from_description_builders.get(bucket, []) and not mirrors:
         fail("Builder " + name + " must have a description_html. All new builders must specify a description.")
+    elif kwargs.get("description_html", "").strip() and name in exempted_from_description_builders.get(bucket, []):
+        fail("Need to remove builder " + bucket + "/" + name + " from exempted_from_description_builders")
 
     cores = defaults.get_value("cores", cores)
     if cores != None:
@@ -780,6 +868,14 @@ def builder(
         properties["sheriff_rotations"] = gardener_rotations
         properties["gardener_rotations"] = gardener_rotations
 
+    if gardener_rotation_console_category and not gardener_rotations:
+        fail("gardener_rotations must also be set when " +
+             "gardener_rotation_console_category is set")
+
+    if gardener_rotation_console_short_name and not gardener_rotations:
+        fail("gardener_rotations must also be set when " +
+             "gardener_rotation_console_short_name is set")
+
     ssd = defaults.get_value("ssd", ssd)
     if ssd == args.COMPUTE:
         ssd = None
@@ -787,11 +883,11 @@ def builder(
             os.category not in _EXCLUDE_BUILDERLESS_SSD_OS_CATEGORIES):
             ssd = False
     if ssd != None:
-        dimensions["ssd"] = str(int(ssd))
+        dimensions["ssd"] = "1" if ssd else "0"
 
-    disallow_gce = defaults.get_value("disallow_gce", disallow_gce)
-    if disallow_gce:
-        dimensions["gce"] = "0"
+    gce = defaults.get_value("gce", gce)
+    if gce != None:
+        dimensions["gce"] = "1" if gce else "0"
 
     code_coverage = _code_coverage_property(
         coverage_gs_bucket = coverage_gs_bucket,
@@ -806,35 +902,32 @@ def builder(
     if code_coverage != None:
         properties["$build/code_coverage"] = code_coverage
 
-    reclient_scandeps_server = defaults.get_value(
-        "reclient_scandeps_server",
-        reclient_scandeps_server,
-    )
-
-    # Enable scandeps_server by default.
-    if reclient_scandeps_server == args.COMPUTE:
-        reclient_scandeps_server = True
-
+    # Properties for build system and remote exeuction.
     rbe_project = defaults.get_value("siso_project", siso_project)
     shadow_rbe_project = defaults.get_value("shadow_siso_project", shadow_siso_project)
-    reclient = _reclient_property(
-        instance = rbe_project,
-        service = reclient_service,
-        jobs = reclient_jobs,
-        rewrapper_env = reclient_rewrapper_env,
-        bootstrap_env = reclient_bootstrap_env,
-        profiler_service = reclient_profiler_service,
-        publish_trace = reclient_publish_trace,
-        scandeps_server = reclient_scandeps_server,
-        cache_silo = reclient_cache_silo,
-        ensure_verified = reclient_ensure_verified,
-        disable_bq_upload = reclient_disable_bq_upload,
-    )
-    if reclient != None:
-        properties["$build/reclient"] = reclient
-        shadow_reclient_instance = shadow_rbe_project
-        shadow_reclient = _reclient_property(
-            instance = shadow_reclient_instance,
+    use_siso = defaults.get_value("siso_enabled", siso_enabled) and rbe_project
+    use_siso_remote_linking = use_siso and defaults.get_value("siso_remote_linking", siso_remote_linking)
+
+    # When remote linking is enabled, Siso needs to use the builtin-RBE client
+    # instead of Reclient.
+    if use_siso_remote_linking:
+        use_reclient = False
+    else:
+        use_reclient = defaults.get_value("reclient_enabled", reclient_enabled)
+    use_siso_rbe_client = not use_reclient
+
+    if use_reclient:
+        reclient_scandeps_server = defaults.get_value(
+            "reclient_scandeps_server",
+            reclient_scandeps_server,
+        )
+
+        # Enable scandeps_server by default for Chromium.
+        if reclient_scandeps_server == args.COMPUTE:
+            reclient_scandeps_server = settings.project.startswith("chromium") or (os and os.category == os_category.MAC)
+
+        reclient = _reclient_property(
+            instance = rbe_project,
             service = reclient_service,
             jobs = reclient_jobs,
             rewrapper_env = reclient_rewrapper_env,
@@ -846,21 +939,64 @@ def builder(
             ensure_verified = reclient_ensure_verified,
             disable_bq_upload = reclient_disable_bq_upload,
         )
-        if shadow_reclient:
-            shadow_properties["$build/reclient"] = shadow_reclient
-            shadow_rbe_project = shadow_reclient["instance"]
-    use_siso = defaults.get_value("siso_enabled", siso_enabled) and rbe_project
+        if reclient != None:
+            properties["$build/reclient"] = reclient
+            shadow_reclient_instance = shadow_rbe_project
+            shadow_reclient = _reclient_property(
+                instance = shadow_reclient_instance,
+                service = reclient_service,
+                jobs = reclient_jobs,
+                rewrapper_env = reclient_rewrapper_env,
+                bootstrap_env = reclient_bootstrap_env,
+                profiler_service = reclient_profiler_service,
+                publish_trace = reclient_publish_trace,
+                scandeps_server = reclient_scandeps_server,
+                cache_silo = reclient_cache_silo,
+                ensure_verified = reclient_ensure_verified,
+                disable_bq_upload = reclient_disable_bq_upload,
+            )
+            if shadow_reclient:
+                shadow_properties["$build/reclient"] = shadow_reclient
+                shadow_rbe_project = shadow_reclient["instance"]
     if use_siso:
         siso = {
-            "configs": defaults.get_value("siso_configs", siso_configs),
             "enable_cloud_profiler": defaults.get_value("siso_enable_cloud_profiler", siso_enable_cloud_profiler),
             "enable_cloud_trace": defaults.get_value("siso_enable_cloud_trace", siso_enable_cloud_trace),
             "experiments": defaults.get_value("siso_experiments", siso_experiments),
             "project": rbe_project,
         }
+        siso_keep_going = defaults.get_value("siso_keep_going", siso_keep_going)
+        if siso_keep_going:
+            siso["keep_going"] = True
+
         remote_jobs = defaults.get_value("siso_remote_jobs", siso_remote_jobs)
         if remote_jobs:
             siso["remote_jobs"] = remote_jobs
+        siso_configs = defaults.get_value("siso_configs", siso_configs)
+        if use_siso_remote_linking:
+            siso_configs = siso_configs + ["remote-link"]
+        siso["configs"] = siso_configs
+        if siso_fail_if_reapi_used:
+            siso["fail_if_reapi_used"] = siso_fail_if_reapi_used
+        siso_output_local_strategy = defaults.get_value("siso_output_local_strategy", siso_output_local_strategy)
+        if not siso_output_local_strategy and use_siso_remote_linking:
+            siso_output_local_strategy = "minimum"
+        if siso_output_local_strategy:
+            siso["output_local_strategy"] = siso_output_local_strategy
+        siso_limits = defaults.get_value("siso_limits", siso_limits)
+        if siso_limits:
+            siso["limits"] = siso_limits
+
+        # Since Siso's remote linking doesn't use Reclient, it needs to enable
+        # Cloud Monitoring for monitoring and alerts.
+        if defaults.get_value("siso_enable_cloud_monitoring", siso_enable_cloud_monitoring) and use_siso_rbe_client:
+            siso["enable_cloud_monitoring"] = True
+
+            # TODO: crbug.com/368518993 - It uses the same GCP project with
+            # Reclient so that we can reuse the existing monitoring setup.
+            # We need to consider migrating to chromium-build-stats or the
+            # RBE project.
+            siso["metrics_project"] = "chromium-reclient-metrics"
         properties["$build/siso"] = siso
         if shadow_rbe_project:
             shadow_siso = dict(siso)
@@ -922,6 +1058,41 @@ def builder(
         kwargs["triggered_by"] = triggered_by
 
     contact_team_email = defaults.get_value("contact_team_email", contact_team_email)
+
+    custom_metrics = [
+        buildbucket.custom_metric(
+            name = "/chrome/infra/browser/builds/ran_tests_retry_shard_count",
+            predicates = ["has(build.output.properties.ran_tests_retry_shard)"],
+        ),
+        buildbucket.custom_metric(
+            name = "/chrome/infra/browser/builds/ran_tests_without_patch_count",
+            predicates = ["has(build.output.properties.ran_tests_without_patch)"],
+        ),
+        buildbucket.custom_metric(
+            name = "/chrome/infra/browser/builds/cached_count",
+            predicates = [
+                "has(build.output.properties.is_cached)",
+                'string(build.output.properties.is_cached) == "true"',
+            ],
+        ),
+        buildbucket.custom_metric(
+            name = "/chrome/infra/browser/builds/uncached_count",
+            predicates = [
+                "has(build.output.properties.is_cached)",
+                'string(build.output.properties.is_cached) == "false"',
+            ],
+        ),
+    ]
+
+    kwargs["custom_metrics"] = args.listify(
+        custom_metrics,
+        defaults.get_value_from_kwargs(
+            "custom_metrics",
+            kwargs,
+            merge = args.MERGE_LIST,
+        ),
+    )
+
     builder = branches.builder(
         name = name,
         branch_selector = branch_selector,
@@ -936,6 +1107,7 @@ def builder(
         shadow_dimensions = shadow_dimensions,
         shadow_service_account = defaults.get_value("shadow_service_account", shadow_service_account),
         shadow_properties = shadow_properties,
+        experiments = experiments,
         **kwargs
     )
 
@@ -944,11 +1116,18 @@ def builder(
     if builder == None:
         return None
 
+    # Define a node to ensure there's only one builder using the
+    # (builder_group, builder)
+    if builder_group != None and bucket not in _BUILDER_GROUP_REUSE_BUCKET_ALLOWLIST:
+        _BUILDER_GROUP_ID_NODE.add("{}:{}".format(builder_group, name))
+
     register_gardener_builder(bucket, name, gardener_rotations)
 
     register_recipe_experiments_ref(bucket, name, executable)
 
-    additional_exclusions = register_gn_args(builder_group, bucket, name, gn_args, use_siso)
+    # When Siso enables remote linking, it must use the builtin RBE client
+    # instead of Reclient. Modify GN args inside register_gn_args().
+    additional_exclusions = register_gn_args(builder_group, bucket, name, gn_args, use_siso, use_siso_rbe_client)
 
     builder_config_settings = defaults.get_value(
         "builder_config_settings",
@@ -964,6 +1143,7 @@ def builder(
         targets,
         targets_settings,
         additional_exclusions,
+        kwargs.get("description_html", "").strip(),
     )
 
     bootstrap = defaults.get_value("bootstrap", bootstrap)
@@ -980,6 +1160,19 @@ def builder(
             entries = [console_view_entry]
         else:
             entries = console_view_entry
+        for rotation in gardener_rotations:
+            rotations = [getattr(builders.gardener_rotations, a) for a in dir(builders.gardener_rotations)]
+            if any([r and r[0] == rotation for r in rotations]):
+                console_view = _gardener_rotation_name(rotation)
+                default_short_name = _default_short_name(name)
+                entries = args.listify(
+                    entries,
+                    consoles.console_view_entry(
+                        console_view = _gardener_rotation_name(rotation),
+                        category = gardener_rotation_console_category,
+                        short_name = gardener_rotation_console_short_name or default_short_name,
+                    ),
+                )
         entries_without_console_view = [
             e
             for e in entries
@@ -1042,5 +1235,6 @@ builders = struct(
     defaults = defaults,
     os = os,
     gardener_rotations = gardener_rotations,
+    gardener_rotation_name = _gardener_rotation_name,
     free_space = free_space,
 )

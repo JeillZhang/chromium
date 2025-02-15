@@ -2,10 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "components/input/web_input_event_builders_ios.h"
 
 #import <UIKit/UIKit.h>
 
+#include "base/notreached.h"
 #include "third_party/blink/public/common/input/web_pointer_event.h"
 #include "third_party/blink/public/common/input/web_touch_point.h"
 #include "ui/events/base_event_utils.h"
@@ -44,7 +50,7 @@ void RemoveUITouch(UITouch* touch) {
       return;
     }
   }
-  CHECK(false);
+  NOTREACHED();
 }
 
 int ModifiersFromEvent(UIEvent* event) {
@@ -92,8 +98,7 @@ blink::WebTouchPoint::State ToWebTouchPointState(UITouch* event,
     case UITouchPhaseStationary:
       return blink::WebTouchPoint::State::kStateStationary;
   }
-  NOTREACHED_IN_MIGRATION() << "Invalid MotionEvent::Action.";
-  return blink::WebTouchPoint::State::kStateUndefined;
+  NOTREACHED() << "Invalid MotionEvent::Action.";
 }
 
 void SetWebPointerPropertiesFromMotionEventData(

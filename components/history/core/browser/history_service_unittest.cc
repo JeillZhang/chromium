@@ -45,6 +45,7 @@
 #include "components/history/core/browser/history_database_params.h"
 #include "components/history/core/browser/history_db_task.h"
 #include "components/history/core/browser/history_types.h"
+#include "components/history/core/browser/keyword_search_term.h"
 #include "components/history/core/browser/visit_delegate.h"
 #include "components/history/core/test/database_test_utils.h"
 #include "components/history/core/test/test_history_database.h"
@@ -1271,23 +1272,15 @@ TEST_F(HistoryServiceTest, GetDomainDiversityLocalVsSynced) {
   query_time =
       std::max(query_time.LocalMidnight() + base::Minutes(10), query_time);
 
-  // Add a regular local visit.
+  // Add a local visit.
   history->AddPage(GURL("https://www.local.com/"),
                    GetTimeInThePast(query_time, /*days_back=*/1,
                                     /*hours_since_midnight=*/12),
                    0, 0, GURL(), history::RedirectList(),
                    ui::PAGE_TRANSITION_LINK, history::SOURCE_BROWSED, false);
 
-  // Add a legacy-style synced visit, as it would be created by TYPED_URLS sync.
-  // This has SOURCE_SYNCED but otherwise looks mostly like a local visit.
-  history->AddPage(GURL("https://www.synced-legacy.com/"),
-                   GetTimeInThePast(query_time, /*days_back=*/1,
-                                    /*hours_since_midnight=*/13),
-                   0, 0, GURL(), history::RedirectList(),
-                   ui::PAGE_TRANSITION_LINK, history::SOURCE_SYNCED, false);
-
-  // Add a new-style synced visit, as it would be created by HISTORY sync. The
-  // API to do this isn't exposed in HistoryService (only HistoryBackend).
+  // Add a synced visit, as it would be created by HISTORY sync. The API to do
+  // this isn't exposed in HistoryService (only HistoryBackend).
   {
     VisitRow visit;
     visit.visit_time = GetTimeInThePast(query_time, /*days_back=*/1,
@@ -1316,8 +1309,8 @@ TEST_F(HistoryServiceTest, GetDomainDiversityLocalVsSynced) {
 
   // The "local" result should only count the local visit.
   TestDomainMetricSet(local_res[0], 1, -1, -1);
-  // The "all" result should also include synced visits.
-  TestDomainMetricSet(all_res[0], 3, -1, -1);
+  // The "all" result should also include the synced visit.
+  TestDomainMetricSet(all_res[0], 2, -1, -1);
 }
 
 TEST_F(HistoryServiceTest, GetMostRecentVisitsForGurl) {
@@ -1390,11 +1383,96 @@ class OrderingHistoryServiceTest : public HistoryServiceTest {
   base::WeakPtr<TestVisitDelegate> weak_visit_delegate_;
 };
 
+TEST_F(OrderingHistoryServiceTest, PartitionContextClicksByOpener) {
+  // Create the components required for our context click visited link. Context
+  // clicks have empty/invalid top-level URLs and valid opener URLs.
+  const GURL frame_url("https://local1.url");
+  const GURL top_level_url = GURL();
+  const GURL opener_url("https://local2.url");
+  const GURL link_url("http://google.com");
+  // Set mock numbers for our Context and nav_entry IDs.
+  const ContextID context_id1 = 1;
+  int nav_entry_id = 2;
+
+  // Prepare a mock `AddPage` request for the context click.
+  HistoryAddPageArgs request(link_url, base::Time::Now() - base::Seconds(1),
+                             context_id1, 0, std::nullopt, frame_url,
+                             /*redirects=*/{}, ui::PAGE_TRANSITION_LINK, false,
+                             SOURCE_BROWSED, false, true,
+                             /*is_ephemeral=*/false, std::nullopt,
+                             top_level_url,
+                             Opener(context_id1, nav_entry_id, opener_url));
+
+  // Simulate a user performing the context click.
+  history_service_->AddPage(request);
+
+  // Check that the visit delegate is not called immediately.
+  ASSERT_TRUE(weak_visit_delegate_);
+  EXPECT_FALSE(weak_visit_delegate_->visit_delegate_was_called());
+
+  // Wait for the visit delegate to resolve.
+  run_loop_.Run();
+
+  // Determine what VisitedLink should be in our mock hashtable.
+  VisitedLink expected_link = {link_url, net::SchemefulSite(opener_url),
+                               url::Origin::Create(frame_url)};
+  std::vector<VisitedLink> expected_links = {expected_link};
+
+  // Ensure that our VisitedLink has been added to the mock hashtable AND opener
+  // has replaced the empty top-level site.
+  ASSERT_TRUE(weak_visit_delegate_);
+  EXPECT_TRUE(weak_visit_delegate_->visit_delegate_was_called());
+  EXPECT_EQ(weak_visit_delegate_->get_added_links(), expected_links);
+}
+
+TEST_F(OrderingHistoryServiceTest, EnsureOpenerDoesntReplaceValidTopLevel) {
+  // Create the components required for a normal link click. In this test, we
+  // want to create a request with valid values for both `top_level_url` and
+  // `opener_url` to ensure that the opener does not replace a valid top-level
+  // for non-context link clicks.
+  const GURL frame_url("https://local1.url");
+  const GURL top_level_url("https://local2.url");
+  const GURL opener_url("https://local3.url");
+  const GURL link_url("http://google.com");
+  // Set mock numbers for our Context and nav_entry IDs.
+  const ContextID context_id1 = 1;
+  int nav_entry_id = 2;
+
+  // Prepare a mock `AddPage` request for the normal link click.
+  HistoryAddPageArgs request(link_url, base::Time::Now() - base::Seconds(1),
+                             context_id1, 0, std::nullopt, frame_url,
+                             /*redirects=*/{}, ui::PAGE_TRANSITION_LINK, false,
+                             SOURCE_BROWSED, false, true,
+                             /*is_ephemeral=*/false, std::nullopt,
+                             top_level_url,
+                             Opener(context_id1, nav_entry_id, opener_url));
+
+  // Simulate a user performing the normal link click.
+  history_service_->AddPage(request);
+
+  // Check that the visit delegate is not called immediately.
+  ASSERT_TRUE(weak_visit_delegate_);
+  EXPECT_FALSE(weak_visit_delegate_->visit_delegate_was_called());
+
+  // Wait for the visit delegate to resolve.
+  run_loop_.Run();
+
+  // Determine what VisitedLink should be in our mock hashtable.
+  VisitedLink expected_link = {link_url, net::SchemefulSite(top_level_url),
+                               url::Origin::Create(frame_url)};
+  std::vector<VisitedLink> expected_links = {expected_link};
+
+  // Ensure that our VisitedLink has been added to the mock hashtable AND opener
+  // HAS NOT replaced the valid top-level site.
+  ASSERT_TRUE(weak_visit_delegate_);
+  EXPECT_TRUE(weak_visit_delegate_->visit_delegate_was_called());
+  EXPECT_EQ(weak_visit_delegate_->get_added_links(), expected_links);
+}
+
 TEST_F(OrderingHistoryServiceTest, EnsureCorrectOrder) {
   // Create the components required for our visited link.
   const GURL frame_url("https://local1.url");
   const GURL top_level_url("https://local2.url");
-  const GURL server_redirect_url("http://ads.google.com");
   const GURL client_redirect_url("http://google.com");
   base::Time visit_time = base::Time::Now() - base::Days(1);
   const ContextID context_id1 = 1;
@@ -1421,7 +1499,7 @@ TEST_F(OrderingHistoryServiceTest, EnsureCorrectOrder) {
       client_redirect_url, base::Time::Now() - base::Seconds(1), context_id1, 0,
       std::nullopt, frame_url,
       /*redirects=*/{}, ui::PAGE_TRANSITION_LINK, false, SOURCE_BROWSED, false,
-      true, std::nullopt, top_level_url);
+      true, /*is_ephemeral=*/false, std::nullopt, top_level_url);
 
   // Simulate a user clicking on our VistedLink.
   history_service_->AddPage(request);

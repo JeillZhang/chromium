@@ -25,8 +25,8 @@ import org.chromium.chrome.R;
 import org.chromium.components.browser_ui.widget.RoundedCornerOutlineProvider;
 import org.chromium.components.browser_ui.widget.selectable_list.SelectableListUtils;
 import org.chromium.ui.listmenu.ListMenuButton;
-import org.chromium.ui.listmenu.ListMenuButton.PopupMenuShownListener;
-import org.chromium.ui.listmenu.ListMenuButtonDelegate;
+import org.chromium.ui.listmenu.ListMenuDelegate;
+import org.chromium.ui.listmenu.ListMenuHost.PopupMenuShownListener;
 import org.chromium.ui.util.ValueUtils;
 import org.chromium.ui.widget.ViewLookupCachingFrameLayout;
 
@@ -71,7 +71,6 @@ public class ImprovedBookmarkRow extends ViewLookupCachingFrameLayout
     private ImageView mEndImageView;
     private @Nullable ViewPropertyAnimator mFadeAnimator;
 
-    private boolean mDragEnabled;
     private boolean mBookmarkIdEditable;
     private boolean mEndImageViewVisible;
     private boolean mMoreButtonVisible;
@@ -214,8 +213,8 @@ public class ImprovedBookmarkRow extends ViewLookupCachingFrameLayout
         mAccessoryViewGroup.addView(view);
     }
 
-    void setListMenuButtonDelegate(ListMenuButtonDelegate listMenuButtonDelegate) {
-        mMoreButton.setDelegate(listMenuButtonDelegate);
+    void setListMenuDelegate(ListMenuDelegate listMenuDelegate) {
+        mMoreButton.setDelegate(listMenuDelegate);
     }
 
     void setPopupListener(PopupMenuShownListener listener) {
@@ -236,11 +235,6 @@ public class ImprovedBookmarkRow extends ViewLookupCachingFrameLayout
                         ? IMPORTANT_FOR_ACCESSIBILITY_YES
                         : IMPORTANT_FOR_ACCESSIBILITY_NO);
         updateView();
-    }
-
-    // TODO: Maybe this can be removed.
-    void setDragEnabled(boolean dragEnabled) {
-        mDragEnabled = dragEnabled;
     }
 
     // TODO: Maybe this can be removed.

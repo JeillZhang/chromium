@@ -5,6 +5,7 @@
 #import "ios/chrome/browser/ui/content_suggestions/magic_stack_half_sheet_table_view_controller.h"
 
 #import "base/test/scoped_feature_list.h"
+#import "ios/chrome/browser/parcel_tracking/features.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/shared/ui/table_view/cells/table_view_switch_item.h"
 #import "ios/chrome/browser/shared/ui/table_view/table_view_utils.h"
@@ -18,8 +19,8 @@
 class MagicStackHalfSheetTableViewControllerUnittest : public PlatformTest {
  public:
   void SetUp() override {
-    scoped_feature_list_.InitWithFeatures(
-        {kSafetyCheckMagicStack, kTabResumption}, {});
+    scoped_feature_list_.InitWithFeatures({kTabResumption},
+                                          {kIOSDisableParcelTracking});
 
     view_controller_ = [[MagicStackHalfSheetTableViewController alloc] init];
   }
@@ -27,7 +28,7 @@ class MagicStackHalfSheetTableViewControllerUnittest : public PlatformTest {
  protected:
   web::WebTaskEnvironment task_environment_;
   base::test::ScopedFeatureList scoped_feature_list_;
-  IOSChromeScopedTestingLocalState local_state_;
+  IOSChromeScopedTestingLocalState scoped_testing_local_state_;
   MagicStackHalfSheetTableViewController* view_controller_;
 };
 

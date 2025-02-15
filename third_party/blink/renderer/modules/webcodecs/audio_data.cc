@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/modules/webcodecs/audio_data.h"
 
 #include "base/compiler_specific.h"
@@ -173,7 +178,7 @@ media::SampleFormat RemovePlanar(media::SampleFormat format) {
       return media::kSampleFormatF32;
 
     default:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }
 
@@ -620,7 +625,7 @@ void AudioData::CopyConvert(base::span<uint8_t> dest,
       }
 
       default:
-        NOTREACHED_NORETURN();
+        NOTREACHED();
     }
   }
 
@@ -665,7 +670,7 @@ void AudioData::CopyConvert(base::span<uint8_t> dest,
       return;
     }
     default:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }
 
@@ -706,7 +711,7 @@ void AudioData::CopyToInterleaved(base::span<uint8_t> dest,
                                         frames_to_copy);
       return;
     default:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }
 
@@ -756,7 +761,7 @@ void AudioData::CopyToPlanar(base::span<uint8_t> dest,
                                    exception_state);
       return;
     default:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }
 

@@ -153,7 +153,7 @@ std::string DurationHistogramName(bool is_update,
       return base::StrCat({base_name, ".OnDeletion"});
   }
 
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 // Records the infobar duration metric for a given `moment`.
@@ -256,8 +256,7 @@ std::u16string IOSChromeSavePasswordInfoBarDelegate::GetButtonLabel(
                        IDS_IOS_PASSWORD_MANAGER_MODAL_BLOCK_BUTTON);
     }
     case BUTTON_NONE:
-      NOTREACHED_IN_MIGRATION();
-      return std::u16string();
+      NOTREACHED();
   }
 }
 

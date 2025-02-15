@@ -12,7 +12,6 @@ import androidx.annotation.VisibleForTesting;
 
 import org.chromium.base.Log;
 import org.chromium.base.ResettersForTesting;
-import org.chromium.base.cached_flags.IntCachedFieldTrialParameter;
 import org.chromium.base.library_loader.LibraryLoader;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
@@ -68,13 +67,9 @@ public class OptimizationGuidePushNotificationManager {
     /** A sentinel Set that is set when the pref for a specific OptimizationType overflows. */
     private static final Set<String> OVERFLOW_SENTINEL_SET = Set.of("__overflow");
 
-    /** The default cache size in Java for push notification. */
-    public static final IntCachedFieldTrialParameter MAX_CACHE_SIZE =
-            ChromeFeatureList.newIntCachedFieldTrialParameter(
-                    ChromeFeatureList.OPTIMIZATION_GUIDE_PUSH_NOTIFICATIONS, "max_cache_size", 100);
-
     /**
      * Called when a new push notification is received.
+     *
      * @param payload the incoming payload.
      */
     public static void onPushNotification(HintNotificationPayload payload) {
@@ -200,7 +195,7 @@ public class OptimizationGuidePushNotificationManager {
     @VisibleForTesting
     public static String cacheKey(OptimizationType optimizationType) {
         return ChromePreferenceKeys.OPTIMIZATION_GUIDE_PUSH_NOTIFICATION_CACHE.createKey(
-                optimizationType.toString());
+                optimizationType.name());
     }
 
     public static void setNativeIsInitializedForTesting(Boolean nativeIsInitialized) {
@@ -229,7 +224,9 @@ public class OptimizationGuidePushNotificationManager {
         if (checkForOverflow(cache)) return;
 
         // Check if we would overflow the cache by writing the new element.
-        if (cache.size() >= MAX_CACHE_SIZE.getValue() - 1) {
+        if (cache.size()
+                >= ChromeFeatureList.sOptimizationGuidePushNotificationsMaxCacheSize.getValue()
+                        - 1) {
             ChromeSharedPreferences.getInstance()
                     .writeStringSet(cacheKey(payload.getOptimizationType()), OVERFLOW_SENTINEL_SET);
             return;

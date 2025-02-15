@@ -23,8 +23,7 @@ namespace autofillPrivate {
     boolean isAutofillSyncToggleEnabled;
   };
 
-  // A copy of FieldType from
-  // chrome/common/extensions/api/autofill_private.idl
+  // A copy of FieldType from components/autofill/core/browser/field_types.h.
   enum FieldType {
     NO_SERVER_DATA,
     UNKNOWN_TYPE,
@@ -35,6 +34,9 @@ namespace autofillPrivate {
     NAME_MIDDLE_INITIAL,
     NAME_FULL,
     NAME_SUFFIX,
+    ALTERNATIVE_FULL_NAME,
+    ALTERNATIVE_GIVEN_NAME,
+    ALTERNATIVE_FAMILY_NAME,
     EMAIL_ADDRESS,
     PHONE_HOME_NUMBER,
     PHONE_HOME_CITY_CODE,
@@ -88,6 +90,8 @@ namespace autofillPrivate {
     ADDRESS_HOME_HOUSE_NUMBER,
     ADDRESS_HOME_SUBPREMISE,
     ADDRESS_HOME_OTHER_SUBUNIT,
+    NAME_LAST_PREFIX,
+    NAME_LAST_CORE,
     NAME_LAST_FIRST,
     NAME_LAST_CONJUNCTION,
     NAME_LAST_SECOND,
@@ -121,11 +125,30 @@ namespace autofillPrivate {
     ADDRESS_HOME_APT_TYPE,
     ADDRESS_HOME_HOUSE_NUMBER_AND_APT,
     SINGLE_USERNAME_WITH_INTERMEDIATE_VALUES,
+    IMPROVED_PREDICTION,
+    PASSPORT_NAME_TAG,
+    PASSPORT_NUMBER,
+    PASSPORT_ISSUING_COUNTRY_TAG,
+    PASSPORT_EXPIRATION_DATE_TAG,
+    PASSPORT_ISSUE_DATE_TAG,
+    LOYALTY_MEMBERSHIP_PROGRAM,
+    LOYALTY_MEMBERSHIP_PROVIDER,
+    LOYALTY_MEMBERSHIP_ID,
+    VEHICLE_OWNER_TAG,
+    VEHICLE_LICENSE_PLATE,
+    VEHICLE_VIN,
+    VEHICLE_MAKE,
+    VEHICLE_MODEL,
+    DRIVERS_LICENSE_NAME_TAG,
+    DRIVERS_LICENSE_REGION,
+    DRIVERS_LICENSE_NUMBER,
+    DRIVERS_LICENSE_EXPIRATION_DATE_TAG,
+    DRIVERS_LICENSE_ISSUE_DATE_TAG,
     MAX_VALID_FIELD_TYPE
   };
 
-  // The address source origin. Describes where the address is stored.
-  enum AddressSource {
+  // The address record type. Describes where the address is stored.
+  enum AddressRecordType {
     // The address is stored in the Chrome infrastructure (locally and
     // possibly synced between devices).
     LOCAL_OR_SYNCABLE,
@@ -148,14 +171,11 @@ namespace autofillPrivate {
     DOMString? summarySublabel;
 
     // For addresses. Describes where the address is stored.
-    AddressSource? source;
+    AddressRecordType? recordType;
 
     // For credit cards, whether the entry is locally owned by Chrome (as opposed to
     // being synced down from the server). Non-local entries may not be editable.
     boolean? isLocal;
-
-    // For credit cards, whether this is a full copy of the card
-    boolean? isCached;
 
     // For credit cards, whether this is migratable (both the card number and
     // expiration date valid and does not have the duplicated server card).
@@ -286,6 +306,9 @@ namespace autofillPrivate {
     // Globally unique identifier for this entry.
     DOMString? guid;
 
+    // The IBAN's instrument ID from the GPay server, if applicable.
+    DOMString? instrumentId;
+
     // IBAN value.
     DOMString? value;
 
@@ -293,6 +316,14 @@ namespace autofillPrivate {
     DOMString? nickname;
 
     AutofillMetadata? metadata;
+  };
+
+  // User annotations entry data. Corresponds to the eponymous message from
+  // components/optimization_guide/proto/features/common_quality_data.proto.
+  dictionary UserAnnotationsEntry {
+    long entryId;
+    DOMString key;
+    DOMString value;
   };
 
   callback GetAccountInfoCallback = void(optional AccountInfo accountInfo);
@@ -304,6 +335,9 @@ namespace autofillPrivate {
   callback IsValidIbanCallback = void(boolean isValid);
   callback GetCreditCardCallback = void(optional CreditCardEntry card);
   callback CheckForDeviceAuthCallback = void(boolean isDeviceAuthAvailable);
+  callback GetUserAnnotationsEntriesCallback = void(UserAnnotationsEntry[] items);
+  callback hasUserAnnotationsEntriesCallback = void(boolean hasEntries);
+  callback isUserEligibleForAutofillImprovementsCallback = void(boolean eligible);
 
   interface Functions {
     // Gets currently signed-in user profile info, no value is returned if
@@ -317,9 +351,16 @@ namespace autofillPrivate {
     // |address|: The address entry to save.
     static void saveAddress(AddressEntry address);
 
+    // Removes the address with the given ID.
+    // |guid|: ID of the address to remove.
+    static void removeAddress(DOMString guid);
+
     // Gets the list of all countries.
+    // |forAccountAddressProfile|: whether the address profile opened in the
+    // editor originates in the user's profile.
     // |callback|: Callback which will be called with the countries.
     static void getCountryList(
+        boolean forAccountAddressProfile,
         GetCountryListCallback callback);
 
     // Gets the address components for a given country code.
@@ -346,9 +387,9 @@ namespace autofillPrivate {
     // |iban|: The IBAN entry to save.
     static void saveIban(IbanEntry iban);
 
-    // Removes the entry (address or credit card) with the given ID.
-    // |guid|: ID of the entry to remove.
-    static void removeEntry(DOMString guid);
+    // Removes the payments entity with the given ID.
+    // |guid|: ID of the entity to remove.
+    static void removePaymentsEntity(DOMString guid);
 
     // Gets the list of credit cards.
     // |callback|: Callback which will be called with the list of credit cards.
@@ -371,6 +412,9 @@ namespace autofillPrivate {
 
     // Logs that the server cards edit link was clicked.
     static void logServerCardLinkClicked();
+
+    // Logs that a server IBAN's edit link was clicked.
+    static void logServerIbanLinkClicked();
 
     // Enrolls a credit card into virtual cards.
     // |cardId|: The server side id of the credit card to be enrolled. Note it
@@ -406,6 +450,27 @@ namespace autofillPrivate {
     // Sets the Sync Autofill toggle value, which corresponds to
     // `syncer::UserSelectableType::kAutofill` in `SyncUserSettings`.
     static void setAutofillSyncToggleEnabled(boolean enabled);
+
+    // Returns the list of user annotations entries.
+    static void getUserAnnotationsEntries(
+        GetUserAnnotationsEntriesCallback callback);
+
+    // Returns if there are any saved user annotations entries.
+    static void hasUserAnnotationsEntries(
+        hasUserAnnotationsEntriesCallback callback);
+
+    // Returns if the user is eligible for autofill improvements.
+    static void isUserEligibleForAutofillImprovements(
+        isUserEligibleForAutofillImprovementsCallback callback);
+
+    // Deletes the user annotations entry by its id.
+    static void deleteUserAnnotationsEntry(long entryId);
+
+    // Deletes all user annotations entries.
+    static void deleteAllUserAnnotationsEntries();
+
+    // Notifies autofill client about the prediction improvements pre changing.
+    static void predictionImprovementsIphFeatureUsed();
   };
 
   interface Events {

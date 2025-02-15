@@ -8,6 +8,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_set>
@@ -150,6 +151,13 @@ class NET_EXPORT HttpResponseHeaders
   static scoped_refptr<HttpResponseHeaders> TryToCreate(
       std::string_view headers);
 
+  // Takes content_type as an ASCII string and tries to combine it with the HTTP
+  // status line for data: URLs. Returns nullptr on failure. Unlike TryToCreate,
+  // HttpUtil::AssembleRawHeaders does not need to be called as the raw headers
+  // are already known.
+  static scoped_refptr<HttpResponseHeaders> TryToCreateForDataURL(
+      std::string_view content_type);
+
   HttpResponseHeaders(const HttpResponseHeaders&) = delete;
   HttpResponseHeaders& operator=(const HttpResponseHeaders&) = delete;
 
@@ -203,19 +211,20 @@ class NET_EXPORT HttpResponseHeaders
   // that would be returned from repeated calls to EnumerateHeader, joined by
   // the string ", ".
   //
-  // Returns false if this header wasn't found.
+  // Returns std::nullopt if this header wasn't found.
   //
   // Example:
   //   Foo: a, b,c
   //   Foo: d
   //
-  //   string value;
-  //   GetNormalizedHeader("Foo", &value);  // Now, |value| is "a, b, c, d".
+  //   std::optional<std::string> value = GetNormalizedHeader("Foo");
+  //   // Now, |value| is "a, b, c, d".
   //
   // NOTE: Do not make any assumptions about the encoding of this output
   // string.  It may be non-ASCII, and the encoding used by the server is not
   // necessarily known to us.  Do not assume that this output is UTF-8!
-  bool GetNormalizedHeader(std::string_view name, std::string* value) const;
+  [[nodiscard]] std::optional<std::string> GetNormalizedHeader(
+      std::string_view name) const;
 
   // Returns the normalized status line.
   std::string GetStatusLine() const;
@@ -251,12 +260,16 @@ class NET_EXPORT HttpResponseHeaders
                             std::string* name,
                             std::string* value) const;
 
-  // Enumerate the values of the specified header.   If you are only interested
+  // Enumerate the values of the specified header. If you are only interested
   // in the first header, then you can pass nullptr for the 'iter' parameter.
   // Otherwise, to iterate across all values for the specified header,
   // initialize a 'size_t' variable to 0 and pass it by address to
   // EnumerateHeader. Note that a header might have an empty value. Call
-  // EnumerateHeader repeatedly until it returns false.
+  // EnumerateHeader repeatedly until it returns std::nullopt.
+  //
+  // The returned value remains valid for the lifetime of HttpResponseHeaders,
+  // or until the headers are modified, so it is legal to hold onto a returned
+  // string_view while continuing to enumerate other values for a header.
   //
   // Unless a header is explicitly marked as non-coalescing (see
   // HttpUtil::IsNonCoalescingHeader), headers that contain
@@ -275,6 +288,13 @@ class NET_EXPORT HttpResponseHeaders
   //
   // To handle cases such as this, use GetNormalizedHeader to return the full
   // concatenated header, and then parse manually.
+  std::optional<std::string_view> EnumerateHeader(size_t* iter,
+                                                  std::string_view name) const;
+
+  // Deprecated overload of EnumerateHeader. Returns a bool instead of an
+  // options, which is false once all headers with the provided name have been
+  // enumerated, and copies the header's value to `value` whenever it returns
+  // true.
   bool EnumerateHeader(size_t* iter,
                        std::string_view name,
                        std::string* value) const;
@@ -304,13 +324,10 @@ class NET_EXPORT HttpResponseHeaders
   // location of the redirect is optionally returned if location is non-null.
   bool IsRedirect(std::string* location) const;
 
-  // Returns true if this response included the `Activate-Storage-Access: retry`
-  // header.
-  bool HasStorageAccessRetryHeader() const;
-
-  // Returns true if this response included the `Activate-Storage-Access: load`
-  // header.
-  bool HasStorageAccessLoadHeader() const;
+  // Returns true if this response included the `Activate-Storage-Access: retry;
+  // allowed-origin=...` header and the "allowed-origin" parameter matched the
+  // `expected_origin`.
+  bool HasStorageAccessRetryHeader(const std::string* expected_origin) const;
 
   // Returns true if the HTTP response code passed in corresponds to a
   // redirect.
@@ -343,19 +360,19 @@ class NET_EXPORT HttpResponseHeaders
                                 const base::Time& response_time,
                                 const base::Time& current_time) const;
 
-  // The following methods extract values from the response headers.  If a
-  // value is not present, or is invalid, then false is returned.  Otherwise,
-  // true is returned and the out param is assigned to the corresponding value.
-  bool GetMaxAgeValue(base::TimeDelta* value) const;
-  bool GetAgeValue(base::TimeDelta* value) const;
-  bool GetDateValue(base::Time* value) const;
-  bool GetLastModifiedValue(base::Time* value) const;
-  bool GetExpiresValue(base::Time* value) const;
-  bool GetStaleWhileRevalidateValue(base::TimeDelta* value) const;
+  // The following methods extract values from the response headers.  If a value
+  // is not present, or is invalid, then std::nullopt is returned.  Otherwise,
+  // the value is returned directly.
+  std::optional<base::TimeDelta> GetMaxAgeValue() const;
+  std::optional<base::TimeDelta> GetAgeValue() const;
+  std::optional<base::Time> GetDateValue() const;
+  std::optional<base::Time> GetLastModifiedValue() const;
+  std::optional<base::Time> GetExpiresValue() const;
+  std::optional<base::TimeDelta> GetStaleWhileRevalidateValue() const;
 
   // Extracts the time value of a particular header.  This method looks for the
   // first matching header value and parses its value as a HTTP-date.
-  bool GetTimeValuedHeader(const std::string& name, base::Time* result) const;
+  std::optional<base::Time> GetTimeValuedHeader(const std::string& name) const;
 
   // Determines if this response indicates a keep-alive connection.
   bool IsKeepAlive() const;
@@ -459,10 +476,9 @@ class NET_EXPORT HttpResponseHeaders
   size_t FindHeader(size_t from, std::string_view name) const;
 
   // Search the Cache-Control header for a directive matching |directive|. If
-  // present, treat its value as a time offset in seconds, write it to |result|,
-  // and return true.
-  bool GetCacheControlDirective(std::string_view directive,
-                                base::TimeDelta* result) const;
+  // present, treat its value as a time offset in seconds.
+  std::optional<base::TimeDelta> GetCacheControlDirective(
+      std::string_view directive) const;
 
   // Add header->value pair(s) to our list. The value will be split into
   // multiple values if it contains unquoted commas. If `contains_commas` is

@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/modules/peerconnection/rtc_peer_connection_handler.h"
 
 #include <string.h>
@@ -40,9 +45,9 @@
 #include "third_party/blink/renderer/modules/mediastream/media_stream_constraints_util.h"
 #include "third_party/blink/renderer/modules/peerconnection/adapters/web_rtc_cross_thread_copier.h"
 #include "third_party/blink/renderer/modules/peerconnection/peer_connection_dependency_factory.h"
+#include "third_party/blink/renderer/modules/peerconnection/peer_connection_features.h"
 #include "third_party/blink/renderer/modules/peerconnection/peer_connection_tracker.h"
 #include "third_party/blink/renderer/modules/peerconnection/rtc_rtp_receiver_impl.h"
-#include "third_party/blink/renderer/modules/peerconnection/speed_limit_uma_listener.h"
 #include "third_party/blink/renderer/modules/peerconnection/webrtc_set_description_observer.h"
 #include "third_party/blink/renderer/modules/webrtc/webrtc_audio_device_impl.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
@@ -259,7 +264,7 @@ std::set<RTCPeerConnectionHandler*>* GetPeerConnectionHandlers() {
 // Counts the number of senders that have |stream_id| as an associated stream.
 size_t GetLocalStreamUsageCount(
     const Vector<std::unique_ptr<blink::RTCRtpSenderImpl>>& rtp_senders,
-    const std::string stream_id) {
+    const std::string& stream_id) {
   size_t usage_count = 0;
   for (const auto& sender : rtp_senders) {
     for (const auto& sender_stream_id : sender->state().stream_ids()) {
@@ -316,8 +321,14 @@ ParsedSessionDescription ParsedSessionDescription::Parse(const String& sdp_type,
 }
 
 void ParsedSessionDescription::DoParse() {
-  description_.reset(webrtc::CreateSessionDescription(
-      type_.Utf8().c_str(), sdp_.Utf8().c_str(), &error_));
+  std::optional<webrtc::SdpType> maybe_type =
+      webrtc::SdpTypeFromString(type_.Utf8().c_str());
+  if (!maybe_type.has_value()) {
+    description_.reset();
+    return;
+  }
+  description_ = webrtc::CreateSessionDescription(*maybe_type,
+                                                  sdp_.Utf8().c_str(), &error_);
 }
 
 // Processes the resulting state changes of a SetLocalDescription() or
@@ -570,8 +581,7 @@ class RTCPeerConnectionHandler::Observer
     DCHECK(native_peer_connection_);
     std::string sdp;
     if (!candidate->ToString(&sdp)) {
-      NOTREACHED_IN_MIGRATION() << "OnIceCandidate: Could not get SDP string.";
-      return;
+      NOTREACHED() << "OnIceCandidate: Could not get SDP string.";
     }
     // The generated candidate may have been added to the pending or current
     // local description, take a snapshot and surface them to the main thread.
@@ -775,7 +785,8 @@ bool RTCPeerConnectionHandler::Initialize(
     const webrtc::PeerConnectionInterface::RTCConfiguration&
         server_configuration,
     WebLocalFrame* frame,
-    ExceptionState& exception_state) {
+    ExceptionState& exception_state,
+    RTCRtpTransport* rtp_transport) {
   DCHECK(task_runner_->RunsTasksInCurrentSequence());
   DCHECK(dependency_factory_);
 
@@ -805,16 +816,19 @@ bool RTCPeerConnectionHandler::Initialize(
   configuration_.crypto_options = webrtc::CryptoOptions{};
   configuration_.crypto_options->srtp.enable_gcm_crypto_suites = true;
   configuration_.crypto_options->srtp.enable_encrypted_rtp_header_extensions =
-      blink::Platform::Current()->IsWebRtcSrtpEncryptedHeadersEnabled();
+      base::FeatureList::IsEnabled(kWebRtcEncryptedRtpHeaderExtensions);
   configuration_.enable_implicit_rollback = true;
 
   // Apply 40 ms worth of bursting. See webrtc::TaskQueuePacedSender.
   configuration_.pacer_burst_interval = webrtc::TimeDelta::Millis(40);
 
+  configuration_.set_stats_timestamp_with_environment_clock(true);
+
   peer_connection_observer_ =
       MakeGarbageCollected<Observer>(weak_factory_.GetWeakPtr(), task_runner_);
   native_peer_connection_ = dependency_factory_->CreatePeerConnection(
-      configuration_, frame_, peer_connection_observer_, exception_state);
+      configuration_, frame_, peer_connection_observer_, exception_state,
+      rtp_transport);
   if (!native_peer_connection_.get()) {
     LOG(ERROR) << "Failed to initialize native PeerConnection.";
     return false;
@@ -835,7 +849,8 @@ bool RTCPeerConnectionHandler::InitializeForTest(
     const webrtc::PeerConnectionInterface::RTCConfiguration&
         server_configuration,
     PeerConnectionTracker* peer_connection_tracker,
-    ExceptionState& exception_state) {
+    ExceptionState& exception_state,
+    RTCRtpTransport* rtp_transport) {
   DCHECK(task_runner_->RunsTasksInCurrentSequence());
   DCHECK(dependency_factory_);
 
@@ -848,7 +863,8 @@ bool RTCPeerConnectionHandler::InitializeForTest(
       MakeGarbageCollected<Observer>(weak_factory_.GetWeakPtr(), task_runner_);
 
   native_peer_connection_ = dependency_factory_->CreatePeerConnection(
-      configuration_, nullptr, peer_connection_observer_, exception_state);
+      configuration_, nullptr, peer_connection_observer_, exception_state,
+      rtp_transport);
   if (!native_peer_connection_.get()) {
     LOG(ERROR) << "Failed to initialize native PeerConnection.";
     return false;
@@ -1528,7 +1544,7 @@ webrtc::RTCErrorOr<std::unique_ptr<RTCRtpTransceiverPlatform>>
 RTCPeerConnectionHandler::RemoveTrack(blink::RTCRtpSenderPlatform* web_sender) {
   DCHECK(task_runner_->RunsTasksInCurrentSequence());
   TRACE_EVENT0("webrtc", "RTCPeerConnectionHandler::RemoveTrack");
-  auto* it = FindSender(web_sender->Id());
+  auto it = FindSender(web_sender->Id());
   if (it == rtp_senders_.end())
     return webrtc::RTCError(webrtc::RTCErrorType::INVALID_PARAMETER);
   const auto& sender = *it;
@@ -1616,50 +1632,11 @@ void RTCPeerConnectionHandler::CloseClientPeerConnection() {
     client_->ClosePeerConnection();
 }
 
-void RTCPeerConnectionHandler::MaybeCreateThermalUmaListner() {
-  DCHECK(task_runner_->RunsTasksInCurrentSequence());
-  // Instantiate the speed limit listener if we have one track.
-  if (!speed_limit_uma_listener_) {
-    for (const auto& sender : rtp_senders_) {
-      if (sender->Track()) {
-        speed_limit_uma_listener_ =
-            std::make_unique<SpeedLimitUmaListener>(task_runner_);
-        speed_limit_uma_listener_->OnSpeedLimitChange(last_speed_limit_);
-        break;
-      }
-    }
-  }
-  if (!thermal_uma_listener_) {
-    // Instantiate the thermal uma listener only if we are sending video.
-    for (const auto& sender : rtp_senders_) {
-      if (sender->Track() &&
-          sender->Track()->GetSourceType() == MediaStreamSource::kTypeVideo) {
-        thermal_uma_listener_ = ThermalUmaListener::Create(task_runner_);
-        thermal_uma_listener_->OnThermalMeasurement(last_thermal_state_);
-        return;
-      }
-    }
-  }
-}
-
-ThermalUmaListener* RTCPeerConnectionHandler::thermal_uma_listener() const {
-  return thermal_uma_listener_.get();
-}
-
-SpeedLimitUmaListener* RTCPeerConnectionHandler::speed_limit_uma_listener()
-    const {
-  return speed_limit_uma_listener_.get();
-}
-
 void RTCPeerConnectionHandler::OnThermalStateChange(
     mojom::blink::DeviceThermalState thermal_state) {
   DCHECK(task_runner_->RunsTasksInCurrentSequence());
   if (is_closed_)
     return;
-  last_thermal_state_ = thermal_state;
-  if (thermal_uma_listener_) {
-    thermal_uma_listener_->OnThermalMeasurement(thermal_state);
-  }
   if (!base::FeatureList::IsEnabled(kWebRtcThermalResource))
     return;
   if (!thermal_resource_) {
@@ -1668,15 +1645,6 @@ void RTCPeerConnectionHandler::OnThermalStateChange(
         rtc::scoped_refptr<ThermalResource>(thermal_resource_.get()));
   }
   thermal_resource_->OnThermalMeasurement(thermal_state);
-}
-
-void RTCPeerConnectionHandler::OnSpeedLimitChange(int32_t speed_limit) {
-  DCHECK(task_runner_->RunsTasksInCurrentSequence());
-  if (is_closed_)
-    return;
-  last_speed_limit_ = speed_limit;
-  if (speed_limit_uma_listener_)
-    speed_limit_uma_listener_->OnSpeedLimitChange(speed_limit);
 }
 
 void RTCPeerConnectionHandler::StartEventLog(int output_period_ms) {
@@ -1899,7 +1867,7 @@ void RTCPeerConnectionHandler::OnModifyTransceivers(
     uintptr_t transceiver_id = blink::RTCRtpTransceiverImpl::GetId(
         transceiver_states[i].webrtc_transceiver().get());
     ids[i] = transceiver_id;
-    auto* it = FindTransceiver(transceiver_id);
+    auto it = FindTransceiver(transceiver_id);
     bool transceiver_is_new = (it == rtp_transceivers_.end());
     bool transceiver_was_modified = false;
     if (!transceiver_is_new) {
@@ -2055,30 +2023,22 @@ void RTCPeerConnectionHandler::ReportFirstSessionDescriptions(
 
 Vector<std::unique_ptr<blink::RTCRtpSenderImpl>>::iterator
 RTCPeerConnectionHandler::FindSender(uintptr_t id) {
-  for (auto* it = rtp_senders_.begin(); it != rtp_senders_.end(); ++it) {
-    if ((*it)->Id() == id)
-      return it;
-  }
-  return rtp_senders_.end();
+  return std::ranges::find_if(
+      rtp_senders_, [id](const auto& sender) { return sender->Id() == id; });
 }
 
 Vector<std::unique_ptr<blink::RTCRtpReceiverImpl>>::iterator
 RTCPeerConnectionHandler::FindReceiver(uintptr_t id) {
-  for (auto* it = rtp_receivers_.begin(); it != rtp_receivers_.end(); ++it) {
-    if ((*it)->Id() == id)
-      return it;
-  }
-  return rtp_receivers_.end();
+  return std::ranges::find_if(rtp_receivers_, [id](const auto& receiver) {
+    return receiver->Id() == id;
+  });
 }
 
 Vector<std::unique_ptr<blink::RTCRtpTransceiverImpl>>::iterator
 RTCPeerConnectionHandler::FindTransceiver(uintptr_t id) {
-  for (auto* it = rtp_transceivers_.begin(); it != rtp_transceivers_.end();
-       ++it) {
-    if ((*it)->Id() == id)
-      return it;
-  }
-  return rtp_transceivers_.end();
+  return std::ranges::find_if(rtp_transceivers_, [id](const auto& transceiver) {
+    return transceiver->Id() == id;
+  });
 }
 
 wtf_size_t RTCPeerConnectionHandler::GetTransceiverIndex(
@@ -2087,8 +2047,7 @@ wtf_size_t RTCPeerConnectionHandler::GetTransceiverIndex(
     if (platform_transceiver.Id() == rtp_transceivers_[i]->Id())
       return i;
   }
-  NOTREACHED_IN_MIGRATION();
-  return 0u;
+  NOTREACHED();
 }
 
 std::unique_ptr<blink::RTCRtpTransceiverImpl>
@@ -2104,7 +2063,7 @@ RTCPeerConnectionHandler::CreateOrUpdateTransceiver(
   auto webrtc_receiver = transceiver_state.receiver_state()->webrtc_receiver();
 
   std::unique_ptr<blink::RTCRtpTransceiverImpl> transceiver;
-  auto* it = FindTransceiver(
+  auto it = FindTransceiver(
       blink::RTCRtpTransceiverImpl::GetId(webrtc_transceiver.get()));
   if (it == rtp_transceivers_.end()) {
     // Create a new transceiver, including a sender and a receiver.
@@ -2117,7 +2076,6 @@ RTCPeerConnectionHandler::CreateOrUpdateTransceiver(
            rtp_senders_.end());
     rtp_senders_.push_back(std::make_unique<blink::RTCRtpSenderImpl>(
         *transceiver->content_sender()));
-    MaybeCreateThermalUmaListner();
     DCHECK(FindReceiver(blink::RTCRtpReceiverImpl::getId(
                webrtc_receiver.get())) == rtp_receivers_.end());
     rtp_receivers_.push_back(std::make_unique<blink::RTCRtpReceiverImpl>(

@@ -21,10 +21,12 @@ class ExceptionState;
 class ScriptState;
 class SharedStorageWorklet;
 class SharedStorageSetMethodOptions;
+class SharedStorageModifierMethodOptions;
+class SharedStorageModifierMethod;
 class SharedStorageRunOperationMethodOptions;
 class SharedStorageUrlWithMetadata;
 class SharedStorageWorklet;
-class WorkletOptions;
+class SharedStorageWorkletOptions;
 
 class MODULES_EXPORT SharedStorage final
     : public ScriptWrappable,
@@ -45,16 +47,37 @@ class MODULES_EXPORT SharedStorage final
   ScriptPromise<IDLAny> set(ScriptState*,
                             const String& key,
                             const String& value,
-                            const SharedStorageSetMethodOptions* options,
+                            const SharedStorageSetMethodOptions*,
                             ExceptionState&);
   ScriptPromise<IDLAny> append(ScriptState*,
                                const String& key,
                                const String& value,
                                ExceptionState&);
+  ScriptPromise<IDLAny> append(ScriptState*,
+                               const String& key,
+                               const String& value,
+                               const SharedStorageModifierMethodOptions*,
+                               ExceptionState&);
   ScriptPromise<IDLAny> Delete(ScriptState*,
                                const String& key,
                                ExceptionState&);
+  ScriptPromise<IDLAny> Delete(ScriptState*,
+                               const String& key,
+                               const SharedStorageModifierMethodOptions*,
+                               ExceptionState&);
   ScriptPromise<IDLAny> clear(ScriptState*, ExceptionState&);
+  ScriptPromise<IDLAny> clear(ScriptState*,
+                              const SharedStorageModifierMethodOptions*,
+                              ExceptionState&);
+  ScriptPromise<IDLAny> batchUpdate(
+      ScriptState*,
+      const HeapVector<Member<SharedStorageModifierMethod>>& methods,
+      ExceptionState&);
+  ScriptPromise<IDLAny> batchUpdate(
+      ScriptState*,
+      const HeapVector<Member<SharedStorageModifierMethod>>& methods,
+      const SharedStorageModifierMethodOptions*,
+      ExceptionState&);
   ScriptPromise<IDLString> get(ScriptState*,
                                const String& key,
                                ExceptionState&);
@@ -81,7 +104,7 @@ class MODULES_EXPORT SharedStorage final
   ScriptPromise<SharedStorageWorklet> createWorklet(
       ScriptState*,
       const String& module_url,
-      const WorkletOptions* options,
+      const SharedStorageWorkletOptions* options,
       ExceptionState&);
   SharedStorageWorklet* worklet(ScriptState*, ExceptionState&);
 

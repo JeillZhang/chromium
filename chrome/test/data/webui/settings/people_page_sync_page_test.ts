@@ -9,10 +9,10 @@ import {webUIListenerCallback} from 'chrome://resources/js/cr.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 import {flush} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 import type {CrExpandButtonElement, CrInputElement, SettingsSyncEncryptionOptionsElement, SettingsSyncPageElement} from 'chrome://settings/lazy_load.js';
-// <if expr="not chromeos_ash">
+// <if expr="not is_chromeos">
 import type {CrDialogElement} from 'chrome://settings/lazy_load.js';
 // </if>
-import type {IronCollapseElement} from 'chrome://settings/lazy_load.js';
+import type {CrCollapseElement} from 'chrome://settings/lazy_load.js';
 import type {CrButtonElement, CrRadioButtonElement, CrRadioGroupElement} from 'chrome://settings/settings.js';
 import {MetricsBrowserProxyImpl} from 'chrome://settings/settings.js';
 import {OpenWindowProxyImpl, PageStatus, Router, routes, SignedInState, StatusAction, SyncBrowserProxyImpl} from 'chrome://settings/settings.js';
@@ -21,7 +21,7 @@ import {flushTasks, waitBeforeNextRender} from 'chrome://webui-test/polymer_test
 import {TestOpenWindowProxy} from 'chrome://webui-test/test_open_window_proxy.js';
 import {isChildVisible, microtasksFinished, eventToPromise} from 'chrome://webui-test/test_util.js';
 
-// <if expr="not chromeos_ash">
+// <if expr="not is_chromeos">
 import {simulateStoredAccounts} from './sync_test_util.js';
 // </if>
 
@@ -158,9 +158,6 @@ suite('SyncSettings', function() {
     assertEquals(otherItems.querySelectorAll('cr-expand-button').length, 1);
 
     assertTrue(isChildVisible(syncPage, '#sync-advanced-row'));
-    // <if expr="chromeos_lacros">
-    assertTrue(isChildVisible(syncPage, '#os-sync-device-row'));
-    // </if>
     // TODO(crbug.com/324091979): Remove once crbug.com/324091979 launched.
     assertFalse(isChildVisible(syncPage, '#activityControlsLinkRowV1'));
 
@@ -612,7 +609,7 @@ suite('SyncSettings', function() {
     assertEquals(router.getRoutes().PEOPLE, router.getCurrentRoute());
   });
 
-  test('EnterExistingPassphraseDoesNotExistIfSignedOut', async function() {
+  test('EnterExistingPassphraseDoesNotExistIfSignedOut', function() {
     syncPage.syncStatus = {
       signedInState: SignedInState.SIGNED_IN,
       disabled: false,
@@ -738,12 +735,12 @@ suite('SyncSettings', function() {
     assertTrue(dashboardLink.hidden);
   });
 
-  // ######################################
-  // TESTS THAT ARE SKIPPED ON CHROMEOS ASH
-  // ######################################
+  // ##################################
+  // TESTS THAT ARE SKIPPED ON CHROMEOS
+  // ##################################
 
 
-  // <if expr="not chromeos_ash">
+  // <if expr="not is_chromeos">
   test('SyncSetupCancel', async function() {
     syncPage.syncStatus = {
       syncSystemEnabled: true,
@@ -954,6 +951,7 @@ suite('SyncSettings', function() {
         !!syncPage.shadowRoot!.querySelector('settings-sync-account-control'));
     syncPage.syncStatus = {
       syncSystemEnabled: false,
+      signedInState: SignedInState.SIGNED_IN,
       statusAction: StatusAction.NO_ACTION,
     };
     flush();
@@ -961,6 +959,7 @@ suite('SyncSettings', function() {
         !!syncPage.shadowRoot!.querySelector('settings-sync-account-control'));
     syncPage.syncStatus = {
       syncSystemEnabled: true,
+      signedInState: SignedInState.SIGNED_IN,
       statusAction: StatusAction.NO_ACTION,
     };
     flush();
@@ -1041,7 +1040,7 @@ suite('EEAChoiceCountry', function() {
   test('personalizationCollapse', async function() {
     // The collapse is collapsed by default.
     const personalizationCollapse =
-        syncPage.shadowRoot!.querySelector<IronCollapseElement>(
+        syncPage.shadowRoot!.querySelector<CrCollapseElement>(
             '#personalizationCollapse');
     assertTrue(!!personalizationCollapse);
     assertFalse(personalizationCollapse.opened);

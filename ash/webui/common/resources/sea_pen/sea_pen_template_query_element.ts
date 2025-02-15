@@ -10,26 +10,29 @@
 import 'chrome://resources/ash/common/personalization/common.css.js';
 import 'chrome://resources/ash/common/personalization/cros_button_style.css.js';
 import 'chrome://resources/ash/common/personalization/personalization_shared_icons.html.js';
-import 'chrome://resources/ash/common/sea_pen/sea_pen_icons.html.js';
-import 'chrome://resources/ash/common/sea_pen/sea_pen_options_element.js';
-import 'chrome://resources/ash/common/sea_pen/sea_pen_chip_text_element.js';
+import './sea_pen.css.js';
+import './sea_pen_chip_text_element.js';
+import './sea_pen_icons.html.js';
+import './sea_pen_options_element.js';
 import 'chrome://resources/cros_components/lottie_renderer/lottie-renderer.js';
 
-import {LottieRenderer} from 'chrome://resources/cros_components/lottie_renderer/lottie-renderer.js';
+import type {LottieRenderer} from 'chrome://resources/cros_components/lottie_renderer/lottie-renderer.js';
 import {assert} from 'chrome://resources/js/assert.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 import {afterNextRender, beforeNextRender} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
-import {getSeaPenTemplates, SeaPenOption, SeaPenTemplate} from './constants.js';
-import {isSeaPenUseExptTemplateEnabled} from './load_time_booleans.js';
-import {SeaPenQuery, SeaPenThumbnail, SeaPenUserVisibleQuery} from './sea_pen.mojom-webui.js';
+import type {SeaPenOption, SeaPenTemplate} from './constants.js';
+import {getSeaPenTemplates} from './constants.js';
+import {isSeaPenTextInputEnabled, isSeaPenUseExptTemplateEnabled} from './load_time_booleans.js';
+import type {SeaPenQuery, SeaPenThumbnail, SeaPenUserVisibleQuery} from './sea_pen.mojom-webui.js';
 import {getSeaPenThumbnails} from './sea_pen_controller.js';
-import {SeaPenTemplateChip, SeaPenTemplateId, SeaPenTemplateOption} from './sea_pen_generated.mojom-webui.js';
+import type {SeaPenTemplateChip, SeaPenTemplateId, SeaPenTemplateOption} from './sea_pen_generated.mojom-webui.js';
 import {getSeaPenProvider} from './sea_pen_interface_provider.js';
 import {logGenerateSeaPenWallpaper} from './sea_pen_metrics_logger.js';
 import {WithSeaPenStore} from './sea_pen_store.js';
 import {getTemplate} from './sea_pen_template_query_element.html.js';
-import {ChipToken, getDefaultOptions, getSelectedOptionsFromQuery, getTemplateTokens, isNonEmptyArray, TemplateToken} from './sea_pen_utils.js';
+import type {ChipToken, TemplateToken} from './sea_pen_utils.js';
+import {getDefaultOptions, getSelectedOptionsFromQuery, getTemplateTokens, isNonEmptyArray, isPersonalizationApp} from './sea_pen_utils.js';
 import {getTransitionEnabled} from './transition.js';
 
 // Two options are the same if they have the same key-value pairs.
@@ -142,7 +145,6 @@ export class SeaPenTemplateQueryElement extends WithSeaPenStore {
 
   // TODO(b/319719709) this should be SeaPenTemplateId.
   templateId: string|null;
-  private inspireMeAnimation_: LottieRenderer|null|undefined;
   private seaPenTemplate_: SeaPenTemplate;
   private seaPenQuery_: SeaPenQuery|null;
   private selectedOptions_: Map<SeaPenTemplateChip, SeaPenOption>;
@@ -179,10 +181,9 @@ export class SeaPenTemplateQueryElement extends WithSeaPenStore {
         new ResizeObserver(() => this.animateContainerHeight());
 
     beforeNextRender(this, () => {
-      this.inspireMeAnimation_ =
-          this.shadowRoot?.querySelector<LottieRenderer>('#inspireMeAnimation');
-      if (this.inspireMeAnimation_) {
-        this.inspireMeAnimation_.autoplay = false;
+      const inspireMeAnimation = this.getInspireMeAnimationElement_();
+      if (inspireMeAnimation) {
+        inspireMeAnimation.autoplay = false;
       }
 
       this.containerOriginalHeight_ = this.$.container.scrollHeight;
@@ -235,13 +236,12 @@ export class SeaPenTemplateQueryElement extends WithSeaPenStore {
   }
 
   private startInspireIconAnimation_() {
-    this.inspireMeAnimation_?.play();
+    this.getInspireMeAnimationElement_()?.play();
   }
 
   private stopInspireIconAnimation_() {
-    this.inspireMeAnimation_?.stop();
+    this.getInspireMeAnimationElement_()?.stop();
   }
-
 
   private clearSelectedChipState_() {
     if (this.selectedChip_) {
@@ -371,6 +371,11 @@ export class SeaPenTemplateQueryElement extends WithSeaPenStore {
     };
   }
 
+  private getInspireMeAnimationElement_(): LottieRenderer|null|undefined {
+    return this.shadowRoot?.querySelector<LottieRenderer>(
+        '#inspireMeAnimation');
+  }
+
   private onClickSearchButton_(event: Event) {
     this.clearSelectedChipState_();
     getSeaPenThumbnails(
@@ -396,6 +401,12 @@ export class SeaPenTemplateQueryElement extends WithSeaPenStore {
 
   private shouldShowOptions_(options: SeaPenOption[]|null): boolean {
     return isNonEmptyArray(options);
+  }
+
+  private shouldShowFreeformNavigationInfo_(thumbnailsLoading: boolean):
+      boolean {
+    return isSeaPenTextInputEnabled() && isPersonalizationApp() &&
+        !thumbnailsLoading;
   }
 
   private shouldEnableTextAnimation(

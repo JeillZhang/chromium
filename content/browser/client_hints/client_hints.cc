@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/342213636): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "content/browser/client_hints/client_hints.h"
 
 #include <algorithm>
@@ -52,7 +57,6 @@
 #include "third_party/blink/public/common/device_memory/approximated_device_memory.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/page/page_zoom.h"
-#include "third_party/blink/public/common/permissions_policy/origin_with_possible_wildcards.h"
 #include "third_party/blink/public/common/permissions_policy/permissions_policy.h"
 #include "third_party/blink/public/common/user_agent/user_agent_metadata.h"
 #include "ui/display/display.h"
@@ -149,13 +153,6 @@ double GetDeviceScaleFactor() {
 
 // Returns the zoom factor for a given |url|.
 double GetZoomFactor(BrowserContext* context, const GURL& url) {
-#if BUILDFLAG(IS_ANDROID)
-  // On Android, use the default value when the AccessibilityPageZoom
-  // feature is not enabled.
-  if (!base::FeatureList::IsEnabled(features::kAccessibilityPageZoom))
-    return 1.0;
-#endif
-
   double zoom_level = HostZoomMap::GetDefaultForBrowserContext(context)
                           ->GetZoomLevelForHostAndScheme(
                               url.scheme(), net::GetHostOrSpecFromURL(url));
@@ -166,7 +163,7 @@ double GetZoomFactor(BrowserContext* context, const GURL& url) {
                      ->GetDefaultZoomLevel();
   }
 
-  return blink::PageZoomLevelToZoomFactor(zoom_level);
+  return blink::ZoomLevelToZoomFactor(zoom_level);
 }
 
 // Returns a string corresponding to |value|. The returned string satisfies
@@ -334,16 +331,7 @@ gfx::Size GetScaledViewportSize(BrowserContext* context,
     viewport_size =
         ScaleToRoundedSize(viewport_size, 980.0 / viewport_size.width());
   }
-
-  // On Android, use the default value when the AccessibilityPageZoom
-  // feature is not enabled.
-  if (!base::FeatureList::IsEnabled(features::kAccessibilityPageZoom)) {
-    return viewport_size;
-  }
 #endif
-
-  base::UmaHistogramBoolean("ClientHints.Viewport.IsDeviceScaleFactorOne",
-                            GetDeviceScaleFactor() == 1.0);
 
   double zoom_factor = GetZoomFactor(context, url);
   if (zoom_factor > 0) {
@@ -448,10 +436,6 @@ void AddEctHeader(net::HttpRequestHeaders* headers,
                   network::NetworkQualityTracker* network_quality_tracker,
                   const GURL& url) {
   DCHECK(headers);
-  DCHECK_EQ(network::kWebEffectiveConnectionTypeMappingCount,
-            net::EFFECTIVE_CONNECTION_TYPE_4G + 1u);
-  DCHECK_EQ(network::kWebEffectiveConnectionTypeMappingCount,
-            static_cast<size_t>(net::EFFECTIVE_CONNECTION_TYPE_LAST));
 
   std::optional<net::EffectiveConnectionType> web_holdback_ect =
       GetWebHoldbackEffectiveConnectionType();
@@ -555,8 +539,7 @@ struct ClientHintsExtendedData {
       main_frame_origin = resource_origin;
     } else if (frame_tree_node->IsInFencedFrameTree()) {
       // TODO(crbug.com/40263100) Add WPT tests and specify the behavior
-      // of client hints delegation for subframes inside
-      // FencedFrames/Portals/etc...
+      // of client hints delegation for subframes inside FencedFrames.
       // Test cases should cover this 3 layers nested frames case, from top to
       // bottom:
       // 1. Fenced frame.
@@ -568,7 +551,7 @@ struct ClientHintsExtendedData {
       // See crbug.com/1470634.
       const std::optional<FencedFrameProperties>& fenced_frame_properties =
           frame_tree_node->GetFencedFrameProperties();
-      base::span<const blink::mojom::PermissionsPolicyFeature> permissions;
+      base::span<const network::mojom::PermissionsPolicyFeature> permissions;
       if (fenced_frame_properties) {
         permissions = fenced_frame_properties->effective_enabled_permissions();
       }
@@ -579,7 +562,7 @@ struct ClientHintsExtendedData {
           frame_tree_node->frame_tree().GetMainFrame();
       main_frame_origin = main_frame->GetLastCommittedOrigin();
       permissions_policy = blink::PermissionsPolicy::CopyStateFrom(
-          main_frame->permissions_policy());
+          main_frame->GetPermissionsPolicy());
     }
 
     const base::TimeTicks start_time = base::TimeTicks::Now();
@@ -704,8 +687,10 @@ void UpdateNavigationRequestClientUaHeadersImpl(
     NavigatorDelegate* nav_delegate =
         frame_tree_node ? frame_tree_node->navigator().GetDelegate() : nullptr;
     ua_metadata =
-        nav_delegate ? nav_delegate->GetUserAgentOverride().ua_metadata_override
-                     : std::nullopt;
+        nav_delegate
+            ? nav_delegate->GetUserAgentOverride(frame_tree_node->frame_tree())
+                  .ua_metadata_override
+            : std::nullopt;
     // If a custom UA override is set, but no value is provided for UA client
     // hints, disable them.
     disable_due_to_custom_ua = !ua_metadata.has_value();
@@ -943,20 +928,11 @@ void AddPrefetchNavigationRequestClientHintsHeaders(
     net::HttpRequestHeaders* headers,
     BrowserContext* context,
     ClientHintsControllerDelegate* delegate,
-    bool is_ua_override_on,
-    bool is_javascript_enabled) {
+    bool is_ua_override_on) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  DCHECK_EQ(network::kWebEffectiveConnectionTypeMappingCount,
-            net::EFFECTIVE_CONNECTION_TYPE_4G + 1u);
-  DCHECK_EQ(network::kWebEffectiveConnectionTypeMappingCount,
-            static_cast<size_t>(net::EFFECTIVE_CONNECTION_TYPE_LAST));
   DCHECK(context);
 
-  // Since prefetch navigation doesn't have a related frame tree node,
-  // |is_javascript_enabled| is passed in to get whether a typical frame tree
-  // node would support javascript.
-  if (!is_javascript_enabled ||
-      !ShouldAddClientHints(origin, nullptr, delegate)) {
+  if (!ShouldAddClientHints(origin, nullptr, delegate)) {
     return;
   }
 
@@ -975,10 +951,6 @@ void AddNavigationRequestClientHintsHeaders(
     const std::optional<GURL>& request_url) {
   DCHECK(frame_tree_node);
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  DCHECK_EQ(network::kWebEffectiveConnectionTypeMappingCount,
-            net::EFFECTIVE_CONNECTION_TYPE_4G + 1u);
-  DCHECK_EQ(network::kWebEffectiveConnectionTypeMappingCount,
-            static_cast<size_t>(net::EFFECTIVE_CONNECTION_TYPE_LAST));
   DCHECK(context);
   if (!ShouldAddClientHints(origin, frame_tree_node, delegate, request_url)) {
     return;

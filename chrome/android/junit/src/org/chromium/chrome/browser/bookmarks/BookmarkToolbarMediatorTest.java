@@ -31,7 +31,6 @@ import org.hamcrest.Matchers;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
@@ -44,15 +43,14 @@ import org.robolectric.annotation.LooperMode;
 import org.chromium.base.supplier.OneshotSupplierImpl;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Batch;
-import org.chromium.base.test.util.Features;
-import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.app.bookmarks.BookmarkEditActivity;
 import org.chromium.chrome.browser.bookmarks.BookmarkUiPrefs.BookmarkRowDisplayPref;
 import org.chromium.chrome.browser.bookmarks.BookmarkUiPrefs.BookmarkRowSortOrder;
 import org.chromium.chrome.browser.bookmarks.BookmarkUiState.BookmarkUiMode;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.profiles.Profile;
+import org.chromium.chrome.browser.profiles.ProfileResolver;
+import org.chromium.chrome.browser.profiles.ProfileResolverJni;
 import org.chromium.components.bookmarks.BookmarkId;
 import org.chromium.components.bookmarks.BookmarkType;
 import org.chromium.components.browser_ui.widget.dragreorder.DragReorderableRecyclerViewAdapter;
@@ -75,10 +73,8 @@ import java.util.function.BooleanSupplier;
 @RunWith(BaseRobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
 @LooperMode(LooperMode.Mode.LEGACY)
-@EnableFeatures(ChromeFeatureList.ANDROID_IMPROVED_BOOKMARKS)
 public class BookmarkToolbarMediatorTest {
     @Rule public MockitoRule mMockitoRule = MockitoJUnit.rule();
-    @Rule public TestRule mProcessor = new Features.JUnitProcessor();
 
     @Rule
     public ActivityScenarioRule<TestActivity> mActivityScenarios =
@@ -95,6 +91,7 @@ public class BookmarkToolbarMediatorTest {
     @Mock private Runnable mEndSearchRunnable;
     @Mock private BookmarkMoveSnackbarManager mBookmarkMoveSnackbarManager;
     @Mock private Profile mProfile;
+    @Mock private ProfileResolver.Natives mProfileResolverNatives;
 
     @Spy private Context mContext;
 
@@ -120,13 +117,14 @@ public class BookmarkToolbarMediatorTest {
 
         mIncognitoEnabledSupplier = () -> mIncognitoEnabled;
 
+        ProfileResolverJni.setInstanceForTesting(mProfileResolverNatives);
+
         initModelAndMediator();
     }
 
     private void initModelAndMediator() {
         mModel =
                 new PropertyModel.Builder(BookmarkToolbarProperties.ALL_KEYS)
-                        .with(BookmarkToolbarProperties.BOOKMARK_OPENER, mBookmarkOpener)
                         .with(BookmarkToolbarProperties.SELECTION_DELEGATE, mSelectionDelegate)
                         .with(BookmarkToolbarProperties.BOOKMARK_UI_MODE, BookmarkUiMode.LOADING)
                         .with(BookmarkToolbarProperties.IS_DIALOG_UI, false)
@@ -139,6 +137,7 @@ public class BookmarkToolbarMediatorTest {
         mMediator =
                 new BookmarkToolbarMediator(
                         mContext,
+                        mProfile,
                         mModel,
                         mDragReorderableRecyclerViewAdapter,
                         mBookmarkDelegateSupplier,
@@ -158,12 +157,6 @@ public class BookmarkToolbarMediatorTest {
                 == (int) mModel.get(BookmarkToolbarProperties.NAVIGATION_BUTTON_STATE);
     }
 
-    private void dropCurrentSelection() {
-        doReturn(Collections.emptyList()).when(mSelectionDelegate).getSelectedItemsAsList();
-        doReturn(Collections.emptyList()).when(mSelectionDelegate).getSelectedItems();
-        doReturn(false).when(mSelectionDelegate).isSelectionEnabled();
-    }
-
     private void setCurrentSelection(BookmarkId... bookmarkIdArray) {
         List<BookmarkId> bookmarkIdList = Arrays.asList(bookmarkIdArray);
         doReturn(bookmarkIdList).when(mSelectionDelegate).getSelectedItemsAsList();
@@ -179,6 +172,7 @@ public class BookmarkToolbarMediatorTest {
         mMediator =
                 new BookmarkToolbarMediator(
                         mContext,
+                        mProfile,
                         mModel,
                         mDragReorderableRecyclerViewAdapter,
                         mBookmarkDelegateSupplier,
@@ -543,7 +537,6 @@ public class BookmarkToolbarMediatorTest {
     }
 
     @Test
-    @EnableFeatures({ChromeFeatureList.ANDROID_IMPROVED_BOOKMARKS})
     public void testNavigateBackWhileSearching() {
         String folderName = "test folder";
         mMediator.onFolderStateSet(
@@ -560,7 +553,6 @@ public class BookmarkToolbarMediatorTest {
     }
 
     @Test
-    @EnableFeatures({ChromeFeatureList.ANDROID_IMPROVED_BOOKMARKS})
     public void testSelectionWhileSorting() {
         String folderName = "test folder";
         mMediator.onFolderStateSet(

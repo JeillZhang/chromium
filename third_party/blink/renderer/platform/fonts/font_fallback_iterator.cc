@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/platform/fonts/font_fallback_iterator.h"
 
 #include "base/memory/values_equivalent.h"
@@ -9,6 +14,7 @@
 #include "third_party/blink/renderer/platform/fonts/font_description.h"
 #include "third_party/blink/renderer/platform/fonts/font_fallback_list.h"
 #include "third_party/blink/renderer/platform/fonts/segmented_font_data.h"
+#include "third_party/blink/renderer/platform/fonts/shaping/harfbuzz_face.h"
 #include "third_party/blink/renderer/platform/fonts/simple_font_data.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 
@@ -37,10 +43,10 @@ void FontFallbackIterator::Reset() {
 }
 
 bool FontFallbackIterator::AlreadyLoadingRangeForHintChar(UChar32 hint_char) {
-  for (auto* it = tracked_loading_range_sets_.begin();
-       it != tracked_loading_range_sets_.end(); ++it) {
-    if ((*it)->Contains(hint_char))
+  for (const auto& range : tracked_loading_range_sets_) {
+    if (range->Contains(hint_char)) {
       return true;
+    }
   }
   return false;
 }
@@ -48,8 +54,8 @@ bool FontFallbackIterator::AlreadyLoadingRangeForHintChar(UChar32 hint_char) {
 bool FontFallbackIterator::RangeSetContributesForHint(
     const HintCharList& hint_list,
     const FontDataForRangeSet* segmented_face) {
-  for (auto* it = hint_list.begin(); it != hint_list.end(); ++it) {
-    if (segmented_face->Contains(*it)) {
+  for (const auto& hint : hint_list) {
+    if (segmented_face->Contains(hint)) {
       // If it's a pending custom font, we need to make sure it can render any
       // new characters, otherwise we may trigger a redundant load. In other
       // cases (already loaded or not a custom font), we can use it right away.
@@ -57,8 +63,9 @@ bool FontFallbackIterator::RangeSetContributesForHint(
       // load them.
       if (!segmented_face->IsPendingCustomFont() ||
           segmented_face->IsPendingDataUrlCustomFont() ||
-          !AlreadyLoadingRangeForHintChar(*it))
+          !AlreadyLoadingRangeForHintChar(hint)) {
         return true;
+      }
     }
   }
   return false;

@@ -5,9 +5,11 @@
 #import "ios/chrome/browser/tips_notifications/model/utils.h"
 
 #import "base/time/time.h"
+#import "ios/chrome/browser/push_notification/model/constants.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/grit/ios_branded_strings.h"
 #import "ios/chrome/grit/ios_strings.h"
+#import "ui/base/device_form_factor.h"
 #import "ui/base/l10n/l10n_util_mac.h"
 
 namespace {
@@ -17,6 +19,14 @@ struct ContentIDs {
   int title;
   int body;
 };
+
+// Returns the string id of the body text for the Docking promo notification.
+int DockingBodyID() {
+  if (ui::GetDeviceFormFactor() == ui::DEVICE_FORM_FACTOR_TABLET) {
+    return IDS_IOS_NOTIFICATIONS_TIPS_DOCKING_BODY_IPAD;
+  }
+  return IDS_IOS_NOTIFICATIONS_TIPS_DOCKING_BODY_IPHONE;
+}
 
 // Returns the ContentIDs for the given `type`.
 ContentIDs ContentIDsForType(TipsNotificationType type) {
@@ -33,23 +43,62 @@ ContentIDs ContentIDsForType(TipsNotificationType type) {
     case TipsNotificationType::kSetUpListContinuation:
       return {IDS_IOS_NOTIFICATIONS_TIPS_SETUPLIST_CONTINUATION_TITLE,
               IDS_IOS_NOTIFICATIONS_TIPS_SETUPLIST_CONTINUATION_BODY};
+    case TipsNotificationType::kDocking:
+      return {IDS_IOS_NOTIFICATIONS_TIPS_DOCKING_TITLE, DockingBodyID()};
+    case TipsNotificationType::kOmniboxPosition:
+      return {IDS_IOS_NOTIFICATIONS_TIPS_OMNIBOX_POSITION_TITLE,
+              IDS_IOS_NOTIFICATIONS_TIPS_OMNIBOX_POSITION_BODY};
+    case TipsNotificationType::kLens:
+      return {IDS_IOS_NOTIFICATIONS_TIPS_LENS_TITLE,
+              IDS_IOS_NOTIFICATIONS_TIPS_LENS_BODY};
+    case TipsNotificationType::kEnhancedSafeBrowsing:
+      return {IDS_IOS_NOTIFICATIONS_TIPS_ENHANCED_SAFE_BROWSING_TITLE,
+              IDS_IOS_NOTIFICATIONS_TIPS_ENHANCED_SAFE_BROWSING_BODY};
     case TipsNotificationType::kError:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }
 
-// A bitfield with all notification types enabled.
-const int kEnableAllNotifications = 23;
+// Returns the default trigger TimeDelta for the given `user_type` depending
+// on whether this is for a reactivation notification or not.
+base::TimeDelta DefaultTriggerDelta(bool for_reactivation,
+                                    TipsNotificationUserType user_type) {
+  if (for_reactivation) {
+    return base::Days(7);
+  }
+  switch (user_type) {
+    case TipsNotificationUserType::kUnknown:
+      return base::Days(3);
+    case TipsNotificationUserType::kLessEngaged:
+      return base::Days(21);
+    case TipsNotificationUserType::kActiveSeeker:
+      return base::Days(7);
+  }
+}
+
+// A bitfield with all notification types from the enum enabled.
+constexpr int kAllNotificationBits =
+    (1 << (int(TipsNotificationType::kMaxValue) + 1)) - 1;
+// A bitfield with all notification types from the enum enabled, except for
+// kError.
+constexpr int kEnableAllNotifications =
+    kAllNotificationBits - (1 << int(TipsNotificationType::kError));
 
 }  // namespace
 
 NSString* const kTipsNotificationId = @"kTipsNotificationId";
 NSString* const kTipsNotificationTypeKey = @"kTipsNotificationTypeKey";
-const base::TimeDelta kTipsNotificationDefaultTriggerDelta = base::Hours(72);
 const char kTipsNotificationsSentPref[] = "tips_notifications.sent_bitfield";
 const char kTipsNotificationsLastSent[] = "tips_notifiations.last_sent";
 const char kTipsNotificationsLastTriggered[] =
     "tips_notifiations.last_triggered";
+const char kTipsNotificationsLastRequestedTime[] =
+    "tips_notifications.last_requested.time";
+const char kTipsNotificationsUserType[] = "tips_notifications.user_type";
+const char kTipsNotificationsDismissCount[] =
+    "tips_notifications.dismiss_count";
+const char kReactivationNotificationsCanceledCount[] =
+    "reactivation_notifications.canceled_count";
 
 bool IsTipsNotification(UNNotificationRequest* request) {
   return [request.identifier isEqualToString:kTipsNotificationId];
@@ -72,11 +121,15 @@ std::optional<TipsNotificationType> ParseTipsNotificationType(
   return static_cast<TipsNotificationType>(type.integerValue);
 }
 
-UNNotificationRequest* TipsNotificationRequest(TipsNotificationType type) {
+UNNotificationRequest* TipsNotificationRequest(
+    TipsNotificationType type,
+    bool for_reactivation,
+    TipsNotificationUserType user_type) {
   return [UNNotificationRequest
       requestWithIdentifier:kTipsNotificationId
                     content:ContentForTipsNotificationType(type)
-                    trigger:TipsNotificationTrigger()];
+                    trigger:TipsNotificationTrigger(for_reactivation,
+                                                    user_type)];
 }
 
 UNNotificationContent* ContentForTipsNotificationType(
@@ -91,15 +144,39 @@ UNNotificationContent* ContentForTipsNotificationType(
   return content;
 }
 
-base::TimeDelta TipsNotificationTriggerDelta() {
-  return GetFieldTrialParamByFeatureAsTimeDelta(
-      kIOSTipsNotifications, kIOSTipsNotificationsTriggerTimeParam,
-      kTipsNotificationDefaultTriggerDelta);
+base::TimeDelta TipsNotificationTriggerDelta(
+    bool for_reactivation,
+    TipsNotificationUserType user_type) {
+  base::TimeDelta default_trigger =
+      DefaultTriggerDelta(for_reactivation, user_type);
+  if (for_reactivation) {
+    return GetFieldTrialParamByFeatureAsTimeDelta(
+        kIOSReactivationNotifications,
+        kIOSReactivationNotificationsTriggerTimeParam, default_trigger);
+  }
+  switch (user_type) {
+    case TipsNotificationUserType::kUnknown:
+      return GetFieldTrialParamByFeatureAsTimeDelta(
+          kIOSTipsNotifications, kIOSTipsNotificationsUnknownTriggerTimeParam,
+          default_trigger);
+    case TipsNotificationUserType::kLessEngaged:
+      return GetFieldTrialParamByFeatureAsTimeDelta(
+          kIOSTipsNotifications,
+          kIOSTipsNotificationsLessEngagedTriggerTimeParam, default_trigger);
+    case TipsNotificationUserType::kActiveSeeker:
+      return GetFieldTrialParamByFeatureAsTimeDelta(
+          kIOSTipsNotifications,
+          kIOSTipsNotificationsActiveSeekerTriggerTimeParam, default_trigger);
+  }
 }
 
-UNNotificationTrigger* TipsNotificationTrigger() {
+UNNotificationTrigger* TipsNotificationTrigger(
+    bool for_reactivation,
+    TipsNotificationUserType user_type) {
   return [UNTimeIntervalNotificationTrigger
-      triggerWithTimeInterval:TipsNotificationTriggerDelta().InSecondsF()
+      triggerWithTimeInterval:TipsNotificationTriggerDelta(for_reactivation,
+                                                           user_type)
+                                  .InSecondsF()
                       repeats:NO];
 }
 
@@ -107,4 +184,102 @@ int TipsNotificationsEnabledBitfield() {
   return GetFieldTrialParamByFeatureAsInt(kIOSTipsNotifications,
                                           kIOSTipsNotificationsEnabledParam,
                                           kEnableAllNotifications);
+}
+
+std::vector<TipsNotificationType> TipsNotificationsTypesOrder(
+    bool for_reactivation) {
+  if (for_reactivation) {
+    return {
+        TipsNotificationType::kLens,
+        TipsNotificationType::kWhatsNew,
+        TipsNotificationType::kEnhancedSafeBrowsing,
+    };
+  }
+  int order_num = GetFieldTrialParamByFeatureAsInt(
+      kIOSTipsNotifications, kIOSTipsNotificationsOrderParam, 3);
+  switch (order_num) {
+    case 1:
+      // The default order.
+      return {
+          TipsNotificationType::kSetUpListContinuation,
+          TipsNotificationType::kWhatsNew,
+          TipsNotificationType::kLens,
+          TipsNotificationType::kOmniboxPosition,
+          TipsNotificationType::kEnhancedSafeBrowsing,
+          TipsNotificationType::kDefaultBrowser,
+          TipsNotificationType::kDocking,
+          TipsNotificationType::kSignin,
+      };
+
+    // Reordered with Lens first.
+    case 2:
+      return {
+          TipsNotificationType::kLens,
+          TipsNotificationType::kWhatsNew,
+          TipsNotificationType::kSetUpListContinuation,
+          TipsNotificationType::kOmniboxPosition,
+          TipsNotificationType::kEnhancedSafeBrowsing,
+          TipsNotificationType::kDefaultBrowser,
+          TipsNotificationType::kDocking,
+          TipsNotificationType::kSignin,
+      };
+
+    // Reordered with ESB first.
+    case 3:
+      return {
+          TipsNotificationType::kEnhancedSafeBrowsing,
+          TipsNotificationType::kWhatsNew,
+          TipsNotificationType::kLens,
+          TipsNotificationType::kOmniboxPosition,
+          TipsNotificationType::kSetUpListContinuation,
+          TipsNotificationType::kDefaultBrowser,
+          TipsNotificationType::kDocking,
+          TipsNotificationType::kSignin,
+      };
+
+    // Reordered with Lens, Omnibox position, and ESB first, and SetUpList
+    // removed.
+    case 4:
+      return {
+          TipsNotificationType::kLens,
+          TipsNotificationType::kOmniboxPosition,
+          TipsNotificationType::kEnhancedSafeBrowsing,
+          TipsNotificationType::kWhatsNew,
+          TipsNotificationType::kDefaultBrowser,
+          TipsNotificationType::kDocking,
+          TipsNotificationType::kSignin,
+      };
+
+    default:
+      NOTREACHED();
+  }
+}
+
+int TipsNotificationsDismissLimit() {
+  return GetFieldTrialParamByFeatureAsInt(
+      kIOSTipsNotifications, kIOSTipsNotificationsDismissLimitParam, 0);
+}
+
+NotificationType NotificationTypeForTipsNotificationType(
+    TipsNotificationType type) {
+  switch (type) {
+    case TipsNotificationType::kDefaultBrowser:
+      return NotificationType::kTipsDefaultBrowser;
+    case TipsNotificationType::kWhatsNew:
+      return NotificationType::kTipsWhatsNew;
+    case TipsNotificationType::kSignin:
+      return NotificationType::kTipsSignin;
+    case TipsNotificationType::kSetUpListContinuation:
+      return NotificationType::kTipsSetUpListContinuation;
+    case TipsNotificationType::kDocking:
+      return NotificationType::kTipsDocking;
+    case TipsNotificationType::kOmniboxPosition:
+      return NotificationType::kTipsOmniboxPosition;
+    case TipsNotificationType::kLens:
+      return NotificationType::kTipsLens;
+    case TipsNotificationType::kEnhancedSafeBrowsing:
+      return NotificationType::kTipsEnhancedSafeBrowsing;
+    default:
+      NOTREACHED();
+  }
 }

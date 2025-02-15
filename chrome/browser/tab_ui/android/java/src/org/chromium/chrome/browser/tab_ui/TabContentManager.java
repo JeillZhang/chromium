@@ -11,6 +11,7 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Matrix;
+import android.os.SystemClock;
 import android.util.Size;
 import android.view.View;
 import android.view.ViewGroup.MarginLayoutParams;
@@ -27,16 +28,14 @@ import org.jni_zero.NativeMethods;
 import org.chromium.base.Callback;
 import org.chromium.base.CommandLine;
 import org.chromium.base.PathUtils;
-import org.chromium.base.SysUtils;
 import org.chromium.base.TraceEvent;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.task.PostTask;
 import org.chromium.base.task.TaskTraits;
 import org.chromium.chrome.browser.browser_controls.BrowserControlsStateProvider;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
-import org.chromium.chrome.browser.hub.HubFieldTrial;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.tabmodel.TabWindowManager;
 import org.chromium.chrome.browser.ui.native_page.FrozenNativePage;
 import org.chromium.chrome.browser.ui.native_page.NativePage;
 import org.chromium.ui.base.DeviceFormFactor;
@@ -84,6 +83,9 @@ public class TabContentManager {
     public static final String UMA_THUMBNAIL_FETCHING_RESULT =
             "Android.GridTabSwitcher.ThumbnailFetchingResult";
 
+    private static final String UMA_THUMBNAIL_CAPTURE_DURATION_FORMAT =
+            "Android.TabContentManager.CaptureThumbnail.%s.Duration";
+
     private float mThumbnailScale;
 
     /**
@@ -101,6 +103,7 @@ public class TabContentManager {
     private final boolean mSnapshotsEnabled;
     private final TabFinder mTabFinder;
     private final Context mContext;
+    private final TabWindowManager mTabWindowManager;
 
     /** The Java interface for listening to thumbnail changes. */
     public interface ThumbnailChangeListener {
@@ -141,11 +144,13 @@ public class TabContentManager {
             Context context,
             BrowserControlsStateProvider browserControlsStateProvider,
             boolean snapshotsEnabled,
-            TabFinder tabFinder) {
+            TabFinder tabFinder,
+            TabWindowManager tabWindowManager) {
         mContext = context;
         mBrowserControlsStateProvider = browserControlsStateProvider;
         mTabFinder = tabFinder;
         mSnapshotsEnabled = snapshotsEnabled;
+        mTabWindowManager = tabWindowManager;
 
         // Override the cache size on the command line with --thumbnails=100
         int defaultCacheSize =
@@ -186,7 +191,7 @@ public class TabContentManager {
                                 mFullResThumbnailsMaxSize,
                                 compressionQueueMaxSize,
                                 writeQueueMaxSize,
-                                /* saveJpegThumbnails= */ !SysUtils.isLowEndDevice());
+                                mSnapshotsEnabled);
     }
 
     /** Destroy the native component. */
@@ -293,11 +298,11 @@ public class TabContentManager {
     }
 
     /**
-     * Call to get an ETC1 thumbnail for a given tab through a {@link Callback}. If there is
-     * no up-to-date thumbnail on disk for the given tab, callback returns null.
+     * Call to get an ETC1 thumbnail for a given tab through a {@link Callback}. If there is no
+     * up-to-date thumbnail on disk for the given tab, callback returns null.
+     *
      * @param tabId The ID of the tab to get the thumbnail for.
-     * @param callback The callback to send the {@link Bitmap} with. Can be called up to twice when
-     *                 {@code forceUpdate}; otherwise always called exactly once.
+     * @param callback The callback to send the {@link Bitmap} with.
      */
     public void getEtc1TabThumbnailWithCallback(int tabId, @NonNull Callback<Bitmap> callback) {
         if (!mSnapshotsEnabled || mNativeTabContentManager == 0) {
@@ -307,74 +312,25 @@ public class TabContentManager {
 
         // Do not capture a JPEG here because we likely already created one when capturing. We just
         // want to fetch the ETC1 off of disk for a higher resolution image to use for animations.
-        TabContentManagerJni.get()
-                .getEtc1TabThumbnail(
-                        mNativeTabContentManager, tabId, /* saveJpeg= */ false, callback);
+        TabContentManagerJni.get().getEtc1TabThumbnail(mNativeTabContentManager, tabId, callback);
     }
 
     /**
-     * Call to get a thumbnail for a given tab through a {@link Callback}. If there is
-     * no up-to-date thumbnail on disk for the given tab, callback returns null.
+     * Call to get a thumbnail for a given tab through a {@link Callback}. If there is no up-to-date
+     * thumbnail on disk for the given tab, callback returns null.
+     *
      * @param tabId The ID of the tab to get the thumbnail for.
      * @param thumbnailSize Desired size of thumbnail received by callback.
-     * @param callback The callback to send the {@link Bitmap} with. Can be called up to twice when
-     *                 {@code forceUpdate}; otherwise always called exactly once.
-     * @param forceUpdate Whether to obtain the thumbnail from the live content.
-     * @param writeBack When {@code forceUpdate}, whether to write the thumbnail to cache.
+     * @param callback The callback to send the {@link Bitmap} with.
      */
     public void getTabThumbnailWithCallback(
-            @NonNull int tabId,
-            @NonNull Size thumbnailSize,
-            @NonNull Callback<Bitmap> callback,
-            boolean forceUpdate,
-            boolean writeBack) {
-        if (!mSnapshotsEnabled) return;
-
-        // TODO(crbug.com/40267864): Remove forceUpdate and writeBack params once the following
-        // features
-        // launch:
-        // * GridTabSwitcherAndroidAnimations
-        // OR
-        // * Hub
-        if (HubFieldTrial.isHubEnabled()
-                || ChromeFeatureList.sGridTabSwitcherAndroidAnimations.isEnabled()) {
-            getTabThumbnailFromDisk(tabId, thumbnailSize, callback);
+            int tabId, @NonNull Size thumbnailSize, @NonNull Callback<Bitmap> callback) {
+        if (!mSnapshotsEnabled) {
+            callback.onResult(null);
             return;
         }
 
-        if (!forceUpdate) {
-            assert !writeBack : "writeBack is ignored if not forceUpdate";
-            getTabThumbnailFromDisk(tabId, thumbnailSize, callback);
-            return;
-        }
-
-        // Reading thumbnail from disk is faster than taking screenshot from live Tab, so fetch
-        // that first even if |forceUpdate|.
-        getTabThumbnailFromDisk(
-                tabId,
-                thumbnailSize,
-                (diskBitmap) -> {
-                    if (diskBitmap != null) {
-                        callback.onResult(diskBitmap);
-                    }
-
-                    Tab tab = getTabById(tabId);
-                    if (tab == null) return;
-
-                    captureThumbnail(
-                            tab,
-                            writeBack,
-                            /* returnBitmap= */ true,
-                            (bitmap) -> {
-                                // Null check to avoid having a Bitmap from
-                                // getTabThumbnailFromDisk() but cleared here.
-                                // If invalidation is not needed, readbackNativeBitmap() might not
-                                // do anything and send back null.
-                                if (bitmap != null) {
-                                    callback.onResult(bitmap);
-                                }
-                            });
-                });
+        getTabThumbnailFromDisk(tabId, thumbnailSize, callback);
     }
 
     /**
@@ -438,7 +394,7 @@ public class TabContentManager {
     }
 
     private void getTabThumbnailFromDisk(
-            @NonNull int tabId, @NonNull Size thumbnailSize, @NonNull Callback<Bitmap> callback) {
+            int tabId, @NonNull Size thumbnailSize, @NonNull Callback<Bitmap> callback) {
         // Get the JPEG once it is ready if a capture is ongoing.
         if (mNativeTabContentManager != 0) {
             TraceEvent.startAsync("GetTabThumbnailFromDiskJpegAwait", tabId);
@@ -593,7 +549,7 @@ public class TabContentManager {
             @NonNull final Tab tab, boolean returnBitmap, Callback<Bitmap> callback) {
         if (mNativeTabContentManager == 0 || !mSnapshotsEnabled) return;
 
-        captureThumbnail(tab, true, returnBitmap, callback);
+        captureThumbnail(tab, returnBitmap, callback);
     }
 
     private Bitmap cacheNativeTabThumbnail(final Tab tab) {
@@ -608,20 +564,22 @@ public class TabContentManager {
 
     /**
      * Capture the content of a tab as a thumbnail.
+     *
      * @param tab The tab whose content we will capture.
-     * @param writeToCache Whether write the captured thumbnail to cache. If not, a downsampled
-     *                     thumbnail is captured instead.
      * @param returnBitmap Whether to return a bitmap to the callback.
      * @param callback The callback to send the {@link Bitmap} with.
      */
     private void captureThumbnail(
-            @NonNull final Tab tab,
-            boolean writeToCache,
-            boolean returnBitmap,
-            @Nullable Callback<Bitmap> callback) {
+            @NonNull final Tab tab, boolean returnBitmap, @Nullable Callback<Bitmap> callback) {
         assert mNativeTabContentManager != 0;
         assert mSnapshotsEnabled;
 
+        if (tab.isHidden()) {
+            Callback.runNullSafe(callback, null);
+            return;
+        }
+
+        long startTime = SystemClock.elapsedRealtime();
         if (tab.getNativePage() != null || isNativeViewShowing(tab)) {
             // If we use readbackNativeBitmap() with a downsampled scale and not saving it through
             // TabContentManagerJni.get().cacheTabWithBitmap(), the logic
@@ -642,33 +600,41 @@ public class TabContentManager {
             Bitmap resized =
                     Bitmap.createBitmap(
                             bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
+            long durationMs = SystemClock.elapsedRealtime() - startTime;
+            RecordHistogram.recordTimesHistogram(
+                    String.format(UMA_THUMBNAIL_CAPTURE_DURATION_FORMAT, "NativePage"), durationMs);
             callback.onResult(resized);
         } else {
-            if (tab.getWebContents() == null || tab.isHidden()) {
-                if (callback != null) {
-                    callback.onResult(null);
-                }
+            if (tab.getWebContents() == null) {
+                Callback.runNullSafe(callback, null);
                 return;
             }
-            // If we don't have to write the thumbnail back to the cache, we can use the faster
-            // path of capturing a downsampled copy.
-            // This faster path is essential to Tab-to-Grid animation to be smooth.
-            final float downsamplingScale = writeToCache ? 1 : 0.5f;
+            Callback<Bitmap> wrappedCallback =
+                    (Bitmap bitmap) -> {
+                        if (bitmap != null) {
+                            long durationMs = SystemClock.elapsedRealtime() - startTime;
+                            RecordHistogram.recordTimesHistogram(
+                                    String.format(
+                                            UMA_THUMBNAIL_CAPTURE_DURATION_FORMAT, "WebContent"),
+                                    durationMs);
+                        }
+                        Callback.runNullSafe(callback, bitmap);
+                    };
             TabContentManagerJni.get()
                     .captureThumbnail(
                             mNativeTabContentManager,
                             tab,
-                            mThumbnailScale * downsamplingScale,
-                            writeToCache,
+                            mThumbnailScale,
                             returnBitmap,
-                            callback);
+                            wrappedCallback);
         }
     }
 
     /**
      * Invalidate a thumbnail if the content of the tab has been changed.
+     *
      * @param tabId The id of the {@link Tab} thumbnail to check.
-     * @param url   The current URL of the {@link Tab}.
+     * @param url The current URL of the {@link Tab}.
      */
     public void invalidateIfChanged(int tabId, GURL url) {
         if (mNativeTabContentManager != 0) {
@@ -701,9 +667,12 @@ public class TabContentManager {
 
     /**
      * Removes a thumbnail of the tab whose id is |tabId|.
+     *
      * @param tabId The Id of the tab whose thumbnail is being removed.
      */
     public void removeTabThumbnail(int tabId) {
+        if (!mTabWindowManager.canTabThumbnailBeDeleted(tabId)) return;
+
         if (mNativeTabContentManager != 0) {
             TabContentManagerJni.get().removeTabThumbnail(mNativeTabContentManager, tabId);
         }
@@ -714,8 +683,10 @@ public class TabContentManager {
                 .setCaptureMinRequestTimeForTesting(mNativeTabContentManager, timeMs);
     }
 
-    public int getInFlightCapturesForTesting() {
-        return TabContentManagerJni.get().getInFlightCapturesForTesting(mNativeTabContentManager);
+    /** Returns whether a thumbnail capture for a tab is in flight for testing. */
+    public boolean isTabCaptureInFlightForTesting(int tabId) {
+        return TabContentManagerJni.get()
+                .isTabCaptureInFlightForTesting(mNativeTabContentManager, tabId);
     }
 
     @CalledByNative
@@ -743,7 +714,6 @@ public class TabContentManager {
                 long nativeTabContentManager,
                 Object tab,
                 float thumbnailScale,
-                boolean writeToCache,
                 boolean returnBitmap,
                 Callback<Bitmap> callback);
 
@@ -760,14 +730,11 @@ public class TabContentManager {
                 long nativeTabContentManager, int tabId, Callback<Boolean> callback);
 
         void getEtc1TabThumbnail(
-                long nativeTabContentManager,
-                int tabId,
-                boolean saveJpeg,
-                Callback<Bitmap> callback);
+                long nativeTabContentManager, int tabId, Callback<Bitmap> callback);
 
         void setCaptureMinRequestTimeForTesting(long nativeTabContentManager, int timeMs);
 
-        int getInFlightCapturesForTesting(long nativeTabContentManager);
+        boolean isTabCaptureInFlightForTesting(long nativeTabContentManager, int tabId);
 
         void destroy(long nativeTabContentManager);
     }

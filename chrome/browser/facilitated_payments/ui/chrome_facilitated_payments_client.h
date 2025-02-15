@@ -5,13 +5,22 @@
 #ifndef CHROME_BROWSER_FACILITATED_PAYMENTS_UI_CHROME_FACILITATED_PAYMENTS_CLIENT_H_
 #define CHROME_BROWSER_FACILITATED_PAYMENTS_UI_CHROME_FACILITATED_PAYMENTS_CLIENT_H_
 
+#include "base/containers/span.h"
+#include "base/functional/callback_forward.h"
 #include "chrome/browser/facilitated_payments/ui/android/facilitated_payments_controller.h"
 #include "components/facilitated_payments/content/browser/content_facilitated_payments_driver_factory.h"
 #include "components/facilitated_payments/core/browser/facilitated_payments_client.h"
+#include "components/facilitated_payments/core/utils/facilitated_payments_ui_utils.h"
 #include "content/public/browser/web_contents_user_data.h"
+
+namespace autofill {
+class BankAccount;
+class Ewallet;
+}  // namespace autofill
 
 namespace content {
 class WebContents;
+class RenderFrameHost;
 }  // namespace content
 
 namespace optimization_guide {
@@ -38,6 +47,10 @@ class ChromeFacilitatedPaymentsClient
   void LoadRiskData(base::OnceCallback<void(const std::string&)>
                         on_risk_data_loaded_callback) override;
 
+  payments::facilitated::ContentFacilitatedPaymentsDriver*
+  GetFacilitatedPaymentsDriverForFrame(
+      content::RenderFrameHost* render_frame_host);
+
   virtual void SetFacilitatedPaymentsControllerForTesting(
       std::unique_ptr<FacilitatedPaymentsController> controller);
 
@@ -52,10 +65,21 @@ class ChromeFacilitatedPaymentsClient
   GetFacilitatedPaymentsNetworkInterface() override;
   // This returns std::nullopt if the `Profile` associated is null.
   std::optional<CoreAccountInfo> GetCoreAccountInfo() override;
-  bool ShowPixPaymentPrompt(
-      base::span<autofill::BankAccount> bank_account_suggestions,
+  bool IsInLandscapeMode() override;
+  void ShowPixPaymentPrompt(
+      base::span<const autofill::BankAccount> bank_account_suggestions,
       base::OnceCallback<void(bool, int64_t)> on_user_decision_callback)
       override;
+  void ShowEwalletPaymentPrompt(
+      base::span<const autofill::Ewallet> ewallet_suggestions,
+      base::OnceCallback<void(bool, int64_t)> on_user_decision_callback)
+      override;
+  void ShowProgressScreen() override;
+  void ShowErrorScreen() override;
+  void DismissPrompt() override;
+  void SetUiEventListener(
+      base::RepeatingCallback<void(payments::facilitated::UiEvent)>
+          ui_event_listener) override;
 
   payments::facilitated::ContentFacilitatedPaymentsDriverFactory
       driver_factory_;
@@ -63,10 +87,8 @@ class ChromeFacilitatedPaymentsClient
   std::unique_ptr<payments::facilitated::FacilitatedPaymentsNetworkInterface>
       facilitated_payments_network_interface_;
 
-#if BUILDFLAG(IS_ANDROID)
   std::unique_ptr<FacilitatedPaymentsController>
       facilitated_payments_controller_;
-#endif
 
   WEB_CONTENTS_USER_DATA_KEY_DECL();
 };

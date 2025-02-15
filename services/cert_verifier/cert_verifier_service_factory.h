@@ -75,7 +75,15 @@ class CertVerifierServiceFactoryImpl
   // Will not return anchors that are not trusted for the current running
   // version of Chrome.
   void GetChromeRootStoreInfo(GetChromeRootStoreInfoCallback callback) override;
+
+#if !BUILDFLAG(IS_CHROMEOS)
+  void GetPlatformRootStoreInfo(
+      GetPlatformRootStoreInfoCallback callback) override;
 #endif
+#endif
+  void UpdateNetworkTime(base::Time system_time,
+                         base::TimeTicks system_ticks,
+                         base::Time current_time) override;
 #if BUILDFLAG(CHROME_ROOT_STORE_OPTIONAL)
   void SetUseChromeRootStore(bool use_crs,
                              SetUseChromeRootStoreCallback callback) override;
@@ -87,6 +95,8 @@ class CertVerifierServiceFactoryImpl
   const net::CertVerifyProc::ImplParams& get_impl_params() const {
     return proc_params_;
   }
+
+  base::WeakPtr<CertVerifierServiceFactoryImpl> GetWeakPtr();
 
  private:
   // Update all the `verifier_services_` with the current data.

@@ -61,7 +61,8 @@ Playlist::Kind MultivariantPlaylist::GetKind() const {
 ParseStatus::Or<scoped_refptr<MultivariantPlaylist>>
 MultivariantPlaylist::Parse(std::string_view source,
                             GURL uri,
-                            types::DecimalInteger version) {
+                            types::DecimalInteger version,
+                            TagRecorder* tag_recorder) {
   DCHECK(version != 0);
   if (version < Playlist::kMinSupportedVersion ||
       version > Playlist::kMaxSupportedVersion) {
@@ -114,6 +115,9 @@ MultivariantPlaylist::Parse(std::string_view source,
       }
 
       if (!tag->GetName().has_value()) {
+        if (tag_recorder) {
+          tag_recorder->SetMetric(TagRecorder::Metric::kUnknownTag);
+        }
         HandleUnknownTag(*tag);
         continue;
       }
@@ -127,7 +131,12 @@ MultivariantPlaylist::Parse(std::string_view source,
           continue;
         }
         case TagKind::kMediaPlaylistTag:
-          return ParseStatusCode::kMultivariantPlaylistHasMediaPlaylistTag;
+          // TODO(crbug.com/395950145): It's really common for multivariant
+          // playlists to incorrectly add an "EXT-X-ENDLIST" tag at the end,
+          // which, while disallowed by spec, is accepted by most other HLS
+          // implementations. We can't fail parsing and thus playback as a
+          // result, in order to maintain compatibility.
+          continue;
         case TagKind::kMultivariantPlaylistTag:
           // Handled below
           break;
@@ -135,6 +144,9 @@ MultivariantPlaylist::Parse(std::string_view source,
 
       switch (static_cast<MultivariantPlaylistTagName>(*tag->GetName())) {
         case MultivariantPlaylistTagName::kXContentSteering: {
+          if (tag_recorder) {
+            tag_recorder->SetMetric(TagRecorder::Metric::kContentSteering);
+          }
           // TODO(crbug.com/40057824): Implement the EXT-X-CONTENT-STEERING tag
           break;
         }
@@ -183,6 +195,9 @@ MultivariantPlaylist::Parse(std::string_view source,
           break;
         }
         case MultivariantPlaylistTagName::kXSessionKey: {
+          if (tag_recorder) {
+            tag_recorder->SetMetric(TagRecorder::Metric::kSessionKey);
+          }
           // TODO(crbug.com/40057824): Implement the EXT-X-SESSION-KEY tag
           break;
         }

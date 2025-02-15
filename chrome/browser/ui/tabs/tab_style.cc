@@ -4,7 +4,10 @@
 
 #include "chrome/browser/ui/tabs/tab_style.h"
 
+#include <array>
+
 #include "chrome/browser/ui/layout_constants.h"
+#include "chrome/browser/ui/tabs/features.h"
 #include "chrome/browser/ui/ui_features.h"
 #include "ui/base/ui_base_features.h"
 #include "ui/color/color_provider.h"
@@ -70,12 +73,12 @@ int ChromeRefresh2023TabStyle::GetMinimumActiveWidth() const {
   const gfx::Insets insets = GetContentsInsets();
   const int min_active_width =
       close_button_size + insets.left() + insets.right();
-  if (base::FeatureList::IsEnabled(features::kScrollableTabStrip)) {
+  if (base::FeatureList::IsEnabled(tabs::kScrollableTabStrip)) {
     return std::max(
         min_active_width,
         base::GetFieldTrialParamByFeatureAsInt(
-            features::kScrollableTabStrip,
-            features::kMinimumTabWidthFeatureParameterName, min_active_width));
+            tabs::kScrollableTabStrip,
+            tabs::kMinimumTabWidthFeatureParameterName, min_active_width));
   }
   return min_active_width;
 }
@@ -89,12 +92,12 @@ int ChromeRefresh2023TabStyle::GetMinimumInactiveWidth() const {
   int min_inactive_width =
       kInteriorWidth - GetSeparatorSize().width() + GetTabOverlap();
 
-  if (base::FeatureList::IsEnabled(features::kScrollableTabStrip)) {
-    return std::max(min_inactive_width,
-                    base::GetFieldTrialParamByFeatureAsInt(
-                        features::kScrollableTabStrip,
-                        features::kMinimumTabWidthFeatureParameterName,
-                        min_inactive_width));
+  if (base::FeatureList::IsEnabled(tabs::kScrollableTabStrip)) {
+    return std::max(
+        min_inactive_width,
+        base::GetFieldTrialParamByFeatureAsInt(
+            tabs::kScrollableTabStrip,
+            tabs::kMinimumTabWidthFeatureParameterName, min_inactive_width));
   }
 
   return min_inactive_width;
@@ -149,29 +152,29 @@ SkColor ChromeRefresh2023TabStyle::GetTabBackgroundColor(
     const ui::ColorProvider& color_provider) const {
   switch (state) {
     case TabStyle::TabSelectionState::kActive: {
-      constexpr ui::ColorId kActiveColorIds[2] = {
+      constexpr std::array<ui::ColorId, 2> kActiveColorIds = {
           kColorTabBackgroundActiveFrameInactive,
           kColorTabBackgroundActiveFrameActive};
       return color_provider.GetColor(kActiveColorIds[frame_active]);
     }
     case TabStyle::TabSelectionState::kSelected: {
-      constexpr ui::ColorId kSelectedColorIds[2][2] = {
-          {kColorTabBackgroundSelectedFrameInactive,
-           kColorTabBackgroundSelectedFrameActive},
-          {kColorTabBackgroundSelectedHoverFrameInactive,
-           kColorTabBackgroundSelectedHoverFrameActive}};
+      constexpr std::array<std::array<ui::ColorId, 2>, 2> kSelectedColorIds = {
+          {{kColorTabBackgroundSelectedFrameInactive,
+            kColorTabBackgroundSelectedFrameActive},
+           {kColorTabBackgroundSelectedHoverFrameInactive,
+            kColorTabBackgroundSelectedHoverFrameActive}}};
       return color_provider.GetColor(kSelectedColorIds[hovered][frame_active]);
     }
     case TabStyle::TabSelectionState::kInactive: {
-      constexpr ui::ColorId kInactiveColorIds[2][2] = {
-          {kColorTabBackgroundInactiveFrameInactive,
-           kColorTabBackgroundInactiveFrameActive},
-          {kColorTabBackgroundInactiveHoverFrameInactive,
-           kColorTabBackgroundInactiveHoverFrameActive}};
+      constexpr std::array<std::array<ui::ColorId, 2>, 2> kInactiveColorIds = {
+          {{kColorTabBackgroundInactiveFrameInactive,
+            kColorTabBackgroundInactiveFrameActive},
+           {kColorTabBackgroundInactiveHoverFrameInactive,
+            kColorTabBackgroundInactiveHoverFrameActive}}};
       return color_provider.GetColor(kInactiveColorIds[hovered][frame_active]);
     }
     default:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }
 

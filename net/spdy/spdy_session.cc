@@ -9,6 +9,7 @@
 
 #include "net/spdy/spdy_session.h"
 
+#include <algorithm>
 #include <limits>
 #include <map>
 #include <string>
@@ -24,7 +25,6 @@
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/rand_util.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
@@ -55,7 +55,6 @@
 #include "net/log/net_log_with_source.h"
 #include "net/nqe/network_quality_estimator.h"
 #include "net/quic/quic_http_utils.h"
-#include "net/socket/client_socket_handle.h"
 #include "net/socket/socket.h"
 #include "net/socket/ssl_client_socket.h"
 #include "net/spdy/alps_decoder.h"
@@ -67,8 +66,8 @@
 #include "net/spdy/spdy_stream.h"
 #include "net/ssl/ssl_cipher_suite_names.h"
 #include "net/ssl/ssl_connection_status_flags.h"
-#include "net/third_party/quiche/src/quiche/spdy/core/spdy_frame_builder.h"
-#include "net/third_party/quiche/src/quiche/spdy/core/spdy_protocol.h"
+#include "net/third_party/quiche/src/quiche/http2/core/spdy_frame_builder.h"
+#include "net/third_party/quiche/src/quiche/http2/core/spdy_protocol.h"
 #include "url/scheme_host_port.h"
 #include "url/url_constants.h"
 
@@ -178,8 +177,18 @@ void LogSpdyAcceptChForOriginHistogram(bool value) {
   base::UmaHistogramBoolean("Net.SpdySession.AcceptChForOrigin", value);
 }
 
+void LogSessionCreationInitiatorToHistogram(
+    MultiplexedSessionCreationInitiator session_creation,
+    bool is_used) {
+  std::string histogram_name =
+      base::StrCat({"Net.SpdySession.GoogleSearch.SessionCreationInitiator",
+                    is_used ? ".Used" : ".Unused"});
+
+  base::UmaHistogramEnumeration(histogram_name, session_creation);
+}
+
 base::Value::Dict NetLogSpdyHeadersSentParams(
-    const spdy::Http2HeaderBlock* headers,
+    const quiche::HttpHeaderBlock* headers,
     bool fin,
     spdy::SpdyStreamId stream_id,
     bool has_priority,
@@ -188,12 +197,12 @@ base::Value::Dict NetLogSpdyHeadersSentParams(
     bool exclusive,
     NetLogSource source_dependency,
     NetLogCaptureMode capture_mode) {
-  auto dict = base::Value::Dict()
-                  .Set("headers",
-                       ElideHttp2HeaderBlockForNetLog(*headers, capture_mode))
-                  .Set("fin", fin)
-                  .Set("stream_id", static_cast<int>(stream_id))
-                  .Set("has_priority", has_priority);
+  auto dict =
+      base::Value::Dict()
+          .Set("headers", ElideHttpHeaderBlockForNetLog(*headers, capture_mode))
+          .Set("fin", fin)
+          .Set("stream_id", static_cast<int>(stream_id))
+          .Set("has_priority", has_priority);
   if (has_priority) {
     dict.Set("parent_stream_id", static_cast<int>(parent_stream_id));
     dict.Set("weight", weight);
@@ -206,12 +215,12 @@ base::Value::Dict NetLogSpdyHeadersSentParams(
 }
 
 base::Value::Dict NetLogSpdyHeadersReceivedParams(
-    const spdy::Http2HeaderBlock* headers,
+    const quiche::HttpHeaderBlock* headers,
     bool fin,
     spdy::SpdyStreamId stream_id,
     NetLogCaptureMode capture_mode) {
   return base::Value::Dict()
-      .Set("headers", ElideHttp2HeaderBlockForNetLog(*headers, capture_mode))
+      .Set("headers", ElideHttpHeaderBlockForNetLog(*headers, capture_mode))
       .Set("fin", fin)
       .Set("stream_id", static_cast<int>(stream_id));
 }
@@ -234,7 +243,7 @@ base::Value::Dict NetLogSpdyInitializedParams(NetLogSource source) {
   if (source.IsValid()) {
     source.AddToEventParameters(dict);
   }
-  dict.Set("protocol", NextProtoToString(kProtoHTTP2));
+  dict.Set("protocol", NextProtoToString(NextProto::kProtoHTTP2));
   return dict;
 }
 
@@ -386,15 +395,6 @@ const size_t kMaxConcurrentStreamLimit = 256;
 
 }  // namespace
 
-BASE_FEATURE(kH2InitialMaxConcurrentStreamsOverride,
-             "H2InitialMaxConcurrentStreamsOverride",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-
-const base::FeatureParam<int> kH2InitialMaxConcurrentStreams(
-    &kH2InitialMaxConcurrentStreamsOverride,
-    "initial_max_concurrent_streams",
-    kDefaultInitialMaxConcurrentStreams);
-
 SpdyProtocolErrorDetails MapFramerErrorToProtocolError(
     http2::Http2DecoderAdapter::SpdyFramerError err) {
   switch (err) {
@@ -461,10 +461,9 @@ SpdyProtocolErrorDetails MapFramerErrorToProtocolError(
       return SPDY_ERROR_STOP_PROCESSING;
 
     case http2::Http2DecoderAdapter::LAST_ERROR:
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
   }
-  NOTREACHED_IN_MIGRATION();
-  return static_cast<SpdyProtocolErrorDetails>(-1);
+  NOTREACHED();
 }
 
 Error MapFramerErrorToNetError(
@@ -516,10 +515,9 @@ Error MapFramerErrorToNetError(
     case http2::Http2DecoderAdapter::SPDY_OVERSIZED_PAYLOAD:
       return ERR_HTTP2_FRAME_SIZE_ERROR;
     case http2::Http2DecoderAdapter::LAST_ERROR:
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
   }
-  NOTREACHED_IN_MIGRATION();
-  return ERR_HTTP2_PROTOCOL_ERROR;
+  NOTREACHED();
 }
 
 SpdyProtocolErrorDetails MapRstStreamStatusToProtocolError(
@@ -554,8 +552,7 @@ SpdyProtocolErrorDetails MapRstStreamStatusToProtocolError(
     case spdy::ERROR_CODE_HTTP_1_1_REQUIRED:
       return STATUS_CODE_HTTP_1_1_REQUIRED;
   }
-  NOTREACHED_IN_MIGRATION();
-  return static_cast<SpdyProtocolErrorDetails>(-1);
+  NOTREACHED();
 }
 
 spdy::SpdyErrorCode MapNetErrorToGoAwayStatus(Error err) {
@@ -754,16 +751,15 @@ bool SpdySession::CanPool(TransportSecurityState* transport_security_state,
   if (!ssl_info.cert->VerifyNameMatch(new_hostname))
     return false;
 
-  // Port is left at 0 as it is never used.
   if (transport_security_state->CheckPublicKeyPins(
-          HostPortPair(new_hostname, 0), ssl_info.is_issued_by_known_root,
+          new_hostname, ssl_info.is_issued_by_known_root,
           ssl_info.public_key_hashes) ==
       TransportSecurityState::PKPStatus::VIOLATED) {
     return false;
   }
 
   switch (transport_security_state->CheckCTRequirements(
-      HostPortPair(new_hostname, 0), ssl_info.is_issued_by_known_root,
+      new_hostname, ssl_info.is_issued_by_known_root,
       ssl_info.public_key_hashes, ssl_info.cert.get(),
       ssl_info.ct_policy_compliance)) {
     case TransportSecurityState::CT_REQUIREMENTS_NOT_MET:
@@ -798,7 +794,8 @@ SpdySession::SpdySession(
     bool enable_priority_update,
     TimeFunc time_func,
     NetworkQualityEstimator* network_quality_estimator,
-    NetLog* net_log)
+    NetLog* net_log,
+    MultiplexedSessionCreationInitiator session_creation_initiator)
     : spdy_session_key_(spdy_session_key),
       http_server_properties_(http_server_properties),
       transport_security_state_(transport_security_state),
@@ -809,7 +806,7 @@ SpdySession::SpdySession(
       greased_http2_frame_(greased_http2_frame),
       http2_end_stream_with_data_frame_(http2_end_stream_with_data_frame),
       enable_priority_update_(enable_priority_update),
-      max_concurrent_streams_(kH2InitialMaxConcurrentStreams.Get()),
+      max_concurrent_streams_(kInitialMaxConcurrentStreams),
       last_read_time_(time_func()),
       session_max_recv_window_size_(session_max_recv_window_size),
       session_max_queued_capped_frames_(session_max_queued_capped_frames),
@@ -833,7 +830,8 @@ SpdySession::SpdySession(
           base::Seconds(kDefaultConnectionAtRiskOfLossSeconds)),
       hung_interval_(base::Seconds(kHungIntervalSeconds)),
       time_func_(time_func),
-      network_quality_estimator_(network_quality_estimator) {
+      network_quality_estimator_(network_quality_estimator),
+      session_creation_initiator_(session_creation_initiator) {
   net_log_.BeginEvent(NetLogEventType::HTTP2_SESSION, [&] {
     return NetLogSpdySessionParams(host_port_proxy_pair());
   });
@@ -869,19 +867,19 @@ SpdySession::~SpdySession() {
 }
 
 void SpdySession::InitializeWithSocketHandle(
-    std::unique_ptr<ClientSocketHandle> client_socket_handle,
+    std::unique_ptr<StreamSocketHandle> stream_socket_handle,
     SpdySessionPool* pool) {
-  DCHECK(!client_socket_handle_);
+  DCHECK(!stream_socket_handle_);
   DCHECK(!owned_stream_socket_);
   DCHECK(!socket_);
 
   // TODO(akalin): Check connection->is_initialized() instead. This
   // requires re-working CreateFakeSpdySession(), though.
-  DCHECK(client_socket_handle->socket());
+  DCHECK(stream_socket_handle->socket());
 
-  client_socket_handle_ = std::move(client_socket_handle);
-  socket_ = client_socket_handle_->socket();
-  client_socket_handle_->AddHigherLayeredPool(this);
+  stream_socket_handle_ = std::move(stream_socket_handle);
+  socket_ = stream_socket_handle_->socket();
+  stream_socket_handle_->AddHigherLayeredPool(this);
 
   InitializeInternal(pool);
 }
@@ -890,7 +888,7 @@ void SpdySession::InitializeWithSocket(
     std::unique_ptr<StreamSocket> stream_socket,
     const LoadTimingInfo::ConnectTiming& connect_timing,
     SpdySessionPool* pool) {
-  DCHECK(!client_socket_handle_);
+  DCHECK(!stream_socket_handle_);
   DCHECK(!owned_stream_socket_);
   DCHECK(!socket_);
 
@@ -1050,7 +1048,7 @@ std::unique_ptr<spdy::SpdySerializedFrame> SpdySession::CreateHeaders(
     spdy::SpdyStreamId stream_id,
     RequestPriority priority,
     spdy::SpdyControlFlags flags,
-    spdy::Http2HeaderBlock block,
+    quiche::HttpHeaderBlock block,
     NetLogSource source_dependency) {
   ActiveStreamMap::const_iterator it = active_streams_.find(stream_id);
   CHECK(it != active_streams_.end());
@@ -1108,8 +1106,7 @@ std::unique_ptr<SpdyBuffer> SpdySession::CreateDataBuffer(
   CHECK_EQ(stream->stream_id(), stream_id);
 
   if (len < 0) {
-    NOTREACHED_IN_MIGRATION();
-    return nullptr;
+    NOTREACHED();
   }
 
   *effective_len = std::min(len, kMaxSpdyFrameChunkSize);
@@ -1232,8 +1229,7 @@ void SpdySession::CloseActiveStream(spdy::SpdyStreamId stream_id, int status) {
 
   auto it = active_streams_.find(stream_id);
   if (it == active_streams_.end()) {
-    NOTREACHED_IN_MIGRATION();
-    return;
+    NOTREACHED();
   }
 
   CloseActiveStreamIterator(it, status);
@@ -1245,8 +1241,7 @@ void SpdySession::CloseCreatedStream(const base::WeakPtr<SpdyStream>& stream,
 
   auto it = created_streams_.find(stream.get());
   if (it == created_streams_.end()) {
-    NOTREACHED_IN_MIGRATION();
-    return;
+    NOTREACHED();
   }
 
   CloseCreatedStreamIterator(it, status);
@@ -1259,8 +1254,7 @@ void SpdySession::ResetStream(spdy::SpdyStreamId stream_id,
 
   auto it = active_streams_.find(stream_id);
   if (it == active_streams_.end()) {
-    NOTREACHED_IN_MIGRATION();
-    return;
+    NOTREACHED();
   }
 
   ResetStreamIterator(it, error, description);
@@ -1420,14 +1414,15 @@ bool SpdySession::IsReused() const {
   // connected socket, since canceling the H2 session request would have
   // destroyed the socket.
   return owned_stream_socket_ ||
-         client_socket_handle_->reuse_type() == ClientSocketHandle::UNUSED_IDLE;
+         stream_socket_handle_->reuse_type() ==
+             StreamSocketHandle::SocketReuseType::kUnusedIdle;
 }
 
 bool SpdySession::GetLoadTimingInfo(spdy::SpdyStreamId stream_id,
                                     LoadTimingInfo* load_timing_info) const {
-  if (client_socket_handle_) {
+  if (stream_socket_handle_) {
     DCHECK(!connect_timing_);
-    return client_socket_handle_->GetLoadTimingInfo(stream_id != kFirstStreamId,
+    return stream_socket_handle_->GetLoadTimingInfo(stream_id != kFirstStreamId,
                                                     load_timing_info);
   }
 
@@ -1663,7 +1658,7 @@ bool SpdySession::CancelStreamRequest(
   PendingStreamRequestQueue* queue = &pending_create_stream_queues_[priority];
   // Remove |request| from |queue| while preserving the order of the
   // other elements.
-  PendingStreamRequestQueue::iterator it = base::ranges::find(
+  PendingStreamRequestQueue::iterator it = std::ranges::find(
       *queue, request.get(), &base::WeakPtr<SpdyStreamRequest>::get);
   // The request may already be removed if there's a
   // CompleteStreamRequest() in flight.
@@ -1671,8 +1666,8 @@ bool SpdySession::CancelStreamRequest(
     it = queue->erase(it);
     // |request| should be in the queue at most once, and if it is
     // present, should not be pending completion.
-    DCHECK(base::ranges::find(it, queue->end(), request.get(),
-                              &base::WeakPtr<SpdyStreamRequest>::get) ==
+    DCHECK(std::ranges::find(it, queue->end(), request.get(),
+                             &base::WeakPtr<SpdyStreamRequest>::get) ==
            queue->end());
     return true;
   }
@@ -1739,7 +1734,7 @@ void SpdySession::CloseActiveStreamIterator(ActiveStreamMap::iterator it,
     // If the socket belongs to a socket pool, and there are no active streams,
     // and the socket pool is stalled, then close the session to free up a
     // socket slot.
-    if (client_socket_handle_ && client_socket_handle_->IsPoolStalled()) {
+    if (stream_socket_handle_ && stream_socket_handle_->IsPoolStalled()) {
       DoDrainSession(ERR_CONNECTION_CLOSED, "Closing idle connection.");
     } else {
       MaybeFinishGoingAway();
@@ -1855,8 +1850,7 @@ int SpdySession::DoReadLoop(ReadState expected_read_state, int result) {
         result = DoReadComplete(result);
         break;
       default:
-        NOTREACHED_IN_MIGRATION() << "read_state_: " << read_state_;
-        break;
+        NOTREACHED() << "read_state_: " << read_state_;
     }
 
     if (availability_state_ == STATE_DRAINING)
@@ -1996,8 +1990,7 @@ int SpdySession::DoWriteLoop(WriteState expected_write_state, int result) {
         break;
       case WRITE_STATE_IDLE:
       default:
-        NOTREACHED_IN_MIGRATION() << "write_state_: " << write_state_;
-        break;
+        NOTREACHED() << "write_state_: " << write_state_;
     }
 
     if (write_state_ == WRITE_STATE_IDLE) {
@@ -2055,8 +2048,7 @@ int SpdySession::DoWrite() {
 
     in_flight_write_ = producer->ProduceBuffer();
     if (!in_flight_write_) {
-      NOTREACHED_IN_MIGRATION();
-      return ERR_UNEXPECTED;
+      NOTREACHED();
     }
     in_flight_write_frame_type_ = frame_type;
     in_flight_write_frame_size_ = in_flight_write_->GetRemainingSize();
@@ -2524,6 +2516,10 @@ void SpdySession::RecordHistograms() {
                               streams_abandoned_count_, 1, 300, 50);
   UMA_HISTOGRAM_BOOLEAN("Net.SpdySession.ServerSupportsWebSocket",
                         support_websocket_);
+  if (IsGoogleHostWithAlpnH3(spdy_session_key_.host_port_pair().host())) {
+    LogSessionCreationInitiatorToHistogram(session_creation_initiator_,
+                                           streams_initiated_count_ > 0);
+  }
 }
 
 void SpdySession::RecordProtocolErrorHistogram(
@@ -2957,7 +2953,7 @@ void SpdySession::OnWindowUpdate(spdy::SpdyStreamId stream_id,
 
 void SpdySession::OnPushPromise(spdy::SpdyStreamId /*stream_id*/,
                                 spdy::SpdyStreamId /*promised_stream_id*/,
-                                spdy::Http2HeaderBlock /*headers*/) {
+                                quiche::HttpHeaderBlock /*headers*/) {
   CHECK(in_io_loop_);
   DoDrainSession(ERR_HTTP2_PROTOCOL_ERROR, "PUSH_PROMISE received");
 }
@@ -2968,7 +2964,7 @@ void SpdySession::OnHeaders(spdy::SpdyStreamId stream_id,
                             spdy::SpdyStreamId parent_stream_id,
                             bool exclusive,
                             bool fin,
-                            spdy::Http2HeaderBlock headers,
+                            quiche::HttpHeaderBlock headers,
                             base::TimeTicks recv_first_byte_time) {
   CHECK(in_io_loop_);
 

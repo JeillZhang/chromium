@@ -16,6 +16,7 @@
 #include "base/functional/callback.h"
 #include "base/functional/overloaded.h"
 #include "base/memory/weak_ptr.h"
+#include "base/not_fatal_until.h"
 #include "components/attribution_reporting/features.h"
 #include "components/browsing_data/content/browsing_data_quota_helper.h"
 #include "components/browsing_data/content/shared_worker_info.h"
@@ -101,9 +102,7 @@ BrowsingDataModel::DataOwner GetDataOwner::GetOwningOriginOrHost<url::Origin>(
     return GetOwnerBasedOnScheme(data_key);
   }
 
-  NOTREACHED_IN_MIGRATION()
-      << "Unexpected StorageType: " << static_cast<int>(storage_type_);
-  return "";
+  NOTREACHED() << "Unexpected StorageType: " << static_cast<int>(storage_type_);
 }
 
 template <>
@@ -120,9 +119,8 @@ GetDataOwner::GetOwningOriginOrHost<blink::StorageKey>(
     case BrowsingDataModel::StorageType::kCdmStorage:
       return GetOwnerBasedOnScheme(data_key.origin());
     default:
-      NOTREACHED_IN_MIGRATION()
-          << "Unexpected StorageType: " << static_cast<int>(storage_type_);
-      return "";
+      NOTREACHED() << "Unexpected StorageType: "
+                   << static_cast<int>(storage_type_);
   }
 }
 
@@ -190,6 +188,13 @@ GetDataOwner::GetOwningOriginOrHost<webid::FederatedIdentityDataModel::DataKey>(
   // Getting owning origin or host also handled by GetDataOwner in
   // ChromeBrowsingDataModelDelegate.
   return GetOwnerBasedOnScheme(data_key.relying_party_embedder());
+}
+
+template <>
+BrowsingDataModel::DataOwner
+GetDataOwner::GetOwningOriginOrHost<net::device_bound_sessions::SessionKey>(
+    const net::device_bound_sessions::SessionKey& data_key) const {
+  return GetOwnerBasedOnScheme(url::Origin::Create(data_key.site.GetURL()));
 }
 
 // Helper which allows the lifetime management of a deletion action to occur
@@ -351,7 +356,7 @@ void StorageRemoverHelper::Visitor::operator()<
         ->ClearSharedDictionaryCacheForIsolationKey(
             isolation_key, helper->GetCompleteCallback());
   } else {
-    NOTREACHED_IN_MIGRATION();
+    NOTREACHED();
   }
 }
 
@@ -373,7 +378,7 @@ void StorageRemoverHelper::Visitor::operator()<net::CanonicalCookie>(
                               bool deleted) { std::move(callback).Run(); },
                            helper->GetCompleteCallback()));
   } else {
-    NOTREACHED_IN_MIGRATION();
+    NOTREACHED();
   }
 }
 
@@ -383,6 +388,15 @@ void StorageRemoverHelper::Visitor::operator()<
     const webid::FederatedIdentityDataModel::DataKey& data_key) {
   // Storage removal handled by RemoveDataKey in
   // ChromeBrowsingDataModelDelegate.
+}
+
+template <>
+void StorageRemoverHelper::Visitor::operator()<
+    net::device_bound_sessions::SessionKey>(
+    const net::device_bound_sessions::SessionKey& data_key) {
+  CHECK(types.Has(BrowsingDataModel::StorageType::kDeviceBoundSession));
+  helper->storage_partition_->GetDeviceBoundSessionManager()->DeleteSession(
+      data_key);
 }
 
 void StorageRemoverHelper::RemoveDataKeyEntries(
@@ -569,6 +583,18 @@ void OnCdmStorageLoaded(BrowsingDataModel* model,
 }
 #endif  // BUILDFLAG(ENABLE_LIBRARY_CDMS)
 
+void OnDeviceBoundSessionsLoaded(
+    BrowsingDataModel* model,
+    base::OnceClosure loaded_callback,
+    const std::vector<net::device_bound_sessions::SessionKey>& sessions) {
+  for (const auto& session_key : sessions) {
+    model->AddBrowsingData(session_key,
+                           BrowsingDataModel::StorageType::kDeviceBoundSession,
+                           kSmallAmountOfDataInBytes);
+  }
+  std::move(loaded_callback).Run();
+}
+
 // If `data_key` represents a non-1P partition, returns the site on which it
 // is partitioned, std::nullopt otherwise.
 std::optional<net::SchemefulSite> GetThirdPartyPartitioningSite(
@@ -613,7 +639,7 @@ std::optional<net::SchemefulSite> GetThirdPartyPartitioningSite(
                   net::SchemefulSite(data_key.relying_party_embedder());
             }
           },
-      },
+          [&](const net::device_bound_sessions::SessionKey& session_key) {}},
       data_key);
 
   return top_level_site;
@@ -681,7 +707,9 @@ const url::Origin BrowsingDataModel::GetOriginForDataKey(
           [](const webid::FederatedIdentityDataModel::DataKey& data_key) {
             return data_key.relying_party_embedder();
           },
-      },
+          [](const net::device_bound_sessions::SessionKey& session_key) {
+            return url::Origin::Create(session_key.site.GetURL());
+          }},
       data_key);
 }
 
@@ -735,7 +763,8 @@ bool BrowsingDataModel::Iterator::operator!=(const Iterator& other) const {
 BrowsingDataModel::BrowsingDataEntryView
 BrowsingDataModel::Iterator::operator*() const {
   DCHECK(outer_iterator_ != outer_end_iterator_);
-  DCHECK(inner_iterator_ != outer_iterator_->second.end());
+  CHECK(inner_iterator_ != outer_iterator_->second.end(),
+        base::NotFatalUntil::M130);
   return BrowsingDataEntryView(outer_iterator_->first, inner_iterator_->first,
                                inner_iterator_->second);
 }
@@ -942,9 +971,10 @@ bool BrowsingDataModel::IsStorageTypeCookieLike(
     case BrowsingDataModel::StorageType::kSharedWorker:
     case BrowsingDataModel::StorageType::kCookie:
     case BrowsingDataModel::StorageType::kCdmStorage:
+    case BrowsingDataModel::StorageType::kDeviceBoundSession:
       return true;
     case BrowsingDataModel::StorageType::kExtendedDelegateRange:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }
 
@@ -973,17 +1003,11 @@ void BrowsingDataModel::PopulateFromDisk(base::OnceClosure finished_callback) {
   bool is_shared_dictionary_enabled = base::FeatureList::IsEnabled(
       network::features::kCompressionDictionaryTransportBackend);
   bool is_interest_group_enabled =
-      base::FeatureList::IsEnabled(blink::features::kAdInterestGroupAPI);
+      base::FeatureList::IsEnabled(blink::features::kInterestGroupStorage);
   bool is_attribution_reporting_enabled = base::FeatureList::IsEnabled(
       attribution_reporting::features::kConversionMeasurement);
   bool is_private_aggregation_enabled =
       base::FeatureList::IsEnabled(blink::features::kPrivateAggregationApi);
-#if BUILDFLAG(ENABLE_LIBRARY_CDMS)
-  bool is_cdm_storage_database_enabled =
-      base::FeatureList::IsEnabled(features::kCdmStorageDatabase);
-  bool is_cdm_migration_enabled =
-      base::FeatureList::IsEnabled(features::kCdmStorageDatabaseMigration);
-#endif  // BUILDFLAG(ENABLE_LIBRARY_CDMS)
 
   base::RepeatingClosure completion =
       base::BindRepeating([](const base::OnceClosure&) {},
@@ -1022,8 +1046,12 @@ void BrowsingDataModel::PopulateFromDisk(base::OnceClosure finished_callback) {
 
   // Interest Groups
   if (is_interest_group_enabled) {
-    storage_partition_->GetInterestGroupManager()->GetAllInterestGroupDataKeys(
-        base::BindOnce(&OnInterestGroupsLoaded, this, completion));
+    content::InterestGroupManager* manager =
+        storage_partition_->GetInterestGroupManager();
+    if (manager) {
+      manager->GetAllInterestGroupDataKeys(
+          base::BindOnce(&OnInterestGroupsLoaded, this, completion));
+    }
   }
 
   // Attribution Reporting
@@ -1039,12 +1067,18 @@ void BrowsingDataModel::PopulateFromDisk(base::OnceClosure finished_callback) {
   }
 
 #if BUILDFLAG(ENABLE_LIBRARY_CDMS)
-  if (is_cdm_storage_database_enabled && !is_cdm_migration_enabled) {
-    storage_partition_->GetCdmStorageDataModel()->GetUsagePerAllStorageKeys(
-        base::BindOnce(&OnCdmStorageLoaded, this, completion),
-        base::Time::Min(), base::Time::Max());
-  }
+  storage_partition_->GetCdmStorageDataModel()->GetUsagePerAllStorageKeys(
+      base::BindOnce(&OnCdmStorageLoaded, this, completion), base::Time::Min(),
+      base::Time::Max());
 #endif  // BUILDFLAG(ENABLE_LIBRARY_CDMS)
+
+  // Device Bound Sessions
+  if (network::mojom::DeviceBoundSessionManager* device_bound_session_manager =
+          storage_partition_->GetDeviceBoundSessionManager();
+      device_bound_session_manager) {
+    device_bound_session_manager->GetAllSessions(
+        base::BindOnce(&OnDeviceBoundSessionsLoaded, this, completion));
+  }
 
   // Data loaded from non-components storage types via the delegate.
   if (delegate_) {

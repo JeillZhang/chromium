@@ -50,11 +50,12 @@ void MockRenderWidgetHostDelegate::PasteAndMatchStyle() {}
 void MockRenderWidgetHostDelegate::SelectAll() {}
 
 void MockRenderWidgetHostDelegate::CreateInputEventRouter() {
-  rwh_input_event_router_ = std::make_unique<RenderWidgetHostInputEventRouter>(
-      GetHostFrameSinkManager(), this);
+  rwh_input_event_router_ =
+      base::MakeRefCounted<input::RenderWidgetHostInputEventRouter>(
+          GetHostFrameSinkManager(), this);
 }
 
-RenderWidgetHostInputEventRouter*
+input::RenderWidgetHostInputEventRouter*
 MockRenderWidgetHostDelegate::GetInputEventRouter() {
   return rwh_input_event_router_.get();
 }
@@ -101,7 +102,10 @@ MockRenderWidgetHostDelegate::GetDelegatedInkRenderer(
   return delegated_ink_point_renderer_.get();
 }
 
-TouchEmulator* MockRenderWidgetHostDelegate::GetTouchEmulator(
+void MockRenderWidgetHostDelegate::OnInputIgnored(
+    const blink::WebInputEvent& event) {}
+
+input::TouchEmulator* MockRenderWidgetHostDelegate::GetTouchEmulator(
     bool create_if_necessary) {
   NOTIMPLEMENTED();
   return nullptr;

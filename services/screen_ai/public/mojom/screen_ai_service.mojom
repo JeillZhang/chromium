@@ -21,12 +21,19 @@ enum Direction {
 
 // Clients of the OCR service.
 enum OcrClientType {
+  // To be used only for testing.
   kTest,
+  // Used in PDF Viewer to convert images to interactble text.
   kPdfViewer,
+  // Used in ChromeOS Local Search to make stored images text searchable.
   kLocalSearch,
+  // Ued by ChromeOS Camera app to create interactable PDFs.
   kCameraApp,
-  kPdfSearchify,
+  // Used by ChromeOS Media app to make PDFs accessible.
   kMediaApp,
+  // Used by the ChromeOS screenshot tool to detect text in a user selected
+  // region.
+  kScreenshotTextDetection,
 };
 
 // A wrapper struct mirroring parts of the chrome_screen_ai.proto.
@@ -67,6 +74,9 @@ struct LineBox {
   // Rotation angle (in degrees, clockwise) of the line baseline box about its
   // top-left corner.
   float baseline_box_angle;
+
+  // Confidence as computed by the OCR engine. The value is in range [0, 1].
+  float confidence;
 };
 
 // A wrapper struct mirroring parts of the chrome_screen_ai.proto.
@@ -94,21 +104,20 @@ struct WordBox {
 
   // The direction of the script contained in the word.
   Direction direction;
+
+  // Confidence as computed by the OCR engine. The value is in range [0, 1].
+  float confidence;
 };
 
 // Main interface a client uses for visual annotation functions of the Screen AI
 // service.
+//
+// NOTE: Security approval for this interface is based on the fact that only
+// simple inputs (bitmaps) are sent to the service. If this needs changing in
+// future, we may need to switch to one service instance per site to keep site
+// content isolation.
 [RuntimeFeature=ax.mojom.features.kScreenAIOCREnabled]
 interface ScreenAIAnnotator {
-  // Receives an image, such as a screenshot or a canvas content, as well as the
-  // ID of the accessibility tree that contains the image (`parent_tree_id`).
-  // It then asks the Screen AI library to perform semantic layout extraction on
-  // the image and returns the ID of the accessibility tree which would be
-  // created by the service containing the output of the library.
-  ExtractSemanticLayout(skia.mojom.BitmapN32 image,
-    ax.mojom.AXTreeID parent_tree_id) =>
-    (ax.mojom.AXTreeID child_tree_id);
-
   // Receives an image, such as a screenshot or a page from a PDF file, as well
   // as the ID of the accessibility tree that contains the image
   // (`parent_tree_id`). It then asks the Screen AI library to perform OCR on
@@ -127,25 +136,14 @@ interface ScreenAIAnnotator {
   SetClientType(OcrClientType client_type);
 };
 
-// This interface sends accessibility messages from the Screen AI Service to
-// `AXScreenAIAnnotator` in the browser process in non-ChromeOS or the extension
-// in ChromeOS.
-interface ScreenAIAnnotatorClient {
-  // Sent to inform about the creation of a new accessibility tree or an update
-  // to an existing one.
-  HandleAXTreeUpdate(ax.mojom.AXTreeUpdate update);
-};
-
 // Main interface a client uses for Main Content Extraction function of Screen
 // AI service. Each RenderFrameImpl can have one AXTreeDistiller which contains
 // an Screen2xMainContentExtractor.
 // All interfaces of one browser profile use one ScreenAIService.
 interface Screen2xMainContentExtractor {
   // Receives the accessibility tree as a snapshot, schedules processing, and
-  // returns the main content of the given tree. ukm_source_id is a
-  // ukm::SourceId which is used to tie the UKM event to the main frame URL for
-  // metrics collection.
-  ExtractMainContent(ax.mojom.AXTreeUpdate snapshot, int64 ukm_source_id) =>
+  // returns the main content of the given tree.
+  ExtractMainContent(ax.mojom.AXTreeUpdate snapshot) =>
     (array<int32> content_node_ids);
 
   // Receives the accessibility tree as a snapshot, schedules processing, and
@@ -162,10 +160,6 @@ interface Screen2xMainContentExtractor {
 interface OCRService {
   // Binds a new annotator to the service.
   BindAnnotator(pending_receiver<ScreenAIAnnotator>? annotator);
-
-  // Binds a client to receive update messages for annotation service.
-  BindAnnotatorClient(
-    pending_remote<ScreenAIAnnotatorClient>? annotator_client);
 };
 
 // Provides an interface to the Main Content Extraction functionalities of the

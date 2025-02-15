@@ -6,6 +6,7 @@
 
 #include <stddef.h>
 
+#include <algorithm>
 #include <map>
 #include <memory>
 #include <optional>
@@ -15,7 +16,6 @@
 
 #include "base/containers/fixed_flat_map.h"
 #include "base/json/json_value_converter.h"
-#include "base/ranges/algorithm.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -50,6 +50,7 @@ constexpr char kDate[] = "date";
 // CalendarEvent
 constexpr char kAttendees[] = "attendees";
 constexpr char kAttendeesOmitted[] = "attendeesOmitted";
+constexpr char kAttendeesResource[] = "resource";
 constexpr char kAttendeesResponseStatus[] = "responseStatus";
 constexpr char kAttendeesSelf[] = "self";
 constexpr char kCalendarEventKind[] = "calendar#event";
@@ -185,6 +186,57 @@ std::optional<CalendarEvent::ResponseStatus> CalculateSelfResponseStatus(
   return CalendarEvent::ResponseStatus::kUnknown;
 }
 
+// Returns true if there is another attendee other than the user that has
+// not declined the meeting.
+bool CalculateHasOtherAttendee(const base::Value& value) {
+  const auto* event = value.GetIfDict();
+  if (!event) {
+    return false;
+  }
+
+  const auto* attendees_raw_value = event->Find(kAttendees);
+  if (!attendees_raw_value) {
+    return false;
+  }
+
+  const auto* attendees = attendees_raw_value->GetIfList();
+  if (!attendees) {
+    return false;
+  }
+
+  for (const auto& x : *attendees) {
+    const auto* attendee = x.GetIfDict();
+    if (!attendee) {
+      continue;
+    }
+
+    const bool is_self = attendee->FindBool(kAttendeesSelf).value_or(false);
+    if (is_self) {
+      continue;
+    }
+
+    const bool is_resource =
+        attendee->FindBool(kAttendeesResource).value_or(false);
+    if (is_resource) {
+      continue;
+    }
+
+    const auto* response_status =
+        attendee->FindString(kAttendeesResponseStatus);
+    if (!response_status) {
+      continue;
+    }
+
+    const auto it = kAttendeesResponseStatuses.find(*response_status);
+    if (it != kAttendeesResponseStatuses.end() &&
+        it->second != CalendarEvent::ResponseStatus::kDeclined) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 // Pulls the video conference URI out of the conferenceData field, if there is
 // one on the event. Returns the first one it finds or an empty GURL if there is
 // none.
@@ -195,7 +247,7 @@ GURL GetConferenceDataUri(const base::Value::Dict& dict) {
     return GURL();
   }
 
-  const auto video_conference_entry_point = base::ranges::find_if(
+  const auto video_conference_entry_point = std::ranges::find_if(
       entry_points->begin(), entry_points->end(), [](const auto& entry_point) {
         const std::string* entry_point_type =
             entry_point.GetDict().FindString(kEntryPointType);
@@ -287,6 +339,8 @@ bool ConvertResponseItems(const base::Value* value, CalendarEvent* event) {
   if (self_response_status.has_value()) {
     event->set_self_response_status(self_response_status.value());
   }
+
+  event->set_has_other_attendee(CalculateHasOtherAttendee(*value));
 
   GURL conference_data_uri = GetConferenceDataUri(value->GetDict());
   event->set_conference_data_uri(conference_data_uri);

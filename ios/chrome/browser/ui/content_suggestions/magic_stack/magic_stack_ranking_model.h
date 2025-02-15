@@ -7,22 +7,26 @@
 
 #import <UIKit/UIKit.h>
 
+namespace commerce {
+class ShoppingService;
+}
+
 namespace segmentation_platform {
 class SegmentationPlatformService;
 }
 
-@protocol ContentSuggestionsConsumer;
+class AuthenticationService;
 @class ContentSuggestionsMetricsRecorder;
 enum class ContentSuggestionsModuleType;
 @protocol HomeStartDataSource;
 @class MagicStackModule;
 @protocol MagicStackRankingModelDelegate;
 class PrefService;
+class TemplateURLService;
+class TipsManagerIOS;
 
 // Manages the Magic Stack module ranking fetch and returns the
 @interface MagicStackRankingModel : NSObject
-
-@property(nonatomic, weak) id<ContentSuggestionsConsumer> consumer;
 
 // Delegate for this model.
 @property(nonatomic, weak) id<MagicStackRankingModelDelegate> delegate;
@@ -36,12 +40,16 @@ class PrefService;
 
 // Default initializer with the module mediators passed in through
 // `moduleMediators`.
-- (instancetype)initWithSegmentationService:
-                    (segmentation_platform::SegmentationPlatformService*)
-                        segmentationService
-                                prefService:(PrefService*)prefService
-                                 localState:(PrefService*)localState
-                            moduleMediators:(NSArray*)moduleMediators
+- (instancetype)
+    initWithSegmentationService:
+        (segmentation_platform::SegmentationPlatformService*)segmentationService
+                shoppingService:(commerce::ShoppingService*)shoppingService
+                    authService:(AuthenticationService*)authenticationService
+                    prefService:(PrefService*)prefService
+                     localState:(PrefService*)localState
+                moduleMediators:(NSArray*)moduleMediators
+                    tipsManager:(TipsManagerIOS*)tipsManager
+             templateURLService:(TemplateURLService*)templateURLService
     NS_DESIGNATED_INITIALIZER;
 
 - (instancetype)init NS_UNAVAILABLE;

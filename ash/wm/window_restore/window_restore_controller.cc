@@ -69,10 +69,9 @@ constexpr ShellWindowId kAppParentContainers[19] = {
 // TODO(crbug.com/40163553): Checking app type is temporary solution until we
 // can get windows which are allowed to window restore from the
 // FullRestoreService.
-constexpr chromeos::AppType kSupportedAppTypes[5] = {
+constexpr chromeos::AppType kSupportedAppTypes[] = {
     chromeos::AppType::BROWSER, chromeos::AppType::CHROME_APP,
-    chromeos::AppType::ARC_APP, chromeos::AppType::SYSTEM_APP,
-    chromeos::AppType::LACROS};
+    chromeos::AppType::ARC_APP, chromeos::AppType::SYSTEM_APP};
 
 // Delay for certain app types before activation is allowed. This is because
 // some apps' client request activation after creation, which can break user
@@ -558,7 +557,7 @@ void WindowRestoreController::RestoreStateTypeAndClearLaunchedKey(
       Shell::Get()->tablet_mode_controller()->AddWindow(window);
 
       if (chromeos::IsSnappedWindowStateType(*state_type)) {
-        base::AutoReset<aura::Window*> auto_reset_to_be_snapped(
+        base::AutoReset<raw_ptr<aura::Window>> auto_reset_to_be_snapped(
             &to_be_snapped_window_, window);
         // Use the window restore info snap percentage as the target snap ratio.
         const float snap_ratio = window_info->snap_percentage.value_or(

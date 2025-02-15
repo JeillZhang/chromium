@@ -42,11 +42,9 @@ import org.mockito.junit.MockitoRule;
 import org.robolectric.annotation.Config;
 import org.robolectric.shadows.ShadowLooper;
 
-import org.chromium.base.FeatureList;
+import org.chromium.base.CallbackUtils;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.CommandLineFlags;
-import org.chromium.base.test.util.Features.DisableFeatures;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.ui.fast_checkout.FastCheckoutProperties.DetailItemType;
 import org.chromium.chrome.browser.ui.fast_checkout.data.FastCheckoutAutofillProfile;
@@ -65,7 +63,6 @@ import org.chromium.ui.modelutil.PropertyModel;
 /** Simple unit tests for the detail screen view. */
 @RunWith(BaseRobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
-@DisableFeatures(ChromeFeatureList.AUTOFILL_ENABLE_NEW_CARD_ART_AND_NETWORK_IMAGES)
 @CommandLineFlags.Add({
     ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
     ChromeSwitches.DISABLE_NATIVE_INITIALIZATION
@@ -126,11 +123,6 @@ public class FastCheckoutDetailScreenViewTest {
 
     @Before
     public void setUp() {
-        FeatureList.TestValues featureTestValues = new FeatureList.TestValues();
-        featureTestValues.addFeatureFlagOverride(
-                ChromeFeatureList.AUTOFILL_ENABLE_NEW_CARD_ART_AND_NETWORK_IMAGES, false);
-        FeatureList.setTestValues(featureTestValues);
-
         mActivityScenarioRule
                 .getScenario()
                 .onActivity(
@@ -236,7 +228,7 @@ public class FastCheckoutDetailScreenViewTest {
                         AutofillProfileItemProperties.create(
                                 sSampleProfile1,
                                 /* isSelected= */ true,
-                                /* onClickListener= */ () -> {})));
+                                /* onClickListener= */ CallbackUtils.emptyRunnable())));
 
         models.add(
                 new ListItem(
@@ -244,7 +236,7 @@ public class FastCheckoutDetailScreenViewTest {
                         AutofillProfileItemProperties.create(
                                 emptyFieldsProfile,
                                 /* isSelected= */ false,
-                                /* onClickListener= */ () -> {})));
+                                /* onClickListener= */ CallbackUtils.emptyRunnable())));
 
         mModel.set(DETAIL_SCREEN_MODEL_LIST, models);
 
@@ -296,21 +288,21 @@ public class FastCheckoutDetailScreenViewTest {
                         CreditCardItemProperties.create(
                                 sSampleCard1,
                                 /* isSelected= */ true,
-                                /* onClickListener= */ () -> {})));
+                                /* onClickListener= */ CallbackUtils.emptyRunnable())));
         models.add(
                 new ListItem(
                         DetailItemType.CREDIT_CARD,
                         CreditCardItemProperties.create(
                                 sampleCardNoName,
                                 /* isSelected= */ false,
-                                /* onClickListener= */ () -> {})));
+                                /* onClickListener= */ CallbackUtils.emptyRunnable())));
         models.add(
                 new ListItem(
                         DetailItemType.CREDIT_CARD,
                         CreditCardItemProperties.create(
                                 sampleCardEmptyFields,
                                 /* isSelected= */ false,
-                                /* onClickListener= */ () -> {})));
+                                /* onClickListener= */ CallbackUtils.emptyRunnable())));
         mModel.set(DETAIL_SCREEN_MODEL_LIST, models);
 
         // Check that the sheet is populated properly.
@@ -368,7 +360,6 @@ public class FastCheckoutDetailScreenViewTest {
                 getTextFromListItemWithId(1, R.id.fast_checkout_add_new_item_label),
                 equalTo(
                         mView.getContext()
-                                .getResources()
                                 .getString(
                                         R.string
                                                 .fast_checkout_detail_screen_add_autofill_profile_text)));

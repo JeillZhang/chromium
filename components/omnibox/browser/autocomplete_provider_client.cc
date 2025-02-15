@@ -14,6 +14,11 @@ AutocompleteProviderClient::GetHistoryEmbeddingsService() {
   return nullptr;
 }
 
+DocumentSuggestionsService*
+AutocompleteProviderClient::GetDocumentSuggestionsService() const {
+  return nullptr;
+}
+
 bool AutocompleteProviderClient::AllowDeletingBrowserHistory() const {
   return true;
 }
@@ -27,6 +32,14 @@ bool AutocompleteProviderClient::IsIncognitoModeAvailable() const {
 }
 
 bool AutocompleteProviderClient::IsSharingHubAvailable() const {
+  return false;
+}
+
+bool AutocompleteProviderClient::IsHistoryEmbeddingsEnabled() const {
+  return false;
+}
+
+bool AutocompleteProviderClient::IsHistoryEmbeddingsSettingVisible() const {
   return false;
 }
 

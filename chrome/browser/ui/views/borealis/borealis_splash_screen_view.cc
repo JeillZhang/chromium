@@ -14,16 +14,17 @@
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/ash/borealis/borealis_metrics.h"
 #include "chrome/browser/ash/borealis/borealis_service.h"
+#include "chrome/browser/ash/borealis/borealis_service_factory.h"
 #include "chrome/browser/ash/borealis/borealis_util.h"
 #include "chrome/browser/ash/borealis/borealis_window_manager.h"
 #include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/color/chrome_color_id.h"
 #include "chrome/browser/ui/views/borealis/borealis_beta_badge.h"
-#include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/grit/chrome_unscaled_resources.h"
 #include "chrome/grit/generated_resources.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/base/mojom/dialog_button.mojom.h"
 #include "ui/color/color_provider_key.h"
 #include "ui/gfx/geometry/insets.h"
 #include "ui/views/controls/image_view.h"
@@ -75,14 +76,14 @@ void BorealisSplashScreenView::Show(Profile* profile) {
 BorealisSplashScreenView::BorealisSplashScreenView(Profile* profile)
     : start_tick_(base::TimeTicks::Now()), weak_factory_(this) {
   profile_ = profile;
-  borealis::BorealisService::GetForProfile(profile_)
+  borealis::BorealisServiceFactory::GetForProfile(profile_)
       ->WindowManager()
       .AddObserver(this);
 
   SetTitle(IDS_BOREALIS_SPLASHSCREEN_TITLE);
   SetShowCloseButton(false);
   SetHasWindowSizeControls(false);
-  SetButtons(ui::DIALOG_BUTTON_NONE);
+  SetButtons(static_cast<int>(ui::mojom::DialogButton::kNone));
   set_margins(gfx::Insets(kOuterPadding));
   set_corner_radius(kCornerRadius);
   set_use_custom_frame(true);
@@ -146,13 +147,14 @@ void BorealisSplashScreenView::OnSessionStarted() {
 void BorealisSplashScreenView::OnWindowManagerDeleted(
     borealis::BorealisWindowManager* window_manager) {
   DCHECK(window_manager ==
-         &borealis::BorealisService::GetForProfile(profile_)->WindowManager());
+         &borealis::BorealisServiceFactory::GetForProfile(profile_)
+              ->WindowManager());
   window_manager->RemoveObserver(this);
 }
 
 BorealisSplashScreenView::~BorealisSplashScreenView() {
   if (profile_) {
-    borealis::BorealisService::GetForProfile(profile_)
+    borealis::BorealisServiceFactory::GetForProfile(profile_)
         ->WindowManager()
         .RemoveObserver(this);
   }

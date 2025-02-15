@@ -28,13 +28,13 @@
 #include "base/threading/platform_thread.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
-#include "chrome/common/child_process_logging.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/media/media_resource_provider.h"
 #include "chrome/common/net/net_resource_provider.h"
 #include "chrome/common/privacy_budget/privacy_budget_settings_provider.h"
 #include "chrome/common/renderer_configuration.mojom.h"
 #include "chrome/common/url_constants.h"
+#include "chrome/renderer/process_state.h"
 #include "components/visitedlink/renderer/visitedlink_reader.h"
 #include "content/public/child/child_thread.h"
 #include "content/public/common/content_switches.h"
@@ -84,8 +84,6 @@ scoped_refptr<base::SequencedTaskRunner> GetCallbackGroupTaskRunner() {
 
 }  // namespace
 
-bool ChromeRenderThreadObserver::is_incognito_process_ = false;
-
 #if BUILDFLAG(IS_CHROMEOS_ASH)
 // static
 scoped_refptr<ChromeRenderThreadObserver::ChromeOSListener>
@@ -126,7 +124,7 @@ ChromeRenderThreadObserver::ChromeOSListener::ChromeOSListener()
           GetCallbackGroupTaskRunner())),
       merge_session_running_(true) {}
 
-ChromeRenderThreadObserver::ChromeOSListener::~ChromeOSListener() {}
+ChromeRenderThreadObserver::ChromeOSListener::~ChromeOSListener() = default;
 
 void ChromeRenderThreadObserver::ChromeOSListener::BindOnIOThread(
     mojo::PendingReceiver<chrome::mojom::ChromeOSListener>
@@ -142,7 +140,7 @@ ChromeRenderThreadObserver::ChromeRenderThreadObserver()
   media::SetLocalizedStringProvider(ChromeMediaLocalizedStringProvider);
 }
 
-ChromeRenderThreadObserver::~ChromeRenderThreadObserver() {}
+ChromeRenderThreadObserver::~ChromeRenderThreadObserver() = default;
 
 chrome::mojom::DynamicParamsPtr ChromeRenderThreadObserver::GetDynamicParams()
     const {
@@ -202,7 +200,7 @@ void ChromeRenderThreadObserver::SetInitialConfiguration(
         bound_session_request_throttled_handler) {
   if (content_settings_manager)
     content_settings_manager_.Bind(std::move(content_settings_manager));
-  is_incognito_process_ = is_incognito_process;
+  SetIsIncognitoProcess(is_incognito_process);
 #if BUILDFLAG(IS_CHROMEOS_ASH)
   if (chromeos_listener_receiver) {
     chromeos_listener_ =

@@ -41,11 +41,6 @@ namespace {
 // SetLatencyHint(), so we needed to peg this with a constant.
 constexpr int kAbsoluteMaxFrames = 24;
 
-bool ShouldUseLowDelayMode(DemuxerStream* stream) {
-  return base::FeatureList::IsEnabled(kLowDelayVideoRenderingOnLiveStream) &&
-         stream->liveness() == StreamLiveness::kLive;
-}
-
 }  // namespace
 
 VideoRendererImpl::VideoRendererImpl(
@@ -194,7 +189,7 @@ void VideoRendererImpl::Initialize(
         base::Unretained(gpu_memory_buffer_pool_.get())));
   }
 
-  low_delay_ = ShouldUseLowDelayMode(demuxer_stream_);
+  low_delay_ = stream->liveness() == StreamLiveness::kLive;
   if (low_delay_) {
     MEDIA_LOG(DEBUG, media_log_) << "Video rendering in low delay mode.";
 
@@ -585,11 +580,20 @@ void VideoRendererImpl::FrameReady(VideoDecoderStream::ReadResult result) {
       // Anything other than `kOk` or `kAborted` is treated as an error.
       DCHECK(!result.has_value());
 
-      PipelineStatus::Codes code =
-          result.code() == DecoderStatus::Codes::kDisconnected
-              ? PIPELINE_ERROR_DISCONNECTED
-              : PIPELINE_ERROR_DECODE;
-      PipelineStatus status = {code, std::move(result).error()};
+      PipelineStatus::Codes pipeline_status_code;
+      switch (result.code()) {
+        case DecoderStatus::Codes::kDisconnected:
+          pipeline_status_code = PIPELINE_ERROR_DISCONNECTED;
+          break;
+        case DecoderStatus::Codes::kOutOfMemory:
+          pipeline_status_code = PIPELINE_ERROR_OUT_OF_MEMORY;
+          break;
+        default:
+          pipeline_status_code = PIPELINE_ERROR_DECODE;
+          break;
+      }
+
+      PipelineStatus status = {pipeline_status_code, std::move(result).error()};
       task_runner_->PostTask(
           FROM_HERE,
           base::BindOnce(&VideoRendererImpl::OnPlaybackError,
@@ -666,7 +670,7 @@ void VideoRendererImpl::FrameReady(VideoDecoderStream::ReadResult result) {
   if (!sink_started_ && !painted_first_frame_ && algorithm_->frames_queued()) {
     if (received_end_of_stream_ ||
         (algorithm_->effective_frames_queued() && has_best_first_frame)) {
-      PaintFirstFrame();
+      PaintFirstFrame_Locked();
     } else if (cant_read) {
       // `cant_read` isn't always reliable, so only paint after 250ms if we
       // haven't gotten anything better. This resets for each frame received. We
@@ -1067,7 +1071,14 @@ void VideoRendererImpl::AttemptReadAndCheckForMetadataChanges(
 }
 
 void VideoRendererImpl::PaintFirstFrame() {
+  base::AutoLock auto_lock(lock_);
+  PaintFirstFrame_Locked();
+}
+
+void VideoRendererImpl::PaintFirstFrame_Locked() {
   DCHECK(task_runner_->RunsTasksInCurrentSequence());
+  lock_.AssertAcquired();
+
   if (painted_first_frame_ || sink_started_) {
     return;
   }

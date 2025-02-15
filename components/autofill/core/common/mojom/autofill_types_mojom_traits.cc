@@ -65,8 +65,9 @@ bool StructTraits<
                                   autofill::SelectOption* out) {
   if (!data.ReadValue(&out->value))
     return false;
-  if (!data.ReadContent(&out->content))
+  if (!data.ReadText(&out->text)) {
     return false;
+  }
   return true;
 }
 
@@ -83,8 +84,7 @@ UnionTraits<autofill::mojom::SectionValueDataView,
   if (absl::holds_alternative<autofill::Section::FieldIdentifier>(r))
     return autofill::mojom::SectionValueDataView::Tag::kFieldIdentifier;
 
-  NOTREACHED_IN_MIGRATION();
-  return autofill::mojom::SectionValueDataView::Tag::kDefaultSection;
+  NOTREACHED();
 }
 
 // static
@@ -159,6 +159,7 @@ bool StructTraits<autofill::mojom::AutocompleteParsingResultDataView,
     return false;
   if (!data.ReadFieldType(&out->field_type))
     return false;
+  out->webauthn = data.webauthn();
   return true;
 }
 
@@ -230,6 +231,14 @@ bool StructTraits<
       return false;
     }
     out->set_parsed_autocomplete(std::move(parsed_autocomplete));
+  }
+
+  {
+    std::u16string pattern;
+    if (!data.ReadPattern(&pattern)) {
+      return false;
+    }
+    out->set_pattern(std::move(pattern));
   }
 
   {
@@ -465,7 +474,7 @@ bool StructTraits<autofill::mojom::FormDataDataView, autofill::FormData>::Read(
     if (!data.ReadFields(&fields)) {
       return false;
     }
-    out->fields = std::move(fields);
+    out->set_fields(std::move(fields));
   }
   {
     std::vector<autofill::FieldRendererId> username_predictions;
@@ -476,11 +485,12 @@ bool StructTraits<autofill::mojom::FormDataDataView, autofill::FormData>::Read(
   }
   out->set_is_gaia_with_skip_save_password_form(
       data.is_gaia_with_skip_save_password_form());
-  return base::ranges::all_of(
+  out->set_likely_contains_captcha(data.likely_contains_captcha());
+  return std::ranges::all_of(
       out->child_frames(),
       [&](int predecessor) {
         return predecessor == -1 ||
-               base::checked_cast<size_t>(predecessor) < out->fields.size();
+               base::checked_cast<size_t>(predecessor) < out->fields().size();
       },
       &autofill::FrameTokenWithPredecessor::predecessor);
 }
@@ -490,23 +500,33 @@ bool StructTraits<autofill::mojom::FormFieldDataPredictionsDataView,
                   autofill::FormFieldDataPredictions>::
     Read(autofill::mojom::FormFieldDataPredictionsDataView data,
          autofill::FormFieldDataPredictions* out) {
-  if (!data.ReadHostFormSignature(&out->host_form_signature))
+  if (!data.ReadHostFormSignature(&out->host_form_signature)) {
     return false;
-  if (!data.ReadSignature(&out->signature))
+  }
+  if (!data.ReadSignature(&out->signature)) {
     return false;
-  if (!data.ReadHeuristicType(&out->heuristic_type))
+  }
+  if (!data.ReadHeuristicType(&out->heuristic_type)) {
     return false;
-  if (!data.ReadServerType(&out->server_type))
+  }
+  if (!data.ReadServerType(&out->server_type)) {
     return false;
+  }
   if (!data.ReadHtmlType(&out->html_type)) {
     return false;
   }
-  if (!data.ReadOverallType(&out->overall_type))
+  if (!data.ReadOverallType(&out->overall_type)) {
     return false;
-  if (!data.ReadParseableName(&out->parseable_name))
+  }
+  if (!data.ReadParseableName(&out->parseable_name)) {
     return false;
-  if (!data.ReadSection(&out->section))
+  }
+  if (!data.ReadParseableLabel(&out->parseable_label)) {
     return false;
+  }
+  if (!data.ReadSection(&out->section)) {
+    return false;
+  }
   out->rank = data.rank();
   out->rank_in_signature_group = data.rank_in_signature_group();
   out->rank_in_host_form = data.rank_in_host_form();
@@ -549,6 +569,7 @@ bool StructTraits<autofill::mojom::PasswordAndMetadataDataView,
     return false;
 
   out->uses_account_store = data.uses_account_store();
+  out->is_grouped_affiliation = data.is_grouped_affiliation();
 
   return true;
 }
@@ -563,13 +584,16 @@ bool StructTraits<autofill::mojom::PasswordFormFillDataDataView,
       !data.ReadUsernameElementRendererId(&out->username_element_renderer_id) ||
       !data.ReadPasswordElementRendererId(&out->password_element_renderer_id) ||
       !data.ReadPreferredLogin(&out->preferred_login) ||
-      !data.ReadAdditionalLogins(&out->additional_logins)) {
+      !data.ReadAdditionalLogins(&out->additional_logins) ||
+      !data.ReadSuggestionBannedFields(&out->suggestion_banned_fields)) {
     return false;
   }
 
   out->wait_for_username = data.wait_for_username();
   out->username_may_use_prefilled_placeholder =
       data.username_may_use_prefilled_placeholder();
+  out->notify_browser_of_successful_filling =
+      data.notify_browser_of_successful_filling();
 
   return true;
 }
@@ -595,7 +619,7 @@ bool StructTraits<autofill::mojom::PasswordGenerationUIDataDataView,
   out->max_length = data.max_length();
   out->is_generation_element_password_type =
       data.is_generation_element_password_type();
-  out->input_field_empty = data.input_field_empty();
+  out->generation_rejected = data.generation_rejected();
 
   return data.ReadGenerationElementId(&out->generation_element_id) &&
          data.ReadGenerationElement(&out->generation_element) &&

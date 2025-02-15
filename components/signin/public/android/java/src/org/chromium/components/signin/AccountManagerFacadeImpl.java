@@ -4,9 +4,10 @@
 
 package org.chromium.components.signin;
 
+import static org.chromium.components.signin.AccountCapabilitiesConstants.IS_SUBJECT_TO_PARENTAL_CONTROLS_CAPABILITY_NAME;
+
 import android.accounts.Account;
 import android.accounts.AccountManager;
-import android.accounts.AuthenticatorDescription;
 import android.app.Activity;
 import android.content.Intent;
 import android.os.Bundle;
@@ -29,8 +30,11 @@ import org.chromium.base.task.AsyncTask;
 import org.chromium.base.task.PostTask;
 import org.chromium.base.task.TaskTraits;
 import org.chromium.components.signin.AccountManagerDelegate.CapabilityResponse;
+import org.chromium.components.signin.ConnectionRetry.AuthTask;
 import org.chromium.components.signin.base.AccountCapabilities;
+import org.chromium.components.signin.base.AccountInfo;
 import org.chromium.components.signin.base.CoreAccountInfo;
+import org.chromium.components.signin.base.GaiaId;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -39,8 +43,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.Predicate;
-import java.util.stream.Collectors;
 
 /** AccountManagerFacade wraps our access of AccountManager in Android. */
 public class AccountManagerFacadeImpl implements AccountManagerFacade {
@@ -75,12 +77,20 @@ public class AccountManagerFacadeImpl implements AccountManagerFacade {
     private final AtomicReference<List<PatternMatcher>> mAccountRestrictionPatterns =
             new AtomicReference<>();
 
+    // Deprecated in favor of `mAccountsPromise`, to be removed after migrating all affected calls.
     private @NonNull Promise<List<CoreAccountInfo>> mCoreAccountInfosPromise = new Promise<>();
 
-    private @Nullable AsyncTask<List<String>> mFetchGaiaIdsTask;
+    private @NonNull Promise<List<AccountInfo>> mAccountsPromise = new Promise<>();
+
+    private @Nullable AsyncTask<List<GaiaId>> mFetchGaiaIdsTask;
 
     private int mNumberOfRetries;
     private boolean mDidAccountFetchSucceed;
+
+    private int mPendingTokenRequests;
+    private Runnable mTokenRequestsCompletedCallback;
+
+    private boolean mDisallowTokenRequestsForTesting;
 
     /**
      * @param delegate the AccountManagerDelegate to use as a backend
@@ -91,13 +101,11 @@ public class AccountManagerFacadeImpl implements AccountManagerFacade {
         mDelegate.attachAccountsChangeObserver(this::onAccountsUpdated);
         new AccountRestrictionPatternReceiver(this::onAccountRestrictionPatternsUpdated);
 
-        getCoreAccountInfos()
+        getAccounts()
                 .then(
-                        coreAccountInfos -> {
+                        accounts -> {
                             RecordHistogram.recordExactLinearHistogram(
-                                    "Signin.AndroidNumberOfDeviceAccounts",
-                                    coreAccountInfos.size(),
-                                    50);
+                                    "Signin.AndroidNumberOfDeviceAccounts", accounts.size(), 50);
                         });
         onAccountsUpdated();
     }
@@ -131,46 +139,110 @@ public class AccountManagerFacadeImpl implements AccountManagerFacade {
         return mCoreAccountInfosPromise;
     }
 
-    /** @return Whether or not there is an account authenticator for Google accounts. */
+    @MainThread
     @Override
-    public boolean hasGoogleAccountAuthenticator() {
-        AuthenticatorDescription[] descs = mDelegate.getAuthenticatorTypes();
-        for (AuthenticatorDescription desc : descs) {
-            if (AccountUtils.GOOGLE_ACCOUNT_TYPE.equals(desc.type)) return true;
-        }
-        return false;
+    public Promise<List<AccountInfo>> getAccounts() {
+        ThreadUtils.assertOnUiThread();
+        return mAccountsPromise;
     }
 
-    /**
-     * Synchronously gets an OAuth2 access token. May return a cached version, use
-     * {@link #invalidateAccessToken} to invalidate a token in the cache.
-     * @param coreAccountInfo The {@link CoreAccountInfo} for which the token is requested.
-     * @param scope OAuth2 scope for which the requested token should be valid.
-     * @return The OAuth2 access token as an AccessTokenData with a string and an expiration time..
-     */
+    @MainThread
     @Override
-    public AccessTokenData getAccessToken(CoreAccountInfo coreAccountInfo, String scope)
-            throws AuthException {
+    public void getAccessToken(
+            CoreAccountInfo coreAccountInfo, String scope, GetAccessTokenCallback callback) {
+        ThreadUtils.assertOnUiThread();
         assert coreAccountInfo != null;
         assert scope != null;
-        return mDelegate.getAuthToken(
-                AccountUtils.createAccountFromName(coreAccountInfo.getEmail()), scope);
+
+        if (mDisallowTokenRequestsForTesting) {
+            callback.onGetTokenFailure(false);
+            return;
+        }
+
+        pendingRequestStarted();
+        ConnectionRetry.runAuthTask(
+                new AuthTask<AccessTokenData>() {
+                    @Override
+                    public AccessTokenData run() throws AuthException {
+                        return mDelegate.getAccessToken(
+                                AccountUtils.createAccountFromName(coreAccountInfo.getEmail()),
+                                scope);
+                    }
+
+                    @Override
+                    public void onSuccess(AccessTokenData token) {
+                        callback.onGetTokenSuccess(token);
+                        pendingRequestFinished();
+                    }
+
+                    @Override
+                    public void onFailure(boolean isTransientError) {
+                        callback.onGetTokenFailure(isTransientError);
+                        pendingRequestFinished();
+                    }
+                });
     }
 
-    /**
-     * Removes an OAuth2 access token from the cache with retries asynchronously.
-     * Uses {@link #getAccessToken} to issue a new token after invalidating the old one.
-     * @param accessToken The access token to invalidate.
-     */
-    @Override
-    public void invalidateAccessToken(String accessToken) {
-        if (!TextUtils.isEmpty(accessToken)) {
-            ConnectionRetry.runAuthTask(
-                    () -> {
-                        mDelegate.invalidateAuthToken(accessToken);
-                        return true;
-                    });
+    private void pendingRequestStarted() {
+        ThreadUtils.assertOnUiThread();
+        mPendingTokenRequests++;
+    }
+
+    private void pendingRequestFinished() {
+        ThreadUtils.assertOnUiThread();
+        mPendingTokenRequests--;
+        assert mPendingTokenRequests >= 0;
+        if (mPendingTokenRequests == 0 && mTokenRequestsCompletedCallback != null) {
+            Runnable callback = mTokenRequestsCompletedCallback;
+            mTokenRequestsCompletedCallback = null;
+            callback.run();
         }
+    }
+
+    @Override
+    public void invalidateAccessToken(String accessToken, @Nullable Runnable completedRunnable) {
+        ThreadUtils.assertOnUiThread();
+        if (TextUtils.isEmpty(accessToken) || mDisallowTokenRequestsForTesting) {
+            // TODO(https://crbug.com/366403142): Replace isEmpty check with an exception.
+            if (completedRunnable != null) {
+                completedRunnable.run();
+            }
+            return;
+        }
+        ConnectionRetry.runAuthTask(
+                new AuthTask<Void>() {
+                    @Override
+                    public Void run() throws AuthException {
+                        mDelegate.invalidateAccessToken(accessToken);
+                        return null;
+                    }
+
+                    @Override
+                    public void onSuccess(Void ignored) {
+                        if (completedRunnable != null) {
+                            completedRunnable.run();
+                        }
+                    }
+
+                    @Override
+                    public void onFailure(boolean ignored) {
+                        if (completedRunnable != null) {
+                            completedRunnable.run();
+                        }
+                    }
+                });
+    }
+
+    @Override
+    public void waitForPendingTokenRequestsToComplete(Runnable requestsCompletedCallback) {
+        ThreadUtils.assertOnUiThread();
+        assert mTokenRequestsCompletedCallback == null;
+        if (mPendingTokenRequests == 0) {
+            requestsCompletedCallback.run();
+            return;
+        }
+        // The callback will be invoked when the all pending token requests are finished.
+        mTokenRequestsCompletedCallback = requestsCompletedCallback;
     }
 
     @Override
@@ -188,6 +260,33 @@ public class AccountManagerFacadeImpl implements AccountManagerFacade {
             protected void onPostExecute(Boolean isChild) {
                 // TODO(crbug.com/40201126): rework this interface to avoid passing a null account.
                 listener.onStatusReady(isChild, isChild ? coreAccountInfo : null);
+            }
+        }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
+    }
+
+    @Override
+    public void checkIsSubjectToParentalControls(
+            CoreAccountInfo coreAccountInfo, ChildAccountStatusListener listener) {
+        ThreadUtils.assertOnUiThread();
+        new AsyncTask<Boolean>() {
+            @Override
+            public Boolean doInBackground() {
+                Account account = AccountUtils.createAccountFromName(coreAccountInfo.getEmail());
+                @CapabilityResponse
+                int capability =
+                        mDelegate.hasCapability(
+                                account,
+                                getAndroidCapabilityName(
+                                        IS_SUBJECT_TO_PARENTAL_CONTROLS_CAPABILITY_NAME));
+                return capability == CapabilityResponse.YES;
+            }
+
+            @Override
+            protected void onPostExecute(Boolean isSubjectToParentalControls) {
+                // TODO(crbug.com/40201126): rework this interface to avoid passing a null account.
+                listener.onStatusReady(
+                        isSubjectToParentalControls,
+                        isSubjectToParentalControls ? coreAccountInfo : null);
             }
         }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
     }
@@ -246,20 +345,6 @@ public class AccountManagerFacadeImpl implements AccountManagerFacade {
         mDelegate.updateCredentials(account, activity, callback);
     }
 
-    /**
-     * Returns the Gaia id for the account associated with the given email address.
-     * If an account with the given email address is not installed on the device
-     * then null is returned.
-     *
-     * This method will throw IllegalStateException if called on the main thread.
-     *
-     * @param accountEmail The email address of a Google account.
-     */
-    @Override
-    public String getAccountGaiaId(String accountEmail) {
-        return mDelegate.getAccountGaiaId(accountEmail);
-    }
-
     @Override
     public void confirmCredentials(Account account, Activity activity, Callback<Bundle> callback) {
         mDelegate.confirmCredentials(account, activity, callback);
@@ -271,8 +356,8 @@ public class AccountManagerFacadeImpl implements AccountManagerFacade {
     }
 
     /**
-     * Fetches gaia ids, wraps them into {@link CoreAccountInfo} and updates {@link
-     * #mCoreAccountInfosPromise}.
+     * Fetches gaia ids, creates account objects and updates {@link #mCoreAccountInfosPromise} and
+     * {@link #mAccountsPromise}.
      */
     @MainThread
     private void fetchGaiaIdsAndUpdateCoreAccountInfos() {
@@ -285,16 +370,16 @@ public class AccountManagerFacadeImpl implements AccountManagerFacade {
 
         List<String> emails = getFilteredAccountEmails();
         mFetchGaiaIdsTask =
-                new AsyncTask<List<String>>() {
+                new AsyncTask<List<GaiaId>>() {
                     @Override
-                    public @Nullable List<String> doInBackground() {
+                    public @Nullable List<GaiaId> doInBackground() {
                         final long seedingStartTime = SystemClock.elapsedRealtime();
-                        List<String> gaiaIds = new ArrayList<>();
+                        List<GaiaId> gaiaIds = new ArrayList<>();
                         for (String email : emails) {
                             if (isCancelled()) {
                                 return null;
                             }
-                            final String gaiaId = getAccountGaiaId(email);
+                            final GaiaId gaiaId = mDelegate.getAccountGaiaId(email);
                             if (gaiaId == null) {
                                 // TODO(crbug.com/40275966): Add metrics to check how often we get a
                                 // null gaiaId.
@@ -309,22 +394,30 @@ public class AccountManagerFacadeImpl implements AccountManagerFacade {
                     }
 
                     @Override
-                    public void onPostExecute(@Nullable List<String> gaiaIds) {
+                    public void onPostExecute(@Nullable List<GaiaId> gaiaIds) {
                         mFetchGaiaIdsTask = null;
                         if (gaiaIds == null) {
                             fetchGaiaIdsAndUpdateCoreAccountInfos();
                             return;
                         }
                         List<CoreAccountInfo> coreAccountInfos = new ArrayList<>();
+                        List<AccountInfo> accounts = new ArrayList<>();
                         for (int index = 0; index < emails.size(); index++) {
                             coreAccountInfos.add(
                                     CoreAccountInfo.createFromEmailAndGaiaId(
                                             emails.get(index), gaiaIds.get(index)));
+                            accounts.add(
+                                    new AccountInfo.Builder(emails.get(index), gaiaIds.get(index))
+                                            .build());
                         }
+                        assert mCoreAccountInfosPromise.isFulfilled()
+                                == mAccountsPromise.isFulfilled();
                         if (mCoreAccountInfosPromise.isFulfilled()) {
                             mCoreAccountInfosPromise = Promise.fulfilled(coreAccountInfos);
+                            mAccountsPromise = Promise.fulfilled(accounts);
                         } else {
                             mCoreAccountInfosPromise.fulfill(coreAccountInfos);
+                            mAccountsPromise.fulfill(accounts);
                         }
                         for (AccountsChangeObserver observer : mObservers) {
                             observer.onCoreAccountInfosChanged();
@@ -365,7 +458,7 @@ public class AccountManagerFacadeImpl implements AccountManagerFacade {
                         // We shouldn't wait indefinitely for the account fetching to succeed, at it
                         // might block certain features. Fall back to an empty list to allow the
                         // user to proceed.
-                        allAccounts = mAllAccounts.get() == null ? mAllAccounts.get() : List.of();
+                        allAccounts = mAllAccounts.get() == null ? List.of() : mAllAccounts.get();
                     }
                 }
                 if (mNumberOfRetries != 0) {
@@ -407,20 +500,22 @@ public class AccountManagerFacadeImpl implements AccountManagerFacade {
     }
 
     private List<String> getFilteredAccountEmails() {
-        Predicate<String> emailMatcher =
-                email -> {
-                    if (mAccountRestrictionPatterns.get().isEmpty()) {
-                        // If there are no restriction patterns then all emails will pass this
-                        // matcher.
-                        return true;
-                    }
-                    return mAccountRestrictionPatterns.get().stream()
-                            .anyMatch(pattern -> pattern.matches(email));
-                };
-        return mAllAccounts.get().stream()
-                .map(account -> account.name)
-                .filter(emailMatcher)
-                .collect(Collectors.toList());
+        List<String> ret = new ArrayList<>();
+        List<PatternMatcher> restrictions = mAccountRestrictionPatterns.get();
+        for (Account account : mAllAccounts.get()) {
+            String name = account.name;
+            boolean matches = restrictions.isEmpty();
+            for (PatternMatcher matcher : restrictions) {
+                if (matches) {
+                    break;
+                }
+                matches = matcher.matches(name);
+            }
+            if (matches) {
+                ret.add(name);
+            }
+        }
+        return ret;
     }
 
     /**
@@ -432,5 +527,18 @@ public class AccountManagerFacadeImpl implements AccountManagerFacade {
             return capabilityName.substring(ACCOUNT_CAPABILITY_NAME_PREFIX.length());
         }
         return capabilityName;
+    }
+
+    public void resetAccountsForTesting() {
+        mCoreAccountInfosPromise = new Promise<>();
+        mAccountsPromise = new Promise<>();
+        mAllAccounts.set(null);
+        updateAccounts();
+    }
+
+    @Override
+    public void disallowTokenRequestsForTesting() {
+        ThreadUtils.assertOnUiThread();
+        mDisallowTokenRequestsForTesting = true;
     }
 }

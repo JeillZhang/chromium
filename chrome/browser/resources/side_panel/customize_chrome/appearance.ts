@@ -4,13 +4,14 @@
 
 import './theme_snapshot.js';
 import './hover_button.js';
-import './strings.m.js'; // Required by <managed-dialog>.
+import '/strings.m.js'; // Required by <managed-dialog>.
 import 'chrome://resources/cr_components/customize_color_scheme_mode/customize_color_scheme_mode.js';
 import 'chrome://resources/cr_components/theme_color_picker/theme_color_picker.js';
 import 'chrome://resources/cr_components/managed_dialog/managed_dialog.js';
 import 'chrome://resources/cr_elements/cr_button/cr_button.js';
 import 'chrome://resources/cr_elements/cr_toggle/cr_toggle.js';
 
+import {getInstance as getAnnouncerInstance} from 'chrome://resources/cr_elements/cr_a11y_announcer/cr_a11y_announcer.js';
 import type {CrToggleElement} from 'chrome://resources/cr_elements/cr_toggle/cr_toggle.js';
 import {I18nMixinLit} from 'chrome://resources/cr_elements/i18n_mixin_lit.js';
 import {assert} from 'chrome://resources/js/assert.js';
@@ -30,7 +31,7 @@ export interface AppearanceElement {
     editThemeButton: HTMLButtonElement,
     themeSnapshot: HTMLElement,
     setClassicChromeButton: HTMLButtonElement,
-    thirdPartyLinkButton: HTMLButtonElement,
+    thirdPartyThemeLinkButton: HTMLButtonElement,
     followThemeToggle: HTMLElement,
     followThemeToggleControl: CrToggleElement,
     uploadedImageButton: HTMLButtonElement,
@@ -76,6 +77,7 @@ export class AppearanceElement extends AppearanceElementBase {
       showUploadedImageButton_: {type: Boolean},
       showSearchedImageButton_: {type: Boolean},
       showManagedDialog_: {type: Boolean},
+      isSourceTabFirstPartyNtp_: {type: Boolean},
 
       wallpaperSearchButtonEnabled_: {
         type: Boolean,
@@ -102,11 +104,15 @@ export class AppearanceElement extends AppearanceElementBase {
       loadTimeData.getBoolean('wallpaperSearchButtonEnabled');
   private wallpaperSearchEnabled_: boolean =
       loadTimeData.getBoolean('wallpaperSearchEnabled');
-
+  protected isSourceTabFirstPartyNtp_: boolean = true;
+  protected ntpManagedByName_: string = '';
   private setThemeListenerId_: number|null = null;
+  private attachedTabStateUpdatedId_: number|null = null;
+  private ntpManagedByNameUpdatedId_: number|null = null;
 
   private callbackRouter_: CustomizeChromePageCallbackRouter;
   private pageHandler_: CustomizeChromePageHandlerInterface;
+
 
   constructor() {
     super();
@@ -121,13 +127,36 @@ export class AppearanceElement extends AppearanceElementBase {
           this.theme_ = theme;
         });
     this.pageHandler_.updateTheme();
-  }
 
+    this.attachedTabStateUpdatedId_ =
+        CustomizeChromeApiProxy.getInstance()
+            .callbackRouter.attachedTabStateUpdated.addListener(
+                (isSourceTabFirstPartyNtp: boolean) => {
+                  this.isSourceTabFirstPartyNtp_ = isSourceTabFirstPartyNtp;
+                });
+    this.pageHandler_.updateAttachedTabState();
+
+    this.ntpManagedByNameUpdatedId_ =
+        CustomizeChromeApiProxy.getInstance()
+            .callbackRouter.ntpManagedByNameUpdated.addListener(
+                (ntpManagedByName: string) => {
+                  this.ntpManagedByName_ = ntpManagedByName;
+                });
+    this.pageHandler_.updateNtpManagedByName();
+  }
 
   override disconnectedCallback() {
     super.disconnectedCallback();
     assert(this.setThemeListenerId_);
     this.callbackRouter_.removeListener(this.setThemeListenerId_);
+
+    assert(this.attachedTabStateUpdatedId_);
+    CustomizeChromeApiProxy.getInstance().callbackRouter.removeListener(
+        this.attachedTabStateUpdatedId_);
+
+    assert(this.ntpManagedByNameUpdatedId_);
+    CustomizeChromeApiProxy.getInstance().callbackRouter.removeListener(
+        this.ntpManagedByNameUpdatedId_);
   }
 
   override willUpdate(changedProperties: PropertyValues<this>) {
@@ -138,7 +167,8 @@ export class AppearanceElement extends AppearanceElementBase {
 
     this.editThemeButtonText_ = this.computeEditThemeButtonText_();
 
-    if (changedPrivateProperties.has('theme_')) {
+    if (changedPrivateProperties.has('theme_') ||
+        changedPrivateProperties.has('isSourceTabFirstPartyNtp_')) {
       this.thirdPartyThemeId_ = this.computeThirdPartyThemeId_();
       this.thirdPartyThemeName_ = this.computeThirdPartyThemeName_();
       this.showClassicChromeButton_ = this.computeShowClassicChromeButton_();
@@ -150,6 +180,22 @@ export class AppearanceElement extends AppearanceElementBase {
     }
 
     this.showBottomDivider_ = this.computeShowBottomDivider_();
+
+    // Announce when theme is set to Classic Chrome.
+    // This should only be triggered if the classic chrome's button is hidden
+    // after the initial theme value has already been set.
+    if (changedPrivateProperties.has('theme_') &&
+        changedPrivateProperties.has('showClassicChromeButton_') &&
+        !!changedPrivateProperties.get('theme_') &&
+        !this.showClassicChromeButton_) {
+      const announcer = getAnnouncerInstance();
+      announcer.announce(this.i18n('updatedToClassicChrome'));
+      // If the classicChrome button has focus, change focus to editTheme
+      // button, since the button is disappearing.
+      if (this.shadowRoot.activeElement === this.$.setClassicChromeButton) {
+        this.focusOnThemeButton();
+      }
+    }
   }
 
   focusOnThemeButton() {
@@ -200,7 +246,8 @@ export class AppearanceElement extends AppearanceElementBase {
   private computeShowThemeSnapshot_(): boolean {
     return !!this.theme_ && !this.theme_.thirdPartyThemeInfo &&
         (!(this.theme_.backgroundImage &&
-           this.theme_.backgroundImage.isUploadedImage));
+           this.theme_.backgroundImage.isUploadedImage)) &&
+        this.isSourceTabFirstPartyNtp_;
   }
 
   private computeShowUploadedImageButton_(): boolean {
@@ -233,7 +280,7 @@ export class AppearanceElement extends AppearanceElementBase {
     this.dispatchEvent(new Event('wallpaper-search-click'));
   }
 
-  protected onThirdPartyLinkButtonClick_() {
+  protected onThirdPartyThemeLinkButtonClick_() {
     if (this.thirdPartyThemeId_) {
       this.pageHandler_.openThirdPartyThemePage(this.thirdPartyThemeId_);
     }
@@ -267,6 +314,10 @@ export class AppearanceElement extends AppearanceElementBase {
 
   protected onManagedDialogClosed_() {
     this.showManagedDialog_ = false;
+  }
+
+  protected onNewTabPageManageByButtonClicked_() {
+    this.pageHandler_.openNtpManagedByPage();
   }
 
   private handleClickForManagedThemes_(): boolean {

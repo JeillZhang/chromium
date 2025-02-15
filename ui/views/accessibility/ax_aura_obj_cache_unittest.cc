@@ -33,11 +33,13 @@ namespace views::test {
 namespace {
 
 bool HasNodeWithName(ui::AXNode* node, const std::string& name) {
-  if (node->GetStringAttribute(ax::mojom::StringAttribute::kName) == name)
+  if (node->GetStringAttribute(ax::mojom::StringAttribute::kName) == name) {
     return true;
+  }
   for (ui::AXNode* child : node->children()) {
-    if (HasNodeWithName(child, name))
+    if (HasNodeWithName(child, name)) {
       return true;
+    }
   }
   return false;
 }
@@ -249,7 +251,7 @@ TEST_F(AXAuraObjCacheTest, GetFocusIsUnignoredAncestor) {
   View* client_child = client->children().front();
   ASSERT_NE(nullptr, client_child);
   client_child->GetViewAccessibility().SetRole(ax::mojom::Role::kDialog);
-  client_child->GetViewAccessibility().OverrideChildTreeID(
+  client_child->GetViewAccessibility().SetChildTreeID(
       ui::AXTreeID::CreateNewAXTreeID());
 
   auto* parent = widget->GetRootView()->AddChildView(std::make_unique<View>());
@@ -300,7 +302,8 @@ class TestingWidgetDelegateView : public WidgetDelegateView {
   explicit TestingWidgetDelegateView(base::RunLoop* run_loop)
       : run_loop_(run_loop) {}
   ~TestingWidgetDelegateView() override {
-    NotifyAccessibilityEvent(ax::mojom::Event::kChildrenChanged, false);
+    NotifyAccessibilityEventDeprecated(ax::mojom::Event::kChildrenChanged,
+                                       false);
     run_loop_->QuitWhenIdle();
   }
   TestingWidgetDelegateView(const TestingWidgetDelegateView&) = delete;
@@ -371,8 +374,8 @@ TEST_F(AXAuraObjCacheTest, VirtualViews) {
   auto* parent = widget->GetRootView()->AddChildView(std::make_unique<View>());
   auto virtual_label = std::make_unique<AXVirtualView>();
   auto* virtual_label_ptr = virtual_label.get();
-  virtual_label->GetCustomData().role = ax::mojom::Role::kStaticText;
-  virtual_label->GetCustomData().SetNameChecked("Label");
+  virtual_label->SetRole(ax::mojom::Role::kStaticText);
+  virtual_label->SetName("Label");
   parent->GetViewAccessibility().AddVirtualChildView(std::move(virtual_label));
 
   AXVirtualViewWrapper* wrapper = virtual_label_ptr->GetOrCreateWrapper(&cache);

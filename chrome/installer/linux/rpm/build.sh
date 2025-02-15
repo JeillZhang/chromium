@@ -62,7 +62,6 @@ verify_package() {
   rpmlib(CompressedFileNames) <= 3.0.4-1, \
   rpmlib(FileDigests) <= 4.6.0-1, \
   rpmlib(PayloadFilesHavePrefix) <= 4.0-1, \
-  rpmlib(RichDependencies) <= 4.12.0-1, \
   /usr/sbin/update-alternatives"
   if [ ${IS_OFFICIAL_BUILD} -ne 0 ]; then
     ADDITIONAL_RPM_DEPENDS="${ADDITIONAL_RPM_DEPENDS}, \
@@ -235,12 +234,13 @@ if [ "$BRANDING" = "google_chrome" ]; then
 else
   source "${OUTPUTDIR}/installer/common/chromium-browser.info"
 fi
-eval $(sed -e "s/^\([^=]\+\)=\(.*\)$/export \1='\2'/" \
+eval $(sed -e "s/^\([^=]\+\)=\(.*\)$/\1='\2'/" \
   "${OUTPUTDIR}/installer/theme/BRANDING")
 
 REPOCONFIG="https://dl.google.com/linux/${PACKAGE#google-}/rpm/stable"
+REPOCONFIGREGEX=
 verify_channel
-export USR_BIN_SYMLINK_NAME="${PACKAGE}-${CHANNEL}"
+USR_BIN_SYMLINK_NAME="${PACKAGE}-${CHANNEL}"
 
 stage_install_rpm
 do_package

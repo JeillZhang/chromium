@@ -5,6 +5,7 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_DISPLAY_LOCK_DISPLAY_LOCK_CONTEXT_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_DISPLAY_LOCK_DISPLAY_LOCK_CONTEXT_H_
 
+#include <array>
 #include <utility>
 
 #include "third_party/blink/renderer/core/core_export.h"
@@ -149,6 +150,7 @@ class CORE_EXPORT DisplayLockContext final
 
   // LifecycleNotificationObserver overrides.
   void WillStartLifecycleUpdate(const LocalFrameView&) override;
+  void DidFinishLayout() override;
 
   // Inform the display lock that it prevented a style change. This is used to
   // invalidate style when we need to update it in the future.
@@ -241,6 +243,16 @@ class CORE_EXPORT DisplayLockContext final
   // State control for view transition element render affecting state.
   void ResetDescendantIsViewTransitionElement();
   void SetDescendantIsViewTransitionElement();
+
+  void SetAffectedByAnchorPositioning(bool);
+
+  // Mark this display lock as needing to recompute whether it has anchors
+  // below it that prevent it from becoming skipped.
+  void SetAnchorPositioningRenderStateMayHaveChanged();
+
+  // Computes whether there is a descendant that is the anchor target of
+  // an OOF positioned element from outside the display lock's subtree.
+  bool DescendantIsAnchorTargetFromOutsideDisplayLock();
 
  private:
   // Give access to |NotifyForcedUpdateScopeStarted()| and
@@ -389,8 +401,7 @@ class CORE_EXPORT DisplayLockContext final
     bool is_forced(ForcedPhase phase) const {
       switch (phase) {
         case ForcedPhase::kNone:
-          NOTREACHED_IN_MIGRATION();
-          return false;
+          NOTREACHED();
         case ForcedPhase::kStyleAndLayoutTree:
           return style_update_forced_ || layout_update_forced_ ||
                  prepaint_update_forced_;
@@ -496,14 +507,16 @@ class CORE_EXPORT DisplayLockContext final
     kAutoUnlockedForPrint,
     kSubtreeHasTopLayerElement,
     kDescendantIsViewTransitionElement,
+    kDescendantIsAnchorTarget,
     kNumRenderAffectingStates
   };
   void SetRenderAffectingState(RenderAffectingState state, bool flag);
   void NotifyRenderAffectingStateChanged();
   const char* RenderAffectingStateName(int state) const;
 
-  bool render_affecting_state_[static_cast<int>(
-      RenderAffectingState::kNumRenderAffectingStates)] = {false};
+  std::array<bool,
+             static_cast<int>(RenderAffectingState::kNumRenderAffectingStates)>
+      render_affecting_state_ = {false};
   int keep_unlocked_count_ = 0;
 
   bool had_lifecycle_update_since_last_unlock_ = false;
@@ -545,6 +558,11 @@ class CORE_EXPORT DisplayLockContext final
   // If true, there is a pending task that will dispatch a state change event if
   // needed.
   bool state_change_task_pending_ = false;
+
+  // True if this lock needs to recompute whether kDescendantIsAnchorTarget
+  // applies. If so, after layout is complete it's necessary to actually
+  // compute whether that is the case.
+  bool anchor_positioning_render_state_may_have_changed_ = false;
 };
 
 }  // namespace blink

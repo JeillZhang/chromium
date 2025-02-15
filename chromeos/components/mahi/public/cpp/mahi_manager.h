@@ -19,6 +19,10 @@
 
 class GURL;
 
+namespace gfx {
+class Rect;
+}  // namespace gfx
+
 namespace chromeos {
 
 struct COMPONENT_EXPORT(MAHI_PUBLIC_CPP) MahiOutline {
@@ -28,6 +32,15 @@ struct COMPONENT_EXPORT(MAHI_PUBLIC_CPP) MahiOutline {
   bool operator==(const MahiOutline&) const;
 };
 
+enum class COMPONENT_EXPORT(MAHI_PUBLIC_CPP) MahiGetContentResponseStatus {
+  // Error types can be fleshed out during implementation.
+  kSuccess = 0,
+  kContentExtractionError = 1,
+  kUnknownError = 2,
+};
+
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
 // List os possible response statuses for a Mahi request.
 enum class COMPONENT_EXPORT(MAHI_PUBLIC_CPP) MahiResponseStatus {
   kSuccess = 0,
@@ -40,7 +53,7 @@ enum class COMPONENT_EXPORT(MAHI_PUBLIC_CPP) MahiResponseStatus {
   kCantFindOutputData = 7,
   kRestrictedCountry = 8,
   kUnsupportedLanguage = 9,
-  kMax = kCantFindOutputData,
+  kMaxValue = kUnsupportedLanguage,
 };
 
 // An interface serves as the connection between mahi system and the UI.
@@ -53,18 +66,31 @@ class COMPONENT_EXPORT(MAHI_PUBLIC_CPP) MahiManager {
 
   static MahiManager* Get();
 
-  static bool IsSupportedWithCorrectFeatureKey();
-
   // Gets information about the content on the corresponding surface.
   virtual std::u16string GetContentTitle() = 0;
   virtual gfx::ImageSkia GetContentIcon() = 0;
   virtual GURL GetContentUrl() = 0;
+
+  // Gets the source selected text. Should only be called when the existing
+  // panel is an elucidation result.
+  virtual std::u16string GetSelectedText() = 0;
+
+  // Returns the text content on the corresponding surface.
+  using MahiContentCallback =
+      base::OnceCallback<void(std::u16string, MahiGetContentResponseStatus)>;
+  virtual void GetContent(MahiContentCallback callback) = 0;
 
   // Returns the quick summary of the current active content on the
   // corresponding surface.
   using MahiSummaryCallback =
       base::OnceCallback<void(std::u16string, MahiResponseStatus)>;
   virtual void GetSummary(MahiSummaryCallback callback) = 0;
+
+  // Returns the elucidated / simplified text of the current selected text on
+  // the corresponding surface.
+  using MahiElucidationCallback =
+      base::OnceCallback<void(std::u16string, MahiResponseStatus)>;
+  virtual void GetElucidation(MahiElucidationCallback callback) = 0;
 
   // Returns the outlines of the current active content on the corresponding
   // surface.
@@ -75,15 +101,35 @@ class COMPONENT_EXPORT(MAHI_PUBLIC_CPP) MahiManager {
   // Goes to the content that is associated with `outline_id`.
   virtual void GoToOutlineContent(int outline_id) = 0;
 
-  // Answers the provided `question`. `current_panel_content` is a boolean to
-  // determine if the question is regarding the current content displayed on
-  // the panel.
+  // Answers the provided `question` with a once callback.
+  // `current_panel_content` is a boolean to determine if the question is
+  // regarding the current content displayed on the panel.
   using MahiAnswerQuestionCallback =
       base::OnceCallback<void(std::optional<std::u16string>,
                               MahiResponseStatus)>;
   virtual void AnswerQuestion(const std::u16string& question,
                               bool current_panel_content,
                               MahiAnswerQuestionCallback callback) = 0;
+
+  // Answers the provided `question` with a repeating callback.
+  // `current_panel_content` is a boolean to determine if the question is
+  // regarding the current content displayed on the panel.
+  using MahiAnswerQuestionCallbackRepeating =
+      base::RepeatingCallback<void(std::optional<std::u16string>,
+                                   MahiResponseStatus)>;
+  virtual void AnswerQuestionRepeating(
+      const std::u16string& question,
+      bool current_panel_content,
+      MahiAnswerQuestionCallbackRepeating callback) = 0;
+
+  // If this function is set to true, then multiple answers can be returned
+  // consecutively from the server after one question is asked. If this is set
+  // to false, then only one answer back from the server is allowed. If this
+  // value is set to true then the MahiAnswerQuestionCallbackRepeating callback
+  // function will be used within the AnswerQuestionRepeating function. Else,
+  // the MahiAnswerQuestionCallback callback will be used within the
+  // AnswerQuestion function.
+  virtual bool AllowRepeatingAnswers() = 0;
 
   // Gets suggested question for the content currently displayed in the panel.
   using MahiGetSuggestedQuestionCallback =
@@ -101,6 +147,11 @@ class COMPONENT_EXPORT(MAHI_PUBLIC_CPP) MahiManager {
   // Opens the feedback dialog.
   virtual void OpenFeedbackDialog() = 0;
 
+  // Opens the Mahi panel on the display specified by `display_id`. The panel
+  // is positied on top of the provided `mahi_menu_bounds`.
+  virtual void OpenMahiPanel(int64_t display_id,
+                             const gfx::Rect& mahi_menu_bounds) = 0;
+
   // Check if the feature is enabled.
   virtual bool IsEnabled() = 0;
 
@@ -116,6 +167,9 @@ class COMPONENT_EXPORT(MAHI_PUBLIC_CPP) MahiManager {
   // If current page info is associated to a Media app PDF window, returns its
   // client id.
   virtual std::optional<base::UnguessableToken> GetMediaAppPDFClientId() const;
+
+  // Clear the cache.
+  virtual void ClearCache() {}
 
  protected:
   MahiManager();

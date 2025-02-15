@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "base/auto_reset.h"
+#include "base/compiler_specific.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/current_thread.h"
 #include "printing/backend/win_helper.h"
@@ -142,13 +143,15 @@ bool PrintingContextSystemDialogWin::InitializeSettingsWithRanges(
   if (!selection_only) {
     // Convert the PRINTPAGERANGE array to a PrintSettings::PageRanges vector.
     ranges_vector.reserve(number_ranges);
-    for (int i = 0; i < number_ranges; ++i) {
-      PageRange range;
-      // Transfer from 1-based to 0-based.
-      range.from = ranges[i].nFromPage - 1;
-      range.to = ranges[i].nToPage - 1;
-      ranges_vector.push_back(range);
-    }
+    UNSAFE_TODO({
+      for (int i = 0; i < number_ranges; ++i) {
+        PageRange range;
+        // Transfer from 1-based to 0-based.
+        range.from = ranges[i].nFromPage - 1;
+        range.to = ranges[i].nToPage - 1;
+        ranges_vector.push_back(range);
+      }
+    });
   }
 
   settings_->set_ranges(ranges_vector);
@@ -182,8 +185,10 @@ mojom::ResultCode PrintingContextSystemDialogWin::ParseDialogResultEx(
           reinterpret_cast<DEVNAMES*>(GlobalLock(dialog_options.hDevNames));
       DCHECK(dev_names);
       if (dev_names) {
-        device_name = reinterpret_cast<const wchar_t*>(dev_names) +
-                      dev_names->wDeviceOffset;
+        UNSAFE_TODO({
+          device_name = reinterpret_cast<const wchar_t*>(dev_names) +
+                        dev_names->wDeviceOffset;
+        });
         GlobalUnlock(dialog_options.hDevNames);
       }
     }

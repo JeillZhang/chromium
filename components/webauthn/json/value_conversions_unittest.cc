@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "components/webauthn/json/value_conversions.h"
 
 #include <cstdint>
@@ -59,7 +64,11 @@ void PrintJava(const char* name, base::span<const uint8_t> data) {
     if (i) {
       fprintf(stderr, ", ");
     }
-    fprintf(stderr, "%d", byte < 128 ? byte : byte - 0x80);
+    if (byte < 0x80) {
+      fprintf(stderr, "%d", byte);
+    } else {
+      fprintf(stderr, "%d", static_cast<int16_t>(byte) - 0x100);
+    }
   }
   fprintf(stderr, "};\n");
 }
@@ -138,7 +147,9 @@ TEST(WebAuthenticationJSONConversionTest,
           /*device_scope_requested=*/true,
           /*provider_scope_requested=*/true,
           device::AttestationConveyancePreference::kDirect,
-          std::vector<std::string>({"a", "b", "c"})));
+          std::vector<std::string>({"a", "b", "c"})),
+      /*payment_browser_bound_key_parameters=*/std::nullopt,
+      std::vector<std::string>{"attfmt1", "attfmt2"}, /*is_conditional=*/false);
 
   base::Value value = ToValue(options);
   std::string json;
@@ -146,7 +157,7 @@ TEST(WebAuthenticationJSONConversionTest,
   ASSERT_TRUE(serializer.Serialize(value));
   EXPECT_EQ(
       json,
-      R"({"attestation":"direct","authenticatorSelection":{"authenticatorAttachment":"platform","residentKey":"required","userVerification":"required"},"challenge":"dGVzdCBjaGFsbGVuZ2U","excludeCredentials":[{"id":"FBUW","transports":["usb"],"type":"public-key"},{"id":"Hh8g","type":"public-key"}],"extensions":{"appIdExclude":"https://example.test/appid.json","credBlob":"dGVzdCBjcmVkIGJsb2I","credProps":true,"credentialProtectionPolicy":"userVerificationRequired","enforceCredentialProtectionPolicy":true,"hmacCreateSecret":true,"largeBlob":{"support":"required"},"minPinLength":true,"payment":{"isPayment":true},"prf":{"eval":{"first":"AQIDBA","second":"BQYHCA"}},"remoteDesktopClientOverride":{"origin":"https://login.example.test","sameOriginWithAncestors":true},"supplementalPubKeys":{"attestation":"direct","attestationFormats":["a","b","c"],"scopes":["device","provider"]}},"hints":["security-key","client-device","hybrid"],"pubKeyCredParams":[{"alg":-7,"type":"public-key"},{"alg":-257,"type":"public-key"}],"rp":{"id":"example.test","name":"Example LLC"},"user":{"displayName":"Example User","id":"dGVzdCB1c2VyIGlk","name":"user@example.test"}})");
+      R"({"attestation":"direct","attestationFormats":["attfmt1","attfmt2"],"authenticatorSelection":{"authenticatorAttachment":"platform","residentKey":"required","userVerification":"required"},"challenge":"dGVzdCBjaGFsbGVuZ2U","excludeCredentials":[{"id":"FBUW","transports":["usb"],"type":"public-key"},{"id":"Hh8g","type":"public-key"}],"extensions":{"appIdExclude":"https://example.test/appid.json","credBlob":"dGVzdCBjcmVkIGJsb2I","credProps":true,"credentialProtectionPolicy":"userVerificationRequired","enforceCredentialProtectionPolicy":true,"hmacCreateSecret":true,"largeBlob":{"support":"required"},"minPinLength":true,"payment":{"isPayment":true},"prf":{"eval":{"first":"AQIDBA","second":"BQYHCA"}},"remoteDesktopClientOverride":{"origin":"https://login.example.test","sameOriginWithAncestors":true},"supplementalPubKeys":{"attestation":"direct","attestationFormats":["a","b","c"],"scopes":["device","provider"]}},"hints":["security-key","client-device","hybrid"],"pubKeyCredParams":[{"alg":-7,"type":"public-key"},{"alg":-257,"type":"public-key"}],"rp":{"id":"example.test","name":"Example LLC"},"user":{"displayName":"Example User","id":"dGVzdCB1c2VyIGlk","name":"user@example.test"}})");
 }
 
 TEST(WebAuthenticationJSONConversionTest,
@@ -160,8 +171,8 @@ TEST(WebAuthenticationJSONConversionTest,
 
   // Exercise all supported fields.
   auto options = PublicKeyCredentialRequestOptions::New(
-      /*is_conditional=*/false, kChallenge, kTimeout, kRpId,
-      GetCredentialList(),
+      blink::mojom::Mediation::MODAL, /*requested_credential_type_flags=*/0,
+      kChallenge, std::nullopt, kTimeout, kRpId, GetCredentialList(),
       /*hints=*/
       std::vector<blink::mojom::Hint>({
           blink::mojom::Hint::SECURITY_KEY,
@@ -178,7 +189,6 @@ TEST(WebAuthenticationJSONConversionTest,
           /*user_verification_methods=*/false,
 #endif
           /*prf=*/true, std::move(prf_values),
-          /*prf_inputs_hashed=*/false,
           /*large_blob_read=*/true,
           /*large_blob_write=*/std::vector<uint8_t>{8, 9, 10},
           /*get_cred_blob=*/true,
@@ -189,7 +199,8 @@ TEST(WebAuthenticationJSONConversionTest,
               /*device_scope_requested=*/true,
               /*provider_scope_requested=*/true,
               device::AttestationConveyancePreference::kDirect,
-              std::vector<std::string>({"a", "b", "c"}))));
+              std::vector<std::string>({"a", "b", "c"})),
+          std::vector<device::PublicKeyCredentialParams::CredentialInfo>()));
 
   base::Value value = ToValue(options);
   std::string json;
@@ -325,7 +336,8 @@ TEST(WebAuthenticationJSONConversionTest,
       /*supports_large_blob=*/true,
       /*supplemental_pub_keys=*/
       blink::mojom::SupplementalPubKeysResponse::New(
-          std::vector<std::vector<uint8_t>>({{0, 16, 131}, {16, 81, 135}})));
+          std::vector<std::vector<uint8_t>>({{0, 16, 131}, {16, 81, 135}})),
+      /*payment=*/nullptr);
 
   EXPECT_EQ(response->info, expected->info);
   EXPECT_EQ(response->authenticator_attachment,
@@ -490,8 +502,8 @@ TEST(WebAuthenticationJSONConversionTest,
           /*get_cred_blob=*/kCredBlob,
           /*supplemental_pub_keys=*/
           blink::mojom::SupplementalPubKeysResponse::New(
-              std::vector<std::vector<uint8_t>>(
-                  {{0, 16, 131}, {16, 81, 135}}))));
+              std::vector<std::vector<uint8_t>>({{0, 16, 131}, {16, 81, 135}})),
+          /*payment=*/nullptr));
   static const uint8_t expected_prf_first[32] = {
       0x99, 0x9d, 0x30, 0x29, 0x7b, 0xc5, 0x03, 0x7b, 0xa5, 0x7b, 0x81,
       0xbc, 0xf8, 0x27, 0xb3, 0x47, 0x1b, 0xe8, 0x3f, 0x80, 0x67, 0xf6,
@@ -514,11 +526,11 @@ TEST(WebAuthenticationJSONConversionTest,
             expected->extensions->appid_extension);
   EXPECT_EQ(response->extensions->echo_prf, expected->extensions->echo_prf);
   ASSERT_TRUE(response->extensions->prf_results);
-  EXPECT_TRUE(base::ranges::equal(response->extensions->prf_results->first,
-                                  expected_prf_first));
+  EXPECT_TRUE(std::ranges::equal(response->extensions->prf_results->first,
+                                 expected_prf_first));
   ASSERT_TRUE(response->extensions->prf_results->second);
-  EXPECT_TRUE(base::ranges::equal(*response->extensions->prf_results->second,
-                                  expected_prf_second));
+  EXPECT_TRUE(std::ranges::equal(*response->extensions->prf_results->second,
+                                 expected_prf_second));
   EXPECT_EQ(response->extensions->prf_not_evaluated,
             expected->extensions->prf_not_evaluated);
   EXPECT_EQ(response->extensions->echo_large_blob,

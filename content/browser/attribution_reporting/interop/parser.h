@@ -98,8 +98,8 @@ base::expected<std::vector<AttributionSimulationEvent>, std::string>
 struct AttributionInteropConfig {
   AttributionConfig attribution_config;
   double max_event_level_epsilon = 0;
+  uint32_t max_trigger_state_cardinality = 0;
   bool needs_cross_app_web = false;
-  bool needs_aggregatable_debug = false;
   std::vector<url::Origin> aggregation_coordinator_origins;
 
   AttributionInteropConfig();

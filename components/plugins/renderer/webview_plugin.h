@@ -115,7 +115,7 @@ class WebViewPlugin : public blink::WebPlugin, public blink::WebViewObserver {
       ui::Cursor* cursor) override;
 
   void DidReceiveResponse(const blink::WebURLResponse& response) override;
-  void DidReceiveData(const char* data, size_t data_length) override;
+  void DidReceiveData(base::span<const char> data) override;
   void DidFinishLoading() override;
   void DidFailLoading(const blink::WebURLError& error) override;
 
@@ -181,7 +181,7 @@ class WebViewPlugin : public blink::WebPlugin, public blink::WebViewObserver {
     // WebLocalFrameClient methods:
     void BindToFrame(blink::WebNavigationControl* frame) override;
     void DidClearWindowObject() override;
-    void FrameDetached() override;
+    void FrameDetached(blink::DetachReason) override;
     scoped_refptr<network::SharedURLLoaderFactory> GetURLLoaderFactory()
         override;
 

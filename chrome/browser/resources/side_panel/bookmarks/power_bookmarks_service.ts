@@ -4,6 +4,7 @@
 
 // This file contains business logic for power bookmarks side panel content.
 
+import type {BookmarkProductInfo} from '//resources/cr_components/commerce/shared.mojom-webui.js';
 import {PageImageServiceBrowserProxy} from '//resources/cr_components/page_image_service/browser_proxy.js';
 import {ClientId as PageImageServiceClientId} from '//resources/cr_components/page_image_service/page_image_service.mojom-webui.js';
 import {loadTimeData} from '//resources/js/load_time_data.js';
@@ -37,7 +38,8 @@ interface PowerBookmarksDelegate {
       oldParent: chrome.bookmarks.BookmarkTreeNode,
       newParent: chrome.bookmarks.BookmarkTreeNode): void;
   onBookmarkRemoved(bookmark: chrome.bookmarks.BookmarkTreeNode): void;
-  isPriceTracked(bookmark: chrome.bookmarks.BookmarkTreeNode): boolean;
+  getTrackedProductInfos(): {[key: string]: BookmarkProductInfo};
+  getAvailableProductInfos(): Map<string, BookmarkProductInfo>;
   getProductImageUrl(bookmark: chrome.bookmarks.BookmarkTreeNode): string;
 }
 
@@ -142,13 +144,13 @@ function compareLastOpened(
 function compareAlphabetical(
     a: chrome.bookmarks.BookmarkTreeNode,
     b: chrome.bookmarks.BookmarkTreeNode): number {
-  return a.title!.localeCompare(b.title);
+  return a.title.localeCompare(b.title);
 }
 
 function compareReverseAlphabetical(
     a: chrome.bookmarks.BookmarkTreeNode,
     b: chrome.bookmarks.BookmarkTreeNode): number {
-  return b.title!.localeCompare(a.title);
+  return b.title.localeCompare(a.title);
 }
 
 export class PowerBookmarksService {
@@ -210,7 +212,7 @@ export class PowerBookmarksService {
    */
   stopListening() {
     for (const [eventName, callback] of this.listeners_.entries()) {
-      this.bookmarksApi_.callbackRouter[eventName]!.removeListener(callback);
+      this.bookmarksApi_.callbackRouter[eventName].removeListener(callback);
     }
   }
 
@@ -302,8 +304,7 @@ export class PowerBookmarksService {
    * results. Used to batch data fetching in any cases where it is particularly
    * expensive.
    */
-  async refreshDataForBookmarks(bookmarks:
-                                    chrome.bookmarks.BookmarkTreeNode[]) {
+  refreshDataForBookmarks(bookmarks: chrome.bookmarks.BookmarkTreeNode[]) {
     bookmarks.forEach(
         (bookmark) => this.findBookmarkImageUrls_(bookmark, true, false));
   }
@@ -315,7 +316,7 @@ export class PowerBookmarksService {
   findBookmarkWithId(id: string|undefined): chrome.bookmarks.BookmarkTreeNode
       |undefined {
     if (id) {
-      const path = this.findPathToId_(id);
+      const path = this.findPathToId(id);
       if (path) {
         return path[path.length - 1];
       }
@@ -346,15 +347,29 @@ export class PowerBookmarksService {
     return this.nodeMatchesContentFilters_(bookmark, labels) &&
         (!searchQuery ||
          (!!bookmark.title &&
-          bookmark.title.toLocaleLowerCase().includes(searchQuery!)) ||
+          bookmark.title.toLocaleLowerCase().includes(searchQuery)) ||
          (!!bookmark.url &&
-          bookmark.url.toLocaleLowerCase().includes(searchQuery!)));
+          bookmark.url.toLocaleLowerCase().includes(searchQuery)));
   }
 
   setMaxImageServiceRequestsForTesting(max: number) {
     this.maxImageServiceRequests_ = max;
   }
 
+  getPriceTrackedInfo(bookmark: chrome.bookmarks.BookmarkTreeNode):
+      BookmarkProductInfo|undefined {
+    const trackedProductInfos = this.delegate_.getTrackedProductInfos();
+    const priceTrackValue = Object.entries(trackedProductInfos)
+                                .find(([key, _val]) => key === bookmark.id)
+                                ?.[1];
+    return priceTrackValue;
+  }
+
+  getAvailableProductInfo(bookmark: chrome.bookmarks.BookmarkTreeNode):
+      BookmarkProductInfo|undefined {
+    const availableProductInfos = this.delegate_.getAvailableProductInfos();
+    return availableProductInfos.get(bookmark.id);
+  }
 
   private applySearchQueryAndLabels_(
       labels: Label[], searchQuery: string|undefined,
@@ -378,22 +393,32 @@ export class PowerBookmarksService {
   private nodeMatchesContentFilters_(
       bookmark: chrome.bookmarks.BookmarkTreeNode, labels: Label[]): boolean {
     // Price tracking label
-    if (labels[0] && labels[0]!.active &&
-        !this.delegate_.isPriceTracked(bookmark)) {
+    const isPriceTracked = !!this.getPriceTrackedInfo(bookmark);
+    if (labels[0] && labels[0].active && !isPriceTracked) {
       return false;
     }
     return true;
   }
 
   private addListener_(eventName: string, callback: Function): void {
-    this.bookmarksApi_.callbackRouter[eventName]!.addListener(callback);
+    this.bookmarksApi_.callbackRouter[eventName].addListener(callback);
     this.listeners_.set(eventName, callback);
   }
 
   private onChanged_(id: string, changedInfo: chrome.bookmarks.ChangeInfo) {
     const bookmark = this.findBookmarkWithId(id)!;
     Object.assign(bookmark, changedInfo);
-    this.findBookmarkImageUrls_(bookmark, false, true);
+    // Deep copy is necessary to ensure that the original bookmark object is
+    // not directly mutated. This helps LitElement's change detection recognize
+    // the changes since the reference to the object will change.
+    const deepCopyBookmark = structuredClone(bookmark);
+    const parent = this.findBookmarkWithId(bookmark.parentId);
+    if (parent) {
+      const index =
+          parent.children!.findIndex(child => child.id === bookmark.id);
+      parent.children![index] = deepCopyBookmark;
+    }
+    this.findBookmarkImageUrls_(deepCopyBookmark, false, true);
     this.delegate_.onBookmarkChanged(id, changedInfo);
   }
 
@@ -412,7 +437,7 @@ export class PowerBookmarksService {
   private onMoved_(movedInfo: chrome.bookmarks.MoveInfo) {
     // Remove node from oldParent at oldIndex.
     const oldParent = this.findBookmarkWithId(movedInfo.oldParentId)!;
-    const movedNode = oldParent!.children![movedInfo.oldIndex]!;
+    const movedNode = oldParent.children![movedInfo.oldIndex];
     Object.assign(
         movedNode, {index: movedInfo.index, parentId: movedInfo.parentId});
     oldParent.children!.splice(movedInfo.oldIndex, 1);
@@ -422,14 +447,14 @@ export class PowerBookmarksService {
     if (!newParent.children) {
       newParent.children = [];
     }
-    newParent.children!.splice(movedInfo.index, 0, movedNode);
+    newParent.children.splice(movedInfo.index, 0, movedNode);
     this.delegate_.onBookmarkMoved(movedNode, oldParent, newParent);
   }
 
   private onRemoved_(id: string) {
-    const oldPath = this.findPathToId_(id);
+    const oldPath = this.findPathToId(id);
     const removedNode = oldPath.pop()!;
-    const oldParent = oldPath[oldPath.length - 1]!;
+    const oldParent = oldPath[oldPath.length - 1];
     oldParent.children!.splice(oldParent.children!.indexOf(removedNode), 1);
     this.delegate_.onBookmarkRemoved(removedNode);
   }
@@ -438,7 +463,7 @@ export class PowerBookmarksService {
    * Finds the node within all bookmarks and returns the path to the node in
    * the tree.
    */
-  private findPathToId_(id: string): chrome.bookmarks.BookmarkTreeNode[] {
+  findPathToId(id: string): chrome.bookmarks.BookmarkTreeNode[] {
     const path: chrome.bookmarks.BookmarkTreeNode[] = [];
 
     function findPathByIdInternal(
@@ -470,7 +495,7 @@ export class PowerBookmarksService {
    * Assigns an image url for the given bookmark. Also assigns an image url to
    * all children if recurse is true.
    */
-  private async findBookmarkImageUrls_(
+  private findBookmarkImageUrls_(
       bookmark: chrome.bookmarks.BookmarkTreeNode, recurse: boolean,
       forceUpdate: boolean) {
     const hasImage =
@@ -524,14 +549,14 @@ export class PowerBookmarksService {
                 {suggestImages: false, optimizationGuideImages: true});
     this.activeImageServiceRequestCount_--;
 
-    if (result) {
-      this.delegate_.setImageUrl(bookmark, result.imageUrl.url);
-      this.bookmarksWithCachedImages_.add(bookmark.id.toString());
-    }
+    // If there is no result, cache an empty URL because we are unlikely to get
+    // a different result in the same session.
+    this.delegate_.setImageUrl(bookmark, result ? result.imageUrl.url : '');
+    this.bookmarksWithCachedImages_.add(bookmark.id.toString());
 
     if (this.inactiveImageServiceRequests_.size > 0) {
       this.findBookmarkImageUrl_(
-          this.inactiveImageServiceRequests_.values().next().value);
+          this.inactiveImageServiceRequests_.values().next().value!);
     }
   }
 }

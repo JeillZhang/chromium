@@ -78,6 +78,10 @@ enum LayoutConstant {
   // with the chrome refresh flag.
   LOCATION_BAR_TRAILING_DECORATION_EDGE_PADDING,
 
+  // The padding between trailing edge decorations and the inner views of the
+  // omnibox.
+  LOCATION_BAR_TRAILING_DECORATION_INNER_PADDING,
+
   // The size of the icons used inside the LocationBar.
   // TODO(crbug.com/40883435): Deprecate this after the size of all location bar
   // icons have moved to
@@ -91,8 +95,15 @@ enum LayoutConstant {
   // The size of the trailing icons used inside the LocationBar.
   LOCATION_BAR_TRAILING_ICON_SIZE,
 
+  // Additional space beyond TAB_STRIP_PADDING between the tab strip and the
+  // new tab button.
+  NEW_TAB_BUTTON_LEADING_MARGIN,
+
   // The size of icons used in PageInfo bubbles.
   PAGE_INFO_ICON_SIZE,
+
+  // The size of icons in star rating view.
+  STAR_RATING_ICON_SIZE,
 
   // Padding after the tab title.
   TAB_AFTER_TITLE_PADDING,

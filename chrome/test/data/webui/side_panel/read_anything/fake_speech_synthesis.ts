@@ -1,6 +1,7 @@
 // Copyright 2024 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+import {createSpeechSynthesisVoice} from './common.js';
 
 // A fake SpeechSynthesis object for testing
 export class FakeSpeechSynthesis {
@@ -13,6 +14,8 @@ export class FakeSpeechSynthesis {
   shouldUseLocalVoices: boolean = false;
   canceledUtterances: SpeechSynthesisUtterance[];
   currentUtterance: SpeechSynthesisUtterance|undefined;
+  private voices_: SpeechSynthesisVoice[] = [];
+  private maxSegments_: number|undefined;
 
 
   constructor() {
@@ -45,15 +48,27 @@ export class FakeSpeechSynthesis {
   }
 
   getVoices(): SpeechSynthesisVoice[] {
-    return [
-      {lang: 'en', name: 'Lauren', default: true} as SpeechSynthesisVoice,
-      {lang: 'en', name: 'Eitan'} as SpeechSynthesisVoice,
-      {lang: 'en', name: 'Kristi'} as SpeechSynthesisVoice,
-      {lang: 'en', name: 'Shari'} as SpeechSynthesisVoice,
-      {lang: 'en', name: 'Yu'} as SpeechSynthesisVoice,
-      {lang: 'en', name: 'Xiang', localService: this.shouldUseLocalVoices} as
-          SpeechSynthesisVoice,
-    ];
+    return this.voices_;
+  }
+
+  setVoices(voices: SpeechSynthesisVoice[]) {
+    this.voices_ = voices;
+  }
+
+  setDefaultVoices() {
+    this.setVoices([
+      createSpeechSynthesisVoice(
+          {lang: 'en', name: 'Google Lauren', default: true}),
+      createSpeechSynthesisVoice({lang: 'en', name: 'Google Eitan'}),
+      createSpeechSynthesisVoice({lang: 'en', name: 'Google Kristi'}),
+      createSpeechSynthesisVoice({lang: 'en', name: 'Google Shari'}),
+      createSpeechSynthesisVoice({lang: 'en', name: 'Google Yu'}),
+      createSpeechSynthesisVoice({
+        lang: 'en',
+        name: 'Google Xiang',
+        localService: this.shouldUseLocalVoices,
+      }),
+    ]);
   }
 
   speak(utterance: SpeechSynthesisUtterance) {
@@ -78,6 +93,12 @@ export class FakeSpeechSynthesis {
       this.triggerUtteranceStartedEventNext = false;
     }
 
+
+    if (this.maxSegments_ &&
+        this.maxSegments_ <= this.spokenUtterances.length) {
+      return;
+    }
+
     if (utterance.onend) {
       this.currentUtterance = undefined;
       utterance.onend(new SpeechSynthesisEvent('end', {utterance}));
@@ -95,6 +116,16 @@ export class FakeSpeechSynthesis {
 
   useLocalVoices() {
     this.shouldUseLocalVoices = true;
+  }
+
+  // Set the max number of segments the engine should speak before stopping.
+  // In tests the fake speech synthesis engine can iterate through all
+  // possible segments instantly, which makes it difficult to test correct
+  // behavior for next / previous button presses because all content on a
+  // page may have been "spoken" before the next / previous events are
+  // emitted.
+  setMaxSegments(maxSegments: number) {
+    this.maxSegments_ = maxSegments;
   }
 
   // These are currently unused in tests but need to be defined in order to be

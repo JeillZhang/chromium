@@ -4,11 +4,12 @@
 
 #include "content/browser/cookie_store/cookie_store_manager.h"
 
+#include <algorithm>
 #include <utility>
 
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
-#include "base/ranges/algorithm.h"
+#include "base/not_fatal_until.h"
 #include "base/sequence_checker.h"
 #include "content/browser/cookie_store/cookie_change_subscriptions.pb.h"
 #include "content/browser/renderer_host/render_frame_host_impl.h"
@@ -231,7 +232,7 @@ void CookieStoreManager::AddSubscriptions(
     auto new_subscription = std::make_unique<CookieChangeSubscription>(
         std::move(mojo_subscription), service_worker_registration->id());
 
-    auto existing_subscription_it = base::ranges::find(
+    auto existing_subscription_it = std::ranges::find(
         subscriptions, *new_subscription,
         &std::unique_ptr<CookieChangeSubscription>::operator*);
     if (existing_subscription_it == subscriptions.end())
@@ -239,7 +240,7 @@ void CookieStoreManager::AddSubscriptions(
   }
 
   ActivateSubscriptions(
-      base::make_span(subscriptions).subspan(old_subscriptions_size));
+      base::span(subscriptions).subspan(old_subscriptions_size));
   StoreSubscriptions(service_worker_registration_id, storage_key, subscriptions,
                      std::move(callback));
 }
@@ -329,7 +330,7 @@ void CookieStoreManager::RemoveSubscriptions(
   }
 
   for (auto& subscription : all_subscriptions) {
-    auto target_subscription_it = base::ranges::find(
+    auto target_subscription_it = std::ranges::find(
         target_subscriptions, *subscription,
         &std::unique_ptr<CookieChangeSubscription>::operator*);
     if (target_subscription_it == target_subscriptions.end()) {
@@ -525,7 +526,7 @@ void CookieStoreManager::DeactivateSubscriptions(
     subscription->RemoveFromList();
   }
   auto it = subscriptions_by_url_key_.find(url_key);
-  DCHECK(it != subscriptions_by_url_key_.end());
+  CHECK(it != subscriptions_by_url_key_.end(), base::NotFatalUntil::M130);
   if (it->second.empty())
     subscriptions_by_url_key_.erase(it);
 }

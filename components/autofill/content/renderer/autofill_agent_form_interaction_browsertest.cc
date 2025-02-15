@@ -24,7 +24,6 @@
 #include "ui/gfx/geometry/rect.h"
 
 namespace autofill {
-
 namespace {
 
 using ::testing::_;
@@ -48,8 +47,8 @@ auto IsContentEditable() {
 
 template <typename... Args>
 auto FieldsAre(Args&&... matchers) {
-  return Field("FormData::fields", &FormData::fields,
-               ElementsAre(std::forward<Args>(matchers)...));
+  return Property("FormData::fields", &FormData::fields,
+                  ElementsAre(std::forward<Args>(matchers)...));
 }
 
 // TODO(crbug.com/40286775): Clean up these functions once
@@ -92,8 +91,6 @@ int NumCallsToHidePopupOnFocusLoss() {
   }
   return 1;  // Any dropdown should disappear on focus loss.
 }
-
-}  // namespace
 
 class AutofillAgentFormInteractionTest : public test::AutofillRendererTest {
  public:
@@ -448,4 +445,5 @@ TEST_F(AutofillAgentContentEditableInteractionTest,
   SimulateElementClickAndWait("ce");
 }
 
+}  // namespace
 }  // namespace autofill

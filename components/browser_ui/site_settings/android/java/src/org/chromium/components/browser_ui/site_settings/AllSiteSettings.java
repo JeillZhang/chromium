@@ -30,11 +30,14 @@ import androidx.preference.PreferenceManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import org.chromium.base.metrics.RecordUserAction;
+import org.chromium.base.supplier.ObservableSupplier;
+import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.build.annotations.UsedByReflection;
 import org.chromium.components.browser_ui.accessibility.PageZoomUtils;
 import org.chromium.components.browser_ui.modaldialog.AppModalPresenter;
 import org.chromium.components.browser_ui.settings.ChromeBasePreference;
 import org.chromium.components.browser_ui.settings.CustomDividerFragment;
+import org.chromium.components.browser_ui.settings.EmbeddableSettingsPage;
 import org.chromium.components.browser_ui.settings.SearchUtils;
 import org.chromium.components.browser_ui.settings.SettingsUtils;
 import org.chromium.components.browser_ui.util.TraceEventVectorDrawableCompat;
@@ -56,12 +59,13 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * Shows a list of all sites. When the user selects a site, SingleWebsiteSettings
- * is launched to allow the user to see or modify the settings for that particular website.
+ * Shows a list of all sites. When the user selects a site, SingleWebsiteSettings is launched to
+ * allow the user to see or modify the settings for that particular website.
  */
 @UsedByReflection("all_site_preferences.xml")
 public class AllSiteSettings extends BaseSiteSettingsFragment
-        implements PreferenceManager.OnPreferenceTreeClickListener,
+        implements EmbeddableSettingsPage,
+                PreferenceManager.OnPreferenceTreeClickListener,
                 View.OnClickListener,
                 CustomDividerFragment {
     // The key to use to pass which category this preference should display,
@@ -99,6 +103,8 @@ public class AllSiteSettings extends BaseSiteSettingsFragment
 
     @Nullable private Set<String> mSelectedDomains;
 
+    private final ObservableSupplierImpl<String> mPageTitle = new ObservableSupplierImpl<>();
+
     private class ResultsPopulator implements WebsitePermissionsFetcher.WebsitePermissionsCallback {
         @Override
         public void onWebsitePermissionsAvailable(Collection<Website> sites) {
@@ -120,7 +126,7 @@ public class AllSiteSettings extends BaseSiteSettingsFragment
     private void getInfoForOrigins() {
         WebsitePermissionsFetcher fetcher =
                 new WebsitePermissionsFetcher(getSiteSettingsDelegate(), false);
-        fetcher.fetchPreferencesForCategoryAndPopulateFpsInfo(mCategory, new ResultsPopulator());
+        fetcher.fetchPreferencesForCategoryAndPopulateRwsInfo(mCategory, new ResultsPopulator());
     }
 
     @Override
@@ -239,7 +245,10 @@ public class AllSiteSettings extends BaseSiteSettingsFragment
                                         .getString(
                                                 R.string
                                                         .site_settings_clear_all_zoom_levels_warning))
-                        .with(ModalDialogProperties.POSITIVE_BUTTON_TEXT, resources, R.string.clear)
+                        .with(
+                                ModalDialogProperties.POSITIVE_BUTTON_TEXT,
+                                resources,
+                                R.string.delete)
                         .with(
                                 ModalDialogProperties.NEGATIVE_BUTTON_TEXT,
                                 resources,
@@ -336,7 +345,7 @@ public class AllSiteSettings extends BaseSiteSettingsFragment
         addPreferencesFromXml();
 
         String title = getArguments().getString(EXTRA_TITLE);
-        if (title != null) getActivity().setTitle(title);
+        if (title != null) mPageTitle.set(title);
 
         mSelectedDomains =
                 getArguments().containsKey(EXTRA_SELECTED_DOMAINS)
@@ -351,6 +360,11 @@ public class AllSiteSettings extends BaseSiteSettingsFragment
         setHasOptionsMenu(true);
 
         super.onActivityCreated(savedInstanceState);
+    }
+
+    @Override
+    public ObservableSupplier<String> getPageTitle() {
+        return mPageTitle;
     }
 
     @Override

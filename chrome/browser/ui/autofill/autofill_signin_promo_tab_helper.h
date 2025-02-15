@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_UI_AUTOFILL_AUTOFILL_SIGNIN_PROMO_TAB_HELPER_H_
 
 #include <memory>
+
 #include "base/memory/raw_ptr.h"
 #include "components/password_manager/core/browser/move_password_to_account_store_helper.h"
 #include "components/password_manager/core/browser/password_form.h"
@@ -34,10 +35,10 @@ class AutofillSigninPromoTabHelper
 
   // Initializes the autofill data move process by observing the
   // IdentityManager. If the sign in happens from a tab with the appropriate
-  // |access_point| within the |time_limit|, the |password_form| will be moved
-  // to account storage.
+  // |access_point| within the |time_limit|, the |move_callback| will be
+  // executed.
   void InitializeDataMoveAfterSignIn(
-      const password_manager::PasswordForm& password_form,
+      base::OnceClosure move_callback,
       signin_metrics::AccessPoint access_point,
       base::TimeDelta time_limit = base::Minutes(50));
 
@@ -68,11 +69,9 @@ class AutofillSigninPromoTabHelper
     base::ScopedObservation<signin::IdentityManager,
                             signin::IdentityManager::Observer>
         identity_manager_observation_;
-    std::unique_ptr<password_manager::MovePasswordToAccountStoreHelper>
-        move_helper_;
-    password_manager::PasswordForm password_form_;
+    base::OnceClosure move_callback_;
     signin_metrics::AccessPoint access_point_ =
-        signin_metrics::AccessPoint::ACCESS_POINT_UNKNOWN;
+        signin_metrics::AccessPoint::kUnknown;
     base::Time initialization_time_;
     base::TimeDelta time_limit_;
     bool is_initialized_ = false;

@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/modules/webaudio/audio_worklet_handler.h"
 
 #include "third_party/blink/public/platform/task_type.h"
@@ -24,6 +29,7 @@
 #include "third_party/blink/renderer/modules/webaudio/cross_thread_audio_worklet_processor_info.h"
 #include "third_party/blink/renderer/platform/audio/audio_bus.h"
 #include "third_party/blink/renderer/platform/audio/audio_utilities.h"
+#include "third_party/blink/renderer/platform/audio/denormal_disabler.h"
 #include "third_party/blink/renderer/platform/bindings/exception_messages.h"
 #include "third_party/blink/renderer/platform/heap/persistent.h"
 #include "third_party/blink/renderer/platform/instrumentation/tracing/trace_event.h"
@@ -47,7 +53,9 @@ AudioWorkletHandler::AudioWorkletHandler(
     const AudioWorkletNodeOptions* options)
     : AudioHandler(kNodeTypeAudioWorklet, node, sample_rate),
       name_(name),
-      param_handler_map_(param_handler_map) {
+      param_handler_map_(param_handler_map),
+      allow_denormal_in_processing_(base::FeatureList::IsEnabled(
+          features::kWebAudioAllowDenormalInProcessing)) {
   DCHECK(IsMainThread());
 
   for (const auto& param_name : param_handler_map_.Keys()) {
@@ -107,7 +115,7 @@ scoped_refptr<AudioWorkletHandler> AudioWorkletHandler::Create(
                                                 param_handler_map, options));
 }
 
-void AudioWorkletHandler::Process(uint32_t frames_to_process) {
+void AudioWorkletHandler::ProcessInternal(uint32_t frames_to_process) {
   DCHECK(Context()->IsAudioThread());
 
   TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("webaudio.audionode"),
@@ -117,7 +125,9 @@ void AudioWorkletHandler::Process(uint32_t frames_to_process) {
   // state. If so, silence the connected outputs and return.
   if (!processor_ || processor_->hasErrorOccurred()) {
     for (unsigned i = 0; i < NumberOfOutputs(); ++i) {
-      Output(i).Bus()->Zero();
+      if (Output(i).IsConnectedDuringRendering()) {
+        Output(i).Bus()->Zero();
+      }
     }
     return;
   }
@@ -165,6 +175,15 @@ void AudioWorkletHandler::Process(uint32_t frames_to_process) {
   if (!processor_->Process(inputs_, outputs_, param_value_map_) ||
       processor_->hasErrorOccurred()) {
     FinishProcessorOnRenderThread();
+  }
+}
+
+void AudioWorkletHandler::Process(uint32_t frames_to_process) {
+  if (allow_denormal_in_processing_) {
+    DenormalEnabler denormal_enabler;
+    ProcessInternal(frames_to_process);
+  } else {
+    ProcessInternal(frames_to_process);
   }
 }
 
@@ -243,7 +262,9 @@ void AudioWorkletHandler::FinishProcessorOnRenderThread() {
   // If the user-supplied code is not runnable (i.e. threw an exception)
   // anymore after the process() call above. Invoke error on the main thread.
   AudioWorkletProcessorErrorState error_state = processor_->GetErrorState();
-  if (error_state == AudioWorkletProcessorErrorState::kProcessError) {
+  if (error_state == AudioWorkletProcessorErrorState::kProcessError ||
+      error_state ==
+          AudioWorkletProcessorErrorState::kProcessMethodUndefinedError) {
     PostCrossThreadTask(
         *main_thread_task_runner_, FROM_HERE,
         CrossThreadBindOnce(&AudioWorkletHandler::NotifyProcessorError,

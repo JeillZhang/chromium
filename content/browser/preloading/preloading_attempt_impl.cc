@@ -244,8 +244,8 @@ void PreloadingAttemptImpl::RecordPreloadingAttemptMetrics(
 
   for (const auto& predictor : GetPredictors()) {
     uint32_t sampled_num = sampling_seed_;
-    sampled_num = base::Crc32(
-        sampled_num, base::as_bytes(base::make_span(&sampling_source, 1u)));
+    sampled_num =
+        base::Crc32(sampled_num, base::byte_span_from_ref(sampling_source));
 
     double sampling_likelihood =
         config.SamplingLikelihood(preloading_type_, predictor);

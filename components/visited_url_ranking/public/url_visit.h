@@ -5,6 +5,7 @@
 #ifndef COMPONENTS_VISITED_URL_RANKING_PUBLIC_URL_VISIT_H_
 #define COMPONENTS_VISITED_URL_RANKING_PUBLIC_URL_VISIT_H_
 
+#include <map>
 #include <memory>
 #include <optional>
 #include <set>
@@ -18,6 +19,7 @@
 #include "components/history/core/browser/url_row.h"
 #include "components/segmentation_platform/public/trigger.h"
 #include "components/sync_device_info/device_info.h"
+#include "components/visited_url_ranking/public/decoration.h"
 #include "url/gurl.h"
 
 namespace visited_url_ranking {
@@ -40,7 +42,8 @@ struct URLVisit {
            const std::u16string& title_arg,
            const base::Time& last_modified_arg,
            syncer::DeviceInfo::FormFactor device_type_arg,
-           Source source_arg);
+           Source source_arg,
+           const std::optional<std::string>& client_name = std::nullopt);
   URLVisit(const URLVisit&);
   ~URLVisit();
 
@@ -56,6 +59,9 @@ struct URLVisit {
       syncer::DeviceInfo::FormFactor::kUnknown;
   // The source from which the visit originated (i.e. local or remote).
   Source source = Source::kNotApplicable;
+  // The visit's user visible client name, if applicable. Only set for remote
+  // sources.
+  std::optional<std::string> client_name;
 };
 
 /**
@@ -63,6 +69,34 @@ struct URLVisit {
  * sources.
  */
 struct URLVisitAggregate {
+  // Type of result URLVisitAggregate, note that each visit can match multiple
+  // types. If any of the types match, then the URL will be returned. Entries
+  // should not be renumbered and numeric values should never be reused.
+  enum class URLType {
+    kUnknown = 0,
+    // The visit has an active local tab.
+    kActiveLocalTab = 1,
+    // The visit has an active remote tab, based on the latest sync.
+    kActiveRemoteTab = 2,
+    // The visit is recorded in history, is not from remote client.
+    kLocalVisit = 3,
+    // The visit is recorded in history, is from a remote client.
+    kRemoteVisit = 4,
+    // The visit is local and registered with app ID from an Android CCT
+    // (Android only).
+    kCCTVisit = 5,
+    kMaxValue = kCCTVisit,
+  };
+  using URLTypeSet =
+      base::EnumSet<URLType, URLType::kUnknown, URLType::kMaxValue>;
+  static constexpr URLTypeSet kAllResultTypes = {
+      URLType::kActiveLocalTab, URLType::kActiveRemoteTab, URLType::kLocalVisit,
+      URLType::kRemoteVisit,
+#if BUILDFLAG(IS_ANDROID)
+      URLType::kCCTVisit
+#endif
+  };
+
   // Captures tab data associated with a given URL visit.
   struct Tab {
     Tab(int32_t id_arg,
@@ -103,7 +137,10 @@ struct URLVisitAggregate {
   };
 
   struct HistoryData {
-    explicit HistoryData(history::AnnotatedVisit annotated_visit);
+    explicit HistoryData(history::AnnotatedVisit annotated_visit,
+                         std::optional<std::string> client_name = std::nullopt,
+                         syncer::DeviceInfo::FormFactor device_type_arg =
+                             syncer::DeviceInfo::FormFactor::kUnknown);
     HistoryData(const HistoryData&) = delete;
     HistoryData(HistoryData&& other);
     HistoryData& operator=(HistoryData&& other);
@@ -113,8 +150,11 @@ struct URLVisitAggregate {
     // time period.
     history::AnnotatedVisit last_visited;
 
-    // The last `app_id` value if any for any of the visits associated with the
-    // URL visit aggregate.
+    // Associated URL visit data.
+    URLVisit visit;
+
+    // The last `app_id` value if any for any of the visits associated with
+    // the URL visit aggregate.
     std::optional<std::string> last_app_id = std::nullopt;
 
     // Whether any of the annotated visits for the given URL visit aggregate are
@@ -128,6 +168,16 @@ struct URLVisitAggregate {
     // The number of history visits associated with the URL visit aggregate in a
     // time period.
     size_t visit_count = 1;
+
+    // The number of history visits that took place on the same time group as
+    // the current visit. See `url_visit_util.h|cc` for details on the
+    // definition of a time group.
+    size_t same_time_group_visit_count = 0;
+
+    // The number of history visits that took place on the same day group as the
+    // current visit. See `url_visit_util.h|cc` for details on the definition of
+    // a day group.
+    size_t same_day_group_visit_count = 0;
   };
 
   explicit URLVisitAggregate(std::string key_arg);
@@ -146,9 +196,18 @@ struct URLVisitAggregate {
   // details.
   segmentation_platform::TrainingRequestId request_id;
 
+  // Returns a set of associated URL titles present in the data provided by the
+  // various fetchers that participated in constructing the aggregate object.
+  std::set<std::u16string_view> GetAssociatedTitles() const;
+
   // Returns a set of associated visit URLs present in the data provided by the
   // various fetchers that participated in constructing the aggregate object.
   std::set<const GURL*> GetAssociatedURLs() const;
+
+  // Utility to fetch timestamp that the URL was last opened on a tab.
+  base::Time GetLastVisitTime() const;
+
+  URLTypeSet GetURLTypes() const;
 
   // A map of aggregate tab related characteristics associated with the visit as
   // provided by a given source.
@@ -163,8 +222,15 @@ struct URLVisitAggregate {
   // foreground.
   size_t num_times_active = 0;
 
+  // A map of additional metrics signals intended only for ML use.
+  std::map<std::string, float> metrics_signals;
+
   // A score associated with the aggregate, if any.
   std::optional<float> score = std::nullopt;
+
+  // The matching decorations for a URL visit aggregate. One of these will be
+  // selected to display on various UI surfaces.
+  std::vector<Decoration> decorations;
 };
 
 // Helper to visit each variant of URLVisitVariant.

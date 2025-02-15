@@ -5,25 +5,27 @@
 package org.chromium.chrome.browser.autofill.iban;
 
 import android.content.Context;
-import android.view.LayoutInflater;
 import android.view.View;
+import android.widget.ScrollView;
+
+import androidx.annotation.NonNull;
 
 import org.chromium.chrome.R;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetContent;
 
 /** This class is responsible for rendering the content for the Autofill save IBAN bottomsheet. */
 /*package*/ class AutofillSaveIbanBottomSheetContent implements BottomSheetContent {
-    private final View mView;
+    private final ScrollView mScrollView;
+    private final View mContentView;
 
-    AutofillSaveIbanBottomSheetContent(Context context) {
-        mView =
-                LayoutInflater.from(context)
-                        .inflate(R.layout.autofill_save_iban_bottom_sheet, null);
+    AutofillSaveIbanBottomSheetContent(View contentView, ScrollView scrollView) {
+        mContentView = contentView;
+        mScrollView = scrollView;
     }
 
     @Override
     public View getContentView() {
-        return mView;
+        return mContentView;
     }
 
     @Override
@@ -42,12 +44,12 @@ import org.chromium.components.browser_ui.bottomsheet.BottomSheetContent;
 
     @Override
     public boolean swipeToDismissEnabled() {
-        return false;
+        return true;
     }
 
     @Override
     public int getVerticalScrollOffset() {
-        return 0;
+        return mScrollView.getScrollY();
     }
 
     @Override
@@ -71,26 +73,24 @@ import org.chromium.components.browser_ui.bottomsheet.BottomSheetContent;
     }
 
     @Override
-    public int getSheetContentDescriptionStringId() {
-        // TODO(b/309163431): Support a11y.
-        return R.string.ok;
+    public @NonNull String getSheetContentDescription(Context context) {
+        return context.getString(
+                R.string.autofill_save_iban_prompt_bottom_sheet_content_description);
     }
 
     @Override
     public int getSheetHalfHeightAccessibilityStringId() {
-        // TODO(b/309163431): Support a11y.
-        return R.string.ok;
+        assert false : "This method will not be called.";
+        return 0;
     }
 
     @Override
     public int getSheetFullHeightAccessibilityStringId() {
-        // TODO(b/309163431): Support a11y.
-        return R.string.ok;
+        return R.string.autofill_save_iban_prompt_bottom_sheet_full_height;
     }
 
     @Override
     public int getSheetClosedAccessibilityStringId() {
-        // TODO(b/309163431): Support a11y.
-        return R.string.ok;
+        return R.string.autofill_save_iban_prompt_bottom_sheet_closed;
     }
 }

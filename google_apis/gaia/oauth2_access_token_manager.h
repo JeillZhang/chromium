@@ -54,10 +54,6 @@ class COMPONENT_EXPORT(GOOGLE_APIS) OAuth2AccessTokenManager {
     // |false| otherwise.
     virtual bool HasRefreshToken(const CoreAccountId& account_id) const = 0;
 
-    // Attempts to fix the error if possible.  Returns true if the error was
-    // fixed and false otherwise. Default implementation returns false.
-    virtual bool FixRequestErrorIfPossible();
-
     // Returns a SharedURLLoaderFactory object that will be used as part of
     // fetching access tokens. Default implementation returns nullptr.
     virtual scoped_refptr<network::SharedURLLoaderFactory> GetURLLoaderFactory()
@@ -166,7 +162,7 @@ class COMPONENT_EXPORT(GOOGLE_APIS) OAuth2AccessTokenManager {
     virtual void OnFetchAccessTokenComplete(const CoreAccountId& account_id,
                                             const std::string& consumer_id,
                                             const ScopeSet& scopes,
-                                            GoogleServiceAuthError error,
+                                            const GoogleServiceAuthError& error,
                                             base::Time expiration_time) {}
 
     // Called when an access token was removed.
@@ -263,7 +259,8 @@ class COMPONENT_EXPORT(GOOGLE_APIS) OAuth2AccessTokenManager {
 
   // Cancels all requests related to a given |account_id|. Virtual so it can be
   // overridden for tests.
-  virtual void CancelRequestsForAccount(const CoreAccountId& account_id);
+  virtual void CancelRequestsForAccount(const CoreAccountId& account_id,
+                                        const GoogleServiceAuthError& error);
 
   // Mark an OAuth2 |access_token| issued for |account_id| and |scopes| as
   // invalid. This should be done if the token was received from this class,
@@ -342,8 +339,9 @@ class COMPONENT_EXPORT(GOOGLE_APIS) OAuth2AccessTokenManager {
           waiting_requests);
 
   // Cancels all requests that are currently in progress.
-  void CancelAllRequests();
+  void CancelAllRequests(const GoogleServiceAuthError& error);
   void CancelRequestIfMatch(
+      const GoogleServiceAuthError& error,
       base::RepeatingCallback<bool(const RequestParameters&)> match_request);
 
   // The cache of currently valid tokens.

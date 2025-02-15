@@ -5,6 +5,7 @@
 #include "ash/assistant/ui/main_stage/chip_view.h"
 
 #include <string>
+#include <string_view>
 
 #include "ash/assistant/ui/assistant_ui_constants.h"
 #include "ash/assistant/ui/assistant_view_ids.h"
@@ -107,12 +108,9 @@ gfx::Size ChipView::CalculatePreferredSize(
     const views::SizeBounds& available_size) const {
   const int preferred_width =
       views::View::CalculatePreferredSize(available_size).width();
-  return gfx::Size(preferred_width, GetHeightForWidth(preferred_width));
-}
-
-int ChipView::GetHeightForWidth(int width) const {
-  return type_ == Type::kDefault ? kPreferredHeightDipDefault
-                                 : kPreferredHeightDipLarge;
+  return gfx::Size(preferred_width, type_ == Type::kDefault
+                                        ? kPreferredHeightDipDefault
+                                        : kPreferredHeightDipLarge);
 }
 
 void ChipView::ChildVisibilityChanged(views::View* child) {
@@ -176,7 +174,7 @@ void ChipView::OnThemeChanged() {
 }
 
 void ChipView::SetIcon(const gfx::ImageSkia& icon) {
-  icon_view_->SetImage(icon);
+  icon_view_->SetImage(ui::ImageModel::FromImageSkia(icon));
   MakeIconVisible();
 }
 
@@ -193,7 +191,7 @@ void ChipView::SetText(const std::u16string& text) {
   GetViewAccessibility().SetName(text);
 }
 
-const std::u16string& ChipView::GetText() const {
+std::u16string_view ChipView::GetText() const {
   return text_view_->GetText();
 }
 

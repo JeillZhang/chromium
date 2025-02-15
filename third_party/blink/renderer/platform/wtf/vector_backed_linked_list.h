@@ -127,8 +127,8 @@ class ConstructTraits<VectorBackedLinkedListNode<ValueType, Allocator>,
     return object;
   }
 
-  static void NotifyNewElements(Node* array, size_t len) {
-    Allocator::template NotifyNewObjects<Node, Traits>(array, len);
+  static void NotifyNewElements(base::span<Node> nodes) {
+    Allocator::template NotifyNewObjects<Node, Traits>(nodes);
   }
 
  private:
@@ -167,7 +167,7 @@ template <typename ValueType, typename Allocator = PartitionAllocator>
 class VectorBackedLinkedList {
   USE_ALLOCATOR(VectorBackedLinkedList, Allocator);
 
-  static_assert(!IsStackAllocatedType<ValueType>);
+  static_assert(!IsStackAllocatedTypeV<ValueType>);
 
  private:
   using Node = VectorBackedLinkedListNode<ValueType, Allocator>;

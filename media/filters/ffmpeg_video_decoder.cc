@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/filters/ffmpeg_video_decoder.h"
 
 #include <stddef.h>
@@ -21,6 +26,7 @@
 #include "media/base/limits.h"
 #include "media/base/media_log.h"
 #include "media/base/media_switches.h"
+#include "media/base/supported_types.h"
 #include "media/base/timestamp_constants.h"
 #include "media/base/video_aspect_ratio.h"
 #include "media/base/video_frame.h"
@@ -80,16 +86,13 @@ static int GetFFmpegVideoDecoderThreadCount(const VideoDecoderConfig& config) {
     case VideoCodec::kVP9:
     case VideoCodec::kAV1:
     case VideoCodec::kDolbyVision:
-      // We do not compile ffmpeg with support for any of these codecs.
-      break;
-
     case VideoCodec::kTheora:
     case VideoCodec::kMPEG4:
-      // No extra threads for these codecs.
-      break;
+    case VideoCodec::kVP8:
+      // We do not compile ffmpeg with support for any of these codecs.
+      NOTREACHED();
 
     case VideoCodec::kH264:
-    case VideoCodec::kVP8:
       // Normalize to three threads for 1080p content, then scale linearly
       // with number of pixels.
       // Examples:
@@ -123,7 +126,8 @@ static void ReleaseVideoBufferImpl(void* opaque, uint8_t* data) {
 
 // static
 bool FFmpegVideoDecoder::IsCodecSupported(VideoCodec codec) {
-  return avcodec_find_decoder(VideoCodecToCodecID(codec)) != nullptr;
+  // We only build support for H.264.
+  return codec == VideoCodec::kH264 && IsDecoderBuiltInVideoCodec(codec);
 }
 
 FFmpegVideoDecoder::FFmpegVideoDecoder(MediaLog* media_log)
@@ -174,7 +178,7 @@ int FFmpegVideoDecoder::GetVideoBuffer(struct AVCodecContext* codec_context,
   DCHECK_EQ(codec_context->lowres, 0);
 
   if (force_allocation_error_)
-    return AVERROR(EINVAL);
+    return AVERROR(ENOMEM);
 
   // FFmpeg has specific requirements on the allocation size of the frame.  The
   // following logic replicates FFmpeg's allocation strategy to ensure buffers
@@ -194,12 +198,12 @@ int FFmpegVideoDecoder::GetVideoBuffer(struct AVCodecContext* codec_context,
   // Round up the allocation, but keep `allocation_size` as the usable
   // allocation after aligning `data`.
   void* fb_priv = nullptr;
-  uint8_t* data = frame_pool_->GetFrameBuffer(allocation_size, &fb_priv);
-  if (!data) {
-    return AVERROR(EINVAL);
+  auto span = frame_pool_->GetFrameBuffer(allocation_size, &fb_priv);
+  if (span.empty() || !fb_priv) {
+    return AVERROR(ENOMEM);
   }
 
-  data = base::bits::AlignUp(data, layout->buffer_addr_align());
+  uint8_t* data = base::bits::AlignUp(span.data(), layout->buffer_addr_align());
 
   for (size_t plane = 0; plane < num_planes; ++plane) {
     frame->data[plane] = data + layout->planes()[plane].offset;
@@ -271,7 +275,7 @@ void FFmpegVideoDecoder::Decode(scoped_refptr<DecoderBuffer> buffer,
       base::BindPostTaskToCurrentDefault(std::move(decode_cb));
 
   if (state_ == DecoderState::kError) {
-    std::move(decode_cb_bound).Run(DecoderStatus::Codes::kFailed);
+    std::move(decode_cb_bound).Run(error_status_);
     return;
   }
 
@@ -302,7 +306,10 @@ void FFmpegVideoDecoder::Decode(scoped_refptr<DecoderBuffer> buffer,
 
   if (!FFmpegDecode(*buffer)) {
     state_ = DecoderState::kError;
-    std::move(decode_cb_bound).Run(DecoderStatus::Codes::kFailed);
+    error_status_ = decoding_loop_->last_averror_code() == AVERROR(ENOMEM)
+                        ? DecoderStatus::Codes::kOutOfMemory
+                        : DecoderStatus::Codes::kFailed;
+    std::move(decode_cb_bound).Run(error_status_);
     return;
   }
 
@@ -320,6 +327,8 @@ void FFmpegVideoDecoder::Reset(base::OnceClosure closure) {
 
   avcodec_flush_buffers(codec_context_.get());
   state_ = DecoderState::kNormal;
+  error_status_ = DecoderStatus::Codes::kFailed;
+
   // PostTask() to avoid calling |closure| immediately.
   base::SequencedTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,
                                                            std::move(closure));
@@ -431,22 +440,10 @@ bool FFmpegVideoDecoder::OnNewFrame(AVFrame* frame) {
   auto config_cs = config_.color_space_info().ToGfxColorSpace();
 
   gfx::ColorSpace color_space;
-  if (codec_context_->codec_id == AV_CODEC_ID_VP8 &&
-      frame->color_range == AVCOL_RANGE_JPEG &&
-      frame->color_primaries == AVCOL_PRI_UNSPECIFIED &&
-      frame->color_trc == AVCOL_TRC_UNSPECIFIED &&
-      frame->colorspace == AVCOL_SPC_BT470BG && !config_cs.IsValid()) {
-    // vp8 has no colorspace information, except for the color range, so prefer
-    // the config color space if it exists.
-    //
-    // However, because of a comment in the vp8 spec, ffmpeg sets the
-    // colorspace to BT470BG. We detect this and treat it as unset.
-    // If the color range is set to full range, we use the jpeg color space.
-    color_space = gfx::ColorSpace::CreateJpeg();
-  } else if (codec_context_->codec_id == AV_CODEC_ID_H264 &&
-             frame->colorspace == AVCOL_SPC_RGB &&
-             VideoPixelFormatToChromaSampling(video_frame->format()) !=
-                 VideoChromaSampling::k444) {
+  if (codec_context_->codec_id == AV_CODEC_ID_H264 &&
+      frame->colorspace == AVCOL_SPC_RGB &&
+      VideoPixelFormatToChromaSampling(video_frame->format()) !=
+          VideoChromaSampling::k444) {
     // Some H.264 videos contain a VUI that specifies a color matrix of GBR,
     // when they are actually ordinary YUV. Default to BT.709 if the format is
     // not 4:4:4 as GBR is reasonable for 4:4:4 content. See crbug.com/1067377
@@ -501,12 +498,6 @@ bool FFmpegVideoDecoder::ConfigureDecoder(const VideoDecoderConfig& config,
   codec_context_->opaque = this;
   codec_context_->get_buffer2 = GetVideoBufferImpl;
   codec_context_->flags |= AV_CODEC_FLAG_COPY_OPAQUE;
-
-  if (base::FeatureList::IsEnabled(kFFmpegAllowLists)) {
-    // Note: FFmpeg will try to free this string, so we must duplicate it.
-    codec_context_->codec_whitelist =
-        av_strdup(FFmpegGlue::GetAllowedVideoDecoders());
-  }
 
   if (decode_nalus_) {
     codec_context_->flags2 |= AV_CODEC_FLAG2_CHUNKS;

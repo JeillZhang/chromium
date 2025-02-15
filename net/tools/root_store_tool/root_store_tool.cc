@@ -31,7 +31,6 @@
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
-#include "crypto/openssl_util.h"
 #include "crypto/sha2.h"
 #include "net/cert/root_store_proto_full/root_store.pb.h"
 #include "third_party/boringssl/src/include/openssl/bio.h"
@@ -79,9 +78,8 @@ std::optional<std::map<std::string, std::string>> DecodeCerts(
                  << " instead of CERTIFICATE";
       return std::nullopt;
     }
-    std::string sha256_hex =
-        base::ToLowerASCII(base::HexEncode(crypto::SHA256Hash(
-            base::make_span(data, base::checked_cast<size_t>(len)))));
+    std::string sha256_hex = base::ToLowerASCII(base::HexEncode(
+        crypto::SHA256Hash(base::span(data, base::checked_cast<size_t>(len)))));
     certs[sha256_hex] = std::string(data, data + len);
   }
   return std::move(certs);
@@ -187,12 +185,28 @@ bool WriteRootCppFile(const RootStore& root_store,
     string_to_write += "};\n";
 
     if (anchor.constraints_size() > 0) {
+      int constraint_num = 0;
+      for (const auto& constraint : anchor.constraints()) {
+        if (constraint.permitted_dns_names_size() > 0) {
+          base::StringAppendF(&string_to_write,
+                              "constexpr std::string_view "
+                              "kChromeRootConstraint%dNames%d[] = {",
+                              i, constraint_num);
+          for (const auto& name : constraint.permitted_dns_names()) {
+            base::StringAppendF(&string_to_write, "\"%s\",", name);
+          }
+          string_to_write += "};\n";
+        }
+        constraint_num++;
+      }
+
       base::StringAppendF(&string_to_write,
                           "constexpr StaticChromeRootCertConstraints "
                           "kChromeRootConstraints%d[] = {",
                           i);
 
       std::vector<std::string> constraint_strings;
+      constraint_num = 0;
       for (const auto& constraint : anchor.constraints()) {
         std::vector<std::string> constraint_params;
 
@@ -216,8 +230,17 @@ bool WriteRootCppFile(const RootStore& root_store,
                 ? VersionFromString(constraint.max_version_exclusive())
                 : kNulloptString);
 
+        if (constraint.permitted_dns_names_size() > 0) {
+          constraint_params.push_back(base::StringPrintf(
+              "kChromeRootConstraint%dNames%d", i, constraint_num));
+        } else {
+          constraint_params.push_back("{}");
+        }
+
         constraint_strings.push_back(
             base::StrCat({"{", base::JoinString(constraint_params, ","), "}"}));
+
+        constraint_num++;
       }
 
       string_to_write += base::JoinString(constraint_strings, ",");
@@ -337,8 +360,6 @@ int main(int argc, char** argv) {
   settings.logging_dest =
       logging::LOG_TO_SYSTEM_DEBUG_LOG | logging::LOG_TO_STDERR;
   logging::InitLogging(settings);
-
-  crypto::EnsureOpenSSLInit();
 
   base::CommandLine& command_line = *base::CommandLine::ForCurrentProcess();
   base::FilePath proto_path = command_line.GetSwitchValuePath("write-proto");

@@ -15,12 +15,13 @@
 #include "base/memory/read_only_shared_memory_region.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
-#include "chrome/browser/enterprise/connectors/analysis/analysis_settings.h"
 #include "chrome/browser/enterprise/connectors/analysis/content_analysis_delegate_base.h"
+#include "chrome/browser/enterprise/connectors/analysis/content_analysis_info.h"
 #include "chrome/browser/enterprise/connectors/common.h"
 #include "chrome/browser/safe_browsing/cloud_content_scanning/binary_upload_service.h"
 #include "chrome/browser/safe_browsing/cloud_content_scanning/deep_scanning_utils.h"
 #include "components/enterprise/common/proto/connectors.pb.h"
+#include "components/enterprise/connectors/core/analysis_settings.h"
 #include "content/public/browser/clipboard_types.h"
 #include "url/gurl.h"
 
@@ -86,7 +87,8 @@ class StringAnalysisRequest
 //     safe_browsing::ContentAnalysisDelegate::CreateForWebContents(
 //         contents, std::move(data), base::BindOnce(...));
 //   }
-class ContentAnalysisDelegate : public ContentAnalysisDelegateBase {
+class ContentAnalysisDelegate : public ContentAnalysisDelegateBase,
+                                public ContentAnalysisInfo {
  public:
   // Used as an input to CreateForWebContents() to describe what data needs
   // deeper scanning.  Any members can be empty.
@@ -134,8 +136,7 @@ class ContentAnalysisDelegate : public ContentAnalysisDelegateBase {
 
     // The clipboard source of data being pasted into the browser. Empty for
     // non-clipboard pastes, and clipboard pastes in special cases (ex. OTR).
-    // TODO: Update description if special values are used
-    std::string clipboard_source;
+    ContentMetaData::CopiedTextSource clipboard_source;
 
     // The settings to use for the analysis of the data in this struct.
     AnalysisSettings settings;
@@ -210,10 +211,7 @@ class ContentAnalysisDelegate : public ContentAnalysisDelegateBase {
   // "CancelledByUser" metrics should not be recorded.
   void Cancel(bool warning) override;
 
-  // Returns both rule-based and policy-based custom message without the prefix
-  // if DialogCustomRuleMessageEnabled flag enabled.
-  // TODO(b/322999022) Cleanup comments after custom rule message finch flag
-  // experiment.
+  // Returns both rule-based and policy-based custom message without the prefix.
   std::optional<std::u16string> GetCustomMessage() const override;
 
   std::optional<GURL> GetCustomLearnMoreUrl() const override;
@@ -287,6 +285,16 @@ class ContentAnalysisDelegate : public ContentAnalysisDelegateBase {
       OnAckAllRequestsCallback callback);
 
   void SetPageWarningForTesting(ContentAnalysisResponse page_response);
+
+  // ContentAnalysisInfo:
+  const AnalysisSettings& settings() const override;
+  int user_action_requests_count() const override;
+  std::string tab_title() const override;
+  std::string user_action_id() const override;
+  std::string email() const override;
+  std::string url() const override;
+  const GURL& tab_url() const override;
+  ContentAnalysisRequest::Reason reason() const override;
 
  protected:
   ContentAnalysisDelegate(content::WebContents* web_contents,
@@ -365,13 +373,6 @@ class ContentAnalysisDelegate : public ContentAnalysisDelegateBase {
   // TODO(crbug.com/40839522): Move to PageRequestHandler.
   void PreparePageRequest();
 
-  // Adds required fields to `request` before sending it to the binary upload
-  // service.
-  // TODO(crbug.com/40839522): Remove once TextRequestHandler and
-  // PageRequestHandler are created.
-  void PrepareRequest(AnalysisConnector connector,
-                      safe_browsing::BinaryUploadService::Request* request);
-
   // Fills the arrays in `result_` with the given boolean status.
   void FillAllResultsWith(bool status);
 
@@ -427,6 +428,11 @@ class ContentAnalysisDelegate : public ContentAnalysisDelegateBase {
   // reporting.
   std::string GetContentTransferMethod() const;
 
+  // Returns `true` if `data_` contains corresponding data to be scanned, and
+  // when that data isn't too large to be exempt from scanning.
+  bool text_request_required() const;
+  bool image_request_required() const;
+
   // The Profile corresponding to the pending scan request(s).
   raw_ptr<Profile> profile_ = nullptr;
 
@@ -461,9 +467,6 @@ class ContentAnalysisDelegate : public ContentAnalysisDelegateBase {
   // Stores the scanned page's size since it moves from `data_` to be uploaded.
   // TODO(crbug.com/40839522): Move to PageRequestHandler.
   int64_t page_size_bytes_ = 0;
-
-  // Stores the total number of requests associated with one user action.
-  int64_t total_requests_count_ = 0;
 
   // Set to true once the scan of text has completed.  If the scan request has
   // no text requiring deep scanning, this is set to true immediately.

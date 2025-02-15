@@ -24,7 +24,7 @@ namespace payments {
 
 PaymentManifestWebDataServiceAndroid::PaymentManifestWebDataServiceAndroid(
     JNIEnv* env,
-    jobject obj,
+    const jni_zero::JavaRef<jobject>& obj,
     content::WebContents* web_contents)
     : web_contents_(web_contents->GetWeakPtr()), weak_java_obj_(env, obj) {}
 
@@ -55,7 +55,7 @@ void PaymentManifestWebDataServiceAndroid::OnWebDataServiceRequestDone(
       OnPaymentMethodManifestRequestDone(env, h, std::move(result));
       break;
     default:
-      NOTREACHED_IN_MIGRATION() << "unsupported data type";
+      NOTREACHED() << "unsupported data type";
   }
 }
 

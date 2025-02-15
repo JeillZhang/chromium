@@ -16,10 +16,9 @@ import org.chromium.chrome.browser.tab.TabCreationState;
 import org.chromium.chrome.browser.tab.TabLaunchType;
 import org.chromium.chrome.browser.tab.TabSelectionType;
 
-import java.util.List;
-
 /** Singleton class intended to stub out Tab model before it has been created. */
-public class EmptyTabModel implements IncognitoTabModel {
+@VisibleForTesting(otherwise = VisibleForTesting.PACKAGE_PRIVATE)
+public class EmptyTabModel implements IncognitoTabModelInternal {
     private boolean mIsIncognito;
 
     /**
@@ -59,7 +58,22 @@ public class EmptyTabModel implements IncognitoTabModel {
     }
 
     @Override
-    public boolean closeTab(Tab tab) {
+    public boolean isOffTheRecord() {
+        return mIsIncognito;
+    }
+
+    @Override
+    public boolean isIncognitoBranded() {
+        return mIsIncognito;
+    }
+
+    @Override
+    public @NonNull TabRemover getTabRemover() {
+        return new EmptyTabRemover();
+    }
+
+    @Override
+    public boolean closeTabs(TabClosureParams tabClosureParams) {
         return false;
     }
 
@@ -67,18 +81,6 @@ public class EmptyTabModel implements IncognitoTabModel {
     public Tab getNextTabIfClosed(int id, boolean uponExit) {
         return null;
     }
-
-    @Override
-    public void closeMultipleTabs(List<Tab> tabs, boolean canUndo) {}
-
-    @Override
-    public void closeMultipleTabs(List<Tab> tabs, boolean canUndo, boolean canRestore) {}
-
-    @Override
-    public void closeAllTabs() {}
-
-    @Override
-    public void closeAllTabs(boolean uponExit) {}
 
     @Override
     public int getCount() {
@@ -113,7 +115,7 @@ public class EmptyTabModel implements IncognitoTabModel {
     }
 
     @Override
-    public void setIndex(int i, @TabSelectionType int type, boolean skipLoadingTab) {}
+    public void setIndex(int i, @TabSelectionType int type) {}
 
     @Override
     public boolean isActiveModel() {
@@ -129,16 +131,6 @@ public class EmptyTabModel implements IncognitoTabModel {
     @Override
     public boolean isClosurePending(int tabId) {
         return false;
-    }
-
-    @Override
-    public boolean closeTab(Tab tab, boolean uponExit, boolean canUndo) {
-        return false;
-    }
-
-    @Override
-    public boolean closeTab(Tab tab, Tab recommendedNextTab, boolean uponExit, boolean canUndo) {
-        return closeTab(tab, uponExit, canUndo);
     }
 
     @Override
@@ -170,6 +162,12 @@ public class EmptyTabModel implements IncognitoTabModel {
     }
 
     @Override
+    public @NonNull TabCreator getTabCreator() {
+        assert false : "This should be unreachable in production, it may be mocked for testing.";
+        return null;
+    }
+
+    @Override
     public void addTab(
             Tab tab, int index, @TabLaunchType int type, @TabCreationState int creationState) {
         assert false;
@@ -180,9 +178,6 @@ public class EmptyTabModel implements IncognitoTabModel {
 
     @Override
     public void removeObserver(TabModelObserver observer) {}
-
-    @Override
-    public void setActive(boolean active) {}
 
     @Override
     public int getTabCountNavigatedInTimeWindow(long beginTimeMs, long endTimeMs) {
@@ -203,4 +198,7 @@ public class EmptyTabModel implements IncognitoTabModel {
 
     @Override
     public void removeIncognitoObserver(IncognitoTabModelObserver observer) {}
+
+    @Override
+    public void setActive(boolean active) {}
 }

@@ -18,7 +18,7 @@ import {StringUtil} from '/common/string_util.js';
 import {TestImportManager} from '/common/testing/test_import_manager.js';
 
 import {Personality, QueueMode, TtsCategory, TtsSpeechProperties} from '../../common/tts_types.js';
-import {TtsInterface} from '../tts_interface.js';
+import type {TtsInterface} from '../tts_interface.js';
 
 import {TypingEchoState} from './typing_echo.js';
 
@@ -134,19 +134,6 @@ export class ChromeVoxEditableTextBase {
     const lineStart = this.getLineStart(index);
     const lineEnd = this.getLineEnd(index);
     return this.value.substr(lineStart, lineEnd - lineStart);
-  }
-
-  /**
-   * @param evt The new text changed event to test.
-   * @return True if the event, when compared to the previous text, should
-   *     trigger description.
-   */
-  shouldDescribeChange(evt: TextChangeEvent): boolean {
-    if (evt.value === this.value && evt.start === this.start &&
-        evt.end === this.end) {
-      return false;
-    }
-    return true;
   }
 
   /**

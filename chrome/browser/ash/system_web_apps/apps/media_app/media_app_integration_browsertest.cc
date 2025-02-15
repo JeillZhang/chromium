@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <algorithm>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -19,17 +20,14 @@
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/user_metrics.h"
 #include "base/path_service.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/string_util.h"
 #include "base/test/bind.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/test_file_util.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/apps/app_service/app_launch_params.h"
 #include "chrome/browser/apps/app_service/app_service_proxy.h"
 #include "chrome/browser/apps/app_service/app_service_proxy_factory.h"
 #include "chrome/browser/ash/app_list/arc/arc_app_utils.h"
-#include "chrome/browser/ash/file_manager/app_id.h"
 #include "chrome/browser/ash/file_manager/app_service_file_tasks.h"
 #include "chrome/browser/ash/file_manager/file_manager_test_util.h"
 #include "chrome/browser/ash/file_manager/volume_manager.h"
@@ -46,6 +44,7 @@
 #include "chrome/browser/error_reporting/mock_chrome_js_error_report_processor.h"
 #include "chrome/browser/extensions/component_loader.h"
 #include "chrome/browser/notifications/notification_display_service.h"
+#include "chrome/browser/notifications/notification_display_service_factory.h"
 #include "chrome/browser/platform_util.h"
 #include "chrome/browser/ui/ash/system_web_apps/system_web_app_ui_utils.h"
 #include "chrome/browser/ui/browser.h"
@@ -55,6 +54,7 @@
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/web_applications/web_app_helpers.h"
 #include "chrome/browser/web_applications/web_app_provider.h"
+#include "chrome/browser/web_applications/web_app_registrar.h"
 #include "chrome/common/chrome_paths.h"
 #include "chromeos/ash/components/dbus/cros_disks/cros_disks_client.h"
 #include "chromeos/ash/components/settings/cros_settings_names.h"
@@ -303,10 +303,12 @@ class NotificationWatcher : public NotificationDisplayService::Observer {
     network_portal_detector.SimulateDefaultNetworkState(
         ash::NetworkPortalDetectorMixin::NetworkStatus::kOnline);
 
-    NotificationDisplayService::GetForProfile(profile_)->AddObserver(this);
+    NotificationDisplayServiceFactory::GetForProfile(profile_)->AddObserver(
+        this);
   }
   ~NotificationWatcher() override {
-    NotificationDisplayService::GetForProfile(profile_)->RemoveObserver(this);
+    NotificationDisplayServiceFactory::GetForProfile(profile_)->RemoveObserver(
+        this);
   }
   std::string NextSeenNotificationId() {
     if (seen_notification_id_.empty()) {
@@ -604,7 +606,7 @@ IN_PROC_BROWSER_TEST_P(MediaAppIntegrationTest, MediaAppHandlesIntents) {
         GetAppsForMimeType(proxy, "application/octet-stream");
 
     // Media App should not be in the returned list of handlers.
-    EXPECT_FALSE(base::ranges::any_of(
+    EXPECT_FALSE(std::ranges::any_of(
         intent_launch_info,
         [&media_app_id](const apps::IntentLaunchInfo& info) {
           return info.app_id == media_app_id;
@@ -622,7 +624,7 @@ IN_PROC_BROWSER_TEST_P(MediaAppIntegrationTest, MediaAppHandlesIntents) {
 
       // Media App should be in the returned list of handlers.
       EXPECT_FALSE(intent_launch_info.empty()) << " at " << accept.mime_type;
-      EXPECT_TRUE(base::ranges::any_of(
+      EXPECT_TRUE(std::ranges::any_of(
           intent_launch_info,
           [&media_app_id](const apps::IntentLaunchInfo& info) {
             return info.app_id == media_app_id;

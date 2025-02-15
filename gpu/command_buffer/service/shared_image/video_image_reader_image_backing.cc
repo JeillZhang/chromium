@@ -9,6 +9,7 @@
 #include "base/android/android_hardware_buffer_compat.h"
 #include "base/android/scoped_hardware_buffer_fence_sync.h"
 #include "base/android/scoped_hardware_buffer_handle.h"
+#include "base/debug/dump_without_crashing.h"
 #include "base/task/bind_post_task.h"
 #include "base/task/single_thread_task_runner.h"
 #include "components/viz/common/gpu/vulkan_context_provider.h"
@@ -31,13 +32,17 @@
 #include "gpu/vulkan/vulkan_image.h"
 #include "gpu/vulkan/vulkan_implementation.h"
 #include "gpu/vulkan/vulkan_util.h"
-#include "third_party/skia/include/gpu/GrBackendSemaphore.h"
-#include "third_party/skia/include/gpu/GrBackendSurface.h"
+#include "third_party/skia/include/gpu/ganesh/GrBackendSemaphore.h"
+#include "third_party/skia/include/gpu/ganesh/GrBackendSurface.h"
 #include "third_party/skia/include/gpu/ganesh/vk/GrVkBackendSurface.h"
 #include "third_party/skia/include/private/chromium/GrPromiseImageTexture.h"
 #include "ui/gl/android/egl_fence_utils.h"
 #include "ui/gl/gl_utils.h"
 #include "ui/gl/scoped_restore_texture.h"
+
+#if BUILDFLAG(SKIA_USE_DAWN)
+#include "third_party/skia/include/gpu/graphite/dawn/DawnTypes.h"
+#endif
 
 namespace gpu {
 
@@ -121,6 +126,7 @@ VideoImageReaderImageBacking::VideoImageReaderImageBacking(
     const gfx::ColorSpace color_space,
     GrSurfaceOrigin surface_origin,
     SkAlphaType alpha_type,
+    std::string debug_label,
     scoped_refptr<StreamTextureSharedImageInterface> stream_texture_sii,
     scoped_refptr<SharedContextState> context_state,
     scoped_refptr<RefCountedLock> drdc_lock)
@@ -129,6 +135,7 @@ VideoImageReaderImageBacking::VideoImageReaderImageBacking(
                                color_space,
                                surface_origin,
                                alpha_type,
+                               std::move(debug_label),
                                !!drdc_lock),
       RefCountedLockHelperDrDc(std::move(drdc_lock)),
       stream_texture_sii_(std::move(stream_texture_sii)),
@@ -317,14 +324,17 @@ class VideoImageReaderImageBacking::GLTexturePassthroughVideoImageRepresentation
 // inner class out of the implementation here and that in
 // DawnAHBImageRepresentation.
 class VideoImageReaderImageBacking::SkiaGraphiteDawnImageRepresentation
-    : public SkiaGraphiteImageRepresentation {
+    : public SkiaGraphiteImageRepresentation,
+      public RefCountedLockHelperDrDc {
  public:
   SkiaGraphiteDawnImageRepresentation(
       SharedImageManager* manager,
       VideoImageReaderImageBacking* backing,
       MemoryTypeTracker* tracker,
-      scoped_refptr<SharedContextState> context_state)
+      scoped_refptr<SharedContextState> context_state,
+      scoped_refptr<RefCountedLock> drdc_lock)
       : SkiaGraphiteImageRepresentation(manager, backing, tracker),
+        RefCountedLockHelperDrDc(std::move(drdc_lock)),
         context_state_(context_state) {}
   ~SkiaGraphiteDawnImageRepresentation() override = default;
 
@@ -344,10 +354,13 @@ class VideoImageReaderImageBacking::SkiaGraphiteDawnImageRepresentation
 
   std::vector<skgpu::graphite::BackendTexture> BeginReadAccess() override {
     DCHECK(!scoped_hardware_buffer_);
-    auto* stream_texture_sii = video_backing()->stream_texture_sii_.get();
 
     // Obtain the AHB for the current video frame.
-    scoped_hardware_buffer_ = stream_texture_sii->GetAHardwareBuffer();
+    {
+      base::AutoLockMaybe auto_lock(GetDrDcLockPtr());
+      scoped_hardware_buffer_ =
+          video_backing()->stream_texture_sii_->GetAHardwareBuffer();
+    }
     if (!scoped_hardware_buffer_) {
       LOG(ERROR) << "Failed to get the hardware buffer.";
       return {};
@@ -399,7 +412,7 @@ class VideoImageReaderImageBacking::SkiaGraphiteDawnImageRepresentation
     base::ScopedFD sync_fd = scoped_hardware_buffer_->TakeFence();
 
     if (sync_fd.is_valid()) {
-      wgpu::SharedFenceVkSemaphoreSyncFDDescriptor sync_fd_desc;
+      wgpu::SharedFenceSyncFDDescriptor sync_fd_desc;
       // NOTE: There is no ownership transfer here, as Dawn internally dup()s
       // the passed-in handle.
       sync_fd_desc.handle = sync_fd.get();
@@ -423,8 +436,15 @@ class VideoImageReaderImageBacking::SkiaGraphiteDawnImageRepresentation
 
     // Create the Dawn texture.
     texture_ = shared_texture_memory_.CreateTexture(&texture_descriptor);
-    if (!shared_texture_memory_.BeginAccess(texture_, &begin_access_desc)) {
+    if (shared_texture_memory_.BeginAccess(texture_, &begin_access_desc) !=
+        wgpu::Status::Success) {
       LOG(ERROR) << "Failed to begin access for texture";
+      // TODO(crbug.com/377489264): Remove after ensuring that all samsung
+      // devices which are failing AHB size vs VkImage size checks have the
+      // check disabled.
+      base::debug::DumpWithoutCrashing();
+      ResetStorage();
+      return {};
     }
 
     // Obtain the YCbCr info from the device.
@@ -432,6 +452,8 @@ class VideoImageReaderImageBacking::SkiaGraphiteDawnImageRepresentation
     if (!device.GetAHardwareBufferProperties(scoped_hardware_buffer_->buffer(),
                                              &ahb_properties)) {
       LOG(ERROR) << "Failed to get the ycbcr info";
+      EndReadAccess();
+      return {};
     }
 
     // Wrap the Dawn texture in a Skia texture, passing the YCbCr info.
@@ -439,7 +461,7 @@ class VideoImageReaderImageBacking::SkiaGraphiteDawnImageRepresentation
         /*sampleCount=*/1, skgpu::Mipmapped::kNo, webgpu_format, webgpu_format,
         texture_descriptor.usage, wgpu::TextureAspect::All, /*slice=*/0,
         ahb_properties.yCbCrInfo);
-    return {skgpu::graphite::BackendTexture(
+    return {skgpu::graphite::BackendTextures::MakeDawn(
         SkISize::Make(ahb_desc.width, ahb_desc.height), dawn_texture_info,
         texture_.Get())};
   }
@@ -451,33 +473,19 @@ class VideoImageReaderImageBacking::SkiaGraphiteDawnImageRepresentation
     wgpu::SharedTextureMemoryVkImageLayoutEndState end_layout{};
     end_access_desc.nextInChain = &end_layout;
 
-    if (!shared_texture_memory_.EndAccess(texture_, &end_access_desc)) {
+    if (shared_texture_memory_.EndAccess(texture_, &end_access_desc) !=
+        wgpu::Status::Success) {
+      // NOTE: Dawn ensures that `end_access_desc.fenceCount` is set to zero in
+      // the case of an error, so there is no need to early-out here.
       LOG(ERROR) << "Failed to end access for texture";
     }
 
-    if (end_access_desc.initialized) {
-      SetCleared();
-    }
-
     wgpu::SharedFenceExportInfo export_info;
-    wgpu::SharedFenceVkSemaphoreSyncFDExportInfo sync_fd_export_info;
+    wgpu::SharedFenceSyncFDExportInfo sync_fd_export_info;
     export_info.nextInChain = &sync_fd_export_info;
 
-    // If Dawn read the texture, ensure that its fence is added to the set of
-    // fences that the ScopedAHB uses to determine when the underlying buffer
-    // can be reused.
-    // If Dawn *didn't* read the texture during the access, it will return 2
-    // fences: the fence that this instance gave it in BeginAccess() (which Dawn
-    // didn't consume), and a fence that Dawn created in EndAccess(). In that
-    // case there is no need to add either fence to the ScopedAHB's set of
-    // fences that determine when the underlying buffer can be reused. Any other
-    // consumer of the underlying buffer will get the buffer in a new ScopedAHB
-    // via StreamTextureSII, and that ScopedAHB would have its own copy of the
-    // fence that determines when the buffer can be read.
-    // TODO(crbug.com/dawn/2454): If we want to preserve this optimization after
-    // Dawn returns a single fence in this case, we could save the initial fence
-    // and do comparison on it here.
-    if (end_access_desc.fenceCount == 1u) {
+    if (end_access_desc.fenceCount) {
+      CHECK(end_access_desc.fenceCount == 1u);
       end_access_desc.fences[0].ExportInfo(&export_info);
 
       // Dawn will close its FD when `end_access_desc` falls out of scope, and
@@ -491,9 +499,15 @@ class VideoImageReaderImageBacking::SkiaGraphiteDawnImageRepresentation
       scoped_hardware_buffer_->SetReadFence(std::move(end_access_sync_fd));
     }
 
+    ResetStorage();
+  }
+
+  void ResetStorage() {
     texture_.Destroy();
     texture_ = nullptr;
     shared_texture_memory_ = nullptr;
+
+    base::AutoLockMaybe auto_lock(GetDrDcLockPtr());
     scoped_hardware_buffer_ = nullptr;
   }
 
@@ -706,8 +720,17 @@ VideoImageReaderImageBacking::ProduceSkiaGraphite(
     SharedImageManager* manager,
     MemoryTypeTracker* tracker,
     scoped_refptr<SharedContextState> context_state) {
+  base::AutoLockMaybe auto_lock(GetDrDcLockPtr());
+
+  // For (old) overlays, we don't have a texture owner, but overlay promotion
+  // might not happen for some reasons. In that case, it will try to draw
+  // which should result in no image.
+  if (!stream_texture_sii_->HasTextureOwner()) {
+    return nullptr;
+  }
+
   return std::make_unique<SkiaGraphiteDawnImageRepresentation>(
-      manager, this, tracker, context_state);
+      manager, this, tracker, context_state, GetDrDcLock());
 }
 #endif
 

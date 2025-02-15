@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "components/download/internal/common/in_memory_download_file.h"
 
 #include "base/android/jni_string.h"
@@ -46,7 +51,7 @@ void InMemoryDownloadFile::Initialize(
     InitializeCallback initialize_callback,
     CancelRequestCallback cancel_request_callback,
     const DownloadItem::ReceivedSlices& received_slices) {
-  JNIEnv* env = base::android::AttachCurrentThread();
+  JNIEnv* env = jni_zero::AttachCurrentThread();
   base::FilePath filename = save_info_->file_path.BaseName();
 
   java_ref_ = Java_InMemoryDownloadFile_createFile(
@@ -91,6 +96,7 @@ void InMemoryDownloadFile::RenameAndAnnotate(
     const std::string& client_guid,
     const GURL& source_url,
     const GURL& referrer_url,
+    const std::optional<url::Origin>& request_initiator,
     mojo::PendingRemote<quarantine::mojom::Quarantine> remote_quarantine,
     RenameCompletionCallback callback) {
   OnRenameComplete(memory_file_path_, main_task_runner_, std::move(callback));
@@ -99,7 +105,7 @@ void InMemoryDownloadFile::RenameAndAnnotate(
 void InMemoryDownloadFile::Detach() {}
 
 void InMemoryDownloadFile::Cancel() {
-  JNIEnv* env = base::android::AttachCurrentThread();
+  JNIEnv* env = jni_zero::AttachCurrentThread();
   Java_InMemoryDownloadFile_destroy(env, java_ref_);
 }
 
@@ -123,7 +129,7 @@ void InMemoryDownloadFile::PublishDownload(RenameCompletionCallback callback) {
 }
 
 void InMemoryDownloadFile::StreamActive(MojoResult result) {
-  JNIEnv* env = base::android::AttachCurrentThread();
+  JNIEnv* env = jni_zero::AttachCurrentThread();
   scoped_refptr<net::IOBuffer> incoming_data;
   size_t incoming_data_size = 0;
   InputStream::StreamState state(InputStream::EMPTY);
@@ -179,7 +185,7 @@ void InMemoryDownloadFile::OnStreamCompleted() {
   input_stream_->ClearDataReadyCallback();
   weak_factory_.InvalidateWeakPtrs();
 
-  JNIEnv* env = base::android::AttachCurrentThread();
+  JNIEnv* env = jni_zero::AttachCurrentThread();
   Java_InMemoryDownloadFile_finish(env, java_ref_);
   main_task_runner_->PostTask(
       FROM_HERE,

@@ -48,16 +48,17 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.CriteriaHelper;
 import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.DoNotBatch;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.Features.DisableFeatures;
+import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.base.test.util.Restriction;
 import org.chromium.chrome.browser.ChromeTabbedActivity;
 import org.chromium.chrome.browser.feature_engagement.TrackerFactory;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.multiwindow.MultiWindowUtils;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
@@ -68,37 +69,24 @@ import org.chromium.chrome.test.util.ChromeRenderTestRule;
 import org.chromium.chrome.test.util.ChromeTabUtils;
 import org.chromium.components.feature_engagement.FeatureConstants;
 import org.chromium.components.feature_engagement.Tracker;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
+import org.chromium.components.omnibox.OmniboxFeatureList;
+import org.chromium.ui.base.DeviceFormFactor;
 import org.chromium.ui.modaldialog.ModalDialogManager;
 import org.chromium.ui.modaldialog.ModalDialogProperties;
-import org.chromium.ui.test.util.UiRestriction;
 
 import java.io.IOException;
 
 /** End-to-end tests for TabGridIph component. */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@CommandLineFlags.Add({
-    ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-    "enable-features=IPH_TabGroupsDragAndDrop<TabGroupsDragAndDrop",
-    "force-fieldtrials=TabGroupsDragAndDrop/Enabled",
-    "force-fieldtrial-params=TabGroupsDragAndDrop.Enabled:availability/any/"
-            + "event_trigger/"
-            + "name%3Aiph_tabgroups_drag_and_drop;comparator%3A==0;window%3A30;storage%3A365/"
-            + "event_trigger2/"
-            + "name%3Aiph_tabgroups_drag_and_drop;comparator%3A<2;window%3A90;storage%3A365/"
-            + "event_used/"
-            + "name%3Atab_drag_and_drop_to_group;comparator%3A==0;window%3A365;storage%3A365/"
-            + "session_rate/<1"
-})
-@Restriction({UiRestriction.RESTRICTION_TYPE_PHONE, RESTRICTION_TYPE_NON_LOW_END_DEVICE})
-// TODO(crbug.com/40238208): The message cards aren't shown the first time when entering GTS
-// with Start surface enabled.
-// Remove the ANDROID_HUB_FLOATING_ACTION_BUTTON restriction and regenerate goldens when launching.
-@DisableFeatures({
-    ChromeFeatureList.ARCHIVE_TAB_SERVICE,
-    ChromeFeatureList.START_SURFACE_ANDROID,
-    ChromeFeatureList.ANDROID_HUB_FLOATING_ACTION_BUTTON
-})
+@CommandLineFlags.Add(ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE)
+@Restriction({DeviceFormFactor.PHONE, RESTRICTION_TYPE_NON_LOW_END_DEVICE})
+@EnableFeatures(
+        "IPH_TabGroupsDragAndDrop:availability/any"
+            + "/event_trigger/name%3Aiph_tabgroups_drag_and_drop;comparator%3A==0;window%3A30;storage%3A365"
+            + "/event_trigger2/name%3Aiph_tabgroups_drag_and_drop;comparator%3A<2;window%3A90;storage%3A365"
+            + "/event_used/name%3Atab_drag_and_drop_to_group;comparator%3A==0;window%3A365;storage%3A365"
+            + "/session_rate/<1")
+@DisableFeatures({OmniboxFeatureList.ANDROID_HUB_SEARCH})
 @DoNotBatch(reason = "Batching can cause message state to leak between tests.")
 public class TabGridIphTest {
     private ModalDialogManager mModalDialogManager;
@@ -112,18 +100,20 @@ public class TabGridIphTest {
             ChromeRenderTestRule.Builder.withPublicCorpus()
                     .setBugComponent(
                             ChromeRenderTestRule.Component.UI_BROWSER_MOBILE_TAB_SWITCHER_GRID)
+                    .setRevision(3)
                     .build();
 
     @Before
     public void setUp() {
+        IphMessageService.setSkipIphInTestsForTesting(false);
         mActivityTestRule.startMainActivityOnBlankPage();
         TabUiTestHelper.verifyTabSwitcherLayoutType(mActivityTestRule.getActivity());
         CriteriaHelper.pollUiThread(
                 mActivityTestRule.getActivity().getTabModelSelector()::isTabStateInitialized);
         mModalDialogManager =
-                TestThreadUtils.runOnUiThreadBlockingNoException(
+                ThreadUtils.runOnUiThreadBlocking(
                         mActivityTestRule.getActivity()::getModalDialogManager);
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mTracker =
                             TrackerFactory.getTrackerForProfile(
@@ -132,7 +122,7 @@ public class TabGridIphTest {
         CriteriaHelper.pollUiThread(mTracker::isInitialized);
         CriteriaHelper.pollUiThread(
                 () -> {
-                    return mTracker.wouldTriggerHelpUI(
+                    return mTracker.wouldTriggerHelpUi(
                             FeatureConstants.TAB_GROUPS_DRAG_AND_DROP_FEATURE);
                 });
     }
@@ -140,7 +130,7 @@ public class TabGridIphTest {
     @After
     public void tearDown() {
         ActivityTestUtils.clearActivityOrientation(mActivityTestRule.getActivity());
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 TabSwitcherMessageManager::resetHasAppendedMessagesForTesting);
     }
 
@@ -304,9 +294,9 @@ public class TabGridIphTest {
     @Feature({"RenderTest"})
     public void testRenderIphDialog_Landscape() throws IOException {
         ChromeTabbedActivity cta = mActivityTestRule.getActivity();
+        ActivityTestUtils.rotateActivityToOrientation(cta, Configuration.ORIENTATION_LANDSCAPE);
 
         enterTabSwitcher(cta);
-        ActivityTestUtils.rotateActivityToOrientation(cta, Configuration.ORIENTATION_LANDSCAPE);
         CriteriaHelper.pollUiThread(TabSwitcherMessageManager::hasAppendedMessagesForTesting);
         // Scroll to the position of the IPH entrance so that it is completely showing for Espresso
         // click.
@@ -316,7 +306,10 @@ public class TabGridIphTest {
                                         withId(TabUiTestHelper.getTabSwitcherAncestorId(cta))),
                                 withId(R.id.tab_list_recycler_view)))
                 .perform(RecyclerViewActions.scrollToPosition(1));
-        onView(allOf(withId(R.id.action_button), withParent(withId(R.id.tab_grid_message_item))))
+        onViewWaiting(
+                        allOf(
+                                withId(R.id.action_button),
+                                withParent(withId(R.id.tab_grid_message_item))))
                 .perform(click());
         verifyIphDialogShowing(cta);
 
@@ -373,7 +366,7 @@ public class TabGridIphTest {
     @Test
     @MediumTest
     @DisabledTest(message = "Consistent failures despite revival effort in b/341267765")
-    public void testSwipeToDismiss_IPH() {
+    public void testSwipeToDismiss_Iph() {
         ChromeTabbedActivity cta = mActivityTestRule.getActivity();
         enterTabSwitcher(cta);
         onViewWaiting(withId(R.id.tab_grid_message_item)).check(matches(isDisplayed()));
@@ -397,7 +390,7 @@ public class TabGridIphTest {
     @Test
     @MediumTest
     @DisabledTest(message = "Still flaky on arm builds despite revival effort in b/341267765")
-    public void testNotShowIPHInMultiWindowMode() {
+    public void testNotShowIphInMultiWindowMode() {
         ChromeTabbedActivity cta = mActivityTestRule.getActivity();
         enterTabSwitcher(cta);
         onViewWaiting(withId(R.id.tab_grid_message_item)).check(matches(isDisplayed()));

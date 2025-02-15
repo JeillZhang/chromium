@@ -17,6 +17,7 @@
 #include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
+#include "base/strings/strcat.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/bind.h"
 #include "base/time/time.h"
@@ -25,6 +26,7 @@
 #include "ui/base/interaction/element_identifier.h"
 #include "ui/base/interaction/element_tracker.h"
 #include "ui/base/interaction/interactive_test.h"
+#include "ui/base/interaction/interactive_test_definitions.h"
 #include "ui/base/interaction/interactive_test_internal.h"
 #include "ui/base/metadata/metadata_types.h"
 #include "ui/views/interaction/element_tracker_views.h"
@@ -329,12 +331,18 @@ class InteractiveViewsTestApi : public ui::test::InteractiveTestApi {
 
   // Move the mouse to the specified `position` in screen coordinates. The
   // `reference` element will be used based on how `position` is specified.
+  //
+  // This verb is only available in interactive test suites; see
+  // `RequireInteractiveTest()`.
   [[nodiscard]] StepBuilder MoveMouseTo(AbsolutePositionSpecifier position);
   [[nodiscard]] StepBuilder MoveMouseTo(
       ElementSpecifier reference,
       RelativePositionSpecifier position = CenterPoint());
 
   // Clicks mouse button `button` at the current cursor position.
+  //
+  // This verb is only available in interactive test suites; see
+  // `RequireInteractiveTest()`.
   [[nodiscard]] StepBuilder ClickMouse(
       ui_controls::MouseButton button = ui_controls::LEFT,
       bool release = true);
@@ -342,6 +350,9 @@ class InteractiveViewsTestApi : public ui::test::InteractiveTestApi {
   // Depresses the left mouse button at the current cursor position and drags to
   // the target `position`. The `reference` element will be used based on how
   // `position` is specified.
+  //
+  // This verb is only available in interactive test suites; see
+  // `RequireInteractiveTest()`.
   [[nodiscard]] StepBuilder DragMouseTo(AbsolutePositionSpecifier position,
                                         bool release = true);
   [[nodiscard]] StepBuilder DragMouseTo(
@@ -351,6 +362,9 @@ class InteractiveViewsTestApi : public ui::test::InteractiveTestApi {
 
   // Releases the specified mouse button. Use when you previously called
   // ClickMouse() or DragMouseTo() with `release` = false.
+  //
+  // This verb is only available in interactive test suites; see
+  // `RequireInteractiveTest()`.
   [[nodiscard]] StepBuilder ReleaseMouse(
       ui_controls::MouseButton button = ui_controls::LEFT);
 
@@ -536,7 +550,7 @@ ui::InteractionSequence::StepBuilder InteractiveViewsTestApi::NameViewRelative(
           if (!IsViewClass<V>(view)) {
             LOG(ERROR) << "NameView(): Target View is of type "
                        << view->GetClassName() << " but expected "
-                       << V::MetaData()->type_name();
+                       << V::kViewClassName;
             seq->FailForTesting();
             return;
           }
@@ -630,7 +644,8 @@ ui::InteractionSequence::StepBuilder InteractiveViewsTestApi::IfViewMatches(
                 return std::move(condition).Run(view);
               },
               ui::test::internal::MaybeBind(std::forward<F>(function))),
-          testing::Matcher<R>(std::forward<M>(matcher)),
+          testing::Matcher<ui::test::internal::MatcherTypeFor<R>>(
+              std::forward<M>(matcher)),
           std::forward<T>(then_steps), std::forward<U>(else_steps))
           .SetDescription("IfViewMatches()"));
 }
@@ -677,7 +692,7 @@ InteractiveViewsTestApi::NameChildViewByType(ElementSpecifier parent,
                                      base::OwnedRef(index)))
                        .SetDescription(base::StringPrintf(
                            "NameChildViewByType<%s>( \"%s\" %zu )",
-                           V::MetaData()->type_name(), name.data(), index)));
+                           V::kViewClassName, name.data(), index)));
 }
 
 // static
@@ -701,7 +716,7 @@ InteractiveViewsTestApi::NameDescendantViewByType(ElementSpecifier ancestor,
                                           base::OwnedRef(index)))
                        .SetDescription(base::StringPrintf(
                            "NameDescendantViewByType<%s>( \"%s\" %zu )",
-                           V::MetaData()->type_name(), name.data(), index)));
+                           V::kViewClassName, name.data(), index)));
 }
 
 // static
@@ -724,17 +739,19 @@ ui::InteractionSequence::StepBuilder InteractiveViewsTestApi::CheckView(
   StepBuilder builder;
   builder.SetDescription("CheckView()");
   ui::test::internal::SpecifyElement(builder, view);
+  using MatcherType = ui::test::internal::MatcherTypeFor<R>;
   builder.SetStartCallback(base::BindOnce(
-      [](base::OnceCallback<R(V*)> function, testing::Matcher<R> matcher,
+      [](base::OnceCallback<R(V*)> function,
+         testing::Matcher<MatcherType> matcher,
          ui::InteractionSequence* seq, ui::TrackedElement* el) {
         if (!ui::test::internal::MatchAndExplain(
                 "CheckView()", matcher,
-                std::move(function).Run(AsView<V>(el)))) {
+                MatcherType(std::move(function).Run(AsView<V>(el))))) {
           seq->FailForTesting();
         }
       },
       ui::test::internal::MaybeBind(std::forward<F>(function)),
-      testing::Matcher<R>(std::forward<M>(matcher))));
+      testing::Matcher<MatcherType>(std::forward<M>(matcher))));
   return builder;
 }
 
@@ -748,15 +765,17 @@ ui::InteractionSequence::StepBuilder InteractiveViewsTestApi::CheckViewProperty(
   StepBuilder builder;
   builder.SetDescription("CheckViewProperty()");
   ui::test::internal::SpecifyElement(builder, view);
+  using MatcherType = ui::test::internal::MatcherTypeFor<R>;
   builder.SetStartCallback(base::BindOnce(
-      [](R (V::*property)() const, testing::Matcher<R> matcher,
+      [](R (V::*property)() const, testing::Matcher<MatcherType> matcher,
          ui::InteractionSequence* seq, ui::TrackedElement* el) {
         if (!ui::test::internal::MatchAndExplain(
-                "CheckViewProperty()", matcher, (AsView<V>(el)->*property)())) {
+                "CheckViewProperty()", matcher,
+                MatcherType((AsView<V>(el)->*property)()))) {
           seq->FailForTesting();
         }
       },
-      property, testing::Matcher<R>(std::forward<M>(matcher))));
+      property, testing::Matcher<MatcherType>(std::forward<M>(matcher))));
   return builder;
 }
 
@@ -777,20 +796,20 @@ InteractiveViewsTestApi::WaitForViewPropertyCallback(
       scoped_refptr<base::RefCountedData<base::CallbackListSubscription>>;
   RefCountedSubscription subscription =
       base::MakeRefCounted<RefCountedSubscription::element_type>();
-  const std::string format_string = base::StringPrintf(
-      "WaitForProperty( %%s, \"%s\" )", event_type.GetName().c_str());
 
   // The first step will check the property, and either immediately send the
   // event or install the observer that will send the event when the state
   // achieves the correct value.
+  using MatcherType = ui::test::internal::MatcherTypeFor<R>;
   auto observe_property = base::BindOnce(
       [](RefCountedSubscription subscription, R (V::*property)() const,
          base::CallbackListSubscription (V::*add_listener)(
              ui::metadata::PropertyChangedCallback),
-         ui::CustomElementEventType event_type, testing::Matcher<R> matcher,
+         ui::CustomElementEventType event_type,
+         testing::Matcher<MatcherType> matcher,
          ui::TrackedElement* el) {
         auto* const view = AsView<V>(el);
-        if (matcher.Matches((view->*property)())) {
+        if (matcher.Matches(MatcherType((view->*property)()))) {
           // Property is already in the desired state, send event immediately.
           ui::ElementTracker::GetFrameworkDelegate()->NotifyCustomEvent(
               el, event_type);
@@ -799,8 +818,8 @@ InteractiveViewsTestApi::WaitForViewPropertyCallback(
           subscription->data = (view->*add_listener)(base::BindRepeating(
               [](V* view, R (V::*property)() const,
                  ui::CustomElementEventType event_type,
-                 testing::Matcher<R> matcher) {
-                if (matcher.Matches((view->*property)())) {
+                 testing::Matcher<MatcherType> matcher) {
+                if (matcher.Matches(MatcherType((view->*property)()))) {
                   ElementTrackerViews::GetInstance()->NotifyCustomEvent(
                       event_type, view);
                 }
@@ -809,18 +828,19 @@ InteractiveViewsTestApi::WaitForViewPropertyCallback(
         }
       },
       subscription, property, add_listener, event_type,
-      testing::Matcher<R>(std::forward<M>(matcher)));
+      testing::Matcher<MatcherType>(std::forward<M>(matcher)));
 
-  return Steps(std::move(AfterShow(view, std::move(observe_property))
-                             .SetMustRemainVisible(true)
-                             .FormatDescription(format_string)),
-               std::move(AfterEvent(view, event_type, [subscription]() {
-                           // Need to reference subscription by value so that it
-                           // is not discarded until this step runs or the
-                           // sequence fails.
-                           subscription->data =
-                               base::CallbackListSubscription();
-                         }).FormatDescription(format_string)));
+  auto steps = Steps(std::move(AfterShow(view, std::move(observe_property))
+                                   .SetMustRemainVisible(true)),
+                     AfterEvent(view, event_type, [subscription]() {
+                       // Need to reference subscription by value so that it is
+                       // not discarded until this step runs or the sequence
+                       // fails.
+                       subscription->data = base::CallbackListSubscription();
+                     }));
+  AddDescriptionPrefix(
+      steps, base::StrCat({"WaitForProperty( ", event_type.GetName(), ", )"}));
+  return steps;
 }
 
 // Waits for a property named `Property` to have a value that matches `matcher`
@@ -902,5 +922,4 @@ ui::InteractionSequence::StepBuilder InteractiveViewsTestApi::PollViewProperty(
 }
 
 }  // namespace views::test
-
 #endif  // UI_VIEWS_INTERACTION_INTERACTIVE_VIEWS_TEST_H_

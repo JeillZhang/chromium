@@ -70,6 +70,7 @@
 #include "chromecast/ui/display_settings_manager_impl.h"
 #include "components/heap_profiling/multi_process/client_connection_manager.h"
 #include "components/heap_profiling/multi_process/supervisor.h"
+#include "components/input/switches.h"
 #include "components/memory_pressure/multi_source_memory_pressure_monitor.h"
 #include "components/prefs/pref_service.h"
 #include "components/viz/common/switches.h"
@@ -188,7 +189,7 @@ void RegisterClosureOnSignal(base::OnceClosure closure) {
   for (int sig : kSignalsToRunClosure) {
     struct sigaction sa_old;
     if (sigaction(sig, &sa_new, &sa_old) == -1) {
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
     } else {
       DCHECK_EQ(sa_old.sa_handler, SIG_DFL);
     }
@@ -214,13 +215,13 @@ void RegisterKillOnAlarm(int timeout_seconds) {
 
   struct sigaction sa_old;
   if (sigaction(SIGALRM, &sa_new, &sa_old) == -1) {
-    NOTREACHED_IN_MIGRATION();
+    NOTREACHED();
   } else {
     DCHECK_EQ(sa_old.sa_handler, SIG_DFL);
   }
 
   if (alarm(timeout_seconds) > 0)
-    NOTREACHED_IN_MIGRATION() << "Previous alarm() was cancelled";
+    NOTREACHED() << "Previous alarm() was cancelled";
 }
 
 void DeregisterKillOnAlarm() {
@@ -235,7 +236,7 @@ void DeregisterKillOnAlarm() {
 
   struct sigaction sa_old;
   if (sigaction(SIGALRM, &sa_new, &sa_old) == -1) {
-    NOTREACHED_IN_MIGRATION();
+    NOTREACHED();
   } else {
     DCHECK_EQ(sa_old.sa_handler, KillOnAlarm);
   }
@@ -310,7 +311,7 @@ const DefaultCommandLineSwitch kDefaultSwitches[] = {
 #if BUILDFLAG(IS_ANDROID)
     {switches::kDisableFrameRateLimit, ""},
     {switches::kDisableGLDrawingForTests, ""},
-    {cc::switches::kDisableThreadedAnimation, ""},
+    {switches::kDisableThreadedAnimation, ""},
 #endif  // BUILDFLAG(IS_ANDROID)
 #endif  // BUILDFLAG(IS_CAST_AUDIO_ONLY)
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
@@ -334,7 +335,7 @@ const DefaultCommandLineSwitch kDefaultSwitches[] = {
     // TODO(halliwell): Revert after fix for b/63101386.
     {switches::kDisallowNonExactResourceReuse, ""},
     // Disable pinch zoom gesture.
-    {switches::kDisablePinch, ""},
+    {input::switches::kDisablePinch, ""},
 };
 
 void AddDefaultCommandLineSwitches(base::CommandLine* command_line) {
@@ -621,8 +622,8 @@ int CastBrowserMainParts::PreMainMessageLoopRun() {
       ::ui_devtools::UiDevToolsServer::IsUiDevToolsEnabled(
           ::ui_devtools::switches::kEnableUiDevTools)) {
     // Starts the UI Devtools server for browser Aura UI
-    ui_devtools_ = std::make_unique<CastUIDevTools>(
-        cast_content_browser_client_->GetSystemNetworkContext());
+    ui_devtools_ =
+        std::make_unique<CastUIDevTools>(content::GetIOThreadTaskRunner({}));
   }
 #endif
 
@@ -704,7 +705,7 @@ void CastBrowserMainParts::WillRunMainMessageLoop(
     std::unique_ptr<base::RunLoop>& run_loop) {
 #if BUILDFLAG(IS_ANDROID)
   // Android does not use native main MessageLoop.
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 #elif !BUILDFLAG(IS_FUCHSIA)
   // Fuchsia doesn't have signals.
   RegisterClosureOnSignal(run_loop->QuitClosure());
@@ -727,9 +728,8 @@ void CastBrowserMainParts::PostMainMessageLoopRun() {
 
 #if BUILDFLAG(IS_ANDROID)
   // Android does not use native main MessageLoop.
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 #else
-
 #if defined(USE_AURA)
   // Reset display change observer here to ensure it is deleted before
   // display_configurator since display_configurator is deleted when
@@ -750,9 +750,9 @@ void CastBrowserMainParts::PostMainMessageLoopRun() {
 #if !BUILDFLAG(IS_FUCHSIA)
   DeregisterKillOnAlarm();
 #endif  // !BUILDFLAG(IS_FUCHSIA)
-#endif
 
   service_manager_context_.reset();
+#endif
 }
 
 void CastBrowserMainParts::PostDestroyThreads() {

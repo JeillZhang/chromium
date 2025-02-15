@@ -2,9 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/audio/alsa/audio_manager_alsa.h"
 
 #include <stddef.h>
+
+#include <array>
 
 #include "base/command_line.h"
 #include "base/containers/contains.h"
@@ -36,9 +43,13 @@ static const int kDefaultSampleRate = 48000;
 // real devices, we remove them from the list to avoiding duplicate counting.
 // In addition, note that we support no more than 2 channels for recording,
 // hence surround devices are not stored in the list.
-static const char* const kInvalidAudioInputDevices[] = {
-    "default", "dmix", "null", "pulse", "surround",
-};
+const auto kInvalidAudioInputDevices = std::to_array<const char*>({
+    "default",
+    "dmix",
+    "null",
+    "pulse",
+    "surround",
+});
 
 AudioManagerAlsa::AudioManagerAlsa(std::unique_ptr<AudioThread> audio_thread,
                                    AudioLogFactory* audio_log_factory)

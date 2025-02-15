@@ -24,9 +24,15 @@ export type DotsIbanMenuClickEvent = CustomEvent<{
   anchorElement: HTMLElement,
 }>;
 
+export type RemoteIbanMenuClickEvent = CustomEvent<{
+  iban: chrome.autofillPrivate.IbanEntry,
+  anchorElement: HTMLElement,
+}>;
+
 declare global {
   interface HTMLElementEventMap {
     'dots-iban-menu-click': DotsIbanMenuClickEvent;
+    'remote-iban-menu-click': RemoteIbanMenuClickEvent;
   }
 }
 
@@ -87,6 +93,10 @@ export class SettingsIbanListEntryElement extends
     this.dispatchEvent(new CustomEvent('remote-iban-menu-click', {
       bubbles: true,
       composed: true,
+      detail: {
+        iban: this.iban,
+        anchorElement: this.dotsMenu,
+      },
     }));
   }
 
@@ -94,7 +104,7 @@ export class SettingsIbanListEntryElement extends
       string {
     // Strip all whitespace and get the pure last four digits of the value.
     const strippedSummaryLabel =
-        iban.metadata ? iban.metadata!.summaryLabel.replace(/\s/g, '') : '';
+        iban.metadata ? iban.metadata.summaryLabel.replace(/\s/g, '') : '';
     const lastFourDigits = strippedSummaryLabel.substring(
         Math.max(0, strippedSummaryLabel.length - 4));
 

@@ -2,12 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #include "chrome/browser/extensions/extension_management.h"
 
 #include <memory>
 #include <string>
 #include <utility>
 
+#include "base/command_line.h"
 #include "base/containers/contains.h"
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
@@ -36,11 +42,13 @@
 #include "chrome/browser/themes/theme_service.h"
 #include "chrome/browser/themes/theme_service_factory.h"
 #include "chrome/common/chrome_features.h"
+#include "chrome/common/chrome_switches.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/common/pref_names.h"
 #include "components/crx_file/id_util.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/pref_service.h"
+#include "content/public/common/content_switches.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/pref_names.h"
 #include "extensions/common/extension.h"
@@ -53,19 +61,42 @@
 #include "extensions/common/url_pattern.h"
 #include "url/gurl.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #include "chrome/browser/ash/profiles/profile_helper.h"
 #else
 #include "components/enterprise/browser/reporting/common_pref_names.h"
 #endif
 
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
+#include "chrome/browser/enterprise/browser_management/management_service_factory.h"
+#endif
+
 namespace extensions {
+
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
+// Disables off-store force-installed extensions in low trust environments.
+BASE_FEATURE(kDisableOffstoreForceInstalledExtensionsInLowTrustEnviroment,
+             "DisableOffstoreForceInstalledExtensionsInLowTrustEnviroment",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+
+// The highest level of trustworthiness for either platform or browser.
+policy::ManagementAuthorityTrustworthiness GetHighestTrustworthiness(
+    Profile* profile) {
+  policy::ManagementAuthorityTrustworthiness platform_trustworthiness =
+      policy::ManagementServiceFactory::GetForPlatform()
+          ->GetManagementAuthorityTrustworthiness();
+  policy::ManagementAuthorityTrustworthiness browser_trustworthiness =
+      policy::ManagementServiceFactory::GetForProfile(profile)
+          ->GetManagementAuthorityTrustworthiness();
+  return std::max(platform_trustworthiness, browser_trustworthiness);
+}
+#endif
 
 ExtensionManagement::ExtensionManagement(Profile* profile)
     : profile_(profile), pref_service_(profile_->GetPrefs()) {
   TRACE_EVENT0("browser,startup",
                "ExtensionManagement::ExtensionManagement::ctor");
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   is_signin_profile_ = ash::ProfileHelper::IsSigninProfile(profile);
 #endif
   pref_change_registrar_.Init(pref_service_);
@@ -84,7 +115,7 @@ ExtensionManagement::ExtensionManagement(Profile* profile)
                              pref_change_callback);
   pref_change_registrar_.Add(prefs::kCloudExtensionRequestEnabled,
                              pref_change_callback);
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_CHROMEOS)
   pref_change_registrar_.Add(enterprise_reporting::kCloudReportingEnabled,
                              pref_change_callback);
 #endif
@@ -356,10 +387,6 @@ bool ExtensionManagement::IsExemptFromMV2DeprecationByPolicy(
 
 bool ExtensionManagement::IsAllowedByUnpublishedAvailabilityPolicy(
     const Extension* extension) {
-  // Check the kill switch before applying policy check.
-  if (!base::FeatureList::IsEnabled(kCWSInfoService)) {
-    return true;
-  }
   // This policy only applies to extensions that update from CWS.
   if (!UpdatesFromWebstore(*extension)) {
     return true;
@@ -386,6 +413,72 @@ bool ExtensionManagement::IsAllowedByUnpublishedAvailabilityPolicy(
     return cws_info->is_live;
   }
   return true;
+}
+
+bool ExtensionManagement::IsAllowedByUnpackedDeveloperModePolicy(
+    const Extension& extension) {
+  if (!base::FeatureList::IsEnabled(
+          extensions_features::kExtensionDisableUnsupportedDeveloper)) {
+    return true;
+  }
+  if (!extension.is_extension()) {
+    return true;
+  }
+  if (extension.location() != mojom::ManifestLocation::kUnpacked) {
+    return true;
+  }
+  // Allow extensions loaded from DevTools' "Extensions.loadUnpacked" command.
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kEnableUnsafeExtensionDebugging)) {
+    return true;
+  }
+
+  bool in_developer_mode =
+      profile_->GetPrefs()->GetBoolean(prefs::kExtensionsUIDeveloperMode);
+  return in_developer_mode;
+}
+
+bool ExtensionManagement::IsForceInstalledInLowTrustEnvironment(
+    const Extension& extension) {
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
+  if (GetInstallationMode(&extension) != INSTALLATION_FORCED) {
+    return false;
+  }
+
+  if (!Manifest::IsPolicyLocation(extension.location())) {
+    return false;
+  }
+
+  return GetHighestTrustworthiness(profile_) <
+         policy::ManagementAuthorityTrustworthiness::TRUSTED;
+#else
+  return false;
+#endif
+}
+
+bool ExtensionManagement::ShouldBlockForceInstalledOffstoreExtension(
+    const Extension& extension) {
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
+  if (!base::FeatureList::IsEnabled(
+          kDisableOffstoreForceInstalledExtensionsInLowTrustEnviroment)) {
+    return false;
+  }
+  if (extension.from_webstore() || UpdatesFromWebstore(extension)) {
+    return false;
+  }
+  if (GetInstallationMode(&extension) !=
+      ExtensionManagement::INSTALLATION_FORCED) {
+    return false;
+  }
+  if (!Manifest::IsPolicyLocation(extension.location())) {
+    return false;
+  }
+
+  return GetHighestTrustworthiness(profile_) <
+         policy::ManagementAuthorityTrustworthiness::TRUSTED;
+#else
+  return false;
+#endif
 }
 
 APIPermissionSet ExtensionManagement::GetBlockedAPIPermissions(
@@ -644,15 +737,11 @@ void ExtensionManagement::Refresh() {
   if (dict_pref) {
     // Parse new extension management preference.
 
-    bool defer_load_settings = base::FeatureList::IsEnabled(
-        features::kExtensionDeferredIndividualSettings);
     std::unordered_set<std::string> installed_extensions;
-    if (defer_load_settings) {
-      auto* extension_prefs = ExtensionPrefs::Get(profile_);
-      auto extensions_info = extension_prefs->GetInstalledExtensionsInfo();
-      for (const auto& extension_info : extensions_info) {
-        installed_extensions.insert(extension_info.extension_id);
-      }
+    auto* extension_prefs = ExtensionPrefs::Get(profile_);
+    auto extensions_info = extension_prefs->GetInstalledExtensionsInfo();
+    for (const auto& extension_info : extensions_info) {
+      installed_extensions.insert(extension_info.extension_id);
     }
 
     for (auto iter : *dict_pref) {
@@ -687,31 +776,30 @@ void ExtensionManagement::Refresh() {
             continue;
           }
 
-          if (defer_load_settings) {
-            auto should_defer = [&extension_id, &installed_extensions](
-                                    const base::Value::Dict& dict,
-                                    const SettingsIdMap* settings_by_id) {
-              // If in legacy force list, don't defer since already have an
-              // entry. This ensures that the entry in these settings matches
-              // the entry in the forcelist. Also don't defer if the extension
-              // is installed.
-              if (base::Contains(*settings_by_id, extension_id) ||
-                  base::Contains(installed_extensions, extension_id)) {
-                return false;
-              }
-              auto* install_mode =
-                  dict.FindString(schema_constants::kInstallationMode);
-              if (!install_mode)
-                return true;
-              // Don't defer if the extension needs to be installed.
-              return *install_mode != schema_constants::kForceInstalled &&
-                     *install_mode != schema_constants::kNormalInstalled;
-            };
-
-            if (should_defer(*subdict, &settings_by_id_)) {
-              deferred_ids_.insert(extension_id);
-              continue;
+          auto should_defer = [&extension_id, &installed_extensions](
+                                  const base::Value::Dict& dict,
+                                  const SettingsIdMap* settings_by_id) {
+            // If in legacy force list, don't defer since already have an
+            // entry. This ensures that the entry in these settings matches
+            // the entry in the forcelist. Also don't defer if the extension
+            // is installed.
+            if (base::Contains(*settings_by_id, extension_id) ||
+                base::Contains(installed_extensions, extension_id)) {
+              return false;
             }
+            auto* install_mode =
+                dict.FindString(schema_constants::kInstallationMode);
+            if (!install_mode) {
+              return true;
+            }
+            // Don't defer if the extension needs to be installed.
+            return *install_mode != schema_constants::kForceInstalled &&
+                   *install_mode != schema_constants::kNormalInstalled;
+          };
+
+          if (should_defer(*subdict, &settings_by_id_)) {
+            deferred_ids_.insert(extension_id);
+            continue;
           }
 
           internal::IndividualSettings* by_id = AccessById(extension_id);
@@ -955,11 +1043,14 @@ ExtensionManagementFactory::ExtensionManagementFactory()
               // TODO(crbug.com/40257657): Check if this service is needed in
               // Guest mode.
               .WithGuest(ProfileSelection::kRedirectedToOriginal)
+              // TODO(crbug.com/41488885): Check if this service is needed for
+              // Ash Internals.
+              .WithAshInternals(ProfileSelection::kRedirectedToOriginal)
               .Build()) {
   DependsOn(InstallStageTrackerFactory::GetInstance());
 }
 
-ExtensionManagementFactory::~ExtensionManagementFactory() {}
+ExtensionManagementFactory::~ExtensionManagementFactory() = default;
 
 std::unique_ptr<KeyedService>
 ExtensionManagementFactory::BuildServiceInstanceForBrowserContext(
@@ -968,11 +1059,6 @@ ExtensionManagementFactory::BuildServiceInstanceForBrowserContext(
                "ExtensionManagementFactory::BuildServiceInstanceFor");
   return std::make_unique<ExtensionManagement>(
       Profile::FromBrowserContext(context));
-}
-
-void ExtensionManagementFactory::RegisterProfilePrefs(
-    user_prefs::PrefRegistrySyncable* user_prefs) {
-  user_prefs->RegisterDictionaryPref(pref_names::kExtensionManagement);
 }
 
 }  // namespace extensions

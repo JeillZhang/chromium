@@ -11,9 +11,12 @@
 
 #include "ash/ash_export.h"
 #include "ash/birch/birch_client.h"
+#include "ash/birch/birch_coral_item.h"
+#include "ash/birch/birch_coral_provider.h"
 #include "ash/birch/birch_item.h"
 #include "ash/public/cpp/session/session_observer.h"
 #include "base/functional/callback.h"
+#include "base/memory/weak_ptr.h"
 #include "base/time/clock.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
@@ -27,46 +30,26 @@ namespace ash {
 class BirchDataProvider;
 class BirchIconCache;
 class BirchItemRemover;
+class CoralItemRemover;
 
 // Birch model, which is used to aggregate and store relevant information from
 // different providers. Both data and prefs are associated with the primary user
 // account.
 class ASH_EXPORT BirchModel : public SessionObserver,
-                              public SimpleGeolocationProvider::Observer {
+                              public SimpleGeolocationProvider::Observer,
+                              public BirchCoralProvider::Observer {
  public:
+  // The callback for lost media data changes. The argument is the updated lost
+  // media item.
+  using LostMediaDataChangedCallback =
+      base::RepeatingCallback<void(std::unique_ptr<BirchItem>)>;
+
   // BirchModel Observers are notified when the BirchClient has been set.
   class Observer : public base::CheckedObserver {
    public:
     ~Observer() override = default;
 
     virtual void OnBirchClientSet() = 0;
-  };
-
-  // Contains information related to fetching and storing data for a single
-  // BirchItem type.
-  template <typename T>
-  struct DataTypeInfo {
-    DataTypeInfo(const std::string& pref_name,
-                 const std::string& metric_suffix);
-    ~DataTypeInfo();
-
-    // Whether a data fetch is in progress.
-    bool fetch_in_progress = false;
-
-    // When the fetch for data was started. Used for metrics.
-    base::Time fetch_start_time;
-
-    // List of items for this data type.
-    std::vector<T> items;
-
-    // Whether the data is fresh.
-    bool is_fresh = false;
-
-    // The name of the pref accossiated with this data type.
-    std::string pref_name;
-
-    // The suffix for metrics recorded for this dta type.
-    std::string metric_suffix;
   };
 
   BirchModel();
@@ -86,11 +69,6 @@ class ASH_EXPORT BirchModel : public SessionObserver,
   // has expired.
   void RequestBirchDataFetch(bool is_post_login, base::OnceClosure callback);
 
-  template <typename T>
-  void SetItems(DataTypeInfo<T>& data_info,
-                const std::vector<T>& items,
-                bool record_latency);
-
   void SetCalendarItems(const std::vector<BirchCalendarItem>& calendar_items);
   void SetAttachmentItems(
       const std::vector<BirchAttachmentItem>& attachment_items);
@@ -101,9 +79,11 @@ class ASH_EXPORT BirchModel : public SessionObserver,
   void SetMostVisitedItems(const std::vector<BirchMostVisitedItem>& items);
   void SetSelfShareItems(
       const std::vector<BirchSelfShareItem>& self_share_items);
+  void SetLostMediaItems(const std::vector<BirchLostMediaItem>& items);
   void SetReleaseNotesItems(
       const std::vector<BirchReleaseNotesItem>& release_notes_items);
   void SetWeatherItems(const std::vector<BirchWeatherItem>& weather_items);
+  void SetCoralItems(const std::vector<BirchCoralItem>& coral_items);
 
   // Sets the BirchClient and begins initializing the BirchItemRemover.
   void SetClientAndInit(BirchClient* client);
@@ -133,6 +113,9 @@ class ASH_EXPORT BirchModel : public SessionObserver,
   std::vector<BirchSelfShareItem>& GetSelfShareItemsForTest() {
     return self_share_data_.items;
   }
+  std::vector<BirchLostMediaItem>& GetLostMediaItemsForTest() {
+    return lost_media_data_.items;
+  }
   const std::vector<BirchReleaseNotesItem>& GetReleaseNotesItemsForTest()
       const {
     return release_notes_data_.items;
@@ -140,7 +123,12 @@ class ASH_EXPORT BirchModel : public SessionObserver,
   const std::vector<BirchWeatherItem>& GetWeatherForTest() const {
     return weather_data_.items;
   }
+  std::vector<BirchCoralItem>& GetCoralItemsForTest() {
+    return coral_data_.items;
+  }
+
   BirchItemRemover* GetItemRemoverForTest() { return item_remover_.get(); }
+  CoralItemRemover* GetCoralItemRemoverForTest();
 
   // Returns all items, sorted by ranking. Includes unranked items.
   std::vector<std::unique_ptr<BirchItem>> GetAllItems();
@@ -151,8 +139,12 @@ class ASH_EXPORT BirchModel : public SessionObserver,
   // Returns whether all data in the model is currently fresh.
   bool IsDataFresh();
 
-  // Add the BirchItem to the list of persistenly removed items.
+  // Adds the BirchItem to the list of persistently removed items.
   void RemoveItem(BirchItem* item);
+
+  void SetLostMediaDataChangedCallback(LostMediaDataChangedCallback callback);
+
+  void ResetLostMediaDataChangedCallback();
 
   // SessionObserver:
   void OnActiveUserSessionChanged(const AccountId& account_id) override;
@@ -160,8 +152,18 @@ class ASH_EXPORT BirchModel : public SessionObserver,
   // SimpleGeolocationProvider::Observer:
   void OnGeolocationPermissionChanged(bool enabled) override;
 
+  // BirchCoralProvider::Observer:
+  void OnCoralGroupRemoved(const base::Token& group_id) override;
+  void OnCoralGroupTitleUpdated(const base::Token& group_id,
+                                const std::string& title) override;
+
+  BirchDataProvider* GetWeatherProviderForTest();
   void OverrideWeatherProviderForTest(
       std::unique_ptr<BirchDataProvider> weather_provider);
+  BirchDataProvider* GetCoralProviderForTest();
+  void OverrideCoralProviderForTest(
+      std::unique_ptr<BirchDataProvider> coral_provider);
+
   void OverrideClockForTest(base::Clock* clock);
   void SetDataFetchCallbackForTest(base::OnceClosure callback);
 
@@ -178,8 +180,48 @@ class ASH_EXPORT BirchModel : public SessionObserver,
     std::unique_ptr<base::OneShotTimer> timer;
   };
 
+  // Contains information related to fetching and storing data for a single
+  // BirchItem type.
+  template <typename T>
+  struct DataTypeInfo {
+    DataTypeInfo(const std::string& pref_name,
+                 const std::string& metric_suffix);
+    ~DataTypeInfo();
+
+    // Whether a data fetch is in progress.
+    bool fetch_in_progress = false;
+
+    // When the fetch for data was started. Used for metrics.
+    base::Time fetch_start_time;
+
+    // List of items for this data type.
+    std::vector<T> items;
+
+    // Whether the data is fresh.
+    bool is_fresh = false;
+
+    // The name of the pref accossiated with this data type.
+    std::string pref_name;
+
+    // The suffix for metrics recorded for this data type.
+    std::string metric_suffix;
+
+    // The data update request to update existing items.
+    std::optional<PendingRequest> update_request;
+  };
+
+  template <typename T>
+  void SetItems(DataTypeInfo<T>& data_info,
+                const std::vector<T>& items,
+                bool record_latency);
+
   // Called when a pending data fetch request timeout expires.
   void HandleRequestTimeout(size_t request_id);
+
+  // Called when the update request completes or timeout expires.
+  // `lost_media_data_changed_callback_` will be called with the current lost
+  // media items.
+  void HandleLostMediaUpdateRequest();
 
   // Runs data fetch callbacks after a data fetch request when all data items
   // have been refreshed.
@@ -200,12 +242,11 @@ class ASH_EXPORT BirchModel : public SessionObserver,
   // Called when a data provider pref changes.
   void OnCalendarPrefChanged();
   void OnFileSuggestPrefChanged();
-  void OnRecentTabPrefChanged();
-  void OnLastActivePrefChanged();
-  void OnMostVisitedPrefChanged();
-  void OnSelfSharePrefChanged();
+  void OnChromeTabsPrefChanged();
+  void OnLostMediaPrefChanged();
   void OnWeatherPrefChanged();
   void OnReleaseNotesPrefChanged();
+  void OnCoralPrefChanged();
 
   // Records metrics on which providers are hidden based on prefs.
   void RecordProviderHiddenHistograms();
@@ -224,9 +265,8 @@ class ASH_EXPORT BirchModel : public SessionObserver,
   // Returns true if most visited items should be included in the results.
   bool ShouldShowMostVisited();
 
-  // Returns the weather provider to use, depending on whether BirchWeatherV2
-  // feature is enabled. Returns nullptr if weather provider is disabled.
-  BirchDataProvider* GetWeatherProvider();
+  // Called when the lost media data provider changed.
+  void OnLostMediaDataProviderChanged();
 
   // Whether this is a post-login fetch (occurring right after login).
   bool is_post_login_fetch_ = false;
@@ -246,14 +286,17 @@ class ASH_EXPORT BirchModel : public SessionObserver,
   DataTypeInfo<BirchLastActiveItem> last_active_data_;
   DataTypeInfo<BirchMostVisitedItem> most_visited_data_;
   DataTypeInfo<BirchSelfShareItem> self_share_data_;
+  DataTypeInfo<BirchLostMediaItem> lost_media_data_;
   DataTypeInfo<BirchReleaseNotesItem> release_notes_data_;
   DataTypeInfo<BirchWeatherItem> weather_data_;
+  DataTypeInfo<BirchCoralItem> coral_data_;
 
   raw_ptr<BirchClient> birch_client_ = nullptr;
 
   std::unique_ptr<BirchIconCache> icon_cache_;
 
   std::unique_ptr<BirchDataProvider> weather_provider_;
+  std::unique_ptr<BirchDataProvider> coral_provider_;
 
   // When set, this clock is used to ensure a consistent current time is used
   // for testing.
@@ -265,12 +308,11 @@ class ASH_EXPORT BirchModel : public SessionObserver,
 
   PrefChangeRegistrar calendar_pref_registrar_;
   PrefChangeRegistrar file_suggest_pref_registrar_;
-  PrefChangeRegistrar recent_tab_pref_registrar_;
-  PrefChangeRegistrar last_active_pref_registrar_;
-  PrefChangeRegistrar most_visited_pref_registrar_;
-  PrefChangeRegistrar self_share_pref_registrar_;
+  PrefChangeRegistrar chrome_tabs_pref_registrar_;
+  PrefChangeRegistrar lost_media_pref_registrar_;
   PrefChangeRegistrar weather_pref_registrar_;
   PrefChangeRegistrar release_notes_pref_registrar_;
+  PrefChangeRegistrar coral_pref_registrar_;
 
   // Used to filter out items which have previously been removed by the user.
   std::unique_ptr<BirchItemRemover> item_remover_;
@@ -288,6 +330,11 @@ class ASH_EXPORT BirchModel : public SessionObserver,
   // When we last returned a most visited item. Used to suppress showing the
   // most visited items too often.
   base::Time most_visited_last_shown_;
+
+  // The callback which runs when the lost media data is changed.
+  LostMediaDataChangedCallback lost_media_data_changed_callback_;
+
+  base::WeakPtrFactory<BirchModel> weak_ptr_factory_{this};
 };
 
 }  // namespace ash

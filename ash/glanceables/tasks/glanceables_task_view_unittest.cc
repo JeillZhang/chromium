@@ -10,7 +10,6 @@
 
 #include "ash/api/tasks/tasks_client.h"
 #include "ash/api/tasks/tasks_types.h"
-#include "ash/constants/ash_features.h"
 #include "ash/glanceables/common/glanceables_util.h"
 #include "ash/glanceables/common/glanceables_view_id.h"
 #include "ash/system/time/calendar_unittest_utils.h"
@@ -18,14 +17,17 @@
 #include "base/functional/callback_helpers.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/test/scoped_feature_list.h"
 #include "base/test/test_future.h"
 #include "base/time/time.h"
 #include "base/time/time_override.h"
 #include "base/types/cxx23_to_underlying.h"
 #include "chromeos/ash/components/settings/scoped_timezone_settings.h"
+#include "google_apis/common/api_error_codes.h"
+#include "ui/accessibility/ax_enums.mojom.h"
+#include "ui/accessibility/platform/ax_platform_node.h"
 #include "ui/events/event_constants.h"
 #include "ui/events/keycodes/keyboard_codes_posix.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/controls/button/image_button.h"
 #include "ui/views/controls/button/label_button.h"
 #include "ui/views/controls/image_view.h"
@@ -41,14 +43,8 @@ namespace ash {
 class GlanceablesTaskViewTest : public AshTestBase {
  public:
   GlanceablesTaskViewTest() {
-    feature_list_.InitWithFeatures(
-        /*enabled_features=*/{features::kGlanceablesTimeManagementTasksView},
-        /*disabled_features=*/{});
     glanceables_util::SetIsNetworkConnectedForTest(true);
   }
-
- private:
-  base::test::ScopedFeatureList feature_list_;
 };
 
 TEST_F(GlanceablesTaskViewTest, FormatsDueDate) {
@@ -155,7 +151,7 @@ TEST_F(GlanceablesTaskViewTest, UpdatingTaskTriggersErrorMessageIfNoNetwork) {
   const auto widget = CreateFramelessTestWidget();
   widget->SetFullscreen(true);
   base::test::TestFuture<GlanceablesTasksErrorType,
-                         GlanceablesErrorMessageView::ButtonActionType>
+                         ErrorMessageToast::ButtonActionType>
       error_future;
 
   const auto* const view =
@@ -182,7 +178,7 @@ TEST_F(GlanceablesTaskViewTest, UpdatingTaskTriggersErrorMessageIfNoNetwork) {
     EXPECT_EQ(task_error_type,
               GlanceablesTasksErrorType::kCantMarkCompleteNoNetwork);
     EXPECT_EQ(button_action_type,
-              GlanceablesErrorMessageView::ButtonActionType::kDismiss);
+              ErrorMessageToast::ButtonActionType::kDismiss);
   }
 
   // No `STRIKE_THROUGH` style should be applied to the label.
@@ -203,7 +199,7 @@ TEST_F(GlanceablesTaskViewTest, UpdatingTaskTriggersErrorMessageIfNoNetwork) {
     EXPECT_EQ(task_error_type,
               GlanceablesTasksErrorType::kCantUpdateTitleNoNetwork);
     EXPECT_EQ(button_action_type,
-              GlanceablesErrorMessageView::ButtonActionType::kDismiss);
+              ErrorMessageToast::ButtonActionType::kDismiss);
   }
 }
 
@@ -432,7 +428,8 @@ TEST_F(GlanceablesTaskViewTest, CommitEditedTaskOnTab) {
                   /*has_email_link=*/false, /*has_notes=*/false,
                   /*updated=*/base::Time::Now(), /*web_view_link=*/GURL(),
                   api::Task::OriginSurfaceType::kRegular);
-    std::move(callback).Run(&updated_task);
+    std::move(callback).Run(google_apis::ApiErrorCode::HTTP_SUCCESS,
+                            &updated_task);
   }
 
   const auto* title_label = views::AsViewClass<views::Label>(view->GetViewByID(
@@ -520,7 +517,8 @@ TEST_F(GlanceablesTaskViewTest, SupportsEditingRightAfterAdding) {
                   /*has_email_link=*/false, /*has_notes=*/false,
                   /*updated=*/base::Time::Now(), /*web_view_link=*/GURL(),
                   api::Task::OriginSurfaceType::kRegular);
-    std::move(callback).Run(&created_task);
+    std::move(callback).Run(google_apis::ApiErrorCode::HTTP_SUCCESS,
+                            &created_task);
   }
 
   {
@@ -590,7 +588,8 @@ TEST_F(GlanceablesTaskViewTest, HandlesPressingCheckButtonWhileAdding) {
                 /*has_email_link=*/false, /*has_notes=*/false,
                 /*updated=*/base::Time::Now(), /*web_view_link=*/GURL(),
                 api::Task::OriginSurfaceType::kRegular);
-  std::move(callback).Run(&created_task);
+  std::move(callback).Run(google_apis::ApiErrorCode::HTTP_SUCCESS,
+                          &created_task);
   EXPECT_TRUE(view->GetCheckButtonForTest()->GetEnabled());
   EXPECT_TRUE(title_button->GetEnabled());
 }
@@ -656,6 +655,40 @@ TEST_F(GlanceablesTaskViewTest, DisplaysOriginSurfaceType) {
           base::to_underlying(GlanceablesViewId::kAssignedTaskNotice))));
     }
   }
+}
+
+TEST_F(GlanceablesTaskViewTest,
+       CheckButtonAccessibleDefaultActionVerbAndCheckedState) {
+  const auto task = api::Task("task-id", "Task title",
+                              /*due=*/std::nullopt, /*completed=*/false,
+                              /*has_subtasks=*/false, /*has_email_link=*/false,
+                              /*has_notes=*/false, /*updated=*/base::Time(),
+                              /*web_view_link=*/GURL(),
+                              api::Task::OriginSurfaceType::kRegular);
+  const auto widget = CreateFramelessTestWidget();
+  widget->SetFullscreen(true);
+  auto* view = widget->SetContentsView(std::make_unique<GlanceablesTaskView>(
+      &task, /*mark_as_completed_callback=*/base::DoNothing(),
+      /*save_callback=*/base::DoNothing(),
+      /*edit_in_browser_callback=*/base::DoNothing(),
+      /*show_error_message_callback=*/base::DoNothing()));
+  auto* check_button = view->GetCheckButtonForTest();
+  ui::AXNodeData data;
+  check_button->GetViewAccessibility().GetAccessibleNodeData(&data);
+  EXPECT_EQ(data.GetDefaultActionVerb(), ax::mojom::DefaultActionVerb::kCheck);
+
+  view->SetCheckedForTest(true);
+  data = ui::AXNodeData();
+  check_button->GetViewAccessibility().GetAccessibleNodeData(&data);
+  EXPECT_EQ(data.GetCheckedState(), ax::mojom::CheckedState::kTrue);
+  EXPECT_EQ(data.GetDefaultActionVerb(),
+            ax::mojom::DefaultActionVerb::kUncheck);
+
+  view->SetCheckedForTest(false);
+  data = ui::AXNodeData();
+  check_button->GetViewAccessibility().GetAccessibleNodeData(&data);
+  EXPECT_EQ(data.GetCheckedState(), ax::mojom::CheckedState::kFalse);
+  EXPECT_EQ(data.GetDefaultActionVerb(), ax::mojom::DefaultActionVerb::kCheck);
 }
 
 }  // namespace ash

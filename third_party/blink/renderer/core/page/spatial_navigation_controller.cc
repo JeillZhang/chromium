@@ -45,14 +45,16 @@ SpatialNavigationDirection FocusDirectionForKey(KeyboardEvent* event) {
     return SpatialNavigationDirection::kNone;
 
   SpatialNavigationDirection ret_val = SpatialNavigationDirection::kNone;
-  if (event->key() == "ArrowDown")
+  const AtomicString key(event->key());
+  if (key == keywords::kArrowDown) {
     ret_val = SpatialNavigationDirection::kDown;
-  else if (event->key() == "ArrowUp")
+  } else if (key == keywords::kArrowUp) {
     ret_val = SpatialNavigationDirection::kUp;
-  else if (event->key() == "ArrowLeft")
+  } else if (key == keywords::kArrowLeft) {
     ret_val = SpatialNavigationDirection::kLeft;
-  else if (event->key() == "ArrowRight")
+  } else if (key == keywords::kArrowRight) {
     ret_val = SpatialNavigationDirection::kRight;
+  }
 
   // TODO(bokan): We should probably assert that we don't get anything else but
   // currently KeyboardEventManager sends non-arrow keys here.
@@ -88,6 +90,17 @@ bool IsSkippableCandidate(const Element* element) {
     return false;
 
   return true;
+}
+
+bool IsEqualDistanceAndContainsBestCandidate(
+    const FocusCandidate& candidate,
+    const FocusCandidate& best_candidate,
+    const double& candidate_distance,
+    const double& best_distance) {
+  return std::fabs(candidate_distance - best_distance) <
+             std::numeric_limits<double>::epsilon() &&
+         candidate.rect_in_root_frame.Contains(
+             best_candidate.rect_in_root_frame);
 }
 
 // Determines whether the given candidate is closer to the current interested
@@ -134,7 +147,12 @@ static void ConsiderForBestCandidate(SpatialNavigationDirection direction,
     previous_best_distance = kMaxDistance;
   }
 
-  if (distance < best_distance && IsUnobscured(candidate)) {
+  // In case of a tie, we must prefer a container to a contained element since
+  // interest moves from outside in (e.g. see ComputeDistanceDataForNode)
+  if ((distance < best_distance ||
+       IsEqualDistanceAndContainsBestCandidate(candidate, *best_candidate,
+                                               distance, best_distance)) &&
+      IsUnobscured(candidate)) {
     *previous_best_candidate = *best_candidate;
     previous_best_distance = best_distance;
     *best_candidate = candidate;
@@ -430,7 +448,7 @@ bool SpatialNavigationController::IsValidCandidate(
       return false;
   }
 
-  return element->IsKeyboardFocusable();
+  return element->IsKeyboardFocusableSlow();
 }
 
 Element* SpatialNavigationController::GetInterestedElement() const {

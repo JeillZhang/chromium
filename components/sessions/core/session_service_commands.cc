@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #include "components/sessions/core/session_service_commands.h"
 
 #include <stdint.h>
@@ -21,6 +26,7 @@
 #include "base/values.h"
 #include "components/sessions/core/base_session_service_commands.h"
 #include "components/tab_groups/tab_group_color.h"
+#include "ui/base/mojom/window_show_state.mojom.h"
 
 namespace sessions {
 
@@ -156,8 +162,8 @@ struct VisibleOnAllWorkspacesPayload {
   bool visible_on_all_workspaces;
 };
 
-// Persisted versions of ui::WindowShowState that are written to disk and can
-// never change.
+// Persisted versions of ui::mojom::WindowShowState that are written to disk and
+// can never change.
 enum PersistedWindowShowState {
   // SHOW_STATE_DEFAULT (0) never persisted.
   PERSISTED_SHOW_STATE_NORMAL = 1,
@@ -170,60 +176,53 @@ enum PersistedWindowShowState {
   PERSISTED_SHOW_STATE_END = 8,
 };
 
-// TODO(crbug.com/40946710): Remove this around December 2024. This is part of a
-// workaround added to support the transition from storing the last_active_time
-// as TimeTicks to Time that was added in December 2023. This is the threshold
-// at which we consider that if a tab is so far in the past, it must be a tab
-// serialized with TimeTicks and not Time.
-const base::TimeDelta kLastActiveWorkaroundThreshold = base::Days(366 * 15);
-
 // Assert to ensure PersistedWindowShowState is updated if ui::WindowShowState
 // is changed.
-static_assert(ui::SHOW_STATE_END ==
-                  static_cast<ui::WindowShowState>(PERSISTED_SHOW_STATE_END -
-                                                   2),
-              "SHOW_STATE_END must equal PERSISTED_SHOW_STATE_END minus the "
-              "deprecated entries");
+// TODO(crbug.com/361560784): Investigate and Remove `kEnd`
+static_assert(
+    ui::mojom::WindowShowState::kEnd ==
+        static_cast<ui::mojom::WindowShowState>(PERSISTED_SHOW_STATE_END - 2),
+    "WindowShowState::kEnd must equal PERSISTED_SHOW_STATE_END minus the "
+    "deprecated entries");
 // Returns the show state to store to disk based |state|.
 PersistedWindowShowState ShowStateToPersistedShowState(
-    ui::WindowShowState state) {
+    ui::mojom::WindowShowState state) {
   switch (state) {
-    case ui::SHOW_STATE_NORMAL:
+    case ui::mojom::WindowShowState::kNormal:
       return PERSISTED_SHOW_STATE_NORMAL;
-    case ui::SHOW_STATE_MINIMIZED:
+    case ui::mojom::WindowShowState::kMinimized:
       return PERSISTED_SHOW_STATE_MINIMIZED;
-    case ui::SHOW_STATE_MAXIMIZED:
+    case ui::mojom::WindowShowState::kMaximized:
       return PERSISTED_SHOW_STATE_MAXIMIZED;
-    case ui::SHOW_STATE_FULLSCREEN:
+    case ui::mojom::WindowShowState::kFullscreen:
       return PERSISTED_SHOW_STATE_FULLSCREEN;
-    case ui::SHOW_STATE_DEFAULT:
-    case ui::SHOW_STATE_INACTIVE:
+    case ui::mojom::WindowShowState::kDefault:
+    case ui::mojom::WindowShowState::kInactive:
       return PERSISTED_SHOW_STATE_NORMAL;
 
-    case ui::SHOW_STATE_END:
+    case ui::mojom::WindowShowState::kEnd:
       break;
   }
-  NOTREACHED_IN_MIGRATION();
-  return PERSISTED_SHOW_STATE_NORMAL;
+  NOTREACHED();
 }
 
 // Lints show state values when read back from persited disk.
-ui::WindowShowState PersistedShowStateToShowState(int state) {
+ui::mojom::WindowShowState PersistedShowStateToShowState(int state) {
   switch (state) {
     case PERSISTED_SHOW_STATE_NORMAL:
-      return ui::SHOW_STATE_NORMAL;
+      return ui::mojom::WindowShowState::kNormal;
     case PERSISTED_SHOW_STATE_MINIMIZED:
-      return ui::SHOW_STATE_MINIMIZED;
+      return ui::mojom::WindowShowState::kMinimized;
     case PERSISTED_SHOW_STATE_MAXIMIZED:
-      return ui::SHOW_STATE_MAXIMIZED;
+      return ui::mojom::WindowShowState::kMaximized;
     case PERSISTED_SHOW_STATE_FULLSCREEN:
-      return ui::SHOW_STATE_FULLSCREEN;
+      return ui::mojom::WindowShowState::kFullscreen;
     case PERSISTED_SHOW_STATE_DETACHED_DEPRECATED:
     case PERSISTED_SHOW_STATE_DOCKED_DEPRECATED:
-      return ui::SHOW_STATE_NORMAL;
+      return ui::mojom::WindowShowState::kNormal;
   }
-  NOTREACHED_IN_MIGRATION();
-  return ui::SHOW_STATE_NORMAL;
+  DUMP_WILL_BE_NOTREACHED();
+  return ui::mojom::WindowShowState::kNormal;
 }
 
 // Iterates through the vector updating the selected_tab_index of each
@@ -488,8 +487,8 @@ void CreateTabsAndWindows(
         GetWindow(window_id, windows)
             ->bounds.SetRect(payload.x, payload.y, payload.w, payload.h);
         GetWindow(window_id, windows)->show_state =
-            payload.is_maximized ? ui::SHOW_STATE_MAXIMIZED
-                                 : ui::SHOW_STATE_NORMAL;
+            payload.is_maximized ? ui::mojom::WindowShowState::kMaximized
+                                 : ui::mojom::WindowShowState::kNormal;
         break;
       }
 
@@ -690,8 +689,12 @@ void CreateTabsAndWindows(
           if (!iter.ReadString(&saved_guid)) {
             return;
           }
-
           group->saved_guid = saved_guid;
+        } else {
+          // Explicitly update the |saved_guid| to nullopt if the group
+          // isn't saved. This is to ensure the right value is set when there
+          // are multiple entries in the append log file.
+          group->saved_guid = std::nullopt;
         }
 
         break;
@@ -797,33 +800,8 @@ void CreateTabsAndWindows(
         }
         SessionTab* tab =
             GetTab(SessionID::FromSerializedValue(payload.tab_id), tabs);
-        base::Time deserialized_time = base::Time::FromDeltaSinceWindowsEpoch(
+        tab->last_active_time = base::Time::FromDeltaSinceWindowsEpoch(
             base::Microseconds(payload.last_active_time));
-
-        if (base::Time::Now() - deserialized_time >
-            kLastActiveWorkaroundThreshold) {
-          // TODO(crbug.com/40946710): Remove this once enough time has passed
-          // (added in December 2023, can be removed after ~1 year). This is a
-          // workaround put in place during the migration from base::TimeTicks
-          // internal representation to microseconds since Windows epoch. As the
-          // origin point may be vastely different, the values stored in the old
-          // format appear as really old when deserialized in the new format. So
-          // checking all value older than 15 years should be a good enough
-          // filter to catch them. If it is a value stored in the old format, it
-          // should be correctly decoded.
-          base::TimeTicks time_tick_value =
-              base::TimeTicks::FromInternalValue(payload.last_active_time);
-          base::TimeDelta delta_since_epoch =
-              time_tick_value - base::TimeTicks::UnixEpoch();
-          base::Time corrected_time =
-              base::Time::UnixEpoch() + delta_since_epoch;
-          if (base::Time::Now() < corrected_time) {
-            // If the correction is giving a time in the future, set it to now.
-            corrected_time = base::Time::Now();
-          }
-          deserialized_time = corrected_time;
-        }
-        tab->last_active_time = deserialized_time;
         break;
       }
 
@@ -963,7 +941,7 @@ std::unique_ptr<SessionCommand> CreateSetTabWindowCommand(SessionID window_id,
 std::unique_ptr<SessionCommand> CreateSetWindowBoundsCommand(
     SessionID window_id,
     const gfx::Rect& bounds,
-    ui::WindowShowState show_state) {
+    ui::mojom::WindowShowState show_state) {
   WindowBoundsPayload3 payload = { 0 };
   payload.window_id = window_id.id();
   payload.x = bounds.x();
@@ -1086,16 +1064,11 @@ std::unique_ptr<SessionCommand> CreateSetActiveWindowCommand(
 
 std::unique_ptr<SessionCommand> CreateLastActiveTimeCommand(
     SessionID tab_id,
-    base::TimeTicks last_active_time) {
+    base::Time last_active_time) {
   LastActiveTimePayload payload = {0};
   payload.tab_id = tab_id.id();
-
-  // Convert the last_active_time from TimeTicks to Time.
-  base::TimeDelta delta_since_epoch =
-      last_active_time - base::TimeTicks::UnixEpoch();
-  base::Time converted_time = base::Time::UnixEpoch() + delta_since_epoch;
   payload.last_active_time =
-      converted_time.ToDeltaSinceWindowsEpoch().InMicroseconds();
+      last_active_time.ToDeltaSinceWindowsEpoch().InMicroseconds();
 
   return CreateSessionCommandForPayload(kCommandLastActiveTime, payload);
 }

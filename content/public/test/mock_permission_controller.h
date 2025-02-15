@@ -43,6 +43,10 @@ class MockPermissionController : public PermissionController {
               GetPermissionResultForCurrentDocument,
               (blink::PermissionType permission,
                RenderFrameHost* render_frame_host));
+  MOCK_METHOD(blink::mojom::PermissionStatus,
+              GetCombinedPermissionAndDeviceStatus,
+              (blink::PermissionType permission,
+               RenderFrameHost* render_frame_host));
   MOCK_METHOD(content::PermissionResult,
               GetPermissionResultForOriginWithoutContext,
               (blink::PermissionType permission,
@@ -82,10 +86,10 @@ class MockPermissionController : public PermissionController {
       SubscribeToPermissionStatusChange,
       (blink::PermissionType permission,
        RenderProcessHost* render_process_host,
-       const url::Origin& requesting_origin,
+       RenderFrameHost* render_frame_host,
+       const GURL& requesting_origin,
        bool should_include_device_status,
-       const base::RepeatingCallback<void(blink::mojom::PermissionStatus)>&
-           callback));
+       const base::RepeatingCallback<void(PermissionStatus)>& callback));
   MOCK_METHOD(void,
               UnsubscribeFromPermissionStatusChange,
               (SubscriptionId subscription_id));

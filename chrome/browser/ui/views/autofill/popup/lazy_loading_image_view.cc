@@ -25,13 +25,14 @@ LazyLoadingImageView::LazyLoadingImageView(gfx::Size size,
 LazyLoadingImageView::~LazyLoadingImageView() = default;
 
 void LazyLoadingImageView::OnLoadSuccess(const gfx::Image& image) {
-  image_->SetImage(image.AsImageSkia());
+  image_->SetImage(ui::ImageModel::FromImage(image));
 }
 
 void LazyLoadingImageView::OnPaint(gfx::Canvas* canvas) {
   if (!requested_ && !GetVisibleBounds().IsEmpty()) {
     CHECK(loader_);
-    std::move(loader_).Run(base::BindOnce(&LazyLoadingImageView::OnLoadSuccess,
+    std::move(loader_).Run(&request_tracker_,
+                           base::BindOnce(&LazyLoadingImageView::OnLoadSuccess,
                                           weak_ptr_factory_.GetWeakPtr()),
                            // Error loading is currently ignored, which means
                            // the placeholder image doesn't change.

@@ -36,6 +36,8 @@ class NET_EXPORT HttpRequestHeaders {
     HeaderKeyValuePair(std::string_view key, const char* value)
         : HeaderKeyValuePair(key, std::string_view(value)) {}
 
+    bool operator==(const HeaderKeyValuePair& other) const = default;
+
     std::string key;
     std::string value;
   };
@@ -117,9 +119,9 @@ class NET_EXPORT HttpRequestHeaders {
     return FindHeader(key) != headers_.end();
   }
 
-  // Gets the first header that matches |key|.  If found, returns true and
-  // writes the value to |out|.
-  bool GetHeader(std::string_view key, std::string* out) const;
+  // Gets the first header that matches |key|, if one exists. If none exist,
+  // returns std::nullopt.
+  std::optional<std::string> GetHeader(std::string_view key) const;
 
   // Clears all the headers.
   void Clear();

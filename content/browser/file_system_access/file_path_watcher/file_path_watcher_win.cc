@@ -33,12 +33,15 @@
 #include "base/threading/platform_thread.h"
 #include "base/threading/scoped_blocking_call.h"
 #include "base/time/time.h"
+#include "base/timer/timer.h"
 #include "base/types/expected.h"
 #include "base/types/id_type.h"
 #include "base/win/object_watcher.h"
 #include "base/win/scoped_handle.h"
 #include "base/win/windows_types.h"
+#include "content/browser/file_system_access/features.h"
 #include "content/browser/file_system_access/file_path_watcher/file_path_watcher_change_tracker.h"
+#include "content/browser/file_system_access/file_path_watcher/file_path_watcher_histogram.h"
 
 namespace content {
 namespace {
@@ -59,9 +62,8 @@ CreateDirectoryHandle(const base::FilePath& dir) {
 
   base::win::ScopedHandle handle(::CreateFileW(
       dir.value().c_str(), FILE_LIST_DIRECTORY,
-      FILE_SHARE_DELETE | FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
-      OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED,
-      nullptr));
+      FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
+      FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED, nullptr));
 
   if (handle.is_valid()) {
     base::File::Info file_info;
@@ -109,18 +111,16 @@ class CompletionIOPortThread final : public base::PlatformThread::Delegate {
   }
 
   // Thread safe.
-  std::optional<WatcherEntryId> AddWatcher(
-      FilePathWatcherImpl& watcher,
-      base::win::ScopedHandle watched_handle,
-      base::FilePath watched_path);
+  base::expected<CompletionIOPortThread::WatcherEntryId,
+                 WatchWithChangeInfoResult>
+  AddWatcher(FilePathWatcherImpl& watcher,
+             base::win::ScopedHandle watched_handle,
+             base::FilePath watched_path);
 
   // Thread safe.
   void RemoveWatcher(WatcherEntryId watcher_id);
 
   base::Lock& GetLockForTest();  // IN-TEST
-
- private:
-  friend base::NoDestructor<CompletionIOPortThread>;
 
   // The max size of a file notification assuming that long paths aren't
   // enabled.
@@ -139,12 +139,17 @@ class CompletionIOPortThread final : public base::PlatformThread::Delegate {
   // https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-readdirectorychangesw#remarks.
   static_assert(kWatchBufferSizeBytes <= 64 * 1024);
 
+ private:
+  friend base::NoDestructor<CompletionIOPortThread>;
+
   struct WatcherEntry {
-    WatcherEntry(base::WeakPtr<FilePathWatcherImpl> watcher_weak_ptr,
+    WatcherEntry(FilePathWatcherImpl* watcher_raw_ptr,
+                 base::WeakPtr<FilePathWatcherImpl> watcher_weak_ptr,
                  scoped_refptr<base::SequencedTaskRunner> task_runner,
                  base::win::ScopedHandle watched_handle,
                  base::FilePath watched_path)
-        : watcher_weak_ptr(std::move(watcher_weak_ptr)),
+        : watcher_raw_ptr(watcher_raw_ptr),
+          watcher_weak_ptr(std::move(watcher_weak_ptr)),
           task_runner(std::move(task_runner)),
           watched_handle(std::move(watched_handle)),
           watched_path(std::move(watched_path)) {}
@@ -157,6 +162,10 @@ class CompletionIOPortThread final : public base::PlatformThread::Delegate {
     WatcherEntry(WatcherEntry&&) = delete;
     WatcherEntry& operator=(WatcherEntry&&) = delete;
 
+    // Safe use of `raw_ptr` because it is only ever accessed in `ThreadMain`
+    // after verifying that the watcher is still alive. Set to nullptr before
+    // the underlying `FilePathWatcherImpl` is destroyed.
+    raw_ptr<FilePathWatcherImpl> watcher_raw_ptr;
     base::WeakPtr<FilePathWatcherImpl> watcher_weak_ptr;
     scoped_refptr<base::SequencedTaskRunner> task_runner;
 
@@ -202,6 +211,10 @@ class FilePathWatcherImpl : public FilePathWatcher::PlatformDelegate {
   FilePathWatcherImpl& operator=(const FilePathWatcherImpl&) = delete;
   ~FilePathWatcherImpl() override;
 
+  size_t current_usage() const override {
+    return CompletionIOPortThread::kWatchBufferSizeBytes;
+  }
+
   // FilePathWatcher::PlatformDelegate implementation:
   bool Watch(const base::FilePath& path,
              Type type,
@@ -216,7 +229,8 @@ class FilePathWatcherImpl : public FilePathWatcher::PlatformDelegate {
   bool WatchWithChangeInfo(
       const base::FilePath& path,
       const WatchOptions& options,
-      const FilePathWatcher::CallbackWithChangeInfo& callback) override;
+      const FilePathWatcher::CallbackWithChangeInfo& callback,
+      const FilePathWatcher::UsageChangeCallback& usage_callback) override;
 
   void Cancel() override;
 
@@ -225,9 +239,37 @@ class FilePathWatcherImpl : public FilePathWatcher::PlatformDelegate {
  private:
   friend CompletionIOPortThread;
 
+  // TODO(crbug.com/343961295): The delay in processing delete event is needed
+  // in order to coalesce deleted and created events, in case of an overwrite.
+  // Adjust the delay time based on testing.
+  static constexpr base::TimeDelta kDeletedChangeDelay =
+      base::Milliseconds(500);
+
+  // Decrements the `upcoming_batch_count_` on destruction unless `Cancel` is
+  // called.
+  class UpcomingBatchCountDecrementer {
+   public:
+    explicit UpcomingBatchCountDecrementer(
+        base::WeakPtr<FilePathWatcherImpl> file_path_watcher_weak_ptr)
+        : file_path_watcher_weak_ptr_(std::move(file_path_watcher_weak_ptr)) {}
+
+    ~UpcomingBatchCountDecrementer() {
+      if (file_path_watcher_weak_ptr_ && !canceled_) {
+        file_path_watcher_weak_ptr_->DecrementAndGetUpcomingBatchCount();
+      }
+    }
+
+    void Cancel() { canceled_ = true; }
+
+   private:
+    base::WeakPtr<FilePathWatcherImpl> file_path_watcher_weak_ptr_;
+
+    bool canceled_ = false;
+  };
+
   // Sets up a watch handle for either `target_` or one of its ancestors.
   // Returns true on success.
-  [[nodiscard]] bool SetupWatchHandleForTarget();
+  [[nodiscard]] WatchWithChangeInfoResult SetupWatchHandleForTarget();
 
   void CloseWatchHandle();
 
@@ -240,6 +282,15 @@ class FilePathWatcherImpl : public FilePathWatcher::PlatformDelegate {
                                 base::HeapArray<uint8_t> notification_batch);
 
   base::FilePath& GetReportedPath(base::FilePath& modified_path);
+
+  int DecrementAndGetUpcomingBatchCount();
+
+  void RunCallbackOnPendingDelete();
+
+  // Incremented by the `CompletionIOPortThread` to indicate if there is another
+  // batch for this `FilePathWatcherImpl` queued to process. Decremented by this
+  // `FilePathWatcherImpl` every time a batch is processed.
+  std::atomic_int upcoming_batch_count_ = 0;
 
   // Callback to notify upon changes.
   FilePathWatcher::CallbackWithChangeInfo callback_;
@@ -254,6 +305,9 @@ class FilePathWatcherImpl : public FilePathWatcher::PlatformDelegate {
 
   std::optional<FilePathWatcherChangeTracker> change_tracker_;
 
+  // Timer to delay processing a pending delete change.
+  base::OneShotTimer pending_delete_timer_;
+
   base::WeakPtrFactory<FilePathWatcherImpl> weak_factory_{this};
 };
 
@@ -266,8 +320,7 @@ DWORD CompletionIOPortThread::SetupWatch(WatcherEntry& watcher_entry) {
       watcher_entry.watched_handle.get(), &watcher_entry.buffer,
       kWatchBufferSizeBytes, /*bWatchSubtree=*/true,
       FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_SIZE |
-          FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_DIR_NAME |
-          FILE_NOTIFY_CHANGE_ATTRIBUTES | FILE_NOTIFY_CHANGE_SECURITY,
+          FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_DIR_NAME,
       nullptr, &overlapped, nullptr);
   if (!success) {
     return ::GetLastError();
@@ -275,7 +328,8 @@ DWORD CompletionIOPortThread::SetupWatch(WatcherEntry& watcher_entry) {
   return ERROR_SUCCESS;
 }
 
-std::optional<CompletionIOPortThread::WatcherEntryId>
+base::expected<CompletionIOPortThread::WatcherEntryId,
+               WatchWithChangeInfoResult>
 CompletionIOPortThread::AddWatcher(FilePathWatcherImpl& watcher,
                                    base::win::ScopedHandle watched_handle,
                                    base::FilePath watched_path) {
@@ -286,12 +340,13 @@ CompletionIOPortThread::AddWatcher(FilePathWatcherImpl& watcher,
       watched_handle.get(), io_completion_port_.get(),
       static_cast<ULONG_PTR>(watcher_id.GetUnsafeValue()), 1);
   if (port == nullptr) {
-    return std::nullopt;
+    return base::unexpected(
+        WatchWithChangeInfoResult::kWinCreateIoCompletionPortError);
   }
 
   auto [it, inserted] = watcher_entries_.emplace(
       std::piecewise_construct, std::forward_as_tuple(watcher_id),
-      std::forward_as_tuple(watcher.weak_factory_.GetWeakPtr(),
+      std::forward_as_tuple(&watcher, watcher.weak_factory_.GetWeakPtr(),
                             watcher.task_runner(), std::move(watched_handle),
                             std::move(watched_path)));
 
@@ -301,7 +356,8 @@ CompletionIOPortThread::AddWatcher(FilePathWatcherImpl& watcher,
 
   if (result != ERROR_SUCCESS) {
     watcher_entries_.erase(it);
-    return std::nullopt;
+    return base::unexpected(
+        WatchWithChangeInfoResult::kWinReadDirectoryChangesWError);
   }
 
   return watcher_id;
@@ -318,6 +374,8 @@ void CompletionIOPortThread::RemoveWatcher(WatcherEntryId watcher_id) {
     auto& watched_handle = it->second.watched_handle;
     CHECK(watched_handle.is_valid());
     raw_watched_handle = watched_handle.release();
+
+    it->second.watcher_raw_ptr = nullptr;
   }
 
   {
@@ -363,8 +421,8 @@ void CompletionIOPortThread::ThreadMain() {
         << "WatcherEntryId not in map";
 
     auto& watcher_entry = watcher_entry_it->second;
-    auto& [watcher_weak_ptr, task_runner, watched_handle, watched_path,
-           buffer] = watcher_entry;
+    auto& [watcher_raw_ptr, watcher_weak_ptr, task_runner, watched_handle,
+           watched_path, buffer] = watcher_entry;
 
     if (!watched_handle.is_valid()) {
       // After the handle has been closed, a final notification will be sent
@@ -377,6 +435,10 @@ void CompletionIOPortThread::ThreadMain() {
       }
       continue;
     }
+
+    // If watched_handle hasn't been released yet, then the `watcher` is
+    // still alive, and it is safe to access via raw pointer.
+    watcher_raw_ptr->upcoming_batch_count_++;
 
     // `GetQueuedCompletionStatus` can fail with `ERROR_ACCESS_DENIED` when the
     // watched directory is deleted.
@@ -443,7 +505,8 @@ bool FilePathWatcherImpl::Watch(const base::FilePath& path,
   return WatchWithChangeInfo(
       path, WatchOptions{.type = type},
       base::IgnoreArgs<const FilePathWatcher::ChangeInfo&>(
-          base::BindRepeating(std::move(callback))));
+          base::BindRepeating(std::move(callback))),
+      base::DoNothingAs<void(size_t, size_t)>());
 }
 
 bool FilePathWatcherImpl::WatchWithOptions(
@@ -453,13 +516,15 @@ bool FilePathWatcherImpl::WatchWithOptions(
   return WatchWithChangeInfo(
       path, options,
       base::IgnoreArgs<const FilePathWatcher::ChangeInfo&>(
-          base::BindRepeating(std::move(callback))));
+          base::BindRepeating(std::move(callback))),
+      base::DoNothingAs<void(size_t, size_t)>());
 }
 
 bool FilePathWatcherImpl::WatchWithChangeInfo(
     const base::FilePath& path,
     const WatchOptions& options,
-    const FilePathWatcher::CallbackWithChangeInfo& callback) {
+    const FilePathWatcher::CallbackWithChangeInfo& callback,
+    const FilePathWatcher::UsageChangeCallback& usage_callback) {
   DCHECK(target_.empty());  // Can only watch one path.
 
   set_task_runner(base::SequencedTaskRunner::GetCurrentDefault());
@@ -469,7 +534,11 @@ bool FilePathWatcherImpl::WatchWithChangeInfo(
 
   change_tracker_ = FilePathWatcherChangeTracker(target_, options.type);
 
-  return SetupWatchHandleForTarget();
+  WatchWithChangeInfoResult result = SetupWatchHandleForTarget();
+
+  RecordWatchWithChangeInfoResultUma(result);
+
+  return result == WatchWithChangeInfoResult::kSuccess;
 }
 
 void FilePathWatcherImpl::Cancel() {
@@ -492,39 +561,68 @@ base::Lock& FilePathWatcherImpl::GetWatchThreadLockForTest() {
 }
 
 void FilePathWatcherImpl::BufferOverflowed() {
-  // `this` may be deleted after `callback_` is run.
-  callback_.Run(FilePathWatcher::ChangeInfo(), target_, /*error=*/false);
+  DCHECK(task_runner()->RunsTasksInCurrentSequence());
+
+  DecrementAndGetUpcomingBatchCount();
+
+  // Do not send a pendeing delete, which may not have been coalesced.
+  // Consider it as lost in the buffer overflowed batch.
+  pending_delete_timer_.Stop();
 
   change_tracker_->MayHaveMissedChanges();
+
+  // `this` may be deleted after `callback_` is run.
+  callback_.Run(FilePathWatcher::ChangeInfo(), target_, /*error=*/false);
 }
 
 void FilePathWatcherImpl::WatchedDirectoryDeleted(
     base::FilePath watched_path,
     base::HeapArray<uint8_t> notification_batch) {
-  if (!SetupWatchHandleForTarget()) {
+  DCHECK(task_runner()->RunsTasksInCurrentSequence());
+
+  WatchWithChangeInfoResult result = SetupWatchHandleForTarget();
+
+  UpcomingBatchCountDecrementer upcoming_batch_count_decrementer(
+      weak_factory_.GetWeakPtr());
+
+  if (result != WatchWithChangeInfoResult::kSuccess) {
+    RecordCallbackErrorUma(result);
     // `this` may be deleted after `callback_` is run.
     callback_.Run(FilePathWatcher::ChangeInfo(), target_, /*error=*/true);
     return;
   }
 
-  bool target_was_deleted = watched_path == target_;
+  auto self = weak_factory_.GetWeakPtr();
 
   if (!notification_batch.empty()) {
-    auto self = weak_factory_.GetWeakPtr();
+    // `ProcessNotificationBatch` will decrement `upcoming_batch_count`.
+    upcoming_batch_count_decrementer.Cancel();
+
     // `ProcessNotificationBatch` may delete `this`.
     ProcessNotificationBatch(std::move(watched_path),
                              std::move(notification_batch));
+
     if (!self) {
       return;
     }
   }
 
-  if (target_was_deleted || change_tracker_->KnowTargetExists()) {
+  // The pending delete can be sent, without having to wait for coalescing
+  // since the watched directory is deleted.
+  if (pending_delete_timer_.IsRunning()) {
+    pending_delete_timer_.FireNow();
+  }
+
+  if (watched_path == target_ || change_tracker_->KnowTargetExists()) {
     // `this` may be deleted after `callback_` is run.
     callback_.Run(FilePathWatcher::ChangeInfo(
                       FilePathWatcher::FilePathType::kDirectory,
                       FilePathWatcher::ChangeType::kDeleted, target_),
                   target_, /*error=*/false);
+
+    if (!self) {
+      return;
+    }
   }
 
   change_tracker_->MayHaveMissedChanges();
@@ -535,6 +633,11 @@ void FilePathWatcherImpl::ProcessNotificationBatch(
     base::HeapArray<uint8_t> notification_batch) {
   DCHECK(task_runner()->RunsTasksInCurrentSequence());
   CHECK(!notification_batch.empty());
+
+  // When a new batch arrives, cancel the timer to send a pending delete since
+  // it may be coalesced if any matching event is found from the new batch in
+  // the change tracker.
+  pending_delete_timer_.Stop();
 
   auto self = weak_factory_.GetWeakPtr();
 
@@ -558,7 +661,18 @@ void FilePathWatcherImpl::ProcessNotificationBatch(
     change_tracker_->AddChange(std::move(change_path), file_notify_info.Action);
   }
 
-  for (auto& change : change_tracker_->PopChanges()) {
+  bool next_change_soon = DecrementAndGetUpcomingBatchCount() > 0;
+
+  // Check for any pending delete, and start a timer to be sent later,
+  // in order to give it a chance to be coalesced.
+  if (!next_change_soon && change_tracker_->HasPendingDelete()) {
+    pending_delete_timer_.Start(
+        FROM_HERE, kDeletedChangeDelay,
+        base::BindOnce(&FilePathWatcherImpl::RunCallbackOnPendingDelete,
+                       weak_factory_.GetWeakPtr()));
+  }
+
+  for (auto& change : change_tracker_->PopChanges(next_change_soon)) {
     // `this` may be deleted after `callback_` is run.
     callback_.Run(std::move(change), GetReportedPath(change.modified_path),
                   /*error=*/false);
@@ -568,7 +682,7 @@ void FilePathWatcherImpl::ProcessNotificationBatch(
   }
 }
 
-bool FilePathWatcherImpl::SetupWatchHandleForTarget() {
+WatchWithChangeInfoResult FilePathWatcherImpl::SetupWatchHandleForTarget() {
   CloseWatchHandle();
 
   base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
@@ -595,7 +709,7 @@ bool FilePathWatcherImpl::SetupWatchHandleForTarget() {
     // We're in an unknown state if `CreateDirectoryHandle` returns an `kFatal`
     // error, so return failure.
     if (result.error() == CreateFileHandleError::kFatal) {
-      return false;
+      return WatchWithChangeInfoResult::kWinCreateFileHandleErrorFatal;
     }
 
     // Abort if we hit the root directory.
@@ -603,7 +717,7 @@ bool FilePathWatcherImpl::SetupWatchHandleForTarget() {
     base::FilePath parent(path_to_watch.DirName());
     if (parent == path_to_watch) {
       DLOG(ERROR) << "Reached the root directory";
-      return false;
+      return WatchWithChangeInfoResult::kWinReachedRootDirectory;
     }
     path_to_watch = std::move(parent);
   }
@@ -619,7 +733,7 @@ bool FilePathWatcherImpl::SetupWatchHandleForTarget() {
       // We're in an unknown state if `CreateDirectoryHandle` returns an
       // `kFatal` error, so return failure.
       if (result.error() == CreateFileHandleError::kFatal) {
-        return false;
+        return WatchWithChangeInfoResult::kWinCreateFileHandleErrorFatal;
       }
       // Otherwise go with the current `watched_handle`.
       break;
@@ -628,10 +742,17 @@ bool FilePathWatcherImpl::SetupWatchHandleForTarget() {
     watched_path = path_to_watch;
   }
 
-  watcher_id_ = CompletionIOPortThread::Get()->AddWatcher(
+  auto watcher_id_or_error = CompletionIOPortThread::Get()->AddWatcher(
       *this, std::move(watched_handle), std::move(watched_path));
 
-  return watcher_id_.has_value();
+  if (watcher_id_or_error.has_value()) {
+    watcher_id_ = watcher_id_or_error.value();
+
+    return WatchWithChangeInfoResult::kSuccess;
+  } else {
+    watcher_id_ = std::nullopt;
+    return watcher_id_or_error.error();
+  }
 }
 
 void FilePathWatcherImpl::CloseWatchHandle() {
@@ -646,9 +767,36 @@ base::FilePath& FilePathWatcherImpl::GetReportedPath(
   return report_modified_path_ ? modified_path : target_;
 }
 
+int FilePathWatcherImpl::DecrementAndGetUpcomingBatchCount() {
+  int upcoming_batch_count = --upcoming_batch_count_;
+  CHECK(upcoming_batch_count >= 0);
+  return upcoming_batch_count;
+}
+
+void FilePathWatcherImpl::RunCallbackOnPendingDelete() {
+  DCHECK(task_runner()->RunsTasksInCurrentSequence());
+
+  if (callback_.is_null()) {
+    return;
+  }
+
+  std::optional<FilePathWatcher::ChangeInfo> opt_pending_delete =
+      change_tracker_->TakePendingDelete();
+  CHECK(opt_pending_delete.has_value());
+  FilePathWatcher::ChangeInfo change = *std::move(opt_pending_delete);
+  // `this` may be deleted after `callback_` is run.
+  callback_.Run(std::move(change), GetReportedPath(change.modified_path),
+                /*error=*/false);
+}
+
 }  // namespace
 
 FilePathWatcher::FilePathWatcher()
     : FilePathWatcher(std::make_unique<FilePathWatcherImpl>()) {}
+
+// static
+size_t FilePathWatcher::GetQuotaLimitImpl() {
+  return features::kFileSystemObserverQuotaLimitWindows.Get();
+}
 
 }  // namespace content

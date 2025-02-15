@@ -5,6 +5,7 @@
 import("//build/config/cast.gni")
 import("//build/config/python.gni")
 import("//media/media_options.gni")
+import("//services/device/public/cpp/compute_pressure/buildflags.gni")
 import("//testing/libfuzzer/fuzzer_test.gni")
 import("//third_party/blink/renderer/bindings/bindings.gni")
 import("//third_party/blink/renderer/build/scripts/scripts.gni")
@@ -76,7 +77,6 @@ component("modules") {
     "//third_party/blink/renderer/modules/cache_storage",
     "//third_party/blink/renderer/modules/canvas",
     "//third_party/blink/renderer/modules/clipboard",
-    "//third_party/blink/renderer/modules/compute_pressure",
     "//third_party/blink/renderer/modules/contacts_picker",
     "//third_party/blink/renderer/modules/content_extraction",
     "//third_party/blink/renderer/modules/content_index",
@@ -96,7 +96,6 @@ component("modules") {
     "//third_party/blink/renderer/modules/eventsource",
     "//third_party/blink/renderer/modules/exported",
     "//third_party/blink/renderer/modules/eyedropper",
-    "//third_party/blink/renderer/modules/formatted_text",
     "//third_party/blink/renderer/modules/filesystem",
     "//third_party/blink/renderer/modules/file_system_access",
     "//third_party/blink/renderer/modules/font_access",
@@ -115,7 +114,6 @@ component("modules") {
     "//third_party/blink/renderer/modules/launch",
     "//third_party/blink/renderer/modules/locked_mode",
     "//third_party/blink/renderer/modules/locks",
-    "//third_party/blink/renderer/modules/lock_screen",
     "//third_party/blink/renderer/modules/manifest",
     "//third_party/blink/renderer/modules/media_capabilities",
     "//third_party/blink/renderer/modules/media_controls",
@@ -142,11 +140,10 @@ component("modules") {
     "//third_party/blink/renderer/modules/push_messaging",
     "//third_party/blink/renderer/modules/quota",
     "//third_party/blink/renderer/modules/remoteplayback",
-    "//third_party/blink/renderer/modules/sanitizer_api",
-    "//third_party/blink/renderer/modules/scheduler",
     "//third_party/blink/renderer/modules/screen_details",
     "//third_party/blink/renderer/modules/screen_orientation",
     "//third_party/blink/renderer/modules/sensor",
+    "//third_party/blink/renderer/modules/serial",
     "//third_party/blink/renderer/modules/service_worker",
     "//third_party/blink/renderer/modules/shapedetection",
     "//third_party/blink/renderer/modules/shared_storage",
@@ -159,6 +156,7 @@ component("modules") {
     "//third_party/blink/renderer/modules/video_rvfc",
     "//third_party/blink/renderer/modules/virtualkeyboard",
     "//third_party/blink/renderer/modules/wake_lock",
+    "//third_party/blink/renderer/modules/web_install",
     "//third_party/blink/renderer/modules/webaudio",
     "//third_party/blink/renderer/modules/webcodecs",
     "//third_party/blink/renderer/modules/webdatabase",
@@ -185,14 +183,18 @@ component("modules") {
     sub_modules += [
       "//third_party/blink/renderer/modules/direct_sockets",
       "//third_party/blink/renderer/modules/printing",
-      "//third_party/blink/renderer/modules/serial",
       "//third_party/blink/renderer/modules/smart_card",
       "//third_party/blink/renderer/modules/window_controls_overlay",
     ]
   }
 
+  if (enable_compute_pressure) {
+    sub_modules += [ "//third_party/blink/renderer/modules/compute_pressure" ]
+  }
+
   deps = [
     ":make_modules_generated",
+    "//build:android_buildflags",
     "//cc",
     "//components/webrtc:thread_wrapper",
     "//gin",
@@ -237,6 +239,8 @@ source_set("modules_testing") {
     "peerconnection/adapters/test/mock_ice_transport_adapter_cross_thread_factory.h",
     "peerconnection/testing/fake_resource_listener.cc",
     "peerconnection/testing/fake_resource_listener.h",
+    "peerconnection/testing/fake_webrtc_data_channel.cc",
+    "peerconnection/testing/fake_webrtc_data_channel.h",
     "peerconnection/testing/internals_rtc_certificate.cc",
     "peerconnection/testing/internals_rtc_certificate.h",
     "peerconnection/testing/internals_rtc_peer_connection.cc",
@@ -259,6 +263,13 @@ source_set("modules_testing") {
     "webaudio/testing/internals_web_audio.cc",
     "webaudio/testing/internals_web_audio.h",
   ]
+
+  if (enable_compute_pressure) {
+    sources += [
+      "compute_pressure/testing/internals_compute_pressure.cc",
+      "compute_pressure/testing/internals_compute_pressure.h",
+    ]
+  }
 
   configs += [
     "//third_party/blink/renderer:config",
@@ -287,7 +298,6 @@ group("make_modules_generated") {
     ":make_modules_generated_event_target_names",
     ":make_modules_generated_indexed_db_names",
     ":make_modules_generated_media_capabilities_names",
-    "//components/ml/mojom:mojom_blink_headers",
     "//components/payments/mojom:mojom_blink_headers",
     "//components/schema_org/common:mojom_blink_headers",
     "//components/services/filesystem/public/mojom:mojom_blink_headers",
@@ -390,7 +400,6 @@ source_set("unit_tests") {
   testonly = true
 
   sources = [
-    "accessibility/accessibility_object_model_test.cc",
     "accessibility/ax_layout_object_test.cc",
     "accessibility/ax_node_object_test.cc",
     "accessibility/ax_object_cache_test.cc",
@@ -402,6 +411,7 @@ source_set("unit_tests") {
     "accessibility/testing/accessibility_selection_test.h",
     "accessibility/testing/accessibility_test.cc",
     "accessibility/testing/accessibility_test.h",
+    "ai/model_execution_responder_test.cc",
     "animationworklet/animation_worklet_global_scope_test.cc",
     "animationworklet/animation_worklet_proxy_client_test.cc",
     "animationworklet/worklet_animation_test.cc",
@@ -421,12 +431,11 @@ source_set("unit_tests") {
     "canvas/canvas2d/canvas_style_test_utils.cc",
     "canvas/canvas2d/canvas_style_test_utils.h",
     "canvas/canvas2d/identifiability_study_helper_test.cc",
-    "canvas/canvas2d/recording_test_utils.cc",
-    "canvas/canvas2d/recording_test_utils.h",
     "canvas/htmlcanvas/html_canvas_element_module_test.cc",
     "canvas/offscreencanvas/offscreen_canvas_rendering_api_ukm_metrics_test.cc",
     "canvas/offscreencanvas/offscreen_canvas_test.cc",
     "canvas/offscreencanvas2d/offscreen_canvas_rendering_context_2d_test.cc",
+    "content_extraction/ai_page_content_agent_unittest.cc",
     "content_extraction/inner_html_builder_unittest.cc",
     "content_extraction/inner_text_builder_unittest.cc",
     "content_index/content_description_type_converter_test.cc",
@@ -434,6 +443,7 @@ source_set("unit_tests") {
     "credentialmanagement/credential_manager_type_converters_unittest.cc",
     "credentialmanagement/digital_identity_credential_test.cc",
     "credentialmanagement/password_credential_test.cc",
+    "credentialmanagement/public_key_credential_unittest.cc",
     "csspaint/document_paint_definition_test.cc",
     "csspaint/nativepaint/background_color_paint_definition_test.cc",
     "csspaint/nativepaint/clip_path_paint_definition_test.cc",
@@ -532,6 +542,7 @@ source_set("unit_tests") {
     "payments/payment_event_data_conversion_test.cc",
     "payments/payment_request_details_test.cc",
     "payments/payment_request_for_invalid_origin_or_ssl_test.cc",
+    "payments/payment_request_is_secure_payment_confirmation_available_test.cc",
     "payments/payment_request_optional_total_test.cc",
     "payments/payment_request_test.cc",
     "payments/payment_request_update_event_test.cc",
@@ -550,6 +561,8 @@ source_set("unit_tests") {
     "peerconnection/rtc_encoded_audio_frame_test.cc",
     "peerconnection/rtc_encoded_audio_underlying_sink_test.cc",
     "peerconnection/rtc_encoded_audio_underlying_source_test.cc",
+    "peerconnection/rtc_encoded_underlying_sink_wrapper_test.cc",
+    "peerconnection/rtc_encoded_underlying_source_wrapper_test.cc",
     "peerconnection/rtc_encoded_video_frame_test.cc",
     "peerconnection/rtc_encoded_video_underlying_sink_test.cc",
     "peerconnection/rtc_encoded_video_underlying_source_test.cc",
@@ -557,12 +570,13 @@ source_set("unit_tests") {
     "peerconnection/rtc_peer_connection_handler_test.cc",
     "peerconnection/rtc_peer_connection_test.cc",
     "peerconnection/rtc_rtp_receiver_impl_test.cc",
+    "peerconnection/rtc_rtp_script_transformer_test.cc",
     "peerconnection/rtc_rtp_sender_impl_test.cc",
     "peerconnection/rtc_rtp_transceiver_impl_test.cc",
+    "peerconnection/rtc_rtp_transport_processor_test.cc",
+    "peerconnection/rtc_rtp_transport_test.cc",
     "peerconnection/rtc_sctp_transport_test.cc",
-    "peerconnection/speed_limit_uma_listener_test.cc",
     "peerconnection/thermal_resource_test.cc",
-    "peerconnection/thermal_uma_listener_test.cc",
     "peerconnection/transceiver_state_surfacer_test.cc",
     "peerconnection/webrtc_audio_renderer_test.cc",
     "peerconnection/webrtc_media_stream_track_adapter_map_test.cc",
@@ -579,8 +593,6 @@ source_set("unit_tests") {
     "push_messaging/push_message_data_test.cc",
     "push_messaging/push_subscription_test.cc",
     "remoteplayback/remote_playback_test.cc",
-    "scheduler/dom_scheduler_test.cc",
-    "scheduler/dom_timer_test.cc",
     "screen_orientation/screen_orientation_controller_test.cc",
     "sensor/sensor_test_utils.cc",
     "sensor/sensor_test_utils.h",
@@ -592,6 +604,7 @@ source_set("unit_tests") {
     "service_worker/web_embedded_worker_impl_test.cc",
     "service_worker/web_service_worker_fetch_context_impl_test.cc",
     "shared_storage/shared_storage_worklet_unittest.cc",
+    "speech/speech_recognition_controller_unittest.cc",
     "video_rvfc/video_frame_callback_requester_impl_test.cc",
     "video_rvfc/video_frame_request_callback_collection_test.cc",
     "wake_lock/wake_lock_manager_test.cc",
@@ -630,14 +643,19 @@ source_set("unit_tests") {
     "xr/xr_view_test.cc",
   ]
 
+  if (enable_compute_pressure) {
+    sources += [
+      "compute_pressure/pressure_observer_test.cc",
+      "compute_pressure/pressure_observer_test_utils.cc",
+      "compute_pressure/pressure_observer_test_utils.h",
+    ]
+  }
+
   if (!is_android) {
     sources += [
       # Inline text box tests do not apply to Android, which only loads
       # AXInlineTextBox tests for the focused node.
       "accessibility/ax_inline_text_box_test.cc",
-      "compute_pressure/pressure_observer_test.cc",
-      "compute_pressure/pressure_observer_test_utils.cc",
-      "compute_pressure/pressure_observer_test_utils.h",
     ]
   }
 
@@ -677,6 +695,7 @@ source_set("unit_tests") {
     "//media/mojo/services:services",
     "//media/webrtc:webrtc",
     "//mojo/public/cpp/bindings",
+    "//mojo/public/cpp/test_support:test_utils",
     "//net:test_support",
     "//services/device/public/cpp:test_support",
     "//services/metrics/public/cpp:ukm_builders",
@@ -691,8 +710,10 @@ source_set("unit_tests") {
     "//third_party/blink/renderer/core",
     "//third_party/blink/renderer/core:testing",
     "//third_party/blink/renderer/core:unit_test_support",
+    "//third_party/blink/renderer/core:unit_tests",
     "//third_party/blink/renderer/modules/ad_auction:unit_tests",
     "//third_party/blink/renderer/modules/breakout_box:unit_tests",
+    "//third_party/blink/renderer/modules/clipboard:unit_tests",
     "//third_party/blink/renderer/modules/file_system_access:unit_tests",
     "//third_party/blink/renderer/modules/gamepad:unit_tests",
     "//third_party/blink/renderer/modules/hid:unit_tests",
@@ -712,6 +733,7 @@ source_set("unit_tests") {
     "//third_party/googletest:gmock",
     "//third_party/opus",
     "//third_party/webrtc_overrides:webrtc_component",
+    "//ui/strings:ax_strings_grit",
     "//v8",
   ]
 
@@ -916,6 +938,7 @@ fuzzer_test("webcodecs_video_encoder_fuzzer") {
 
   deps = [
     ":modules",
+    "//third_party/blink/renderer/controller:blink_bindings_test_sources",
     "//third_party/blink/renderer/core:testing",
     "//third_party/blink/renderer/modules/webcodecs:fuzzer_protos",
     "//third_party/blink/renderer/platform:blink_fuzzer_test_support",

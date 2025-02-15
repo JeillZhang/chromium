@@ -12,13 +12,23 @@ import android.text.TextUtils;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
+import org.chromium.base.Callback;
+import org.chromium.base.CallbackController;
+import org.chromium.base.ThreadUtils;
+import org.chromium.base.supplier.ObservableSupplier;
+import org.chromium.base.task.PostTask;
+import org.chromium.base.task.TaskTraits;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.magic_stack.ModuleDelegate;
 import org.chromium.chrome.browser.magic_stack.ModuleDelegate.ModuleType;
+import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab_resumption.TabResumptionDataProvider.ResultStrength;
 import org.chromium.chrome.browser.tab_resumption.TabResumptionDataProvider.SuggestionsResult;
 import org.chromium.chrome.browser.tab_resumption.TabResumptionModuleMetricsUtils.ModuleNotShownReason;
 import org.chromium.chrome.browser.tab_resumption.TabResumptionModuleMetricsUtils.ModuleShowConfig;
 import org.chromium.chrome.browser.tab_resumption.TabResumptionModuleUtils.SuggestionClickCallback;
+import org.chromium.chrome.browser.tabmodel.TabModel;
+import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.components.visited_url_ranking.ScoredURLUserAction;
 import org.chromium.ui.modelutil.PropertyModel;
 
@@ -82,6 +92,7 @@ public class TabResumptionModuleMediator {
      */
     private class Session {
         private final TabResumptionDataProvider mDataProvider;
+        private MultiTabObserver mLocalTabClosureObserver;
 
         private boolean mIsAlive;
         private Handler mHandler;
@@ -94,6 +105,7 @@ public class TabResumptionModuleMediator {
         private boolean mIsStable;
         private SuggestionBundle mBundle;
         private @ResultStrength int mStrength;
+        private final CallbackController mCallbackController;
 
         /**
          * @param dataProvider TabResumptionDataProvider instance owned by this class.
@@ -105,6 +117,25 @@ public class TabResumptionModuleMediator {
                 @NonNull Runnable statusChangedCallback) {
             mDataProvider = dataProvider;
             mDataProvider.setStatusChangedCallback(statusChangedCallback);
+            mLocalTabClosureObserver =
+                    new MultiTabObserver() {
+                        @Override
+                        public void onClosingStateChanged(Tab tab, boolean closing) {
+                            if (!closing) return;
+
+                            // Tab is being closed and only cleanup should be done. We'd like to
+                            // reload, but doing so eagerly now is error-prone (in particular,
+                            // mTabModel.getTabById() on the closing Tab would return non-null).
+                            // Therefore defer reload by posting on current task runner.
+                            assert ThreadUtils.runningOnUiThread();
+                            PostTask.postTask(TaskTraits.UI_DEFAULT, mReloadSessionCallback);
+                        }
+                    };
+
+            mCallbackController = new CallbackController();
+            mModel.set(
+                    TabResumptionModuleProperties.TAB_OBSERVER_CALLBACK,
+                    (tab) -> mLocalTabClosureObserver.add(tab));
             mStrength = ResultStrength.TENTATIVE;
             mIsAlive = true;
         }
@@ -114,6 +145,8 @@ public class TabResumptionModuleMediator {
                 recordSeenActionForEntries(mBundle.entries);
             }
 
+            mCallbackController.destroy();
+            mLocalTabClosureObserver.destroy();
             mDataProvider.setStatusChangedCallback(null);
             mDataProvider.destroy();
             if (mHandler != null) {
@@ -271,9 +304,12 @@ public class TabResumptionModuleMediator {
             // This directly changes `mShowHideHelper` results.
             mModuleShowConfig = TabResumptionModuleMetricsUtils.computeModuleShowConfig(mBundle);
 
+            @Nullable Callback<Integer> callback = createOnModuleShowConfigFinalizedCallback();
+            boolean shouldLogMetrics = callback == null;
+
             mStrength = result.strength;
             if (mStrength == ResultStrength.TENTATIVE) {
-                setPropertiesAndTriggerRender(mBundle);
+                setPropertiesAndTriggerRender(mBundle, callback);
                 // On first call, start timeout to transition to STABLE and log.
                 if (mHandler == null) {
                     mHandler = new Handler();
@@ -281,8 +317,10 @@ public class TabResumptionModuleMediator {
                             () -> {
                                 // Activates if the only strength seen is TENTATIVE. In this case,
                                 // TENTATIVE suggestions is considered stable.
-                                ensureStabilityAndLogMetrics(
-                                        /* recordStabilityDelay= */ false, mModuleShowConfig);
+                                if (shouldLogMetrics) {
+                                    ensureStabilityAndLogMetrics(
+                                            /* recordStabilityDelay= */ false, mModuleShowConfig);
+                                }
                                 // Multiple TENTATIVE suggestions might have repeated attempts to
                                 //  show / hide the module. Finalize if needed.
                                 mShowHideHelper.maybeNotifyModuleDelegate();
@@ -296,18 +334,59 @@ public class TabResumptionModuleMediator {
 
             } else if (mStrength == ResultStrength.STABLE) {
                 mShowHideHelper.maybeNotifyModuleDelegate();
-                setPropertiesAndTriggerRender(mBundle);
-                ensureStabilityAndLogMetrics(/* recordStabilityDelay= */ true, mModuleShowConfig);
 
+                setPropertiesAndTriggerRender(mBundle, callback);
+                if (shouldLogMetrics) {
+                    ensureStabilityAndLogMetrics(
+                            /* recordStabilityDelay= */ true, mModuleShowConfig);
+                }
             } else if (mStrength == ResultStrength.FORCED_NULL) {
                 assert !mShowHideHelper.shouldShow();
                 mShowHideHelper.maybeNotifyModuleDelegate();
                 // Activates if STABLE was never encountered. In this case, TENTATIVE suggestions
                 // are considered stable (therefore log `prevModuleShowConfig`).
-                setPropertiesAndTriggerRender(mBundle);
-                ensureStabilityAndLogMetrics(
-                        /* recordStabilityDelay= */ false, prevModuleShowConfig);
+                setPropertiesAndTriggerRender(mBundle, callback);
+                if (shouldLogMetrics) {
+                    ensureStabilityAndLogMetrics(
+                            /* recordStabilityDelay= */ false, prevModuleShowConfig);
+                }
             }
+
+            if (mBundle != null) {
+                mLocalTabClosureObserver.clear();
+                TabModel tabModel = mTabModelSelectorSupplier.get().getModel(false);
+                for (SuggestionEntry entry : mBundle.entries) {
+                    if (entry.isLocalTab()) {
+                        Tab tab = tabModel.getTabById(entry.getLocalTabId());
+                        assert tab != null; // isSuggestionValid() filtering ensures this.
+                        mLocalTabClosureObserver.add(tab);
+                    }
+                }
+            }
+        }
+
+        @Nullable
+        private Callback<Integer> createOnModuleShowConfigFinalizedCallback() {
+            if (mModuleShowConfig == null || isModuleShowConfigFinalized(mModuleShowConfig)) {
+                return null;
+            }
+
+            return mCallbackController.makeCancelable(
+                    moduleShowConfig -> {
+                        mModuleShowConfig = moduleShowConfig;
+                        ensureStabilityAndLogMetrics(
+                                /* recordStabilityDelay= */ true, mModuleShowConfig);
+                        mModel.set(
+                                TabResumptionModuleProperties
+                                        .ON_MODULE_SHOW_CONFIG_FINALIZED_CALLBACK,
+                                null);
+                    });
+        }
+
+        /** Returns whether the type of ModuleShowConfig is a finalized one. */
+        private boolean isModuleShowConfigFinalized(@ModuleShowConfig int moduleShowConfig) {
+            return moduleShowConfig != ModuleShowConfig.SINGLE_TILE_ANY
+                    && moduleShowConfig != ModuleShowConfig.DOUBLE_TILE_ANY;
         }
     }
 
@@ -318,8 +397,10 @@ public class TabResumptionModuleMediator {
     private final Context mContext;
     private final ModuleDelegate mModuleDelegate;
     private final PropertyModel mModel;
+    private final ObservableSupplier<TabModelSelector> mTabModelSelectorSupplier;
 
     protected final UrlImageProvider mUrlImageProvider;
+    protected final Runnable mReloadSessionCallback;
     protected final Runnable mStatusChangedCallback;
     protected final SuggestionClickCallback mSuggestionClickCallback;
     private final ShowHideHelper mShowHideHelper;
@@ -329,15 +410,19 @@ public class TabResumptionModuleMediator {
     public TabResumptionModuleMediator(
             @NonNull Context context,
             @NonNull ModuleDelegate moduleDelegate,
+            @NonNull ObservableSupplier<TabModelSelector> tabModelSelectorSupplier,
             @NonNull PropertyModel model,
             @NonNull UrlImageProvider urlImageProvider,
+            @NonNull Runnable reloadSessionCallback,
             @NonNull Runnable statusChangedCallback,
             @NonNull Runnable seeMoreLinkClickCallback,
             @NonNull SuggestionClickCallback suggestionClickCallback) {
         mContext = context;
         mModuleDelegate = moduleDelegate;
+        mTabModelSelectorSupplier = tabModelSelectorSupplier;
         mModel = model;
         mUrlImageProvider = urlImageProvider;
+        mReloadSessionCallback = reloadSessionCallback;
         mStatusChangedCallback = statusChangedCallback;
         mSuggestionClickCallback =
                 (SuggestionEntry entry) -> {
@@ -346,6 +431,9 @@ public class TabResumptionModuleMediator {
                 };
         mShowHideHelper = new ShowHideHelper();
 
+        mModel.set(
+                TabResumptionModuleProperties.TAB_MODEL_SELECTOR_SUPPLIER,
+                mTabModelSelectorSupplier);
         mModel.set(TabResumptionModuleProperties.URL_IMAGE_PROVIDER, mUrlImageProvider);
         mModel.set(
                 TabResumptionModuleProperties.SEE_MORE_LINK_CLICK_CALLBACK,
@@ -377,14 +465,26 @@ public class TabResumptionModuleMediator {
      * available then hides the module. See onSuggestionReceived() for details.
      */
     void loadModule() {
+        mModel.set(TabResumptionModuleProperties.TRACKING_TAB, mModuleDelegate.getTrackingTab());
         mSession.maybeFetchSuggestionsAndRenderResults();
     }
 
     /**
      * @return Whether the given suggestion is qualified to be shown in UI.
      */
-    private static boolean isSuggestionValid(SuggestionEntry entry) {
-        return (entry.isLocalTab()) || !TextUtils.isEmpty(entry.title);
+    private boolean isSuggestionValid(SuggestionEntry entry) {
+        if (entry.isLocalTab()) {
+            // We already detect closure the of a suggested Local Tab, and perform refresh. Below
+            // guards against glitches where a Local Tab somehow gets closed, or is in the closing
+            // state, but still get suggested.
+            assert mTabModelSelectorSupplier.hasValue();
+            TabModel tabModel = mTabModelSelectorSupplier.get().getModel(false);
+            assert tabModel != null;
+            Tab tab = tabModel.getTabById(entry.getLocalTabId());
+            return tab != null && !tab.isClosing();
+        }
+
+        return !TextUtils.isEmpty(entry.title);
     }
 
     /**
@@ -396,10 +496,24 @@ public class TabResumptionModuleMediator {
     private SuggestionBundle makeSuggestionBundle(List<SuggestionEntry> suggestions) {
         long currentTimeMs = TabResumptionModuleUtils.getCurrentTimeMs();
         SuggestionBundle bundle = new SuggestionBundle(currentTimeMs);
-        int maxTilesNumber = TabResumptionModuleUtils.TAB_RESUMPTION_MAX_TILES_NUMBER.getValue();
+        int maxTilesNumber = ChromeFeatureList.sTabResumptionModuleAndroidMaxTilesNumber.getValue();
+        boolean hasLocalTab = false;
         for (SuggestionEntry entry : suggestions) {
+            // At most one local Tab can be shown on the Tab resumption module.
+            if (hasLocalTab && entry.isLocalTab()) {
+                continue;
+            }
+
             if (isSuggestionValid(entry)) {
+                boolean isHistoryEntry = entry.type == SuggestionEntryType.HISTORY;
+                // The entry of type |HISTORY| will be in a single tile only.
+                if (isHistoryEntry) {
+                    if (!bundle.entries.isEmpty()) continue;
+                    bundle.entries.add(entry);
+                    break;
+                }
                 bundle.entries.add(entry);
+                hasLocalTab |= entry.isLocalTab();
                 if (bundle.entries.size() >= maxTilesNumber) {
                     break;
                 }
@@ -420,7 +534,8 @@ public class TabResumptionModuleMediator {
     }
 
     /** Computes and sets UI properties and triggers render. */
-    private void setPropertiesAndTriggerRender(@Nullable SuggestionBundle bundle) {
+    private void setPropertiesAndTriggerRender(
+            @Nullable SuggestionBundle bundle, @Nullable Callback<Integer> callback) {
         String title = null;
         boolean isVisible = false;
         if (bundle != null) {
@@ -430,6 +545,8 @@ public class TabResumptionModuleMediator {
                             R.plurals.home_modules_tab_resumption_title, bundle.entries.size());
             isVisible = true;
         }
+        mModel.set(
+                TabResumptionModuleProperties.ON_MODULE_SHOW_CONFIG_FINALIZED_CALLBACK, callback);
         mModel.set(TabResumptionModuleProperties.SUGGESTION_BUNDLE, bundle);
         mModel.set(TabResumptionModuleProperties.TITLE, title);
         mModel.set(TabResumptionModuleProperties.IS_VISIBLE, isVisible);

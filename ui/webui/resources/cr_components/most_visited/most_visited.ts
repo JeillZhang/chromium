@@ -192,17 +192,15 @@ export class MostVisitedElement extends MostVisitedElementBase {
   private boundOnDocumentKeyDown_: (e: KeyboardEvent) => void = (_e) => null;
   private prerenderTimer_: null|ReturnType<typeof setTimeout> = null;
   private preconnectTimer_: null|ReturnType<typeof setTimeout> = null;
+  private dragImage_: HTMLImageElement;
 
   private info_: MostVisitedInfo|null = null;
 
   private get tileElements_() {
     return Array.from(
-        this.shadowRoot!.querySelectorAll<HTMLElement>('.tile:not([hidden])'));
+        this.shadowRoot.querySelectorAll<HTMLElement>('.tile:not([hidden])'));
   }
 
-  // Suppress TypeScript's error TS2376 to intentionally allow calling
-  // performance.mark() before calling super().
-  // @ts-ignore
   constructor() {
     performance.mark('most-visited-creation-start');
     super();
@@ -213,11 +211,17 @@ export class MostVisitedElement extends MostVisitedElementBase {
 
     this.windowProxy_ = MostVisitedWindowProxy.getInstance();
 
-    /**
-     * This is the position of the mouse with respect to the top-left corner
-     * of the tile being dragged.
-     */
+    // Position of the mouse with respect to the top-left corner of the tile
+    // being dragged.
     this.dragOffset_ = null;
+
+    // Create a transparent 1x1 pixel image that will replace the default drag
+    // "ghost" image. The image is preloaded to ensure it's available when
+    // dragging starts.
+    this.dragImage_ = new Image(1, 1);
+    this.dragImage_.src =
+        'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAA' +
+        'ABAAEAAAICTAEAOw==';
 
     this.mediaEventTracker_ = new EventTracker();
     this.eventTracker_ = new EventTracker();
@@ -331,7 +335,7 @@ export class MostVisitedElement extends MostVisitedElementBase {
   }
 
   private clearForceHover_() {
-    const forceHover = this.shadowRoot!.querySelector('.force-hover');
+    const forceHover = this.shadowRoot.querySelector('.force-hover');
     if (forceHover) {
       forceHover.classList.remove('force-hover');
     }
@@ -433,9 +437,9 @@ export class MostVisitedElement extends MostVisitedElementBase {
     this.dragOffset_ = null;
 
     const dragElement =
-        this.shadowRoot!.querySelector<HTMLElement>('.tile.dragging');
+        this.shadowRoot.querySelector<HTMLElement>('.tile.dragging');
     const droppedElement =
-        this.shadowRoot!.querySelector<HTMLElement>('.tile.dropped');
+        this.shadowRoot.querySelector<HTMLElement>('.tile.dropped');
 
     if (!dragElement && !droppedElement) {
       this.reordering_ = false;
@@ -474,7 +478,7 @@ export class MostVisitedElement extends MostVisitedElementBase {
     }
 
     const dragElement =
-        this.shadowRoot!.querySelector<HTMLElement>('.tile.dragging');
+        this.shadowRoot.querySelector<HTMLElement>('.tile.dragging');
     if (!dragElement) {
       return;
     }
@@ -507,7 +511,7 @@ export class MostVisitedElement extends MostVisitedElementBase {
    */
   private dragOver_(x: number, y: number) {
     const dragElement =
-        this.shadowRoot!.querySelector<HTMLElement>('.tile.dragging');
+        this.shadowRoot.querySelector<HTMLElement>('.tile.dragging');
     if (!dragElement) {
       this.reordering_ = false;
       return;
@@ -691,8 +695,9 @@ export class MostVisitedElement extends MostVisitedElementBase {
     }
     // |dataTransfer| is null in tests.
     if (e.dataTransfer) {
-      // Remove the ghost image that appears when dragging.
-      e.dataTransfer.setDragImage(new Image(), 0, 0);
+      // Replace the ghost image that appears when dragging with a transparent
+      // 1x1 pixel image.
+      e.dataTransfer.setDragImage(this.dragImage_, 0, 0);
     }
 
     this.dragStart_(e.target as HTMLElement, e.x, e.y);
@@ -797,9 +802,7 @@ export class MostVisitedElement extends MostVisitedElementBase {
       return;
     }
 
-    if (loadTimeData.getBoolean('handleMostVisitedNavigationExplicitly')) {
-      e.preventDefault();  // Prevents default browser action (navigation).
-    }
+    e.preventDefault();  // Prevents default browser action (navigation).
 
     const index = this.getCurrentTargetIndex_(e);
     const item = this.tiles_[index]!;

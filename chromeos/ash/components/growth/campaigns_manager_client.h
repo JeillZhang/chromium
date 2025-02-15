@@ -28,6 +28,9 @@ namespace growth {
 using CampaignComponentLoadedCallback = base::OnceCallback<void(
     const std::optional<const base::FilePath>& file_path)>;
 
+using OnTrackerInitializedCallback =
+    base::OnceCallback<void(bool init_success)>;
+
 using ActionMap = std::map<ActionType, std::unique_ptr<ActionPerformer>>;
 
 class CampaignsManagerClient {
@@ -42,6 +45,9 @@ class CampaignsManagerClient {
   virtual void LoadCampaignsComponent(
       CampaignComponentLoadedCallback callback) = 0;
 
+  virtual void AddOnTrackerInitializedCallback(
+      OnTrackerInitializedCallback callback) = 0;
+
   // True if the device is in demo mode.
   virtual bool IsDeviceInDemoMode() const = 0;
 
@@ -50,6 +56,9 @@ class CampaignsManagerClient {
 
   // True if the device is feature aware device.
   virtual bool IsFeatureAwareDevice() const = 0;
+
+  // True if the app icon is available on shelf.
+  virtual bool IsAppIconOnShelf(const std::string& app_id) const = 0;
 
   // Returns application locale.
   virtual const std::string& GetApplicationLocale() const = 0;
@@ -78,11 +87,14 @@ class CampaignsManagerClient {
   // Proxy to Feature Engagement methods.
   virtual void ClearConfig(
       const std::map<std::string, std::string>& params) = 0;
-  virtual void RecordEvent(const std::string& event) = 0;
+  virtual void RecordEvent(const std::string& event,
+                           bool trigger_campaigns) = 0;
   virtual bool WouldTriggerHelpUI(
       const std::map<std::string, std::string>& params) = 0;
   // Returns the IdentityManager for the active user profile.
   virtual signin::IdentityManager* GetIdentityManager() const = 0;
+  virtual void RecordImpressionEvents(int campaign_id,
+                                      std::optional<int> group_id) = 0;
 };
 
 }  // namespace growth

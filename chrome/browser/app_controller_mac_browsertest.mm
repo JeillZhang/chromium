@@ -65,7 +65,6 @@
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/ui_features.h"
 #include "chrome/common/chrome_constants.h"
-#include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
@@ -316,7 +315,7 @@ class AppControllerWebAppBrowserTest : public InProcessBrowserTest {
   }
 
   std::string GetAppURL() const {
-    return "http://example.com/";
+    return "https://example.com/";
   }
 
   raw_ptr<const BrowserList> active_browser_list_;
@@ -943,14 +942,7 @@ IN_PROC_BROWSER_TEST_F(AppControllerBrowserTest,
                         ->GetLastCommittedURL());
 }
 
-class AppControllerShortcutsNotAppsBrowserTest : public InProcessBrowserTest {
- protected:
-  AppControllerShortcutsNotAppsBrowserTest() {
-    features_.InitAndEnableFeature(features::kShortcutsNotApps);
-  }
-
-  base::test::ScopedFeatureList features_;
-};
+using AppControllerShortcutsNotAppsBrowserTest = InProcessBrowserTest;
 
 IN_PROC_BROWSER_TEST_F(AppControllerShortcutsNotAppsBrowserTest,
                        OpenChromeWeblocFile) {
@@ -1034,6 +1026,51 @@ IN_PROC_BROWSER_TEST_F(AppControllerShortcutsNotAppsBrowserTest,
                         ->GetActiveWebContents()
                         ->GetLastCommittedURL());
 
+  {
+    base::ScopedAllowBlockingForTesting allow_blocking;
+    EXPECT_TRUE(temp_dir.Delete());
+  }
+}
+
+IN_PROC_BROWSER_TEST_F(AppControllerShortcutsNotAppsBrowserTest,
+                       LockedProfileOpensProfilePicker) {
+  // Flag the profile picker as already shown in the past, to avoid additional
+  // feature onboarding logic.
+  g_browser_process->local_state()->SetBoolean(
+      prefs::kBrowserProfilePickerShown, true);
+  signin_util::ScopedForceSigninSetterForTesting signin_setter(true);
+  // The User Manager uses the system profile as its underlying profile. To
+  // minimize flakiness due to the scheduling/descheduling of tasks on the
+  // different threads, pre-initialize the guest profile before it is needed.
+  CreateAndWaitForSystemProfile();
+  AppController* app_controller = AppController.sharedController;
+  // Lock the active profile.
+  Profile* profile = [app_controller lastProfileIfLoaded];
+  ProfileAttributesEntry* entry =
+      g_browser_process->profile_manager()
+          ->GetProfileAttributesStorage()
+          .GetProfileAttributesWithPath(profile->GetPath());
+  ASSERT_NE(entry, nullptr);
+  entry->LockForceSigninProfile(true);
+  EXPECT_TRUE(entry->IsSigninRequired());
+  // Create and open a .crwebloc file
+  GURL simple("https://simple.invalid/");
+  base::ScopedTempDir temp_dir;
+  base::FilePath crwebloc_file;
+  {
+    base::ScopedAllowBlockingForTesting allow_blocking;
+    ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
+    crwebloc_file = temp_dir.GetPath().AppendASCII("test shortcut.crwebloc");
+    ASSERT_TRUE(shortcuts::ChromeWeblocFile(
+                    simple, *base::SafeBaseName::Create(profile->GetPath()))
+                    .SaveToFile(crwebloc_file));
+  }
+  SendOpenUrlToAppController(net::FilePathToFileURL(crwebloc_file));
+  auto* active_browser_list = BrowserList::GetInstance();
+  base::RunLoop().RunUntilIdle();
+  EXPECT_EQ(1u, active_browser_list->size());
+  EXPECT_TRUE(ProfilePicker::IsOpen());
+  ProfilePicker::Hide();
   {
     base::ScopedAllowBlockingForTesting allow_blocking;
     EXPECT_TRUE(temp_dir.Delete());
@@ -1161,7 +1198,7 @@ IN_PROC_BROWSER_TEST_F(AppControllerMainMenuBrowserTest,
   base::ScopedAllowBlockingForTesting allow_blocking;
   base::FilePath path2 = profile_manager->GenerateNextProfileDirectoryPath();
   std::unique_ptr<Profile> profile2 =
-      Profile::CreateProfile(path2, nullptr, Profile::CREATE_MODE_SYNCHRONOUS);
+      Profile::CreateProfile(path2, nullptr, Profile::CreateMode::kSynchronous);
   Profile* profile2_ptr = profile2.get();
   profile_manager->RegisterTestingProfile(std::move(profile2), false);
   bookmarks::test::WaitForBookmarkModelToLoad(

@@ -138,6 +138,12 @@
  */
 #define SK_PDF_USE_HARFBUZZ_SUBSET
 
+/*  This controls how much space should be pre-allocated in an SkCanvas object
+    to store the SkMatrix and clip via calls to SkCanvas::save() (and balanced
+    with SkCanvas::restore()).
+*/
+#define SK_CANVAS_SAVE_RESTORE_PREALLOC_COUNT 16
+
 // Handle exporting using base/component_export.h
 #define SK_API COMPONENT_EXPORT(SKIA)
 
@@ -225,19 +231,11 @@ SK_API void SkDebugf_FileLine(const char* file,
 
 #define SK_USE_LEGACY_MIPMAP_BUILDER
 
-#define SK_USE_LEGACY_DEFERRED_BLIT
-
 #define SK_SUPPORT_LEGACY_CONIC_CHOP
 
 #define SK_USE_PADDED_BLUR_UPSCALE
 
 #define SK_LEGACY_INITWITHPREV_LAYER_SIZING
-
-#define SK_USE_LEGACY_BLUR_RASTER
-
-#define SK_USE_LEGACY_BLUR_GANESH
-
-#define SK_USE_LEGACY_BLUR_GRAPHITE
 
 ///////////////////////// Imported from BUILD.gn and skia_common.gypi
 
@@ -256,6 +254,8 @@ SK_API void SkDebugf_FileLine(const char* file,
 #define SK_USE_DISCARDABLE_SCALEDIMAGECACHE
 
 #define SK_ATTR_DEPRECATED          SK_NOTHING_ARG1
-#define GR_GL_CUSTOM_SETUP_HEADER   "GrGLConfig_chrome.h"
+
+// glGetError() forces a sync with gpu process on chrome
+#define GR_GL_CHECK_ERROR_START 0
 
 #endif  // SKIA_CONFIG_SKUSERCONFIG_H_

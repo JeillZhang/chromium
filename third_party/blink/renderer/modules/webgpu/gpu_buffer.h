@@ -10,7 +10,6 @@
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
 #include "third_party/blink/renderer/core/typed_arrays/array_buffer_view_helpers.h"
-#include "third_party/blink/renderer/core/typed_arrays/flexible_array_buffer_view.h"
 #include "third_party/blink/renderer/modules/webgpu/dawn_object.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 
@@ -21,6 +20,7 @@ class GPUBufferDescriptor;
 class GPUMappedDOMArrayBuffer;
 struct BoxedMappableWGPUBufferHandles;
 class ScriptState;
+class V8GPUBufferMapState;
 
 class GPUBuffer : public DawnObject<wgpu::Buffer> {
   DEFINE_WRAPPERTYPEINFO();
@@ -61,7 +61,7 @@ class GPUBuffer : public DawnObject<wgpu::Buffer> {
   void destroy(v8::Isolate* isolate);
   uint64_t size() const;
   uint32_t usage() const;
-  String mapState() const;
+  V8GPUBufferMapState mapState() const;
 
   void DetachMappedArrayBuffers(v8::Isolate* isolate);
 
@@ -77,7 +77,8 @@ class GPUBuffer : public DawnObject<wgpu::Buffer> {
                                      ExceptionState& exception_state);
 
   void OnMapAsyncCallback(ScriptPromiseResolver<IDLUndefined>* resolver,
-                          WGPUBufferMapAsyncStatus status);
+                          wgpu::MapAsyncStatus status,
+                          wgpu::StringView message);
 
   DOMArrayBuffer* CreateArrayBufferForMappedData(v8::Isolate* isolate,
                                                  void* data,

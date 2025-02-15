@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 // Converts an Input protobuf Message to a string that can be successfully read
 // by SkImageFilter::Deserialize and used as an image filter. The string
 // is essentially a valid flattened skia image filter. Note: We will sometimes
@@ -758,8 +763,7 @@ size_t Converter::PopStartSize() {
 template <typename T>
 void Converter::WriteNum(const T num) {
   if (sizeof(T) > 4) {
-    CHECK(num <= UINT32_MAX);
-    uint32_t four_byte_num = static_cast<uint32_t>(num);
+    auto four_byte_num = base::checked_cast<uint32_t>(num);
     char num_arr[sizeof(four_byte_num)];
     memcpy(num_arr, &four_byte_num, sizeof(four_byte_num));
     for (size_t idx = 0; idx < sizeof(four_byte_num); idx++)
@@ -1240,7 +1244,7 @@ void Converter::Visit(const LayerDrawLooper& layer_draw_looper) {
   WriteNum(layer_draw_looper.layer_infos_size());
   int n = layer_draw_looper.layer_infos_size();
 #ifdef AVOID_MISBEHAVIOR
-  n = 1;  // Only write 1 to avoid timeouts.
+  n = std::min(n, 1);  // Write at most 1 to avoid timeouts.
 #endif
   for (int i = 0; i < n; ++i)
     Visit(layer_draw_looper.layer_infos(i));
@@ -1314,7 +1318,7 @@ void Converter::Visit(const PathRef& path_ref) {
         case ValidVerb::kClose_Verb:
           break;
         default:
-          NOTREACHED_IN_MIGRATION();
+          NOTREACHED();
       }
     }
     WriteNum(num_points);
@@ -1501,11 +1505,11 @@ void Converter::Visit(const ICC& icc) {
       tags_size = GetLut16Size(icc.color_space().a2b0().lut16()) +
                   kICCTagTableEntrySize;
     } else {
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
     }
     tag_count = 1;
   } else {
-    NOTREACHED_IN_MIGRATION();
+    NOTREACHED();
   }
 
   const uint32_t profile_size = sizeof(float) * 33 + tags_size;
@@ -2113,12 +2117,16 @@ void Converter::WriteFields(const Message& msg,
           break;
         }
         case FieldDescriptor::CPPTYPE_MESSAGE: {
+// TODO(crbug.com/393557657): update this.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
           Visit(reflection->GetRepeatedPtrField<google::protobuf::Message>(
               msg, field_descriptor));
+#pragma clang diagnostic pop
           break;
         }
         default: {
-          NOTREACHED_IN_MIGRATION();
+          NOTREACHED();
         }
       }
       continue;
@@ -2152,7 +2160,7 @@ void Converter::WriteFields(const Message& msg,
         Visit(reflection->GetMessage(msg, field_descriptor));
         break;
       default:
-        NOTREACHED_IN_MIGRATION();
+        NOTREACHED();
     }
   }
   CHECK(!write_until_last ||

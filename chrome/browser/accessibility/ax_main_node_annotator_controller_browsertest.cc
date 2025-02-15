@@ -7,7 +7,6 @@
 #include "base/test/scoped_feature_list.h"
 #include "base/test/test_future.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/accessibility/accessibility_state_utils.h"
 #include "chrome/browser/accessibility/ax_main_node_annotator_controller_factory.h"
 #include "chrome/browser/profiles/profile.h"
@@ -25,11 +24,12 @@
 #include "content/public/test/accessibility_notification_waiter.h"
 #include "content/public/test/browser_test.h"
 #include "net/dns/mock_host_resolver.h"
+#include "services/screen_ai/buildflags/buildflags.h"
 #include "services/screen_ai/public/cpp/utilities.h"
 #include "ui/accessibility/accessibility_features.h"
 #include "ui/accessibility/ax_features.mojom-features.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #include "chrome/browser/ash/accessibility/accessibility_manager.h"
 #include "chrome/browser/ash/accessibility/speech_monitor.h"
 #include "extensions/browser/browsertest_util.h"
@@ -38,7 +38,7 @@
 #include <optional>
 
 #include "content/public/test/scoped_accessibility_mode_override.h"
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 class AXMainNodeAnnotatorControllerBrowserTest : public InProcessBrowserTest {
  public:
@@ -54,8 +54,10 @@ class AXMainNodeAnnotatorControllerBrowserTest : public InProcessBrowserTest {
   void SetUpOnMainThread() override {
     InProcessBrowserTest::SetUpOnMainThread();
 
+#if BUILDFLAG(ENABLE_SCREEN_AI_BROWSERTESTS)
     screen_ai::ScreenAIInstallState::GetInstance()->SetComponentFolder(
         screen_ai::GetComponentBinaryPathForTests().DirName());
+#endif
 
     host_resolver()->AddRule("*", "127.0.0.1");
     ASSERT_TRUE(embedded_test_server()->Start());
@@ -66,12 +68,7 @@ class AXMainNodeAnnotatorControllerBrowserTest : public InProcessBrowserTest {
   }
 
   void Connect() {
-// Lacros does not download the library.
-#if BUILDFLAG(IS_CHROMEOS_LACROS) || !BUILDFLAG(USE_FAKE_SCREEN_AI)
-    screen_ai::AXMainNodeAnnotatorControllerFactory::GetForProfile(
-        browser()->profile())
-        ->set_service_ready_for_testing();
-#else
+#if BUILDFLAG(ENABLE_SCREEN_AI_BROWSERTESTS)
     base::test::TestFuture<bool> future;
     screen_ai::ScreenAIServiceRouterFactory::GetForBrowserContext(
         browser()->profile())
@@ -80,6 +77,10 @@ class AXMainNodeAnnotatorControllerBrowserTest : public InProcessBrowserTest {
             future.GetCallback());
     ASSERT_TRUE(future.Wait()) << "Service state callback not called.";
     ASSERT_TRUE(future.Get<bool>()) << "Service initialization failed.";
+#else
+    screen_ai::AXMainNodeAnnotatorControllerFactory::GetForProfile(
+        browser()->profile())
+        ->set_service_ready_for_testing();
 #endif
   }
 
@@ -90,7 +91,7 @@ class AXMainNodeAnnotatorControllerBrowserTest : public InProcessBrowserTest {
   }
 
   void EnableScreenReader(bool enabled) {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
     // Enable Chromevox.
     ash::AccessibilityManager::Get()->EnableSpokenFeedback(enabled);
     if (enabled) {
@@ -107,11 +108,11 @@ class AXMainNodeAnnotatorControllerBrowserTest : public InProcessBrowserTest {
       screen_reader_override_.emplace(ui::AXMode::kWebContents |
                                       ui::AXMode::kScreenReader);
     }
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
   }
 
  private:
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   void DisableEarcons() {
     // Playing earcons from within a test is not only annoying if you're
     // running the test locally, but seems to cause crashes

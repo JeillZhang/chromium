@@ -4,6 +4,7 @@
 
 #include "chrome/updater/installer.h"
 
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -18,8 +19,10 @@
 #include "base/threading/scoped_blocking_call.h"
 #include "base/time/time.h"
 #include "base/values.h"
+#include "base/version.h"
 #include "build/build_config.h"
 #include "chrome/updater/action_handler.h"
+#include "chrome/updater/app/app_utils.h"
 #include "chrome/updater/constants.h"
 #include "chrome/updater/update_service.h"
 #include "chrome/updater/update_usage_stats_task.h"
@@ -46,7 +49,8 @@ AppInfo MakeAppInfo(UpdaterScope scope,
                     const base::FilePath& brand_path,
                     const std::string& brand_key,
                     const base::FilePath& ec_path) {
-  const base::Version pv_lookup = LookupVersion(pv_path, pv_key, pv);
+  const base::Version pv_lookup =
+      LookupVersion(scope, app_id, pv_path, pv_key, pv);
   return AppInfo(scope, app_id, LookupString(ap_path, ap_key, ap),
                  LookupString(brand_path, brand_key, brand),
                  pv_lookup.IsValid() ? pv_lookup : base::Version(kNullVersion),
@@ -95,8 +99,10 @@ Installer::Installer(
       policy_same_version_update_(policy_same_version_update),
       persisted_data_(persisted_data),
       crx_verifier_format_(crx_verifier_format),
-      usage_stats_enabled_(persisted_data->GetUsageStatsEnabled() ||
-                           AreRawUsageStatsEnabled(updater_scope_)),
+      usage_stats_enabled_(
+          IsUpdaterOrCompanionApp(app_id)
+              ? persisted_data->GetUsageStatsEnabled()
+              : AreRawUsageStatsEnabled(updater_scope_, {app_id})),
       app_info_(AppInfo(GetUpdaterScope(), app_id, {}, {}, {}, {})) {}
 
 Installer::~Installer() = default;
@@ -174,18 +180,13 @@ Installer::Result Installer::InstallHelper(
   }
 
   // Assume the install params are ASCII for now.
-  const auto application_installer =
-      unpack_path.AppendASCII(install_params->run);
-  if (!base::PathExists(application_installer)) {
-    return Result(GOOPDATEINSTALL_E_FILENAME_INVALID, kErrorMissingRunableFile);
-  }
-
   // Upon success, when the control flow returns back to the |update_client|,
   // the prefs are updated asynchronously with the new |pv| and |fingerprint|.
   // The task sequencing guarantees that the prefs will be updated by the
   // time another CrxDataCallback is invoked, which needs updated values.
   return RunApplicationInstaller(
-      app_info_, application_installer, install_params->arguments,
+      app_info_, unpack_path.AppendASCII(install_params->run),
+      install_params->arguments,
       WriteInstallerDataToTempFile(unpack_path,
                                    client_install_data_.empty()
                                        ? install_params->server_install_data
@@ -202,7 +203,6 @@ void Installer::InstallWithSyncPrimitives(
                                                 base::BlockingType::WILL_BLOCK);
   const auto result = InstallHelper(unpack_path, std::move(install_params),
                                     std::move(progress_callback));
-  base::DeletePathRecursively(unpack_path);
   std::move(callback).Run(result);
 }
 
@@ -225,9 +225,9 @@ void Installer::Install(const base::FilePath& unpack_path,
                      std::move(callback)));
 }
 
-bool Installer::GetInstalledFile(const std::string& file,
-                                 base::FilePath* installed_file) {
-  return false;
+std::optional<base::FilePath> Installer::GetInstalledFile(
+    const std::string& file) {
+  return std::nullopt;
 }
 
 bool Installer::Uninstall() {

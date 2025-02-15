@@ -27,14 +27,14 @@ class TabGridDialogProperties {
     public static final PropertyModel.WritableObjectPropertyKey<OnClickListener>
             ADD_CLICK_LISTENER = new PropertyModel.WritableObjectPropertyKey<>();
     public static final PropertyModel.WritableObjectPropertyKey<OnClickListener>
-            SHARE_INVITE_CLICK_LISTENER = new PropertyModel.WritableObjectPropertyKey<>();
+            SHARE_BUTTON_CLICK_LISTENER = new PropertyModel.WritableObjectPropertyKey<>();
     public static final PropertyModel.WritableObjectPropertyKey<OnClickListener>
             SHARE_IMAGE_TILES_CLICK_LISTENER = new PropertyModel.WritableObjectPropertyKey<>();
-    public static final PropertyModel.WritableObjectPropertyKey<OnClickListener>
-            SHARE_MANAGE_ADD_CLICK_LISTENER = new PropertyModel.WritableObjectPropertyKey<>();
     public static final PropertyModel.WritableObjectPropertyKey<String> HEADER_TITLE =
             new PropertyModel.WritableObjectPropertyKey<>(true);
     public static final PropertyModel.WritableIntPropertyKey CONTENT_TOP_MARGIN =
+            new PropertyModel.WritableIntPropertyKey();
+    public static final PropertyModel.WritableIntPropertyKey APP_HEADER_HEIGHT =
             new PropertyModel.WritableIntPropertyKey();
     public static final PropertyModel.WritableIntPropertyKey PRIMARY_COLOR =
             new PropertyModel.WritableIntPropertyKey();
@@ -44,11 +44,11 @@ class TabGridDialogProperties {
             new PropertyModel.WritableObjectPropertyKey<>();
     public static final PropertyModel.WritableBooleanPropertyKey IS_DIALOG_VISIBLE =
             new PropertyModel.WritableBooleanPropertyKey();
-    public static final PropertyModel.WritableBooleanPropertyKey IS_SHARE_SHEET_VISIBLE =
+    public static final PropertyModel.WritableBooleanPropertyKey SHOW_SHARE_BUTTON =
             new PropertyModel.WritableBooleanPropertyKey();
-    public static final PropertyModel.WritableBooleanPropertyKey SHOULD_SHOW_SHARE =
-            new PropertyModel.WritableBooleanPropertyKey();
-    public static final PropertyModel.WritableBooleanPropertyKey IS_TAB_GROUP_SHARED =
+    public static final PropertyModel.WritableIntPropertyKey SHARE_BUTTON_STRING_RES =
+            new PropertyModel.WritableIntPropertyKey();
+    public static final PropertyModel.WritableBooleanPropertyKey SHOW_IMAGE_TILES =
             new PropertyModel.WritableBooleanPropertyKey();
     public static final WritableObjectPropertyKey<TabGridDialogView.VisibilityListener>
             VISIBILITY_LISTENER = new WritableObjectPropertyKey<>();
@@ -101,15 +101,26 @@ class TabGridDialogProperties {
             new PropertyModel.WritableBooleanPropertyKey();
     public static final PropertyModel.WritableObjectPropertyKey<OnClickListener>
             COLOR_ICON_CLICK_LISTENER = new PropertyModel.WritableObjectPropertyKey<>();
+    public static final PropertyModel.WritableIntPropertyKey HAIRLINE_COLOR =
+            new PropertyModel.WritableIntPropertyKey();
+    public static final PropertyModel.WritableBooleanPropertyKey HAIRLINE_VISIBILITY =
+            new PropertyModel.WritableBooleanPropertyKey();
+    public static final PropertyModel.WritableBooleanPropertyKey FORCE_ANIMATION_TO_FINISH =
+            new PropertyModel.WritableBooleanPropertyKey();
+    public static final PropertyModel.WritableBooleanPropertyKey IS_CONTENT_SENSITIVE =
+            new PropertyModel.WritableBooleanPropertyKey();
+    public static final PropertyModel.WritableBooleanPropertyKey SHOW_SEND_FEEDBACK =
+            new PropertyModel.WritableBooleanPropertyKey();
+    public static final PropertyModel.WritableObjectPropertyKey<Runnable> SEND_FEEDBACK_RUNNABLE =
+            new PropertyModel.WritableObjectPropertyKey<>();
     public static final PropertyKey[] ALL_KEYS =
             new PropertyKey[] {
                 BINDING_TOKEN,
                 BROWSER_CONTROLS_STATE_PROVIDER,
                 COLLAPSE_CLICK_LISTENER,
                 ADD_CLICK_LISTENER,
-                SHARE_INVITE_CLICK_LISTENER,
+                SHARE_BUTTON_CLICK_LISTENER,
                 SHARE_IMAGE_TILES_CLICK_LISTENER,
-                SHARE_MANAGE_ADD_CLICK_LISTENER,
                 HEADER_TITLE,
                 PRIMARY_COLOR,
                 DIALOG_BACKGROUND_COLOR,
@@ -131,15 +142,22 @@ class TabGridDialogProperties {
                 IS_KEYBOARD_VISIBLE,
                 COLLAPSE_BUTTON_CONTENT_DESCRIPTION,
                 IS_DIALOG_VISIBLE,
-                IS_SHARE_SHEET_VISIBLE,
-                SHOULD_SHOW_SHARE,
-                IS_TAB_GROUP_SHARED,
+                SHOW_SHARE_BUTTON,
+                SHARE_BUTTON_STRING_RES,
+                SHOW_IMAGE_TILES,
                 CONTENT_TOP_MARGIN,
+                APP_HEADER_HEIGHT,
                 IS_MAIN_CONTENT_VISIBLE,
                 INITIAL_SCROLL_INDEX,
                 TAB_GROUP_COLOR_ID,
                 IS_INCOGNITO,
                 COLOR_ICON_CLICK_LISTENER,
                 ANIMATION_BACKGROUND_COLOR,
+                HAIRLINE_COLOR,
+                HAIRLINE_VISIBILITY,
+                FORCE_ANIMATION_TO_FINISH,
+                IS_CONTENT_SENSITIVE,
+                SHOW_SEND_FEEDBACK,
+                SEND_FEEDBACK_RUNNABLE,
             };
 }

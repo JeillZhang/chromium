@@ -37,14 +37,17 @@ public class SiteSettingsUtil {
         ContentSettingsType.MIDI_SYSEX,
         ContentSettingsType.CLIPBOARD_READ_WRITE,
         ContentSettingsType.NFC,
+        ContentSettingsType.FILE_SYSTEM_WRITE_GUARD,
         ContentSettingsType.BLUETOOTH_SCANNING,
         ContentSettingsType.VR,
         ContentSettingsType.AR,
+        ContentSettingsType.HAND_TRACKING,
         ContentSettingsType.IDLE_DETECTION,
         ContentSettingsType.FEDERATED_IDENTITY_API,
         ContentSettingsType.SENSORS,
         ContentSettingsType.AUTO_DARK_WEB_CONTENT,
         ContentSettingsType.REQUEST_DESKTOP_SITE,
+        ContentSettingsType.JAVASCRIPT_OPTIMIZER,
     };
 
     static final int[] CHOOSER_PERMISSIONS = {

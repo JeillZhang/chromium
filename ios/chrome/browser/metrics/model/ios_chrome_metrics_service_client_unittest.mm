@@ -12,6 +12,7 @@
 #import "base/test/scoped_feature_list.h"
 #import "build/branding_buildflags.h"
 #import "components/metrics/client_info.h"
+#import "components/metrics/dwa/dwa_recorder.h"
 #import "components/metrics/metrics_service.h"
 #import "components/metrics/metrics_state_manager.h"
 #import "components/metrics/metrics_switches.h"
@@ -20,9 +21,9 @@
 #import "components/prefs/testing_pref_service.h"
 #import "components/ukm/ukm_service.h"
 #import "components/variations/synthetic_trial_registry.h"
-#import "ios/chrome/browser/shared/model/browser_state/test_chrome_browser_state.h"
-#import "ios/chrome/browser/shared/model/browser_state/test_chrome_browser_state_manager.h"
-#import "ios/chrome/test/ios_chrome_scoped_testing_chrome_browser_state_manager.h"
+#import "ios/chrome/browser/shared/model/profile/test/test_profile_ios.h"
+#import "ios/chrome/browser/shared/model/profile/test/test_profile_manager_ios.h"
+#import "ios/chrome/test/ios_chrome_scoped_testing_local_state.h"
 #import "ios/web/public/test/web_task_environment.h"
 #import "testing/platform_test.h"
 
@@ -33,10 +34,8 @@ class UkmService;
 class IOSChromeMetricsServiceClientTest : public PlatformTest {
  public:
   IOSChromeMetricsServiceClientTest()
-      : scoped_browser_state_manager_(
-            std::make_unique<TestChromeBrowserStateManager>(
-                TestChromeBrowserState::Builder().Build())),
-        enabled_state_provider_(/*consent=*/false, /*enabled=*/false) {
+      : enabled_state_provider_(/*consent=*/false, /*enabled=*/false) {
+    profile_manager_.AddProfileWithBuilder(TestProfileIOS::Builder());
   }
 
   IOSChromeMetricsServiceClientTest(const IOSChromeMetricsServiceClientTest&) =
@@ -56,7 +55,8 @@ class IOSChromeMetricsServiceClientTest : public PlatformTest {
 
  protected:
   web::WebTaskEnvironment task_environment_;
-  IOSChromeScopedTestingChromeBrowserStateManager scoped_browser_state_manager_;
+  IOSChromeScopedTestingLocalState scoped_testing_local_state_;
+  TestProfileManagerIOS profile_manager_;
   metrics::TestEnabledStateProvider enabled_state_provider_;
   TestingPrefServiceSimple prefs_;
   std::unique_ptr<metrics::MetricsStateManager> metrics_state_manager_;
@@ -92,7 +92,7 @@ TEST_F(IOSChromeMetricsServiceClientTest, TestRegisterMetricsServiceProviders) {
 
   // This is the number of metrics providers that are registered inside
   // IOSChromeMetricsServiceClient::Initialize().
-  expected_providers += 21;
+  expected_providers += 23;
 
   std::unique_ptr<IOSChromeMetricsServiceClient> chrome_metrics_service_client =
       IOSChromeMetricsServiceClient::Create(metrics_state_manager_.get(),
@@ -101,6 +101,26 @@ TEST_F(IOSChromeMetricsServiceClientTest, TestRegisterMetricsServiceProviders) {
             chrome_metrics_service_client->GetMetricsService()
                 ->delegating_provider_.GetProviders()
                 .size());
+}
+
+TEST_F(IOSChromeMetricsServiceClientTest, TestDwaServiceNotInitialized) {
+  base::test::ScopedFeatureList local_feature;
+  local_feature.InitAndDisableFeature(metrics::dwa::kDwaFeature);
+
+  std::unique_ptr<IOSChromeMetricsServiceClient> chrome_metrics_service_client =
+      IOSChromeMetricsServiceClient::Create(metrics_state_manager_.get(),
+                                            synthetic_trial_registry_.get());
+  EXPECT_EQ(chrome_metrics_service_client->GetDwaService(), nullptr);
+}
+
+TEST_F(IOSChromeMetricsServiceClientTest, TestDwaServiceInitialized) {
+  base::test::ScopedFeatureList local_feature;
+  local_feature.InitAndEnableFeature(metrics::dwa::kDwaFeature);
+
+  std::unique_ptr<IOSChromeMetricsServiceClient> chrome_metrics_service_client =
+      IOSChromeMetricsServiceClient::Create(metrics_state_manager_.get(),
+                                            synthetic_trial_registry_.get());
+  EXPECT_NE(chrome_metrics_service_client->GetDwaService(), nullptr);
 }
 
 TEST_F(IOSChromeMetricsServiceClientTest,
@@ -112,8 +132,7 @@ TEST_F(IOSChromeMetricsServiceClientTest,
       IOSChromeMetricsServiceClient::Create(metrics_state_manager_.get(),
                                             synthetic_trial_registry_.get());
 
-  ukm::UkmService* ukmService =
-      chrome_metrics_service_client->GetUkmService();
+  ukm::UkmService* ukmService = chrome_metrics_service_client->GetUkmService();
   // Verify that the UKM service is instantiated when enabled.
   EXPECT_TRUE(ukmService);
 

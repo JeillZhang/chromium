@@ -29,6 +29,8 @@
 #include "base/types/expected.h"
 #include "base/types/pass_key.h"
 #include "build/chromeos_buildflags.h"
+#include "chrome/browser/web_applications/mojom/user_display_mode.mojom.h"
+#include "chrome/browser/web_applications/proto/web_app_install_state.pb.h"
 #include "chrome/browser/web_applications/user_display_mode.h"
 #include "chrome/browser/web_applications/web_app.h"
 #include "chrome/browser/web_applications/web_app_chromeos_data.h"
@@ -36,19 +38,21 @@
 #include "chrome/browser/web_applications/web_app_constants.h"
 #include "chrome/browser/web_applications/web_app_database.h"
 #include "chrome/browser/web_applications/web_app_helpers.h"
+#include "chrome/browser/web_applications/web_app_management_type.h"
 #include "chrome/browser/web_applications/web_app_proto_utils.h"
 #include "chrome/browser/web_applications/web_app_registry_update.h"
 #include "chrome/browser/web_applications/web_app_utils.h"
 #include "chrome/common/channel_info.h"
+#include "chrome/common/chrome_features.h"
+#include "components/sync/base/data_type.h"
 #include "components/sync/base/deletion_origin.h"
-#include "components/sync/base/model_type.h"
 #include "components/sync/base/report_unrecoverable_error.h"
-#include "components/sync/model/client_tag_based_model_type_processor.h"
+#include "components/sync/model/client_tag_based_data_type_processor.h"
+#include "components/sync/model/data_type_local_change_processor.h"
+#include "components/sync/model/data_type_store.h"
 #include "components/sync/model/metadata_batch.h"
 #include "components/sync/model/metadata_change_list.h"
 #include "components/sync/model/model_error.h"
-#include "components/sync/model/model_type_change_processor.h"
-#include "components/sync/model/model_type_store.h"
 #include "components/sync/model/mutable_data_batch.h"
 #include "components/sync/model/string_ordinal.h"
 #include "components/sync/protocol/entity_data.h"
@@ -123,6 +127,11 @@ BASE_FEATURE(kDeleteBadWebAppSyncEntitites,
              "DeleteBadWebAppSyncEntitites",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
+// A feature to enable the migration from shortcut apps to diy apps.
+BASE_FEATURE(kMigrateShortcutsToDiy,
+             "MigrateShortcutsToDiy",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+
 std::unique_ptr<syncer::EntityData> CreateSyncEntityData(const WebApp& app) {
   // The Sync System doesn't allow empty entity_data name.
   DCHECK(!app.untranslated_name().empty());
@@ -189,15 +198,15 @@ void ApplySyncDataToApp(const sync_pb::WebAppSpecifics& sync_proto,
 WebAppSyncBridge::WebAppSyncBridge(WebAppRegistrarMutable* registrar)
     : WebAppSyncBridge(
           registrar,
-          std::make_unique<syncer::ClientTagBasedModelTypeProcessor>(
+          std::make_unique<syncer::ClientTagBasedDataTypeProcessor>(
               syncer::WEB_APPS,
               base::BindRepeating(&syncer::ReportUnrecoverableError,
                                   chrome::GetChannel()))) {}
 
 WebAppSyncBridge::WebAppSyncBridge(
     WebAppRegistrarMutable* registrar,
-    std::unique_ptr<syncer::ModelTypeChangeProcessor> change_processor)
-    : syncer::ModelTypeSyncBridge(std::move(change_processor)),
+    std::unique_ptr<syncer::DataTypeLocalChangeProcessor> change_processor)
+    : syncer::DataTypeSyncBridge(std::move(change_processor)),
       registrar_(registrar) {
   DCHECK(registrar_);
 }
@@ -358,7 +367,7 @@ void WebAppSyncBridge::SetUserPageOrdinal(const webapps::AppId& app_id,
   // called before the app is installed in the web apps system. Until apps are
   // no longer double-installed on both systems, ignore this case.
   // https://crbug.com/1101781
-  if (!registrar_->IsInstalled(app_id)) {
+  if (!registrar_->IsInRegistrar(app_id)) {
     return;
   }
   if (web_app) {
@@ -377,7 +386,7 @@ void WebAppSyncBridge::SetUserLaunchOrdinal(
   // called before the app is installed in the web apps system. Until apps are
   // no longer double-installed on both systems, ignore this case.
   // https://crbug.com/1101781
-  if (!registrar_->IsInstalled(app_id)) {
+  if (!registrar_->IsInRegistrar(app_id)) {
     return;
   }
   WebApp* web_app = update->UpdateApp(app_id);
@@ -393,7 +402,10 @@ void WebAppSyncBridge::SetUserLaunchOrdinal(
 void WebAppSyncBridge::SetAlwaysShowToolbarInFullscreen(
     const webapps::AppId& app_id,
     bool show) {
-  if (!registrar_->IsInstalled(app_id)) {
+  if (!registrar_->IsInstallState(
+          app_id, {proto::InstallState::SUGGESTED_FROM_ANOTHER_DEVICE,
+                   proto::InstallState::INSTALLED_WITHOUT_OS_INTEGRATION,
+                   proto::InstallState::INSTALLED_WITH_OS_INTEGRATION})) {
     return;
   }
   {
@@ -488,11 +500,6 @@ void WebAppSyncBridge::UpdateRegistrar(
   for (std::unique_ptr<WebApp>& web_app : update_data->apps_to_create) {
     webapps::AppId app_id = web_app->app_id();
     DCHECK(!registrar_->GetAppById(app_id));
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-    // We do not install non-system web apps in Ash when Lacros web apps are
-    // enabled.
-    DCHECK(web_app->IsSystemApp() || !IsWebAppsCrosapiEnabled());
-#endif
     registrar_->registry().emplace(std::move(app_id), std::move(web_app));
   }
 
@@ -506,7 +513,7 @@ void WebAppSyncBridge::UpdateRegistrar(
   }
   for (const webapps::AppId& app_id : update_data->apps_to_delete) {
     auto it = registrar_->registry().find(app_id);
-    DCHECK(it != registrar_->registry().end());
+    CHECK(it != registrar_->registry().end(), base::NotFatalUntil::M130);
     registrar_->registry().erase(it);
   }
 }
@@ -574,7 +581,11 @@ void WebAppSyncBridge::OnDatabaseOpened(
 
   // Do database migrations to ensure apps are valid before notifying anything
   // else that the sync bridge is ready.
+  if (base::FeatureList::IsEnabled(kMigrateShortcutsToDiy)) {
+    EnsureShortcutAppToDiyAppMigration();
+  }
   EnsureAppsHaveUserDisplayModeForCurrentPlatform();
+  EnsurePartiallyInstalledAppsHaveCorrectStatus();
 
   std::move(initialized_callback).Run();
 
@@ -601,6 +612,49 @@ void WebAppSyncBridge::EnsureAppsHaveUserDisplayModeForCurrentPlatform() {
       update->UpdateApp(app.app_id())
           ->SetUserDisplayMode(ToMojomUserDisplayMode(udm));
     }
+  }
+}
+
+void WebAppSyncBridge::EnsureShortcutAppToDiyAppMigration() {
+  web_app::ScopedRegistryUpdate update = BeginUpdate();
+  int shortcut_to_diy_apps = 0;
+  for (const webapps::AppId& app_id : registrar().GetAppIds()) {
+    WebApp* app_to_update = update->UpdateApp(app_id);
+    bool is_shortcut = app_to_update->scope().is_empty() ||
+                       (app_to_update->latest_install_source().has_value() &&
+                        app_to_update->latest_install_source() ==
+                            webapps::WebappInstallSource::MENU_CREATE_SHORTCUT);
+    if (is_shortcut) {
+      app_to_update->SetIsDiyApp(true);
+      // Shortcut apps are separated from other web apps based on the fact that
+      // they have an empty scope. DIY apps do not have that distinction, so
+      // populate the scope from the start_url of the web app.
+      if (!app_to_update->scope().is_valid()) {
+        CHECK(app_to_update->start_url().is_valid());
+        GURL scope(app_to_update->start_url().GetWithoutFilename());
+        app_to_update->SetScope(scope);
+      }
+      app_to_update->SetWasShortcutApp(true);
+      shortcut_to_diy_apps++;
+    }
+  }
+  base::UmaHistogramCounts1000("WebApp.Migrations.ShortcutAppsToDiy",
+                               shortcut_to_diy_apps);
+}
+
+void WebAppSyncBridge::EnsurePartiallyInstalledAppsHaveCorrectStatus() {
+  web_app::ScopedRegistryUpdate update = BeginUpdate();
+  for (const WebApp& app : registrar().GetApps()) {
+    if (app.install_state() !=
+        proto::InstallState::INSTALLED_WITH_OS_INTEGRATION) {
+      continue;
+    }
+    if (app.current_os_integration_states().has_shortcut()) {
+      continue;
+    }
+    update->UpdateApp(app.app_id())
+        ->SetInstallState(
+            proto::InstallState::INSTALLED_WITHOUT_OS_INTEGRATION);
   }
 }
 
@@ -649,7 +703,7 @@ ManifestIdParseResult WebAppSyncBridge::PrepareLocalUpdateFromSyncChange(
   // app_id is storage key.
   const webapps::AppId& app_id = change.storage_key();
 
-  const WebApp* existing_web_app = registrar_->GetAppByIdMutable(app_id);
+  const WebApp* existing_web_app = registrar_->GetAppById(app_id);
 
   // Handle deletion first.
   if (change.type() == syncer::EntityChange::ACTION_DELETE) {
@@ -659,6 +713,10 @@ ManifestIdParseResult WebAppSyncBridge::PrepareLocalUpdateFromSyncChange(
     }
     auto app_copy = std::make_unique<WebApp>(*existing_web_app);
     app_copy->RemoveSource(WebAppManagement::kSync);
+    // Currently removing an app from sync will uninstall the app on all
+    // profiles that are synced to it; we could consider not removing the
+    // kUserInstalled source in this case.
+    app_copy->RemoveSource(WebAppManagement::kUserInstalled);
     if (!app_copy->HasAnySources()) {
       // Uninstallation from the local database is a two-phase commit. Setting
       // this flag to true signals that uninstallation should occur, and then
@@ -705,7 +763,10 @@ ManifestIdParseResult WebAppSyncBridge::PrepareLocalUpdateFromSyncChange(
       web_app->SetName(specifics.name());
     }
     // For a new app, automatically choose if we want to install it locally.
-    web_app->SetIsLocallyInstalled(AreAppsLocallyInstalledBySync());
+    web_app->SetInstallState(
+        AreAppsLocallyInstalledBySync()
+            ? proto::InstallState::INSTALLED_WITH_OS_INTEGRATION
+            : proto::InstallState::SUGGESTED_FROM_ANOTHER_DEVICE);
   } else {
     web_app = std::make_unique<WebApp>(*existing_web_app);
   }
@@ -789,7 +850,7 @@ void WebAppSyncBridge::ApplyIncrementalSyncChangesToRegistrar(
 
 std::unique_ptr<syncer::MetadataChangeList>
 WebAppSyncBridge::CreateMetadataChangeList() {
-  return syncer::ModelTypeStore::WriteBatch::CreateMetadataChangeList();
+  return syncer::DataTypeStore::WriteBatch::CreateMetadataChangeList();
 }
 
 std::optional<syncer::ModelError> WebAppSyncBridge::MergeFullSyncData(
@@ -858,8 +919,43 @@ std::optional<syncer::ModelError> WebAppSyncBridge::ApplyIncrementalSyncChanges(
   return std::nullopt;
 }
 
-void WebAppSyncBridge::GetDataForCommit(StorageKeyList storage_keys,
-                                        DataCallback callback) {
+void WebAppSyncBridge::ApplyDisableSyncChanges(
+    std::unique_ptr<syncer::MetadataChangeList> delete_metadata_change_list) {
+  if (!base::FeatureList::IsEnabled(
+          features::kWebAppDontAddExistingAppsToSync)) {
+    syncer::DataTypeSyncBridge::ApplyDisableSyncChanges(
+        std::move(delete_metadata_change_list));
+    return;
+  }
+
+  auto update_local_data = std::make_unique<RegistryUpdateData>();
+
+  for (const WebApp& web_app : registrar_->GetAppsIncludingStubs()) {
+    if (web_app.GetSources().Has(WebAppManagement::kSync)) {
+      auto app_copy = std::make_unique<WebApp>(web_app);
+      app_copy->RemoveSource(WebAppManagement::kSync);
+      if (!app_copy->HasAnySources()) {
+        // Uninstallation from the local database is a two-phase commit. Setting
+        // this flag to true signals that uninstallation should occur, and then
+        // when all asynchronous uninstallation tasks are complete then the
+        // entity is deleted from the database.
+        app_copy->SetIsUninstalling(true);
+      }
+      update_local_data->apps_to_update.push_back(std::move(app_copy));
+    }
+  }
+
+  database_->Write(
+      *update_local_data, std::move(delete_metadata_change_list),
+      base::BindOnce(&WebAppSyncBridge::OnDataWritten,
+                     weak_ptr_factory_.GetWeakPtr(), base::DoNothing()));
+
+  ApplyIncrementalSyncChangesToRegistrar(std::move(update_local_data),
+                                         /*apps_display_mode_changed=*/{});
+}
+
+std::unique_ptr<syncer::DataBatch> WebAppSyncBridge::GetDataForCommit(
+    StorageKeyList storage_keys) {
   auto data_batch = std::make_unique<syncer::MutableDataBatch>();
 
   for (const webapps::AppId& app_id : storage_keys) {
@@ -868,10 +964,10 @@ void WebAppSyncBridge::GetDataForCommit(StorageKeyList storage_keys,
       data_batch->Put(app->app_id(), CreateSyncEntityData(*app));
   }
 
-  std::move(callback).Run(std::move(data_batch));
+  return data_batch;
 }
 
-void WebAppSyncBridge::GetAllDataForDebugging(DataCallback callback) {
+std::unique_ptr<syncer::DataBatch> WebAppSyncBridge::GetAllDataForDebugging() {
   auto data_batch = std::make_unique<syncer::MutableDataBatch>();
 
   for (const WebApp& app : registrar_->GetAppsIncludingStubs()) {
@@ -879,7 +975,7 @@ void WebAppSyncBridge::GetAllDataForDebugging(DataCallback callback) {
       data_batch->Put(app.app_id(), CreateSyncEntityData(app));
   }
 
-  std::move(callback).Run(std::move(data_batch));
+  return data_batch;
 }
 
 std::string WebAppSyncBridge::GetClientTag(
@@ -943,7 +1039,8 @@ void WebAppSyncBridge::SetAppNotLocallyInstalledForTesting(
     ScopedRegistryUpdate update = BeginUpdate();
     WebApp* web_app = update->UpdateApp(app_id);
     if (web_app) {
-      web_app->SetIsLocallyInstalled(false);
+      web_app->SetInstallState(
+          proto::InstallState::SUGGESTED_FROM_ANOTHER_DEVICE);
     }
   }
 }

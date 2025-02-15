@@ -12,16 +12,15 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
+#include "base/test/task_environment.h"
 #include "base/time/time.h"
 #include "base/uuid.h"
 #include "build/build_config.h"
-#include "components/autofill/core/browser/autofill_experiments.h"
-#include "components/autofill/core/browser/autofill_test_utils.h"
 #include "components/autofill/core/browser/autofill_type.h"
-#include "components/autofill/core/browser/data_model/autofill_metadata.h"
-#include "components/autofill/core/browser/data_model/test_autofill_data_model.h"
-#include "components/autofill/core/browser/test_autofill_clock.h"
-#include "components/autofill/core/browser/validation.h"
+#include "components/autofill/core/browser/data_model/payments_metadata.h"
+#include "components/autofill/core/browser/data_quality/validation.h"
+#include "components/autofill/core/browser/studies/autofill_experiments.h"
+#include "components/autofill/core/browser/test_utils/autofill_test_utils.h"
 #include "components/autofill/core/common/autofill_clock.h"
 #include "components/autofill/core/common/autofill_constants.h"
 #include "components/autofill/core/common/autofill_features.h"
@@ -37,14 +36,13 @@ using base::ASCIIToUTF16;
 using base::UTF8ToUTF16;
 
 namespace autofill {
+namespace {
 
 const CreditCard::RecordType LOCAL_CARD = CreditCard::RecordType::kLocalCard;
 const CreditCard::RecordType MASKED_SERVER_CARD =
     CreditCard::RecordType::kMaskedServerCard;
 const CreditCard::RecordType FULL_SERVER_CARD =
     CreditCard::RecordType::kFullServerCard;
-
-namespace {
 
 // From
 // https://www.paypalobjects.com/en_US/vhelp/paypalmanager_help/credit_card_numbers.htm
@@ -87,11 +85,9 @@ const char* const kEmptyNickname = "";
 // Use this function to generate a year in the future.
 std::u16string GetYearInTheFuture() {
   base::Time::Exploded now;
-  AutofillClock::Now().LocalExplode(&now);
+  base::Time::Now().LocalExplode(&now);
   return base::NumberToString16(now.year + 4);
 }
-
-}  // namespace
 
 TEST(CreditCardTest, GetObfuscatedStringForCardDigits) {
   const std::u16string digits = u"1235";
@@ -468,40 +464,43 @@ TEST(CreditCardTest, AssignmentOperator) {
 
 TEST(CreditCardTest, GetMetadata) {
   CreditCard local_card = test::GetCreditCard();
-  local_card.set_use_count(2);
-  local_card.set_use_date(base::Time::FromSecondsSinceUnixEpoch(25));
+  local_card.usage_history().set_use_count(2);
+  local_card.usage_history().set_use_date(
+      base::Time::FromSecondsSinceUnixEpoch(25));
   local_card.set_billing_address_id("123");
-  AutofillMetadata local_metadata = local_card.GetMetadata();
+  PaymentsMetadata local_metadata = local_card.GetMetadata();
   EXPECT_EQ(local_card.guid(), local_metadata.id);
   EXPECT_EQ(local_card.billing_address_id(), local_metadata.billing_address_id);
-  EXPECT_EQ(local_card.use_count(), local_metadata.use_count);
-  EXPECT_EQ(local_card.use_date(), local_metadata.use_date);
+  EXPECT_EQ(local_card.usage_history().use_count(), local_metadata.use_count);
+  EXPECT_EQ(local_card.usage_history().use_date(), local_metadata.use_date);
 
   CreditCard masked_card = test::GetMaskedServerCard();
-  masked_card.set_use_count(4);
-  masked_card.set_use_date(base::Time::FromSecondsSinceUnixEpoch(50));
+  masked_card.usage_history().set_use_count(4);
+  masked_card.usage_history().set_use_date(
+      base::Time::FromSecondsSinceUnixEpoch(50));
   masked_card.set_billing_address_id("abc");
-  AutofillMetadata masked_metadata = masked_card.GetMetadata();
+  PaymentsMetadata masked_metadata = masked_card.GetMetadata();
   EXPECT_EQ(masked_card.server_id(), masked_metadata.id);
   EXPECT_EQ(masked_card.billing_address_id(),
             masked_metadata.billing_address_id);
-  EXPECT_EQ(masked_card.use_count(), masked_metadata.use_count);
-  EXPECT_EQ(masked_card.use_date(), masked_metadata.use_date);
+  EXPECT_EQ(masked_card.usage_history().use_count(), masked_metadata.use_count);
+  EXPECT_EQ(masked_card.usage_history().use_date(), masked_metadata.use_date);
 
   CreditCard full_card = test::GetFullServerCard();
-  full_card.set_use_count(6);
-  full_card.set_use_date(base::Time::FromSecondsSinceUnixEpoch(100));
+  full_card.usage_history().set_use_count(6);
+  full_card.usage_history().set_use_date(
+      base::Time::FromSecondsSinceUnixEpoch(100));
   full_card.set_billing_address_id("xyz");
-  AutofillMetadata full_metadata = full_card.GetMetadata();
+  PaymentsMetadata full_metadata = full_card.GetMetadata();
   EXPECT_EQ(full_card.server_id(), full_metadata.id);
   EXPECT_EQ(full_card.billing_address_id(), full_metadata.billing_address_id);
-  EXPECT_EQ(full_card.use_count(), full_metadata.use_count);
-  EXPECT_EQ(full_card.use_date(), full_metadata.use_date);
+  EXPECT_EQ(full_card.usage_history().use_count(), full_metadata.use_count);
+  EXPECT_EQ(full_card.usage_history().use_date(), full_metadata.use_date);
 }
 
 TEST(CreditCardTest, SetMetadata_MatchingId) {
   CreditCard local_card = test::GetCreditCard();
-  AutofillMetadata local_metadata;
+  PaymentsMetadata local_metadata;
   local_metadata.id = local_card.guid();
   local_metadata.use_count = 100;
   local_metadata.use_date = base::Time::FromSecondsSinceUnixEpoch(50);
@@ -509,11 +508,11 @@ TEST(CreditCardTest, SetMetadata_MatchingId) {
   EXPECT_TRUE(local_card.SetMetadata(local_metadata));
   EXPECT_EQ(local_metadata.id, local_card.guid());
   EXPECT_EQ(local_metadata.billing_address_id, local_card.billing_address_id());
-  EXPECT_EQ(local_metadata.use_count, local_card.use_count());
-  EXPECT_EQ(local_metadata.use_date, local_card.use_date());
+  EXPECT_EQ(local_metadata.use_count, local_card.usage_history().use_count());
+  EXPECT_EQ(local_metadata.use_date, local_card.usage_history().use_date());
 
   CreditCard masked_card = test::GetMaskedServerCard();
-  AutofillMetadata masked_metadata;
+  PaymentsMetadata masked_metadata;
   masked_metadata.id = masked_card.server_id();
   masked_metadata.use_count = 100;
   masked_metadata.use_date = base::Time::FromSecondsSinceUnixEpoch(50);
@@ -522,11 +521,11 @@ TEST(CreditCardTest, SetMetadata_MatchingId) {
   EXPECT_EQ(masked_metadata.id, masked_card.server_id());
   EXPECT_EQ(masked_metadata.billing_address_id,
             masked_card.billing_address_id());
-  EXPECT_EQ(masked_metadata.use_count, masked_card.use_count());
-  EXPECT_EQ(masked_metadata.use_date, masked_card.use_date());
+  EXPECT_EQ(masked_metadata.use_count, masked_card.usage_history().use_count());
+  EXPECT_EQ(masked_metadata.use_date, masked_card.usage_history().use_date());
 
   CreditCard full_card = test::GetFullServerCard();
-  AutofillMetadata full_metadata;
+  PaymentsMetadata full_metadata;
   full_metadata.id = full_card.server_id();
   full_metadata.use_count = 100;
   full_metadata.use_date = base::Time::FromSecondsSinceUnixEpoch(50);
@@ -534,13 +533,13 @@ TEST(CreditCardTest, SetMetadata_MatchingId) {
   EXPECT_TRUE(full_card.SetMetadata(full_metadata));
   EXPECT_EQ(full_metadata.id, full_card.server_id());
   EXPECT_EQ(full_metadata.billing_address_id, full_card.billing_address_id());
-  EXPECT_EQ(full_metadata.use_count, full_card.use_count());
-  EXPECT_EQ(full_metadata.use_date, full_card.use_date());
+  EXPECT_EQ(full_metadata.use_count, full_card.usage_history().use_count());
+  EXPECT_EQ(full_metadata.use_date, full_card.usage_history().use_date());
 }
 
 TEST(CreditCardTest, SetMetadata_NotMatchingId) {
   CreditCard local_card = test::GetCreditCard();
-  AutofillMetadata local_metadata;
+  PaymentsMetadata local_metadata;
   local_metadata.id = "WrongId";
   local_metadata.use_count = 100;
   local_metadata.use_date = base::Time::FromSecondsSinceUnixEpoch(50);
@@ -548,11 +547,11 @@ TEST(CreditCardTest, SetMetadata_NotMatchingId) {
   EXPECT_FALSE(local_card.SetMetadata(local_metadata));
   EXPECT_NE(local_metadata.id, local_card.guid());
   EXPECT_NE(local_metadata.billing_address_id, local_card.billing_address_id());
-  EXPECT_NE(local_metadata.use_count, local_card.use_count());
-  EXPECT_NE(local_metadata.use_date, local_card.use_date());
+  EXPECT_NE(local_metadata.use_count, local_card.usage_history().use_count());
+  EXPECT_NE(local_metadata.use_date, local_card.usage_history().use_date());
 
   CreditCard masked_card = test::GetMaskedServerCard();
-  AutofillMetadata masked_metadata;
+  PaymentsMetadata masked_metadata;
   masked_metadata.id = "WrongId";
   masked_metadata.use_count = 100;
   masked_metadata.use_date = base::Time::FromSecondsSinceUnixEpoch(50);
@@ -561,11 +560,11 @@ TEST(CreditCardTest, SetMetadata_NotMatchingId) {
   EXPECT_NE(masked_metadata.id, masked_card.server_id());
   EXPECT_NE(masked_metadata.billing_address_id,
             masked_card.billing_address_id());
-  EXPECT_NE(masked_metadata.use_count, masked_card.use_count());
-  EXPECT_NE(masked_metadata.use_date, masked_card.use_date());
+  EXPECT_NE(masked_metadata.use_count, masked_card.usage_history().use_count());
+  EXPECT_NE(masked_metadata.use_date, masked_card.usage_history().use_date());
 
   CreditCard full_card = test::GetFullServerCard();
-  AutofillMetadata full_metadata;
+  PaymentsMetadata full_metadata;
   full_metadata.id = "WrongId";
   full_metadata.use_count = 100;
   full_metadata.use_date = base::Time::FromSecondsSinceUnixEpoch(50);
@@ -573,8 +572,8 @@ TEST(CreditCardTest, SetMetadata_NotMatchingId) {
   EXPECT_FALSE(full_card.SetMetadata(full_metadata));
   EXPECT_NE(full_metadata.id, full_card.server_id());
   EXPECT_NE(full_metadata.billing_address_id, full_card.billing_address_id());
-  EXPECT_NE(full_metadata.use_count, full_card.use_count());
-  EXPECT_NE(full_metadata.use_date, full_card.use_date());
+  EXPECT_NE(full_metadata.use_count, full_card.usage_history().use_count());
+  EXPECT_NE(full_metadata.use_date, full_card.usage_history().use_date());
 }
 
 // Test that if one of the two compared cards is masked server card,
@@ -1041,31 +1040,68 @@ TEST(CreditCardTest, Compare) {
   EXPECT_LT(0, b.Compare(a));
 }
 
+TEST(CreditCardTest, CompareCardInfoRetrievalEnrollmentState) {
+  CreditCard a(base::Uuid::GenerateRandomV4().AsLowercaseString(),
+               std::string());
+  CreditCard b(base::Uuid::GenerateRandomV4().AsLowercaseString(),
+               std::string());
+
+  // Empty cards are the same.
+  EXPECT_EQ(0, a.Compare(b));
+
+  // Difference in card_info_retrieval_enrollment_state.
+  a.set_card_info_retrieval_enrollment_state(
+      CreditCard::CardInfoRetrievalEnrollmentState::
+          kRetrievalUnenrolledAndNotEligible);
+  b.set_card_info_retrieval_enrollment_state(
+      CreditCard::CardInfoRetrievalEnrollmentState::kRetrievalEnrolled);
+  EXPECT_NE(0, a.Compare(b));
+  // Card with UNSPECIFIED enrollment state is different from ENROLLED state.
+  a.set_card_info_retrieval_enrollment_state(
+      CreditCard::CardInfoRetrievalEnrollmentState::kRetrievalUnspecified);
+  b.set_card_info_retrieval_enrollment_state(
+      CreditCard::CardInfoRetrievalEnrollmentState::kRetrievalEnrolled);
+  EXPECT_NE(0, a.Compare(b));
+  // Reset the enrollment state to UNSPECIFIED and UNSPECIFIED states are
+  // considered the same.
+  a.set_card_info_retrieval_enrollment_state(
+      CreditCard::CardInfoRetrievalEnrollmentState::kRetrievalUnspecified);
+  b.set_card_info_retrieval_enrollment_state(
+      CreditCard::CardInfoRetrievalEnrollmentState::kRetrievalUnspecified);
+  EXPECT_EQ(0, a.Compare(b));
+  // Two same non UNSPECIFIED enrollment states are considered the same.
+  a.set_card_info_retrieval_enrollment_state(
+      CreditCard::CardInfoRetrievalEnrollmentState::kRetrievalEnrolled);
+  b.set_card_info_retrieval_enrollment_state(
+      CreditCard::CardInfoRetrievalEnrollmentState::kRetrievalEnrolled);
+  EXPECT_EQ(0, a.Compare(b));
+}
+
 // Test we get the correct icon for each card type.
 TEST(CreditCardTest, IconResourceId) {
   base::test::ScopedFeatureList scoped_feature_list{
       features::kAutofillEnableVerveCardSupport};
-  EXPECT_EQ(IDR_AUTOFILL_CC_AMEX,
+  EXPECT_EQ(IDR_AUTOFILL_METADATA_CC_AMEX,
             CreditCard::IconResourceId(Suggestion::Icon::kCardAmericanExpress));
-  EXPECT_EQ(IDR_AUTOFILL_CC_DINERS,
+  EXPECT_EQ(IDR_AUTOFILL_METADATA_CC_DINERS,
             CreditCard::IconResourceId(Suggestion::Icon::kCardDiners));
-  EXPECT_EQ(IDR_AUTOFILL_CC_DISCOVER,
+  EXPECT_EQ(IDR_AUTOFILL_METADATA_CC_DISCOVER,
             CreditCard::IconResourceId(Suggestion::Icon::kCardDiscover));
-  EXPECT_EQ(IDR_AUTOFILL_CC_ELO,
+  EXPECT_EQ(IDR_AUTOFILL_METADATA_CC_ELO,
             CreditCard::IconResourceId(Suggestion::Icon::kCardElo));
-  EXPECT_EQ(IDR_AUTOFILL_CC_JCB,
+  EXPECT_EQ(IDR_AUTOFILL_METADATA_CC_JCB,
             CreditCard::IconResourceId(Suggestion::Icon::kCardJCB));
-  EXPECT_EQ(IDR_AUTOFILL_CC_MASTERCARD,
+  EXPECT_EQ(IDR_AUTOFILL_METADATA_CC_MASTERCARD,
             CreditCard::IconResourceId(Suggestion::Icon::kCardMasterCard));
-  EXPECT_EQ(IDR_AUTOFILL_CC_MIR,
+  EXPECT_EQ(IDR_AUTOFILL_METADATA_CC_MIR,
             CreditCard::IconResourceId(Suggestion::Icon::kCardMir));
-  EXPECT_EQ(IDR_AUTOFILL_CC_TROY,
+  EXPECT_EQ(IDR_AUTOFILL_METADATA_CC_TROY,
             CreditCard::IconResourceId(Suggestion::Icon::kCardTroy));
-  EXPECT_EQ(IDR_AUTOFILL_CC_UNIONPAY,
+  EXPECT_EQ(IDR_AUTOFILL_METADATA_CC_UNIONPAY,
             CreditCard::IconResourceId(Suggestion::Icon::kCardUnionPay));
-  EXPECT_EQ(IDR_AUTOFILL_CC_VERVE,
+  EXPECT_EQ(IDR_AUTOFILL_METADATA_CC_VERVE,
             CreditCard::IconResourceId(Suggestion::Icon::kCardVerve));
-  EXPECT_EQ(IDR_AUTOFILL_CC_VISA,
+  EXPECT_EQ(IDR_AUTOFILL_METADATA_CC_VISA,
             CreditCard::IconResourceId(Suggestion::Icon::kCardVisa));
 }
 
@@ -1073,21 +1109,25 @@ TEST(CreditCardTest, IconResourceId) {
 TEST(CreditCardTest, IconResourceIdFromString) {
   base::test::ScopedFeatureList scoped_feature_list{
       features::kAutofillEnableVerveCardSupport};
-
-  EXPECT_EQ(IDR_AUTOFILL_CC_AMEX,
+  EXPECT_EQ(IDR_AUTOFILL_METADATA_CC_AMEX,
             CreditCard::IconResourceId(kAmericanExpressCard));
-  EXPECT_EQ(IDR_AUTOFILL_CC_DINERS, CreditCard::IconResourceId(kDinersCard));
-  EXPECT_EQ(IDR_AUTOFILL_CC_DISCOVER,
+  EXPECT_EQ(IDR_AUTOFILL_METADATA_CC_DINERS,
+            CreditCard::IconResourceId(kDinersCard));
+  EXPECT_EQ(IDR_AUTOFILL_METADATA_CC_DISCOVER,
             CreditCard::IconResourceId(kDiscoverCard));
-  EXPECT_EQ(IDR_AUTOFILL_CC_ELO, CreditCard::IconResourceId(kEloCard));
-  EXPECT_EQ(IDR_AUTOFILL_CC_JCB, CreditCard::IconResourceId(kJCBCard));
-  EXPECT_EQ(IDR_AUTOFILL_CC_MASTERCARD,
+  EXPECT_EQ(IDR_AUTOFILL_METADATA_CC_ELO, CreditCard::IconResourceId(kEloCard));
+  EXPECT_EQ(IDR_AUTOFILL_METADATA_CC_JCB, CreditCard::IconResourceId(kJCBCard));
+  EXPECT_EQ(IDR_AUTOFILL_METADATA_CC_MASTERCARD,
             CreditCard::IconResourceId(kMasterCard));
-  EXPECT_EQ(IDR_AUTOFILL_CC_MIR, CreditCard::IconResourceId(kMirCard));
-  EXPECT_EQ(IDR_AUTOFILL_CC_TROY, CreditCard::IconResourceId(kTroyCard));
-  EXPECT_EQ(IDR_AUTOFILL_CC_UNIONPAY, CreditCard::IconResourceId(kUnionPay));
-  EXPECT_EQ(IDR_AUTOFILL_CC_VERVE, CreditCard::IconResourceId(kVerveCard));
-  EXPECT_EQ(IDR_AUTOFILL_CC_VISA, CreditCard::IconResourceId(kVisaCard));
+  EXPECT_EQ(IDR_AUTOFILL_METADATA_CC_MIR, CreditCard::IconResourceId(kMirCard));
+  EXPECT_EQ(IDR_AUTOFILL_METADATA_CC_TROY,
+            CreditCard::IconResourceId(kTroyCard));
+  EXPECT_EQ(IDR_AUTOFILL_METADATA_CC_UNIONPAY,
+            CreditCard::IconResourceId(kUnionPay));
+  EXPECT_EQ(IDR_AUTOFILL_METADATA_CC_VERVE,
+            CreditCard::IconResourceId(kVerveCard));
+  EXPECT_EQ(IDR_AUTOFILL_METADATA_CC_VISA,
+            CreditCard::IconResourceId(kVisaCard));
 }
 
 TEST(CreditCardTest, UpdateFromImportedCard_UpdatedWithNameAndExpirationDate) {
@@ -1414,7 +1454,7 @@ TEST(CreditCardTest,
 TEST(CreditCardTest, IsValidCardNumberAndExpiryDate) {
   CreditCard card;
   // Invalid because expired
-  const base::Time now(AutofillClock::Now());
+  const base::Time now(base::Time::Now());
   base::Time::Exploded now_exploded;
   now.LocalExplode(&now_exploded);
   card.SetRawInfo(CREDIT_CARD_EXP_MONTH,
@@ -1519,15 +1559,15 @@ TEST(CreditCardTest, SetExpirationMonth) {
   EXPECT_EQ(u"07", card.GetRawInfo(CREDIT_CARD_EXP_MONTH));
   EXPECT_EQ(7, card.expiration_month());
 
-  card.SetInfo(AutofillType(CREDIT_CARD_EXP_MONTH), u"January", "en-US");
+  card.SetInfo(CREDIT_CARD_EXP_MONTH, u"January", "en-US");
   EXPECT_EQ(u"01", card.GetRawInfo(CREDIT_CARD_EXP_MONTH));
   EXPECT_EQ(1, card.expiration_month());
 
-  card.SetInfo(AutofillType(CREDIT_CARD_EXP_MONTH), u"Apr", "en-US");
+  card.SetInfo(CREDIT_CARD_EXP_MONTH, u"Apr", "en-US");
   EXPECT_EQ(u"04", card.GetRawInfo(CREDIT_CARD_EXP_MONTH));
   EXPECT_EQ(4, card.expiration_month());
 
-  card.SetInfo(AutofillType(CREDIT_CARD_EXP_MONTH), u"FÉVRIER", "fr-FR");
+  card.SetInfo(CREDIT_CARD_EXP_MONTH, u"FÉVRIER", "fr-FR");
   EXPECT_EQ(u"02", card.GetRawInfo(CREDIT_CARD_EXP_MONTH));
   EXPECT_EQ(2, card.expiration_month());
 }
@@ -1579,6 +1619,9 @@ TEST(CreditCardTest, CreditCardVerificationCode) {
   card.SetRawInfo(CREDIT_CARD_VERIFICATION_CODE, u"999");
   EXPECT_EQ(u"999", card.GetRawInfo(CREDIT_CARD_VERIFICATION_CODE));
   EXPECT_EQ(u"999", card.cvc());
+  card.SetRawInfo(CREDIT_CARD_STANDALONE_VERIFICATION_CODE, u"999");
+  EXPECT_EQ(u"999", card.GetRawInfo(CREDIT_CARD_STANDALONE_VERIFICATION_CODE));
+  EXPECT_EQ(u"999", card.cvc());
 }
 
 // Tests that the card in only deletable if it is expired before the threshold.
@@ -1587,32 +1630,34 @@ TEST(CreditCardTest, IsDeletable) {
   // threshold later than that time. This sets the year to 2007. The code
   // expects valid expiration years to be between 2000 and 2999. However,
   // because of the year 2018 problem, we need to pick an earlier year.
-  const base::Time kArbitraryTime =
+  constexpr auto kArbitraryTime =
       base::Time::FromSecondsSinceUnixEpoch(1000000000);
-  TestAutofillClock test_clock;
-  test_clock.SetNow(kArbitraryTime + kDisusedDataModelDeletionTimeDelta +
-                    base::Days(1));
+  base::test::TaskEnvironment task_environment{
+      base::test::TaskEnvironment::TimeSource::MOCK_TIME};
+  task_environment.AdvanceClock(kArbitraryTime +
+                                kDisusedDataModelDeletionTimeDelta +
+                                base::Days(1) - base::Time::Now());
 
   // Created a card that has not been used since over the deletion threshold.
   CreditCard card(base::Uuid::GenerateRandomV4().AsLowercaseString(),
                   "https://www.example.com/");
-  card.set_use_date(kArbitraryTime);
+  card.usage_history().set_use_date(kArbitraryTime);
 
   // Set the card to be expired before the threshold.
   base::Time::Exploded now_exploded;
-  AutofillClock::Now().LocalExplode(&now_exploded);
+  base::Time::Now().LocalExplode(&now_exploded);
   card.SetExpirationYear(now_exploded.year - 5);
   card.SetExpirationMonth(1);
-  ASSERT_TRUE(card.IsExpired(AutofillClock::Now() -
-                             kDisusedDataModelDeletionTimeDelta));
+  ASSERT_TRUE(
+      card.IsExpired(base::Time::Now() - kDisusedDataModelDeletionTimeDelta));
 
   // Make sure the card is deletable.
   EXPECT_TRUE(card.IsDeletable());
 
   // Set the card to not be expired.
   card.SetExpirationYear(now_exploded.year + 5);
-  ASSERT_FALSE(card.IsExpired(AutofillClock::Now() -
-                              kDisusedDataModelDeletionTimeDelta));
+  ASSERT_FALSE(
+      card.IsExpired(base::Time::Now() - kDisusedDataModelDeletionTimeDelta));
 
   // Make sure the card is not deletable.
   EXPECT_FALSE(card.IsDeletable());
@@ -1793,12 +1838,8 @@ constexpr base::TimeDelta kCurrent = base::Days(0);
 constexpr base::TimeDelta kOneYear = base::Days(365);
 constexpr base::TimeDelta kOneMonth = base::Days(31);
 
-void MonthAndYearFromDelta(const base::TimeDelta& time_delta,
-                           int& month,
-                           int& year) {
-  base::Time now = AutofillClock::Now();
-  autofill::TestAutofillClock test_clock;
-  test_clock.SetNow(now);
+void MonthAndYearFromDelta(base::TimeDelta time_delta, int& month, int& year) {
+  const base::Time now = base::Time::Now();
   base::Time::Exploded exploded;
   (now + time_delta).LocalExplode(&exploded);
   month = exploded.month;
@@ -1889,7 +1930,7 @@ struct VirtualCardRankingTestCase {
   Expectation expectation;
 };
 
-base::Time current_time = AutofillClock::Now();
+base::Time current_time = base::Time::Now();
 
 class VirtualCardRankingTest
     : public testing::TestWithParam<VirtualCardRankingTestCase> {};
@@ -1905,18 +1946,18 @@ TEST_P(VirtualCardRankingTest, HasGreaterRankingThan) {
 
   CreditCard model_a = test::GetVirtualCard();
   model_a.set_guid(test_case.guid_a);
-  model_a.set_use_count(test_case.use_count_a);
-  model_a.set_use_date(test_case.use_date_a);
+  model_a.usage_history().set_use_count(test_case.use_count_a);
+  model_a.usage_history().set_use_date(test_case.use_date_a);
 
   CreditCard model_b = test::GetCreditCard();
   model_b.set_guid(test_case.guid_b);
-  model_b.set_use_count(test_case.use_count_b);
-  model_b.set_use_date(test_case.use_date_b);
+  model_b.usage_history().set_use_count(test_case.use_count_b);
+  model_b.usage_history().set_use_date(test_case.use_date_b);
 
   EXPECT_EQ(test_case.expectation == GREATER,
-            model_a.HasGreaterRankingThan(&model_b, current_time));
+            model_a.HasGreaterRankingThan(model_b, current_time));
   EXPECT_NE(test_case.expectation == GREATER,
-            model_b.HasGreaterRankingThan(&model_a, current_time));
+            model_b.HasGreaterRankingThan(model_a, current_time));
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -1953,4 +1994,5 @@ INSTANTIATE_TEST_SUITE_P(
                                    "guid_b", 1, current_time - base::Days(30),
                                    LESS}));
 
+}  // namespace
 }  // namespace autofill

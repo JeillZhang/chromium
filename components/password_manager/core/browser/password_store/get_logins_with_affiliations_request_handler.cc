@@ -58,7 +58,7 @@ LoginsResultOrError ProcessExactAndPSLForms(
   for (auto& form : absl::get<LoginsResult>(logins_or_error)) {
     switch (GetMatchResult(form, digest)) {
       case MatchResult::NO_MATCH:
-        NOTREACHED_NORETURN();
+        NOTREACHED();
       case MatchResult::EXACT_MATCH:
       case MatchResult::FEDERATED_MATCH:
         form.match_type = PasswordForm::MatchType::kExact;
@@ -99,11 +99,11 @@ void TrimUsernameOnlyCredentials(std::vector<PasswordForm>& credentials) {
   // Remove username-only credentials which are not federated.
   std::erase_if(credentials, [](const PasswordForm& form) {
     return form.scheme == PasswordForm::Scheme::kUsernameOnly &&
-           form.federation_origin.opaque();
+           !form.IsFederatedCredential();
   });
 
   // Set "skip_zero_click" on federated credentials.
-  base::ranges::for_each(credentials, [](PasswordForm& form) {
+  std::ranges::for_each(credentials, [](PasswordForm& form) {
     if (form.scheme == PasswordForm::Scheme::kUsernameOnly) {
       form.skip_zero_click = true;
     }

@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #import "ui/events/keycodes/keyboard_code_conversion_mac.h"
 
 #import <Carbon/Carbon.h>
@@ -42,11 +47,6 @@ constexpr int kUCKeyTranslateBufferLength = 4;
 inline bool IsDomKeyUnicodeCharacter(char32_t c) {
   return base::IsValidCodepoint(c) && !base::IsUnicodeControl(c);
 }
-
-// This value is not defined but shows up as 0x36.
-constexpr int kVK_RightCommand = 0x36;
-// Context menu is not defined but shows up as 0x6E.
-constexpr int kVK_ContextMenu = 0x6E;
 
 bool IsKeypadOrNumericKeyEvent(NSEvent* event) {
   // Check that this is the type of event that has a keyCode.
@@ -147,7 +147,7 @@ DomKey DomKeyFromKeyCode(unsigned short key_code) {
       {kVK_RightArrow, DomKey::ARROW_RIGHT},
       {kVK_DownArrow, DomKey::ARROW_DOWN},
       {kVK_UpArrow, DomKey::ARROW_UP},
-      {kVK_ContextMenu, DomKey::CONTEXT_MENU},
+      {kVK_ContextualMenu, DomKey::CONTEXT_MENU},
       {kVK_JIS_Eisu, DomKey::EISU},
       {kVK_JIS_Kana, DomKey::KANJI_MODE},
   });
@@ -895,7 +895,7 @@ DomKey DomKeyFromNSEvent(NSEvent* event) {
       return DomKeyFromKeyCode(event.keyCode);
     }
     default:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }
 

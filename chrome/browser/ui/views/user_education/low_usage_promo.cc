@@ -18,18 +18,19 @@
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_navigator.h"
 #include "chrome/browser/ui/browser_navigator_params.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/chrome_pages.h"
-#include "chrome/browser/ui/views/side_panel/side_panel_entry_id.h"
 #include "chrome/browser/ui/views/side_panel/side_panel_coordinator.h"
 #include "chrome/browser/ui/views/side_panel/side_panel_entry.h"
+#include "chrome/browser/ui/views/side_panel/side_panel_entry_id.h"
 #include "chrome/browser/ui/views/side_panel/side_panel_util.h"
 #include "chrome/common/webui_url_constants.h"
 #include "chrome/grit/branded_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/feature_engagement/public/feature_constants.h"
-#include "components/user_education/common/feature_promo_handle.h"
-#include "components/user_education/common/feature_promo_specification.h"
-#include "components/user_education/common/help_bubble_params.h"
+#include "components/user_education/common/feature_promo/feature_promo_handle.h"
+#include "components/user_education/common/feature_promo/feature_promo_specification.h"
+#include "components/user_education/common/help_bubble/help_bubble_params.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
@@ -71,8 +72,8 @@ constexpr char kThemesWebStoreUrl[] =
 Browser* ContextToBrowser(ui::ElementContext ctx) {
   Browser* const browser = chrome::FindBrowserWithUiElementContext(ctx);
   if (!browser) {
-    NOTREACHED_IN_MIGRATION() << "Promo attempted to open a side panel but the "
-                                 "browser context was invalid.";
+    NOTREACHED() << "Promo attempted to open a side panel but the browser "
+                    "context was invalid.";
   }
   return browser;
 }
@@ -81,7 +82,7 @@ Browser* ContextToBrowser(ui::ElementContext ctx) {
 // already exist.
 void ShowSidePanel(Browser* browser, SidePanelEntryId entry) {
   SidePanelCoordinator* const coordinator =
-      SidePanelUtil::GetSidePanelCoordinatorForBrowser(browser);
+      browser->GetFeatures().side_panel_coordinator();
   coordinator->Show(entry);
 }
 
@@ -92,9 +93,8 @@ content::WebContents* NavigateToPage(Browser* browser, const GURL& url) {
   navigate_params.disposition = WindowOpenDisposition::NEW_FOREGROUND_TAB;
   Navigate(&navigate_params);
   if (!navigate_params.navigated_or_inserted_contents) {
-    NOTREACHED_IN_MIGRATION()
-        << "Promo attempted to open a page, but did not receive a "
-           "navigation handle.";
+    NOTREACHED() << "Promo attempted to open a page, but did not receive a "
+                    "navigation handle.";
   }
   return navigate_params.navigated_or_inserted_contents;
 }

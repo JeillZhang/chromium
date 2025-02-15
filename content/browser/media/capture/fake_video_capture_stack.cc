@@ -193,12 +193,8 @@ class FakeVideoCaptureStackReceiver final : public media::VideoFrameReceiver {
     CHECK(gmb);
 
     gfx::Size size = gmb->GetSize();
-    scoped_refptr<gpu::ClientSharedImage> shared_image;
     auto video_frame = media::VideoFrame::WrapExternalGpuMemoryBuffer(
-        frame.frame_info->visible_rect, size, std::move(gmb), shared_image,
-        gpu::SyncToken(), /*texture_target=*/0,
-        base::BindOnce([](const gpu::SyncToken& token,
-                          std::unique_ptr<gfx::GpuMemoryBuffer> gmb) {}),
+        frame.frame_info->visible_rect, size, std::move(gmb),
         frame.frame_info->timestamp);
     CHECK(video_frame);
 
@@ -296,7 +292,7 @@ class FakeVideoCaptureStackReceiver final : public media::VideoFrameReceiver {
     capture_stack_->SetStarted();
   }
 
-  void OnStartedUsingGpuDecode() override { NOTREACHED_IN_MIGRATION(); }
+  void OnStartedUsingGpuDecode() override { NOTREACHED(); }
 
   void OnStopped() override {}
 

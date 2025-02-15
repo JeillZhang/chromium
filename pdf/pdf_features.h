@@ -16,10 +16,17 @@ static_assert(BUILDFLAG(ENABLE_PDF), "ENABLE_PDF not set to true");
 namespace chrome_pdf::features {
 
 BASE_DECLARE_FEATURE(kAccessiblePDFForm);
+BASE_DECLARE_FEATURE(kPdfCr23);
+BASE_DECLARE_FEATURE(kPdfGetSaveDataInBlocks);
 BASE_DECLARE_FEATURE(kPdfIncrementalLoading);
 BASE_DECLARE_FEATURE(kPdfOopif);
 BASE_DECLARE_FEATURE(kPdfPartialLoading);
 BASE_DECLARE_FEATURE(kPdfPortfolio);
+BASE_DECLARE_FEATURE(kPdfSaveOriginalFromMemory);
+BASE_DECLARE_FEATURE(kPdfSearchify);
+BASE_DECLARE_FEATURE(kPdfSearchifySave);
+BASE_DECLARE_FEATURE(kPdfTags);
+BASE_DECLARE_FEATURE(kPdfUseShowSaveFilePicker);
 BASE_DECLARE_FEATURE(kPdfUseSkiaRenderer);
 BASE_DECLARE_FEATURE(kPdfXfaSupport);
 
@@ -34,6 +41,9 @@ void SetIsOopifPdfPolicyEnabled(bool is_oopif_pdf_policy_enabled);
 // Returns whether the OOPIF PDF viewer should be used, otherwise the GuestView
 // PDF viewer should be used.
 bool IsOopifPdfEnabled();
+
+// Returns whether PDF Searchify and PDF Searchify Save features are enabled.
+bool IsPdfSearchifySaveEnabled();
 
 }  // namespace chrome_pdf::features
 

@@ -43,7 +43,6 @@ import org.chromium.chrome.browser.browser_controls.BrowserControlsSizer;
 import org.chromium.chrome.browser.browserservices.intents.BrowserServicesIntentDataProvider;
 import org.chromium.chrome.browser.browserservices.intents.CustomButtonParams;
 import org.chromium.chrome.browser.customtabs.content.CustomTabActivityTabProvider;
-import org.chromium.chrome.browser.night_mode.SystemNightModeMonitor;
 import org.chromium.components.browser_ui.widget.gesture.SwipeGestureListener.ScrollDirection;
 import org.chromium.ui.base.ApplicationViewportInsetSupplier;
 import org.chromium.ui.base.TestActivity;
@@ -61,7 +60,6 @@ public class CustomTabBottomBarDelegateUnitTest {
     @Mock private WindowAndroid mWindowAndroid;
     @Mock private BrowserControlsSizer mBrowserControlsSizer;
     @Mock private CustomTabNightModeStateController mNightModeStateController;
-    @Mock private SystemNightModeMonitor mSystemNightModeMonitor;
     @Mock private CustomTabActivityTabProvider mTabProvider;
     @Mock private CustomTabCompositorContentInitializer mCompositorContentInitializer;
     @Mock private CustomTabBottomBarView mBottomBarView;
@@ -101,7 +99,6 @@ public class CustomTabBottomBarDelegateUnitTest {
                         mIntentDataProvider,
                         mBrowserControlsSizer,
                         mNightModeStateController,
-                        mSystemNightModeMonitor,
                         mTabProvider,
                         mCompositorContentInitializer);
         when(mBottomBarView.findViewById(eq(R.id.bottombar_shadow))).thenReturn(mShadowView);
@@ -162,7 +159,7 @@ public class CustomTabBottomBarDelegateUnitTest {
         var description = "description";
         CustomButtonParams customButtonParams = Mockito.mock(CustomButtonParams.class);
         when(customButtonParams.getId()).thenReturn(1);
-        when(customButtonParams.getIcon(any())).thenReturn(icon);
+        when(customButtonParams.getIcon(any(), any())).thenReturn(icon);
         when(customButtonParams.getDescription()).thenReturn(description);
 
         mBottomBarDelegate.updateBottomBarButtons(customButtonParams);
@@ -178,7 +175,7 @@ public class CustomTabBottomBarDelegateUnitTest {
         var description = "description";
         CustomButtonParams customButtonParams = Mockito.mock(CustomButtonParams.class);
         when(customButtonParams.getId()).thenReturn(1);
-        when(customButtonParams.getIcon(any())).thenReturn(icon);
+        when(customButtonParams.getIcon(any(), any())).thenReturn(icon);
         when(customButtonParams.getDescription()).thenReturn(description);
         CustomTabBottomBarDelegate.CustomButtonsUpdater updater =
                 Mockito.mock(CustomTabBottomBarDelegate.CustomButtonsUpdater.class);
@@ -198,9 +195,12 @@ public class CustomTabBottomBarDelegateUnitTest {
         mBottomBarDelegate.onControlsOffsetChanged(
                 /* topOffset= */ 0,
                 /* topControlsMinHeightOffset= */ 0,
+                /* topControlsMinHeightChanged= */ false,
                 /* bottomOffset= */ 0,
                 /* bottomControlsMinHeightOffset= */ 0,
-                /* needsAnimate= */ false);
+                /* bottomControlsMinHeightChanged= */ false,
+                /* requestNewFrame= */ false,
+                /* isVisibilityForced= */ false);
         verify(mBottomBarView).setTranslationY(-100);
     }
 

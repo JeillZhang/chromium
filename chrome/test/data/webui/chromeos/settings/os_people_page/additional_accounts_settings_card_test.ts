@@ -5,17 +5,19 @@
 import 'chrome://os-settings/os_settings.js';
 
 import {AccountManagerBrowserProxyImpl} from 'chrome://os-settings/lazy_load.js';
-import {AdditionalAccountsSettingsCardElement, CrTooltipIconElement, Router, routes, settingMojom, setUserActionRecorderForTesting} from 'chrome://os-settings/os_settings.js';
+import type {AdditionalAccountsSettingsCardElement, CrTooltipIconElement} from 'chrome://os-settings/os_settings.js';
+import {Router, routes, settingMojom, setUserActionRecorderForTesting} from 'chrome://os-settings/os_settings.js';
 import {assert} from 'chrome://resources/js/assert.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 import {getDeepActiveElement} from 'chrome://resources/js/util.js';
-import {DomRepeat, flush} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+import type {DomRepeat} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+import {flush} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 import {assertEquals, assertFalse, assertNull, assertTrue} from 'chrome://webui-test/chai_assert.js';
 import {waitAfterNextRender} from 'chrome://webui-test/polymer_test_util.js';
 
 import {FakeUserActionRecorder} from '../fake_user_action_recorder.js';
 
-import {TestAccountManagerBrowserProxy, TestAccountManagerBrowserProxyForAccountsAllowedInArc} from './test_account_manager_browser_proxy.js';
+import {TestAccountManagerBrowserProxy} from './test_account_manager_browser_proxy.js';
 
 suite('<additonal-accounts-settings-card>', () => {
   let browserProxy: TestAccountManagerBrowserProxy;
@@ -24,7 +26,9 @@ suite('<additonal-accounts-settings-card>', () => {
   let userActionRecorder: FakeUserActionRecorder;
 
   suiteSetup(() => {
-    loadTimeData.overrideValues({isDeviceAccountManaged: true});
+    loadTimeData.overrideValues({
+      isDeviceAccountManaged: true,
+    });
 
     userActionRecorder = new FakeUserActionRecorder();
     setUserActionRecorderForTesting(userActionRecorder);
@@ -114,17 +118,6 @@ suite('<additonal-accounts-settings-card>', () => {
     assertTrue(!!actionMenu);
     actionMenu.querySelectorAll('button')[0]!.click();
 
-    if (loadTimeData.getBoolean('lacrosEnabled')) {
-      const confirmationDialog =
-          additionalAccountSettingsCard.shadowRoot!.querySelector(
-              '#removeConfirmationDialog');
-      assertTrue(!!confirmationDialog);
-      const button = confirmationDialog.querySelector<HTMLButtonElement>(
-          '#removeConfirmationButton');
-      assertTrue(!!button);
-      button.click();
-    }
-
     const account = await browserProxy.whenCalled('removeAccount');
     assertEquals('456', account.id);
     // Add account button should be in focus now.
@@ -152,43 +145,6 @@ suite('<additonal-accounts-settings-card>', () => {
         deepLinkElement, getDeepActiveElement(),
         `Kebab menu should be focused for settingId${removeAccountSettingId}.`);
   });
-
-  if (loadTimeData.getBoolean('arcAccountRestrictionsEnabled')) {
-    test('arc availability is shown for secondary accounts', () => {
-      accountList.items!.forEach((item, i) => {
-        const notAvailableInArc =
-            additionalAccountSettingsCard.shadowRoot!
-                .querySelectorAll<HTMLElement>('.arc-availability')[i];
-        assertTrue(!!notAvailableInArc);
-        assertEquals(item.isAvailableInArc, notAvailableInArc.hidden);
-      });
-    });
-
-    test('change arc availability', async () => {
-      const testAccount = accountList.items![0];
-      const currentValue = testAccount.isAvailableInArc;
-      // Click on 'More Actions' for the |testAccount| (First one (index 0)
-      // to have the hamburger menu).
-      additionalAccountSettingsCard.shadowRoot!
-          .querySelectorAll('cr-icon-button')[0]!.click();
-      // Click on the button to change ARC availability (the second button in
-      // the menu).
-      const actionMenu =
-          additionalAccountSettingsCard.shadowRoot!.querySelector(
-              'cr-action-menu');
-      assertTrue(!!actionMenu);
-      actionMenu.querySelectorAll('button')[1]!.click();
-
-      const args = await browserProxy.whenCalled('changeArcAvailability');
-      assertEquals(testAccount, args[0]);
-      assertEquals(!currentValue, args[1]);
-      // 'More actions' button should be in focus now.
-      assertEquals(
-          additionalAccountSettingsCard.shadowRoot!.querySelectorAll(
-              'cr-icon-button')[0],
-          getDeepActiveElement());
-    });
-  }
 });
 
 suite('AccountManagerAccountAdditionDisabledTests', () => {
@@ -238,20 +194,23 @@ suite('AccountManagerAccountAdditionDisabledTests', () => {
   });
 });
 
-suite('AccountManagerAccountAdditionInAndroidDisallowedTests', () => {
-  let browserProxy: TestAccountManagerBrowserProxyForAccountsAllowedInArc;
+suite('SecondaryAccountAllowedInArcPolicyTests', () => {
+  let browserProxy: TestAccountManagerBrowserProxy;
   let additionalAccountSettingsCard: AdditionalAccountsSettingsCardElement;
   let accountList: DomRepeat;
+  let userActionRecorder: FakeUserActionRecorder;
 
   suiteSetup(() => {
     loadTimeData.overrideValues({
-      isSecondaryAccountAllowedInArc: false,
-      arcAccountRestrictionsEnabled: true,
+      isDeviceAccountManaged: true,
     });
+
+    userActionRecorder = new FakeUserActionRecorder();
+    setUserActionRecorderForTesting(userActionRecorder);
   });
 
   setup(async () => {
-    browserProxy = new TestAccountManagerBrowserProxyForAccountsAllowedInArc();
+    browserProxy = new TestAccountManagerBrowserProxy();
     AccountManagerBrowserProxyImpl.setInstanceForTesting(browserProxy);
     const accounts = await browserProxy.getAccounts();
 
@@ -264,6 +223,7 @@ suite('AccountManagerAccountAdditionInAndroidDisallowedTests', () => {
             '#secondaryAccountsList');
     assertTrue(!!list);
     accountList = list;
+
     Router.getInstance().navigateTo(routes.OS_PEOPLE);
     flush();
   });
@@ -274,52 +234,13 @@ suite('AccountManagerAccountAdditionInAndroidDisallowedTests', () => {
     Router.getInstance().resetRouteForTesting();
   });
 
-  test('arc disallowed is shown for secondary managed account', () => {
-    assertEquals(2, accountList.items!.length);
-    const notAvailableInArc =
-        additionalAccountSettingsCard.shadowRoot!.querySelector<HTMLElement>(
-            '#arcStatus_0');
-    assertTrue(!!notAvailableInArc);
-    assertFalse(notAvailableInArc.hidden);
+  test('arc availability is shown for secondary accounts', () => {
+    accountList.items!.forEach((item, i) => {
+      const notAvailableInArc =
+          additionalAccountSettingsCard.shadowRoot!
+              .querySelectorAll<HTMLElement>('.arc-availability')[i];
+      assertTrue(!!notAvailableInArc);
+      assertEquals(item.isAvailableInArc, notAvailableInArc.hidden);
+    });
   });
-
-  test('arc disallowed is not shown for secondary unmanaged account', () => {
-    const notAvailableInArc =
-        additionalAccountSettingsCard.shadowRoot!.querySelector<HTMLElement>(
-            '#arcStatus_1');
-    assertTrue(!!notAvailableInArc);
-    assertTrue(notAvailableInArc.hidden);
-  });
-
-  test(
-      'use with Android apps option in hamburger menu is disabled for managed secondary account',
-      () => {
-        additionalAccountSettingsCard.shadowRoot!
-            .querySelectorAll('cr-icon-button')[0]!.click();
-        const actionMenu =
-            additionalAccountSettingsCard.shadowRoot!.querySelector(
-                'cr-action-menu');
-        const button =
-            additionalAccountSettingsCard.shadowRoot!
-                .querySelector<HTMLButtonElement>('#arcStatusButton');
-        assertTrue(!!actionMenu);
-        assert(button);
-        assertTrue(button.disabled);
-      });
-
-  test(
-      'use with Android apps option in hamburger menu is available for unmanaged secondary account',
-      () => {
-        additionalAccountSettingsCard.shadowRoot!
-            .querySelectorAll('cr-icon-button')[1]!.click();
-        const actionMenu =
-            additionalAccountSettingsCard.shadowRoot!.querySelector(
-                'cr-action-menu');
-        const button =
-            additionalAccountSettingsCard.shadowRoot!
-                .querySelector<HTMLButtonElement>('#arcStatusButton');
-        assertTrue(!!actionMenu);
-        assert(button);
-        assertFalse(button.disabled);
-      });
 });

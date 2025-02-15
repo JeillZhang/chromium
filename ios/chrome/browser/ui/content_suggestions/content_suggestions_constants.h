@@ -15,6 +15,7 @@
 // reused.
 // LINT.IfChange
 enum class ContentSuggestionsModuleType {
+  kInvalid = -1,
   kMostVisited = 0,
   kShortcuts = 1,
   kSetUpListSync = 2,
@@ -30,7 +31,19 @@ enum class ContentSuggestionsModuleType {
   // Removed: kParcelTrackingSeeMore = 12,
   kSetUpListNotifications = 13,
   kPlaceholder = 14,
-  kMaxValue = kPlaceholder,
+  kPriceTrackingPromo = 15,
+  // Larger variant of `kTips` with different layout/formatting for displaying
+  // larger-sized product images within the module.
+  //
+  // TODO(crbug.com/370479820): Deprecate when Magic Stack supports dynamic
+  // styling and layout decoupled from `ContentSuggestionsModuleType`.
+  kTipsWithProductImage = 16,
+  kTips = 17,
+  kSendTabPromo = 18,
+  kSetUpListDocking = 19,
+  kSetUpListAddressBar = 20,
+  kShopCard = 21,
+  kMaxValue = kShopCard,
 };
 // LINT.ThenChange(/tools/metrics/histograms/metadata/ios/enums.xml)
 
@@ -84,11 +97,6 @@ extern const CGFloat kMostVisitedBottomMargin;
 // Most Visited Tiles favicon width when kMagicStack is enabled.
 extern const CGFloat kMagicStackFaviconWidth;
 
-// Maximum number of Trending Queries shown.
-// If the value of this constant is updated, please also update the
-// TrendingQueryIndex enum so it can capture a higher max value.
-const int kMaxTrendingQueries = 4;
-
 // Returns the matching ContentSuggestionsModuleType for a given
 // SetUpListItemType `type`.
 ContentSuggestionsModuleType SetUpListModuleTypeForSetUpListType(
@@ -96,5 +104,8 @@ ContentSuggestionsModuleType SetUpListModuleTypeForSetUpListType(
 
 // Returns true if the module type is one of the SetUpList types.
 bool IsSetUpListModuleType(ContentSuggestionsModuleType type);
+
+// Returns true if the module type is one of the Tips types.
+bool IsTipsModuleType(ContentSuggestionsModuleType type);
 
 #endif  // IOS_CHROME_BROWSER_UI_CONTENT_SUGGESTIONS_CONTENT_SUGGESTIONS_CONSTANTS_H_

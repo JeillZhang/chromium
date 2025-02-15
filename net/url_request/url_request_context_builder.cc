@@ -45,6 +45,7 @@
 #include "net/proxy_resolution/configured_proxy_resolution_service.h"
 #include "net/quic/quic_context.h"
 #include "net/quic/quic_session_pool.h"
+#include "net/shared_dictionary/shared_dictionary_network_transaction_factory.h"
 #include "net/socket/network_binding_client_socket_factory.h"
 #include "net/ssl/ssl_config_service_defaults.h"
 #include "net/url_request/static_http_user_agent_settings.h"
@@ -60,11 +61,12 @@
 #endif  // BUILDFLAG(ENABLE_REPORTING)
 
 #if BUILDFLAG(IS_ANDROID)
-#include "base/android/build_info.h"
+#include "base/android/android_info.h"
 #endif  // BUILDFLAG(IS_ANDROID)
 
 #if BUILDFLAG(ENABLE_DEVICE_BOUND_SESSIONS)
-#include "net/device_bound_sessions/device_bound_session_service.h"
+#include "net/device_bound_sessions/session_service.h"
+#include "net/device_bound_sessions/session_store.h"
 #endif  // BUILDFLAG(ENABLE_DEVICE_BOUND_SESSIONS)
 
 namespace net {
@@ -180,6 +182,11 @@ void URLRequestContextBuilder::set_persistent_reporting_and_nel_store(
   persistent_reporting_and_nel_store_ =
       std::move(persistent_reporting_and_nel_store);
 }
+
+void URLRequestContextBuilder::set_enterprise_reporting_endpoints(
+    const base::flat_map<std::string, GURL>& enterprise_reporting_endpoints) {
+  enterprise_reporting_endpoints_ = enterprise_reporting_endpoints;
+}
 #endif  // BUILDFLAG(ENABLE_REPORTING)
 
 void URLRequestContextBuilder::SetCookieStore(
@@ -249,7 +256,8 @@ void URLRequestContextBuilder::SetCreateHttpTransactionFactoryCallback(
 
 #if BUILDFLAG(ENABLE_DEVICE_BOUND_SESSIONS)
 void URLRequestContextBuilder::set_device_bound_session_service(
-    std::unique_ptr<DeviceBoundSessionService> device_bound_session_service) {
+    std::unique_ptr<device_bound_sessions::SessionService>
+        device_bound_session_service) {
   device_bound_session_service_ = std::move(device_bound_session_service);
 }
 #endif  // BUILDFLAG(ENABLE_DEVICE_BOUND_SESSIONS)
@@ -259,13 +267,6 @@ void URLRequestContextBuilder::BindToNetwork(
     std::optional<HostResolver::ManagerOptions> options) {
 #if BUILDFLAG(IS_ANDROID)
   DCHECK(NetworkChangeNotifier::AreNetworkHandlesSupported());
-  // DNS lookups for this context will need to target `network`. NDK to do that
-  // has been introduced in Android Marshmallow
-  // (https://developer.android.com/ndk/reference/group/networking#android_getaddrinfofornetwork)
-  // This is also checked later on in the codepath (at lookup time), but
-  // failing here should be preferred to return a more intuitive crash path.
-  CHECK(base::android::BuildInfo::GetInstance()->sdk_int() >=
-        base::android::SDK_VERSION_MARSHMALLOW);
   bound_network_ = network;
   manager_options_ = options.value_or(manager_options_);
 #else
@@ -476,7 +477,8 @@ std::unique_ptr<URLRequestContext> URLRequestContextBuilder::Build() {
   } else if (reporting_policy_) {
     context->set_reporting_service(
         ReportingService::Create(*reporting_policy_, context.get(),
-                                 persistent_reporting_and_nel_store_.get()));
+                                 persistent_reporting_and_nel_store_.get(),
+                                 enterprise_reporting_endpoints_));
   }
 
   if (network_error_logging_enabled_) {
@@ -505,8 +507,13 @@ std::unique_ptr<URLRequestContext> URLRequestContextBuilder::Build() {
 
 #if BUILDFLAG(ENABLE_DEVICE_BOUND_SESSIONS)
   if (has_device_bound_session_service_) {
+    if (!device_bound_sessions_file_path_.empty()) {
+      context->set_device_bound_session_store(
+          device_bound_sessions::SessionStore::Create(
+              device_bound_sessions_file_path_));
+    }
     context->set_device_bound_session_service(
-        DeviceBoundSessionService::Create(context.get()));
+        device_bound_sessions::SessionService::Create(context.get()));
   } else {
     if (device_bound_session_service_) {
       context->set_device_bound_session_service(
@@ -538,6 +545,12 @@ std::unique_ptr<URLRequestContext> URLRequestContextBuilder::Build() {
         std::make_unique<HttpNetworkLayer>(context->http_network_session());
   }
 
+  if (enable_shared_dictionary_) {
+    http_transaction_factory =
+        std::make_unique<SharedDictionaryNetworkTransactionFactory>(
+            std::move(http_transaction_factory), enable_shared_zstd_);
+  }
+
   if (http_cache_enabled_) {
     std::unique_ptr<HttpCache::BackendFactory> http_cache_backend;
     if (http_cache_params_.type != HttpCacheParams::IN_MEMORY) {
@@ -555,8 +568,7 @@ std::unique_ptr<URLRequestContext> URLRequestContextBuilder::Build() {
           backend_type = CACHE_BACKEND_SIMPLE;
           break;
         case HttpCacheParams::IN_MEMORY:
-          NOTREACHED_IN_MIGRATION();
-          break;
+          NOTREACHED();
       }
       http_cache_backend = std::make_unique<HttpCache::DefaultBackend>(
           DISK_CACHE, backend_type, http_cache_params_.file_operations_factory,

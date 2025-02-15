@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include "base/command_line.h"
@@ -49,9 +50,9 @@
 #include "components/autofill/content/browser/test_autofill_client_injector.h"
 #include "components/autofill/content/common/mojom/autofill_driver.mojom-test-utils.h"
 #include "components/autofill/content/common/mojom/autofill_driver.mojom.h"
-#include "components/autofill/core/browser/autofill_test_utils.h"
 #include "components/autofill/core/browser/field_types.h"
 #include "components/autofill/core/browser/proto/api_v1.pb.h"
+#include "components/autofill/core/browser/test_utils/autofill_test_utils.h"
 #include "components/autofill/core/common/autofill_features.h"
 #include "components/autofill/core/common/autofill_switches.h"
 #include "components/autofill/core/common/form_field_data.h"
@@ -92,6 +93,7 @@
 #include "content/public/test/prerender_test_util.h"
 #include "content/public/test/test_utils.h"
 #include "content/public/test/url_loader_interceptor.h"
+#include "google_apis/gaia/gaia_id.h"
 #include "google_apis/gaia/gaia_switches.h"
 #include "net/base/filename_util.h"
 #include "net/dns/mock_host_resolver.h"
@@ -230,7 +232,7 @@ class MockHttpAuthObserver : public password_manager::HttpAuthObserver {
  public:
   MOCK_METHOD(void,
               OnAutofillDataAvailable,
-              (const std::u16string& username, const std::u16string& password),
+              (std::u16string_view username, std::u16string_view password),
               (override));
 
   MOCK_METHOD(void, OnLoginModelDestroying, (), (override));
@@ -1003,10 +1005,6 @@ IN_PROC_BROWSER_TEST_F(PasswordManagerBrowserTest, NoPromptIfLinkClicked) {
 
 IN_PROC_BROWSER_TEST_F(PasswordManagerVotingBrowserTest,
                        VerifyPasswordGenerationUpload) {
-  // Disable Autofill requesting access to AddressBook data. This causes
-  // the test to hang on Mac.
-  autofill::test::DisableSystemServices(browser()->profile()->GetPrefs());
-
   // The form should not be hosted on localhost to enable sending
   // crowdsourcing votes.
   const std::string kTestSignonRealm = "example.com";
@@ -1064,7 +1062,6 @@ IN_PROC_BROWSER_TEST_F(PasswordManagerVotingBrowserTest,
     histograms.ExpectUniqueSample("Autofill.UploadEvent", 1, 2);
   }
   EXPECT_FALSE(second_prompt_observer.IsSavePromptShownAutomatically());
-  autofill::test::ReenableSystemServices();
 }
 
 IN_PROC_BROWSER_TEST_F(PasswordManagerBrowserTest, PromptForSubmitFromIframe) {
@@ -1260,15 +1257,17 @@ IN_PROC_BROWSER_TEST_F(PasswordManagerOverwritePlaceholderTest,
       autofill::test::CreateFieldPrediction(autofill::FieldType::PASSWORD)};
   // Simulate password manager receiving server predictions.
   password_manager::ContentPasswordManagerDriver* driver =
-      password_manager::ContentPasswordManagerDriverFactory::FromWebContents(
-          WebContents())
-          ->GetDriverForFrame(WebContents()->GetPrimaryMainFrame());
+      password_manager::ContentPasswordManagerDriver::GetForRenderFrameHost(
+          WebContents()->GetPrimaryMainFrame());
   autofill::FormData form_data(
-      *driver->GetPasswordManager()->form_managers()[0]->observed_form());
+      *static_cast<const password_manager::PasswordManager*>(
+           driver->GetPasswordManager())
+           ->form_managers()[0]
+           ->observed_form());
   driver->GetPasswordManager()->ProcessAutofillPredictions(
       driver, form_data,
-      {{form_data.fields[0].global_id(), std::move(username_prediction)},
-       {form_data.fields[1].global_id(), std::move(password_prediction)}});
+      {{form_data.fields()[0].global_id(), std::move(username_prediction)},
+       {form_data.fields()[1].global_id(), std::move(password_prediction)}});
 
   // Password Manager will not autofill on page load until user interacted with
   // the page.
@@ -2232,9 +2231,10 @@ IN_PROC_BROWSER_TEST_F(PasswordManagerBrowserTest,
   EXPECT_TRUE(prompt_observer.IsSavePromptShownAutomatically());
 }
 
+// TODO(crbug.com/360035859): Fix and re-enable.
 IN_PROC_BROWSER_TEST_F(
     PasswordManagerBrowserTest,
-    IFrameDetachedRightAfterFormSubmission_UpdateBubbleShown) {
+    DISABLED_IFrameDetachedRightAfterFormSubmission_UpdateBubbleShown) {
   password_manager::PasswordStoreInterface* password_store =
       ProfilePasswordStoreFactory::GetForProfile(
           browser()->profile(), ServiceAccessType::IMPLICIT_ACCESS)
@@ -4099,7 +4099,8 @@ class PasswordManagerBrowserTestWithSigninInterception
   // another dummy account in Chrome that acts as the primary.
   void SetupAccountsForSavingGaiaPassword() {
     CoreAccountId dummy_account = helper_.AddGaiaAccountToProfile(
-        browser()->profile(), "dummy_email@example.com", "dummy_gaia_id");
+        browser()->profile(), "dummy_email@example.com",
+        GaiaId("dummy_gaia_id"));
     IdentityManagerFactory::GetForProfile(browser()->profile())
         ->GetPrimaryAccountMutator()
         ->SetPrimaryAccount(dummy_account, signin::ConsentLevel::kSignin);
@@ -4146,8 +4147,7 @@ IN_PROC_BROWSER_TEST_F(PasswordManagerBrowserTestWithSigninInterception,
   DiceWebSigninInterceptor* signin_interceptor =
       helper_.GetSigninInterceptor(profile);
   signin_interceptor->MaybeInterceptWebSignin(
-      WebContents(), account_id,
-      signin_metrics::AccessPoint::ACCESS_POINT_UNKNOWN,
+      WebContents(), account_id, signin_metrics::AccessPoint::kUnknown,
       /*is_new_account=*/true,
       /*is_sync_signin=*/false);
   EXPECT_FALSE(signin_interceptor->is_interception_in_progress());
@@ -4177,8 +4177,7 @@ IN_PROC_BROWSER_TEST_F(PasswordManagerBrowserTestWithSigninInterception,
   DiceWebSigninInterceptor* signin_interceptor =
       helper_.GetSigninInterceptor(profile);
   signin_interceptor->MaybeInterceptWebSignin(
-      WebContents(), account_id,
-      signin_metrics::AccessPoint::ACCESS_POINT_UNKNOWN,
+      WebContents(), account_id, signin_metrics::AccessPoint::kUnknown,
       /*is_new_account=*/true,
       /*is_sync_signin=*/false);
   EXPECT_FALSE(signin_interceptor->is_interception_in_progress());
@@ -4210,8 +4209,7 @@ IN_PROC_BROWSER_TEST_F(PasswordManagerBrowserTestWithSigninInterception,
   DiceWebSigninInterceptor* signin_interceptor =
       helper_.GetSigninInterceptor(profile);
   signin_interceptor->MaybeInterceptWebSignin(
-      WebContents(), account_id,
-      signin_metrics::AccessPoint::ACCESS_POINT_UNKNOWN,
+      WebContents(), account_id, signin_metrics::AccessPoint::kUnknown,
       /*is_new_account=*/true,
       /*is_sync_signin=*/false);
   EXPECT_TRUE(signin_interceptor->is_interception_in_progress());
@@ -4235,8 +4233,7 @@ IN_PROC_BROWSER_TEST_F(PasswordManagerBrowserTestWithSigninInterception,
   DiceWebSigninInterceptor* signin_interceptor =
       helper_.GetSigninInterceptor(profile);
   signin_interceptor->MaybeInterceptWebSignin(
-      WebContents(), account_id,
-      signin_metrics::AccessPoint::ACCESS_POINT_UNKNOWN,
+      WebContents(), account_id, signin_metrics::AccessPoint::kUnknown,
       /*is_new_account=*/true,
       /*is_sync_signin=*/false);
   EXPECT_TRUE(signin_interceptor->is_interception_in_progress());
@@ -4311,12 +4308,6 @@ class MockPrerenderPasswordManagerDriver
               ShowPasswordSuggestions,
               (const autofill::PasswordSuggestionRequest&),
               (override));
-#if BUILDFLAG(IS_ANDROID)
-  MOCK_METHOD(void,
-              ShowKeyboardReplacingSurface,
-              (autofill::mojom::SubmissionReadinessState, bool),
-              (override));
-#endif
   MOCK_METHOD(void,
               CheckSafeBrowsingReputation,
               (const GURL& form_action, const GURL& frame_url),
@@ -4386,14 +4377,6 @@ class MockPrerenderPasswordManagerDriver
               copy.password_field_index = 0;
               impl_->ShowPasswordSuggestions(copy);
             });
-#if BUILDFLAG(IS_ANDROID)
-    ON_CALL(*this, ShowKeyboardReplacingSurface)
-        .WillByDefault([this](autofill::mojom::SubmissionReadinessState
-                                  submission_readiness) {
-          impl_->ShowKeyboardReplacingSurface(submission_readiness,
-                                              /*is_webauthn=*/false);
-        });
-#endif
     ON_CALL(*this, CheckSafeBrowsingReputation)
         .WillByDefault([this](const GURL& form_action, const GURL& frame_url) {
           impl_->CheckSafeBrowsingReputation(form_action, frame_url);
@@ -4459,10 +4442,8 @@ class MockPrerenderPasswordManagerDriverInjector
  private:
   password_manager::ContentPasswordManagerDriver* GetDriverForFrame(
       content::RenderFrameHost* rfh) {
-    password_manager::ContentPasswordManagerDriverFactory* driver_factory =
-        password_manager::ContentPasswordManagerDriverFactory::FromWebContents(
-            web_contents());
-    return driver_factory->GetDriverForFrame(rfh);
+    return password_manager::ContentPasswordManagerDriver::
+        GetForRenderFrameHost(rfh);
   }
 
   // content::WebContentsObserver:
@@ -4548,6 +4529,7 @@ class PasswordManagerPrerenderBrowserTest : public PasswordManagerBrowserTest {
     browser()->tab_strip_model()->AppendWebContents(
         std::move(owned_web_contents), true);
     if (preexisting_tab) {
+      ClearWebContentsPtr();
       browser()->tab_strip_model()->CloseWebContentsAt(
           0, TabCloseTypes::CLOSE_NONE);
     }
@@ -4581,8 +4563,9 @@ IN_PROC_BROWSER_TEST_F(PasswordManagerPrerenderBrowserTest,
 
   // Ensure that the prerender has started.
   registry_observer.WaitForTrigger(prerender_url);
-  auto prerender_id = prerender_helper()->GetHostForUrl(prerender_url);
-  EXPECT_NE(content::RenderFrameHost::kNoFrameTreeNodeId, prerender_id);
+  content::FrameTreeNodeId prerender_id =
+      prerender_helper()->GetHostForUrl(prerender_url);
+  EXPECT_TRUE(prerender_id);
   content::test::PrerenderHostObserver host_observer(*WebContents(),
                                                      prerender_id);
   // PrerenderHost is destroyed by net::INVALID_AUTH_CREDENTIALS and it stops
@@ -4624,7 +4607,8 @@ IN_PROC_BROWSER_TEST_F(PasswordManagerPrerenderBrowserTest,
   auto prerender_url =
       embedded_test_server()->GetURL("/password/password_form.html");
   // Loads a page in the prerender.
-  int host_id = prerender_helper()->AddPrerender(prerender_url);
+  content::FrameTreeNodeId host_id =
+      prerender_helper()->AddPrerender(prerender_url);
   content::test::PrerenderHostObserver host_observer(*WebContents(), host_id);
   content::RenderFrameHost* render_frame_host =
       prerender_helper()->GetPrerenderedMainFrameHost(host_id);
@@ -4674,7 +4658,8 @@ IN_PROC_BROWSER_TEST_F(PasswordManagerPrerenderBrowserTest,
   auto prerender_url =
       embedded_test_server()->GetURL("/password/password_form.html");
   // Loads a page in the prerender.
-  int host_id = prerender_helper()->AddPrerender(prerender_url);
+  content::FrameTreeNodeId host_id =
+      prerender_helper()->AddPrerender(prerender_url);
   content::test::PrerenderHostObserver host_observer(*web_contents(), host_id);
   content::RenderFrameHost* render_frame_host =
       prerender_helper()->GetPrerenderedMainFrameHost(host_id);
@@ -4710,10 +4695,8 @@ class MockPasswordManagerDriverInjector : public content::WebContentsObserver {
  private:
   password_manager::ContentPasswordManagerDriver* GetDriverForFrame(
       content::RenderFrameHost* rfh) {
-    password_manager::ContentPasswordManagerDriverFactory* driver_factory =
-        password_manager::ContentPasswordManagerDriverFactory::FromWebContents(
-            web_contents());
-    return driver_factory->GetDriverForFrame(rfh);
+    return password_manager::ContentPasswordManagerDriver::
+        GetForRenderFrameHost(rfh);
   }
 
   // content::WebContentsObserver:

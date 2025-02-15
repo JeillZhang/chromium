@@ -17,6 +17,7 @@
 #import "ios/chrome/browser/shared/public/commands/bookmarks_commands.h"
 #import "ios/chrome/browser/shared/public/commands/browser_coordinator_commands.h"
 #import "ios/chrome/browser/shared/public/commands/find_in_page_commands.h"
+#import "ios/chrome/browser/shared/public/commands/help_commands.h"
 #import "ios/chrome/browser/shared/public/commands/load_query_commands.h"
 #import "ios/chrome/browser/shared/public/commands/open_new_tab_command.h"
 #import "ios/chrome/browser/shared/public/commands/page_info_commands.h"
@@ -80,7 +81,7 @@ using base::UserMetricsAction;
       if (!currentWebState) {
         return;
       }
-      [self.bookmarksCommandsHandler bookmarkWithWebState:currentWebState];
+      [self.bookmarksCommandsHandler addBookmarkForWebState:currentWebState];
       break;
     }
     case PopupMenuActionTranslate:
@@ -94,7 +95,8 @@ using base::UserMetricsAction;
     case PopupMenuActionRequestDesktop:
       RecordAction(UserMetricsAction("MobileMenuRequestDesktopSite"));
       self.navigationAgent->RequestDesktopSite();
-      [self.browserCoordinatorCommandsHandler showDefaultSiteViewIPH];
+      [self.helpHandler
+          presentInProductHelpWithType:InProductHelpType::kDefaultSiteView];
       break;
     case PopupMenuActionRequestMobile:
       RecordAction(UserMetricsAction("MobileMenuRequestMobileSite"));
@@ -172,8 +174,7 @@ using base::UserMetricsAction;
       [self.dispatcher showPriceNotifications];
       break;
     default:
-      NOTREACHED_IN_MIGRATION() << "Unexpected identifier";
-      break;
+      NOTREACHED() << "Unexpected identifier";
   }
 
   // Close the tools menu.

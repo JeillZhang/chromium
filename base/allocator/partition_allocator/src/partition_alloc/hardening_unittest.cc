@@ -82,7 +82,8 @@ TEST(HardeningTest, MetadataPointerCrashing) {
   root.Free(data);
 
   uintptr_t slot_start = root.ObjectToSlotStart(data);
-  auto* metadata = SlotSpanMetadata::FromSlotStart(slot_start);
+  auto* metadata =
+      SlotSpanMetadata<MetadataKind::kReadOnly>::FromSlotStart(slot_start);
 
   root.get_freelist_dispatcher()->EmplaceAndInitForTest(slot_start, metadata,
                                                         true);
@@ -174,7 +175,8 @@ TEST(HardeningTest, PoolOffsetMetadataPointerCrashing) {
   root.Free(data);
 
   uintptr_t slot_start = root.ObjectToSlotStart(data);
-  auto* metadata = SlotSpanMetadata::FromSlotStart(slot_start);
+  auto* metadata =
+      SlotSpanMetadata<MetadataKind::kReadOnly>::FromSlotStart(slot_start);
 
   root.get_freelist_dispatcher()->EmplaceAndInitForTest(slot_start, metadata,
                                                         true);
@@ -218,10 +220,21 @@ TEST(HardeningTest, PoolOffsetSuccessfulCorruption) {
   void* new_data = root.Alloc(kAllocSize);
   ASSERT_EQ(new_data, data);
 
+#if !PA_CONFIG(ENFORCE_SLOT_STARTS)
+
   // Not crashing, because a zeroed area is a "valid" freelist entry.
   void* new_data2 = root.Alloc(kAllocSize);
   // Now we have a pointer to the middle of an existing allocation.
   EXPECT_EQ(new_data2, to_corrupt);
+
+#else
+
+  // When `SlotStart` enforcement is on, `AllocInternalNoHooks()` will
+  // call `SlotStartToObject()` and `CHECK()` that it's a slot start.
+  EXPECT_DEATH_IF_SUPPORTED(root.Alloc(kAllocSize), "");
+
+#endif  // !PA_CONFIG(ENFORCE_SLOT_STARTS)
+
 #endif  // PA_BUILDFLAG(USE_FREESLOT_BITMAP)
 }
 #endif  // !PA_BUILDFLAG(IS_ANDROID)

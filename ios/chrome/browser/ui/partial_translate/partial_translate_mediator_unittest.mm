@@ -2,9 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#import <Foundation/Foundation.h>
-
 #import "ios/chrome/browser/ui/partial_translate/partial_translate_mediator.h"
+
+#import <Foundation/Foundation.h>
 
 #import "base/ios/ios_util.h"
 #import "base/memory/raw_ptr.h"
@@ -14,15 +14,16 @@
 #import "components/sync_preferences/pref_service_syncable.h"
 #import "components/sync_preferences/testing_pref_service_syncable.h"
 #import "components/translate/core/browser/translate_pref_names.h"
-#import "ios/chrome/browser/shared/model/browser_state/test_chrome_browser_state.h"
+#import "ios/chrome/browser/browser_container/ui_bundled/edit_menu_alert_delegate.h"
+#import "ios/chrome/browser/shared/model/profile/test/test_profile_ios.h"
 #import "ios/chrome/browser/shared/model/web_state_list/test/fake_web_state_list_delegate.h"
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_list.h"
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_opener.h"
 #import "ios/chrome/browser/shared/public/commands/browser_coordinator_commands.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
-#import "ios/chrome/browser/ui/browser_container/edit_menu_alert_delegate.h"
 #import "ios/chrome/browser/web/model/chrome_web_client.h"
 #import "ios/chrome/browser/web_selection/model/web_selection_tab_helper.h"
+#import "ios/chrome/test/ios_chrome_scoped_testing_local_state.h"
 #import "ios/chrome/test/providers/partial_translate/test_partial_translate.h"
 #import "ios/web/public/test/scoped_testing_web_client.h"
 #import "ios/web/public/test/web_state_test_util.h"
@@ -144,10 +145,9 @@ class PartialTranslateMediatorTest : public PlatformTest {
   PartialTranslateMediatorTest()
       : web_client_(std::make_unique<ChromeWebClient>()),
         web_state_list_(&web_state_list_delegate_) {
-    feature_list_.InitAndEnableFeature(kIOSEditMenuPartialTranslate);
-    browser_state_ = TestChromeBrowserState::Builder().Build();
+    profile_ = TestProfileIOS::Builder().Build();
 
-    web::WebState::CreateParams params(browser_state_.get());
+    web::WebState::CreateParams params(profile_.get());
     auto web_state = web::WebState::Create(params);
     WebSelectionTabHelper::CreateForWebState(web_state.get());
     web_state_list_.InsertWebState(
@@ -161,7 +161,7 @@ class PartialTranslateMediatorTest : public PlatformTest {
     mediator_ = [[PartialTranslateMediator alloc]
           initWithWebStateList:&web_state_list_
         withBaseViewController:base_view_controller_
-                   prefService:browser_state_->GetSyncablePrefs()
+                   prefService:profile_->GetSyncablePrefs()
           fullscreenController:nullptr
                      incognito:NO];
     mediator_.alertDelegate = fake_alert_controller_;
@@ -206,11 +206,11 @@ class PartialTranslateMediatorTest : public PlatformTest {
   }
 
  protected:
+  IOSChromeScopedTestingLocalState scoped_testing_local_state_;
   web::WebTaskEnvironment task_environment_{
       base::test::TaskEnvironment::TimeSource::MOCK_TIME};
   web::ScopedTestingWebClient web_client_;
-  base::test::ScopedFeatureList feature_list_;
-  std::unique_ptr<TestChromeBrowserState> browser_state_;
+  std::unique_ptr<TestProfileIOS> profile_;
   FakeWebStateListDelegate web_state_list_delegate_;
   WebStateList web_state_list_;
   raw_ptr<web::WebState> web_state_;
@@ -240,7 +240,7 @@ TEST_F(PartialTranslateMediatorTest, EnterpriseDisabled) {
   auto factory = SetupTranslateControllerFactory(true);
 
   base::Value managed_value(false);
-  browser_state_->GetTestingPrefService()->SetManagedPref(
+  profile_->GetTestingPrefService()->SetManagedPref(
       translate::prefs::kOfferTranslateEnabled, managed_value.Clone());
   EXPECT_FALSE([mediator_ shouldInstallPartialTranslate]);
   EXPECT_NSEQ(nil, factory.latestController);
@@ -248,18 +248,10 @@ TEST_F(PartialTranslateMediatorTest, EnterpriseDisabled) {
 
 // Tests the behavior in incognito.
 TEST_F(PartialTranslateMediatorTest, IncognitoSupportedSuccess) {
-  if (!base::ios::IsRunningOnIOS16OrLater()) {
-    // Partial translate not supported before iOS16.
-    return;
-  }
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndEnableFeatureWithParameters(
-      kIOSEditMenuPartialTranslate,
-      {{kIOSEditMenuPartialTranslateNoIncognitoParam, "false"}});
   PartialTranslateMediator* mediator = [[PartialTranslateMediator alloc]
         initWithWebStateList:&web_state_list_
       withBaseViewController:base_view_controller_
-                 prefService:browser_state_->GetSyncablePrefs()
+                 prefService:profile_->GetSyncablePrefs()
         fullscreenController:nullptr
                    incognito:YES];
   base::HistogramTester histogram_tester;
@@ -287,7 +279,7 @@ TEST_F(PartialTranslateMediatorTest, IncognitoNotSupported) {
   PartialTranslateMediator* mediator = [[PartialTranslateMediator alloc]
         initWithWebStateList:&web_state_list_
       withBaseViewController:base_view_controller_
-                 prefService:browser_state_->GetSyncablePrefs()
+                 prefService:profile_->GetSyncablePrefs()
         fullscreenController:nullptr
                    incognito:YES];
   EXPECT_FALSE([mediator shouldInstallPartialTranslate]);

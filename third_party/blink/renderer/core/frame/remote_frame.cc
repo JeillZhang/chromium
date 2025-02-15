@@ -10,6 +10,7 @@
 #include "third_party/blink/public/common/fenced_frame/fenced_frame_utils.h"
 #include "third_party/blink/public/common/frame/frame_owner_element_type.h"
 #include "third_party/blink/public/common/navigation/navigation_policy.h"
+#include "third_party/blink/public/common/page/page_zoom.h"
 #include "third_party/blink/public/mojom/frame/frame.mojom-blink.h"
 #include "third_party/blink/public/mojom/frame/frame_owner_properties.mojom-blink.h"
 #include "third_party/blink/public/mojom/frame/frame_replication_state.mojom-blink.h"
@@ -42,9 +43,9 @@
 #include "third_party/blink/renderer/core/html/html_frame_owner_element.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
 #include "third_party/blink/renderer/core/layout/geometry/physical_rect.h"
-#include "third_party/blink/renderer/core/layout/intrinsic_sizing_info.h"
 #include "third_party/blink/renderer/core/layout/layout_embedded_content.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
+#include "third_party/blink/renderer/core/layout/natural_sizing_info.h"
 #include "third_party/blink/renderer/core/layout/text_autosizer.h"
 #include "third_party/blink/renderer/core/loader/frame_load_request.h"
 #include "third_party/blink/renderer/core/loader/frame_loader.h"
@@ -125,14 +126,10 @@ RemoteFrame::RemoteFrame(
       task_runner_(page.GetPageScheduler()
                        ->GetAgentGroupScheduler()
                        .DefaultTaskRunner()) {
-  // TODO(crbug.com/1094850): Remove this check once the renderer is correctly
-  // handling errors during the creation of HTML portal elements, which would
-  // otherwise cause RemoteFrame() being created with empty frame tokens.
-  if (!frame_token.value().is_empty()) {
-    auto frame_tracking_result = GetRemoteFramesMap().insert(
-        RemoteFrameToken::Hasher()(frame_token), this);
-    CHECK(frame_tracking_result.stored_value) << "Inserting a duplicate item.";
-  }
+  TRACE_EVENT("navigation", "RemoteFrame");
+  auto frame_tracking_result = GetRemoteFramesMap().insert(
+      RemoteFrameToken::Hasher()(frame_token), this);
+  CHECK(frame_tracking_result.stored_value) << "Inserting a duplicate item.";
 
   dom_window_ = MakeGarbageCollected<RemoteDOMWindow>(*this);
 
@@ -239,11 +236,9 @@ void RemoteFrame::Navigate(FrameLoadRequest& frame_request,
     initiator_frame_is_ad = window->GetFrame()->IsAdFrame();
     is_ad_script_in_stack = window->GetFrame()->IsAdScriptInStack();
 
-    if (frame_request.ClientRedirectReason() != ClientNavigationReason::kNone) {
-      probe::FrameRequestedNavigation(window->GetFrame(), this, url,
-                                      frame_request.ClientRedirectReason(),
-                                      kNavigationPolicyCurrentTab);
-    }
+    probe::FrameRequestedNavigation(window->GetFrame(), this, url,
+                                    frame_request.GetClientNavigationReason(),
+                                    kNavigationPolicyCurrentTab);
 
     if (!initiator_frame_token) {
       initiator_frame_token = window->GetFrame()->GetLocalFrameToken();
@@ -295,6 +290,7 @@ void RemoteFrame::Navigate(FrameLoadRequest& frame_request,
     params->source_location->line = source_location->LineNumber();
     params->source_location->column = source_location->ColumnNumber();
   }
+  params->storage_access_api_status = window->GetStorageAccessApiStatus();
 
   params->impression = frame_request.Impression();
 
@@ -315,6 +311,8 @@ void RemoteFrame::Navigate(FrameLoadRequest& frame_request,
                                                   is_ad_script_in_stack);
 
   params->is_container_initiated = frame_request.IsContainerInitiated();
+  params->has_rel_opener = frame_request.GetWindowFeatures().explicit_opener;
+
   GetRemoteFrameHostRemote().OpenURL(std::move(params));
 }
 
@@ -347,6 +345,12 @@ bool RemoteFrame::DetachImpl(FrameDetachType type) {
     SetCcLayer(nullptr, false);
   receiver_.reset();
   main_frame_receiver_.reset();
+
+  RemoteFramesByTokenMap& remote_frames_map = GetRemoteFramesMap();
+  auto it =
+      remote_frames_map.find(RemoteFrameToken::Hasher()(GetRemoteFrameToken()));
+  CHECK(it != remote_frames_map.end());
+  remote_frames_map.erase(it);
 
   return true;
 }
@@ -426,6 +430,7 @@ void RemoteFrame::AddResourceTimingFromChild(
 }
 
 void RemoteFrame::DidStartLoading() {
+  TRACE_EVENT("navigation", "RemoteFrame::DidStartLoading");
   // If this proxy was created for a frame that hasn't yet finished loading,
   // let the renderer know so it can also mark the proxy as loading. See
   // https://crbug.com/916137.
@@ -433,6 +438,8 @@ void RemoteFrame::DidStartLoading() {
 }
 
 void RemoteFrame::DidStopLoading() {
+  TRACE_EVENT("navigation", "RemoteFrame::DidStopLoading");
+
   SetIsLoading(false);
 
   // When a subframe finishes loading, the parent should check if *all*
@@ -564,22 +571,27 @@ void RemoteFrame::WillEnterFullscreen(
 
 void RemoteFrame::EnforceInsecureNavigationsSet(
     const WTF::Vector<uint32_t>& set) {
+  TRACE_EVENT("navigation", "RemoteFrame::EnforceInsecureNavigationsSet");
   security_context_.SetInsecureNavigationsSet(set);
 }
 
 void RemoteFrame::SetFrameOwnerProperties(
     mojom::blink::FrameOwnerPropertiesPtr properties) {
+  TRACE_EVENT("navigation", "RemoteFrame::SetFrameOwnerProperties");
   Frame::ApplyFrameOwnerProperties(std::move(properties));
 }
 
 void RemoteFrame::EnforceInsecureRequestPolicy(
     mojom::blink::InsecureRequestPolicy policy) {
+  TRACE_EVENT("navigation", "RemoteFrame::EnforceInsecureRequestPolicy");
   SetInsecureRequestPolicy(policy);
 }
 
 void RemoteFrame::SetReplicatedOrigin(
     const scoped_refptr<const SecurityOrigin>& origin,
     bool is_potentially_trustworthy_unique_origin) {
+  TRACE_EVENT("navigation", "RemoteFrame::SetReplicatedOrigin");
+
   scoped_refptr<SecurityOrigin> security_origin = origin->IsolatedCopy();
   security_origin->SetOpaqueOriginIsPotentiallyTrustworthy(
       is_potentially_trustworthy_unique_origin);
@@ -606,11 +618,13 @@ bool RemoteFrame::IsAdFrame() const {
 }
 
 void RemoteFrame::SetReplicatedIsAdFrame(bool is_ad_frame) {
+  TRACE_EVENT("navigation", "RemoteFrame::SetReplicatedIsAdFrame");
   is_ad_frame_ = is_ad_frame;
 }
 
 void RemoteFrame::SetReplicatedName(const String& name,
                                     const String& unique_name) {
+  TRACE_EVENT("navigation", "RemoteFrame::SetReplicatedName");
   Tree().SetName(AtomicString(name));
   unique_name_ = unique_name;
 }
@@ -630,6 +644,8 @@ void RemoteFrame::Focus() {
 }
 
 void RemoteFrame::SetHadStickyUserActivationBeforeNavigation(bool value) {
+  TRACE_EVENT("navigation",
+              "RemoteFrame::SetHadStickyUserActivationBeforeNavigation");
   Frame::SetHadStickyUserActivationBeforeNavigation(value);
 }
 
@@ -671,11 +687,8 @@ void RemoteFrame::UpdateUserActivationState(
     case mojom::blink::UserActivationUpdateType::kClearActivation:
       ClearUserActivationInFrameTree();
       break;
-    case mojom::blink::UserActivationUpdateType::
-        kNotifyActivationPendingBrowserVerification:
-      NOTREACHED_IN_MIGRATION()
-          << "Unexpected UserActivationUpdateType from browser";
-      break;
+    default:
+      NOTREACHED() << "Unexpected UserActivationUpdateType from browser";
   }
 }
 
@@ -714,6 +727,7 @@ void RemoteFrame::ScrollRectToVisible(
 
   scroll_into_view_util::ScrollRectToVisible(*owner_object, absolute_rect,
                                              std::move(params),
+                                             /*container=*/nullptr,
                                              /*from_remote_frame=*/true);
 }
 
@@ -728,14 +742,14 @@ void RemoteFrame::IntrinsicSizingInfoOfChildChanged(
   // TODO(https://crbug.com/1044304): Should either remove the native
   // C++ Blink type and use the Mojo type everywhere or typemap the
   // Mojo type to the pre-existing native C++ Blink type.
-  IntrinsicSizingInfo sizing_info;
+  NaturalSizingInfo sizing_info;
   sizing_info.size = info->size;
   sizing_info.aspect_ratio = info->aspect_ratio;
   sizing_info.has_width = info->has_width;
   sizing_info.has_height = info->has_height;
-  View()->SetIntrinsicSizeInfo(sizing_info);
+  View()->SetNaturalDimensions(sizing_info);
 
-  owner->IntrinsicSizingInfoChanged();
+  owner->NaturalSizingInfoChanged();
 }
 
 // Update the proxy's SecurityContext with new sandbox flags or permissions
@@ -750,6 +764,8 @@ void RemoteFrame::DidSetFramePolicyHeaders(
     network::mojom::blink::WebSandboxFlags sandbox_flags,
     const WTF::Vector<ParsedPermissionsPolicyDeclaration>&
         parsed_permissions_policy) {
+  TRACE_EVENT("navigation", "RemoteFrame::DidSetFramePolicyHeaders");
+
   SetReplicatedSandboxFlags(sandbox_flags);
   // Convert from WTF::Vector<ParsedPermissionsPolicyDeclaration>
   // to std::vector<ParsedPermissionsPolicyDeclaration>, since
@@ -779,6 +795,7 @@ void RemoteFrame::DidSetFramePolicyHeaders(
 // with the caveat that the FrameOwner won't learn about updates to its flags
 // until they take effect.
 void RemoteFrame::DidUpdateFramePolicy(const FramePolicy& frame_policy) {
+  TRACE_EVENT("navigation", "RemoteFrame::DidUpdateFramePolicy");
   // At the moment, this is only used to replicate sandbox flags and container
   // policy for frames with a remote owner.
   SECURITY_CHECK(IsA<RemoteFrameOwner>(Owner()));
@@ -829,6 +846,7 @@ void RemoteFrame::SetOpener(Frame* opener_frame) {
 
 void RemoteFrame::UpdateTextAutosizerPageInfo(
     mojom::blink::TextAutosizerPageInfoPtr mojo_remote_page_info) {
+  TRACE_EVENT("navigation", "RemoteFrame::UpdateTextAutosizerPageInfo");
   // Only propagate the remote page info if our main frame is remote.
   DCHECK(IsMainFrame());
   Frame* root_frame = GetPage()->MainFrame();
@@ -959,6 +977,8 @@ bool RemoteFrame::SynchronizeVisualProperties(
           pending_visual_properties_.screen_infos ||
       sent_visual_properties_->zoom_level !=
           pending_visual_properties_.zoom_level ||
+      sent_visual_properties_->css_zoom_factor !=
+          pending_visual_properties_.css_zoom_factor ||
       sent_visual_properties_->page_scale_factor !=
           pending_visual_properties_.page_scale_factor ||
       sent_visual_properties_->compositing_scale_factor !=
@@ -1007,7 +1027,7 @@ void RemoteFrame::RecordSentVisualProperties() {
   sent_visual_properties_ = pending_visual_properties_;
   TRACE_EVENT_WITH_FLOW2(
       TRACE_DISABLED_BY_DEFAULT("viz.surface_id_flow"),
-      "RenderFrameProxy::SynchronizeVisualProperties Send Message",
+      "RemoteFrame::SynchronizeVisualProperties Send Message",
       TRACE_ID_GLOBAL(
           pending_visual_properties_.local_surface_id.submission_trace_id()),
       TRACE_EVENT_FLAG_FLOW_OUT, "message",
@@ -1060,8 +1080,22 @@ void RemoteFrame::DidChangeScreenInfos(
   SynchronizeVisualProperties();
 }
 
-void RemoteFrame::ZoomLevelChanged(double zoom_level) {
-  pending_visual_properties_.zoom_level = zoom_level;
+void RemoteFrame::ZoomFactorChanged(double zoom_factor) {
+  // zoom_factor includes device scale factor, browser zoom, and css zoom.
+  WebViewImpl* view = GetPage()->GetChromeClient().GetWebView();
+  double device_scale_factor = view->ZoomFactorForViewportLayout();
+  if (Owner() && Owner()->IsLocal()) {
+    DCHECK(ancestor_widget_);
+    double zoom_level = ancestor_widget_->GetZoomLevel();
+    pending_visual_properties_.zoom_level = zoom_level;
+    double browser_zoom_factor = view->ZoomLevelToZoomFactor(zoom_level);
+    pending_visual_properties_.css_zoom_factor =
+        zoom_factor / (device_scale_factor * browser_zoom_factor);
+  } else {
+    pending_visual_properties_.zoom_level =
+        ZoomFactorToZoomLevel(zoom_factor / device_scale_factor);
+    pending_visual_properties_.css_zoom_factor = 1.0;
+  }
   SynchronizeVisualProperties();
 }
 

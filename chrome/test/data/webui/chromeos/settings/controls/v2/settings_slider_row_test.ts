@@ -4,7 +4,8 @@
 
 import 'chrome://os-settings/os_settings.js';
 
-import {SettingsRowElement, SettingsSliderRowElement, SettingsSliderV2Element} from 'chrome://os-settings/os_settings.js';
+import type {SettingsRowElement, SettingsSliderV2Element} from 'chrome://os-settings/os_settings.js';
+import {SettingsSliderRowElement} from 'chrome://os-settings/os_settings.js';
 import {strictQuery} from 'chrome://resources/ash/common/typescript_utils/strict_query.js';
 import {assertEquals, assertFalse, assertNotEquals, assertTrue} from 'chrome://webui-test/chai_assert.js';
 import {flushTasks} from 'chrome://webui-test/polymer_test_util.js';
@@ -131,7 +132,7 @@ suite(SettingsSliderRowElement.is, () => {
       await flushTasks();
     });
 
-    test('pref value updates the slider value', async () => {
+    test('pref value updates the slider value', () => {
       ticks.forEach((tickValue, index) => {
         sliderRow.set('pref.value', tickValue);
         assertSliderValueByTick(index);
@@ -151,7 +152,7 @@ suite(SettingsSliderRowElement.is, () => {
       assertTrue(isVisible(policyIndicator));
     });
 
-    test('updating pref value dispatches pref change event', async () => {
+    test('updating pref value dispatches pref change event', () => {
       ticks.forEach(async (tickValue, index) => {
         const prefChangeEventPromise =
             eventToPromise('user-action-setting-pref-change', window);
@@ -164,7 +165,7 @@ suite(SettingsSliderRowElement.is, () => {
       });
     });
 
-    test('updating pref value dispatches change event', async () => {
+    test('updating pref value dispatches change event', () => {
       ticks.forEach(async (tickValue, index) => {
         const changeEventPromise = eventToPromise('change', window);
         sliderRow.set('pref.value', tickValue);
@@ -179,14 +180,14 @@ suite(SettingsSliderRowElement.is, () => {
   });
 
   suite('without pref', () => {
-    test('updating value updates the slider value', async () => {
+    test('updating value updates the slider value', () => {
       ticks.forEach((tickValue, index) => {
         sliderRow.value = tickValue;
         assertSliderValueByTick(index);
       });
     });
 
-    test('updating value dispatches change event', async () => {
+    test('updating value dispatches change event', () => {
       ticks.forEach(async (tickValue, index) => {
         const changeEventPromise = eventToPromise('change', window);
         sliderRow.value = tickValue;
@@ -200,12 +201,44 @@ suite(SettingsSliderRowElement.is, () => {
     });
   });
 
-  suite('focus()', async () => {
-    test('should focus the slider element', async () => {
+  suite('focus()', () => {
+    test('should focus the slider element', () => {
       assertNotEquals(
           internalSliderElement, sliderRow.shadowRoot!.activeElement);
       sliderRow.focus();
       assertEquals(internalSliderElement, sliderRow.shadowRoot!.activeElement);
     });
+  });
+
+  suite('for a11y', () => {
+    test('label is the ARIA label by default', () => {
+      const label = 'Lorem ipsum';
+      sliderRow.label = label;
+      assertEquals(label, internalSliderElement.ariaLabel);
+    });
+
+    test('sublabel is the ARIA description by default', () => {
+      const sublabel = 'Lorem ipsum dolor sit amet';
+      sliderRow.sublabel = sublabel;
+      assertEquals(sublabel, internalSliderElement.ariaDescription);
+    });
+
+    test('ariaLabel property takes precedence for the ARIA label', () => {
+      const label = 'Lorem ipsum';
+      const ariaLabel = 'A11y ' + label;
+      sliderRow.label = label;
+      sliderRow.ariaLabel = ariaLabel;
+      assertEquals(ariaLabel, internalSliderElement.ariaLabel);
+    });
+
+    test(
+        'ariaDescription property takes precedence for the ARIA description',
+        () => {
+          const sublabel = 'Lorem ipsum dolor sit amet';
+          const ariaDescription = 'A11y ' + sublabel;
+          sliderRow.sublabel = sublabel;
+          sliderRow.ariaDescription = ariaDescription;
+          assertEquals(ariaDescription, internalSliderElement.ariaDescription);
+        });
   });
 });

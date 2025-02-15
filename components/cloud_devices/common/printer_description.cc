@@ -17,11 +17,9 @@
 #include "base/json/json_writer.h"
 #include "base/notreached.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
 #include "base/values.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "components/cloud_devices/common/cloud_device_description_consts.h"
 #include "components/cloud_devices/common/description_items_inl.h"
 #include "ui/gfx/geometry/rect.h"
@@ -453,8 +451,7 @@ const gfx::Size& FindMediaSizeByType(MediaSize size_name) {
       return media.size_um;
     }
   }
-  NOTREACHED_IN_MIGRATION();
-  return kMediaDefinitions[0].size_um;
+  NOTREACHED();
 }
 
 const MediaDefinition* FindMediaBySize(const gfx::Size& size_um) {
@@ -475,8 +472,7 @@ std::string TypeToString(const T& names, IdType id) {
     if (id == name.id)
       return name.json_name;
   }
-  NOTREACHED_IN_MIGRATION();
-  return std::string();
+  NOTREACHED();
 }
 
 template <class T, class IdType>
@@ -497,7 +493,7 @@ PwgRasterConfig::PwgRasterConfig()
       reverse_order_streaming(false),
       rotate_all_pages(false) {}
 
-PwgRasterConfig::~PwgRasterConfig() {}
+PwgRasterConfig::~PwgRasterConfig() = default;
 
 RangeVendorCapability::RangeVendorCapability() = default;
 
@@ -571,8 +567,7 @@ bool RangeVendorCapability::IsValid() const {
       return true;
     }
   }
-  NOTREACHED_IN_MIGRATION() << "Bad range capability value type";
-  return false;
+  NOTREACHED() << "Bad range capability value type";
 }
 
 bool RangeVendorCapability::LoadFrom(const base::Value::Dict& dict) {
@@ -664,8 +659,7 @@ bool TypedValueVendorCapability::IsValid() const {
     case ValueType::STRING:
       return true;
   }
-  NOTREACHED_IN_MIGRATION() << "Bad typed value capability value type";
-  return false;
+  NOTREACHED() << "Bad typed value capability value type";
 }
 
 bool TypedValueVendorCapability::LoadFrom(const base::Value::Dict& dict) {
@@ -734,7 +728,7 @@ VendorCapability::VendorCapability(VendorCapability&& other)
           TypedValueVendorCapability(std::move(other.typed_value_capability_));
       break;
     default:
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
   }
 }
 
@@ -756,7 +750,7 @@ void VendorCapability::InternalCleanup() {
       typed_value_capability_.~TypedValueVendorCapability();
       break;
     default:
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
   }
   type_ = Type::NONE;
 }
@@ -776,7 +770,7 @@ bool VendorCapability::operator==(const VendorCapability& other) const {
     case Type::TYPED_VALUE:
       return typed_value_capability_ == other.typed_value_capability_;
   }
-  NOTREACHED_IN_MIGRATION() << "Bad vendor capability type";
+  NOTREACHED() << "Bad vendor capability type";
 }
 
 bool VendorCapability::IsValid() const {
@@ -792,8 +786,7 @@ bool VendorCapability::IsValid() const {
     case Type::TYPED_VALUE:
       return typed_value_capability_.IsValid();
   }
-  NOTREACHED_IN_MIGRATION() << "Bad vendor capability type";
-  return false;
+  NOTREACHED() << "Bad vendor capability type";
 }
 
 bool VendorCapability::LoadFrom(const base::Value::Dict& dict) {
@@ -834,8 +827,7 @@ bool VendorCapability::LoadFrom(const base::Value::Dict& dict) {
   switch (type_) {
     case Type::NONE:
     default:
-      NOTREACHED_IN_MIGRATION();
-      break;
+      NOTREACHED();
     case Type::RANGE:
       new (&range_capability_) RangeVendorCapability();
       return range_capability_.LoadFrom(*range_capability_value);
@@ -846,8 +838,6 @@ bool VendorCapability::LoadFrom(const base::Value::Dict& dict) {
       new (&typed_value_capability_) TypedValueVendorCapability();
       return typed_value_capability_.LoadFrom(*typed_value_capability_value);
   }
-
-  return false;
 }
 
 void VendorCapability::SaveTo(base::Value::Dict* dict) const {
@@ -858,8 +848,7 @@ void VendorCapability::SaveTo(base::Value::Dict* dict) const {
 
   switch (type_) {
     case Type::NONE:
-      NOTREACHED_IN_MIGRATION();
-      break;
+      NOTREACHED();
     case Type::RANGE: {
       base::Value::Dict range_capability_value;
       range_capability_.SaveTo(&range_capability_value);

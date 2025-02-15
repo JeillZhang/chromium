@@ -8,20 +8,20 @@
 #include <memory>
 #include <string>
 
+#include "ash/app_list/vector_icons/vector_icons.h"
+#include "ash/constants/web_app_id_constants.h"
 #include "base/containers/flat_map.h"
 #include "base/containers/flat_set.h"
 #include "base/metrics/histogram_macros.h"
 #include "chrome/browser/apps/app_service/app_service_proxy.h"
 #include "chrome/browser/apps/app_service/app_service_proxy_factory.h"
 #include "chrome/browser/ash/app_list/search/common/icon_constants.h"
-#include "chrome/browser/ash/app_list/vector_icons/vector_icons.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/settings_window_manager_chromeos.h"
 #include "chrome/browser/ui/webui/ash/settings/search/hierarchy.h"
 #include "chrome/browser/ui/webui/ash/settings/search/search_handler.h"
 #include "chrome/browser/ui/webui/ash/settings/services/settings_manager/os_settings_manager.h"
 #include "chrome/browser/ui/webui/ash/settings/services/settings_manager/os_settings_manager_factory.h"
-#include "chrome/browser/web_applications/web_app_id_constants.h"
 #include "components/services/app_service/public/cpp/app_registry_cache.h"
 #include "components/services/app_service/public/cpp/app_types.h"
 #include "components/session_manager/core/session_manager.h"
@@ -206,7 +206,7 @@ OsSettingsProvider::OsSettingsProvider(Profile* profile)
   if (session_manager->IsUserSessionStartUpTaskCompleted()) {
     // If user session start up task has completed, the initialization can
     // start.
-    Initialize();
+    MaybeInitialize();
   } else {
     // Wait for the user session start up task completion to prioritize
     // resources for them.
@@ -216,9 +216,15 @@ OsSettingsProvider::OsSettingsProvider(Profile* profile)
 
 OsSettingsProvider::~OsSettingsProvider() = default;
 
-void OsSettingsProvider::Initialize(
+void OsSettingsProvider::MaybeInitialize(
     ash::settings::SearchHandler* fake_search_handler,
     const ash::settings::Hierarchy* fake_hierarchy) {
+  // Ensures that the provider can be initialized once only.
+  if (has_initialized) {
+    return;
+  }
+  has_initialized = true;
+
   // Initialization is happening, so we no longer need to wait for user session
   // start up task completion.
   session_manager_observation_.Reset();
@@ -278,6 +284,11 @@ void OsSettingsProvider::Start(const std::u16string& query) {
   //  - the settings app isn't ready
   //  - we don't have an icon to display with results.
   if (!search_handler_) {
+    // If user has started to user launcher search before the user session
+    // startup tasks completed, we should honor this user action and
+    // initialize the provider. It makes the os setting search available
+    // earlier.
+    MaybeInitialize();
     return;
   } else if (icon_.IsEmpty()) {
     LogStatus(Status::kNoSettingsIcon);
@@ -314,7 +325,7 @@ ash::AppListSearchResultType OsSettingsProvider::ResultType() const {
 }
 
 void OsSettingsProvider::OnAppUpdate(const apps::AppUpdate& update) {
-  if (update.AppId() != web_app::kOsSettingsAppId) {
+  if (update.AppId() != ash::kOsSettingsAppId) {
     return;
   }
 
@@ -329,7 +340,7 @@ void OsSettingsProvider::OnAppUpdate(const apps::AppUpdate& update) {
   // changed.
   auto* proxy = apps::AppServiceProxyFactory::GetForProfile(profile_);
   if (update.ReadinessChanged() || update.IconKeyChanged()) {
-    proxy->LoadIcon(web_app::kOsSettingsAppId, apps::IconType::kStandard,
+    proxy->LoadIcon(ash::kOsSettingsAppId, apps::IconType::kStandard,
                     kAppIconDimension,
                     /*allow_placeholder_icon=*/false,
                     base::BindOnce(&OsSettingsProvider::OnLoadIcon,
@@ -365,7 +376,7 @@ void OsSettingsProvider::OnSearchResultsChanged() {
 }
 
 void OsSettingsProvider::OnUserSessionStartUpTaskCompleted() {
-  Initialize();
+  MaybeInitialize();
 }
 
 void OsSettingsProvider::OnSearchReturned(

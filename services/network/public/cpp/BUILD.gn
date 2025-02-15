@@ -88,8 +88,8 @@ component("cpp") {
     "is_potentially_trustworthy.h",
     "link_header_parser.cc",
     "link_header_parser.h",
-    "load_info_util.cc",
-    "load_info_util.h",
+    "loading_params.cc",
+    "loading_params.h",
     "net_adapters.cc",
     "net_adapters.h",
     "network_connection_tracker.cc",
@@ -108,6 +108,9 @@ component("cpp") {
     "origin_agent_cluster_parser.h",
     "parsed_headers.cc",
     "parsed_headers.h",
+    "permissions_policy/origin_with_possible_wildcards.cc",
+    "permissions_policy/origin_with_possible_wildcards.h",
+    "permissions_policy/permissions_policy_mojom_traits.cc",
     "private_network_access_check_result.cc",
     "private_network_access_check_result.h",
     "record_ontransfersizeupdate_utils.h",
@@ -120,8 +123,6 @@ component("cpp") {
     "self_deleting_url_loader_factory.cc",
     "self_deleting_url_loader_factory.h",
     "session_cookie_delete_predicate.h",
-    "shared_dictionary_encoding_names.cc",
-    "shared_dictionary_encoding_names.h",
     "shared_url_loader_factory.cc",
     "shared_url_loader_factory.h",
     "simple_host_resolver.cc",
@@ -135,6 +136,8 @@ component("cpp") {
     "source_stream_to_data_pipe.h",
     "spki_hash_set.cc",
     "spki_hash_set.h",
+    "sri_message_signatures.cc",
+    "sri_message_signatures.h",
     "supports_loading_mode/supports_loading_mode_parser.cc",
     "supports_loading_mode/supports_loading_mode_parser.h",
     "timing_allow_origin_parser.cc",
@@ -155,23 +158,6 @@ component("cpp") {
     "x_frame_options_parser.h",
   ]
 
-  if (enable_websockets) {
-    sources += [
-      "server/http_connection.cc",
-      "server/http_connection.h",
-      "server/http_server.cc",
-      "server/http_server.h",
-      "server/http_server_request_info.cc",
-      "server/http_server_request_info.h",
-      "server/http_server_response_info.cc",
-      "server/http_server_response_info.h",
-      "server/web_socket.cc",
-      "server/web_socket.h",
-      "server/web_socket_encoder.cc",
-      "server/web_socket_encoder.h",
-    ]
-  }
-
   configs += [ "//build/config/compiler:wexit_time_destructors" ]
 
   public_deps = [
@@ -179,17 +165,19 @@ component("cpp") {
     ":cpp_base",
     "//net",
     "//services/network/public/mojom",
+    "//services/network/public/mojom:mojom_permissions_policy",
+    "//services/network/public/mojom:url_loader_base",
     "//url",
     "//url/ipc:url_ipc",
   ]
 
   deps = [
     "//base",
-    "//build:chromeos_buildflags",
     "//components/link_header_util",
     "//components/miracle_parameter/common",
     "//components/prefs",
     "//ipc",
+    "//net",
     "//services/proxy_resolver/public/mojom",
   ]
 
@@ -348,35 +336,26 @@ component("document_isolation_policy") {
   defines = [ "IS_NETWORK_CPP_DOCUMENT_ISOLATION_IMPL" ]
 }
 
-# This component is separate from `:cpp_base` to avoid a circular dependency as
-# its needed by :attribution_traits.
-component("attribution") {
+component("shared_storage_support") {
   sources = [
-    "attribution_reporting_runtime_features.h",
-    "trigger_verification.cc",
-    "trigger_verification.h",
+    "shared_storage_mojom_traits.cc",
+    "shared_storage_mojom_traits.h",
+    "shared_storage_utils.cc",
+    "shared_storage_utils.h",
   ]
-  deps = [ "//base" ]
-  configs += [ "//build/config/compiler:wexit_time_destructors" ]
-  defines = [ "IS_NETWORK_CPP_ATTRIBUTION_IMPL" ]
-}
-
-# This component is separate from
-# //services/network/public/mojom:url_loader_base to use the same typemap for
-# both Blink and non-Blink bindings.
-component("attribution_traits") {
-  sources = [
-    "attribution_mojom_traits.cc",
-    "attribution_mojom_traits.h",
-    "trigger_verification.h",
-  ]
-  deps = [
-    ":attribution",
+  public_deps = [
     "//base",
-    "//services/network/public/mojom:mojom_attribution_shared",
+    "//mojo/public/mojom/base",
+    "//services/network/public/mojom:mojom_shared_storage",
   ]
+
+  # TODO(crbug.com/40915226): Remove the need to ignore this warning.
+  if (is_win && is_component_build) {
+    ldflags = [ "/IGNORE:4217" ]
+  }
+
   configs += [ "//build/config/compiler:wexit_time_destructors" ]
-  defines = [ "IS_NETWORK_CPP_ATTRIBUTION_MOJOM_TRAITS_IMPL" ]
+  defines = [ "IS_NETWORK_CPP_SHARED_STORAGE_IMPL" ]
 }
 
 # This component is separate from cpp_base as it is a dependency of
@@ -410,6 +389,21 @@ component("first_party_sets_mojom_support") {
   ]
   configs += [ "//build/config/compiler:wexit_time_destructors" ]
   defines = [ "IS_FIRST_PARTY_SETS_MOJOM_TRAITS_IMPL" ]
+}
+
+# This component is separate from cpp_base as it is a dependency of
+# //services/network/public/mojom:cookies_mojom.
+component("storage_access_api_mojom_support") {
+  sources = [
+    "storage_access_api_mojom_traits.cc",
+    "storage_access_api_mojom_traits.h",
+  ]
+  deps = [
+    "//mojo/public/cpp/base:shared_typemap_traits",
+    "//net",
+    "//services/network/public/mojom:mojom_storage_access_api_shared",
+  ]
+  defines = [ "IS_STORAGE_ACCESS_API_MOJOM_TRAITS_IMPL" ]
 }
 
 component("cpp_base") {
@@ -450,6 +444,8 @@ component("cpp_base") {
     "resource_request.h",
     "resource_request_body.cc",
     "resource_request_body.h",
+    "source_type_mojom_traits.cc",
+    "source_type_mojom_traits.h",
     "transferable_directory.cc",
     "transferable_directory.h",
     "transferable_socket.cc",
@@ -470,8 +466,6 @@ component("cpp_base") {
   configs += [ "//build/config/compiler:wexit_time_destructors" ]
 
   public_deps = [
-    ":attribution",
-    ":attribution_traits",
     ":cookies_mojom_support",
     ":crash_keys",
     ":cross_origin_embedder_policy",
@@ -480,6 +474,8 @@ component("cpp_base") {
     ":network_param_mojom_support",
     ":proxy_config_mojom_support",
     ":schemeful_site_mojom_support",
+    ":shared_storage_support",
+    ":storage_access_api_mojom_support",
     ":structured_headers_mojom_support",
     "//services/network/public/mojom:url_loader_base",
     "//url/ipc:url_ipc",
@@ -496,6 +492,7 @@ component("cpp_base") {
     "//services/network/public/mojom:cookies_mojom",
     "//services/network/public/mojom:mojom_first_party_sets",
     "//services/network/public/mojom:mojom_network_isolation_key",
+    "//services/network/public/mojom:mojom_storage_access_api",
     "//services/network/public/mojom:url_loader_base",
   ]
   defines = [ "IS_NETWORK_CPP_BASE_IMPL" ]
@@ -536,14 +533,9 @@ mojom("test_interfaces") {
 source_set("test_support") {
   testonly = true
 
-  sources = [
-    "is_potentially_trustworthy_unittest.h",
-    "trigger_verification_test_utils.cc",
-    "trigger_verification_test_utils.h",
-  ]
+  sources = [ "is_potentially_trustworthy_unittest.h" ]
 
   public_deps = [
-    ":attribution",
     ":cpp",
     "//base",
     "//base/test:test_support",
@@ -608,21 +600,24 @@ source_set("tests") {
     "origin_agent_cluster_parser_unittest.cc",
     "parsed_headers_unittest.cc",
     "parsed_request_cookie_mojom_traits_unittest.cc",
+    "permissions_policy/origin_with_possible_wildcards_unittest.cc",
     "proxy_config_mojom_traits_unittest.cc",
     "request_destination_unittest.cc",
     "schemeful_site_mojom_traits_unittest.cc",
     "self_deleting_url_loader_factory_unittest.cc",
     "shared_dictionary_isolation_key_mojom_traits_unittest.cc",
     "shared_dictionary_usage_info_mojom_traits_unittest.cc",
+    "shared_storage_mojom_traits_unittest.cc",
     "simple_host_resolver_unittest.cc",
     "simple_url_loader_unittest.cc",
     "source_stream_to_data_pipe_unittest.cc",
+    "sri_message_signatures_unittest.cc",
+    "storage_access_api_mojom_traits_unittest.cc",
     "structured_headers_mojom_traits_unittest.cc",
     "supports_loading_mode/supports_loading_mode_parser_unittest.cc",
     "timing_allow_origin_parser_unittest.cc",
     "transferable_directory_unittest.cc",
     "transferable_socket_unittest.cc",
-    "trigger_verification_unittest.cc",
     "url_loader_completion_status_mojom_traits_unittest.cc",
     "url_loader_factory_builder_unittest.cc",
     "url_request_mojom_traits_unittest.cc",
@@ -630,19 +625,13 @@ source_set("tests") {
     "x_frame_options_parser_unittest.cc",
   ]
 
-  if (enable_websockets) {
-    sources += [
-      "server/http_server_unittest.cc",
-      "server/web_socket_encoder_unittest.cc",
-    ]
-  }
-
   if (is_linux) {
     sources += [ "network_interface_change_listener_mojom_traits_unittest.cc" ]
   }
 
   deps = [
     ":cpp",
+    ":shared_storage_support",
     ":test_interfaces",
     ":test_support",
     "//base",

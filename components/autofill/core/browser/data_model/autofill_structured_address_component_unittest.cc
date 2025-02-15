@@ -225,25 +225,10 @@ void TestCompoundNameMerging(AddressComponentTestValues older_values,
 
 class AutofillStructuredAddressAddressComponent : public testing::Test {
  public:
-  AutofillStructuredAddressAddressComponent() {
-    features_.InitWithFeatures(
-        {features::kAutofillUseI18nAddressModel,
-         features::kAutofillUseBRAddressModel,
-         features::kAutofillUseINAddressModel,
-         features::kAutofillUseMXAddressModel,
-         features::kAutofillEnableSupportForLandmark,
-         features::kAutofillEnableSupportForBetweenStreets,
-         features::kAutofillEnableSupportForAddressOverflow,
-         features::kAutofillEnableSupportForBetweenStreetsOrLandmark,
-         features::kAutofillEnableSupportForAddressOverflowAndLandmark,
-         features::kAutofillEnableSupportForAdminLevel2,
-         features::kAutofillEnableSupportForApartmentNumbers,
-         features::kAutofillEnableDependentLocalityParsing},
-        {});
-  }
+  AutofillStructuredAddressAddressComponent() = default;
 
  private:
-  base::test::ScopedFeatureList features_;
+  base::test::ScopedFeatureList features_{features::kAutofillUseINAddressModel};
 };
 
 // Tests that the destructor does not crash
@@ -252,15 +237,6 @@ TEST_F(AutofillStructuredAddressAddressComponent, ConstructAndDestruct) {
       new AddressComponent(NAME_FULL, {}, MergeMode::kDefault);
   delete component;
   EXPECT_TRUE(true);
-}
-
-// Tests that a non-proper AddressComponent tree fails a DCHECK for
-// |GetSupportedTypes()|.
-TEST_F(AutofillStructuredAddressAddressComponent,
-       TestNonProperTreeDcheckFailure) {
-  TestNonProperFirstNameAddressComponent non_proper_compound;
-  FieldTypeSet supported_types;
-  EXPECT_DCHECK_DEATH(non_proper_compound.GetSupportedTypes(&supported_types));
 }
 
 // Tests getting the root node.
@@ -286,7 +262,7 @@ TEST_F(AutofillStructuredAddressAddressComponent, TestGetSupportedFieldType) {
 
   // The first name does not have an additional supported field type.
   EXPECT_EQ(first_name_component.GetAdditionalSupportedFieldTypes(),
-            FieldTypeSet({}));
+            FieldTypeSet());
 
   // The middle name supports an initial.
   EXPECT_EQ(middle_name_component.GetAdditionalSupportedFieldTypes(),
@@ -341,49 +317,40 @@ TEST_F(AutofillStructuredAddressAddressComponent,
 
 // Tests adding all supported types to the set.
 TEST_F(AutofillStructuredAddressAddressComponent, TestGetSupportedTypes) {
-  FieldTypeSet field_type_set;
-
   TestAtomicFirstNameAddressComponent first_name_component;
   TestAtomicMiddleNameAddressComponent middle_name_component;
   TestCompoundNameAddressComponent compound_name;
 
   // The first name only supports NAME_FIRST.
-  first_name_component.GetSupportedTypes(&field_type_set);
-  EXPECT_EQ(field_type_set, FieldTypeSet({NAME_FIRST}));
+  EXPECT_EQ(first_name_component.GetSupportedTypes(),
+            FieldTypeSet({NAME_FIRST}));
 
   // The middle name supports an initial.
-  field_type_set.clear();
-  middle_name_component.GetSupportedTypes(&field_type_set);
-  EXPECT_EQ(field_type_set, FieldTypeSet({NAME_MIDDLE, NAME_MIDDLE_INITIAL}));
+  EXPECT_EQ(middle_name_component.GetSupportedTypes(),
+            FieldTypeSet({NAME_MIDDLE, NAME_MIDDLE_INITIAL}));
 
   // Verify that all types are added correctly in a compound structure.
-  field_type_set.clear();
-  compound_name.GetSupportedTypes(&field_type_set);
-  EXPECT_EQ(field_type_set, FieldTypeSet({NAME_MIDDLE, NAME_MIDDLE_INITIAL,
-                                          NAME_FIRST, NAME_LAST, NAME_FULL}));
+  EXPECT_EQ(compound_name.GetSupportedTypes(),
+            FieldTypeSet({NAME_MIDDLE, NAME_MIDDLE_INITIAL, NAME_FIRST,
+                          NAME_LAST, NAME_FULL}));
 }
 
 // Tests adding all storable types to the set.
 TEST_F(AutofillStructuredAddressAddressComponent, TestGetStorableTypes) {
-  FieldTypeSet field_type_set;
-
   TestAtomicFirstNameAddressComponent first_name_component;
   TestAtomicMiddleNameAddressComponent middle_name_component;
   TestCompoundNameAddressComponent compound_name;
 
   // The first name only supports NAME_FIRST.
-  first_name_component.GetStorableTypes(&field_type_set);
-  EXPECT_EQ(field_type_set, FieldTypeSet({NAME_FIRST}));
+  EXPECT_EQ(first_name_component.GetStorableTypes(),
+            FieldTypeSet({NAME_FIRST}));
 
   // The middle name supports an initial.
-  field_type_set.clear();
-  middle_name_component.GetStorableTypes(&field_type_set);
-  EXPECT_EQ(field_type_set, FieldTypeSet({NAME_MIDDLE}));
+  EXPECT_EQ(middle_name_component.GetStorableTypes(),
+            FieldTypeSet({NAME_MIDDLE}));
 
   // Verify that all types are added correctly in a compound structure.
-  field_type_set.clear();
-  compound_name.GetStorableTypes(&field_type_set);
-  EXPECT_EQ(field_type_set,
+  EXPECT_EQ(compound_name.GetStorableTypes(),
             FieldTypeSet({NAME_MIDDLE, NAME_FIRST, NAME_LAST, NAME_FULL}));
 }
 
@@ -1889,9 +1856,6 @@ TEST_F(AutofillStructuredAddressAddressComponent, TestFillTreeGaps) {
 
 TEST_F(AutofillStructuredAddressAddressComponent,
        IsValueCompatibleWithAncestorsCompatible) {
-  base::test::ScopedFeatureList feature{
-      features::kAutofillEnableSupportForApartmentNumbers};
-
   AddressComponentsStore store =
       i18n_model_definition::CreateAddressComponentModel();
   AddressComponent* root = store.Root();

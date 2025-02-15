@@ -15,7 +15,6 @@
 #include "ash/login/ui/views_utils.h"
 #include "ash/shell.h"
 #include "ash/style/ash_color_id.h"
-#include "ash/style/ash_color_provider.h"
 #include "ash/wallpaper/wallpaper_controller_impl.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
@@ -26,6 +25,7 @@
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/chromeos/styles/cros_tokens_color_mappings.h"
 #include "ui/color/color_id.h"
+#include "ui/color/color_provider.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/color_analysis.h"
 #include "ui/gfx/color_utils.h"
@@ -121,8 +121,7 @@ LayoutParams BuildLayoutForStyle(LoginDisplayStyle style) {
       return params;
     }
     default: {
-      NOTREACHED_IN_MIGRATION();
-      return LayoutParams();
+      NOTREACHED();
     }
   }
 }
@@ -138,10 +137,7 @@ ScrollableUsersListView::GradientParams::BuildForStyle(LoginDisplayStyle style,
       SkColor dark_muted_color = view->GetColorProvider()->GetColor(
           kColorAshLoginScrollableUserListBackground);
 
-      ui::ColorId tint_color_id =
-          chromeos::features::IsJellyEnabled()
-              ? static_cast<ui::ColorId>(cros_tokens::kCrosSysScrim2)
-              : kColorAshShieldAndBase80;
+      ui::ColorId tint_color_id = cros_tokens::kCrosSysScrim2;
 
       SkColor tint_color = color_utils::GetResultingPaintColor(
           view->GetColorProvider()->GetColor(tint_color_id),
@@ -159,8 +155,7 @@ ScrollableUsersListView::GradientParams::BuildForStyle(LoginDisplayStyle style,
       return params;
     }
     default: {
-      NOTREACHED_IN_MIGRATION();
-      return GradientParams();
+      NOTREACHED();
     }
   }
 }
@@ -327,10 +322,7 @@ void ScrollableUsersListView::OnPaintBackground(gfx::Canvas* canvas) {
     flags.setAntiAlias(true);
     flags.setStyle(cc::PaintFlags::kFill_Style);
 
-    ui::ColorId background_color_id =
-        chromeos::features::IsJellyEnabled()
-            ? static_cast<ui::ColorId>(cros_tokens::kCrosSysScrim2)
-            : kColorAshShieldAndBase80;
+    ui::ColorId background_color_id = cros_tokens::kCrosSysScrim2;
     flags.setColor(GetColorProvider()->GetColor(background_color_id));
     canvas->DrawRoundRect(render_bounds,
                           login::kNonBlurredWallpaperBackgroundRadiusDp, flags);

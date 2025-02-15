@@ -33,9 +33,6 @@
 
 namespace {
 
-constexpr char kPartialBubbleVisibleHistogramName[] =
-    "Download.Bubble.PartialView.VisibleTime";
-
 // We want the checkbox to accept gestures when users click on the label text,
 // like all other Chrome checkboxes. This ViewTargeterDelegate achieves that.
 class CheckboxTargeter : public views::ViewTargeterDelegate {
@@ -144,8 +141,7 @@ class SuppressBubbleSettingRow : public views::View,
         views::ViewTargeterDelegate::TargetForRect(root, rect);
     // Links should operate as expected, but all other gestures on this view
     // should be forwarded to the checkbox.
-    if (std::string_view(target->GetClassName()) ==
-        std::string_view(views::LinkFragment::kViewClassName)) {
+    if (target->GetClassName() == views::LinkFragment::kViewClassName) {
       return target;
     }
 
@@ -248,18 +244,7 @@ DownloadBubblePartialView::DownloadBubblePartialView(
   MaybeRecordImpression(profile, impressions);
 }
 
-DownloadBubblePartialView::~DownloadBubblePartialView() {
-  LogVisibleTimeMetrics();
-}
-
-std::string_view DownloadBubblePartialView::GetVisibleTimeHistogramName()
-    const {
-  return kPartialBubbleVisibleHistogramName;
-}
-
-bool DownloadBubblePartialView::IsPartialView() const {
-  return true;
-}
+DownloadBubblePartialView::~DownloadBubblePartialView() = default;
 
 void DownloadBubblePartialView::AddedToWidget() {
   auto* focus_manager = GetFocusManager();

@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/browser/ui/views/frame/browser_frame_view_win.h"
 
 #include <dwmapi.h>
@@ -40,6 +45,7 @@
 #include "ui/base/theme_provider.h"
 #include "ui/base/ui_base_features.h"
 #include "ui/base/win/hwnd_metrics.h"
+#include "ui/color/color_provider_key.h"
 #include "ui/display/win/dpi.h"
 #include "ui/display/win/screen_win.h"
 #include "ui/gfx/canvas.h"
@@ -59,7 +65,7 @@ namespace {
 
 // Converts the |image| to a Windows icon and returns the corresponding HICON
 // handle. |image| is resized to desired |width| and |height| if needed.
-base::win::ScopedHICON CreateHICONFromSkBitmapSizedTo(
+base::win::ScopedGDIObject<HICON> CreateHICONFromSkBitmapSizedTo(
     const gfx::ImageSkia& image,
     int width,
     int height) {
@@ -315,7 +321,9 @@ int BrowserFrameViewWin::NonClientHitTest(const gfx::Point& point) {
   // pixels at the end of the top and bottom edges trigger diagonal resizing.
   constexpr int kResizeCornerWidth = 16;
 
-  const int top_border_thickness = GetLayoutConstant(TAB_STRIP_PADDING);
+  const int top_border_thickness = browser_view()->GetIsWebAppType()
+                                       ? FrameTopBorderThickness(false)
+                                       : GetLayoutConstant(TAB_STRIP_PADDING);
 
   const int window_component = GetHTComponentForFrame(
       point, gfx::Insets::TLBR(top_border_thickness, 0, 0, 0),
@@ -439,7 +447,7 @@ bool BrowserFrameViewWin::ShouldTabIconViewAnimate() const {
   }
 
   content::WebContents* current_tab = browser_view()->GetActiveWebContents();
-  return current_tab && current_tab->IsLoading();
+  return current_tab && current_tab->ShouldShowLoadingUI();
 }
 
 ui::ImageModel BrowserFrameViewWin::GetFaviconForTabIconView() {
@@ -659,7 +667,8 @@ void BrowserFrameViewWin::TabletModeChanged() {
 void BrowserFrameViewWin::SetSystemMicaTitlebarAttributes() {
   CHECK(SystemTitlebarCanUseMicaMaterial());
 
-  const BOOL dark_titlebar_enabled = GetNativeTheme()->ShouldUseDarkColors();
+  const BOOL dark_titlebar_enabled =
+      frame()->GetColorMode() == ui::ColorProviderKey::ColorMode::kDark;
   DwmSetWindowAttribute(views::HWNDForWidget(frame()),
                         DWMWA_USE_IMMERSIVE_DARK_MODE, &dark_titlebar_enabled,
                         sizeof(dark_titlebar_enabled));
@@ -843,8 +852,8 @@ void BrowserFrameViewWin::StopThrobber() {
   if (throbber_running_) {
     throbber_running_ = false;
 
-    base::win::ScopedHICON previous_small_icon;
-    base::win::ScopedHICON previous_big_icon;
+    base::win::ScopedGDIObject<HICON> previous_small_icon;
+    base::win::ScopedGDIObject<HICON> previous_big_icon;
     HICON small_icon = nullptr;
     HICON big_icon = nullptr;
 

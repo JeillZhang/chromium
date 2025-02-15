@@ -97,7 +97,7 @@ class UserScriptWorldBrowserTest : public ExtensionApiTest {
             blink::mojom::UserActivationOption::kDoNotActivate,
             blink::mojom::PromiseResultOption::kAwait)),
         ScriptExecutor::SPECIFIED_FRAMES, {ExtensionApiFrameIdMap::kTopFrameId},
-        ScriptExecutor::DONT_MATCH_ABOUT_BLANK,
+        mojom::MatchOriginAsFallbackBehavior::kNever,
         mojom::RunLocation::kDocumentIdle, ScriptExecutor::DEFAULT_PROCESS,
         GURL() /* webview_src */, base::BindLambdaForTesting(on_complete));
     run_loop.Run();
@@ -137,8 +137,7 @@ class UserScriptWorldBrowserTest : public ExtensionApiTest {
     scoped_refptr<const Extension> extension =
         ExtensionBuilder("extension")
             .SetManifestVersion(3)
-            .SetManifestKey("host_permissions",
-                            base::Value::List().Append(host_permission))
+            .AddHostPermission(host_permission)
             .Build();
     extension_service()->AddExtension(extension.get());
     EXPECT_TRUE(
@@ -159,8 +158,10 @@ class UserScriptWorldBrowserTest : public ExtensionApiTest {
                                     std::optional<std::string> csp,
                                     bool enable_messaging) {
     RendererStartupHelperFactory::GetForBrowserContext(profile())
-        ->SetUserScriptWorldProperties(extension, std::move(world_id),
-                                       std::move(csp), enable_messaging);
+        ->SetUserScriptWorldProperties(
+            extension,
+            mojom::UserScriptWorldInfo::New(extension.id(), std::move(world_id),
+                                            std::move(csp), enable_messaging));
   }
 
   // Clears associated user script world properties in the renderer(s).
@@ -227,8 +228,8 @@ IN_PROC_BROWSER_TEST_F(UserScriptWorldBrowserTest,
                            "OnRestartRequiredReason", "PlatformArch",
                            "PlatformNaclArch", "PlatformOs",
                            "RequestUpdateCheckStatus",
-                           "connect", "id", "onConnect", "onMessage",
-                           "sendMessage"]
+                           "connect", "dynamicId", "id", "onConnect",
+                           "onMessage", "sendMessage"]
          })";
   EXPECT_THAT(script_result, base::test::IsJson(kExpectedJson));
 }

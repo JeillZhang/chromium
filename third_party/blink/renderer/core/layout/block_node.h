@@ -27,6 +27,7 @@ class PhysicalBoxFragment;
 class PhysicalFragment;
 enum class BaselineAlgorithmType;
 enum class MathScriptType;
+enum class SizeType;
 struct LayoutAlgorithmParams;
 
 // Represents a node to be laid out.
@@ -108,7 +109,7 @@ class CORE_EXPORT BlockNode : public LayoutInputNode {
   // space is not optional.
   MinMaxSizesResult ComputeMinMaxSizes(
       WritingMode container_writing_mode,
-      const MinMaxSizesType,
+      const SizeType,
       const ConstraintSpace&,
       const MinMaxSizesFloatInput float_input = MinMaxSizesFloatInput()) const;
 
@@ -116,8 +117,6 @@ class CORE_EXPORT BlockNode : public LayoutInputNode {
 
   BlockNode GetRenderedLegend() const;
   BlockNode GetFieldsetContent() const;
-
-  bool IsTableCell() const { return box_->IsTableCell(); }
 
   bool IsFrameSet() const { return box_->IsFrameSet(); }
   bool IsParentNGFrameSet() const { return box_->Parent()->IsFrameSet(); }
@@ -132,11 +131,10 @@ class CORE_EXPORT BlockNode : public LayoutInputNode {
 
   bool IsInlineLevel() const;
   bool IsAtomicInlineLevel() const;
-  bool HasAspectRatio() const;
   bool IsInTopOrViewTransitionLayer() const;
 
   // Returns the aspect ratio of a replaced element.
-  LogicalSize GetAspectRatio() const;
+  LogicalSize GetReplacedAspectRatio() const;
 
   // Returns the transform to apply to a child (e.g. for scrollable-overflow).
   std::optional<gfx::Transform> GetTransformForChildFragment(
@@ -178,6 +176,19 @@ class CORE_EXPORT BlockNode : public LayoutInputNode {
   // Returns true if the custom layout node is in its loaded state (all script
   // for the web-developer defined layout is ready).
   bool IsCustomLayoutLoaded() const;
+
+  // Return the ::scroll-marker-group associated with this node, if any.
+  BlockNode GetScrollMarkerGroup() const {
+    return BlockNode(DynamicTo<LayoutBlock>(box_->GetScrollMarkerGroup()));
+  }
+
+  // Search for scroll markers in `scroller` and attach them to this scroll
+  // marker group. Any existing scroll markers will first be removed.
+  void PopulateScrollMarkerGroup(const BlockNode& scroller) const;
+
+  // Populate with scroll markers (and relayout if necessary)
+  // the::scroll-marker-group associated with this node, if any.
+  void HandleScrollMarkerGroup() const;
 
   // Get script type for scripts (msub, msup, msubsup, munder, mover and
   // munderover).

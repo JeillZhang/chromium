@@ -31,6 +31,7 @@
 #include "base/containers/circular_deque.h"
 #include "base/containers/flat_map.h"
 #include "base/containers/flat_set.h"
+#include "base/containers/heap_array.h"
 #include "base/containers/linked_list.h"
 #include "base/containers/lru_cache.h"
 #include "base/containers/queue.h"
@@ -84,11 +85,11 @@
 // then recursively fix compilation errors that are caused by types not
 // implementing EstimateMemoryUsage().
 //
-// Note that in the above example, the memory estimates for `id_` and `success_` are
-// intentionally omitted. This is because these members do not allocate any _dynamic_ memory.
-// If, for example, `MyClass` is declared as a heap-allocated `unique_ptr` member in some parent
-// class, then `EstimateMemoryUsage` on the `unique_ptr` will automatically take into account
-// `sizeof(MyClass)`.
+// Note that in the above example, the memory estimates for `id_` and `success_`
+// are intentionally omitted. This is because these members do not allocate any
+// _dynamic_ memory. If, for example, `MyClass` is declared as a heap-allocated
+// `unique_ptr` member in some parent class, then `EstimateMemoryUsage` on the
+// `unique_ptr` will automatically take into account `sizeof(MyClass)`.
 
 namespace base {
 namespace trace_event {
@@ -116,7 +117,10 @@ template <class T, size_t N>
 size_t EstimateMemoryUsage(T (&array)[N]);
 
 template <class T>
-size_t EstimateMemoryUsage(base::span<const T> span);
+size_t EstimateMemoryUsage(const base::HeapArray<T>& array);
+
+template <class T>
+size_t EstimateMemoryUsage(base::span<T> array);
 
 // std::unique_ptr
 
@@ -245,7 +249,7 @@ concept IsIteratorOfStandardContainer =
 
 template <typename T>
 concept IsKnownNonAllocatingType =
-    std::is_trivially_destructible_v<T> || base::IsRawPtrV<T> ||
+    std::is_trivially_destructible_v<T> || base::IsRawPtr<T> ||
     IsIteratorOfStandardContainer<T>;
 
 }  // namespace internal
@@ -325,12 +329,13 @@ size_t EstimateMemoryUsage(T (&array)[N]) {
 }
 
 template <class T>
-size_t EstimateMemoryUsage(base::span<const T> span) {
-  size_t memory_usage = sizeof(T) * span.size();
-  for (size_t i = 0; i != span.size(); ++i) {
-    memory_usage += EstimateItemMemoryUsage(span[i]);
-  }
-  return memory_usage;
+size_t EstimateMemoryUsage(const base::HeapArray<T>& array) {
+  return sizeof(T) * array.size() + EstimateIterableMemoryUsage(array);
+}
+
+template <class T>
+size_t EstimateMemoryUsage(base::span<T> array) {
+  return sizeof(T) * array.size() + EstimateIterableMemoryUsage(array);
 }
 
 // std::unique_ptr
@@ -387,8 +392,7 @@ size_t EstimateMemoryUsage(const std::list<T, A>& list) {
     raw_ptr<Node> next;
     value_type value;
   };
-  return sizeof(Node) * list.size() +
-         EstimateIterableMemoryUsage(list);
+  return sizeof(Node) * list.size() + EstimateIterableMemoryUsage(list);
 }
 
 template <class T>
@@ -548,8 +552,9 @@ size_t EstimateMemoryUsage(const std::deque<T, A>& deque) {
 
 #if defined(__GLIBCXX__)
   // libstdc++: deque always has at least one block
-  if (!blocks)
+  if (!blocks) {
     blocks = 1;
+  }
 #endif
 
 #if defined(_LIBCPP_VERSION)
@@ -559,8 +564,9 @@ size_t EstimateMemoryUsage(const std::deque<T, A>& deque) {
   // ever allocated (and hence has 1 or 2 blocks) is to check
   // iterator's pointer. Non-zero value means that deque has
   // at least one block.
-  if (!blocks && deque.begin().operator->())
+  if (!blocks && deque.begin().operator->()) {
     blocks = 1;
+  }
 #endif
 
   return (blocks * block_length * sizeof(T)) +

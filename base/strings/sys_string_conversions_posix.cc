@@ -13,7 +13,8 @@
 #include <string.h>
 #include <wchar.h>
 
-#include "base/strings/string_piece.h"
+#include <string_view>
+
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 
@@ -24,7 +25,7 @@ std::string SysWideToUTF8(const std::wstring& wide) {
   // than our ICU, but this will do for now.
   return WideToUTF8(wide);
 }
-std::wstring SysUTF8ToWide(StringPiece utf8) {
+std::wstring SysUTF8ToWide(std::string_view utf8) {
   // In theory this should be using the system-provided conversion rather
   // than our ICU, but this will do for now.
   std::wstring out;
@@ -40,7 +41,7 @@ std::string SysWideToNativeMB(const std::wstring& wide) {
   return WideToUTF8(wide);
 }
 
-std::wstring SysNativeMBToWide(StringPiece native_mb) {
+std::wstring SysNativeMBToWide(std::string_view native_mb) {
   return SysUTF8ToWide(native_mb);
 }
 
@@ -73,8 +74,9 @@ std::string SysWideToNativeMB(const std::wstring& wide) {
     }
   }
 
-  if (num_out_chars == 0)
+  if (num_out_chars == 0) {
     return std::string();
+  }
 
   std::string out;
   out.resize(num_out_chars);
@@ -103,14 +105,14 @@ std::string SysWideToNativeMB(const std::wstring& wide) {
   return out;
 }
 
-std::wstring SysNativeMBToWide(StringPiece native_mb) {
+std::wstring SysNativeMBToWide(std::string_view native_mb) {
   mbstate_t ps;
 
   // Calculate the number of wide characters.  We walk through the string
   // without writing the output, counting the number of wide characters.
   size_t num_out_chars = 0;
   memset(&ps, 0, sizeof(ps));
-  for (size_t i = 0; i < native_mb.size(); ) {
+  for (size_t i = 0; i < native_mb.size();) {
     const char* src = native_mb.data() + i;
     size_t res = mbrtowc(nullptr, src, native_mb.size() - i, &ps);
     switch (res) {
@@ -129,8 +131,9 @@ std::wstring SysNativeMBToWide(StringPiece native_mb) {
     }
   }
 
-  if (num_out_chars == 0)
+  if (num_out_chars == 0) {
     return std::wstring();
+  }
 
   std::wstring out;
   out.resize(num_out_chars);

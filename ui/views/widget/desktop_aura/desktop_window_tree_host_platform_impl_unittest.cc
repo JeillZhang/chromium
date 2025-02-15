@@ -2,8 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "ui/views/widget/desktop_aura/desktop_window_tree_host_platform.h"
-
 #include <utility>
 
 #include "base/command_line.h"
@@ -16,6 +14,7 @@
 #include "ui/platform_window/platform_window.h"
 #include "ui/views/test/views_test_base.h"
 #include "ui/views/widget/desktop_aura/desktop_native_widget_aura.h"
+#include "ui/views/widget/desktop_aura/desktop_window_tree_host_platform.h"
 #include "ui/views/widget/widget_delegate.h"
 
 namespace views {
@@ -42,8 +41,9 @@ class ShapedNonClientFrameView : public NonClientFrameView {
   }
   int NonClientHitTest(const gfx::Point& point) override {
     // Fake bottom for non client event test.
-    if (point == gfx::Point(500, 500))
+    if (point == gfx::Point(500, 500)) {
       return HTBOTTOM;
+    }
     return HTNOWHERE;
   }
   void GetWindowMask(const gfx::Size& size, SkPath* window_mask) override {
@@ -185,12 +185,12 @@ TEST_F(DesktopWindowTreeHostPlatformImplTest, MouseNCEvents) {
       widget->GetNativeWindow()->GetHost());
   ASSERT_TRUE(host_platform);
 
-  ui::MouseEvent event(ui::ET_MOUSE_PRESSED, gfx::PointF(500, 500),
+  ui::MouseEvent event(ui::EventType::kMousePressed, gfx::PointF(500, 500),
                        gfx::PointF(500, 500), base::TimeTicks::Now(), 0, 0, {});
   host_platform->DispatchEvent(&event);
 
   ASSERT_EQ(1u, recorder.mouse_events().size());
-  EXPECT_EQ(ui::ET_MOUSE_PRESSED, recorder.mouse_events()[0].type());
+  EXPECT_EQ(ui::EventType::kMousePressed, recorder.mouse_events()[0].type());
   EXPECT_TRUE(recorder.mouse_events()[0].flags() & ui::EF_IS_NON_CLIENT);
 
   widget->GetNativeWindow()->RemovePreTargetHandler(&recorder);
@@ -294,14 +294,14 @@ TEST_F(DesktopWindowTreeHostPlatformImplHighDPITest, MouseNCEvents) {
       widget->GetNativeWindow()->GetHost());
   ASSERT_TRUE(host_platform);
 
-  ui::MouseEvent event(ui::ET_MOUSE_PRESSED, gfx::PointF(1001, 1001),
+  ui::MouseEvent event(ui::EventType::kMousePressed, gfx::PointF(1001, 1001),
                        gfx::PointF(1001, 1001), base::TimeTicks::Now(), 0, 0,
                        {});
   host_platform->DispatchEvent(&event);
 
   EXPECT_EQ(1u, recorder.mouse_events().size());
   EXPECT_EQ(gfx::Point(500, 500), recorder.mouse_events()[0].location());
-  EXPECT_EQ(ui::ET_MOUSE_PRESSED, recorder.mouse_events()[0].type());
+  EXPECT_EQ(ui::EventType::kMousePressed, recorder.mouse_events()[0].type());
   EXPECT_TRUE(recorder.mouse_events()[0].flags() & ui::EF_IS_NON_CLIENT);
 
   widget->GetNativeWindow()->RemovePreTargetHandler(&recorder);

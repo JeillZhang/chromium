@@ -111,10 +111,10 @@ class GL_EXPORT Presenter : public base::RefCounted<Presenter> {
   // properties.
   virtual bool ScheduleCALayer(const ui::CARendererLayerParams& params);
 
-  // Schedule a DCLayer to be shown at next Present(). Semantics is similar to
-  // ScheduleOverlayPlane() above. All arguments correspond to their DCLayer
-  // properties.
-  virtual void ScheduleDCLayer(std::unique_ptr<DCLayerOverlayParams> params);
+  // Schedule a list of DCLayers to be shown at next Present(). Semantics is
+  // similar to calling ScheduleOverlayPlane() for every overlay in a frame. All
+  // arguments correspond to their DCLayer properties.
+  virtual void ScheduleDCLayers(std::vector<DCLayerOverlayParams> overlays);
 
   // Presents current frame asynchronously. `completion_callback` will be called
   // once all necessary steps were taken to display the frame.
@@ -151,6 +151,11 @@ class GL_EXPORT Presenter : public base::RefCounted<Presenter> {
 
   // Tells the presenter to rely on implicit sync when presenting buffers.
   virtual void SetRelyOnImplicitSync() {}
+
+  // Tells the presenter to send
+  // gfx::SwapResult::SWAP_NON_SIMPLE_OVERLAYS_FAILED if a non-simple overlay
+  // submission fails (see gfx::OverlayType).
+  virtual void SetNotifyNonSimpleOverlayFailure() {}
 
  protected:
   friend class base::RefCounted<Presenter>;

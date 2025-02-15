@@ -20,14 +20,23 @@ ContentNotificationClient::ContentNotificationClient()
 
 ContentNotificationClient::~ContentNotificationClient() = default;
 
-void ContentNotificationClient::HandleNotificationInteraction(
+bool ContentNotificationClient::HandleNotificationInteraction(
     UNNotificationResponse* response) {
   // Need to check if it is a content notification first to avoid conflicts with
   // other clients.
   if (![response.notification.request.content.categoryIdentifier
           isEqualToString:kContentNotificationFeedbackCategoryIdentifier]) {
-    return;
+    return false;
   }
+
+  // If the app is not foreground active, store this interaction and process it
+  // later.
+  if (GetSceneLevelForegroundActiveBrowser() == nullptr) {
+    stored_interaction_ = response;
+    return true;
+  }
+  stored_interaction_ = nil;
+
   // In order to send delivered NAUs, the payload has been modified for it to be
   // processed on `HandleNotificationReception()`. Before reusing the payload,
   // remove the NAU body paramater from the payload to return it to its normal
@@ -41,68 +50,60 @@ void ContentNotificationClient::HandleNotificationInteraction(
   // Regenerate the regular payload as NSDictionary after removing the extra
   // object.
   NSDictionary<NSString*, id>* payload = [unprocessedPayload copy];
+  ProfileIOS* profile = GetAnyProfile();
+  CHECK(profile);
   ContentNotificationService* contentNotificationService =
-      ContentNotificationServiceFactory::GetForBrowserState(
-          GetLastUsedBrowserState());
+      ContentNotificationServiceFactory::GetForProfile(profile);
+  CHECK(contentNotificationService);
   ContentNotificationNAUConfiguration* config =
       [[ContentNotificationNAUConfiguration alloc] init];
   config.notification = response.notification;
   if ([response.actionIdentifier
           isEqualToString:kContentNotificationFeedbackActionIdentifier]) {
     config.actionType = NAUActionTypeFeedbackClicked;
+    base::UmaHistogramEnumeration(
+        kContentNotificationActionHistogramName,
+        NotificationActionType::kNotificationActionTypeFeedbackClicked);
     NSDictionary<NSString*, NSString*>* feedbackPayload =
         contentNotificationService->GetFeedbackPayload(payload);
-    loadFeedbackWithPayloadAndClientId(feedbackPayload,
+    LoadFeedbackWithPayloadAndClientId(feedbackPayload,
                                        PushNotificationClientId::kContent);
   } else if ([response.actionIdentifier
                  isEqualToString:UNNotificationDefaultActionIdentifier]) {
     config.actionType = NAUActionTypeOpened;
+    base::UmaHistogramEnumeration(
+        kContentNotificationActionHistogramName,
+        NotificationActionType::kNotificationActionTypeOpened);
     const GURL& url = contentNotificationService->GetDestinationUrl(payload);
     if (url.is_empty()) {
       base::UmaHistogramBoolean("ContentNotifications.OpenURLAction.HasURL",
                                 false);
-      return;
+      return true;
     }
     base::UmaHistogramBoolean("ContentNotifications.OpenURLAction.HasURL",
                               true);
-    loadUrlInNewTab(url);
+    LoadUrlInNewTab(url);
   } else if ([response.actionIdentifier
                  isEqualToString:UNNotificationDismissActionIdentifier]) {
+    base::UmaHistogramBoolean("ContentNotifications.DismissAction", true);
     config.actionType = NAUActionTypeDismissed;
+    base::UmaHistogramEnumeration(
+        kContentNotificationActionHistogramName,
+        NotificationActionType::kNotificationActionTypeDismissed);
   }
   // TODO(crbug.com/337871560): Three way patch NAU and adding completion
   // handler.
   contentNotificationService->SendNAUForConfiguration(config);
+  return true;
 }
 
 // TODO(crbug.com/338875261): Add background refresh support.
-// Log a Delivered NAU from here. Only works when not in the background. This
-// method doesn't modify the payload and doesn't pass it forward, it is
-// readonly.
-UIBackgroundFetchResult ContentNotificationClient::HandleNotificationReception(
+// Delivered NAUs are currently being sent from the push_notification_delegate,
+// and in the future they should be here once background refresh is available.
+std::optional<UIBackgroundFetchResult>
+ContentNotificationClient::HandleNotificationReception(
     NSDictionary<NSString*, id>* payload) {
-  ContentNotificationService* contentNotificationService =
-      ContentNotificationServiceFactory::GetForBrowserState(
-          GetLastUsedBrowserState());
-  NSString* notificationBody =
-      [payload objectForKey:kContentNotificationNAUBodyParameter];
-  if (notificationBody) {
-    // Send NAU.
-    ContentNotificationNAUConfiguration* config =
-        [[ContentNotificationNAUConfiguration alloc] init];
-    config.actionType = NAUActionTypeDisplayed;
-    // Create a new payload without the parameter to mimic the original payload,
-    // to be sent with the NAU.
-    NSMutableDictionary<NSString*, id>* newPayload = [payload mutableCopy];
-    [newPayload removeObjectForKey:kContentNotificationNAUBodyParameter];
-    UNMutableNotificationContent* content =
-        [[UNMutableNotificationContent alloc] init];
-    content.body = notificationBody;
-    content.userInfo = [newPayload copy];
-    config.content = content;
-    contentNotificationService->SendNAUForConfiguration(config);
-  }
-  return UIBackgroundFetchResultNoData;
+  return std::nullopt;
 }
 
 NSArray<UNNotificationCategory*>*
@@ -118,4 +119,11 @@ ContentNotificationClient::RegisterActionableNotifications() {
            intentIdentifiers:@[]
                      options:UNNotificationCategoryOptionCustomDismissAction];
   return @[ contentNotificationCategory ];
+}
+
+void ContentNotificationClient::OnSceneActiveForegroundBrowserReady() {
+  if (stored_interaction_) {
+    HandleNotificationInteraction(stored_interaction_);
+  }
+  PushNotificationClient::OnSceneActiveForegroundBrowserReady();
 }

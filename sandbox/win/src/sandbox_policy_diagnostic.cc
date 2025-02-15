@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "sandbox/win/src/sandbox_policy_diagnostic.h"
 
 #include <windows.h>
@@ -130,7 +135,7 @@ std::string GetMitigationsAsHex(MitigationFlags mitigations) {
 }
 
 std::string GetPlatformMitigationsAsHex(MitigationFlags mitigations) {
-  DWORD64 platform_flags[2] = {0};
+  DWORD64 platform_flags[2] = {};
   size_t flags_size = 0;
   sandbox::ConvertProcessMitigationsToPolicy(mitigations, &(platform_flags[0]),
                                              &flags_size);

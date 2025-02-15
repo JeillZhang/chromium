@@ -6,6 +6,7 @@
 
 #include <stddef.h>
 
+#include <algorithm>
 #include <map>
 #include <string>
 #include <utility>
@@ -14,7 +15,6 @@
 #include "base/files/file_path.h"
 #include "base/i18n/rtl.h"
 #include "base/memory/ptr_util.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
@@ -30,6 +30,7 @@
 #include "content/public/browser/reload_type.h"
 #include "content/public/common/content_constants.h"
 #include "content/public/common/url_constants.h"
+#include "net/storage_access_api/status.h"
 #include "services/metrics/public/cpp/ukm_source_id.h"
 #include "services/network/public/mojom/fetch_api.mojom.h"
 #include "third_party/blink/public/common/navigation/navigation_params.h"
@@ -150,7 +151,7 @@ void RecursivelyGenerateFrameState(
   blink::ExplodedPageState exploded_page_state;
   if (!blink::DecodePageState(node->frame_entry->page_state().ToEncodedData(),
                               &exploded_page_state)) {
-    NOTREACHED_IN_MIGRATION();
+    DUMP_WILL_BE_NOTREACHED();
     return;
   }
   blink::ExplodedFrameState frame_state = exploded_page_state.top;
@@ -432,7 +433,6 @@ NavigationEntryImpl::NavigationEntryImpl(
       is_renderer_initiated_(is_renderer_initiated),
       should_clear_history_list_(false),
       can_load_local_resources_(false),
-      frame_tree_node_id_(FrameTreeNode::kFrameTreeNodeInvalidId),
       has_user_gesture_(false),
       reload_type_(ReloadType::NONE),
       started_from_context_menu_(false),
@@ -444,7 +444,9 @@ NavigationEntryImpl::NavigationEntryImpl(
               : InitialNavigationEntryState::kNonInitial) {}
 
 NavigationEntryImpl::~NavigationEntryImpl() {
-  if (same_document_navigation_entry_screenshot_token_.has_value()) {
+  if (navigation_transition_data_
+          .same_document_navigation_entry_screenshot_token()
+          .has_value()) {
     // We get here if:
     // - `DidCommitSameDocumentNavigation` sets the token, promising a
     //    screenshot was supposed to arrive.
@@ -453,7 +455,9 @@ NavigationEntryImpl::~NavigationEntryImpl() {
     viz::HostFrameSinkManager* manager = GetHostFrameSinkManager();
     CHECK(manager);
     manager->InvalidateCopyOutputReadyCallback(
-        same_document_navigation_entry_screenshot_token_.value());
+        navigation_transition_data_
+            .same_document_navigation_entry_screenshot_token()
+            .value());
   }
 }
 
@@ -516,8 +520,8 @@ const GURL& NavigationEntryImpl::GetVirtualURL() {
   return virtual_url_.is_empty() ? GetURL() : virtual_url_;
 }
 
-void NavigationEntryImpl::SetTitle(const std::u16string& title) {
-  title_ = title;
+void NavigationEntryImpl::SetTitle(std::u16string title) {
+  title_ = std::move(title);
   cached_display_title_.clear();
 }
 
@@ -525,12 +529,14 @@ const std::u16string& NavigationEntryImpl::GetTitle() {
   return title_;
 }
 
-void NavigationEntryImpl::SetAppTitle(const std::u16string& app_title) {
-  app_title_ = app_title;
+void NavigationEntryImpl::SetApplicationTitle(
+    const std::u16string& application_title) {
+  application_title_ = application_title;
 }
 
-const std::u16string& NavigationEntryImpl::GetAppTitle() {
-  return app_title_;
+const std::optional<std::u16string>&
+NavigationEntryImpl::GetApplicationTitle() {
+  return application_title_;
 }
 
 void NavigationEntryImpl::SetPageState(const blink::PageState& state,
@@ -854,6 +860,16 @@ NavigationEntryImpl::CloneAndReplaceInternal(
   copy->should_skip_on_back_forward_ui_ = should_skip_on_back_forward_ui_;
   copy->initial_navigation_entry_state_ = initial_navigation_entry_state_;
 
+  if (navigation_transition_data().cache_hit_or_miss_reason() ==
+      NavigationTransitionData::CacheHitOrMissReason::kCacheHit) {
+    copy->navigation_transition_data().set_cache_hit_or_miss_reason(
+        NavigationTransitionData::CacheHitOrMissReason::
+            kCacheMissClonedNavigationEntry);
+  } else {
+    copy->navigation_transition_data().set_cache_hit_or_miss_reason(
+        navigation_transition_data().cache_hit_or_miss_reason());
+  }
+
   return copy;
 }
 
@@ -905,8 +921,8 @@ NavigationEntryImpl::ConstructCommitNavigationParams(
     const std::string& original_method,
     const base::flat_map<std::string, bool>& subframe_unique_names,
     bool intended_as_new_entry,
-    int pending_history_list_offset,
-    int current_history_list_offset,
+    int pending_history_list_index,
+    int current_history_list_index,
     int current_history_list_length,
     const blink::FramePolicy& frame_policy,
     bool ancestor_or_self_has_cspee,
@@ -925,15 +941,15 @@ NavigationEntryImpl::ConstructCommitNavigationParams(
     redirects = frame_entry.redirect_chain();
   }
 
-  int pending_offset_to_send = pending_history_list_offset;
-  int current_offset_to_send = current_history_list_offset;
+  int pending_index_to_send = pending_history_list_index;
+  int current_index_to_send = current_history_list_index;
   int current_length_to_send = current_history_list_length;
   if (should_clear_history_list()) {
     // Set the history list related parameters to the same values a
     // NavigationController would return before its first navigation. This will
     // fully clear the RenderView's view of the session history.
-    pending_offset_to_send = -1;
-    current_offset_to_send = -1;
+    pending_index_to_send = -1;
+    current_index_to_send = -1;
     current_length_to_send = 0;
   }
 
@@ -947,8 +963,8 @@ NavigationEntryImpl::ConstructCommitNavigationParams(
           std::vector<net::RedirectInfo>(), std::string(), original_url,
           original_method, GetCanLoadLocalResources(),
           frame_entry.page_state().ToEncodedData(), GetUniqueID(),
-          subframe_unique_names, intended_as_new_entry, pending_offset_to_send,
-          current_offset_to_send, current_length_to_send, false,
+          subframe_unique_names, intended_as_new_entry, pending_index_to_send,
+          current_index_to_send, current_length_to_send, false,
           IsViewSourceMode(), should_clear_history_list(),
           blink::mojom::NavigationTiming::New(),
           blink::mojom::WasActivatedOption::kUnknown,
@@ -957,7 +973,7 @@ NavigationEntryImpl::ConstructCommitNavigationParams(
 #if BUILDFLAG(IS_ANDROID)
           std::string(),
 #endif
-          false /* is_browser_initiated */,
+          false /* is_browser_initiated */, false /*has_ua_visual_transition*/,
           ukm::kInvalidSourceId /* document_ukm_source_id */, frame_policy,
           std::vector<std::string>() /* force_enabled_origin_trials */,
           false /* origin_agent_cluster */,
@@ -981,11 +997,16 @@ NavigationEntryImpl::ConstructCommitNavigationParams(
           base::flat_map<::blink::mojom::RuntimeFeature, bool>(),
           /*fenced_frame_properties=*/std::nullopt,
           /*not_restored_reasons=*/nullptr,
-          /*load_with_storage_access=*/false,
+          /*load_with_storage_access=*/
+          net::StorageAccessApiStatus::kNone,
           /*browsing_context_group_info=*/std::nullopt,
           /*lcpp_hint=*/nullptr, blink::CreateDefaultRendererContentSettings(),
           /*cookie_deprecation_label=*/std::nullopt,
-          /*visited_link_salt=*/std::nullopt);
+          /*visited_link_salt=*/std::nullopt,
+          /*local_surface_id=*/std::nullopt,
+          /*initial_permission_statuses=*/std::nullopt,
+          /*should_skip_screenshot*/ false,
+          /*force_new_document_sequence_number=*/false);
 #if BUILDFLAG(IS_ANDROID)
   // `data_url_as_string` is saved in NavigationEntry but should only be used by
   // main frames, because loadData* navigations can only happen on the main
@@ -1012,7 +1033,7 @@ void NavigationEntryImpl::ResetForCommit(FrameNavigationEntry* frame_entry) {
   set_is_renderer_initiated(false);
 
   set_should_clear_history_list(false);
-  set_frame_tree_node_id(FrameTreeNode::kFrameTreeNodeInvalidId);
+  set_frame_tree_node_id(FrameTreeNodeId());
   set_reload_type(ReloadType::NONE);
 
   if (frame_entry) {
@@ -1065,10 +1086,14 @@ void NavigationEntryImpl::AddOrUpdateFrameEntry(
   // If this is called for the main frame, the FrameNavigationEntry is
   // guaranteed to exist, so just update it directly and return.
   if (frame_tree_node->IsMainFrame()) {
-    // If the document of the FrameNavigationEntry is changing, we must clear
-    // any child FrameNavigationEntries.
+    // If the document of the FrameNavigationEntry is changing (or if this
+    // entry's SiteInstance already exists and differs), we must clear any child
+    // FrameNavigationEntries and replace the FrameNavigationEntry.
+    bool site_instance_differs =
+        this->site_instance() && this->site_instance() != site_instance;
     if (root_node()->frame_entry->document_sequence_number() !=
-        document_sequence_number) {
+            document_sequence_number ||
+        site_instance_differs) {
       root_node()->children.clear();
       if (!url.is_empty()) {
         // A cross-document navigation committed in the main frame, so the
@@ -1079,15 +1104,24 @@ void NavigationEntryImpl::AddOrUpdateFrameEntry(
         initial_navigation_entry_state_ =
             InitialNavigationEntryState::kNonInitial;
       }
+      root_node()->frame_entry = base::MakeRefCounted<FrameNavigationEntry>(
+          frame_tree_node->unique_name(), item_sequence_number,
+          document_sequence_number, navigation_api_key, site_instance,
+          std::move(source_site_instance), url, origin, referrer,
+          initiator_origin, initiator_base_url, redirect_chain, page_state,
+          method, post_id, std::move(blob_url_loader_factory),
+          std::move(policy_container_policies), protect_url_in_navigation_api);
+    } else {
+      // When staying in the same document (and thus SiteInstance), it is ok to
+      // update the existing (possibly shared) FrameNavigationEntry.
+      root_node()->frame_entry->UpdateEntry(
+          frame_tree_node->unique_name(), item_sequence_number,
+          document_sequence_number, navigation_api_key, site_instance,
+          std::move(source_site_instance), url, origin, referrer,
+          initiator_origin, initiator_base_url, redirect_chain, page_state,
+          method, post_id, std::move(blob_url_loader_factory),
+          std::move(policy_container_policies), protect_url_in_navigation_api);
     }
-
-    root_node()->frame_entry->UpdateEntry(
-        frame_tree_node->unique_name(), item_sequence_number,
-        document_sequence_number, navigation_api_key, site_instance,
-        std::move(source_site_instance), url, origin, referrer,
-        initiator_origin, initiator_base_url, redirect_chain, page_state,
-        method, post_id, std::move(blob_url_loader_factory),
-        std::move(policy_container_policies), protect_url_in_navigation_api);
     return;
   }
 
@@ -1226,9 +1260,9 @@ void NavigationEntryImpl::RemoveEntryForFrame(FrameTreeNode* frame_tree_node,
               true /* global_ walk_or_frame_removal */);
     }
     NavigationEntryImpl::TreeNode* parent_node = node->parent;
-    auto it = base::ranges::find(
-        parent_node->children, node,
-        &std::unique_ptr<NavigationEntryImpl::TreeNode>::get);
+    auto it =
+        std::ranges::find(parent_node->children, node,
+                          &std::unique_ptr<NavigationEntryImpl::TreeNode>::get);
     CHECK(it != parent_node->children.end());
     parent_node->children.erase(it);
   }
@@ -1255,18 +1289,6 @@ void NavigationEntryImpl::UpdateBackForwardCacheNotRestoredReasons(
 
 GURL NavigationEntryImpl::GetHistoryURLForDataURL() {
   return GetBaseURLForDataURL().is_empty() ? GURL() : GetVirtualURL();
-}
-
-void NavigationEntryImpl::SetSameDocumentNavigationEntryScreenshotToken(
-    const std::optional<blink::SameDocNavigationScreenshotDestinationToken>&
-        token) {
-  viz::HostFrameSinkManager* manager = GetHostFrameSinkManager();
-  CHECK(manager);
-  if (same_document_navigation_entry_screenshot_token_.has_value()) {
-    manager->InvalidateCopyOutputReadyCallback(
-        same_document_navigation_entry_screenshot_token_.value());
-  }
-  same_document_navigation_entry_screenshot_token_ = token;
 }
 
 }  // namespace content

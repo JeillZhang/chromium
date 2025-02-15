@@ -9,7 +9,9 @@ import androidx.annotation.VisibleForTesting;
 import com.google.protobuf.InvalidProtocolBufferException;
 
 import org.jni_zero.CalledByNative;
+import org.jni_zero.JniType;
 
+import org.chromium.base.ServiceLoaderUtil;
 import org.chromium.components.signin.base.CoreAccountInfo;
 import org.chromium.components.sync.protocol.NigoriKey;
 
@@ -23,26 +25,13 @@ import org.chromium.components.sync.protocol.NigoriKey;
  */
 @VisibleForTesting(otherwise = VisibleForTesting.PACKAGE_PRIVATE)
 public abstract class ExplicitPassphrasePlatformClient {
-    private static ExplicitPassphrasePlatformClient sInstance;
-
-    public static void overrideForTesting(ExplicitPassphrasePlatformClient instance) {
-        assert sInstance == null : "Attempting to override after real client created";
-        sInstance = instance;
-    }
-
     @VisibleForTesting(otherwise = VisibleForTesting.PROTECTED)
     public abstract void setExplicitDecryptionPassphrase(
             CoreAccountInfo account, NigoriKey nigoriKey);
 
-    private static ExplicitPassphrasePlatformClient get() {
-        if (sInstance == null) {
-            sInstance = new ExplicitPassphrasePlatformClientImpl();
-        }
-        return sInstance;
-    }
-
     @CalledByNative
-    private static void setExplicitDecryptionPassphrase(CoreAccountInfo account, byte[] nigoriKey) {
+    private static void setExplicitDecryptionPassphrase(
+            @JniType("CoreAccountInfo") CoreAccountInfo account, byte[] nigoriKey) {
         NigoriKey parsedKey;
         try {
             parsedKey = NigoriKey.parseFrom(nigoriKey);
@@ -51,6 +40,10 @@ public abstract class ExplicitPassphrasePlatformClient {
             return;
         }
 
-        get().setExplicitDecryptionPassphrase(account, parsedKey);
+        ExplicitPassphrasePlatformClient client =
+                ServiceLoaderUtil.maybeCreate(ExplicitPassphrasePlatformClient.class);
+        if (client != null) {
+            client.setExplicitDecryptionPassphrase(account, parsedKey);
+        }
     }
 }

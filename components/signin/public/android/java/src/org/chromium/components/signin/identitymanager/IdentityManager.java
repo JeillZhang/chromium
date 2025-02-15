@@ -43,10 +43,6 @@ public class IdentityManager {
         default void onExtendedAccountInfoUpdated(AccountInfo accountInfo) {}
     }
 
-    /** A simple callback for getAccessToken. */
-    public interface GetAccessTokenCallback
-            extends ProfileOAuth2TokenServiceDelegate.GetAccessTokenCallback {}
-
     private long mNativeIdentityManager;
     private final ProfileOAuth2TokenServiceDelegate mProfileOAuth2TokenServiceDelegate;
 
@@ -159,10 +155,10 @@ public class IdentityManager {
 
     /**
      * Refreshes extended {@link AccountInfo} with image for all accounts with a refresh token or
-     * the given list of {@link CoreAccountInfo} if the existing ones are stale.
+     * the given list of {@link AccountInfo} if the existing ones are stale.
      */
-    public void refreshAccountInfoIfStale(List<CoreAccountInfo> accountInfos) {
-        for (CoreAccountInfo accountInfo : accountInfos) {
+    public void refreshAccountInfoIfStale(List<AccountInfo> accountInfos) {
+        for (AccountInfo accountInfo : accountInfos) {
             IdentityManagerJni.get()
                     .refreshAccountInfoIfStale(mNativeIdentityManager, accountInfo.getId());
         }
@@ -187,6 +183,12 @@ public class IdentityManager {
 
     public void setRefreshTokenUpdateObserverForTests(Callback<CoreAccountInfo> callback) {
         mRefreshTokenUpdateObserver = callback;
+    }
+
+    /** Can be called by native code to convert from Java to the corresponding C++ object. */
+    @CalledByNative
+    private long getNativePointer() {
+        return mNativeIdentityManager;
     }
 
     @NativeMethods

@@ -5,6 +5,7 @@
 load("//lib/builder_config.star", "builder_config")
 load("//lib/builders.star", "builder", "cpu", "defaults", "os", "siso")
 load("//lib/gn_args.star", "gn_args")
+load("//lib/targets.star", "targets")
 load("//lib/xcode.star", "xcode")
 
 luci.bucket(
@@ -53,7 +54,16 @@ defaults.set(
     siso_remote_jobs = siso.remote_jobs.DEFAULT,
 )
 
+targets.builder_defaults.set(
+    mixins = [
+        "chromium-tester-service-account",
+    ],
+)
+
 # Builders are defined in lexicographic order by name
+
+# For builders, specify targets if the builder has no associated
+# tester (if it does, it will build what the tester needs).
 
 builder(
     name = "WebRTC Chromium FYI Android Builder",
@@ -84,6 +94,15 @@ builder(
             "remoteexec",
             "minimal_symbols",
             "strip_debug_info",
+            "arm",
+        ],
+    ),
+    targets = targets.bundle(
+        additional_compile_targets = [
+            "capture_unittests",
+            "content_browsertests",
+            "content_unittests",
+            "remoting_unittests",
         ],
     ),
 )
@@ -115,8 +134,10 @@ builder(
             "android_builder",
             "debug_static_builder",
             "remoteexec",
+            "arm",
         ],
     ),
+    targets = targets.bundle(),
 )
 
 builder(
@@ -149,6 +170,7 @@ builder(
             "arm64",
         ],
     ),
+    targets = targets.bundle(),
 )
 
 builder(
@@ -174,6 +196,24 @@ builder(
         ),
         android_config = builder_config.android_config(config = "base_config"),
         build_gs_bucket = "chromium-webrtc",
+    ),
+    targets = targets.bundle(
+        targets = [
+            "webrtc_chromium_simple_gtests",
+        ],
+        mixins = [
+            "walleye",
+        ],
+        per_test_modifications = {
+            "content_browsertests": targets.mixin(
+                args = [
+                    "--test-launcher-filter-file=../../testing/buildbot/filters/chromium.webrtc.fyi.android.tests.dbg.content_browsertests.filter",
+                ],
+            ),
+        },
+    ),
+    targets_settings = targets.settings(
+        os_type = targets.os_type.ANDROID,
     ),
 )
 
@@ -201,6 +241,24 @@ builder(
         android_config = builder_config.android_config(config = "base_config"),
         build_gs_bucket = "chromium-webrtc",
     ),
+    targets = targets.bundle(
+        targets = [
+            "webrtc_chromium_simple_gtests",
+        ],
+        mixins = [
+            "walleye",
+        ],
+        per_test_modifications = {
+            "content_browsertests": targets.mixin(
+                args = [
+                    "--test-launcher-filter-file=../../testing/buildbot/filters/chromium.webrtc.fyi.android.tests.dbg.content_browsertests.filter",
+                ],
+            ),
+        },
+    ),
+    targets_settings = targets.settings(
+        os_type = targets.os_type.ANDROID,
+    ),
 )
 
 builder(
@@ -227,6 +285,8 @@ builder(
             "gpu_tests",
             "release_builder",
             "remoteexec",
+            "linux",
+            "x64",
         ],
     ),
 )
@@ -251,6 +311,17 @@ builder(
         configs = [
             "debug_builder",
             "remoteexec",
+            "linux",
+            "x64",
+        ],
+    ),
+    targets = targets.bundle(
+        additional_compile_targets = [
+            "browser_tests",
+            "capture_unittests",
+            "content_browsertests",
+            "content_unittests",
+            "remoting_unittests",
         ],
     ),
 )
@@ -272,6 +343,15 @@ builder(
             target_platform = builder_config.target_platform.LINUX,
         ),
         build_gs_bucket = "chromium-webrtc",
+    ),
+    targets = targets.bundle(
+        targets = [
+            "webrtc_chromium_gtests",
+        ],
+        mixins = [
+            "x86-64",
+            "linux-jammy",
+        ],
     ),
 )
 
@@ -299,6 +379,8 @@ builder(
             "gpu_tests",
             "release_builder",
             "remoteexec",
+            "mac",
+            "x64",
         ],
     ),
     os = os.MAC_ANY,
@@ -324,6 +406,17 @@ builder(
         configs = [
             "debug_builder",
             "remoteexec",
+            "mac",
+            "x64",
+        ],
+    ),
+    targets = targets.bundle(
+        additional_compile_targets = [
+            "browser_tests",
+            "capture_unittests",
+            "content_browsertests",
+            "content_unittests",
+            "remoting_unittests",
         ],
     ),
     os = os.MAC_ANY,
@@ -346,6 +439,14 @@ builder(
             target_platform = builder_config.target_platform.MAC,
         ),
         build_gs_bucket = "chromium-webrtc",
+    ),
+    targets = targets.bundle(
+        targets = [
+            "webrtc_chromium_gtests",
+        ],
+        mixins = [
+            "mac_default_x64",
+        ],
     ),
     os = os.MAC_ANY,
 )
@@ -376,6 +477,8 @@ builder(
             "minimal_symbols",
             "no_com_init_hooks",
             "chrome_with_codecs",
+            "win",
+            "x64",
         ],
     ),
     os = os.WINDOWS_DEFAULT,
@@ -403,6 +506,17 @@ builder(
             "remoteexec",
             "no_com_init_hooks",
             "chrome_with_codecs",
+            "win",
+            "x64",
+        ],
+    ),
+    targets = targets.bundle(
+        additional_compile_targets = [
+            "browser_tests",
+            "capture_unittests",
+            "content_browsertests",
+            "content_unittests",
+            "remoting_unittests",
         ],
     ),
     os = os.WINDOWS_DEFAULT,
@@ -425,6 +539,15 @@ builder(
             target_platform = builder_config.target_platform.WIN,
         ),
         build_gs_bucket = "chromium-webrtc",
+    ),
+    targets = targets.bundle(
+        targets = [
+            "webrtc_chromium_gtests",
+        ],
+        mixins = [
+            "x86-64",
+            "win10",
+        ],
     ),
     os = os.WINDOWS_DEFAULT,
 )
@@ -461,6 +584,7 @@ builder(
             "ios_build_chrome_false",
         ],
     ),
+    targets = targets.bundle(),
     os = os.MAC_ANY,
     xcode = xcode.xcode_default,
 )
@@ -489,6 +613,16 @@ builder(
             "x64",
             "xctest",
             "ios_build_chrome_false",
+        ],
+    ),
+    targets = targets.bundle(
+        mixins = [
+            "has_native_resultdb_integration",
+            "mac_default_x64",
+            "mac_toolchain",
+            "out_dir_arg",
+            "xcode_16_main",
+            "xctest",
         ],
     ),
     os = os.MAC_ANY,

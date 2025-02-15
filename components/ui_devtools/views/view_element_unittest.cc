@@ -6,6 +6,7 @@
 
 #include <memory>
 
+#include "base/strings/to_string.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/ui_devtools/protocol.h"
 #include "components/ui_devtools/ui_devtools_unittest_utils.h"
@@ -37,7 +38,7 @@ void TestBooleanCustomPropertySetting(ui_devtools::ViewElement* element,
                                       bool init_value) {
   std::pair<size_t, size_t> indices =
       GetPropertyIndices(element, property_name);
-  std::string old_value(init_value ? "true" : "false");
+  std::string old_value = base::ToString(init_value);
   std::vector<UIElement::ClassProperties> props =
       element->GetCustomPropertiesForMatchedStyle();
   std::vector<UIElement::UIProperty> ui_props =
@@ -68,9 +69,9 @@ class MockNamedTestView : public views::View {
   METADATA_HEADER(MockNamedTestView, views::View)
 
  public:
-  // For custom properties test.
-  std::u16string GetTooltipText(const gfx::Point& p) const override {
-    return u"This is the tooltip";
+  MockNamedTestView() {
+    // For custom properties test.
+    SetTooltipText(u"This is the tooltip");
   }
 
   int GetBoolProperty() const { return bool_property_; }
@@ -126,12 +127,12 @@ END_METADATA
 
 class ViewElementTest : public views::ViewsTestBase {
  public:
-  ViewElementTest() {}
+  ViewElementTest() = default;
 
   ViewElementTest(const ViewElementTest&) = delete;
   ViewElementTest& operator=(const ViewElementTest&) = delete;
 
-  ~ViewElementTest() override {}
+  ~ViewElementTest() override = default;
 
  protected:
   void SetUp() override {

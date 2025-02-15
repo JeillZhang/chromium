@@ -24,7 +24,6 @@
 #include "base/memory/shared_memory_mapping.h"
 #include "base/memory/unsafe_shared_memory_region.h"
 #include "base/numerics/safe_conversions.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/strcat.h"
 #include "base/strings/stringprintf.h"
 #include "base/task/bind_post_task.h"
@@ -46,7 +45,6 @@
 #include "media/gpu/macros.h"
 #include "media/gpu/vaapi/av1_vaapi_video_encoder_delegate.h"
 #include "media/gpu/vaapi/h264_vaapi_video_encoder_delegate.h"
-#include "media/gpu/vaapi/va_surface.h"
 #include "media/gpu/vaapi/vaapi_common.h"
 #include "media/gpu/vaapi/vaapi_utils.h"
 #include "media/gpu/vaapi/vaapi_wrapper.h"
@@ -106,14 +104,12 @@ class VaapiVideoEncodeAccelerator::ScopedVASurfaceWrapper {
   ScopedVASurfaceWrapper(const ScopedVASurfaceWrapper&) = delete;
 
   const ScopedVASurface& surface() const { return *surface_.get(); }
-  // TODO(339518553): Try and remove this method.
-  scoped_refptr<VASurface> ReleaseAsVASurface() {
+
+  std::unique_ptr<VASurfaceHandle> ReleaseAsVASurfaceHandle() {
     const auto id = surface_->id();
-    const auto size = surface_->size();
-    const auto format = surface_->format();
-    return base::MakeRefCounted<VASurface>(
-        id, size, format,
-        // This lambda is an adapter to VASurface::ReleaseCB which uses a
+    return std::make_unique<VASurfaceHandle>(
+        id,
+        // This lambda is an adapter to ScopedID::ReleaseCB which uses a
         // VASurfaceID parameter.
         base::BindOnce(
             [](std::unique_ptr<ScopedVASurface> surface, ReleaseCB release_cb,
@@ -158,7 +154,7 @@ VaapiVideoEncodeAccelerator::VaapiVideoEncodeAccelerator()
 
   // The default value of VideoEncoderInfo of VaapiVideoEncodeAccelerator.
   encoder_info_.implementation_name = "VaapiVideoEncodeAccelerator";
-  DCHECK(!encoder_info_.has_trusted_rate_controller);
+  encoder_info_.has_trusted_rate_controller = true;
   DCHECK(encoder_info_.is_hardware_accelerated);
   DCHECK(encoder_info_.supports_native_handle);
   DCHECK(!encoder_info_.supports_simulcast);
@@ -220,7 +216,7 @@ bool VaapiVideoEncodeAccelerator::Initialize(
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
     // TODO(crbug.com/40172317): Remove this restriction.
-    if (!base::ranges::is_sorted(
+    if (!std::ranges::is_sorted(
             config.spatial_layers,
             [](const VideoEncodeAccelerator::Config::SpatialLayer& lhs,
                const VideoEncodeAccelerator::Config::SpatialLayer& rhs) {
@@ -317,9 +313,13 @@ void VaapiVideoEncodeAccelerator::InitializeTask(const Config& config) {
     VaapiWrapper::CodecMode mode;
     switch (output_codec_) {
       case VideoCodec::kH264:
-        mode = config.bitrate.mode() == Bitrate::Mode::kConstant
-                   ? VaapiWrapper::kEncodeConstantBitrate
-                   : VaapiWrapper::kEncodeVariableBitrate;
+        if (H264VaapiVideoEncoderDelegate::UseSoftwareRateController(config)) {
+          mode = VaapiWrapper::kEncodeConstantQuantizationParameter;
+        } else {
+          mode = config.bitrate.mode() == Bitrate::Mode::kConstant
+                     ? VaapiWrapper::kEncodeConstantBitrate
+                     : VaapiWrapper::kEncodeVariableBitrate;
+        }
         break;
       case VideoCodec::kVP8:
       case VideoCodec::kVP9:
@@ -373,6 +373,7 @@ void VaapiVideoEncodeAccelerator::InitializeTask(const Config& config) {
             VaapiWrapper::GetImplementationType() ==
                 VAImplementation::kIntelIHD) {
           encoder_info_.reports_average_qp = false;
+          encoder_info_.has_trusted_rate_controller = false;
         }
       }
       break;
@@ -395,9 +396,7 @@ void VaapiVideoEncodeAccelerator::InitializeTask(const Config& config) {
       }
       break;
     default:
-      NOTREACHED_IN_MIGRATION()
-          << "Unsupported codec type " << GetCodecName(output_codec_);
-      return;
+      NOTREACHED() << "Unsupported codec type " << GetCodecName(output_codec_);
   }
 
   if (!vaapi_wrapper_->GetVAEncMaxNumOfRefFrames(
@@ -645,11 +644,11 @@ bool VaapiVideoEncodeAccelerator::CreateSurfacesForGpuMemoryBufferEncoding(
   // ordered from small to larger ones. It cannot contain duplicates.
   // TODO(crbug.com/40172317): Consider supporting multiple layers with the
   // same resolution.
-  CHECK(base::ranges::is_sorted(spatial_layer_resolutions,
-                                [](const gfx::Size& lhs, const gfx::Size& rhs) {
-                                  return lhs.width() < rhs.width() &&
-                                         lhs.height() < rhs.height();
-                                }));
+  CHECK(std::ranges::is_sorted(spatial_layer_resolutions,
+                               [](const gfx::Size& lhs, const gfx::Size& rhs) {
+                                 return lhs.width() < rhs.width() &&
+                                        lhs.height() < rhs.height();
+                               }));
 
   // Create input surfaces.
   TRACE_EVENT1("media,gpu", "VAVEA::ConstructSurfaces", "layers",
@@ -891,21 +890,21 @@ VaapiVideoEncodeAccelerator::CreateEncodeJob(
   scoped_refptr<CodecPicture> picture;
   switch (output_codec_) {
     case VideoCodec::kH264:
-      picture =
-          new VaapiH264Picture(reconstructed_surface->ReleaseAsVASurface());
+      picture = new VaapiH264Picture(
+          reconstructed_surface->ReleaseAsVASurfaceHandle());
       break;
     case VideoCodec::kVP8:
-      picture =
-          new VaapiVP8Picture(reconstructed_surface->ReleaseAsVASurface());
+      picture = new VaapiVP8Picture(
+          reconstructed_surface->ReleaseAsVASurfaceHandle());
       break;
     case VideoCodec::kVP9:
-      picture =
-          new VaapiVP9Picture(reconstructed_surface->ReleaseAsVASurface());
+      picture = new VaapiVP9Picture(
+          reconstructed_surface->ReleaseAsVASurfaceHandle());
       break;
     case VideoCodec::kAV1:
-      picture =
-          new VaapiAV1Picture(/*display_va_surface=*/nullptr,
-                              reconstructed_surface->ReleaseAsVASurface());
+      picture = new VaapiAV1Picture(
+          /*display_va_surface=*/nullptr,
+          reconstructed_surface->ReleaseAsVASurfaceHandle());
       break;
     default:
       return nullptr;
@@ -1069,8 +1068,9 @@ void VaapiVideoEncodeAccelerator::RequestEncodingParametersChange(
     const std::optional<gfx::Size>& size) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(child_sequence_checker_);
 
-  VideoBitrateAllocation allocation;
+  VideoBitrateAllocation allocation(bitrate.mode());
   allocation.SetBitrate(0, 0, bitrate.target_bps());
+  allocation.SetPeakBps(bitrate.peak_bps());
   encoder_task_runner_->PostTask(
       FROM_HERE,
       base::BindOnce(

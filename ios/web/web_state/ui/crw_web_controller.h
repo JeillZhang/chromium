@@ -34,7 +34,7 @@ class NavigationItem;
 class NavigationItemImpl;
 class WebState;
 class WebStateImpl;
-}
+}  // namespace web
 
 // Manages a view that can be used either for rendering web content in a web
 // view. CRWWebController also transparently evicts and restores the internal
@@ -197,10 +197,6 @@ class WebStateImpl;
 - (void)removeWebViewFromViewHierarchyForShutdown:(BOOL)shutdown;
 // Adds the webView back in the view hierarchy.
 - (void)addWebViewToViewHierarchy;
-
-// Notifies this controller that the surface size has changed due to
-// multiwindow action or orientation change.
-- (void)surfaceSizeChanged;
 
 // Injects an opaque NSData block into a WKWebView to restore or serialize. Only
 // supported on iOS15+. On earlier iOS versions, `setSessionStateData` is

@@ -8,8 +8,8 @@
 #include <limits>
 
 #include "partition_alloc/build_config.h"
+#include "partition_alloc/buildflags.h"
 #include "partition_alloc/partition_alloc_base/compiler_specific.h"
-#include "partition_alloc/partition_alloc_buildflags.h"
 #include "partition_alloc/partition_alloc_check.h"
 
 #if PA_BUILDFLAG(IS_WIN)
@@ -150,7 +150,7 @@ StackTopRegistry::~StackTopRegistry() = default;
 // static
 StackTopRegistry& StackTopRegistry::Get() {
   static base::NoDestructor<StackTopRegistry> instance;
-  return *instance.get();
+  return *instance;
 }
 
 void StackTopRegistry::NotifyThreadCreated(void* stack_top) {

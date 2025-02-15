@@ -11,6 +11,10 @@
 #include "components/history_embeddings/history_embeddings_features.h"
 #include "content/public/test/browser_test.h"
 
+#if BUILDFLAG(IS_CHROMEOS)
+#include "chromeos/constants/chromeos_features.h"
+#endif  // BUILDFLAG(IS_CHROMEOS)
+
 class HistoryUIBrowserTest : public WebUIMochaBrowserTest {
  protected:
   HistoryUIBrowserTest() {
@@ -163,6 +167,18 @@ IN_PROC_BROWSER_TEST_F(HistoryListTest, SetsScrollOffset) {
   RunTestCase("SetsScrollOffset");
 }
 
+IN_PROC_BROWSER_TEST_F(HistoryListTest, AnnouncesExactMatches) {
+  RunTestCase("AnnouncesExactMatches");
+}
+
+IN_PROC_BROWSER_TEST_F(HistoryListTest, ScrollingLoadsMore) {
+  RunTestCase("ScrollingLoadsMore");
+}
+
+IN_PROC_BROWSER_TEST_F(HistoryListTest, ResizingLoadsMore) {
+  RunTestCase("ResizingLoadsMore");
+}
+
 class HistoryProductSpecificationsListTest : public WebUIMochaBrowserTest {
  protected:
   HistoryProductSpecificationsListTest() {
@@ -176,14 +192,36 @@ class HistoryProductSpecificationsListTest : public WebUIMochaBrowserTest {
 };
 
 IN_PROC_BROWSER_TEST_F(HistoryProductSpecificationsListTest, Load) {
-  RunTest("history/history_product_specifications_tab_test.js", "mocha.run()");
+  RunTest("history/history_product_specifications_list_test.js", "mocha.run()");
+}
+
+class HistoryProductSpecificationsItemTest : public WebUIMochaBrowserTest {
+ protected:
+  HistoryProductSpecificationsItemTest() {
+    set_test_loader_host(chrome::kChromeUIHistoryHost);
+    scoped_feature_list_.InitWithFeatures({commerce::kProductSpecifications},
+                                          {});
+  }
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
+
+IN_PROC_BROWSER_TEST_F(HistoryProductSpecificationsItemTest, Load) {
+  RunTest("history/history_product_specifications_item_test.js", "mocha.run()");
 }
 
 class HistoryWithHistoryEmbeddingsTest : public WebUIMochaBrowserTest {
  protected:
   HistoryWithHistoryEmbeddingsTest() {
-    scoped_feature_list_.InitAndEnableFeature(
-        history_embeddings::kHistoryEmbeddings);
+    scoped_feature_list_.InitWithFeatures(
+        /*enabled_features=*/{history_embeddings::kHistoryEmbeddings,
+#if BUILDFLAG(IS_CHROMEOS)
+                              chromeos::features::
+                                  kFeatureManagementHistoryEmbedding
+#endif  // BUILDFLAG(IS_CHROMEOS)
+        },
+        /*disabled_features=*/{});
     set_test_loader_host(chrome::kChromeUIHistoryHost);
   }
 

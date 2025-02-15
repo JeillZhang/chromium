@@ -11,9 +11,15 @@
 // the description in automation.
 extern NSString* const kPlusAddressSheetDescriptionAccessibilityIdentifier;
 
-// Accessibility identifier for the bottom sheet's error message used to locate
-// the error message in automation.
-extern NSString* const kPlusAddressSheetErrorMessageAccessibilityIdentifier;
+// Accessibility identifier for the bottom sheet's notice message used to locate
+// the notice message in automation.
+extern NSString* const kPlusAddressSheetNoticeMessageAccessibilityIdentifier;
+
+// Accessibility identifier for the plus address label.
+extern NSString* const kPlusAddressLabelAccessibilityIdentifier;
+
+// Accessibility identifier for the refresh button in the bottom sheet.
+extern NSString* const kPlusAddressRefreshButtonAccessibilityIdentifier;
 
 // The margin to be shown under the user's primary email address, and above the
 // reserved plus address element in the bottom sheet.
@@ -26,19 +32,6 @@ extern const CGFloat kPlusAddressSheetBeforeImageTopMargin;
 // The margin to be shown below the image, to prevent the extra space which may
 // cause content overflow.
 extern const CGFloat kPlusAddressSheetAfterImageMargin;
-
-// The desired size of the image at the top of the bottom sheet content in
-// `PointSize`.
-extern const CGFloat kPlusAddressSheetImageSize;
-
-// The desired size of the branded image width at the top of the bottom sheet
-// content. `kImageSize` can not be used as branded image size uses different
-// dimensions and unit.
-extern const CGFloat kPlusAddressSheetBrandedImageWidth;
-
-// The margin to be added below the content. This is hidden under action buttons
-// stack and is used to prevent content being hidden under buttons border.
-extern const CGFloat kPlusAddressSheetScrollViewBottomInsets;
 
 // The table view corner radius.
 extern const CGFloat kPlusAddressSheetTableViewCellCornerRadius;
@@ -55,6 +48,12 @@ extern const CGFloat kPlusAddressSheetBrandingIconContainerViewSize;
 // Branding icon view corner radius.
 extern const CGFloat kPlusAddressSheetBrandingIconContainerViewCornerRadius;
 
+// Branding icon view shadow radius.
+extern const CGFloat kPlusAddressSheetBrandingIconContainerViewShadowRadius;
+
+// Branding icon view shadow opacity.
+extern const CGFloat kPlusAddressSheetBrandingIconContainerViewShadowOpacity;
+
 // Branding icon size that sits inside the entire view.
 extern const CGFloat kPlusAddressSheetBrandingIconSize;
 
@@ -66,8 +65,10 @@ extern const CGFloat kPlusAddressSheetBrandingIconContainerViewTopPadding;
 
 // Enum specifying the URL the bottom sheet should open.
 enum class PlusAddressURLType {
-  kErrorReport = 0,
-  kManagement = 1,
+  // A plus address management surface on accounts.google.com.
+  kManagement = 0,
+  // A help center page to learn more about plus addresses.
+  kLearnMore = 1,
 };
 
 #endif  // IOS_CHROME_BROWSER_PLUS_ADDRESSES_UI_PLUS_ADDRESS_BOTTOM_SHEET_CONSTANTS_H_

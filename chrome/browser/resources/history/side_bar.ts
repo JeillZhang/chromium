@@ -13,7 +13,7 @@ import 'chrome://resources/cr_elements/cr_icon/cr_icon.js';
 import 'chrome://resources/cr_elements/cr_shared_vars.css.js';
 import './shared_icons.html.js';
 import './shared_vars.css.js';
-import './strings.m.js';
+import '/strings.m.js';
 
 import type {CrMenuSelector} from 'chrome://resources/cr_elements/cr_menu_selector/cr_menu_selector.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
@@ -94,7 +94,7 @@ export class HistorySideBarElement extends PolymerElement {
             'historyClustersEnabled, historyClustersVisible)',
       },
 
-      productSpecificationsListsEnabled_: Boolean,
+      compareHistoryEnabled_: Boolean,
     };
   }
 
@@ -107,8 +107,8 @@ export class HistorySideBarElement extends PolymerElement {
   private historyClustersVisibleManagedByPolicy_: boolean;
   private showFooter_: boolean;
   private showHistoryClusters_: boolean;
-  private productSpecificationsListsEnabled_: boolean =
-      loadTimeData.getBoolean('productSpecificationsListsEnabled');
+  private compareHistoryEnabled_: boolean =
+      loadTimeData.getBoolean('compareHistoryEnabled');
 
   override ready() {
     super.ready();
@@ -132,7 +132,7 @@ export class HistorySideBarElement extends PolymerElement {
   private onClearBrowsingDataClick_(e: Event) {
     const browserService = BrowserServiceImpl.getInstance();
     browserService.recordAction('InitClearBrowsingData');
-    browserService.openClearBrowsingData();
+    browserService.handler.openClearBrowsingDataDialog();
     e.preventDefault();
   }
 
@@ -142,7 +142,7 @@ export class HistorySideBarElement extends PolymerElement {
 
   /**
    * Prevent clicks on sidebar items from navigating. These are only links for
-   * accessibility purposes, taps are handled separately by <iron-selector>.
+   * accessibility purposes, taps are handled separately.
    */
   private onItemClick_(e: Event) {
     e.preventDefault();

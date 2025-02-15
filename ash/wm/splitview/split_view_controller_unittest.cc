@@ -24,6 +24,7 @@
 #include "ash/session/test_session_controller_client.h"
 #include "ash/shelf/shelf_layout_manager.h"
 #include "ash/shell.h"
+#include "ash/strings/grit/ash_strings.h"
 #include "ash/system/overview/overview_button_tray.h"
 #include "ash/system/status_area_widget.h"
 #include "ash/system/status_area_widget_test_helper.h"
@@ -66,6 +67,7 @@
 #include "ui/aura/test/test_window_delegate.h"
 #include "ui/aura/test/test_windows.h"
 #include "ui/base/ime/dummy_text_input_client.h"
+#include "ui/base/l10n/l10n_util.h"
 #include "ui/compositor/presentation_time_recorder.h"
 #include "ui/compositor/scoped_animation_duration_scale_mode.h"
 #include "ui/compositor/test/test_utils.h"
@@ -75,6 +77,7 @@
 #include "ui/events/base_event_utils.h"
 #include "ui/events/test/event_generator.h"
 #include "ui/gfx/geometry/point_conversions.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/bubble/bubble_dialog_delegate_view.h"
 #include "ui/views/widget/widget.h"
 #include "ui/wm/core/shadow_controller.h"
@@ -133,7 +136,7 @@ class TestBubbleDialogDelegateView : public views::BubbleDialogDelegateView {
   TestBubbleDialogDelegateView& operator=(const TestBubbleDialogDelegateView&) =
       delete;
 
-  ~TestBubbleDialogDelegateView() override {}
+  ~TestBubbleDialogDelegateView() override = default;
 };
 
 // Helper class to simulate the text input field in a window. When the text
@@ -171,7 +174,7 @@ class TestTextInputClient : public ui::DummyTextInputClient {
     }
 
     ime->SetVirtualKeyboardVisibilityIfEnabled(true);
-    ASSERT_TRUE(keyboard::WaitUntilShown());
+    ASSERT_TRUE(keyboard::test::WaitUntilShown());
   }
 
   // When the text client is unfocused, hide the virtual keyboard.
@@ -192,13 +195,7 @@ class TestTextInputClient : public ui::DummyTextInputClient {
 
 class SplitViewControllerTest : public AshTestBase {
  public:
-  SplitViewControllerTest() {
-    scoped_feature_list_.InitWithFeatures(
-        /*enabled_features=*/{features::kSnapGroup,
-                              features::kFasterSplitScreenSetup,
-                              features::kOsSettingsRevampWayfinding},
-        /*disabled_features=*/{});
-  }
+  SplitViewControllerTest() = default;
   SplitViewControllerTest(const SplitViewControllerTest&) = delete;
   SplitViewControllerTest& operator=(const SplitViewControllerTest&) = delete;
   ~SplitViewControllerTest() override = default;
@@ -265,8 +262,9 @@ class SplitViewControllerTest : public AshTestBase {
   void EndSplitView() { split_view_controller()->EndSplitView(); }
 
   void LongPressOnOverviewButtonTray() {
-    ui::GestureEvent event(0, 0, 0, base::TimeTicks(),
-                           ui::GestureEventDetails(ui::ET_GESTURE_LONG_PRESS));
+    ui::GestureEvent event(
+        0, 0, 0, base::TimeTicks(),
+        ui::GestureEventDetails(ui::EventType::kGestureLongPress));
     StatusAreaWidgetTestHelper::GetStatusAreaWidget()
         ->overview_button_tray()
         ->OnGestureEvent(&event);
@@ -338,8 +336,6 @@ class SplitViewControllerTest : public AshTestBase {
   std::vector<std::string> trace_names_;
 
   base::HistogramTester histograms_;
-
-  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 // Tests the basic functionalities.
@@ -632,8 +628,9 @@ TEST_F(SplitViewControllerTest,
   ASSERT_TRUE(divider);
   auto* divider_view = divider->divider_view_for_testing();
   ASSERT_TRUE(divider_view);
-  ui::GestureEvent gesture_end(0, 0, 0, ui::EventTimeForNow(),
-                               ui::GestureEventDetails(ui::ET_GESTURE_END));
+  ui::GestureEvent gesture_end(
+      0, 0, 0, ui::EventTimeForNow(),
+      ui::GestureEventDetails(ui::EventType::kGestureEnd));
   divider->divider_view_for_testing()->OnGestureEvent(&gesture_end);
 
   // Trigger a second tap, using a different `touch_id` for this tap, to
@@ -944,11 +941,9 @@ TEST_F(SplitViewControllerTest, SplitDividerBasicTest) {
   EXPECT_EQ(ui::ZOrderLevel::kNormal,
             split_view_divider()->divider_widget()->GetZOrderLevel());
   EXPECT_TRUE(window_util::IsStackedBelow(
-      window1.get(),
-      split_view_divider()->divider_widget()->GetNativeWindow()));
+      window1.get(), split_view_divider()->GetDividerWindow()));
   EXPECT_TRUE(window_util::IsStackedBelow(
-      window2.get(),
-      split_view_divider()->divider_widget()->GetNativeWindow()));
+      window2.get(), split_view_divider()->GetDividerWindow()));
 
   // Test that activating an non-snappable window ends the split view mode.
   std::unique_ptr<aura::Window> window3(CreateNonSnappableWindow(bounds));
@@ -989,8 +984,7 @@ TEST_F(SplitViewControllerTest, DividerStateWhenDraggedOverviewItemDestroyed) {
             split_view_divider()->divider_widget()->GetZOrderLevel());
   EXPECT_TRUE(window_util::IsStackedBelow(window1.get(), window3.get()));
   EXPECT_TRUE(window_util::IsStackedBelow(
-      window3.get(),
-      split_view_divider()->divider_widget()->GetNativeWindow()));
+      window3.get(), split_view_divider()->GetDividerWindow()));
 }
 
 // Tests that the split divider has the correct state when the drag of the
@@ -1029,11 +1023,9 @@ TEST_F(SplitViewControllerTest, DividerStateWhenOverviewItemDragCancelled) {
   EXPECT_EQ(ui::ZOrderLevel::kNormal,
             split_view_divider()->divider_widget()->GetZOrderLevel());
   EXPECT_TRUE(window_util::IsStackedBelow(
-      window1.get(),
-      split_view_divider()->divider_widget()->GetNativeWindow()));
+      window1.get(), split_view_divider()->GetDividerWindow()));
   EXPECT_TRUE(window_util::IsStackedBelow(
-      window3.get(),
-      split_view_divider()->divider_widget()->GetNativeWindow()));
+      window3.get(), split_view_divider()->GetDividerWindow()));
 }
 
 // Verifys that the bounds of the two windows in splitview are as expected.
@@ -3781,8 +3773,7 @@ TEST_F(SplitViewControllerTest, StackingOrderWithDivider) {
   EXPECT_EQ(controller->state(), SplitViewController::State::kBothSnapped);
   SplitViewDivider* divider = split_view_divider();
   ASSERT_TRUE(divider->divider_widget());
-  aura::Window* divider_widget_native_window =
-      divider->divider_widget()->GetNativeWindow();
+  aura::Window* divider_widget_native_window = divider->GetDividerWindow();
   EXPECT_TRUE(
       window_util::IsStackedBelow(w1.get(), divider_widget_native_window));
   EXPECT_TRUE(
@@ -3811,7 +3802,7 @@ TEST_F(SplitViewControllerTest, DividerStaysVisibleDuringMinimizeAndRestore) {
   EXPECT_EQ(controller->state(), SplitViewController::State::kBothSnapped);
   SplitViewDivider* divider = split_view_divider();
   ASSERT_TRUE(divider->divider_widget());
-  EXPECT_TRUE(divider->divider_widget()->GetNativeWindow()->IsVisible());
+  EXPECT_TRUE(divider->GetDividerWindow()->IsVisible());
 
   // Tests that the divider stays visible on `w1` minimized and restore.
   // To simulate the actual CUJ when user minimizes a window i.e. the minimized
@@ -3821,12 +3812,12 @@ TEST_F(SplitViewControllerTest, DividerStaysVisibleDuringMinimizeAndRestore) {
   WMEvent w1_minimize(WM_EVENT_MINIMIZE);
   WindowState::Get(w1.get())->OnWMEvent(&w1_minimize);
   EXPECT_FALSE(w1->IsVisible());
-  EXPECT_TRUE(divider->divider_widget()->GetNativeWindow()->IsVisible());
+  EXPECT_TRUE(divider->GetDividerWindow()->IsVisible());
 
   // Restoring the window will refresh the widget but keep it visible.
   WMEvent w1_restore(WM_EVENT_RESTORE);
   WindowState::Get(w1.get())->OnWMEvent(&w1_restore);
-  EXPECT_TRUE(divider->divider_widget()->GetNativeWindow()->IsVisible());
+  EXPECT_TRUE(divider->GetDividerWindow()->IsVisible());
 }
 
 // Tests the windows stay onscreen during fast resize. Regression test for
@@ -3885,8 +3876,7 @@ TEST_F(SplitViewControllerTest, SnapWindowsWithDifferentParentContainers) {
 
   SplitViewDivider* divider = split_view_divider();
   ASSERT_TRUE(divider->divider_widget());
-  aura::Window* divider_widget_native_window =
-      divider->divider_widget()->GetNativeWindow();
+  aura::Window* divider_widget_native_window = divider->GetDividerWindow();
   EXPECT_EQ(divider_widget_native_window->parent(),
             always_on_top_window->parent());
   EXPECT_EQ(ui::ZOrderLevel::kFloatingWindow,
@@ -4093,6 +4083,23 @@ TEST_F(SplitViewControllerTest,
 
   // Convert the device to clamshell mode. There should be no crash.
   Shell::Get()->tablet_mode_controller()->SetEnabledForTest(false);
+}
+
+TEST_F(SplitViewControllerTest, SplitViewDividerViewAccessibleProperties) {
+  UpdateDisplay("900x600");
+  std::unique_ptr<aura::Window> window(CreateWindow(gfx::Rect(0, 0, 520, 500)));
+  split_view_controller()->SnapWindow(
+      window.get(), SnapPosition::kPrimary,
+      WindowSnapActionSource::kSnapByWindowLayoutMenu,
+      /*activate_window=*/false, chromeos::kDefaultSnapRatio);
+  auto* divider_view = split_view_divider()->divider_view_for_testing();
+  ui::AXNodeData data;
+
+  ASSERT_TRUE(divider_view);
+  divider_view->GetViewAccessibility().GetAccessibleNodeData(&data);
+  EXPECT_EQ(data.role, ax::mojom::Role::kToolbar);
+  EXPECT_EQ(data.GetString16Attribute(ax::mojom::StringAttribute::kName),
+            l10n_util::GetStringUTF16(IDS_ASH_SNAP_GROUP_DIVIDER_A11Y_NAME));
 }
 
 // The test class that enables the feature flag of portrait mode split view

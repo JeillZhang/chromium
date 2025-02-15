@@ -54,7 +54,7 @@ PasswordForm CreateSavedFederated() {
   federated.signon_realm = "federation://example.in/google.com";
   federated.type = PasswordForm::Type::kApi;
   federated.federation_origin =
-      url::Origin::Create(GURL("https://google.com/"));
+      url::SchemeHostPort(GURL("https://google.com/"));
   federated.username_value = u"federated_username";
   return federated;
 }
@@ -104,6 +104,7 @@ class MockPasswordManagerClient : public StubPasswordManagerClient {
       bool update_password) override;
 
   MOCK_METHOD(bool, PromptUserToSaveOrUpdatePasswordMock, (bool), ());
+  MOCK_METHOD(bool, IsPasswordChangeOngoing, (), ());
 
   std::unique_ptr<PasswordFormManagerForUI> MoveForm() {
     return std::move(form_to_save_);
@@ -170,6 +171,7 @@ PasswordGenerationManagerTest::SetUpOverwritingUI(
   const PasswordForm federated = CreateSavedFederated();
   FakeFormFetcher fetcher;
   fetcher.SetNonFederated({saved});
+  fetcher.SetBestMatches({saved});
   fetcher.set_federated({federated});
 
   EXPECT_CALL(client_, PromptUserToSaveOrUpdatePasswordMock(true))
@@ -185,7 +187,7 @@ void PasswordGenerationManagerTest::ForwardByMinute() {
 }
 
 void PasswordGenerationManagerTest::SetAccountStoreEnabled(bool is_enabled) {
-  ON_CALL(*client().GetPasswordFeatureManager(), IsOptedInForAccountStorage())
+  ON_CALL(*client().GetPasswordFeatureManager(), IsAccountStorageEnabled())
       .WillByDefault(testing::Return(is_enabled));
 }
 
@@ -213,6 +215,7 @@ TEST_F(PasswordGenerationManagerTest, GeneratedPasswordAccepted_Conflict) {
   MockPasswordManagerDriver driver;
   FakeFormFetcher fetcher;
   fetcher.SetNonFederated({saved});
+  fetcher.SetBestMatches({saved});
 
   EXPECT_CALL(driver, GeneratedPasswordAccepted(generated.password_value));
   manager().GeneratedPasswordAccepted(std::move(generated), {&saved}, {},
@@ -369,6 +372,31 @@ TEST_F(PasswordGenerationManagerTest, PresaveGeneratedPassword_WithConflict) {
   EXPECT_TRUE(manager().HasGeneratedPassword());
 }
 
+TEST_F(PasswordGenerationManagerTest,
+       PresaveGeneratedPassword_WithConflict_DuringPasswordChange) {
+  PasswordForm generated = CreateGenerated();
+  generated.username_element = u"username";
+
+  PasswordForm saved = CreateSaved();
+  saved.username_value = generated.username_value;
+  PasswordForm empty_username = CreateSaved();
+  empty_username.username_value = u"";
+
+  EXPECT_CALL(client(), IsPasswordChangeOngoing)
+      .WillOnce(testing::Return(true));
+
+  PasswordForm generated_with_date;
+  EXPECT_CALL(store(), AddLogin)
+      .WillOnce(testing::SaveArg<0>(&generated_with_date));
+
+  manager().PresaveGeneratedPassword(generated, {&saved, &empty_username},
+                                     &form_saver());
+
+  EXPECT_TRUE(manager().HasGeneratedPassword());
+  EXPECT_NE(generated_with_date.username_element, generated.username_element);
+  EXPECT_TRUE(generated_with_date.username_value.empty());
+}
+
 // Check that presaving a password with an unknown username saves it as is.
 TEST_F(PasswordGenerationManagerTest,
        PresaveGeneratedPassword_WithoutConflict) {
@@ -463,9 +491,13 @@ TEST_F(PasswordGenerationManagerTest, PresaveGeneratedPassword_ThenUpdate) {
   related_psl_password_expected.date_password_modified = base::Time::Now();
   EXPECT_CALL(store(), UpdateLogin(related_psl_password_expected, _));
 
+  const std::vector<PasswordForm> matches_for_generation = {
+      related_password, related_psl_password, unrelated_password,
+      unrelated_psl_password};
   manager().CommitGeneratedPassword(
-      generated, matches, u"old password", PasswordForm::Store::kProfileStore,
-      &form_saver(), nullptr /* account_store_form_saver */);
+      generated, matches_for_generation, u"old password",
+      PasswordForm::Store::kProfileStore, &form_saver(),
+      nullptr /* account_store_form_saver */);
   EXPECT_TRUE(manager().HasGeneratedPassword());
 }
 
@@ -708,7 +740,7 @@ TEST_F(PasswordGenerationManagerTest,
   EXPECT_CALL(store(), UpdateLoginWithPrimaryKey(generated, _, _));
 
   manager().CommitGeneratedPassword(
-      generated, {&saved}, u"",
+      generated, std::vector{saved}, u"",
       PasswordForm::Store::kProfileStore | PasswordForm::Store::kAccountStore,
       &form_saver(), &account_store_form_saver);
 }

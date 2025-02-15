@@ -5,7 +5,9 @@
 #include <memory>
 
 #include "base/strings/strcat.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "net/base/network_anonymization_key.h"
+#include "net/base/privacy_mode.h"
 #include "net/base/proxy_chain.h"
 #include "net/base/proxy_server.h"
 #include "net/base/session_usage.h"
@@ -45,6 +47,8 @@ class QuicSessionPoolProxyJobTest
         context_.clock(), host, perspective, client_priority_uses_incremental,
         use_priority_header);
   }
+
+  base::HistogramTester histogram_tester;
 };
 
 INSTANTIATE_TEST_SUITE_P(All,
@@ -93,7 +97,8 @@ TEST_P(QuicSessionPoolProxyJobTest, CreateProxiedQuicSession) {
   socket_data.AddRead("server-settings", ConstructServerSettingsPacket(3));
   socket_data.AddRead("ok-response",
                       ConstructOkResponsePacket(4, stream_id, true));
-  socket_data.AddWrite("ack", client_maker_.MakeAckPacket(3, 3, 4, 3));
+  socket_data.AddWrite("ack",
+                       client_maker_.Packet(3).AddAckFrame(3, 4, 3).Build());
   socket_data.AddWrite("endpoint-initial-settings",
                        ConstructClientH3DatagramPacket(
                            4, stream_id, kConnectUdpContextId,
@@ -122,7 +127,7 @@ TEST_P(QuicSessionPoolProxyJobTest, CreateProxiedQuicSession) {
   std::unique_ptr<HttpStream> stream = CreateStream(&builder.request);
   EXPECT_TRUE(stream.get());
   QuicChromiumClientSession* session =
-      GetActiveSession(origin, nak, proxy_chain);
+      GetActiveSession(origin, PRIVACY_MODE_DISABLED, nak, proxy_chain);
   ASSERT_TRUE(session);
 
   // The direct connection to the proxy has a max packet size 1350. The
@@ -138,8 +143,9 @@ TEST_P(QuicSessionPoolProxyJobTest, CreateProxiedQuicSession) {
 
   // Check that the session to the proxy is keyed by an empty NAK and always
   // uses RFCv1.
-  QuicChromiumClientSession* proxy_session = GetActiveSession(
-      proxy_origin, nak, ProxyChain::ForIpProtection({}), SessionUsage::kProxy);
+  QuicChromiumClientSession* proxy_session =
+      GetActiveSession(proxy_origin, PRIVACY_MODE_DISABLED, nak,
+                       ProxyChain::ForIpProtection({}), SessionUsage::kProxy);
   ASSERT_TRUE(proxy_session);
   EXPECT_EQ(proxy_session->GetQuicVersion(), quic::ParsedQuicVersion::RFCv1());
 
@@ -149,6 +155,8 @@ TEST_P(QuicSessionPoolProxyJobTest, CreateProxiedQuicSession) {
   RunUntilIdle();
 
   EXPECT_TRUE(socket_data.AllDataConsumed());
+  histogram_tester.ExpectTotalCount(
+      "Net.HttpProxy.ConnectLatency.Http3.Quic.Success", 1);
 }
 
 TEST_P(QuicSessionPoolProxyJobTest, DoubleProxiedQuicSession) {
@@ -325,8 +333,8 @@ TEST_P(QuicSessionPoolProxyJobTest, DoubleProxiedQuicSession) {
   ASSERT_EQ(OK, callback_.WaitForResult());
   std::unique_ptr<HttpStream> stream = CreateStream(&builder.request);
   EXPECT_TRUE(stream.get());
-  QuicChromiumClientSession* session =
-      GetActiveSession(origin, endpoint_nak, proxy_chain);
+  QuicChromiumClientSession* session = GetActiveSession(
+      origin, PRIVACY_MODE_DISABLED, endpoint_nak, proxy_chain);
   ASSERT_TRUE(session);
 
   // The direct connection to the proxy has a max packet size 1350. The
@@ -344,7 +352,7 @@ TEST_P(QuicSessionPoolProxyJobTest, DoubleProxiedQuicSession) {
   // !kPartitionProxyChains) and RFCv1.
   auto proxy_nak = NetworkAnonymizationKey();
   QuicChromiumClientSession* proxy1_session =
-      GetActiveSession(proxy1_origin, proxy_nak,
+      GetActiveSession(proxy1_origin, PRIVACY_MODE_DISABLED, proxy_nak,
                        ProxyChain::ForIpProtection({}), SessionUsage::kProxy);
   ASSERT_TRUE(proxy1_session);
   EXPECT_EQ(proxy1_session->quic_session_key().network_anonymization_key(),
@@ -353,7 +361,7 @@ TEST_P(QuicSessionPoolProxyJobTest, DoubleProxiedQuicSession) {
 
   // Check that the session to proxy2 uses the endpoint NAK and RFCv1.
   QuicChromiumClientSession* proxy2_session = GetActiveSession(
-      proxy2_origin, endpoint_nak,
+      proxy2_origin, PRIVACY_MODE_DISABLED, endpoint_nak,
       ProxyChain::ForIpProtection({ProxyServer::FromSchemeHostAndPort(
           ProxyServer::SCHEME_QUIC, proxy1_origin.host(), 443)}),
       SessionUsage::kProxy);
@@ -368,6 +376,67 @@ TEST_P(QuicSessionPoolProxyJobTest, DoubleProxiedQuicSession) {
   RunUntilIdle();
 
   ASSERT_TRUE(socket_data.AllDataConsumed());
+
+  histogram_tester.ExpectTotalCount(
+      "Net.HttpProxy.ConnectLatency.Http3.Quic.Success", 1);
+}
+
+TEST_P(QuicSessionPoolProxyJobTest, PoolDeletedDuringSessionCreation) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitWithFeatures(
+      {net::features::kPartitionConnectionsByNetworkIsolationKey},
+      {net::features::kPartitionProxyChains});
+  Initialize();
+
+  // Set up a connection via proxy1, to proxy2, to example.org, all using QUIC.
+  GURL url("https://www.example.org/");
+  GURL proxy1(kProxy1Url);
+  GURL proxy2(kProxy2Url);
+  auto origin = url::SchemeHostPort(url);
+  auto proxy1_origin = url::SchemeHostPort(proxy1);
+  auto proxy2_origin = url::SchemeHostPort(proxy2);
+  auto endpoint_nak =
+      NetworkAnonymizationKey::CreateSameSite(SchemefulSite(url));
+
+  scoped_refptr<X509Certificate> cert(
+      ImportCertFromFile(GetTestCertsDirectory(), "wildcard.pem"));
+  ASSERT_TRUE(cert->VerifyNameMatch(origin.host()));
+  ASSERT_TRUE(cert->VerifyNameMatch(proxy1_origin.host()));
+  ASSERT_FALSE(cert->VerifyNameMatch(kDifferentHostname));
+
+  ProofVerifyDetailsChromium verify_details;
+  verify_details.cert_verify_result.verified_cert = cert;
+  verify_details.cert_verify_result.is_issued_by_known_root = true;
+  crypto_client_stream_factory_.AddProofVerifyDetails(&verify_details);
+
+  auto proxy_chain = ProxyChain::ForIpProtection({
+      ProxyServer::FromSchemeHostAndPort(ProxyServer::SCHEME_QUIC,
+                                         proxy1_origin.host(), 443),
+      ProxyServer::FromSchemeHostAndPort(ProxyServer::SCHEME_QUIC,
+                                         proxy2_origin.host(), 443),
+  });
+  EXPECT_TRUE(proxy_chain.IsValid());
+
+  {
+    RequestBuilder builder(this);
+    builder.destination = origin;
+    builder.proxy_chain = proxy_chain;
+    builder.http_user_agent_settings = &http_user_agent_settings_;
+    builder.network_anonymization_key = endpoint_nak;
+    builder.url = url;
+
+    // Note: `builder` defaults to using the parameterized `version_` member,
+    // which we will assert here as a pre-condition for checking that the proxy
+    // session ignores this and uses RFCv1 instead.
+    ASSERT_EQ(builder.quic_version, version_);
+
+    EXPECT_EQ(ERR_IO_PENDING, builder.CallRequest());
+    // Drop the builder first, since it contains a raw pointer to the pool.
+  }
+
+  // Drop the QuicSessionPool, destroying all pending requests. This should not
+  // crash (see crbug.com/374777473).
+  factory_.reset();
 }
 
 TEST_P(QuicSessionPoolProxyJobTest, CreateProxySessionFails) {
@@ -460,6 +529,13 @@ TEST_P(QuicSessionPoolProxyJobTest, CreateSessionFails) {
                              quic::QuicErrorCode::QUIC_INTERNAL_ERROR);
 
   ASSERT_EQ(ERR_QUIC_HANDSHAKE_FAILED, callback_.WaitForResult());
+
+  // The direct connection was successful; the tunneled connection failed, but
+  // that is not measured by this metric.
+  histogram_tester.ExpectTotalCount(
+      "Net.HttpProxy.ConnectLatency.Http3.Quic.Success", 1);
+  histogram_tester.ExpectTotalCount(
+      "Net.HttpProxy.ConnectLatency.Http3.Quic.Error", 0);
 }
 
 // If the server in a proxied session provides an SPA, the client does not
@@ -468,10 +544,9 @@ TEST_P(QuicSessionPoolProxyJobTest,
        ProxiedQuicSessionWithServerPreferredAddressShouldNotMigrate) {
   IPEndPoint server_preferred_address = IPEndPoint(IPAddress(1, 2, 3, 4), 123);
   FLAGS_quic_enable_chaos_protection = false;
-
-  // Enable server preferred address on the client side.
-  quic_params_->connection_options.push_back(quic::kSPAD);
-
+  if (!quic_params_->allow_server_migration) {
+    quic_params_->connection_options.push_back(quic::kSPAD);
+  }
   Initialize();
 
   GURL url("https://www.example.org/");
@@ -524,7 +599,8 @@ TEST_P(QuicSessionPoolProxyJobTest,
   socket_data.AddRead("server-settings", ConstructServerSettingsPacket(3));
   socket_data.AddRead("ok-response",
                       ConstructOkResponsePacket(4, stream_id, true));
-  socket_data.AddWrite("ack", client_maker_.MakeAckPacket(3, 3, 4, 3));
+  socket_data.AddWrite("ack",
+                       client_maker_.Packet(3).AddAckFrame(3, 4, 3).Build());
   socket_data.AddWrite("datagram",
                        ConstructClientH3DatagramPacket(
                            4, stream_id, kConnectUdpContextId,
@@ -554,7 +630,7 @@ TEST_P(QuicSessionPoolProxyJobTest,
   std::unique_ptr<HttpStream> stream = CreateStream(&builder.request);
   EXPECT_TRUE(stream.get());
   QuicChromiumClientSession* session =
-      GetActiveSession(origin, nak, proxy_chain);
+      GetActiveSession(origin, PRIVACY_MODE_DISABLED, nak, proxy_chain);
   ASSERT_TRUE(session);
 
   // Ensure the session finishes creating before proceeding.

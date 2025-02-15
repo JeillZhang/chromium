@@ -60,6 +60,7 @@ declare global {
             'EXTENSION_SERVICE_WORKER_BACKGROUND',
         TAB_CONTENTS = 'TAB_CONTENTS',
         EXTENSION_SIDE_PANEL = 'EXTENSION_SIDE_PANEL',
+        DEVELOPER_TOOLS = 'DEVELOPER_TOOLS',
       }
 
       export enum ErrorType {
@@ -77,7 +78,7 @@ declare global {
         ENABLED = 'ENABLED',
         DISABLED = 'DISABLED',
         TERMINATED = 'TERMINATED',
-        BLACKLISTED = 'BLACKLISTED',
+        BLOCKLISTED = 'BLOCKLISTED',
       }
 
       export enum ComandScope {
@@ -152,6 +153,8 @@ declare global {
         reloading: boolean;
         custodianApprovalRequired: boolean;
         parentDisabledPermissions: boolean;
+        unsupportedManifestVersion: boolean;
+        unsupportedDeveloperExtension: boolean;
       }
 
       export interface OptionsPage {
@@ -225,7 +228,7 @@ declare global {
       }
 
       export interface ExtensionInfo {
-        blacklistText?: string;
+        blocklistText?: string;
         safetyCheckText?: SafetyCheckStrings;
         commands: Command[];
         controlledInfo?: ControlledInfo;
@@ -238,7 +241,9 @@ declare global {
         iconUrl: string;
         id: string;
         incognitoAccess: AccessModifier;
+        userScriptsAccess: AccessModifier;
         installWarnings: string[];
+        isCommandRegistrationHandledExternally: boolean;
         launchUrl?: string;
         location: Location;
         locationText?: string;
@@ -264,10 +269,10 @@ declare global {
         showSafeBrowsingAllowlistWarning: boolean;
         showAccessRequestsInToolbar: boolean;
         safetyCheckWarningReason: SafetyCheckWarningReason;
-        acknowledgeSafetyCheckWarning: boolean;
         pinnedToToolbar?: boolean;
         isAffectedByMV2Deprecation: boolean;
-        didAcknowledgeMV2DeprecationWarning: boolean;
+        didAcknowledgeMV2DeprecationNotice: boolean;
+        canUploadAsAccountExtension: boolean;
       }
 
       export interface ProfileInfo {
@@ -276,25 +281,24 @@ declare global {
         isDeveloperModeControlledByPolicy: boolean;
         isIncognitoAvailable: boolean;
         isChildAccount: boolean;
-        isMv2DeprecationWarningDismissed: boolean;
+        isMv2DeprecationNoticeDismissed: boolean;
       }
 
       export interface ExtensionConfigurationUpdate {
         extensionId: string;
         fileAccess?: boolean;
         incognitoAccess?: boolean;
+        userScriptsAccess?: boolean;
         errorCollection?: boolean;
         hostAccess?: HostAccess;
         showAccessRequestsInToolbar?: boolean;
-        acknowledgeSafetyCheckWarning?: boolean;
         acknowledgeSafetyCheckWarningReason?: SafetyCheckWarningReason;
-        acknowledgeMv2DeprecationWarning?: boolean;
         pinnedToToolbar?: boolean;
       }
 
       export interface ProfileConfigurationUpdate {
         inDeveloperMode?: boolean;
-        isMv2DeprecationWarningDismissed?: boolean;
+        isMv2DeprecationNoticeDismissed?: boolean;
       }
 
       export interface ExtensionCommandUpdate {
@@ -507,6 +511,10 @@ declare global {
           site: string, updates: ExtensionSiteAccessUpdate[]): Promise<void>;
       export function dismissSafetyHubExtensionsMenuNotification(): void;
       export function dismissMv2DeprecationPanel(): void;
+      export function dismissMv2DeprecationNoticeForExtension(
+          extensionId: string): Promise<void>;
+      export function uploadExtensionToAccount(extensionId: string):
+          Promise<void>;
 
       export const onItemStateChanged: ChromeEvent<(data: EventData) => void>;
       export const onProfileStateChanged:

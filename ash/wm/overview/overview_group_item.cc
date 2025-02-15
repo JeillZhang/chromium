@@ -11,10 +11,7 @@
 #include "ash/wm/desks/desks_util.h"
 #include "ash/wm/overview/overview_constants.h"
 #include "ash/wm/overview/overview_controller.h"
-#include "ash/wm/overview/overview_focus_cycler_old.h"
-#include "ash/wm/overview/overview_focusable_view.h"
 #include "ash/wm/overview/overview_grid.h"
-#include "ash/wm/overview/overview_group_container_view.h"
 #include "ash/wm/overview/overview_item.h"
 #include "ash/wm/overview/overview_item_base.h"
 #include "ash/wm/overview/overview_item_view.h"
@@ -36,6 +33,7 @@
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/rect_f.h"
 #include "ui/gfx/geometry/rounded_corners_f.h"
+#include "ui/views/view.h"
 #include "ui/views/widget/widget.h"
 
 namespace ash {
@@ -133,8 +131,6 @@ void OverviewGroupItem::DestroyMirrorsForDragging() {
 }
 
 aura::Window* OverviewGroupItem::GetWindow() {
-  // TODO(michelefan): `GetWindow()` will be replaced by `GetWindows()` in a
-  // follow-up cl.
   CHECK_LE(overview_items_.size(), 2u);
   return overview_items_.empty() ? nullptr : overview_items_[0]->GetWindow();
 }
@@ -335,15 +331,12 @@ void OverviewGroupItem::EnsureVisible() {
   }
 }
 
-std::vector<OverviewFocusableView*> OverviewGroupItem::GetFocusableViews()
-    const {
-  std::vector<OverviewFocusableView*> focusable_views;
+std::vector<views::Widget*> OverviewGroupItem::GetFocusableWidgets() {
+  std::vector<views::Widget*> focusable_widgets;
   for (const auto& overview_item : overview_items_) {
-    if (auto* overview_item_view = overview_item->overview_item_view()) {
-      focusable_views.push_back(overview_item_view);
-    }
+    focusable_widgets.push_back(overview_item->item_widget());
   }
-  return focusable_views;
+  return focusable_widgets;
 }
 
 views::View* OverviewGroupItem::GetBackDropView() const {
@@ -363,8 +356,6 @@ void OverviewGroupItem::UpdateRoundedCornersAndShadow() {
 }
 
 float OverviewGroupItem::GetOpacity() const {
-  // TODO(michelefan): This is a temporary placeholder value. The opacity
-  // settings will be handled in a separate task.
   return 1.f;
 }
 
@@ -391,7 +382,9 @@ void OverviewGroupItem::OnStartingAnimationComplete() {
 }
 
 void OverviewGroupItem::Restack() {
-  CHECK(!overview_items_.empty());
+  if (overview_items_.empty() || !item_widget_) {
+    return;
+  }
 
   // Sort the items in `sorted_items` based on their stacking order, starting
   // with the lowest.
@@ -477,7 +470,13 @@ void OverviewGroupItem::Shutdown() {
   }
 }
 
-void OverviewGroupItem::AnimateAndCloseItem(bool up) {}
+void OverviewGroupItem::AnimateAndCloseItem(bool up) {
+  animating_to_close_ = true;
+
+  for (const auto& overview_item : overview_items_) {
+    overview_item->AnimateAndCloseItem(up);
+  }
+}
 
 void OverviewGroupItem::StopWidgetAnimation() {
   for (const auto& overview_item : overview_items_) {
@@ -496,25 +495,6 @@ void OverviewGroupItem::UpdateOverviewItemFillMode() {
   for (const auto& overview_item : overview_items_) {
     overview_item->UpdateOverviewItemFillMode();
   }
-}
-
-gfx::Point OverviewGroupItem::GetMagnifierFocusPointInScreen() const {
-  CHECK(!overview_items_.empty());
-
-  OverviewSession* overview_session =
-      OverviewController::Get()->overview_session();
-  CHECK(overview_session);
-  OverviewFocusCyclerOld* focus_cycler_old =
-      overview_session->focus_cycler_old();
-  for (const auto& overview_item : overview_items_) {
-    if (overview_item->overview_item_view() ==
-        focus_cycler_old->focused_view()) {
-      return overview_item->GetMagnifierFocusPointInScreen();
-    }
-  }
-
-  NOTREACHED_IN_MIGRATION();
-  return gfx::Point();
 }
 
 const gfx::RoundedCornersF OverviewGroupItem::GetRoundedCorners() const {
@@ -537,13 +517,11 @@ const gfx::RoundedCornersF OverviewGroupItem::GetRoundedCorners() const {
 void OverviewGroupItem::OnOverviewItemWindowDestroying(
     OverviewItem* overview_item,
     bool reposition) {
-  RefreshFocusedViewOnItemDestroying(overview_item->overview_item_view());
-
   // We use 2-step removal to ensure that the `overview_item` gets removed from
   // the vector before been destroyed so that all the overview items in
   // `overview_items_` are valid.
-  auto iter = base::ranges::find_if(overview_items_,
-                                    base::MatchesUniquePtr(overview_item));
+  auto iter = std::ranges::find_if(overview_items_,
+                                   base::MatchesUniquePtr(overview_item));
   auto to_be_removed = std::move(*iter);
   overview_items_.erase(iter);
   to_be_removed.reset();
@@ -558,9 +536,9 @@ void OverviewGroupItem::OnOverviewItemWindowDestroying(
       // Remove the group-level shadow and apply it on the window-level to
       // ensure that the shadow bounds get updated properly.
       item->set_eligible_for_shadow_config(/*eligible_for_shadow_config=*/true);
-
-      OverviewItemView* item_view = item->overview_item_view();
-      item_view->ResetRoundedCorners();
+      if (OverviewItemView* item_view = item->overview_item_view()) {
+        item_view->ResetRoundedCorners();
+      }
     }
   }
 
@@ -584,22 +562,10 @@ void OverviewGroupItem::CreateItemWidget() {
 
   CreateShadow();
 
-  overview_group_container_view_ = item_widget_->SetContentsView(
-      std::make_unique<OverviewGroupContainerView>(this));
+  overview_group_container_view_ =
+      item_widget_->SetContentsView(std::make_unique<views::View>());
   item_widget_->Show();
   item_widget_->GetLayer()->SetMasksToBounds(/*masks_to_bounds=*/false);
-}
-
-void OverviewGroupItem::RefreshFocusedViewOnItemDestroying(
-    OverviewItemView* item_view) {
-  OverviewController* overview_controller = OverviewController::Get();
-  OverviewSession* overview_session = overview_controller->overview_session();
-  if (overview_session) {
-    if (OverviewFocusCyclerOld* focus_cycler_old =
-            overview_session->focus_cycler_old()) {
-      focus_cycler_old->OnViewDestroyingOrDisabling(item_view);
-    }
-  }
 }
 
 }  // namespace ash

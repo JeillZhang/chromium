@@ -8,27 +8,35 @@ import android.content.Context;
 
 import androidx.annotation.Nullable;
 
-import org.chromium.chrome.browser.omaha.UpdateStatusProvider;
+import org.chromium.chrome.browser.password_manager.PasswordStoreBridge;
 
 /** A delegate for Safety Hub to handle UI related behaviour. */
 public interface SafetyHubModuleDelegate {
-
-    /**
-     * @return A boolean indicating whether to show the account-level password check module in
-     *     Safety Hub based on the Sync and UPM status.
-     */
-    boolean shouldShowPasswordCheckModule();
 
     /**
      * Launches the Password Checkup UI from GMSCore.
      *
      * @param context used to show the dialog.
      */
-    void showPasswordCheckUI(Context context);
+    void showPasswordCheckUi(Context context);
 
     /**
-     * @return The last fetched update status from Omaha if available.
+     * Opens the Play Store page for the installed Chrome channel.
+     *
+     * @param context used to launch the play store intent.
      */
-    @Nullable
-    UpdateStatusProvider.UpdateStatus getUpdateStatus();
+    void openGooglePlayStore(Context context);
+
+    /**
+     * @param passwordStoreBridge Provides access to stored passwords.
+     * @return the total passwords count for Account-level passwords.
+     */
+    int getAccountPasswordsCount(@Nullable PasswordStoreBridge passwordStoreBridge);
+
+    /**
+     * Opens the sign-in bottomsheet.
+     *
+     * @param context used to launch the promo in.
+     */
+    void launchSigninPromo(Context context);
 }

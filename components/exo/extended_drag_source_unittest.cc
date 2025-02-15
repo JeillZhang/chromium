@@ -99,7 +99,7 @@ class TestExtendedDragSourceDelegate : public ExtendedDragSource::Delegate {
 
 class ExtendedDragSourceTest : public test::ExoTestBase {
  public:
-  ExtendedDragSourceTest() {}
+  ExtendedDragSourceTest() = default;
   ExtendedDragSourceTest(const ExtendedDragSourceTest&) = delete;
   ExtendedDragSourceTest& operator=(const ExtendedDragSourceTest&) = delete;
   ~ExtendedDragSourceTest() override = default;
@@ -282,9 +282,6 @@ class WindowObserverHookChecker : public aura::WindowObserver {
     dragged_window_ = surface_window_->GetToplevelWindow();
     dragged_window_->AddObserver(this);
     surface_window_->RemoveObserver(this);
-
-    dragged_window_->SetProperty(chromeos::kAppTypeKey,
-                                 chromeos::AppType::LACROS);
   }
 
   void OnWindowVisibilityChanging(aura::Window* window, bool visible) override {
@@ -423,7 +420,7 @@ TEST_F(ExtendedDragSourceTest, DragSurfaceNotMappedYet_Touch) {
             *extended_drag_source_->GetDragOffsetForTesting());
 
   // Initiate the gesture sequence.
-  DispatchGesture(ui::ET_GESTURE_BEGIN, gfx::Point(10, 10));
+  DispatchGesture(ui::EventType::kGestureBegin, gfx::Point(10, 10));
 
   // Map the |detached_surface|.
   auto detached_buffer = CreateBuffer({50, 50});
@@ -474,7 +471,7 @@ TEST_F(ExtendedDragSourceTest, DestroyDraggedSurfaceWhileDragging) {
   // Create an drag event instance to be dispatched manually
   // and hold a dangling target pointer.
   auto event = std::make_unique<ui::MouseEvent>(
-      ui::ET_MOUSE_DRAGGED, dragged_window->bounds().origin(),
+      ui::EventType::kMouseDragged, dragged_window->bounds().origin(),
       dragged_window->bounds().origin(), ui::EventTimeForNow(),
       ui::EF_LEFT_MOUSE_BUTTON, ui::EF_LEFT_MOUSE_BUTTON);
   ui::Event::DispatcherApi(event.get())

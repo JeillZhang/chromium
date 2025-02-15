@@ -9,6 +9,8 @@
 #include <string>
 #include <vector>
 
+#include "base/memory/ref_counted.h"
+#include "base/time/time.h"
 #include "content/common/content_export.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/gfx/image/image.h"
@@ -16,9 +18,13 @@
 
 namespace content {
 
+class IdentityProviderData;
+
 // Represents a federated user account which is used when displaying the FedCM
 // account selector.
-struct CONTENT_EXPORT IdentityRequestAccount {
+class CONTENT_EXPORT IdentityRequestAccount
+    : public base::RefCounted<IdentityRequestAccount> {
+ public:
   enum class LoginState {
     // This is a returning user signing in with RP/IDP in this browser.
     kSignIn,
@@ -51,9 +57,12 @@ struct CONTENT_EXPORT IdentityRequestAccount {
       std::vector<std::string> domain_hints,
       std::vector<std::string> labels,
       std::optional<LoginState> login_state = std::nullopt,
-      LoginState browser_trusted_login_state = LoginState::kSignUp);
-  IdentityRequestAccount(const IdentityRequestAccount&);
-  ~IdentityRequestAccount();
+      LoginState browser_trusted_login_state = LoginState::kSignUp,
+      std::optional<base::Time> last_used_timestamp = std::nullopt);
+
+  // The identity provider to which the account belongs to. This is not set in
+  // the constructor but instead set later.
+  scoped_refptr<IdentityProviderData> identity_provider = nullptr;
 
   std::string id;
   std::string email;
@@ -73,6 +82,17 @@ struct CONTENT_EXPORT IdentityRequestAccount {
 
   // The account login state that the browser can trust.
   LoginState browser_trusted_login_state;
+  // The last used timestamp, or nullopt if the account has not been used
+  // before.
+  std::optional<base::Time> last_used_timestamp;
+  // Whether this account is filtered out or not. An account may be filtered out
+  // due to login hint, domain hint, or account label.
+  bool is_filtered_out = false;
+
+ private:
+  friend class base::RefCounted<IdentityRequestAccount>;
+
+  ~IdentityRequestAccount();
 };
 
 }  // namespace content

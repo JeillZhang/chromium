@@ -75,8 +75,7 @@ int ToPlayoutChannel(AudioChannel audio_channel) {
     case AudioChannel::kRight:
       return 1;
   }
-  NOTREACHED_IN_MIGRATION();
-  return kChannelAll;
+  NOTREACHED();
 }
 
 int MaxQueuedFrames(int sample_rate) {
@@ -108,7 +107,7 @@ AudioDecoderForMixer::AudioDecoderForMixer(
       task_runner_(backend->GetTaskRunner()),
       buffer_pool_frames_(kInitialFillSizeFrames),
       pending_output_frames_(kNoPendingOutput),
-      pool_(new ::media::AudioBufferMemoryPool()),
+      pool_(base::MakeRefCounted<::media::AudioBufferMemoryPool>()),
       weak_factory_(this) {
   TRACE_FUNCTION_ENTRY0();
   DCHECK(backend_);
@@ -572,7 +571,7 @@ void AudioDecoderForMixer::WritePcm(scoped_refptr<DecoderBufferBase> buffer) {
                                 buffer->timestamp());
 }
 
-void AudioDecoderForMixer::FillNextBuffer(void* buffer,
+void AudioDecoderForMixer::FillNextBuffer(base::span<uint8_t> buffer,
                                           int frames,
                                           int64_t delay_timestamp,
                                           int64_t delay) {

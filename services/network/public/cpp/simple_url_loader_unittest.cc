@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #include "services/network/public/cpp/simple_url_loader.h"
 
 #include <stdint.h>
@@ -16,6 +21,7 @@
 
 #include "base/base_paths.h"
 #include "base/check_op.h"
+#include "base/containers/span.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
@@ -1209,8 +1215,9 @@ TEST_P(SimpleURLLoaderTest, OnResponseStartedCallback) {
          const mojom::URLResponseHead& response_head) {
         *out_final_url = final_url;
         if (response_head.headers) {
-          response_head.headers->EnumerateHeader(/*iter=*/nullptr, "foo",
-                                                 foo_header_value);
+          *foo_header_value =
+              response_head.headers->GetNormalizedHeader("foo").value_or(
+                  std::string());
         }
         std::move(quit_closure).Run();
       },
@@ -2144,17 +2151,19 @@ class MockURLLoader : public network::mojom::URLLoader {
           ASSERT_TRUE(upload_data_pipe_.is_valid());
           std::string upload_body;
           while (true) {
-            char read_buffer[32 * 1024];
-            size_t read_size = sizeof(read_buffer);
+            std::string read_buffer(32 * 1024, '\0');
+            size_t actually_read_bytes = 0;
             MojoResult result = upload_data_pipe_->ReadData(
-                read_buffer, &read_size, MOJO_READ_DATA_FLAG_NONE);
+                MOJO_READ_DATA_FLAG_NONE,
+                base::as_writable_byte_span(read_buffer), actually_read_bytes);
             if (result == MOJO_RESULT_SHOULD_WAIT) {
               base::RunLoop().RunUntilIdle();
               continue;
             }
             if (result != MOJO_RESULT_OK)
               break;
-            upload_body.append(read_buffer, read_size);
+            upload_body.append(
+                std::string_view(read_buffer).substr(0, actually_read_bytes));
           }
           EXPECT_EQ(GetLongUploadBody(), upload_body);
           break;
@@ -2163,12 +2172,11 @@ class MockURLLoader : public network::mojom::URLLoader {
           ASSERT_TRUE(data_pipe_getter_);
           ASSERT_TRUE(upload_data_pipe_.is_valid());
           MojoResult result;
-          char byte;
-          size_t read_size;
+          uint8_t byte;
+          size_t read_size = 0;
           while (true) {
-            read_size = 1;
-            result = upload_data_pipe_->ReadData(&byte, &read_size,
-                                                 MOJO_READ_DATA_FLAG_NONE);
+            result = upload_data_pipe_->ReadData(
+                MOJO_READ_DATA_FLAG_NONE, base::span_from_ref(byte), read_size);
             if (result != MOJO_RESULT_SHOULD_WAIT)
               break;
             base::RunLoop().RunUntilIdle();
@@ -2262,13 +2270,14 @@ class MockURLLoader : public network::mojom::URLLoader {
         }
         case TestLoaderEvent::kBodyDataRead: {
           if (should_create_data_pipe_) {
-            size_t num_bytes = 1;
+            size_t actually_written_bytes = 0;
             // Writing one byte should always succeed synchronously, for the
             // amount of data these tests send.
             EXPECT_EQ(MOJO_RESULT_OK,
-                      body_stream_->WriteData("a", &num_bytes,
-                                              MOJO_WRITE_DATA_FLAG_NONE));
-            EXPECT_EQ(num_bytes, 1u);
+                      body_stream_->WriteData(base::byte_span_from_cstring("a"),
+                                              MOJO_WRITE_DATA_FLAG_NONE,
+                                              actually_written_bytes));
+            EXPECT_EQ(actually_written_bytes, 1u);
           }
           break;
         }
@@ -2344,10 +2353,8 @@ class MockURLLoader : public network::mojom::URLLoader {
       const std::optional<GURL>& new_url) override {}
   void SetPriority(net::RequestPriority priority,
                    int32_t intra_priority_value) override {
-    NOTREACHED_IN_MIGRATION();
+    NOTREACHED();
   }
-  void PauseReadingBodyFromNet() override {}
-  void ResumeReadingBodyFromNet() override {}
 
   network::mojom::URLLoaderClient* client() const { return client_.get(); }
 

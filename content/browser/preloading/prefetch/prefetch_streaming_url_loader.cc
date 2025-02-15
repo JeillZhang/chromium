@@ -6,6 +6,7 @@
 
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
+#include "base/trace_event/trace_event.h"
 #include "content/browser/loader/navigation_url_loader.h"
 #include "content/browser/preloading/prefetch/prefetch_response_reader.h"
 #include "net/cookies/cookie_util.h"
@@ -19,13 +20,13 @@ PrefetchStreamingURLLoader::PrefetchStreamingURLLoader(
     OnPrefetchResponseStartedCallback on_prefetch_response_started_callback,
     OnPrefetchResponseCompletedCallback on_prefetch_response_completed_callback,
     OnPrefetchRedirectCallback on_prefetch_redirect_callback,
-    base::OnceClosure on_received_head_callback)
+    base::OnceClosure on_determined_head_callback)
     : on_prefetch_response_started_callback_(
           std::move(on_prefetch_response_started_callback)),
       on_prefetch_response_completed_callback_(
           std::move(on_prefetch_response_completed_callback)),
       on_prefetch_redirect_callback_(std::move(on_prefetch_redirect_callback)),
-      on_received_head_callback_(std::move(on_received_head_callback)) {}
+      on_determined_head_callback_(std::move(on_determined_head_callback)) {}
 
 void PrefetchStreamingURLLoader::Start(
     network::mojom::URLLoaderFactory* url_loader_factory,
@@ -85,14 +86,15 @@ PrefetchStreamingURLLoader::CreateAndStart(
     OnPrefetchResponseStartedCallback on_prefetch_response_started_callback,
     OnPrefetchResponseCompletedCallback on_prefetch_response_completed_callback,
     OnPrefetchRedirectCallback on_prefetch_redirect_callback,
-    base::OnceClosure on_received_head_callback,
+    base::OnceClosure on_determined_head_callback,
     base::WeakPtr<PrefetchResponseReader> response_reader) {
+  TRACE_EVENT("loading", "PrefetchStreamingURLLoader::CreateAndStart");
   std::unique_ptr<PrefetchStreamingURLLoader> streaming_loader =
       std::make_unique<PrefetchStreamingURLLoader>(
           std::move(on_prefetch_response_started_callback),
           std::move(on_prefetch_response_completed_callback),
           std::move(on_prefetch_redirect_callback),
-          std::move(on_received_head_callback));
+          std::move(on_determined_head_callback));
 
   streaming_loader->SetResponseReader(std::move(response_reader));
 
@@ -125,7 +127,7 @@ void PrefetchStreamingURLLoader::CancelIfNotServing() {
 void PrefetchStreamingURLLoader::DisconnectPrefetchURLLoaderMojo() {
   prefetch_url_loader_.reset();
   prefetch_url_loader_client_receiver_.reset();
-  timeout_timer_.AbandonAndStop();
+  timeout_timer_.Stop();
 
   if (!self_pointer_) {
     return;
@@ -179,8 +181,8 @@ void PrefetchStreamingURLLoader::OnReceiveResponse(
                                         std::move(body));
   }
 
-  if (on_received_head_callback_) {
-    std::move(on_received_head_callback_).Run();
+  if (on_determined_head_callback_) {
+    std::move(on_determined_head_callback_).Run();
   }
 }
 
@@ -219,8 +221,8 @@ void PrefetchStreamingURLLoader::HandleRedirect(
       break;
     case PrefetchRedirectStatus::kFail:
       DisconnectPrefetchURLLoaderMojo();
-      if (on_received_head_callback_) {
-        std::move(on_received_head_callback_).Run();
+      if (on_determined_head_callback_) {
+        std::move(on_determined_head_callback_).Run();
       }
       break;
   }
@@ -236,7 +238,7 @@ void PrefetchStreamingURLLoader::OnUploadProgress(
     int64_t total_size,
     OnUploadProgressCallback callback) {
   // Only handle GETs.
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 void PrefetchStreamingURLLoader::OnTransferSizeUpdated(
@@ -255,10 +257,9 @@ void PrefetchStreamingURLLoader::OnComplete(
   }
 
   if (completion_status.error_code != net::OK) {
-    // Note that we may have already started serving the prefetch if it was
-    // marked as servable in |OnReceiveResponse|.
-    if (on_received_head_callback_) {
-      std::move(on_received_head_callback_).Run();
+    // Notify a failure if the callback is not consumed yet.
+    if (on_determined_head_callback_) {
+      std::move(on_determined_head_callback_).Run();
     }
   }
 
@@ -267,7 +268,7 @@ void PrefetchStreamingURLLoader::OnComplete(
 
 void PrefetchStreamingURLLoader::OnStartServing() {
   // Once the prefetch is served, stop the timeout timer.
-  timeout_timer_.AbandonAndStop();
+  timeout_timer_.Stop();
 
   used_for_serving_ = true;
 }
@@ -276,18 +277,6 @@ void PrefetchStreamingURLLoader::SetPriority(net::RequestPriority priority,
                                              int32_t intra_priority_value) {
   if (prefetch_url_loader_) {
     prefetch_url_loader_->SetPriority(priority, intra_priority_value);
-  }
-}
-
-void PrefetchStreamingURLLoader::PauseReadingBodyFromNet() {
-  if (prefetch_url_loader_) {
-    prefetch_url_loader_->PauseReadingBodyFromNet();
-  }
-}
-
-void PrefetchStreamingURLLoader::ResumeReadingBodyFromNet() {
-  if (prefetch_url_loader_) {
-    prefetch_url_loader_->ResumeReadingBodyFromNet();
   }
 }
 

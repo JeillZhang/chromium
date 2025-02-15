@@ -5,12 +5,13 @@
 #include "third_party/blink/renderer/modules/serial/serial.h"
 
 #include <inttypes.h>
+
 #include <utility>
 
 #include "base/unguessable_token.h"
-#include "third_party/blink/public/common/browser_interface_broker_proxy.h"
-#include "third_party/blink/public/mojom/permissions_policy/permissions_policy_feature.mojom-blink.h"
+#include "services/network/public/mojom/permissions_policy/permissions_policy_feature.mojom-blink.h"
 #include "third_party/blink/public/mojom/serial/serial.mojom-blink.h"
+#include "third_party/blink/public/platform/browser_interface_broker_proxy.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_serial_port_filter.h"
@@ -69,7 +70,7 @@ bool ShouldBlockSerialServiceCall(LocalDOMWindow* window,
     security_origin = static_cast<WorkerGlobalScope*>(context)
                           ->top_level_frame_security_origin();
   } else {
-    NOTREACHED_NORETURN();
+    NOTREACHED();
   }
 
   if (security_origin->IsOpaque()) {
@@ -82,7 +83,7 @@ bool ShouldBlockSerialServiceCall(LocalDOMWindow* window,
   }
 
   if (!context->IsFeatureEnabled(
-          mojom::blink::PermissionsPolicyFeature::kSerial,
+          network::mojom::PermissionsPolicyFeature::kSerial,
           ReportOptions::kReportOnFailure)) {
     if (exception_state) {
       exception_state->ThrowSecurityError(kFeaturePolicyBlocked);

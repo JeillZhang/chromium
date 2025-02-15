@@ -15,6 +15,8 @@ import androidx.test.InstrumentationRegistry;
 import androidx.test.internal.runner.junit4.AndroidJUnit4ClassRunner;
 import androidx.test.internal.util.AndroidRunnerParams;
 
+import org.jni_zero.JniTestInstancesSnapshot;
+import org.junit.AssumptionViolatedException;
 import org.junit.rules.MethodRule;
 import org.junit.rules.TestRule;
 import org.junit.runner.Description;
@@ -28,6 +30,7 @@ import org.junit.runners.model.Statement;
 import org.chromium.base.LifetimeAssert;
 import org.chromium.base.Log;
 import org.chromium.base.ResettersForTesting;
+import org.chromium.base.ResettersForTesting.State;
 import org.chromium.base.library_loader.LibraryLoader;
 import org.chromium.base.metrics.UmaRecorderHolder;
 import org.chromium.base.test.params.MethodParamAnnotationRule;
@@ -39,6 +42,7 @@ import org.chromium.base.test.util.DisableIfSkipCheck;
 import org.chromium.base.test.util.RequiresRestart;
 import org.chromium.base.test.util.RestrictionSkipCheck;
 import org.chromium.base.test.util.SkipCheck;
+import org.chromium.base.test.util.TestAnimations;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -74,7 +78,6 @@ public class BaseJUnit4ClassRunner extends AndroidJUnit4ClassRunner {
     public interface ClassHook {
         /**
          * @param targetContext the instrumentation context that will be used during the test.
-         * @param testMethod the test method to be run.
          */
         public void run(Context targetContext, Class<?> testClass);
     }
@@ -95,8 +98,62 @@ public class BaseJUnit4ClassRunner extends AndroidJUnit4ClassRunner {
         public void run(Context targetContext, FrameworkMethod testMethod);
     }
 
+    /** Makes it more obvious that all tests are being marked as failed. */
+    private static class BeforeClassException extends RuntimeException {
+        private BeforeClassException(boolean batchedTest, Throwable causedBy) {
+            super(
+                    "Exception in @BeforeClass."
+                            + (batchedTest
+                                    ? " All tests in this class will be marked as failed."
+                                    : ""),
+                    causedBy);
+        }
+    }
+
+    /** Makes it more obvious that all tests are being marked as failed. */
+    private static class AfterClassException extends RuntimeException {
+        private AfterClassException(boolean batchedTest, Throwable causedBy) {
+            super(
+                    "Exception in @AfterClass."
+                            + (batchedTest
+                                    ? " All tests in this class will be marked as failed."
+                                    : ""),
+                    causedBy);
+        }
+    }
+
+    /**
+     * Thrown if a prior test in the same batch also failed thus possibly causing the current test's
+     * failure.
+     */
+    public static class CascadingFailureException extends RuntimeException {
+        private CascadingFailureException(String message) {
+            super(message);
+        }
+
+        @Override
+        public String toString() {
+            // Shorten full name to just simple name.
+            return getClass().getSimpleName() + ": " + getLocalizedMessage();
+        }
+
+        /**
+         * Returns a new CascadingFailureException with the originalException marked as suppressed.
+         *
+         * @param message Error message for the CascadingFailureException
+         * @param originalException The original throwable being suppressed.
+         */
+        public static CascadingFailureException wrap(String message, Throwable originalException) {
+            CascadingFailureException exception = new CascadingFailureException(message);
+            exception.addSuppressed(originalException);
+            return exception;
+        }
+    }
+
     protected final RestrictionSkipCheck mRestrictionSkipCheck = new RestrictionSkipCheck();
     private long mTestStartTimeMs;
+    private String mFailedBatchTestName;
+    private JniTestInstancesSnapshot mJniZeroSnapshot;
 
     /**
      * Create a BaseJUnit4ClassRunner to run {@code klass} and initialize values.
@@ -287,9 +344,17 @@ public class BaseJUnit4ClassRunner extends AndroidJUnit4ClassRunner {
         BaseJUnit4ClassRunner.getApplication().getSystemService(JobScheduler.class).cancelAll();
     }
 
+    private static boolean isInUnitTestBatch(Class<?> testClass) {
+        Batch annotation = testClass.getAnnotation(Batch.class);
+        return annotation != null && annotation.value().equals(Batch.UNIT_TESTS);
+    }
+
+    private static boolean isBatchedTest(Class<?> testClass) {
+        return testClass.getAnnotation(Batch.class) != null;
+    }
+
     private static void blockUnitTestsFromStartingBrowser(FrameworkMethod testMethod) {
-        Batch annotation = testMethod.getDeclaringClass().getAnnotation(Batch.class);
-        if (annotation != null && annotation.value().equals(Batch.UNIT_TESTS)) {
+        if (isInUnitTestBatch(testMethod.getDeclaringClass())) {
             if (testMethod.getAnnotation(RequiresRestart.class) != null) return;
             LibraryLoader.setBrowserProcessStartupBlockedForTesting();
         }
@@ -301,7 +366,14 @@ public class BaseJUnit4ClassRunner extends AndroidJUnit4ClassRunner {
         return new Statement() {
             @Override
             public void evaluate() throws Throwable {
-                onBeforeTestClass();
+                try {
+                    onBeforeTestClass();
+                } catch (Throwable t) {
+                    if (t instanceof AssumptionViolatedException) {
+                        throw t;
+                    }
+                    throw new BeforeClassException(isBatchedTest(getTestClass().getJavaClass()), t);
+                }
                 Throwable exception = null;
                 try {
                     innerStatement.evaluate();
@@ -319,7 +391,8 @@ public class BaseJUnit4ClassRunner extends AndroidJUnit4ClassRunner {
                     }
                 }
                 if (exception != null) {
-                    throw exception;
+                    throw new AfterClassException(
+                            isBatchedTest(getTestClass().getJavaClass()), exception);
                 }
             }
         };
@@ -352,23 +425,57 @@ public class BaseJUnit4ClassRunner extends AndroidJUnit4ClassRunner {
                     }
                 }
                 if (exception != null) {
+                    if (!(exception instanceof AssumptionViolatedException)) {
+                        exception = wrapExceptionIfCascadingFailure(exception);
+                        markBatchTestFailed(method);
+                    }
                     throw exception;
                 }
             }
         };
     }
 
+    private void markBatchTestFailed(FrameworkMethod method) {
+        Class<?> testClass = method.getDeclaringClass();
+        if (mFailedBatchTestName == null
+                && isBatchedTest(testClass)
+                && !isInUnitTestBatch(testClass)) {
+            mFailedBatchTestName = method.getName();
+        }
+    }
+
+    private Throwable wrapExceptionIfCascadingFailure(Throwable originalFailure) {
+        if (mFailedBatchTestName == null) return originalFailure;
+        return CascadingFailureException.wrap(
+                "A previous batched test ("
+                        + mFailedBatchTestName
+                        + ") failed and may be the cause of the current failure. See suppressed"
+                        + " failure below.",
+                originalFailure);
+    }
+
     private void onBeforeTestMethod(FrameworkMethod method) {
         TestTraceEvent.begin(method.getName());
 
         mTestStartTimeMs = SystemClock.uptimeMillis();
+        boolean firstTestMethod = ResettersForTesting.getState() != State.BETWEEN_METHODS;
         ResettersForTesting.beforeHooksWillExecute();
+        if (firstTestMethod) {
+            BaseChromiumAndroidJUnitRunner.sInMemorySharedPreferencesContext
+                    .createSharedPreferencesSnapshot();
+            mJniZeroSnapshot = JniTestInstancesSnapshot.snapshotOverridesForTesting();
+        } else {
+            BaseChromiumAndroidJUnitRunner.sInMemorySharedPreferencesContext
+                    .restoreSharedPreferencesSnapshot();
+            JniTestInstancesSnapshot.restoreSnapshotForTesting(mJniZeroSnapshot);
+        }
 
         // TODO: Might be slow to do this before every test.
         SharedPreferencesTestUtil.deleteOnDiskSharedPreferences(getApplication());
 
         Class<?> testClass = getTestClass().getJavaClass();
         CommandLineFlags.reset(testClass.getAnnotations(), method.getAnnotations());
+        TestAnimations.reset(testClass, method.getMethod());
 
         blockUnitTestsFromStartingBrowser(method);
         UmaRecorderHolder.resetForTesting();
@@ -379,11 +486,14 @@ public class BaseJUnit4ClassRunner extends AndroidJUnit4ClassRunner {
         }
     }
 
-    private void onBeforeTestClass() {
+    protected void onBeforeTestClass() {
         Class<?> testClass = getTestClass().getJavaClass();
         ResettersForTesting.beforeClassHooksWillExecute();
+        BaseChromiumAndroidJUnitRunner.sInMemorySharedPreferencesContext.resetSharedPreferences();
+        JniTestInstancesSnapshot.clearAllForTesting();
 
         CommandLineFlags.reset(testClass.getAnnotations(), null);
+        TestAnimations.reset(testClass, null);
 
         Context targetContext = InstrumentationRegistry.getTargetContext();
         for (ClassHook hook : getPreClassHooks()) {

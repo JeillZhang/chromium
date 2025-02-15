@@ -2,16 +2,21 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "ui/ozone/platform/x11/x11_window.h"
+
+#include <algorithm>
 
 #include "base/memory/scoped_refptr.h"
 #include "base/no_destructor.h"
 #include "base/notreached.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/trace_event/trace_event.h"
-#include "build/chromeos_buildflags.h"
 #include "net/base/network_interfaces.h"
 #include "third_party/skia/include/core/SkPath.h"
 #include "third_party/skia/include/core/SkRegion.h"
@@ -69,8 +74,9 @@ bool CoalesceEventsIfNeeded(const x11::Event& xev,
                             x11::Event* out) {
   if (xev.As<x11::MotionNotifyEvent>() ||
       (xev.As<x11::Input::DeviceEvent>() &&
-       (type == ui::ET_TOUCH_MOVED || type == ui::ET_MOUSE_MOVED ||
-        type == ui::ET_MOUSE_DRAGGED))) {
+       (type == ui::EventType::kTouchMoved ||
+        type == ui::EventType::kMouseMoved ||
+        type == ui::EventType::kMouseDragged))) {
     return ui::CoalescePendingMotionEvents(xev, out) > 0;
   }
   return false;
@@ -141,8 +147,7 @@ x11::NotifyMode XI2ModeToXMode(x11::Input::NotifyMode xi2_mode) {
     case x11::Input::NotifyMode::WhileGrabbed:
       return x11::NotifyMode::WhileGrabbed;
     default:
-      NOTREACHED_IN_MIGRATION();
-      return x11::NotifyMode::Normal;
+      NOTREACHED();
   }
 }
 
@@ -689,6 +694,8 @@ void X11Window::SetFullscreen(bool fullscreen, int64_t target_display_id) {
       restored_bounds_in_pixels_ = gfx::Rect();
     }
   }
+
+  UpdateDecorationInsets();
 
   // Do not go through SetBounds as long as it adjusts bounds and sets them to X
   // Server. Instead, we just store the bounds and notify the client that the
@@ -1288,8 +1295,7 @@ bool X11Window::HandleAsAtkEvent(const x11::KeyEvent& key_event,
                                  bool transient) {
 #if !BUILDFLAG(USE_ATK)
   // TODO(crbug.com/40653448): Support ATK in Ozone/X11.
-  NOTREACHED_IN_MIGRATION();
-  return false;
+  NOTREACHED();
 #else
   if (!x11_extension_delegate_) {
     return false;
@@ -1301,7 +1307,7 @@ bool X11Window::HandleAsAtkEvent(const x11::KeyEvent& key_event,
 
 void X11Window::OnEvent(const x11::Event& xev) {
   auto event_type = ui::EventTypeFromXEvent(xev);
-  if (event_type != ET_UNKNOWN) {
+  if (event_type != EventType::kUnknown) {
     // If this event can be translated, it will be handled in ::DispatchEvent.
     // Otherwise, we end up processing XEvents twice that could lead to unwanted
     // behaviour like loosing activation during tab drag and etc.
@@ -1379,7 +1385,8 @@ void X11Window::DispatchUiEvent(ui::Event* event, const x11::Event& xev) {
   if (event->IsLocatedEvent() && located_events_grabber &&
       located_events_grabber != this) {
     if (event->IsMouseEvent() ||
-        (event->IsTouchEvent() && event->type() == ui::ET_TOUCH_PRESSED)) {
+        (event->IsTouchEvent() &&
+         event->type() == ui::EventType::kTouchPressed)) {
       // Another X11Window has installed itself as capture. Translate the
       // event's location and dispatch to the other.
       ConvertEventLocationToTargetWindowLocation(
@@ -1497,6 +1504,7 @@ void X11Window::OnXWindowStateChanged() {
     tiled_state_ = tiled_state;
 #if BUILDFLAG(IS_LINUX)
     platform_window_delegate_->OnWindowTiledStateChanged(tiled_state);
+    UpdateDecorationInsets();
 #endif
   }
 }
@@ -1581,6 +1589,7 @@ bool X11Window::StartDrag(
     mojom::DragEventSource source,
     gfx::NativeCursor cursor,
     bool can_grab_pointer,
+    base::OnceClosure drag_started_callback,
     WmDragHandler::DragFinishedCallback drag_finished_callback,
     WmDragHandler::LocationDelegate* location_delegate) {
   DCHECK(drag_drop_client_);
@@ -1596,7 +1605,8 @@ bool X11Window::StartDrag(
 
   auto alive = weak_ptr_factory_.GetWeakPtr();
   const bool dropped =
-      drag_loop_->RunMoveLoop(can_grab_pointer, last_cursor_, last_cursor_);
+      drag_loop_->RunMoveLoop(can_grab_pointer, last_cursor_, last_cursor_,
+                              std::move(drag_started_callback));
   if (!alive) {
     return false;
   }
@@ -1629,7 +1639,9 @@ int X11Window::UpdateDrag(const gfx::Point& connection_point) {
 
   DCHECK(drag_drop_client_);
   auto* target_current_context = drag_drop_client_->target_current_context();
-  DCHECK(target_current_context);
+  if (!target_current_context) {
+    return DragDropTypes::DRAG_NONE;
+  }
 
   auto data = std::make_unique<OSExchangeData>(
       std::make_unique<XOSExchangeDataProvider>(
@@ -1695,10 +1707,11 @@ DragOperation X11Window::PerformDrop() {
     return DragOperation::kNone;
   }
 
-  // The drop data has been supplied on entering the window.  The drop handler
-  // should have it since then.
   auto* target_current_context = drag_drop_client_->target_current_context();
-  DCHECK(target_current_context);
+  if (!target_current_context) {
+    return DragOperation::kNone;
+  }
+
   drop_handler->OnDragDrop(GetKeyModifiers(
       XDragDropClient::GetForWindow(target_current_context->source_window())));
   notified_enter_ = false;
@@ -1746,7 +1759,7 @@ void X11Window::QuitDragLoop() {
 
 gfx::Size X11Window::AdjustSizeForDisplay(
     const gfx::Size& requested_size_in_pixels) {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   // We do not need to apply the workaround for the ChromeOS.
   return requested_size_in_pixels;
 #else
@@ -1778,7 +1791,7 @@ void X11Window::CreateXWindow(const PlatformWindowInitProperties& properties) {
   bounds.set_size(adjusted_size_in_pixels);
   const auto override_redirect =
       properties.x11_extension_delegate &&
-      properties.x11_extension_delegate->IsOverrideRedirect();
+      properties.x11_extension_delegate->IsOverrideRedirect(*this);
 
   workspace_extension_delegate_ = properties.workspace_extension_delegate;
   x11_extension_delegate_ = properties.x11_extension_delegate;
@@ -1812,7 +1825,7 @@ void X11Window::CreateXWindow(const PlatformWindowInitProperties& properties) {
     req.override_redirect = x11::Bool32(true);
   }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   req.override_redirect = x11::Bool32(UseTestConfigForPlatformWindows());
 #endif
 
@@ -1888,7 +1901,7 @@ void X11Window::CloseXWindow() {
   // Unregister from the global security surface list if necessary.
   if (is_security_surface_) {
     auto& security_surfaces = GetSecuritySurfaces();
-    security_surfaces.erase(base::ranges::find(security_surfaces, xwindow_),
+    security_surfaces.erase(std::ranges::find(security_surfaces, xwindow_),
                             security_surfaces.end());
   }
 
@@ -1928,6 +1941,8 @@ void X11Window::Map(bool inactive) {
   }
 
   UpdateMinAndMaxSize();
+
+  UpdateDecorationInsets();
 
   if (window_properties_.empty()) {
     connection_->DeleteProperty(xwindow_, x11::GetAtom("_NET_WM_STATE"));
@@ -2394,12 +2409,11 @@ void X11Window::UpdateWMUserTime(Event* event) {
   }
   DCHECK(event);
   EventType type = event->type();
-  if (type == ET_MOUSE_PRESSED || type == ET_KEY_PRESSED ||
-      type == ET_TOUCH_PRESSED) {
-    uint32_t wm_user_time_ms =
-        (event->time_stamp() - base::TimeTicks()).InMilliseconds();
+  if (type == EventType::kMousePressed || type == EventType::kKeyPressed ||
+      type == EventType::kTouchPressed) {
     connection_->SetProperty(xwindow_, x11::GetAtom("_NET_WM_USER_TIME"),
-                             x11::Atom::CARDINAL, wm_user_time_ms);
+                             x11::Atom::CARDINAL,
+                             X11EventSource::GetInstance()->GetTimestamp());
   }
 }
 

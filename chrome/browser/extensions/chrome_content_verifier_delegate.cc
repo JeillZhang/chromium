@@ -41,7 +41,7 @@
 #include "extensions/common/switches.h"
 #include "net/base/backoff_entry.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #include "chrome/browser/extensions/extension_assets_manager_chromeos.h"
 #endif
 
@@ -164,8 +164,7 @@ ChromeContentVerifierDelegate::ChromeContentVerifierDelegate(
     content::BrowserContext* context)
     : context_(context), default_mode_(GetDefaultMode()) {}
 
-ChromeContentVerifierDelegate::~ChromeContentVerifierDelegate() {
-}
+ChromeContentVerifierDelegate::~ChromeContentVerifierDelegate() = default;
 
 ContentVerifierDelegate::VerifierSourceType
 ChromeContentVerifierDelegate::GetVerifierSourceType(
@@ -179,8 +178,7 @@ ChromeContentVerifierDelegate::GetVerifierSourceType(
 }
 
 ContentVerifierKey ChromeContentVerifierDelegate::GetPublicKey() {
-  return ContentVerifierKey(kWebstoreSignaturesPublicKey,
-                            kWebstoreSignaturesPublicKeySize);
+  return kWebstoreSignaturesPublicKey;
 }
 
 GURL ChromeContentVerifierDelegate::GetSignatureFetchUrl(
@@ -331,7 +329,7 @@ ChromeContentVerifierDelegate::GetVerifyInfo(const Extension& extension) const {
                        management_policy->ShouldRepairIfCorrupted(&extension);
   bool is_from_webstore = IsFromWebstore(extension);
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   if (ExtensionAssetsManagerChromeOS::IsSharedInstall(&extension)) {
     return VerifyInfo(VerifyInfo::Mode::ENFORCE_STRICT, is_from_webstore,
                       should_repair);

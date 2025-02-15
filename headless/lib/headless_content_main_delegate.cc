@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #include "headless/lib/headless_content_main_delegate.h"
 
 #include <cstdint>
@@ -49,6 +54,7 @@
 #include "ui/ozone/public/ozone_switches.h"
 
 #if BUILDFLAG(IS_WIN)
+#include "base/win/dark_mode_support.h"
 #include "base/win/resource_exhaustion.h"
 #endif  // BUILDFLAG(IS_WIN)
 
@@ -90,10 +96,6 @@ const base::FilePath::CharType kDefaultProfileName[] =
 
 namespace {
 
-// Keep in sync with content/common/content_constants_internal.h.
-// TODO(skyostil): Add a tracing test for this.
-const int kTraceEventBrowserProcessSortIndex = -6;
-
 HeadlessContentMainDelegate* g_current_headless_content_main_delegate = nullptr;
 
 #if !BUILDFLAG(IS_FUCHSIA)
@@ -120,13 +122,10 @@ void OnResourceExhausted() {
 
 void InitializeResourceBundle(const base::CommandLine& command_line) {
 #if defined(HEADLESS_USE_EMBEDDED_RESOURCES)
-  ui::ResourceBundle::InitSharedInstanceWithBuffer(
-      {kHeadlessResourcePackStrings.contents,
-       kHeadlessResourcePackStrings.length},
-      ui::kScaleFactorNone);
+  ui::ResourceBundle::InitSharedInstanceWithBuffer(kHeadlessResourcePackStrings,
+                                                   ui::kScaleFactorNone);
   ui::ResourceBundle::GetSharedInstance().AddDataPackFromBuffer(
-      {kHeadlessResourcePackData.contents, kHeadlessResourcePackData.length},
-      ui::k100Percent);
+      kHeadlessResourcePackData, ui::k100Percent);
 #else
   base::FilePath resource_dir;
   bool result = base::PathService::Get(base::DIR_ASSETS, &resource_dir);
@@ -196,10 +195,10 @@ void AddSwitchesForVirtualTime() {
       // run.
       ::switches::kRunAllCompositorStagesBeforeDraw,
       ::switches::kDisableNewContentRenderingTimeout,
-      cc::switches::kDisableThreadedAnimation,
+      ::switches::kDisableThreadedAnimation,
       // Animtion-only BeginFrames are only supported when updates from the
       // impl-thread are disabled, see go/headless-rendering.
-      cc::switches::kDisableCheckerImaging,
+      ::switches::kDisableCheckerImaging,
       // Ensure that image animations don't resync their animation timestamps
       // when looping back around.
       blink::switches::kDisableImageAnimationResync,
@@ -256,8 +255,9 @@ std::optional<int> HeadlessContentMainDelegate::BasicStartupComplete() {
   }
 
   // Make sure all processes know that we're in headless mode.
-  if (!command_line->HasSwitch(::switches::kHeadless))
-    command_line->AppendSwitch(::switches::kHeadless);
+  if (!command_line->HasSwitch(::switches::kHeadless)) {
+    command_line->AppendSwitchASCII(::switches::kHeadless, "old");
+  }
 
   // Use software rendering by default, but don't mess with gl and angle
   // switches if user is overriding them.
@@ -451,8 +451,6 @@ HeadlessContentMainDelegate::RunProcess(
 
   base::CurrentProcess::GetInstance().SetProcessType(
       base::CurrentProcessType::PROCESS_BROWSER);
-  base::trace_event::TraceLog::GetInstance()->SetProcessSortIndex(
-      kTraceEventBrowserProcessSortIndex);
 
   std::unique_ptr<content::BrowserMainRunner> browser_runner =
       content::BrowserMainRunner::Create();
@@ -509,13 +507,12 @@ HeadlessContentMainDelegate* HeadlessContentMainDelegate::GetInstance() {
 }
 
 std::optional<int> HeadlessContentMainDelegate::PreBrowserMain() {
-  HeadlessBrowser::Options::Builder builder;
-
+  HeadlessBrowser::Options browser_options;
   if (!HandleCommandLineSwitches(*base::CommandLine::ForCurrentProcess(),
-                                 builder)) {
+                                 browser_options)) {
     return EXIT_FAILURE;
   }
-  browser_->SetOptions(builder.Build());
+  browser_->SetOptions(std::move(browser_options));
 
 #if BUILDFLAG(IS_WIN)
   // Register callback to handle resource exhaustion.
@@ -592,6 +589,12 @@ std::optional<int> HeadlessContentMainDelegate::PostEarlyInitialization(
   if (base::FeatureList::IsEnabled(features::kVirtualTime)) {
     AddSwitchesForVirtualTime();
   }
+
+#if BUILDFLAG(IS_WIN)
+  // Make sure that 'uxtheme.dll' is pinned before blocking on the main thread
+  // is disallowed; see https://crbug.com/368388543#comment11.
+  base::win::IsDarkModeAvailable();
+#endif  // BUILDFLAG(IS_WIN)
 
   return std::nullopt;
 }

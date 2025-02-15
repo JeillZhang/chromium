@@ -10,6 +10,7 @@
 #include "ash/auth/views/auth_textfield.h"
 #include "ash/login/ui/arrow_button_view.h"
 #include "ash/login/ui/non_accessible_view.h"
+#include "ash/public/cpp/ime_controller.h"
 #include "ash/resources/vector_icons/vector_icons.h"
 #include "ash/strings/grit/ash_strings.h"
 #include "ash/style/system_textfield_controller.h"
@@ -204,12 +205,12 @@ PasswordAuthView::PasswordAuthView(AuthPanelEventDispatcher* dispatcher,
     : dispatcher_(dispatcher) {
   auth_factor_store_subscription_ = store->Subscribe(base::BindRepeating(
       &PasswordAuthView::OnStateChanged, weak_ptr_factory_.GetWeakPtr()));
-  input_methods_observer_.Observe(Shell::Get()->ime_controller());
+  input_methods_observer_.Observe(ImeController::Get());
 
   ConfigureRootLayout();
   CreateAndConfigurePasswordRow();
-  CreateAndConfigureTextfieldContainer();
   CreateAndConfigureCapslockIcon();
+  CreateAndConfigureTextfieldContainer();
   CreateAndConfigureDisplayPasswordButton();
   CreateAndConfigureSubmitButton();
 }
@@ -222,16 +223,19 @@ AshAuthFactor PasswordAuthView::GetFactor() {
   return AshAuthFactor::kGaiaPassword;
 }
 
-bool PasswordAuthView::OnKeyPressed(const ui::KeyEvent& event) {
-  if (event.key_code() == ui::KeyboardCode::VKEY_RETURN) {
-    OnSubmitButtonPressed();
-    return true;
-  }
-  return false;
-}
-
 void PasswordAuthView::RequestFocus() {
   auth_textfield_->RequestFocus();
+}
+
+void PasswordAuthView::OnSubmit() {
+  OnSubmitButtonPressed();
+}
+
+void PasswordAuthView::OnEscape() {
+  dispatcher_->DispatchEvent(AuthPanelEventDispatcher::UserAction{
+      AuthPanelEventDispatcher::UserAction::Type::
+          kEscapePressedOnPasswordTextfield,
+      std::nullopt});
 }
 
 void PasswordAuthView::OnCapsLockChanged(bool enabled) {
@@ -252,7 +256,7 @@ void PasswordAuthView::OnDisplayPasswordButtonPressed() {
       std::nullopt});
 }
 
-void PasswordAuthView::OnContentsChanged(const std::u16string& new_contents) {
+void PasswordAuthView::OnContentsChanged(std::u16string_view new_contents) {
   // TODO(b/288692954): switch to variant-based implementation of event objects.
   dispatcher_->DispatchEvent(AuthPanelEventDispatcher::UserAction{
       AuthPanelEventDispatcher::UserAction::Type::

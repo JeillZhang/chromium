@@ -17,7 +17,7 @@ import {I18nMixin} from 'chrome://resources/ash/common/cr_elements/i18n_mixin.js
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {GlobalScrollTargetMixin} from '../common/global_scroll_target_mixin.js';
-import {JapaneseDictionary} from '../mojom-webui/user_data_japanese_dictionary.mojom-webui.js';
+import type {JapaneseDictionary} from '../mojom-webui/user_data_japanese_dictionary.mojom-webui.js';
 import {routes} from '../router.js';
 
 import {getTemplate} from './os_japanese_manage_user_dictionary_page.html.js';
@@ -28,6 +28,8 @@ import {UserDataServiceProvider} from './user_data_service_provider.js';
 // TODO(b/265559727): Remove GlobalScrollTargetMixin if it is unused.
 const OsSettingsJapaneseManageUserDictionaryPageElementBase =
     GlobalScrollTargetMixin(I18nMixin(PolymerElement));
+
+const NEW_DICTIONARY_NAME = 'New Dictionary';
 
 class OsSettingsJapaneseManageUserDictionaryPageElement extends
     OsSettingsJapaneseManageUserDictionaryPageElementBase {
@@ -61,6 +63,7 @@ class OsSettingsJapaneseManageUserDictionaryPageElement extends
   override ready(): void {
     super.ready();
     this.addEventListener('dictionary-saved', this.getDictionaries_);
+    this.getDictionaries_();
   }
 
   // Loads the dictionary objects from IME user data service.
@@ -76,6 +79,31 @@ class OsSettingsJapaneseManageUserDictionaryPageElement extends
       this.dictionaries_ = [...response.dictionaries];
       this.status = `number of dictionaries=${this.dictionaries_.length}`;
     }
+  }
+
+  // Adds a new dictionary with the name "New dictionary".
+  private async addDictionary_(): Promise<void> {
+    const resp =
+        (await UserDataServiceProvider.getRemote().createJapaneseDictionary(
+             this.newDictName_()))
+            .status;
+    if (resp.success) {
+      this.getDictionaries_();
+    }
+  }
+
+  // The backend does not let you add the same dictionary name twice. We have to
+  // automatically append an incrementing number to it if there is a clash.
+  private newDictName_(): string {
+    let count = 0;
+    let newName = NEW_DICTIONARY_NAME;
+    while (this.dictionaries_.some(
+        (dict: JapaneseDictionary) => dict.name === newName)) {
+      count++;
+      newName = `${NEW_DICTIONARY_NAME} ${count}`;
+    }
+
+    return newName;
   }
 
   // Used to get the last index of the synced entries of each dictionary so that

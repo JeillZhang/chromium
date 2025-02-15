@@ -8,8 +8,6 @@
 #include <optional>
 #include <string>
 
-#include "ash/ime/ime_controller_impl.h"
-#include "ash/shell.h"
 #include "base/callback_list.h"
 #include "chromeos/ash/components/auth_panel/impl/auth_panel.h"
 #include "chromeos/ash/components/auth_panel/impl/auth_panel_event_dispatcher.h"
@@ -20,6 +18,7 @@ namespace ash {
 
 class AuthHubConnector;
 class AuthPanel;
+class ImeController;
 
 // This class encapsulates the UI state of `AuthPanel`.
 class AuthFactorStore {
@@ -66,9 +65,10 @@ class AuthFactorStore {
   using OnStateUpdatedCallbackList =
       base::RepeatingCallbackList<void(const State& state)>;
 
-  AuthFactorStore(Shell* shell,
+  AuthFactorStore(ImeController* ime_controller,
                   AuthHubConnector* connector,
-                  std::optional<AshAuthFactor> password_type);
+                  std::optional<AshAuthFactor> password_type,
+                  AuthHub* auth_hub);
   ~AuthFactorStore();
 
   base::CallbackListSubscription Subscribe(OnStateUpdatedCallback callback);
@@ -93,16 +93,27 @@ class AuthFactorStore {
   raw_ptr<AuthHubConnector> auth_hub_connector_;
 
   auth_panel::SubmitPasswordCallback submit_password_callback_;
+
+  raw_ptr<AuthHub> auth_hub_;
 };
 
 class AuthFactorStoreFactory {
  public:
+  explicit AuthFactorStoreFactory(AuthHub* auth_hub) : auth_hub_(auth_hub) {}
+
   std::unique_ptr<AuthFactorStore> CreateAuthFactorStore(
-      Shell* shell,
+      ImeController* ime_controller,
       AuthHubConnector* connector,
       std::optional<AshAuthFactor> password_type) {
-    return std::make_unique<AuthFactorStore>(shell, connector, password_type);
+    return std::make_unique<AuthFactorStore>(ime_controller, connector,
+                                             password_type, auth_hub_);
   }
+
+ private:
+  // AuthHub is a long-lived, singleton object. It's created early in Ash's
+  // lifecycle and destroyed late, after message loop stops. It is therefore
+  // guaranteed to outlive `AuthFactorStoreFactory` and `AuthFactorStore`.
+  raw_ptr<AuthHub> auth_hub_;
 };
 
 }  // namespace ash

@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/filters/ffmpeg_demuxer.h"
 
 #include <algorithm>
@@ -221,7 +226,8 @@ std::unique_ptr<FFmpegDemuxerStream> FFmpegDemuxerStream::Create(
     // IsValidConfig internally and return a null scoped_ptr if not valid.
     if (!AVStreamToAudioDecoderConfig(stream, audio_config.get()) ||
         !audio_config->IsValidConfig() ||
-        !IsSupportedAudioType(AudioType::FromDecoderConfig(*audio_config))) {
+        !IsDecoderSupportedAudioType(
+            AudioType::FromDecoderConfig(*audio_config))) {
       MEDIA_LOG(DEBUG, media_log) << "Warning, FFmpegDemuxer failed to create "
                                      "a valid/supported audio decoder "
                                      "configuration from muxed stream, config:"
@@ -238,7 +244,8 @@ std::unique_ptr<FFmpegDemuxerStream> FFmpegDemuxerStream::Create(
     // IsValidConfig internally and return a null scoped_ptr if not valid.
     if (!AVStreamToVideoDecoderConfig(stream, video_config.get()) ||
         !video_config->IsValidConfig() ||
-        !IsSupportedVideoType(VideoType::FromDecoderConfig(*video_config))) {
+        !IsDecoderSupportedVideoType(
+            VideoType::FromDecoderConfig(*video_config))) {
       MEDIA_LOG(DEBUG, media_log) << "Warning, FFmpegDemuxer failed to create "
                                      "a valid/supported video decoder "
                                      "configuration from muxed stream, config:"
@@ -304,8 +311,7 @@ FFmpegDemuxerStream::FFmpegDemuxerStream(
       is_encrypted = video_config_->is_encrypted();
       break;
     default:
-      NOTREACHED_IN_MIGRATION();
-      break;
+      NOTREACHED();
   }
 
   // Calculate the duration.
@@ -334,6 +340,14 @@ FFmpegDemuxerStream::~FFmpegDemuxerStream() {
   DCHECK(!demuxer_);
   DCHECK(!read_cb_);
   DCHECK(buffer_queue_.IsEmpty());
+}
+
+base::span<const uint8_t> GetSideData(const AVPacket* packet) {
+  size_t side_data_size = 0;
+  uint8_t* side_data = av_packet_get_side_data(
+      packet, AV_PKT_DATA_MATROSKA_BLOCKADDITIONAL, &side_data_size);
+
+  return base::span<const uint8_t>(side_data, side_data_size);
 }
 
 void FFmpegDemuxerStream::EnqueuePacket(ScopedAVPacket packet) {
@@ -375,7 +389,7 @@ void FFmpegDemuxerStream::EnqueuePacket(ScopedAVPacket packet) {
   }
 
   if (!demuxer_ || end_of_stream_) {
-    NOTREACHED_IN_MIGRATION()
+    DUMP_WILL_BE_NOTREACHED()
         << "Attempted to enqueue packet on a stopped stream";
     return;
   }
@@ -396,27 +410,26 @@ void FFmpegDemuxerStream::EnqueuePacket(ScopedAVPacket packet) {
   // Convert the packet if there is a bitstream filter.
   if (bitstream_converter_ &&
       !bitstream_converter_->ConvertPacket(packet.get())) {
-    DVLOG(1) << "Format conversion failed.";
+    demuxer_->NotifyDemuxerError(DEMUXER_ERROR_BITSTREAM_CONVERSION_FAILED);
+    return;
   }
 #endif
 
   scoped_refptr<DecoderBuffer> buffer;
 
-    size_t side_data_size = 0;
-    uint8_t* side_data = av_packet_get_side_data(
-        packet.get(), AV_PKT_DATA_MATROSKA_BLOCKADDITIONAL, &side_data_size);
+  base::span<const uint8_t> side_data = GetSideData(packet.get());
 
-    std::unique_ptr<DecryptConfig> decrypt_config;
-    int data_offset = 0;
-    if ((type() == DemuxerStream::AUDIO && audio_config_->is_encrypted()) ||
-        (type() == DemuxerStream::VIDEO && video_config_->is_encrypted())) {
-      if (!WebMCreateDecryptConfig(
-              packet->data, packet->size,
-              reinterpret_cast<const uint8_t*>(encryption_key_id_.data()),
-              encryption_key_id_.size(), &decrypt_config, &data_offset)) {
-        MEDIA_LOG(ERROR, media_log_) << "Creation of DecryptConfig failed.";
-      }
+  std::unique_ptr<DecryptConfig> decrypt_config;
+  int data_offset = 0;
+  if ((type() == DemuxerStream::AUDIO && audio_config_->is_encrypted()) ||
+      (type() == DemuxerStream::VIDEO && video_config_->is_encrypted())) {
+    if (!WebMCreateDecryptConfig(
+            packet->data, packet->size,
+            reinterpret_cast<const uint8_t*>(encryption_key_id_.data()),
+            encryption_key_id_.size(), &decrypt_config, &data_offset)) {
+      MEDIA_LOG(ERROR, media_log_) << "Creation of DecryptConfig failed.";
     }
+  }
 
     // FFmpeg may return garbage packets for MP3 stream containers, so we need
     // to drop these to avoid decoder errors. The ffmpeg team maintains that
@@ -455,11 +468,11 @@ void FFmpegDemuxerStream::EnqueuePacket(ScopedAVPacket packet) {
     // If a packet is returned by FFmpeg's av_parser_parse2() the packet will
     // reference inner memory of FFmpeg.  As such we should transfer the packet
     // into memory we control.
-    buffer =
-        DecoderBuffer::CopyFrom(AVPacketData(*packet).subspan(data_offset));
-    if (side_data_size > 0) {
-      buffer->WritableSideData().alpha_data.assign(side_data,
-                                                   side_data + side_data_size);
+    buffer = DecoderBuffer::CopyFrom(
+        AVPacketData(*packet).subspan(base::checked_cast<size_t>(data_offset)));
+    if (side_data.size() > 0) {
+      buffer->WritableSideData().alpha_data =
+          base::HeapArray<uint8_t>::CopiedFrom(side_data);
     }
 
     size_t skip_samples_size = 0;
@@ -1393,19 +1406,6 @@ void FFmpegDemuxer::OnFindStreamInfoDone(int result) {
       continue;
     }
 
-    // Discard disabled streams, if there is at least one that is enabled.
-    if (has_enabled_stream && !IsStreamEnabled(container(), stream)) {
-      if (codec_type == AVMEDIA_TYPE_AUDIO) {
-        MEDIA_LOG(INFO, media_log_)
-            << GetDisplayName() << ": skipping disabled audio track";
-      } else if (codec_type == AVMEDIA_TYPE_VIDEO) {
-        MEDIA_LOG(INFO, media_log_)
-            << GetDisplayName() << ": skipping disabled video track";
-      }
-      stream->discard = AVDISCARD_ALL;
-      continue;
-    }
-
     // Attempt to create a FFmpegDemuxerStream from the AVStream. This will
     // return nullptr if the AVStream is invalid. Validity checks will verify
     // things like: codec, channel layout, sample/pixel format, etc...
@@ -1441,15 +1441,29 @@ void FFmpegDemuxer::OnFindStreamInfoDone(int result) {
       track_label = MediaTrack::Label(streams_[i]->GetMetadata("title"));
     }
 
+    // Enable the first non-disabled stream for each of audio and video.
+    // If all streams are disabled, they are treated as enabled instead.
+    bool stream_enabled = true;
     if (codec_type == AVMEDIA_TYPE_AUDIO) {
-      ++supported_audio_track_count;
-      streams_[i]->SetEnabled(supported_audio_track_count == 1,
-                              base::TimeDelta());
+      if (has_enabled_stream && !IsStreamEnabled(container(), stream)) {
+        MEDIA_LOG(INFO, media_log_)
+            << GetDisplayName() << ": skipping disabled audio track";
+        stream_enabled = false;
+      } else {
+        ++supported_audio_track_count;
+        stream_enabled = supported_audio_track_count == 1;
+      }
     } else if (codec_type == AVMEDIA_TYPE_VIDEO) {
-      ++supported_video_track_count;
-      streams_[i]->SetEnabled(supported_video_track_count == 1,
-                              base::TimeDelta());
+      if (has_enabled_stream && !IsStreamEnabled(container(), stream)) {
+        MEDIA_LOG(INFO, media_log_)
+            << GetDisplayName() << ": skipping disabled video track";
+        stream_enabled = false;
+      } else {
+        ++supported_video_track_count;
+        stream_enabled = supported_video_track_count == 1;
+      }
     }
+    streams_[i]->SetEnabled(stream_enabled, base::TimeDelta());
 
     // TODO(chcunningham): Remove the IsValidConfig() checks below. If the
     // config isn't valid we shouldn't have created a demuxer stream nor
@@ -1471,26 +1485,28 @@ void FFmpegDemuxer::OnFindStreamInfoDone(int result) {
       AudioDecoderConfig audio_config = streams_[i]->audio_decoder_config();
       RecordAudioCodecStats(audio_config);
 
-      media_track = media_tracks->AddAudioTrack(audio_config, track_id,
-                                                MediaTrack::Kind("main"),
-                                                track_label, track_language);
+      media_track = media_tracks->AddAudioTrack(
+          audio_config, stream_enabled, track_id, MediaTrack::Kind("main"),
+          track_label, track_language);
       media_track->set_id(MediaTrack::Id(base::NumberToString(track_id)));
-      DCHECK(track_id_to_demux_stream_map_.find(media_track->id()) ==
+      DCHECK(track_id_to_demux_stream_map_.find(media_track->track_id()) ==
              track_id_to_demux_stream_map_.end());
-      track_id_to_demux_stream_map_[media_track->id()] = streams_[i].get();
+      track_id_to_demux_stream_map_[media_track->track_id()] =
+          streams_[i].get();
     } else if (codec_type == AVMEDIA_TYPE_VIDEO) {
       VideoDecoderConfig video_config = streams_[i]->video_decoder_config();
 
       RecordVideoCodecStats(glue_->container(), video_config,
                             stream->codecpar->color_range, media_log_);
 
-      media_track = media_tracks->AddVideoTrack(video_config, track_id,
-                                                MediaTrack::Kind("main"),
-                                                track_label, track_language);
+      media_track = media_tracks->AddVideoTrack(
+          video_config, stream_enabled, track_id, MediaTrack::Kind("main"),
+          track_label, track_language);
       media_track->set_id(MediaTrack::Id(base::NumberToString(track_id)));
-      DCHECK(track_id_to_demux_stream_map_.find(media_track->id()) ==
+      DCHECK(track_id_to_demux_stream_map_.find(media_track->track_id()) ==
              track_id_to_demux_stream_map_.end());
-      track_id_to_demux_stream_map_[media_track->id()] = streams_[i].get();
+      track_id_to_demux_stream_map_[media_track->track_id()] =
+          streams_[i].get();
     }
 
     max_duration = std::max(max_duration, streams_[i]->duration());
@@ -1712,7 +1728,7 @@ FFmpegDemuxerStream* FFmpegDemuxer::FindPreferredStreamForSeeking(
       return stream.get();
   }
 
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 void FFmpegDemuxer::OnSeekFrameDone(int result) {
@@ -1781,7 +1797,7 @@ void FFmpegDemuxer::FindAndEnableProperTracks(
 
   std::vector<DemuxerStream*> streams(enabled_streams.begin(),
                                       enabled_streams.end());
-  std::move(change_completed_cb).Run(track_type, streams);
+  std::move(change_completed_cb).Run(streams);
 }
 
 void FFmpegDemuxer::OnEnabledAudioTracksChanged(
@@ -1796,7 +1812,11 @@ void FFmpegDemuxer::OnVideoSeekedForTrackChange(
     DemuxerStream* video_stream,
     base::OnceClosure seek_completed_cb,
     int result) {
-  static_cast<FFmpegDemuxerStream*>(video_stream)->FlushBuffers(true);
+  for (const auto& stream : streams_) {
+    if (stream && stream->IsEnabled()) {
+      stream->FlushBuffers(true);
+    }
+  }
   // TODO(crbug.com/40898124): Report seek failures for track changes too.
   std::move(seek_completed_cb).Run();
 }
@@ -1804,22 +1824,20 @@ void FFmpegDemuxer::OnVideoSeekedForTrackChange(
 void FFmpegDemuxer::SeekOnVideoTrackChange(
     base::TimeDelta seek_to_time,
     TrackChangeCB seek_completed_cb,
-    DemuxerStream::Type stream_type,
     const std::vector<DemuxerStream*>& streams) {
-  DCHECK_EQ(stream_type, DemuxerStream::VIDEO);
   if (streams.size() != 1u) {
     // If FFmpegDemuxer::FindAndEnableProperTracks() was not able to find the
     // selected streams in the ID->DemuxerStream map, then its possible for
     // this vector to be empty. If that's the case, we don't want to bother
     // with seeking, and just call the callback immediately.
-    std::move(seek_completed_cb).Run(stream_type, streams);
+    std::move(seek_completed_cb).Run(streams);
     return;
   }
-  SeekInternal(seek_to_time,
-               base::BindOnce(&FFmpegDemuxer::OnVideoSeekedForTrackChange,
-                              weak_factory_.GetWeakPtr(), streams[0],
-                              base::BindOnce(std::move(seek_completed_cb),
-                                             DemuxerStream::VIDEO, streams)));
+  SeekInternal(
+      seek_to_time,
+      base::BindOnce(&FFmpegDemuxer::OnVideoSeekedForTrackChange,
+                     weak_factory_.GetWeakPtr(), streams[0],
+                     base::BindOnce(std::move(seek_completed_cb), streams)));
 }
 
 void FFmpegDemuxer::OnSelectedVideoTrackChanged(

@@ -6,7 +6,6 @@
 
 #include "ash/public/cpp/style/color_provider.h"
 #include "ash/style/ash_color_id.h"
-#include "chromeos/constants/chromeos_features.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/compositor/layer.h"
 #include "ui/views/background.h"
@@ -46,16 +45,10 @@ gfx::Size RoundedLabel::CalculatePreferredSize(
                    preferred_height_);
 }
 
-int RoundedLabel::GetHeightForWidth(int width) const {
-  return preferred_height_;
-}
-
 void RoundedLabel::OnPaintBorder(gfx::Canvas* canvas) {
   views::HighlightBorder::PaintBorderToCanvas(
       canvas, *this, GetLocalBounds(), gfx::RoundedCornersF(rounding_dp_),
-      chromeos::features::IsJellyrollEnabled()
-          ? views::HighlightBorder::Type::kHighlightBorderNoShadow
-          : views::HighlightBorder::Type::kHighlightBorder2);
+      views::HighlightBorder::Type::kHighlightBorderNoShadow);
 }
 
 BEGIN_METADATA(RoundedLabel)

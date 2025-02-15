@@ -14,14 +14,14 @@ import 'chrome://resources/cr_elements/cr_icon_button/cr_icon_button.js';
 import 'chrome://resources/cr_elements/cr_link_row/cr_link_row.js';
 import 'chrome://resources/cr_elements/cr_shared_style.css.js';
 import 'chrome://resources/cr_elements/cr_hidden_style.css.js';
-import 'chrome://resources/polymer/v3_0/iron-flex-layout/iron-flex-layout-classes.js';
 import '../controls/settings_toggle_button.js';
+import '../privacy_icons.html.js';
 import '../safety_hub/safety_hub_module.js';
 import '../settings_page/settings_animated_pages.js';
 import '../settings_page/settings_subpage.js';
 import '../settings_shared.css.js';
-import '../site_settings/offer_writing_help_page.js';
 import '../site_settings/settings_category_default_radio_group.js';
+import '../site_settings/smart_card_readers_page.js';
 import './privacy_guide/privacy_guide_dialog.js';
 
 import {PrefsMixin} from '/shared/settings/prefs/prefs_mixin.js';
@@ -113,6 +113,13 @@ export class SettingsPrivacyPageElement extends SettingsPrivacyPageElementBase {
         },
       },
 
+      enableManagePhones_: {
+        type: Boolean,
+        value() {
+          return loadTimeData.getBoolean('enableSecurityKeysManagePhones');
+        },
+      },
+
       blockAutoplayStatus_: {
         type: Object,
         value() {
@@ -124,6 +131,13 @@ export class SettingsPrivacyPageElement extends SettingsPrivacyPageElementBase {
         type: Boolean,
         value() {
           return loadTimeData.getBoolean('enablePaymentHandlerContentSetting');
+        },
+      },
+
+      enableHandTrackingContentSetting_: {
+        type: Boolean,
+        value() {
+          return loadTimeData.getBoolean('enableHandTrackingContentSetting');
         },
       },
 
@@ -150,6 +164,16 @@ export class SettingsPrivacyPageElement extends SettingsPrivacyPageElementBase {
           return loadTimeData.getBoolean('enableSecurityKeysSubpage');
         },
       },
+
+      // <if expr="is_chromeos">
+      enableSmartCardReadersContentSetting_: {
+        type: Boolean,
+        value() {
+          return loadTimeData.getBoolean(
+              'enableSmartCardReadersContentSetting');
+        },
+      },
+      // </if>
 
       enableWebBluetoothNewPermissionsBackend_: {
         type: Boolean,
@@ -178,17 +202,6 @@ export class SettingsPrivacyPageElement extends SettingsPrivacyPageElementBase {
             loadTimeData.getBoolean('isPrivacySandboxRestrictedNoticeEnabled'),
       },
 
-      is3pcdRedesignEnabled_: {
-        type: Boolean,
-        value: () =>
-            loadTimeData.getBoolean('is3pcdCookieSettingsRedesignEnabled'),
-      },
-
-      privateStateTokensEnabled_: {
-        type: Boolean,
-        value: () => loadTimeData.getBoolean('privateStateTokensEnabled'),
-      },
-
       autoPictureInPictureEnabled_: {
         type: Boolean,
         value: () => loadTimeData.getBoolean('autoPictureInPictureEnabled'),
@@ -197,6 +210,11 @@ export class SettingsPrivacyPageElement extends SettingsPrivacyPageElementBase {
       capturedSurfaceControlEnabled_: {
         type: Boolean,
         value: () => loadTimeData.getBoolean('capturedSurfaceControlEnabled'),
+      },
+
+      enableAiSettingsPageRefresh_: {
+        type: Boolean,
+        value: () => loadTimeData.getBoolean('enableAiSettingsPageRefresh'),
       },
 
       enableComposeProactiveNudge_: {
@@ -214,12 +232,6 @@ export class SettingsPrivacyPageElement extends SettingsPrivacyPageElementBase {
         value: function() {
           return loadTimeData.getBoolean('showPersistentPermissions');
         },
-      },
-
-      isProactiveTopicsBlockingEnabled_: {
-        type: Boolean,
-        value: () =>
-            loadTimeData.getBoolean('isProactiveTopicsBlockingEnabled'),
       },
 
       enableAutomaticFullscreenContentSetting_: {
@@ -301,18 +313,10 @@ export class SettingsPrivacyPageElement extends SettingsPrivacyPageElementBase {
         value: ChooserType,
       },
 
-      enableSafetyHub_: {
+      shouldShowSafetyHub_: {
         type: Boolean,
         value() {
-          return loadTimeData.getBoolean('enableSafetyHub') &&
-              !loadTimeData.getBoolean('isGuest');
-        },
-      },
-
-      showDedicatedCpssSetting_: {
-        type: Boolean,
-        value() {
-          return loadTimeData.getBoolean('permissionDedicatedCpssSettings');
+          return !loadTimeData.getBoolean('isGuest');
         },
       },
 
@@ -326,10 +330,14 @@ export class SettingsPrivacyPageElement extends SettingsPrivacyPageElementBase {
       },
       // </if>
 
-      enableKeyboardAndPointerLockPrompt_: {
+      enableKeyboardLockPrompt_: {
         type: Boolean,
-        value: () =>
-            loadTimeData.getBoolean('enableKeyboardAndPointerLockPrompt'),
+        value: () => loadTimeData.getBoolean('enableKeyboardLockPrompt'),
+      },
+
+      enableWebAppInstallation_: {
+        type: Boolean,
+        value: () => loadTimeData.getBoolean('enableWebAppInstallation'),
       },
 
       isNotificationAllowed_: Boolean,
@@ -348,21 +356,25 @@ export class SettingsPrivacyPageElement extends SettingsPrivacyPageElementBase {
   private blockAutoplayStatus_: BlockAutoplayStatus;
   private enableFederatedIdentityApiContentSetting_: boolean;
   private enablePaymentHandlerContentSetting_: boolean;
+  private enableHandTrackingContentSetting_: boolean;
   private enableExperimentalWebPlatformFeatures_: boolean;
   private enableSecurityKeysSubpage_: boolean;
+  // <if expr="is_chromeos">
+  private enableSmartCardReadersContentSetting_: boolean;
+  // </if>
   private enableWebBluetoothNewPermissionsBackend_: boolean;
   private enableWebPrintingContentSetting_: boolean;
   private showNotificationPermissionsReview_: boolean;
   private isPrivacySandboxRestricted_: boolean;
   private isPrivacySandboxRestrictedNoticeEnabled_: boolean;
-  private isProactiveTopicsBlockingEnabled_: boolean;
   private enableAutomaticFullscreenContentSetting_: boolean;
-  private is3pcdRedesignEnabled_: boolean;
   private privateStateTokensEnabled_: boolean;
   private autoPictureInPictureEnabled_: boolean;
   private capturedSurfaceControlEnabled_: boolean;
+  private enableAiSettingsPageRefresh_: boolean;
   private enableComposeProactiveNudge_: boolean;
-  private enableSafetyHub_: boolean;
+  private shouldShowSafetyHub_: boolean;
+  private enableWebAppInstallation_: boolean;
   private focusConfig_: FocusConfig;
   private searchFilter_: string;
   private notificationPermissionsReviewHeader_: string;
@@ -377,11 +389,10 @@ export class SettingsPrivacyPageElement extends SettingsPrivacyPageElementBase {
       SafetyHubBrowserProxyImpl.getInstance();
   private isNotificationAllowed_: boolean;
   private isLocationAllowed_: boolean;
-  private showDedicatedCpssSetting_: boolean;
   // <if expr="chrome_root_store_cert_management_ui">
   private enableCertManagementUIV2_: boolean;
   // </if>
-  private enableKeyboardAndPointerLockPrompt_: boolean;
+  private enableKeyboardLockPrompt_: boolean;
 
   override ready() {
     super.ready();
@@ -593,13 +604,23 @@ export class SettingsPrivacyPageElement extends SettingsPrivacyPageElementBase {
   }
 
   private computeThirdPartyCookiesSublabel_(): string {
+    // Handle the correct pref in Mode B.
+    if (loadTimeData.getBoolean('is3pcdCookieSettingsRedesignEnabled')) {
+      if (this.getPref('tracking_protection.block_all_3pc_toggle_enabled')
+              .value) {
+        return this.i18n('thirdPartyCookiesLinkRowSublabelDisabled');
+      }
+      return this.i18n('thirdPartyCookiesLinkRowSublabelLimited');
+    }
     const currentCookieSetting =
         this.getPref('profile.cookie_controls_mode').value;
     switch (currentCookieSetting) {
       case CookieControlsMode.OFF:
         return this.i18n('thirdPartyCookiesLinkRowSublabelEnabled');
       case CookieControlsMode.INCOGNITO_ONLY:
-        return this.i18n('thirdPartyCookiesLinkRowSublabelDisabledIncognito');
+        return loadTimeData.getBoolean('isAlwaysBlock3pcsIncognitoEnabled') ?
+            this.i18n('thirdPartyCookiesLinkRowSublabelEnabled') :
+            this.i18n('thirdPartyCookiesLinkRowSublabelDisabledIncognito');
       case CookieControlsMode.BLOCK_THIRD_PARTY:
         return this.i18n('thirdPartyCookiesLinkRowSublabelDisabled');
       default:
@@ -612,15 +633,9 @@ export class SettingsPrivacyPageElement extends SettingsPrivacyPageElementBase {
         this.isPrivacySandboxRestrictedNoticeEnabled_;
   }
 
-  // Only show Manage Topics page when PTB is enabled. If user is part of Mode B
-  // and include-mode-b feature param is false, don't show the page.
-  private shouldShowManageTopics_(): boolean {
-    if (!this.isProactiveTopicsBlockingEnabled_ ||
-        this.isPrivacySandboxRestricted_) {
-      return false;
-    }
-    return loadTimeData.getBoolean('proactiveTopicsBlockingIncludesModeB') ||
-        !loadTimeData.getBoolean('isInCookieDeprecationFacilitatedTesting');
+  private shouldShowComposeProactiveNudge_(): boolean {
+    return this.enableComposeProactiveNudge_ &&
+        !this.enableAiSettingsPageRefresh_;
   }
 
   private onSafetyHubButtonClick_() {

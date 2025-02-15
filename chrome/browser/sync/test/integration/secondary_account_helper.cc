@@ -19,6 +19,7 @@
 #include "components/signin/public/identity_manager/identity_test_utils.h"
 #include "components/signin/public/identity_manager/primary_account_mutator.h"
 #include "google_apis/gaia/gaia_auth_util.h"
+#include "google_apis/gaia/gaia_id.h"
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
 #include "chrome/browser/ash/net/network_portal_detector_test_impl.h"
@@ -41,20 +42,21 @@ void OnWillCreateBrowserContextServices(
 }
 
 void SetCookieForGaiaId(
-    const std::string& gaia_id,
+    const GaiaId& gaia_id,
     const std::string& email,
     bool signed_out,
     signin::IdentityManager* identity_manager,
     network::TestURLLoaderFactory* test_url_loader_factory) {
-  base::flat_map<std::string, signin::CookieParamsForTest> cookies_by_gaia_id;
+  base::flat_map<GaiaId, signin::CookieParamsForTest> cookies_by_gaia_id;
   signin::AccountsInCookieJarInfo cookies =
       identity_manager->GetAccountsInCookieJar();
-  for (const gaia::ListedAccount& account : cookies.signed_in_accounts) {
+  for (const gaia::ListedAccount& account :
+       cookies.GetPotentiallyInvalidSignedInAccounts()) {
     cookies_by_gaia_id[account.gaia_id] = {.email = account.email,
                                            .gaia_id = account.gaia_id,
                                            .signed_out = false};
   }
-  for (const gaia::ListedAccount& account : cookies.signed_out_accounts) {
+  for (const gaia::ListedAccount& account : cookies.GetSignedOutAccounts()) {
     cookies_by_gaia_id[account.gaia_id] = {
         .email = account.email, .gaia_id = account.gaia_id, .signed_out = true};
   }
@@ -125,8 +127,8 @@ AccountInfo ImplicitSignInUnconsentedAccount(
 #if !BUILDFLAG(IS_CHROMEOS_ASH)
           .AsPrimary(signin::ConsentLevel::kSignin)
 #endif  // !BUILDFLAG(IS_CHROMEOS_ASH)
-        // `ACCESS_POINT_WEB_SIGNIN` is not explicit signin.
-          .WithAccessPoint(signin_metrics::AccessPoint::ACCESS_POINT_WEB_SIGNIN)
+        // `kWebSignin` is not explicit signin.
+          .WithAccessPoint(signin_metrics::AccessPoint::kWebSignin)
           .Build(email));
   SetCookieForGaiaId(account_info.gaia, account_info.email,
                      /*signed_out=*/false, identity_manager,

@@ -28,21 +28,16 @@ import org.junit.runner.RunWith;
 
 import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.base.ContextUtils;
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Criteria;
 import org.chromium.base.test.util.CriteriaHelper;
 import org.chromium.base.test.util.DisableIf;
 import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Feature;
-import org.chromium.base.test.util.Features.DisableFeatures;
-import org.chromium.base.test.util.Features.EnableFeatures;
-import org.chromium.base.test.util.HistogramWatcher;
 import org.chromium.base.test.util.Restriction;
 import org.chromium.base.test.util.UrlUtils;
-import org.chromium.chrome.browser.back_press.BackPressManager;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
-import org.chromium.chrome.browser.layouts.LayoutType;
 import org.chromium.chrome.browser.tab.EmptyTabObserver;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.Tab.LoadUrlResult;
@@ -51,7 +46,6 @@ import org.chromium.chrome.browser.tab.TabUtils;
 import org.chromium.chrome.browser.tab.TabUtils.UseDesktopUserAgentCaller;
 import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.chrome.browser.tabmodel.TabModelUtils;
-import org.chromium.chrome.browser.tasks.tab_management.TabUiTestHelper;
 import org.chromium.chrome.browser.toolbar.ToolbarManager;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
@@ -59,25 +53,21 @@ import org.chromium.chrome.test.R;
 import org.chromium.chrome.test.util.ChromeTabUtils;
 import org.chromium.chrome.test.util.OmniboxTestUtils;
 import org.chromium.chrome.test.util.browser.TabLoadObserver;
-import org.chromium.components.browser_ui.widget.gesture.BackPressHandler;
 import org.chromium.components.embedder_support.util.UrlConstants;
 import org.chromium.content_public.browser.LoadUrlParams;
 import org.chromium.content_public.browser.test.util.DOMUtils;
 import org.chromium.content_public.browser.test.util.JavaScriptUtils;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.content_public.browser.test.util.TouchCommon;
 import org.chromium.content_public.browser.test.util.UiUtils;
 import org.chromium.net.test.EmbeddedTestServer;
 import org.chromium.net.test.ServerCertificate;
 import org.chromium.net.test.util.TestWebServer;
-import org.chromium.ui.test.util.UiDisableIf;
-import org.chromium.ui.test.util.UiRestriction;
+import org.chromium.ui.base.DeviceFormFactor;
 import org.chromium.url.GURL;
 import org.chromium.url.Origin;
 
 import java.net.URL;
 import java.util.Locale;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 
@@ -164,9 +154,10 @@ public class NavigateTest {
     }
 
     @Test
-    @Restriction(UiRestriction.RESTRICTION_TYPE_TABLET)
+    @Restriction(DeviceFormFactor.TABLET)
     @MediumTest
     @Feature({"Navigation"})
+    @DisabledTest(message = "Flaky. See crbug.com/380238040")
     public void testNavigateMany() throws Exception {
         final String[] urls =
                 mTestServer.getURLs(
@@ -205,6 +196,7 @@ public class NavigateTest {
     @Test
     @MediumTest
     @Feature({"Navigation"})
+    @DisabledTest(message = "https://crbug.com/346968609")
     public void testOpenAndNavigate() throws Exception {
         final String url = mTestServer.getURL("/chrome/test/data/android/navigate/simple.html");
         navigateAndObserve(url);
@@ -226,7 +218,7 @@ public class NavigateTest {
     @Test
     @MediumTest
     @Feature({"Navigation"})
-    @DisableIf.Device(type = {UiDisableIf.TABLET}) // https://crbug.com/339299609
+    @DisableIf.Device(DeviceFormFactor.TABLET) // https://crbug.com/339299609
     public void testOpenLink() throws Exception {
         String url1 = mTestServer.getURL("/chrome/test/data/android/google.html");
         String url2 = mTestServer.getURL("/chrome/test/data/android/about.html");
@@ -258,20 +250,16 @@ public class NavigateTest {
         String url2 =
                 mTestServer.getURL(
                         "/echoheader?sec-ch-ua-arch&sec-ch-ua-mobile&sec-ch-ua-model&sec-ch-ua-platform");
+        final Tab tab = mActivityTestRule.getActivity().getActivityTab();
 
         navigateAndObserve(url1);
-
-        final Tab tab = mActivityTestRule.getActivity().getActivityTab();
-        TestThreadUtils.runOnUiThreadBlocking(
-                () ->
-                        TabUtils.switchUserAgent(
-                                tab,
-                                /* switchToDesktop= */ true,
-                                /* forcedByUser= */ true,
-                                UseDesktopUserAgentCaller.OTHER));
         ChromeTabUtils.waitForTabPageLoaded(tab, url1);
 
         navigateAndObserve(url2);
+        ThreadUtils.runOnUiThreadBlocking(
+                () ->
+                        TabUtils.switchUserAgent(
+                                tab, /* switchToDesktop= */ true, UseDesktopUserAgentCaller.OTHER));
         ChromeTabUtils.waitForTabPageLoaded(tab, url2);
         String content =
                 JavaScriptUtils.executeJavaScriptAndWaitForResult(
@@ -294,15 +282,12 @@ public class NavigateTest {
         // implemented
         String url = mTestServer.getURL("/echocriticalheader");
         final Tab tab = mActivityTestRule.getActivity().getActivityTab();
-        TestThreadUtils.runOnUiThreadBlocking(
+        navigateAndObserve(url);
+        ThreadUtils.runOnUiThreadBlocking(
                 () ->
                         TabUtils.switchUserAgent(
-                                tab,
-                                /* switchToDesktop= */ true,
-                                /* forcedByUser= */ true,
-                                UseDesktopUserAgentCaller.OTHER));
+                                tab, /* switchToDesktop= */ true, UseDesktopUserAgentCaller.OTHER));
 
-        navigateAndObserve(url);
         ChromeTabUtils.waitForTabPageLoaded(tab, url);
         String content =
                 JavaScriptUtils.executeJavaScriptAndWaitForResult(
@@ -317,7 +302,7 @@ public class NavigateTest {
     @Test
     @MediumTest
     @Feature({"Navigation"})
-    @DisableIf.Device(type = {UiDisableIf.TABLET}) // https://crbug.com/339299609
+    @DisableIf.Device(DeviceFormFactor.TABLET) // https://crbug.com/339299609
     public void testTabObserverOnPageLoadStarted() throws Exception {
         final String url1 = mTestServer.getURL("/chrome/test/data/android/google.html");
         final String url2 = mTestServer.getURL("/chrome/test/data/android/about.html");
@@ -335,7 +320,7 @@ public class NavigateTest {
                     }
                 };
         Tab tab = mActivityTestRule.getActivity().getActivityTab();
-        TestThreadUtils.runOnUiThreadBlocking(() -> tab.addObserver(onPageLoadStartedObserver));
+        ThreadUtils.runOnUiThreadBlocking(() -> tab.addObserver(onPageLoadStartedObserver));
         DOMUtils.clickNode(tab.getWebContents(), "aboutLink");
         ChromeTabUtils.waitForTabPageLoaded(tab, url2);
         Assert.assertEquals(
@@ -345,11 +330,7 @@ public class NavigateTest {
                         mActivityTestRule.getActivity().getActivityTab()));
     }
 
-    /**
-     * Test re-direct functionality for a web-page.
-     *
-     * @throws Exception
-     */
+    /** Test re-direct functionality for a web-page. */
     @Test
     @MediumTest
     @Feature({"Navigation"})
@@ -443,7 +424,7 @@ public class NavigateTest {
 
     /** Test navigating back. */
     @Test
-    @Restriction(UiRestriction.RESTRICTION_TYPE_PHONE)
+    @Restriction(DeviceFormFactor.PHONE)
     @MediumTest
     @Feature({"Navigation"})
     public void testNavigateBack() throws Exception {
@@ -470,7 +451,7 @@ public class NavigateTest {
                     toolbarManager.getHandleBackPressChangedSupplier().get());
             Assert.assertTrue(
                     "Tab has been navigated back",
-                    TestThreadUtils.runOnUiThreadBlocking(toolbarManager::back));
+                    ThreadUtils.runOnUiThreadBlocking(toolbarManager::back));
             UiUtils.settleDownUI(InstrumentationRegistry.getInstrumentation());
         }
         Assert.assertEquals(
@@ -484,7 +465,7 @@ public class NavigateTest {
 
     /** Test back and forward buttons. */
     @Test
-    @Restriction(UiRestriction.RESTRICTION_TYPE_TABLET)
+    @Restriction(DeviceFormFactor.TABLET)
     @MediumTest
     @Feature({"Navigation"})
     public void testNavigateBackAndForwardButtons() throws Exception {
@@ -576,76 +557,6 @@ public class NavigateTest {
         onView(withId(R.id.back_button)).check(matches(Matchers.not(isEnabled())));
     }
 
-    /** Test back with tab switcher. */
-    @Test
-    @MediumTest
-    @Feature({"Navigation"})
-    @DisabledTest(message = "https://crbug.com/1410635")
-    @DisableFeatures({ChromeFeatureList.BACK_GESTURE_REFACTOR})
-    public void testNavigateBackWithTabSwitcher() throws Exception {
-        final String[] urls = {
-            mTestServer.getURL("/chrome/test/data/android/navigate/one.html"),
-            mTestServer.getURL("/chrome/test/data/android/navigate/two.html"),
-            mTestServer.getURL("/chrome/test/data/android/navigate/three.html")
-        };
-
-        for (String url : urls) {
-            navigateAndObserve(url);
-        }
-
-        String histogram = BackPressManager.getHistogramForTesting();
-
-        HistogramWatcher startSurfaceHistogram =
-                HistogramWatcher.newSingleRecordWatcher(
-                        histogram,
-                        BackPressManager.getHistogramValue(BackPressHandler.Type.START_SURFACE));
-        HistogramWatcher tabSwitcherHistogram =
-                HistogramWatcher.newSingleRecordWatcher(
-                        histogram,
-                        BackPressManager.getHistogramValue(BackPressHandler.Type.TAB_SWITCHER));
-
-        ChromeTabbedActivity cta = mActivityTestRule.getActivity();
-        TabUiTestHelper.enterTabSwitcher(cta);
-        Assert.assertTrue(cta.getLayoutManager().isLayoutVisible(LayoutType.TAB_SWITCHER));
-        TestThreadUtils.runOnUiThreadBlocking(
-                () -> {
-                    mActivityTestRule.getActivity().getOnBackPressedDispatcher().onBackPressed();
-                });
-        CriteriaHelper.pollInstrumentationThread(
-                () -> {
-                    int type =
-                            mActivityTestRule
-                                    .getActivity()
-                                    .getLayoutManager()
-                                    .getActiveLayoutType();
-                    Assert.assertEquals(LayoutType.BROWSING, type);
-                });
-
-        try {
-            startSurfaceHistogram.assertExpected();
-        } catch (AssertionError e) {
-            tabSwitcherHistogram.assertExpected(
-                    "Either start surface or tab switcher handles back press.");
-        }
-    }
-
-    /** Test back with tab switcher. */
-    @Test
-    @MediumTest
-    @Feature({"Navigation"})
-    @EnableFeatures({ChromeFeatureList.BACK_GESTURE_REFACTOR})
-    @DisabledTest(message = "https://crbug.com/1410635")
-    public void testNavigateBackWithTabSwitcher_BackPressRefactor() throws Exception {
-        // Disable iph
-        TestThreadUtils.runOnUiThreadBlocking(
-                () -> {
-                    BackPressManager backPressManager =
-                            mActivityTestRule.getActivity().getBackPressManagerForTesting();
-                    backPressManager.removeHandler(BackPressHandler.Type.TEXT_BUBBLE);
-                });
-        testNavigateBackWithTabSwitcher();
-    }
-
     @Test
     @DisableIf.Build(hardware_is = "sprout", message = "fails on android-one: crbug.com/540723")
     @MediumTest
@@ -664,7 +575,7 @@ public class NavigateTest {
                         final Tab tab = TabModelUtils.getCurrentTab(model);
 
                         // Make sure that we are showing the spoofed data and a blank URL.
-                        String url = getTabUrlOnUIThread(tab);
+                        String url = getTabUrlOnUiThread(tab);
                         boolean spoofedUrl = "".equals(url) || "about:blank".equals(url);
                         Assert.assertTrue("URL Spoofed", spoofedUrl);
                         Assert.assertEquals(
@@ -707,7 +618,7 @@ public class NavigateTest {
             mActivityTestRule.assertWaitForPageScaleFactorMatch(0.75f);
             CriteriaHelper.pollInstrumentationThread(
                     () -> {
-                        Criteria.checkThat(getTabUrlOnUIThread(tab), Matchers.is(mockedUrl));
+                        Criteria.checkThat(getTabUrlOnUiThread(tab), Matchers.is(mockedUrl));
                     },
                     5000,
                     50);
@@ -722,8 +633,6 @@ public class NavigateTest {
     /**
      * Test that if the browser launches a renderer initiated intent towards itself, the url load
      * will be renderer initiated and has the correct origin.
-     *
-     * @throws Exception
      */
     @Test
     @MediumTest
@@ -783,24 +692,18 @@ public class NavigateTest {
                             Origin origin = params.getInitiatorOrigin();
                             Assert.assertEquals(url.getHost(), origin.getHost());
                         } catch (Exception e) {
-                            Assert.fail("Cannot parse URL:" + finalUrl);
+                            throw new AssertionError("Cannot parse URL:" + finalUrl, e);
                         }
                     }
                 };
         Tab tab = mActivityTestRule.getActivity().getActivityTab();
-        TestThreadUtils.runOnUiThreadBlocking(() -> tab.addObserver(onPageLoadStartedObserver));
+        ThreadUtils.runOnUiThreadBlocking(() -> tab.addObserver(onPageLoadStartedObserver));
         DOMUtils.clickNode(tab.getWebContents(), "rendererInitiated");
         ChromeTabUtils.waitForTabPageLoaded(tab, finalUrl);
     }
 
-    private String getTabUrlOnUIThread(final Tab tab) {
-        try {
-            return TestThreadUtils.runOnUiThreadBlocking(
-                    () -> ChromeTabUtils.getUrlStringOnUiThread(tab));
-        } catch (ExecutionException ex) {
-            assert false : "Unexpected ExecutionException";
-        }
-        return null;
+    private String getTabUrlOnUiThread(final Tab tab) {
+        return ThreadUtils.runOnUiThreadBlocking(() -> ChromeTabUtils.getUrlStringOnUiThread(tab));
     }
 
     private String getTabBodyText(Tab tab) {

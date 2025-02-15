@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/342213636): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "content/renderer/renderer_blink_platform_impl.h"
 
 #include <algorithm>
@@ -35,10 +40,11 @@
 #include "base/time/time_delta_from_string.h"
 #include "build/build_config.h"
 #include "cc/trees/raster_context_provider_wrapper.h"
+#include "components/content_settings/core/common/content_settings_pattern.h"
+#include "components/input/input_constants.h"
 #include "components/url_formatter/url_formatter.h"
 #include "components/viz/common/features.h"
 #include "content/child/child_process.h"
-#include "content/common/content_constants_internal.h"
 #include "content/common/features.h"
 #include "content/common/user_level_memory_pressure_signal_features.h"
 #include "content/public/common/content_features.h"
@@ -78,6 +84,7 @@
 #include "media/webrtc/webrtc_features.h"
 #include "mojo/public/cpp/base/big_buffer.h"
 #include "mojo/public/cpp/system/platform_handle.h"
+#include "net/base/schemeful_site.h"
 #include "ppapi/buildflags/buildflags.h"
 #include "services/network/public/cpp/features.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
@@ -90,6 +97,7 @@
 #include "third_party/blink/public/common/security/protocol_handler_security_level.h"
 #include "third_party/blink/public/common/thread_safe_browser_interface_broker_proxy.h"
 #include "third_party/blink/public/mojom/indexeddb/indexeddb.mojom.h"
+#include "third_party/blink/public/mojom/peerconnection/webrtc_ip_handling_policy.mojom.h"
 #include "third_party/blink/public/mojom/service_worker/service_worker_provider.mojom.h"
 #include "third_party/blink/public/platform/file_path_conversion.h"
 #include "third_party/blink/public/platform/modules/video_capture/web_video_capture_impl_manager.h"
@@ -102,7 +110,6 @@
 #include "third_party/blink/public/platform/web_url.h"
 #include "third_party/blink/public/platform/web_url_request.h"
 #include "third_party/blink/public/platform/web_v8_value_converter.h"
-#include "third_party/blink/public/platform/web_vector.h"
 #include "third_party/blink/public/web/modules/media/audio/audio_device_factory.h"
 #include "third_party/blink/public/web/web_local_frame.h"
 #include "third_party/blink/public/web/web_media_inspector.h"
@@ -112,6 +119,13 @@
 #include "ui/gl/buildflags.h"
 #include "url/gurl.h"
 #include "url/origin.h"
+
+#if BUILDFLAG(IS_WIN)
+#include "content/child/child_process_sandbox_support_impl_win.h"
+#include "content/renderer/font_data/font_data_manager.h"
+#include "skia/ext/font_utils.h"
+#include "third_party/blink/public/web/win/web_font_rendering.h"
+#endif
 
 #if BUILDFLAG(IS_MAC)
 #include "content/child/child_process_sandbox_support_impl_mac.h"
@@ -135,7 +149,6 @@ using blink::WebAudioSinkDescriptor;
 using blink::WebMediaStreamTrack;
 using blink::WebString;
 using blink::WebURL;
-using blink::WebVector;
 
 namespace content {
 
@@ -168,8 +181,7 @@ gpu::ContextType ToGpuContextType(blink::Platform::ContextType type) {
     case blink::Platform::kWebGPUContextType:
       return gpu::CONTEXT_TYPE_WEBGPU;
   }
-  NOTREACHED_IN_MIGRATION();
-  return gpu::CONTEXT_TYPE_OPENGLES2;
+  NOTREACHED();
 }
 
 }  // namespace
@@ -198,12 +210,30 @@ RendererBlinkPlatformImpl::RendererBlinkPlatformImpl(
     font_loader = sk_make_sp<font_service::FontLoader>(std::move(font_service));
     SkFontConfigInterface::SetGlobal(font_loader);
 #endif
+
+#if BUILDFLAG(IS_WIN)
+    // Create a FontDataManager if it's enabled, and if we're not in a
+    // single-process environment. In single process, the SkFontMgr is already
+    // installed by browser process code at this point.
+    if (base::FeatureList::IsEnabled(
+            features::kFontDataServiceAllWebContents) &&
+        sandboxEnabled()) {
+      sk_sp<font_data_service::FontDataManager> font_data_manager =
+          sk_make_sp<font_data_service::FontDataManager>();
+
+      blink::WebFontRendering::SetSkiaFontManager(font_data_manager);
+      skia::OverrideDefaultSkFontMgr(font_data_manager);
+    }
+#endif
   }
 
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_MAC)
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_MAC) || \
+    BUILDFLAG(IS_WIN)
   if (sandboxEnabled()) {
 #if BUILDFLAG(IS_MAC)
     sandbox_support_ = std::make_unique<WebSandboxSupportMac>();
+#elif BUILDFLAG(IS_WIN)
+    sandbox_support_ = std::make_unique<WebSandboxSupportWin>();
 #else
     sandbox_support_ = std::make_unique<WebSandboxSupportLinux>(font_loader);
 #endif
@@ -261,7 +291,8 @@ void RendererBlinkPlatformImpl::SetThreadType(base::PlatformThreadId thread_id,
 #endif
 
 blink::WebSandboxSupport* RendererBlinkPlatformImpl::GetSandboxSupport() {
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_MAC)
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_MAC) || \
+    BUILDFLAG(IS_WIN)
   return sandbox_support_.get();
 #else
   // These platforms do not require sandbox support.
@@ -284,6 +315,14 @@ bool RendererBlinkPlatformImpl::sandboxEnabled() {
 uint64_t RendererBlinkPlatformImpl::VisitedLinkHash(
     std::string_view canonical_url) {
   return GetContentClient()->renderer()->VisitedLinkHash(canonical_url);
+}
+
+uint64_t RendererBlinkPlatformImpl::PartitionedVisitedLinkFingerprint(
+    std::string_view canonical_link_url,
+    const net::SchemefulSite& top_level_site,
+    const blink::WebSecurityOrigin& frame_origin) {
+  return GetContentClient()->renderer()->PartitionedVisitedLinkFingerprint(
+      canonical_link_url, top_level_site, frame_origin);
 }
 
 bool RendererBlinkPlatformImpl::IsLinkVisited(uint64_t link_hash) {
@@ -338,6 +377,12 @@ RendererBlinkPlatformImpl::CreateWebSocketHandshakeThrottleProvider() {
   return GetContentClient()
       ->renderer()
       ->CreateWebSocketHandshakeThrottleProvider();
+}
+
+bool RendererBlinkPlatformImpl::ShouldUseCodeCacheWithHashing(
+    const blink::WebURL& request_url) const {
+  return GetContentClient()->renderer()->ShouldUseCodeCacheWithHashing(
+      request_url);
 }
 
 bool RendererBlinkPlatformImpl::IsolateStartsInBackground() {
@@ -456,7 +501,7 @@ unsigned RendererBlinkPlatformImpl::AudioHardwareOutputChannels() {
 }
 
 base::TimeDelta RendererBlinkPlatformImpl::GetHungRendererDelay() {
-  return kHungRendererDelay;
+  return input::kHungRendererDelay;
 }
 
 std::unique_ptr<WebAudioDevice> RendererBlinkPlatformImpl::CreateAudioDevice(
@@ -496,6 +541,10 @@ RendererBlinkPlatformImpl::SharedCompositorWorkerContextProvider(
     cc::RasterDarkModeFilter* dark_mode_filter) {
   return RenderThreadImpl::current()->SharedCompositorWorkerContextProvider(
       dark_mode_filter);
+}
+
+bool RendererBlinkPlatformImpl::IsGpuRemoteDisconnected() {
+  return RenderThreadImpl::current()->IsGpuRemoteDisconnected();
 }
 
 scoped_refptr<gpu::GpuChannelHost>
@@ -572,7 +621,7 @@ media::MediaPermission* RendererBlinkPlatformImpl::GetWebRTCMediaPermission(
 
 void RendererBlinkPlatformImpl::GetWebRTCRendererPreferences(
     blink::WebLocalFrame* web_frame,
-    blink::WebString* ip_handling_policy,
+    blink::mojom::WebRtcIpHandlingPolicy* ip_handling_policy,
     uint16_t* udp_min_port,
     uint16_t* udp_max_port,
     bool* allow_mdns_obfuscation) {
@@ -585,13 +634,24 @@ void RendererBlinkPlatformImpl::GetWebRTCRendererPreferences(
   if (!render_frame)
     return;
 
-  *ip_handling_policy = blink::WebString::FromUTF8(
-      render_frame->GetRendererPreferences().webrtc_ip_handling_policy);
+  GURL gurl = url::Origin(web_frame->Top()->GetSecurityOrigin()).GetURL();
+
+  *ip_handling_policy =
+      render_frame->GetRendererPreferences().webrtc_ip_handling_policy;
+  std::vector<blink::WebRtcIpHandlingUrlEntry> ip_handling_urls =
+      render_frame->GetRendererPreferences().webrtc_ip_handling_urls;
+  for (const auto& per_url_entry : ip_handling_urls) {
+    if (per_url_entry.url_pattern.Matches(gurl)) {
+      *ip_handling_policy = per_url_entry.handling;
+      break;
+    }
+  }
+
   *udp_min_port = render_frame->GetRendererPreferences().webrtc_udp_min_port;
   *udp_max_port = render_frame->GetRendererPreferences().webrtc_udp_max_port;
+  const std::string url(web_frame->GetSecurityOrigin().ToString().Utf8());
   const std::vector<std::string>& allowed_urls =
       render_frame->GetRendererPreferences().webrtc_local_ips_allowed_urls;
-  const std::string url(web_frame->GetSecurityOrigin().ToString().Utf8());
   for (const auto& allowed_url : allowed_urls) {
     if (base::MatchPattern(url, allowed_url)) {
       *allow_mdns_obfuscation = false;
@@ -607,11 +667,6 @@ bool RendererBlinkPlatformImpl::IsWebRtcHWEncodingEnabled() {
 
 bool RendererBlinkPlatformImpl::IsWebRtcHWDecodingEnabled() {
   return base::FeatureList::IsEnabled(::features::kWebRtcHWDecoding);
-}
-
-bool RendererBlinkPlatformImpl::IsWebRtcSrtpEncryptedHeadersEnabled() {
-  return base::CommandLine::ForCurrentProcess()->HasSwitch(
-      switches::kEnableWebRtcSrtpEncryptedHeaders);
 }
 
 bool RendererBlinkPlatformImpl::AllowsLoopbackInPeerConnection() {
@@ -696,9 +751,8 @@ RendererBlinkPlatformImpl::CreateOffscreenGraphicsContext3DProvider(
   return std::make_unique<WebGraphicsContext3DProviderImpl>(
       base::MakeRefCounted<viz::ContextProviderCommandBuffer>(
           std::move(gpu_channel_host), kGpuStreamIdDefault,
-          kGpuStreamPriorityDefault, gpu::kNullSurfaceHandle,
-          GURL(document_url), automatic_flushes, support_locking,
-          gpu::SharedMemoryLimits(), attributes,
+          kGpuStreamPriorityDefault, GURL(document_url), automatic_flushes,
+          support_locking, gpu::SharedMemoryLimits(), attributes,
           viz::command_buffer_metrics::ContextType::WEBGL));
 }
 
@@ -755,10 +809,10 @@ CreateWebGPUGraphicsContext3DImpl(
   return std::make_unique<WebGraphicsContext3DProviderImpl>(
       base::MakeRefCounted<viz::ContextProviderCommandBuffer>(
           std::move(gpu_channel_host), kGpuStreamIdDefault,
-          kGpuStreamPriorityDefault, gpu::kNullSurfaceHandle,
-          GURL(document_url), automatic_flushes, support_locking,
-          gpu::SharedMemoryLimits::ForWebGPUContext(), attributes,
-          viz::command_buffer_metrics::ContextType::WEBGPU, buffer_mapper));
+          kGpuStreamPriorityDefault, GURL(document_url), automatic_flushes,
+          support_locking, gpu::SharedMemoryLimits::ForWebGPUContext(),
+          attributes, viz::command_buffer_metrics::ContextType::WEBGPU,
+          buffer_mapper));
 }
 
 std::unique_ptr<blink::WebGraphicsContext3DProvider>
@@ -959,6 +1013,7 @@ base::WeakPtr<media::DecoderFactory>
 RendererBlinkPlatformImpl::GetMediaDecoderFactory() {
   blink::WebLocalFrame* const web_frame =
       blink::WebLocalFrame::FrameForCurrentContext();
+  CHECK(web_frame);
   RenderFrameImpl* render_frame = RenderFrameImpl::FromWebFrame(web_frame);
   return render_frame->GetMediaDecoderFactory();
 }
@@ -1000,16 +1055,27 @@ RendererBlinkPlatformImpl::CreateWebV8ValueConverter() {
   return std::make_unique<V8ValueConverterImpl>();
 }
 
+bool RendererBlinkPlatformImpl::DisallowV8FeatureFlagOverrides() const {
+  return base::CommandLine::ForCurrentProcess()->HasSwitch(
+      switches::kDisallowV8FeatureFlagOverrides);
+}
+
 void RendererBlinkPlatformImpl::AppendContentSecurityPolicy(
     const blink::WebURL& url,
-    blink::WebVector<blink::WebContentSecurityPolicyHeader>* csp) {
+    std::vector<blink::WebContentSecurityPolicyHeader>* csp) {
   GetContentClient()->renderer()->AppendContentSecurityPolicy(url, csp);
+}
+
+bool RendererBlinkPlatformImpl::IsFilePickerAllowedForCrossOriginSubframe(
+    const blink::WebSecurityOrigin& origin) {
+  return GetContentClient()->IsFilePickerAllowedForCrossOriginSubframe(origin);
 }
 
 base::PlatformThreadId RendererBlinkPlatformImpl::GetIOThreadId() const {
   auto io_task_runner = GetIOTaskRunner();
-  if (!io_task_runner)
+  if (!io_task_runner) {
     return base::kInvalidThreadId;
+  }
   // Cannot be called from IO thread due to potential deadlock.
   CHECK(!io_task_runner->BelongsToCurrentThread());
   {
@@ -1031,7 +1097,7 @@ RendererBlinkPlatformImpl::VideoFrameCompositorTaskRunner() {
       video_frame_compositor_thread_ =
           std::make_unique<base::Thread>("VideoFrameCompositor");
       video_frame_compositor_thread_->StartWithOptions(
-          base::Thread::Options(base::ThreadType::kCompositing));
+          base::Thread::Options(base::ThreadType::kDisplayCritical));
     }
 
     return video_frame_compositor_thread_->task_runner();

@@ -4,7 +4,6 @@
 
 #include "third_party/blink/renderer/bindings/core/v8/serialization/v8_script_value_serializer.h"
 
-#include "base/auto_reset.h"
 #include "base/feature_list.h"
 #include "base/numerics/byte_conversions.h"
 #include "third_party/blink/public/mojom/use_counter/metrics/web_feature.mojom-blink.h"
@@ -224,8 +223,6 @@ scoped_refptr<SerializedScriptValue> V8ScriptValueSerializer::Serialize(
   serialize_invoked_ = true;
 #endif
   DCHECK(serialized_script_value_);
-  base::AutoReset<const ExceptionState*> reset(&exception_state_,
-                                               &exception_state);
 
   // Prepare to transfer the provided transferables.
   PrepareTransfer(exception_state);
@@ -250,15 +247,14 @@ scoped_refptr<SerializedScriptValue> V8ScriptValueSerializer::Serialize(
 
   // Serialize the value and handle errors.
   v8::Isolate* isolate = script_state_->GetIsolate();
-  v8::TryCatch try_catch(isolate);
+  TryRethrowScope rethrow_scope(isolate, exception_state);
   v8::MicrotasksScope microtasks_scope(
       isolate, ToMicrotaskQueue(script_state_),
       v8::MicrotasksScope::kDoNotRunMicrotasks);
   bool wrote_value;
   if (!serializer_.WriteValue(script_state_->GetContext(), value)
            .To(&wrote_value)) {
-    DCHECK(try_catch.HasCaught());
-    exception_state.RethrowV8Exception(try_catch.Exception());
+    DCHECK(rethrow_scope.HasCaught());
     return nullptr;
   }
   DCHECK(wrote_value);
@@ -300,11 +296,10 @@ scoped_refptr<SerializedScriptValue> V8ScriptValueSerializer::Serialize(
   if (!trailer.empty()) {
     buffer.as_span()
         .subspan<kTrailerOffsetPosition, sizeof(uint64_t)>()
-        .copy_from(
-            base::numerics::U64ToBigEndian(buffer.size() - trailer.size()));
+        .copy_from(base::U64ToBigEndian(buffer.size() - trailer.size()));
     buffer.as_span()
         .subspan<kTrailerOffsetPosition + sizeof(uint64_t), sizeof(uint32_t)>()
-        .copy_from(base::numerics::U32ToBigEndian(trailer.size()));
+        .copy_from(base::U32ToBigEndian(trailer.size()));
   }
   serialized_script_value_->SetData(std::move(buffer));
   return std::move(serialized_script_value_);
@@ -401,9 +396,7 @@ void V8ScriptValueSerializer::WriteUnguessableToken(
   WriteUint64(token.GetLowForSerialization());
 }
 
-void V8ScriptValueSerializer::WriteUTF8String(const String& string) {
-  // TODO(jbroman): Ideally this method would take a WTF::StringView, but the
-  // StringUTF8Adaptor trick doesn't yet work with StringView.
+void V8ScriptValueSerializer::WriteUTF8String(const StringView& string) {
   StringUTF8Adaptor utf8(string);
   WriteUint32(utf8.size());
   WriteRawBytes(utf8.data(), utf8.size());
@@ -413,8 +406,6 @@ bool V8ScriptValueSerializer::WriteDOMObject(ScriptWrappable* wrappable,
                                              ExceptionState& exception_state) {
   ScriptWrappable::TypeDispatcher dispatcher(wrappable);
   if (auto* blob = dispatcher.ToMostDerived<Blob>()) {
-    serialized_script_value_->BlobDataHandles().Set(blob->Uuid(),
-                                                    blob->GetBlobDataHandle());
     if (blob_info_array_) {
       size_t index = blob_info_array_->size();
       DCHECK_LE(index, std::numeric_limits<uint32_t>::max());
@@ -423,6 +414,8 @@ bool V8ScriptValueSerializer::WriteDOMObject(ScriptWrappable* wrappable,
       WriteAndRequireInterfaceTag(kBlobIndexTag);
       WriteUint32(static_cast<uint32_t>(index));
     } else {
+      serialized_script_value_->BlobDataHandles().Set(
+          blob->Uuid(), blob->GetBlobDataHandle());
       WriteAndRequireInterfaceTag(kBlobTag);
       WriteUTF8String(blob->Uuid());
       WriteUTF8String(blob->type());
@@ -712,15 +705,15 @@ bool V8ScriptValueSerializer::WriteDOMObject(ScriptWrappable* wrappable,
           "because it had a rendering context.");
       return false;
     }
+    SerializedTextDirectionSettings serialized_direction(
+        canvas->GetTextDirection(nullptr));
     WriteAndRequireInterfaceTag(kOffscreenCanvasTransferTag);
     WriteUint32(canvas->width());
     WriteUint32(canvas->height());
+    WriteUint32Enum(serialized_direction.GetSerializedTextDirection());
     WriteUint64(canvas->PlaceholderCanvasId());
     WriteUint32(canvas->ClientId());
     WriteUint32(canvas->SinkId());
-    WriteUint32(canvas->FilterQuality() == cc::PaintFlags::FilterQuality::kNone
-                    ? 0
-                    : 1);
     return true;
   }
   if (auto* stream = dispatcher.ToMostDerived<ReadableStream>()) {
@@ -820,17 +813,10 @@ bool V8ScriptValueSerializer::WriteDOMObject(ScriptWrappable* wrappable,
     WriteAndRequireInterfaceTag(kFencedFrameConfigTag);
 
     WriteUTF8String(
-        config
-            ->GetValueIgnoringVisibility<FencedFrameConfig::Attribute::kURL>());
-    WriteUint32(config->GetValueIgnoringVisibility<
-                FencedFrameConfig::Attribute::kWidth>());
-    WriteUint32(config->GetValueIgnoringVisibility<
-                FencedFrameConfig::Attribute::kHeight>());
+        config->GetValueIgnoringVisibility<FencedFrameConfig::Attribute::kURL>()
+            .GetString());
     WriteUint32(static_cast<uint32_t>(
         config->GetAttributeVisibility<FencedFrameConfig::Attribute::kURL>(
-            PassKey())));
-    WriteUint32(static_cast<uint32_t>(
-        config->GetAttributeVisibility<FencedFrameConfig::Attribute::kWidth>(
             PassKey())));
     WriteUint32(config->deprecated_should_freeze_initial_size(PassKey()));
     std::optional<KURL> urn_uuid = config->urn_uuid(PassKey());
@@ -865,8 +851,6 @@ bool V8ScriptValueSerializer::WriteDOMObject(ScriptWrappable* wrappable,
 
 bool V8ScriptValueSerializer::WriteFile(File* file,
                                         ExceptionState& exception_state) {
-  serialized_script_value_->BlobDataHandles().Set(file->Uuid(),
-                                                  file->GetBlobDataHandle());
   if (blob_info_array_) {
     size_t index = blob_info_array_->size();
     DCHECK_LE(index, std::numeric_limits<uint32_t>::max());
@@ -875,6 +859,8 @@ bool V8ScriptValueSerializer::WriteFile(File* file,
         file->LastModifiedTimeForSerialization(), file->size());
     WriteUint32(static_cast<uint32_t>(index));
   } else {
+    serialized_script_value_->BlobDataHandles().Set(file->Uuid(),
+                                                    file->GetBlobDataHandle());
     WriteUTF8String(file->HasBackingFile() ? file->GetPath() : g_empty_string);
     WriteUTF8String(file->name());
     WriteUTF8String(file->webkitRelativePath());
@@ -897,11 +883,8 @@ bool V8ScriptValueSerializer::WriteFile(File* file,
 
 void V8ScriptValueSerializer::ThrowDataCloneError(
     v8::Local<v8::String> v8_message) {
-  DCHECK(exception_state_);
-  ExceptionState exception_state(script_state_->GetIsolate(),
-                                 exception_state_->GetContext());
-  exception_state.ThrowDOMException(
-      DOMExceptionCode::kDataCloneError,
+  V8ThrowDOMException::Throw(
+      script_state_->GetIsolate(), DOMExceptionCode::kDataCloneError,
       ToBlinkString<String>(script_state_->GetIsolate(), v8_message,
                             kDoNotExternalize));
 }
@@ -917,9 +900,8 @@ v8::Maybe<bool> V8ScriptValueSerializer::IsHostObject(
 v8::Maybe<bool> V8ScriptValueSerializer::WriteHostObject(
     v8::Isolate* isolate,
     v8::Local<v8::Object> object) {
-  DCHECK(exception_state_);
   DCHECK_EQ(isolate, script_state_->GetIsolate());
-  ExceptionState exception_state(isolate, exception_state_->GetContext());
+  ExceptionState exception_state(isolate);
 
   if (!V8DOMWrapper::IsWrapper(isolate, object)) {
     exception_state.ThrowDOMException(DOMExceptionCode::kDataCloneError,
@@ -948,7 +930,7 @@ namespace {
 DOMSharedArrayBuffer* ToSharedArrayBuffer(v8::Isolate* isolate,
                                           v8::Local<v8::Value> value,
                                           ExceptionState& exception_state) {
-  if (UNLIKELY(!value->IsSharedArrayBuffer())) {
+  if (!value->IsSharedArrayBuffer()) [[unlikely]] {
     exception_state.ThrowTypeError(
         ExceptionMessages::FailedToConvertJSValue("SharedArrayBuffer"));
     return nullptr;
@@ -978,10 +960,9 @@ DOMSharedArrayBuffer* ToSharedArrayBuffer(v8::Isolate* isolate,
 v8::Maybe<uint32_t> V8ScriptValueSerializer::GetSharedArrayBufferId(
     v8::Isolate* isolate,
     v8::Local<v8::SharedArrayBuffer> v8_shared_array_buffer) {
-  DCHECK(exception_state_);
   DCHECK_EQ(isolate, script_state_->GetIsolate());
 
-  ExceptionState exception_state(isolate, exception_state_->GetContext());
+  ExceptionState exception_state(isolate);
 
   if (for_storage_) {
     exception_state.ThrowDOMException(
@@ -1018,11 +999,8 @@ v8::Maybe<uint32_t> V8ScriptValueSerializer::GetWasmModuleTransferId(
     v8::Isolate* isolate,
     v8::Local<v8::WasmModuleObject> module) {
   if (for_storage_) {
-    DCHECK(exception_state_);
-    DCHECK_EQ(isolate, script_state_->GetIsolate());
-    ExceptionState exception_state(isolate, exception_state_->GetContext());
-    exception_state.ThrowDOMException(
-        DOMExceptionCode::kDataCloneError,
+    V8ThrowDOMException::Throw(
+        isolate, DOMExceptionCode::kDataCloneError,
         "A WebAssembly.Module can not be serialized for storage.");
     return v8::Nothing<uint32_t>();
   }
@@ -1034,10 +1012,9 @@ v8::Maybe<uint32_t> V8ScriptValueSerializer::GetWasmModuleTransferId(
     case Options::kBlockedInNonSecureContext: {
       // This happens, currently, when we try to serialize to IndexedDB
       // in an non-secure context.
-      ExceptionState exception_state(isolate, exception_state_->GetContext());
-      exception_state.ThrowDOMException(DOMExceptionCode::kDataCloneError,
-                                        "Serializing WebAssembly modules in "
-                                        "non-secure contexts is not allowed.");
+      V8ThrowDOMException::Throw(isolate, DOMExceptionCode::kDataCloneError,
+                                 "Serializing WebAssembly modules in "
+                                 "non-secure contexts is not allowed.");
       return v8::Nothing<uint32_t>();
     }
 
@@ -1054,7 +1031,7 @@ v8::Maybe<uint32_t> V8ScriptValueSerializer::GetWasmModuleTransferId(
     }
 
     case Options::kUnspecified:
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
   }
   return v8::Nothing<uint32_t>();
 }
@@ -1076,11 +1053,8 @@ bool V8ScriptValueSerializer::AdoptSharedValueConveyor(
     v8::SharedValueConveyor&& conveyor) {
   auto* execution_context = ExecutionContext::From(script_state_);
   if (for_storage_ || !execution_context->SharedArrayBufferTransferAllowed()) {
-    DCHECK(exception_state_);
-    ExceptionState exception_state(script_state_->GetIsolate(),
-                                   exception_state_->GetContext());
-    exception_state.ThrowDOMException(
-        DOMExceptionCode::kDataCloneError,
+    V8ThrowDOMException::Throw(
+        isolate, DOMExceptionCode::kDataCloneError,
         for_storage_
             ? "A shared JS value cannot be serialized for storage."
             : "Shared JS value conveyance requires self.crossOriginIsolated.");

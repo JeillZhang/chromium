@@ -80,7 +80,9 @@ class CheckboxMenuOptionGroup : public CheckboxGroup {
                       0,
                       kMenuItemInnerPadding,
                       kCheckmarkLabelSpacing) {
-    GetViewAccessibility().SetProperties(ax::mojom::Role::kListBox);
+    GetViewAccessibility().SetRole(ax::mojom::Role::kListBox);
+    GetViewAccessibility().SetName(
+        std::string(), ax::mojom::NameFrom::kAttributeExplicitlyEmpty);
   }
 
   // CheckboxGroup:
@@ -92,11 +94,6 @@ class CheckboxMenuOptionGroup : public CheckboxGroup {
     button->set_delegate(this);
     buttons_.push_back(button);
     return button;
-  }
-
-  void GetAccessibleNodeData(ui::AXNodeData* node_data) override {
-    CheckboxGroup::GetAccessibleNodeData(node_data);
-    node_data->SetNameExplicitlyEmpty();
   }
 };
 
@@ -234,14 +231,14 @@ class DropDownCheckbox::EventHandler : public ui::EventHandler {
         drop_down_checkbox_->menu_->GetWindowBoundsInScreen().Contains(
             event_location);
     switch (event->type()) {
-      case ui::ET_MOUSEWHEEL:
+      case ui::EventType::kMousewheel:
         // Close menu if scrolling outside menu.
         if (!event_in_menu) {
           drop_down_checkbox_->CloseDropDownMenu();
         }
         break;
-      case ui::ET_MOUSE_PRESSED:
-      case ui::ET_TOUCH_PRESSED:
+      case ui::EventType::kMousePressed:
+      case ui::EventType::kTouchPressed:
         // Close menu if pressing outside menu and label button.
         if (!event_in_menu && !event_in_drop_down_checkbox) {
           event->StopPropagation();
@@ -304,7 +301,7 @@ DropDownCheckbox::DropDownCheckbox(const std::u16string& title,
 
   event_handler_ = std::make_unique<EventHandler>(this);
 
-  GetViewAccessibility().SetProperties(ax::mojom::Role::kPopUpButton);
+  GetViewAccessibility().SetRole(ax::mojom::Role::kPopUpButton);
 }
 
 DropDownCheckbox::~DropDownCheckbox() = default;
@@ -330,9 +327,8 @@ bool DropDownCheckbox::IsMenuRunning() const {
 }
 
 void DropDownCheckbox::SetCallback(PressedCallback callback) {
-  NOTREACHED_IN_MIGRATION()
-      << "Clients shouldn't modify this. Maybe you want to use "
-         "SetSelectedAction?";
+  NOTREACHED() << "Clients shouldn't modify this. Maybe you want to use "
+                  "SetSelectedAction?";
 }
 
 void DropDownCheckbox::OnBoundsChanged(const gfx::Rect& previous_bounds) {
@@ -463,7 +459,7 @@ void DropDownCheckbox::ShowDropDownMenu() {
       kDropDownArrowIcon, kActiveTitleAndIconColorId, kArrowIconSize));
 
   RequestFocus();
-  NotifyAccessibilityEvent(ax::mojom::Event::kStateChanged, true);
+  NotifyAccessibilityEventDeprecated(ax::mojom::Event::kStateChanged, true);
 }
 
 void DropDownCheckbox::CloseDropDownMenu() {
@@ -475,7 +471,7 @@ void DropDownCheckbox::CloseDropDownMenu() {
   title_->SetEnabledColorId(kInactiveTitleAndIconColorId);
   drop_down_arrow_->SetImage(ui::ImageModel::FromVectorIcon(
       kDropDownArrowIcon, kInactiveTitleAndIconColorId, kArrowIconSize));
-  NotifyAccessibilityEvent(ax::mojom::Event::kStateChanged, true);
+  NotifyAccessibilityEventDeprecated(ax::mojom::Event::kStateChanged, true);
   OnPerformAction();
 }
 

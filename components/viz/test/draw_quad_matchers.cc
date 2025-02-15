@@ -33,8 +33,6 @@ const char* MaterialToString(DrawQuad::Material material) {
       return "kTextureContent";
     case DrawQuad::Material::kTiledContent:
       return "kTiledContent";
-    case DrawQuad::Material::kYuvVideoContent:
-      return "kYuvVideoContent";
     case DrawQuad::Material::kVideoHole:
       return "kVideoHole";
   }
@@ -77,10 +75,6 @@ testing::Matcher<const DrawQuad*> IsSolidColorQuad(SkColor4f expected_color) {
 
 testing::Matcher<const DrawQuad*> IsTextureQuad() {
   return IsQuadType(DrawQuad::Material::kTextureContent);
-}
-
-testing::Matcher<const DrawQuad*> IsYuvVideoQuad() {
-  return IsQuadType(DrawQuad::Material::kYuvVideoContent);
 }
 
 testing::Matcher<const DrawQuad*> IsSurfaceQuad() {
@@ -127,6 +121,12 @@ testing::Matcher<const DrawQuad*> AreContentsOpaque(bool opaque) {
   return HasSharedQuadState(testing::Field(
       "are_contents_opaque", &SharedQuadState::are_contents_opaque,
       testing::Eq(opaque)));
+}
+
+testing::Matcher<const DrawQuad*> HasClipRect(
+    std::optional<gfx::Rect> clip_rect) {
+  return HasSharedQuadState(testing::Field(
+      "clip_rect", &SharedQuadState::clip_rect, testing::Eq(clip_rect)));
 }
 
 testing::Matcher<const DrawQuad*> HasOffsetTag(OffsetTag offset_tag) {

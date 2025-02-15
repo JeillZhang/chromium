@@ -10,7 +10,6 @@
 
 #include "base/functional/bind.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/commerce/shopping_service_factory.h"
 #include "chrome/browser/feature_engagement/tracker_factory.h"
@@ -22,6 +21,8 @@
 #include "chrome/browser/ui/browser_element_identifiers.h"
 #include "chrome/browser/ui/commerce/mock_commerce_ui_tab_helper.h"
 #include "chrome/browser/ui/signin/bubble_signin_promo_delegate.h"
+#include "chrome/browser/ui/tabs/public/tab_features.h"
+#include "chrome/browser/ui/tabs/public/tab_interface.h"
 #include "chrome/browser/ui/views/commerce/price_tracking_view.h"
 #include "chrome/browser/ui/views/commerce/shopping_collection_iph_view.h"
 #include "chrome/test/base/browser_with_test_window_test.h"
@@ -35,20 +36,23 @@
 #include "components/feature_engagement/public/feature_constants.h"
 #include "components/feature_engagement/test/mock_tracker.h"
 #include "components/signin/public/identity_manager/identity_test_utils.h"
+#include "components/sync/base/features.h"
 #include "components/sync/test/test_sync_service.h"
 #include "components/ukm/test_ukm_recorder.h"
 #include "services/metrics/public/cpp/ukm_builders.h"
 #include "ui/base/interaction/element_identifier.h"
 #include "ui/base/interaction/element_tracker.h"
 #include "ui/views/bubble/bubble_dialog_delegate_view.h"
+#include "ui/views/controls/combobox/combobox.h"
 #include "ui/views/interaction/element_tracker_views.h"
 #include "ui/views/test/widget_test.h"
 #include "ui/views/widget/unique_widget_ptr.h"
+
 using bookmarks::BookmarkModel;
 
 namespace {
 const char kTestBookmarkURL[] = "http://www.google.com";
-} // namespace
+}  // namespace
 
 class BookmarkBubbleViewTestBase : public BrowserWithTestWindowTest {
  public:
@@ -100,26 +104,28 @@ class BookmarkBubbleViewTestBase : public BrowserWithTestWindowTest {
   }
 
   TestingProfile::TestingFactories GetTestingFactories() override {
-    TestingProfile::TestingFactories factories = {
-        {BookmarkModelFactory::GetInstance(),
-         BookmarkModelFactory::GetDefaultFactory()},
-        {commerce::ShoppingServiceFactory::GetInstance(),
-         base::BindRepeating([](content::BrowserContext* context) {
-           return commerce::MockShoppingService::Build();
-         })},
-        // Used by IdentityTestEnvironmentProfileAdaptor.
-        {ChromeSigninClientFactory::GetInstance(),
-         base::BindRepeating(&BuildChromeSigninClientWithURLLoader,
-                             test_url_loader_factory())},
-        // Used by ImageService.
-        {SyncServiceFactory::GetInstance(),
-         base::BindRepeating([](content::BrowserContext*) {
-           return static_cast<std::unique_ptr<KeyedService>>(
-               std::make_unique<syncer::TestSyncService>());
-         })}};
-    IdentityTestEnvironmentProfileAdaptor::
-        AppendIdentityTestEnvironmentFactories(&factories);
-    return factories;
+    return IdentityTestEnvironmentProfileAdaptor::
+        GetIdentityTestEnvironmentFactoriesWithAppendedFactories(
+            {TestingProfile::TestingFactory{
+                 BookmarkModelFactory::GetInstance(),
+                 BookmarkModelFactory::GetDefaultFactory()},
+             TestingProfile::TestingFactory{
+                 commerce::ShoppingServiceFactory::GetInstance(),
+                 base::BindRepeating([](content::BrowserContext* context) {
+                   return commerce::MockShoppingService::Build();
+                 })},
+             // Used by IdentityTestEnvironmentProfileAdaptor.
+             TestingProfile::TestingFactory{
+                 ChromeSigninClientFactory::GetInstance(),
+                 base::BindRepeating(&BuildChromeSigninClientWithURLLoader,
+                                     test_url_loader_factory())},
+             // Used by ImageService.
+             TestingProfile::TestingFactory{
+                 SyncServiceFactory::GetInstance(),
+                 base::BindRepeating([](content::BrowserContext*) {
+                   return static_cast<std::unique_ptr<KeyedService>>(
+                       std::make_unique<syncer::TestSyncService>());
+                 })}});
   }
 
   BookmarkModel* GetBookmarkModel() { return bookmark_model_; }
@@ -136,14 +142,17 @@ class BookmarkBubbleViewTestBase : public BrowserWithTestWindowTest {
 
   const bookmarks::BookmarkNode* GetBookmark() { return bookmark_node_; }
 
-  PriceTrackingView* GetPriceTrackingView() {
+  views::View* GetViewInBookmarkBubble(ui::ElementIdentifier id) {
     const ui::ElementContext context =
         views::ElementTrackerViews::GetContextForView(
             BookmarkBubbleView::bookmark_bubble()->GetAnchorView());
-    views::View* matched_view =
-        views::ElementTrackerViews::GetInstance()->GetFirstMatchingView(
-            kPriceTrackingBookmarkViewElementId, context);
+    return views::ElementTrackerViews::GetInstance()->GetFirstMatchingView(
+        id, context);
+  }
 
+  PriceTrackingView* GetPriceTrackingView() {
+    views::View* const matched_view =
+        GetViewInBookmarkBubble(kPriceTrackingBookmarkViewElementId);
     return matched_view ? views::AsViewClass<PriceTrackingView>(matched_view)
                         : nullptr;
   }
@@ -179,9 +188,9 @@ TEST_F(BookmarkBubbleViewTest, SyncPromoNotSignedIn) {
   CreateBubbleView();
   views::View* footnote =
       BookmarkBubbleView::bookmark_bubble()->GetFootnoteViewForTesting();
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   EXPECT_FALSE(footnote);
-#else  // !BUILDFLAG(IS_CHROMEOS_ASH)
+#else  // !BUILDFLAG(IS_CHROMEOS)
   EXPECT_TRUE(footnote);
 #endif
 }
@@ -270,6 +279,7 @@ class PriceTrackingViewFeatureFlagTest
       public testing::WithParamInterface<bool> {
  public:
   PriceTrackingViewFeatureFlagTest() {
+    MockCommerceUiTabHelper::ReplaceFactory();
     const bool is_feature_enabled = GetParam();
     if (is_feature_enabled) {
       test_features_.InitAndEnableFeature(commerce::kShoppingList);
@@ -299,11 +309,11 @@ TEST_P(PriceTrackingViewFeatureFlagTest, PriceTrackingViewCreation) {
   const bool is_feature_enabled = GetParam();
   mock_shopping_service->SetIsShoppingListEligible(is_feature_enabled);
 
-  MockCommerceUiTabHelper::CreateForWebContents(
-      browser()->tab_strip_model()->GetActiveWebContents());
-  auto* mock_tab_helper_ = static_cast<MockCommerceUiTabHelper*>(
-      MockCommerceUiTabHelper::FromWebContents(
-          browser()->tab_strip_model()->GetActiveWebContents()));
+  auto* mock_tab_helper_ =
+      static_cast<MockCommerceUiTabHelper*>(browser()
+                                                ->GetActiveTabInterface()
+                                                ->GetTabFeatures()
+                                                ->commerce_ui_tab_helper());
   const gfx::Image image = mock_tab_helper_->GetValidProductImage();
   ON_CALL(*mock_tab_helper_, GetProductImage)
       .WillByDefault(
@@ -411,7 +421,7 @@ TEST_F(BookmarkBubbleViewShoppingCollectionTest, IPHNotShown_NotAProduct) {
   const ui::ElementContext context =
       views::ElementTrackerViews::GetContextForView(
           BookmarkBubbleView::bookmark_bubble()->GetAnchorView());
-  views::View* iph_root =
+  views::View* const iph_root =
       views::ElementTrackerViews::GetInstance()->GetFirstMatchingView(
           commerce::kShoppingCollectionIPHViewId, context);
 
@@ -419,4 +429,30 @@ TEST_F(BookmarkBubbleViewShoppingCollectionTest, IPHNotShown_NotAProduct) {
   EXPECT_FALSE(iph_root);
   EXPECT_FALSE(
       BookmarkBubbleView::bookmark_bubble()->GetFootnoteViewForTesting());
+}
+
+class BookmarkBubbleViewWithAccountBookmarksTest
+    : public BookmarkBubbleViewTestBase {
+ public:
+  BookmarkBubbleViewWithAccountBookmarksTest() {
+    test_features_.InitAndEnableFeature(
+        syncer::kSyncEnableBookmarksInTransportMode);
+  }
+};
+
+// Verifies that the bookmark bubble correctly instantiates a combobox that
+// separates account bookmarks and local bookmarks with headers. It also
+// verifies that RecentlyUsedFoldersComboModel correctly reports those as
+// "title" items and that ComboboxMenuModel correctly translates that to a
+// TYPE_TITLE item that can be rendered differently when the popup menu is
+// displayed.
+TEST_F(BookmarkBubbleViewWithAccountBookmarksTest,
+       ComboboxUsesTitlesForHeaders) {
+  GetBookmarkModel()->CreateAccountPermanentFolders();
+  CreateBubbleView();
+  EXPECT_EQ(ui::MenuModel::TYPE_TITLE,
+            views::AsViewClass<views::Combobox>(
+                GetViewInBookmarkBubble(kBookmarkFolderFieldId))
+                ->menu_model_for_testing()
+                ->GetTypeAt(0));
 }

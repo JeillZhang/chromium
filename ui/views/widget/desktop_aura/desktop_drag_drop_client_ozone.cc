@@ -2,20 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#if defined(UNSAFE_BUFFERS_BUILD)
-// TODO(https://crbug.com/344639839): fix the unsafe buffer errors in this file,
-// then remove this pragma.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "ui/views/widget/desktop_aura/desktop_drag_drop_client_ozone.h"
 
 #include <memory>
 #include <utility>
 
 #include "base/functional/bind.h"
+#include "base/scoped_observation.h"
 #include "ui/aura/client/capture_client.h"
 #include "ui/aura/client/cursor_client.h"
+#include "ui/aura/client/drag_drop_client_observer.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/base/cursor/mojom/cursor_type.mojom-shared.h"
@@ -49,10 +45,8 @@ bool IsValidDragImage(const gfx::ImageSkia& image) {
   // transparent image.
   const SkBitmap* in_bitmap = image.bitmap();
   for (int y = 0; y < in_bitmap->height(); ++y) {
-    uint32_t* in_row = in_bitmap->getAddr32(0, y);
-
     for (int x = 0; x < in_bitmap->width(); ++x) {
-      if (SkColorGetA(in_row[x]) > kMinAlpha) {
+      if (SkColorGetA(in_bitmap->getColor(x, y)) > kMinAlpha) {
         return true;
       }
     }
@@ -129,11 +123,12 @@ DesktopDragDropClientOzone::DragContext::~DragContext() = default;
 DesktopDragDropClientOzone::DesktopDragDropClientOzone(
     aura::Window* root_window,
     ui::WmDragHandler* drag_handler)
-    : root_window_(root_window),
-      drag_handler_(drag_handler) {}
+    : root_window_(root_window), drag_handler_(drag_handler) {}
 
 DesktopDragDropClientOzone::~DesktopDragDropClientOzone() {
   ResetDragDropTarget();
+  observers_.Notify(
+      &aura::client::DragDropClientObserver::OnDragDropClientDestroying);
 }
 
 DragOperation DesktopDragDropClientOzone::StartDragAndDrop(
@@ -185,6 +180,8 @@ DragOperation DesktopDragDropClientOzone::StartDragAndDrop(
   const bool drag_succeeded = drag_handler_->StartDrag(
       *data.get(), allowed_operations, source, cursor_client->GetCursor(),
       !source_window->HasCapture(),
+      base::BindOnce(&DesktopDragDropClientOzone::OnDragStarted,
+                     weak_factory_.GetWeakPtr()),
       base::BindOnce(&DesktopDragDropClientOzone::OnDragFinished,
                      weak_factory_.GetWeakPtr()),
       GetLocationDelegate());
@@ -195,6 +192,7 @@ DragOperation DesktopDragDropClientOzone::StartDragAndDrop(
 
   if (!drag_succeeded) {
     selected_operation_ = DragOperation::kNone;
+    observers_.Notify(&aura::client::DragDropClientObserver::OnDragCancelled);
   }
 
   if (cursor_client) {
@@ -229,12 +227,12 @@ bool DesktopDragDropClientOzone::IsDragDropInProgress() {
 
 void DesktopDragDropClientOzone::AddObserver(
     aura::client::DragDropClientObserver* observer) {
-  NOTIMPLEMENTED_LOG_ONCE();
+  observers_.AddObserver(observer);
 }
 
 void DesktopDragDropClientOzone::RemoveObserver(
     aura::client::DragDropClientObserver* observer) {
-  NOTIMPLEMENTED_LOG_ONCE();
+  observers_.RemoveObserver(observer);
 }
 
 void DesktopDragDropClientOzone::OnDragEnter(const gfx::PointF& location,
@@ -252,7 +250,11 @@ void DesktopDragDropClientOzone::OnDragDataAvailable(
     std::unique_ptr<ui::OSExchangeData> data) {
   DCHECK(data);
   data_to_drop_ = std::move(data);
-  UpdateTargetAndCreateDropEvent();
+  std::unique_ptr<ui::DropTargetEvent> event = UpdateTargetAndCreateDropEvent();
+  if (event) {
+    observers_.Notify(&aura::client::DragDropClientObserver::OnDragUpdated,
+                      *event);
+  }
 }
 
 int DesktopDragDropClientOzone::OnDragMotion(const gfx::PointF& location,
@@ -270,9 +272,13 @@ int DesktopDragDropClientOzone::OnDragMotion(const gfx::PointF& location,
   // Ask the delegate what operation it would accept for the current data.
   int client_operation = ui::DragDropTypes::DRAG_NONE;
   auto event = UpdateTargetAndCreateDropEvent();
-  if (delegate_ && event) {
-    current_drag_update_info_ = delegate_->OnDragUpdated(*event);
-    client_operation = current_drag_update_info_.drag_operation;
+  if (event) {
+    observers_.Notify(&aura::client::DragDropClientObserver::OnDragUpdated,
+                      *event);
+    if (delegate_) {
+      current_drag_update_info_ = delegate_->OnDragUpdated(*event);
+      client_operation = current_drag_update_info_.drag_operation;
+    }
   }
   return client_operation;
 }
@@ -294,6 +300,9 @@ void DesktopDragDropClientOzone::OnDragDrop(int modifiers) {
             data_to_drop_raw, current_drag_update_info_,
             base::BindOnce(&PerformDrop, std::move(drop_cb),
                            std::move(data_to_drop_), std::move(drag_cancel)));
+
+        observers_.Notify(
+            &aura::client::DragDropClientObserver::OnDragCompleted, *event);
       }
     }
   }
@@ -309,10 +318,9 @@ void DesktopDragDropClientOzone::OnDragLeave() {
 }
 
 void DesktopDragDropClientOzone::OnWindowDestroyed(aura::Window* window) {
-  DCHECK_EQ(window, entered_window_);
+  DCHECK(entered_window_observation_.IsObservingSource(window));
 
-  entered_window_->RemoveObserver(this);
-  entered_window_ = nullptr;
+  entered_window_observation_.Reset();
   delegate_ = nullptr;
   current_drag_update_info_ = aura::client::DragUpdateInfo();
 }
@@ -322,8 +330,14 @@ DesktopDragDropClientOzone::GetLocationDelegate() {
   return nullptr;
 }
 
+void DesktopDragDropClientOzone::OnDragStarted() {
+  observers_.Notify(&aura::client::DragDropClientObserver::OnDragStarted);
+}
+
 void DesktopDragDropClientOzone::OnDragFinished(DragOperation operation) {
   selected_operation_ = operation;
+  observers_.Notify(&aura::client::DragDropClientObserver::OnDropCompleted,
+                    operation);
 }
 
 std::unique_ptr<ui::DropTargetEvent>
@@ -343,8 +357,7 @@ DesktopDragDropClientOzone::UpdateTargetAndCreateDropEvent() {
   if (delegate_has_changed) {
     ResetDragDropTarget();
     delegate_ = new_delegate;
-    entered_window_ = window;
-    entered_window_->AddObserver(this);
+    entered_window_observation_.Observe(window);
   }
 
   if (!delegate_) {
@@ -371,10 +384,7 @@ void DesktopDragDropClientOzone::ResetDragDropTarget(bool send_exit) {
     }
     delegate_ = nullptr;
   }
-  if (entered_window_) {
-    entered_window_->RemoveObserver(this);
-    entered_window_ = nullptr;
-  }
+  entered_window_observation_.Reset();
 }
 
 }  // namespace views

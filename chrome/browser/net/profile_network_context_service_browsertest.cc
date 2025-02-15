@@ -19,7 +19,6 @@
 #include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
-#include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/utf_string_conversions.h"
@@ -77,6 +76,7 @@
 #include "net/test/embedded_test_server/http_request.h"
 #include "net/test/embedded_test_server/http_response.h"
 #include "net/test/embedded_test_server/request_handler_util.h"
+#include "net/test/scoped_mutually_exclusive_feature_list.h"
 #include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "services/cert_verifier/public/mojom/cert_verifier_service_factory.mojom.h"
 #include "services/network/public/cpp/cors/cors.h"
@@ -277,16 +277,20 @@ class ProfileNetworkContextServiceCacheSameBrowsertest
  public:
   ProfileNetworkContextServiceCacheSameBrowsertest() {
     // Override features that are enabled via the fieldtrial testing config.
-    scoped_feature_list_.InitWithFeatures(
-        {}, {net::features::kSplitCacheByNetworkIsolationKey,
-             net::features::kEnableCrossSiteFlagNetworkIsolationKey});
+    split_cache_features_disabled_feature_list_.InitWithFeatures(
+        {}, {
+                net::features::kSplitCacheByNetworkIsolationKey,
+                net::features::kSplitCacheByCrossSiteMainFrameNavigationBoolean,
+                net::features::kSplitCacheByMainFrameNavigationInitiator,
+                net::features::kSplitCacheByNavigationInitiator,
+            });
   }
   ~ProfileNetworkContextServiceCacheSameBrowsertest() override = default;
 
   base::HistogramTester histograms_;
 
  private:
-  base::test::ScopedFeatureList scoped_feature_list_;
+  base::test::ScopedFeatureList split_cache_features_disabled_feature_list_;
 };
 
 IN_PROC_BROWSER_TEST_F(ProfileNetworkContextServiceCacheSameBrowsertest,
@@ -321,15 +325,24 @@ class ProfileNetworkContextServiceCacheChangeBrowsertest
     : public ProfileNetworkContextServiceBrowsertest {
  public:
   ProfileNetworkContextServiceCacheChangeBrowsertest() {
-    scoped_feature_list_.InitAndEnableFeatureWithParameters(
+    split_cache_always_enabled_feature_list_.InitAndEnableFeatureWithParameters(
         net::features::kSplitCacheByNetworkIsolationKey, {});
+
+    split_cache_experiment_always_disabled_feature_list_.InitWithFeatures(
+        {}, {
+                net::features::kSplitCacheByCrossSiteMainFrameNavigationBoolean,
+                net::features::kSplitCacheByMainFrameNavigationInitiator,
+                net::features::kSplitCacheByNavigationInitiator,
+            });
   }
   ~ProfileNetworkContextServiceCacheChangeBrowsertest() override = default;
 
   base::HistogramTester histograms_;
 
  private:
-  base::test::ScopedFeatureList scoped_feature_list_;
+  base::test::ScopedFeatureList split_cache_always_enabled_feature_list_;
+  base::test::ScopedFeatureList
+      split_cache_experiment_always_disabled_feature_list_;
 };
 
 // The first time we load, even if we're in an experiment there's no reset
@@ -373,15 +386,24 @@ class ProfileNetworkContextServiceCacheCredentialsBrowserTest
     : public ProfileNetworkContextServiceBrowsertest {
  public:
   ProfileNetworkContextServiceCacheCredentialsBrowserTest() {
-    scoped_feature_list_.InitAndEnableFeatureWithParameters(
+    split_cache_always_enabled_feature_list_.InitAndEnableFeatureWithParameters(
         net::features::kSplitCacheByIncludeCredentials, {});
+
+    split_cache_experiment_always_disabled_feature_list_.InitWithFeatures(
+        {}, {
+                net::features::kSplitCacheByCrossSiteMainFrameNavigationBoolean,
+                net::features::kSplitCacheByMainFrameNavigationInitiator,
+                net::features::kSplitCacheByNavigationInitiator,
+            });
   }
   ~ProfileNetworkContextServiceCacheCredentialsBrowserTest() override = default;
 
   base::HistogramTester histograms_;
 
  private:
-  base::test::ScopedFeatureList scoped_feature_list_;
+  base::test::ScopedFeatureList split_cache_always_enabled_feature_list_;
+  base::test::ScopedFeatureList
+      split_cache_experiment_always_disabled_feature_list_;
 };
 
 IN_PROC_BROWSER_TEST_F(ProfileNetworkContextServiceCacheCredentialsBrowserTest,
@@ -418,83 +440,85 @@ IN_PROC_BROWSER_TEST_F(ProfileNetworkContextServiceCacheCredentialsBrowserTest,
       "None None None scoped_feature_list_trial_group");
 }
 
-// This subclass adds tests for the 2023 HTTP Cache keying experiment flags.
-enum class HttpCache2023ExperimentTestCase {
-  kDoublePlusBitExperimentGroup,
-  kTripleKeyedSharedOpaqueExperimentGroup,
-  kControlGroup,
+// This subclass adds tests for the 2024 HTTP Cache keying experiment flags.
+enum class HttpCache2024ExperimentTestCase {
+  kEnabledTriplePlusCrossSiteMainFrameNavBool,
+  kEnabledTriplePlusMainFrameNavInitiator,
+  kEnabledTriplePlusNavInitiator,
+  kControlGroup
 };
+
+const struct {
+  const HttpCache2024ExperimentTestCase test_case;
+  base::test::FeatureRef feature;
+} kTestCaseToFeatureMapping[] = {
+    {HttpCache2024ExperimentTestCase::
+         kEnabledTriplePlusCrossSiteMainFrameNavBool,
+     net::features::kSplitCacheByCrossSiteMainFrameNavigationBoolean},
+    {HttpCache2024ExperimentTestCase::kEnabledTriplePlusMainFrameNavInitiator,
+     net::features::kSplitCacheByMainFrameNavigationInitiator},
+    {HttpCache2024ExperimentTestCase::kEnabledTriplePlusNavInitiator,
+     net::features::kSplitCacheByNavigationInitiator},
+    {HttpCache2024ExperimentTestCase::kControlGroup,
+     net::features::kHttpCacheKeyingExperimentControlGroup2024}};
 
 class ProfileNetworkContextServiceCacheKeySchemeExperimentBrowserTest
     : public ProfileNetworkContextServiceBrowsertest,
-      public testing::WithParamInterface<HttpCache2023ExperimentTestCase> {
+      public testing::WithParamInterface<HttpCache2024ExperimentTestCase> {
  public:
-  ProfileNetworkContextServiceCacheKeySchemeExperimentBrowserTest() {
+  ProfileNetworkContextServiceCacheKeySchemeExperimentBrowserTest()
+      : split_cache_experiment_feature_list_(GetParam(),
+                                             kTestCaseToFeatureMapping) {
     // Override any configured experiments for the
     // SplitCacheByNetworkIsolationKey feature.
-    always_enabled_feature_list_.InitAndEnableFeatureWithParameters(
+    split_cache_always_enabled_feature_list_.InitAndEnableFeatureWithParameters(
         net::features::kSplitCacheByNetworkIsolationKey, {});
-
-    switch (GetParam()) {
-      case HttpCache2023ExperimentTestCase::kDoublePlusBitExperimentGroup:
-        test_feature_list_.InitWithFeatures(
-            {net::features::kEnableCrossSiteFlagNetworkIsolationKey},
-            {net::features::kEnableFrameSiteSharedOpaqueNetworkIsolationKey,
-             net::features::kHttpCacheKeyingExperimentControlGroup});
-        break;
-      case HttpCache2023ExperimentTestCase::
-          kTripleKeyedSharedOpaqueExperimentGroup:
-        test_feature_list_.InitWithFeatures(
-            {net::features::kEnableFrameSiteSharedOpaqueNetworkIsolationKey},
-            {net::features::kEnableCrossSiteFlagNetworkIsolationKey,
-             net::features::kHttpCacheKeyingExperimentControlGroup});
-        break;
-      case HttpCache2023ExperimentTestCase::kControlGroup:
-        test_feature_list_.InitWithFeatures(
-            {net::features::kHttpCacheKeyingExperimentControlGroup},
-            {net::features::kEnableCrossSiteFlagNetworkIsolationKey,
-             net::features::kEnableFrameSiteSharedOpaqueNetworkIsolationKey});
-        break;
-    }
   }
 
   const char* GetExperimentString() {
     switch (GetParam()) {
-      case HttpCache2023ExperimentTestCase::kDoublePlusBitExperimentGroup:
-        return "CrossSiteFlagNIK";
-      case HttpCache2023ExperimentTestCase::
-          kTripleKeyedSharedOpaqueExperimentGroup:
-        return "FrameSiteSharedOpaqueNIK";
-      case HttpCache2023ExperimentTestCase::kControlGroup:
-        return "2023ExperimentControlGroup";
+      case HttpCache2024ExperimentTestCase::
+          kEnabledTriplePlusCrossSiteMainFrameNavBool:
+        return "20240814-CrossSiteNavBool";
+      case HttpCache2024ExperimentTestCase::
+          kEnabledTriplePlusMainFrameNavInitiator:
+        return "20240814-MainFrameNavigationInitiator";
+      case HttpCache2024ExperimentTestCase::kEnabledTriplePlusNavInitiator:
+        return "20240814-NavigationInitiator";
+      case HttpCache2024ExperimentTestCase::kControlGroup:
+        return "20240814-ExperimentControlGroup";
     }
   }
-  ~ProfileNetworkContextServiceCacheKeySchemeExperimentBrowserTest() override =
-      default;
 
   base::HistogramTester histograms_;
 
  private:
-  base::test::ScopedFeatureList always_enabled_feature_list_;
-  base::test::ScopedFeatureList test_feature_list_;
+  net::test::ScopedMutuallyExclusiveFeatureList
+      split_cache_experiment_feature_list_;
+  base::test::ScopedFeatureList split_cache_always_enabled_feature_list_;
 };
 
 INSTANTIATE_TEST_SUITE_P(
     All,
     ProfileNetworkContextServiceCacheKeySchemeExperimentBrowserTest,
     testing::ValuesIn(
-        {HttpCache2023ExperimentTestCase::kDoublePlusBitExperimentGroup,
-         HttpCache2023ExperimentTestCase::
-             kTripleKeyedSharedOpaqueExperimentGroup,
-         HttpCache2023ExperimentTestCase::kControlGroup}),
-    [](const testing::TestParamInfo<HttpCache2023ExperimentTestCase>& info) {
+        {HttpCache2024ExperimentTestCase::
+             kEnabledTriplePlusCrossSiteMainFrameNavBool,
+         HttpCache2024ExperimentTestCase::
+             kEnabledTriplePlusMainFrameNavInitiator,
+         HttpCache2024ExperimentTestCase::kEnabledTriplePlusNavInitiator,
+         HttpCache2024ExperimentTestCase::kControlGroup}),
+    [](const testing::TestParamInfo<HttpCache2024ExperimentTestCase>& info) {
       switch (info.param) {
-        case (HttpCache2023ExperimentTestCase::kDoublePlusBitExperimentGroup):
-          return "DoublePlusBitExperimentGroup";
-        case (HttpCache2023ExperimentTestCase::
-                  kTripleKeyedSharedOpaqueExperimentGroup):
-          return "TripleKeyedSharedOpaqueExperimentGroup";
-        case (HttpCache2023ExperimentTestCase::kControlGroup):
+        case HttpCache2024ExperimentTestCase::
+            kEnabledTriplePlusCrossSiteMainFrameNavBool:
+          return "SplitCacheEnabledTriplePlusCrossSiteMainFrameNavigationBool";
+        case HttpCache2024ExperimentTestCase::
+            kEnabledTriplePlusMainFrameNavInitiator:
+          return "SplitCacheEnabledTriplePlusMainFrameNavigationInitiator";
+        case HttpCache2024ExperimentTestCase::kEnabledTriplePlusNavInitiator:
+          return "SplitCacheEnabledTriplePlusNavigationInitiator";
+        case (HttpCache2024ExperimentTestCase::kControlGroup):
           return "ControlGroup";
       }
     });
@@ -537,6 +561,83 @@ IN_PROC_BROWSER_TEST_P(
                     GetExperimentString()}));
 }
 
+class ProfileNetworkContextServiceDiskCacheBackendExperimentBrowserTest
+    : public ProfileNetworkContextServiceBrowsertest,
+      public ::testing::WithParamInterface<net::features::DiskCacheBackend> {
+ public:
+  ProfileNetworkContextServiceDiskCacheBackendExperimentBrowserTest() {
+    feature_list_.InitAndEnableFeatureWithParameters(
+        net::features::kDiskCacheBackendExperiment,
+        {{"backend", GetBackendParamValue()}});
+  }
+  ~ProfileNetworkContextServiceDiskCacheBackendExperimentBrowserTest()
+      override = default;
+
+  const char* GetBackendParamValue() {
+    switch (GetParam()) {
+      case net::features::DiskCacheBackend::kSimple:
+        return "simple";
+      case net::features::DiskCacheBackend::kBlockfile:
+        return "blockfile";
+    }
+  }
+
+  const char* GetExperimentString() {
+    switch (GetParam()) {
+      case net::features::DiskCacheBackend::kSimple:
+        return "20241007-DiskCache-Simple";
+      case net::features::DiskCacheBackend::kBlockfile:
+        return "20241007-DiskCache-Blockfile";
+    }
+  }
+
+  base::HistogramTester histograms_;
+
+ private:
+  base::test::ScopedFeatureList feature_list_;
+};
+
+IN_PROC_BROWSER_TEST_P(
+    ProfileNetworkContextServiceDiskCacheBackendExperimentBrowserTest,
+    PRE_TestCacheResetParameter) {
+  NavigateToCreateHttpCache();
+  CheckCacheResetStatus(&histograms_, false);
+
+  // At this point, we have already called the initialization.
+  // Verify that we have the correct values in the local_state.
+  PrefService* local_state = g_browser_process->local_state();
+  DCHECK_EQ(local_state->GetString("profile_network_context_service.http_"
+                                   "cache_finch_experiment_groups"),
+            base::StrCat({"None None None None ", GetExperimentString()}));
+
+  // Set the local state for the next test.
+  local_state->SetString(
+      "profile_network_context_service.http_cache_finch_experiment_groups",
+      "None None None None");
+}
+
+// The second time we load we know the state, which was "None None None None"
+// for the previous test, so we should see a reset being in an experiment.
+IN_PROC_BROWSER_TEST_P(
+    ProfileNetworkContextServiceDiskCacheBackendExperimentBrowserTest,
+    TestCacheResetParameter) {
+  NavigateToCreateHttpCache();
+  CheckCacheResetStatus(&histograms_, true);
+
+  // At this point, we have already called the initialization.
+  // Verify that we have the correct values in the local_state.
+  PrefService* local_state = g_browser_process->local_state();
+  DCHECK_EQ(local_state->GetString("profile_network_context_service.http_"
+                                   "cache_finch_experiment_groups"),
+            base::StrCat({"None None None None ", GetExperimentString()}));
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    All,
+    ProfileNetworkContextServiceDiskCacheBackendExperimentBrowserTest,
+    testing::ValuesIn({net::features::DiskCacheBackend::kSimple,
+                       net::features::DiskCacheBackend::kBlockfile}));
+
 class AmbientAuthenticationTestWithPolicy : public policy::PolicyTest {
  public:
   AmbientAuthenticationTestWithPolicy() {
@@ -565,7 +666,7 @@ class AmbientAuthenticationTestWithPolicy : public policy::PolicyTest {
                   policy_value));
 // ChromeOS guest sessions don't have the capability to
 // do ambient authentications.
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_CHROMEOS)
     EXPECT_EQ(
         AmbientAuthenticationTestHelper::IsAmbientAuthAllowedForProfile(
             CreateGuestBrowser()->profile()),
@@ -617,7 +718,7 @@ class ProfileNetworkContextServiceDiskCacheBrowsertest
     EXPECT_TRUE(temp_dir_.CreateUniqueTempDir());
   }
 
-  ~ProfileNetworkContextServiceDiskCacheBrowsertest() override {}
+  ~ProfileNetworkContextServiceDiskCacheBrowsertest() override = default;
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
     command_line->AppendSwitchPath(switches::kDiskCacheDir,
@@ -744,19 +845,7 @@ INSTANTIATE_TEST_SUITE_P(
 class ProfileNetworkContextTrustTokensBrowsertest
     : public ProfileNetworkContextServiceBrowsertest {
  public:
-  ProfileNetworkContextTrustTokensBrowsertest() {
-    auto& field_trial_param =
-        network::features::kTrustTokenOperationsRequiringOriginTrial;
-    feature_list_.InitWithFeaturesAndParameters(
-        // Enabled Features:
-        {{network::features::kPrivateStateTokens,
-          {{field_trial_param.name,
-            field_trial_param.GetName(
-                network::features::TrustTokenOriginTrialSpec::
-                    kOriginTrialNotRequired)}}}},
-        // Disabled Features:
-        {});
-  }
+  ProfileNetworkContextTrustTokensBrowsertest() = default;
   ~ProfileNetworkContextTrustTokensBrowsertest() override = default;
 
   void SetUpOnMainThread() override {
@@ -808,12 +897,10 @@ class ProfileNetworkContextTrustTokensBrowsertest
  private:
   std::unique_ptr<net::EmbeddedTestServer> https_server_;
   network::test::TrustTokenRequestHandler request_handler_;
-  base::test::ScopedFeatureList feature_list_;
 };
 
 IN_PROC_BROWSER_TEST_F(ProfileNetworkContextTrustTokensBrowsertest,
                        TrustTokenBlocked) {
-  base::test::ScopedFeatureList feature_list_;
   ProvideRequestHandlerKeyCommitmentsToNetworkService("a.test");
   auto* privacy_sandbox_settings =
       PrivacySandboxSettingsFactory::GetForProfile(browser()->profile());
@@ -877,4 +964,50 @@ IN_PROC_BROWSER_TEST_F(ProfileNetworkContextTrustTokensBrowsertest,
   chrome::Reload(browser(), WindowOpenDisposition::CURRENT_TAB);
   EXPECT_TRUE(content::WaitForLoadStop(GetActiveWebContents()));
   EXPECT_EQ(false, EvalJs(GetActiveWebContents(), command));
+}
+
+class ReportingEndpointsPolicyTest : public policy::PolicyTest {
+ public:
+  void SetUpInProcessBrowserTestFixture() override {
+    scoped_feature_list_.InitAndEnableFeature(
+        net::features::kReportingApiEnableEnterpriseCookieIssues);
+    policy::PolicyTest::SetUpInProcessBrowserTestFixture();
+  }
+
+  void UpdateReportingEndpointsPolicy(base::Value::Dict dict) {
+    SetPolicy(&policies_, policy::key::kReportingEndpoints,
+              base::Value(std::move(dict)));
+    UpdateProviderPolicy(policies_);
+  }
+
+ private:
+  policy::PolicyMap policies_;
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
+
+IN_PROC_BROWSER_TEST_F(ReportingEndpointsPolicyTest,
+                       CheckEnterpriseEndpointsNetworkContextParamsSet) {
+  network::mojom::NetworkContextParams network_context_params;
+  EXPECT_FALSE(
+      network_context_params.enterprise_reporting_endpoints.has_value());
+  UpdateReportingEndpointsPolicy(
+      base::Value::Dict()
+          .Set("endpoint-1", "https://example.com/reports")
+          .Set("endpoint-2", "https://reporting.example/cookie-issues")
+          .Set("endpoint-3", "https://report-collector.example"));
+  ProfileNetworkContextService* profile_network_context_service =
+      ProfileNetworkContextServiceFactory::GetForContext(browser()->profile());
+  base::FilePath empty_relative_partition_path;
+  cert_verifier::mojom::CertVerifierCreationParams
+      cert_verifier_creation_params;
+  profile_network_context_service->ConfigureNetworkContextParams(
+      /*in_memory=*/false, empty_relative_partition_path,
+      &network_context_params, &cert_verifier_creation_params);
+  base::flat_map<std::string, GURL> expected_enterprise_endpoints{
+      {"endpoint-1", GURL("https://example.com/reports")},
+      {"endpoint-2", GURL("https://reporting.example/cookie-issues")},
+      {"endpoint-3", GURL("https://report-collector.example")},
+  };
+  EXPECT_EQ(expected_enterprise_endpoints,
+            network_context_params.enterprise_reporting_endpoints);
 }

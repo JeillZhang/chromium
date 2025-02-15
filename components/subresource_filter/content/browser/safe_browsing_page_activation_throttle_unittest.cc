@@ -21,9 +21,6 @@
 #include "base/test/test_mock_time_task_runner.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
-#include "components/infobars/content/content_infobar_manager.h"
-#include "components/infobars/core/confirm_infobar_delegate.h"
-#include "components/infobars/core/infobar.h"
 #include "components/safe_browsing/core/common/features.h"
 #include "components/subresource_filter/content/browser/content_subresource_filter_throttle_manager.h"
 #include "components/subresource_filter/content/browser/content_subresource_filter_web_contents_helper.h"
@@ -33,12 +30,13 @@
 #include "components/subresource_filter/content/browser/subresource_filter_safe_browsing_client.h"
 #include "components/subresource_filter/content/browser/subresource_filter_safe_browsing_client_request.h"
 #include "components/subresource_filter/content/browser/throttle_manager_test_support.h"
-#include "components/subresource_filter/content/shared/common/subresource_filter_utils.h"
+#include "components/subresource_filter/content/shared/browser/utils.h"
 #include "components/subresource_filter/core/browser/subresource_filter_features.h"
 #include "components/subresource_filter/core/browser/subresource_filter_features_test_support.h"
 #include "components/subresource_filter/core/browser/verified_ruleset_dealer.h"
 #include "components/subresource_filter/core/common/activation_decision.h"
 #include "components/subresource_filter/core/common/activation_list.h"
+#include "components/subresource_filter/core/common/constants.h"
 #include "components/subresource_filter/core/common/test_ruleset_creator.h"
 #include "components/subresource_filter/core/common/test_ruleset_utils.h"
 #include "components/subresource_filter/core/mojom/subresource_filter.mojom.h"
@@ -162,19 +160,19 @@ class SafeBrowsingPageActivationThrottleTest
   SafeBrowsingPageActivationThrottleTest& operator=(
       const SafeBrowsingPageActivationThrottleTest&) = delete;
 
-  ~SafeBrowsingPageActivationThrottleTest() override {}
+  ~SafeBrowsingPageActivationThrottleTest() override = default;
 
   void SetUp() override {
     content::RenderViewHostTestHarness::SetUp();
     Configure();
-    test_io_task_runner_ = new base::TestMockTimeTaskRunner();
     // Note: Using NiceMock to allow uninteresting calls and suppress warnings.
     std::vector<url_pattern_index::proto::UrlRule> rules;
     rules.push_back(testing::CreateSuffixRule("disallowed.html"));
     ASSERT_NO_FATAL_FAILURE(test_ruleset_creator_.CreateRulesetWithRules(
         rules, &test_ruleset_pair_));
     ruleset_dealer_ = std::make_unique<VerifiedRulesetDealer::Handle>(
-        base::SingleThreadTaskRunner::GetCurrentDefault());
+        base::SingleThreadTaskRunner::GetCurrentDefault(),
+        kSafeBrowsingRulesetConfig);
     ruleset_dealer_->TryOpenAndSetRulesetFile(test_ruleset_pair_.indexed.path,
                                               /*expected_checksum=*/0,
                                               base::DoNothing());
@@ -213,9 +211,7 @@ class SafeBrowsingPageActivationThrottleTest
     RunUntilIdle();
     RunUntilIdle();
 
-    // RunUntilIdle() called once more, to delete the database on the IO thread.
     fake_safe_browsing_database_ = nullptr;
-    RunUntilIdle();
 
     content::RenderViewHostTestHarness::TearDown();
 
@@ -232,8 +228,7 @@ class SafeBrowsingPageActivationThrottleTest
     if (IsInSubresourceFilterRoot(navigation_handle)) {
       navigation_handle->RegisterThrottleForTesting(
           std::make_unique<SafeBrowsingPageActivationThrottle>(
-              navigation_handle, delegate(), test_io_task_runner_,
-              fake_safe_browsing_database_));
+              navigation_handle, delegate(), fake_safe_browsing_database_));
     }
     std::vector<std::unique_ptr<content::NavigationThrottle>> throttles;
 
@@ -301,15 +296,6 @@ class SafeBrowsingPageActivationThrottleTest
 
   content::NavigationThrottle::ThrottleCheckResult SimulateCommit(
       content::NavigationSimulator* simulator) {
-    // Need to post a task to flush the IO thread because calling Commit()
-    // blocks until the throttle checks are complete.
-    // TODO(csharrison): Consider adding finer grained control to the
-    // NavigationSimulator by giving it an option to be driven by a
-    // TestMockTimeTaskRunner. Also see https://crbug.com/703346.
-    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
-        FROM_HERE,
-        base::BindOnce(&base::TestMockTimeTaskRunner::RunUntilIdle,
-                       base::Unretained(test_io_task_runner_.get())));
     simulator->Commit();
     return simulator->GetLastThrottleCheckResult();
   }
@@ -348,7 +334,6 @@ class SafeBrowsingPageActivationThrottleTest
 
   void RunUntilIdle() {
     base::RunLoop().RunUntilIdle();
-    test_io_task_runner_->RunUntilIdle();
   }
 
   content::NavigationSimulator* navigation_simulator() {
@@ -358,9 +343,6 @@ class SafeBrowsingPageActivationThrottleTest
   const base::HistogramTester& tester() const { return tester_; }
 
   TestSafeBrowsingActivationThrottleDelegate* delegate() { return &delegate_; }
-  base::TestMockTimeTaskRunner* test_io_task_runner() const {
-    return test_io_task_runner_.get();
-  }
 
   testing::ScopedSubresourceFilterConfigurator* scoped_configuration() {
     return &scoped_configuration_;
@@ -373,7 +355,6 @@ class SafeBrowsingPageActivationThrottleTest
 
  private:
   testing::ScopedSubresourceFilterConfigurator scoped_configuration_;
-  scoped_refptr<base::TestMockTimeTaskRunner> test_io_task_runner_;
 
   testing::TestRulesetCreator test_ruleset_creator_;
   testing::TestRulesetPair test_ruleset_pair_;
@@ -388,53 +369,18 @@ class SafeBrowsingPageActivationThrottleTest
   base::HistogramTester tester_;
 };
 
-class SafeBrowsingPageActivationThrottleInfoBarUiTest
-    : public SafeBrowsingPageActivationThrottleTest {
- public:
-  void SetUp() override {
-    SafeBrowsingPageActivationThrottleTest::SetUp();
-#if BUILDFLAG(IS_ANDROID)
-    message_dispatcher_bridge_.SetMessagesEnabledForEmbedder(false);
-    messages::MessageDispatcherBridge::SetInstanceForTesting(
-        &message_dispatcher_bridge_);
-#endif
-  }
-
-  bool presenting_ads_blocked_infobar() {
-    auto* infobar_manager = infobars::ContentInfoBarManager::FromWebContents(
-        content::RenderViewHostTestHarness::web_contents());
-    if (infobar_manager->infobars().empty()) {
-      return false;
-    }
-
-    // No infobars other than the ads blocked infobar should be displayed in the
-    // context of these tests.
-    EXPECT_EQ(infobar_manager->infobars().size(), 1u);
-    auto* infobar = infobar_manager->infobars()[0].get();
-    EXPECT_EQ(infobar->GetIdentifier(),
-              infobars::InfoBarDelegate::ADS_BLOCKED_INFOBAR_DELEGATE_ANDROID);
-
-    return true;
-  }
-
- protected:
-#if BUILDFLAG(IS_ANDROID)
-  messages::MockMessageDispatcherBridge message_dispatcher_bridge_;
-#endif
-};
-
 class SafeBrowsingPageActivationThrottleParamTest
     : public SafeBrowsingPageActivationThrottleTest,
       public ::testing::WithParamInterface<ActivationListTestData> {
  public:
-  SafeBrowsingPageActivationThrottleParamTest() {}
+  SafeBrowsingPageActivationThrottleParamTest() = default;
 
   SafeBrowsingPageActivationThrottleParamTest(
       const SafeBrowsingPageActivationThrottleParamTest&) = delete;
   SafeBrowsingPageActivationThrottleParamTest& operator=(
       const SafeBrowsingPageActivationThrottleParamTest&) = delete;
 
-  ~SafeBrowsingPageActivationThrottleParamTest() override {}
+  ~SafeBrowsingPageActivationThrottleParamTest() override = default;
 
   void Configure() override {
     const ActivationListTestData& test_data = GetParam();
@@ -517,14 +463,14 @@ class SafeBrowsingPageActivationThrottleScopeTest
     : public SafeBrowsingPageActivationThrottleTest,
       public ::testing::WithParamInterface<ActivationScopeTestData> {
  public:
-  SafeBrowsingPageActivationThrottleScopeTest() {}
+  SafeBrowsingPageActivationThrottleScopeTest() = default;
 
   SafeBrowsingPageActivationThrottleScopeTest(
       const SafeBrowsingPageActivationThrottleScopeTest&) = delete;
   SafeBrowsingPageActivationThrottleScopeTest& operator=(
       const SafeBrowsingPageActivationThrottleScopeTest&) = delete;
 
-  ~SafeBrowsingPageActivationThrottleScopeTest() override {}
+  ~SafeBrowsingPageActivationThrottleScopeTest() override = default;
 };
 
 TEST_F(SafeBrowsingPageActivationThrottleTest, NoConfigs) {
@@ -662,9 +608,6 @@ TEST_F(SafeBrowsingPageActivationThrottleTest, ActivationList) {
        safe_browsing::ThreatPatternType::MALWARE_DISTRIBUTION},
       {mojom::ActivationLevel::kDisabled, ActivationList::PHISHING_INTERSTITIAL,
        SB_THREAT_TYPE_API_ABUSE,
-       safe_browsing::ThreatPatternType::SOCIAL_ENGINEERING_ADS},
-      {mojom::ActivationLevel::kDisabled, ActivationList::PHISHING_INTERSTITIAL,
-       SB_THREAT_TYPE_BLOCKLISTED_RESOURCE,
        safe_browsing::ThreatPatternType::SOCIAL_ENGINEERING_ADS},
       {mojom::ActivationLevel::kDisabled, ActivationList::PHISHING_INTERSTITIAL,
        SB_THREAT_TYPE_URL_BINARY_MALWARE,
@@ -1134,18 +1077,6 @@ TEST_F(SafeBrowsingPageActivationThrottleTest,
                   : mojom::ActivationLevel::kDisabled,
               *observer()->GetPageActivationForLastCommittedLoad());
   }
-}
-
-TEST_F(SafeBrowsingPageActivationThrottleInfoBarUiTest,
-       NotificationVisibility) {
-  GURL url(kURL);
-  ConfigureForMatch(url);
-  content::RenderFrameHost* rfh = SimulateNavigateAndCommit({url}, main_rfh());
-
-  EXPECT_FALSE(CreateAndNavigateDisallowedSubframe(rfh));
-#if BUILDFLAG(IS_ANDROID)
-  EXPECT_TRUE(presenting_ads_blocked_infobar());
-#endif
 }
 
 TEST_P(SafeBrowsingPageActivationThrottleParamTest,

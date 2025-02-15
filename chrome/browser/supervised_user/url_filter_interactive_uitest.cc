@@ -11,9 +11,10 @@
 #include "base/types/strong_alias.h"
 #include "chrome/browser/ui/tabs/tab_strip_model_observer.h"
 #include "chrome/test/interaction/interactive_browser_test.h"
+#include "chrome/test/supervised_user/browser_user.h"
 #include "chrome/test/supervised_user/family_live_test.h"
-#include "chrome/test/supervised_user/family_member.h"
-#include "chrome/test/supervised_user/test_state_seeded_observer.h"
+#include "components/supervised_user/core/common/features.h"
+#include "components/supervised_user/test_support/family_link_settings_state_management.h"
 #include "content/public/test/browser_test.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -27,14 +28,23 @@ static constexpr std::string_view kPermissionRequestUrl =
 
 // All tests in this unit are subject to flakiness because they interact with a
 // system that can be externally modified during execution.
-class UrlFilterUiTest : public InteractiveFamilyLiveTest,
-                        public testing::WithParamInterface<FamilyIdentifier> {
+// TODO(b/301587955): Fix placement of supervised_user/e2e test files and their
+// dependencies.
+class UrlFilterUiTest
+    : public InteractiveFamilyLiveTest,
+      public testing::WithParamInterface<FamilyLiveTest::RpcMode> {
  public:
   UrlFilterUiTest()
       : InteractiveFamilyLiveTest(
-            /*family_identifier=*/GetParam(),
-            /*extra_enabled_hosts=*/std::vector<std::string>(
-                {"example.com", "bestgore.com"})) {}
+            GetParam(),
+            /*extra_enabled_hosts=*/{"example.com", "bestgore.com"}) {
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
+    scoped_feature_list_.InitWithFeatures(
+        /*enabled_features=*/
+        {supervised_user::kUncredentialedFilteringFallbackForSupervisedUsers},
+        /*disabled_features=*/{});
+#endif // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
+  }
 
  protected:
   auto ParentOpensControlListPage(ui::ElementIdentifier kParentTab,
@@ -63,13 +73,19 @@ class UrlFilterUiTest : public InteractiveFamilyLiveTest,
   }
 
   StateChange RemoteApprovalButtonAppeared() {
-    DEFINE_LOCAL_CUSTOM_ELEMENT_EVENT_TYPE(kStateChange);
-    StateChange state_change;
-    state_change.type = StateChange::Type::kExists;
-    state_change.where = {"#frame-blocked #remote-approvals-button"};
-    state_change.event = kStateChange;
-    state_change.continue_across_navigation = true;
-    return state_change;
+    return ElementHasAppeared({"#frame-blocked #remote-approvals-button"});
+  }
+
+  StateChange ReauthenticationInterstitialNextButtonAppeared() {
+    return ElementHasAppeared({".supervised-user-verify #primary-button"});
+  }
+
+  StateChange SignInButtonsAppeared() {
+    return ElementHasAppeared({"#identifierNext"});
+  }
+
+  StateChange ParentPasswordEntryAppeared() {
+    return ElementHasAppeared({"#password"});
   }
 
   // Clicks the approval request button for a pending request on Family Link.
@@ -92,6 +108,40 @@ class UrlFilterUiTest : public InteractiveFamilyLiveTest,
     return Steps(ExecuteJsAt(kChildTab,
                              {"#frame-blocked #remote-approvals-button"},
                              R"js( (button) => { button.click(); } )js"));
+  }
+
+  // Clicks the 'Next' button on the supervised user re-authentication
+  // interstitial.
+  auto ChildProceedsToSignIn(ui::ElementIdentifier kChildTab) {
+    return Steps(ExecuteJsAt(kChildTab,
+                             {".supervised-user-verify #primary-button"},
+                             R"js( (button) => { button.click(); } )js"));
+  }
+
+  // Performs a child sign-in from the UI that is opened by the
+  // Re-authentication interstitial.
+  auto DoChildSignInFromUI(ui::ElementIdentifier kChildSignInElementId) {
+    return Steps(
+        Log("When sign-in first page is loaded"),
+        WaitForStateChange(kChildSignInElementId, SignInButtonsAppeared()),
+        Log("Child proceeds to Next sign-in page"),
+        // On the first sign-in page click the "Next" button to be presented
+        // with the prompt for credentials.
+        ExecuteJsAt(kChildSignInElementId, {"#identifierNext > div > button"},
+                    R"js( (button) => { button.click(); } )js"),
+        // Confirm the password entry field appears.
+        WaitForStateChange(kChildSignInElementId,
+                           ParentPasswordEntryAppeared()),
+        Log("Sign-in page is ready"),
+        // Fill-in the password field.
+        ExecuteJsAt(kChildSignInElementId, {"#password input[type=password]"},
+                    base::StringPrintf(
+                        R"js( (entry) => { entry.value = "%s"; } )js",
+                        std::string(child().GetAccountPassword()).c_str())),
+        // Click the "Next" button which concludes the sign-in.
+        ExecuteJsAt(kChildSignInElementId, {"#passwordNext > div > button"},
+                    R"js( (button) => { button.click(); } )js"),
+        Log("Child fills in password and proceeds"));
   }
 
   // Checks that a permission request exists on Family link.
@@ -129,104 +179,114 @@ class UrlFilterUiTest : public InteractiveFamilyLiveTest,
     state_change.continue_across_navigation = true;
     return state_change;
   }
+
+ private:
+  StateChange ElementHasAppeared(DeepQuery element_selector) {
+    DEFINE_LOCAL_CUSTOM_ELEMENT_EVENT_TYPE(kStateChange);
+    StateChange state_change;
+    state_change.type = StateChange::Type::kExists;
+    state_change.where = element_selector;
+    state_change.event = kStateChange;
+    state_change.continue_across_navigation = true;
+    return state_change;
+  }
+
+  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 IN_PROC_BROWSER_TEST_P(UrlFilterUiTest, ParentBlocksPage) {
   DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kChildElementId);
-  DEFINE_LOCAL_STATE_IDENTIFIER_VALUE(BrowserState::Observer,
+  DEFINE_LOCAL_STATE_IDENTIFIER_VALUE(InIntendedStateObserver,
                                       kSetSafeSitesStateObserverId);
-  DEFINE_LOCAL_STATE_IDENTIFIER_VALUE(BrowserState::Observer,
+  DEFINE_LOCAL_STATE_IDENTIFIER_VALUE(InIntendedStateObserver,
                                       kDefineStateObserverId);
-  DEFINE_LOCAL_STATE_IDENTIFIER_VALUE(BrowserState::Observer,
+  DEFINE_LOCAL_STATE_IDENTIFIER_VALUE(InIntendedStateObserver,
                                       kResetStateObserverId);
 
-  TurnOnSyncFor(head_of_household());
-  TurnOnSyncFor(child());
+  TurnOnSync();
 
   // Child activity is happening in this tab.
   int tab_index = 0;
   GURL all_audiences_site_url(GetRoutedUrl("https://example.com"));
 
   RunTestSequence(
-      WaitForStateSeeding(kResetStateObserverId, head_of_household(), child(),
-                          BrowserState::Reset()),
-      WaitForStateSeeding(kSetSafeSitesStateObserverId, head_of_household(),
-                          child(), BrowserState::EnableSafeSites()),
+      WaitForStateSeeding(kResetStateObserverId, child(),
+                          FamilyLinkSettingsState::Reset()),
+      WaitForStateSeeding(kSetSafeSitesStateObserverId, child(),
+                          FamilyLinkSettingsState::EnableSafeSites()),
 
       // Supervised user navigates to any page.
-      InstrumentTab(kChildElementId, tab_index, child().browser()),
+      InstrumentTab(kChildElementId, tab_index, &child().browser()),
       NavigateWebContents(kChildElementId, all_audiences_site_url),
       WaitForStateChange(kChildElementId,
                          PageWithMatchingTitle("Example Domain")),
       // Supervisor blocks that page and supervised user sees interstitial
       // blocked page screen.
-      WaitForStateSeeding(kDefineStateObserverId, head_of_household(), child(),
-                          BrowserState::BlockSite(all_audiences_site_url)),
+      WaitForStateSeeding(
+          kDefineStateObserverId, child(),
+          FamilyLinkSettingsState::BlockSite(all_audiences_site_url)),
       WaitForStateChange(kChildElementId, RemoteApprovalButtonAppeared()));
 }
 
 // Sanity test, if it fails it means that resetting the test state is not
 // functioning properly.
 IN_PROC_BROWSER_TEST_P(UrlFilterUiTest, ClearFamilyLinkSettings) {
-  DEFINE_LOCAL_STATE_IDENTIFIER_VALUE(BrowserState::Observer, kObserverId);
+  DEFINE_LOCAL_STATE_IDENTIFIER_VALUE(InIntendedStateObserver, kObserverId);
 
-  TurnOnSyncFor(head_of_household());
-  TurnOnSyncFor(child());
+  TurnOnSync();
 
   // Clear all existing filters.
-  RunTestSequence(WaitForStateSeeding(kObserverId, head_of_household(), child(),
-                                      BrowserState::Reset()));
+  RunTestSequence(WaitForStateSeeding(kObserverId, child(),
+                                      FamilyLinkSettingsState::Reset()));
 }
 
 IN_PROC_BROWSER_TEST_P(UrlFilterUiTest, ParentAllowsPageBlockedBySafeSites) {
   DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kChildElementId);
-  DEFINE_LOCAL_STATE_IDENTIFIER_VALUE(BrowserState::Observer,
+  DEFINE_LOCAL_STATE_IDENTIFIER_VALUE(InIntendedStateObserver,
                                       kDefineStateObserverId);
-  DEFINE_LOCAL_STATE_IDENTIFIER_VALUE(BrowserState::Observer,
+  DEFINE_LOCAL_STATE_IDENTIFIER_VALUE(InIntendedStateObserver,
                                       kResetStateObserverId);
 
-  TurnOnSyncFor(head_of_household());
-  TurnOnSyncFor(child());
+  TurnOnSync();
 
   // Child activity is happening in this tab.
   int tab_index = 0;
   GURL mature_site_url(GetRoutedUrl("https://bestgore.com"));
 
   RunTestSequence(
-      WaitForStateSeeding(kResetStateObserverId, head_of_household(), child(),
-                          BrowserState::Reset()),
+      WaitForStateSeeding(kResetStateObserverId, child(),
+                          FamilyLinkSettingsState::Reset()),
 
       // Supervised user navigates to inappropriate page and is blocked.
-      InstrumentTab(kChildElementId, tab_index, child().browser()),
+      InstrumentTab(kChildElementId, tab_index, &child().browser()),
       NavigateWebContents(kChildElementId, mature_site_url),
       WaitForStateChange(kChildElementId, RemoteApprovalButtonAppeared()),
 
       // Supervisor allows that page and supervised user consumes content.
-      WaitForStateSeeding(kDefineStateObserverId, head_of_household(), child(),
-                          BrowserState::AllowSite(mature_site_url)),
+      WaitForStateSeeding(kDefineStateObserverId, child(),
+                          FamilyLinkSettingsState::AllowSite(mature_site_url)),
       WaitForStateChange(kChildElementId, PageWithMatchingTitle("Best Gore")));
 }
 
 IN_PROC_BROWSER_TEST_P(UrlFilterUiTest,
-                       ParentAprovesPermissionRequestForBlockedSite) {
+                       ParentApprovesPermissionRequestForBlockedSite) {
   DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kChildElementId);
   DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kParentApprovalTab);
-  DEFINE_LOCAL_STATE_IDENTIFIER_VALUE(BrowserState::Observer,
+  DEFINE_LOCAL_STATE_IDENTIFIER_VALUE(InIntendedStateObserver,
                                       kResetStateObserverId);
 
-  TurnOnSyncFor(head_of_household());
-  TurnOnSyncFor(child());
+  TurnOnSync();
 
   // Child and parent activity is happening in these tabs.
   int child_tab_index = 0;
   int parent_tab_index = 0;
 
   RunTestSequence(
-      WaitForStateSeeding(kResetStateObserverId, head_of_household(), child(),
-                          BrowserState::Reset()),
+      WaitForStateSeeding(kResetStateObserverId, child(),
+                          FamilyLinkSettingsState::Reset()),
       // Supervised user navigates to inappropriate page and is blocked, and
       // makes approval request.
-      InstrumentTab(kChildElementId, child_tab_index, child().browser()),
+      InstrumentTab(kChildElementId, child_tab_index, &child().browser()),
       Log("When child navigates to blocked url"),
       NavigateWebContents(kChildElementId,
                           GetRoutedUrl("https://bestgore.com")),
@@ -238,7 +298,7 @@ IN_PROC_BROWSER_TEST_P(UrlFilterUiTest,
       // Link.
       Log("When parent receives approval request"),
       InstrumentTab(kParentApprovalTab, parent_tab_index,
-                    /*in_browser=*/head_of_household().browser()),
+                    /*in_browser=*/&head_of_household().browser()),
       ParentOpensControlListPage(kParentApprovalTab,
                                  GURL(kPermissionRequestUrl)),
       WaitForStateChange(kParentApprovalTab, RemotePermissionRequestAppeared()),
@@ -251,13 +311,63 @@ IN_PROC_BROWSER_TEST_P(UrlFilterUiTest,
       WaitForStateChange(kChildElementId, PageWithMatchingTitle("Best Gore")));
 }
 
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
+IN_PROC_BROWSER_TEST_P(UrlFilterUiTest,
+                       ChildInPendingStateCanReauthAndRequestApproval) {
+  DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kChildElementId);
+  DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kChildSignInElementId);
+  DEFINE_LOCAL_STATE_IDENTIFIER_VALUE(InIntendedStateObserver,
+                                      kResetStateObserverId);
+
+  TurnOnSync();
+  RunTestSequence(WaitForStateSeeding(kResetStateObserverId, child(),
+                                      FamilyLinkSettingsState::Reset()));
+
+  child().SignOutFromWeb();
+  // TODO(b/364011203): Once the condition for displaying the interstitial is
+  // set, expect the condition is met here.
+
+  // Child activity starts in this tab.
+  int tab_index = 0;
+  RunTestSequence(
+      // Child in pending state navigates to explicit website.
+      Log("Test sequence starting"),
+      InstrumentTab(kChildElementId, tab_index, &child().browser()),
+      NavigateWebContents(kChildElementId,
+                          GetRoutedUrl("https://bestgore.com")),
+      Log("When child in pending state navigates to blocked url"),
+      // Child is shown the re-authentication interstitial.
+      WaitForStateChange(kChildElementId,
+                         PageWithMatchingTitle("Site blocked")),
+      WaitForStateChange(kChildElementId,
+                         ReauthenticationInterstitialNextButtonAppeared()),
+      Log("Then child is shown the re-authentication interstitial"),
+      ChildProceedsToSignIn(kChildElementId),
+      Log("When child clicks the 'Next' button on interstitial"),
+      InstrumentTab(kChildSignInElementId, tab_index + 1, &child().browser()),
+      WaitForStateChange(kChildSignInElementId,
+                         PageWithMatchingTitle("Sign in - Google Accounts")),
+      Log("The child is redirected to Sign-in page"),
+      // Child goes through the sign-in flow.
+      // Note: If the UI-sign performed below is flaky we can drop this part of
+      // the test or find another way to sign-in.
+      DoChildSignInFromUI(kChildSignInElementId),
+      WaitForStateChange(kChildElementId, RemoteApprovalButtonAppeared()),
+      Log("The child is shown the blocked url interstitial"),
+      EnsureNotPresent(kChildSignInElementId), Log("The sign-in tab is closed"),
+      Log("Test sequence finished"));
+}
+#endif // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
+
+
 INSTANTIATE_TEST_SUITE_P(
-    All,
+    ,
     UrlFilterUiTest,
-    testing::Values(FamilyIdentifier("FAMILY_DMA_ELIGIBLE_NO_CONSENT"),
-                    FamilyIdentifier("FAMILY_DMA_ELIGIBLE_WITH_CONSENT"),
-                    FamilyIdentifier("FAMILY_DMA_INELIGIBLE")),
-    [](const auto& info) { return info.param->data(); });
+    testing::Values(FamilyLiveTest::RpcMode::kProd,
+                    FamilyLiveTest::RpcMode::kTestImpersonation),
+    [](const testing::TestParamInfo<FamilyLiveTest::RpcMode>& info) {
+      return ToString(info.param);
+    });
 
 }  // namespace
 }  // namespace supervised_user

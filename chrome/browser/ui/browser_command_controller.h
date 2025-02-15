@@ -8,14 +8,15 @@
 #include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/command_updater.h"
 #include "chrome/browser/command_updater_delegate.h"
 #include "chrome/browser/command_updater_impl.h"
 #include "chrome/browser/ui/tabs/tab_strip_model_observer.h"
+#include "chrome/browser/ui/webui/side_panel/customize_chrome/customize_chrome_section.h"
 #include "components/prefs/pref_change_registrar.h"
 #include "components/prefs/pref_member.h"
 #include "components/sessions/core/tab_restore_service_observer.h"
+#include "content/public/browser/web_contents_observer.h"
 #include "ui/actions/actions.h"
 #include "ui/base/window_open_disposition.h"
 
@@ -73,13 +74,12 @@ class BrowserCommandController : public CommandUpdater,
   // Overriden from CommandUpdater:
   bool SupportsCommand(int id) const override;
   bool IsCommandEnabled(int id) const override;
-  bool ExecuteCommand(
-      int id,
-      base::TimeTicks time_stamp = base::TimeTicks::Now()) override;
-  bool ExecuteCommandWithDisposition(
-      int id,
-      WindowOpenDisposition disposition,
-      base::TimeTicks time_stamp = base::TimeTicks::Now()) override;
+  using CommandUpdater::ExecuteCommand;
+  bool ExecuteCommand(int id, base::TimeTicks time_stamp) override;
+  using CommandUpdater::ExecuteCommandWithDisposition;
+  bool ExecuteCommandWithDisposition(int id,
+                                     WindowOpenDisposition disposition,
+                                     base::TimeTicks time_stamp) override;
   void AddCommandObserver(int id, CommandObserver* observer) override;
   void RemoveCommandObserver(int id, CommandObserver* observer) override;
   void RemoveCommandObserver(CommandObserver* observer) override;
@@ -95,8 +95,9 @@ class BrowserCommandController : public CommandUpdater,
       Profile* profile);
 
  private:
-  FRIEND_TEST_ALL_PREFIXES(BrowserCommandControllerBrowserTest,
-                           LockedFullscreen);
+#if BUILDFLAG(IS_CHROMEOS)
+  friend class BrowserCommandControllerBrowserTestLockedFullscreen;
+#endif
 
   // Overridden from TabStripModelObserver:
   void OnTabStripModelChanged(
@@ -121,9 +122,6 @@ class BrowserCommandController : public CommandUpdater,
   // Returns true if the location bar is shown or is currently hidden, but can
   // be shown. Used for updating window command states only.
   bool IsShowingLocationBar();
-
-  // Returns true if the browser window is for a web app or custom tab.
-  bool IsWebAppOrCustomTab() const;
 
   // Initialize state for all browser commands.
   void InitCommandState();
@@ -216,6 +214,11 @@ class BrowserCommandController : public CommandUpdater,
                                      actions::ActionId action_id,
                                      bool enabled);
 
+  // Helper method to show the customize chrome sidepanel and optionally scroll
+  // to a specific section.
+  void ShowCustomizeChromeSidePanel(
+      std::optional<CustomizeChromeSection> section = std::nullopt);
+
   inline BrowserWindow* window();
   inline Profile* profile();
 
@@ -229,6 +232,11 @@ class BrowserCommandController : public CommandUpdater,
 
   // In locked fullscreen mode disallow enabling/disabling commands.
   bool is_locked_fullscreen_ = false;
+
+  // If the Customize Chrome side panel is shown, determines which section to
+  // display.
+  CustomizeChromeSection customize_chrome_section_ =
+      CustomizeChromeSection::kUnspecified;
 };
 
 }  // namespace chrome

@@ -4,12 +4,15 @@
 
 #include "device/bluetooth/chromeos/bluetooth_utils.h"
 
+#include "ash/constants/ash_pref_names.h"
 #include "base/command_line.h"
 #include "base/functional/callback_helpers.h"
 #include "base/run_loop.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/task_environment.h"
-#include "build/chromeos_buildflags.h"
+#include "build/build_config.h"
+#include "components/prefs/pref_registry_simple.h"
+#include "components/prefs/testing_pref_service.h"
 #include "device/bluetooth/bluetooth_adapter_factory.h"
 #include "device/bluetooth/bluetooth_device.h"
 #include "device/bluetooth/test/mock_bluetooth_adapter.h"
@@ -17,15 +20,11 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #include "ash/constants/ash_features.h"
 #include "chromeos/ash/services/nearby/public/cpp/nearby_client_uuids.h"
 #include "chromeos/ash/services/secure_channel/public/cpp/shared/ble_constants.h"
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
-
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-#include "chromeos/lacros/lacros_test_helper.h"
-#endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 namespace device {
 
@@ -43,12 +42,14 @@ constexpr char kTimeIntervalBetweenConnectionsHistogramName[] =
 const BluetoothDevice::ServiceDataMap kTestServiceDataMap = {
     {BluetoothUUID(kHIDServiceUUID), {1}}};
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 // Note: The first 3 hex bytes represent the OUI portion of the address, which
 // indicates the device vendor. In this case, "64:16:7F:**:**:**" represents a
 // device manufactured by Poly.
 constexpr char kFakePolyDeviceAddress[] = "64:16:7F:12:34:56";
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+constexpr char kConnectionToastShownLast24HoursCountHistogramName[] =
+    "Bluetooth.ChromeOS.ConnectionToastShownIn24Hours.Count";
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 const size_t kMaxDevicesForFilter = 5;
 
@@ -83,7 +84,7 @@ class BluetoothUtilsTest : public testing::Test {
     return mock_bluetooth_device_ptr;
   }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   void AddMockPolyDeviceToAdapter() {
     MockBluetoothDevice* mock_bluetooth_device =
         AddMockBluetoothDeviceToAdapter(BLUETOOTH_TRANSPORT_CLASSIC);
@@ -94,7 +95,7 @@ class BluetoothUtilsTest : public testing::Test {
     ON_CALL(*mock_bluetooth_device, GetAddress)
         .WillByDefault(testing::Return(kFakePolyDeviceAddress));
   }
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
   MockBluetoothAdapter* adapter() { return adapter_.get(); }
 
@@ -115,9 +116,6 @@ class BluetoothUtilsTest : public testing::Test {
   base::test::TaskEnvironment task_environment_;
   scoped_refptr<MockBluetoothAdapter> adapter_ =
       base::MakeRefCounted<testing::NiceMock<MockBluetoothAdapter>>();
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-  chromeos::ScopedLacrosServiceTestHelper scoped_lacros_service_test_helper_;
-#endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
 };
 
 TEST_F(BluetoothUtilsTest,
@@ -199,7 +197,7 @@ TEST_F(BluetoothUtilsTest,
                                   1u /* num_expected_remaining_devices */);
 }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 // Regression test for b/228118615.
 TEST_F(BluetoothUtilsTest, ShowPolyDevice_PolyFlagEnabled) {
   // Poly devices should not be filtered out, regardless of device type.
@@ -207,7 +205,7 @@ TEST_F(BluetoothUtilsTest, ShowPolyDevice_PolyFlagEnabled) {
   VerifyFilterBluetoothDeviceList(BluetoothFilterType::KNOWN,
                                   1u /* num_expected_remaining_devices */);
 }
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 TEST_F(
     BluetoothUtilsTest,
@@ -271,7 +269,7 @@ TEST_F(
                                   3u /* num_expected_remaining_devices */);
 }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 TEST_F(
     BluetoothUtilsTest,
     TestFilterBluetoothDeviceList_FilterKnown_RemoveDevicesWithUnsupportedUuids) {
@@ -292,7 +290,7 @@ TEST_F(
                                     0u /* num_expected_remaining_devices */);
   }
 }
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 TEST_F(
     BluetoothUtilsTest,
@@ -431,6 +429,13 @@ TEST_F(BluetoothUtilsTest, TestPairMetric) {
         failure_reason, 1);
   };
 
+  auto assert_filtered_user_error_histograms =
+      [&](device::ConnectionFailureReason failure_reason) {
+        histogram_tester.ExpectBucketCount(
+            "Bluetooth.ChromeOS.Pairing.Result.UserErrorsFiltered2", 0,
+            total_count - 1);
+      };
+
   auto assert_filtered_failure_histograms =
       [&](device::ConnectionFailureReason error, size_t expected_count) {
         histogram_tester.ExpectBucketCount(
@@ -448,6 +453,14 @@ TEST_F(BluetoothUtilsTest, TestPairMetric) {
   assert_histograms(device::ConnectionFailureReason::kAuthFailed);
   assert_filtered_failure_histograms(
       device::ConnectionFailureReason::kAuthFailed, /*expected_count=*/1);
+
+  RecordPairingResult(device::ConnectionFailureReason::kNotFound,
+                      device::BluetoothTransport::BLUETOOTH_TRANSPORT_CLASSIC,
+                      base::Seconds(2));
+  total_count++;
+  assert_histograms(device::ConnectionFailureReason::kNotFound);
+  assert_filtered_user_error_histograms(
+      device::ConnectionFailureReason::kNotFound);
 
   RecordPairingResult(device::ConnectionFailureReason::kAuthCanceled,
                       device::BluetoothTransport::BLUETOOTH_TRANSPORT_CLASSIC,
@@ -489,6 +502,29 @@ TEST_F(BluetoothUtilsTest, TestUserAttemptedReconnectionMetric) {
       "Bluetooth.ChromeOS.UserInitiatedReconnectionAttempt.Duration.Failure."
       "Classic",
       2000, 1);
+
+  histogram_tester.ExpectBucketCount(
+      "Bluetooth.ChromeOS.UserInitiatedReconnectionAttempt.Result."
+      "UserErrorsFiltered",
+      0, 0);
+
+  RecordUserInitiatedReconnectionAttemptResult(
+      device::ConnectionFailureReason::kFailed,
+      device::UserInitiatedReconnectionUISurfaces::kSettings);
+
+  histogram_tester.ExpectBucketCount(
+      "Bluetooth.ChromeOS.UserInitiatedReconnectionAttempt.Result."
+      "UserErrorsFiltered",
+      0, 1);
+
+  RecordUserInitiatedReconnectionAttemptResult(
+      device::ConnectionFailureReason::kInprogress,
+      device::UserInitiatedReconnectionUISurfaces::kSettings);
+
+  histogram_tester.ExpectBucketCount(
+      "Bluetooth.ChromeOS.UserInitiatedReconnectionAttempt.Result."
+      "UserErrorsFiltered",
+      0, 1);
 }
 
 TEST_F(BluetoothUtilsTest, TestDisconnectMetric) {
@@ -514,6 +550,108 @@ TEST_F(BluetoothUtilsTest, TestTimeIntervalBetweenConnectionsMetric) {
       kTimeIntervalBetweenConnectionsHistogramName, 1);
   histogram_tester.ExpectTimeBucketCount(
       kTimeIntervalBetweenConnectionsHistogramName, base::Minutes(1), 1);
+}
+
+#if BUILDFLAG(IS_CHROMEOS)
+TEST_F(BluetoothUtilsTest, TestConnectionToastShownCount24HoursMetric) {
+  // Verify no initial histogram entries.
+  histogram_tester.ExpectTotalCount(
+      kConnectionToastShownLast24HoursCountHistogramName, 0);
+
+  // Initialize pref.
+  std::unique_ptr<TestingPrefServiceSimple> local_state =
+      std::make_unique<TestingPrefServiceSimple>();
+  local_state->registry()->RegisterIntegerPref(
+      ash::prefs::kBluetoothConnectionToastShownCount, 0);
+  local_state->registry()->RegisterTimePref(
+      ash::prefs::kBluetoothToastCountStartTime,
+      base::Time::Now().LocalMidnight());
+
+  // Simulate 1 minute passing and connect the Bluetooth device.
+  local_state->SetTime(ash::prefs::kBluetoothToastCountStartTime,
+                       base::Time::Now().LocalMidnight() - base::Minutes(1));
+  MaybeRecordConnectionToastShownCount(local_state.get(),
+                                       /*triggered_by_connect=*/true);
+
+  // Verify the toast count increments to 1, and no metric is recorded since
+  // it is within 24 hours.
+  EXPECT_EQ(1, local_state->GetInteger(
+                   ash::prefs::kBluetoothConnectionToastShownCount));
+  histogram_tester.ExpectTotalCount(
+      kConnectionToastShownLast24HoursCountHistogramName, 0);
+
+  // Simulate 15 minutes passing and connect again.
+  local_state->SetTime(ash::prefs::kBluetoothToastCountStartTime,
+                       base::Time::Now().LocalMidnight() - base::Minutes(15));
+  MaybeRecordConnectionToastShownCount(local_state.get(),
+                                       /*triggered_by_connect=*/true);
+
+  // Verify the toast count increments to 2, but still no metrics recorded.
+  EXPECT_EQ(2, local_state->GetInteger(
+                   ash::prefs::kBluetoothConnectionToastShownCount));
+  histogram_tester.ExpectTotalCount(
+      kConnectionToastShownLast24HoursCountHistogramName, 0);
+
+  // Simulate 30 hours passing and connect.
+  local_state->SetTime(ash::prefs::kBluetoothToastCountStartTime,
+                       base::Time::Now().LocalMidnight() - base::Hours(30));
+  MaybeRecordConnectionToastShownCount(local_state.get(),
+                                       /*triggered_by_connect=*/true);
+
+  // Verify the metric is emitted after the 24-hour threshold is crossed.
+  histogram_tester.ExpectTotalCount(
+      kConnectionToastShownLast24HoursCountHistogramName, 1);
+  histogram_tester.ExpectBucketCount(
+      kConnectionToastShownLast24HoursCountHistogramName, /*sample=*/2,
+      /*expected_count=*/1);
+
+  // Verify the toast count and start time are reset after emitting the metric.
+  EXPECT_EQ(1, local_state->GetInteger(
+                   ash::prefs::kBluetoothConnectionToastShownCount));
+  EXPECT_EQ(base::Time::Now().LocalMidnight(),
+            local_state->GetTime(ash::prefs::kBluetoothToastCountStartTime));
+
+  // Simulate passing more than 24 hours, but this time, triggered by device
+  // start.
+  local_state->SetTime(ash::prefs::kBluetoothToastCountStartTime,
+                       base::Time::Now().LocalMidnight() - base::Hours(30));
+  MaybeRecordConnectionToastShownCount(local_state.get(),
+                                       /*triggered_by_connect=*/false);
+
+  // Verify the metric is emitted.
+  histogram_tester.ExpectTotalCount(
+      kConnectionToastShownLast24HoursCountHistogramName, 2);
+  histogram_tester.ExpectBucketCount(
+      kConnectionToastShownLast24HoursCountHistogramName, /*sample=*/1,
+      /*expected_count=*/1);
+
+  // Verify the count is reset to 0, instead of 1 this time.
+  EXPECT_EQ(0, local_state->GetInteger(
+                   ash::prefs::kBluetoothConnectionToastShownCount));
+}
+#endif  // BUILDFLAG(IS_CHROMEOS)
+
+TEST_F(BluetoothUtilsTest, TestFlossManagerClientInitMetric) {
+  static int expected_num_successes = 0, expected_num_failures = 0;
+  auto assert_histograms = [&]() {
+    histogram_tester.ExpectBucketCount(
+        "Bluetooth.ChromeOS.FlossManagerClientInit.Result", 1,
+        expected_num_successes);
+    histogram_tester.ExpectBucketCount(
+        "Bluetooth.ChromeOS.FlossManagerClientInit.Result", 0,
+        expected_num_failures);
+  };
+  RecordFlossManagerClientInit(/*success=*/true, base::Seconds(1));
+  expected_num_successes++;
+  histogram_tester.ExpectBucketCount(
+      "Bluetooth.ChromeOS.FlossManagerClientInit.Duration.Success", 1000, 1);
+  assert_histograms();
+
+  RecordFlossManagerClientInit(/*success=*/false, base::Seconds(2));
+  expected_num_failures++;
+  histogram_tester.ExpectBucketCount(
+      "Bluetooth.ChromeOS.FlossManagerClientInit.Duration.Failure", 2000, 1);
+  assert_histograms();
 }
 
 }  // namespace device

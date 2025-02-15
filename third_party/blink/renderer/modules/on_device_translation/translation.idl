@@ -9,7 +9,7 @@ enum TranslationAvailability {
 };
 
 [
-  RuntimeEnabled=TranslationAPI,
+  RuntimeEnabled=TranslationAPIEntryPoint,
   Exposed=(Window,Worker)
 ]
 interface Translation {

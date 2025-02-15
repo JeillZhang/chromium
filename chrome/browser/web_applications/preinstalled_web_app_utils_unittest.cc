@@ -18,9 +18,9 @@
 #include "ui/events/devices/touchscreen_device.h"
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
-#include "ash/components/arc/arc_util.h"
 #include "ash/constants/ash_switches.h"
 #include "base/command_line.h"
+#include "chromeos/ash/experiences/arc/arc_util.h"
 #endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
 #if BUILDFLAG(IS_CHROMEOS_LACROS)
@@ -238,7 +238,7 @@ TEST_F(PreinstalledWebAppUtilsTest, MAYBE_OfflineManifestValid) {
                                                     .Run();
   EXPECT_TRUE(app_info);
   EXPECT_EQ(app_info->title, u"Test App");
-  EXPECT_EQ(app_info->start_url, GURL("https://test.org/start.html"));
+  EXPECT_EQ(app_info->start_url(), GURL("https://test.org/start.html"));
   EXPECT_EQ(app_info->scope, GURL("https://test.org/"));
   EXPECT_EQ(app_info->display_mode, DisplayMode::kStandalone);
   EXPECT_EQ(app_info->icon_bitmaps.any.size(), 1u);

@@ -53,9 +53,8 @@ class ColorChooserTest : public views::ViewsTestBase {
     auto* view = delegate->TransferOwnershipOfContentsView();
 
     view->SetBounds(0, 0, 400, 300);
-    widget_ =
-        CreateTestWidget(views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET,
-                         views::Widget::InitParams::TYPE_WINDOW);
+    widget_ = CreateTestWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET,
+                               views::Widget::InitParams::TYPE_WINDOW);
     widget_->GetContentsView()->AddChildView(std::move(view));
     generator_ = std::make_unique<ui::test::EventGenerator>(
         views::GetRootWindow(widget_.get()), widget_->GetNativeWindow());
@@ -63,6 +62,7 @@ class ColorChooserTest : public views::ViewsTestBase {
 
   void TearDown() override {
     generator_.reset();
+    chooser_.reset();
     widget_.reset();
     ViewsTestBase::TearDown();
   }
@@ -91,9 +91,10 @@ class ColorChooserTest : public views::ViewsTestBase {
   }
 
   SkColor GetTextualColor() const {
-    std::u16string text = chooser_->textfield_for_testing()->GetText();
-    if (text.empty() || text[0] != '#')
+    std::u16string_view text = chooser_->textfield_for_testing()->GetText();
+    if (text.empty() || text[0] != '#') {
       return SK_ColorTRANSPARENT;
+    }
 
     uint32_t color;
     return base::HexStringToUInt(base::UTF16ToUTF8(text.substr(1)), &color)
@@ -105,8 +106,9 @@ class ColorChooserTest : public views::ViewsTestBase {
     chooser_->textfield_for_testing()->SetText(base::UTF8ToUTF16(color));
     // Synthesize ContentsChanged, since Textfield normally doesn't deliver it
     // for SetText, only for user-typed text.
-    chooser_->ContentsChanged(chooser_->textfield_for_testing(),
-                              chooser_->textfield_for_testing()->GetText());
+    chooser_->ContentsChanged(
+        chooser_->textfield_for_testing(),
+        std::u16string(chooser_->textfield_for_testing()->GetText()));
   }
 
   void PressMouseAt(views::View* view, const gfx::Point& p) {
@@ -116,7 +118,7 @@ class ColorChooserTest : public views::ViewsTestBase {
     generator_->MoveMouseTo(po + p.OffsetFromOrigin());
     generator_->ClickLeftButton();
 #endif
-    ui::MouseEvent press(ui::ET_MOUSE_PRESSED,
+    ui::MouseEvent press(ui::EventType::kMousePressed,
                          gfx::Point(view->x() + p.x(), view->y() + p.y()),
                          gfx::Point(0, 0), base::TimeTicks::Now(), 0, 0);
     view->OnMousePressed(press);

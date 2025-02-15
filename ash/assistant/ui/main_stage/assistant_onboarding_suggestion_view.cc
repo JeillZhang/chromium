@@ -2,7 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "ash/assistant/ui/main_stage/assistant_onboarding_suggestion_view.h"
+
+#include <string_view>
 
 #include "ash/assistant/ui/assistant_ui_constants.h"
 #include "ash/assistant/ui/assistant_view_delegate.h"
@@ -119,8 +126,11 @@ AssistantOnboardingSuggestionView::~AssistantOnboardingSuggestionView() {
   views::InkDrop::Remove(this);
 }
 
-int AssistantOnboardingSuggestionView::GetHeightForWidth(int width) const {
-  return kPreferredHeightDip;
+gfx::Size AssistantOnboardingSuggestionView::CalculatePreferredSize(
+    const views::SizeBounds& available_size) const {
+  const int preferred_width =
+      views::Button::CalculatePreferredSize(available_size).width();
+  return gfx::Size(preferred_width, kPreferredHeightDip);
 }
 
 void AssistantOnboardingSuggestionView::ChildPreferredSizeChanged(
@@ -154,10 +164,11 @@ void AssistantOnboardingSuggestionView::OnThemeChanged() {
   label_->SetEnabledColor(GetForegroundColor(index_));
 
   if (assistant::util::IsResourceLinkType(url_, ResourceLinkType::kIcon)) {
-    icon_->SetImage(assistant::util::CreateVectorIcon(
-        assistant::util::AppendOrReplaceColorParam(url_,
-                                                   GetForegroundColor(index_)),
-        kIconSizeDip));
+    icon_->SetImage(
+        ui::ImageModel::FromImageSkia(assistant::util::CreateVectorIcon(
+            assistant::util::AppendOrReplaceColorParam(
+                url_, GetForegroundColor(index_)),
+            kIconSizeDip)));
   }
 }
 
@@ -165,7 +176,7 @@ gfx::ImageSkia AssistantOnboardingSuggestionView::GetIcon() const {
   return icon_->GetImage();
 }
 
-const std::u16string& AssistantOnboardingSuggestionView::GetText() const {
+std::u16string_view AssistantOnboardingSuggestionView::GetText() const {
   return label_->GetText();
 }
 
@@ -255,7 +266,7 @@ void AssistantOnboardingSuggestionView::InitLayout(
 
 void AssistantOnboardingSuggestionView::UpdateIcon(const gfx::ImageSkia& icon) {
   if (!icon.isNull())
-    icon_->SetImage(icon);
+    icon_->SetImage(ui::ImageModel::FromImageSkia(icon));
 }
 
 void AssistantOnboardingSuggestionView::OnButtonPressed() {

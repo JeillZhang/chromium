@@ -18,17 +18,18 @@ import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
 
 import org.chromium.base.test.BaseRobolectricTestRunner;
+import org.chromium.base.test.util.HistogramWatcher;
 import org.chromium.chrome.browser.layouts.LayoutStateProvider;
 import org.chromium.chrome.browser.tabmodel.TabModel;
+import org.chromium.components.autofill.SaveIbanPromptOffer;
+import org.chromium.components.autofill.SaveIbanPromptResult;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController;
 
 @RunWith(BaseRobolectricTestRunner.class)
 public final class AutofillSaveIbanBottomSheetMediatorTest {
-    private static final String IBAN_LABEL = "CH56 **** **** **** *800 9";
-
     @Rule public MockitoRule mMockitoRule = MockitoJUnit.rule();
 
-    @Mock private AutofillSaveIbanBottomSheetBridge mBridge;
+    @Mock private AutofillSaveIbanBottomSheetBridge mDelegate;
     @Mock private BottomSheetController mBottomSheetController;
     @Mock private LayoutStateProvider mLayoutStateProvider;
     @Mock private TabModel mTabModel;
@@ -38,29 +39,112 @@ public final class AutofillSaveIbanBottomSheetMediatorTest {
 
     @Before
     public void setUp() {
+        mBottomSheetContent = new AutofillSaveIbanBottomSheetContent(null, null);
         mMediator =
                 new AutofillSaveIbanBottomSheetMediator(
-                        mBridge,
+                        mDelegate,
                         mBottomSheetContent,
                         mBottomSheetController,
                         mLayoutStateProvider,
-                        mTabModel);
+                        mTabModel,
+                        /* isServerSave= */ true);
     }
 
     @Test
     public void testRequestShowContent_showsContent() {
+        HistogramWatcher promptOfferHistogramWatcher =
+                HistogramWatcher.newSingleRecordWatcher(
+                        AutofillSaveIbanBottomSheetMediator.SAVE_IBAN_PROMPT_OFFER_HISTOGRAM
+                                + ".Upload.FirstShow",
+                        SaveIbanPromptOffer.SHOWN);
+
         when(mBottomSheetController.requestShowContent(
                         any(AutofillSaveIbanBottomSheetContent.class), /* animate= */ eq(true)))
                 .thenReturn(true);
-        mMediator.requestShowContent(IBAN_LABEL);
+
+        mMediator.requestShowContent();
 
         verify(mBottomSheetController).requestShowContent(mBottomSheetContent, /* animate= */ true);
+        promptOfferHistogramWatcher.assertExpected();
     }
 
     @Test
-    public void testDestroy_hidesBottomSheetContent() {
-        mMediator.destroy();
+    public void testRequestShowContent_showsContent_ignored() {
+        HistogramWatcher promptOfferHistogramWatcher =
+                HistogramWatcher.newSingleRecordWatcher(
+                        AutofillSaveIbanBottomSheetMediator.SAVE_IBAN_PROMPT_RESULT_HISTOGRAM
+                                + ".Upload.FirstShow",
+                        SaveIbanPromptResult.UNKNOWN);
 
-        verify(mBottomSheetController).hideContent(mBottomSheetContent, /* animate= */ true);
+        when(mBottomSheetController.requestShowContent(
+                        any(AutofillSaveIbanBottomSheetContent.class), /* animate= */ eq(true)))
+                .thenReturn(false);
+
+        mMediator.requestShowContent();
+
+        verify(mBottomSheetController).requestShowContent(mBottomSheetContent, /* animate= */ true);
+        promptOfferHistogramWatcher.assertExpected();
+    }
+
+    @Test
+    public void testHide_hidesBottomSheetContent() {
+        mMediator.hide(BottomSheetController.StateChangeReason.NONE);
+
+        verify(mBottomSheetController)
+                .hideContent(
+                        mBottomSheetContent,
+                        /* animate= */ true,
+                        BottomSheetController.StateChangeReason.NONE);
+    }
+
+    @Test
+    public void testOnAccepted_emptyNickname() {
+        HistogramWatcher promptResultHistogramWatcher =
+                HistogramWatcher.newSingleRecordWatcher(
+                        AutofillSaveIbanBottomSheetMediator.SAVE_IBAN_PROMPT_RESULT_HISTOGRAM
+                                + ".Upload.FirstShow",
+                        SaveIbanPromptResult.ACCEPTED);
+        HistogramWatcher nicknameHistogramWatcher =
+                HistogramWatcher.newSingleRecordWatcher(
+                        AutofillSaveIbanBottomSheetMediator.SAVE_IBAN_PROMPT_RESULT_HISTOGRAM
+                                + ".Upload.SavedWithNickname",
+                        false);
+
+        mMediator.onAccepted("");
+
+        promptResultHistogramWatcher.assertExpected();
+        nicknameHistogramWatcher.assertExpected();
+    }
+
+    @Test
+    public void testOnAccepted_nicknameAvailable() {
+        HistogramWatcher promptResultHistogramWatcher =
+                HistogramWatcher.newSingleRecordWatcher(
+                        AutofillSaveIbanBottomSheetMediator.SAVE_IBAN_PROMPT_RESULT_HISTOGRAM
+                                + ".Upload.FirstShow",
+                        SaveIbanPromptResult.ACCEPTED);
+        HistogramWatcher nicknameHistogramWatcher =
+                HistogramWatcher.newSingleRecordWatcher(
+                        AutofillSaveIbanBottomSheetMediator.SAVE_IBAN_PROMPT_RESULT_HISTOGRAM
+                                + ".Upload.SavedWithNickname",
+                        true);
+
+        mMediator.onAccepted("My iban");
+
+        promptResultHistogramWatcher.assertExpected();
+        nicknameHistogramWatcher.assertExpected();
+    }
+
+    @Test
+    public void testOnCanceled() {
+        HistogramWatcher promptResultHistogramWatcher =
+                HistogramWatcher.newSingleRecordWatcher(
+                        AutofillSaveIbanBottomSheetMediator.SAVE_IBAN_PROMPT_RESULT_HISTOGRAM
+                                + ".Upload.FirstShow",
+                        SaveIbanPromptResult.CANCELLED);
+
+        mMediator.onCanceled();
+
+        promptResultHistogramWatcher.assertExpected();
     }
 }

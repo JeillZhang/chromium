@@ -28,7 +28,8 @@ void DispatchToAgents(DevToolsAgentHostImpl* agent_host,
     (h->*method)(std::forward<Args>(args)...);
 }
 
-RenderFrameHostImpl* GetRenderFrameHostImplFrom(int frame_tree_node_id) {
+RenderFrameHostImpl* GetRenderFrameHostImplFrom(
+    FrameTreeNodeId frame_tree_node_id) {
   auto* ftn = FrameTreeNode::GloballyFindByID(frame_tree_node_id);
   if (!ftn) {
     return nullptr;
@@ -43,13 +44,13 @@ RenderFrameHostImpl* GetRenderFrameHostImplFrom(int frame_tree_node_id) {
 NetworkServiceDevToolsObserver::NetworkServiceDevToolsObserver(
     base::PassKey<NetworkServiceDevToolsObserver> pass_key,
     const std::string& id,
-    int frame_tree_node_id)
+    FrameTreeNodeId frame_tree_node_id)
     : devtools_agent_id_(id), frame_tree_node_id_(frame_tree_node_id) {}
 
 NetworkServiceDevToolsObserver::~NetworkServiceDevToolsObserver() = default;
 
 DevToolsAgentHostImpl* NetworkServiceDevToolsObserver::GetDevToolsAgentHost() {
-  if (frame_tree_node_id_ != FrameTreeNode::kFrameTreeNodeInvalidId) {
+  if (frame_tree_node_id_) {
     auto* frame_tree_node =
         FrameTreeNode::GloballyFindByID(frame_tree_node_id_);
     if (!frame_tree_node)
@@ -123,8 +124,9 @@ void NetworkServiceDevToolsObserver::OnPrivateNetworkRequest(
     bool is_warning,
     network::mojom::IPAddressSpace resource_address_space,
     network::mojom::ClientSecurityStatePtr client_security_state) {
-  if (frame_tree_node_id_ == FrameTreeNode::kFrameTreeNodeInvalidId)
+  if (frame_tree_node_id_.is_null()) {
     return;
+  }
   auto* ftn = FrameTreeNode::GloballyFindByID(frame_tree_node_id_);
   if (!ftn)
     return;
@@ -180,7 +182,8 @@ void NetworkServiceDevToolsObserver::OnCorsPreflightRequest(
   DispatchToAgents(host, &protocol::NetworkHandler::RequestSent, id,
                    /* loader_id=*/"", request_headers, *request_info,
                    protocol::Network::Initiator::TypeEnum::Preflight,
-                   initiator_url, initiator_devtools_request_id, timestamp);
+                   initiator_url, initiator_devtools_request_id,
+                   /*frame_token=*/std::nullopt, timestamp);
 }
 
 void NetworkServiceDevToolsObserver::OnCorsPreflightResponse(
@@ -194,7 +197,7 @@ void NetworkServiceDevToolsObserver::OnCorsPreflightResponse(
   DispatchToAgents(host, &protocol::NetworkHandler::ResponseReceived, id,
                    /* loader_id=*/"", url,
                    protocol::Network::ResourceTypeEnum::Preflight, *head,
-                   protocol::Maybe<std::string>());
+                   std::nullopt);
 }
 
 void NetworkServiceDevToolsObserver::OnCorsPreflightRequestCompleted(
@@ -218,23 +221,6 @@ void NetworkServiceDevToolsObserver::OnCorsError(
   RenderFrameHostImpl* rfhi = GetRenderFrameHostImplFrom(frame_tree_node_id_);
   if (!rfhi)
     return;
-
-  // TODO(crbug.com/40204695): Remove this once enforcement is always
-  // enabled and warnings are no more.
-  if (is_warning && initiator_origin.has_value()) {
-    if (!initiator_origin->IsSameOriginWith(url)) {
-      GetContentClient()->browser()->LogWebFeatureForCurrentPage(
-          rfhi, blink::mojom::WebFeature::
-                    kPrivateNetworkAccessIgnoredCrossOriginPreflightError);
-    }
-
-    if (net::SchemefulSite(initiator_origin.value()) !=
-        net::SchemefulSite(url)) {
-      GetContentClient()->browser()->LogWebFeatureForCurrentPage(
-          rfhi, blink::mojom::WebFeature::
-                    kPrivateNetworkAccessIgnoredCrossSitePreflightError);
-    }
-  }
 
   std::unique_ptr<protocol::Audits::AffectedRequest> affected_request =
       protocol::Audits::AffectedRequest::Create()
@@ -366,7 +352,7 @@ protocol::String BuildSharedDictionaryError(
       return SharedDictionaryErrorEnum::
           UseErrorUnexpectedContentDictionaryHeader;
     case SharedDictionaryError::kWriteErrorAlreadyRegistered:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
     case SharedDictionaryError::kWriteErrorCossOriginNoCorsRequest:
       return SharedDictionaryErrorEnum::WriteErrorCossOriginNoCorsRequest;
     case SharedDictionaryError::kWriteErrorDisallowedBySettings:
@@ -455,7 +441,7 @@ NetworkServiceDevToolsObserver::MakeSelfOwned(const std::string& id) {
   mojo::MakeSelfOwnedReceiver(
       std::make_unique<NetworkServiceDevToolsObserver>(
           base::PassKey<NetworkServiceDevToolsObserver>(), id,
-          FrameTreeNode::kFrameTreeNodeInvalidId),
+          FrameTreeNodeId()),
       remote.InitWithNewPipeAndPassReceiver());
   return remote;
 }

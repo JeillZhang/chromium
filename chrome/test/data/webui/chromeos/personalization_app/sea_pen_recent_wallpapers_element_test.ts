@@ -5,14 +5,15 @@
 import 'chrome://personalization/strings.m.js';
 import 'chrome://webui-test/chromeos/mojo_webui_test_support.js';
 
-import {emptyState, SeaPenActionName, SeaPenRecentWallpapersElement, WallpaperGridItemElement} from 'chrome://personalization/js/personalization_app.js';
+import type {WallpaperGridItemElement} from 'chrome://personalization/js/personalization_app.js';
+import {emptyState, SeaPenActionName, SeaPenRecentWallpapersElement} from 'chrome://personalization/js/personalization_app.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 import {assertDeepEquals, assertEquals, assertFalse, assertNull, assertTrue} from 'chrome://webui-test/chai_assert.js';
 import {waitAfterNextRender} from 'chrome://webui-test/polymer_test_util.js';
 
 import {baseSetup, initElement, teardownElement} from './personalization_app_test_utils.js';
-import {TestPersonalizationStore} from './test_personalization_store.js';
-import {TestSeaPenProvider} from './test_sea_pen_interface_provider.js';
+import type {TestPersonalizationStore} from './test_personalization_store.js';
+import type {TestSeaPenProvider} from './test_sea_pen_interface_provider.js';
 
 suite('SeaPenRecentWallpapersElementTest', function() {
   let personalizationStore: TestPersonalizationStore;
@@ -50,7 +51,7 @@ suite('SeaPenRecentWallpapersElementTest', function() {
     await teardownElement(seaPenRecentWallpapersElement);
     seaPenRecentWallpapersElement = null;
     loadTimeData.overrideValues({
-      isSeaPenUINextEnabled: false,
+      isSeaPenTextInputEnabled: false,
     });
   });
 
@@ -93,8 +94,8 @@ suite('SeaPenRecentWallpapersElementTest', function() {
     assertEquals(3, actionMenus!.length, 'should be 3 action menus available.');
     actionMenus.forEach(function(actionMenu: Element, i: number) {
       const menuDialog =
-          (actionMenu as HTMLElement).shadowRoot!.querySelector('dialog') as
-          HTMLDialogElement;
+          (actionMenu as HTMLElement)
+              .shadowRoot!.querySelector<HTMLDialogElement>('dialog');
       assertFalse(!!menuDialog!.open, `menu dialog ${i} should be closed.`);
     });
   });
@@ -312,8 +313,8 @@ suite('SeaPenRecentWallpapersElementTest', function() {
     assertEquals(3, actionMenus!.length, 'should be 3 action menus available.');
     actionMenus.forEach(function(actionMenu: Element, i: number) {
       const menuDialog =
-          (actionMenu as HTMLElement).shadowRoot!.querySelector('dialog') as
-          HTMLDialogElement;
+          (actionMenu as HTMLElement)
+              .shadowRoot!.querySelector<HTMLDialogElement>('dialog');
       if (i === 1) {
         assertTrue(!!menuDialog!.open, `menu dialog ${i} should be opened.`);
       } else {
@@ -323,7 +324,7 @@ suite('SeaPenRecentWallpapersElementTest', function() {
   });
 
   test(
-      'disables SeaPenUiNext to hide Create more option for recent image',
+      'disables SeaPenTextInput to hide Create more option for recent image',
       async () => {
         personalizationStore.data.wallpaper.seaPen.recentImages =
             seaPenProvider.recentImageIds;
@@ -377,10 +378,10 @@ suite('SeaPenRecentWallpapersElementTest', function() {
       });
 
   test(
-      'enables SeaPenUINext to show Create more option for recent image',
+      'enables SeaPenTextInput to show Create more option for recent image',
       async () => {
         loadTimeData.overrideValues({
-          isSeaPenUINextEnabled: true,
+          isSeaPenTextInputEnabled: true,
         });
         personalizationStore.data.wallpaper.seaPen.recentImages =
             seaPenProvider.recentImageIds;
@@ -478,8 +479,8 @@ suite('SeaPenRecentWallpapersElementTest', function() {
 
         // Menu dialog for the 3rd image should be opened.
         const actionMenu2 = actionMenus[2] as HTMLElement;
-        const menuDialog2 = actionMenu2.shadowRoot!.querySelector('dialog') as
-            HTMLDialogElement;
+        const menuDialog2 =
+            actionMenu2.shadowRoot!.querySelector<HTMLDialogElement>('dialog');
         assertTrue(
             !!menuDialog2!.open,
             `menu dialog for the 3rd image should be opened.`);
@@ -604,12 +605,12 @@ suite('SeaPenRecentWallpapersElementTest', function() {
     // Menu dialog for the first image should be opened.
     const actionMenu = actionMenus[0] as HTMLElement;
     const menuDialog =
-        actionMenu.shadowRoot!.querySelector('dialog') as HTMLDialogElement;
+        actionMenu.shadowRoot!.querySelector<HTMLDialogElement>('dialog');
     assertTrue(!!menuDialog!.open, `menu dialog 0 should be opened.`);
 
     // Wallpaper Info menu option is available. Click on this option.
     const deleteWallpaperOption =
-        actionMenu.querySelector('.delete-wallpaper-option') as HTMLElement;
+        actionMenu.querySelector<HTMLElement>('.delete-wallpaper-option');
     assertTrue(
         !!deleteWallpaperOption, 'delete wallpaper option should display.');
 

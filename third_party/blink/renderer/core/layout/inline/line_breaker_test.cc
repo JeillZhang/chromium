@@ -4,6 +4,8 @@
 
 #include "third_party/blink/renderer/core/layout/inline/line_breaker.h"
 
+#include <array>
+
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_testing.h"
 #include "third_party/blink/renderer/core/layout/base_layout_algorithm_test.h"
 #include "third_party/blink/renderer/core/layout/box_fragment_builder.h"
@@ -13,7 +15,7 @@
 #include "third_party/blink/renderer/core/layout/inline/inline_item_result_ruby_column.h"
 #include "third_party/blink/renderer/core/layout/inline/inline_node.h"
 #include "third_party/blink/renderer/core/layout/inline/line_info.h"
-#include "third_party/blink/renderer/core/layout/layout_ng_block_flow.h"
+#include "third_party/blink/renderer/core/layout/layout_block_flow.h"
 #include "third_party/blink/renderer/core/layout/positioned_float.h"
 #include "third_party/blink/renderer/core/layout/unpositioned_float.h"
 #include "third_party/blink/renderer/platform/fonts/shaping/shape_result_view.h"
@@ -395,7 +397,7 @@ TEST_F(LineBreakerTest, OverflowMargin) {
     </style>
     <div id=container><span>123 456</span> 789</div>
   )HTML");
-  const HeapVector<InlineItem>& items = node.ItemsData(false).items;
+  const InlineItems& items = node.ItemsData(false).items;
 
   // While "123 456" can fit in a line, "456" has a right margin that cannot
   // fit. Since "456" and its right margin is not breakable, "456" should be on
@@ -405,7 +407,7 @@ TEST_F(LineBreakerTest, OverflowMargin) {
   EXPECT_EQ(3u, lines.size());
   EXPECT_EQ("123", lines[0].first);
   EXPECT_EQ("456", lines[1].first);
-  DCHECK_EQ(InlineItem::kCloseTag, items[lines[1].second - 1].Type());
+  DCHECK_EQ(InlineItem::kCloseTag, items[lines[1].second - 1]->Type());
   EXPECT_EQ("789", lines[2].first);
 
   // Same as above, but this time "456" overflows the line because it is 70px.
@@ -413,7 +415,7 @@ TEST_F(LineBreakerTest, OverflowMargin) {
   EXPECT_EQ(3u, lines.size());
   EXPECT_EQ("123", lines[0].first);
   EXPECT_EQ("456", lines[1].first);
-  DCHECK_EQ(InlineItem::kCloseTag, items[lines[1].second].Type());
+  DCHECK_EQ(InlineItem::kCloseTag, items[lines[1].second]->Type());
   EXPECT_EQ("789", lines[2].first);
 }
 
@@ -1011,9 +1013,12 @@ TEST_F(LineBreakerTest, BreakAt) {
     </div>
   )HTML");
   InlineNode target = GetInlineNodeByElementId("target");
-  LineBreakPoint break_points[]{LineBreakPoint{{0, 2}}, LineBreakPoint{{1, 6}},
-                                LineBreakPoint{{2, 7}}};
-  LineInfo line_info_list[4];
+  auto break_points = std::to_array<LineBreakPoint>({
+      LineBreakPoint{{0, 2}},
+      LineBreakPoint{{1, 6}},
+      LineBreakPoint{{2, 7}},
+  });
+  std::array<LineInfo, 4> line_info_list;
   const wtf_size_t num_lines =
       BreakLinesAt(target, LayoutUnit(800), break_points, line_info_list);
   EXPECT_EQ(num_lines, 4u);
@@ -1050,8 +1055,9 @@ TEST_F(LineBreakerTest, BreakAtTrailingSpaces) {
     </div>
   )HTML");
   InlineNode target = GetInlineNodeByElementId("target");
-  LineBreakPoint break_points[]{LineBreakPoint{{7, 5}, {3, 4}}};
-  LineInfo line_info_list[2];
+  auto break_points =
+      std::to_array<LineBreakPoint>({LineBreakPoint{{7, 5}, {3, 4}}});
+  std::array<LineInfo, 2> line_info_list;
   const wtf_size_t num_lines =
       BreakLinesAt(target, LayoutUnit(800), break_points, line_info_list);
   EXPECT_EQ(num_lines, 2u);
@@ -1085,8 +1091,9 @@ TEST_F(LineBreakerTest, BreakAtTrailingSpacesAfterAtomicInline) {
     </div>
   )HTML");
   InlineNode target = GetInlineNodeByElementId("target");
-  LineBreakPoint break_points[]{LineBreakPoint{{4, 2}, {2, 1}}};
-  LineInfo line_info_list[2];
+  auto break_points =
+      std::to_array<LineBreakPoint>({LineBreakPoint{{4, 2}, {2, 1}}});
+  std::array<LineInfo, 2> line_info_list;
   const wtf_size_t num_lines =
       BreakLinesAt(target, LayoutUnit(800), break_points, line_info_list);
   EXPECT_EQ(num_lines, 2u);
@@ -1129,7 +1136,6 @@ TEST_F(LineBreakerTest, WideContentInRuby) {
 }
 
 TEST_F(LineBreakerTest, SetInputRange) {
-  ScopedRubyLineBreakableForTest enable_ruby_line_breakable(true);
   InlineNode node = CreateInlineNode(R"HTML(
       <div id=container>before<span>content</span>after</div>)HTML");
   node.PrepareLayoutIfNeeded();
@@ -1194,7 +1200,7 @@ C AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 // crbug.com/342027571 A crash with an overflowing continuation ruby column.
 TEST_F(LineBreakerTest, OverflowingContinuationRuby2) {
   InlineNode node = CreateInlineNode(R"HTML(
-<div id="container" style="writing-mode:vertical-rl; word-wrap:break-word;">
+<div id="container" style="writing-mode:vertical-rl; word-wrap:break-word; font-size: 12px;">
 <ruby>)S
 <rb dir="rtl" style="margin-bottom:-6em;"><svg></svg></rb>
 <rt>x AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
@@ -1222,6 +1228,15 @@ AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 </div>)HTML");
   ComputeMinMaxSizes(node);
   // Pass if no division-by-zero.
+}
+
+// crbug.com/350122891
+TEST_F(LineBreakerTest, MinMaxWithEmptyRubyBase) {
+  InlineNode node = CreateInlineNode(R"HTML(
+<div id="container" style="display:inline-block;">
+<ruby><rt><wbr>++P}A[X9e+52FuYyMsuADbOcYXMu73ci73uDMfYQsD</ruby></div>)HTML");
+  ComputeMinMaxSizes(node);
+  // Pass if no CHECK failure.
 }
 
 struct CanBreakInsideTestData {
@@ -1265,7 +1280,7 @@ TEST_P(CanBreakInsideTest, Data) {
   )HTML",
                                   data.target_css, data.style, data.html));
   InlineNode target = GetInlineNodeByElementId("target");
-  LineInfo line_info_list[1];
+  std::array<LineInfo, 1> line_info_list;
   const LayoutUnit available_width = LayoutUnit(800);
   const wtf_size_t num_lines =
       BreakLines(target, available_width, line_info_list);

@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -27,14 +32,12 @@ class NameValuePairsParserFuzzer {
  private:
   void testInputAsVpdDumpLine(const std::string& input) {
     NameValuePairsParser parser(&name_value_map_);
-    parser.ParseNameValuePairs(input, NameValuePairsFormat::kVpdDump,
-                               "testAsVpd");
+    parser.ParseNameValuePairs(input, NameValuePairsFormat::kVpdDump);
   }
 
   void testInputAsCrossystemOutputLine(const std::string& input) {
     NameValuePairsParser parser(&name_value_map_);
-    parser.ParseNameValuePairs(input, NameValuePairsFormat::kCrossystem,
-                               "testAsCrossystem");
+    parser.ParseNameValuePairs(input, NameValuePairsFormat::kCrossystem);
   }
 
   void testInputAsVpdDumpValuesForKey(const std::string& input) {

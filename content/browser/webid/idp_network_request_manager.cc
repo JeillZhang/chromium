@@ -30,6 +30,7 @@
 #include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "services/network/public/cpp/simple_url_loader.h"
+#include "services/network/public/cpp/url_loader_completion_status.h"
 #include "services/network/public/mojom/client_security_state.mojom.h"
 #include "services/network/public/mojom/url_response_head.mojom.h"
 #include "third_party/blink/public/common/manifest/manifest_icon_selector.h"
@@ -42,21 +43,19 @@
 namespace content {
 
 namespace {
-using LoginState = IdentityRequestAccount::LoginState;
 
-using AccountList = IdpNetworkRequestManager::AccountList;
+using AccountsResponseInvalidReason =
+    IdpNetworkRequestManager::AccountsResponseInvalidReason;
 using ClientMetadata = IdpNetworkRequestManager::ClientMetadata;
 using Endpoints = IdpNetworkRequestManager::Endpoints;
-using FetchStatus = content::IdpNetworkRequestManager::FetchStatus;
-using TokenResult = content::IdpNetworkRequestManager::TokenResult;
-using TokenError = content::IdentityCredentialTokenError;
-using ParseStatus = content::IdpNetworkRequestManager::ParseStatus;
-using AccountsResponseInvalidReason =
-    content::IdpNetworkRequestManager::AccountsResponseInvalidReason;
-using ErrorDialogType = content::IdpNetworkRequestManager::FedCmErrorDialogType;
-using TokenResponseType =
-    content::IdpNetworkRequestManager::FedCmTokenResponseType;
-using ErrorUrlType = content::IdpNetworkRequestManager::FedCmErrorUrlType;
+using ErrorDialogType = IdpNetworkRequestManager::FedCmErrorDialogType;
+using ErrorUrlType = IdpNetworkRequestManager::FedCmErrorUrlType;
+using FetchStatus = IdpNetworkRequestManager::FetchStatus;
+using LoginState = IdentityRequestAccount::LoginState;
+using ParseStatus = IdpNetworkRequestManager::ParseStatus;
+using TokenError = IdentityCredentialTokenError;
+using TokenResponseType = IdpNetworkRequestManager::FedCmTokenResponseType;
+using TokenResult = IdpNetworkRequestManager::TokenResult;
 
 // TODO(kenrb): These need to be defined in the explainer or draft spec and
 // referenced here.
@@ -69,17 +68,20 @@ constexpr char kProviderUrlListKey[] = "provider_urls";
 
 // fedcm.json configuration keys.
 constexpr char kIdAssertionEndpoint[] = "id_assertion_endpoint";
+constexpr char kVcIssuanceEndpoint[] = "vc_issuance_endpoint";
 constexpr char kClientMetadataEndpointKey[] = "client_metadata_endpoint";
 constexpr char kMetricsEndpoint[] = "metrics_endpoint";
 constexpr char kDisconnectEndpoint[] = "disconnect_endpoint";
 constexpr char kModesKey[] = "modes";
+constexpr char kTypesKey[] = "types";
+constexpr char kFormatsKey[] = "formats";
 
 // Keys in the 'accounts' dictionary
 constexpr char kIncludeKey[] = "include";
 
 // Keys in the 'modes' dictionary.
-constexpr char kButtonModeKey[] = "button";
-constexpr char kWidgetModeKey[] = "widget";
+constexpr char kActiveModeKey[] = "active";
+constexpr char kPassiveModeKey[] = "passive";
 
 // Keys in the specific mode dictionary.
 constexpr char kSupportsUseOtherAccountKey[] = "supports_use_other_account";
@@ -89,14 +91,12 @@ constexpr char kAccountsEndpointKey[] = "accounts_endpoint";
 constexpr char kLoginUrlKey[] = "login_url";
 
 // Keys in fedcm.json 'branding' dictionary.
-constexpr char kIdpBrandingBackgroundColor[] = "background_color";
-constexpr char kIdpBrandingForegroundColor[] = "color";
-constexpr char kIdpBrandingIcons[] = "icons";
+constexpr char kIdpBrandingBackgroundColorKey[] = "background_color";
+constexpr char kIdpBrandingForegroundColorKey[] = "color";
 
 // Client metadata keys.
 constexpr char kPrivacyPolicyKey[] = "privacy_policy_url";
 constexpr char kTermsOfServiceKey[] = "terms_of_service_url";
-constexpr char kBrandIconUrlKey[] = "brand_icon_url";
 
 // Accounts endpoint response keys.
 constexpr char kAccountsKey[] = "accounts";
@@ -113,9 +113,11 @@ constexpr char kHintsKey[] = "login_hints";
 constexpr char kDomainHintsKey[] = "domain_hints";
 constexpr char kLabelsKey[] = "labels";
 
-// Keys in 'branding' 'icons' dictionary in accounts endpoint.
-constexpr char kIdpBrandingIconUrl[] = "url";
-constexpr char kIdpBrandingIconSize[] = "size";
+// Keys in 'branding' 'icons' dictionary in config for the IDP icon and client
+// metadata endpoint for the RP icon.
+constexpr char kBrandingIconsKey[] = "icons";
+constexpr char kBrandingIconUrl[] = "url";
+constexpr char kBrandingIconSize[] = "size";
 
 // The id assertion endpoint contains a token result.
 constexpr char kTokenKey[] = "token";
@@ -194,7 +196,6 @@ GURL ExtractUrl(const base::Value::Dict& response, const char* key) {
     return GURL();
   }
   GURL url = GURL(*response_url);
-  // TODO(crbug.com/40280145): Allow localhost URLs
   if (!url.is_valid() || !url.SchemeIsHTTPOrHTTPS()) {
     return GURL();
   }
@@ -209,9 +210,8 @@ std::string ExtractString(const base::Value::Dict& response, const char* key) {
   return *str;
 }
 
-std::optional<content::IdentityRequestAccount> ParseAccount(
-    const base::Value::Dict& account,
-    const std::string& client_id) {
+IdentityRequestAccountPtr ParseAccount(const base::Value::Dict& account,
+                                       const std::string& client_id) {
   auto* id = account.FindString(kAccountIdKey);
   auto* email = account.FindString(kAccountEmailKey);
   auto* name = account.FindString(kAccountNameKey);
@@ -248,8 +248,9 @@ std::optional<content::IdentityRequestAccount> ParseAccount(
   }
 
   // required fields
-  if (!(id && email && name))
-    return std::nullopt;
+  if (!(id && email && name)) {
+    return nullptr;
+  }
 
   auto trimmed_email =
       base::TrimWhitespace(base::UTF8ToUTF16(*email), base::TRIM_ALL);
@@ -257,7 +258,7 @@ std::optional<content::IdentityRequestAccount> ParseAccount(
       base::TrimWhitespace(base::UTF8ToUTF16(*name), base::TRIM_ALL);
   // TODO(crbug.com/40849405): validate email address.
   if (trimmed_email.empty() || trimmed_name.empty()) {
-    return std::nullopt;
+    return nullptr;
   }
 
   RecordApprovedClientsExistence(approved_clients != nullptr);
@@ -279,7 +280,7 @@ std::optional<content::IdentityRequestAccount> ParseAccount(
     RecordApprovedClientsSize(approved_clients->size());
   }
 
-  return content::IdentityRequestAccount(
+  return base::MakeRefCounted<IdentityRequestAccount>(
       *id, *email, *name, given_name ? *given_name : "",
       picture ? GURL(*picture) : GURL(), std::move(account_hints),
       std::move(domain_hints), std::move(labels), approved_value,
@@ -289,7 +290,7 @@ std::optional<content::IdentityRequestAccount> ParseAccount(
 // Parses accounts from given Value. Returns true if parse is successful and
 // adds parsed accounts to the |account_list|.
 bool ParseAccounts(const base::Value::List& accounts,
-                   AccountList& account_list,
+                   std::vector<IdentityRequestAccountPtr>& account_list,
                    const std::string& client_id,
                    AccountsResponseInvalidReason& parsing_error) {
   DCHECK(account_list.empty());
@@ -302,14 +303,15 @@ bool ParseAccounts(const base::Value::List& accounts,
       return false;
     }
 
-    auto parsed_account = ParseAccount(*account_dict, client_id);
+    IdentityRequestAccountPtr parsed_account =
+        ParseAccount(*account_dict, client_id);
     if (parsed_account) {
       if (account_ids.count(parsed_account->id)) {
         parsing_error = AccountsResponseInvalidReason::kAccountsShareSameId;
         return false;
       }
-      account_list.push_back(parsed_account.value());
       account_ids.insert(parsed_account->id);
+      account_list.push_back(std::move(parsed_account));
     } else {
       parsing_error =
           AccountsResponseInvalidReason::kAccountMissesRequiredField;
@@ -326,10 +328,53 @@ std::optional<SkColor> ParseCssColor(const std::string* value) {
     return std::nullopt;
 
   SkColor color;
-  if (!content::ParseCssColorString(*value, &color))
+  if (!ParseCssColorString(*value, &color)) {
     return std::nullopt;
+  }
 
   return SkColorSetA(color, 0xff);
+}
+
+GURL FindBestMatchingIconUrl(const base::Value::List* icons_value,
+                             int brand_icon_ideal_size,
+                             int brand_icon_minimum_size,
+                             const GURL& config_url) {
+  std::vector<blink::Manifest::ImageResource> icons;
+  for (const base::Value& icon_value : *icons_value) {
+    const base::Value::Dict* icon_value_dict = icon_value.GetIfDict();
+    if (!icon_value_dict) {
+      continue;
+    }
+
+    const std::string* icon_src = icon_value_dict->FindString(kBrandingIconUrl);
+    if (!icon_src) {
+      continue;
+    }
+
+    blink::Manifest::ImageResource icon;
+
+    if (!config_url.is_empty()) {
+      icon.src = config_url.Resolve(*icon_src);
+    } else {
+      icon.src = GURL(*icon_src);
+    }
+
+    if (!icon.src.is_valid() || !icon.src.SchemeIsHTTPOrHTTPS()) {
+      continue;
+    }
+
+    icon.purpose = {blink::mojom::ManifestImageResource_Purpose::MASKABLE};
+
+    std::optional<int> icon_size = icon_value_dict->FindInt(kBrandingIconSize);
+    int icon_size_int = icon_size.value_or(0);
+    icon.sizes.emplace_back(icon_size_int, icon_size_int);
+
+    icons.push_back(icon);
+  }
+
+  return blink::ManifestIconSelector::FindBestMatchingSquareIcon(
+      icons, brand_icon_ideal_size, brand_icon_minimum_size,
+      blink::mojom::ManifestImageResource_Purpose::MASKABLE);
 }
 
 // Parse IdentityProviderMetadata from given value. Overwrites |idp_metadata|
@@ -338,50 +383,20 @@ void ParseIdentityProviderMetadata(const base::Value::Dict& idp_metadata_value,
                                    int brand_icon_ideal_size,
                                    int brand_icon_minimum_size,
                                    IdentityProviderMetadata& idp_metadata) {
-  idp_metadata.brand_background_color =
-      ParseCssColor(idp_metadata_value.FindString(kIdpBrandingBackgroundColor));
-  idp_metadata.brand_text_color =
-      ParseCssColor(idp_metadata_value.FindString(kIdpBrandingForegroundColor));
+  idp_metadata.brand_background_color = ParseCssColor(
+      idp_metadata_value.FindString(kIdpBrandingBackgroundColorKey));
+  idp_metadata.brand_text_color = ParseCssColor(
+      idp_metadata_value.FindString(kIdpBrandingForegroundColorKey));
 
   const base::Value::List* icons_value =
-      idp_metadata_value.FindList(kIdpBrandingIcons);
+      idp_metadata_value.FindList(kBrandingIconsKey);
   if (!icons_value) {
     return;
   }
 
-  std::vector<blink::Manifest::ImageResource> icons;
-  for (const base::Value& icon_value : *icons_value) {
-    const base::Value::Dict* icon_value_dict = icon_value.GetIfDict();
-    if (!icon_value_dict) {
-      continue;
-    }
-
-    const std::string* icon_src =
-        icon_value_dict->FindString(kIdpBrandingIconUrl);
-    if (!icon_src) {
-      continue;
-    }
-
-    blink::Manifest::ImageResource icon;
-    icon.src = GURL(*icon_src);
-    if (!icon.src.is_valid()) {
-      continue;
-    }
-
-    icon.purpose = {blink::mojom::ManifestImageResource_Purpose::MASKABLE};
-
-    std::optional<int> icon_size =
-        icon_value_dict->FindInt(kIdpBrandingIconSize);
-    int icon_size_int = icon_size.value_or(0);
-    icon.sizes.emplace_back(icon_size_int, icon_size_int);
-
-    icons.push_back(icon);
-  }
-
   idp_metadata.brand_icon_url =
-      blink::ManifestIconSelector::FindBestMatchingSquareIcon(
-          icons, brand_icon_ideal_size, brand_icon_minimum_size,
-          blink::mojom::ManifestImageResource_Purpose::MASKABLE);
+      FindBestMatchingIconUrl(icons_value, brand_icon_ideal_size,
+                              brand_icon_minimum_size, idp_metadata.config_url);
 }
 
 // This method follows https://mimesniff.spec.whatwg.org/#json-mime-type.
@@ -433,13 +448,14 @@ void OnDownloadedJson(
     IdpNetworkRequestManager::ParseJsonCallback parse_json_callback,
     std::unique_ptr<std::string> response_body,
     int response_code,
-    const std::string& mime_type) {
+    const std::string& mime_type,
+    bool cors_error = false) {
   ParseStatus parse_status =
       GetResponseError(response_body.get(), response_code, mime_type);
 
   if (parse_status != ParseStatus::kSuccess) {
     std::move(parse_json_callback)
-        .Run({parse_status, response_code},
+        .Run({parse_status, response_code, cors_error},
              data_decoder::DataDecoder::ValueOrError());
     return;
   }
@@ -487,6 +503,12 @@ void OnWellKnownParsed(
   well_known.accounts =
       ExtractEndpoint(well_known_url, *dict, kAccountsEndpointKey);
   well_known.login_url = ExtractEndpoint(well_known_url, *dict, kLoginUrlKey);
+
+  if (!well_known.accounts.is_empty() && !well_known.login_url.is_empty() &&
+      !dict->Find(kProviderUrlListKey)) {
+    std::move(callback).Run(fetch_status, std::move(well_known));
+    return;
+  }
 
   const base::Value::List* list = dict->FindList(kProviderUrlListKey);
   if (!list) {
@@ -548,6 +570,7 @@ void OnConfigParsed(const GURL& provider,
   endpoints.metrics = ExtractEndpoint(provider, response, kMetricsEndpoint);
   endpoints.disconnect =
       ExtractEndpoint(provider, response, kDisconnectEndpoint);
+  endpoints.issuance = ExtractEndpoint(provider, response, kVcIssuanceEndpoint);
 
   const base::Value::Dict* idp_metadata_value =
       response.FindDict(kIdpBrandingKey);
@@ -561,6 +584,28 @@ void OnConfigParsed(const GURL& provider,
   idp_metadata.idp_login_url =
       ExtractEndpoint(provider, response, kLoginUrlKey);
 
+  if (IsFedCmIdPRegistrationEnabled()) {
+    const base::Value::List* formats = response.FindList(kFormatsKey);
+    if (formats) {
+      for (const auto& format : *formats) {
+        if (format.is_string()) {
+          idp_metadata.formats.push_back(format.GetString());
+        }
+      }
+    }
+  }
+
+  if (IsFedCmIdPRegistrationEnabled()) {
+    const base::Value::List* types = response.FindList(kTypesKey);
+    if (types) {
+      for (const auto& type : *types) {
+        if (type.is_string()) {
+          idp_metadata.types.push_back(type.GetString());
+        }
+      }
+    }
+  }
+
   const base::Value::Dict* accounts_dict = response.FindDict(kAccountsKey);
   if (accounts_dict) {
     const std::string* requested_label = accounts_dict->FindString(kIncludeKey);
@@ -569,16 +614,16 @@ void OnConfigParsed(const GURL& provider,
     }
   }
 
-  if (IsFedCmUseOtherAccountEnabled(rp_mode == blink::mojom::RpMode::kButton)) {
+  if (IsFedCmUseOtherAccountEnabled()) {
     const base::Value::Dict* modes_dict = response.FindDict(kModesKey);
     const base::Value::Dict* selected_mode_dict = nullptr;
     if (modes_dict) {
       switch (rp_mode) {
-        case blink::mojom::RpMode::kWidget:
-          selected_mode_dict = modes_dict->FindDict(kWidgetModeKey);
+        case blink::mojom::RpMode::kPassive:
+          selected_mode_dict = modes_dict->FindDict(kPassiveModeKey);
           break;
-        case blink::mojom::RpMode::kButton:
-          selected_mode_dict = modes_dict->FindDict(kButtonModeKey);
+        case blink::mojom::RpMode::kActive:
+          selected_mode_dict = modes_dict->FindDict(kActiveModeKey);
           break;
       };
     }
@@ -595,6 +640,8 @@ void OnConfigParsed(const GURL& provider,
 }
 
 void OnClientMetadataParsed(
+    int rp_brand_icon_ideal_size,
+    int rp_brand_icon_minimum_size,
     IdpNetworkRequestManager::FetchClientMetadataCallback callback,
     FetchStatus fetch_status,
     data_decoder::DataDecoder::ValueOrError result) {
@@ -607,7 +654,13 @@ void OnClientMetadataParsed(
   const base::Value::Dict& response = result->GetDict();
   data.privacy_policy_url = ExtractUrl(response, kPrivacyPolicyKey);
   data.terms_of_service_url = ExtractUrl(response, kTermsOfServiceKey);
-  data.brand_icon_url = ExtractUrl(response, kBrandIconUrlKey);
+
+  const base::Value::List* icons_value = response.FindList(kBrandingIconsKey);
+  if (icons_value) {
+    data.brand_icon_url =
+        FindBestMatchingIconUrl(icons_value, rp_brand_icon_ideal_size,
+                                rp_brand_icon_minimum_size, GURL());
+  }
 
   std::move(callback).Run({ParseStatus::kSuccess, fetch_status.response_code},
                           data);
@@ -618,14 +671,14 @@ void OnAccountsRequestParsed(
     IdpNetworkRequestManager::AccountsRequestCallback callback,
     FetchStatus fetch_status,
     data_decoder::DataDecoder::ValueOrError result) {
+  std::vector<IdentityRequestAccountPtr> account_list;
   if (fetch_status.parse_status != ParseStatus::kSuccess) {
     RecordAccountsResponseInvalidReason(
         AccountsResponseInvalidReason::kResponseIsNotJsonOrDict);
-    std::move(callback).Run(fetch_status, AccountList());
+    std::move(callback).Run(fetch_status, account_list);
     return;
   }
 
-  AccountList account_list;
   const base::Value::Dict& response = result->GetDict();
   const base::Value::List* accounts = response.FindList(kAccountsKey);
 
@@ -634,7 +687,7 @@ void OnAccountsRequestParsed(
         AccountsResponseInvalidReason::kNoAccountsKey);
     std::move(callback).Run(
         {ParseStatus::kInvalidResponseError, fetch_status.response_code},
-        AccountList());
+        account_list);
     return;
   }
 
@@ -643,7 +696,7 @@ void OnAccountsRequestParsed(
         AccountsResponseInvalidReason::kAccountListIsEmpty);
     std::move(callback).Run(
         {ParseStatus::kEmptyListError, fetch_status.response_code},
-        AccountList());
+        account_list);
     return;
   }
 
@@ -658,7 +711,7 @@ void OnAccountsRequestParsed(
     RecordAccountsResponseInvalidReason(parsing_error);
     std::move(callback).Run(
         {ParseStatus::kInvalidResponseError, fetch_status.response_code},
-        AccountList());
+        std::vector<IdentityRequestAccountPtr>());
     return;
   }
 
@@ -865,7 +918,8 @@ void OnTokenRequestParsed(
 void OnLogoutCompleted(IdpNetworkRequestManager::LogoutCallback callback,
                        std::unique_ptr<std::string> response_body,
                        int response_code,
-                       const std::string& mime_type) {
+                       const std::string& mime_type,
+                       bool cors_error) {
   std::move(callback).Run();
 }
 
@@ -892,7 +946,6 @@ void OnDisconnectResponseParsed(
 }
 
 }  // namespace
-
 IdpNetworkRequestManager::Endpoints::Endpoints() = default;
 IdpNetworkRequestManager::Endpoints::~Endpoints() = default;
 IdpNetworkRequestManager::Endpoints::Endpoints(const Endpoints& other) =
@@ -1025,15 +1078,25 @@ void IdpNetworkRequestManager::SendTokenRequest(
     const GURL& token_url,
     const std::string& account,
     const std::string& url_encoded_post_data,
+    bool idp_blindness,
     TokenRequestCallback callback,
     ContinueOnCallback continue_on,
     RecordErrorMetricsCallback record_error_metrics_callback) {
   std::unique_ptr<network::ResourceRequest> resource_request =
       CreateCredentialedResourceRequest(
-          token_url,
-          base::FeatureList::IsEnabled(features::kFedCmIdAssertionCORS)
-              ? CredentialedResourceRequestType::kOriginWithCORS
-              : CredentialedResourceRequestType::kOriginWithoutCORS);
+          token_url, idp_blindness
+                         ? CredentialedResourceRequestType::kNoOrigin
+                         : CredentialedResourceRequestType::kOriginWithCORS);
+
+  if (idp_blindness) {
+    // IdP blindness can only be used when the feature is enabled.
+    DCHECK(IsFedCmIdPRegistrationEnabled());
+    // We have to set this to a Origin: null because the underlying loader
+    // will  not let us send a request without Origin header if the request
+    // method is POST.
+    resource_request->request_initiator = url::Origin();
+  }
+
   DownloadJsonAndParse(
       std::move(resource_request), url_encoded_post_data,
       base::BindOnce(&OnTokenRequestParsed, std::move(callback),
@@ -1053,7 +1116,8 @@ void IdpNetworkRequestManager::SendSuccessfulTokenRequestMetrics(
     base::TimeDelta account_selected_to_token_response_time,
     base::TimeDelta api_call_to_token_response_time) {
   std::string url_encoded_post_data = base::StringPrintf(
-      "time_to_show_ui=%d"
+      "outcome=success"
+      "&time_to_show_ui=%d"
       "&time_to_continue=%d"
       "&time_to_receive_token=%d"
       "&turnaround_time=%d",
@@ -1067,23 +1131,33 @@ void IdpNetworkRequestManager::SendSuccessfulTokenRequestMetrics(
       CreateCredentialedResourceRequest(
           metrics_endpoint_url,
           CredentialedResourceRequestType::kOriginWithoutCORS);
-  DownloadJsonAndParse(std::move(resource_request), url_encoded_post_data,
-                       IdpNetworkRequestManager::ParseJsonCallback(),
-                       maxResponseSizeInKiB * 1024);
+  // Typically, this IdpNetworkRequestManager will be destroyed after
+  // we return, but because the SimpleURLLoader is owned by the callback
+  // object, the load will not be aborted.
+  // The result of the download is not important, so we pass an empty
+  // DownloadCallback.
+  DownloadUrl(std::move(resource_request), url_encoded_post_data,
+              DownloadCallback(), maxResponseSizeInKiB * 1024);
 }
 
 void IdpNetworkRequestManager::SendFailedTokenRequestMetrics(
     const GURL& metrics_endpoint_url,
+    bool did_show_ui,
     MetricsEndpointErrorCode error_code) {
-  std::string url_encoded_post_data =
-      base::StringPrintf("error_code=%d", static_cast<int>(error_code));
+  std::string url_encoded_post_data = base::StringPrintf(
+      "outcome=failure&error_code=%d&did_show_ui=%s",
+      static_cast<int>(error_code), did_show_ui ? "true" : "false");
   std::unique_ptr<network::ResourceRequest> resource_request =
       CreateUncredentialedResourceRequest(metrics_endpoint_url,
                                           /*send_origin=*/false);
 
-  DownloadJsonAndParse(std::move(resource_request), url_encoded_post_data,
-                       IdpNetworkRequestManager::ParseJsonCallback(),
-                       maxResponseSizeInKiB * 1024);
+  // Typically, this IdpNetworkRequestManager will be destroyed after
+  // we return, but because the SimpleURLLoader is owned by the callback
+  // object, the load will not be aborted.
+  // The result of the download is not important, so we pass an empty
+  // DownloadCallback.
+  DownloadUrl(std::move(resource_request), url_encoded_post_data,
+              DownloadCallback(), maxResponseSizeInKiB * 1024);
 }
 
 void IdpNetworkRequestManager::SendLogout(const GURL& logout_url,
@@ -1178,6 +1252,10 @@ void IdpNetworkRequestManager::OnDownloadedUrl(
     std::unique_ptr<network::SimpleURLLoader> url_loader,
     IdpNetworkRequestManager::DownloadCallback callback,
     std::unique_ptr<std::string> response_body) {
+  if (!callback) {
+    // For the metrics endpoint, we do not care about the result.
+    return;
+  }
   auto* response_info = url_loader->ResponseInfo();
   // Use the HTTP response code, if available. If it is not available, use the
   // NetError(). Note that it is acceptable to put these in the same int because
@@ -1190,14 +1268,24 @@ void IdpNetworkRequestManager::OnDownloadedUrl(
     response_info->headers->GetMimeType(&mime_type);
   }
 
+  // Check for CORS error
+  std::optional<network::URLLoaderCompletionStatus> status =
+      url_loader->CompletionStatus();
+  bool cors_error = false;
+  if (status && status.value().cors_error_status.has_value()) {
+    cors_error = true;
+  }
+
   url_loader.reset();
   std::move(callback).Run(std::move(response_body), response_code,
-                          std::move(mime_type));
+                          std::move(mime_type), cors_error);
 }
 
 void IdpNetworkRequestManager::FetchClientMetadata(
     const GURL& endpoint,
     const std::string& client_id,
+    int rp_brand_icon_ideal_size,
+    int rp_brand_icon_minimum_size,
     FetchClientMetadataCallback callback) {
   GURL target_url = endpoint.Resolve(
       "?client_id=" + base::EscapeQueryParamValue(client_id, true));
@@ -1209,7 +1297,8 @@ void IdpNetworkRequestManager::FetchClientMetadata(
   DownloadJsonAndParse(
       std::move(resource_request),
       /*url_encoded_post_data=*/std::nullopt,
-      base::BindOnce(&OnClientMetadataParsed, std::move(callback)),
+      base::BindOnce(&OnClientMetadataParsed, rp_brand_icon_ideal_size,
+                     rp_brand_icon_minimum_size, std::move(callback)),
       maxResponseSizeInKiB * 1024);
 }
 
@@ -1217,7 +1306,8 @@ void IdpNetworkRequestManager::OnDownloadedImage(
     ImageCallback callback,
     std::unique_ptr<std::string> response_body,
     int response_code,
-    const std::string& mime_type) {
+    const std::string& mime_type,
+    bool cors_error) {
   if (!response_body || response_code != net::HTTP_OK) {
     std::move(callback).Run(gfx::Image());
     return;
@@ -1290,20 +1380,9 @@ IdpNetworkRequestManager::CreateCredentialedResourceRequest(
   auto target_origin = url::Origin::Create(target_url);
   auto site_for_cookies = net::SiteForCookies::FromOrigin(target_origin);
 
-  if (IsFedCmSameSiteNoneEnabled()) {
-    // Setting the initiator to relying_party_origin_ ensures that we don't send
-    // SameSite=Strict cookies.
-    resource_request->request_initiator = relying_party_origin_;
-  } else {
-    // We set the initiator to nullopt to denote browser-initiated so that this
-    // request is considered first-party. We want to send first-party cookies
-    // because this is not a real third-party request as it is mediated by the
-    // browser, and third-party cookies will be going away with 3pc deprecation,
-    // but we still need to send cookies in these requests.
-    // We use nullopt instead of target_origin because we want to send a
-    // `Sec-Fetch-Site: none` header instead of `Sec-Fetch-Site: same-origin`.
-    resource_request->request_initiator = std::nullopt;
-  }
+  // Setting the initiator to relying_party_origin_ ensures that we don't send
+  // SameSite=Strict cookies.
+  resource_request->request_initiator = relying_party_origin_;
 
   resource_request->destination =
       network::mojom::RequestDestination::kWebIdentity;
@@ -1326,9 +1405,14 @@ IdpNetworkRequestManager::CreateCredentialedResourceRequest(
   resource_request->credentials_mode =
       network::mojom::CredentialsMode::kInclude;
   resource_request->trusted_params = network::ResourceRequest::TrustedParams();
+  net::IsolationInfo::RequestType request_type =
+      net::IsolationInfo::RequestType::kOther;
+  if (IsFedCmSameSiteLaxEnabled()) {
+    // We use kMainFrame so that we can send SameSite=Lax cookies.
+    request_type = net::IsolationInfo::RequestType::kMainFrame;
+  }
   resource_request->trusted_params->isolation_info = net::IsolationInfo::Create(
-      net::IsolationInfo::RequestType::kOther, target_origin, target_origin,
-      site_for_cookies);
+      request_type, target_origin, target_origin, site_for_cookies);
   DCHECK(client_security_state_);
   resource_request->trusted_params->client_security_state =
       client_security_state_.Clone();

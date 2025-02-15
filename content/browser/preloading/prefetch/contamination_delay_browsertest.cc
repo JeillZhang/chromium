@@ -57,7 +57,6 @@ class ContaminationDelayBrowserTest : public ContentBrowserTest {
     scoped_feature_list_.InitWithFeaturesAndParameters(
         {{features::kPrefetchStateContaminationMitigation,
           {{"swaps_bcg", "true"}}},
-         {features::kPrefetchRedirects, {}},
          // This is needed specifically for CrOS MSAN, where we apply a 10x
          // multiplier to all test timeouts, which happens to be enough to push
          // the response delay in this test (which is scaled in that way to
@@ -100,8 +99,7 @@ class ContaminationDelayBrowserTest : public ContentBrowserTest {
                  network::mojom::ReferrerPolicy::kStrictOriginWhenCrossOrigin));
     std::vector<blink::mojom::SpeculationCandidatePtr> candidates;
     candidates.push_back(std::move(candidate));
-    prefetch_document_manager->ProcessCandidates(candidates,
-                                                 /*devtools_observer=*/nullptr);
+    prefetch_document_manager->ProcessCandidates(candidates);
     ASSERT_TRUE(base::test::RunUntil([&] {
       return prefetch_document_manager->GetReferringPageMetrics()
                  .prefetch_successful_count >= 1;

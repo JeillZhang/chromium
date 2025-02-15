@@ -14,7 +14,11 @@
 #include "net/base/schemeful_site.h"
 #include "url/origin.h"
 
-namespace net {
+namespace net::device_bound_sessions {
+
+namespace proto {
+class SessionInclusionRules;
+}
 
 // This class represents a set of rules that define which network requests may
 // potentially be deferred on account of an active DBSC session. It is derived
@@ -56,10 +60,13 @@ class NET_EXPORT SessionInclusionRules final {
 
   SessionInclusionRules(const SessionInclusionRules& other) = delete;
   SessionInclusionRules& operator=(const SessionInclusionRules& other) = delete;
-  SessionInclusionRules(SessionInclusionRules&& other) = delete;
-  SessionInclusionRules& operator=(SessionInclusionRules&& other) = delete;
+
+  SessionInclusionRules(SessionInclusionRules&& other);
+  SessionInclusionRules& operator=(SessionInclusionRules&& other);
 
   ~SessionInclusionRules();
+
+  bool operator==(const SessionInclusionRules& other) const;
 
   // Sets the basic include rule underlying the more specific URL rules. This
   // should be derived from the "include_site" param in the config. If not set
@@ -89,8 +96,15 @@ class NET_EXPORT SessionInclusionRules final {
   InclusionResult EvaluateRequestUrl(const GURL& url) const;
 
   bool may_include_site_for_testing() const { return may_include_site_; }
+  const url::Origin& origin() const { return origin_; }
 
   size_t num_url_rules_for_testing() const;
+
+  proto::SessionInclusionRules ToProto() const;
+  static std::unique_ptr<SessionInclusionRules> CreateFromProto(
+      const proto::SessionInclusionRules& proto);
+
+  std::string DebugString() const;
 
  private:
   struct UrlRule;
@@ -122,6 +136,6 @@ class NET_EXPORT SessionInclusionRules final {
   std::vector<UrlRule> url_rules_;
 };
 
-}  // namespace net
+}  // namespace net::device_bound_sessions
 
 #endif  // NET_DEVICE_BOUND_SESSIONS_SESSION_INCLUSION_RULES_H_

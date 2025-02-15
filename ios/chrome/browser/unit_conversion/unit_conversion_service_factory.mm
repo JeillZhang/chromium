@@ -5,9 +5,7 @@
 #import "ios/chrome/browser/unit_conversion/unit_conversion_service_factory.h"
 
 #import "base/no_destructor.h"
-#import "components/keyed_service/ios/browser_state_dependency_manager.h"
-#import "ios/chrome/browser/shared/model/browser_state/browser_state_otr_helper.h"
-#import "ios/chrome/browser/shared/model/browser_state/chrome_browser_state.h"
+#import "ios/chrome/browser/shared/model/profile/profile_ios.h"
 #import "ios/chrome/browser/unit_conversion/unit_conversion_service.h"
 
 // static
@@ -17,27 +15,21 @@ UnitConversionServiceFactory* UnitConversionServiceFactory::GetInstance() {
 }
 
 // static
-UnitConversionService* UnitConversionServiceFactory::GetForBrowserState(
-    ChromeBrowserState* const state) {
-  return static_cast<UnitConversionService*>(
-      GetInstance()->GetServiceForBrowserState(state, true));
+UnitConversionService* UnitConversionServiceFactory::GetForProfile(
+    ProfileIOS* profile) {
+  return GetInstance()->GetServiceForProfileAs<UnitConversionService>(
+      profile, /*create=*/true);
 }
 
 UnitConversionServiceFactory::UnitConversionServiceFactory()
-    : BrowserStateKeyedServiceFactory(
-          "UnitConversionService",
-          BrowserStateDependencyManager::GetInstance()) {}
+    : ProfileKeyedServiceFactoryIOS("UnitConversionService",
+                                    ProfileSelection::kOwnInstanceInIncognito) {
+}
 
 UnitConversionServiceFactory::~UnitConversionServiceFactory() {}
 
 std::unique_ptr<KeyedService>
 UnitConversionServiceFactory::BuildServiceInstanceFor(
-    web::BrowserState* const state) const {
+    web::BrowserState* context) const {
   return std::make_unique<UnitConversionService>();
-}
-
-web::BrowserState* UnitConversionServiceFactory::GetBrowserStateToUse(
-    web::BrowserState* const state) const {
-  // The incognito has distinct instance of `UnitConversionService`.
-  return GetBrowserStateOwnInstanceInIncognito(state);
 }

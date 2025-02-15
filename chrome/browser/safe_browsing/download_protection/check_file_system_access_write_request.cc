@@ -99,7 +99,7 @@ void CheckFileSystemAccessWriteRequest::SetDownloadProtectionData(
   // IncidentReportingService usage.
 }
 
-void CheckFileSystemAccessWriteRequest::MaybeStorePingsForDownload(
+void CheckFileSystemAccessWriteRequest::MaybeBeginFeedbackForDownload(
     DownloadCheckResult result,
     bool upload_requested,
     const std::string& request_data,
@@ -119,8 +119,7 @@ void CheckFileSystemAccessWriteRequest::UploadBinary(
     enterprise_connectors::AnalysisSettings settings) {}
 
 bool CheckFileSystemAccessWriteRequest::ShouldImmediatelyDeepScan(
-    bool server_requests_prompt,
-    bool log_metrics) const {
+    bool server_requests_prompt) const {
   return false;
 }
 
@@ -159,7 +158,7 @@ bool CheckFileSystemAccessWriteRequest::IsAllowlistedByPolicy() const {
 
 void CheckFileSystemAccessWriteRequest::LogDeepScanningPrompt(
     bool did_prompt) const {
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 }  // namespace safe_browsing

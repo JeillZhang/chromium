@@ -8,15 +8,17 @@
 #include <stdint.h>
 
 #include <optional>
+#include <string>
 #include <vector>
 
+#include "base/containers/flat_map.h"
 #include "base/time/time.h"
 #include "base/types/strong_alias.h"
 #include "components/attribution_reporting/aggregation_keys.h"
+#include "components/attribution_reporting/attribution_scopes_data.h"
 #include "components/attribution_reporting/destination_set.h"
 #include "components/attribution_reporting/event_level_epsilon.h"
 #include "components/attribution_reporting/filters.h"
-#include "components/attribution_reporting/max_event_level_reports.h"
 #include "components/attribution_reporting/trigger_config.h"
 #include "components/attribution_reporting/trigger_data_matching.mojom-forward.h"
 #include "content/browser/attribution_reporting/common_source_info.h"
@@ -25,10 +27,14 @@
 
 namespace content {
 
+class AggregatableNamedBudgetPair;
+
 // Contains attributes specific to a stored source.
 class CONTENT_EXPORT StoredSource {
  public:
   using Id = base::StrongAlias<StoredSource, int64_t>;
+  using AggregatableNamedBudgets =
+      base::flat_map<std::string, AggregatableNamedBudgetPair>;
 
   // Note that aggregatable reports are not subject to the attribution logic.
   enum class AttributionLogic {
@@ -56,7 +62,6 @@ class CONTENT_EXPORT StoredSource {
       base::Time expiry_time,
       attribution_reporting::TriggerSpecs,
       base::Time aggregatable_report_window_time,
-      attribution_reporting::MaxEventLevelReports,
       int64_t priority,
       attribution_reporting::FilterData,
       std::optional<uint64_t> debug_key,
@@ -69,7 +74,9 @@ class CONTENT_EXPORT StoredSource {
       attribution_reporting::mojom::TriggerDataMatching,
       attribution_reporting::EventLevelEpsilon,
       absl::uint128 aggregatable_debug_key_piece,
-      int remaining_aggregatable_debug_budget);
+      int remaining_aggregatable_debug_budget,
+      std::optional<attribution_reporting::AttributionScopesData>,
+      AggregatableNamedBudgets);
 
   ~StoredSource();
 
@@ -97,10 +104,6 @@ class CONTENT_EXPORT StoredSource {
 
   const attribution_reporting::TriggerSpecs& trigger_specs() const {
     return trigger_specs_;
-  }
-
-  attribution_reporting::MaxEventLevelReports max_event_level_reports() const {
-    return max_event_level_reports_;
   }
 
   int64_t priority() const { return priority_; }
@@ -156,6 +159,15 @@ class CONTENT_EXPORT StoredSource {
     return remaining_aggregatable_debug_budget_;
   }
 
+  const std::optional<attribution_reporting::AttributionScopesData>&
+  attribution_scopes_data() const {
+    return attribution_scopes_data_;
+  }
+
+  const AggregatableNamedBudgets& aggregatable_named_budgets() const {
+    return aggregatable_named_budgets_;
+  }
+
  private:
   StoredSource(CommonSourceInfo common_info,
                uint64_t source_event_id,
@@ -164,7 +176,6 @@ class CONTENT_EXPORT StoredSource {
                base::Time expiry_time,
                attribution_reporting::TriggerSpecs,
                base::Time aggregatable_report_window_time,
-               attribution_reporting::MaxEventLevelReports,
                int64_t priority,
                attribution_reporting::FilterData,
                std::optional<uint64_t> debug_key,
@@ -177,7 +188,9 @@ class CONTENT_EXPORT StoredSource {
                attribution_reporting::mojom::TriggerDataMatching,
                attribution_reporting::EventLevelEpsilon,
                absl::uint128 aggregatable_debug_key_piece,
-               int remaining_aggregatable_debug_budget);
+               int remaining_aggregatable_debug_budget,
+               std::optional<attribution_reporting::AttributionScopesData>,
+               AggregatableNamedBudgets);
 
   CommonSourceInfo common_info_;
 
@@ -187,7 +200,6 @@ class CONTENT_EXPORT StoredSource {
   base::Time expiry_time_;
   attribution_reporting::TriggerSpecs trigger_specs_;
   base::Time aggregatable_report_window_time_;
-  attribution_reporting::MaxEventLevelReports max_event_level_reports_;
   int64_t priority_;
   attribution_reporting::FilterData filter_data_;
   std::optional<uint64_t> debug_key_;
@@ -201,8 +213,6 @@ class CONTENT_EXPORT StoredSource {
 
   int remaining_aggregatable_attribution_budget_;
 
-  // Dedup keys associated with the source. Only set in values returned from
-  // `AttributionStorage::GetActiveSources()`.
   std::vector<uint64_t> dedup_keys_;
 
   std::vector<uint64_t> aggregatable_dedup_keys_;
@@ -216,6 +226,11 @@ class CONTENT_EXPORT StoredSource {
   absl::uint128 aggregatable_debug_key_piece_;
 
   int remaining_aggregatable_debug_budget_;
+
+  std::optional<attribution_reporting::AttributionScopesData>
+      attribution_scopes_data_;
+
+  AggregatableNamedBudgets aggregatable_named_budgets_;
 
   // When adding new members, the corresponding `operator==()` definition in
   // `attribution_test_utils.h` should also be updated.

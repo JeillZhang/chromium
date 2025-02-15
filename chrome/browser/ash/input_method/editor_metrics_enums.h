@@ -16,7 +16,8 @@ enum class EditorTone {
   kFormalize = 5,
   kFreeformRewrite = 6,
   kUnknown = 7,
-  kMaxValue = kUnknown,
+  kProofread = 8,
+  kMaxValue = kProofread,
 };
 
 // Must match with IMEEditorCriticalStates in enums.xml
@@ -87,7 +88,7 @@ enum class EditorStates {
   kBlockedByUnsupportedRegion = 19,
   // Increase by 1 when the feature is blocked because user is using a managed
   // device.
-  kBlockedByManagedStatus = 20,
+  // kBlockedByManagedStatus_DEPRECATED = 20,
   // Increase by 1 when the feature is blocked because the consent status does
   // not satisfy.
   kBlockedByConsent = 21,
@@ -152,7 +153,10 @@ enum class EditorStates {
   //  Increase by 1 when the feature is blocked because the capability value has
   //  been been fetched and determined yet.
   kBlockedByUnknownCapability = 46,
-  kMaxValue = kBlockedByUnknownCapability,
+  //  Increase by 1 when the feature is blocked because there is an associated
+  //  policy that disables the feature.
+  kBlockedByPolicy = 47,
+  kMaxValue = kBlockedByPolicy,
 };
 
 }  // namespace ash::input_method

@@ -1777,6 +1777,9 @@
   <message desc="Spoken when earcons are off." name="IDS_CHROMEVOX_EARCONS_OFF">
     Earcons off
   </message>
+  <message desc="Description of the key combination to start live captions on a braille display. Shown in the ChromeVox menus." name="IDS_CHROMEVOX_TOGGLE_CAPTIONS">
+    Toggle captions
+  </message>
   <message desc="Description of the toggle dictation key combination. Shown in the ChromeVox menus." name="IDS_CHROMEVOX_TOGGLE_DICTATION">
     Toggle dictation
   </message>
@@ -1990,8 +1993,8 @@
   <message desc="Describes the key to toggle full screen  in the ChromeVox keyboard explorer." name="IDS_CHROMEVOX_TOGGLE_FULL_SCREEN_KEY">
     toggle full screen
   </message>
-  <message desc="Describes the key to toggle window overview in the ChromeVox keyboard explorer." name="IDS_CHROMEVOX_WINDOW_OVERVIEW_KEY">
-    window overview
+  <message desc="Describes the key to toggle show windows in the ChromeVox keyboard explorer." name="IDS_CHROMEVOX_WINDOW_OVERVIEW_KEY">
+    show windows
   </message>
   <message desc="Describes the brightness down key in the ChromeVox keyboard explorer." name="IDS_CHROMEVOX_BRIGHTNESS_DOWN_KEY">
     Brightness down

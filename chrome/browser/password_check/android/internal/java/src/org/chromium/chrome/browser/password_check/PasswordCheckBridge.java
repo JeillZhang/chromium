@@ -8,9 +8,9 @@ import android.app.Activity;
 import android.content.Context;
 
 import org.jni_zero.CalledByNative;
+import org.jni_zero.JniType;
 import org.jni_zero.NativeMethods;
 
-import org.chromium.components.browser_ui.settings.SettingsLauncher;
 import org.chromium.url.GURL;
 
 /**
@@ -80,14 +80,14 @@ class PasswordCheckBridge {
     private static void insertCredential(
             CompromisedCredential[] credentials,
             int index,
-            String signonRealm,
+            @JniType("std::string") String signonRealm,
             GURL associatedUrl,
-            String username,
-            String displayOrigin,
-            String displayUsername,
-            String password,
-            String passwordChangeUrl,
-            String associatedApp,
+            @JniType("std::u16string") String username,
+            @JniType("std::u16string") String displayOrigin,
+            @JniType("std::u16string") String displayUsername,
+            @JniType("std::u16string") String password,
+            @JniType("std::string") String passwordChangeUrl,
+            @JniType("std::string") String associatedApp,
             long creationTime,
             long lastUsedTime,
             boolean leaked,
@@ -161,11 +161,9 @@ class PasswordCheckBridge {
                 .updateCredential(mNativePasswordCheckBridge, credential, newPassword);
     }
 
-    void onEditCredential(
-            CompromisedCredential credential, Context context, SettingsLauncher settingsLauncher) {
+    void onEditCredential(CompromisedCredential credential, Context context) {
         PasswordCheckBridgeJni.get()
-                .onEditCredential(
-                        mNativePasswordCheckBridge, credential, context, settingsLauncher);
+                .onEditCredential(mNativePasswordCheckBridge, credential, context);
     }
 
     void removeCredential(CompromisedCredential credential) {
@@ -207,13 +205,10 @@ class PasswordCheckBridge {
         void updateCredential(
                 long nativePasswordCheckBridge,
                 CompromisedCredential credential,
-                String newPassword);
+                @JniType("std::string") String newPassword);
 
         void onEditCredential(
-                long nativePasswordCheckBridge,
-                CompromisedCredential credential,
-                Context context,
-                SettingsLauncher settingsLauncher);
+                long nativePasswordCheckBridge, CompromisedCredential credential, Context context);
 
         void removeCredential(long nativePasswordCheckBridge, CompromisedCredential credentials);
 

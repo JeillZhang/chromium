@@ -23,7 +23,6 @@
 #include "ash/public/cpp/wallpaper/wallpaper_controller.h"
 #include "ash/public/cpp/wallpaper/wallpaper_info.h"
 #include "ash/public/cpp/wallpaper/wallpaper_types.h"
-#include "ash/public/cpp/window_backdrop.h"
 #include "ash/wallpaper/sea_pen_wallpaper_manager.h"
 #include "ash/wallpaper/wallpaper_constants.h"
 #include "ash/wallpaper/wallpaper_utils/sea_pen_metadata_utils.h"
@@ -33,6 +32,7 @@
 #include "ash/webui/personalization_app/mojom/personalization_app.mojom.h"
 #include "ash/webui/personalization_app/mojom/personalization_app_mojom_traits.h"
 #include "ash/webui/personalization_app/proto/backdrop_wallpaper.pb.h"
+#include "base/containers/span.h"
 #include "base/debug/crash_logging.h"
 #include "base/debug/dump_without_crashing.h"
 #include "base/files/file_path.h"
@@ -44,17 +44,14 @@
 #include "chrome/browser/ash/system_web_apps/apps/personalization_app/personalization_app_manager_factory.h"
 #include "chrome/browser/ash/system_web_apps/apps/personalization_app/personalization_app_utils.h"
 #include "chrome/browser/ash/wallpaper/wallpaper_enumerator.h"
+#include "chrome/browser/ash/wallpaper_handlers/google_photos_wallpaper_handlers.h"
 #include "chrome/browser/ash/wallpaper_handlers/wallpaper_fetcher_delegate.h"
 #include "chrome/browser/ash/wallpaper_handlers/wallpaper_handlers.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/ash/thumbnail_loader.h"
-#include "chrome/browser/ui/ash/wallpaper_controller_client_impl.h"
-#include "chrome/browser/ui/views/frame/browser_view.h"
-#include "chrome/browser/ui/views/frame/contents_web_view.h"
+#include "chrome/browser/ui/ash/thumbnail_loader/thumbnail_loader.h"
+#include "chrome/browser/ui/ash/wallpaper/wallpaper_controller_client_impl.h"
 #include "chrome/browser/ui/webui/sanitized_image_source.h"
 #include "chromeos/strings/grit/chromeos_strings.h"
-#include "chromeos/ui/base/window_properties.h"
-#include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/url_data_source.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
@@ -75,6 +72,7 @@
 #include "ui/gfx/image/image_skia_operations.h"
 #include "ui/gfx/image/image_util.h"
 #include "url/gurl.h"
+#include "url/mojom/url.mojom-forward.h"
 
 namespace ash::personalization_app {
 
@@ -84,8 +82,7 @@ using ash::WallpaperController;
 using ash::personalization_app::GetAccountId;
 using ash::personalization_app::GetUser;
 
-constexpr int kLocalImageThumbnailSizeDip = 256;
-constexpr int kCurrentWallpaperThumbnailSizeDip = 1024;
+constexpr int kLocalImageThumbnailSizeDip = 384;
 
 // Return the online wallpaper key. Use |info.unit_id| if available so we might
 // be able to fallback to the cached attribution.
@@ -95,13 +92,16 @@ const std::string GetOnlineWallpaperKey(ash::WallpaperInfo info) {
 }
 
 GURL GetBitmapJpegDataUrl(const SkBitmap& bitmap) {
-  std::vector<unsigned char> output;
-  if (!gfx::JPEGCodec::Encode(bitmap, /*quality=*/90, &output)) {
+  std::optional<std::vector<uint8_t>> output =
+      gfx::JPEGCodec::Encode(bitmap, /*quality=*/100);
+  if (!output) {
     LOG(ERROR) << "Unable to encode bitmap";
     return GURL();
   }
-  return GetJpegDataUrl(
-      {reinterpret_cast<char*>(output.data()), output.size()});
+  GURL data_url = GetJpegDataUrl(base::as_string_view(output.value()));
+  // @see `url.mojom` warning about dropping urls that are too long.
+  DCHECK_LT(data_url.spec().size(), url::mojom::kMaxURLChars);
+  return data_url;
 }
 
 }  // namespace
@@ -148,47 +148,13 @@ bool PersonalizationAppWallpaperProviderImpl::IsEligibleForGooglePhotos() {
   return GetUser(profile_)->HasGaiaAccount();
 }
 
-bool PersonalizationAppWallpaperProviderImpl::IsManagedSeaPenEnabled() {
-  return ::ash::personalization_app::IsManagedSeaPenWallpaperEnabled(profile_);
-}
-
 void PersonalizationAppWallpaperProviderImpl::MakeTransparent() {
-  auto* web_contents = web_ui_->GetWebContents();
-
-  // Disable the window backdrop that creates an opaque layer in tablet mode.
-  auto* window_backdrop =
-      ash::WindowBackdrop::Get(web_contents->GetTopLevelNativeWindow());
-  window_backdrop->SetBackdropMode(
-      ash::WindowBackdrop::BackdropMode::kDisabled);
-
-  // Set transparency on the top level native window and tell the WM not to
-  // change it when window state changes.
-  aura::Window* top_level_window = web_contents->GetTopLevelNativeWindow();
-  top_level_window->SetProperty(::chromeos::kWindowManagerManagesOpacityKey,
-                                false);
-  top_level_window->SetTransparent(true);
-
-  // Set the background color to transparent.
-  web_contents->GetRenderWidgetHostView()->SetBackgroundColor(
-      SK_ColorTRANSPARENT);
-
-  // Turn off the web contents background.
-  static_cast<ContentsWebView*>(BrowserView::GetBrowserViewForNativeWindow(
-                                    web_contents->GetTopLevelNativeWindow())
-                                    ->contents_web_view())
-      ->SetBackgroundVisible(false);
+  WallpaperControllerClientImpl::Get()->MakeTransparent(
+      web_ui_->GetWebContents());
 }
 
 void PersonalizationAppWallpaperProviderImpl::MakeOpaque() {
-  auto* web_contents = web_ui_->GetWebContents();
-
-  // Reversing `contents_web_view` is sufficient to make the view opaque,
-  // as `window_backdrop`, `top_level_window` and `web_contents` are not
-  // highly impactful to the animated theme change effect.
-  static_cast<ContentsWebView*>(BrowserView::GetBrowserViewForNativeWindow(
-                                    web_contents->GetTopLevelNativeWindow())
-                                    ->contents_web_view())
-      ->SetBackgroundVisible(true);
+  WallpaperControllerClientImpl::Get()->MakeOpaque(web_ui_->GetWebContents());
 }
 
 void PersonalizationAppWallpaperProviderImpl::FetchCollections(
@@ -809,13 +775,11 @@ void PersonalizationAppWallpaperProviderImpl::ConfirmPreviewWallpaper() {
   // splitscreen, this prevents `WallpaperController::OnOverviewModeWillStart`
   // from triggering first, which leads to preview wallpaper getting canceled
   // before it gets confirmed (b/289133203).
-  WallpaperController::Get()->ConfirmPreviewWallpaper();
-  SetMinimizedWindowStateForPreview(/*preview_mode=*/false);
+  WallpaperControllerClientImpl::Get()->ConfirmPreviewWallpaper(profile_);
 }
 
 void PersonalizationAppWallpaperProviderImpl::CancelPreviewWallpaper() {
-  WallpaperController::Get()->CancelPreviewWallpaper();
-  SetMinimizedWindowStateForPreview(/*preview_mode=*/false);
+  WallpaperControllerClientImpl::Get()->CancelPreviewWallpaper(profile_);
 }
 
 void PersonalizationAppWallpaperProviderImpl::
@@ -897,11 +861,11 @@ void PersonalizationAppWallpaperProviderImpl::OnFetchCollectionImages(
   std::optional<std::vector<backdrop::Image>> result;
   if (success && !images.empty()) {
     // Do first pass to clear all unit_id associated with the images.
-    base::ranges::for_each(images, [&](auto& proto_image) {
+    std::ranges::for_each(images, [&](auto& proto_image) {
       image_unit_id_map_.erase(proto_image.unit_id());
     });
     // Do second pass to repopulate the map with fresh data.
-    base::ranges::for_each(images, [&](auto& proto_image) {
+    std::ranges::for_each(images, [&](auto& proto_image) {
       if (proto_image.has_asset_id() && proto_image.has_unit_id() &&
           proto_image.has_image_url()) {
         image_unit_id_map_[proto_image.unit_id()].push_back(
@@ -961,10 +925,9 @@ void PersonalizationAppWallpaperProviderImpl::OnGetDefaultImage(
     std::move(callback).Run(GURL());
     return;
   }
-  std::move(callback).Run(GURL(
-      webui::GetBitmapDataUrl(*WallpaperResizer::GetResizedImage(
-                                   image, kCurrentWallpaperThumbnailSizeDip)
-                                   .bitmap())));
+  gfx::ImageSkia resized =
+      WallpaperResizer::GetResizedImage(image, kLocalImageThumbnailSizeDip);
+  std::move(callback).Run(GetBitmapJpegDataUrl(*resized.bitmap()));
 }
 
 void PersonalizationAppWallpaperProviderImpl::OnGetLocalImages(
@@ -1171,7 +1134,7 @@ void PersonalizationAppWallpaperProviderImpl::SendGooglePhotosAttribution(
     } else if (info.type == WallpaperType::kDailyGooglePhotos) {
       UpdateDailyRefreshWallpaper(/*callback=*/base::DoNothing());
     } else {
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
     }
     return;
   }

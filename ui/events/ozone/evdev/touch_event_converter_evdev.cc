@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "ui/events/ozone/evdev/touch_event_converter_evdev.h"
 
 #include <errno.h>
@@ -125,6 +130,13 @@ std::vector<SupportedHidrawDevice> GetSupportedHidrawDevices() {
   return {
       {
           .name = "spi 04F3:4222",
+          .vendor_id = 0x04F3,
+          .product_id = 0x4222,
+          .model_id = ui::HeatmapPalmDetector::ModelId::kRex,
+          .crop_heatmap = std::nullopt,
+      },
+      {
+          .name = "quickspi-hid 04F3:4222",
           .vendor_id = 0x04F3,
           .product_id = 0x4222,
           .model_id = ui::HeatmapPalmDetector::ModelId::kRex,
@@ -644,22 +656,23 @@ EventType TouchEventConverterEvdev::GetEventTypeForTouch(
 
   if ((!touch_was_alive && !touch_is_alive) || touch.was_cancelled) {
     // Ignore this touch; it was never born or has already died.
-    return ET_UNKNOWN;
+    return EventType::kUnknown;
   }
 
   if (!touch_was_alive) {
     // This touch has just been born.
-    return ET_TOUCH_PRESSED;
+    return EventType::kTouchPressed;
   }
 
   if (!touch_is_alive) {
     // This touch was alive but is now dead.
     if (touch.cancelled)
-      return ET_TOUCH_CANCELLED;  // Cancelled by driver or noise filter.
-    return ET_TOUCH_RELEASED;     // Finger lifted.
+      return EventType::kTouchCancelled;  // Cancelled by driver or noise
+                                          // filter.
+    return EventType::kTouchReleased;     // Finger lifted.
   }
 
-  return ET_TOUCH_MOVED;
+  return EventType::kTouchMoved;
 }
 
 void TouchEventConverterEvdev::ReportTouchEvent(
@@ -986,9 +999,10 @@ void TouchEventConverterEvdev::ProcessTouchEvent(InProgressTouchEvdev* event,
   EventType event_type = GetEventTypeForTouch(*event);
 
   // The tool type is fixed with the touch pressed event and does not change.
-  if (event_type == ET_TOUCH_PRESSED)
+  if (event_type == EventType::kTouchPressed) {
     event->reported_tool_type = GetEventPointerType(event->tool_code);
-  if (event_type != ET_UNKNOWN) {
+  }
+  if (event_type != EventType::kUnknown) {
     UpdateRadiusFromTouchWithOrientation(event);
     ReportTouchEvent(*event, event_type, timestamp);
   }

@@ -6,9 +6,12 @@
 
 #import "base/check.h"
 #import "base/debug/dump_without_crashing.h"
+#import "base/feature_list.h"
 #import "base/ios/block_types.h"
 #import "base/metrics/histogram_macros.h"
 #import "base/numerics/safe_conversions.h"
+#import "components/segmentation_platform/public/features.h"
+#import "ios/chrome/browser/ntp/shared/metrics/home_metrics.h"
 #import "ios/chrome/browser/shared/ui/util/uikit_ui_util.h"
 #import "ios/chrome/browser/ui/content_suggestions/cells/content_suggestions_tile_layout_util.h"
 #import "ios/chrome/browser/ui/content_suggestions/content_suggestions_constants.h"
@@ -17,9 +20,10 @@
 #import "ios/chrome/browser/ui/content_suggestions/magic_stack/magic_stack_constants.h"
 #import "ios/chrome/browser/ui/content_suggestions/magic_stack/magic_stack_edit_button_cell.h"
 #import "ios/chrome/browser/ui/content_suggestions/magic_stack/magic_stack_layout_configurator.h"
+#import "ios/chrome/browser/ui/content_suggestions/magic_stack/magic_stack_module_collection_view_cell.h"
 #import "ios/chrome/browser/ui/content_suggestions/magic_stack/magic_stack_module_container.h"
+#import "ios/chrome/browser/ui/content_suggestions/magic_stack/magic_stack_utils.h"
 #import "ios/chrome/browser/ui/content_suggestions/magic_stack/placeholder_config.h"
-#import "ios/chrome/browser/ui/ntp/metrics/home_metrics.h"
 
 namespace {
 
@@ -27,6 +31,9 @@ namespace {
 const char kMagicStackScrollToIndexHistogram[] =
     "IOS.MagicStack.ScrollActionToIndex";
 const float kMaxModuleHistogramIndex = 50;
+
+// Constants for the removal animation of a Magic Stack module.
+static const CGFloat kMagicStackModuleRemovalAnimationDuration = 0.5;
 
 }  // namespace
 
@@ -47,6 +54,8 @@ typedef NSDiffableDataSourceSnapshot<NSString*, MagicStackModule*>
   UICollectionViewCellRegistration* _editButtonRegistration;
   // The most recently selected MagicStack module's page index.
   NSUInteger _magicStackPage;
+  BOOL _hasSeenEphemeralCard;
+  NSLayoutConstraint* _heightConstraint;
 }
 
 - (void)loadView {
@@ -55,9 +64,25 @@ typedef NSDiffableDataSourceSnapshot<NSString*, MagicStackModule*>
   [self populateWithPlaceholders];
 
   self.view = _collectionView;
-  [NSLayoutConstraint
-      activateConstraints:@[ [_collectionView.heightAnchor
-                              constraintEqualToConstant:kModuleMaxHeight] ]];
+
+  if (@available(iOS 17, *)) {
+    NSArray<UITrait>* traits = TraitCollectionSetForTraits(
+        @[ UITraitPreferredContentSizeCategory.class ]);
+    [self registerForTraitChanges:traits
+                       withAction:@selector(updateCardHeightOnTraitChange)];
+  }
+}
+
+- (void)viewDidLoad {
+  _heightConstraint = [_collectionView.heightAnchor
+      constraintEqualToConstant:GetMagicStackHeight(self.view)];
+
+  [NSLayoutConstraint activateConstraints:@[ _heightConstraint ]];
+}
+
+- (void)viewWillLayoutSubviews {
+  [super viewWillLayoutSubviews];
+  _collectionView.clipsToBounds = [self shouldHaveWideLayout];
 }
 
 - (void)viewWillTransitionToSize:(CGSize)size
@@ -78,20 +103,42 @@ typedef NSDiffableDataSourceSnapshot<NSString*, MagicStackModule*>
                       completion:nil];
 }
 
+#if !defined(__IPHONE_17_0) || __IPHONE_OS_VERSION_MIN_REQUIRED < __IPHONE_17_0
+- (void)traitCollectionDidChange:(UITraitCollection*)previousTraitCollection {
+  [super traitCollectionDidChange:previousTraitCollection];
+  if (@available(iOS 17, *)) {
+    return;
+  }
+
+  if (previousTraitCollection.preferredContentSizeCategory !=
+      self.traitCollection.preferredContentSizeCategory) {
+    [self updateCardHeightOnTraitChange];
+  }
+}
+#endif
+
 #pragma mark - Public
 
 - (void)moduleWidthDidUpdate {
   if (_collectionView) {
-    _collectionView.clipsToBounds = [self shouldHaveWideLayout];
     [self snapToNearestMagicStackModule];
   }
+}
+
+- (void)reset {
+  [self populateWithPlaceholders];
 }
 
 #pragma mark - MagicStackConsumer
 
 - (void)populateItems:(NSArray<MagicStackModule*>*)items {
   if ([items count] > 0) {
-    LogTopModuleImpressionForType(items[0].type);
+    MagicStackModule* card = items[0];
+    LogTopModuleImpressionForType(card.type);
+    if ([self isCardEphemeral:card]) {
+      _hasSeenEphemeralCard = YES;
+      [self.audience logEphemeralCardVisibility:card.type];
+    }
   }
 
   for (NSUInteger index = 0; index < [items count]; index++) {
@@ -104,6 +151,10 @@ typedef NSDiffableDataSourceSnapshot<NSString*, MagicStackModule*>
 - (void)insertItem:(MagicStackModule*)item atIndex:(NSUInteger)index {
   if (index == 0) {
     LogTopModuleImpressionForType(item.type);
+    if ([self isCardEphemeral:item]) {
+      _hasSeenEphemeralCard = YES;
+      [self.audience logEphemeralCardVisibility:item.type];
+    }
   }
   [item.delegate magicStackModule:item wasDisplayedAtIndex:index];
 
@@ -140,7 +191,7 @@ typedef NSDiffableDataSourceSnapshot<NSString*, MagicStackModule*>
                intoSectionWithIdentifier:kMagicStackSectionIdentifier];
   }
   [self.diffableDataSource applySnapshot:snapshot
-                    animatingDifferences:YES
+                    animatingDifferences:NO
                               completion:nil];
 }
 
@@ -168,15 +219,50 @@ typedef NSDiffableDataSourceSnapshot<NSString*, MagicStackModule*>
   [self.diffableDataSource applySnapshot:snapshot animatingDifferences:NO];
 }
 
-- (void)removeItem:(MagicStackModule*)item {
+- (void)removeItem:(MagicStackModule*)item
+           animate:(BOOL)animate
+    withCompletion:(ProceduralBlock)completion {
   NSIndexPath* existingItemIndexPath =
       [self.diffableDataSource indexPathForItemIdentifier:item];
+
   if (!existingItemIndexPath) {
     return;
   }
-  MagicStackSnapshot* snapshot = [self.diffableDataSource snapshot];
-  [snapshot deleteItemsWithIdentifiers:@[ item ]];
-  [self.diffableDataSource applySnapshot:snapshot animatingDifferences:NO];
+
+  __weak __typeof(self) weakSelf = self;
+
+  ProceduralBlock deleteItemFromDataSource = ^{
+    MagicStackSnapshot* snapshot = [weakSelf.diffableDataSource snapshot];
+    [snapshot deleteItemsWithIdentifiers:@[ item ]];
+    [weakSelf.diffableDataSource applySnapshot:snapshot
+                          animatingDifferences:animate
+                                    completion:completion];
+  };
+
+  // Get the cell to animate.
+  MagicStackModuleCollectionViewCell* cell =
+      (MagicStackModuleCollectionViewCell*)[_collectionView
+          cellForItemAtIndexPath:existingItemIndexPath];
+
+  if (!cell || !animate) {
+    deleteItemFromDataSource();
+    return;
+  }
+
+  CGFloat verticalOffset = -self.view.frame.size.height / 2.0;
+
+  // Perform the floating up and fade out animation.
+  [UIView animateWithDuration:kMagicStackModuleRemovalAnimationDuration
+      animations:^{
+        cell.transform = CGAffineTransformMakeTranslation(0, verticalOffset);
+        cell.alpha = 0;
+      }
+      completion:^(BOOL finished) {
+        if (finished) {
+          // Remove the item from the data source after the animation completes.
+          deleteItemFromDataSource();
+        }
+      }];
 }
 
 - (void)reconfigureItem:(MagicStackModule*)item {
@@ -220,12 +306,12 @@ typedef NSDiffableDataSourceSnapshot<NSString*, MagicStackModule*>
   _collectionView.backgroundColor = [UIColor clearColor];
 
   __weak MagicStackCollectionViewController* weakSelf = self;
-  auto configureModuleCell = ^(MagicStackModuleContainer* cell,
+  auto configureModuleCell = ^(MagicStackModuleCollectionViewCell* cell,
                                NSIndexPath* indexPath, MagicStackModule* item) {
     [weakSelf configureCell:cell withItem:item atIndex:indexPath.item];
   };
   _moduleCellRegistration = [UICollectionViewCellRegistration
-      registrationWithCellClass:[MagicStackModuleContainer class]
+      registrationWithCellClass:[MagicStackModuleCollectionViewCell class]
            configurationHandler:configureModuleCell];
 
   auto configureEditButtonCell =
@@ -285,7 +371,7 @@ typedef NSDiffableDataSourceSnapshot<NSString*, MagicStackModule*>
 }
 
 // Cell configuration handler helper.
-- (void)configureCell:(MagicStackModuleContainer*)cell
+- (void)configureCell:(MagicStackModuleCollectionViewCell*)cell
              withItem:(MagicStackModule*)item
               atIndex:(NSUInteger)index {
   cell.delegate = self.audience;
@@ -319,7 +405,8 @@ typedef NSDiffableDataSourceSnapshot<NSString*, MagicStackModule*>
                intoSectionWithIdentifier:kMagicStackEditSectionIdentifier];
   }
 
-  [self.diffableDataSource applySnapshot:snapshot animatingDifferences:NO];
+  [self.diffableDataSource applySnapshot:snapshot
+                    animatingDifferences:!isPlaceholder];
 }
 
 // Determines the final page offset given the scroll `offset` and the `velocity`
@@ -332,13 +419,9 @@ typedef NSDiffableDataSourceSnapshot<NSString*, MagicStackModule*>
   CGFloat moduleWidth =
       self.view.frame.size.width -
       ModuleNarrowerWidthToAllowPeekingForTraitCollection(self.traitCollection);
-  NSUInteger moduleCount = [[self.diffableDataSource.snapshot
-      itemIdentifiersInSectionWithIdentifier:kMagicStackSectionIdentifier]
-      count];
 
   // Find closest page to the current scroll offset.
   CGFloat closestPage = roundf(offset / moduleWidth);
-  closestPage = fminf(closestPage, moduleCount);
 
   if (velocity <= -kMagicStackMinimumPaginationScrollVelocity) {
     closestPage--;
@@ -350,7 +433,18 @@ typedef NSDiffableDataSourceSnapshot<NSString*, MagicStackModule*>
     UMA_HISTOGRAM_EXACT_LINEAR(kMagicStackScrollToIndexHistogram, closestPage,
                                kMaxModuleHistogramIndex);
   }
+  NSArray<MagicStackModule*>* items =
+      [self.diffableDataSource.snapshot itemIdentifiers];
+  closestPage = std::clamp<CGFloat>(closestPage, 0, [items count] - 1);
   _magicStackPage = closestPage;
+  if (base::FeatureList::IsEnabled(
+          segmentation_platform::features::
+              kSegmentationPlatformEphemeralCardRanker)) {
+    if ([items count] > 0 && !_hasSeenEphemeralCard &&
+        [self isCardEphemeral:items[_magicStackPage]]) {
+      [self.audience logEphemeralCardVisibility:items[_magicStackPage].type];
+    }
+  }
   return _magicStackPage * (moduleWidth + kMagicStackSpacing) -
          [self peekOffsetForMagicStackPage:_magicStackPage];
 }
@@ -393,6 +487,41 @@ typedef NSDiffableDataSourceSnapshot<NSString*, MagicStackModule*>
       0, _collectionView.contentSize.width - _collectionView.bounds.size.width);
   offset.x = MIN(offset.x, maxOffset);
   _collectionView.contentOffset = offset;
+}
+
+- (BOOL)isCardEphemeral:(MagicStackModule*)card {
+  switch (card.type) {
+    case ContentSuggestionsModuleType::kPriceTrackingPromo:
+    case ContentSuggestionsModuleType::kSendTabPromo:
+    case ContentSuggestionsModuleType::kTipsWithProductImage:
+    case ContentSuggestionsModuleType::kTips:
+      return YES;
+    case ContentSuggestionsModuleType::kMostVisited:
+    case ContentSuggestionsModuleType::kShortcuts:
+    case ContentSuggestionsModuleType::kSafetyCheck:
+    case ContentSuggestionsModuleType::kTabResumption:
+    case ContentSuggestionsModuleType::kParcelTracking:
+    case ContentSuggestionsModuleType::kSetUpListSync:
+    case ContentSuggestionsModuleType::kSetUpListDefaultBrowser:
+    case ContentSuggestionsModuleType::kSetUpListAutofill:
+    case ContentSuggestionsModuleType::kSetUpListNotifications:
+    case ContentSuggestionsModuleType::kSetUpListDocking:
+    case ContentSuggestionsModuleType::kSetUpListAddressBar:
+    case ContentSuggestionsModuleType::kCompactedSetUpList:
+    case ContentSuggestionsModuleType::kSetUpListAllSet:
+    case ContentSuggestionsModuleType::kShopCard:
+    case ContentSuggestionsModuleType::kPlaceholder:
+    case ContentSuggestionsModuleType::kInvalid:
+      return NO;
+  }
+}
+
+// Resizes the Magic Stack card height.
+- (void)updateCardHeightOnTraitChange {
+  _heightConstraint.constant = GetMagicStackHeight(self.view);
+
+  [_magicStackCollectionViewLayoutConfigurator
+          .magicStackCompositionalLayout invalidateLayout];
 }
 
 @end

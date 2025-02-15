@@ -20,6 +20,11 @@
     Boston, MA 02110-1301, USA.
 */
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_GEOMETRY_LENGTH_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_GEOMETRY_LENGTH_H_
 
@@ -28,9 +33,9 @@
 #include <optional>
 
 #include "base/check_op.h"
-#include "base/functional/function_ref.h"
 #include "base/memory/stack_allocated.h"
 #include "base/notreached.h"
+#include "third_party/blink/renderer/platform/geometry/evaluation_input.h"
 #include "third_party/blink/renderer/platform/geometry/layout_unit.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
@@ -94,6 +99,7 @@ class Length;
 
 PLATFORM_EXPORT extern const Length& g_auto_length;
 PLATFORM_EXPORT extern const Length& g_fill_available_length;
+PLATFORM_EXPORT extern const Length& g_stretch_length;
 PLATFORM_EXPORT extern const Length& g_fit_content_length;
 PLATFORM_EXPORT extern const Length& g_max_content_length;
 PLATFORM_EXPORT extern const Length& g_min_content_length;
@@ -118,6 +124,7 @@ class PLATFORM_EXPORT Length {
     kMaxContent,
     kMinIntrinsic,
     kFillAvailable,
+    kStretch,
     kFitContent,
     kCalculated,
     kFlex,
@@ -191,6 +198,7 @@ class PLATFORM_EXPORT Length {
 
   static const Length& Auto() { return g_auto_length; }
   static const Length& FillAvailable() { return g_fill_available_length; }
+  static const Length& Stretch() { return g_stretch_length; }
   static const Length& FitContent() { return g_fit_content_length; }
   static const Length& MaxContent() { return g_max_content_length; }
   static const Length& MinContent() { return g_min_content_length; }
@@ -223,8 +231,7 @@ class PLATFORM_EXPORT Length {
 
   int IntValue() const {
     if (IsCalculated()) {
-      NOTREACHED_IN_MIGRATION();
-      return 0;
+      NOTREACHED();
     }
     DCHECK(!IsNone());
     return static_cast<int>(value_);
@@ -308,6 +315,7 @@ class PLATFORM_EXPORT Length {
   bool IsMaxContent() const { return GetType() == kMaxContent; }
   bool IsMinIntrinsic() const { return GetType() == kMinIntrinsic; }
   bool IsFillAvailable() const { return GetType() == kFillAvailable; }
+  bool IsStretch() const { return GetType() == kStretch; }
   bool IsFitContent() const { return GetType() == kFitContent; }
   bool IsPercent() const { return GetType() == kPercent; }
   // MayHavePercentDependence should be used to decide whether to optimize
@@ -363,16 +371,6 @@ class PLATFORM_EXPORT Length {
     DCHECK(!IsCalculated());
     return value_;
   }
-
-  using IntrinsicLengthEvaluator = base::FunctionRef<LayoutUnit(const Length&)>;
-
-  struct EvaluationInput {
-    STACK_ALLOCATED();
-
-   public:
-    std::optional<float> size_keyword_basis = std::nullopt;
-    std::optional<IntrinsicLengthEvaluator> intrinsic_evaluator = std::nullopt;
-  };
 
   float NonNanCalculatedValue(float max_value, const EvaluationInput&) const;
 

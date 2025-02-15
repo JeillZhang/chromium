@@ -23,7 +23,8 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import org.chromium.base.FeatureList;
+import org.chromium.base.FeatureOverrides;
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Criteria;
@@ -37,8 +38,7 @@ import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.chrome.test.batch.BlankCTATabInitialStateRule;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
-import org.chromium.ui.test.util.UiRestriction;
+import org.chromium.ui.base.DeviceFormFactor;
 import org.chromium.ui.test.util.ViewUtils;
 import org.chromium.url.GURL;
 
@@ -63,17 +63,11 @@ public class ContinuousSearchFullUiTest {
     private GURL mUrl;
 
     public ContinuousSearchFullUiTest() {
-        FeatureList.TestValues testValues = new FeatureList.TestValues();
-        testValues.addFeatureFlagOverride(ChromeFeatureList.CONTINUOUS_SEARCH, true);
-        testValues.addFieldTrialParamOverride(
-                ChromeFeatureList.CONTINUOUS_SEARCH,
-                ContinuousSearchListMediator.TRIGGER_MODE_PARAM,
-                "0");
-        testValues.addFieldTrialParamOverride(
-                ChromeFeatureList.CONTINUOUS_SEARCH,
-                ContinuousSearchListMediator.SHOW_RESULT_TITLE_PARAM,
-                "true");
-        FeatureList.setTestValues(testValues);
+        FeatureOverrides.newBuilder()
+                .enable(ChromeFeatureList.CONTINUOUS_SEARCH)
+                .param(ContinuousSearchListMediator.TRIGGER_MODE_PARAM, 0)
+                .param(ContinuousSearchListMediator.SHOW_RESULT_TITLE_PARAM, true)
+                .apply();
     }
 
     @Before
@@ -89,7 +83,7 @@ public class ContinuousSearchFullUiTest {
     /** Assert that all the critical views are shown using mock data to trigger the UI. */
     @Test
     @MediumTest
-    @Restriction({UiRestriction.RESTRICTION_TYPE_PHONE})
+    @Restriction({DeviceFormFactor.PHONE})
     public void testDisplaysFullUi() throws TimeoutException {
         List<PageItem> results = new ArrayList<PageItem>();
         results.add(new PageItem(new GURL("https://www.foo.com/"), "Foo Result"));
@@ -112,7 +106,7 @@ public class ContinuousSearchFullUiTest {
 
         // Show the container and contents.
         Tab tab = sActivityTestRule.getActivity().getActivityTab();
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     ContinuousNavigationUserData.getForTab(tab).updateData(metadata, mUrl);
                 });
@@ -163,7 +157,7 @@ public class ContinuousSearchFullUiTest {
                         .findViewById(
                                 org.chromium.chrome.browser.continuous_search.R.id.container_root);
         Assert.assertNotNull(rootContainer);
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     ContinuousNavigationUserData.getForTab(tab)
                             .updateCurrentUrl(new GURL("https://other.com/"));

@@ -9,6 +9,9 @@
 
 #include "base/files/file_util.h"
 
+#include <algorithm>
+#include <string_view>
+
 #include "base/task/sequenced_task_runner.h"
 #include "build/build_config.h"
 
@@ -17,6 +20,7 @@
 #endif
 #include <stdio.h>
 
+#include <algorithm>
 #include <fstream>
 #include <limits>
 #include <memory>
@@ -32,10 +36,8 @@
 #include "base/functional/function_ref.h"
 #include "base/notreached.h"
 #include "base/posix/eintr_wrapper.h"
-#include "base/ranges/algorithm.h"
-#include "base/strings/string_piece.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
-#include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/bind_post_task.h"
 #include "base/threading/scoped_blocking_call.h"
@@ -223,8 +225,7 @@ bool CopyFileContents(File& infile, File& outfile) {
     } while (bytes_written_per_read < bytes_read);
   }
 
-  NOTREACHED_IN_MIGRATION();
-  return false;
+  NOTREACHED();
 }
 
 bool ContentsEqual(const FilePath& filename1, const FilePath& filename2) {
@@ -330,7 +331,7 @@ bool ReadStreamToStringWithMaxSize(FILE* stream,
   bool read_successs = ReadStreamToSpanWithMaxSize(
       stream, max_size, [&content_string](size_t size) {
         content_string.resize(size);
-        return as_writable_bytes(make_span(content_string));
+        return as_writable_byte_span(content_string);
       });
 
   if (contents) {
@@ -354,7 +355,7 @@ std::optional<std::vector<uint8_t>> ReadFileToBytes(const FilePath& path) {
                                    std::numeric_limits<size_t>::max(),
                                    [&bytes](size_t size) {
                                      bytes.resize(size);
-                                     return make_span(bytes);
+                                     return span(bytes);
                                    })) {
     return std::nullopt;
   }
@@ -409,13 +410,17 @@ bool CreateDirectory(const FilePath& full_path) {
   return CreateDirectoryAndGetError(full_path, nullptr);
 }
 
-bool GetFileSize(const FilePath& file_path, int64_t* file_size) {
+std::optional<int64_t> GetFileSize(const FilePath& file_path) {
   File::Info info;
   if (!GetFileInfo(file_path, &info)) {
-    return false;
+    return std::nullopt;
   }
-  *file_size = info.size;
-  return true;
+  return info.size;
+}
+
+OnceCallback<std::optional<int64_t>()> GetFileSizeCallback(
+    const FilePath& path) {
+  return BindOnce([](const FilePath& path) { return GetFileSize(path); }, path);
 }
 
 bool TouchFile(const FilePath& path,
@@ -481,22 +486,15 @@ int ReadFile(const FilePath& filename, char* data, int max_size) {
     return -1;
   }
   std::optional<uint64_t> result =
-      ReadFile(filename, make_span(data, static_cast<uint32_t>(max_size)));
+      ReadFile(filename, span(data, static_cast<uint32_t>(max_size)));
   if (!result) {
     return -1;
   }
   return checked_cast<int>(result.value());
 }
 
-bool WriteFile(const FilePath& filename, span<const uint8_t> data) {
-  int size = checked_cast<int>(data.size());
-  return WriteFile(filename, reinterpret_cast<const char*>(data.data()),
-                   size) == size;
-}
-
-bool WriteFile(const FilePath& filename, StringPiece data) {
-  int size = checked_cast<int>(data.size());
-  return WriteFile(filename, data.data(), size) == size;
+bool WriteFile(const FilePath& filename, std::string_view data) {
+  return WriteFile(filename, as_byte_span(data));
 }
 
 FilePath GetUniquePath(const FilePath& path) {
@@ -504,22 +502,22 @@ FilePath GetUniquePath(const FilePath& path) {
 }
 
 FilePath GetUniquePathWithSuffixFormat(const FilePath& path,
-                                       cstring_view suffix_format) {
+                                       base::cstring_view suffix_format) {
   DCHECK(!path.empty());
-  DCHECK_EQ(base::ranges::count(suffix_format, '%'), 1);
+  DCHECK_EQ(std::ranges::count(suffix_format, '%'), 1);
   DCHECK(base::Contains(suffix_format, "%d"));
 
   if (!PathExists(path)) {
     return path;
   }
-  std::string number;
   for (int count = 1; count <= kMaxUniqueFiles; ++count) {
-    StringAppendF(&number, suffix_format.c_str(), count);
-    FilePath candidate_path = path.InsertBeforeExtensionASCII(number);
+    std::string suffix(suffix_format);
+    base::ReplaceFirstSubstringAfterOffset(&suffix, 0, "%d",
+                                           base::NumberToString(count));
+    FilePath candidate_path = path.InsertBeforeExtensionASCII(suffix);
     if (!PathExists(candidate_path)) {
       return candidate_path;
     }
-    number.clear();
   }
   return FilePath();
 }

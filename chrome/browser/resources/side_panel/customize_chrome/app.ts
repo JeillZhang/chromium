@@ -3,10 +3,11 @@
 // found in the LICENSE file.
 
 import 'chrome://customize-chrome-side-panel.top-chrome/shared/sp_heading.js';
+import 'chrome://resources/cr_components/help_bubble/new_badge.js';
 import 'chrome://resources/cr_elements/cr_chip/cr_chip.js';
 import 'chrome://resources/cr_elements/cr_icon/cr_icon.js';
 import 'chrome://resources/cr_elements/cr_page_selector/cr_page_selector.js';
-import 'chrome://resources/cr_elements/icons_lit.html.js';
+import 'chrome://resources/cr_elements/icons.html.js';
 import './appearance.js';
 import './cards.js';
 import './categories.js';
@@ -52,7 +53,7 @@ const AppElementBase = HelpBubbleMixinLit(CrLitElement);
 
 export interface AppElement {
   $: {
-    overviewPage: HTMLDivElement,
+    overviewPage: HTMLElement,
     categoriesPage: CategoriesElement,
     themesPage: ThemesElement,
     appearanceElement: AppearanceElement,
@@ -80,6 +81,7 @@ export class AppElement extends AppElementBase {
       extensionsCardEnabled_: {type: Boolean},
       wallpaperSearchEnabled_: {type: Boolean},
       toolbarCustomizationEnabled_: {type: Boolean},
+      isSourceTabFirstPartyNtp_: {type: Boolean},
     };
   }
 
@@ -100,7 +102,9 @@ export class AppElement extends AppElementBase {
       loadTimeData.getBoolean('wallpaperSearchEnabled');
   protected toolbarCustomizationEnabled_: boolean =
       loadTimeData.getBoolean('toolbarCustomizationEnabled');
+  protected isSourceTabFirstPartyNtp_: boolean = true;
   private scrollToSectionListenerId_: number|null = null;
+  private attachedTabStateUpdatedId_: number|null = null;
   private pageHandler_: CustomizeChromePageHandlerInterface =
       CustomizeChromeApiProxy.getInstance().handler;
 
@@ -113,15 +117,42 @@ export class AppElement extends AppElementBase {
                   if (section === CustomizeChromeSection.kWallpaperSearch) {
                     this.onWallpaperSearchSelect_();
                     return;
+                  } else if (section === CustomizeChromeSection.kToolbar) {
+                    this.openToolbarCustomizationPage();
+                    chrome.metricsPrivate.recordUserAction(
+                        'Actions.CustomizeToolbarSidePanel' +
+                        '.OpenedFromOutsideCustomizeChrome');
+                    return;
                   }
                   const selector = SECTION_TO_SELECTOR[section];
-                  const element = this.shadowRoot!.querySelector(selector);
+                  const element = this.shadowRoot.querySelector(selector);
                   if (!element) {
                     return;
                   }
                   this.page_ = CustomizeChromePage.OVERVIEW;
                   element.scrollIntoView({behavior: 'auto'});
                 });
+
+    this.attachedTabStateUpdatedId_ =
+        CustomizeChromeApiProxy.getInstance()
+            .callbackRouter.attachedTabStateUpdated.addListener(
+                (isSourceTabFirstPartyNtp: boolean) => {
+                  if (this.isSourceTabFirstPartyNtp_ ===
+                      isSourceTabFirstPartyNtp) {
+                    return;
+                  }
+
+                  this.isSourceTabFirstPartyNtp_ = isSourceTabFirstPartyNtp;
+
+                  // Since some pages aren't supported in non first party mode,
+                  // change the section back to the overview.
+                  if (!this.isSourceTabFirstPartyNtp_ &&
+                      !this.pageSupportedOnNonFirstPartyNtps()) {
+                    this.page_ = CustomizeChromePage.OVERVIEW;
+                  }
+                });
+    this.pageHandler_.updateAttachedTabState();
+
     // We wait for load because `scrollIntoView` above requires the page to be
     // laid out.
     window.addEventListener('load', () => {
@@ -143,16 +174,21 @@ export class AppElement extends AppElementBase {
       // Start observing if extension cards are scroll into view.
       if (this.shadowRoot && this.shadowRoot.querySelector('#extensions')) {
         extensionsCardSectionObserver.observe(
-            this.shadowRoot!.querySelector('#extensions')!);
+            this.shadowRoot.querySelector('#extensions')!);
       }
     }, {once: true});
   }
 
   override disconnectedCallback() {
     super.disconnectedCallback();
+
     assert(this.scrollToSectionListenerId_);
     CustomizeChromeApiProxy.getInstance().callbackRouter.removeListener(
         this.scrollToSectionListenerId_);
+
+    assert(this.attachedTabStateUpdatedId_);
+    CustomizeChromeApiProxy.getInstance().callbackRouter.removeListener(
+        this.attachedTabStateUpdatedId_);
   }
 
   protected async onBackClick_() {
@@ -195,7 +231,7 @@ export class AppElement extends AppElementBase {
   protected onWallpaperSearchSelect_() {
     this.page_ = CustomizeChromePage.WALLPAPER_SEARCH;
     const page =
-        this.shadowRoot!.querySelector('customize-chrome-wallpaper-search');
+        this.shadowRoot.querySelector('customize-chrome-wallpaper-search');
     assert(page);
     page.focusOnBackButton();
   }
@@ -227,10 +263,21 @@ export class AppElement extends AppElementBase {
   }
 
   protected onToolbarCustomizationButtonClick_() {
+    this.openToolbarCustomizationPage();
+    chrome.metricsPrivate.recordUserAction(
+        'Actions.CustomizeToolbarSidePanel.OpenedFromCustomizeChrome');
+  }
+
+  private async openToolbarCustomizationPage() {
     this.page_ = CustomizeChromePage.TOOLBAR;
-    const page = this.shadowRoot!.querySelector('customize-chrome-toolbar');
+    const page = this.shadowRoot.querySelector('customize-chrome-toolbar');
     assert(page);
+    await this.updateComplete;
     page.focusOnBackButton();
+  }
+
+  private pageSupportedOnNonFirstPartyNtps() {
+    return this.page_ === CustomizeChromePage.TOOLBAR;
   }
 }
 

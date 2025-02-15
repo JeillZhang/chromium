@@ -9,6 +9,7 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.widget.RelativeLayout;
 
+import androidx.annotation.NonNull;
 import androidx.annotation.Px;
 import androidx.recyclerview.widget.RecyclerView;
 
@@ -42,6 +43,7 @@ class TouchToFillPaymentMethodView extends TouchToFillViewBase {
                 case ItemType.HEADER: // Fallthrough.
                 case ItemType.FOOTER: // Fallthrough.
                 case ItemType.FILL_BUTTON:
+                case ItemType.TERMS_LABEL:
                     return true;
                 case ItemType.CREDIT_CARD:
                 case ItemType.IBAN:
@@ -82,8 +84,8 @@ class TouchToFillPaymentMethodView extends TouchToFillViewBase {
     }
 
     @Override
-    public int getSheetContentDescriptionStringId() {
-        return R.string.autofill_payment_method_bottom_sheet_content_description;
+    public @NonNull String getSheetContentDescription(Context context) {
+        return context.getString(R.string.autofill_payment_method_bottom_sheet_content_description);
     }
 
     @Override

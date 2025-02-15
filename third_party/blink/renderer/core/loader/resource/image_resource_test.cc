@@ -72,7 +72,6 @@
 #include "third_party/blink/renderer/platform/scheduler/test/fake_frame_scheduler.h"
 #include "third_party/blink/renderer/platform/scheduler/test/fake_task_runner.h"
 #include "third_party/blink/renderer/platform/testing/mock_context_lifecycle_notifier.h"
-#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 #include "third_party/blink/renderer/platform/testing/scoped_mocked_url.h"
 #include "third_party/blink/renderer/platform/testing/task_environment.h"
 #include "third_party/blink/renderer/platform/testing/testing_platform_support_with_mock_scheduler.h"
@@ -144,7 +143,8 @@ TEST_F(ImageResourceTest, DimensionsDecodableFromPartialTestImage) {
   EXPECT_EQ(
       Image::kSizeAvailable,
       image->SetData(SharedBuffer::Create(
-                         kJpegImage, kJpegImageSubrangeWithDimensionsLength),
+                         base::span(kJpegImage)
+                             .first(kJpegImageSubrangeWithDimensionsLength)),
                      true));
   EXPECT_TRUE(IsA<BitmapImage>(image.get()));
   EXPECT_EQ(1, image->width());
@@ -896,8 +896,8 @@ TEST_F(ImageResourceTest, PartialContentWithoutDimensions) {
       /*body=*/mojo::ScopedDataPipeConsumerHandle(),
       /*cached_metadata=*/std::nullopt);
   image_resource->Loader()->DidReceiveDataForTesting(
-      base::make_span(reinterpret_cast<const char*>(kJpegImage),
-                      kJpegImageSubrangeWithoutDimensionsLength));
+      base::as_chars(base::span(kJpegImage))
+          .first(kJpegImageSubrangeWithoutDimensionsLength));
 
   EXPECT_EQ(ResourceStatus::kPending, image_resource->GetStatus());
   EXPECT_FALSE(observer->ImageNotifyFinishedCalled());

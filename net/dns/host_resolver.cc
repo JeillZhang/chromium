@@ -4,6 +4,7 @@
 
 #include "net/dns/host_resolver.h"
 
+#include <algorithm>
 #include <optional>
 #include <set>
 #include <string>
@@ -15,7 +16,6 @@
 #include "base/functional/bind.h"
 #include "base/no_destructor.h"
 #include "base/notreached.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/time/time_delta_from_string.h"
 #include "base/values.h"
@@ -56,6 +56,8 @@ const char kUseDnsHttpsSvcbSecureExtraTimePercent[] =
     "secure_extra_time_percent";
 const char kUseDnsHttpsSvcbSecureExtraTimeMin[] = "secure_extra_time_min";
 
+// An implementation of HostResolver::{ResolveHost,Probe}Request that always
+// fails immediately.
 class FailingRequestImpl : public HostResolver::ResolveHostRequest,
                            public HostResolver::ProbeRequest {
  public:
@@ -96,6 +98,49 @@ class FailingRequestImpl : public HostResolver::ResolveHostRequest,
     static const std::optional<HostCache::EntryStaleness> nullopt_result;
     return nullopt_result;
   }
+
+ private:
+  const int error_;
+};
+
+// Similar to FailingRequestImpl, but for ServiceEndpointRequest.
+class FailingServiceEndpointRequestImpl
+    : public HostResolver::ServiceEndpointRequest {
+ public:
+  explicit FailingServiceEndpointRequestImpl(int error) : error_(error) {}
+
+  FailingServiceEndpointRequestImpl(const FailingServiceEndpointRequestImpl&) =
+      delete;
+  FailingServiceEndpointRequestImpl& operator=(
+      const FailingServiceEndpointRequestImpl&) = delete;
+
+  ~FailingServiceEndpointRequestImpl() override = default;
+
+  int Start(Delegate* delegate) override { return error_; }
+
+  const std::vector<ServiceEndpoint>& GetEndpointResults() override {
+    static const base::NoDestructor<std::vector<ServiceEndpoint>> kEmptyResult;
+    return *kEmptyResult.get();
+  }
+
+  const std::set<std::string>& GetDnsAliasResults() override {
+    static const base::NoDestructor<std::set<std::string>> kEmptyResult;
+    return *kEmptyResult.get();
+  }
+
+  bool EndpointsCryptoReady() override { return false; }
+
+  ResolveErrorInfo GetResolveErrorInfo() override {
+    return ResolveErrorInfo(error_);
+  }
+
+  const HostCache::EntryStaleness* GetStaleInfo() const override {
+    return nullptr;
+  }
+
+  bool IsStaleWhileRefresing() const override { return false; }
+
+  void ChangeRequestPriority(RequestPriority priority) override {}
 
  private:
   const int error_;
@@ -261,8 +306,7 @@ HostResolver::ManagerOptions::~ManagerOptions() = default;
 
 const std::vector<bool>*
 HostResolver::ResolveHostRequest::GetExperimentalResultsForTesting() const {
-  NOTREACHED_IN_MIGRATION();
-  return nullptr;
+  NOTREACHED();
 }
 
 std::unique_ptr<HostResolver> HostResolver::Factory::CreateResolver(
@@ -285,7 +329,11 @@ std::unique_ptr<HostResolver> HostResolver::Factory::CreateStandaloneResolver(
 HostResolver::ResolveHostParameters::ResolveHostParameters() = default;
 
 HostResolver::ResolveHostParameters::ResolveHostParameters(
-    const ResolveHostParameters& other) = default;
+    const ResolveHostParameters&) = default;
+
+HostResolver::ResolveHostParameters&
+HostResolver::ResolveHostParameters::operator=(const ResolveHostParameters&) =
+    default;
 
 HostResolver::~HostResolver() = default;
 
@@ -293,8 +341,7 @@ std::unique_ptr<HostResolver::ProbeRequest>
 HostResolver::CreateDohProbeRequest() {
   // Should be overridden in any HostResolver implementation where this method
   // may be called.
-  NOTREACHED_IN_MIGRATION();
-  return nullptr;
+  NOTREACHED();
 }
 
 std::unique_ptr<HostResolver::MdnsListener> HostResolver::CreateMdnsListener(
@@ -302,8 +349,7 @@ std::unique_ptr<HostResolver::MdnsListener> HostResolver::CreateMdnsListener(
     DnsQueryType query_type) {
   // Should be overridden in any HostResolver implementation where this method
   // may be called.
-  NOTREACHED_IN_MIGRATION();
-  return nullptr;
+  NOTREACHED();
 }
 
 HostCache* HostResolver::GetHostCache() {
@@ -317,21 +363,19 @@ base::Value::Dict HostResolver::GetDnsConfigAsValue() const {
 void HostResolver::SetRequestContext(URLRequestContext* request_context) {
   // Should be overridden in any HostResolver implementation where this method
   // may be called.
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 HostResolverManager* HostResolver::GetManagerForTesting() {
   // Should be overridden in any HostResolver implementation where this method
   // may be called.
-  NOTREACHED_IN_MIGRATION();
-  return nullptr;
+  NOTREACHED();
 }
 
 const URLRequestContext* HostResolver::GetContextForTesting() const {
   // Should be overridden in any HostResolver implementation where this method
   // may be called.
-  NOTREACHED_IN_MIGRATION();
-  return nullptr;
+  NOTREACHED();
 }
 
 handles::NetworkHandle HostResolver::GetTargetNetworkForTesting() const {
@@ -503,7 +547,7 @@ AddressList HostResolver::EndpointResultToAddressList(
   AddressList list;
 
   auto non_protocol_endpoint =
-      base::ranges::find_if(endpoints, &EndpointResultIsNonProtocol);
+      std::ranges::find_if(endpoints, &EndpointResultIsNonProtocol);
   if (non_protocol_endpoint == endpoints.end())
     return list;
 
@@ -513,23 +557,6 @@ AddressList HostResolver::EndpointResultToAddressList(
   list.SetDnsAliases(std::move(aliases_vector));
 
   return list;
-}
-
-// static
-bool HostResolver::AllProtocolEndpointsHaveEch(
-    base::span<const HostResolverEndpointResult> endpoints) {
-  bool has_svcb = false;
-  for (const auto& endpoint : endpoints) {
-    if (!endpoint.metadata.supported_protocol_alpns.empty()) {
-      has_svcb = true;
-      if (endpoint.metadata.ech_config_list.empty()) {
-        return false;  // There is a non-ECH SVCB/HTTPS route.
-      }
-    }
-  }
-  // Either there were no SVCB/HTTPS records (should be SVCB-optional), or there
-  // were and all supported ECH (should be SVCB-reliant).
-  return has_svcb;
 }
 
 // static
@@ -553,6 +580,12 @@ HostResolver::CreateFailingRequest(int error) {
 std::unique_ptr<HostResolver::ProbeRequest>
 HostResolver::CreateFailingProbeRequest(int error) {
   return std::make_unique<FailingRequestImpl>(error);
+}
+
+// static
+std::unique_ptr<HostResolver::ServiceEndpointRequest>
+HostResolver::CreateFailingServiceEndpointRequest(int error) {
+  return std::make_unique<FailingServiceEndpointRequestImpl>(error);
 }
 
 }  // namespace net

@@ -174,6 +174,44 @@ RUNTIMES_LIST = {
     }
 }
 
+IOS18_RUNTIMES_LIST = {
+    "111111": {
+        "build": "22A5297f",
+        "deletable": True,
+        "identifier": "111111",
+        "kind": "Disk Image",
+        "lastUsedAt": "2024-06-26T16:57:51Z",
+        "mountPath": "path/to/mount/iOS_22A5297f",
+        "path": "path/to/runtime/111111.dmg",
+        "platformIdentifier": "com.apple.platform.iphonesimulator",
+        "runtimeBundlePath": "path/to/bundle/runtime/iOS 18.0.simruntime",
+        "runtimeIdentifier": "com.apple.CoreSimulator.SimRuntime.iOS-18-0",
+        "signatureState": "Verified",
+        "sizeBytes": 8291822059,
+        "state": "Ready",
+        "version": "18.0"
+    },
+    "222222": {
+        "build": "22A5282m",
+        "deletable": True,
+        "identifier": "222222",
+        "kind": "Disk Image",
+        "lastUsedAt": "2024-06-26T14:56:35Z",
+        "mountPath": "path/to/mount/iOS_22A5282m",
+        "parentIdentifier": "333333",
+        "parentImagePath": "path/to/parent/image/090-28824-040.dmg",
+        "parentMountPath": "path/to/parent/mount//SimRuntimeBundle-333333",
+        "path": "path/to/runtime/090-28222-040.dmg",
+        "platformIdentifier": "com.apple.platform.iphonesimulator",
+        "runtimeBundlePath": "path/to/bundle/runtime/iOS 18.0.simruntime",
+        "runtimeIdentifier": "com.apple.CoreSimulator.SimRuntime.iOS-18-0",
+        "signatureState": "Verified",
+        "sizeBytes": 8461564223,
+        "state": "Ready",
+        "version": "18.0"
+    }
+}
+
 RUNTIMES_MATCH_LIST = {
     "appletvos17.0": {
         "chosenRuntimeBuild": "21J11111",
@@ -381,7 +419,8 @@ class GetiOSSimUtil(test_runner_test.TestCase):
     iossim_util.add_simulator_runtime(dmg_path)
 
     calls = [
-        mock.call(['xcrun', 'simctl', 'runtime', 'add', dmg_path]),
+        mock.call(['xcrun', 'simctl', 'runtime', 'add', dmg_path, '--verbose'],
+                  stderr=subprocess.STDOUT),
     ]
 
     check_output_mock.assert_has_calls(calls)

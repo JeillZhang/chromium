@@ -30,7 +30,7 @@ class VIZ_SERVICE_EXPORT OverlayProcessorWin
     : public OverlayProcessorInterface {
  public:
   OverlayProcessorWin(
-      OutputSurface* output_surface,
+      OutputSurface::DCSupportLevel dc_support_level,
       const DebugRendererSettings* debug_settings,
       std::unique_ptr<DCLayerOverlayProcessor> dc_layer_overlay_processor);
 
@@ -80,53 +80,6 @@ class VIZ_SERVICE_EXPORT OverlayProcessorWin
   // enabling DC layers.
   void SetUsingDCLayersForTesting(AggregatedRenderPassId render_pass_id,
                                   bool value);
-
-  void set_frames_since_last_qualified_multi_overlays_for_testing(int value) {
-    CHECK_IS_TEST();
-    GetOverlayProcessor()
-        ->set_frames_since_last_qualified_multi_overlays_for_testing(value);
-  }
-  void set_system_hdr_enabled_on_any_display_for_testing(bool value) {
-    CHECK_IS_TEST();
-    GetOverlayProcessor()->set_system_hdr_enabled_on_any_display_for_testing(
-        value);
-  }
-  void set_system_hdr_disabled_on_any_display_for_testing(bool value) {
-    CHECK_IS_TEST();
-    GetOverlayProcessor()->set_system_hdr_disabled_on_any_display_for_testing(
-        value);
-  }
-  void set_has_p010_video_processor_support_for_testing(bool value) {
-    CHECK_IS_TEST();
-    GetOverlayProcessor()->set_has_p010_video_processor_support_for_testing(
-        value);
-  }
-  void set_has_auto_hdr_video_processor_support_for_testing(bool value) {
-    CHECK_IS_TEST();
-    GetOverlayProcessor()->set_has_auto_hdr_video_processor_support_for_testing(
-        value);
-  }
-  void set_is_on_battery_power_for_testing(bool value) {
-    CHECK_IS_TEST();
-    GetOverlayProcessor()->set_is_on_battery_power_for_testing(value);
-  }
-  size_t get_previous_frame_render_pass_count() {
-    CHECK_IS_TEST();
-    return GetOverlayProcessor()->get_previous_frame_render_pass_count();
-  }
-  std::vector<AggregatedRenderPassId> get_previous_frame_render_pass_ids() {
-    CHECK_IS_TEST();
-    return GetOverlayProcessor()->get_previous_frame_render_pass_ids();
-  }
-
-  void ProcessOnDCLayerOverlayProcessorForTesting(
-      const DisplayResourceProvider* resource_provider,
-      const FilterOperationsMap& render_pass_filters,
-      const FilterOperationsMap& render_pass_backdrop_filters,
-      SurfaceDamageRectList surface_damage_rect_list,
-      bool is_page_fullscreen_mode,
-      DCLayerOverlayProcessor::RenderPassOverlayDataMap&
-          render_pass_overlay_data_map);
 
   static gfx::Rect InsertSurfaceContentOverlaysAndSetPlaneZOrderForTesting(
       DCLayerOverlayProcessor::RenderPassOverlayDataMap
@@ -206,7 +159,7 @@ class VIZ_SERVICE_EXPORT OverlayProcessorWin
   };
 
   // Attempt to promote all the quads in |root_render_pass|. Promoted quads will
-  // be placed in |out_candidates| in front-to-back order. Returns true if all
+  // be placed in |out_candidates| in back-to-front order. Returns true if all
   // quads were successfully promoted.
   base::expected<DelegatedCompositingResult, DelegationStatus>
   TryDelegatedCompositing(
@@ -232,7 +185,7 @@ class VIZ_SERVICE_EXPORT OverlayProcessorWin
 
   // Insert overlay candidates from |surface_content_render_passes| into
   // |candidates|, assigning correct plane z-order in the process. |candidates|
-  // is assumed to be in front-to-back. The resulting candidates list is not
+  // is assumed to be in back-to-front. The resulting candidates list is not
   // sorted. Returns the union rect of overlays in
   // |surface_content_render_passes|.
   // TODO(crbug.com/324460866): Used for partially delegated compositing.
@@ -241,7 +194,7 @@ class VIZ_SERVICE_EXPORT OverlayProcessorWin
           surface_content_render_passes,
       OverlayCandidateList& candidates);
 
-  const raw_ptr<OutputSurface> output_surface_;
+  const OutputSurface::DCSupportLevel dc_support_level_;
 
   // Reference to the global viz singleton.
   const raw_ptr<const DebugRendererSettings> debug_settings_;

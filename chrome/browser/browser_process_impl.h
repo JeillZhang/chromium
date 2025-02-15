@@ -31,13 +31,13 @@
 #include "components/nacl/common/buildflags.h"
 #include "components/prefs/persistent_pref_store.h"
 #include "components/prefs/pref_change_registrar.h"
+#include "components/safe_browsing/buildflags.h"
 #include "extensions/buildflags/buildflags.h"
 #include "media/media_buildflags.h"
 #include "ppapi/buildflags/buildflags.h"
 #include "printing/buildflags/buildflags.h"
 #include "services/network/public/cpp/network_quality_tracker.h"
 #include "services/network/public/mojom/network_service.mojom-forward.h"
-#include "services/screen_ai/buildflags/buildflags.h"
 
 #if !BUILDFLAG(IS_ANDROID)
 #include "chrome/browser/upgrade_detector/build_state.h"
@@ -54,7 +54,6 @@ class DevToolsAutoOpener;
 class GlobalFeatures;
 class RemoteDebuggingServer;
 class PrefRegistrySimple;
-class SearchEngineChoiceProfileTagger;
 class SecureOriginPrefsObserver;
 class SiteIsolationPrefsObserver;
 class SystemNotificationHelper;
@@ -69,7 +68,7 @@ class OriginTrialsSettingsStorage;
 }  // namespace embedder_support
 
 namespace extensions {
-class ChromeExtensionsBrowserClient;
+class ExtensionsBrowserClient;
 }
 
 namespace gcm {
@@ -171,9 +170,10 @@ class BrowserProcessImpl : public BrowserProcess,
   GetOriginTrialsSettingsStorage() override;
   ProfileManager* profile_manager() override;
   PrefService* local_state() override;
+  signin::ActivePrimaryAccountsMetricsRecorder*
+  active_primary_accounts_metrics_recorder() override;
   variations::VariationsService* variations_service() override;
   BrowserProcessPlatformPart* platform_part() override;
-  extensions::EventRouterForwarder* extension_event_router_forwarder() override;
   NotificationUIManager* notification_ui_manager() override;
   NotificationPlatformBridge* notification_platform_bridge() override;
   policy::ChromeBrowserPolicyConnector* browser_policy_connector() override;
@@ -194,13 +194,15 @@ class BrowserProcessImpl : public BrowserProcess,
   void SetApplicationLocale(const std::string& actual_locale) override;
   DownloadStatusUpdater* download_status_updater() override;
   DownloadRequestLimiter* download_request_limiter() override;
-  BackgroundModeManager* background_mode_manager() override;
 #if BUILDFLAG(ENABLE_BACKGROUND_MODE)
+  BackgroundModeManager* background_mode_manager() override;
   void set_background_mode_manager_for_test(
       std::unique_ptr<BackgroundModeManager> manager) override;
 #endif
   StatusTray* status_tray() override;
+#if BUILDFLAG(SAFE_BROWSING_AVAILABLE)
   safe_browsing::SafeBrowsingService* safe_browsing_service() override;
+#endif
   subresource_filter::RulesetService* subresource_filter_ruleset_service()
       override;
   subresource_filter::RulesetService*
@@ -225,8 +227,8 @@ class BrowserProcessImpl : public BrowserProcess,
   resource_coordinator::ResourceCoordinatorParts* resource_coordinator_parts()
       override;
 
-#if !BUILDFLAG(IS_ANDROID)
   SerialPolicyAllowedPorts* serial_policy_allowed_ports() override;
+#if !BUILDFLAG(IS_ANDROID)
   HidSystemTrayIcon* hid_system_tray_icon() override;
   UsbSystemTrayIcon* usb_system_tray_icon() override;
 #endif
@@ -240,6 +242,8 @@ class BrowserProcessImpl : public BrowserProcess,
   BuildState* GetBuildState() override;
 
   static void RegisterPrefs(PrefRegistrySimple* registry);
+  GlobalFeatures* GetFeatures() override;
+  void CreateGlobalFeaturesForTesting() override;
 
  private:
   using WebRtcEventLogManager = webrtc_event_logging::WebRtcEventLogManager;
@@ -258,7 +262,9 @@ class BrowserProcessImpl : public BrowserProcess,
   void CreateNotificationUIManager();
   void CreatePrintPreviewDialogController();
   void CreateBackgroundPrintingManager();
+#if BUILDFLAG(SAFE_BROWSING_AVAILABLE)
   void CreateSafeBrowsingService();
+#endif
   void CreateSubresourceFilterRulesetService();
   void CreateFingerprintingProtectionRulesetService();
   void CreateOptimizationGuideService();
@@ -286,6 +292,10 @@ class BrowserProcessImpl : public BrowserProcess,
   std::unique_ptr<ProfileManager> profile_manager_;
 
   const std::unique_ptr<PrefService> local_state_;
+
+  // Must be destroyed before |local_state_|.
+  std::unique_ptr<signin::ActivePrimaryAccountsMetricsRecorder>
+      active_primary_accounts_metrics_recorder_;
 
   // |metrics_services_manager_| owns this.
   raw_ptr<ChromeMetricsServicesManagerClient, AcrossTasksDanglingUntriaged>
@@ -317,13 +327,12 @@ class BrowserProcessImpl : public BrowserProcess,
 
   std::unique_ptr<GpuModeManager> gpu_mode_manager_;
 
-#if BUILDFLAG(ENABLE_EXTENSIONS)
-  std::unique_ptr<extensions::ChromeExtensionsBrowserClient>
+#if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
+  std::unique_ptr<extensions::ExtensionsBrowserClient>
       extensions_browser_client_;
+#endif
 
-  scoped_refptr<extensions::EventRouterForwarder>
-      extension_event_router_forwarder_;
-
+#if BUILDFLAG(ENABLE_EXTENSIONS)
   std::unique_ptr<MediaFileSystemRegistry> media_file_system_registry_;
 #endif
 
@@ -352,9 +361,7 @@ class BrowserProcessImpl : public BrowserProcess,
 
   std::unique_ptr<StatusTray> status_tray_;
 
-#if BUILDFLAG(ENABLE_SYSTEM_NOTIFICATIONS)
   bool created_notification_bridge_ = false;
-#endif
 
   std::unique_ptr<NotificationPlatformBridge> notification_bridge_;
 
@@ -367,8 +374,10 @@ class BrowserProcessImpl : public BrowserProcess,
   std::unique_ptr<BackgroundModeManager> background_mode_manager_;
 #endif
 
+#if BUILDFLAG(SAFE_BROWSING_AVAILABLE)
   bool created_safe_browsing_service_ = false;
   scoped_refptr<safe_browsing::SafeBrowsingService> safe_browsing_service_;
+#endif
 
   bool created_subresource_filter_ruleset_service_ = false;
   std::unique_ptr<subresource_filter::RulesetService>
@@ -427,9 +436,7 @@ class BrowserProcessImpl : public BrowserProcess,
   // SodaInstallerImpl depends on ComponentUpdateService, so define it here
   // to ensure that SodaInstallerImpl gets destructed first.
   std::unique_ptr<speech::SodaInstaller> soda_installer_impl_;
-#endif
 
-#if BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
   // Used to download Screen AI on demand and keep track of the library
   // availability.
   std::unique_ptr<screen_ai::ScreenAIInstallState> screen_ai_download_;
@@ -456,18 +463,15 @@ class BrowserProcessImpl : public BrowserProcess,
   std::unique_ptr<SecureOriginPrefsObserver> secure_origin_prefs_observer_;
   std::unique_ptr<SiteIsolationPrefsObserver> site_isolation_prefs_observer_;
 
+  std::unique_ptr<SerialPolicyAllowedPorts> serial_policy_allowed_ports_;
 #if !BUILDFLAG(IS_ANDROID)
   // Called to signal the process' main message loop to exit.
   base::OnceClosure quit_closure_;
 
-  std::unique_ptr<SerialPolicyAllowedPorts> serial_policy_allowed_ports_;
   std::unique_ptr<HidSystemTrayIcon> hid_system_tray_icon_;
   std::unique_ptr<UsbSystemTrayIcon> usb_system_tray_icon_;
 
   BuildState build_state_;
-
-  std::unique_ptr<SearchEngineChoiceProfileTagger>
-      search_engine_choice_profile_tagger_;
 #endif
 
 #if BUILDFLAG(IS_ANDROID)
@@ -487,6 +491,9 @@ class BrowserProcessImpl : public BrowserProcess,
 
   std::optional<std::pair<size_t, std::unique_ptr<os_crypt_async::KeyProvider>>>
       additional_provider_for_test_;
+
+  // Do not add new members to this class. Instead use GlobalFeatures. See
+  // browser_process.h file level comments for more details.
 
   SEQUENCE_CHECKER(sequence_checker_);
 };

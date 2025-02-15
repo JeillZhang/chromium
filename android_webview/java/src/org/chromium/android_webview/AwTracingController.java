@@ -10,6 +10,7 @@ import androidx.annotation.Nullable;
 
 import org.jni_zero.CalledByNative;
 import org.jni_zero.JNINamespace;
+import org.jni_zero.JniType;
 import org.jni_zero.NativeMethods;
 
 import org.chromium.android_webview.common.Lifetime;
@@ -27,8 +28,6 @@ import java.util.List;
 @Lifetime.Singleton
 @JNINamespace("android_webview")
 public class AwTracingController {
-    private static final String TAG = "AwTracingController";
-
     public static final int RESULT_SUCCESS = 0;
     public static final int RESULT_ALREADY_TRACING = 1;
     public static final int RESULT_INVALID_CATEGORIES = 2;
@@ -181,7 +180,7 @@ public class AwTracingController {
         boolean start(
                 long nativeAwTracingController,
                 AwTracingController caller,
-                String categories,
+                @JniType("std::string") String categories,
                 int traceMode);
 
         boolean stopAndFlush(long nativeAwTracingController, AwTracingController caller);

@@ -95,11 +95,11 @@ bool HashWithMachineId(const std::string& salt, std::string* result) {
   std::unique_ptr<crypto::SecureHash> hash(
       crypto::SecureHash::Create(crypto::SecureHash::SHA256));
 
-  hash->Update(machine_id.data(), machine_id.size());
-  hash->Update(salt.data(), salt.size());
+  hash->Update(base::as_byte_span(machine_id));
+  hash->Update(base::as_byte_span(salt));
 
-  std::string result_bytes(crypto::kSHA256Length, 0);
-  hash->Finish(std::data(result_bytes), result_bytes.size());
+  std::array<uint8_t, crypto::kSHA256Length> result_bytes;
+  hash->Finish(result_bytes);
 
   *result = base::Base64Encode(result_bytes);
   return true;
@@ -224,11 +224,12 @@ bool InstallSigner::VerifySignature(const InstallSignature& signature) {
 
   crypto::SignatureVerifier verifier;
   if (!verifier.VerifyInit(crypto::SignatureVerifier::RSA_PKCS1_SHA1,
-                           base::as_bytes(base::make_span(signature.signature)),
-                           base::as_bytes(base::make_span(public_key))))
+                           base::as_byte_span(signature.signature),
+                           base::as_byte_span(public_key))) {
     return false;
+  }
 
-  verifier.VerifyUpdate(base::as_bytes(base::make_span(signed_data)));
+  verifier.VerifyUpdate(base::as_byte_span(signed_data));
   return verifier.VerifyFinal();
 }
 

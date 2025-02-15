@@ -27,25 +27,33 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_HTML_CANVAS_TEXT_METRICS_H_
 
 #include "third_party/blink/renderer/bindings/core/v8/v8_baselines.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_canvas_text_align.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_canvas_text_baseline.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_text_cluster_options.h"
 #include "third_party/blink/renderer/core/core_export.h"
+#include "third_party/blink/renderer/core/html/canvas/text_cluster.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
 #include "third_party/blink/renderer/platform/fonts/font.h"
 #include "third_party/blink/renderer/platform/graphics/graphics_types.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
+#include "third_party/blink/renderer/platform/text/text_direction.h"
+#include "third_party/blink/renderer/platform/text/text_run.h"
 
 namespace blink {
 
 class DOMRectReadOnly;
+class ExceptionState;
+class TextClusterOptions;
 
 class CORE_EXPORT TextMetrics final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
   TextMetrics();
-  TextMetrics(const Font& font,
+  TextMetrics(const Font* font,
               const TextDirection& direction,
-              const TextBaseline& baseline,
-              const TextAlign& align,
+              V8CanvasTextBaseline::Enum baseline,
+              V8CanvasTextAlign::Enum align,
               const String& text);
 
   double width() const { return width_; }
@@ -63,21 +71,60 @@ class CORE_EXPORT TextMetrics final : public ScriptWrappable {
   double emHeightAscent() const { return em_height_ascent_; }
   double emHeightDescent() const { return em_height_descent_; }
 
-  static float GetFontBaseline(const TextBaseline&, const SimpleFontData&);
+  static float GetFontBaseline(const V8CanvasTextBaseline::Enum,
+                               const SimpleFontData&);
+
+  unsigned getIndexFromOffset(double x);
 
   const HeapVector<Member<DOMRectReadOnly>> getSelectionRects(
       uint32_t start,
       uint32_t end,
       ExceptionState& exception_state);
+  DOMRectReadOnly* getActualBoundingBox(uint32_t start,
+                                        uint32_t end,
+                                        ExceptionState& exception_state);
+  HeapVector<Member<TextCluster>> getTextClusters(
+      uint32_t start,
+      uint32_t end,
+      const TextClusterOptions* options,
+      ExceptionState& exception_state);
+  HeapVector<Member<TextCluster>> getTextClusters(
+      const TextClusterOptions* options);
+
+  const Font* GetFont() const { return font_; }
 
   void Trace(Visitor*) const override;
 
+  struct RunWithOffset {
+    DISALLOW_NEW();
+
+    void Trace(Visitor* visitor) const { visitor->Trace(shape_result_); }
+
+    Member<const ShapeResult> shape_result_{
+        nullptr, Member<const ShapeResult>::AtomicInitializerTag{}};
+    String text_;
+    TextDirection direction_;
+    unsigned character_offset_;
+    unsigned num_characters_;
+    float x_position_;
+  };
+
  private:
-  void Update(const Font&,
-              const TextDirection&,
-              const TextBaseline&,
-              const TextAlign&,
+  void Update(const Font*,
+              const TextDirection& direction,
+              V8CanvasTextBaseline::Enum baseline,
+              V8CanvasTextAlign::Enum align,
               const String&);
+
+  void ShapeTextIfNeeded();
+  unsigned CorrectForMixedBidi(HeapVector<RunWithOffset>::reverse_iterator&,
+                               unsigned);
+
+  HeapVector<Member<TextCluster>> getTextClustersImpl(
+      uint32_t start,
+      uint32_t end,
+      const TextClusterOptions* options,
+      ExceptionState* exception_state);
 
   // x-direction
   double width_ = 0.0;
@@ -92,14 +139,35 @@ class CORE_EXPORT TextMetrics final : public ScriptWrappable {
   double actual_bounding_box_descent_ = 0.0;
   double em_height_ascent_ = 0.0;
   double em_height_descent_ = 0.0;
+  float baseline_y = 0.0;
   Member<Baselines> baselines_;
 
-  // Needed for selection rects.
-  Vector<TextRun> text_runs_;
-  Font font_;
-  uint32_t text_length_ = 0;
+  // Needed for selection rects, bounding boxes and caret position.
+  Member<const Font> font_;
+  TextDirection direction_;
+  String text_;
+
+  // Values from the canvas context at the moment the text was measured.
+  V8CanvasTextAlign::Enum ctx_text_align_ = V8CanvasTextAlign::Enum::kStart;
+  V8CanvasTextBaseline::Enum ctx_text_baseline_ =
+      V8CanvasTextBaseline::Enum::kAlphabetic;
+
+  // Cache of ShapeResults that is lazily created the first time it's needed.
+  HeapVector<RunWithOffset> runs_with_offset_;
+  bool shaping_needed_ = false;
 };
 
 }  // namespace blink
+
+namespace WTF {
+
+template <>
+struct VectorTraits<blink::TextMetrics::RunWithOffset>
+    : VectorTraitsBase<blink::TextMetrics::RunWithOffset> {
+  static constexpr bool kCanClearUnusedSlotsWithMemset = true;
+  static constexpr bool kCanTraceConcurrently = true;
+};
+
+}  // namespace WTF
 
 #endif  // THIRD_PARTY_BLINK_RENDERER_CORE_HTML_CANVAS_TEXT_METRICS_H_

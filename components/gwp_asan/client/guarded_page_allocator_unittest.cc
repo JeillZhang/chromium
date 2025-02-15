@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "components/gwp_asan/client/guarded_page_allocator.h"
 
 #include <algorithm>
@@ -191,7 +196,7 @@ class GuardedPageAllocatorParamTest
 
 TEST_P(GuardedPageAllocatorParamTest, AllocDeallocAllPages) {
   size_t num_allocations = GetParam();
-  char* bufs[kMaxMetadata];
+  std::array<char*, kMaxMetadata> bufs;
   for (size_t i = 0; i < num_allocations; i++) {
     bufs[i] = reinterpret_cast<char*>(gpa_.Allocate(1));
     EXPECT_NE(bufs[i], nullptr);
@@ -246,7 +251,7 @@ class ThreadedAllocCountDelegate : public base::DelegateSimpleThread::Delegate {
 // extra pages are allocated when there's concurrent calls to Allocate().
 TEST_P(GuardedPageAllocatorTest, ThreadedAllocCount) {
   constexpr size_t num_threads = 2;
-  std::array<void*, kMaxMetadata> allocations[num_threads];
+  std::array<std::array<void*, kMaxMetadata>, num_threads> allocations;
   {
     base::DelegateSimpleThreadPool threads("alloc_threads", num_threads);
     threads.Start();

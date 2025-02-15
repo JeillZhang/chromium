@@ -76,7 +76,8 @@ void TouchIdAuthenticator::GetPlatformCredentialInfoForRequest(
   for (const auto& credential : *credentials) {
     result.emplace_back(AuthenticatorType::kTouchID, request.rp_id,
                         credential.credential_id,
-                        credential.metadata.ToPublicKeyCredentialUserEntity());
+                        credential.metadata.ToPublicKeyCredentialUserEntity(),
+                        /*provider_name=*/std::nullopt);
   }
   std::move(callback).Run(
       std::move(result),
@@ -148,7 +149,9 @@ const AuthenticatorSupportedOptions& TouchIdAuthenticator::Options() const {
 }
 
 void TouchIdAuthenticator::GetTouch(base::OnceClosure callback) {
-  NOTREACHED_IN_MIGRATION();
+  // If at any point request processing wants to collect a "touch" from this
+  // authenticator, pretend that happens immediately because UI interaction
+  // already happened to trigger this authenticator.
   std::move(callback).Run();
 }
 

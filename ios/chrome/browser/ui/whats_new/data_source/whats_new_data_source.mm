@@ -10,6 +10,7 @@
 #import "base/strings/string_util.h"
 #import "base/strings/sys_string_conversions.h"
 #import "base/version.h"
+#import "ios/chrome/browser/price_insights/model/price_insights_feature.h"
 #import "ios/chrome/browser/shared/ui/symbols/symbols.h"
 #import "ios/chrome/browser/ui/whats_new/data_source/whats_new_item.h"
 #import "ios/chrome/browser/ui/whats_new/whats_new_util.h"
@@ -24,8 +25,10 @@ namespace {
 // The size of the icon image.
 const CGFloat kIconImageWhatsNew = 16;
 
-// The file name.
+// The file names.
 NSString* const kfileName = @"whats_new_entries.plist";
+NSString* const kfilePriceInsightsName =
+    @"whats_new_price_insights_entries.plist";
 
 // Dictionary keys.
 NSString* const kDictionaryFeaturesKey = @"Features";
@@ -57,6 +60,8 @@ UIColor* GenerateColor(NSString* color) {
     return [UIColor colorNamed:kGrey800Color];
   } else if ([color isEqualToString:@"purple"]) {
     return [UIColor colorNamed:kPurple500Color];
+  } else if ([color isEqualToString:@"green"]) {
+    return [UIColor colorNamed:kGreen500Color];
   } else {
     return nil;
   }
@@ -67,17 +72,16 @@ UIColor* GenerateColor(NSString* color) {
 NSString* GetPrimaryActionTitle(WhatsNewPrimaryAction action) {
   switch (action) {
     case WhatsNewPrimaryAction::kIOSSettings:
-      return l10n_util::GetNSString(IDS_IOS_OPEN_IOS_SETTINGS);
-    case WhatsNewPrimaryAction::kPrivacySettings:
-      return l10n_util::GetNSString(IDS_IOS_OPEN_CHROME_SETTINGS);
-    case WhatsNewPrimaryAction::kChromeSettings:
-      return l10n_util::GetNSString(IDS_IOS_OPEN_CHROME_SETTINGS);
     case WhatsNewPrimaryAction::kIOSSettingsPasswords:
       return l10n_util::GetNSString(IDS_IOS_OPEN_IOS_SETTINGS);
-    case WhatsNewPrimaryAction::kLens:
-      return l10n_util::GetNSString(IDS_IOS_GO_TO_LENS);
+    case WhatsNewPrimaryAction::kPrivacySettings:
+    case WhatsNewPrimaryAction::kChromeSettings:
     case WhatsNewPrimaryAction::kSafeBrowsingSettings:
       return l10n_util::GetNSString(IDS_IOS_OPEN_CHROME_SETTINGS);
+    case WhatsNewPrimaryAction::kChromePasswordManager:
+      return l10n_util::GetNSString(IDS_IOS_OPEN_PASSWORD_MANAGER);
+    case WhatsNewPrimaryAction::kLens:
+      return l10n_util::GetNSString(IDS_IOS_GO_TO_LENS);
     case WhatsNewPrimaryAction::kNoAction:
     case WhatsNewPrimaryAction::kError:
       return nil;
@@ -123,8 +127,7 @@ WhatsNewType WhatsNewTypeFromInt(int type) {
   const int max_value = static_cast<int>(WhatsNewType::kMaxValue);
 
   if (min_value > type || type > max_value) {
-    NOTREACHED_IN_MIGRATION() << "unexpected type: " << type;
-    return WhatsNewType::kError;
+    NOTREACHED() << "unexpected type: " << type;
   }
 
   return static_cast<WhatsNewType>(type);
@@ -135,8 +138,7 @@ WhatsNewPrimaryAction WhatsNewPrimaryActionFromInt(int type) {
   const int max_value = static_cast<int>(WhatsNewPrimaryAction::kMaxValue);
 
   if (min_value > type || type > max_value) {
-    NOTREACHED_IN_MIGRATION() << "unexpected type: " << type;
-    return WhatsNewPrimaryAction::kError;
+    NOTREACHED() << "unexpected type: " << type;
   }
 
   return static_cast<WhatsNewPrimaryAction>(type);
@@ -170,19 +172,14 @@ NSArray<WhatsNewItem*>* WhatsNewItemsFromFileAndKey(NSString* path,
 
 NSArray<NSString*>* loadInstructionsForPasswordInOtherApps(
     NSArray<NSString*>* instructions) {
-#if defined(__IPHONE_16_0) && __IPHONE_OS_VERSION_MAX_ALLOWED >= __IPHONE_16_0
-  if (@available(iOS 16.0, *)) {
-    return @[
-      l10n_util::GetNSString(
-          IDS_IOS_WHATS_NEW_CHROME_TIP_PASSWORDS_IN_OTHER_APPS_STEP_1_IOS16),
-      l10n_util::GetNSString(
-          IDS_IOS_WHATS_NEW_CHROME_TIP_PASSWORDS_IN_OTHER_APPS_STEP_2_IOS16),
-      l10n_util::GetNSString(
-          IDS_IOS_WHATS_NEW_CHROME_TIP_PASSWORDS_IN_OTHER_APPS_STEP_2),
-    ];
-  }
-#endif  // defined (__IPHONE_16_0)
-  return instructions;
+  return @[
+    l10n_util::GetNSString(
+        IDS_IOS_WHATS_NEW_CHROME_TIP_PASSWORDS_IN_OTHER_APPS_STEP_1_IOS16),
+    l10n_util::GetNSString(
+        IDS_IOS_WHATS_NEW_CHROME_TIP_PASSWORDS_IN_OTHER_APPS_STEP_2_IOS16),
+    l10n_util::GetNSString(
+        IDS_IOS_WHATS_NEW_CHROME_TIP_PASSWORDS_IN_OTHER_APPS_STEP_2),
+  ];
 }
 
 }  // namespace
@@ -309,6 +306,8 @@ WhatsNewItem* ConstructWhatsNewItem(NSDictionary* entry) {
 NSString* WhatsNewFilePath() {
   NSString* bundle_path = [base::apple::FrameworkBundle() bundlePath];
   NSString* entries_file_path =
-      [bundle_path stringByAppendingPathComponent:kfileName];
+      [bundle_path stringByAppendingPathComponent:IsPriceInsightsRegionEnabled()
+                                                      ? kfilePriceInsightsName
+                                                      : kfileName];
   return entries_file_path;
 }

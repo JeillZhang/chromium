@@ -18,8 +18,8 @@
 #include "base/task/single_thread_task_runner.h"
 #include "media/base/android/media_common_android.h"
 #include "media/base/android/media_resource_getter.h"
-#include "media/base/android/media_url_interceptor.h"
 #include "media/base/timestamp_constants.h"
+#include "net/storage_access_api/status.h"
 
 // Must come after all headers that specialize FromJniType() / ToJniType().
 #include "media/base/android/media_jni_headers/MediaPlayerBridge_jni.h"
@@ -70,7 +70,7 @@ MediaPlayerBridge::MediaPlayerBridge(
     const GURL& url,
     const net::SiteForCookies& site_for_cookies,
     const url::Origin& top_frame_origin,
-    bool has_storage_access,
+    net::StorageAccessApiStatus storage_access_api_status,
     const std::string& user_agent,
     bool hide_url_log,
     Client* client,
@@ -84,7 +84,7 @@ MediaPlayerBridge::MediaPlayerBridge(
       url_(url),
       site_for_cookies_(site_for_cookies),
       top_frame_origin_(top_frame_origin),
-      has_storage_access_(has_storage_access),
+      storage_access_api_status_(storage_access_api_status),
       pending_retrieve_cookies_(false),
       should_prepare_on_retrieved_cookies_(false),
       user_agent_(user_agent),
@@ -136,7 +136,7 @@ void MediaPlayerBridge::Initialize() {
 
     pending_retrieve_cookies_ = true;
     resource_getter->GetCookies(
-        url_, site_for_cookies_, top_frame_origin_, has_storage_access_,
+        url_, site_for_cookies_, top_frame_origin_, storage_access_api_status_,
         base::BindOnce(&MediaPlayerBridge::OnCookiesRetrieved,
                        weak_factory_.GetWeakPtr()));
   }
@@ -205,22 +205,6 @@ void MediaPlayerBridge::SetDataSource(const std::string& url) {
   JNIEnv* env = base::android::AttachCurrentThread();
   CHECK(env);
 
-  int fd;
-  int64_t offset;
-  int64_t size;
-  if (InterceptMediaUrl(url, &fd, &offset, &size)) {
-    if (!Java_MediaPlayerBridge_setDataSourceFromFd(env, j_media_player_bridge_,
-                                                    fd, offset, size)) {
-      OnMediaError(MEDIA_ERROR_FORMAT);
-      return;
-    }
-
-    if (!Java_MediaPlayerBridge_prepareAsync(env, j_media_player_bridge_))
-      OnMediaError(MEDIA_ERROR_FORMAT);
-
-    return;
-  }
-
   // Create a Java String for the URL.
   ScopedJavaLocalRef<jstring> j_url_string = ConvertUTF8ToJavaString(env, url);
 
@@ -279,27 +263,6 @@ void MediaPlayerBridge::SetDataSourceInternal() {
 
   if (!Java_MediaPlayerBridge_prepareAsync(env, j_media_player_bridge_))
     OnMediaError(MEDIA_ERROR_FORMAT);
-}
-
-bool MediaPlayerBridge::InterceptMediaUrl(const std::string& url,
-                                          int* fd,
-                                          int64_t* offset,
-                                          int64_t* size) {
-  // Sentinel value to check whether the output arguments have been set.
-  const int kUnsetValue = -1;
-
-  *fd = kUnsetValue;
-  *offset = kUnsetValue;
-  *size = kUnsetValue;
-  media::MediaUrlInterceptor* url_interceptor =
-      client_->GetMediaUrlInterceptor();
-  if (url_interceptor && url_interceptor->Intercept(url, fd, offset, size)) {
-    DCHECK_NE(kUnsetValue, *fd);
-    DCHECK_NE(kUnsetValue, *offset);
-    DCHECK_NE(kUnsetValue, *size);
-    return true;
-  }
-  return false;
 }
 
 void MediaPlayerBridge::OnDidSetDataUriDataSource(

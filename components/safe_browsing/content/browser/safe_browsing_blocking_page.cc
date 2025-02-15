@@ -14,10 +14,10 @@
 #include "base/metrics/histogram_macros.h"
 #include "components/prefs/pref_service.h"
 #include "components/safe_browsing/content/browser/client_report_util.h"
+#include "components/safe_browsing/content/browser/content_unsafe_resource_util.h"
 #include "components/safe_browsing/content/browser/safe_browsing_navigation_observer_manager.h"
 #include "components/safe_browsing/content/browser/threat_details.h"
 #include "components/safe_browsing/content/browser/triggers/trigger_manager.h"
-#include "components/safe_browsing/content/browser/unsafe_resource_util.h"
 #include "components/safe_browsing/content/browser/web_contents_key.h"
 #include "components/safe_browsing/core/browser/safe_browsing_hats_delegate.h"
 #include "components/safe_browsing/core/browser/safe_browsing_metrics_collector.h"
@@ -80,7 +80,6 @@ SafeBrowsingBlockingPage::SafeBrowsingBlockingPage(
       threat_details_in_progress_(false),
       threat_source_(unsafe_resources[0].threat_source),
       threat_type_(unsafe_resources[0].threat_type),
-      is_subresource_(unsafe_resources[0].is_subresource),
       history_service_(history_service),
       navigation_observer_manager_(navigation_observer_manager),
       metrics_collector_(metrics_collector),
@@ -92,10 +91,12 @@ SafeBrowsingBlockingPage::SafeBrowsingBlockingPage(
       ignore_auto_revocation_notifications_trigger_(
           std::move(ignore_auto_revocation_notifications_trigger)) {
   if (unsafe_resources.size() == 1) {
-    UMA_HISTOGRAM_ENUMERATION("SafeBrowsing.BlockingPage.RequestDestination",
-                              unsafe_resources[0].request_destination);
+    UMA_HISTOGRAM_ENUMERATION("SafeBrowsing.BlockingPage.ThreatType",
+                              unsafe_resources[0].threat_type);
   }
-  LogSafeBrowsingInterstitialShownUKM(web_contents);
+  if (unsafe_resources[0].navigation_id.has_value()) {
+    LogSafeBrowsingInterstitialShownUKM();
+  }
 
   if (metrics_collector_) {
     metrics_collector_->AddSafeBrowsingEventToPref(
@@ -125,13 +126,14 @@ SafeBrowsingBlockingPage::SafeBrowsingBlockingPage(
               TriggerType::SECURITY_INTERSTITIAL, web_contents,
               unsafe_resources[0], url_loader_factory, history_service_,
               navigation_observer_manager_,
-              sb_error_ui()->get_error_display_options());
+              TriggerManager::DataCollectionPermissions(
+                  sb_error_ui()->get_error_display_options()));
       warning_shown_ts_ = base::Time::Now().InMillisecondsSinceUnixEpoch();
     }
   }
 }
 
-SafeBrowsingBlockingPage::~SafeBrowsingBlockingPage() {}
+SafeBrowsingBlockingPage::~SafeBrowsingBlockingPage() = default;
 
 security_interstitials::SecurityInterstitialPage::TypeID
 SafeBrowsingBlockingPage::GetTypeForTesting() {
@@ -159,8 +161,8 @@ void SafeBrowsingBlockingPage::OnInterstitialClosing() {
   }
 
   // Log UKM if the user bypassed the interstitial.
-  if (proceeded()) {
-    LogSafeBrowsingInterstitialBypassedUKM(web_contents());
+  if (proceeded() && unsafe_resources()[0].navigation_id.has_value()) {
+    LogSafeBrowsingInterstitialBypassedUKM();
   }
 
   // If the user proceeded past a social engineering threat interstitial,
@@ -226,8 +228,8 @@ void SafeBrowsingBlockingPage::FinishThreatDetails(const base::TimeDelta& delay,
                                                    bool did_proceed,
                                                    int num_visits) {
   base::UmaHistogramBoolean(
-      "SafeBrowsing.ClientSafeBrowsingReport.HasThreatDetailsAtFinish" +
-          std::string(is_subresource_ ? ".Subresource" : ".Mainframe"),
+      "SafeBrowsing.ClientSafeBrowsingReport.HasThreatDetailsAtFinish."
+      "Mainframe",
       threat_details_in_progress_);
   // Not all interstitials collect threat details (eg., incognito mode).
   if (!threat_details_in_progress_) {
@@ -261,8 +263,9 @@ void SafeBrowsingBlockingPage::FinishThreatDetails(const base::TimeDelta& delay,
   auto report_sent_result = trigger_manager_->FinishCollectingThreatDetails(
       TriggerType::SECURITY_INTERSTITIAL, GetWebContentsKey(web_contents()),
       delay, did_proceed, num_visits,
-      sb_error_ui()->get_error_display_options(), warning_shown_ts_,
-      is_hats_candidate);
+      TriggerManager::DataCollectionPermissions(
+          sb_error_ui()->get_error_display_options()),
+      warning_shown_ts_, is_hats_candidate);
   if (!report_sent_result.are_threat_details_available &&
       report_sent_result.should_send_report && unsafe_resources().size() == 1) {
     // If reports are not sent because threat details are not available, send a
@@ -277,18 +280,20 @@ void SafeBrowsingBlockingPage::FinishThreatDetails(const base::TimeDelta& delay,
   }
 }
 
-void SafeBrowsingBlockingPage::LogSafeBrowsingInterstitialBypassedUKM(
-    content::WebContents* web_contents) {
+void SafeBrowsingBlockingPage::LogSafeBrowsingInterstitialBypassedUKM() {
+  CHECK(unsafe_resources()[0].navigation_id.has_value());
   ukm::SourceId source_id =
-      web_contents->GetPrimaryMainFrame()->GetPageUkmSourceId();
+      ukm::ConvertToSourceId(unsafe_resources()[0].navigation_id.value(),
+                             ukm::SourceIdType::NAVIGATION_ID);
   ukm::builders::SafeBrowsingInterstitial(source_id).SetBypassed(true).Record(
       ukm::UkmRecorder::Get());
 }
 
-void SafeBrowsingBlockingPage::LogSafeBrowsingInterstitialShownUKM(
-    content::WebContents* web_contents) {
+void SafeBrowsingBlockingPage::LogSafeBrowsingInterstitialShownUKM() {
+  CHECK(unsafe_resources()[0].navigation_id.has_value());
   ukm::SourceId source_id =
-      web_contents->GetPrimaryMainFrame()->GetPageUkmSourceId();
+      ukm::ConvertToSourceId(unsafe_resources()[0].navigation_id.value(),
+                             ukm::SourceIdType::NAVIGATION_ID);
   ukm::builders::SafeBrowsingInterstitial(source_id).SetShown(true).Record(
       ukm::UkmRecorder::Get());
 }

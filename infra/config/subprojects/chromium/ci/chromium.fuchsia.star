@@ -10,6 +10,7 @@ load("//lib/builders.star", "free_space", "gardener_rotations", "os", "siso")
 load("//lib/ci.star", "ci")
 load("//lib/consoles.star", "consoles")
 load("//lib/gn_args.star", "gn_args")
+load("//lib/targets.star", "targets")
 
 ci.defaults.set(
     executable = ci.DEFAULT_EXECUTABLE,
@@ -20,11 +21,11 @@ ci.defaults.set(
     pool = ci.DEFAULT_POOL,
     cores = 8,
     os = os.LINUX_DEFAULT,
+    gardener_rotations = gardener_rotations.CHROMIUM,
     tree_closing = True,
     main_console_view = "main",
     cq_mirrors_console_view = "mirrors",
     execution_timeout = ci.DEFAULT_EXECUTION_TIMEOUT,
-    gardener_rotations = gardener_rotations.CHROMIUM,
     health_spec = health_spec.DEFAULT,
     notifies = ["cr-fuchsia"],
     service_account = ci.DEFAULT_SERVICE_ACCOUNT,
@@ -42,6 +43,15 @@ consoles.console_view(
     },
 )
 
+targets.builder_defaults.set(
+    mixins = ["chromium-tester-service-account"],
+)
+
+targets.settings_defaults.set(
+    browser_config = targets.browser_config.WEB_ENGINE_SHELL,
+    os_type = targets.os_type.FUCHSIA,
+)
+
 ci.builder(
     name = "Deterministic Fuchsia (dbg)",
     executable = "recipe:swarming/deterministic_build",
@@ -50,11 +60,14 @@ ci.builder(
             "debug_builder",
             "remoteexec",
             "fuchsia_smart_display",
+            "x64",
         ],
     ),
     # Runs two builds, which can cause the builder to run out of disk space
     # with standard free space.
     free_space = free_space.high,
+    gardener_rotation_console_category = "ci|x64",
+    gardener_rotation_console_short_name = "det",
     console_view_entry = [
         consoles.console_view_entry(
             category = "det",
@@ -63,7 +76,7 @@ ci.builder(
         consoles.console_view_entry(
             branch_selector = branches.selector.MAIN,
             console_view = "sheriff.fuchsia",
-            category = "gardener|ci|x64",
+            category = "ci|x64",
             short_name = "det",
         ),
     ],
@@ -103,6 +116,40 @@ ci.builder(
             "cast_receiver_size_optimized",
         ],
     ),
+    targets = targets.bundle(
+        targets = [
+            "fuchsia_arm64_tests",
+        ],
+        additional_compile_targets = [
+            "all",
+            "cast_test_lists",
+        ],
+        mixins = [
+            "arm64",
+            "docker",
+            "linux-jammy-or-focal",
+        ],
+        per_test_modifications = {
+            "context_lost_validating_tests": targets.remove(
+                reason = "crbug.com/42050042, crbug.com/42050537 this test does not work on swiftshader on arm64",
+            ),
+            "expected_color_pixel_validating_test": targets.remove(
+                reason = "crbug.com/42050042, crbug.com/42050537 this test does not work on swiftshader on arm64",
+            ),
+            "gpu_process_launch_tests": targets.remove(
+                reason = "crbug.com/42050042, crbug.com/42050537 this test does not work on swiftshader on arm64",
+            ),
+            "hardware_accelerated_feature_tests": targets.remove(
+                reason = "crbug.com/42050042, crbug.com/42050537 this test does not work on swiftshader on arm64",
+            ),
+            "pixel_skia_gold_validating_test": targets.remove(
+                reason = "crbug.com/42050042, crbug.com/42050537 this test does not work on swiftshader on arm64",
+            ),
+            "screenshot_sync_validating_tests": targets.remove(
+                reason = "crbug.com/42050042, crbug.com/42050537 this test does not work on swiftshader on arm64",
+            ),
+        },
+    ),
     console_view_entry = [
         consoles.console_view_entry(
             category = "cast-receiver",
@@ -111,7 +158,7 @@ ci.builder(
         consoles.console_view_entry(
             branch_selector = branches.selector.MAIN,
             console_view = "sheriff.fuchsia",
-            category = "gardener|ci|arm64",
+            category = "ci|arm64",
             short_name = "cast",
         ),
     ],
@@ -146,7 +193,53 @@ ci.builder(
             "remoteexec",
             "fuchsia",
             "cast_receiver_size_optimized",
+            "x64",
         ],
+    ),
+    targets = targets.bundle(
+        targets = [
+            # Passthrough is used since these emulators use SwiftShader, which
+            # forces use of the passthrough decoder even if validating is
+            # specified.
+            "fuchsia_standard_passthrough_tests",
+        ],
+        additional_compile_targets = [
+            "all",
+            "cast_test_lists",
+        ],
+        mixins = [
+            "isolate_profile_data",
+            "linux-jammy",
+            targets.mixin(
+                swarming = targets.swarming(
+                    dimensions = {
+                        "kvm": "1",
+                    },
+                ),
+            ),
+        ],
+        per_test_modifications = {
+            "blink_web_tests": [
+                targets.mixin(
+                    swarming = targets.swarming(
+                        shards = 1,
+                    ),
+                ),
+            ],
+            "blink_wpt_tests": [
+                targets.mixin(
+                    swarming = targets.swarming(
+                        shards = 1,
+                    ),
+                ),
+            ],
+            "chrome_wpt_tests": targets.remove(
+                reason = "Wptrunner does not work on Fuchsia",
+            ),
+            "headless_shell_wpt_tests": targets.remove(
+                reason = "Wptrunner does not work on Fuchsia",
+            ),
+        },
     ),
     free_space = free_space.high,
     console_view_entry = [
@@ -157,7 +250,7 @@ ci.builder(
         consoles.console_view_entry(
             branch_selector = branches.selector.MAIN,
             console_view = "sheriff.fuchsia",
-            category = "gardener|ci|x64",
+            category = "ci|x64",
             short_name = "cast-dbg",
         ),
     ],
@@ -191,7 +284,62 @@ ci.builder(
             "remoteexec",
             "fuchsia",
             "cast_receiver_size_optimized",
+            "x64",
         ],
+    ),
+    # Do not forget to update
+    # infra/config/subprojects/chromium/ci/chromium.clang.star when adding or
+    # removing targets.
+    targets = targets.bundle(
+        targets = [
+            # Passthrough is used since these emulators use SwiftShader, which
+            # forces use of the passthrough decoder even if validating is
+            # specified.
+            "fuchsia_standard_passthrough_tests",
+        ],
+        additional_compile_targets = [
+            "all",
+            "cast_test_lists",
+        ],
+        mixins = [
+            "fuchsia-large-device-spec",
+            "isolate_profile_data",
+            "linux-jammy",
+            targets.mixin(
+                swarming = targets.swarming(
+                    dimensions = {
+                        "kvm": "1",
+                    },
+                ),
+            ),
+        ],
+        per_test_modifications = {
+            "blink_web_tests": [
+                targets.mixin(
+                    swarming = targets.swarming(
+                        shards = 1,
+                    ),
+                ),
+            ],
+            "blink_wpt_tests": [
+                targets.mixin(
+                    swarming = targets.swarming(
+                        shards = 1,
+                    ),
+                ),
+            ],
+            "chrome_wpt_tests": targets.remove(
+                reason = "Wptrunner does not work on Fuchsia",
+            ),
+            "headless_shell_wpt_tests": targets.remove(
+                reason = "Wptrunner does not work on Fuchsia",
+            ),
+            "content_browsertests": [
+                # Temporarily only run this on CI due to resource requirements.
+                # TODO(crbug.com/40872145): Remove this once resources are available.
+                "ci_only",
+            ],
+        },
     ),
     console_view_entry = [
         consoles.console_view_entry(
@@ -201,7 +349,7 @@ ci.builder(
         consoles.console_view_entry(
             branch_selector = branches.selector.MAIN,
             console_view = "sheriff.fuchsia",
-            category = "gardener|ci|x64",
+            category = "ci|x64",
             short_name = "cast",
         ),
     ],

@@ -2,8 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #include <stdint.h>
 
+#include "gpu/command_buffer/common/shared_image_usage.h"
 #include "gpu/command_buffer/service/gles2_cmd_decoder.h"
 #include "gpu/command_buffer/service/gles2_cmd_decoder_unittest.h"
 #include "gpu/command_buffer/service/shared_image/shared_image_format_service_utils.h"
@@ -21,7 +27,7 @@ std::unique_ptr<TestImageBacking> AllocateTextureAndCreateSharedImage(
     const gfx::ColorSpace& color_space,
     GrSurfaceOrigin surface_origin,
     SkAlphaType alpha_type,
-    uint32_t usage) {
+    SharedImageUsageSet usage) {
   GLuint service_id;
   glGenTextures(1, &service_id);
   glBindTexture(GL_TEXTURE_2D, service_id);
@@ -43,7 +49,8 @@ TEST_F(GLES2DecoderPassthroughTest, CreateAndTexStorage2DSharedImageCHROMIUM) {
   auto format = viz::SinglePlaneFormat::kRGBA_8888;
   auto backing = AllocateTextureAndCreateSharedImage(
       mailbox, format, gfx::Size(10, 10), gfx::ColorSpace(),
-      kTopLeft_GrSurfaceOrigin, kPremul_SkAlphaType, 0);
+      kTopLeft_GrSurfaceOrigin, kPremul_SkAlphaType,
+      {SHARED_IMAGE_USAGE_GLES2_READ, SHARED_IMAGE_USAGE_GLES2_WRITE});
   GLuint service_id = backing->service_id();
   std::unique_ptr<SharedImageRepresentationFactoryRef> shared_image =
       GetSharedImageManager()->Register(std::move(backing), &memory_tracker);
@@ -109,7 +116,8 @@ TEST_F(GLES2DecoderPassthroughTest,
       GetSharedImageManager()->Register(
           AllocateTextureAndCreateSharedImage(
               mailbox, format, gfx::Size(10, 10), gfx::ColorSpace(),
-              kTopLeft_GrSurfaceOrigin, kPremul_SkAlphaType, 0),
+              kTopLeft_GrSurfaceOrigin, kPremul_SkAlphaType,
+              {SHARED_IMAGE_USAGE_GLES2_READ, SHARED_IMAGE_USAGE_GLES2_WRITE}),
           &memory_tracker);
 
   {
@@ -134,7 +142,7 @@ TEST_F(GLES2DecoderPassthroughTest,
   shared_image.reset();
 }
 
-TEST_F(GLES2DecoderPassthroughTest, BeginEndSharedImageAccessCRHOMIUM) {
+TEST_F(GLES2DecoderPassthroughTest, BeginEndSharedImageAccessCHROMIUM) {
   MemoryTypeTracker memory_tracker(nullptr);
   std::vector<std::unique_ptr<SharedImageRepresentationFactoryRef>>
       shared_images;
@@ -145,7 +153,9 @@ TEST_F(GLES2DecoderPassthroughTest, BeginEndSharedImageAccessCRHOMIUM) {
         GetSharedImageManager()->Register(
             AllocateTextureAndCreateSharedImage(
                 mailbox, format, gfx::Size(10, 10), gfx::ColorSpace(),
-                kTopLeft_GrSurfaceOrigin, kPremul_SkAlphaType, 0),
+                kTopLeft_GrSurfaceOrigin, kPremul_SkAlphaType,
+                {SHARED_IMAGE_USAGE_GLES2_READ,
+                 SHARED_IMAGE_USAGE_GLES2_WRITE}),
             &memory_tracker);
     shared_images.emplace_back(std::move(shared_image));
 
@@ -211,7 +221,8 @@ TEST_F(GLES2DecoderPassthroughTest,
   auto format = viz::SinglePlaneFormat::kRGBA_8888;
   auto shared_image_backing = AllocateTextureAndCreateSharedImage(
       mailbox, format, gfx::Size(10, 10), gfx::ColorSpace(),
-      kTopLeft_GrSurfaceOrigin, kPremul_SkAlphaType, 0);
+      kTopLeft_GrSurfaceOrigin, kPremul_SkAlphaType,
+      {SHARED_IMAGE_USAGE_GLES2_READ});
   // Set the shared image to fail BeginAccess.
   shared_image_backing->set_can_access(false);
   std::unique_ptr<SharedImageRepresentationFactoryRef> shared_image =
@@ -255,7 +266,8 @@ TEST_F(GLES2DecoderPassthroughTest,
       GetSharedImageManager()->Register(
           AllocateTextureAndCreateSharedImage(
               mailbox, format, gfx::Size(10, 10), gfx::ColorSpace(),
-              kTopLeft_GrSurfaceOrigin, kPremul_SkAlphaType, 0),
+              kTopLeft_GrSurfaceOrigin, kPremul_SkAlphaType,
+              {SHARED_IMAGE_USAGE_GLES2_READ, SHARED_IMAGE_USAGE_GLES2_WRITE}),
           &memory_tracker);
 
   // Backing should be initially uncleared.

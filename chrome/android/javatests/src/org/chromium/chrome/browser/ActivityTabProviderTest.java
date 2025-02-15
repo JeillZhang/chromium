@@ -15,26 +15,25 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.DoNotBatch;
 import org.chromium.base.test.util.Feature;
-import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.base.test.util.Restriction;
 import org.chromium.chrome.browser.ActivityTabProvider.ActivityTabTabObserver;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.layouts.LayoutTestUtils;
 import org.chromium.chrome.browser.layouts.LayoutType;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabSelectionType;
+import org.chromium.chrome.browser.tabmodel.TabClosureParams;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.chrome.test.util.ChromeTabUtils;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.content_public.common.ContentUrlConstants;
-import org.chromium.ui.test.util.UiRestriction;
+import org.chromium.ui.base.DeviceFormFactor;
 
 import java.util.concurrent.TimeoutException;
 
@@ -42,7 +41,6 @@ import java.util.concurrent.TimeoutException;
 @DoNotBatch(reason = "waitForActivityCompletelyLoaded is unhappy when batched - more work needed")
 @RunWith(ChromeJUnit4ClassRunner.class)
 @CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
-@EnableFeatures(ChromeFeatureList.ANDROID_HUB)
 public class ActivityTabProviderTest {
     /** A test observer that provides access to the tab being observed. */
     private static class TestActivityTabTabObserver extends ActivityTabTabObserver {
@@ -51,7 +49,7 @@ public class ActivityTabProviderTest {
 
         public TestActivityTabTabObserver(ActivityTabProvider provider) {
             super(provider);
-            TestThreadUtils.runOnUiThreadBlockingNoException(() -> mObservedTab = provider.get());
+            ThreadUtils.runOnUiThreadBlocking(() -> mObservedTab = provider.get());
         }
 
         @Override
@@ -61,22 +59,23 @@ public class ActivityTabProviderTest {
 
         @Override
         protected void updateObservedTabToCurrent() {
-            TestThreadUtils.runOnUiThreadBlocking(super::updateObservedTabToCurrent);
+            ThreadUtils.runOnUiThreadBlocking(super::updateObservedTabToCurrent);
         }
 
         @Override
         protected void addObserverToTabSupplier() {
-            TestThreadUtils.runOnUiThreadBlocking(super::addObserverToTabSupplier);
+            ThreadUtils.runOnUiThreadBlocking(super::addObserverToTabSupplier);
         }
 
         @Override
         protected void removeObserverFromTabSupplier() {
-            TestThreadUtils.runOnUiThreadBlocking(super::removeObserverFromTabSupplier);
+            ThreadUtils.runOnUiThreadBlocking(super::removeObserverFromTabSupplier);
         }
 
         @Override
+        @SuppressWarnings("MissingSuperCall")
         public void destroy() {
-            TestThreadUtils.runOnUiThreadBlocking(super::destroy);
+            ThreadUtils.runOnUiThreadBlocking(super::destroy);
         }
     }
 
@@ -91,7 +90,7 @@ public class ActivityTabProviderTest {
     @Before
     public void setUp() throws Exception {
         mActivityTestRule.startMainActivityOnBlankPage();
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mActivity = mActivityTestRule.getActivity();
                     mProvider = mActivity.getActivityTabProvider();
@@ -124,7 +123,7 @@ public class ActivityTabProviderTest {
     @Feature({"ActivityTabObserver"})
     public void testTriggerOnAddObserver() throws TimeoutException {
         CallbackHelper helper = new CallbackHelper();
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mProvider.addObserver(tab -> helper.notifyCalled());
                 });
@@ -144,14 +143,14 @@ public class ActivityTabProviderTest {
     @Test
     @SmallTest
     @Feature({"ActivityTabObserver"})
-    @Restriction(UiRestriction.RESTRICTION_TYPE_PHONE)
+    @Restriction(DeviceFormFactor.PHONE)
     public void testTriggerWithTabSwitcher() throws TimeoutException {
         assertEquals(
                 "The activity tab should be the model's selected tab.",
                 getModelSelectedTab(),
                 mActivityTab);
 
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> mActivity.getLayoutManager().showLayout(LayoutType.TAB_SWITCHER, false));
         mActivityTabChangedHelper.waitForCallback(1);
         assertEquals(
@@ -162,7 +161,7 @@ public class ActivityTabProviderTest {
 
         LayoutTestUtils.waitForLayout(mActivity.getLayoutManager(), LayoutType.TAB_SWITCHER);
 
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> mActivity.getLayoutManager().showLayout(LayoutType.BROWSING, false));
         mActivityTabChangedHelper.waitForCallback(2);
         assertEquals(
@@ -201,13 +200,13 @@ public class ActivityTabProviderTest {
                 mActivityTab);
 
         int callCount = mActivityTabChangedHelper.getCallCount();
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     // Select the original tab without switching layouts.
                     mActivity
                             .getTabModelSelector()
                             .getCurrentModel()
-                            .setIndex(0, TabSelectionType.FROM_USER, false);
+                            .setIndex(0, TabSelectionType.FROM_USER);
                 });
         mActivityTabChangedHelper.waitForCallback(callCount);
 
@@ -225,18 +224,22 @@ public class ActivityTabProviderTest {
         // Have a tab open in incognito model. This should not be in the way getting the event
         // triggered when closing the last tab in normal mode.
         TabModelSelector selector = mActivity.getTabModelSelector();
-        TestThreadUtils.runOnUiThreadBlocking(() -> selector.selectModel(true));
+        ThreadUtils.runOnUiThreadBlocking(() -> selector.selectModel(true));
         ChromeTabUtils.fullyLoadUrlInNewTab(
                 InstrumentationRegistry.getInstrumentation(),
                 mActivity,
                 ContentUrlConstants.ABOUT_BLANK_DISPLAY_URL,
                 true);
-        TestThreadUtils.runOnUiThreadBlocking(() -> selector.selectModel(false));
+        ThreadUtils.runOnUiThreadBlocking(() -> selector.selectModel(false));
 
         int callCount = mActivityTabChangedHelper.getCallCount();
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
-                    selector.closeTab(getModelSelectedTab());
+                    selector.tryCloseTab(
+                            TabClosureParams.closeTab(getModelSelectedTab())
+                                    .allowUndo(false)
+                                    .build(),
+                            /* allowDialog= */ false);
                 });
         mActivityTabChangedHelper.waitForCallback(callCount);
 
@@ -273,9 +276,13 @@ public class ActivityTabProviderTest {
                 mActivityTab);
         Tab activityTabBefore = mActivityTab;
 
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
-                    mActivity.getTabModelSelector().closeTab(startingTab);
+                    mActivity
+                            .getTabModelSelector()
+                            .tryCloseTab(
+                                    TabClosureParams.closeTab(startingTab).allowUndo(false).build(),
+                                    /* allowDialog= */ false);
                 });
 
         assertEquals("The activity tab should not have changed.", activityTabBefore, mActivityTab);

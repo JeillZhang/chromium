@@ -12,9 +12,9 @@
 #import "components/profile_metrics/browser_profile_type.h"
 #import "ios/chrome/browser/crash_report/model/crash_keys_helper.h"
 #import "ios/chrome/browser/crash_report/model/crash_loop_detection_util.h"
-#import "ios/chrome/browser/sessions/session_restoration_service.h"
-#import "ios/chrome/browser/sessions/session_restoration_service_factory.h"
-#import "ios/chrome/browser/shared/model/browser_state/chrome_browser_state.h"
+#import "ios/chrome/browser/sessions/model/session_restoration_service.h"
+#import "ios/chrome/browser/sessions/model/session_restoration_service_factory.h"
+#import "ios/chrome/browser/shared/model/profile/profile_ios.h"
 #import "ios/chrome/browser/shared/model/url/chrome_url_constants.h"
 #import "ios/chrome/browser/shared/model/web_state_list/all_web_state_observation_forwarder.h"
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_list.h"
@@ -40,11 +40,11 @@ WebStateListMetricsBrowserAgent::WebStateListMetricsBrowserAgent(
   web_state_forwarder_ =
       std::make_unique<AllWebStateObservationForwarder>(web_state_list_, this);
 
-  ChromeBrowserState* browser_state = browser->GetBrowserState();
+  ProfileIOS* profile = browser->GetProfile();
   session_restoration_service_observation_.Observe(
-      SessionRestorationServiceFactory::GetForBrowserState(browser_state));
+      SessionRestorationServiceFactory::GetForProfile(profile));
 
-  is_off_record_ = browser_state->IsOffTheRecord();
+  is_off_record_ = profile->IsOffTheRecord();
   is_inactive_ = browser->IsInactive();
 }
 
@@ -105,6 +105,9 @@ void WebStateListMetricsBrowserAgent::WebStateListDidChange(
     WebStateList* web_state_list,
     const WebStateListChange& change,
     const WebStateListStatus& status) {
+  if (web_state_list->IsBatchInProgress()) {
+    return;
+  }
   if (metric_collection_paused_) {
     return;
   }
@@ -132,6 +135,14 @@ void WebStateListMetricsBrowserAgent::WebStateListDidChange(
     case WebStateListChange::Type::kGroupDelete:
       break;
   }
+}
+
+void WebStateListMetricsBrowserAgent::BatchOperationEnded(
+    WebStateList* web_state_list) {
+  if (metric_collection_paused_) {
+    return;
+  }
+  UpdateCrashkeysTabCount();
 }
 
 #pragma mark - WebStateObserver

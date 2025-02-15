@@ -6,15 +6,12 @@
 
 #include "ash/accessibility/accessibility_controller.h"
 #include "ash/public/cpp/window_properties.h"
-#include "ash/resources/vector_icons/vector_icons.h"
 #include "ash/shell.h"
-#include "ash/shell_delegate.h"
 #include "ash/strings/grit/ash_strings.h"
-#include "ash/style/icon_button.h"
 #include "ash/wm/splitview/split_view_constants.h"
 #include "ash/wm/splitview/split_view_divider.h"
 #include "ash/wm/splitview/split_view_utils.h"
-#include "base/functional/callback_helpers.h"
+#include "base/metrics/user_metrics.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/chromeos/styles/cros_tokens_color_mappings.h"
@@ -27,6 +24,7 @@
 #include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/background.h"
 #include "ui/views/controls/focus_ring.h"
+#include "ui/views/highlight_border.h"
 #include "ui/views/view.h"
 #include "ui/wm/core/coordinate_conversion.h"
 
@@ -83,15 +81,20 @@ SplitViewDividerView::SplitViewDividerView(SplitViewDivider* divider)
   SetBackground(
       views::CreateThemedSolidBackground(cros_tokens::kCrosSysSystemBase));
 
+  SetBorder(std::make_unique<views::HighlightBorder>(
+      /*corner_radius=*/0,
+      views::HighlightBorder::Type::kHighlightBorderNoShadow));
+
   SetFocusBehavior(views::View::FocusBehavior::ACCESSIBLE_ONLY);
   set_allow_deactivate_on_esc(true);
-  SetAccessibleName(
+
+  GetViewAccessibility().SetRole(ax::mojom::Role::kToolbar);
+  GetViewAccessibility().SetName(
       l10n_util::GetStringUTF16(IDS_ASH_SNAP_GROUP_DIVIDER_A11Y_NAME));
   GetViewAccessibility().SetDescription(l10n_util::GetStringUTF16(
       horizontal ? IDS_ASH_SNAP_GROUP_DIVIDER_A11Y_DESCRIPTION_HORIZONTAL
                  : IDS_ASH_SNAP_GROUP_DIVIDER_A11Y_DESCRIPTION_VERTICAL));
   TooltipTextChanged();
-  SetAccessibleRole(ax::mojom::Role::kToolbar);
 
   views::FocusRing::Install(this);
 }
@@ -107,17 +110,12 @@ void SplitViewDividerView::SetHandlerBarVisible(bool visible) {
 }
 
 void SplitViewDividerView::Layout(PassKey) {
-  // There is no divider in clamshell split view unless the feature flag
-  // `kSnapGroup` is enabled. If we are in clamshell mode without the feature
-  // flag and params, then we must be transitioning from tablet mode, and the
-  // divider will be destroyed and there is no need to update it.
-  if (!divider_ || (!display::Screen::GetScreen()->InTabletMode() &&
-                    !IsSnapGroupEnabledInClamshellMode())) {
+  if (!divider_) {
     return;
   }
 
   SetBoundsRect(GetLocalBounds());
-  RefreshDividerHandler(/*should_enlarge=*/false);
+  RefreshDividerHandler();
 }
 
 void SplitViewDividerView::OnMouseEntered(const ui::MouseEvent& event) {
@@ -141,6 +139,9 @@ bool SplitViewDividerView::OnMousePressed(const ui::MouseEvent& event) {
   gfx::Point location(event.location());
   views::View::ConvertPointToScreen(this, &location);
   initial_mouse_event_location_ = location;
+
+  divider_->EnlargeOrShrinkDivider(/*should_enlarge=*/true);
+
   return true;
 }
 
@@ -184,27 +185,27 @@ void SplitViewDividerView::OnGestureEvent(ui::GestureEvent* event) {
   gfx::Point location(event->location());
   views::View::ConvertPointToScreen(this, &location);
   switch (event->type()) {
-    case ui::ET_GESTURE_TAP:
+    case ui::EventType::kGestureTap:
       if (event->details().tap_count() == 2) {
         SwapWindows();
       }
       break;
-    case ui::ET_GESTURE_TAP_DOWN:
+    case ui::EventType::kGestureTapDown:
       divider_->EnlargeOrShrinkDivider(/*should_enlarge=*/true);
       break;
-    case ui::ET_GESTURE_TAP_CANCEL:
+    case ui::EventType::kGestureTapCancel:
       divider_->EnlargeOrShrinkDivider(/*should_enlarge=*/false);
       break;
-    case ui::ET_GESTURE_SCROLL_BEGIN:
+    case ui::EventType::kGestureScrollBegin:
       StartResizing(location);
       break;
-    case ui::ET_GESTURE_SCROLL_UPDATE:
+    case ui::EventType::kGestureScrollUpdate:
       divider_->ResizeWithDivider(location);
       break;
-    case ui::ET_GESTURE_SCROLL_END:
+    case ui::EventType::kGestureScrollEnd:
       divider_->EnlargeOrShrinkDivider(/*should_enlarge=*/false);
       break;
-    case ui::ET_GESTURE_END: {
+    case ui::EventType::kGestureEnd: {
       EndResizing(location, /*swap_windows=*/false);
 
       // `EndResizing()` may set `divider_` to nullptr and causing crash.
@@ -221,13 +222,13 @@ void SplitViewDividerView::OnGestureEvent(ui::GestureEvent* event) {
 }
 
 ui::Cursor SplitViewDividerView::GetCursor(const ui::MouseEvent& event) {
-  return IsLayoutHorizontal(divider_->divider_widget()->GetNativeWindow())
+  return IsLayoutHorizontal(divider_->GetDividerWindow())
              ? ui::mojom::CursorType::kColumnResize
              : ui::mojom::CursorType::kRowResize;
 }
 
 void SplitViewDividerView::OnKeyEvent(ui::KeyEvent* event) {
-  if (event->type() != ui::ET_KEY_PRESSED) {
+  if (event->type() != ui::EventType::kKeyPressed) {
     return;
   }
   const bool horizontal = IsLayoutHorizontal(divider_->GetRootWindow());
@@ -258,10 +259,6 @@ bool SplitViewDividerView::DoesIntersectRect(const views::View* target,
 
 views::View* SplitViewDividerView::GetDefaultFocusableChild() {
   return this;
-}
-
-void SplitViewDividerView::GetAccessibleNodeData(ui::AXNodeData* node_data) {
-  node_data->role = ax::mojom::Role::kToolbar;
 }
 
 void SplitViewDividerView::OnFocus() {
@@ -302,6 +299,7 @@ void SplitViewDividerView::EndResizing(gfx::Point location, bool swap_windows) {
 
 void SplitViewDividerView::ResizeOnKeyEvent(bool left_or_top, bool horizontal) {
   CHECK(divider_);
+  base::RecordAction(base::UserMetricsAction("SnapGroups_ResizeViaKeyboard"));
   const gfx::Point start_location(GetBoundsInScreen().CenterPoint());
   StartResizing(start_location);
   const int distance = left_or_top ? -kSplitViewDividerResizeDistance
@@ -319,18 +317,23 @@ void SplitViewDividerView::ResizeOnKeyEvent(bool left_or_top, bool horizontal) {
   Shell::Get()->accessibility_controller()->TriggerAccessibilityAlert(alert);
 }
 
-void SplitViewDividerView::RefreshDividerHandler(bool should_enlarge) {
+void SplitViewDividerView::RefreshDividerHandler() {
   CHECK(divider_);
 
-  const gfx::Point divider_center = bounds().CenterPoint();
+  const gfx::Rect divider_bounds = bounds();
+  const bool is_horizontal = IsLayoutHorizontal(divider_->GetRootWindow());
+  handler_view_->set_is_horizontal(is_horizontal);
+  const int divider_short_length =
+      is_horizontal ? divider_bounds.width() : divider_bounds.height();
+  const bool should_enlarge =
+      divider_short_length == kSplitviewDividerEnlargedShortSideLength;
+  const gfx::Point divider_center = divider_bounds.CenterPoint();
   const int handler_short_side = should_enlarge
                                      ? kDividerHandlerEnlargedShortSideLength
                                      : kDividerHandlerShortSideLength;
   const int handler_long_side = should_enlarge
                                     ? kDividerHandlerEnlargedLongSideLength
                                     : kDividerHandlerLongSideLength;
-  const bool is_horizontal = IsLayoutHorizontal(divider_->GetRootWindow());
-  handler_view_->set_is_horizontal(is_horizontal);
   if (is_horizontal) {
     handler_view_->SetBounds(divider_center.x() - handler_short_side / 2,
                              divider_center.y() - handler_long_side / 2,

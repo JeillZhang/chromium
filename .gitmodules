@@ -9,6 +9,10 @@
 	path = chrome/installer/mac/third_party/xz/xz
 	url = https://chromium.googlesource.com/chromium/deps/xz
 	gclient-condition = checkout_mac
+[submodule "chrome/release_scripts"]
+	path = chrome/release_scripts
+	url = https://chrome-internal.googlesource.com/chrome/tools/release/scripts
+	gclient-condition = checkout_chrome_release_scripts
 [submodule "third_party/libc++/src"]
 	path = third_party/libc++/src
 	url = https://chromium.googlesource.com/external/github.com/llvm/llvm-project/libcxx
@@ -18,6 +22,9 @@
 [submodule "third_party/libunwind/src"]
 	path = third_party/libunwind/src
 	url = https://chromium.googlesource.com/external/github.com/llvm/llvm-project/libunwind
+[submodule "third_party/llvm-libc/src"]
+	path = third_party/llvm-libc/src
+	url = https://chromium.googlesource.com/external/github.com/llvm/llvm-project/libc
 [submodule "chrome/test/data/autofill/captured_sites/artifacts"]
 	path = chrome/test/data/autofill/captured_sites/artifacts
 	url = https://chrome-internal.googlesource.com/chrome/test/captured_sites/autofill
@@ -118,10 +125,6 @@
 [submodule "third_party/accessibility_test_framework/src"]
 	path = third_party/accessibility_test_framework/src
 	url = https://chromium.googlesource.com/external/github.com/google/Accessibility-Test-Framework-for-Android
-[submodule "third_party/android_protobuf/src"]
-	path = third_party/android_protobuf/src
-	url = https://android.googlesource.com/platform/external/protobuf
-	gclient-condition = checkout_android
 [submodule "third_party/androidx_javascriptengine/src"]
 	path = third_party/androidx_javascriptengine/src
 	url = https://chromium.googlesource.com/aosp/platform/frameworks/support/javascriptengine/javascriptengine/src
@@ -203,20 +206,12 @@
 [submodule "third_party/crossbench"]
 	path = third_party/crossbench
 	url = https://chromium.googlesource.com/crossbench
-[submodule "third_party/crubit/src"]
-	path = third_party/crubit/src
-	url = https://chromium.googlesource.com/external/github.com/google/crubit
-	gclient-condition = checkout_crubit
 [submodule "third_party/depot_tools"]
 	path = third_party/depot_tools
 	url = https://chromium.googlesource.com/chromium/tools/depot_tools
 [submodule "third_party/devtools-frontend/src"]
 	path = third_party/devtools-frontend/src
 	url = https://chromium.googlesource.com/devtools/devtools-frontend
-[submodule "third_party/devtools-frontend-internal"]
-	path = third_party/devtools-frontend-internal
-	url = https://chrome-internal.googlesource.com/devtools/devtools-internal
-	gclient-condition = checkout_src_internal
 [submodule "third_party/dom_distiller_js/dist"]
 	path = third_party/dom_distiller_js/dist
 	url = https://chromium.googlesource.com/chromium/dom-distiller/dist
@@ -230,6 +225,9 @@
 [submodule "third_party/farmhash/src"]
 	path = third_party/farmhash/src
 	url = https://chromium.googlesource.com/external/github.com/google/farmhash
+[submodule "third_party/fast_float/src"]
+	path = third_party/fast_float/src
+	url = https://chromium.googlesource.com/external/github.com/fastfloat/fast_float
 [submodule "third_party/ffmpeg"]
 	path = third_party/ffmpeg
 	url = https://chromium.googlesource.com/chromium/third_party/ffmpeg
@@ -264,6 +262,12 @@
 [submodule "third_party/harfbuzz-ng/src"]
 	path = third_party/harfbuzz-ng/src
 	url = https://chromium.googlesource.com/external/github.com/harfbuzz/harfbuzz
+[submodule "third_party/ink/src"]
+	path = third_party/ink/src
+	url = https://chromium.googlesource.com/external/github.com/google/ink
+[submodule "third_party/ink_stroke_modeler/src"]
+	path = third_party/ink_stroke_modeler/src
+	url = https://chromium.googlesource.com/external/github.com/google/ink-stroke-modeler
 [submodule "third_party/instrumented_libs"]
 	path = third_party/instrumented_libs
 	url = https://chromium.googlesource.com/chromium/third_party/instrumented_libraries
@@ -330,21 +334,18 @@
 [submodule "third_party/fuzztest/src"]
 	path = third_party/fuzztest/src
 	url = https://chromium.googlesource.com/external/github.com/google/fuzztest
+[submodule "third_party/domato/src"]
+	path = third_party/domato/src
+	url = https://chromium.googlesource.com/external/github.com/googleprojectzero/domato
 [submodule "third_party/libaddressinput/src"]
 	path = third_party/libaddressinput/src
 	url = https://chromium.googlesource.com/external/libaddressinput
 [submodule "third_party/libaom/source/libaom"]
 	path = third_party/libaom/source/libaom
 	url = https://aomedia.googlesource.com/aom
-[submodule "third_party/libavif/src"]
-	path = third_party/libavif/src
-	url = https://chromium.googlesource.com/external/github.com/AOMediaCodec/libavif
 [submodule "third_party/crabbyavif/src"]
 	path = third_party/crabbyavif/src
 	url = https://chromium.googlesource.com/external/github.com/webmproject/CrabbyAvif
-[submodule "third_party/libavifinfo/src"]
-	path = third_party/libavifinfo/src
-	url = https://aomedia.googlesource.com/libavifinfo
 [submodule "third_party/nearby/src"]
 	path = third_party/nearby/src
 	url = https://chromium.googlesource.com/external/github.com/google/nearby-connections
@@ -354,8 +355,17 @@
 [submodule "third_party/securemessage/src"]
 	path = third_party/securemessage/src
 	url = https://chromium.googlesource.com/external/github.com/google/securemessage
+[submodule "third_party/speedometer/main"]
+	path = third_party/speedometer/main
+	url = https://chromium.googlesource.com/external/github.com/WebKit/Speedometer
 [submodule "third_party/speedometer/v3.0"]
 	path = third_party/speedometer/v3.0
+	url = https://chromium.googlesource.com/external/github.com/WebKit/Speedometer
+[submodule "third_party/speedometer/v2.0"]
+	path = third_party/speedometer/v2.0
+	url = https://chromium.googlesource.com/external/github.com/WebKit/Speedometer
+[submodule "third_party/speedometer/v2.1"]
+	path = third_party/speedometer/v2.1
 	url = https://chromium.googlesource.com/external/github.com/WebKit/Speedometer
 [submodule "third_party/ukey2/src"]
 	path = third_party/ukey2/src
@@ -393,11 +403,14 @@
 [submodule "third_party/libsync/src"]
 	path = third_party/libsync/src
 	url = https://chromium.googlesource.com/aosp/platform/system/core/libsync
-	gclient-condition = checkout_linux
+	gclient-condition = checkout_linux or checkout_android
 [submodule "third_party/libunwindstack"]
 	path = third_party/libunwindstack
 	url = https://chromium.googlesource.com/chromium/src/third_party/libunwindstack
 	gclient-condition = checkout_android
+[submodule "third_party/libva-fake-driver/src"]
+	path = third_party/libva-fake-driver/src
+	url = https://chromium.googlesource.com/chromiumos/platform/libva-fake-driver
 [submodule "third_party/libvpx/source/libvpx"]
 	path = third_party/libvpx/source/libvpx
 	url = https://chromium.googlesource.com/webm/libvpx
@@ -472,7 +485,7 @@
 	url = https://chromium.googlesource.com/external/github.com/protocolbuffers/protobuf-javascript
 [submodule "third_party/pthreadpool/src"]
 	path = third_party/pthreadpool/src
-	url = https://chromium.googlesource.com/external/github.com/Maratyszcza/pthreadpool
+	url = https://chromium.googlesource.com/external/github.com/google/pthreadpool
 [submodule "third_party/pyelftools"]
 	path = third_party/pyelftools
 	url = https://chromium.googlesource.com/chromiumos/third_party/pyelftools
@@ -493,6 +506,9 @@
 [submodule "third_party/ruy/src"]
 	path = third_party/ruy/src
 	url = https://chromium.googlesource.com/external/github.com/google/ruy
+[submodule "third_party/search_engines_data/resources"]
+	path = third_party/search_engines_data/resources
+	url = https://chromium.googlesource.com/external/search_engines_data
 [submodule "third_party/skia"]
 	path = third_party/skia
 	url = https://skia.googlesource.com/skia
@@ -547,6 +563,9 @@
 [submodule "third_party/vulkan_memory_allocator"]
 	path = third_party/vulkan_memory_allocator
 	url = https://chromium.googlesource.com/external/github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator
+[submodule "third_party/wasm_tts_engine/src"]
+	path = third_party/wasm_tts_engine/src
+	url = https://chromium.googlesource.com/chromium/wasm-tts-engine
 [submodule "third_party/wayland/src"]
 	path = third_party/wayland/src
 	url = https://chromium.googlesource.com/external/anongit.freedesktop.org/git/wayland/wayland
@@ -572,6 +591,9 @@
 [submodule "third_party/webgpu-cts/src"]
 	path = third_party/webgpu-cts/src
 	url = https://chromium.googlesource.com/external/github.com/gpuweb/cts
+[submodule "third_party/webpagereplay"]
+	path = third_party/webpagereplay
+	url = https://chromium.googlesource.com/webpagereplay
 [submodule "third_party/webrtc"]
 	path = third_party/webrtc
 	url = https://webrtc.googlesource.com/src
@@ -582,10 +604,6 @@
 	path = third_party/weston/src
 	url = https://chromium.googlesource.com/external/anongit.freedesktop.org/git/wayland/weston
 	gclient-condition = checkout_linux
-[submodule "third_party/wlcs/src"]
-	path = third_party/wlcs/src
-	url = https://chromium.googlesource.com/external/github.com/MirServer/wlcs
-	gclient-condition = checkout_chromeos
 [submodule "third_party/xdg-utils"]
 	path = third_party/xdg-utils
 	url = https://chromium.googlesource.com/chromium/deps/xdg-utils
@@ -593,9 +611,6 @@
 [submodule "third_party/xnnpack/src"]
 	path = third_party/xnnpack/src
 	url = https://chromium.googlesource.com/external/github.com/google/XNNPACK
-[submodule "tools/page_cycler/acid3"]
-	path = tools/page_cycler/acid3
-	url = https://chromium.googlesource.com/chromium/deps/acid3
 [submodule "third_party/zstd/src"]
 	path = third_party/zstd/src
 	url = https://chromium.googlesource.com/external/github.com/facebook/zstd
@@ -618,10 +633,6 @@
 	path = chromeos/assistant/internal
 	url = https://chrome-internal.googlesource.com/chrome/assistant
 	gclient-condition = checkout_src_internal and checkout_chromeos
-[submodule "ash/webui/conch"]
-	path = ash/webui/conch
-	url = https://chrome-internal.googlesource.com/ash/webui/conch
-	gclient-condition = checkout_src_internal and checkout_chromeos
 [submodule "build/fuchsia/internal"]
 	path = build/fuchsia/internal
 	url = https://chrome-internal.googlesource.com/fuchsia/build
@@ -642,6 +653,10 @@
 	path = chrome/browser/enterprise/connectors/internal
 	url = https://chrome-internal.googlesource.com/chrome/browser/enterprise/connectors/internal
 	gclient-condition = checkout_src_internal
+[submodule "chrome/browser/glic/resources/internal"]
+	path = chrome/browser/glic/resources/internal
+	url = https://chrome-internal.googlesource.com/chrome/browser/glic/resources/internal
+	gclient-condition = checkout_src_internal
 [submodule "chrome/browser/google/linkdoctor_internal"]
 	path = chrome/browser/google/linkdoctor_internal
 	url = https://chrome-internal.googlesource.com/chrome/linkdoctor
@@ -661,6 +676,10 @@
 [submodule "chrome/browser/platform_experience/win"]
 	path = chrome/browser/platform_experience/win
 	url = https://chrome-internal.googlesource.com/chrome/browser/platform_experience/win
+	gclient-condition = checkout_src_internal
+[submodule "chrome/browser/request_header_integrity/internal"]
+	path = chrome/browser/request_header_integrity/internal
+	url = https://chrome-internal.googlesource.com/chrome/browser/request_header_integrity/internal
 	gclient-condition = checkout_src_internal
 [submodule "chrome/browser/resources/downloads/internal"]
 	path = chrome/browser/resources/downloads/internal
@@ -718,6 +737,14 @@
 	path = chrome/services/speech/internal
 	url = https://chrome-internal.googlesource.com/chromeos/speech
 	gclient-condition = checkout_chromeos and checkout_src_internal
+[submodule "chrome/updater/internal"]
+	path = chrome/updater/internal
+	url = https://chrome-internal.googlesource.com/chrome/updater/internal
+	gclient-condition = checkout_src_internal
+[submodule "components/accessibility/internal"]
+	path = components/accessibility/internal
+	url = https://chrome-internal.googlesource.com/chrome-accessibility
+	gclient-condition = checkout_src_internal
 [submodule "components/autofill/core/browser/form_parsing/internal_resources"]
 	path = components/autofill/core/browser/form_parsing/internal_resources
 	url = https://chrome-internal.googlesource.com/chrome/components/autofill_regex_patterns
@@ -762,6 +789,10 @@
 	path = components/test/data/autofill/heuristics-json/internal
 	url = https://chrome-internal.googlesource.com/chrome/test/autofill/structured_forms
 	gclient-condition = checkout_chromium_autofill_test_dependencies
+[submodule "components/test/data/autofill/label-doms/internal"]
+	path = components/test/data/autofill/label-doms/internal
+	url = https://chrome-internal.googlesource.com/chrome/test/autofill/field_labels
+	gclient-condition = checkout_chromium_autofill_test_dependencies
 [submodule "components/vector_icons/google_chrome"]
 	path = components/vector_icons/google_chrome
 	url = https://chrome-internal.googlesource.com/chrome/vector_icons/google_chrome
@@ -802,22 +833,10 @@
 	path = skia/tools/clusterfuzz-data
 	url = https://chrome-internal.googlesource.com/chrome/tools/clusterfuzz-data
 	gclient-condition = checkout_clusterfuzz_data and checkout_src_internal
-[submodule "third_party/amd"]
-	path = third_party/amd
-	url = https://chrome-internal.googlesource.com/chrome/deps/amd
-	gclient-condition = checkout_win and checkout_src_internal
 [submodule "third_party/android_tools_internal"]
 	path = third_party/android_tools_internal
 	url = https://chrome-internal.googlesource.com/clank/third_party/android_tools
 	gclient-condition = checkout_android and checkout_src_internal
-[submodule "third_party/gles2_conform"]
-	path = third_party/gles2_conform
-	url = https://chrome-internal.googlesource.com/chrome/deps/gles2_conform
-	gclient-condition = checkout_src_internal
-[submodule "third_party/khronos_glcts"]
-	path = third_party/khronos_glcts
-	url = https://chrome-internal.googlesource.com/chrome/deps/khronos_glcts
-	gclient-condition = checkout_src_internal
 [submodule "third_party/widevine/cdm/chromeos"]
 	path = third_party/widevine/cdm/chromeos
 	url = https://chrome-internal.googlesource.com/chrome/deps/widevine/cdm/chromeos

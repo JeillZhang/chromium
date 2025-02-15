@@ -28,14 +28,6 @@ public abstract class PaymentApp extends EditableOption {
     /** Arbitrarily chosen maximum length of a payment app name. */
     private static final int APP_NAME_ELIDE_LENGTH = 64;
 
-    /**
-     * Whether complete and valid autofill data for merchant's request is available, e.g., if
-     * merchant specifies `requestPayerEmail: true`, then this variable is true only if the autofill
-     * data contains a valid email address. May be used in canMakePayment() for some types of
-     * app, such as AutofillPaymentInstrument.
-     */
-    protected boolean mHaveRequestedAutofillData;
-
     /** The interface for the requester of payment details from the app. */
     public interface InstrumentDetailsCallback {
         /**
@@ -151,14 +143,6 @@ public abstract class PaymentApp extends EditableOption {
     }
 
     /**
-     * @param haveRequestedAutofillData Whether complete and valid autofill data for merchant's
-     *                                  request is available.
-     */
-    public void setHaveRequestedAutofillData(boolean haveRequestedAutofillData) {
-        mHaveRequestedAutofillData = haveRequestedAutofillData;
-    }
-
-    /**
      * @return Whether this payment app should cause PaymentRequest.hasEnrolledInstrument() to
      *         return true.
      */
@@ -180,8 +164,10 @@ public abstract class PaymentApp extends EditableOption {
      * @param merchantName     The name of the merchant.
      * @param origin           The origin of this merchant.
      * @param iframeOrigin     The origin of the iframe that invoked PaymentRequest.
-     * @param certificateChain The site certificate chain of the merchant. Can be null for localhost
-     *                         or local file, which are secure contexts without SSL.
+     * @param certificateChain The site certificate chain of the merchant. Can be null when
+     *                         ANDROID_PAYMENT_INTENTS_OMIT_DEPRECATED_PARAMETERS is enabled or for
+     *                         localhost or local file, which are secure contexts without SSL. Each
+     *                         byte array cannot be null.
      * @param methodDataMap    The payment-method specific data for all applicable payment methods,
      *                         e.g., whether the app should be invoked in test or production, a
      *                         merchant identifier, or a public key.

@@ -9,6 +9,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
 import android.content.Context;
+import android.os.Build;
 
 import androidx.preference.Preference;
 import androidx.test.core.app.ApplicationProvider;
@@ -23,14 +24,16 @@ import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
-import org.chromium.base.CollectionUtil;
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.Criteria;
 import org.chromium.base.test.util.CriteriaHelper;
+import org.chromium.base.test.util.DisableIf;
 import org.chromium.base.test.util.DoNotBatch;
-import org.chromium.base.test.util.JniMocker;
 import org.chromium.chrome.browser.password_check.PasswordCheck;
 import org.chromium.chrome.browser.password_check.PasswordCheckFactory;
+import org.chromium.chrome.browser.password_manager.PasswordManagerHelper;
+import org.chromium.chrome.browser.password_manager.PasswordManagerHelperJni;
 import org.chromium.chrome.browser.password_manager.PasswordManagerUtilBridge;
 import org.chromium.chrome.browser.password_manager.PasswordManagerUtilBridgeJni;
 import org.chromium.chrome.browser.preferences.ChromePreferenceKeys;
@@ -41,9 +44,9 @@ import org.chromium.chrome.browser.settings.SettingsActivityTestRule;
 import org.chromium.chrome.browser.sync.SyncServiceFactory;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.components.signin.base.CoreAccountInfo;
+import org.chromium.components.signin.base.GaiaId;
 import org.chromium.components.sync.SyncService;
 import org.chromium.components.sync.UserSelectableType;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.ui.modelutil.PropertyModel;
 
 import java.util.Collections;
@@ -70,23 +73,22 @@ public class SafetyCheckSettingsFragmentTest {
     public SettingsActivityTestRule<SafetyCheckSettingsFragment> mSettingsActivityTestRule =
             new SettingsActivityTestRule<>(SafetyCheckSettingsFragment.class);
 
-    @Rule public JniMocker mJniMocker = new JniMocker();
-
     @Mock private PasswordCheck mPasswordCheck;
-    @Mock protected SyncService mSyncService;
-    @Mock protected PasswordManagerUtilBridge.Natives mPasswordManagerUtilBridgeNativeMock;
+    @Mock private SyncService mSyncService;
+    @Mock private PasswordManagerUtilBridge.Natives mPasswordManagerUtilBridgeNativeMock;
+    @Mock private PasswordManagerHelper.Natives mPasswordManagerHelperNativeMock;
 
-    protected PropertyModel mSafetyCheckModel;
+    private PropertyModel mSafetyCheckModel;
     private PropertyModel mPasswordCheckPreferenceLocalModel;
-    protected SafetyCheckSettingsFragment mFragment;
+    private SafetyCheckSettingsFragment mFragment;
 
     @Before
     public void setUp() {
         MockitoAnnotations.initMocks(this);
         PasswordCheckFactory.setPasswordCheckForTesting(mPasswordCheck);
         SyncServiceFactory.setInstanceForTesting(mSyncService);
-        mJniMocker.mock(
-                PasswordManagerUtilBridgeJni.TEST_HOOKS, mPasswordManagerUtilBridgeNativeMock);
+        PasswordManagerUtilBridgeJni.setInstanceForTesting(mPasswordManagerUtilBridgeNativeMock);
+        PasswordManagerHelperJni.setInstanceForTesting(mPasswordManagerHelperNativeMock);
     }
 
     @Test
@@ -125,10 +127,10 @@ public class SafetyCheckSettingsFragmentTest {
                 SafetyCheckViewBinder.getLastRunTimestampText(context, t0, t0 + 315 * DAY_TO_MS));
     }
 
-    protected void createFragmentAndModel() {
+    private void createFragmentAndModel() {
         mSettingsActivityTestRule.startSettingsActivity();
         mFragment = (SafetyCheckSettingsFragment) mSettingsActivityTestRule.getFragment();
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mSafetyCheckModel =
                             SafetyCheckCoordinator.createSafetyCheckModelAndBind(mFragment);
@@ -145,7 +147,7 @@ public class SafetyCheckSettingsFragmentTest {
         mSettingsActivityTestRule.startSettingsActivity(
                 SafetyCheckSettingsFragment.createBundle(safetyCheckImmediateRun));
         mFragment = (SafetyCheckSettingsFragment) mSettingsActivityTestRule.getFragment();
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mSafetyCheckModel =
                             SafetyCheckCoordinator.createSafetyCheckModelAndBind(mFragment);
@@ -160,13 +162,18 @@ public class SafetyCheckSettingsFragmentTest {
 
     private void configureMockSyncService(boolean isPasswordSyncEnabled) {
         when(mSyncService.isSyncFeatureEnabled()).thenReturn(true);
-        Set<Integer> selectedTypes =
+        Set<Integer> selectedTypes;
+        selectedTypes =
                 isPasswordSyncEnabled
-                        ? CollectionUtil.newHashSet(UserSelectableType.PASSWORDS)
+                        ? Set.of(UserSelectableType.PASSWORDS)
                         : Collections.EMPTY_SET;
         when(mSyncService.getSelectedTypes()).thenReturn(selectedTypes);
         when(mSyncService.getAccountInfo())
-                .thenReturn(CoreAccountInfo.createFromEmailAndGaiaId(TEST_EMAIL_ADDRESS, "0"));
+                .thenReturn(
+                        CoreAccountInfo.createFromEmailAndGaiaId(
+                                TEST_EMAIL_ADDRESS, new GaiaId("0")));
+        when(mPasswordManagerHelperNativeMock.hasChosenToSyncPasswords(mSyncService))
+                .thenReturn(isPasswordSyncEnabled);
     }
 
     private void configurePasswordManagerUtilBridge(boolean usesSplitStores) {
@@ -180,7 +187,7 @@ public class SafetyCheckSettingsFragmentTest {
         configurePasswordManagerUtilBridge(usesSplitStores);
         createFragmentAndModel();
         // Binds the account model.
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     SafetyCheckCoordinator.createPasswordCheckPreferenceModelAndBind(
                             mFragment,
@@ -218,6 +225,7 @@ public class SafetyCheckSettingsFragmentTest {
 
     @Test
     @MediumTest
+    @DisableIf.Build(sdk_equals = Build.VERSION_CODES.S_V2, message = "crbug.com/41496704")
     public void testNullStateDisplayedCorrectlySyncOnNoUsingSplitStores() {
         verifyNullStateDisplayedCorrectly(
                 /* isPasswordSyncEnabled= */ true, /* usesSplitStores= */ false);
@@ -225,6 +233,7 @@ public class SafetyCheckSettingsFragmentTest {
 
     @Test
     @MediumTest
+    @DisableIf.Build(sdk_equals = Build.VERSION_CODES.S_V2, message = "crbug.com/41496704")
     public void testNullStateDisplayedCorrectlySyncOnUsingSplitStores() {
         verifyNullStateDisplayedCorrectly(true, true);
     }
@@ -257,7 +266,7 @@ public class SafetyCheckSettingsFragmentTest {
         Preference passwordsLocal = mFragment.findPreference(PASSWORDS_LOCAL);
         Preference safeBrowsing = mFragment.findPreference(SAFE_BROWSING);
         Preference updates = mFragment.findPreference(UPDATES);
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     // Passwords state remains unchanged.
                     // Safe browsing is in "checking".
@@ -287,7 +296,7 @@ public class SafetyCheckSettingsFragmentTest {
         CallbackHelper safeBrowsingClicked = new CallbackHelper();
         CallbackHelper updatesClicked = new CallbackHelper();
         // Set the listeners
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mPasswordCheckPreferenceLocalModel.set(
                             PasswordsCheckPreferenceProperties.PASSWORDS_CLICK_LISTENER,
@@ -314,7 +323,7 @@ public class SafetyCheckSettingsFragmentTest {
         Preference passwordsLocal = mFragment.findPreference(PASSWORDS_LOCAL);
         Preference safeBrowsing = mFragment.findPreference(SAFE_BROWSING);
         Preference updates = mFragment.findPreference(UPDATES);
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     // If local password storage is available, should be clickable.
                     passwordsLocal.performClick();

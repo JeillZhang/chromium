@@ -233,8 +233,7 @@ int StreamPacketSocket::GetOption(rtc::Socket::Option option, int* value) {
 
 int StreamPacketSocket::SetOption(rtc::Socket::Option option, int value) {
   if (!socket_) {
-    NOTREACHED_IN_MIGRATION();
-    return -1;
+    NOTREACHED();
   }
 
   switch (option) {
@@ -254,8 +253,7 @@ int StreamPacketSocket::SetOption(rtc::Socket::Option option, int value) {
 
     case rtc::Socket::OPT_NODELAY:
       // Should call TCPClientSocket::SetNoDelay directly.
-      NOTREACHED_IN_MIGRATION();
-      return -1;
+      NOTREACHED();
 
     case rtc::Socket::OPT_IPV6_V6ONLY:
       NOTIMPLEMENTED();
@@ -274,8 +272,7 @@ int StreamPacketSocket::SetOption(rtc::Socket::Option option, int value) {
       return -1;
   }
 
-  NOTREACHED_IN_MIGRATION();
-  return -1;
+  NOTREACHED();
 }
 
 int StreamPacketSocket::GetError() const {
@@ -338,9 +335,13 @@ bool StreamPacketSocket::HandleWriteResult(int result) {
   PendingPacket& packet = send_queue_.front();
   packet.data->DidConsume(result);
   if (packet.data->BytesRemaining() == 0) {
-    SignalSentPacket(
-        this, rtc::SentPacket(packet.options.packet_id, rtc::TimeMillis()));
+    // Pop the queue before SignalSentPacket just in case SignalSentPacket
+    // ends up reentrant. This is a speculative fix for a hardening crash when
+    // send_queue_.pop_front() was called after SignalSentPacket.
+    const rtc::SentPacket sent_packet(packet.options.packet_id,
+                                      rtc::TimeMillis());
     send_queue_.pop_front();
+    SignalSentPacket(this, sent_packet);
   }
   return true;
 }
@@ -389,12 +390,11 @@ bool StreamPacketSocket::HandleReadResult(int result) {
   }
 
   read_buffer_->set_offset(read_buffer_->offset() + result);
-  uint8_t* head = reinterpret_cast<uint8_t*>(read_buffer_->StartOfBuffer());
-  int pos = 0;
-  while (pos < read_buffer_->offset()) {
+  base::span<uint8_t> span = read_buffer_->span_before_offset();
+  while (!span.empty()) {
     size_t bytes_consumed = 0;
-    auto packet = packet_processor_->Unpack(
-        head + pos, read_buffer_->offset() - pos, &bytes_consumed);
+    auto packet =
+        packet_processor_->Unpack(span.data(), span.size(), &bytes_consumed);
     if (packet) {
       NotifyPacketReceived(rtc::ReceivedPacket(
           rtc::MakeArrayView(packet->bytes(), packet->size()),
@@ -403,13 +403,13 @@ bool StreamPacketSocket::HandleReadResult(int result) {
     if (!bytes_consumed) {
       break;
     }
-    pos += bytes_consumed;
+    span = span.subspan(bytes_consumed);
   }
   // We've consumed all complete packets from the buffer; now move any remaining
   // bytes to the head of the buffer and set offset to reflect this.
-  if (pos && pos <= read_buffer_->offset()) {
-    memmove(head, head + pos, read_buffer_->offset() - pos);
-    read_buffer_->set_offset(read_buffer_->offset() - pos);
+  if (!span.empty()) {
+    read_buffer_->everything().copy_prefix_from(span);
+    read_buffer_->set_offset(span.size());
   }
 
   return true;

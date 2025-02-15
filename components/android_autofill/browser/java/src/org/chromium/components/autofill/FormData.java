@@ -4,6 +4,8 @@
 
 package org.chromium.components.autofill;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.graphics.RectF;
 import android.view.View;
 import android.view.ViewStructure;
@@ -15,6 +17,8 @@ import org.jni_zero.CalledByNative;
 import org.jni_zero.JNINamespace;
 import org.jni_zero.JniType;
 
+import org.chromium.build.annotations.NullMarked;
+
 import java.util.List;
 
 /**
@@ -24,14 +28,12 @@ import java.util.List;
  * AutofillRequest} to translate the FormData object into a ViewStructure.
  */
 @JNINamespace("autofill")
+@NullMarked
 public class FormData {
     public final int mSessionId;
     public final String mName;
     public final String mHost;
     public final List<FormFieldData> mFields;
-    // Every node must have an Autofill id. We (arbitrarily, but consistently) choose the
-    // maximum value for the form node.
-    private static final short FORM_NODE_ID = Short.MAX_VALUE;
 
     @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
     @CalledByNative
@@ -54,8 +56,9 @@ public class FormData {
      * Translates the current form into a ViewStructure processed by Android's Autofill framework.
      *
      * @param structure out parameter, the structure passed to the framework.
+     * @param focusFieldIndex the index of the field that is currently focused. -1 if unknown.
      */
-    public void fillViewStructure(ViewStructure structure) {
+    public void fillViewStructure(ViewStructure structure, short focusFieldIndex) {
         structure.setWebDomain(mHost);
         structure.setHtmlInfo(
                 structure.newHtmlInfoBuilder("form").addAttribute("name", mName).build());
@@ -63,9 +66,12 @@ public class FormData {
         short fieldIndex = 0;
         for (FormFieldData field : mFields) {
             ViewStructure child = structure.newChild(index++);
+            if (focusFieldIndex == fieldIndex) {
+                child.setFocused(true);
+            }
             int virtualId = toFieldVirtualId(mSessionId, fieldIndex++);
-            child.setAutofillId(structure.getAutofillId(), virtualId);
-            field.setAutofillId(child.getAutofillId());
+            child.setAutofillId(assumeNonNull(structure.getAutofillId()), virtualId);
+            field.setAutofillId(assumeNonNull(child.getAutofillId()));
             if (field.mAutocompleteAttr != null && !field.mAutocompleteAttr.isEmpty()) {
                 child.setAutofillHints(field.mAutocompleteAttr.split(" +"));
             }

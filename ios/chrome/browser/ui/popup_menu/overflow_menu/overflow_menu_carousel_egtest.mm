@@ -3,12 +3,14 @@
 // found in the LICENSE file.
 
 #import "components/feature_engagement/public/feature_constants.h"
+#import "components/signin/internal/identity_manager/account_capabilities_constants.h"
+#import "ios/chrome/browser/authentication/ui_bundled/signin_earl_grey.h"
+#import "ios/chrome/browser/authentication/ui_bundled/signin_earl_grey_ui_test_util.h"
 #import "ios/chrome/browser/metrics/model/metrics_app_interface.h"
+#import "ios/chrome/browser/settings/ui_bundled/google_services/manage_sync_settings_constants.h"
 #import "ios/chrome/browser/shared/model/prefs/pref_names.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/signin/model/fake_system_identity.h"
-#import "ios/chrome/browser/ui/authentication/signin_earl_grey.h"
-#import "ios/chrome/browser/ui/authentication/signin_earl_grey_ui_test_util.h"
 #import "ios/chrome/browser/ui/popup_menu/overflow_menu/feature_flags.h"
 #import "ios/chrome/browser/ui/popup_menu/popup_menu_constants.h"
 #import "ios/chrome/browser/ui/whats_new/constants.h"
@@ -72,23 +74,20 @@ void CleanupDestinationsHighlightFeaturesData() {
       resetDataForLocalStatePref:prefs::kOverflowMenuNewDestinations];
 
   // Clean up What's New destination promo data.
-  [ChromeEarlGrey removeUserDefaultsObjectForKey:kWhatsNewUsageEntryKey];
   [ChromeEarlGrey removeUserDefaultsObjectForKey:kWhatsNewM116UsageEntryKey];
 }
 
 // Resolves the passphrase error from the Overflow Menu.
 void ResolvePassphraseErrorFromOverflowMenu() {
   // Tap on the Settings destination that has an error badge.
-  [[EarlGrey
-      selectElementWithMatcher:GetSettingsDestinationWithErrorBadgeMatcher()]
-      performAction:grey_tap()];
+  [ChromeEarlGreyUI
+      tapToolsMenuButton:GetSettingsDestinationWithErrorBadgeMatcher()];
 
   // Enter passphrase to resolve the identity error.
   [[EarlGrey selectElementWithMatcher:chrome_test_util::SettingsAccountButton()]
       performAction:grey_tap()];
-  [[EarlGrey selectElementWithMatcher:
-                 grey_text(l10n_util::GetNSString(
-                     IDS_IOS_ACCOUNT_TABLE_ERROR_ENTER_PASSPHRASE_BUTTON))]
+  [[EarlGrey
+      selectElementWithMatcher:grey_accessibilityID(kSyncErrorButtonIdentifier)]
       performAction:grey_tap()];
   [SigninEarlGreyUI submitSyncPassphrase:kPassphrase];
   [[EarlGrey selectElementWithMatcher:chrome_test_util::SettingsDoneButton()]
@@ -110,23 +109,16 @@ void ResolvePassphraseErrorFromOverflowMenu() {
   [super setUp];
 
   CleanupDestinationsHighlightFeaturesData();
-
-  [ChromeEarlGrey
-      waitForSyncEngineInitialized:NO
-                       syncTimeout:syncher::kSyncUKMOperationsTimeout];
 }
 
-- (void)tearDown {
+- (void)tearDownHelper {
   // Clean up sign-in and Sync data.
   [SigninEarlGrey signOut];
-  [ChromeEarlGrey
-      waitForSyncEngineInitialized:NO
-                       syncTimeout:syncher::kSyncUKMOperationsTimeout];
   [ChromeEarlGrey clearFakeSyncServerData];
 
   CleanupDestinationsHighlightFeaturesData();
 
-  [super tearDown];
+  [super tearDownHelper];
 }
 
 #pragma mark - Tests
@@ -144,7 +136,7 @@ void ResolvePassphraseErrorFromOverflowMenu() {
 
   // Encrypt synced data with a passphrase to enable passphrase encryption for
   // the signed in account.
-  [ChromeEarlGrey addBookmarkWithSyncPassphrase:kPassphrase];
+  [ChromeEarlGrey addSyncPassphrase:kPassphrase];
 
   // Sign in in butter mode while keeping sync disabled.
   FakeSystemIdentity* fakeIdentity = [FakeSystemIdentity fakeIdentity1];
@@ -178,7 +170,7 @@ void ResolvePassphraseErrorFromOverflowMenu() {
 
   // Encrypt synced data with a passphrase to enable passphrase encryption for
   // the signed in account.
-  [ChromeEarlGrey addBookmarkWithSyncPassphrase:kPassphrase];
+  [ChromeEarlGrey addSyncPassphrase:kPassphrase];
 
   // Sign in and Sync account.
   FakeSystemIdentity* fakeIdentity = [FakeSystemIdentity fakeIdentity1];
@@ -223,15 +215,18 @@ void ResolvePassphraseErrorFromOverflowMenu() {
 
 // Tests that the overflow menu footer displays Family Link disclaimer with a
 // link to more information about family accounts.
-- (void)testOverflowMenuFooterFamilyLink {
+// TODO(crbug.com/339689514): Failing on ios-simulator-noncq
+- (void)DISABLED_testOverflowMenuFooterFamilyLink {
   if (![ChromeEarlGrey isNewOverflowMenuEnabled]) {
     EARL_GREY_TEST_SKIPPED(kOverflowMenuSkipTestMessage)
   }
 
   // Sign in and Sync account.
   FakeSystemIdentity* fakeIdentity = [FakeSystemIdentity fakeIdentity1];
-  [SigninEarlGrey addFakeIdentity:fakeIdentity];
-  [SigninEarlGrey setIsSubjectToParentalControls:YES forIdentity:fakeIdentity];
+  [SigninEarlGrey addFakeIdentity:fakeIdentity
+                 withCapabilities:@{
+                   @(kIsSubjectToParentalControlsCapabilityName) : @YES,
+                 }];
   [SigninEarlGrey signinWithFakeIdentity:fakeIdentity];
 
   // Open tools menu to click on "Learn more" family link footer.
@@ -254,7 +249,6 @@ void ResolvePassphraseErrorFromOverflowMenu() {
   AppLaunchConfiguration config;
   config.iph_feature_enabled =
       feature_engagement::kIPHiOSOverflowMenuCustomizationFeature.name;
-  config.features_enabled.push_back(kOverflowMenuCustomization);
   [[AppLaunchManager sharedManager] ensureAppLaunchedWithConfiguration:config];
 
   // Open tools menu and see IPH appears.

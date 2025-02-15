@@ -4,7 +4,6 @@
 
 package org.chromium.chrome.browser.ui.signin;
 
-import android.graphics.Color;
 import android.view.ViewGroup;
 import android.view.ViewGroup.LayoutParams;
 import android.widget.FrameLayout;
@@ -12,6 +11,7 @@ import android.widget.FrameLayout;
 import androidx.activity.ComponentActivity;
 import androidx.annotation.ColorInt;
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import org.chromium.base.Callback;
 import org.chromium.base.task.PostTask;
@@ -31,13 +31,12 @@ import org.chromium.components.browser_ui.bottomsheet.BottomSheetObserver;
 import org.chromium.components.browser_ui.bottomsheet.EmptyBottomSheetObserver;
 import org.chromium.components.browser_ui.device_lock.DeviceLockActivityLauncher;
 import org.chromium.components.browser_ui.widget.gesture.BackPressHandler;
-import org.chromium.components.browser_ui.widget.scrim.ScrimCoordinator;
+import org.chromium.components.browser_ui.widget.scrim.ScrimManager;
+import org.chromium.components.signin.base.CoreAccountId;
 import org.chromium.components.signin.base.CoreAccountInfo;
 import org.chromium.components.signin.metrics.SigninAccessPoint;
 import org.chromium.ui.KeyboardVisibilityDelegate;
-import org.chromium.ui.UiUtils;
 import org.chromium.ui.base.WindowAndroid;
-import org.chromium.ui.util.ColorUtils;
 import org.chromium.ui.widget.Toast;
 
 /** Responsible of showing the sign-in bottom sheet. */
@@ -52,8 +51,9 @@ public class SigninAccountPickerCoordinator implements AccountPickerDelegate {
     private final DeviceLockActivityLauncher mDeviceLockActivityLauncher;
     private final SigninManager mSigninManager;
     private final @SigninAccessPoint int mSigninAccessPoint;
+    private final @Nullable CoreAccountId mSelectedCoreAccountId;
 
-    private ScrimCoordinator mScrim;
+    private ScrimManager mScrimManager;
     private BottomSheetObserver mBottomSheetObserver;
     private BottomSheetController mBottomSheetController;
     private AccountPickerBottomSheetCoordinator mAccountPickerBottomSheetCoordinator;
@@ -71,6 +71,12 @@ public class SigninAccountPickerCoordinator implements AccountPickerDelegate {
 
         /** Called when the bottom sheet is dismissed without completing sign-in. */
         void onSignInCancel();
+
+        /**
+         * Called when the bottom sheet scrim color is changed, and the hosting activity's status
+         * bar needs to be updated to the provided color.
+         */
+        void setStatusBarColor(@ColorInt int color);
     }
 
     /**
@@ -86,6 +92,7 @@ public class SigninAccountPickerCoordinator implements AccountPickerDelegate {
      * @param bottomSheetStrings The object containing the strings shown by the bottom sheet.
      * @param accountPickerLaunchMode Indicate the first bottom sheet view shown to the user.
      * @param signinAccessPoint The entry point for the sign-in.
+     * @param selectedAccountId the account id to use as default, if present.
      */
     public SigninAccountPickerCoordinator(
             @NonNull WindowAndroid windowAndroid,
@@ -96,7 +103,8 @@ public class SigninAccountPickerCoordinator implements AccountPickerDelegate {
             @NonNull SigninManager signinManager,
             @NonNull AccountPickerBottomSheetStrings bottomSheetStrings,
             @AccountPickerLaunchMode int accountPickerLaunchMode,
-            @SigninAccessPoint int signinAccessPoint) {
+            @SigninAccessPoint int signinAccessPoint,
+            @Nullable CoreAccountId selectedAccountId) {
         mWindowAndroid = windowAndroid;
         mActivity = activity;
         mContainerView = containerView;
@@ -104,6 +112,7 @@ public class SigninAccountPickerCoordinator implements AccountPickerDelegate {
         mDeviceLockActivityLauncher = deviceLockActivityLauncher;
         mSigninManager = signinManager;
         mSigninAccessPoint = signinAccessPoint;
+        mSelectedCoreAccountId = selectedAccountId;
 
         initAndShowBottomSheet(bottomSheetStrings, accountPickerLaunchMode);
     }
@@ -115,35 +124,18 @@ public class SigninAccountPickerCoordinator implements AccountPickerDelegate {
         sheetContainer.setLayoutParams(
                 new FrameLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
         mContainerView.addView(sheetContainer);
-        @ColorInt int scrimColor = mActivity.getColor(R.color.default_scrim_color);
-        mScrim =
-                new ScrimCoordinator(
-                        mActivity,
-                        new ScrimCoordinator.SystemUiScrimDelegate() {
-                            @Override
-                            public void setStatusBarScrimFraction(float scrimFraction) {
-                                // Update the status bar color to match the currently shown scrim
-                                // color when the latter is changed.
-                                float alpha = ((float) Color.alpha(scrimColor)) * scrimFraction;
-                                @ColorInt
-                                int color = ColorUtils.setAlphaComponent(scrimColor, (int) alpha);
-                                UiUtils.setStatusBarColor(mActivity.getWindow(), color);
-                            }
-
-                            @Override
-                            public void setNavigationBarScrimFraction(float scrimFraction) {}
-                        },
-                        (ViewGroup) sheetContainer.getParent(),
-                        scrimColor);
+        mScrimManager = new ScrimManager(mActivity, (ViewGroup) sheetContainer.getParent());
+        mScrimManager.getStatusBarColorSupplier().addObserver(mDelegate::setStatusBarColor);
 
         mBottomSheetController =
                 BottomSheetControllerFactory.createBottomSheetController(
-                        () -> mScrim,
+                        () -> mScrimManager,
                         (sheet) -> {},
                         mActivity.getWindow(),
                         KeyboardVisibilityDelegate.getInstance(),
                         () -> sheetContainer,
-                        () -> 0);
+                        () -> 0,
+                        /* desktopWindowStateManager= */ null);
 
         mBottomSheetObserver =
                 new EmptyBottomSheetObserver() {
@@ -161,7 +153,7 @@ public class SigninAccountPickerCoordinator implements AccountPickerDelegate {
                 mActivity,
                 mActivity.getOnBackPressedDispatcher(),
                 bottomSheetBackPressHandler,
-                SecondaryActivity.SIGNIN_AND_HISTORY_OPT_IN);
+                SecondaryActivity.SIGNIN_AND_HISTORY_SYNC);
 
         mAccountPickerBottomSheetCoordinator =
                 new AccountPickerBottomSheetCoordinator(
@@ -172,7 +164,8 @@ public class SigninAccountPickerCoordinator implements AccountPickerDelegate {
                         mDeviceLockActivityLauncher,
                         accountPickerLaunchMode,
                         mSigninAccessPoint == SigninAccessPoint.WEB_SIGNIN,
-                        mSigninAccessPoint);
+                        mSigninAccessPoint,
+                        mSelectedCoreAccountId);
     }
 
     /** Called when an account is added on the device. */
@@ -183,7 +176,7 @@ public class SigninAccountPickerCoordinator implements AccountPickerDelegate {
     /** Implements {@link AccountPickerDelegate}. */
     @Override
     public boolean canHandleAddAccount() {
-        return SigninUtils.shouldShowNewSigninFlow();
+        return true;
     }
 
     /** Implements {@link AccountPickerDelegate}. */

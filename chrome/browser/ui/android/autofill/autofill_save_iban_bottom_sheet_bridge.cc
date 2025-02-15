@@ -7,8 +7,12 @@
 #include <memory>
 
 #include "base/android/jni_string.h"
+#include "chrome/browser/android/resource_mapper.h"
 #include "chrome/browser/ui/android/autofill/autofill_save_iban_delegate.h"
 #include "chrome/browser/ui/android/tab_model/tab_model.h"
+#include "components/autofill/android/payments/legal_message_line_android.h"
+#include "components/autofill/android/payments_jni_headers/AutofillSaveIbanUiInfo_jni.h"
+#include "components/autofill/core/browser/payments/autofill_save_iban_ui_info.h"
 #include "content/public/browser/web_contents.h"
 #include "ui/android/window_android.h"
 
@@ -16,6 +20,22 @@
 #include "chrome/android/chrome_jni_headers/AutofillSaveIbanBottomSheetBridge_jni.h"
 
 namespace autofill {
+
+namespace {
+
+static base::android::ScopedJavaLocalRef<jobject> ConvertUiInfoToJavaObject(
+    JNIEnv* env,
+    const AutofillSaveIbanUiInfo& ui_info) {
+  return Java_AutofillSaveIbanUiInfo_Constructor(
+      env, ui_info.accept_text, ui_info.cancel_text, ui_info.description_text,
+      ui_info.iban_value, ui_info.is_server_save,
+      LegalMessageLineAndroid::ConvertToJavaLinkedList(
+          ui_info.legal_message_lines),
+      ResourceMapper::MapToJavaDrawableId(ui_info.logo_icon_id),
+      ui_info.title_text);
+}
+
+}  // namespace
 
 AutofillSaveIbanBottomSheetBridge::AutofillSaveIbanBottomSheetBridge(
     ui::WindowAndroid* window_android,
@@ -37,13 +57,26 @@ AutofillSaveIbanBottomSheetBridge::~AutofillSaveIbanBottomSheetBridge() {
 }
 
 void AutofillSaveIbanBottomSheetBridge::RequestShowContent(
-    std::u16string_view iban_label,
+    const AutofillSaveIbanUiInfo& ui_info,
     std::unique_ptr<AutofillSaveIbanDelegate> delegate) {
   JNIEnv* env = base::android::AttachCurrentThread();
   save_iban_delegate_ = std::move(delegate);
   Java_AutofillSaveIbanBottomSheetBridge_requestShowContent(
-      env, java_autofill_save_iban_bottom_sheet_bridge_, iban_label);
+      env, java_autofill_save_iban_bottom_sheet_bridge_,
+      ConvertUiInfoToJavaObject(env, ui_info));
 }
+
+void AutofillSaveIbanBottomSheetBridge::Hide() {
+  JNIEnv* env = base::android::AttachCurrentThread();
+  Java_AutofillSaveIbanBottomSheetBridge_hide(
+      env, java_autofill_save_iban_bottom_sheet_bridge_);
+}
+
+AutofillSaveIbanBottomSheetBridge::AutofillSaveIbanBottomSheetBridge(
+    base::android::ScopedJavaGlobalRef<jobject>
+        java_autofill_save_iban_bottom_sheet_bridge)
+    : java_autofill_save_iban_bottom_sheet_bridge_(
+          java_autofill_save_iban_bottom_sheet_bridge) {}
 
 void AutofillSaveIbanBottomSheetBridge::OnUiAccepted(
     JNIEnv* env,

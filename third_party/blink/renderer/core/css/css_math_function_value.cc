@@ -5,6 +5,7 @@
 #include "third_party/blink/renderer/core/css/css_math_function_value.h"
 
 #include "third_party/blink/renderer/core/css/css_math_expression_node.h"
+#include "third_party/blink/renderer/core/css/css_primitive_value.h"
 #include "third_party/blink/renderer/core/css/css_value_clamping_utils.h"
 #include "third_party/blink/renderer/platform/geometry/calculation_expression_node.h"
 #include "third_party/blink/renderer/platform/geometry/length.h"
@@ -90,6 +91,12 @@ double CSSMathFunctionValue::ComputeSeconds(
   return ClampToPermittedRange(expression_->ComputeNumber(length_resolver));
 }
 
+double CSSMathFunctionValue::ComputeDotsPerPixel(
+    const CSSLengthResolver& length_resolver) const {
+  DCHECK_EQ(kCalcResolution, expression_->Category());
+  return ClampToPermittedRange(expression_->ComputeNumber(length_resolver));
+}
+
 double CSSMathFunctionValue::ComputeLengthPx(
     const CSSLengthResolver& length_resolver) const {
   // |CSSToLengthConversionData| only resolves relative length units, but not
@@ -111,12 +118,18 @@ int CSSMathFunctionValue::ComputeInteger(
 
 double CSSMathFunctionValue::ComputeNumber(
     const CSSLengthResolver& length_resolver) const {
-  // |CSSToLengthConversionData| only resolves relative length units, but not
-  // percentages.
-  DCHECK_EQ(kCalcNumber, expression_->Category());
-  DCHECK(!expression_->HasPercentage());
+  if (expression_->Category() == kCalcNumber) {
+    // |CSSToLengthConversionData| only resolves relative length units, but not
+    // percentages.
+    DCHECK(!expression_->HasPercentage());
+  } else {
+    DCHECK_EQ(expression_->Category(), kCalcPercent);
+  }
   double value =
       ClampToPermittedRange(expression_->ComputeNumber(length_resolver));
+  if (expression_->Category() == kCalcPercent) {
+    value /= 100.0;
+  }
   return std::isnan(value) ? 0.0 : value;
 }
 
@@ -127,6 +140,18 @@ double CSSMathFunctionValue::ComputePercentage(
   DCHECK_EQ(kCalcPercent, expression_->Category());
   double value =
       ClampToPermittedRange(expression_->ComputeNumber(length_resolver));
+  return std::isnan(value) ? 0.0 : value;
+}
+
+double CSSMathFunctionValue::ComputeValueInCanonicalUnit(
+    const CSSLengthResolver& length_resolver) const {
+  // Don't use it for mix of length and percentage or similar,
+  // as it would compute 10px + 10% to 20.
+  DCHECK(IsResolvableBeforeLayout());
+  std::optional<double> optional_value =
+      expression_->ComputeValueInCanonicalUnit(length_resolver);
+  DCHECK(optional_value.has_value());
+  double value = ClampToPermittedRange(optional_value.value());
   return std::isnan(value) ? 0.0 : value;
 }
 
@@ -184,13 +209,6 @@ double CSSMathFunctionValue::ClampToPermittedRange(double value) const {
     case CSSPrimitiveValue::ValueRange::kAll:
       return value;
   }
-}
-
-bool CSSMathFunctionValue::IsZero() const {
-  if (expression_->ResolvedUnitType() == UnitType::kUnknown) {
-    return false;
-  }
-  return expression_->IsZero();
 }
 
 bool CSSMathFunctionValue::IsPx() const {

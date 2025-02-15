@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <iterator>
+
 #include "base/android/feature_map.h"
 #include "base/feature_list.h"
 #include "base/no_destructor.h"
@@ -21,15 +23,16 @@ namespace {
 // code base.
 const base::Feature* const kFeaturesExposedToJava[] = {
     &device::kWebAuthnAndroidCredMan,
-    &device::kWebAuthnAndroidFidoJson,
-    &device::kWebAuthnHybridLinkWithoutNotifications,
+    &device::kWebAuthnAndroidUsePasskeyCache,
+    &device::kWebAuthnEnablePaaskFragment,
     &kGenericSensorExtraClasses,
+    &kBatteryStatusManagerBroadcastReceiverInBackground,
 };
 
 // static
 base::android::FeatureMap* GetFeatureMap() {
-  static base::NoDestructor<base::android::FeatureMap> kFeatureMap(std::vector(
-      std::begin(kFeaturesExposedToJava), std::end(kFeaturesExposedToJava)));
+  static base::NoDestructor<base::android::FeatureMap> kFeatureMap(
+      kFeaturesExposedToJava);
   return kFeatureMap.get();
 }
 

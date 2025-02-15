@@ -46,7 +46,7 @@ class MockDownloadItem : public DownloadItem {
   MOCK_METHOD0(UpdateObservers, void());
   MOCK_METHOD0(ValidateDangerousDownload, void());
   MOCK_METHOD0(ValidateInsecureDownload, void());
-  MOCK_METHOD2(StealDangerousDownload, void(bool, AcquireFileCallback));
+  MOCK_METHOD1(CopyDownload, void(AcquireFileCallback));
   MOCK_METHOD0(Pause, void());
   MOCK_METHOD1(Resume, void(bool));
   MOCK_METHOD1(Cancel, void(bool));
@@ -117,6 +117,7 @@ class MockDownloadItem : public DownloadItem {
   MOCK_CONST_METHOD0(GetReceivedBytes, int64_t());
   MOCK_CONST_METHOD0(GetReceivedSlices,
                      const std::vector<DownloadItem::ReceivedSlice>&());
+  MOCK_CONST_METHOD0(GetUploadedBytes, int64_t());
   MOCK_CONST_METHOD0(GetStartTime, base::Time());
   MOCK_CONST_METHOD0(GetEndTime, base::Time());
   MOCK_METHOD0(CanShowInFolder, bool());

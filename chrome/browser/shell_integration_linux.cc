@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/browser/shell_integration_linux.h"
 
 #include <fcntl.h>
@@ -397,7 +402,8 @@ std::string GetXdgAppIdForWebApp(std::string app_name,
   if (base::StartsWith(app_name, web_app::kCrxAppPrefix))
     app_name = app_name.substr(strlen(web_app::kCrxAppPrefix));
   return GetDesktopBaseName(
-      web_app::GetAppShortcutFilename(profile_path, app_name).AsUTF8Unsafe());
+      web_app::GetAppDesktopShortcutFilename(profile_path, app_name)
+          .AsUTF8Unsafe());
 }
 
 namespace internal {
@@ -754,7 +760,7 @@ std::string GetDesktopFileContentsForUrlShortcut(
   g_key_file_free(key_file);
   return output_buffer;
 #else
-  NOTREACHED_NORETURN();
+  NOTREACHED();
   return std::string();
 #endif
 }

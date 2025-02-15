@@ -60,7 +60,9 @@ class ASH_EXPORT BrightnessControllerChromeos
                             BrightnessChangeSource source) override;
   void GetBrightnessPercent(
       base::OnceCallback<void(std::optional<double>)> callback) override;
-  void SetAmbientLightSensorEnabled(bool enabled) override;
+  void SetAmbientLightSensorEnabled(
+      bool enabled,
+      AmbientLightSensorEnabledChangeSource source) override;
   void GetAmbientLightSensorEnabled(
       base::OnceCallback<void(std::optional<bool>)> callback) override;
   void HasAmbientLightSensor(
@@ -76,6 +78,8 @@ class ASH_EXPORT BrightnessControllerChromeos
       const power_manager::BacklightBrightnessChange& change) override;
   void AmbientLightSensorEnabledChanged(
       const power_manager::AmbientLightSensorChange& change) override;
+  void LidEventReceived(chromeos::PowerManagerClient::LidState state,
+                        base::TimeTicks timestamp) override;
 
   // LoginDataDispatcher::Observer:
   void OnFocusPod(const AccountId& account_id) override;
@@ -83,8 +87,13 @@ class ASH_EXPORT BrightnessControllerChromeos
  private:
   void RecordHistogramForBrightnessAction(BrightnessAction brightness_action);
   void OnGetBrightnessAfterLogin(std::optional<double> brightness_percent);
+  void OnGetHasAmbientLightSensor(std::optional<bool> has_sensor);
+  void OnGetSwitchStates(
+      std::optional<chromeos::PowerManagerClient::SwitchStates> switch_states);
   void RestoreBrightnessSettings(const AccountId& account_id);
+  void MaybeRestoreBrightnessSettings();
   void RestoreBrightnessSettingsOnFirstLogin();
+  bool IsInitialBrightnessSetByPolicy();
 
   raw_ptr<PrefService> local_state_;
   raw_ptr<SessionControllerImpl> session_controller_;
@@ -105,6 +114,16 @@ class ASH_EXPORT BrightnessControllerChromeos
   // True if the ambient light sensor value has already been restored for a
   // user's first login.
   bool has_ambient_light_sensor_been_restored_for_new_user_ = false;
+
+  // True if the ambient light sensor status has already been recorded at login
+  // screen, it is used to ensures the status is recorded only once per boot.
+  bool has_ambient_light_sensor_status_been_recorded_ = false;
+
+  // True if device has an ambient light sensor.
+  std::optional<bool> has_sensor_ = false;
+
+  chromeos::PowerManagerClient::LidState lid_state_ =
+      chromeos::PowerManagerClient::LidState::OPEN;
 
   // This PrefChangeRegistrar is used to check when the synced profile pref for
   // the ambient light sensor value has finished syncing.

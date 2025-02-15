@@ -3,8 +3,8 @@
 // found in the LICENSE file.
 
 #ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
-#pragma allow_unsafe_buffers
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
 #endif
 
 #include "net/cert/internal/trust_store_nss.h"
@@ -19,6 +19,7 @@
 #include <secmod.h>
 #include <secmodt.h>
 
+#include "base/containers/to_vector.h"
 #include "base/hash/sha1.h"
 #include "base/logging.h"
 #include "base/notreached.h"
@@ -29,7 +30,7 @@
 #include "crypto/nss_util_internal.h"
 #include "crypto/scoped_nss_types.h"
 #include "net/base/features.h"
-#include "net/cert/internal/trust_store_features.h"
+#include "net/cert/internal/platform_trust_store.h"
 #include "net/cert/scoped_nss_types.h"
 #include "net/cert/x509_util.h"
 #include "net/cert/x509_util_nss.h"
@@ -88,8 +89,14 @@ GetAllSlotsAndHandlesForCert(CERTCertificate* nss_cert,
     }
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
-    for (int i = 0; i < item->module->slotCount; ++i) {
-      PK11SlotInfo* slot = item->module->slots[i];
+    // SAFETY: item->module->slots is an array with item->module->slotCount
+    // elements. slotCount is a signed int so use checked_cast when creating
+    // the span.
+    base::span<PK11SlotInfo*> module_slots = UNSAFE_BUFFERS(
+        base::span(item->module->slots,
+                   base::checked_cast<size_t>(item->module->slotCount)));
+
+    for (PK11SlotInfo* slot : module_slots) {
       if (PK11_IsPresent(slot)) {
         CK_OBJECT_HANDLE handle = PK11_FindCertInSlot(slot, nss_cert, nullptr);
         if (handle != CK_INVALID_HANDLE) {
@@ -108,12 +115,10 @@ bool IsMozillaCaPolicyProvided(PK11SlotInfo* slot,
                               /*haslock=*/PR_FALSE) == CK_TRUE;
 }
 
-bool IsCertOnlyInNSSRoots(CERTCertificate* cert) {
-  // In this path, `cert` could be a client certificate, so we should not skip
-  // the chaps module.
+bool IsCertOnlyInNSSRoots(CERTCertificate* cert, bool ignore_chaps_module) {
   std::vector<std::pair<crypto::ScopedPK11Slot, CK_OBJECT_HANDLE>>
       slots_and_handles_for_cert =
-          GetAllSlotsAndHandlesForCert(cert, /*ignore_chaps_module=*/false);
+          GetAllSlotsAndHandlesForCert(cert, ignore_chaps_module);
   for (const auto& [slot, handle] : slots_and_handles_for_cert) {
     if (IsMozillaCaPolicyProvided(slot.get(), handle)) {
       // Cert is an NSS root. Continue looking to see if it also is present in
@@ -201,8 +206,8 @@ void TrustStoreNSS::SyncGetIssuersOf(const bssl::ParsedCertificate* cert,
     bssl::CertErrors parse_errors;
     std::shared_ptr<const bssl::ParsedCertificate> cur_cert =
         bssl::ParsedCertificate::Create(
-            x509_util::CreateCryptoBuffer(base::make_span(
-                node->cert->derCert.data, node->cert->derCert.len)),
+            x509_util::CreateCryptoBuffer(
+                x509_util::CERTCertificateAsSpan(node->cert)),
             {}, &parse_errors);
 
     if (!cur_cert) {
@@ -218,6 +223,14 @@ void TrustStoreNSS::SyncGetIssuersOf(const bssl::ParsedCertificate* cert,
 
 std::vector<TrustStoreNSS::ListCertsResult>
 TrustStoreNSS::ListCertsIgnoringNSSRoots() {
+  // In this path, the returned certs could include client certificates, so we
+  // should not skip the chaps module.
+  return ListCertsIgnoringNSSRootsImpl(/*ignore_chaps_module=*/false);
+}
+
+std::vector<TrustStoreNSS::ListCertsResult>
+TrustStoreNSS::ListCertsIgnoringNSSRootsImpl(bool ignore_chaps_module) {
+  crypto::EnsureNSSInit();
   std::vector<TrustStoreNSS::ListCertsResult> results;
   crypto::ScopedCERTCertList cert_list;
   if (absl::holds_alternative<crypto::ScopedPK11Slot>(
@@ -242,7 +255,7 @@ TrustStoreNSS::ListCertsIgnoringNSSRoots() {
   CERTCertListNode* node;
   for (node = CERT_LIST_HEAD(cert_list); !CERT_LIST_END(node, cert_list);
        node = CERT_LIST_NEXT(node)) {
-    if (IsCertOnlyInNSSRoots(node->cert)) {
+    if (IsCertOnlyInNSSRoots(node->cert, ignore_chaps_module)) {
       continue;
     }
     results.emplace_back(x509_util::DupCERTCertificate(node->cert),
@@ -377,8 +390,8 @@ bssl::CertificateTrust TrustStoreNSS::GetTrustIgnoringSystemTrust(
   // clear the cache. (There are multiple approaches possible, could cache the
   // hash->trust mappings on a per-slot basis, or just cache the end result for
   // each cert, etc.)
-  base::SHA1Digest cert_sha1 = base::SHA1Hash(
-      base::make_span(nss_cert->derCert.data, nss_cert->derCert.len));
+  base::SHA1Digest cert_sha1 =
+      base::SHA1Hash(x509_util::CERTCertificateAsSpan(nss_cert));
 
   // Check the slots in trustOrder ordering. Lower trustOrder values are higher
   // priority, so we can return as soon as we find a matching trust object.
@@ -404,13 +417,12 @@ bssl::CertificateTrust TrustStoreNSS::GetTrustIgnoringSystemTrust(
         DVLOG(1) << "trust object has no CKA_CERT_SHA1_HASH attr";
         continue;
       }
-      base::span<const uint8_t> trust_obj_sha1 = base::make_span(
-          sha1_hash_attr->data, sha1_hash_attr->data + sha1_hash_attr->len);
+      base::span<const uint8_t> trust_obj_sha1 =
+          x509_util::SECItemAsSpan(*sha1_hash_attr);
       DVLOG(1) << "found trust object for sha1 "
                << base::HexEncode(trust_obj_sha1);
 
-      if (!std::equal(trust_obj_sha1.begin(), trust_obj_sha1.end(),
-                      cert_sha1.begin(), cert_sha1.end())) {
+      if (trust_obj_sha1 != cert_sha1) {
         DVLOG(1) << "trust object does not match target cert hash, skipping";
         continue;
       }
@@ -427,8 +439,7 @@ bssl::CertificateTrust TrustStoreNSS::GetTrustIgnoringSystemTrust(
         continue;
       }
       DVLOG(1) << "trust "
-               << base::HexEncode(base::make_span(
-                      trust_attr->data, trust_attr->data + trust_attr->len))
+               << base::HexEncode(x509_util::SECItemAsSpan(*trust_attr))
                << " for sha1 " << base::HexEncode(trust_obj_sha1);
 
       CK_TRUST trust;
@@ -454,11 +465,9 @@ bssl::CertificateTrust TrustStoreNSS::GetTrustIgnoringSystemTrust(
           return bssl::CertificateTrust::ForTrustedLeaf();
         case CKT_NSS_TRUSTED_DELEGATOR: {
           DVLOG(1) << "CKT_NSS_TRUSTED_DELEGATOR -> trust anchor";
-          const bool enforce_anchor_constraints =
-              IsLocalAnchorConstraintsEnforcementEnabled();
           return bssl::CertificateTrust::ForTrustAnchor()
-              .WithEnforceAnchorConstraints(enforce_anchor_constraints)
-              .WithEnforceAnchorExpiry(enforce_anchor_constraints);
+              .WithEnforceAnchorConstraints()
+              .WithEnforceAnchorExpiry();
         }
         case CKT_NSS_MUST_VERIFY_TRUST:
         case CKT_NSS_VALID_DELEGATOR:
@@ -492,35 +501,50 @@ bssl::CertificateTrust TrustStoreNSS::GetTrustForNSSTrust(
     return bssl::CertificateTrust::ForDistrusted();
   }
 
-  bool is_trusted_ca = false;
-  bool is_trusted_leaf = false;
-  const bool enforce_anchor_constraints =
-      IsLocalAnchorConstraintsEnforcementEnabled();
-
   // Determine if the certificate is a trust anchor.
-  if ((trust_flags & CERTDB_TRUSTED_CA) == CERTDB_TRUSTED_CA) {
-    is_trusted_ca = true;
-  }
+  bool is_trusted_ca = (trust_flags & CERTDB_TRUSTED_CA) == CERTDB_TRUSTED_CA;
 
   constexpr unsigned int kTrustedPeerBits =
       CERTDB_TERMINAL_RECORD | CERTDB_TRUSTED;
-  if ((trust_flags & kTrustedPeerBits) == kTrustedPeerBits) {
-    is_trusted_leaf = true;
-  }
+  bool is_trusted_leaf = (trust_flags & kTrustedPeerBits) == kTrustedPeerBits;
 
   if (is_trusted_ca && is_trusted_leaf) {
     return bssl::CertificateTrust::ForTrustAnchorOrLeaf()
-        .WithEnforceAnchorConstraints(enforce_anchor_constraints)
-        .WithEnforceAnchorExpiry(enforce_anchor_constraints);
+        .WithEnforceAnchorConstraints()
+        .WithEnforceAnchorExpiry();
   } else if (is_trusted_ca) {
     return bssl::CertificateTrust::ForTrustAnchor()
-        .WithEnforceAnchorConstraints(enforce_anchor_constraints)
-        .WithEnforceAnchorExpiry(enforce_anchor_constraints);
+        .WithEnforceAnchorConstraints()
+        .WithEnforceAnchorExpiry();
   } else if (is_trusted_leaf) {
     return bssl::CertificateTrust::ForTrustedLeaf();
   }
 
   return bssl::CertificateTrust::ForUnspecified();
+}
+
+std::vector<PlatformTrustStore::CertWithTrust>
+TrustStoreNSS::GetAllUserAddedCerts() {
+  std::vector<PlatformTrustStore::CertWithTrust> user_added_certs;
+  // Do not consider certs from Chaps here, as there should be no way for a
+  // user to have client cert in Chaps with a server auth trust setting.
+  std::vector<ListCertsResult> certs =
+      ListCertsIgnoringNSSRootsImpl(/*ignore_chaps_module=*/true);
+  for (const auto& cert_result : certs) {
+    // Skip user certs, unless the user added the user cert with specific
+    // server auth trust settings.
+    if (cert_result.trust.HasUnspecifiedTrust() &&
+        CERT_IsUserCert(cert_result.cert.get())) {
+      continue;
+    }
+
+    user_added_certs.emplace_back(
+        base::ToVector(
+            x509_util::CERTCertificateAsSpan(cert_result.cert.get())),
+        cert_result.trust);
+  }
+
+  return user_added_certs;
 }
 
 }  // namespace net

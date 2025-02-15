@@ -24,7 +24,7 @@
 #include "gpu/command_buffer/service/shared_image/shared_image_manager.h"
 #include "gpu/command_buffer/service/shared_image/skia_gl_image_representation.h"
 #include "third_party/skia/include/core/SkAlphaType.h"
-#include "third_party/skia/include/gpu/GrTypes.h"
+#include "third_party/skia/include/gpu/ganesh/GrTypes.h"
 #include "ui/gfx/buffer_format_util.h"
 #include "ui/gfx/color_space.h"
 #include "ui/gfx/color_space_win.h"
@@ -54,7 +54,7 @@ std::unique_ptr<DXGISwapChainImageBacking> DXGISwapChainImageBacking::Create(
     const gfx::ColorSpace& color_space,
     GrSurfaceOrigin surface_origin,
     SkAlphaType alpha_type,
-    uint32_t usage,
+    gpu::SharedImageUsageSet usage,
     std::string debug_label) {
   if (!d3d11_device) {
     return nullptr;
@@ -96,9 +96,6 @@ std::unique_ptr<DXGISwapChainImageBacking> DXGISwapChainImageBacking::Create(
   HRESULT hr = dxgi_factory->CreateSwapChainForComposition(
       d3d11_device.Get(), &desc, nullptr, &dxgi_swap_chain);
 
-  base::UmaHistogramSparse(
-      "GPU.DirectComposition.CreateSwapChainForComposition", hr);
-
   // If CreateSwapChainForComposition fails, we cannot draw to the
   // browser window. Return false after disabling Direct Composition support
   // and let the Renderer handle it. Either the GPU command buffer or the GPU
@@ -106,9 +103,6 @@ std::unique_ptr<DXGISwapChainImageBacking> DXGISwapChainImageBacking::Create(
   if (FAILED(hr)) {
     DLOG(ERROR) << "CreateSwapChainForComposition failed: "
                 << logging::SystemErrorCodeToString(hr);
-    // Disable direct composition because SwapChain creation might fail again
-    // next time.
-    gl::SetDirectCompositionSwapChainFailed();
     return nullptr;
   }
 
@@ -150,7 +144,7 @@ DXGISwapChainImageBacking::DXGISwapChainImageBacking(
     const gfx::ColorSpace& color_space,
     GrSurfaceOrigin surface_origin,
     SkAlphaType alpha_type,
-    uint32_t usage,
+    gpu::SharedImageUsageSet usage,
     std::string debug_label,
     Microsoft::WRL::ComPtr<ID3D11Device> d3d11_device,
     Microsoft::WRL::ComPtr<IDXGISwapChain1> dxgi_swap_chain,
@@ -170,8 +164,8 @@ DXGISwapChainImageBacking::DXGISwapChainImageBacking(
       dxgi_swap_chain_(std::move(dxgi_swap_chain)),
       buffers_need_alpha_initialization_count_(
           buffers_need_alpha_initialization_count) {
-  const bool has_scanout = !!(usage & SHARED_IMAGE_USAGE_SCANOUT);
-  const bool has_write = !!(usage & SHARED_IMAGE_USAGE_DISPLAY_WRITE);
+  const bool has_scanout = usage.Has(SHARED_IMAGE_USAGE_SCANOUT);
+  const bool has_write = usage.Has(SHARED_IMAGE_USAGE_DISPLAY_WRITE);
   DCHECK(has_scanout);
   DCHECK(has_write);
 }
@@ -345,8 +339,8 @@ DXGISwapChainImageBacking::ProduceSkiaGanesh(
     auto gl_format_desc = context_state->GetGLFormatCaps().ToGLFormatDesc(
         format(), /*plane_index=*/0);
     gl_texture_holder_ = D3DImageBacking::CreateGLTexture(
-        gl_format_desc, size(), color_space(), backbuffer_texture,
-        GL_TEXTURE_2D, /*array_slice=*/0, /*plane_index=*/0, dxgi_swap_chain_);
+        gl_format_desc, backbuffer_texture, GL_TEXTURE_2D, /*array_slice=*/0,
+        /*plane_index=*/0);
     if (!gl_texture_holder_) {
       LOG(ERROR) << "Failed to create GL texture.";
       return nullptr;
@@ -393,7 +387,7 @@ DXGISwapChainImageBacking::ProduceSkiaGraphite(
       std::move(dawn_representation), context_state,
       context_state->gpu_main_graphite_recorder(), manager, this, tracker);
 #else
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 #endif  // BUILDFLAG(SKIA_USE_DAWN)
 }
 

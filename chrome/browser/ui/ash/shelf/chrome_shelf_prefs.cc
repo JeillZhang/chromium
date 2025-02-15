@@ -10,12 +10,15 @@
 #include <map>
 #include <memory>
 #include <ostream>
+#include <set>
 #include <utility>
 
 #include "ash/constants/ash_features.h"
 #include "ash/constants/ash_pref_names.h"
 #include "ash/constants/ash_switches.h"
+#include "ash/constants/web_app_id_constants.h"
 #include "ash/public/cpp/shelf_types.h"
+#include "ash/webui/mall/app_id.h"
 #include "ash/webui/projector_app/public/cpp/projector_app_constants.h"
 #include "base/check.h"
 #include "base/check_op.h"
@@ -25,7 +28,6 @@
 #include "base/feature_list.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_functions.h"
-#include "base/ranges/algorithm.h"
 #include "base/values.h"
 #include "chrome/browser/apps/app_preload_service/app_preload_service.h"
 #include "chrome/browser/apps/app_service/app_service_proxy.h"
@@ -35,19 +37,17 @@
 #include "chrome/browser/ash/app_list/app_list_syncable_service.h"
 #include "chrome/browser/ash/app_list/app_list_syncable_service_factory.h"
 #include "chrome/browser/ash/app_list/arc/arc_app_list_prefs.h"
-#include "chrome/browser/ash/crosapi/browser_util.h"
-#include "chrome/browser/ash/file_manager/app_id.h"
 #include "chrome/browser/ash/file_manager/prefs_migration_uma.h"
 #include "chrome/browser/ash/login/demo_mode/demo_session.h"
 #include "chrome/browser/ash/profiles/profile_helper.h"
 #include "chrome/browser/prefs/pref_service_syncable_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sync/sync_service_factory.h"
-#include "chrome/browser/ui/ash/default_pinned_apps.h"
 #include "chrome/browser/ui/ash/shelf/shelf_controller_helper.h"
 #include "chrome/browser/ui/ash/system_web_apps/system_web_app_ui_utils.h"
-#include "chrome/browser/web_applications/web_app_id_constants.h"
 #include "chrome/common/pref_names.h"
+#include "chromeos/ash/components/default_pinned_apps/default_pinned_apps.h"
+#include "chromeos/ash/components/file_manager/app_id.h"
 #include "chromeos/constants/chromeos_features.h"
 #include "components/app_constants/constants.h"
 #include "components/pref_registry/pref_registry_syncable.h"
@@ -94,9 +94,7 @@ syncer::StringOrdinal GetAdjacentPosition(
     if (!sync_item->item_pin_ordinal.IsValid()) {
       continue;
     }
-    if (exclude_chrome && (item_id == app_constants::kChromeAppId ||
-                           item_id == app_constants::kLacrosAppId ||
-                           item_id == app_constants::kAshDebugBrowserAppId)) {
+    if (exclude_chrome && item_id == app_constants::kChromeAppId) {
       continue;
     }
     if (position.IsValid() && !compare(position, sync_item->item_pin_ordinal)) {
@@ -168,8 +166,7 @@ void EnsurePinnedOrMakeFirst(
     app_list::AppListSyncableService* syncable_service) {
   // This piece prevents accidental side-effects to the SetPinPosition() call
   // below.
-  CHECK(app_id == app_constants::kChromeAppId ||
-        app_id == app_constants::kLacrosAppId);
+  CHECK_EQ(app_id, app_constants::kChromeAppId);
   syncer::StringOrdinal position = syncable_service->GetPinPosition(app_id);
   if (!position.IsValid()) {
     position = CreateFirstPinPosition(syncable_service);
@@ -208,8 +205,9 @@ struct PinInfo {
 // This is required because tablet form factor devices do not sync app
 // positions and pin preferences.
 std::string GetShelfDefaultPinLayoutPref() {
-  if (ash::switches::IsTabletFormFactor())
+  if (ash::switches::IsTabletFormFactor()) {
     return prefs::kShelfDefaultPinLayoutRollsForTabletFormFactor;
+  }
 
   return prefs::kShelfDefaultPinLayoutRolls;
 }
@@ -268,46 +266,6 @@ bool IsOnlyPolicyPinned(app_list::AppListSyncableService::SyncItem* sync_item) {
          ash::features::IsRemoveStalePolicyPinnedAppsFromShelfEnabled();
 }
 
-// In order to ensure that the chrome icon in the shelf is consistent across
-// devices, we must apply the following rules:
-// (1) If lacros is the only web-browser (lacros_only), transform [sync id]
-// kChromeAppId <-> [shelf id] kLacrosAppId
-// (2) If lacros is the only web-browser and ash debug browser is enabled,
-// transform [sync id] kAshDebugBrowserAppId <-> [shelf id] kChromeAppId
-std::string GetShelfId(const std::string& sync_id) {
-  if (!crosapi::browser_util::IsAshWebBrowserEnabled()) {
-    if (sync_id == app_constants::kChromeAppId) {
-      return app_constants::kLacrosAppId;
-    }
-    if (ash::switches::IsAshDebugBrowserEnabled() &&
-        sync_id == app_constants::kAshDebugBrowserAppId) {
-      return app_constants::kChromeAppId;
-    }
-  }
-
-  return sync_id;
-}
-
-// In order to ensure that the chrome icon in the shelf is consistent across
-// devices, we must apply the following rules:
-// (1) If lacros is the only web-browser (lacros_only), transform [shelf id]
-// kLacrosAppId <-> [sync id] kChromeAppId
-// (2) If lacros is the only web-browser and ash debug browser is enabled,
-// transform [shelf id] kChromeAppId <-> [sync id] kAshDebugBrowserAppId
-std::string GetSyncId(const std::string& shelf_id) {
-  if (!crosapi::browser_util::IsAshWebBrowserEnabled()) {
-    if (shelf_id == app_constants::kLacrosAppId) {
-      return app_constants::kChromeAppId;
-    }
-    if (ash::switches::IsAshDebugBrowserEnabled() &&
-        shelf_id == app_constants::kChromeAppId) {
-      return app_constants::kAshDebugBrowserAppId;
-    }
-  }
-
-  return shelf_id;
-}
-
 // Helper to create and insert pins on the shelf for the set of apps defined in
 // |app_ids| after Chrome in the first position and before any other pinned app.
 // If Chrome is not the first pinned app then apps are pinned before any other
@@ -359,45 +317,41 @@ void InsertPinsAfterChromeAndBeforeFirstPinnedApp(
   }
 }
 
-void AddContainerAppPinIfNeeded(
+void AddGeminiAppPinIfNeeded(
     Profile* profile,
     ShelfControllerHelper* helper,
     app_list::AppListSyncableService* syncable_service) {
 #if BUILDFLAG(GOOGLE_CHROME_BRANDING)
-  if (!chromeos::features::IsContainerAppPreinstallEnabled()) {
+  if (!chromeos::features::IsGeminiAppPreinstallEnabled()) {
     return;
   }
 
-  if (!profile->GetPrefs()
-           ->GetList(prefs::kShelfContainerAppPinRolls)
-           .empty()) {
+  if (!profile->GetPrefs()->GetList(prefs::kShelfGeminiAppPinRolls).empty()) {
     return;
   }
 
-  const std::string app_id = web_app::kContainerAppId;
-
-  if (!helper->IsAppDefaultInstalled(profile, app_id)) {
+  if (!helper->IsAppDefaultInstalled(profile, ash::kGeminiAppId)) {
     return;
   }
 
   const app_list::AppListSyncableService::SyncItem* sync_item =
-      syncable_service->GetSyncItem(app_id);
+      syncable_service->GetSyncItem(ash::kGeminiAppId);
   if (sync_item && sync_item->item_pin_ordinal.IsValid()) {
     if (sync_item->is_user_pinned.value_or(true)) {
       ScopedListPrefUpdate update(profile->GetPrefs(),
-                                  prefs::kShelfContainerAppPinRolls);
+                                  prefs::kShelfGeminiAppPinRolls);
       update->Append("v1");
     }
     return;
   }
 
-  // Pin the container app before chrome.
-  syncable_service->SetPinPosition(app_id,
+  // Pin the Gemini app before Chrome.
+  syncable_service->SetPinPosition(ash::kGeminiAppId,
                                    CreateFirstPinPosition(syncable_service),
                                    /*is_policy_initiated=*/false);
   {
     ScopedListPrefUpdate update(profile->GetPrefs(),
-                                prefs::kShelfContainerAppPinRolls);
+                                prefs::kShelfGeminiAppPinRolls);
     update->Append("v1");
   }
 #endif  // GOOGLE_CHROME_BRANDING
@@ -405,14 +359,31 @@ void AddContainerAppPinIfNeeded(
 
 // Ensures the Mall app is pinned to the shelf after Chrome, when Mall is
 // enabled.
-void AddMallPin(app_list::AppListSyncableService* syncable_service) {
+void AddMallPinIfNeeded(Profile* profile,
+                        app_list::AppListSyncableService* syncable_service) {
   if (!base::FeatureList::IsEnabled(chromeos::features::kCrosMall)) {
     return;
   }
 
+  // When Mall SWA is enabled, pin the Mall SWA once, and use a synced pref to
+  // make sure it doesn't pin a second time. Users have the option to unpin the
+  // SWA.
+  if (!profile->GetPrefs()->GetList(prefs::kShelfMallAppPinRolls).empty()) {
+    return;
+  }
+
+  if (!ShelfControllerHelper::IsAppDefaultInstalled(profile,
+                                                    ash::kMallSystemAppId)) {
+    return;
+  }
+
   InsertPinsAfterChromeAndBeforeFirstPinnedApp(syncable_service,
-                                               {{web_app::kMallAppId}},
+                                               {{ash::kMallSystemAppId}},
                                                /*is_policy_initiated=*/false);
+
+  ScopedListPrefUpdate update(profile->GetPrefs(),
+                              prefs::kShelfMallAppPinRolls);
+  update->Append("v1");
 }
 
 void SetPreloadPinComplete(Profile* profile) {
@@ -434,11 +405,37 @@ void ChromeShelfPrefs::RegisterProfilePrefs(
       prefs::kShelfDefaultPinLayoutRolls,
       user_prefs::PrefRegistrySyncable::SYNCABLE_OS_PRIORITY_PREF);
   registry->RegisterListPref(
-      prefs::kShelfContainerAppPinRolls,
+      prefs::kShelfGeminiAppPinRolls,
       user_prefs::PrefRegistrySyncable::SYNCABLE_OS_PREF);
   registry->RegisterListPref(
       prefs::kShelfDefaultPinLayoutRollsForTabletFormFactor,
       PrefRegistry::NO_REGISTRATION_FLAGS);
+  registry->RegisterListPref(
+      prefs::kShelfMallAppPinRolls,
+      user_prefs::PrefRegistrySyncable::SYNCABLE_OS_PREF);
+}
+
+// TODO(crbug.com/350769496): Fixes bug from M127 beta, can be removed once M127
+// is no longer in stable (end of 2024, or mid 2025 is ok).
+void ChromeShelfPrefs::CleanupPreloadPrefs(PrefService* profile_prefs) {
+  constexpr std::array<const char*, 2> kPrefNames{
+      prefs::kShelfDefaultPinLayoutRolls,
+      prefs::kShelfDefaultPinLayoutRollsForTabletFormFactor};
+
+  for (auto* const pref_name : kPrefNames) {
+    // Deduplicate items in list.
+    ScopedListPrefUpdate list(profile_prefs, pref_name);
+    std::set<base::Value> set;
+    for (const auto& item : *list) {
+      set.insert(item.Clone());
+    }
+    if (set.size() < list->size()) {
+      list->clear();
+      for (const auto& item : set) {
+        list->Append(item.Clone());
+      }
+    }
+  }
 }
 
 void ChromeShelfPrefs::InitLocalPref(PrefService* prefs,
@@ -475,8 +472,7 @@ std::vector<std::string> ChromeShelfPrefs::GetAppsPinnedByPolicy(
     }
 
     if (ash::DemoSession::Get() &&
-        !ash::DemoSession::Get()->ShouldShowAndroidOrChromeAppInShelf(
-            *policy_entry)) {
+        !ash::DemoSession::Get()->ShouldShowAppInShelf(*policy_entry)) {
       continue;
     }
 
@@ -530,10 +526,9 @@ std::vector<ash::ShelfID> ChromeShelfPrefs::GetPinnedAppsFromSync(
     AddDefaultApps();
   }
 
-  AddMallPin(syncable_service);
-
   if (IsSafeToApplyDefaultPinLayout(profile_)) {
-    AddContainerAppPinIfNeeded(profile_, helper, syncable_service);
+    AddGeminiAppPinIfNeeded(profile_, helper, syncable_service);
+    AddMallPinIfNeeded(profile_, syncable_service);
   }
 
   // Handle pins, forced by policy. In case Chrome is first app they are added
@@ -547,23 +542,9 @@ std::vector<ash::ShelfID> ChromeShelfPrefs::GetPinnedAppsFromSync(
                                                /*is_policy_initiated=*/true);
 
   // Pin preload apps only if none are set by policy.
-  if (policy_pinned_apps.empty() && IsSafeToApplyDefaultPinLayout(profile_)) {
+  if (!DidAddPreloadApps() && policy_pinned_apps.empty() &&
+      IsSafeToApplyDefaultPinLayout(profile_)) {
     PinPreloadApps();
-  }
-
-  // If Lacros is enabled and allowed for this user type, ensure the Lacros icon
-  // is pinned. Lacros doesn't support multi-signin, so only add the icon for
-  // the primary user.
-  if (crosapi::browser_util::IsLacrosEnabled() &&
-      ash::ProfileHelper::IsPrimaryProfile(profile_)) {
-    syncer::StringOrdinal lacros_position =
-        syncable_service->GetPinPosition(app_constants::kLacrosAppId);
-    if (!lacros_position.IsValid()) {
-      // If Lacros isn't already pinned, add it to the right of the Chrome icon.
-      InsertPinsAfterChromeAndBeforeFirstPinnedApp(
-          syncable_service, {{app_constants::kLacrosAppId}},
-          /*is_policy_initiated=*/false);
-    }
   }
 
   std::vector<std::string> policy_delta_remove_from_shelf;
@@ -578,12 +559,7 @@ std::vector<ash::ShelfID> ChromeShelfPrefs::GetPinnedAppsFromSync(
       continue;
     }
 
-    // kChromeAppId is the only valid sync ID for the browser.
-    if (item_id == app_constants::kLacrosAppId) {
-      continue;
-    }
-
-    std::string app_id = GetShelfId(item_id);
+    const std::string& app_id = item_id;
 
     // All sync items must be valid app service apps to be added to the shelf
     // with the exception of ash-chrome, which for legacy reasons does not use
@@ -602,7 +578,7 @@ std::vector<ash::ShelfID> ChromeShelfPrefs::GetPinnedAppsFromSync(
       policy_delta_remove_from_shelf.push_back(item_id);
       continue;
     }
-    pin_infos.emplace_back(std::move(app_id), sync_item->item_pin_ordinal);
+    pin_infos.emplace_back(app_id, sync_item->item_pin_ordinal);
   }
 
   for (const auto& item_id : policy_delta_remove_from_shelf) {
@@ -610,12 +586,12 @@ std::vector<ash::ShelfID> ChromeShelfPrefs::GetPinnedAppsFromSync(
   }
 
   // Sort pins according their ordinals.
-  base::ranges::sort(pin_infos, syncer::StringOrdinal::LessThanFn(),
-                     &PinInfo::item_ordinal);
+  std::ranges::sort(pin_infos, syncer::StringOrdinal::LessThanFn(),
+                    &PinInfo::item_ordinal);
 
   // Convert to ShelfID array.
   std::vector<ash::ShelfID> pins;
-  base::ranges::transform(
+  std::ranges::transform(
       pin_infos, std::back_inserter(pins),
       [](const auto& pin_info) { return ash::ShelfID(pin_info.app_id); });
 
@@ -642,7 +618,7 @@ void ChromeShelfPrefs::SetPinPosition(
     const ash::ShelfID& shelf_id_before,
     base::span<const ash::ShelfID> shelf_ids_after,
     bool pinned_by_policy) {
-  const std::string app_id = GetSyncId(shelf_id.app_id);
+  const std::string& app_id = shelf_id.app_id;
 
   if (!shelf_id.launch_id.empty()) {
     VLOG(2) << "Syncing set pin for '" << app_id
@@ -651,7 +627,7 @@ void ChromeShelfPrefs::SetPinPosition(
     return;
   }
 
-  const std::string app_id_before = GetSyncId(shelf_id_before.app_id);
+  const std::string& app_id_before = shelf_id_before.app_id;
 
   DCHECK(!app_id.empty());
   DCHECK_NE(app_id, app_id_before);
@@ -659,15 +635,16 @@ void ChromeShelfPrefs::SetPinPosition(
   auto* syncable_service =
       app_list::AppListSyncableServiceFactory::GetForProfile(profile_);
   // Some unit tests may not have this service.
-  if (!syncable_service)
+  if (!syncable_service) {
     return;
+  }
 
   syncer::StringOrdinal position_before =
       app_id_before.empty() ? syncer::StringOrdinal()
                             : syncable_service->GetPinPosition(app_id_before);
   syncer::StringOrdinal position_after;
   for (const auto& shelf_id_after : shelf_ids_after) {
-    std::string app_id_after = GetSyncId(shelf_id_after.app_id);
+    const std::string& app_id_after = shelf_id_after.app_id;
     DCHECK_NE(app_id_after, app_id);
     DCHECK_NE(app_id_after, app_id_before);
     syncer::StringOrdinal position =
@@ -737,19 +714,6 @@ void ChromeShelfPrefs::EnsureProjectorShelfPinConsistency() {
 void ChromeShelfPrefs::EnsureChromePinned() {
   auto* syncable_service =
       app_list::AppListSyncableServiceFactory::GetForProfile(profile_);
-  // If ash is the only web browser or if lacros is the only web browser, ensure
-  // that ash-chrome is pinned. The sync<->shelf translation layer ensures that
-  // we will use the appropriate shelf id.
-  if (!crosapi::browser_util::IsLacrosEnabled() ||
-      !crosapi::browser_util::IsAshWebBrowserEnabled()) {
-    EnsurePinnedOrMakeFirst(app_constants::kChromeAppId, syncable_service);
-    return;
-  }
-
-  // Otherwise, we are in a transition situation where both the ash and lacros
-  // web browsers are available. To ensure consistency with legacy behavior, we
-  // ensure both web browsers are pinned.
-  EnsurePinnedOrMakeFirst(app_constants::kLacrosAppId, syncable_service);
   EnsurePinnedOrMakeFirst(app_constants::kChromeAppId, syncable_service);
 }
 
@@ -789,12 +753,15 @@ void ChromeShelfPrefs::AddDefaultApps() {
   update->Append(kDefaultPinnedAppsKey);
 }
 
+bool ChromeShelfPrefs::DidAddPreloadApps() const {
+  return base::Contains(
+      profile_->GetPrefs()->GetList(GetShelfDefaultPinLayoutPref()),
+      kPreloadPinnedAppsKey);
+}
+
 void ChromeShelfPrefs::PinPreloadApps() {
   // Only pin once per user.
-  if (pending_preload_apps_.empty() ||
-      base::Contains(
-          profile_->GetPrefs()->GetList(GetShelfDefaultPinLayoutPref()),
-          kPreloadPinnedAppsKey)) {
+  if (pending_preload_apps_.empty() || DidAddPreloadApps()) {
     return;
   }
 
@@ -875,10 +842,13 @@ void ChromeShelfPrefs::AttachProfile(Profile* profile) {
   profile_ = profile;
   needs_consistency_migrations_ = true;
   sync_service_observer_.Reset();
+  if (profile_) {
+    CleanupPreloadPrefs(profile_->GetPrefs());
+  }
 
   pending_preload_apps_.clear();
   preload_pin_order_.clear();
-  if (profile_) {
+  if (profile_ && !DidAddPreloadApps()) {
     if (auto* app_preload_service = apps::AppPreloadService::Get(profile_)) {
       app_preload_service->GetPinApps(
           base::BindOnce(&ChromeShelfPrefs::OnGetPinPreloadApps,
@@ -919,7 +889,7 @@ void ChromeShelfPrefs::OnGetPinPreloadApps(
     const std::vector<apps::PackageId>& pin_order) {
   pending_preload_apps_ = pin_apps;
   preload_pin_order_ = pin_order;
-  if (pin_apps.empty()) {
+  if (pin_apps.empty() && !DidAddPreloadApps()) {
     SetPreloadPinComplete(profile_);
   }
 }

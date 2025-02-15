@@ -16,7 +16,6 @@ import org.chromium.chrome.browser.flags.ActivityType;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabLaunchType;
-import org.chromium.chrome.browser.tasks.tab_groups.TabGroupModelFilter;
 import org.chromium.content_public.browser.LoadUrlParams;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.content_public.common.ResourceRequestBody;
@@ -24,14 +23,14 @@ import org.chromium.url.GURL;
 import org.chromium.url.Origin;
 
 /** Bridges between the C++ and Java {@link TabModel} interfaces. */
-public abstract class TabModelJniBridge implements TabModel {
+public abstract class TabModelJniBridge implements TabModelInternal {
     private final Profile mProfile;
 
     /** The type of the Activity for which this tab model works. */
     private final @ActivityType int mActivityType;
 
-    /** Whether the model should be tracked in native. */
-    private final boolean mTrackInNativeModelList;
+    /** Whether the model is for archvied tabs. */
+    private final boolean mIsArchivedTabModel;
 
     /** Native TabModelJniBridge pointer, which will be set by {@link #initializeNative()}. */
     private long mNativeTabModelJniBridge;
@@ -39,17 +38,14 @@ public abstract class TabModelJniBridge implements TabModel {
     /**
      * @param profile The profile this TabModel belongs to.
      * @param activityType The type of activity this TabModel was created in.
-     * @param trackInNativeModelList Whether this TabModel should be tracked in the native
-     *     TabModelList. TabModelList is used to track tabs for sync (e.g. sessions, send tab to
-     *     self).
+     * @param isArchivedTabModel Whether this tab model is for archived tabs. When true, excludes
+     *     the model from broadcasting sync updates.
      */
     public TabModelJniBridge(
-            @NonNull Profile profile,
-            @ActivityType int activityType,
-            boolean trackInNativeModelList) {
+            @NonNull Profile profile, @ActivityType int activityType, boolean isArchivedTabModel) {
         mProfile = profile;
         mActivityType = activityType;
-        mTrackInNativeModelList = trackInNativeModelList;
+        mIsArchivedTabModel = isArchivedTabModel;
     }
 
     /** Initializes the native-side counterpart to this class. */
@@ -57,11 +53,7 @@ public abstract class TabModelJniBridge implements TabModel {
         assert mNativeTabModelJniBridge == 0;
         mNativeTabModelJniBridge =
                 TabModelJniBridgeJni.get()
-                        .init(
-                                TabModelJniBridge.this,
-                                profile,
-                                mActivityType,
-                                mTrackInNativeModelList);
+                        .init(TabModelJniBridge.this, profile, mActivityType, mIsArchivedTabModel);
     }
 
     /** Returns whether the native-side pointer has been initialized. */
@@ -81,6 +73,16 @@ public abstract class TabModelJniBridge implements TabModel {
     @Override
     public boolean isIncognito() {
         return mProfile.isOffTheRecord();
+    }
+
+    @Override
+    public boolean isOffTheRecord() {
+        return mProfile.isOffTheRecord();
+    }
+
+    @Override
+    public boolean isIncognitoBranded() {
+        return mProfile.isIncognitoBranded();
     }
 
     @Override
@@ -108,11 +110,12 @@ public abstract class TabModelJniBridge implements TabModel {
 
     /**
      * Sets the TabModel's index.
+     *
      * @param index Index of the Tab to select.
      */
     @CalledByNative
     private void setIndex(int index) {
-        TabModelUtils.setIndex(this, index, false);
+        TabModelUtils.setIndex(this, index);
     }
 
     @Override
@@ -120,7 +123,17 @@ public abstract class TabModelJniBridge implements TabModel {
     public abstract Tab getTabAt(int index);
 
     /**
+     * Closes all tabs. This bypasses protections for shared tab groups where placeholder tabs are
+     * created to ensure collaboration data is not destroyed. Prefer {@link #closeTabAt()} to ensure
+     * collaboration data is not destroyed by mistake. This is primarily intended for test usage
+     * where the loss of collaboration data is acceptable.
+     */
+    @CalledByNative
+    protected abstract void forceCloseAllTabs();
+
+    /**
      * Closes the Tab at a particular index.
+     *
      * @param index Index of the tab to close.
      * @return Whether the was successfully closed.
      */
@@ -144,11 +157,12 @@ public abstract class TabModelJniBridge implements TabModel {
      * @param parent      The parent tab that creates the new tab.
      * @param profile     The profile for which to create the new tab.
      * @param webContents A {@link WebContents} object.
+     * @param select      Select the created tab.
      * @return Whether or not the Tab was successfully created.
      */
     @CalledByNative
     protected abstract boolean createTabWithWebContents(
-            Tab parent, Profile profile, WebContents webContents);
+            Tab parent, Profile profile, WebContents webContents, boolean select);
 
     @CalledByNative
     protected abstract void openNewTab(
@@ -175,13 +189,10 @@ public abstract class TabModelJniBridge implements TabModel {
     @CalledByNative
     @VisibleForTesting
     static boolean isTabInTabGroup(@NonNull Tab tab) {
-        final TabModelFilter filter = TabModelUtils.getTabModelFilterByTab(tab);
+        final TabGroupModelFilter filter = TabModelUtils.getTabGroupModelFilterByTab(tab);
         if (filter == null) return false;
 
-        assert filter instanceof TabGroupModelFilter;
-        final TabGroupModelFilter groupingFilter = (TabGroupModelFilter) filter;
-
-        return groupingFilter.isTabInTabGroup(tab);
+        return filter.isTabInTabGroup(tab);
     }
 
     @Override

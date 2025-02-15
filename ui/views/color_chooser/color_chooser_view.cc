@@ -2,12 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#if defined(UNSAFE_BUFFERS_BUILD)
-// TODO(https://crbug.com/344639839): fix the unsafe buffer errors in this file,
-// then remove this pragma.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "ui/views/color_chooser/color_chooser_view.h"
 
 #include <stdint.h>
@@ -18,6 +12,7 @@
 #include <utility>
 
 #include "base/check.h"
+#include "base/compiler_specific.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "cc/paint/paint_flags.h"
@@ -29,6 +24,7 @@
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
+#include "ui/base/mojom/ui_base_types.mojom-shared.h"
 #include "ui/color/color_id.h"
 #include "ui/color/color_provider.h"
 #include "ui/events/event.h"
@@ -39,6 +35,7 @@
 #include "ui/gfx/geometry/insets.h"
 #include "ui/native_theme/native_theme.h"
 #include "ui/strings/grit/ui_strings.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/background.h"
 #include "ui/views/border.h"
 #include "ui/views/color_chooser/color_chooser_listener.h"
@@ -63,14 +60,16 @@ std::u16string GetColorText(SkColor color) {
 }
 
 bool GetColorFromText(const std::u16string& text, SkColor* result) {
-  if (text.size() != 6 && !(text.size() == 7 && text[0] == '#'))
+  if (text.size() != 6 && !(text.size() == 7 && text[0] == '#')) {
     return false;
+  }
 
   std::string input =
       base::UTF16ToUTF8((text.size() == 6) ? text : text.substr(1));
   std::array<uint8_t, 3> hex;
-  if (!base::HexStringToSpan(input, hex))
+  if (!base::HexStringToSpan(input, hex)) {
     return false;
+  }
 
   *result = SkColorSetRGB(hex[0], hex[1], hex[2]);
   return true;
@@ -104,8 +103,8 @@ class LocatedEventHandlerView : public views::View {
   }
 
   void OnGestureEvent(ui::GestureEvent* event) override {
-    if (event->type() == ui::ET_GESTURE_TAP ||
-        event->type() == ui::ET_GESTURE_TAP_DOWN ||
+    if (event->type() == ui::EventType::kGestureTap ||
+        event->type() == ui::EventType::kGestureTapDown ||
         event->IsScrollGestureEvent()) {
       ProcessEventAtLocation(event->location());
       event->SetHandled();
@@ -126,10 +125,11 @@ void DrawGradientRect(const gfx::Rect& rect,
                          SkColor4f::FromColor(end_color)};
   SkPoint points[2];
   points[0].iset(0, 0);
-  if (is_horizontal)
+  if (is_horizontal) {
     points[1].iset(rect.width() + 1, 0);
-  else
+  } else {
     points[1].iset(0, rect.height() + 1);
+  }
   cc::PaintFlags flags;
   flags.setShader(cc::PaintShader::MakeLinearGradient(points, colors, nullptr,
                                                       2, SkTileMode::kClamp));
@@ -327,16 +327,18 @@ void SaturationValueView::OnHueChanged(SkScalar hue) {
 
 void SaturationValueView::OnSaturationValueChanged(SkScalar saturation,
                                                    SkScalar value) {
-  if (saturation_ == saturation && value_ == value)
+  if (saturation_ == saturation && value_ == value) {
     return;
+  }
 
   saturation_ = saturation;
   value_ = value;
   SkScalar scalar_size = SkIntToScalar(kSaturationValueSize - 1);
   int x = SkScalarFloorToInt(saturation * scalar_size) + kBorderWidth;
   int y = SkScalarFloorToInt((SK_Scalar1 - value) * scalar_size) + kBorderWidth;
-  if (gfx::Point(x, y) == marker_position_)
+  if (gfx::Point(x, y) == marker_position_) {
     return;
+  }
 
   marker_position_.set_x(x);
   marker_position_.set_y(y);
@@ -423,10 +425,11 @@ SelectedColorPatchView::SelectedColorPatchView() {
 }
 
 void SelectedColorPatchView::SetColor(SkColor color) {
-  if (!background())
+  if (!background()) {
     SetBackground(CreateSolidBackground(color));
-  else
+  } else {
     background()->SetNativeControlColor(color);
+  }
   SchedulePaint();
 }
 
@@ -459,7 +462,7 @@ std::unique_ptr<View> ColorChooser::BuildView() {
   auto textfield = std::make_unique<Textfield>();
   textfield->set_controller(this);
   textfield->SetDefaultWidthInChars(kTextfieldLengthInChars);
-  textfield->SetAccessibleName(
+  textfield->GetViewAccessibility().SetName(
       l10n_util::GetStringUTF16(IDS_APP_ACCNAME_COLOR_CHOOSER_HEX_INPUT));
   textfield_ = container2->AddChildView(std::move(textfield));
   selected_color_patch_ =
@@ -537,10 +540,11 @@ bool ColorChooser::HandleKeyEvent(Textfield* sender,
                                   const ui::KeyEvent& key_event) {
   DCHECK(IsViewAttached());
 
-  if (key_event.type() != ui::ET_KEY_PRESSED ||
+  if (key_event.type() != ui::EventType::kKeyPressed ||
       (key_event.key_code() != ui::VKEY_RETURN &&
-       key_event.key_code() != ui::VKEY_ESCAPE))
+       key_event.key_code() != ui::VKEY_ESCAPE)) {
     return false;
+  }
 
   tracker_.view()->GetWidget()->Close();
   return true;
@@ -553,7 +557,7 @@ std::unique_ptr<WidgetDelegate> ColorChooser::MakeWidgetDelegate() {
   delegate->SetCanMinimize(false);
   delegate->SetContentsView(BuildView());
   delegate->SetInitiallyFocusedView(textfield_);
-  delegate->SetModalType(ui::MODAL_TYPE_WINDOW);
+  delegate->SetModalType(ui::mojom::ModalType::kWindow);
   delegate->RegisterWindowClosingCallback(base::BindOnce(
       &ColorChooser::OnViewClosing, weak_ptr_factory_.GetWeakPtr()));
 
@@ -563,10 +567,12 @@ std::unique_ptr<WidgetDelegate> ColorChooser::MakeWidgetDelegate() {
 ColorChooser::ColorChooser(ColorChooserListener* listener, SkColor initial)
     : listener_(listener), initial_color_(initial) {}
 
-ColorChooser::~ColorChooser() = default;
+ColorChooser::~ColorChooser() {
+  textfield_->set_controller(nullptr);
+}
 
 void ColorChooser::SetColor(SkColor color) {
-  SkColorToHSV(color, hsv_);
+  UNSAFE_TODO(SkColorToHSV(color, hsv_.data()));
   listener_->OnColorChosen(GetColor());
 }
 
@@ -582,7 +588,7 @@ void ColorChooser::SetSaturationValue(SkScalar saturation, SkScalar value) {
 }
 
 SkColor ColorChooser::GetColor() const {
-  return SkHSVToColor(255, hsv_);
+  UNSAFE_TODO(return SkHSVToColor(255, hsv_.data()));
 }
 
 void ColorChooser::OnViewClosing() {

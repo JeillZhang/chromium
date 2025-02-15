@@ -32,6 +32,7 @@
 
 #include <memory>
 
+#include "base/metrics/histogram_functions.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/mojom/fenced_frame/fenced_frame.mojom-blink.h"
 #include "third_party/blink/public/mojom/frame/frame.mojom-blink.h"
@@ -44,7 +45,6 @@
 #include "third_party/blink/renderer/core/dom/document_type.h"
 #include "third_party/blink/renderer/core/dom/events/event.h"
 #include "third_party/blink/renderer/core/dom/increment_load_event_delay_count.h"
-#include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/execution_context/window_agent_factory.h"
 #include "third_party/blink/renderer/core/frame/frame_owner.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
@@ -110,6 +110,10 @@ void Frame::Trace(Visitor* visitor) const {
 
 bool Frame::Detach(FrameDetachType type) {
   TRACE_EVENT0("blink", "Frame::Detach");
+  const std::string_view histogram_suffix =
+      (type == FrameDetachType::kRemove) ? "Remove" : "Swap";
+  base::ScopedUmaHistogramTimer histogram_timer(
+      base::StrCat({"Navigation.Frame.Detach.", histogram_suffix}));
   DCHECK(client_);
   // Detach() can be re-entered, so this can't simply DCHECK(IsAttached()).
   DCHECK(!IsDetached());
@@ -324,8 +328,7 @@ void Frame::NotifyUserActivationInFrameTree(
   // See the "Same-origin Visibility" section in |UserActivationState| class
   // doc.
   auto* local_frame = DynamicTo<LocalFrame>(this);
-  if (local_frame &&
-      RuntimeEnabledFeatures::UserActivationSameOriginVisibilityEnabled()) {
+  if (local_frame) {
     const SecurityOrigin* security_origin =
         local_frame->GetSecurityContext()->GetSecurityOrigin();
 
@@ -500,10 +503,10 @@ void Frame::UpdateVisibleToHitTesting() {
     DidChangeVisibleToHitTesting();
 }
 
-const std::string& Frame::GetFrameIdForTracing() {
+const String& Frame::GetFrameIdForTracing() {
   // token's ToString() is latin1.
   if (!trace_value_)
-    trace_value_ = devtools_frame_token_.ToString();
+    trace_value_ = String(devtools_frame_token_.ToString());
   return trace_value_.value();
 }
 
@@ -585,6 +588,7 @@ void Frame::ApplyFrameOwnerProperties(
   owner->SetAllowPaymentRequest(properties->allow_payment_request);
   owner->SetIsDisplayNone(properties->is_display_none);
   owner->SetColorScheme(properties->color_scheme);
+  owner->SetPreferredColorScheme(properties->preferred_color_scheme);
 }
 
 void Frame::InsertAfter(Frame* new_child, Frame* previous_sibling) {
@@ -725,16 +729,19 @@ bool Frame::AllowFocusWithoutUserActivation() {
 
 bool Frame::Swap(WebLocalFrame* new_web_frame) {
   return SwapImpl(new_web_frame, mojo::NullAssociatedRemote(),
-                  mojo::NullAssociatedReceiver());
+                  mojo::NullAssociatedReceiver(),
+                  /*devtools_frame_token=*/std::nullopt);
 }
 
-bool Frame::Swap(WebRemoteFrame* new_web_frame,
-                 mojo::PendingAssociatedRemote<mojom::blink::RemoteFrameHost>
-                     remote_frame_host,
-                 mojo::PendingAssociatedReceiver<mojom::blink::RemoteFrame>
-                     remote_frame_receiver) {
+bool Frame::Swap(
+    WebRemoteFrame* new_web_frame,
+    mojo::PendingAssociatedRemote<mojom::blink::RemoteFrameHost>
+        remote_frame_host,
+    mojo::PendingAssociatedReceiver<mojom::blink::RemoteFrame>
+        remote_frame_receiver,
+    const std::optional<base::UnguessableToken>& devtools_frame_token) {
   return SwapImpl(new_web_frame, std::move(remote_frame_host),
-                  std::move(remote_frame_receiver));
+                  std::move(remote_frame_receiver), devtools_frame_token);
 }
 
 bool Frame::SwapImpl(
@@ -742,7 +749,13 @@ bool Frame::SwapImpl(
     mojo::PendingAssociatedRemote<mojom::blink::RemoteFrameHost>
         remote_frame_host,
     mojo::PendingAssociatedReceiver<mojom::blink::RemoteFrame>
-        remote_frame_receiver) {
+        remote_frame_receiver,
+    const std::optional<base::UnguessableToken>& devtools_frame_token) {
+  TRACE_EVENT0("navigation", "Frame::SwapImpl");
+  std::string_view histogram_suffix =
+      (new_web_frame->IsWebLocalFrame() ? "Local" : "Remote");
+  base::ScopedUmaHistogramTimer histogram_timer(
+      base::StrCat({"Navigation.Frame.SwapImpl.", histogram_suffix}));
   DCHECK(IsAttached());
 
   using std::swap;
@@ -800,11 +813,11 @@ bool Frame::SwapImpl(
     DCHECK(remote_frame_host && remote_frame_receiver);
     CHECK(!WebFrame::ToCoreFrame(*new_web_frame));
     To<WebRemoteFrameImpl>(new_web_frame)
-        ->InitializeCoreFrame(*page, owner, WebFrame::FromCoreFrame(parent_),
-                              nullptr, FrameInsertType::kInsertLater, name,
-                              &window_agent_factory(), devtools_frame_token_,
-                              std::move(remote_frame_host),
-                              std::move(remote_frame_receiver));
+        ->InitializeCoreFrame(
+            *page, owner, WebFrame::FromCoreFrame(parent_), nullptr,
+            FrameInsertType::kInsertLater, name, &window_agent_factory(),
+            devtools_frame_token.value_or(devtools_frame_token_),
+            std::move(remote_frame_host), std::move(remote_frame_receiver));
     // At this point, a `RemoteFrame` will have already updated
     // `Page::MainFrame()` or `FrameOwner::ContentFrame()` as appropriate, and
     // its `parent_` pointer is also populated.
@@ -855,6 +868,9 @@ bool Frame::SwapImpl(
 
   // Clone the state of the current Frame into the one being swapped in.
   if (auto* new_local_frame = DynamicTo<LocalFrame>(new_frame)) {
+    TRACE_EVENT0("navigation", "Frame::SwapImpl.CloneState");
+    base::ScopedUmaHistogramTimer clone_state_timer(
+        "Navigation.Frame.SwapImpl.CloneState");
     // A `LocalFrame` being swapped in is created provisionally, so
     // `Page::MainFrame()` or `FrameOwner::ContentFrame()` needs to be updated
     // to point to the newly swapped-in frame.
@@ -892,10 +908,8 @@ bool Frame::SwapImpl(
         page->SetMainFrame(
             WebFrame::ToCoreFrame(*old_page_placeholder_remote_frame));
 
-        // The old page might be in the middle of closing when this swap
-        // happens. We need to ensure that the closing still happens with the
-        // new page, so also swap the CloseTaskHandlers in the pages.
-        new_page->TakeCloseTaskHandler(page);
+        // Take properties from the old page, such as its list of related pages.
+        new_page->TakePropertiesForLocalMainFrameSwap(page);
 
         // On the new Page, we have a different placeholder main RemoteFrame,
         // which was created when the new Page's WebView was created from

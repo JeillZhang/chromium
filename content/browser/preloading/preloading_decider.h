@@ -49,12 +49,16 @@ class CONTENT_EXPORT PreloadingDecider
   //  Receives and processes ML model score for 'url' target link.
   void OnPreloadingHeuristicsModelDone(const GURL& url, float score);
 
+  // Receives and processes 'url' selected by viewport heuristic.
+  void OnViewportHeuristicTriggered(const GURL& url);
+
   // Sets the new preloading decider observer for testing and returns the old
   // one.
   PreloadingDeciderObserverForTesting* SetObserverForTesting(
       PreloadingDeciderObserverForTesting* observer);
 
-  // Returns the prerenderer for testing.
+  // Returns subcomponents for testing.
+  Prefetcher& GetPrefetcherForTesting() { return prefetcher_; }
   Prerenderer& GetPrerendererForTesting();
 
   // Sets the new prerenderer for testing and returns the old one.
@@ -141,6 +145,20 @@ class CONTENT_EXPORT PreloadingDecider
       const blink::mojom::SpeculationCandidatePtr& candidate);
   void RemoveStandbyCandidate(const SpeculationCandidateKey key);
   void ClearStandbyCandidates();
+
+  // Helper functions to select a prerender/prefetch candidate to be
+  // triggered.
+  std::optional<
+      std::pair<SpeculationCandidateKey, blink::mojom::SpeculationCandidatePtr>>
+  GetMatchedPreloadingCandidate(const SpeculationCandidateKey& lookup_key,
+                                const PreloadingPredictor& enacting_predictor,
+                                PreloadingConfidence confidence) const;
+  std::optional<
+      std::pair<SpeculationCandidateKey, blink::mojom::SpeculationCandidatePtr>>
+  GetMatchedPreloadingCandidateByNoVarySearchHint(
+      const SpeculationCandidateKey& lookup_key,
+      const PreloadingPredictor& enacting_predictor,
+      PreloadingConfidence confidence) const;
 
   // |on_standby_candidates_| stores preloading candidates for each target URL,
   // action pairs that are safe to perform but are not marked as |kEager| and

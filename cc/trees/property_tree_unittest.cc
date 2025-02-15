@@ -9,6 +9,7 @@
 #include "cc/input/main_thread_scrolling_reason.h"
 #include "cc/test/fake_impl_task_runner_provider.h"
 #include "cc/test/fake_layer_tree_host_impl.h"
+#include "cc/test/layer_test_common.h"
 #include "cc/test/test_task_graph_runner.h"
 #include "cc/trees/clip_node.h"
 #include "cc/trees/draw_property_utils.h"
@@ -551,7 +552,6 @@ TEST(EffectTreeTest, CopyOutputRequestsAreTransformed) {
   EffectTree& effect_tree = property_trees.effect_tree_mutable();
   EffectNode effect_node;
   effect_node.render_surface_reason = RenderSurfaceReason::kTest;
-  effect_node.has_copy_request = true;
   effect_node.transform_id = contents_root.id;
   effect_node.id = effect_tree.Insert(effect_node, 0);
   effect_tree.UpdateEffects(effect_node.id);
@@ -650,7 +650,6 @@ TEST(EffectTreeTest, CopyOutputRequestsThatBecomeIllegalAreDropped) {
   EffectTree& effect_tree = property_trees.effect_tree_mutable();
   EffectNode effect_node;
   effect_node.render_surface_reason = RenderSurfaceReason::kTest;
-  effect_node.has_copy_request = true;
   effect_node.transform_id = contents_root.id;
   effect_node.id = effect_tree.Insert(effect_node, 0);
   effect_tree.UpdateEffects(effect_node.id);
@@ -718,8 +717,9 @@ TEST(ScrollTreeTest, PushScrollUpdatesFromMainThreadIntegerDelta) {
   // Set up FakeLayerTreeHostImpl.
   TestTaskGraphRunner task_graph_runner;
   FakeImplTaskRunnerProvider impl_task_runner_provider;
-  FakeLayerTreeHostImpl host_impl(
-      LayerTreeSettings(), &impl_task_runner_provider, &task_graph_runner);
+  FakeLayerTreeHostImpl host_impl(CommitToPendingTreeLayerTreeSettings(),
+                                  &impl_task_runner_provider,
+                                  &task_graph_runner);
   host_impl.CreatePendingTree();
 
   // Set up pending property trees.

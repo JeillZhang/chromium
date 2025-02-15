@@ -19,11 +19,10 @@ namespace performance_manager {
 // A GraphOwned object that tracks tab transitions to/from
 // active/background/closed/discarded states and records timing information
 // about these states.
-class TabRevisitTracker : public GraphOwned,
-                          public GraphRegisteredImpl<TabRevisitTracker>,
-                          public TabPageObserver,
+class TabRevisitTracker : public TabPageObserver,
                           public PageLiveStateObserverDefaultImpl,
-                          public PageNode::ObserverDefaultImpl {
+                          public PageNodeObserver,
+                          public GraphOwnedAndRegistered<TabRevisitTracker> {
  public:
   static constexpr char kTimeToRevisitHistogramName[] =
       "PerformanceManager.TabRevisitTracker.TimeToRevisit2";
@@ -87,7 +86,7 @@ class TabRevisitTracker : public GraphOwned,
   // PageLiveStateObserverDefaultImpl:
   void OnIsActiveTabChanged(const PageNode* page_node) override;
 
-  // PageNode::ObserverDefaultImpl:
+  // PageNodeObserver:
   void OnUkmSourceIdChanged(const PageNode* page_node) override;
 
   std::map<const TabPageDecorator::TabHandle*, StateBundle> tab_states_;

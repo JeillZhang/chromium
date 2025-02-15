@@ -117,6 +117,9 @@ id<GREYMatcher> CancelButton();
 // Returns the matcher for an enabled cancel button in a navigation bar.
 id<GREYMatcher> NavigationBarCancelButton();
 
+// Returns the matcher for an enabled save button in a navigation bar.
+id<GREYMatcher> NavigationBarSaveButton();
+
 // Returns a matcher for close tab menu button.
 id<GREYMatcher> CloseTabMenuButton();
 
@@ -168,9 +171,6 @@ id<GREYMatcher> OmniboxContainingText(const std::string& text);
 // Returns a matcher for `text` being inline autocomplete text in the omnibox.
 id<GREYMatcher> OmniboxContainingAutocompleteText(NSString* text);
 
-// Returns a matcher for omnibox autocomplete.
-id<GREYMatcher> OmniboxAutocompleteLabel();
-
 // Returns a matcher for `text` being a substring of the text in the location
 // view.
 id<GREYMatcher> LocationViewContainingText(const std::string& text);
@@ -184,6 +184,9 @@ id<GREYMatcher> NewTabButton();
 
 // Returns a matcher for the Share menu button.
 id<GREYMatcher> ShareButton();
+
+// Returns a matcher for a context menu button that contains `text`.
+id<GREYMatcher> ContextMenuButtonContainingText(NSString* text);
 
 // Returns a matcher for the tab Share button (either in the omnibox or
 // toolbar).
@@ -250,9 +253,6 @@ id<GREYMatcher> ClearBrowsingDataButton();
 // Returns a matcher for the clear browsing data view.
 id<GREYMatcher> ClearBrowsingDataView();
 
-// Returns a matcher for the clear browsing data action sheet item.
-id<GREYMatcher> ConfirmClearBrowsingDataButton();
-
 // Returns a matcher for the "Done" button in the settings' navigation bar.
 id<GREYMatcher> SettingsDoneButton();
 
@@ -305,6 +305,16 @@ id<GREYMatcher> IdentityChooserScrim();
 // Returns matcher for the cancel button in the fake add account flow.
 id<GREYMatcher> FakeAddAccountScreenCancelButton();
 
+// Returns matcher for the primary button (typically labeled somethings like
+// "Yes") in various promo screens, including sign-in, history sync, default
+// browser choice, and more.
+id<GREYMatcher> PromoScreenPrimaryButtonMatcher();
+
+// Returns matcher for the secondary button (typically labeled somethings like
+// "No Thanks") in various promo screens, including sign-in, history sync,
+// default browser choice, and more.
+id<GREYMatcher> PromoScreenSecondaryButtonMatcher();
+
 // Returns a matcher for the button for the currently signed in account in the
 // settings menu.
 id<GREYMatcher> SettingsAccountButton();
@@ -341,17 +351,9 @@ id<GREYMatcher> ContentSettingsButton();
 // Settings screen.
 id<GREYMatcher> GoogleServicesSettingsButton();
 
-// Returns a matcher for the Manage Sync Settings button on the main Settings
-// screen.
-id<GREYMatcher> ManageSyncSettingsButton();
-
 // Returns a matcher for the Inactive Tabs Settings button on the Tabs Settings
 // screen.
 id<GREYMatcher> InactiveTabsSettingsButton();
-
-// Returns a matcher for the Tab Pickup Settings button on the Tabs Settings
-// screen.
-id<GREYMatcher> TabPickupSettingsButton();
 
 // Returns a matcher for the Tabs Settings button on the main Settings screen.
 id<GREYMatcher> TabsSettingsButton();
@@ -397,6 +399,12 @@ id<GREYMatcher> VoiceSearchInputAccessoryButton();
 
 // Returns a matcher for the settings main menu view.
 id<GREYMatcher> SettingsCollectionView();
+
+// Returns the matcher for the quick delete browsing data button.
+id<GREYMatcher> BrowsingDataButtonMatcher();
+
+// Returns the matcher for the quick delete browsing data confirmation button.
+id<GREYMatcher> BrowsingDataConfirmButtonMatcher();
 
 // Returns a matcher for the clear browsing history cell on the clear browsing
 // data panel.
@@ -532,11 +540,24 @@ id<GREYMatcher> TabGridCellAtIndex(unsigned int index);
 // Returns a matcher for the group cell at `index` in the tab grid.
 id<GREYMatcher> TabGridGroupCellAtIndex(unsigned int index);
 
+// Returns a matcher for the group cell for the given `group_name` and
+// `tab_count`.
+id<GREYMatcher> TabGridGroupCellWithName(NSString* group_name,
+                                         NSInteger tab_count);
+
 // Returns a matcher for the cell at `index` in the tab strip.
 id<GREYMatcher> TabStripCellAtIndex(unsigned int index);
 
 // Returns a matcher for the group cell at `index` in the tab strip.
 id<GREYMatcher> TabStripGroupCellAtIndex(unsigned int index);
+
+// Returns a matcher for the group cell at `index` in the tab groups panel.
+id<GREYMatcher> TabGroupsPanelCellAtIndex(unsigned int index);
+
+// Returns a matcher for the group cell created just now in the tab groups panel
+// for the given `group_name` and `tab_count`.
+id<GREYMatcher> TabGroupsPanelCellWithName(NSString* group_name,
+                                           NSInteger tab_count);
 
 // Returns a matcher for the button that closes the tab grid.
 id<GREYMatcher> TabGridDoneButton();
@@ -574,6 +595,12 @@ id<GREYMatcher> TabGridIncognitoTabsPanelButton();
 // Returns a matcher for the button to go to the other devices panel in
 // the tab grid.
 id<GREYMatcher> TabGridOtherDevicesPanelButton();
+
+// Returns the matcher for the tab group snack bar.
+id<GREYMatcher> TabGroupSnackBar(int tabGroupCount);
+
+// Returns the matcher for the tab group snackbar action.
+id<GREYMatcher> TabGroupSnackBarAction();
 
 // Returns a matcher for the button to go to the Tab Groups panel in
 // the tab grid.
@@ -660,6 +687,12 @@ id<GREYMatcher> SafetyCheckTableViewMatcher();
 // Returns a matcher for action in an AlertCoordinator.
 id<GREYMatcher> AlertAction(NSString* title);
 
+// Returns the matcher for the iOS 13+ Activity View header.
+id<GREYMatcher> ActivityViewHeader(NSString* url_host, NSString* page_title);
+
+// Returns a matcher for the button to accept the generated password.
+id<GREYMatcher> UseSuggestedPasswordMatcher();
+
 #pragma mark - Promo style view controller
 
 // Returns matcher for the primary action button.
@@ -687,82 +720,6 @@ id<GREYMatcher> IncognitoInterstitialOpenInChromeButton();
 
 // Returns a matcher for the Cancel button in the Incognito Interstitial.
 id<GREYMatcher> IncognitoInterstitialCancelButton();
-
-#pragma mark - Manual Fallback
-
-// Returns a matcher for the scroll view in keyboard accessory bar.
-id<GREYMatcher> ManualFallbackFormSuggestionViewMatcher();
-
-// Returns a matcher for the keyboard icon in the keyboard accessory bar.
-id<GREYMatcher> ManualFallbackKeyboardIconMatcher();
-
-// Returns a matcher for the password icon in the keyboard accessory bar.
-id<GREYMatcher> ManualFallbackPasswordIconMatcher();
-
-// Returns a matcher for the password table view in manual fallback.
-id<GREYMatcher> ManualFallbackPasswordTableViewMatcher();
-
-// Returns a matcher for the password search bar in manual fallback.
-id<GREYMatcher> ManualFallbackPasswordSearchBarMatcher();
-
-// Returns a matcher for the button to open Password Manager in manual
-// fallback.
-id<GREYMatcher> ManualFallbackManagePasswordsMatcher();
-
-// Returns a matcher for the button to open password settings in manual
-// fallback.
-id<GREYMatcher> ManualFallbackManageSettingsMatcher();
-
-// Returns a matcher for the button to open all passwords in manual fallback.
-id<GREYMatcher> ManualFallbackOtherPasswordsMatcher();
-
-// Returns a matcher for the button to dismiss all passwords in manual fallback.
-id<GREYMatcher> ManualFallbackOtherPasswordsDismissMatcher();
-
-// Returns a matcher for the a password in the manual fallback list.
-id<GREYMatcher> ManualFallbackPasswordButtonMatcher();
-
-// Returns a matcher for the profiles icon in the keyboard accessory bar.
-id<GREYMatcher> ManualFallbackProfilesIconMatcher();
-
-// Returns a matcher for the profiles table view in manual fallback.
-id<GREYMatcher> ManualFallbackProfilesTableViewMatcher();
-// Returns a matcher for the button to open profile settings in manual
-// fallback.
-id<GREYMatcher> ManualFallbackManageProfilesMatcher();
-
-// Returns a matcher for the profiles settings collection view.
-id<GREYMatcher> SettingsProfileMatcher();
-
-// Returns a matcher for the ProfileTableView window.
-id<GREYMatcher> ManualFallbackProfileTableViewWindowMatcher();
-
-// Returns a matcher for the credit card icon in the keyboard accessory bar.
-id<GREYMatcher> ManualFallbackCreditCardIconMatcher();
-
-// Returns a matcher for the credit card table view in manual fallback.
-id<GREYMatcher> ManualFallbackCreditCardTableViewMatcher();
-
-// Returns a matcher for the button to open payment method settings in manual
-// fallback.
-id<GREYMatcher> ManualFallbackManagePaymentMethodsMatcher();
-
-// Returns a matcher for the button to add a payment method in manual
-// fallback.
-id<GREYMatcher> ManualFallbackAddPaymentMethodMatcher();
-
-// Returns a matcher for the CreditCardTableView window.
-id<GREYMatcher> ManualFallbackCreditCardTableViewWindowMatcher();
-
-// Returns the matcher for the iOS 13+ Activity View header.
-id<GREYMatcher> ActivityViewHeader(NSString* url_host, NSString* page_title);
-
-// Returns a matcher for the button to trigger password generation on manual
-// fallback.
-id<GREYMatcher> ManualFallbackSuggestPasswordMatcher();
-
-// Returns a matcher for the button to accept the generated password.
-id<GREYMatcher> UseSuggestedPasswordMatcher();
 
 #pragma mark - Overflow Menu Destinations
 
@@ -841,6 +798,112 @@ id<GREYMatcher> TabGridSearchCancelButton();
 
 // Returns a matcher for the tab grid search mode toolbar.
 id<GREYMatcher> TabGridSearchModeToolbar();
+
+#pragma mark - Create Tab Group View
+
+// Returns the matcher for the tab group creation view.
+id<GREYMatcher> TabGroupCreationView();
+
+// Returns the matcher for the text field in the tab group creation view.
+id<GREYMatcher> CreateTabGroupTextField();
+
+// Returns the matcher for the text field's clear button in the tab group
+// creation view.
+id<GREYMatcher> CreateTabGroupTextFieldClearButton();
+
+// Returns the matcher for `Create Group` button in the tab group creation view.
+id<GREYMatcher> CreateTabGroupCreateButton();
+
+// Returns the matcher for the cancel button in the tab group creation view.
+id<GREYMatcher> CreateTabGroupCancelButton();
+
+#pragma mark - Tab Group View
+
+// Returns the matcher for the tab group view.
+id<GREYMatcher> TabGroupView();
+
+// Returns the matcher for the title on the tab group view.
+id<GREYMatcher> TabGroupViewTitle(NSString* title);
+
+// Returns the matcher for the overflow menu button in the tab group view.
+id<GREYMatcher> TabGroupOverflowMenuButton();
+
+// Returns the matcher for the back button in the tab group view.
+id<GREYMatcher> TabGroupBackButton();
+
+#pragma mark - Tab Groups Context Menus
+
+// Returns the matcher for `Add Tab to New Group` button in the context menu.
+id<GREYMatcher> AddTabToNewGroupButton();
+
+// Returns the matcher for the sub menu button `New Tab Group` in the `Add Tab
+// To Group` button.
+id<GREYMatcher> AddTabToGroupSubMenuButton();
+
+// Returns the matcher for `Rename Group` button in the context menu of a tab
+// group.
+id<GREYMatcher> RenameGroupButton();
+
+// Returns the matcher for `Ungroup` button in the context menu of a tab group.
+id<GREYMatcher> UngroupButton();
+
+// Returns the matcher for `Ungroup` button in the confirmation dialog of a tab
+// group. It's displayed only when tab groups sync is enabled.
+id<GREYMatcher> UngroupConfirmationButton();
+
+// Returns the matcher for `Delete Group` button in the context menu of a tab
+// group.
+id<GREYMatcher> DeleteGroupButton();
+
+// Returns the matcher for `Delete Group` button in the confirmation dialog of a
+// tab group. It's displayed only when tab groups sync is enabled.
+id<GREYMatcher> DeleteGroupConfirmationButton();
+
+// Returns the matcher for `Close Group` button in the context menu of a tab
+// group.
+id<GREYMatcher> CloseGroupButton();
+
+// Returns the matcher for `Share Group` button in the context menu of a tab
+// group.
+id<GREYMatcher> ShareGroupButton();
+
+// Returns the matcher for the manage group button in the context menu of a tab
+// group.
+id<GREYMatcher> ManageGroupButton();
+
+// Returns the matcher for `Leave Group` button in the context menu of a shared
+// tab group.
+id<GREYMatcher> LeaveSharedGroupButton();
+
+// Returns the matcher for `Leave Group` button in the confirmation dialog of a
+// shared tab group.
+id<GREYMatcher> LeaveSharedGroupConfirmationButton();
+
+// Returns the matcher for `Delete Group` button in the context menu of a shared
+// tab group.
+id<GREYMatcher> DeleteSharedGroupButton();
+
+// Returns the matcher for `Delete Group` button in the confirmation dialog of a
+// shared tab group.
+id<GREYMatcher> DeleteSharedConfirmationButton();
+
+// Returns the matcher for `Keep Group` button in the confirmation dialog of a
+// shared tab group.
+id<GREYMatcher> KeepSharedConfirmationButton();
+
+// Returns the matcher for the shared tab group Share flow view.
+id<GREYMatcher> FakeShareFlowView();
+
+// Returns the matcher for the shared tab group Manage flow view.
+id<GREYMatcher> FakeManageFlowView();
+
+// Returns the matcher for the shared tab group Join flow view.
+id<GREYMatcher> FakeJoinFlowView();
+
+#pragma mark - Tab Groups Panel
+
+// Returns the matcher for the tab groups panel view.
+id<GREYMatcher> TabGroupsPanel();
 
 }  // namespace chrome_test_util
 

@@ -1,4 +1,4 @@
-<style include="cr-shared-style settings-shared iron-flex passwords-shared">
+<style include="cr-shared-style settings-shared passwords-shared">
   .expiration-column {
     align-items: center;
     display: flex;
@@ -53,11 +53,20 @@
 </template>
 <template is="dom-if" if="[[cardBenefitsFlagEnabled_]]">
   <settings-toggle-button id="cardBenefitsToggle"
-      no-extension-indicator label="$i18n{cardBenefitsToggleLabel}"
+      no-extension-indicator label="$i18n{cardBenefitsLabel}"
       sub-label-with-link="[[cardBenefitsSublabel_]]"
       on-sub-label-link-clicked="onCardBenefitsSublabelLinkClick_"
       disabled="[[!prefs.autofill.credit_card_enabled.value]]"
       pref="{{prefs.autofill.payment_card_benefits}}">
+  </settings-toggle-button>
+</template>
+<template is="dom-if" if="[[shouldShowPayOverTimeSettingsToggle_]]">
+  <settings-toggle-button id="payOverTimeToggle"
+      no-extension-indicator label="$i18n{autofillPayOverTimeSettingsLabel}"
+      sub-label-with-link="[[payOverTimeSublabel_]]"
+      on-sub-label-link-clicked="onPayOverTimeSublabelLinkClick_"
+      disabled="[[!prefs.autofill.credit_card_enabled.value]]"
+      pref="{{prefs.autofill.bnpl_enabled}}">
   </settings-toggle-button>
 </template>
 <settings-toggle-button id="canMakePaymentToggle"
@@ -102,7 +111,7 @@
         aria-label="$i18n{addPaymentMethods}"
         hidden$="[[!prefs.autofill.credit_card_enabled.value]]">
       $i18n{add}
-      <iron-icon icon="cr:arrow-drop-down" class="arrow-icon-down"></iron-icon>
+      <cr-icon icon="cr:arrow-drop-down" class="arrow-icon-down"></cr-icon>
     </cr-button>
     <cr-lazy-render id="paymentMethodsActionMenu">
       <template>

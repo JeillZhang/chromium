@@ -9,6 +9,7 @@
 
 #include "base/sequence_checker.h"
 #include "base/thread_annotations.h"
+#include "content/browser/file_system_access/file_system_access_observation_group.h"
 #include "content/browser/file_system_access/file_system_access_watcher_manager.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
@@ -29,11 +30,13 @@ class FileSystemAccessObserverHost;
 // TODO(crbug.com/341213353): Consider removing this class in favor of
 // giving the ObserverHost a FileSystemAccessObserver mojo::RemoteSet. See
 // https://chromium-review.googlesource.com/c/chromium/src/+/4809069/comment/8d90508d_74ae7891/.
-class FileSystemAccessObserverObservation : public WebContentsObserver {
+class FileSystemAccessObserverObservation
+    : public WebContentsObserver,
+      public FileSystemAccessPermissionGrant::Observer {
  public:
   FileSystemAccessObserverObservation(
       FileSystemAccessObserverHost* host,
-      std::unique_ptr<FileSystemAccessWatcherManager::Observation> observation,
+      std::unique_ptr<FileSystemAccessObservationGroup::Observer> observation,
       mojo::PendingRemote<blink::mojom::FileSystemAccessObserver> remote,
       absl::variant<std::unique_ptr<FileSystemAccessDirectoryHandleImpl>,
                     std::unique_ptr<FileSystemAccessFileHandleImpl>> handle);
@@ -52,17 +55,33 @@ class FileSystemAccessObserverObservation : public WebContentsObserver {
       RenderFrameHost::LifecycleState old_state,
       RenderFrameHost::LifecycleState new_state) override;
 
+  // FileSystemAccessPermissionGrant::Observer override.
+  void OnPermissionStatusChanged() override;
+
  private:
   void OnReceiverDisconnect();
 
-  // Called repeatedly by `observation_`.
+  // Called repeatedly by `observation_` whenever there are file changes. It
+  // processes the received change data and sends a file change event via mojo
+  // pipe.
   void OnChanges(
-      const std::list<FileSystemAccessWatcherManager::Observation::Change>&
-          changes);
+      const std::optional<std::list<FileSystemAccessObservationGroup::Change>>&
+          changes_or_error);
+
+  // Invoked if an error occurred while watching file changes. It sends a file
+  // change event with `kErrored` type and destroys this observation so that
+  // it is no longer observing. Currently, an error indicates that this
+  // observation is in a non-recoverable state.
+  void HandleError();
+
+  void RecordCallbackCountUMA();
 
   SEQUENCE_CHECKER(sequence_checker_);
 
+  int callback_count_ = 0;
+
   bool received_changes_while_in_bf_cache_ = false;
+  bool received_error_while_in_bf_cache_ = false;
 
   // The host which owns this instance.
   const raw_ptr<FileSystemAccessObserverHost> host_ = nullptr;
@@ -72,7 +91,7 @@ class FileSystemAccessObserverObservation : public WebContentsObserver {
                       std::unique_ptr<FileSystemAccessFileHandleImpl>>
       handle_;
 
-  std::unique_ptr<FileSystemAccessWatcherManager::Observation> observation_
+  std::unique_ptr<FileSystemAccessObservationGroup::Observer> observation_
       GUARDED_BY_CONTEXT(sequence_checker_);
 
   // Mojo pipes that send file change notifications back to the renderer.

@@ -30,6 +30,7 @@
 
 #include "third_party/blink/renderer/modules/service_worker/service_worker_global_scope.h"
 
+#include <algorithm>
 #include <memory>
 #include <utility>
 
@@ -39,8 +40,8 @@
 #include "base/memory/ptr_util.h"
 #include "base/metrics/field_trial_params.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/not_fatal_until.h"
 #include "base/numerics/safe_conversions.h"
-#include "base/ranges/algorithm.h"
 #include "base/time/time.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "services/network/public/cpp/cross_origin_embedder_policy.h"
@@ -155,10 +156,6 @@ namespace {
 constexpr char kServiceWorkerGlobalScopeTraceScope[] =
     "ServiceWorkerGlobalScope";
 
-// The default timeout for offline events in a service worker. The  value is
-// the same as the update interval value in the event queue.
-constexpr int kDefaultTimeoutSecondsForOfflineEvent = 10;
-
 void DidSkipWaiting(ScriptPromiseResolver<IDLUndefined>* resolver,
                     bool success) {
   // Per spec the promise returned by skipWaiting() can never reject.
@@ -178,7 +175,7 @@ ServiceWorkerEventQueue::AbortCallback CreateAbortCallback(MapType* map,
       [](MapType* map, Args&&... args, int event_id,
          mojom::blink::ServiceWorkerEventStatus status) {
         auto iter = map->find(event_id);
-        DCHECK(iter != map->end());
+        CHECK(iter != map->end(), base::NotFatalUntil::M130);
         std::move(iter->value).Run(status, std::forward<Args>(args)...);
         map->erase(iter);
       },
@@ -265,8 +262,6 @@ ServiceWorkerGlobalScope::ServiceWorkerGlobalScope(
   // service workers, but basically that won't be big problem because we have
   // ping-pong timer and that will kill paused service workers.
   event_queue_ = std::make_unique<ServiceWorkerEventQueue>(
-      WTF::BindRepeating(&ServiceWorkerGlobalScope::OnBeforeStartEvent,
-                         WrapWeakPersistent(this)),
       WTF::BindRepeating(&ServiceWorkerGlobalScope::OnIdleTimeout,
                          WrapWeakPersistent(this)),
       GetTaskRunner(TaskType::kInternalDefault));
@@ -342,7 +337,7 @@ void ServiceWorkerGlobalScope::FetchAndRunClassicScript(
       WTF::BindOnce(&ServiceWorkerGlobalScope::DidFetchClassicScript,
                     WrapWeakPersistent(this),
                     WrapPersistent(classic_script_loader), stack_id),
-      RejectCoepUnsafeNone(false), {}, CreateUniqueIdentifier());
+      RejectCoepUnsafeNone(false), {});
 }
 
 void ServiceWorkerGlobalScope::FetchAndRunModuleScript(
@@ -369,6 +364,11 @@ void ServiceWorkerGlobalScope::FetchAndRunModuleScript(
       installed_scripts_manager_
           ? ModuleScriptCustomFetchType::kInstalledServiceWorker
           : ModuleScriptCustomFetchType::kWorkerConstructor;
+
+  // Count instantiation of a service worker using a module script as a proxy %
+  // of page loads use a service worker with a module script.
+  CountWebDXFeature(WebDXFeature::kJsModulesServiceWorkers);
+
   FetchModuleScript(module_url_record, outside_settings_object,
                     outside_resource_timing_notifier,
                     mojom::blink::RequestContextType::SERVICE_WORKER,
@@ -641,7 +641,7 @@ void ServiceWorkerGlobalScope::OnNavigationPreloadResponse(
     mojo::ScopedDataPipeConsumerHandle data_pipe) {
   DCHECK(IsContextThread());
   auto it = pending_preload_fetch_events_.find(fetch_event_id);
-  DCHECK(it != pending_preload_fetch_events_.end());
+  CHECK(it != pending_preload_fetch_events_.end(), base::NotFatalUntil::M130);
   FetchEvent* fetch_event = it->value.Get();
   DCHECK(fetch_event);
   fetch_event->OnNavigationPreloadResponse(ScriptController()->GetScriptState(),
@@ -803,6 +803,7 @@ void ServiceWorkerGlobalScope::Trace(Visitor* visitor) const {
   visitor->Trace(payment_response_callbacks_);
   visitor->Trace(fetch_response_callbacks_);
   visitor->Trace(pending_preload_fetch_events_);
+  visitor->Trace(pending_streaming_upload_fetch_events_);
   visitor->Trace(controller_receivers_);
   visitor->Trace(remote_associated_interfaces_);
   visitor->Trace(associated_interfaces_receiver_);
@@ -829,7 +830,7 @@ int ServiceWorkerGlobalScope::GetOutstandingThrottledLimit() const {
 // Note that ServiceWorkers can be for cross-origin iframes, and that it might
 // look like an escape from the Permissions-Policy enforced on documents. It is
 // safe however, even on platforms without OOPIF  because a ServiceWorker
-// controlling a cross-origin iframe would be put in  a different process from
+// controlling a cross-origin iframe would be put in a different process from
 // the page, due to an origin mismatch in their cross-origin isolation.
 // See https://crbug.com/1290224 for details.
 bool ServiceWorkerGlobalScope::CrossOriginIsolatedCapability() const {
@@ -837,8 +838,7 @@ bool ServiceWorkerGlobalScope::CrossOriginIsolatedCapability() const {
 }
 
 bool ServiceWorkerGlobalScope::IsIsolatedContext() const {
-  // TODO(mkwst): Make a decision here, and spec it.
-  return false;
+  return Agent::IsIsolatedContext();
 }
 
 void ServiceWorkerGlobalScope::importScripts(const Vector<String>& urls) {
@@ -885,13 +885,13 @@ void ServiceWorkerGlobalScope::CountCacheStorageInstalledScript(
 
   base::UmaHistogramCustomCounts(
       "ServiceWorker.CacheStorageInstalledScript.ScriptSize",
-      base::saturated_cast<base::Histogram::Sample>(script_size), 1000, 5000000,
+      base::saturated_cast<base::Histogram::Sample32>(script_size), 1000, 5000000,
       50);
 
   if (script_metadata_size) {
     base::UmaHistogramCustomCounts(
         "ServiceWorker.CacheStorageInstalledScript.CachedMetadataSize",
-        base::saturated_cast<base::Histogram::Sample>(script_metadata_size),
+        base::saturated_cast<base::Histogram::Sample32>(script_metadata_size),
         1000, 50000000, 50);
   }
 }
@@ -997,6 +997,7 @@ void ServiceWorkerGlobalScope::DidHandleExtendableMessageEvent(
 
 void ServiceWorkerGlobalScope::RespondToFetchEventWithNoResponse(
     int fetch_event_id,
+    FetchEvent* fetch_event,
     const KURL& request_url,
     bool range_request,
     std::optional<network::DataElementChunkedDataPipe> request_body,
@@ -1022,7 +1023,14 @@ void ServiceWorkerGlobalScope::RespondToFetchEventWithNoResponse(
 
   NoteRespondedToFetchEvent(request_url, range_request);
 
+  if (request_body) {
+    pending_streaming_upload_fetch_events_.insert(fetch_event_id, fetch_event);
+  }
+
   response_callback->OnFallback(std::move(request_body), std::move(timing));
+}
+void ServiceWorkerGlobalScope::OnStreamingUploadCompletion(int fetch_event_id) {
+  pending_streaming_upload_fetch_events_.erase(fetch_event_id);
 }
 
 void ServiceWorkerGlobalScope::RespondToFetchEvent(
@@ -1337,18 +1345,18 @@ void ServiceWorkerGlobalScope::SetIsInstalling(bool is_installing) {
   // stored in Cache storage during installation.
   base::UmaHistogramCounts1000(
       "ServiceWorker.CacheStorageInstalledScript.Count",
-      base::saturated_cast<base::Histogram::Sample>(
+      base::saturated_cast<base::Histogram::Sample32>(
           cache_storage_installed_script_count_));
   base::UmaHistogramCustomCounts(
       "ServiceWorker.CacheStorageInstalledScript.ScriptTotalSize",
-      base::saturated_cast<base::Histogram::Sample>(
+      base::saturated_cast<base::Histogram::Sample32>(
           cache_storage_installed_script_total_size_),
       1000, 50000000, 50);
 
   if (cache_storage_installed_script_metadata_total_size_) {
     base::UmaHistogramCustomCounts(
         "ServiceWorker.CacheStorageInstalledScript.CachedMetadataTotalSize",
-        base::saturated_cast<base::Histogram::Sample>(
+        base::saturated_cast<base::Histogram::Sample32>(
             cache_storage_installed_script_metadata_total_size_),
         1000, 50000000, 50);
   }
@@ -1363,11 +1371,6 @@ mojom::blink::ServiceWorkerHost*
 ServiceWorkerGlobalScope::GetServiceWorkerHost() {
   DCHECK(service_worker_host_.is_bound());
   return service_worker_host_.get();
-}
-
-void ServiceWorkerGlobalScope::OnBeforeStartEvent(bool is_offline_event) {
-  DCHECK(IsContextThread());
-  SetIsOfflineMode(is_offline_event);
 }
 
 void ServiceWorkerGlobalScope::OnIdleTimeout() {
@@ -1512,12 +1515,10 @@ void ServiceWorkerGlobalScope::AbortCallbackForFetchEvent(
 void ServiceWorkerGlobalScope::StartFetchEvent(
     mojom::blink::DispatchFetchEventParamsPtr params,
     base::WeakPtr<CrossOriginResourcePolicyChecker> corp_checker,
-    std::optional<base::TimeTicks> created_time,
+    base::TimeTicks created_time,
     int event_id) {
   DCHECK(IsContextThread());
-  if (created_time.has_value()) {
-    RecordQueuingTime(created_time.value());
-  }
+  RecordQueuingTime(created_time);
 
   // This TRACE_EVENT is used for perf benchmark to confirm if all of fetch
   // events have completed. (crbug.com/736697)
@@ -1672,11 +1673,14 @@ void ServiceWorkerGlobalScope::Clone(
     mojo::PendingReceiver<mojom::blink::ControllerServiceWorker> receiver,
     const network::CrossOriginEmbedderPolicy& cross_origin_embedder_policy,
     mojo::PendingRemote<
-        network::mojom::blink::CrossOriginEmbedderPolicyReporter>
-        coep_reporter) {
+        network::mojom::blink::CrossOriginEmbedderPolicyReporter> coep_reporter,
+    const network::DocumentIsolationPolicy& document_isolation_policy,
+    mojo::PendingRemote<network::mojom::blink::DocumentIsolationPolicyReporter>
+        dip_reporter) {
   DCHECK(IsContextThread());
   auto checker = std::make_unique<CrossOriginResourcePolicyChecker>(
-      cross_origin_embedder_policy, std::move(coep_reporter));
+      cross_origin_embedder_policy, std::move(coep_reporter),
+      document_isolation_policy, std::move(dip_reporter));
 
   controller_receivers_.Add(
       std::move(receiver), std::move(checker),
@@ -1693,8 +1697,6 @@ void ServiceWorkerGlobalScope::InitializeGlobalScope(
     mojom::blink::ServiceWorkerRegistrationObjectInfoPtr registration_info,
     mojom::blink::ServiceWorkerObjectInfoPtr service_worker_info,
     mojom::blink::FetchHandlerExistence fetch_hander_existence,
-    mojo::PendingReceiver<mojom::blink::ReportingObserver>
-        reporting_observer_receiver,
     mojom::blink::AncestorFrameType ancestor_frame_type,
     const blink::BlinkStorageKey& storage_key) {
   DCHECK(IsContextThread());
@@ -1731,10 +1733,6 @@ void ServiceWorkerGlobalScope::InitializeGlobalScope(
   SetFetchHandlerExistence(fetch_hander_existence);
 
   ancestor_frame_type_ = ancestor_frame_type;
-
-  if (reporting_observer_receiver) {
-    ReportingContext::From(this)->Bind(std::move(reporting_observer_receiver));
-  }
 
   global_scope_initialized_ = true;
   if (!pause_evaluation_)
@@ -1778,7 +1776,7 @@ void ServiceWorkerGlobalScope::AbortInstallEvent(
     mojom::blink::ServiceWorkerEventStatus status) {
   DCHECK(IsContextThread());
   auto iter = install_event_callbacks_.find(event_id);
-  DCHECK(iter != install_event_callbacks_.end());
+  CHECK(iter != install_event_callbacks_.end(), base::NotFatalUntil::M130);
   GlobalFetch::ScopedFetcher* fetcher = GlobalFetch::ScopedFetcher::From(*this);
   std::move(iter->value).Run(status, fetcher->FetchCount());
   install_event_callbacks_.erase(iter);
@@ -2045,25 +2043,14 @@ void ServiceWorkerGlobalScope::DispatchFetchEventForMainResource(
 
   // We can use nullptr as a |corp_checker| for the main resource because it
   // must be the same origin.
-  if (params->is_offline_capability_check) {
-    event_queue_->EnqueueOffline(
-        event_id,
-        WTF::BindOnce(&ServiceWorkerGlobalScope::StartFetchEvent,
-                      WrapWeakPersistent(this), std::move(params),
-                      /*corp_checker=*/nullptr, std::nullopt),
-        WTF::BindOnce(&ServiceWorkerGlobalScope::AbortCallbackForFetchEvent,
-                      WrapWeakPersistent(this)),
-        base::Seconds(kDefaultTimeoutSecondsForOfflineEvent));
-  } else {
-    event_queue_->EnqueueNormal(
-        event_id,
-        WTF::BindOnce(&ServiceWorkerGlobalScope::StartFetchEvent,
-                      WrapWeakPersistent(this), std::move(params),
-                      /*corp_checker=*/nullptr, base::TimeTicks::Now()),
-        WTF::BindOnce(&ServiceWorkerGlobalScope::AbortCallbackForFetchEvent,
-                      WrapWeakPersistent(this)),
-        std::nullopt);
-  }
+  event_queue_->EnqueueNormal(
+      event_id,
+      WTF::BindOnce(&ServiceWorkerGlobalScope::StartFetchEvent,
+                    WrapWeakPersistent(this), std::move(params),
+                    /*corp_checker=*/nullptr, base::TimeTicks::Now()),
+      WTF::BindOnce(&ServiceWorkerGlobalScope::AbortCallbackForFetchEvent,
+                    WrapWeakPersistent(this)),
+      std::nullopt);
 }
 
 void ServiceWorkerGlobalScope::DispatchNotificationClickEvent(
@@ -2454,7 +2441,7 @@ void ServiceWorkerGlobalScope::StartPaymentRequestEvent(
   // Count standardized payment method identifiers, such as "basic-card" or
   // "tokenized-card". Omit counting the URL-based payment method identifiers,
   // such as "https://bobpay.xyz".
-  if (base::ranges::any_of(
+  if (std::ranges::any_of(
           event_data->method_data,
           [](const payments::mojom::blink::PaymentMethodDataPtr& datum) {
             return datum && !datum->supported_method.StartsWith("http");
@@ -2643,7 +2630,6 @@ void ServiceWorkerGlobalScope::ExecuteScriptForTest(
   }
 
   base::Value value;
-  String exception;
 
   // TODO(devlin): Is this thread-safe? Platform::Current() is set during
   // blink initialization and the created V8ValueConverter is constructed

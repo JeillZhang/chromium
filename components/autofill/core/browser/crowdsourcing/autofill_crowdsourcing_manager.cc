@@ -28,8 +28,8 @@
 #include "base/strings/stringprintf.h"
 #include "base/task/single_thread_task_runner.h"
 #include "build/build_config.h"
-#include "components/autofill/core/browser/autofill_client.h"
 #include "components/autofill/core/browser/crowdsourcing/autofill_crowdsourcing_encoding.h"
+#include "components/autofill/core/browser/foundations/autofill_client.h"
 #include "components/autofill/core/browser/logging/log_manager.h"
 #include "components/autofill/core/browser/logging/log_protobufs.h"
 #include "components/autofill/core/browser/metrics/autofill_metrics.h"
@@ -51,6 +51,7 @@
 #include "components/prefs/scoped_user_pref_update.h"
 #include "components/variations/net/variations_http_headers.h"
 #include "components/variations/variations_ids_provider.h"
+#include "google_apis/common/api_key_request_util.h"
 #include "google_apis/google_api_keys.h"
 #include "net/base/load_flags.h"
 #include "net/http/http_request_headers.h"
@@ -107,8 +108,6 @@ constexpr net::BackoffEntry::Policy kAutofillBackoffPolicy = {
 constexpr char kDefaultAutofillServerURL[] =
     "https://content-autofill.googleapis.com/";
 
-// Header for API key.
-constexpr char kGoogApiKey[] = "X-Goog-Api-Key";
 // Header to get base64 encoded serialized proto from API for safety.
 constexpr char kGoogEncodeResponseIfExecutable[] =
     "X-Goog-Encode-Response-If-Executable";
@@ -141,8 +140,8 @@ enum class UploadType {
 // Returns the base URL for the autofill server.
 GURL GetAutofillServerURL() {
   // If a valid autofill server URL is specified on the command line, then the
-  // AutofillDownlaodManager will use it, and assume that server communication
-  // is enabled.
+  // AutofillCrowdsourcingManager will use it, and assume that server
+  // communication is enabled.
   const base::CommandLine& command_line =
       *base::CommandLine::ForCurrentProcess();
   if (command_line.HasSwitch(switches::kAutofillServerURL)) {
@@ -183,7 +182,7 @@ base::TimeDelta GetThrottleResetPeriod() {
 
 // Returns true if `id` is within `kAutofillExperimentRanges`.
 bool IsAutofillExperimentId(int id) {
-  return base::ranges::any_of(kAutofillExperimentRanges, [id](auto range) {
+  return std::ranges::any_of(kAutofillExperimentRanges, [id](auto range) {
     const auto& [low, high] = range;
     return low <= id && id <= high;
   });
@@ -197,7 +196,7 @@ std::string GetMetricName(RequestType request_type, std::string_view suffix) {
       case RequestType::kRequestUpload:
         return "Upload";
     }
-    NOTREACHED_NORETURN();
+    NOTREACHED();
   };
   return base::StrCat({"Autofill.", TypeToName(request_type), ".", suffix});
 }
@@ -304,13 +303,13 @@ net::NetworkTrafficAnnotationTag GetNetworkTrafficAnnotation(
         }
       })");
   }
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 size_t CountActiveFieldsInForms(
     const std::vector<raw_ptr<FormStructure, VectorExperimental>>& forms) {
   size_t active_field_count = 0;
-  for (const autofill::FormStructure* form : forms) {
+  for (const FormStructure* form : forms) {
     active_field_count += form->active_field_count();
   }
   return active_field_count;
@@ -329,13 +328,7 @@ LogBuffer& operator<<(LogBuffer& out, const AutofillPageQueryRequest& query) {
   for (const auto& form : query.forms()) {
     LogBuffer form_buffer(LogBuffer::IsActive(true));
     for (const auto& field : form.fields()) {
-      form_buffer << Tag{"table"};
-      form_buffer << Tr{} << "Signature"
-                  << "Field name"
-                  << "Control type";
-      form_buffer << Tr{} << field.signature() << field.name()
-                  << field.control_type();
-      form_buffer << CTag{"table"};
+      form_buffer << "Signature: " << field.signature();
     }
     out << Tr{} << ("Form " + base::NumberToString(form.signature()))
         << std::move(form_buffer);
@@ -369,27 +362,20 @@ LogBuffer& operator<<(LogBuffer& out, const AutofillUploadContents& upload) {
   if (upload.has_has_form_tag())
     out << Tr{} << "has_form_tag:" << upload.has_form_tag();
 
-  for (const auto& single_username_data : upload.single_username_data()) {
-    LogBuffer single_username_data_buffer(LogBuffer::IsActive(true));
-    single_username_data_buffer << Tag{"span"} << "[";
-    single_username_data_buffer
-        << Tr{} << "username_form_signature:"
-        << single_username_data.username_form_signature();
-    single_username_data_buffer
-        << Tr{} << "username_field_signature:"
-        << single_username_data.username_field_signature();
-    single_username_data_buffer
-        << Tr{}
-        << "value_type:" << static_cast<int>(single_username_data.value_type());
-    single_username_data_buffer
-        << Tr{} << "prompt_edit:"
-        << static_cast<int>(single_username_data.prompt_edit());
-    out << Tr{} << "single_username_data"
-        << std::move(single_username_data_buffer);
-  }
-
   out << Tr{} << "form_signature:" << upload.form_signature();
-  for (const auto& field : upload.field()) {
+  if (upload.has_second_last_address_form_submitted()) {
+    out << Tr{} << "second_last_address_form_submitted:"
+        << upload.second_last_address_form_submitted();
+  }
+  if (upload.has_last_address_form_submitted()) {
+    out << Tr{} << "last_address_form_submitted:"
+        << upload.last_address_form_submitted();
+  }
+  if (upload.has_last_credit_card_form_submitted()) {
+    out << Tr{} << "last_credit_card_form_submitted:"
+        << upload.last_credit_card_form_submitted();
+  }
+  for (const auto& field : upload.field_data()) {
     out << Tr{} << Attrib{"style", "font-weight: bold"}
         << "field_signature:" << field.signature();
 
@@ -520,7 +506,7 @@ std::string GetAPIMethodUrl(RequestType type,
       case RequestType::kRequestUpload:
         return "/v1/forms:vote";
     }
-    NOTREACHED_NORETURN();
+    NOTREACHED();
   }();
   if (resource_id.empty()) {
     return std::string(api_method_url);
@@ -567,10 +553,7 @@ std::string GetAPIKeyForUrl(version_info::Channel channel) {
   }
 
   // Get the API key from Chrome baked keys.
-  if (channel == version_info::Channel::STABLE) {
-    return google_apis::GetAPIKey();
-  }
-  return google_apis::GetNonStableAPIKey();
+  return google_apis::GetAPIKey(channel);
 }
 
 std::optional<std::vector<variations::VariationID>>& GetActiveExperiments() {
@@ -598,13 +581,69 @@ void InitActiveExperiments() {
       std::unique(active_experiments.begin(), active_experiments.end()),
       active_experiments.end());
 
+  // We specify the experiment id for AutofillAI server predictions via a
+  // feature parameter instead of a variations ids so that we can use it
+  // together with a Google Groups controlled study.
+  if (features::kAutofillAiWithDataSchemaServerExperimentId.Get()) {
+    active_experiments.push_back(
+        features::kAutofillAiWithDataSchemaServerExperimentId.Get());
+  }
+
   GetActiveExperiments() = std::move(active_experiments);
 }
 
 }  // namespace
 
+template <typename Signature>
+class ScopedCallbackRunner;
+
+// A variant of `base::ScopedClosureRunner` that encapsulates a callback and
+// default arguments.
+template <typename R, typename... Args>
+class ScopedCallbackRunner<R(Args...)> final {
+ public:
+  ScopedCallbackRunner() = default;
+
+  [[nodiscard]] explicit ScopedCallbackRunner(
+      base::OnceCallback<R(Args...)> callback,
+      Args&&... args)
+      : callback_(std::move(callback)), args_(std::forward<Args>(args)...) {}
+
+  ScopedCallbackRunner(ScopedCallbackRunner&& other) = default;
+
+  ScopedCallbackRunner& operator=(ScopedCallbackRunner&& other) {
+    if (this != &other) {
+      RunAndReset();
+      callback_ = std::move(other.callback_);
+      args_ = std::move(other.args_);
+    }
+    return *this;
+  }
+
+  ~ScopedCallbackRunner() { RunAndReset(); }
+
+  explicit operator bool() const { return !!callback_; }
+
+  void RunAndReset() {
+    if (callback_) {
+      [&]<size_t... Indexes>(std::index_sequence<Indexes...>) {
+        std::move(callback_).Run(std::get<Indexes>(std::move(args_))...);
+      }(std::make_index_sequence<sizeof...(Args)>());
+      DCHECK(!callback_);
+    }
+  }
+
+  [[nodiscard]] base::OnceCallback<R(Args...)> Release() && {
+    return std::move(callback_);
+  }
+
+ private:
+  base::OnceCallback<R(Args...)> callback_;
+  std::tuple<Args...> args_;
+};
+
 struct AutofillCrowdsourcingManager::FormRequestData {
-  std::optional<QueryRequestCompleteCallback> callback = std::nullopt;
+  ScopedCallbackRunner<void(std::optional<QueryResponse>)> callback;
   std::vector<FormSignature> form_signatures;
   RequestType request_type;
   std::optional<net::IsolationInfo> isolation_info;
@@ -620,19 +659,30 @@ ScopedActiveAutofillExperiments::~ScopedActiveAutofillExperiments() {
   GetActiveExperiments().reset();
 }
 
-AutofillCrowdsourcingManager::AutofillCrowdsourcingManager(AutofillClient* client,
-                                                 version_info::Channel channel,
-                                                 LogManager* log_manager)
-    : AutofillCrowdsourcingManager(client,
-                              GetAPIKeyForUrl(channel),
-                              log_manager) {}
+AutofillCrowdsourcingManager::QueryResponse::QueryResponse(
+    std::string response,
+    std::vector<FormSignature> queried_form_signatures)
+    : response(std::move(response)),
+      queried_form_signatures(std::move(queried_form_signatures)) {}
 
-AutofillCrowdsourcingManager::AutofillCrowdsourcingManager(AutofillClient* client,
-                                                 const std::string& api_key,
-                                                 LogManager* log_manager)
+AutofillCrowdsourcingManager::QueryResponse::QueryResponse(QueryResponse&&) =
+    default;
+AutofillCrowdsourcingManager::QueryResponse&
+AutofillCrowdsourcingManager::QueryResponse::operator=(QueryResponse&&) =
+    default;
+
+AutofillCrowdsourcingManager::QueryResponse::~QueryResponse() = default;
+
+AutofillCrowdsourcingManager::AutofillCrowdsourcingManager(
+    AutofillClient* client,
+    version_info::Channel channel)
+    : AutofillCrowdsourcingManager(client, GetAPIKeyForUrl(channel)) {}
+
+AutofillCrowdsourcingManager::AutofillCrowdsourcingManager(
+    AutofillClient* client,
+    std::string api_key)
     : client_(client),
-      api_key_(api_key),
-      log_manager_(log_manager),
+      api_key_(std::move(api_key)),
       autofill_server_url_(GetAutofillServerURL()),
       throttle_reset_period_(GetThrottleResetPeriod()),
       max_form_cache_size_(kAutofillCrowdsourcingManagerMaxFormCacheSize),
@@ -649,9 +699,13 @@ bool AutofillCrowdsourcingManager::IsEnabled() const {
 bool AutofillCrowdsourcingManager::StartQueryRequest(
     const std::vector<raw_ptr<FormStructure, VectorExperimental>>& forms,
     std::optional<net::IsolationInfo> isolation_info,
-    QueryRequestCompleteCallback callback) {
-  if (!IsEnabled())
+    base::OnceCallback<void(std::optional<QueryResponse>)> callback) {
+  ScopedCallbackRunner<void(std::optional<QueryResponse>)>
+      scoped_callback_runner(std::move(callback), std::nullopt);
+
+  if (!IsEnabled()) {
     return false;
+  }
 
   // Do not send the request if it contains more fields than the server can
   // accept.
@@ -683,30 +737,32 @@ bool AutofillCrowdsourcingManager::StartQueryRequest(
     return false;
   }
 
-  FormRequestData request_data = {
-      .callback = std::move(callback),
-      .form_signatures = std::move(queried_form_signatures),
-      .request_type = RequestType::kRequestQuery,
-      .isolation_info = std::move(isolation_info),
-      .payload = std::move(payload).value(),
-  };
   AutofillMetrics::LogServerQueryMetric(AutofillMetrics::QUERY_SENT);
 
   std::string query_data;
-  if (CheckCacheForQueryRequest(request_data.form_signatures, &query_data)) {
-    LOG_AF(log_manager_) << LoggingScope::kAutofillServer
-                         << LogMessage::kCachedAutofillQuery << Br{} << query;
-    if (request_data.callback && *request_data.callback) {
-      std::move(*request_data.callback)
-          .Run(std::move(query_data), request_data.form_signatures);
+  if (CheckCacheForQueryRequest(queried_form_signatures, &query_data)) {
+    LOG_AF(client_->GetCurrentLogManager())
+        << LoggingScope::kAutofillServer << LogMessage::kCachedAutofillQuery
+        << Br{} << query;
+    if (scoped_callback_runner) {
+      std::move(scoped_callback_runner)
+          .Release()
+          .Run(QueryResponse(std::move(query_data),
+                             std::move(queried_form_signatures)));
     }
     return true;
   }
 
-  LOG_AF(log_manager_) << LoggingScope::kAutofillServer
-                       << LogMessage::kSendAutofillQuery << Br{}
-                       << "Signatures: " << query;
-  return StartRequest(std::move(request_data));
+  LOG_AF(client_->GetCurrentLogManager())
+      << LoggingScope::kAutofillServer << LogMessage::kSendAutofillQuery << Br{}
+      << "Signatures: " << query;
+  return StartRequest(FormRequestData{
+      .callback = std::move(scoped_callback_runner),
+      .form_signatures = std::move(queried_form_signatures),
+      .request_type = RequestType::kRequestQuery,
+      .isolation_info = std::move(isolation_info),
+      .payload = std::move(payload).value(),
+  });
 }
 
 bool AutofillCrowdsourcingManager::StartUploadRequest(
@@ -744,7 +800,8 @@ bool AutofillCrowdsourcingManager::StartUploadRequest(
           /*form_submission_source_for_vote_upload=*/std::nullopt)) {
     for (AutofillUploadContents& upload : upload_contents) {
       upload.clear_randomized_form_metadata();
-      for (AutofillUploadContents::Field& field : *upload.mutable_field()) {
+      for (AutofillUploadContents::Field& field :
+           *upload.mutable_field_data()) {
         field.clear_randomized_field_metadata();
       }
     }
@@ -752,7 +809,8 @@ bool AutofillCrowdsourcingManager::StartUploadRequest(
 
   // For debugging purposes, even throttled uploads are logged. If no log
   // manager is active, the function can exit early for throttled uploads.
-  const bool needs_logging = log_manager_ && log_manager_->IsLoggingActive();
+  LogManager* log_manager = client_->GetCurrentLogManager();
+  const bool needs_logging = log_manager && log_manager->IsLoggingActive();
   if (!needs_logging && !allow_upload)
     return false;
 
@@ -763,22 +821,20 @@ bool AutofillCrowdsourcingManager::StartUploadRequest(
       return false;
     }
 
-    FormRequestData request_data = {
-        .form_signatures = {form_signature},
-        .request_type = RequestType::kRequestUpload,
-        .isolation_info = std::nullopt,
-        .payload = std::move(payload).value(),
-    };
-
-    LOG_AF(log_manager_) << LoggingScope::kAutofillServer
-                         << LogMessage::kSendAutofillUpload << Br{}
-                         << "Allow upload?: " << allow_upload << Br{}
-                         << "Data: " << Br{} << upload;
+    LOG_AF(log_manager) << LoggingScope::kAutofillServer
+                        << LogMessage::kSendAutofillUpload << Br{}
+                        << "Allow upload?: " << allow_upload << Br{}
+                        << "Data: " << Br{} << upload;
 
     if (!allow_upload)
       return false;
 
-    return StartRequest(std::move(request_data));
+    return StartRequest(FormRequestData{
+        .form_signatures = {form_signature},
+        .request_type = RequestType::kRequestUpload,
+        .isolation_info = std::nullopt,
+        .payload = std::move(payload).value(),
+    });
   };
 
   bool all_succeeded = true;
@@ -879,11 +935,11 @@ bool AutofillCrowdsourcingManager::StartRequest(FormRequestData request_data) {
   resource_request->headers.SetHeader(kGoogEncodeResponseIfExecutable,
                                       "base64");
 
-  // Put API key in request's header if a key exists, and the endpoint is
-  // trusted by Google.
+  // Add API key to the request if a key exists, and the endpoint is trusted by
+  // Google.
   if (!api_key_.empty() && request_url.SchemeIs(url::kHttpsScheme) &&
       google_util::IsGoogleAssociatedDomainUrl(request_url)) {
-    resource_request->headers.SetHeader(kGoogApiKey, api_key_);
+    google_apis::AddAPIKeyToRequest(*resource_request, api_key_);
   }
 
   auto simple_loader = network::SimpleURLLoader::Create(
@@ -1032,9 +1088,11 @@ void AutofillCrowdsourcingManager::OnSimpleLoaderComplete(
 
   CacheQueryRequest(request_data.form_signatures, *response_body);
   base::UmaHistogramBoolean(kUmaWasInCache, simple_loader->LoadedFromCache());
-  if (request_data.callback && *request_data.callback) {
-    std::move(*request_data.callback)
-        .Run(std::move(*response_body), request_data.form_signatures);
+  if (request_data.callback) {
+    std::move(request_data.callback)
+        .Release()
+        .Run(QueryResponse(std::move(*response_body),
+                           std::move(request_data.form_signatures)));
   }
 }
 

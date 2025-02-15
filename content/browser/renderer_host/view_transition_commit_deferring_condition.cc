@@ -24,6 +24,12 @@ ViewTransitionCommitDeferringCondition::MaybeCreate(
     return nullptr;
   }
 
+  // If we already have a transition animation, we should skip the view
+  // transition.
+  if (navigation_request.was_initiated_by_animated_transition()) {
+    return nullptr;
+  }
+
   switch (navigation_request.frame_tree_node()->frame_tree().type()) {
     case FrameTree::Type::kPrerender:
       // Pre-rendered frame trees don't render any frames until activation. It's
@@ -34,6 +40,9 @@ ViewTransitionCommitDeferringCondition::MaybeCreate(
       break;
     case FrameTree::Type::kFencedFrame:
       // TODO(khushalsagar): Enable for fenced frames with a WPT.
+      return nullptr;
+    case FrameTree::Type::kGuest:
+      // TODO(crbug.com/40202416): Enable for MPArch based guests.
       return nullptr;
   };
 
@@ -108,7 +117,7 @@ ViewTransitionCommitDeferringCondition::MaybeCreate(
     case blink::mojom::NavigationType::HISTORY_SAME_DOCUMENT:
       // Same document navigations should already be excluded by
       // `ShouldDispatchPageSwapEvent`.
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
   }
 
   return base::WrapUnique(
@@ -172,6 +181,10 @@ ViewTransitionCommitDeferringCondition::WillCommitNavigation(
       GetSnapshotCallbackTimeout());
 
   return Result::kDefer;
+}
+
+const char* ViewTransitionCommitDeferringCondition::TraceEventName() const {
+  return "ViewTransitionCommitDeferringCondition";
 }
 
 void ViewTransitionCommitDeferringCondition::OnSnapshotTimeout() {

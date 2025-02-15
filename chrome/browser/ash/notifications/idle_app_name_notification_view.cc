@@ -7,12 +7,12 @@
 #include <string>
 
 #include "ash/public/cpp/shell_window_ids.h"
+#include "ash/utility/wm_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
-#include "chrome/browser/ui/ash/ash_util.h"
 #include "chrome/grit/generated_resources.h"
 #include "extensions/common/extension.h"
 #include "ui/accessibility/ax_enums.mojom.h"
@@ -93,7 +93,7 @@ void CreateAndShowWidget(views::WidgetDelegateView* delegate,
   widget->SetBounds(bounds);
 
   // Allow to use the message for spoken feedback.
-  delegate->NotifyAccessibilityEvent(ax::mojom::Event::kAlert, true);
+  delegate->NotifyAccessibilityEventDeprecated(ax::mojom::Event::kAlert, true);
 }
 
 }  // namespace
@@ -129,7 +129,8 @@ class IdleAppNameNotificationDelegateView
                       base::Milliseconds(message_visibility_time_in_ms), this,
                       &IdleAppNameNotificationDelegateView::RemoveMessage);
 
-    SetAccessibilityProperties(ax::mojom::Role::kAlert, app_name);
+    GetViewAccessibility().SetRole(ax::mojom::Role::kAlert);
+    GetViewAccessibility().SetName(app_name);
   }
 
   IdleAppNameNotificationDelegateView(
@@ -234,10 +235,8 @@ bool IdleAppNameNotificationView::IsVisible() {
 }
 
 std::u16string IdleAppNameNotificationView::GetShownTextForTest() {
-  ui::AXNodeData node_data;
   DCHECK(view_);
-  view_->GetViewAccessibility().GetAccessibleNodeData(&node_data);
-  return node_data.GetString16Attribute(ax::mojom::StringAttribute::kName);
+  return view_->GetViewAccessibility().GetCachedName();
 }
 
 void IdleAppNameNotificationView::ShowMessage(

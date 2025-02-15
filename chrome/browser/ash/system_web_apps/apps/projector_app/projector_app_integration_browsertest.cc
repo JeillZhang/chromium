@@ -2,9 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "ash/annotator/annotator_controller.h"
 #include "ash/capture_mode/capture_mode_controller.h"
 #include "ash/projector/projector_controller_impl.h"
-#include "ash/webui/annotator/annotator_client.h"
+#include "ash/shell.h"
+#include "ash/webui/annotator/annotator_client_impl.h"
+#include "ash/webui/annotator/public/cpp/annotator_client.h"
 #include "ash/webui/media_app_ui/buildflags.h"
 #include "ash/webui/media_app_ui/test/media_app_ui_browsertest.h"
 #include "ash/webui/projector_app/buildflags.h"
@@ -13,7 +16,6 @@
 #include "base/run_loop.h"
 #include "chrome/browser/ash/system_web_apps/system_web_app_manager.h"
 #include "chrome/browser/ash/system_web_apps/test_support/system_web_app_integration_test.h"
-#include "chrome/browser/ui/ash/annotator/annotator_client_impl.h"
 #include "chrome/browser/ui/ash/system_web_apps/system_web_app_ui_utils.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
@@ -70,11 +72,13 @@ IN_PROC_BROWSER_TEST_P(ProjectorAppIntegrationTest,
   // Begin Projector screen capture.
   auto* controller = ash::ProjectorControllerImpl::Get();
   auto* capture_mode_controller = ash::CaptureModeController::Get();
+  auto* annotator_controller = ash::Shell::Get()->annotator_controller();
 
   // Set callback that is run when the Ink canvas has been initialized.
   base::RunLoop run_loop;
   base::OnceClosure callback = run_loop.QuitClosure();
-  controller->set_canvas_initialized_callback_for_test(std::move(callback));
+  annotator_controller->set_canvas_initialized_callback_for_test(
+      std::move(callback));
 
   controller->StartProjectorSession(
       base::SafeBaseName::Create("projector_data").value());

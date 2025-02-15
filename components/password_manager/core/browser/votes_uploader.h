@@ -23,7 +23,7 @@
 
 namespace autofill {
 class AutofillField;
-struct FormData;
+class FormData;
 class FormStructure;
 }  // namespace autofill
 
@@ -70,9 +70,6 @@ struct SingleUsernameVoteData {
 
   // Predictions for the form which contains a field with |renderer_id|.
   FormPredictions form_predictions;
-
-  // Type of the value seen in the single username candidate field.
-  autofill::AutofillUploadContents::ValueType value_type;
 
   // Information about username edits in a save/update prompt. Not calculated on
   // Android, because it's not possible to edit credentials in prompts on
@@ -178,11 +175,9 @@ class VotesUploader {
   // username value is found in |all_alternative_usernames| and the password
   // value of the match is equal to |password|, the match is saved to
   // |username_correction_vote_| and the method returns true.
-  bool FindCorrectedUsernameElement(
-      const std::vector<raw_ptr<const PasswordForm, VectorExperimental>>&
-          matches,
-      const std::u16string& username,
-      const std::u16string& password);
+  bool FindCorrectedUsernameElement(base::span<const PasswordForm> matches,
+                                    const std::u16string& username,
+                                    const std::u16string& password);
 
   // Returns a password attributes vote based on `password_value` . Declared as
   // public for testing.
@@ -338,15 +333,6 @@ class VotesUploader {
       autofill::IsMostRecentSingleUsernameCandidate
           is_most_recent_single_username_candidate,
       bool is_forgot_password_vote);
-
-  // On username first flow votes are uploaded both for the single username form
-  // and for the single password form. This method sets the data needed to
-  // upload vote on the password form. The vote is based on whether there was
-  // a username form that preceded the password form, and on the type of user
-  // input it had (e.g. email-like, phone-like, arbitrary string).
-  void SetSingleUsernameVoteOnPasswordForm(
-      const SingleUsernameVoteData& vote_data,
-      autofill::FormStructure& form_structure);
 
   // Returns whether `IN_FORM_OVERRULE` vote should be sent. `IN_FORM_OVERRULE`
   // signal can be either positive or negative. If positive (`autofill_type` is

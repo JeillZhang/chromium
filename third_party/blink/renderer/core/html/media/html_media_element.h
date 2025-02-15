@@ -35,10 +35,10 @@
 #include "base/time/time.h"
 #include "base/timer/elapsed_timer.h"
 #include "media/mojo/mojom/media_player.mojom-blink.h"
+#include "media/renderers/remote_playback_client_wrapper.h"
 #include "third_party/abseil-cpp/absl/types/variant.h"
 #include "third_party/blink/public/common/media/display_type.h"
 #include "third_party/blink/public/platform/web_audio_source_provider_impl.h"
-#include "third_party/blink/public/platform/web_media_player_client.h"
 #include "third_party/blink/renderer/bindings/core/v8/active_script_wrappable.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/core/core_export.h"
@@ -52,6 +52,7 @@
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/heap/disallow_new_wrapper.h"
 #include "third_party/blink/renderer/platform/heap/prefinalizer.h"
+#include "third_party/blink/renderer/platform/media/media_player_client.h"
 #include "third_party/blink/renderer/platform/media/web_audio_source_provider_client.h"
 #include "third_party/blink/renderer/platform/mojo/heap_mojo_associated_receiver_set.h"
 #include "third_party/blink/renderer/platform/mojo/heap_mojo_associated_remote.h"
@@ -91,6 +92,7 @@ class MediaSourceAttachment;
 class MediaSourceHandle;
 class MediaSourceTracer;
 class MediaStreamDescriptor;
+class RemotePlaybackClient;
 class ScriptPromiseResolverBase;
 class ScriptState;
 class TextTrack;
@@ -99,7 +101,8 @@ class TextTrackList;
 class TimeRanges;
 class VideoTrack;
 class VideoTrackList;
-class WebRemotePlaybackClient;
+class V8CanPlayTypeResult;
+class V8TextTrackKind;
 
 class CORE_EXPORT HTMLMediaElement
     : public HTMLElement,
@@ -107,7 +110,8 @@ class CORE_EXPORT HTMLMediaElement
       public ActiveScriptWrappable<HTMLMediaElement>,
       public ExecutionContextLifecycleStateObserver,
       public media::mojom::blink::MediaPlayer,
-      private WebMediaPlayerClient {
+      public media::RemotePlaybackClientWrapper,
+      private MediaPlayerClient {
   DEFINE_WRAPPERTYPEINFO();
   USING_PRE_FINALIZER(HTMLMediaElement, Dispose);
 
@@ -123,11 +127,12 @@ class CORE_EXPORT HTMLMediaElement
     kPaused_EndOfPlayback,
     kPaused_RemovedFromDocument,
     kPaused_AutoplayAutoPause,
-    kPaused_BackgroundVideoOptimization,
+    kPaused_PageHidden,
     kPaused_SuspendedPlayerIdleTimeout,
     kPaused_RemotePlayStateChange,
     kPaused_PauseRequestedByUser,
     kPaused_PauseRequestedInternally,
+    kPaused_FrameHidden,
   };
 
   bool IsMediaElement() const override { return true; }
@@ -211,7 +216,7 @@ class CORE_EXPORT HTMLMediaElement
   WebTimeRanges BufferedInternal() const;
   TimeRanges* buffered() const;
   void load();
-  String canPlayType(const String& mime_type) const;
+  V8CanPlayTypeResult canPlayType(const String& mime_type) const;
 
   // ready state
   enum ReadyState {
@@ -283,7 +288,7 @@ class CORE_EXPORT HTMLMediaElement
   VideoTrackList& videoTracks();
   void SelectedVideoTrackChanged(VideoTrack*);
 
-  TextTrack* addTextTrack(const AtomicString& kind,
+  TextTrack* addTextTrack(const V8TextTrackKind& kind,
                           const AtomicString& label,
                           const AtomicString& language,
                           ExceptionState&);
@@ -370,23 +375,16 @@ class CORE_EXPORT HTMLMediaElement
 
   void VideoWillBeDrawnToCanvas() const;
 
-  const WebRemotePlaybackClient* RemotePlaybackClient() const {
-    return remote_playback_client_;
-  }
-
   const AutoplayPolicy& GetAutoplayPolicy() const { return *autoplay_policy_; }
 
   WebMediaPlayer::LoadType GetLoadType() const;
 
   bool HasMediaSource() const { return media_source_attachment_.get(); }
 
-  // Return true if element is paused and won't resume automatically if it
-  // becomes visible again.
-  bool PausedWhenVisible() const;
-
   void DidAudioOutputSinkChanged(const String& hashed_device_id);
 
   void SetCcLayerForTesting(cc::Layer* layer) { SetCcLayer(layer); }
+  void AddMediaTrackForTesting(const media::MediaTrack& t) { AddMediaTrack(t); }
 
   // This should be called directly after creation.
   void SetMediaPlayerHostForTesting(
@@ -414,8 +412,26 @@ class CORE_EXPORT HTMLMediaElement
   // reason while in picture in picture mode.
   LocalFrame* LocalFrameForPlayer();
 
-  bool IsValidInvokeAction(HTMLElement& invoker, InvokeAction action) override;
-  bool HandleInvokeInternal(HTMLElement& invoker, InvokeAction action) override;
+  bool IsValidBuiltinCommand(HTMLElement& invoker,
+                             CommandEventType command) override;
+  bool HandleCommandInternal(HTMLElement& invoker,
+                             CommandEventType command) override;
+
+  // media::RemotePlaybackClientWrapper overrides:
+  std::string GetActivePresentationId() override;
+
+  // Returns the execution context for player creation. This will be the
+  // execution context of the opener document if available, otherwise the
+  // execution context of the current document.
+  //
+  // This method should be used when it is necessary to continue using the
+  // execution context of the opener document, when a media element is moved
+  // into a new document (e.g. picture in picture window).
+  //
+  // This is currently only used by the `ModulesInitializer` to properly set the
+  // media player inspector context, so that media DevTool logs are routed using
+  // the correct execution context.
+  ExecutionContext* GetExecutionContextForPlayer() const;
 
  protected:
   // Assert the correct order of the children in shadow dom when DCHECK is on.
@@ -458,6 +474,9 @@ class CORE_EXPORT HTMLMediaElement
 
   void UpdateLayoutObject();
 
+  virtual void RecordVideoOcclusionState(
+      std::string_view occlusion_state) const {}
+
  private:
   // Friend class for testing.
   friend class ContextMenuControllerTest;
@@ -496,10 +515,8 @@ class CORE_EXPORT HTMLMediaElement
   bool AlwaysCreateUserAgentShadowRoot() const final { return true; }
   bool AreAuthorShadowsAllowed() const final { return false; }
 
-  bool SupportsFocus(UpdateBehavior update_behavior =
-                         UpdateBehavior::kStyleAndLayout) const final;
-  bool IsFocusable(UpdateBehavior update_behavior =
-                       UpdateBehavior::kStyleAndLayout) const final;
+  FocusableState SupportsFocus(UpdateBehavior update_behavior) const final;
+  FocusableState IsFocusableState(UpdateBehavior update_behavior) const final;
   int DefaultTabIndex() const final;
   bool LayoutObjectIsNeeded(const DisplayStyle&) const override;
   LayoutObject* CreateLayoutObject(const ComputedStyle&) override;
@@ -543,21 +560,13 @@ class CORE_EXPORT HTMLMediaElement
 
   int GetElementId() override { return GetDomNodeId(); }
 
-  void SetCcLayer(cc::Layer*) final;
-  WebMediaPlayer::TrackId AddAudioTrack(const WebString&,
-                                        WebMediaPlayerClient::AudioTrackKind,
-                                        const WebString&,
-                                        const WebString&,
-                                        bool) final;
-  void RemoveAudioTrack(WebMediaPlayer::TrackId) final;
-  WebMediaPlayer::TrackId AddVideoTrack(const WebString&,
-                                        WebMediaPlayerClient::VideoTrackKind,
-                                        const WebString&,
-                                        const WebString&,
-                                        bool) final;
-  void RemoveVideoTrack(WebMediaPlayer::TrackId) final;
+  void SetCcLayer(cc::Layer*) override;
+
+  void AddMediaTrack(const media::MediaTrack&) final;
+  void RemoveMediaTrack(const media::MediaTrack&) final;
+
   void MediaSourceOpened(std::unique_ptr<WebMediaSource>) final;
-  void RemotePlaybackCompatibilityChanged(const WebURL&,
+  void RemotePlaybackCompatibilityChanged(const KURL&,
                                           bool is_compatible) final;
   bool HasSelectedVideoTrack() final;
   WebMediaPlayer::TrackId GetSelectedVideoTrackId() final;
@@ -565,8 +574,8 @@ class CORE_EXPORT HTMLMediaElement
   bool HasNativeControls() final;
   bool IsAudioElement() final;
   DisplayType GetDisplayType() const override;
-  WebRemotePlaybackClient* RemotePlaybackClient() final {
-    return remote_playback_client_;
+  media::RemotePlaybackClientWrapper* RemotePlaybackClientWrapper() final {
+    return this;
   }
   gfx::ColorSpace TargetColorSpace() override;
   bool WasAutoplayInitiated() override;
@@ -610,6 +619,8 @@ class CORE_EXPORT HTMLMediaElement
   void SetAudioSinkId(const String&) override;
   void SuspendForFrameClosed() override;
   void RequestMediaRemoting() override {}
+  void RequestVisibility(
+      RequestVisibilityCallback request_visibility_cb) override {}
 
   void LoadTimerFired(TimerBase*);
   void ProgressEventTimerFired();
@@ -985,7 +996,7 @@ class CORE_EXPORT HTMLMediaElement
 
   Member<AutoplayPolicy> autoplay_policy_;
 
-  WebRemotePlaybackClient* remote_playback_client_;
+  RemotePlaybackClient* remote_playback_client_ = nullptr;
 
   Member<MediaControls> media_controls_;
   Member<HTMLMediaElementControlsList> controls_list_;

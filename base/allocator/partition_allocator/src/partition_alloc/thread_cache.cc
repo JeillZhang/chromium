@@ -11,13 +11,12 @@
 #include <cstdint>
 
 #include "partition_alloc/build_config.h"
+#include "partition_alloc/buildflags.h"
 #include "partition_alloc/internal_allocator.h"
 #include "partition_alloc/partition_alloc-inl.h"
 #include "partition_alloc/partition_alloc_base/component_export.h"
-#include "partition_alloc/partition_alloc_base/debug/debugging_buildflags.h"
 #include "partition_alloc/partition_alloc_base/immediate_crash.h"
 #include "partition_alloc/partition_alloc_base/time/time.h"
-#include "partition_alloc/partition_alloc_buildflags.h"
 #include "partition_alloc/partition_alloc_check.h"
 #include "partition_alloc/partition_alloc_config.h"
 #include "partition_alloc/partition_alloc_constants.h"
@@ -179,7 +178,7 @@ void ThreadCacheRegistry::ForcePurgeAllThreadAfterForkUnsafe() {
   internal::ScopedGuard scoped_locker(GetLock());
   ThreadCache* tcache = list_head_;
   while (tcache) {
-#if PA_BUILDFLAG(PA_DCHECK_IS_ON)
+#if PA_BUILDFLAG(DCHECKS_ARE_ON)
     // Before fork(), locks are acquired in the parent process. This means that
     // a concurrent allocation in the parent which must be filled by the central
     // allocator (i.e. the thread cache bucket is empty) will block inside the
@@ -342,8 +341,7 @@ void ThreadCacheRegistry::ResetForTesting() {
 void ThreadCache::EnsureThreadSpecificDataInitialized() {
   // Using the registry lock to protect from concurrent initialization without
   // adding a special-pupose lock.
-  internal::ScopedGuard scoped_locker(
-      ThreadCacheRegistry::Instance().GetLock());
+  internal::ScopedGuard scoped_locker(ThreadCacheRegistry::GetLock());
   if (g_thread_cache_key_created) {
     return;
   }
@@ -379,7 +377,11 @@ void ThreadCache::SwapForTesting(PartitionRoot* root) {
 // static
 void ThreadCache::RemoveTombstoneForTesting() {
   PA_CHECK(IsTombstone(Get()));
+#if PA_CONFIG(THREAD_CACHE_FAST_TLS)
+  internal::g_thread_cache = nullptr;
+#else
   internal::PartitionTlsSet(internal::g_thread_cache_key, nullptr);
+#endif
 }
 
 // static

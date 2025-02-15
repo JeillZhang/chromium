@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ash/file_manager/app_service_file_tasks.h"
 
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -21,7 +22,6 @@
 #include "chrome/browser/ash/app_list/arc/arc_app_list_prefs.h"
 #include "chrome/browser/ash/crostini/crostini_test_helper.h"
 #include "chrome/browser/ash/crostini/fake_crostini_features.h"
-#include "chrome/browser/ash/file_manager/app_id.h"
 #include "chrome/browser/ash/file_manager/file_manager_test_util.h"
 #include "chrome/browser/ash/file_manager/file_tasks.h"
 #include "chrome/browser/ash/file_manager/path_util.h"
@@ -31,6 +31,7 @@
 #include "chrome/browser/chromeos/policy/dlp/test/mock_dlp_rules_manager.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/testing_profile.h"
+#include "chromeos/ash/components/file_manager/app_id.h"
 #include "components/prefs/scoped_user_pref_update.h"
 #include "components/services/app_service/public/cpp/app_types.h"
 #include "components/services/app_service/public/cpp/intent_filter.h"
@@ -43,6 +44,7 @@
 #include "extensions/browser/entry_info.h"
 #include "extensions/common/extension_builder.h"
 #include "extensions/common/extension_features.h"
+#include "google_apis/gaia/gaia_id.h"
 #include "storage/browser/file_system/external_mount_points.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -139,8 +141,8 @@ class AppServiceFileTasksTest : public testing::Test {
     file_tasks::FindAppServiceTasks(profile(), entries, file_urls,
                                     dlp_source_urls, &resulting_tasks->tasks);
     // Sort by app ID so we don't rely on ordering.
-    base::ranges::sort(
-        resulting_tasks->tasks, base::ranges::less(),
+    std::ranges::sort(
+        resulting_tasks->tasks, std::ranges::less(),
         [](const auto& task) { return task.task_descriptor.app_id; });
 
     return resulting_tasks;
@@ -284,7 +286,7 @@ class AppServiceFileTasksTest : public testing::Test {
   }
 
   // Load an extension from the supplied manifest, then add intent filters.
-  void LoadExtension(const std::string manifest) {
+  void LoadExtension(std::string_view manifest) {
     scoped_refptr<const extensions::Extension> extension =
         extensions::ExtensionBuilder("file handlers").AddJSON(manifest).Build();
     auto filters = apps_util::CreateIntentFiltersForExtension(extension.get());
@@ -937,7 +939,7 @@ class AppServiceFileTasksPolicyTest : public AppServiceFileTasksTest {
     AppServiceFileTasksTest::SetUp();
 
     AccountId account_id =
-        AccountId::FromUserEmailGaiaId("test@example.com", "12345");
+        AccountId::FromUserEmailGaiaId("test@example.com", GaiaId("12345"));
     profile_->SetIsNewProfile(true);
     user_manager::User* user =
         fake_user_manager_->AddUserWithAffiliationAndTypeAndProfile(

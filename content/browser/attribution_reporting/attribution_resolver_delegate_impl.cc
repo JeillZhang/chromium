@@ -20,10 +20,10 @@
 #include "base/types/expected_macros.h"
 #include "base/uuid.h"
 #include "components/attribution_reporting/aggregatable_trigger_config.h"
+#include "components/attribution_reporting/attribution_scopes_data.h"
 #include "components/attribution_reporting/event_level_epsilon.h"
 #include "components/attribution_reporting/event_report_windows.h"
 #include "components/attribution_reporting/features.h"
-#include "components/attribution_reporting/max_event_level_reports.h"
 #include "components/attribution_reporting/privacy_math.h"
 #include "components/attribution_reporting/source_registration_time_config.mojom.h"
 #include "components/attribution_reporting/source_type.mojom.h"
@@ -31,7 +31,6 @@
 #include "content/browser/attribution_reporting/attribution_config.h"
 #include "content/browser/attribution_reporting/attribution_report.h"
 #include "content/browser/attribution_reporting/stored_source.h"
-#include "services/network/public/cpp/trigger_verification.h"
 
 namespace content {
 
@@ -78,6 +77,13 @@ AttributionResolverDelegateImpl::GetDeleteExpiredSourcesFrequency() const {
 
 base::TimeDelta
 AttributionResolverDelegateImpl::GetDeleteExpiredRateLimitsFrequency() const {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  return base::Minutes(5);
+}
+
+base::TimeDelta
+AttributionResolverDelegateImpl::GetDeleteExpiredOsRegistrationsFrequency()
+    const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   return base::Minutes(5);
 }
@@ -155,41 +161,19 @@ void AttributionResolverDelegateImpl::ShuffleReports(
   }
 }
 
-void AttributionResolverDelegateImpl::ShuffleTriggerVerifications(
-    std::vector<network::TriggerVerification>& verifications) {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-
-  switch (noise_mode_) {
-    case AttributionNoiseMode::kDefault:
-      base::RandomShuffle(verifications.begin(), verifications.end());
-      break;
-    case AttributionNoiseMode::kNone:
-      break;
-  }
-}
-
-double AttributionResolverDelegateImpl::GetRandomizedResponseRate(
-    const attribution_reporting::TriggerSpecs& trigger_specs,
-    attribution_reporting::MaxEventLevelReports max_event_level_reports,
-    attribution_reporting::EventLevelEpsilon epsilon) const {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  return attribution_reporting::GetRandomizedResponseRate(
-      GetNumStates(trigger_specs, max_event_level_reports), epsilon);
-}
-
 AttributionResolverDelegate::GetRandomizedResponseResult
 AttributionResolverDelegateImpl::GetRandomizedResponse(
     SourceType source_type,
     const attribution_reporting::TriggerSpecs& trigger_specs,
-    attribution_reporting::MaxEventLevelReports max_event_level_reports,
-    attribution_reporting::EventLevelEpsilon epsilon) {
+    attribution_reporting::EventLevelEpsilon epsilon,
+    const std::optional<attribution_reporting::AttributionScopesData>&
+        scopes_data) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   ASSIGN_OR_RETURN(auto response,
                    attribution_reporting::DoRandomizedResponse(
-                       trigger_specs, max_event_level_reports, epsilon,
-                       config_.event_level_limit.max_trigger_state_cardinality,
-                       GetMaxChannelCapacity(source_type)));
+                       trigger_specs, epsilon, source_type, scopes_data,
+                       config_.privacy_math_config));
 
   switch (noise_mode_) {
     case AttributionNoiseMode::kDefault:

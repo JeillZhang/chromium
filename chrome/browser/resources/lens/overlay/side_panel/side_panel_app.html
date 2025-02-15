@@ -1,11 +1,16 @@
-<style include="cr-icons">
+<style include="cr-icons searchbox-shared-style">
+  :host {
+    --cr-searchbox-height: 52px;
+    --cr-searchbox-min-width: min(calc(100%), 1100px);
+  }
+
   .results-pane {
     border: none;
-     /* Viewport height minus the realbox height and margin. */
+     /* Viewport height minus the searchbox height and margin. */
     height: calc(100vh - 76px);
     inset-inline-start: 0;
      /*
-      * We need to offset by the realbox height and margin since we are in a
+      * We need to offset by the searchbox height and margin since we are in a
       * fixed position.
       */
     inset-block-start: 76px;
@@ -20,7 +25,7 @@
   }
 
   :host([dark-mode]) .results-pane {
-    background-color: #1F1F1F;
+    background-color: #101218;
   }
 
   /* Set z-index to hide results to prevent ghost frames when reshowing. */
@@ -28,123 +33,205 @@
     z-index: 0;
   }
 
-  #loadingResultsImage {
+  #ghostLoader {
     background-color: white;
+    max-width: 796px;
   }
 
-  :host([dark-mode]) #loadingResultsImage {
-    background-color: #1F1F1F;
+  :host([dark-mode]) #ghostLoader {
+    background-color: #101218;
   }
 
-  :host(:not([is-loading-results])) #loadingResultsImage {
+  :host(:not([is-loading-results])) #ghostLoader,
+  :host([is-error-page-visible]) #ghostLoader {
+    visibility: hidden;
     z-index: 0;
   }
 
-  #realbox {
-    margin: 16px 14px 8px 14px;
+  :host([is-back-arrow-visible]) #ghostLoader {
+    max-width: 832px;
   }
 
-  :host([is-back-arrow-visible]) #realbox {
-    margin: 16px 14px 8px 0px;
-  }
-
-  #realboxContainer {
-    display: flex;
+  #networkErrorBottomLine {
+    color: #70757A;
     font-family: Roboto, Arial, sans-serif;
+    font-size: 14px;
+    font-style: normal;
+    font-weight: 400;
+    line-height: 22px;
+    margin-top: 8px;
+    margin-bottom: 16px;
+    text-align: center;
+  }
+
+  #networkErrorIcon {
+    height: 48px;
+    margin: 156px auto 0px;
+    width: 40px;
+  }
+
+  #networkErrorPage {
+    background-color: white;
+    display: none;
+    inset: 0;
+    position: fixed;
+  }
+
+  #networkErrorTopLine {
+    color: #202124;
+    font-family: Roboto, Arial, sans-serif;
+    font-size: 16px;
+    font-style: normal;
+    font-weight: 400;
+    line-height: 24px;
+    margin-top: 44px;
+    text-align: center;
+  }
+
+  :host([is-error-page-visible]) #networkErrorPage {
+    display: block;
+    z-index: 2;
+  }
+
+  :host([dark-mode]) #networkErrorBottomLine {
+    color: #9AA0A6;
+  }
+
+  :host([dark-mode]) #networkErrorPage {
+    background-color: #202124;
+  }
+
+  :host([dark-mode]) #networkErrorTopLine {
+    color: #E8EAED;
+  }
+
+  #searchbox {
+    margin-block-start: 16px;
+    margin-inline-end: 14px;
+    margin-block-end: 8px;
+    margin-inline-start: 14px;
+  }
+
+  :host([is-back-arrow-visible]) #searchbox {
+    margin-inline-start: 0px;
+  }
+
+  #searchboxContainer {
     position: fixed;
     width: 100%;
-    z-index: 2;  /* Searchbox should render in front of the results iframe. */
-    /* TODO(jdonnelly): Specify these in a color mixer. */
-    /* Colors used in the cr-searchbox results dropdown */
-    --color-realbox-answer-icon-background: #d3e3fdff;
-    --color-realbox-answer-icon-foreground: #041e49ff;
-    --color-realbox-results-action-chip:#a8c7faff;
-    --color-realbox-results-action-chip-icon: #0b57d0ff;
-    --color-realbox-results-action-chip-focus-outline: #0b57d0ff;
-    --color-realbox-results-background-hovered:#e9e9eaff;
-    --color-realbox-results-background: #ffffffff;
-    --color-realbox-results-button-hover: #202124ff;
-    --color-realbox-results-dim-selected: #5f6368ff;
-    --color-realbox-results-focus-indicator: #e9e9eaff;
-    --color-realbox-results-foreground: #000000ff;
-    --color-realbox-results-foreground-dimmed: #5f6368ff;
-    --color-realbox-results-icon-focused-outline: #1a73e8ff;
-    --color-realbox-results-icon-selected: #5f6368ff;
-    --color-realbox-results-icon: #5f6368ff;
-    --color-realbox-results-url: #1967d2ff;
-    --color-realbox-results-url-selected: #1967d2ff;
-    --color-realbox-search-icon-background: #5f6368ff;
-    /* Colors specific to the cr-searchbox input */
-    --color-realbox-background-hovered: #F1F3F4;
-    --color-realbox-background: #F1F3F4;
-    --color-realbox-border: #dadce0ff;
-    --color-realbox-foreground: #202124ff;
-    --color-realbox-placeholder: #5f6368ff;
-    --color-realbox-shadow: #20212451;
-    /* Variables used by cr-realbox */
-    --cr-realbox-height: 52px;
-    --cr-realbox-icon-left-position: 10px;
-    --cr-realbox-icon-top-position: 1px;
-    --cr-realbox-min-width: min(calc(100vw - 16px), 768px);
-    --cr-realbox-icon-size-in-searchbox: 24px;
+    --color-searchbox-results-background: #ffffffff;
   }
 
-  :host([is-back-arrow-visible]) #realboxContainer {
-    --cr-realbox-min-width: min(calc(100vw - 60px), 768px);
+  :host([dark-mode]) #searchboxContainer {
+    background-color: #101218;
+    /* Colors used in the cr-searchbox results dropdown */
+    --color-searchbox-answer-icon-background: #004a77ff;
+    --color-searchbox-answer-icon-foreground: #c2e7ffff;
+    --color-searchbox-dropdown-divider: #60626C;
+    --color-searchbox-results-action-chip: #047db7ff;
+    --color-searchbox-results-action-chip-icon: #a8c7faff;
+    --color-searchbox-results-action-chip-focus-outline: #669df6ff;
+    --color-searchbox-results-background: #2E313B;
+    --color-searchbox-results-background-hovered: #3D4049;
+    --color-searchbox-results-button-hover: #fdfcfb1a;
+    --color-searchbox-results-dim-selected: #c7c7c7ff;
+    --color-searchbox-results-focus-indicator: #3C4043;
+    --color-searchbox-results-foreground: #E8EAED;
+    --color-searchbox-results-foreground-dimmed: #c7c7c7ff;
+    --color-searchbox-results-icon: #9aa0a6;
+    --color-searchbox-results-icon-container-background: #3D4049;
+    --color-searchbox-results-icon-focused-outline: #a8c7faff;
+    --color-searchbox-results-icon-selected: #9DA3A9;
+    --color-searchbox-results-typed-prefix: #9DA3A9;
+    --color-searchbox-results-url: #a8c7faff;
+    --color-searchbox-results-url-selected: #a8c7faff;
+    --color-searchbox-search-icon-background: #9DA3A9;
+    --color-searchbox-thumbnail-overlay: #8CB7FA66;
+    --color-searchbox-thumbnail-outline: #8CB7FA;
+    /* Colors specific to the cr-searchbox input */
+    --color-searchbox-background-hovered: #4D5160;
+    --color-searchbox-background: #3F4454;
+    --color-searchbox-border: #dadce0ff;
+    --color-searchbox-foreground: #e8eaed;
+    --color-searchbox-placeholder: #999da9;
+    --color-searchbox-shadow: #20212451;
+    /* Colors for searchbox ghost loader */
+    --color-searchbox-ghost-loader-spinner: #70757A;
   }
 
-  :host([dark-mode]) #realboxContainer {
-    background-color: #1F1F1F;
-
-    /* Colors used in the cr-searchbox results dropdown */
-    --color-realbox-answer-icon-background: #004a77ff;
-    --color-realbox-answer-icon-foreground: #c2e7ffff;
-    --color-realbox-results-action-chip: #047db7ff;
-    --color-realbox-results-action-chip-icon: #a8c7faff;
-    --color-realbox-results-action-chip-focus-outline: #669df6ff;
-    --color-realbox-results-background: #3c3c3cff;
-    --color-realbox-results-background-hovered: #50504fff;
-    --color-realbox-results-button-hover: #fdfcfb1a;
-    --color-realbox-results-dim-selected: #c7c7c7ff;
-    --color-realbox-results-focus-indicator: #50504fff;
-    --color-realbox-results-foreground: #e3e3e3ff;
-    --color-realbox-results-foreground-dimmed: #c7c7c7ff;
-    --color-realbox-results-icon: #c7c7c7ff;
-    --color-realbox-results-icon-focused-outline: #a8c7faff;
-    --color-realbox-results-icon-selected: #c7c7c7ff;
-    --color-realbox-results-url: #a8c7faff;
-    --color-realbox-results-url-selected: #a8c7faff;
-    --color-realbox-search-icon-background: #c7c7c7ff;
-    /* Colors specific to the cr-searchbox input */
-    --color-realbox-background-hovered: #4a4a4aff;
-    --color-realbox-background: #303134;
-    --color-realbox-border: #dadce0ff;
-    --color-realbox-foreground: #e3e3e3ff;
-    --color-realbox-placeholder: #c7c7c7ff;
-    --color-realbox-shadow: #20212451;
+  :host([show-ghost-loader]) #searchboxContainer {
+    --color-searchbox-background: var(--color-searchbox-results-background);
   }
 
   cr-icon-button.icon-arrow-back {
+    margin-block-start: 26px;
     margin-inline-start: 8px;
-    margin-inline-end: 10px;
-    margin-top: 26px;
+    margin-inline-end: 8px;
   }
 
   :host([dark-mode]) cr-icon-button.icon-arrow-back {
     color: #70757A;
   }
+
+  cr-searchbox-ghost-loader {
+    display: none;
+    position: absolute;
+    inset-inline-start: 14px;
+    inset-inline-end: 14px;
+    top: 16px;
+  }
+
+  /**
+   * Show the ghost loader when the searchbox is focused and the searchbox
+   * dropdown isn't showing (no results available). Only show for contextual
+   * searchboxes.
+   */
+  :host([show-ghost-loader]) #searchboxContainer:has(cr-searchbox:not([dropdown-is-visible])) cr-searchbox-ghost-loader {
+    display: block;
+  }
 </style>
-<div id="realboxContainer">
+<div id="searchboxContainer"
+     on-escape-searchbox="handleEscapeSearchbox"
+     on-focusout="onSearchboxFocusOut_">
   <template is="dom-if" if="[[isBackArrowVisible]]">
     <cr-icon-button id="backButton" class="action-icon icon-arrow-back"
         on-click="onBackArrowClick" aria-label="$i18n{backButton}">
     </cr-icon-button>
   </template>
-  <cr-realbox id="realbox"></cr-realbox>
+    <cr-searchbox
+    id="searchbox"
+    placeholder-text="{{placeholderText}}"
+    searchbox-aria-description="[[getSearchboxAriaDescription(showErrorState, showGhostLoader)]]"
+    on-focusin="onSearchboxFocusIn_"
+    >
+  </cr-searchbox>
+  <cr-searchbox-ghost-loader
+      id="searchboxGhostLoader"
+      show-error-state="{{showErrorState}}"
+      page-content-type="[[pageContentType]]"
+      tabindex="-1">
+  </cr-searchbox-ghost-loader>
 </div>
 
-<!-- Image that is only shown when results are loading. -->
-<img id="loadingResultsImage" class="results-pane" src="[[loadingImageUrl]]">
+<!-- Network error UI that is initially hidden -->
+<div id="networkErrorPage">
+  <div id="networkErrorIcon">
+    <picture>
+      <source srcset="generic-error-icon-dark.png"
+        media$="[[darkMode]]">
+      <img src="generic-error-icon.png">
+    </picture>
+  </div>
+  <div id="networkErrorTopLine">
+    $i18n{networkErrorPageTopLine}
+  </div>
+  <div id="networkErrorBottomLine">
+    $i18n{networkErrorPageBottomLine}
+  </div>
+</div>
+
+<side-panel-ghost-loader id="ghostLoader"
+    class="results-pane"></side-panel-ghost-loader>
 
 <iframe name="results" id="results" class="results-pane"
     allow="cross-origin-isolated; display-capture; geolocation; microphone;"

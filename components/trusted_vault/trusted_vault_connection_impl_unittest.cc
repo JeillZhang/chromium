@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "base/base64url.h"
+#include "base/functional/callback_helpers.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
@@ -88,6 +89,8 @@ constexpr char kTestMemberPublicKey[] =
 constexpr int kTestKeyVersion = 100;
 constexpr int kTestGPMExpirySeconds = 1000000;
 constexpr int kTestLSKFExpirySeconds = 1000001;
+constexpr char kTestMemberProof[] = "member_proof";
+constexpr char kTestWrappedKey[] = "wrapped_key";
 
 enum class Member {
   kPhysical,
@@ -122,6 +125,8 @@ trusted_vault_pb::ListSecurityDomainMembersResponse MakeSecurityDomainMembers(
     } else {
       key->set_epoch(kTestKeyVersion);
     }
+    key->set_member_proof(kTestMemberProof);
+    key->set_wrapped_key(kTestWrappedKey);
 
     switch (member_type) {
       case Member::kPhysical:
@@ -314,7 +319,7 @@ TEST_P(TrustedVaultConnectionImplTest,
   ASSERT_THAT(key_pair, NotNull());
 
   std::unique_ptr<TrustedVaultConnection::Request> request =
-      connection()->RegisterDeviceWithoutKeys(
+      connection()->RegisterLocalDeviceWithoutKeys(
           /*account_info=*/CoreAccountInfo(), key_pair->public_key(),
           TrustedVaultConnection::RegisterAuthenticationFactorCallback());
   EXPECT_THAT(request, NotNull());
@@ -378,7 +383,7 @@ TEST_P(TrustedVaultConnectionImplTest,
       connection()->RegisterAuthenticationFactor(
           /*account_info=*/CoreAccountInfo(),
           GetTrustedVaultKeysWithVersions(kTrustedVaultKeys, kLastKeyVersion),
-          key_pair->public_key(), PhysicalDevice(),
+          key_pair->public_key(), LocalPhysicalDevice(),
           TrustedVaultConnection::RegisterAuthenticationFactorCallback());
   EXPECT_THAT(request, NotNull());
 
@@ -450,8 +455,8 @@ TEST_P(TrustedVaultConnectionImplTest,
   std::unique_ptr<TrustedVaultConnection::Request> request =
       connection()->RegisterAuthenticationFactor(
           /*account_info=*/CoreAccountInfo(),
-          PrecomputedMemberKeys(kVersion, kWrappedKey, kProof),
-          key_pair->public_key(), PhysicalDevice(),
+          MemberKeys(kVersion, kWrappedKey, kProof), key_pair->public_key(),
+          LocalPhysicalDevice(),
           TrustedVaultConnection::RegisterAuthenticationFactorCallback());
 
   const network::TestURLLoaderFactory::PendingRequest* pending_request =
@@ -591,7 +596,7 @@ TEST_P(TrustedVaultConnectionImplTest,
           /*account_info=*/CoreAccountInfo(),
           GetTrustedVaultKeysWithVersions(kTrustedVaultKeys,
                                           /*last_key_version=*/1),
-          key_pair->public_key(), PhysicalDevice(), callback.Get());
+          key_pair->public_key(), LocalPhysicalDevice(), callback.Get());
   ASSERT_THAT(request, NotNull());
 
   EXPECT_CALL(callback, Run(Eq(TrustedVaultRegistrationStatus::kSuccess),
@@ -627,7 +632,7 @@ TEST_P(TrustedVaultConnectionImplTest,
       callback;
 
   std::unique_ptr<TrustedVaultConnection::Request> request =
-      connection()->RegisterDeviceWithoutKeys(
+      connection()->RegisterLocalDeviceWithoutKeys(
           /*account_info=*/CoreAccountInfo(), key_pair->public_key(),
           callback.Get());
   ASSERT_THAT(request, NotNull());
@@ -652,7 +657,7 @@ TEST_P(TrustedVaultConnectionImplTest,
       callback;
 
   std::unique_ptr<TrustedVaultConnection::Request> request =
-      connection()->RegisterDeviceWithoutKeys(
+      connection()->RegisterLocalDeviceWithoutKeys(
           /*account_info=*/CoreAccountInfo(), key_pair->public_key(),
           callback.Get());
   ASSERT_THAT(request, NotNull());
@@ -691,7 +696,7 @@ TEST_P(TrustedVaultConnectionImplTest,
           /*account_info=*/CoreAccountInfo(),
           GetTrustedVaultKeysWithVersions(kTrustedVaultKeys,
                                           /*last_key_version=*/0),
-          key_pair->public_key(), PhysicalDevice(), callback.Get());
+          key_pair->public_key(), LocalPhysicalDevice(), callback.Get());
   ASSERT_THAT(request, NotNull());
 
   EXPECT_CALL(callback,
@@ -715,7 +720,7 @@ TEST_P(TrustedVaultConnectionImplTest,
           /*account_info=*/CoreAccountInfo(),
           GetTrustedVaultKeysWithVersions(kTrustedVaultKeys,
                                           /*last_key_version=*/0),
-          key_pair->public_key(), PhysicalDevice(), callback.Get());
+          key_pair->public_key(), LocalPhysicalDevice(), callback.Get());
   ASSERT_THAT(request, NotNull());
 
   EXPECT_CALL(callback,
@@ -739,7 +744,7 @@ TEST_P(TrustedVaultConnectionImplTest,
           /*account_info=*/CoreAccountInfo(),
           GetTrustedVaultKeysWithVersions(kTrustedVaultKeys,
                                           /*last_key_version=*/1),
-          key_pair->public_key(), PhysicalDevice(), callback.Get());
+          key_pair->public_key(), LocalPhysicalDevice(), callback.Get());
   ASSERT_THAT(request, NotNull());
 
   EXPECT_CALL(callback,
@@ -763,7 +768,7 @@ TEST_P(TrustedVaultConnectionImplTest,
           /*account_info=*/CoreAccountInfo(),
           GetTrustedVaultKeysWithVersions(kTrustedVaultKeys,
                                           /*last_key_version=*/1),
-          key_pair->public_key(), PhysicalDevice(), callback.Get());
+          key_pair->public_key(), LocalPhysicalDevice(), callback.Get());
   ASSERT_THAT(request, NotNull());
 
   // Advance time to bypass retry logic.
@@ -788,7 +793,7 @@ TEST_P(TrustedVaultConnectionImplTest,
           /*account_info=*/CoreAccountInfo(),
           GetTrustedVaultKeysWithVersions(kTrustedVaultKeys,
                                           /*last_key_version=*/1),
-          key_pair->public_key(), PhysicalDevice(), callback.Get());
+          key_pair->public_key(), LocalPhysicalDevice(), callback.Get());
   ASSERT_THAT(request, NotNull());
 
   // In particular, HTTP_NOT_FOUND indicates that security domain was removed.
@@ -814,7 +819,7 @@ TEST_P(TrustedVaultConnectionImplTest,
           /*account_info=*/CoreAccountInfo(),
           GetTrustedVaultKeysWithVersions(kTrustedVaultKeys,
                                           /*last_key_version=*/1),
-          key_pair->public_key(), PhysicalDevice(), callback.Get());
+          key_pair->public_key(), LocalPhysicalDevice(), callback.Get());
   ASSERT_THAT(request, NotNull());
 
   // In particular, HTTP_BAD_REQUEST indicates that
@@ -853,7 +858,7 @@ TEST_P(
           /*account_info=*/CoreAccountInfo(),
           GetTrustedVaultKeysWithVersions(kTrustedVaultKeys,
                                           /*last_key_version=*/1),
-          key_pair->public_key(), PhysicalDevice(), callback.Get());
+          key_pair->public_key(), LocalPhysicalDevice(), callback.Get());
   ASSERT_THAT(request, NotNull());
 
   // No requests should be sent to the network.
@@ -873,7 +878,7 @@ TEST_P(TrustedVaultConnectionImplTest, ShouldCancelJoinSecurityDomainsRequest) {
           /*account_info=*/CoreAccountInfo(),
           GetTrustedVaultKeysWithVersions(kTrustedVaultKeys,
                                           /*last_key_version=*/1),
-          key_pair->public_key(), PhysicalDevice(), callback.Get());
+          key_pair->public_key(), LocalPhysicalDevice(), callback.Get());
   ASSERT_THAT(request, NotNull());
 
   EXPECT_CALL(callback, Run).Times(0);
@@ -1119,7 +1124,8 @@ TEST_P(TrustedVaultConnectionImplTest,
 
   std::unique_ptr<TrustedVaultConnection::Request> request =
       connection()->DownloadAuthenticationFactorsRegistrationState(
-          /*account_info=*/CoreAccountInfo(), callback.Get());
+          /*account_info=*/CoreAccountInfo(), callback.Get(),
+          base::NullCallback());
   ASSERT_THAT(request, NotNull());
 
   EXPECT_CALL(callback,
@@ -1155,7 +1161,7 @@ TEST_P(TrustedVaultConnectionImplTest,
     std::optional<int> expected_key_version;
     std::optional<GpmPinMetadata> expected_gpm_pin_metadata;
     std::vector<base::Time> expected_lskf_expiries;
-    std::vector<std::string> expected_icloud_keys;
+    std::optional<std::string> expected_icloud_key;
   } kTestCases[] = {
       {
           {{}},
@@ -1279,10 +1285,11 @@ TEST_P(TrustedVaultConnectionImplTest,
             DownloadAuthenticationFactorsRegistrationStateResult in_result) {
           result.emplace(std::move(in_result));
         });
-
+    testing::StrictMock<base::MockRepeatingClosure> keep_alive_callback;
     std::unique_ptr<TrustedVaultConnection::Request> request =
         connection()->DownloadAuthenticationFactorsRegistrationState(
-            /*account_info=*/CoreAccountInfo(), std::move(callback));
+            /*account_info=*/CoreAccountInfo(), std::move(callback),
+            keep_alive_callback.Get());
     ASSERT_THAT(request, NotNull());
 
     std::optional<std::string> prev_next_page_token;
@@ -1296,6 +1303,7 @@ TEST_P(TrustedVaultConnectionImplTest,
 
       std::optional<std::string> next_page_token;
       if (i < test.responses.size() - 1) {
+        EXPECT_CALL(keep_alive_callback, Run());
         next_page_token = base::NumberToString(i);
       }
       ASSERT_TRUE(
@@ -1305,6 +1313,8 @@ TEST_P(TrustedVaultConnectionImplTest,
               MakeSecurityDomainMembers(security_domain(), test.responses[i],
                                         next_page_token)
                   .SerializeAsString()));
+      EXPECT_TRUE(
+          testing::Mock::VerifyAndClearExpectations(&keep_alive_callback));
       num_pages_downloaded++;
       prev_next_page_token = std::move(next_page_token);
     }
@@ -1313,11 +1323,19 @@ TEST_P(TrustedVaultConnectionImplTest,
     EXPECT_EQ(result->state, test.expected_result);
     EXPECT_EQ(result->gpm_pin_metadata, test.expected_gpm_pin_metadata);
     EXPECT_EQ(result->lskf_expiries, test.expected_lskf_expiries);
-    std::vector<std::string> result_icloud_keys;
-    for (const auto& key : result->icloud_keys) {
-      result_icloud_keys.push_back(base::HexEncode(key->ExportToBytes()));
+    EXPECT_EQ(result->icloud_keys.size(), test.expected_icloud_key ? 1u : 0u);
+    if (test.expected_icloud_key) {
+      EXPECT_EQ(base::HexEncode(
+                    result->icloud_keys.at(0).public_key->ExportToBytes()),
+                test.expected_icloud_key);
+      EXPECT_EQ(result->icloud_keys.at(0).member_keys.size(), 1u);
+      EXPECT_EQ(result->icloud_keys.at(0).member_keys.at(0).proof,
+                ProtoStringToBytes(kTestMemberProof));
+      EXPECT_EQ(result->icloud_keys.at(0).member_keys.at(0).wrapped_key,
+                ProtoStringToBytes(kTestWrappedKey));
+      EXPECT_EQ(result->icloud_keys.at(0).member_keys.at(0).version,
+                kTestKeyVersion * 2);
     }
-    EXPECT_EQ(result_icloud_keys, test.expected_icloud_keys);
   }
 }
 
@@ -1329,7 +1347,8 @@ TEST_P(TrustedVaultConnectionImplTest,
 
   std::unique_ptr<TrustedVaultConnection::Request> request =
       connection()->DownloadAuthenticationFactorsRegistrationState(
-          /*account_info=*/CoreAccountInfo(), callback.Get());
+          /*account_info=*/CoreAccountInfo(), callback.Get(),
+          base::NullCallback());
   ASSERT_THAT(request, NotNull());
 
   EXPECT_CALL(callback,
@@ -1350,7 +1369,8 @@ TEST_P(TrustedVaultConnectionImplTest,
 
   std::unique_ptr<TrustedVaultConnection::Request> request =
       connection()->DownloadAuthenticationFactorsRegistrationState(
-          /*account_info=*/CoreAccountInfo(), callback.Get());
+          /*account_info=*/CoreAccountInfo(), callback.Get(),
+          base::NullCallback());
   ASSERT_THAT(request, NotNull());
 
   EXPECT_CALL(callback,

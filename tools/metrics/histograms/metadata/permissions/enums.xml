@@ -71,6 +71,18 @@ chromium-metrics-reviews@google.com.
   <int value="1" label="DISMISSED_SCRIM"/>
 </enum>
 
+<!-- LINT.IfChange(ExternalProtocolScheme) -->
+
+<enum name="ExternalProtocolScheme">
+  <int value="0" label="Other"/>
+  <int value="1" label="search-ms"/>
+  <int value="2" label="search"/>
+  <int value="3" label="mailto"/>
+  <int value="4" label="microsoft-edge"/>
+</enum>
+
+<!-- LINT.ThenChange(/chrome/browser/external_protocol/external_protocol_handler.cc:LoggedScheme) -->
+
 <enum name="HandleStateType">
   <int value="0" label="Launch"/>
   <int value="1" label="Checked launch"/>
@@ -159,6 +171,7 @@ chromium-metrics-reviews@google.com.
   <int value="4"
       label="Autodismissed after prompt was accepted but OS permission was
              denied"/>
+  <int value="5" label="Autodismissed due to no modal dialog manager"/>
 </enum>
 
 <enum name="PermissionRequestIgnoredReason">

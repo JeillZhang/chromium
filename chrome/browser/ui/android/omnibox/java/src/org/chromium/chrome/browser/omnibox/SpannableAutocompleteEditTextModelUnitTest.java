@@ -41,7 +41,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 @RunWith(BaseRobolectricTestRunner.class)
 public class SpannableAutocompleteEditTextModelUnitTest {
     public @Rule MockitoRule mockitoRule = MockitoJUnit.rule();
-    private @Mock SpannableAutocompleteEditTextModel.AutocompleteInputConnection mConnection;
+    private @Mock AutocompleteInputConnection mConnection;
     private @Mock AutocompleteEditTextModelBase.Delegate mDelegate;
     private SpannableAutocompleteEditTextModel mModel;
     private AutocompleteState mCurrentState;
@@ -138,41 +138,18 @@ public class SpannableAutocompleteEditTextModelUnitTest {
     }
 
     @Test
-    public void dispatchKeyEvent_processAutocompleteKeysWhenAutocompletionIsAvailable_ltr() {
-        mModel.setLayoutDirectionIsLtr(true);
+    public void dispatchKeyEvent_processAutocompleteKeysWhenAutocompletionIsAvailable() {
         mCurrentState.setAutocompleteText(Optional.of("google.com"));
 
         confirmAutocompletionAppliedWithKey(KeyEvent.KEYCODE_DPAD_RIGHT);
-        confirmAutocompletionApplied(KeyEvent.KEYCODE_ENTER);
-        confirmAutocompletionApplied(KeyEvent.KEYCODE_TAB);
-        confirmAutocompletionAppliedWithKey(KeyEvent.KEYCODE_DPAD_LEFT);
-    }
-
-    @Test
-    public void dispatchKeyEvent_processAutocompleteKeysWhenAutocompletionIsAvailable_rtl() {
-        mModel.setLayoutDirectionIsLtr(false);
-        mCurrentState.setAutocompleteText(Optional.of("google.com"));
-
-        confirmAutocompletionAppliedWithKey(KeyEvent.KEYCODE_DPAD_LEFT);
-        confirmAutocompletionApplied(KeyEvent.KEYCODE_ENTER);
-        confirmAutocompletionApplied(KeyEvent.KEYCODE_TAB);
-        confirmAutocompletionAppliedWithKey(KeyEvent.KEYCODE_DPAD_RIGHT);
-    }
-
-    @Test
-    public void dispatchKeyEvent_passAutocompleteKeysWhenAutocompletionIsNotAvailable_ltr() {
-        mModel.setLayoutDirectionIsLtr(true);
-        mCurrentState.setAutocompleteText(Optional.empty());
-
-        confirmAutocompletionBypassed(KeyEvent.KEYCODE_DPAD_RIGHT);
+        // Enter is forwarded to the delegate for handling which is what "bypassed" checks.
         confirmAutocompletionBypassed(KeyEvent.KEYCODE_ENTER);
-        confirmAutocompletionBypassed(KeyEvent.KEYCODE_TAB);
-        confirmAutocompletionBypassed(KeyEvent.KEYCODE_DPAD_LEFT);
+        confirmAutocompletionApplied(KeyEvent.KEYCODE_TAB);
+        confirmAutocompletionAppliedWithKey(KeyEvent.KEYCODE_DPAD_LEFT);
     }
 
     @Test
-    public void dispatchKeyEvent_passAutocompleteKeysWhenAutocompletionIsNotAvailable_rtl() {
-        mModel.setLayoutDirectionIsLtr(false);
+    public void dispatchKeyEvent_passAutocompleteKeysWhenAutocompletionIsNotAvailable() {
         mCurrentState.setAutocompleteText(Optional.empty());
 
         confirmAutocompletionBypassed(KeyEvent.KEYCODE_DPAD_RIGHT);
@@ -185,7 +162,7 @@ public class SpannableAutocompleteEditTextModelUnitTest {
     public void dispatchKeyEvent_handleForwardDel() {
         mCurrentState.setUserText("goo");
         mCurrentState.setAutocompleteText(Optional.of("gle.com"));
-        assertEquals(mCurrentState.getText(), "google.com"); // Verify full state constructed.
+        assertEquals("google.com", mCurrentState.getText()); // Verify full state constructed.
 
         // The delete key doesn't get sent to our delegate when in autocomplete mode so
         // confirmAutocompletionBypassed() doesn't work. Manually dispatch.
@@ -194,7 +171,7 @@ public class SpannableAutocompleteEditTextModelUnitTest {
         mModel.dispatchKeyEvent(event);
 
         // Inline autocompleted text should be deleted.
-        assertEquals(mCurrentState.getText(), "goo");
+        assertEquals("goo", mCurrentState.getText());
 
         // Go left and then forward delete the last user-char. The forward delete should still
         // get dispatched.

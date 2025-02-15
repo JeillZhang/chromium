@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/342213636): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "content/browser/indexed_db/indexed_db_leveldb_coding.h"
 
 #include <stddef.h>
@@ -19,8 +24,7 @@
 using blink::IndexedDBKey;
 using blink::IndexedDBKeyPath;
 
-namespace content {
-
+namespace content::indexed_db {
 namespace {
 
 static IndexedDBKey CreateArrayIDBKey() {
@@ -236,7 +240,7 @@ TEST(IndexedDBLevelDBCodingTest, DecodeInt) {
 
     // Verify decoding at an offset, to detect unaligned memory access.
     v.insert(v.begin(), 1u, static_cast<char>(0));
-    slice = std::string_view(&*v.begin() + 1, v.size() - 1);
+    slice = std::string_view(v).substr(1u);
     EXPECT_TRUE(DecodeInt(&slice, &value));
     EXPECT_EQ(n, value);
     EXPECT_TRUE(slice.empty());
@@ -288,7 +292,7 @@ TEST(IndexedDBLevelDBCodingTest, DecodeString) {
 
     // Verify decoding at an offset, to detect unaligned memory access.
     v.insert(v.begin(), 1u, static_cast<char>(0));
-    slice = std::string_view(&*v.begin() + 1, v.size() - 1);
+    slice = std::string_view(v).substr(1u);
     EXPECT_TRUE(DecodeString(&slice, &result));
     EXPECT_EQ(test_case, result);
     EXPECT_TRUE(slice.empty());
@@ -348,7 +352,7 @@ TEST(IndexedDBLevelDBCodingTest, DecodeStringWithLength) {
 
     // Verify decoding at an offset, to detect unaligned memory access.
     v.insert(v.begin(), 1u, static_cast<char>(0));
-    slice = std::string_view(&*v.begin() + 1, v.size() - 1);
+    slice = std::string_view(v).substr(1u);
     EXPECT_TRUE(DecodeStringWithLength(&slice, &res));
     EXPECT_EQ(s, res);
     EXPECT_TRUE(slice.empty());
@@ -457,7 +461,7 @@ TEST(IndexedDBLevelDBCodingTest, DecodeBinary) {
 
     // Verify decoding at an offset, to detect unaligned memory access.
     v.insert(v.begin(), 1u, static_cast<char>(0));
-    slice = std::string_view(&*v.begin() + 1, v.size() - 1);
+    slice = std::string_view(v).substr(1u);
     EXPECT_TRUE(DecodeBinary(&slice, &result));
     EXPECT_EQ(value, result);
     EXPECT_TRUE(slice.empty());
@@ -496,7 +500,7 @@ TEST(IndexedDBLevelDBCodingTest, DecodeDouble) {
 
     // Verify decoding at an offset, to detect unaligned memory access.
     v.insert(v.begin(), 1u, static_cast<char>(0));
-    slice = std::string_view(&*v.begin() + 1, v.size() - 1);
+    slice = std::string_view(v).substr(1u);
     EXPECT_TRUE(DecodeDouble(&slice, &result));
     EXPECT_EQ(value, result);
     EXPECT_TRUE(slice.empty());
@@ -555,7 +559,7 @@ TEST(IndexedDBLevelDBCodingTest, EncodeDecodeIDBKeyPath) {
                        0      // Type is null
     };
     encoded_paths.push_back(
-        std::string(expected, expected + std::size(expected)));
+        std::string(std::begin(expected), std::end(expected)));
   }
 
   {
@@ -565,7 +569,7 @@ TEST(IndexedDBLevelDBCodingTest, EncodeDecodeIDBKeyPath) {
                        0      // Length is 0
     };
     encoded_paths.push_back(
-        std::string(expected, expected + std::size(expected)));
+        std::string(std::begin(expected), std::end(expected)));
   }
 
   {
@@ -575,7 +579,7 @@ TEST(IndexedDBLevelDBCodingTest, EncodeDecodeIDBKeyPath) {
                        3, 0, 'f', 0, 'o', 0, 'o'  // String length 3, UTF-16BE
     };
     encoded_paths.push_back(
-        std::string(expected, expected + std::size(expected)));
+        std::string(std::begin(expected), std::end(expected)));
   }
 
   {
@@ -586,7 +590,7 @@ TEST(IndexedDBLevelDBCodingTest, EncodeDecodeIDBKeyPath) {
                        'r'  // String length 7, UTF-16BE
     };
     encoded_paths.push_back(
-        std::string(expected, expected + std::size(expected)));
+        std::string(std::begin(expected), std::end(expected)));
   }
 
   {
@@ -601,7 +605,7 @@ TEST(IndexedDBLevelDBCodingTest, EncodeDecodeIDBKeyPath) {
                        'r'  // Member 3 (String length 7)
     };
     encoded_paths.push_back(
-        std::string(expected, expected + std::size(expected)));
+        std::string(std::begin(expected), std::end(expected)));
   }
 
   ASSERT_EQ(key_paths.size(), encoded_paths.size());
@@ -1102,5 +1106,4 @@ TEST(IndexedDBLevelDBCodingTest, EncodeVarIntVSEncodeByteTest) {
 }
 
 }  // namespace
-
-}  // namespace content
+}  // namespace content::indexed_db

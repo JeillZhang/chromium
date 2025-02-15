@@ -37,9 +37,12 @@ class CampaignsManagerClientImpl : public growth::CampaignsManagerClient,
   // growth::CampaignsManagerClient:
   void LoadCampaignsComponent(
       growth::CampaignComponentLoadedCallback callback) override;
+  void AddOnTrackerInitializedCallback(
+      growth::OnTrackerInitializedCallback callback) override;
   bool IsDeviceInDemoMode() const override;
   bool IsCloudGamingDevice() const override;
   bool IsFeatureAwareDevice() const override;
+  bool IsAppIconOnShelf(const std::string& app_id) const override;
   const std::string& GetApplicationLocale() const override;
   const std::string& GetUserLocale() const override;
 
@@ -53,24 +56,37 @@ class CampaignsManagerClientImpl : public growth::CampaignsManagerClient,
       const std::string& trial_name,
       const std::string& group_name) const override;
   void ClearConfig(const std::map<std::string, std::string>& params) override;
-  void RecordEvent(const std::string& event_name) override;
+  void RecordEvent(const std::string& event_name,
+                   bool trigger_campaigns) override;
   bool WouldTriggerHelpUI(
       const std::map<std::string, std::string>& params) override;
   signin::IdentityManager* GetIdentityManager() const override;
 
   // UiActionPerformer::Observer:
-  void OnReadyToLogImpression(int campaign_id) override;
-  void OnDismissed(int campaign_id, bool should_mark_dismissed) override;
+  void OnReadyToLogImpression(int campaign_id,
+                              std::optional<int> group_id,
+                              bool should_log_cros_events) override;
+  void RecordImpressionEvents(int campaign_id,
+                              std::optional<int> group_id) override;
+  void OnDismissed(int campaign_id,
+                   std::optional<int> group_id,
+                   bool should_mark_dismissed,
+                   bool should_log_cros_events) override;
   void OnButtonPressed(int campaign_id,
+                       std::optional<int> group_id,
                        CampaignButtonId button_id,
-                       bool should_mark_dismissed) override;
+                       bool should_mark_dismissed,
+                       bool should_log_cros_events) override;
 
  private:
   void OnComponentDownloaded(
       growth::CampaignComponentLoadedCallback loaded_callback,
       component_updater::ComponentManagerAsh::Error error,
       const base::FilePath& path);
+  void OnTrackerInitialized(growth::OnTrackerInitializedCallback callback,
+                            bool init_success);
   void UpdateConfig(const std::map<std::string, std::string>& params);
+  void RecordDismissalEvents(int campaign_id, std::optional<int> group_id);
 
   growth::CampaignsConfigurationProvider config_provider_;
   std::unique_ptr<growth::CampaignsManager> campaigns_manager_;

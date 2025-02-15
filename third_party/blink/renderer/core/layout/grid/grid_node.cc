@@ -113,9 +113,10 @@ GridItems GridNode::ConstructGridItems(
   }
 
   // Copy each resolved position to its respective grid item data.
-  auto* resolved_position = cached_placement_data->grid_item_positions.begin();
+  auto resolved_position = cached_placement_data->grid_item_positions.begin();
   for (auto& grid_item : grid_items) {
-    grid_item.resolved_position = *(resolved_position++);
+    // TODO(crbug.com/351564777): Resolve a buffer safety issue.
+    grid_item.resolved_position = *(UNSAFE_TODO(resolved_position++));
   }
   return grid_items;
 }

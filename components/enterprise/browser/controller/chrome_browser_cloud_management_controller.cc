@@ -53,7 +53,7 @@ ChromeBrowserCloudManagementController::Delegate::
 
 void ChromeBrowserCloudManagementController::Delegate::DeferInitialization(
     base::OnceClosure callback) {
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 ChromeBrowserCloudManagementController::ChromeBrowserCloudManagementController(
@@ -343,16 +343,6 @@ void ChromeBrowserCloudManagementController::UnenrollCallback(
     InvalidatePolicies();
 
   NotifyBrowserUnenrolled(success);
-}
-
-void ChromeBrowserCloudManagementController::OnPolicyFetched(
-    CloudPolicyClient* client) {
-  // Ignored.
-}
-
-void ChromeBrowserCloudManagementController::OnRegistrationStateChanged(
-    CloudPolicyClient* client) {
-  // Ignored.
 }
 
 void ChromeBrowserCloudManagementController::OnClientError(

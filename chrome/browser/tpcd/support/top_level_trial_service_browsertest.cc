@@ -13,6 +13,7 @@
 #include "chrome/browser/tpcd/support/trial_test_utils.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/test/base/chrome_test_utils.h"
+#include "chrome/test/base/in_process_browser_test.h"
 #include "components/content_settings/core/browser/content_settings_observer.h"
 #include "components/content_settings/core/browser/cookie_settings.h"
 #include "components/content_settings/core/common/content_settings.h"
@@ -46,7 +47,7 @@ using content::WebContents;
 
 namespace tpcd::trial {
 
-class TopLevelTpcdTrialBrowserTest : public PlatformBrowserTest {
+class TopLevelTpcdTrialBrowserTest : public InProcessBrowserTest {
  public:
   const std::string kUkmEventName =
       "ThirdPartyCookies.TopLevelDeprecationTrial";
@@ -59,12 +60,11 @@ class TopLevelTpcdTrialBrowserTest : public PlatformBrowserTest {
 
   void SetUp() override {
     features_.InitWithFeaturesAndParameters(
-        {{::features::kPersistentOriginTrials, {}},
-         {net::features::kTopLevelTpcdTrialSettings, {}},
+        {{net::features::kTopLevelTpcdTrialSettings, {}},
          {content_settings::features::kTrackingProtection3pcd, {}}},
         {});
 
-    PlatformBrowserTest::SetUp();
+    InProcessBrowserTest::SetUp();
   }
 
   void SetUpOnMainThread() override {
@@ -94,7 +94,7 @@ class TopLevelTpcdTrialBrowserTest : public PlatformBrowserTest {
   void TearDownOnMainThread() override {
     https_server_.reset();
     url_loader_interceptor_.reset();
-    PlatformBrowserTest::TearDownOnMainThread();
+    InProcessBrowserTest::TearDownOnMainThread();
   }
 
  protected:
@@ -206,7 +206,7 @@ class TopLevelTpcdTrialBrowserTest : public PlatformBrowserTest {
             "Content-Type: text/html\n"
             "Origin-Trial: %s\n"
             "Location: %s\n",
-            kTopLevelTrialToken, kOtherTrialEnabledSite.spec().c_str())));
+            k1pDeprecationTrialToken, kOtherTrialEnabledSite.spec().c_str())));
     auto response = network::mojom::URLResponseHead::New();
     response->headers = info.headers;
     response->headers->GetMimeType(&response->mime_type);
@@ -221,24 +221,24 @@ class TopLevelTpcdTrialBrowserTest : public PlatformBrowserTest {
 
     if (host == kTrialEnabledDomain) {
       if (query == "subdomain_matching_token") {
-        return kTopLevelTrialSubdomainMatchingToken;
+        return k1pDeprecationTrialSubdomainMatchingToken;
       } else {
-        return kTopLevelTrialToken;
+        return k1pDeprecationTrialToken;
       }
     }
 
     if (host == kTrialEnabledSubdomain) {
       if (query == "etld_plus_1_token") {
-        return kTopLevelTrialSubdomainMatchingToken;
+        return k1pDeprecationTrialSubdomainMatchingToken;
       } else if (query == "subdomain_matching_token") {
-        return kSubdomainTopLevelTrialSubdomainMatchingToken;
+        return kSubdomain1pDeprecationTrialSubdomainMatchingToken;
       } else {
-        return kSubdomainTopLevelTrialToken;
+        return kSubdomain1pDeprecationTrialToken;
       }
     }
 
     if (host == kOtherTrialEnabledDomain) {
-      return kOtherDomainTopLevelTrialToken;
+      return kOtherDomain1pDeprecationTrialToken;
     }
 
     // The host isn't one of our trial-enabled domains, so return no token.
@@ -520,15 +520,6 @@ IN_PROC_BROWSER_TEST_F(TopLevelTpcdTrialBrowserTest,
   // update content settings and then emit this UMA metric, which is why we need
   // the `RunLoop` here:
   base::RunLoop().RunUntilIdle();
-  ASSERT_THAT(
-      histograms.GetAllSamples(
-          "PageLoad.Clients.TPCD.TopLevelTpcd.CrossSiteTrialChange"),
-      BucketsAre(
-          base::Bucket(OriginTrialStatusChange::kDisabled, 0),
-          base::Bucket(OriginTrialStatusChange::kDisabled_MatchesSubdomains, 0),
-          base::Bucket(OriginTrialStatusChange::kEnabled, 1),
-          base::Bucket(OriginTrialStatusChange::kEnabled_MatchesSubdomains,
-                       0)));
 
   // Check the TopLevelTpcd origin trial itself is enabled for
   // `kTrialEnabledSite` embedded under `embedding_site`.
@@ -594,15 +585,6 @@ IN_PROC_BROWSER_TEST_F(TopLevelTpcdTrialBrowserTest,
   // update content settings and then emit this UMA metric, which is why we need
   // the `RunLoop` here:
   base::RunLoop().RunUntilIdle();
-  ASSERT_THAT(
-      histograms.GetAllSamples(
-          "PageLoad.Clients.TPCD.TopLevelTpcd.CrossSiteTrialChange"),
-      BucketsAre(
-          base::Bucket(OriginTrialStatusChange::kDisabled, 0),
-          base::Bucket(OriginTrialStatusChange::kDisabled_MatchesSubdomains, 0),
-          base::Bucket(OriginTrialStatusChange::kEnabled, 1),
-          base::Bucket(OriginTrialStatusChange::kEnabled_MatchesSubdomains,
-                       0)));
 
   // Check the TopLevelTpcd origin trial itself is enabled for
   // `kTrialEnabledSite` embedded under `embedding_site`.
@@ -626,15 +608,6 @@ IN_PROC_BROWSER_TEST_F(TopLevelTpcdTrialBrowserTest,
   // update content settings and then emit this UMA metric, which is why we need
   // the `RunLoop` here:
   base::RunLoop().RunUntilIdle();
-  ASSERT_THAT(
-      histograms.GetAllSamples(
-          "PageLoad.Clients.TPCD.TopLevelTpcd.CrossSiteTrialChange"),
-      BucketsAre(
-          base::Bucket(OriginTrialStatusChange::kDisabled, 1),
-          base::Bucket(OriginTrialStatusChange::kDisabled_MatchesSubdomains, 0),
-          base::Bucket(OriginTrialStatusChange::kEnabled, 1),
-          base::Bucket(OriginTrialStatusChange::kEnabled_MatchesSubdomains,
-                       0)));
 
   // Check the TopLevelTpcd origin trial itself is now disabled for
   // `kTrialEnabledSite` embedded under `embedding_site`.

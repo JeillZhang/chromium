@@ -13,8 +13,6 @@
 
 class Profile;
 
-namespace chrome {
-
 // The delegate for the infobar shown when Chrome is not the default browser.
 // Ownership of the delegate is given to the infobar itself, the lifetime of
 // which is bound to the containing WebContents.
@@ -74,6 +72,4 @@ class DefaultBrowserInfoBarDelegate : public ConfirmInfoBarDelegate {
   base::WeakPtrFactory<DefaultBrowserInfoBarDelegate> weak_factory_{this};
 };
 
-}  // namespace chrome
-
-#endif // CHROME_BROWSER_UI_STARTUP_DEFAULT_BROWSER_PROMPT_DEFAULT_BROWSER_INFOBAR_DELEGATE_H_
+#endif  // CHROME_BROWSER_UI_STARTUP_DEFAULT_BROWSER_PROMPT_DEFAULT_BROWSER_INFOBAR_DELEGATE_H_

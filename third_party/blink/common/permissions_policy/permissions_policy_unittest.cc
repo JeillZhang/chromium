@@ -11,15 +11,15 @@
 #include "base/strings/stringprintf.h"
 #include "base/test/gtest_util.h"
 #include "base/test/scoped_feature_list.h"
+#include "services/network/public/cpp/permissions_policy/origin_with_possible_wildcards.h"
 #include "services/network/public/cpp/resource_request.h"
+#include "services/network/public/mojom/permissions_policy/permissions_policy_feature.mojom-shared.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/common/permissions_policy/permissions_policy_features_internal.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/frame/fenced_frame_permissions_policies.h"
 #include "third_party/blink/public/common/permissions_policy/permissions_policy_features.h"
-#include "third_party/blink/public/mojom/permissions_policy/permissions_policy_feature.mojom-shared.h"
-#include "third_party/blink/public/mojom/permissions_policy/permissions_policy_feature.mojom.h"
 #include "third_party/blink/public/mojom/permissions_policy/policy_value.mojom.h"
 #include "url/gurl.h"
 #include "url/origin.h"
@@ -28,22 +28,26 @@ namespace blink {
 
 namespace {
 
-const mojom::PermissionsPolicyFeature kDefaultOnFeature =
-    static_cast<mojom::PermissionsPolicyFeature>(
-        static_cast<int>(mojom::PermissionsPolicyFeature::kMaxValue) + 1);
+const network::mojom::PermissionsPolicyFeature kDefaultOnFeature =
+    static_cast<network::mojom::PermissionsPolicyFeature>(
+        static_cast<int>(network::mojom::PermissionsPolicyFeature::kMaxValue) +
+        1);
 
-const mojom::PermissionsPolicyFeature kDefaultSelfFeature =
-    static_cast<mojom::PermissionsPolicyFeature>(
-        static_cast<int>(mojom::PermissionsPolicyFeature::kMaxValue) + 2);
+const network::mojom::PermissionsPolicyFeature kDefaultSelfFeature =
+    static_cast<network::mojom::PermissionsPolicyFeature>(
+        static_cast<int>(network::mojom::PermissionsPolicyFeature::kMaxValue) +
+        2);
 
-const mojom::PermissionsPolicyFeature kDefaultOffFeature =
-    static_cast<mojom::PermissionsPolicyFeature>(
-        static_cast<int>(mojom::PermissionsPolicyFeature::kMaxValue) + 3);
+const network::mojom::PermissionsPolicyFeature kDefaultOffFeature =
+    static_cast<network::mojom::PermissionsPolicyFeature>(
+        static_cast<int>(network::mojom::PermissionsPolicyFeature::kMaxValue) +
+        3);
 
 // This feature is defined in code, but not present in the feature list.
-const mojom::PermissionsPolicyFeature kUnavailableFeature =
-    static_cast<mojom::PermissionsPolicyFeature>(
-        static_cast<int>(mojom::PermissionsPolicyFeature::kMaxValue) + 4);
+const network::mojom::PermissionsPolicyFeature kUnavailableFeature =
+    static_cast<network::mojom::PermissionsPolicyFeature>(
+        static_cast<int>(network::mojom::PermissionsPolicyFeature::kMaxValue) +
+        4);
 
 }  // namespace
 
@@ -56,17 +60,17 @@ class PermissionsPolicyTest : public testing::Test {
               PermissionsPolicyFeatureDefault::EnableForSelf},
              {kDefaultOffFeature,
               PermissionsPolicyFeatureDefault::EnableForNone},
-             {mojom::PermissionsPolicyFeature::kBrowsingTopics,
+             {network::mojom::PermissionsPolicyFeature::kBrowsingTopics,
               PermissionsPolicyFeatureDefault::EnableForSelf},
-             {mojom::PermissionsPolicyFeature::kClientHintDPR,
+             {network::mojom::PermissionsPolicyFeature::kClientHintDPR,
               PermissionsPolicyFeatureDefault::EnableForSelf},
-             {mojom::PermissionsPolicyFeature::kAttributionReporting,
+             {network::mojom::PermissionsPolicyFeature::kAttributionReporting,
               PermissionsPolicyFeatureDefault::EnableForSelf},
-             {mojom::PermissionsPolicyFeature::kSharedStorage,
+             {network::mojom::PermissionsPolicyFeature::kSharedStorage,
               PermissionsPolicyFeatureDefault::EnableForSelf},
-             {mojom::PermissionsPolicyFeature::kSharedStorageSelectUrl,
+             {network::mojom::PermissionsPolicyFeature::kSharedStorageSelectUrl,
               PermissionsPolicyFeatureDefault::EnableForSelf},
-             {mojom::PermissionsPolicyFeature::kPrivateAggregation,
+             {network::mojom::PermissionsPolicyFeature::kPrivateAggregation,
               PermissionsPolicyFeatureDefault::EnableForSelf}}) {}
 
   ~PermissionsPolicyTest() override = default;
@@ -74,26 +78,31 @@ class PermissionsPolicyTest : public testing::Test {
   std::unique_ptr<PermissionsPolicy> CreateFromParentPolicy(
       const PermissionsPolicy* parent,
       ParsedPermissionsPolicy header_policy,
-      const url::Origin& origin) {
+      const url::Origin& origin,
+      bool headerless = false) {
     ParsedPermissionsPolicy empty_container_policy;
     return PermissionsPolicy::CreateFromParentPolicy(
-        parent, header_policy, empty_container_policy, origin, feature_list_);
+        parent, header_policy, empty_container_policy, origin, feature_list_,
+        headerless);
   }
 
   std::unique_ptr<PermissionsPolicy> CreateFromParsedPolicy(
       const ParsedPermissionsPolicy& parsed_policy,
-      const url::Origin& origin) {
-    return PermissionsPolicy::CreateFromParsedPolicy(
-        parsed_policy, std::nullopt, origin, feature_list_);
+      const url::Origin& origin,
+      const std::optional<ParsedPermissionsPolicy>& base_policy =
+          std::nullopt) {
+    return PermissionsPolicy::CreateFromParsedPolicy(parsed_policy, base_policy,
+                                                     origin, feature_list_);
   }
 
   std::unique_ptr<PermissionsPolicy> CreateFromParentWithFramePolicy(
       const PermissionsPolicy* parent,
       ParsedPermissionsPolicy header_policy,
       const ParsedPermissionsPolicy& frame_policy,
-      const url::Origin& origin) {
+      const url::Origin& origin,
+      bool headerless = false) {
     return PermissionsPolicy::CreateFromParentPolicy(
-        parent, header_policy, frame_policy, origin, feature_list_);
+        parent, header_policy, frame_policy, origin, feature_list_, headerless);
   }
 
   std::unique_ptr<PermissionsPolicy> CreateFlexibleForFencedFrame(
@@ -108,7 +117,7 @@ class PermissionsPolicyTest : public testing::Test {
   std::unique_ptr<PermissionsPolicy> CreateFixedForFencedFrame(
       const url::Origin& origin,
       ParsedPermissionsPolicy header_policy,
-      base::span<const blink::mojom::PermissionsPolicyFeature>
+      base::span<const network::mojom::PermissionsPolicyFeature>
           effective_enabled_permissions) {
     return PermissionsPolicy::CreateFixedForFencedFrame(
         origin, header_policy, feature_list_, effective_enabled_permissions);
@@ -116,14 +125,15 @@ class PermissionsPolicyTest : public testing::Test {
 
   bool IsFeatureEnabledForSubresourceRequestAssumingOptIn(
       PermissionsPolicy* policy,
-      mojom::PermissionsPolicyFeature feature,
+      network::mojom::PermissionsPolicyFeature feature,
       const url::Origin& origin) const {
     return policy->IsFeatureEnabledForSubresourceRequestAssumingOptIn(feature,
                                                                       origin);
   }
 
-  bool PolicyContainsInheritedValue(const PermissionsPolicy* policy,
-                                    mojom::PermissionsPolicyFeature feature) {
+  bool PolicyContainsInheritedValue(
+      const PermissionsPolicy* policy,
+      network::mojom::PermissionsPolicyFeature feature) {
     return base::Contains(policy->inherited_policies_, feature);
   }
 
@@ -201,6 +211,7 @@ TEST_F(PermissionsPolicyTest, TestInitialSameOriginChildPolicy) {
   std::unique_ptr<PermissionsPolicy> policy2 =
       CreateFromParentPolicy(policy1.get(), /*header_policy=*/{}, origin_a_);
   EXPECT_TRUE(policy2->IsFeatureEnabled(kDefaultOnFeature));
+  EXPECT_FALSE(policy2->IsFeatureEnabled(kDefaultOffFeature));
   EXPECT_TRUE(policy2->IsFeatureEnabled(kDefaultSelfFeature));
   EXPECT_FALSE(policy2->IsFeatureEnabled(kDefaultOffFeature));
 }
@@ -376,14 +387,14 @@ TEST_F(PermissionsPolicyTest,
   ASSERT_TRUE(policy1->IsFeatureEnabled(kDefaultOffFeature));
   ParsedPermissionsPolicy frame_policy = {
       {{kDefaultOffFeature, /*allowed_origins=*/
-        {*blink::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
+        {*network::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
             origin_a_,
             /*has_subdomain_wildcard=*/false)},
         /*self_if_matches=*/std::nullopt,
         /*matches_all_origins=*/false,
         /*matches_opaque_src=*/false},
        {kDefaultOffFeature, /*allowed_origins=*/
-        {*blink::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
+        {*network::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
             origin_b_,
             /*has_subdomain_wildcard=*/false)},
         /*self_if_matches=*/std::nullopt,
@@ -410,6 +421,122 @@ TEST_F(PermissionsPolicyTest,
 }
 
 TEST_F(PermissionsPolicyTest,
+       TestSameOriginChildWithParentEnabledCanAllowHeaderless) {
+  // +-----------------------------------------------+
+  // |(1) Origin A                                   |
+  // |Permissions-Policy: default-off=self           |
+  // | <iframe allow="default-off OriginA">          |
+  // | +--------------------------------------+      |
+  // | |(2) Origin A                          |      |
+  // | |Headerless                            |      |
+  // | +--------------------------------------+      |
+  // | <iframe>                                      |
+  // | +--------------------------------------+      |
+  // | |(3) Origin A                          |      |
+  // | |Headerless                            |      |
+  // | +--------------------------------------+      |
+  // +-----------------------------------------------+
+  // Features enabled in the parent should be able to be enabled in a headerless
+  // subframe.
+  std::unique_ptr<PermissionsPolicy> policy1 = CreateFromParentPolicy(
+      nullptr,
+      {{{kDefaultOffFeature,
+         /*allowed_origins=*/
+         {*network::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
+             origin_a_,
+             /*has_subdomain_wildcard=*/false)},
+         /*self_if_matches=*/origin_a_,
+         /*matches_all_origins=*/false,
+         /*matches_opaque_src=*/false}}},
+      origin_a_);
+  ASSERT_TRUE(policy1->IsFeatureEnabled(kDefaultOffFeature));
+
+  {
+    ParsedPermissionsPolicy frame_policy = {{
+        {kDefaultOffFeature, /*allowed_origins=*/
+         {*network::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
+             origin_a_,
+             /*has_subdomain_wildcard=*/false)},
+         /*self_if_matches=*/std::nullopt,
+         /*matches_all_origins=*/false,
+         /*matches_opaque_src=*/false},
+    }};
+
+    std::unique_ptr<PermissionsPolicy> policy2 =
+        CreateFromParentWithFramePolicy(policy1.get(), /*header_policy=*/{},
+                                        frame_policy, origin_a_, true);
+    EXPECT_TRUE(policy2->IsFeatureEnabled(kDefaultOffFeature));
+    EXPECT_TRUE(policy2->IsFeatureEnabled(kDefaultOnFeature));
+    EXPECT_TRUE(policy2->IsFeatureEnabled(kDefaultSelfFeature));
+  }
+  {
+    std::unique_ptr<PermissionsPolicy> policy2 =
+        CreateFromParentPolicy(policy1.get(), /*header_policy=*/{}, origin_a_);
+    EXPECT_FALSE(policy2->IsFeatureEnabled(kDefaultOffFeature));
+    EXPECT_TRUE(policy2->IsFeatureEnabled(kDefaultOnFeature));
+    EXPECT_TRUE(policy2->IsFeatureEnabled(kDefaultSelfFeature));
+  }
+}
+
+TEST_F(PermissionsPolicyTest,
+       TestSameOriginChildWithParentDisabledCannotAllowHeaderless) {
+  // +--------------------------------------------------------------+
+  // |(1) Origin A                                                  |
+  // |Permissions-Policy: default-on=OriginB default-self=OriginB   |
+  // | <iframe allow="default-off *; default-on *; default-self *"> |
+  // | +--------------------------------------+                     |
+  // | |(2) Origin A                          |                     |
+  // | |Headerless                            |                     |
+  // | +--------------------------------------+                     |
+  // +--------------------------------------------------------------+
+  // Features disabled in the parent should not be enabled in a headerless
+  // subframe.
+  ParsedPermissionsPolicy header_policy = {{
+      {kDefaultOnFeature, /*allowed_origins=*/
+       {*network::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
+           origin_b_,
+           /*has_subdomain_wildcard=*/false)},
+       /*self_if_matches=*/std::nullopt,
+       /*matches_all_origins=*/false,
+       /*matches_opaque_src=*/false},
+      {kDefaultSelfFeature, /*allowed_origins=*/
+       {*network::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
+           origin_b_,
+           /*has_subdomain_wildcard=*/false)},
+       /*self_if_matches=*/std::nullopt,
+       /*matches_all_origins=*/false,
+       /*matches_opaque_src=*/false},
+  }};
+  std::unique_ptr<PermissionsPolicy> policy1 =
+      CreateFromParentPolicy(nullptr, header_policy, origin_a_);
+  ASSERT_FALSE(policy1->IsFeatureEnabled(kDefaultOffFeature));
+
+  {
+    ParsedPermissionsPolicy frame_policy = {{
+        {kDefaultOffFeature, /*allowed_origins=*/{},
+         /*self_if_matches=*/std::nullopt,
+         /*matches_all_origins=*/true,
+         /*matches_opaque_src=*/false},
+        {kDefaultOnFeature, /*allowed_origins=*/{},
+         /*self_if_matches=*/std::nullopt,
+         /*matches_all_origins=*/true,
+         /*matches_opaque_src=*/false},
+        {kDefaultSelfFeature, /*allowed_origins=*/{},
+         /*self_if_matches=*/std::nullopt,
+         /*matches_all_origins=*/true,
+         /*matches_opaque_src=*/false},
+    }};
+
+    std::unique_ptr<PermissionsPolicy> policy2 =
+        CreateFromParentWithFramePolicy(policy1.get(), /*header_policy=*/{},
+                                        frame_policy, origin_a_, true);
+    EXPECT_FALSE(policy2->IsFeatureEnabled(kDefaultOffFeature));
+    EXPECT_FALSE(policy2->IsFeatureEnabled(kDefaultOnFeature));
+    EXPECT_FALSE(policy2->IsFeatureEnabled(kDefaultSelfFeature));
+  }
+}
+
+TEST_F(PermissionsPolicyTest,
        TestCrossOriginChildWithParentEnabledCanEnableOffFeatureWithAllow) {
   // +------------------------------------------+
   // |(1) Origin A                              |
@@ -433,7 +560,7 @@ TEST_F(PermissionsPolicyTest,
   ASSERT_TRUE(policy1->IsFeatureEnabled(kDefaultOffFeature));
   ParsedPermissionsPolicy frame_policy = {
       {{kDefaultOffFeature, /*allowed_origins=*/
-        {*blink::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
+        {*network::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
             origin_b_,
             /*has_subdomain_wildcard=*/false)},
         /*self_if_matches=*/std::nullopt,
@@ -568,7 +695,7 @@ TEST_F(PermissionsPolicyTest, TestSelectiveFrameInheritance) {
   std::unique_ptr<PermissionsPolicy> policy1 = CreateFromParentPolicy(
       nullptr,
       {{{kDefaultSelfFeature, /*allowed_origins=*/
-         {*blink::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
+         {*network::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
              origin_b_,
              /*has_subdomain_wildcard=*/false)},
          /*self_if_matches=*/std::nullopt,
@@ -607,7 +734,7 @@ TEST_F(PermissionsPolicyTest, TestSelectiveFrameInheritance2) {
   std::unique_ptr<PermissionsPolicy> policy1 = CreateFromParentPolicy(
       nullptr,
       {{{kDefaultSelfFeature, /*allowed_origins=*/
-         {*blink::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
+         {*network::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
              origin_b_,
              /*has_subdomain_wildcard=*/false)},
          /*self_if_matches=*/std::nullopt,
@@ -616,7 +743,7 @@ TEST_F(PermissionsPolicyTest, TestSelectiveFrameInheritance2) {
       origin_a_);
   ParsedPermissionsPolicy frame_policy = {
       {{kDefaultSelfFeature, /*allowed_origins=*/
-        {*blink::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
+        {*network::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
             origin_b_,
             /*has_subdomain_wildcard=*/false)},
         /*self_if_matches=*/std::nullopt,
@@ -800,7 +927,7 @@ TEST_F(PermissionsPolicyTest, TestEnableForAllOriginsAndDelegate) {
                              origin_a_);
   ParsedPermissionsPolicy frame_policy = {
       {{kDefaultSelfFeature, /*allowed_origins=*/
-        {*blink::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
+        {*network::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
             origin_b_,
             /*has_subdomain_wildcard=*/false)},
         /*self_if_matches=*/std::nullopt,
@@ -832,7 +959,7 @@ TEST_F(PermissionsPolicyTest, TestDefaultOnStillNeedsSelf) {
   std::unique_ptr<PermissionsPolicy> policy1 = CreateFromParentPolicy(
       nullptr,
       {{{kDefaultOnFeature, /*allowed_origins=*/
-         {*blink::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
+         {*network::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
              origin_b_,
              /*has_subdomain_wildcard=*/false)},
          /*self_if_matches=*/std::nullopt,
@@ -868,7 +995,7 @@ TEST_F(PermissionsPolicyTest, TestDefaultOnEnablesForAllDescendants) {
   std::unique_ptr<PermissionsPolicy> policy1 = CreateFromParentPolicy(
       nullptr,
       {{{kDefaultOnFeature, /*allowed_origins=*/
-         {*blink::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
+         {*network::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
              origin_b_,
              /*has_subdomain_wildcard=*/false)},
          /*self_if_matches=*/origin_a_,
@@ -904,7 +1031,7 @@ TEST_F(PermissionsPolicyTest, TestDefaultSelfRequiresDelegation) {
   std::unique_ptr<PermissionsPolicy> policy1 = CreateFromParentPolicy(
       nullptr,
       {{{kDefaultSelfFeature, /*allowed_origins=*/
-         {*blink::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
+         {*network::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
              origin_b_,
              /*has_subdomain_wildcard=*/false)},
          /*self_if_matches=*/std::nullopt,
@@ -941,7 +1068,7 @@ TEST_F(PermissionsPolicyTest, TestDefaultSelfRespectsSameOriginEmbedding) {
   std::unique_ptr<PermissionsPolicy> policy1 = CreateFromParentPolicy(
       nullptr,
       {{{kDefaultSelfFeature, /*allowed_origins=*/
-         {*blink::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
+         {*network::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
              origin_b_,
              /*has_subdomain_wildcard=*/false)},
          /*self_if_matches=*/origin_a_,
@@ -1092,18 +1219,19 @@ TEST_F(PermissionsPolicyTest, TestEnabledFrameCanDelegateByDefault) {
   // | +--------------------+ +--------------------+ |
   // +-----------------------------------------------+
   // Feature should be enabled in frames 1, 2, and 3, and disabled in frame 4.
-  std::unique_ptr<PermissionsPolicy> policy1 = CreateFromParentPolicy(
-      nullptr,
-      {{
-          {kDefaultOnFeature, /*allowed_origins=*/
-           {*blink::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
-               origin_b_,
-               /*has_subdomain_wildcard=*/false)},
-           /*self_if_matches=*/origin_a_,
-           /*matches_all_origins=*/false,
-           /*matches_opaque_src=*/false},
-      }},
-      origin_a_);
+  std::unique_ptr<PermissionsPolicy> policy1 =
+      CreateFromParentPolicy(nullptr,
+                             {{
+                                 {kDefaultOnFeature, /*allowed_origins=*/
+                                  {*network::OriginWithPossibleWildcards::
+                                       FromOriginAndWildcardsForTest(
+                                           origin_b_,
+                                           /*has_subdomain_wildcard=*/false)},
+                                  /*self_if_matches=*/origin_a_,
+                                  /*matches_all_origins=*/false,
+                                  /*matches_opaque_src=*/false},
+                             }},
+                             origin_a_);
   std::unique_ptr<PermissionsPolicy> policy2 =
       CreateFromParentPolicy(policy1.get(), /*header_policy=*/{}, origin_b_);
   std::unique_ptr<PermissionsPolicy> policy3 =
@@ -1134,7 +1262,7 @@ TEST_F(PermissionsPolicyTest, TestFeaturesDontDelegateByDefault) {
   std::unique_ptr<PermissionsPolicy> policy1 = CreateFromParentPolicy(
       nullptr,
       {{{kDefaultSelfFeature, /*allowed_origins=*/
-         {*blink::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
+         {*network::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
              origin_b_,
              /*has_subdomain_wildcard=*/false)},
          /*self_if_matches=*/origin_a_,
@@ -1175,7 +1303,7 @@ TEST_F(PermissionsPolicyTest, TestFeaturesAreIndependent) {
   std::unique_ptr<PermissionsPolicy> policy1 = CreateFromParentPolicy(
       nullptr,
       {{{kDefaultSelfFeature, /*allowed_origins=*/
-         {*blink::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
+         {*network::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
              origin_b_,
              /*has_subdomain_wildcard=*/false)},
          /*self_if_matches=*/origin_a_,
@@ -1189,7 +1317,7 @@ TEST_F(PermissionsPolicyTest, TestFeaturesAreIndependent) {
       origin_a_);
   ParsedPermissionsPolicy frame_policy = {
       {{kDefaultSelfFeature, /*allowed_origins=*/
-        {*blink::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
+        {*network::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
             origin_b_,
             /*has_subdomain_wildcard=*/false)},
         /*self_if_matches=*/origin_a_,
@@ -1203,7 +1331,7 @@ TEST_F(PermissionsPolicyTest, TestFeaturesAreIndependent) {
       policy1.get(), /*header_policy=*/{}, frame_policy, origin_b_);
   ParsedPermissionsPolicy frame_policy2 = {
       {{kDefaultSelfFeature, /*allowed_origins=*/
-        {*blink::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
+        {*network::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
             origin_c_,
             /*has_subdomain_wildcard=*/false)},
         /*self_if_matches=*/origin_a_,
@@ -1244,7 +1372,7 @@ TEST_F(PermissionsPolicyTest, TestSimpleFramePolicy) {
       CreateFromParentPolicy(nullptr, /*header_policy=*/{}, origin_a_);
   ParsedPermissionsPolicy frame_policy = {
       {{kDefaultSelfFeature, /*allowed_origins=*/
-        {*blink::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
+        {*network::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
             origin_b_,
             /*has_subdomain_wildcard=*/false)},
         /*self_if_matches=*/std::nullopt,
@@ -1318,7 +1446,7 @@ TEST_F(PermissionsPolicyTest, TestFramePolicyCanBeFurtherDelegated) {
       CreateFromParentPolicy(nullptr, /*header_policy=*/{}, origin_a_);
   ParsedPermissionsPolicy frame_policy1 = {{
       {kDefaultSelfFeature, /*allowed_origins=*/
-       {*blink::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
+       {*network::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
            origin_b_,
            /*has_subdomain_wildcard=*/false)},
        /*self_if_matches=*/std::nullopt,
@@ -1329,7 +1457,7 @@ TEST_F(PermissionsPolicyTest, TestFramePolicyCanBeFurtherDelegated) {
       policy1.get(), /*header_policy=*/{}, frame_policy1, origin_b_);
   ParsedPermissionsPolicy frame_policy2 = {{
       {kDefaultSelfFeature, /*allowed_origins=*/
-       {*blink::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
+       {*network::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
            origin_c_,
            /*has_subdomain_wildcard=*/false)},
        /*self_if_matches=*/std::nullopt,
@@ -1423,18 +1551,19 @@ TEST_F(PermissionsPolicyTest, TestFramePolicyModifiesHeaderPolicy) {
   // by frame policy, even though the parent frame's header policy would
   // otherwise enable it. This is true regardless of the child frame's header
   // policy.
-  std::unique_ptr<PermissionsPolicy> policy1 = CreateFromParentPolicy(
-      nullptr,
-      {{
-          {kDefaultSelfFeature, /*allowed_origins=*/
-           {*blink::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
-               origin_b_,
-               /*has_subdomain_wildcard=*/false)},
-           /*self_if_matches=*/origin_a_,
-           /*matches_all_origins=*/false,
-           /*matches_opaque_src=*/false},
-      }},
-      origin_a_);
+  std::unique_ptr<PermissionsPolicy> policy1 =
+      CreateFromParentPolicy(nullptr,
+                             {{
+                                 {kDefaultSelfFeature, /*allowed_origins=*/
+                                  {*network::OriginWithPossibleWildcards::
+                                       FromOriginAndWildcardsForTest(
+                                           origin_b_,
+                                           /*has_subdomain_wildcard=*/false)},
+                                  /*self_if_matches=*/origin_a_,
+                                  /*matches_all_origins=*/false,
+                                  /*matches_opaque_src=*/false},
+                             }},
+                             origin_a_);
   ParsedPermissionsPolicy frame_policy1 = {
       {{kDefaultSelfFeature, /*allowed_origins=*/{},
         /*self_if_matches=*/std::nullopt,
@@ -1492,7 +1621,7 @@ TEST_F(PermissionsPolicyTest, TestCombineFrameAndHeaderPolicies) {
       CreateFromParentPolicy(nullptr, /*header_policy=*/{}, origin_a_);
   ParsedPermissionsPolicy frame_policy1 = {
       {{kDefaultSelfFeature, /*allowed_origins=*/
-        {*blink::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
+        {*network::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
             origin_b_,
             /*has_subdomain_wildcard=*/false)},
         /*self_if_matches=*/std::nullopt,
@@ -1551,7 +1680,7 @@ TEST_F(PermissionsPolicyTest, TestFeatureDeclinedAtTopLevel) {
                              origin_a_);
   ParsedPermissionsPolicy frame_policy1 = {{
       {kDefaultSelfFeature, /*allowed_origins=*/
-       {*blink::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
+       {*network::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
            origin_b_,
            /*has_subdomain_wildcard=*/false)},
        /*self_if_matches=*/std::nullopt,
@@ -1603,7 +1732,7 @@ TEST_F(PermissionsPolicyTest, TestFeatureDelegatedAndAllowed) {
   std::unique_ptr<PermissionsPolicy> policy1 = CreateFromParentPolicy(
       nullptr,
       {{{kDefaultSelfFeature, /*allowed_origins=*/
-         {*blink::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
+         {*network::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
              origin_b_,
              /*has_subdomain_wildcard=*/false)},
          /*self_if_matches=*/origin_a_,
@@ -1612,7 +1741,7 @@ TEST_F(PermissionsPolicyTest, TestFeatureDelegatedAndAllowed) {
       origin_a_);
   ParsedPermissionsPolicy frame_policy1 = {
       {{kDefaultSelfFeature, /*allowed_origins=*/
-        {*blink::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
+        {*network::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
             origin_a_,
             /*has_subdomain_wildcard=*/false)},
         /*self_if_matches=*/std::nullopt,
@@ -1622,7 +1751,7 @@ TEST_F(PermissionsPolicyTest, TestFeatureDelegatedAndAllowed) {
       policy1.get(), /*header_policy=*/{}, frame_policy1, origin_b_);
   ParsedPermissionsPolicy frame_policy2 = {
       {{kDefaultSelfFeature, /*allowed_origins=*/
-        {*blink::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
+        {*network::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
             origin_b_,
             /*has_subdomain_wildcard=*/false)},
         /*self_if_matches=*/std::nullopt,
@@ -1914,7 +2043,8 @@ TEST_F(PermissionsPolicyTest, TestUndefinedFeaturesInFramePolicy) {
   std::unique_ptr<PermissionsPolicy> policy1 =
       CreateFromParentPolicy(nullptr, /*header_policy=*/{}, origin_a_);
   ParsedPermissionsPolicy frame_policy = {
-      {{mojom::PermissionsPolicyFeature::kNotFound, /*allowed_origins=*/{},
+      {{network::mojom::PermissionsPolicyFeature::kNotFound,
+        /*allowed_origins=*/{},
         /*self_if_matches=*/std::nullopt,
         /*matches_all_origins=*/false,
         /*matches_opaque_src=*/true},
@@ -1925,11 +2055,11 @@ TEST_F(PermissionsPolicyTest, TestUndefinedFeaturesInFramePolicy) {
   std::unique_ptr<PermissionsPolicy> policy2 = CreateFromParentWithFramePolicy(
       policy1.get(), /*header_policy=*/{}, frame_policy, origin_b_);
   EXPECT_FALSE(PolicyContainsInheritedValue(
-      policy1.get(), mojom::PermissionsPolicyFeature::kNotFound));
+      policy1.get(), network::mojom::PermissionsPolicyFeature::kNotFound));
   EXPECT_FALSE(
       PolicyContainsInheritedValue(policy1.get(), kUnavailableFeature));
   EXPECT_FALSE(PolicyContainsInheritedValue(
-      policy2.get(), mojom::PermissionsPolicyFeature::kNotFound));
+      policy2.get(), network::mojom::PermissionsPolicyFeature::kNotFound));
   EXPECT_FALSE(
       PolicyContainsInheritedValue(policy2.get(), kUnavailableFeature));
 }
@@ -1977,43 +2107,43 @@ TEST_F(PermissionsPolicyTest,
         CreateFromParentPolicy(nullptr, /*header_policy=*/{}, origin_a_);
 
     EXPECT_TRUE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_a_,
+        network::mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_a_,
         request_without_any_opt_in));
     EXPECT_TRUE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_a_,
+        network::mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_a_,
         request_with_topics_opt_in));
     EXPECT_TRUE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_a_,
+        network::mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_a_,
         request_with_both_opt_in));
 
     EXPECT_TRUE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kSharedStorage, origin_a_,
+        network::mojom::PermissionsPolicyFeature::kSharedStorage, origin_a_,
         request_without_any_opt_in));
     EXPECT_TRUE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kSharedStorage, origin_a_,
+        network::mojom::PermissionsPolicyFeature::kSharedStorage, origin_a_,
         request_with_shared_storage_opt_in));
     EXPECT_TRUE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kSharedStorage, origin_a_,
+        network::mojom::PermissionsPolicyFeature::kSharedStorage, origin_a_,
         request_with_both_opt_in));
 
     EXPECT_FALSE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_b_,
+        network::mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_b_,
         request_without_any_opt_in));
     EXPECT_TRUE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_b_,
+        network::mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_b_,
         request_with_topics_opt_in));
     EXPECT_TRUE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_b_,
+        network::mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_b_,
         request_with_both_opt_in));
 
     EXPECT_FALSE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kSharedStorage, origin_b_,
+        network::mojom::PermissionsPolicyFeature::kSharedStorage, origin_b_,
         request_without_any_opt_in));
     EXPECT_TRUE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kSharedStorage, origin_b_,
+        network::mojom::PermissionsPolicyFeature::kSharedStorage, origin_b_,
         request_with_shared_storage_opt_in));
     EXPECT_TRUE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kSharedStorage, origin_b_,
+        network::mojom::PermissionsPolicyFeature::kSharedStorage, origin_b_,
         request_with_both_opt_in));
   }
 
@@ -2031,12 +2161,12 @@ TEST_F(PermissionsPolicyTest,
 
     std::unique_ptr<PermissionsPolicy> policy = CreateFromParentPolicy(
         nullptr,
-        {{{mojom::PermissionsPolicyFeature::kBrowsingTopics,
+        {{{network::mojom::PermissionsPolicyFeature::kBrowsingTopics,
            /*allowed_origins=*/{},
            /*self_if_matches=*/origin_a_,
            /*matches_all_origins=*/false,
            /*matches_opaque_src=*/false},
-          {mojom::PermissionsPolicyFeature::kSharedStorage,
+          {network::mojom::PermissionsPolicyFeature::kSharedStorage,
            /*allowed_origins=*/{},
            /*self_if_matches=*/origin_a_,
            /*matches_all_origins=*/false,
@@ -2044,43 +2174,43 @@ TEST_F(PermissionsPolicyTest,
         origin_a_);
 
     EXPECT_TRUE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_a_,
+        network::mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_a_,
         request_without_any_opt_in));
     EXPECT_TRUE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_a_,
+        network::mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_a_,
         request_with_topics_opt_in));
     EXPECT_TRUE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_a_,
+        network::mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_a_,
         request_with_both_opt_in));
 
     EXPECT_TRUE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kSharedStorage, origin_a_,
+        network::mojom::PermissionsPolicyFeature::kSharedStorage, origin_a_,
         request_without_any_opt_in));
     EXPECT_TRUE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kSharedStorage, origin_a_,
+        network::mojom::PermissionsPolicyFeature::kSharedStorage, origin_a_,
         request_with_shared_storage_opt_in));
     EXPECT_TRUE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kSharedStorage, origin_a_,
+        network::mojom::PermissionsPolicyFeature::kSharedStorage, origin_a_,
         request_with_both_opt_in));
 
     EXPECT_FALSE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_b_,
+        network::mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_b_,
         request_without_any_opt_in));
     EXPECT_FALSE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_b_,
+        network::mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_b_,
         request_with_topics_opt_in));
     EXPECT_FALSE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_b_,
+        network::mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_b_,
         request_with_both_opt_in));
 
     EXPECT_FALSE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kSharedStorage, origin_b_,
+        network::mojom::PermissionsPolicyFeature::kSharedStorage, origin_b_,
         request_without_any_opt_in));
     EXPECT_FALSE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kSharedStorage, origin_b_,
+        network::mojom::PermissionsPolicyFeature::kSharedStorage, origin_b_,
         request_with_shared_storage_opt_in));
     EXPECT_FALSE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kSharedStorage, origin_b_,
+        network::mojom::PermissionsPolicyFeature::kSharedStorage, origin_b_,
         request_with_both_opt_in));
   }
 
@@ -2098,12 +2228,12 @@ TEST_F(PermissionsPolicyTest,
 
     std::unique_ptr<PermissionsPolicy> policy = CreateFromParentPolicy(
         nullptr,
-        {{{mojom::PermissionsPolicyFeature::kBrowsingTopics,
+        {{{network::mojom::PermissionsPolicyFeature::kBrowsingTopics,
            /*allowed_origins=*/{},
            /*self_if_matches=*/std::nullopt,
            /*matches_all_origins=*/false,
            /*matches_opaque_src=*/false},
-          {mojom::PermissionsPolicyFeature::kSharedStorage,
+          {network::mojom::PermissionsPolicyFeature::kSharedStorage,
            /*allowed_origins=*/{},
            /*self_if_matches=*/std::nullopt,
            /*matches_all_origins=*/false,
@@ -2111,43 +2241,43 @@ TEST_F(PermissionsPolicyTest,
         origin_a_);
 
     EXPECT_FALSE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_a_,
+        network::mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_a_,
         request_without_any_opt_in));
     EXPECT_FALSE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_a_,
+        network::mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_a_,
         request_with_topics_opt_in));
     EXPECT_FALSE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_a_,
+        network::mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_a_,
         request_with_both_opt_in));
 
     EXPECT_FALSE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kSharedStorage, origin_a_,
+        network::mojom::PermissionsPolicyFeature::kSharedStorage, origin_a_,
         request_without_any_opt_in));
     EXPECT_FALSE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kSharedStorage, origin_a_,
+        network::mojom::PermissionsPolicyFeature::kSharedStorage, origin_a_,
         request_with_shared_storage_opt_in));
     EXPECT_FALSE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kSharedStorage, origin_a_,
+        network::mojom::PermissionsPolicyFeature::kSharedStorage, origin_a_,
         request_with_both_opt_in));
 
     EXPECT_FALSE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_b_,
+        network::mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_b_,
         request_without_any_opt_in));
     EXPECT_FALSE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_b_,
+        network::mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_b_,
         request_with_topics_opt_in));
     EXPECT_FALSE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_b_,
+        network::mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_b_,
         request_with_both_opt_in));
 
     EXPECT_FALSE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kSharedStorage, origin_b_,
+        network::mojom::PermissionsPolicyFeature::kSharedStorage, origin_b_,
         request_without_any_opt_in));
     EXPECT_FALSE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kSharedStorage, origin_b_,
+        network::mojom::PermissionsPolicyFeature::kSharedStorage, origin_b_,
         request_with_shared_storage_opt_in));
     EXPECT_FALSE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kSharedStorage, origin_b_,
+        network::mojom::PermissionsPolicyFeature::kSharedStorage, origin_b_,
         request_with_both_opt_in));
   }
 
@@ -2165,12 +2295,12 @@ TEST_F(PermissionsPolicyTest,
 
     std::unique_ptr<PermissionsPolicy> policy = CreateFromParentPolicy(
         nullptr,
-        {{{mojom::PermissionsPolicyFeature::kBrowsingTopics,
+        {{{network::mojom::PermissionsPolicyFeature::kBrowsingTopics,
            /*allowed_origins=*/{},
            /*self_if_matches=*/std::nullopt,
            /*matches_all_origins=*/true,
            /*matches_opaque_src=*/false},
-          {mojom::PermissionsPolicyFeature::kSharedStorage,
+          {network::mojom::PermissionsPolicyFeature::kSharedStorage,
            /*allowed_origins=*/{},
            /*self_if_matches=*/std::nullopt,
            /*matches_all_origins=*/true,
@@ -2178,43 +2308,43 @@ TEST_F(PermissionsPolicyTest,
         origin_a_);
 
     EXPECT_TRUE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_a_,
+        network::mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_a_,
         request_without_any_opt_in));
     EXPECT_TRUE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_a_,
+        network::mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_a_,
         request_with_topics_opt_in));
     EXPECT_TRUE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_a_,
+        network::mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_a_,
         request_with_both_opt_in));
 
     EXPECT_TRUE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kSharedStorage, origin_a_,
+        network::mojom::PermissionsPolicyFeature::kSharedStorage, origin_a_,
         request_without_any_opt_in));
     EXPECT_TRUE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kSharedStorage, origin_a_,
+        network::mojom::PermissionsPolicyFeature::kSharedStorage, origin_a_,
         request_with_shared_storage_opt_in));
     EXPECT_TRUE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kSharedStorage, origin_a_,
+        network::mojom::PermissionsPolicyFeature::kSharedStorage, origin_a_,
         request_with_both_opt_in));
 
     EXPECT_TRUE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_b_,
+        network::mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_b_,
         request_without_any_opt_in));
     EXPECT_TRUE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_b_,
+        network::mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_b_,
         request_with_topics_opt_in));
     EXPECT_TRUE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_b_,
+        network::mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_b_,
         request_with_both_opt_in));
 
     EXPECT_TRUE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kSharedStorage, origin_b_,
+        network::mojom::PermissionsPolicyFeature::kSharedStorage, origin_b_,
         request_without_any_opt_in));
     EXPECT_TRUE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kSharedStorage, origin_b_,
+        network::mojom::PermissionsPolicyFeature::kSharedStorage, origin_b_,
         request_with_shared_storage_opt_in));
     EXPECT_TRUE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kSharedStorage, origin_b_,
+        network::mojom::PermissionsPolicyFeature::kSharedStorage, origin_b_,
         request_with_both_opt_in));
   }
 
@@ -2234,83 +2364,86 @@ TEST_F(PermissionsPolicyTest,
     // |                          sharedStorageWritable: true}) |
     // +--------------------------------------------------------+
 
-    std::unique_ptr<PermissionsPolicy> policy = CreateFromParentPolicy(
-        nullptr,
-        {{{mojom::PermissionsPolicyFeature::
-               kBrowsingTopics, /*allowed_origins=*/
-           {*blink::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
-               origin_b_,
-               /*has_subdomain_wildcard=*/false)},
-           /*self_if_matches=*/std::nullopt,
-           /*matches_all_origins=*/false,
-           /*matches_opaque_src=*/false},
-          {mojom::PermissionsPolicyFeature::kSharedStorage, /*allowed_origins=*/
-           {*blink::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
-               origin_b_,
-               /*has_subdomain_wildcard=*/false)},
-           /*self_if_matches=*/std::nullopt,
-           /*matches_all_origins=*/false,
-           /*matches_opaque_src=*/false}}},
-        origin_a_);
+    std::unique_ptr<PermissionsPolicy> policy =
+        CreateFromParentPolicy(nullptr,
+                               {{{network::mojom::PermissionsPolicyFeature::
+                                      kBrowsingTopics, /*allowed_origins=*/
+                                  {*network::OriginWithPossibleWildcards::
+                                       FromOriginAndWildcardsForTest(
+                                           origin_b_,
+                                           /*has_subdomain_wildcard=*/false)},
+                                  /*self_if_matches=*/std::nullopt,
+                                  /*matches_all_origins=*/false,
+                                  /*matches_opaque_src=*/false},
+                                 {network::mojom::PermissionsPolicyFeature::
+                                      kSharedStorage, /*allowed_origins=*/
+                                  {*network::OriginWithPossibleWildcards::
+                                       FromOriginAndWildcardsForTest(
+                                           origin_b_,
+                                           /*has_subdomain_wildcard=*/false)},
+                                  /*self_if_matches=*/std::nullopt,
+                                  /*matches_all_origins=*/false,
+                                  /*matches_opaque_src=*/false}}},
+                               origin_a_);
 
     EXPECT_FALSE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_a_,
+        network::mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_a_,
         request_without_any_opt_in));
     EXPECT_FALSE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_a_,
+        network::mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_a_,
         request_with_topics_opt_in));
     EXPECT_FALSE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_a_,
+        network::mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_a_,
         request_with_both_opt_in));
 
     EXPECT_FALSE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kSharedStorage, origin_a_,
+        network::mojom::PermissionsPolicyFeature::kSharedStorage, origin_a_,
         request_without_any_opt_in));
     EXPECT_FALSE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kSharedStorage, origin_a_,
+        network::mojom::PermissionsPolicyFeature::kSharedStorage, origin_a_,
         request_with_shared_storage_opt_in));
     EXPECT_FALSE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kSharedStorage, origin_a_,
+        network::mojom::PermissionsPolicyFeature::kSharedStorage, origin_a_,
         request_with_both_opt_in));
 
     EXPECT_TRUE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_b_,
+        network::mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_b_,
         request_without_any_opt_in));
     EXPECT_TRUE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_b_,
+        network::mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_b_,
         request_with_topics_opt_in));
     EXPECT_TRUE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_b_,
+        network::mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_b_,
         request_with_both_opt_in));
 
     EXPECT_TRUE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kSharedStorage, origin_b_,
+        network::mojom::PermissionsPolicyFeature::kSharedStorage, origin_b_,
         request_without_any_opt_in));
     EXPECT_TRUE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kSharedStorage, origin_b_,
+        network::mojom::PermissionsPolicyFeature::kSharedStorage, origin_b_,
         request_with_shared_storage_opt_in));
     EXPECT_TRUE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kSharedStorage, origin_b_,
+        network::mojom::PermissionsPolicyFeature::kSharedStorage, origin_b_,
         request_with_both_opt_in));
 
     EXPECT_FALSE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_c_,
+        network::mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_c_,
         request_without_any_opt_in));
     EXPECT_FALSE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_c_,
+        network::mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_c_,
         request_with_topics_opt_in));
     EXPECT_FALSE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_c_,
+        network::mojom::PermissionsPolicyFeature::kBrowsingTopics, origin_c_,
         request_with_both_opt_in));
 
     EXPECT_FALSE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kSharedStorage, origin_c_,
+        network::mojom::PermissionsPolicyFeature::kSharedStorage, origin_c_,
         request_without_any_opt_in));
     EXPECT_FALSE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kSharedStorage, origin_c_,
+        network::mojom::PermissionsPolicyFeature::kSharedStorage, origin_c_,
         request_with_shared_storage_opt_in));
     EXPECT_FALSE(policy->IsFeatureEnabledForSubresourceRequest(
-        mojom::PermissionsPolicyFeature::kSharedStorage, origin_c_,
+        network::mojom::PermissionsPolicyFeature::kSharedStorage, origin_c_,
         request_with_both_opt_in));
   }
 }
@@ -2336,15 +2469,15 @@ TEST_F(PermissionsPolicyTest,
         CreateFromParentPolicy(nullptr, /*header_policy=*/{}, origin_a_);
 
     EXPECT_TRUE(policy->IsFeatureEnabledForOrigin(
-        mojom::PermissionsPolicyFeature::kSharedStorage, origin_a_));
+        network::mojom::PermissionsPolicyFeature::kSharedStorage, origin_a_));
     EXPECT_TRUE(IsFeatureEnabledForSubresourceRequestAssumingOptIn(
-        policy.get(), mojom::PermissionsPolicyFeature::kSharedStorage,
+        policy.get(), network::mojom::PermissionsPolicyFeature::kSharedStorage,
         origin_a_));
 
     EXPECT_FALSE(policy->IsFeatureEnabledForOrigin(
-        mojom::PermissionsPolicyFeature::kSharedStorage, origin_b_));
+        network::mojom::PermissionsPolicyFeature::kSharedStorage, origin_b_));
     EXPECT_TRUE(IsFeatureEnabledForSubresourceRequestAssumingOptIn(
-        policy.get(), mojom::PermissionsPolicyFeature::kSharedStorage,
+        policy.get(), network::mojom::PermissionsPolicyFeature::kSharedStorage,
         origin_b_));
   }
 
@@ -2358,7 +2491,7 @@ TEST_F(PermissionsPolicyTest,
 
     std::unique_ptr<PermissionsPolicy> policy = CreateFromParentPolicy(
         nullptr,
-        {{{mojom::PermissionsPolicyFeature::kSharedStorage,
+        {{{network::mojom::PermissionsPolicyFeature::kSharedStorage,
            /*allowed_origins=*/{},
            /*self_if_matches=*/origin_a_,
            /*matches_all_origins=*/false,
@@ -2366,15 +2499,15 @@ TEST_F(PermissionsPolicyTest,
         origin_a_);
 
     EXPECT_TRUE(policy->IsFeatureEnabledForOrigin(
-        mojom::PermissionsPolicyFeature::kSharedStorage, origin_a_));
+        network::mojom::PermissionsPolicyFeature::kSharedStorage, origin_a_));
     EXPECT_TRUE(IsFeatureEnabledForSubresourceRequestAssumingOptIn(
-        policy.get(), mojom::PermissionsPolicyFeature::kSharedStorage,
+        policy.get(), network::mojom::PermissionsPolicyFeature::kSharedStorage,
         origin_a_));
 
     EXPECT_FALSE(policy->IsFeatureEnabledForOrigin(
-        mojom::PermissionsPolicyFeature::kSharedStorage, origin_b_));
+        network::mojom::PermissionsPolicyFeature::kSharedStorage, origin_b_));
     EXPECT_FALSE(IsFeatureEnabledForSubresourceRequestAssumingOptIn(
-        policy.get(), mojom::PermissionsPolicyFeature::kSharedStorage,
+        policy.get(), network::mojom::PermissionsPolicyFeature::kSharedStorage,
         origin_b_));
   }
 
@@ -2388,7 +2521,7 @@ TEST_F(PermissionsPolicyTest,
 
     std::unique_ptr<PermissionsPolicy> policy = CreateFromParentPolicy(
         nullptr,
-        {{{mojom::PermissionsPolicyFeature::kSharedStorage,
+        {{{network::mojom::PermissionsPolicyFeature::kSharedStorage,
            /*allowed_origins=*/{},
            /*self_if_matches=*/std::nullopt,
            /*matches_all_origins=*/false,
@@ -2396,15 +2529,15 @@ TEST_F(PermissionsPolicyTest,
         origin_a_);
 
     EXPECT_FALSE(policy->IsFeatureEnabledForOrigin(
-        mojom::PermissionsPolicyFeature::kSharedStorage, origin_a_));
+        network::mojom::PermissionsPolicyFeature::kSharedStorage, origin_a_));
     EXPECT_FALSE(IsFeatureEnabledForSubresourceRequestAssumingOptIn(
-        policy.get(), mojom::PermissionsPolicyFeature::kSharedStorage,
+        policy.get(), network::mojom::PermissionsPolicyFeature::kSharedStorage,
         origin_a_));
 
     EXPECT_FALSE(policy->IsFeatureEnabledForOrigin(
-        mojom::PermissionsPolicyFeature::kSharedStorage, origin_b_));
+        network::mojom::PermissionsPolicyFeature::kSharedStorage, origin_b_));
     EXPECT_FALSE(IsFeatureEnabledForSubresourceRequestAssumingOptIn(
-        policy.get(), mojom::PermissionsPolicyFeature::kSharedStorage,
+        policy.get(), network::mojom::PermissionsPolicyFeature::kSharedStorage,
         origin_b_));
   }
 
@@ -2418,7 +2551,7 @@ TEST_F(PermissionsPolicyTest,
 
     std::unique_ptr<PermissionsPolicy> policy = CreateFromParentPolicy(
         nullptr,
-        {{{mojom::PermissionsPolicyFeature::kSharedStorage,
+        {{{network::mojom::PermissionsPolicyFeature::kSharedStorage,
            /*allowed_origins=*/{},
            /*self_if_matches=*/std::nullopt,
            /*matches_all_origins=*/true,
@@ -2426,15 +2559,15 @@ TEST_F(PermissionsPolicyTest,
         origin_a_);
 
     EXPECT_TRUE(policy->IsFeatureEnabledForOrigin(
-        mojom::PermissionsPolicyFeature::kSharedStorage, origin_a_));
+        network::mojom::PermissionsPolicyFeature::kSharedStorage, origin_a_));
     EXPECT_TRUE(IsFeatureEnabledForSubresourceRequestAssumingOptIn(
-        policy.get(), mojom::PermissionsPolicyFeature::kSharedStorage,
+        policy.get(), network::mojom::PermissionsPolicyFeature::kSharedStorage,
         origin_a_));
 
     EXPECT_TRUE(policy->IsFeatureEnabledForOrigin(
-        mojom::PermissionsPolicyFeature::kSharedStorage, origin_b_));
+        network::mojom::PermissionsPolicyFeature::kSharedStorage, origin_b_));
     EXPECT_TRUE(IsFeatureEnabledForSubresourceRequestAssumingOptIn(
-        policy.get(), mojom::PermissionsPolicyFeature::kSharedStorage,
+        policy.get(), network::mojom::PermissionsPolicyFeature::kSharedStorage,
         origin_b_));
   }
 
@@ -2447,33 +2580,35 @@ TEST_F(PermissionsPolicyTest,
     // | fetch(<Origin C's url>, {sharedStorageWritable: true}) |
     // +--------------------------------------------------------+
 
-    std::unique_ptr<PermissionsPolicy> policy = CreateFromParentPolicy(
-        nullptr,
-        {{{mojom::PermissionsPolicyFeature::kSharedStorage, /*allowed_origins=*/
-           {*blink::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
-               origin_b_,
-               /*has_subdomain_wildcard=*/false)},
-           /*self_if_matches=*/std::nullopt,
-           /*matches_all_origins=*/false,
-           /*matches_opaque_src=*/false}}},
-        origin_a_);
+    std::unique_ptr<PermissionsPolicy> policy =
+        CreateFromParentPolicy(nullptr,
+                               {{{network::mojom::PermissionsPolicyFeature::
+                                      kSharedStorage, /*allowed_origins=*/
+                                  {*network::OriginWithPossibleWildcards::
+                                       FromOriginAndWildcardsForTest(
+                                           origin_b_,
+                                           /*has_subdomain_wildcard=*/false)},
+                                  /*self_if_matches=*/std::nullopt,
+                                  /*matches_all_origins=*/false,
+                                  /*matches_opaque_src=*/false}}},
+                               origin_a_);
 
     EXPECT_FALSE(policy->IsFeatureEnabledForOrigin(
-        mojom::PermissionsPolicyFeature::kSharedStorage, origin_a_));
+        network::mojom::PermissionsPolicyFeature::kSharedStorage, origin_a_));
     EXPECT_FALSE(IsFeatureEnabledForSubresourceRequestAssumingOptIn(
-        policy.get(), mojom::PermissionsPolicyFeature::kSharedStorage,
+        policy.get(), network::mojom::PermissionsPolicyFeature::kSharedStorage,
         origin_a_));
 
     EXPECT_TRUE(policy->IsFeatureEnabledForOrigin(
-        mojom::PermissionsPolicyFeature::kSharedStorage, origin_b_));
+        network::mojom::PermissionsPolicyFeature::kSharedStorage, origin_b_));
     EXPECT_TRUE(IsFeatureEnabledForSubresourceRequestAssumingOptIn(
-        policy.get(), mojom::PermissionsPolicyFeature::kSharedStorage,
+        policy.get(), network::mojom::PermissionsPolicyFeature::kSharedStorage,
         origin_b_));
 
     EXPECT_FALSE(policy->IsFeatureEnabledForOrigin(
-        mojom::PermissionsPolicyFeature::kSharedStorage, origin_c_));
+        network::mojom::PermissionsPolicyFeature::kSharedStorage, origin_c_));
     EXPECT_FALSE(IsFeatureEnabledForSubresourceRequestAssumingOptIn(
-        policy.get(), mojom::PermissionsPolicyFeature::kSharedStorage,
+        policy.get(), network::mojom::PermissionsPolicyFeature::kSharedStorage,
         origin_c_));
   }
 }
@@ -2568,7 +2703,7 @@ TEST_F(PermissionsPolicyTest, ProposedTestCompletelyBlockedPolicy) {
 
   ParsedPermissionsPolicy frame_policy5 = {
       {{kDefaultSelfFeature, /*allowed_origins=*/
-        {*blink::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
+        {*network::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
             origin_b_,
             /*has_subdomain_wildcard=*/false)},
         /*self_if_matches=*/std::nullopt,
@@ -2580,7 +2715,7 @@ TEST_F(PermissionsPolicyTest, ProposedTestCompletelyBlockedPolicy) {
 
   ParsedPermissionsPolicy frame_policy6 = {
       {{kDefaultSelfFeature, /*allowed_origins=*/
-        {*blink::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
+        {*network::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
             origin_c_,
             /*has_subdomain_wildcard=*/false)},
         /*self_if_matches=*/std::nullopt,
@@ -2648,7 +2783,7 @@ TEST_F(PermissionsPolicyTest, ProposedTestDisallowedCrossOriginChildPolicy) {
   // This is a critical change from the existing semantics.
   ParsedPermissionsPolicy frame_policy5 = {
       {{kDefaultSelfFeature, /*allowed_origins=*/
-        {*blink::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
+        {*network::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
             origin_b_,
             /*has_subdomain_wildcard=*/false)},
         /*self_if_matches=*/std::nullopt,
@@ -2660,7 +2795,7 @@ TEST_F(PermissionsPolicyTest, ProposedTestDisallowedCrossOriginChildPolicy) {
 
   ParsedPermissionsPolicy frame_policy6 = {
       {{kDefaultSelfFeature, /*allowed_origins=*/
-        {*blink::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
+        {*network::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
             origin_c_,
             /*has_subdomain_wildcard=*/false)},
         /*self_if_matches=*/std::nullopt,
@@ -2703,7 +2838,7 @@ TEST_F(PermissionsPolicyTest, ProposedTestAllowedCrossOriginChildPolicy) {
   std::unique_ptr<PermissionsPolicy> policy1 = CreateFromParentPolicy(
       nullptr,
       {{{kDefaultSelfFeature, /*allowed_origins=*/
-         {*blink::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
+         {*network::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
              origin_b_,
              /*has_subdomain_wildcard=*/false)},
          /*self_if_matches=*/origin_a_,
@@ -2731,7 +2866,7 @@ TEST_F(PermissionsPolicyTest, ProposedTestAllowedCrossOriginChildPolicy) {
 
   ParsedPermissionsPolicy frame_policy5 = {
       {{kDefaultSelfFeature, /*allowed_origins=*/
-        {*blink::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
+        {*network::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
             origin_b_,
             /*has_subdomain_wildcard=*/false)},
         /*self_if_matches=*/std::nullopt,
@@ -2743,7 +2878,7 @@ TEST_F(PermissionsPolicyTest, ProposedTestAllowedCrossOriginChildPolicy) {
 
   ParsedPermissionsPolicy frame_policy6 = {
       {{kDefaultSelfFeature, /*allowed_origins=*/
-        {*blink::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
+        {*network::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
             origin_c_,
             /*has_subdomain_wildcard=*/false)},
         /*self_if_matches=*/std::nullopt,
@@ -2811,7 +2946,7 @@ TEST_F(PermissionsPolicyTest, ProposedTestAllAllowedCrossOriginChildPolicy) {
 
   ParsedPermissionsPolicy frame_policy5 = {
       {{kDefaultSelfFeature, /*allowed_origins=*/
-        {*blink::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
+        {*network::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
             origin_b_,
             /*has_subdomain_wildcard=*/false)},
         /*self_if_matches=*/std::nullopt,
@@ -2823,7 +2958,7 @@ TEST_F(PermissionsPolicyTest, ProposedTestAllAllowedCrossOriginChildPolicy) {
 
   ParsedPermissionsPolicy frame_policy6 = {
       {{kDefaultSelfFeature, /*allowed_origins=*/
-        {*blink::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
+        {*network::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
             origin_c_,
             /*has_subdomain_wildcard=*/false)},
         /*self_if_matches=*/std::nullopt,
@@ -2854,7 +2989,7 @@ TEST_F(PermissionsPolicyTest, ProposedTestNestedPolicyPropagates) {
   std::unique_ptr<PermissionsPolicy> policy1 = CreateFromParentPolicy(
       nullptr,
       {{{kDefaultSelfFeature, /*allowed_origins=*/
-         {*blink::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
+         {*network::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
              origin_b_,
              /*has_subdomain_wildcard=*/false)},
          /*self_if_matches=*/origin_a_,
@@ -2891,17 +3026,17 @@ TEST_F(PermissionsPolicyTest, CreateFlexibleForFencedFrame) {
   EXPECT_FALSE(policy->IsFeatureEnabled(kDefaultOnFeature));
   EXPECT_FALSE(policy->IsFeatureEnabled(kDefaultSelfFeature));
   EXPECT_FALSE(policy->IsFeatureEnabled(
-      mojom::PermissionsPolicyFeature::kAttributionReporting));
+      network::mojom::PermissionsPolicyFeature::kAttributionReporting));
   EXPECT_TRUE(policy->IsFeatureEnabled(
-      mojom::PermissionsPolicyFeature::kSharedStorage));
+      network::mojom::PermissionsPolicyFeature::kSharedStorage));
   EXPECT_TRUE(policy->IsFeatureEnabled(
-      mojom::PermissionsPolicyFeature::kSharedStorageSelectUrl));
+      network::mojom::PermissionsPolicyFeature::kSharedStorageSelectUrl));
   EXPECT_TRUE(policy->IsFeatureEnabled(
-      mojom::PermissionsPolicyFeature::kPrivateAggregation));
+      network::mojom::PermissionsPolicyFeature::kPrivateAggregation));
 }
 
 TEST_F(PermissionsPolicyTest, CreateForFledgeFencedFrame) {
-  std::vector<blink::mojom::PermissionsPolicyFeature>
+  std::vector<network::mojom::PermissionsPolicyFeature>
       effective_enabled_permissions;
   effective_enabled_permissions.insert(
       effective_enabled_permissions.end(),
@@ -2913,13 +3048,13 @@ TEST_F(PermissionsPolicyTest, CreateForFledgeFencedFrame) {
   EXPECT_FALSE(policy->IsFeatureEnabled(kDefaultOnFeature));
   EXPECT_FALSE(policy->IsFeatureEnabled(kDefaultSelfFeature));
   EXPECT_TRUE(policy->IsFeatureEnabled(
-      mojom::PermissionsPolicyFeature::kAttributionReporting));
+      network::mojom::PermissionsPolicyFeature::kAttributionReporting));
   EXPECT_TRUE(policy->IsFeatureEnabled(
-      mojom::PermissionsPolicyFeature::kSharedStorage));
+      network::mojom::PermissionsPolicyFeature::kSharedStorage));
 }
 
 TEST_F(PermissionsPolicyTest, CreateForSharedStorageFencedFrame) {
-  std::vector<blink::mojom::PermissionsPolicyFeature>
+  std::vector<network::mojom::PermissionsPolicyFeature>
       effective_enabled_permissions;
   effective_enabled_permissions.insert(
       effective_enabled_permissions.end(),
@@ -2931,18 +3066,18 @@ TEST_F(PermissionsPolicyTest, CreateForSharedStorageFencedFrame) {
   EXPECT_FALSE(policy->IsFeatureEnabled(kDefaultOnFeature));
   EXPECT_FALSE(policy->IsFeatureEnabled(kDefaultSelfFeature));
   EXPECT_TRUE(policy->IsFeatureEnabled(
-      mojom::PermissionsPolicyFeature::kAttributionReporting));
+      network::mojom::PermissionsPolicyFeature::kAttributionReporting));
   EXPECT_TRUE(policy->IsFeatureEnabled(
-      mojom::PermissionsPolicyFeature::kSharedStorage));
+      network::mojom::PermissionsPolicyFeature::kSharedStorage));
 }
 
 TEST_F(PermissionsPolicyTest, CreateFromParsedPolicy) {
   ParsedPermissionsPolicy parsed_policy = {
       {{kDefaultSelfFeature, /*allowed_origins=*/
-        {*blink::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
+        {*network::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
              origin_a_,
              /*has_subdomain_wildcard=*/false),
-         *blink::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
+         *network::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
              origin_b_,
              /*has_subdomain_wildcard=*/false)},
         /*self_if_matches=*/std::nullopt,
@@ -2958,7 +3093,7 @@ TEST_F(PermissionsPolicyTest, CreateFromParsedPolicy) {
 TEST_F(PermissionsPolicyTest, CreateFromParsedPolicyExcludingSelf) {
   ParsedPermissionsPolicy parsed_policy = {
       {{kDefaultSelfFeature, /*allowed_origins=*/
-        {*blink::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
+        {*network::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
             origin_b_,
             /*has_subdomain_wildcard=*/false)},
         /*self_if_matches=*/std::nullopt,
@@ -2981,13 +3116,153 @@ TEST_F(PermissionsPolicyTest, CreateFromParsedPolicyWithEmptyAllowlist) {
   EXPECT_FALSE(policy->IsFeatureEnabled(kDefaultSelfFeature));
 }
 
+TEST_F(PermissionsPolicyTest, CreateFromParsedPolicyWithBasePolicy) {
+  url::Origin origin_self = url::Origin::Create(GURL("https://example.edu/"));
+  ParsedPermissionsPolicy base_policy = {
+      {{kDefaultSelfFeature, /*allowed_origins=*/
+        {
+            *network::OriginWithPossibleWildcards::
+                FromOriginAndWildcardsForTest(origin_a_,
+                                              /*has_subdomain_wildcard=*/false),
+            *network::OriginWithPossibleWildcards::
+                FromOriginAndWildcardsForTest(origin_b_,
+                                              /*has_subdomain_wildcard=*/false),
+        },
+        /*self_if_matches=*/origin_self,
+        /*matches_all_origins=*/false,
+        /*matches_opaque_src=*/false}}};
+  ParsedPermissionsPolicy parsed_policy = {
+      {{kDefaultSelfFeature, /*allowed_origins=*/
+        {
+            *network::OriginWithPossibleWildcards::
+                FromOriginAndWildcardsForTest(origin_b_,
+                                              /*has_subdomain_wildcard=*/false),
+            *network::OriginWithPossibleWildcards::
+                FromOriginAndWildcardsForTest(origin_c_,
+                                              /*has_subdomain_wildcard=*/false),
+        },
+        /*self_if_matches=*/origin_self,
+        /*matches_all_origins=*/false,
+        /*matches_opaque_src=*/false}}};
+  auto policy = CreateFromParsedPolicy(parsed_policy, origin_self, base_policy);
+  EXPECT_TRUE(
+      policy->IsFeatureEnabledForOrigin(kDefaultSelfFeature, origin_self));
+  EXPECT_FALSE(
+      policy->IsFeatureEnabledForOrigin(kDefaultSelfFeature, origin_a_));
+  EXPECT_TRUE(
+      policy->IsFeatureEnabledForOrigin(kDefaultSelfFeature, origin_b_));
+  EXPECT_FALSE(
+      policy->IsFeatureEnabledForOrigin(kDefaultSelfFeature, origin_c_));
+}
+
+TEST_F(PermissionsPolicyTest,
+       CreateFromParsedPolicyWithBasePolicyExcludingSelf) {
+  url::Origin origin_self = url::Origin::Create(GURL("https://example.edu/"));
+  ParsedPermissionsPolicy base_policy = {
+      {{kDefaultSelfFeature, /*allowed_origins=*/{},
+        /*self_if_matches=*/std::nullopt,
+        /*matches_all_origins=*/false,
+        /*matches_opaque_src=*/false}}};
+  ParsedPermissionsPolicy parsed_policy = {
+      {{kDefaultSelfFeature, /*allowed_origins=*/{},
+        /*self_if_matches=*/origin_a_,
+        /*matches_all_origins=*/false,
+        /*matches_opaque_src=*/false}}};
+  auto policy = CreateFromParsedPolicy(parsed_policy, origin_a_, base_policy);
+  EXPECT_FALSE(
+      policy->IsFeatureEnabledForOrigin(kDefaultSelfFeature, origin_a_));
+}
+
+TEST_F(PermissionsPolicyTest, CreateFromParsedPolicyWithoutSelfWithBasePolicy) {
+  url::Origin origin_self = url::Origin::Create(GURL("https://example.edu/"));
+  ParsedPermissionsPolicy base_policy = {
+      {{kDefaultSelfFeature, /*allowed_origins=*/{},
+        /*self_if_matches=*/origin_a_,
+        /*matches_all_origins=*/false,
+        /*matches_opaque_src=*/false}}};
+  ParsedPermissionsPolicy parsed_policy = {
+      {{kDefaultSelfFeature, /*allowed_origins=*/{},
+        /*self_if_matches=*/std::nullopt,
+        /*matches_all_origins=*/false,
+        /*matches_opaque_src=*/false}}};
+  auto policy = CreateFromParsedPolicy(parsed_policy, origin_a_, base_policy);
+  EXPECT_FALSE(
+      policy->IsFeatureEnabledForOrigin(kDefaultSelfFeature, origin_a_));
+}
+
+TEST_F(PermissionsPolicyTest,
+       CreateFromParsedPolicyWildcardWithMoreRestrictiveBasePolicy) {
+  ParsedPermissionsPolicy base_policy = {
+      {{kDefaultSelfFeature, /*allowed_origins=*/
+        {*network::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
+            origin_b_,
+            /*has_subdomain_wildcard=*/false)},
+        /*self_if_matches=*/origin_a_,
+        /*matches_all_origins=*/false,
+        /*matches_opaque_src=*/false}}};
+  ParsedPermissionsPolicy parsed_policy = {
+      {{kDefaultSelfFeature, /*allowed_origins=*/{},
+        /*self_if_matches=*/std::nullopt,
+        /*matches_all_origins=*/true,
+        /*matches_opaque_src=*/false}}};
+  auto policy = CreateFromParsedPolicy(parsed_policy, origin_a_, base_policy);
+  EXPECT_TRUE(
+      policy->IsFeatureEnabledForOrigin(kDefaultSelfFeature, origin_a_));
+  EXPECT_TRUE(
+      policy->IsFeatureEnabledForOrigin(kDefaultSelfFeature, origin_b_));
+  EXPECT_FALSE(
+      policy->IsFeatureEnabledForOrigin(kDefaultSelfFeature, origin_c_));
+}
+
+TEST_F(PermissionsPolicyTest, CreateFromParsedPolicyWithWildcardBasePolicy) {
+  ParsedPermissionsPolicy base_policy = {
+      {{kDefaultSelfFeature, /*allowed_origins=*/{},
+        /*self_if_matches=*/std::nullopt,
+        /*matches_all_origins=*/true,
+        /*matches_opaque_src=*/false}}};
+  ParsedPermissionsPolicy parsed_policy = {
+      {{kDefaultSelfFeature, /*allowed_origins=*/
+        {*network::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
+            origin_a_,
+            /*has_subdomain_wildcard=*/false)},
+        /*self_if_matches=*/std::nullopt,
+        /*matches_all_origins=*/false,
+        /*matches_opaque_src=*/false}}};
+  auto policy = CreateFromParsedPolicy(parsed_policy, origin_a_, base_policy);
+  EXPECT_TRUE(
+      policy->IsFeatureEnabledForOrigin(kDefaultSelfFeature, origin_a_));
+  EXPECT_FALSE(
+      policy->IsFeatureEnabledForOrigin(kDefaultSelfFeature, origin_b_));
+  EXPECT_FALSE(
+      policy->IsFeatureEnabledForOrigin(kDefaultSelfFeature, origin_c_));
+}
+
+TEST_F(PermissionsPolicyTest, CreateFromParsedPolicyWithMissingBasePolicy) {
+  // Tests a parsed policy that includes an allowlist for a feature not
+  // declared in the base policy.
+  ParsedPermissionsPolicy base_policy = {
+      {{kDefaultOnFeature, /*allowed_origins=*/{},
+        /*self_if_matches=*/std::nullopt,
+        /*matches_all_origins=*/true,
+        /*matches_opaque_src=*/false}}};
+  ParsedPermissionsPolicy parsed_policy = {
+      {{kDefaultSelfFeature, /*allowed_origins=*/{},
+        /*self_if_matches=*/std::nullopt,
+        /*matches_all_origins=*/true,
+        /*matches_opaque_src=*/false}}};
+  auto policy = CreateFromParsedPolicy(parsed_policy, origin_a_, base_policy);
+  EXPECT_TRUE(policy->IsFeatureEnabledForOrigin(kDefaultOnFeature, origin_a_));
+  EXPECT_FALSE(
+      policy->IsFeatureEnabledForOrigin(kDefaultSelfFeature, origin_a_));
+}
+
 TEST_F(PermissionsPolicyTest, OverwriteHeaderPolicyForClientHints) {
   // We can construct a policy, set/overwrite the same header, and then check.
   auto policy1 = CreateFromParentPolicy(
       nullptr,
-      {{{mojom::PermissionsPolicyFeature::kClientHintDPR,
+      {{{network::mojom::PermissionsPolicyFeature::kClientHintDPR,
          /*allowed_origins=*/
-         {*blink::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
+         {*network::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
              origin_b_,
              /*has_subdomain_wildcard=*/false)},
          /*self_if_matches=*/std::nullopt,
@@ -2995,23 +3270,23 @@ TEST_F(PermissionsPolicyTest, OverwriteHeaderPolicyForClientHints) {
          /*matches_opaque_src=*/false}}},
       origin_a_);
   policy1 = policy1->WithClientHints(
-      {{{mojom::PermissionsPolicyFeature::kClientHintDPR,
+      {{{network::mojom::PermissionsPolicyFeature::kClientHintDPR,
          /*allowed_origins=*/
-         {*blink::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
+         {*network::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
              origin_a_,
              /*has_subdomain_wildcard=*/false)},
          /*self_if_matches=*/std::nullopt,
          /*matches_all_origins=*/false,
          /*matches_opaque_src=*/false}}});
   EXPECT_TRUE(policy1->IsFeatureEnabled(
-      mojom::PermissionsPolicyFeature::kClientHintDPR));
+      network::mojom::PermissionsPolicyFeature::kClientHintDPR));
 
   // If we overwrite an enabled header with a disabled header it's now disabled.
   auto policy2 = CreateFromParentPolicy(
       nullptr,
-      {{{mojom::PermissionsPolicyFeature::kClientHintDPR,
+      {{{network::mojom::PermissionsPolicyFeature::kClientHintDPR,
          /*allowed_origins=*/
-         {*blink::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
+         {*network::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
              origin_a_,
              /*has_subdomain_wildcard=*/false)},
          /*self_if_matches=*/std::nullopt,
@@ -3019,22 +3294,22 @@ TEST_F(PermissionsPolicyTest, OverwriteHeaderPolicyForClientHints) {
          /*matches_opaque_src=*/false}}},
       origin_a_);
   policy2 = policy2->WithClientHints(
-      {{{mojom::PermissionsPolicyFeature::kClientHintDPR,
+      {{{network::mojom::PermissionsPolicyFeature::kClientHintDPR,
          /*allowed_origins=*/
-         {*blink::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
+         {*network::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
              origin_b_,
              /*has_subdomain_wildcard=*/false)},
          /*self_if_matches=*/std::nullopt,
          /*matches_all_origins=*/false,
          /*matches_opaque_src=*/false}}});
   EXPECT_FALSE(policy2->IsFeatureEnabled(
-      mojom::PermissionsPolicyFeature::kClientHintDPR));
+      network::mojom::PermissionsPolicyFeature::kClientHintDPR));
 
   // We can construct a policy, set/overwrite different headers, and then check.
   auto policy3 = CreateFromParentPolicy(
       nullptr,
       {{{kDefaultSelfFeature, /*allowed_origins=*/
-         {*blink::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
+         {*network::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
              origin_b_,
              /*has_subdomain_wildcard=*/false)},
          /*self_if_matches=*/std::nullopt,
@@ -3042,22 +3317,22 @@ TEST_F(PermissionsPolicyTest, OverwriteHeaderPolicyForClientHints) {
          /*matches_opaque_src=*/false}}},
       origin_a_);
   policy3 = policy3->WithClientHints(
-      {{{mojom::PermissionsPolicyFeature::kClientHintDPR,
+      {{{network::mojom::PermissionsPolicyFeature::kClientHintDPR,
          /*allowed_origins=*/
-         {*blink::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
+         {*network::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
              origin_a_,
              /*has_subdomain_wildcard=*/false)},
          /*self_if_matches=*/std::nullopt,
          /*matches_all_origins=*/false,
          /*matches_opaque_src=*/false}}});
   EXPECT_TRUE(policy3->IsFeatureEnabled(
-      mojom::PermissionsPolicyFeature::kClientHintDPR));
+      network::mojom::PermissionsPolicyFeature::kClientHintDPR));
 
   // We can't overwrite a non-client-hint header.
   auto policy4 = CreateFromParentPolicy(nullptr, {}, origin_a_);
   EXPECT_DCHECK_DEATH(policy4->WithClientHints(
       {{{kDefaultSelfFeature, /*allowed_origins=*/
-         {*blink::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
+         {*network::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
              origin_a_,
              /*has_subdomain_wildcard=*/false)},
          /*self_if_matches=*/std::nullopt,
@@ -3066,20 +3341,20 @@ TEST_F(PermissionsPolicyTest, OverwriteHeaderPolicyForClientHints) {
 }
 
 TEST_F(PermissionsPolicyTest, GetAllowlistForFeatureIfExists) {
-  const std::vector<blink::OriginWithPossibleWildcards> origins1(
-      {*blink::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
+  const std::vector<network::OriginWithPossibleWildcards> origins1(
+      {*network::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
           origin_b_,
           /*has_subdomain_wildcard=*/false)});
   // If we set a policy, then we can extract it.
-  auto policy1 =
-      CreateFromParentPolicy(nullptr,
-                             {{{mojom::PermissionsPolicyFeature::kClientHintDPR,
-                                origins1, /*self_if_matches=*/std::nullopt,
-                                /*matches_all_origins=*/false,
-                                /*matches_opaque_src=*/false}}},
-                             origin_a_);
+  auto policy1 = CreateFromParentPolicy(
+      nullptr,
+      {{{network::mojom::PermissionsPolicyFeature::kClientHintDPR, origins1,
+         /*self_if_matches=*/std::nullopt,
+         /*matches_all_origins=*/false,
+         /*matches_opaque_src=*/false}}},
+      origin_a_);
   const auto& maybe_allow_list1 = policy1->GetAllowlistForFeatureIfExists(
-      mojom::PermissionsPolicyFeature::kClientHintDPR);
+      network::mojom::PermissionsPolicyFeature::kClientHintDPR);
   EXPECT_TRUE(maybe_allow_list1.has_value());
   EXPECT_FALSE(maybe_allow_list1.value().MatchesAll());
   EXPECT_FALSE(maybe_allow_list1.value().MatchesOpaqueSrc());
@@ -3090,29 +3365,29 @@ TEST_F(PermissionsPolicyTest, GetAllowlistForFeatureIfExists) {
   auto policy2 =
       CreateFromParentPolicy(nullptr, /*header_policy=*/{}, origin_a_);
   const auto& maybe_allow_list2 = policy2->GetAllowlistForFeatureIfExists(
-      mojom::PermissionsPolicyFeature::kClientHintDPR);
+      network::mojom::PermissionsPolicyFeature::kClientHintDPR);
   EXPECT_FALSE(maybe_allow_list2.has_value());
 
-  const std::vector<blink::OriginWithPossibleWildcards> origins3(
-      {*blink::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
+  const std::vector<network::OriginWithPossibleWildcards> origins3(
+      {*network::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
           origin_a_,
           /*has_subdomain_wildcard=*/false)});
   // If we set a policy, then overwrite it, we can extract it.
-  auto policy3 =
-      CreateFromParentPolicy(nullptr,
-                             {{{mojom::PermissionsPolicyFeature::kClientHintDPR,
-                                {},
-                                /*self_if_matches=*/std::nullopt,
-                                /*matches_all_origins=*/false,
-                                /*matches_opaque_src=*/false}}},
-                             origin_a_);
+  auto policy3 = CreateFromParentPolicy(
+      nullptr,
+      {{{network::mojom::PermissionsPolicyFeature::kClientHintDPR,
+         {},
+         /*self_if_matches=*/std::nullopt,
+         /*matches_all_origins=*/false,
+         /*matches_opaque_src=*/false}}},
+      origin_a_);
   auto new_policy3 = policy3->WithClientHints(
-      {{{mojom::PermissionsPolicyFeature::kClientHintDPR, origins3,
+      {{{network::mojom::PermissionsPolicyFeature::kClientHintDPR, origins3,
          /*self_if_matches=*/std::nullopt,
          /*matches_all_origins=*/false,
          /*matches_opaque_src=*/false}}});
   const auto& maybe_allow_list3 = new_policy3->GetAllowlistForFeatureIfExists(
-      mojom::PermissionsPolicyFeature::kClientHintDPR);
+      network::mojom::PermissionsPolicyFeature::kClientHintDPR);
   EXPECT_TRUE(maybe_allow_list3.has_value());
   EXPECT_FALSE(maybe_allow_list3.value().MatchesAll());
   EXPECT_FALSE(maybe_allow_list3.value().MatchesOpaqueSrc());
@@ -3122,20 +3397,20 @@ TEST_F(PermissionsPolicyTest, GetAllowlistForFeatureIfExists) {
   // If we don't set a policy, then overwrite it, we can extract it.
   auto policy4 =
       CreateFromParentPolicy(nullptr, /*header_policy=*/{}, origin_a_);
-  const std::vector<blink::OriginWithPossibleWildcards> origins4(
-      {*blink::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
+  const std::vector<network::OriginWithPossibleWildcards> origins4(
+      {*network::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
            origin_a_,
            /*has_subdomain_wildcard=*/false),
-       *blink::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
+       *network::OriginWithPossibleWildcards::FromOriginAndWildcardsForTest(
            origin_b_,
            /*has_subdomain_wildcard=*/false)});
   policy4 = policy4->WithClientHints(
-      {{{mojom::PermissionsPolicyFeature::kClientHintDPR, origins4,
+      {{{network::mojom::PermissionsPolicyFeature::kClientHintDPR, origins4,
          /*self_if_matches=*/std::nullopt,
          /*matches_all_origins=*/false,
          /*matches_opaque_src=*/false}}});
   const auto& maybe_allow_list4 = policy4->GetAllowlistForFeatureIfExists(
-      mojom::PermissionsPolicyFeature::kClientHintDPR);
+      network::mojom::PermissionsPolicyFeature::kClientHintDPR);
   EXPECT_TRUE(maybe_allow_list4.has_value());
   EXPECT_FALSE(maybe_allow_list4.value().MatchesAll());
   EXPECT_FALSE(maybe_allow_list4.value().MatchesOpaqueSrc());
@@ -3153,7 +3428,7 @@ TEST_F(PermissionsPolicyTest, UnloadDefaultEnabledForAll) {
         CreateFromParentPolicy(nullptr, /*header_policy=*/{}, origin_a_);
     EXPECT_EQ(PermissionsPolicyFeatureDefault::EnableForAll,
               GetPermissionsPolicyFeatureList(origin_a_)
-                  .find(mojom::PermissionsPolicyFeature::kUnload)
+                  .find(network::mojom::PermissionsPolicyFeature::kUnload)
                   ->second);
   }
 }
@@ -3168,7 +3443,7 @@ TEST_F(PermissionsPolicyTest, UnloadDefaultEnabledForNone) {
         CreateFromParentPolicy(nullptr, /*header_policy=*/{}, origin_a_);
     EXPECT_EQ(PermissionsPolicyFeatureDefault::EnableForNone,
               GetPermissionsPolicyFeatureList(origin_a_)
-                  .find(mojom::PermissionsPolicyFeature::kUnload)
+                  .find(network::mojom::PermissionsPolicyFeature::kUnload)
                   ->second);
   }
 }
@@ -3176,7 +3451,7 @@ TEST_F(PermissionsPolicyTest, UnloadDefaultEnabledForNone) {
 blink::PermissionsPolicyFeatureDefault GetDefaultForUnload(
     const url::Origin& origin) {
   return GetPermissionsPolicyFeatureList(origin)
-      .find(mojom::PermissionsPolicyFeature::kUnload)
+      .find(network::mojom::PermissionsPolicyFeature::kUnload)
       ->second;
 }
 
@@ -3221,12 +3496,33 @@ TEST_F(PermissionsPolicyTest, GetPermissionsPolicyFeatureListForUnload) {
   ASSERT_NEAR(total_count, 99 * 100 / 2, 71);
 }
 
-// Test that parameter parsing works.
-TEST_F(PermissionsPolicyTest, UnloadDeprecationAllowedHosts) {
+// Tests for the handling unload deprecation parameters.
+class DeprecateUnloadTest : public PermissionsPolicyTest {
+ protected:
+  const url::Origin http_origin1_ =
+      url::Origin::Create(GURL("http://testing1/"));
+  const url::Origin https_origin1_ =
+      url::Origin::Create(GURL("https://testing1/"));
+  const url::Origin http_origin2_ =
+      url::Origin::Create(GURL("http://testing2/"));
+  const url::Origin https_origin2_ =
+      url::Origin::Create(GURL("https://testing2/"));
+  const url::Origin http_origin3_ =
+      url::Origin::Create(GURL("http://testing3/"));
+  const url::Origin https_origin3_ =
+      url::Origin::Create(GURL("https://testing3/"));
+};
+
+// The parameter should default to "" and be parsed correctly.
+TEST_F(DeprecateUnloadTest, UnloadDeprecationAllowedHosts_Empty) {
+  // Make sure the default is the empty string.
+  ASSERT_EQ(features::kDeprecateUnloadAllowlist.Get(), "");
   EXPECT_EQ(std::unordered_set<std::string>({}),
             UnloadDeprecationAllowedHosts());
+}
 
-  // Now set the parameter and try again.
+// A simple list of hosts should be parsed correctly.
+TEST_F(DeprecateUnloadTest, UnloadDeprecationAllowedHosts_Simple) {
   base::test::ScopedFeatureList feature_list;
   feature_list.InitWithFeaturesAndParameters(
       {{blink::features::kDeprecateUnloadByAllowList,
@@ -3237,12 +3533,8 @@ TEST_F(PermissionsPolicyTest, UnloadDeprecationAllowedHosts) {
             UnloadDeprecationAllowedHosts());
 }
 
-// Test that parameter parsing handles empty hosts.
-TEST_F(PermissionsPolicyTest, UnloadDeprecationAllowedHostsEmpty) {
-  EXPECT_EQ(std::unordered_set<std::string>({}),
-            UnloadDeprecationAllowedHosts());
-
-  // Now set the parameter and try again.
+// A messy list of hosts should be parsed correctly.
+TEST_F(DeprecateUnloadTest, UnloadDeprecationAllowedHosts_Messy) {
   base::test::ScopedFeatureList feature_list;
   feature_list.InitWithFeaturesAndParameters(
       {{blink::features::kDeprecateUnloadByAllowList,
@@ -3254,53 +3546,53 @@ TEST_F(PermissionsPolicyTest, UnloadDeprecationAllowedHostsEmpty) {
             UnloadDeprecationAllowedHosts());
 }
 
-// Test that the UnloadDeprecationAllowedForHost works correctly with
-// an empty and a non-empty allowlist.
-TEST_F(PermissionsPolicyTest, UnloadDeprecationAllowedForHostHostLists) {
-  const url::Origin http_origin1 =
-      url::Origin::Create(GURL("http://testing1/"));
-  const url::Origin https_origin1 =
-      url::Origin::Create(GURL("https://testing1/"));
-  const url::Origin http_origin2 =
-      url::Origin::Create(GURL("http://testing2/"));
-  const url::Origin https_origin2 =
-      url::Origin::Create(GURL("https://testing2/"));
-  const url::Origin http_origin3 =
-      url::Origin::Create(GURL("http://testing3/"));
-  const url::Origin https_origin3 =
-      url::Origin::Create(GURL("https://testing3/"));
-
-  {
-    const auto hosts = UnloadDeprecationAllowedHosts();
-    // With no allowlist, every origin is allowed.
-    EXPECT_TRUE(UnloadDeprecationAllowedForHost(http_origin1.host(), hosts));
-    EXPECT_TRUE(UnloadDeprecationAllowedForHost(https_origin1.host(), hosts));
-    EXPECT_TRUE(UnloadDeprecationAllowedForHost(http_origin2.host(), hosts));
-    EXPECT_TRUE(UnloadDeprecationAllowedForHost(https_origin2.host(), hosts));
-    EXPECT_TRUE(UnloadDeprecationAllowedForHost(http_origin3.host(), hosts));
-    EXPECT_TRUE(UnloadDeprecationAllowedForHost(https_origin3.host(), hosts));
-  }
-
-  // Now set an allowlist and check that only the allowed domains see
-  // deprecation.
-  {
-    base::test::ScopedFeatureList feature_list;
-    feature_list.InitWithFeaturesAndParameters(
-        {{blink::features::kDeprecateUnloadByAllowList,
-          {{features::kDeprecateUnloadAllowlist.name, "testing1,testing2"}}}},
-        /*disabled_features=*/{});
-
-    const auto hosts = UnloadDeprecationAllowedHosts();
-    EXPECT_TRUE(UnloadDeprecationAllowedForHost(http_origin1.host(), hosts));
-    EXPECT_TRUE(UnloadDeprecationAllowedForHost(https_origin1.host(), hosts));
-    EXPECT_TRUE(UnloadDeprecationAllowedForHost(http_origin2.host(), hosts));
-    EXPECT_TRUE(UnloadDeprecationAllowedForHost(https_origin2.host(), hosts));
-    EXPECT_FALSE(UnloadDeprecationAllowedForHost(http_origin3.host(), hosts));
-    EXPECT_FALSE(UnloadDeprecationAllowedForHost(https_origin3.host(), hosts));
-  }
+// Test that UnloadDeprecationAllowedForHost works correctly with an empty
+// allowlist.
+TEST_F(DeprecateUnloadTest, UnloadDeprecationAllowedForHost_EmptyAllowList) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitWithFeaturesAndParameters(
+      {{blink::features::kDeprecateUnloadByAllowList,
+        {{features::kDeprecateUnloadAllowlist.name, ""}}}},
+      /*disabled_features=*/{});
+  const auto hosts = UnloadDeprecationAllowedHosts();
+  // With no allowlist, every origin is allowed.
+  EXPECT_TRUE(UnloadDeprecationAllowedForHost(http_origin1_.host(), hosts));
+  EXPECT_TRUE(UnloadDeprecationAllowedForHost(https_origin1_.host(), hosts));
+  EXPECT_TRUE(UnloadDeprecationAllowedForHost(http_origin2_.host(), hosts));
+  EXPECT_TRUE(UnloadDeprecationAllowedForHost(https_origin2_.host(), hosts));
+  EXPECT_TRUE(UnloadDeprecationAllowedForHost(http_origin3_.host(), hosts));
+  EXPECT_TRUE(UnloadDeprecationAllowedForHost(https_origin3_.host(), hosts));
 }
 
-TEST_F(PermissionsPolicyTest, UnloadDeprecationAllowedForOrigin_NonHttp) {
+// Test that the UnloadDeprecationAllowedForHost works correctly with
+// an non-empty allowlist.
+TEST_F(DeprecateUnloadTest, UnloadDeprecationAllowedForHost_NonEmptyAllowList) {
+  // Now set an allowlist and check that only the allowed domains see
+  // deprecation.
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitWithFeaturesAndParameters(
+      {{blink::features::kDeprecateUnloadByAllowList,
+        {{features::kDeprecateUnloadAllowlist.name, "testing1,testing2"}}}},
+      /*disabled_features=*/{});
+
+  const auto hosts = UnloadDeprecationAllowedHosts();
+  EXPECT_TRUE(UnloadDeprecationAllowedForHost(http_origin1_.host(), hosts));
+  EXPECT_TRUE(UnloadDeprecationAllowedForHost(https_origin1_.host(), hosts));
+  EXPECT_TRUE(UnloadDeprecationAllowedForHost(http_origin2_.host(), hosts));
+  EXPECT_TRUE(UnloadDeprecationAllowedForHost(https_origin2_.host(), hosts));
+  EXPECT_FALSE(UnloadDeprecationAllowedForHost(http_origin3_.host(), hosts));
+  EXPECT_FALSE(UnloadDeprecationAllowedForHost(https_origin3_.host(), hosts));
+}
+
+// Non-http(s) origins should never be included in the deprecation.
+TEST_F(DeprecateUnloadTest, UnloadDeprecationAllowedForOrigin_NonHttp) {
+  // Set to 100% deprecation.
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitWithFeaturesAndParameters(
+      {{blink::features::kDeprecateUnload,
+        {{features::kDeprecateUnloadPercent.name, "100"},
+         {features::kDeprecateUnloadBucket.name, "0"}}}},
+      /*disabled_features=*/{});
   const url::Origin chrome_origin =
       url::Origin::Create(GURL("chrome://settings"));
   EXPECT_FALSE(UnloadDeprecationAllowedForOrigin(chrome_origin));
@@ -3308,47 +3600,80 @@ TEST_F(PermissionsPolicyTest, UnloadDeprecationAllowedForOrigin_NonHttp) {
       UnloadDeprecationAllowedForOrigin(chrome_origin.DeriveNewOpaqueOrigin()));
 }
 
-TEST_F(PermissionsPolicyTest,
-       UnloadDeprecationAllowedForOrigin_GradualRollout) {
-  const url::Origin testing_origin =
-      url::Origin::Create(GURL("http://testing"));
-  {
-    base::test::ScopedFeatureList feature_list;
-    feature_list.InitWithFeaturesAndParameters(
-        {{blink::features::kDeprecateUnload,
-          {{features::kDeprecateUnloadPercent.name, "0"},
-           {features::kDeprecateUnloadBucket.name, "0"}}}},
-        /*disabled_features=*/{});
-    EXPECT_FALSE(UnloadDeprecationAllowedForOrigin(testing_origin));
-    EXPECT_FALSE(UnloadDeprecationAllowedForOrigin(
-        testing_origin.DeriveNewOpaqueOrigin()));
-  }
-  {
-    base::test::ScopedFeatureList feature_list;
-    feature_list.InitWithFeaturesAndParameters(
-        {{blink::features::kDeprecateUnload,
-          {{features::kDeprecateUnloadPercent.name, "100"},
-           {features::kDeprecateUnloadBucket.name, "0"}}}},
-        /*disabled_features=*/{});
-    EXPECT_TRUE(UnloadDeprecationAllowedForOrigin(testing_origin));
-    EXPECT_TRUE(UnloadDeprecationAllowedForOrigin(
-        testing_origin.DeriveNewOpaqueOrigin()));
-  }
-  {
-    base::test::ScopedFeatureList feature_list;
-    feature_list.InitWithFeaturesAndParameters(
-        {{blink::features::kDeprecateUnload,
-          {{features::kDeprecateUnloadPercent.name, "100"},
-           {features::kDeprecateUnloadBucket.name, "0"}}},
-         {blink::features::kDeprecateUnloadByAllowList,
-          {{features::kDeprecateUnloadAllowlist.name, "testing"}}}},
-        /*disabled_features=*/{});
-    EXPECT_TRUE(UnloadDeprecationAllowedForOrigin(testing_origin));
-    EXPECT_TRUE(UnloadDeprecationAllowedForOrigin(
-        testing_origin.DeriveNewOpaqueOrigin()));
-    const url::Origin disallowed_testing_origin =
-        url::Origin::Create(GURL("http://disallowed-testing"));
-    EXPECT_FALSE(UnloadDeprecationAllowedForOrigin(disallowed_testing_origin));
-  }
+// When the rollout is at 0%, no host should be allowed.
+TEST_F(DeprecateUnloadTest, UnloadDeprecationAllowedForOrigin_0Percent) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitWithFeaturesAndParameters(
+      {{blink::features::kDeprecateUnload,
+        {{features::kDeprecateUnloadPercent.name, "0"},
+         {features::kDeprecateUnloadBucket.name, "0"}}}},
+      /*disabled_features=*/{});
+  EXPECT_FALSE(UnloadDeprecationAllowedForOrigin(http_origin1_));
+  EXPECT_FALSE(
+      UnloadDeprecationAllowedForOrigin(http_origin1_.DeriveNewOpaqueOrigin()));
 }
+
+// When the rollout is at 100% all hosts should be allowed.
+TEST_F(DeprecateUnloadTest, UnloadDeprecationAllowedForOrigin_100Percent) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitWithFeaturesAndParameters(
+      {{blink::features::kDeprecateUnload,
+        {{features::kDeprecateUnloadPercent.name, "100"},
+         {features::kDeprecateUnloadBucket.name, "0"}}}},
+      /*disabled_features=*/{});
+  EXPECT_TRUE(UnloadDeprecationAllowedForOrigin(http_origin1_));
+  EXPECT_TRUE(
+      UnloadDeprecationAllowedForOrigin(http_origin1_.DeriveNewOpaqueOrigin()));
+}
+
+// When the rollout is at 0% with an allowlist, no host should be allowed,
+// including the one on the list.
+TEST_F(DeprecateUnloadTest,
+       UnloadDeprecationAllowedForOrigin_0PercentAndAllowList) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitWithFeaturesAndParameters(
+      {{blink::features::kDeprecateUnload,
+        {{features::kDeprecateUnloadPercent.name, "0"},
+         {features::kDeprecateUnloadBucket.name, "0"}}},
+       {blink::features::kDeprecateUnloadByAllowList,
+        {{features::kDeprecateUnloadAllowlist.name, http_origin1_.host()}}}},
+      /*disabled_features=*/{});
+  EXPECT_TRUE(UnloadDeprecationAllowedForOrigin(http_origin1_));
+  EXPECT_TRUE(
+      UnloadDeprecationAllowedForOrigin(http_origin1_.DeriveNewOpaqueOrigin()));
+  // http_origin2 is not on the allow list.
+  EXPECT_FALSE(UnloadDeprecationAllowedForOrigin(http_origin2_));
+}
+
+// When the rollout is at 100% with an allowlist, the hosts on the list should
+// be allowed.
+TEST_F(DeprecateUnloadTest,
+       UnloadDeprecationAllowedForOrigin_100PercentAndAllowList) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitWithFeaturesAndParameters(
+      {{blink::features::kDeprecateUnload,
+        {{features::kDeprecateUnloadPercent.name, "100"},
+         {features::kDeprecateUnloadBucket.name, "0"}}},
+       {blink::features::kDeprecateUnloadByAllowList,
+        {{features::kDeprecateUnloadAllowlist.name, http_origin1_.host()}}}},
+      /*disabled_features=*/{});
+  EXPECT_TRUE(UnloadDeprecationAllowedForOrigin(http_origin1_));
+  EXPECT_TRUE(
+      UnloadDeprecationAllowedForOrigin(http_origin1_.DeriveNewOpaqueOrigin()));
+  // http_origin2 is not on the allow list but we are at 100%.
+  EXPECT_TRUE(UnloadDeprecationAllowedForOrigin(http_origin2_));
+}
+
+// Test that we recognize the known types of headerless documents.
+TEST_F(DeprecateUnloadTest, Headerless) {
+  EXPECT_FALSE(
+      PermissionsPolicy::IsHeaderlessUrl(GURL("http://www.test.com/")));
+  EXPECT_FALSE(
+      PermissionsPolicy::IsHeaderlessUrl(GURL("https://www.test.com/")));
+  EXPECT_TRUE(PermissionsPolicy::IsHeaderlessUrl(GURL("about:srcdoc")));
+  EXPECT_TRUE(PermissionsPolicy::IsHeaderlessUrl(GURL("about:blank")));
+  EXPECT_TRUE(PermissionsPolicy::IsHeaderlessUrl(GURL("data:abc")));
+  EXPECT_TRUE(PermissionsPolicy::IsHeaderlessUrl(GURL("blob:abc")));
+}
+
 }  // namespace blink

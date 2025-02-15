@@ -5,17 +5,37 @@
 package org.chromium.chrome.browser.safety_hub;
 
 import android.app.Activity;
+import android.os.Bundle;
+import android.view.View;
+
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+import androidx.fragment.app.Fragment;
 
 import org.chromium.base.ApplicationStatus;
+import org.chromium.base.supplier.OneshotSupplier;
 import org.chromium.chrome.browser.settings.ChromeBaseSettingsFragment;
+import org.chromium.chrome.browser.settings.SettingsNavigationFactory;
 import org.chromium.chrome.browser.ui.messages.snackbar.Snackbar;
 import org.chromium.chrome.browser.ui.messages.snackbar.SnackbarManager;
+import org.chromium.components.browser_ui.site_settings.ContentSettingsResources;
+import org.chromium.components.browser_ui.site_settings.SingleCategorySettings;
+import org.chromium.components.browser_ui.site_settings.SiteSettingsCategory;
 
 public abstract class SafetyHubBaseFragment extends ChromeBaseSettingsFragment {
-    private SnackbarManager mSnackbarManager;
+    private OneshotSupplier<SnackbarManager> mSnackbarManagerSupplier;
 
-    public void setSnackbarManager(SnackbarManager snackbarManager) {
-        mSnackbarManager = snackbarManager;
+    @Override
+    public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
+        super.onViewCreated(view, savedInstanceState);
+
+        // Disable animations of preference changes.
+        getListView().setItemAnimator(null);
+    }
+
+    public void setSnackbarManagerSupplier(
+            OneshotSupplier<SnackbarManager> snackbarManagerSupplier) {
+        mSnackbarManagerSupplier = snackbarManagerSupplier;
     }
 
     protected void showSnackbar(
@@ -23,8 +43,8 @@ public abstract class SafetyHubBaseFragment extends ChromeBaseSettingsFragment {
             int identifier,
             SnackbarManager.SnackbarController controller,
             Object actionData) {
-        if (mSnackbarManager != null) {
-            showSnackbar(mSnackbarManager, text, identifier, controller, actionData);
+        if (mSnackbarManagerSupplier.hasValue()) {
+            showSnackbar(mSnackbarManagerSupplier.get(), text, identifier, controller, actionData);
         }
     }
 
@@ -54,5 +74,22 @@ public abstract class SafetyHubBaseFragment extends ChromeBaseSettingsFragment {
         snackbar.setSingleLine(false);
 
         snackbarManager.showSnackbar(snackbar);
+    }
+
+    protected void startSettings(Class<? extends Fragment> fragment) {
+        SettingsNavigationFactory.createSettingsNavigation().startSettings(getContext(), fragment);
+    }
+
+    protected void launchSiteSettingsActivity(@SiteSettingsCategory.Type int category) {
+        Bundle extras = new Bundle();
+        extras.putString(
+                SingleCategorySettings.EXTRA_CATEGORY,
+                SiteSettingsCategory.preferenceKey(category));
+        extras.putString(
+                SingleCategorySettings.EXTRA_TITLE,
+                getContext().getString(ContentSettingsResources.getTitleForCategory(category)));
+
+        SettingsNavigationFactory.createSettingsNavigation()
+                .startSettings(getContext(), SingleCategorySettings.class, extras);
     }
 }

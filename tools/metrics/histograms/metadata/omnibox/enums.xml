@@ -60,7 +60,8 @@ chromium-metrics-reviews@google.com.
   <int value="1" label="Unknown"/>
   <int value="2" label="Not allowed because feature disabled"/>
   <int value="3" label="Not allowed because the suggest setting is disabled"/>
-  <int value="4" label="Not allowed because the Drive setting is disabled"/>
+  <int value="4"
+      label="Not allowed because the Drive setting is disabled (obsolete)"/>
   <int value="5" label="Not allowed because the profile is off the record"/>
   <int value="6" label="Not allowed because the user is not logged in"/>
   <int value="7" label="Not allowed because the user is not Syncing"/>
@@ -69,6 +70,8 @@ chromium-metrics-reviews@google.com.
   <int value="10" label="Not allowed because the input is a focus or is empty"/>
   <int value="11" label="Not allowed because the input length is too short"/>
   <int value="12" label="Not allowed because the input looks like a URL"/>
+  <int value="13"
+      label="Not allowed because the user is not enterprise eligible"/>
 </enum>
 
 <enum name="DocumentSuggestRequestEvent">
@@ -112,7 +115,7 @@ chromium-metrics-reviews@google.com.
   <int value="2" label="@bookmarks starter pack engine"/>
   <int value="3" label="@history starter pack engine"/>
   <int value="4" label="@tabs starter pack engine"/>
-  <int value="5" label="@google starter pack engine"/>
+  <int value="5" label="@gemini starter pack engine"/>
 </enum>
 
 <enum name="OmniboxEnteredKeywordMode2">
@@ -155,6 +158,31 @@ chromium-metrics-reviews@google.com.
   <int value="4" label="Shortcut text prefix"/>
 </enum>
 
+<enum name="ReconciliationType">
+  <int value="0" label="No Reconciliation"/>
+  <int value="1" label="By prepopulate_id"/>
+  <int value="2" label="By keyword"/>
+  <int value="3" label="By domain based keyword"/>
+</enum>
+
+<enum name="RegulatoryExtensionVariant">
+  <int value="0" label="Default extension"/>
+  <int value="1" label="Android EEA"/>
+</enum>
+
+<!-- LINT.IfChange(SearchPrefetchCacheAliasFallbackReasonEnum) -->
+
+<enum name="SearchPrefetchCacheAliasFallbackReason">
+  <int value="0" label="kNoFallback"/>
+  <int value="1" label="kNoResponseHeaders"/>
+  <int value="2" label="kNon2xxResponse"/>
+  <int value="3" label="kRedirectResponse"/>
+  <int value="4" label="kErrorOnComplete"/>
+  <int value="5" label="kMojoDisconnect"/>
+</enum>
+
+<!-- LINT.ThenChange(//chrome/browser/preloading/prefetch/search_prefetch/cache_alias_search_prefetch_url_loader.h:FallbackReason) -->
+
 <enum name="SearchPrefetchEligibilityReason">
   <int value="0" label="Prefetch started"/>
   <int value="1" label="User disabled prefetch/preconnect"/>
@@ -165,6 +193,7 @@ chromium-metrics-reviews@google.com.
   <int value="6" label="Duplicate prefetch request"/>
   <int value="7" label="Too many recent prefetches"/>
   <int value="8" label="Throttle prevented the prefetch"/>
+  <int value="9" label="SlowNetwork suppressed the prefetch"/>
 </enum>
 
 <enum name="SearchPrefetchResponseDataReaderStatus">
@@ -182,30 +211,31 @@ chromium-metrics-reviews@google.com.
   <int value="3" label="Navigation URL was not a default search URL"/>
   <int value="4" label="No prefetch issued for the search terms"/>
   <int value="5" label="Prefetch was for a different origin"/>
-  <int value="6" label="Prefetch request was cancelled"/>
+  <int value="6" label="Prefetch request was cancelled (Obsolete)"/>
   <int value="7" label="Prefetch request failed"/>
   <int value="8" label="Another reason (unexpected)"/>
   <int value="9" label="POST, reload, form, link, or other non-cache loads."/>
   <int value="10"
-      label="A prerender navigation request has taken this response away."/>
+      label="A prerender navigation request has taken this response away
+             (Obsolete)."/>
 </enum>
 
 <enum name="SearchPrefetchStatus">
   <int value="0" label="Not started"/>
-  <int value="1" label="In flight"/>
+  <int value="1" label="In flight (Obsolete)"/>
   <int value="2" label="Headers received (for streaming responses)"/>
   <int value="3"
       label="Headers received and user navigated to search terms (for
-             streaming responses)"/>
+             streaming responses) (Obsolete)"/>
   <int value="4" label="Completed the prefetch"/>
   <int value="5" label="Request failed"/>
-  <int value="6" label="Request cancelled"/>
+  <int value="6" label="Request cancelled (Obsolete)"/>
   <int value="7" label="Prefetch request served for real navigation"/>
-  <int value="8" label="Was served to prerender navigation stack"/>
+  <int value="8" label="Was served to prerender navigation stack (Obsolete)"/>
   <int value="9"
       label="Serving to prerender navigation stack and user navigated to
-             search terms"/>
-  <int value="10" label="Upgraded to prerender and succeeded"/>
+             search terms (Obsolete)"/>
+  <int value="10" label="Upgraded to prerender and succeeded (Obsolete)"/>
 </enum>
 
 <enum name="SearchPreloadForwardingResult">

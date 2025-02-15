@@ -37,7 +37,7 @@
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/common/chrome_features.h"
-#include "components/enterprise/data_controls/dlp_histogram_helper.h"
+#include "components/enterprise/data_controls/core/browser/dlp_histogram_helper.h"
 #include "components/strings/grit/components_strings.h"
 #include "content/public/browser/browser_context.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -530,7 +530,7 @@ void FilesPolicyNotificationManager::HandleDlpWarningNotificationClick(
       }
       break;
     default:
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
   }
 }
 
@@ -579,7 +579,7 @@ void FilesPolicyNotificationManager::HandleDlpErrorNotificationClick(
       }
       break;
     default:
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
   }
 }
 
@@ -845,7 +845,7 @@ void FilesPolicyNotificationManager::HandleFilesPolicyErrorNotificationClick(
       }
       return;
     default:
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
   }
 }
 
@@ -1021,18 +1021,18 @@ bool FilesPolicyNotificationManager::HasWarning(
 }
 
 bool FilesPolicyNotificationManager::HasNonIOTask(
-    const std::string notification_id) const {
+    const std::string& notification_id) const {
   return base::Contains(non_io_tasks_, notification_id);
 }
 
 bool FilesPolicyNotificationManager::HasBlockedFiles(
-    const std::string notification_id) const {
+    const std::string& notification_id) const {
   return HasNonIOTask(notification_id) &&
          !non_io_tasks_.at(notification_id).block_info_map().empty();
 }
 
 bool FilesPolicyNotificationManager::HasWarning(
-    const std::string notification_id) const {
+    const std::string& notification_id) const {
   return HasNonIOTask(notification_id) &&
          non_io_tasks_.at(notification_id).HasWarningInfo();
 }

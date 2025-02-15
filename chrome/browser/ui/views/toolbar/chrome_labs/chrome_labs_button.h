@@ -6,7 +6,6 @@
 #define CHROME_BROWSER_UI_VIEWS_TOOLBAR_CHROME_LABS_CHROME_LABS_BUTTON_H_
 
 #include "base/memory/raw_ptr.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/ui/toolbar/chrome_labs/chrome_labs_model.h"
 #include "chrome/browser/ui/views/toolbar/chrome_labs/chrome_labs_coordinator.h"
 #include "chrome/browser/ui/views/toolbar/toolbar_button.h"
@@ -36,10 +35,6 @@ class ChromeLabsButton : public ToolbarButton {
     return new_experiments_indicator_->GetVisible();
   }
 
-  ChromeLabsCoordinator* GetChromeLabsCoordinator() {
-    return chrome_labs_coordinator_.get();
-  }
-
  private:
   void UpdateDotIndicator();
 
@@ -48,8 +43,6 @@ class ChromeLabsButton : public ToolbarButton {
   raw_ptr<const ChromeLabsModel, AcrossTasksDanglingUntriaged> model_;
 
   raw_ptr<views::DotIndicator> new_experiments_indicator_;
-
-  std::unique_ptr<ChromeLabsCoordinator> chrome_labs_coordinator_ = nullptr;
 };
 
 #endif  // CHROME_BROWSER_UI_VIEWS_TOOLBAR_CHROME_LABS_CHROME_LABS_BUTTON_H_

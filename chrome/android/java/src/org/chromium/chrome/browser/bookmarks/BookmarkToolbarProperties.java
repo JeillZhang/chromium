@@ -4,6 +4,7 @@
 
 package org.chromium.chrome.browser.bookmarks;
 
+import org.chromium.chrome.browser.bookmarks.BookmarkUiState.BookmarkUiMode;
 import org.chromium.components.browser_ui.widget.selectable_list.SelectionDelegate;
 import org.chromium.ui.modelutil.PropertyKey;
 import org.chromium.ui.modelutil.PropertyModel.WritableBooleanPropertyKey;
@@ -19,9 +20,6 @@ import java.util.function.Function;
  */
 class BookmarkToolbarProperties {
     /** Dependencies */
-    static final WritableObjectPropertyKey<BookmarkOpener> BOOKMARK_OPENER =
-            new WritableObjectPropertyKey<>();
-
     static final WritableObjectPropertyKey<SelectionDelegate> SELECTION_DELEGATE =
             new WritableObjectPropertyKey<>();
 
@@ -30,7 +28,7 @@ class BookmarkToolbarProperties {
     static final WritableObjectPropertyKey<String> TITLE =
             new WritableObjectPropertyKey<>(/* skipEquality= */ true);
 
-    static final WritableObjectPropertyKey<Integer> BOOKMARK_UI_MODE =
+    static final WritableObjectPropertyKey<@BookmarkUiMode Integer> BOOKMARK_UI_MODE =
             new WritableObjectPropertyKey<>();
     static final WritableObjectPropertyKey<Boolean> SOFT_KEYBOARD_VISIBLE =
             new WritableObjectPropertyKey<>(/* skipEquality= */ true);
@@ -76,7 +74,6 @@ class BookmarkToolbarProperties {
             new WritableObjectPropertyKey<>();
 
     static final PropertyKey[] ALL_KEYS = {
-        BOOKMARK_OPENER,
         SELECTION_DELEGATE,
         TITLE,
         BOOKMARK_UI_MODE,

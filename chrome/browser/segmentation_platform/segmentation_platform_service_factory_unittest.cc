@@ -13,14 +13,18 @@
 #include "base/test/scoped_feature_list.h"
 #include "base/test/simple_test_clock.h"
 #include "base/test/task_environment.h"
+#include "chrome/browser/commerce/shopping_service_factory.h"
 #include "chrome/browser/segmentation_platform/ukm_data_manager_test_utils.h"
 #include "chrome/test/base/testing_profile.h"
+#include "components/commerce/core/mock_shopping_service.h"
 #include "components/optimization_guide/core/optimization_guide_features.h"
 #include "components/prefs/pref_change_registrar.h"
 #include "components/prefs/pref_observer.h"
 #include "components/prefs/pref_service.h"
 #include "components/segmentation_platform/embedder/default_model/contextual_page_actions_model.h"
+#include "components/segmentation_platform/embedder/default_model/metrics_clustering.h"
 #include "components/segmentation_platform/embedder/default_model/most_visited_tiles_user.h"
+#include "components/segmentation_platform/embedder/home_modules/ephemeral_home_module_backend.h"
 #include "components/segmentation_platform/internal/constants.h"
 #include "components/segmentation_platform/internal/database/client_result_prefs.h"
 #include "components/segmentation_platform/internal/segmentation_ukm_helper.h"
@@ -115,7 +119,10 @@ class SegmentationPlatformServiceFactoryTest : public testing::Test {
           {{"SamplingRate", "1"}}},
          {features::kSegmentationPlatformTabResumptionRanker, {}},
          {features::kSegmentationPlatformAndroidHomeModuleRanker, {}},
-         {features::kSegmentationPlatformURLVisitResumptionRanker, {}}},
+         {features::kSegmentationPlatformURLVisitResumptionRanker, {}},
+         {features::kSegmentationPlatformEphemeralCardRanker, {}},
+         {features::kSegmentationSurveyPage, {}},
+         {features::kSegmentationPlatformFedCmUser, {}}},
         {});
 
     // Creating profile and initialising segmentation service.
@@ -147,7 +154,8 @@ class SegmentationPlatformServiceFactoryTest : public testing::Test {
       PredictionStatus expected_status,
       std::optional<std::vector<std::string>> expected_labels,
       const ClassificationResult& actual_result) {
-    EXPECT_EQ(actual_result.status, expected_status);
+    EXPECT_EQ(static_cast<int>(actual_result.status),
+              static_cast<int>(expected_status));
     if (expected_labels.has_value()) {
       EXPECT_EQ(actual_result.ordered_labels, expected_labels.value());
     }
@@ -310,7 +318,15 @@ class SegmentationPlatformServiceFactoryTest : public testing::Test {
   struct ProfileData {
     explicit ProfileData(UkmDataManagerTestUtils* test_utils,
                          const std::string& result_pref)
-        : test_utils(test_utils), profile(TestingProfile::Builder().Build()) {
+        : test_utils(test_utils) {
+      TestingProfile::Builder profile_builder;
+      profile_builder.AddTestingFactory(
+          commerce::ShoppingServiceFactory::GetInstance(),
+          base::BindRepeating([](content::BrowserContext* context) {
+            return commerce::MockShoppingService::Build();
+          }));
+      profile = profile_builder.Build();
+
       profile->GetPrefs()->SetString(kSegmentationClientResultPrefs,
                                      result_pref);
       test_utils->SetupForProfile(profile.get());
@@ -470,6 +486,17 @@ TEST_F(SegmentationPlatformServiceFactoryTest, TabResupmtionRanker) {
 }
 #endif  //! BUILDFLAG(IS_CHROMEOS)
 
+TEST_F(SegmentationPlatformServiceFactoryTest, MetricsClustering) {
+  InitService();
+
+  segmentation_platform::PredictionOptions prediction_options =
+      PredictionOptions::ForOnDemand();
+
+  ExpectGetAnnotatedNumericResult(
+      segmentation_platform::MetricsClustering::kMetricsClusteringKey,
+      prediction_options, nullptr, PredictionStatus::kFailed);
+}
+
 #if BUILDFLAG(IS_ANDROID)
 // Tests for models in android platform.
 TEST_F(SegmentationPlatformServiceFactoryTest, TestDeviceTierSegment) {
@@ -504,24 +531,27 @@ TEST_F(SegmentationPlatformServiceFactoryTest, TestContextualPageActionsShare) {
 
   auto input_context = base::MakeRefCounted<InputContext>();
   input_context->metadata_args.emplace(
-      segmentation_platform::kContextualPageActionModelInputPriceTracking,
+      segmentation_platform::kContextualPageActionModelInputDiscounts,
       segmentation_platform::processing::ProcessedValue::FromFloat(1));
   input_context->metadata_args.emplace(
-      segmentation_platform::kContextualPageActionModelInputReaderMode,
+      segmentation_platform::kContextualPageActionModelInputPriceInsights,
       segmentation_platform::processing::ProcessedValue::FromFloat(0));
   input_context->metadata_args.emplace(
-      segmentation_platform::kContextualPageActionModelInputPriceInsights,
+      segmentation_platform::kContextualPageActionModelInputPriceTracking,
+      segmentation_platform::processing::ProcessedValue::FromFloat(0));
+  input_context->metadata_args.emplace(
+      segmentation_platform::kContextualPageActionModelInputReaderMode,
       segmentation_platform::processing::ProcessedValue::FromFloat(0));
 
   ExpectGetClassificationResult(
       kContextualPageActionsKey, prediction_options, input_context,
       /*expected_status=*/PredictionStatus::kSucceeded,
       /*expected_labels=*/
-      std::vector<std::string>(1,
-                               kContextualPageActionModelLabelPriceTracking));
+      std::vector<std::string>(1, kContextualPageActionModelLabelDiscounts));
   clock()->Advance(base::Seconds(
       ContextualPageActionsModel::kShareOutputCollectionDelayInSec));
 
+  // TODO(crbug.com/40254472): Clean this up.
   WaitAndCheckUkmRecord(
       proto::OPTIMIZATION_TARGET_CONTEXTUAL_PAGE_ACTION_PRICE_TRACKING,
       /*inputs=*/
@@ -606,9 +636,12 @@ TEST_F(SegmentationPlatformServiceFactoryTest, TestAndroidHomeModuleRanker) {
   input_context->metadata_args.emplace(
       segmentation_platform::kTabResumptionForAndroidHomeFreshness,
       segmentation_platform::processing::ProcessedValue::FromFloat(-1));
+  input_context->metadata_args.emplace(
+      segmentation_platform::kSafetyHubFreshness,
+      segmentation_platform::processing::ProcessedValue::FromFloat(-1));
 
   std::vector<std::string> result = {kPriceChange, kSingleTab,
-                                     kTabResumptionForAndroidHome};
+                                     kTabResumptionForAndroidHome, kSafetyHub};
   ExpectGetClassificationResult(
       segmentation_platform::kAndroidHomeModuleRankerKey, prediction_options,
       input_context,
@@ -617,6 +650,41 @@ TEST_F(SegmentationPlatformServiceFactoryTest, TestAndroidHomeModuleRanker) {
 }
 
 #endif  // BUILDFLAG(IS_ANDROID)
+
+TEST_F(SegmentationPlatformServiceFactoryTest, EphemeralHomeMdouleBackend) {
+  InitService();
+
+  home_modules::HomeModulesCardRegistry* registry =
+      SegmentationPlatformServiceFactory::GetHomeModulesCardRegistry(
+          profile_->profile.get());
+  ASSERT_TRUE(registry);
+  // Update this test when adding new cards with inputs.
+  // Each card's feature flag should be enabled by test framework for this
+  // integration test.
+  EXPECT_TRUE(registry->get_all_cards_by_priority().empty());
+
+  PredictionOptions prediction_options;
+  prediction_options.on_demand_execution = true;
+
+  auto input_context = base::MakeRefCounted<InputContext>();
+
+  // No cards are added, the model fetches no results and fails.
+  ExpectGetAnnotatedNumericResult(
+      kEphemeralHomeModuleBackendKey, prediction_options, input_context,
+      /*expected_status=*/segmentation_platform::PredictionStatus::kSucceeded);
+}
+
+TEST_F(SegmentationPlatformServiceFactoryTest, TestFedCmUserModel) {
+  InitService();
+  PredictionOptions prediction_options;
+  prediction_options.on_demand_execution = true;
+
+  ExpectGetClassificationResult(
+      kFedCmUserKey, prediction_options, nullptr,
+      /*expected_status=*/PredictionStatus::kSucceeded,
+      /*expected_labels=*/
+      std::vector<std::string>(1, "FedCmUserLoud"));
+}
 
 }  // namespace
 }  // namespace segmentation_platform

@@ -5,9 +5,10 @@
 package org.chromium.chrome.browser.bookmarks;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.doReturn;
 
-import static org.chromium.content_public.browser.test.util.TestThreadUtils.runOnUiThreadBlocking;
+import static org.chromium.base.ThreadUtils.runOnUiThreadBlocking;
 import static org.chromium.ui.test.util.MockitoHelper.doCallback;
 
 import android.content.res.Resources;
@@ -33,6 +34,7 @@ import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
 
 import org.chromium.base.Callback;
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.BaseActivityTestRule;
 import org.chromium.base.test.params.ParameterAnnotations;
 import org.chromium.base.test.params.ParameterAnnotations.ClassParameter;
@@ -40,23 +42,16 @@ import org.chromium.base.test.params.ParameterSet;
 import org.chromium.base.test.params.ParameterizedRunner;
 import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.Feature;
-import org.chromium.base.test.util.Features;
-import org.chromium.base.test.util.Features.DisableFeatures;
-import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.bookmarks.BookmarkUiPrefs.BookmarkRowDisplayPref;
 import org.chromium.chrome.browser.feature_engagement.TrackerFactory;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.test.ChromeJUnit4RunnerDelegate;
 import org.chromium.chrome.test.util.ChromeRenderTestRule;
 import org.chromium.components.bookmarks.BookmarkId;
 import org.chromium.components.browser_ui.widget.RecyclerViewTestUtils;
 import org.chromium.components.commerce.core.ShoppingService;
 import org.chromium.components.feature_engagement.Tracker;
-import org.chromium.components.sync.SyncFeatureMap;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.ui.test.util.BlankUiTestActivity;
-import org.chromium.ui.test.util.DisableAnimationsTestRule;
 import org.chromium.ui.test.util.NightModeTestUtils;
 import org.chromium.url.GURL;
 
@@ -67,8 +62,6 @@ import java.util.List;
 @RunWith(ParameterizedRunner.class)
 @ParameterAnnotations.UseRunnerDelegate(ChromeJUnit4RunnerDelegate.class)
 @Batch(Batch.PER_CLASS)
-@EnableFeatures(ChromeFeatureList.ANDROID_IMPROVED_BOOKMARKS)
-@DisableFeatures(SyncFeatureMap.ENABLE_BOOKMARK_FOLDERS_FOR_ACCOUNT_STORAGE)
 public class BookmarkFolderPickerRenderTest {
     @ClassParameter
     private static List<ParameterSet> sClassParams =
@@ -79,10 +72,6 @@ public class BookmarkFolderPickerRenderTest {
                     new ParameterSet().value(false, false).name("CompactRow_NightModeDisabled"));
 
     @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
-    @Rule public final Features.JUnitProcessor mFeaturesRule = new Features.JUnitProcessor();
-
-    @Rule
-    public final DisableAnimationsTestRule mDisableAnimationsRule = new DisableAnimationsTestRule();
 
     @Rule
     public final BaseActivityTestRule<BlankUiTestActivity> mActivityTestRule =
@@ -140,14 +129,14 @@ public class BookmarkFolderPickerRenderTest {
                 Bitmap.createBitmap(bitmapSize, bitmapSize, Bitmap.Config.ARGB_8888);
         secondaryBitmap.eraseColor(Color.RED);
         doCallback(
-                        /* index= */ 1,
+                        /* index= */ 2,
                         (Callback<Pair<Drawable, Drawable>> callback) ->
                                 callback.onResult(
                                         new Pair<>(
                                                 new BitmapDrawable(resources, primaryBitmap),
                                                 new BitmapDrawable(resources, secondaryBitmap))))
                 .when(mBookmarkImageFetcher)
-                .fetchFirstTwoImagesForFolder(any(), any());
+                .fetchFirstTwoImagesForFolder(any(), anyInt(), any());
 
         // Setup BookmarkUiPrefs.
         doReturn(
@@ -157,7 +146,7 @@ public class BookmarkFolderPickerRenderTest {
                 .when(mBookmarkUiPrefs)
                 .getBookmarkRowDisplayPref();
 
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mContentView = new FrameLayout(mActivity);
 
@@ -261,7 +250,7 @@ public class BookmarkFolderPickerRenderTest {
                                         new GURL("https://test.com")));
         createCoordinatorToMoveBookmarkIds(bookmarkId);
 
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> mCoordinator.openFolderForTesting(mBookmarkModel.getRootFolderId()));
         RecyclerViewTestUtils.waitForStableMvcRecyclerView(mRecyclerView);
         mRenderTestRule.render(mContentView, "move_bookmark_from_root");
@@ -282,7 +271,7 @@ public class BookmarkFolderPickerRenderTest {
                                         new GURL("https://test.com")));
         createCoordinatorToMoveBookmarkIds(bookmarkId);
 
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> mCoordinator.openFolderForTesting(mBookmarkModel.getRootFolderId()));
         RecyclerViewTestUtils.waitForStableMvcRecyclerView(mRecyclerView);
         mRenderTestRule.render(mContentView, "move_bookmark_from_root_with_account");

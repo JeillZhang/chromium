@@ -4,10 +4,11 @@
 
 #include "third_party/blink/renderer/modules/compute_pressure/pressure_observer.h"
 
-#include "base/ranges/algorithm.h"
+#include <algorithm>
+
 #include "base/task/sequenced_task_runner.h"
+#include "services/network/public/mojom/permissions_policy/permissions_policy_feature.mojom-blink.h"
 #include "third_party/blink/public/common/features.h"
-#include "third_party/blink/public/mojom/permissions_policy/permissions_policy_feature.mojom-blink.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_pressure_observer_options.h"
@@ -53,12 +54,6 @@ ScriptPromise<IDLUndefined> PressureObserver::observe(
     V8PressureSource source,
     PressureObserverOptions* options,
     ExceptionState& exception_state) {
-  if (!base::FeatureList::IsEnabled(blink::features::kComputePressure)) {
-    exception_state.ThrowDOMException(DOMExceptionCode::kNotSupportedError,
-                                      "Compute Pressure API is not available.");
-    return EmptyPromise();
-  }
-
   ExecutionContext* execution_context = ExecutionContext::From(script_state);
   if (execution_context->IsContextDestroyed()) {
     exception_state.ThrowDOMException(DOMExceptionCode::kNotSupportedError,
@@ -69,7 +64,7 @@ ScriptPromise<IDLUndefined> PressureObserver::observe(
   // Checks whether the document is allowed by Permissions Policy to call
   // Compute Pressure API.
   if (!execution_context->IsFeatureEnabled(
-          mojom::blink::PermissionsPolicyFeature::kComputePressure,
+          network::mojom::PermissionsPolicyFeature::kComputePressure,
           ReportOptions::kReportOnFailure)) {
     exception_state.ThrowDOMException(DOMExceptionCode::kNotAllowedError,
                                       kFeaturePolicyBlocked);
@@ -103,11 +98,8 @@ void PressureObserver::unobserve(V8PressureSource source) {
   // Reject all pending promises for `source`.
   RejectPendingResolvers(source.AsEnum(), DOMExceptionCode::kAbortError,
                          "Called unobserve method.");
-  records_.erase(base::ranges::remove_if(records_,
-                                         [source](const auto& record) {
-                                           return record->source() == source;
-                                         }),
-                 records_.end());
+  auto removed = std::ranges::remove(records_, source, &PressureRecord::source);
+  records_.erase(removed.begin(), removed.end());
 }
 
 void PressureObserver::disconnect() {

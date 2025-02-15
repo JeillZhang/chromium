@@ -36,13 +36,17 @@ AutofillImageFetcherFactory::AutofillImageFetcherFactory()
               // TODO(crbug.com/40257657): Check if this service is needed in
               // Guest mode.
               .WithGuest(ProfileSelection::kRedirectedToOriginal)
+              // TODO(crbug.com/41488885): Check if this service is needed for
+              // Ash Internals.
+              .WithAshInternals(ProfileSelection::kRedirectedToOriginal)
               .Build()) {}
 
 AutofillImageFetcherFactory::~AutofillImageFetcherFactory() = default;
 
-KeyedService* AutofillImageFetcherFactory::BuildServiceInstanceFor(
+std::unique_ptr<KeyedService>
+AutofillImageFetcherFactory::BuildServiceInstanceForBrowserContext(
     content::BrowserContext* context) const {
-  return new AutofillImageFetcherImpl(
+  return std::make_unique<AutofillImageFetcherImpl>(
       Profile::FromBrowserContext(context)->GetProfileKey());
 }
 

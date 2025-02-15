@@ -7,18 +7,29 @@
 #include <memory>
 
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/renderer/core/css/css_default_style_sheets.h"
+#include "third_party/blink/renderer/core/css/resolver/style_resolver.h"
 #include "third_party/blink/renderer/core/css/style_engine.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/shadow_root.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
 #include "third_party/blink/renderer/core/html/forms/form_controller.h"
+#include "third_party/blink/renderer/core/html/forms/html_button_element.h"
 #include "third_party/blink/renderer/core/html/forms/html_form_element.h"
+#include "third_party/blink/renderer/core/html/forms/html_input_element.h"
+#include "third_party/blink/renderer/core/html/forms/html_opt_group_element.h"
 #include "third_party/blink/renderer/core/html/forms/html_option_element.h"
 #include "third_party/blink/renderer/core/html/forms/select_type.h"
+#include "third_party/blink/renderer/core/html/html_hr_element.h"
 #include "third_party/blink/renderer/core/layout/layout_theme.h"
 #include "third_party/blink/renderer/core/testing/page_test_base.h"
+#include "third_party/blink/renderer/core/testing/sim/sim_compositor.h"
+#include "third_party/blink/renderer/core/testing/sim/sim_request.h"
+#include "third_party/blink/renderer/core/testing/sim/sim_test.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
+#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
+#include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
 
 namespace blink {
 
@@ -55,7 +66,7 @@ class HTMLSelectElementTest : public PageTestBase {
 
   String MenuListLabel() const {
     auto* select = To<HTMLSelectElement>(GetDocument().body()->firstChild());
-    return select->InnerElementForAppearanceAuto().textContent();
+    return select->InnerElement().textContent();
   }
 
  private:
@@ -122,9 +133,8 @@ TEST_F(HTMLSelectElementTest, SaveRestoreSelectSingleFormControlState) {
   EXPECT_EQ(2, To<HTMLSelectElement>(element)->selectedIndex());
   EXPECT_FALSE(opt0->Selected());
   EXPECT_TRUE(opt2->Selected());
-  EXPECT_EQ("!666", To<HTMLSelectElement>(element)
-                        ->InnerElementForAppearanceAuto()
-                        .textContent());
+  EXPECT_EQ("!666",
+            To<HTMLSelectElement>(element)->InnerElement().textContent());
 }
 
 TEST_F(HTMLSelectElementTest, SaveRestoreSelectMultipleFormControlState) {
@@ -711,5 +721,382 @@ TEST_F(HTMLSelectElementTest, ChangeRenderingSelectRoot) {
   EXPECT_TRUE(GetDocument().GetStyleEngine().NeedsStyleRecalc());
   EXPECT_TRUE(select->NeedsStyleRecalc());
 }
+
+TEST_F(HTMLSelectElementTest, GetListItems) {
+  // Structure:
+  // <select>
+  //   <option id=one></option>
+  //   <div>
+  //     <option id=two></option>
+  //   </div>
+  //   <option id=three>
+  //     <option id=four></option>
+  //   </option>
+  //   <hr>
+  //     <option id=five></option>
+  //   </hr>
+  //   <optgroup id=groupone>
+  //     <option id=six></option>
+  //     <optgroup id=grouptwo>
+  //       <option id=seven></option>
+  //     </optgroup>
+  //   </optgroup>
+  // </select>
+  auto* select = MakeGarbageCollected<HTMLSelectElement>(GetDocument());
+  GetDocument().body()->appendChild(select);
+  auto* one = MakeGarbageCollected<HTMLOptionElement>(GetDocument());
+  select->appendChild(one);
+  auto* div = MakeGarbageCollected<HTMLDivElement>(GetDocument());
+  select->appendChild(div);
+  auto* two = MakeGarbageCollected<HTMLOptionElement>(GetDocument());
+  div->appendChild(two);
+  auto* three = MakeGarbageCollected<HTMLOptionElement>(GetDocument());
+  select->appendChild(three);
+  auto* four = MakeGarbageCollected<HTMLOptionElement>(GetDocument());
+  three->appendChild(four);
+  auto* hr = MakeGarbageCollected<HTMLHRElement>(GetDocument());
+  select->appendChild(hr);
+  auto* five = MakeGarbageCollected<HTMLOptionElement>(GetDocument());
+  hr->appendChild(five);
+  auto* groupone = MakeGarbageCollected<HTMLOptGroupElement>(GetDocument());
+  select->appendChild(groupone);
+  auto* six = MakeGarbageCollected<HTMLOptionElement>(GetDocument());
+  groupone->appendChild(six);
+  auto* grouptwo = MakeGarbageCollected<HTMLOptGroupElement>(GetDocument());
+  groupone->appendChild(grouptwo);
+  auto* seven = MakeGarbageCollected<HTMLOptionElement>(GetDocument());
+  grouptwo->appendChild(seven);
+
+  VectorOf<HTMLElement> expected_items({one, two, three, hr, groupone, six});
+  VectorOf<HTMLElement> actual_items = select->GetListItems();
+  EXPECT_EQ(expected_items, actual_items);
+}
+
+TEST_F(HTMLSelectElementTest, DialogModeDefault) {
+  SetHtmlInnerHTML(R"HTML(
+    <select id="target"></select>
+  )HTML");
+
+  auto* select = To<HTMLSelectElement>(GetElementById("target"));
+  ASSERT_FALSE(select->IsInDialogMode());
+}
+
+TEST_F(HTMLSelectElementTest, DialogModeBaseSelectDefault) {
+  SetHtmlInnerHTML(R"HTML(
+    <style>
+      select,
+      select::picker(select) {
+        appearance: base-select;
+      }
+    </style>
+
+    <select id="target"></select>
+  )HTML");
+
+  auto* select = To<HTMLSelectElement>(GetElementById("target"));
+  ASSERT_FALSE(select->IsInDialogMode());
+}
+
+TEST_F(HTMLSelectElementTest, DialogModeBaseSelectAllowedDescendant) {
+  SetHtmlInnerHTML(R"HTML(
+    <style>
+      select,
+      select::picker(select) {
+        appearance: base-select;
+      }
+    </style>
+
+    <select id="target">
+      <option>A</option>
+    </select>
+  )HTML");
+
+  auto* select = To<HTMLSelectElement>(GetElementById("target"));
+  ASSERT_FALSE(select->IsInDialogMode());
+}
+
+TEST_F(HTMLSelectElementTest, DialogModeBaseSelectButtonDescendant) {
+  SetHtmlInnerHTML(R"HTML(
+    <style>
+      select,
+      select::picker(select) {
+        appearance: base-select;
+      }
+    </style>
+
+    <select id="target">
+      <button>button</button>
+    </select>
+  )HTML");
+
+  auto* select = To<HTMLSelectElement>(GetElementById("target"));
+  ASSERT_FALSE(select->IsInDialogMode());
+}
+
+TEST_F(HTMLSelectElementTest, DialogModeBaseSelectButtonAndOption) {
+  SetHtmlInnerHTML(R"HTML(
+    <style>
+      select,
+      select::picker(select) {
+        appearance: base-select;
+      }
+    </style>
+
+    <select id="target">
+      <button>button</button>
+      <option>A</option>
+    </select>
+  )HTML");
+
+  auto* select = To<HTMLSelectElement>(GetElementById("target"));
+  ASSERT_FALSE(select->IsInDialogMode());
+}
+
+TEST_F(HTMLSelectElementTest, DialogModeBaseSelectDisallowedButton) {
+  SetHtmlInnerHTML(R"HTML(
+    <style>
+      select,
+      select::picker(select) {
+        appearance: base-select;
+      }
+    </style>
+
+    <select id="target">
+      <option>A</option>
+      <button>button</button>
+    </select>
+  )HTML");
+
+  auto* select = To<HTMLSelectElement>(GetElementById("target"));
+  ASSERT_TRUE(select->IsInDialogMode());
+}
+
+TEST_F(HTMLSelectElementTest,
+       DialogModeBaseSelectDisallowedButtonWithinOption) {
+  SetHtmlInnerHTML(R"HTML(
+    <style>
+      select,
+      select::picker(select) {
+        appearance: base-select;
+      }
+    </style>
+
+    <select id="target">
+      <option>
+        <button>button</button>
+      </option>
+    </select>
+  )HTML");
+
+  auto* select = To<HTMLSelectElement>(GetElementById("target"));
+  ASSERT_TRUE(select->IsInDialogMode());
+}
+
+TEST_F(HTMLSelectElementTest, DialogModeBaseSelectDisallowedTabIndexElement) {
+  SetHtmlInnerHTML(R"HTML(
+    <style>
+      select,
+      select::picker(select) {
+        appearance: base-select;
+      }
+    </style>
+
+    <select id="target">
+      <option>
+        <span tabindex="1">..</span>
+      </option>
+    </select>
+  )HTML");
+
+  auto* select = To<HTMLSelectElement>(GetElementById("target"));
+  ASSERT_TRUE(select->IsInDialogMode());
+}
+
+TEST_F(HTMLSelectElementTest,
+       DialogModeBaseSelectDisallowedContenteditableElement) {
+  SetHtmlInnerHTML(R"HTML(
+    <style>
+      select,
+      select::picker(select) {
+        appearance: base-select;
+      }
+    </style>
+
+    <select id="target">
+      <option>
+        <span contenteditable="true">..</span>
+      </option>
+    </select>
+  )HTML");
+
+  auto* select = To<HTMLSelectElement>(GetElementById("target"));
+  ASSERT_TRUE(select->IsInDialogMode());
+}
+
+TEST_F(HTMLSelectElementTest,
+       DialogModeBaseSelectDisallowedInteractiveElement) {
+  SetHtmlInnerHTML(R"HTML(
+    <style>
+      select,
+      select::picker(select) {
+        appearance: base-select;
+      }
+    </style>
+
+    <select id="target">
+      <details>details</details>
+    </select>
+  )HTML");
+
+  auto* select = To<HTMLSelectElement>(GetElementById("target"));
+  ASSERT_TRUE(select->IsInDialogMode());
+}
+
+class HTMLSelectElementSimTest : public SimTest {};
+
+TEST_F(HTMLSelectElementSimTest, DialogModeBaseSelectAddAllowedButton) {
+  SimRequest main_resource("https://example.com", "text/html");
+
+  LoadURL("https://example.com");
+
+  main_resource.Complete(R"HTML(
+    <style>
+      select,
+      select::picker(select) {
+        appearance: base-select;
+      }
+    </style>
+
+    <select id="target">
+      <option>A</option>
+      <option>B</option>
+      <option>C</option>
+    </select>
+  )HTML");
+
+  test::RunPendingTasks();
+  Compositor().BeginFrame();
+
+  auto* select = To<HTMLSelectElement>(
+      GetDocument().getElementById(AtomicString("target")));
+  ASSERT_FALSE(select->IsInDialogMode());
+
+  auto* button = MakeGarbageCollected<HTMLButtonElement>(GetDocument());
+  select->appendChild(button);
+
+  test::RunPendingTasks();
+  Compositor().BeginFrame();
+
+  ASSERT_TRUE(select->IsInDialogMode());
+}
+
+TEST_F(HTMLSelectElementSimTest, DialogModeBaseSelectRemoveDisallowedButton) {
+  SimRequest main_resource("https://example.com", "text/html");
+
+  LoadURL("https://example.com");
+
+  main_resource.Complete(R"HTML(
+    <style>
+      select,
+      select::picker(select) {
+        appearance: base-select;
+      }
+    </style>
+
+    <select id="target">
+      <option>A</option>
+      <option>B</option>
+      <option>C</option>
+      <button id="target-button">button</button>
+    </select>
+  )HTML");
+
+  test::RunPendingTasks();
+  Compositor().BeginFrame();
+
+  auto* select = To<HTMLSelectElement>(
+      GetDocument().getElementById(AtomicString("target")));
+  ASSERT_TRUE(select->IsInDialogMode());
+
+  auto* button = GetDocument().getElementById(AtomicString("target-button"));
+  select->removeChild(button);
+
+  test::RunPendingTasks();
+  Compositor().BeginFrame();
+
+  ASSERT_FALSE(select->IsInDialogMode());
+}
+
+TEST_F(HTMLSelectElementSimTest, DialogModeBaseSelectNestedButton) {
+  SimRequest main_resource("https://example.com", "text/html");
+
+  LoadURL("https://example.com");
+
+  main_resource.Complete(R"HTML(
+    <style>
+      select,
+      select::picker(select) {
+        appearance: base-select;
+      }
+    </style>
+    <select id="target">
+      <option id="option">A</option>
+    </select>
+  )HTML");
+
+  test::RunPendingTasks();
+  Compositor().BeginFrame();
+
+  auto* select = To<HTMLSelectElement>(
+      GetDocument().getElementById(AtomicString("target")));
+  ASSERT_FALSE(select->IsInDialogMode());
+
+  auto* div = MakeGarbageCollected<HTMLDivElement>(GetDocument());
+  auto* first_button = MakeGarbageCollected<HTMLButtonElement>(GetDocument());
+  auto* second_button = MakeGarbageCollected<HTMLButtonElement>(GetDocument());
+  auto* option = To<HTMLOptionElement>(
+      GetDocument().getElementById(AtomicString("option")));
+
+  div->appendChild(first_button);
+  option->appendChild(div);
+
+  test::RunPendingTasks();
+  Compositor().BeginFrame();
+
+  ASSERT_TRUE(select->IsInDialogMode());
+
+  option->remove();
+  select->appendChild(second_button);
+
+  test::RunPendingTasks();
+  Compositor().BeginFrame();
+
+  ASSERT_FALSE(select->IsInDialogMode());
+}
+
+class HTMLSelectElementUATest : public HTMLSelectElementTest,
+                                public testing::WithParamInterface<bool>,
+                                public ScopedCSSLogicalOverflowForTest {
+ public:
+  HTMLSelectElementUATest() : ScopedCSSLogicalOverflowForTest(GetParam()) {}
+};
+
+TEST_P(HTMLSelectElementUATest, OverflowStyle) {
+  CSSDefaultStyleSheets::Instance().PrepareForLeakDetection();
+  SetHtmlInnerHTML(R"HTML(
+    <select id="target" multiple></select>
+  )HTML");
+
+  HTMLSelectElement* select = To<HTMLSelectElement>(GetElementById("target"));
+  if (select->UsesMenuList()) {
+    // The UA styles won't apply when the menu list rendering is delegated.
+    return;
+  }
+  GetDocument().UpdateStyleAndLayoutTree();
+  EXPECT_EQ(select->ComputedStyleRef().OverflowX(), EOverflow::kHidden);
+  EXPECT_EQ(select->ComputedStyleRef().OverflowY(), EOverflow::kScroll);
+}
+
+INSTANTIATE_TEST_SUITE_P(All, HTMLSelectElementUATest, ::testing::Bool());
 
 }  // namespace blink

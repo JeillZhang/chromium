@@ -14,6 +14,7 @@
 #include "base/test/test_future.h"
 #include "chrome/browser/ui/web_applications/web_app_browsertest_base.h"
 #include "chrome/browser/web_applications/os_integration/os_integration_manager.h"
+#include "chrome/browser/web_applications/proto/web_app_install_state.pb.h"
 #include "chrome/browser/web_applications/test/fake_os_integration_manager.h"
 #include "chrome/browser/web_applications/test/web_app_icon_test_utils.h"
 #include "chrome/browser/web_applications/test/web_app_install_test_utils.h"
@@ -29,6 +30,8 @@
 #include "content/public/test/browser_test.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkBitmap.h"
+
+using base::BucketsAre;
 
 namespace web_app {
 
@@ -79,11 +82,15 @@ IN_PROC_BROWSER_TEST_F(InstallFromInfoCommandTest, SuccessInstall) {
       WebAppInstallParams());
   loop.Run();
 
-  EXPECT_TRUE(provider().registrar_unsafe().IsActivelyInstalled(result_app_id));
+  EXPECT_EQ(proto::InstallState::INSTALLED_WITH_OS_INTEGRATION,
+            provider().registrar_unsafe().GetInstallState(result_app_id));
 
   // Ensure histogram is only measured once.
-  tester.ExpectBucketCount("WebApp.Install.Result", /*sample=*/true,
-                           /*expected_count=*/1);
+
+  EXPECT_THAT(tester.GetAllSamples("WebApp.Install.Result"),
+              BucketsAre(base::Bucket(true, 1)));
+  EXPECT_THAT(tester.GetAllSamples("WebApp.Install.Source.Success"),
+              BucketsAre(base::Bucket(install_source, 1)));
 
   const WebApp* web_app =
       provider().registrar_unsafe().GetAppById(result_app_id);
@@ -103,7 +110,6 @@ IN_PROC_BROWSER_TEST_F(InstallFromInfoCommandTest, InstallWithParams) {
   info->title = u"Test name";
 
   WebAppInstallParams install_params;
-  install_params.bypass_os_hooks = false;
   install_params.add_to_applications_menu = true;
   install_params.add_to_desktop = true;
 
@@ -116,8 +122,8 @@ IN_PROC_BROWSER_TEST_F(InstallFromInfoCommandTest, InstallWithParams) {
       base::BindLambdaForTesting(
           [&](const webapps::AppId& app_id, webapps::InstallResultCode code) {
             EXPECT_EQ(code, webapps::InstallResultCode::kSuccessNewInstall);
-            EXPECT_TRUE(
-                provider().registrar_unsafe().IsActivelyInstalled(app_id));
+            EXPECT_EQ(proto::InstallState::INSTALLED_WITH_OS_INTEGRATION,
+                      provider().registrar_unsafe().GetInstallState(app_id));
             result_app_id = app_id;
             loop.Quit();
           }),

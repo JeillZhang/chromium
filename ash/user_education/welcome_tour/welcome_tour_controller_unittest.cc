@@ -50,16 +50,18 @@
 #include "chromeos/constants/devicetype.h"
 #include "components/account_id/account_id.h"
 #include "components/services/app_service/public/cpp/app_launch_util.h"
-#include "components/user_education/common/tutorial_description.h"
+#include "components/user_education/common/tutorial/tutorial_description.h"
 #include "components/user_manager/user_type.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/abseil-cpp/absl/types/variant.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/base/mojom/ui_base_types.mojom-shared.h"
 #include "ui/chromeos/devicetype_utils.h"
 #include "ui/display/display.h"
 #include "ui/display/screen.h"
 #include "ui/events/types/event_type.h"
+#include "ui/gfx/vector_icon_types.h"
 #include "ui/message_center/message_center.h"
 #include "ui/message_center/public/cpp/notification.h"
 #include "ui/message_center/public/cpp/notification_delegate.h"
@@ -101,8 +103,7 @@ using ContextMode = TutorialDescription::ContextMode;
 using ElementSpecifier = TutorialDescription::ElementSpecifier;
 
 // Strings.
-constexpr char16_t kTotalStepsV1[] = u"5";
-constexpr char16_t kTotalStepsV2[] = u"6";
+constexpr char16_t kTotalSteps[] = u"5";
 
 // Actions ---------------------------------------------------------------------
 
@@ -166,8 +167,10 @@ MATCHER_P6(BubbleStep,
          util::GetHelpBubbleId(ext_props) == help_bubble_id &&
          arg.body_text_id() == body_text_id && arg.arrow() == arrow &&
          arg.next_button_callback().is_null() != has_next_button &&
-         util::GetHelpBubbleModalType(ext_props) == ui::MODAL_TYPE_SYSTEM &&
-         &util::GetHelpBubbleBodyIcon(ext_props)->get() == &gfx::kNoneIcon;
+         util::GetHelpBubbleModalType(ext_props) ==
+             ui::mojom::ModalType::kSystem &&
+         &util::GetHelpBubbleBodyIcon(ext_props)->get() ==
+             &gfx::VectorIcon::EmptyIcon();
 }
 
 MATCHER_P7(BubbleStep,
@@ -188,8 +191,10 @@ MATCHER_P7(BubbleStep,
          arg.body_text_id() == body_text_id && arg.arrow() == arrow &&
          Matches(body_text_matcher)(util::GetHelpBubbleBodyText(ext_props)) &&
          arg.next_button_callback().is_null() != has_next_button &&
-         &util::GetHelpBubbleBodyIcon(ext_props)->get() == &gfx::kNoneIcon &&
-         util::GetHelpBubbleModalType(ext_props) == ui::MODAL_TYPE_SYSTEM;
+         &util::GetHelpBubbleBodyIcon(ext_props)->get() ==
+             &gfx::VectorIcon::EmptyIcon() &&
+         util::GetHelpBubbleModalType(ext_props) ==
+             ui::mojom::ModalType::kSystem;
 }
 
 MATCHER_P8(BubbleStep,
@@ -213,8 +218,10 @@ MATCHER_P8(BubbleStep,
          arg.body_text_id() == body_text_id && arg.arrow() == arrow &&
          Matches(body_text_matcher)(util::GetHelpBubbleBodyText(ext_props)) &&
          arg.next_button_callback().is_null() != has_next_button &&
-         &util::GetHelpBubbleBodyIcon(ext_props)->get() == &gfx::kNoneIcon &&
-         util::GetHelpBubbleModalType(ext_props) == ui::MODAL_TYPE_SYSTEM;
+         &util::GetHelpBubbleBodyIcon(ext_props)->get() ==
+             &gfx::VectorIcon::EmptyIcon() &&
+         util::GetHelpBubbleModalType(ext_props) ==
+             ui::mojom::ModalType::kSystem;
 }
 
 MATCHER_P2(HiddenStep, element_specifier, context_mode, "") {
@@ -263,7 +270,7 @@ MATCHER_P(TutorialDescriptionEqInternal, tutorial_description, "") {
   return std::tie(arg.can_be_restarted, arg.complete_button_text_id) ==
              std::tie(tutorial_description->data.can_be_restarted,
                       tutorial_description->data.complete_button_text_id) &&
-         base::ranges::equal(
+         std::ranges::equal(
              arg.steps, tutorial_description->data.steps,
              [](auto& a, auto& b) { return Matches(StepEq(a))(b); });
 }
@@ -521,41 +528,55 @@ TEST_F(WelcomeTourControllerTest, AbortsTourAndPropagatesEvents) {
   EXPECT_TRUE(ended_future.Wait());
 }
 
-// WelcomeTourControllerV2Test -------------------------------------------------
+// WelcomeTourControllerV3Test -------------------------------------------------
 
 // Base class for tests of the `WelcomeTourController` which are concerned with
-// the behavior of WelcomeTourV2 experiment arms, parameterized by whether the
-// Welcome Tour V2 feature is enabled.
-class WelcomeTourControllerV2Test : public WelcomeTourControllerTest,
-                                    public ::testing::WithParamInterface<
-                                        /*is_welcome_tour_v2_enabled=*/bool> {
+// the behavior of WelcomeTourV3 experiment arms, parameterized by whether the
+// Welcome Tour V3 feature is enabled.
+class WelcomeTourControllerV3Test
+    : public WelcomeTourControllerTest,
+      public ::testing::WithParamInterface<std::tuple<
+          /*is_welcome_tour_v3_enabled=*/bool,
+          /*is_welcome_tour_counterfactually_enabled=*/bool>> {
  public:
-  WelcomeTourControllerV2Test() {
-    scoped_feature_list_.InitWithFeatureState(features::kWelcomeTourV2,
-                                              IsWelcomeTourV2Enabled());
+  WelcomeTourControllerV3Test() {
+    // Only one of those features can be enabled at a time.
+    scoped_feature_list_.InitWithFeatureStates(
+        {{features::kWelcomeTourV3,
+          IsWelcomeTourV3Enabled() && !IsWelcomeTourCounterfactuallyEnabled()},
+         {features::kWelcomeTourCounterfactualArm,
+          IsWelcomeTourCounterfactuallyEnabled()},
+         {features::kWelcomeTourHoldbackArm, false}});
   }
 
  protected:
-  // Returns whether the WelcomeTourV2 feature is enabled given test
+  // Returns whether the WelcomeTourV3 feature is enabled given test
   // parameterization.
-  bool IsWelcomeTourV2Enabled() const { return GetParam(); }
+  bool IsWelcomeTourV3Enabled() const { return std::get<0>(GetParam()); }
+
+  // Returns whether the WelcomeTour feature is counterfactually enabled given
+  // test parameterization.
+  bool IsWelcomeTourCounterfactuallyEnabled() const {
+    return std::get<1>(GetParam());
+  }
 
  private:
   base::test::ScopedFeatureList scoped_feature_list_;
 };
 
-INSTANTIATE_TEST_SUITE_P(All,
-                         WelcomeTourControllerV2Test,
-                         /*is_welcome_tour_v2_enabled=*/testing::Bool());
+INSTANTIATE_TEST_SUITE_P(
+    All,
+    WelcomeTourControllerV3Test,
+    testing::Combine(
+        /*is_welcome_tour_v3_enabled=*/testing::Bool(),
+        /*is_welcome_tour_counterfactually_enabled=*/testing::Bool()));
 
 // Verifies that `GetTutorialDescription()` returns expected values.
-TEST_P(WelcomeTourControllerV2Test, GetTutorialDescription) {
+TEST_P(WelcomeTourControllerV3Test, GetTutorialDescription) {
   auto* welcome_tour_controller = WelcomeTourController::Get();
   ASSERT_TRUE(welcome_tour_controller);
 
   const std::u16string product_name = ui::GetChromeOSDeviceName();
-  const std::u16string total_steps =
-      IsWelcomeTourV2Enabled() ? kTotalStepsV2 : kTotalStepsV1;
   int current_step = 1;
 
   using ::testing::Matcher;
@@ -569,63 +590,73 @@ TEST_P(WelcomeTourControllerV2Test, GetTutorialDescription) {
           ElementSpecifier(kShelfViewElementId), ContextMode::kInitial,
           HelpBubbleId::kWelcomeTourShelf,
           StringFUTF8Eq(IDS_ASH_WELCOME_TOUR_SHELF_BUBBLE_ACCNAME,
-                        base::NumberToString16(current_step++), total_steps),
+                        base::NumberToString16(current_step++), kTotalSteps),
           IDS_ASH_WELCOME_TOUR_OVERRIDDEN_BUBBLE_BODY_TEXT,
           StringUTF8Eq(IDS_ASH_WELCOME_TOUR_SHELF_BUBBLE_BODY_TEXT),
           HelpBubbleArrow::kBottomCenter,
           /*has_next_button=*/true),
       EventStep(ElementSpecifier(kShelfViewElementId),
                 ContextMode::kFromPreviousStep,
-                /*has_name_elements_callback=*/true),
-      BubbleStep(
-          ElementSpecifier(kUnifiedSystemTrayElementName), ContextMode::kAny,
-          HelpBubbleId::kWelcomeTourStatusArea,
-          StringFUTF8Eq(IDS_ASH_WELCOME_TOUR_STATUS_AREA_BUBBLE_ACCNAME,
-                        base::NumberToString16(current_step++), total_steps),
-          IDS_ASH_WELCOME_TOUR_OVERRIDDEN_BUBBLE_BODY_TEXT,
-          StringUTF8Eq(IDS_ASH_WELCOME_TOUR_STATUS_AREA_BUBBLE_BODY_TEXT),
-          HelpBubbleArrow::kBottomRight,
-          /*has_next_button=*/true),
-      EventStep(ElementSpecifier(kUnifiedSystemTrayElementName),
-                ContextMode::kFromPreviousStep,
-                /*has_name_elements_callback=*/true),
-      BubbleStep(
-          ElementSpecifier(kHomeButtonElementName), ContextMode::kAny,
-          HelpBubbleId::kWelcomeTourHomeButton,
-          StringFUTF8Eq(IDS_ASH_WELCOME_TOUR_HOME_BUTTON_BUBBLE_ACCNAME,
-                        base::NumberToString16(current_step++), total_steps,
-                        product_name),
-          IDS_ASH_WELCOME_TOUR_OVERRIDDEN_BUBBLE_BODY_TEXT,
-          StringFUTF8Eq(
-              (chromeos::GetDeviceType() == chromeos::DeviceType::kChromebook)
-                  ? IDS_ASH_WELCOME_TOUR_HOME_BUTTON_BUBBLE_BODY_TEXT_CHROMEBOOK
-                  : IDS_ASH_WELCOME_TOUR_HOME_BUTTON_BUBBLE_BODY_TEXT_OTHER_DEVICE_TYPES,
-              product_name),
-          HelpBubbleArrow::kBottomLeft,
-          /*has_next_button=*/true),
-      BubbleStep(ElementSpecifier(kSearchBoxViewElementId), ContextMode::kAny,
-                 HelpBubbleId::kWelcomeTourSearchBox,
-                 StringFUTF8Eq(IDS_ASH_WELCOME_TOUR_SEARCH_BOX_BUBBLE_ACCNAME,
-                               base::NumberToString16(current_step++),
-                               total_steps, product_name),
-                 IDS_ASH_WELCOME_TOUR_OVERRIDDEN_BUBBLE_BODY_TEXT,
-                 StringFUTF8Eq(IDS_ASH_WELCOME_TOUR_SEARCH_BOX_BUBBLE_BODY_TEXT,
-                               product_name),
-                 HelpBubbleArrow::kTopCenter,
-                 /*has_next_button=*/true),
-      EventStep(ElementSpecifier(kSearchBoxViewElementId),
-                ContextMode::kFromPreviousStep,
-                /*has_name_elements_callback=*/false)};
+                /*has_name_elements_callback=*/true)};
 
-  if (features::IsWelcomeTourV2Enabled()) {
+  if (!features::IsWelcomeTourV3Enabled()) {
+    // No status area step for V3.
     expected_steps.insert(
         expected_steps.end(),
-        {// Files app step for V2.
+        {BubbleStep(
+             ElementSpecifier(kUnifiedSystemTrayElementName), ContextMode::kAny,
+             HelpBubbleId::kWelcomeTourStatusArea,
+             StringFUTF8Eq(IDS_ASH_WELCOME_TOUR_STATUS_AREA_BUBBLE_ACCNAME,
+                           base::NumberToString16(current_step++), kTotalSteps),
+             IDS_ASH_WELCOME_TOUR_OVERRIDDEN_BUBBLE_BODY_TEXT,
+             StringUTF8Eq(IDS_ASH_WELCOME_TOUR_STATUS_AREA_BUBBLE_BODY_TEXT),
+             HelpBubbleArrow::kBottomRight,
+             /*has_next_button=*/true),
+         EventStep(ElementSpecifier(kUnifiedSystemTrayElementName),
+                   ContextMode::kFromPreviousStep,
+                   /*has_name_elements_callback=*/true)});
+  }
+
+  expected_steps.insert(
+      expected_steps.end(),
+      {BubbleStep(
+           ElementSpecifier(kHomeButtonElementName), ContextMode::kAny,
+           HelpBubbleId::kWelcomeTourHomeButton,
+           StringFUTF8Eq(IDS_ASH_WELCOME_TOUR_HOME_BUTTON_BUBBLE_ACCNAME,
+                         base::NumberToString16(current_step++), kTotalSteps,
+                         product_name),
+           IDS_ASH_WELCOME_TOUR_OVERRIDDEN_BUBBLE_BODY_TEXT,
+           StringFUTF8Eq(
+               (chromeos::GetDeviceType() == chromeos::DeviceType::kChromebook)
+                   ? IDS_ASH_WELCOME_TOUR_HOME_BUTTON_BUBBLE_BODY_TEXT_CHROMEBOOK
+                   : IDS_ASH_WELCOME_TOUR_HOME_BUTTON_BUBBLE_BODY_TEXT_OTHER_DEVICE_TYPES,
+               product_name),
+           HelpBubbleArrow::kBottomLeft,
+           /*has_next_button=*/true),
+       BubbleStep(
+           ElementSpecifier(kSearchBoxViewElementId), ContextMode::kAny,
+           HelpBubbleId::kWelcomeTourSearchBox,
+           StringFUTF8Eq(IDS_ASH_WELCOME_TOUR_SEARCH_BOX_BUBBLE_ACCNAME,
+                         base::NumberToString16(current_step++), kTotalSteps,
+                         product_name),
+           IDS_ASH_WELCOME_TOUR_OVERRIDDEN_BUBBLE_BODY_TEXT,
+           StringFUTF8Eq(IDS_ASH_WELCOME_TOUR_SEARCH_BOX_BUBBLE_BODY_TEXT,
+                         product_name),
+           HelpBubbleArrow::kTopCenter,
+           /*has_next_button=*/true),
+       EventStep(ElementSpecifier(kSearchBoxViewElementId),
+                 ContextMode::kFromPreviousStep,
+                 /*has_name_elements_callback=*/false)});
+
+  if (features::IsWelcomeTourV3Enabled()) {
+    expected_steps.insert(
+        expected_steps.end(),
+        {// Files app step for V3.
          BubbleStep(
              ElementSpecifier(kFilesAppElementId),
              ContextMode::kFromPreviousStep, HelpBubbleId::kWelcomeTourFilesApp,
              StringFUTF8Eq(IDS_ASH_WELCOME_TOUR_FILES_APP_BUBBLE_ACCNAME,
-                           base::NumberToString16(current_step++), total_steps),
+                           base::NumberToString16(current_step++), kTotalSteps),
              IDS_ASH_WELCOME_TOUR_OVERRIDDEN_BUBBLE_BODY_TEXT,
              StringUTF8Eq(IDS_ASH_WELCOME_TOUR_FILES_APP_BUBBLE_BODY_TEXT),
              HelpBubbleArrow::kBottomLeft,
@@ -642,7 +673,7 @@ TEST_P(WelcomeTourControllerV2Test, GetTutorialDescription) {
            ContextMode::kFromPreviousStep,
            HelpBubbleId::kWelcomeTourSettingsApp,
            StringFUTF8Eq(IDS_ASH_WELCOME_TOUR_SETTINGS_APP_BUBBLE_ACCNAME,
-                         base::NumberToString16(current_step++), total_steps,
+                         base::NumberToString16(current_step++), kTotalSteps,
                          product_name),
            IDS_ASH_WELCOME_TOUR_OVERRIDDEN_BUBBLE_BODY_TEXT,
            StringFUTF8Eq(IDS_ASH_WELCOME_TOUR_SETTINGS_APP_BUBBLE_BODY_TEXT,
@@ -798,59 +829,60 @@ TEST_P(WelcomeTourControllerChromeVoxTest,
                   IsEmpty()));
 }
 
-// WelcomeTourControllerCounterfactualTest -------------------------------------
+// WelcomeTourControllerHoldbackTest -------------------------------------------
 
-// Base class for tests of the `WelcomeTourController` which are concerned with
-// the behavior of counterfactual experiment arms, parameterized by whether the
-// Welcome Tour feature is enabled counterfactually.
-class WelcomeTourControllerCounterfactualTest
+// Base class for tests of the `WelcomeTourController` which are concerned
+// with the behavior of holdback experiment arms, parameterized by whether the
+// Welcome Tour is held back.
+class WelcomeTourControllerHoldbackTest
     : public WelcomeTourControllerTest,
       public ::testing::WithParamInterface<
-          /*is_counterfactual=*/std::optional<bool>> {
+          /*is_holdback=*/std::optional<bool>> {
  public:
-  WelcomeTourControllerCounterfactualTest() {
-    if (const auto& is_counterfactual = IsCounterfactual()) {
-      scoped_feature_list_.InitAndEnableFeatureWithParameters(
-          features::kWelcomeTour,
-          {{"is-counterfactual", *is_counterfactual ? "true" : "false"}});
+  WelcomeTourControllerHoldbackTest() {
+    // Only one of those features can be enabled at a time.
+    if (const auto& is_holdback = IsHoldback()) {
+      scoped_feature_list_.InitWithFeatureStates(
+          {{features::kWelcomeTourHoldbackArm, is_holdback.value()},
+           {features::kWelcomeTourV3, false},
+           {features::kWelcomeTourCounterfactualArm, false}});
     }
   }
 
-  // Returns whether the Welcome Tour is enabled counterfactually as part of an
-  // experiment arm given test parameterization.
-  const std::optional<bool>& IsCounterfactual() const { return GetParam(); }
+  // Returns whether the Welcome Tour is enabled as the holdback experiment
+  // arm given test parameterization.
+  const std::optional<bool>& IsHoldback() const { return GetParam(); }
 
  private:
-  // Used to conditionally enable the Welcome Tour counterfactually as part of
-  // an experiment arm given test parameterization.
+  // Used to conditionally enable the Welcome Tour as the holdback experiment
+  // arm given test parameterization.
   base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 INSTANTIATE_TEST_SUITE_P(All,
-                         WelcomeTourControllerCounterfactualTest,
-                         /*is_counterfactual=*/
+                         WelcomeTourControllerHoldbackTest,
+                         /*is_holdback=*/
                          ::testing::Values(std::make_optional(true),
                                            std::make_optional(false),
                                            std::nullopt));
 
 // Tests -----------------------------------------------------------------------
 
-// Verifies that the Welcome Tour is prevented from running if enabled
-// counterfactually as part of an experiment arm and that an attempt is made to
-// launch the Explore app when that occurs.
-TEST_P(WelcomeTourControllerCounterfactualTest,
-       PreventsWelcomeTourForCounterfactualArms) {
+// Verifies that the Welcome Tour is prevented from running if enabled as the
+// holdback experiment arm and that an attempt is made to launch the Explore app
+// when that occurs.
+TEST_P(WelcomeTourControllerHoldbackTest, PreventsWelcomeTourForHoldbackArms) {
   const auto primary_account_id = AccountId::FromUserEmail("primary@test");
 
   // Set expectations for whether the Welcome Tour will run.
   EXPECT_CALL(
       *user_education_delegate(),
       RegisterTutorial(Eq(primary_account_id), Eq(TutorialId::kWelcomeTour), _))
-      .Times(IsCounterfactual().value_or(false) ? 0u : 1u);
+      .Times(IsHoldback().value_or(false) ? 0u : 1u);
   EXPECT_CALL(*user_education_delegate(),
               StartTutorial(Eq(primary_account_id),
                             Eq(TutorialId::kWelcomeTour), _, _, _))
-      .Times(IsCounterfactual().value_or(false) ? 0u : 1u);
+      .Times(IsHoldback().value_or(false) ? 0u : 1u);
 
   // Set expectations for whether the Explore app will launch.
   EXPECT_CALL(*user_education_delegate(),
@@ -858,7 +890,7 @@ TEST_P(WelcomeTourControllerCounterfactualTest,
                   Eq(primary_account_id), Eq(ash::SystemWebAppType::HELP),
                   Eq(apps::LaunchSource::kFromWelcomeTour),
                   Eq(display::Screen::GetScreen()->GetPrimaryDisplay().id())))
-      .Times(IsCounterfactual().value_or(false) ? 1u : 0u);
+      .Times(IsHoldback().value_or(false) ? 1u : 0u);
 
   // Login the primary user for the first time and verify expectations.
   SimulateNewUserFirstLogin(primary_account_id.GetUserEmail());
@@ -1118,16 +1150,21 @@ TEST_F(WelcomeTourControllerRunTest, BlockInteractionsWithIrrelevantWindow) {
   widget->GetFocusManager()->SetFocusedView(contents_view);
 
   // `contents_view` should be interactive before the Welcome Tour.
-  EXPECT_CALL(*contents_view,
-              OnEvent(Property(&ui::Event::type, Eq(ui::ET_MOUSE_ENTERED))));
-  EXPECT_CALL(*contents_view,
-              OnEvent(Property(&ui::Event::type, Eq(ui::ET_MOUSE_PRESSED))));
-  EXPECT_CALL(*contents_view,
-              OnEvent(Property(&ui::Event::type, Eq(ui::ET_MOUSE_EXITED))));
-  EXPECT_CALL(*contents_view,
-              OnEvent(Property(&ui::Event::type, Eq(ui::ET_KEY_PRESSED))));
-  EXPECT_CALL(*contents_view,
-              OnEvent(Property(&ui::Event::type, Eq(ui::ET_KEY_RELEASED))));
+  EXPECT_CALL(
+      *contents_view,
+      OnEvent(Property(&ui::Event::type, Eq(ui::EventType::kMouseEntered))));
+  EXPECT_CALL(
+      *contents_view,
+      OnEvent(Property(&ui::Event::type, Eq(ui::EventType::kMousePressed))));
+  EXPECT_CALL(
+      *contents_view,
+      OnEvent(Property(&ui::Event::type, Eq(ui::EventType::kMouseExited))));
+  EXPECT_CALL(
+      *contents_view,
+      OnEvent(Property(&ui::Event::type, Eq(ui::EventType::kKeyPressed))));
+  EXPECT_CALL(
+      *contents_view,
+      OnEvent(Property(&ui::Event::type, Eq(ui::EventType::kKeyReleased))));
   LeftClickOn(contents_view);
   PressAndReleaseKey(ui::VKEY_A);
 
@@ -1141,16 +1178,21 @@ TEST_F(WelcomeTourControllerRunTest, BlockInteractionsWithIrrelevantWindow) {
 
   // Perform the same set of actions after the Welcome Tour. `contents_view`
   // should be interactive.
-  EXPECT_CALL(*contents_view,
-              OnEvent(Property(&ui::Event::type, Eq(ui::ET_MOUSE_ENTERED))));
-  EXPECT_CALL(*contents_view,
-              OnEvent(Property(&ui::Event::type, Eq(ui::ET_MOUSE_PRESSED))));
-  EXPECT_CALL(*contents_view,
-              OnEvent(Property(&ui::Event::type, Eq(ui::ET_MOUSE_EXITED))));
-  EXPECT_CALL(*contents_view,
-              OnEvent(Property(&ui::Event::type, Eq(ui::ET_KEY_PRESSED))));
-  EXPECT_CALL(*contents_view,
-              OnEvent(Property(&ui::Event::type, Eq(ui::ET_KEY_RELEASED))));
+  EXPECT_CALL(
+      *contents_view,
+      OnEvent(Property(&ui::Event::type, Eq(ui::EventType::kMouseEntered))));
+  EXPECT_CALL(
+      *contents_view,
+      OnEvent(Property(&ui::Event::type, Eq(ui::EventType::kMousePressed))));
+  EXPECT_CALL(
+      *contents_view,
+      OnEvent(Property(&ui::Event::type, Eq(ui::EventType::kMouseExited))));
+  EXPECT_CALL(
+      *contents_view,
+      OnEvent(Property(&ui::Event::type, Eq(ui::EventType::kKeyPressed))));
+  EXPECT_CALL(
+      *contents_view,
+      OnEvent(Property(&ui::Event::type, Eq(ui::EventType::kKeyReleased))));
   LeftClickOn(contents_view);
   PressAndReleaseKey(ui::VKEY_A);
 }
@@ -1407,8 +1449,8 @@ class WelcomeTourAcceleratorHandlerRunTest
               Property(&ui::KeyEvent::type,
                        Eq(accelerator.key_state() ==
                                   ui::Accelerator::KeyState::PRESSED
-                              ? ui::ET_KEY_PRESSED
-                              : ui::ET_KEY_RELEASED)),
+                              ? ui::EventType::kKeyPressed
+                              : ui::EventType::kKeyReleased)),
               Property(&ui::KeyEvent::key_code, Eq(accelerator.key_code())))))
           .Times(received ? 1u : 0u);
 
@@ -1419,8 +1461,8 @@ class WelcomeTourAcceleratorHandlerRunTest
               Property(&ui::KeyEvent::type,
                        Eq(accelerator.key_state() ==
                                   ui::Accelerator::KeyState::PRESSED
-                              ? ui::ET_KEY_RELEASED
-                              : ui::ET_KEY_PRESSED)),
+                              ? ui::EventType::kKeyReleased
+                              : ui::EventType::kKeyPressed)),
               Property(&ui::KeyEvent::key_code, Eq(accelerator.key_code())))));
 
       // Press and release `accelerator`.

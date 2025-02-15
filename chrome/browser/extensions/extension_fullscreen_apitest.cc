@@ -23,7 +23,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionApiTest,
 }
 
 #if BUILDFLAG(IS_MAC)
-// Fails on MAC: http://crbug.com/480370
+// TODO(crbug.com/40415216): Fails on MAC.
 #define MAYBE_ExtensionFullscreenAccessPass \
     DISABLED_ExtensionFullscreenAccessPass
 #else

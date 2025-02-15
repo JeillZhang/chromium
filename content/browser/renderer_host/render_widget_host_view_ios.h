@@ -21,7 +21,6 @@
 #include "ui/events/gesture_detection/filtered_gesture_provider.h"
 
 namespace ui {
-class DisplayCALayerTree;
 enum class DomCode : uint32_t;
 }  // namespace ui
 
@@ -117,6 +116,7 @@ class CONTENT_EXPORT RenderWidgetHostViewIOS
   void OnOldViewDidNavigatePreCommit() override;
   void OnNewViewDidNavigatePostCommit() override;
   void DidEnterBackForwardCache() override;
+  void ActivatedOrEvictedFromBackForwardCache() override;
   void DidNavigate() override;
   bool RequestRepaintForTesting() override;
   void Destroy() override;
@@ -127,6 +127,7 @@ class CONTENT_EXPORT RenderWidgetHostViewIOS
       base::OnceCallback<void(const SkBitmap&)> callback) override;
   ui::Compositor* GetCompositor() override;
   void GestureEventAck(const blink::WebGestureEvent& event,
+                       blink::mojom::InputEventResultSource ack_source,
                        blink::mojom::InputEventResultState ack_result) override;
   void ChildDidAckGestureEvent(
       const blink::WebGestureEvent& event,
@@ -151,7 +152,7 @@ class CONTENT_EXPORT RenderWidgetHostViewIOS
   void TransformPointToRootSurface(gfx::PointF* point) override;
   bool TransformPointToCoordSpaceForView(
       const gfx::PointF& point,
-      RenderWidgetHostViewInput* target_view,
+      input::RenderWidgetHostViewInput* target_view,
       gfx::PointF* transformed_point) override;
   void ProcessAckedTouchEvent(
       const input::TouchEventWithLatencyInfo& touch,
@@ -210,6 +211,7 @@ class CONTENT_EXPORT RenderWidgetHostViewIOS
   bool CanBecomeFirstResponderForTesting() const;
   bool CanResignFirstResponderForTesting() const;
   void ContentInsetChanged();
+  void DeleteSurroundingText(int before, int after);
 
  private:
   friend class MockPointerLockRenderWidgetHostView;
@@ -260,7 +262,6 @@ class CONTENT_EXPORT RenderWidgetHostViewIOS
 
   std::unique_ptr<BrowserCompositorIOS> browser_compositor_;
   std::unique_ptr<UIViewHolder> ui_view_;
-  std::unique_ptr<ui::DisplayCALayerTree> display_tree_;
   base::WeakPtrFactory<RenderWidgetHostViewIOS> weak_factory_{this};
 };
 

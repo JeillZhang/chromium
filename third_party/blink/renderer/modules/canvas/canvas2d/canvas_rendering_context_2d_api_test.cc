@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <algorithm>
 #include <memory>
 #include <vector>
 
@@ -20,6 +21,8 @@
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_testing.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_blob_callback.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_canvas_text_align.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_canvas_text_baseline.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_image_bitmap_options.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_image_data_settings.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_union_float32array_uint16array_uint8clampedarray.h"  // IWYU pragma: keep
@@ -67,8 +70,6 @@
 namespace v8 {
 class Isolate;
 }  // namespace v8
-
-using testing::Mock;
 
 namespace blink {
 
@@ -281,12 +282,10 @@ TEST_F(CanvasRenderingContext2DAPITest, CreateImageData) {
   EXPECT_EQ(100, image_data->width());
   EXPECT_EQ(50, image_data->height());
 
-  for (size_t i = 0; i < image_data->data()->GetAsUint8ClampedArray()->length();
-       ++i) {
-    image_data->data()->GetAsUint8ClampedArray()->Data()[i] = 255;
-  }
+  std::ranges::fill(image_data->data()->GetAsUint8ClampedArray()->AsSpan(),
+                    255);
 
-  EXPECT_EQ(255, image_data->data()->GetAsUint8ClampedArray()->Data()[32]);
+  EXPECT_EQ(255, image_data->data()->GetAsUint8ClampedArray()->AsSpan()[32]);
 
   // createImageData(imageData) should create a new ImageData of the same size
   // as 'imageData' but filled with transparent black
@@ -296,8 +295,8 @@ TEST_F(CanvasRenderingContext2DAPITest, CreateImageData) {
   EXPECT_FALSE(exception_state.HadException());
   EXPECT_EQ(100, same_size_image_data->width());
   EXPECT_EQ(50, same_size_image_data->height());
-  EXPECT_EQ(0,
-            same_size_image_data->data()->GetAsUint8ClampedArray()->Data()[32]);
+  EXPECT_EQ(
+      0, same_size_image_data->data()->GetAsUint8ClampedArray()->AsSpan()[32]);
 
   // createImageData(width, height) takes the absolute magnitude of the size
   // arguments
@@ -346,20 +345,24 @@ TEST_F(CanvasRenderingContext2DAPITest, GetImageDataTooBig) {
 TEST_F(CanvasRenderingContext2DAPITest,
        GetImageDataIntegerOverflowNegativeParams) {
   CreateContext(kNonOpaque);
-  DummyExceptionStateForTesting exception_state;
   ImageDataSettings* settings = ImageDataSettings::Create();
-  ImageData* image_data = Context2D()->getImageData(
-      1, -2147483647, 1, -2147483647, settings, exception_state);
-  EXPECT_EQ(nullptr, image_data);
-  EXPECT_TRUE(exception_state.HadException());
-  EXPECT_EQ(ESErrorType::kRangeError, exception_state.CodeAs<ESErrorType>());
+  {
+    DummyExceptionStateForTesting exception_state;
+    ImageData* image_data = Context2D()->getImageData(
+        1, -2147483647, 1, -2147483647, settings, exception_state);
+    EXPECT_EQ(nullptr, image_data);
+    EXPECT_TRUE(exception_state.HadException());
+    EXPECT_EQ(ESErrorType::kRangeError, exception_state.CodeAs<ESErrorType>());
+  }
 
-  exception_state.ClearException();
-  image_data = Context2D()->getImageData(-2147483647, 1, -2147483647, 1,
-                                         settings, exception_state);
-  EXPECT_EQ(nullptr, image_data);
-  EXPECT_TRUE(exception_state.HadException());
-  EXPECT_EQ(ESErrorType::kRangeError, exception_state.CodeAs<ESErrorType>());
+  {
+    DummyExceptionStateForTesting exception_state;
+    ImageData* image_data = Context2D()->getImageData(
+        -2147483647, 1, -2147483647, 1, settings, exception_state);
+    EXPECT_EQ(nullptr, image_data);
+    EXPECT_TRUE(exception_state.HadException());
+    EXPECT_EQ(ESErrorType::kRangeError, exception_state.CodeAs<ESErrorType>());
+  }
 }
 
 // Checks `CreateImageBitmap` throws an exception if called inside a layer.
@@ -579,7 +582,6 @@ void ResetCanvasForAccessibilityRectTest(Document& document) {
   EXPECT_TRUE(canvas->RenderingContext()->IsRenderingContext2D());
 }
 
-
 // A IdentifiabilityStudySettingsProvider implementation that opts-into study
 // participation.
 class ActiveSettingsProvider : public IdentifiabilityStudySettingsProvider {
@@ -651,7 +653,7 @@ TEST_F(CanvasRenderingContext2DAPITest, MAYBE_IdentifiabilityStudyDigest_Font) {
   CreateContext(kNonOpaque);
 
   Context2D()->setFont("Arial");
-  EXPECT_EQ(INT64_C(-7111871220951205888),
+  EXPECT_EQ(INT64_C(7339381412423806682),
             Context2D()->IdentifiableTextToken().ToUkmMetricValue());
 
   EXPECT_FALSE(Context2D()->IdentifiabilityEncounteredSkippedOps());
@@ -690,7 +692,7 @@ TEST_F(CanvasRenderingContext2DAPITest,
   CreateContext(kNonOpaque);
 
   Context2D()->strokeText("Sensitive message", 1.0, 1.0);
-  EXPECT_EQ(INT64_C(2232415440872807707),
+  EXPECT_EQ(INT64_C(8218678546639211996),
             Context2D()->IdentifiableTextToken().ToUkmMetricValue());
 
   EXPECT_FALSE(Context2D()->IdentifiabilityEncounteredSkippedOps());
@@ -714,7 +716,7 @@ TEST_F(CanvasRenderingContext2DAPITest,
   CreateContext(kNonOpaque);
 
   Context2D()->fillText("Sensitive message", 1.0, 1.0);
-  EXPECT_EQ(INT64_C(6317349156921019980),
+  EXPECT_EQ(INT64_C(-7525055925911674050),
             Context2D()->IdentifiableTextToken().ToUkmMetricValue());
 
   EXPECT_FALSE(Context2D()->IdentifiabilityEncounteredSkippedOps());
@@ -737,8 +739,9 @@ TEST_F(CanvasRenderingContext2DAPITest,
   StudyParticipationRaii study_participation_raii;
   CreateContext(kNonOpaque);
 
-  Context2D()->setTextAlign("center");
-  EXPECT_EQ(INT64_C(-1799394612814265049),
+  Context2D()->setTextAlign(
+      V8CanvasTextAlign(V8CanvasTextAlign::Enum::kCenter));
+  EXPECT_EQ(INT64_C(-5618040280239325003),
             Context2D()->IdentifiableTextToken().ToUkmMetricValue());
 
   EXPECT_FALSE(Context2D()->IdentifiabilityEncounteredSkippedOps());
@@ -761,8 +764,9 @@ TEST_F(CanvasRenderingContext2DAPITest,
   StudyParticipationRaii study_participation_raii;
   CreateContext(kNonOpaque);
 
-  Context2D()->setTextBaseline("top");
-  EXPECT_EQ(INT64_C(-7620161594820691651),
+  Context2D()->setTextBaseline(
+      V8CanvasTextBaseline(V8CanvasTextBaseline::Enum::kTop));
+  EXPECT_EQ(INT64_C(-6814889525293785691),
             Context2D()->IdentifiableTextToken().ToUkmMetricValue());
 
   EXPECT_FALSE(Context2D()->IdentifiabilityEncounteredSkippedOps());
@@ -772,7 +776,8 @@ TEST_F(CanvasRenderingContext2DAPITest,
 
 // TODO(crbug.com/1239374): Fix test on Android and re-enable.
 // TODO(crbug.com/1258605): Fix test on Windows and re-enable.
-#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_WIN)
+// TODO(crbug.com/392441189): Re-enable test with new V8 string hash.
+#if true || BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_WIN)
 #define MAYBE_IdentifiabilityStudyDigest_StrokeStyle \
   DISABLED_IdentifiabilityStudyDigest_StrokeStyle
 #else
@@ -787,7 +792,7 @@ TEST_F(CanvasRenderingContext2DAPITest,
   CreateContext(kNonOpaque);
 
   SetStrokeStyleString(Context2D(), GetScriptState(), "blue");
-  EXPECT_EQ(INT64_C(-1964835352532316734),
+  EXPECT_EQ(INT64_C(3577524355478740727),
             Context2D()->IdentifiableTextToken().ToUkmMetricValue());
 
   EXPECT_FALSE(Context2D()->IdentifiabilityEncounteredSkippedOps());
@@ -797,7 +802,8 @@ TEST_F(CanvasRenderingContext2DAPITest,
 
 // TODO(crbug.com/1239374): Fix test on Android and re-enable.
 // TODO(crbug.com/1258605): Fix test on Windows and re-enable.
-#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_WIN)
+// TODO(crbug.com/392441189): Re-enable test with new V8 string hash.
+#if true || BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_WIN)
 #define MAYBE_IdentifiabilityStudyDigest_FillStyle \
   DISABLED_IdentifiabilityStudyDigest_FillStyle
 #else
@@ -812,7 +818,7 @@ TEST_F(CanvasRenderingContext2DAPITest,
   CreateContext(kNonOpaque);
 
   SetFillStyleString(Context2D(), GetScriptState(), "blue");
-  EXPECT_EQ(INT64_C(-4860826471555317536),
+  EXPECT_EQ(INT64_C(7953663110297373742),
             Context2D()->IdentifiableTextToken().ToUkmMetricValue());
 
   EXPECT_FALSE(Context2D()->IdentifiabilityEncounteredSkippedOps());
@@ -822,7 +828,8 @@ TEST_F(CanvasRenderingContext2DAPITest,
 
 // TODO(crbug.com/1239374): Fix test on Android and re-enable.
 // TODO(crbug.com/1258605): Fix test on Windows and re-enable.
-#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_WIN)
+// TODO(crbug.com/392441189): Re-enable test with new V8 string hash.
+#if true || BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_WIN)
 #define MAYBE_IdentifiabilityStudyDigest_Combo \
   DISABLED_IdentifiabilityStudyDigest_Combo
 #else
@@ -836,14 +843,15 @@ TEST_F(CanvasRenderingContext2DAPITest,
   CreateContext(kNonOpaque);
 
   Context2D()->fillText("Sensitive message", 1.0, 1.0);
-  EXPECT_EQ(INT64_C(6317349156921019980),
+  EXPECT_EQ(INT64_C(-7525055925911674050),
             Context2D()->IdentifiableTextToken().ToUkmMetricValue());
   Context2D()->setFont("Helvetica");
-  Context2D()->setTextBaseline("bottom");
-  Context2D()->setTextAlign("right");
+  Context2D()->setTextBaseline(
+      V8CanvasTextBaseline(V8CanvasTextBaseline::Enum::kBottom));
+  Context2D()->setTextAlign(V8CanvasTextAlign(V8CanvasTextAlign::Enum::kRight));
   SetFillStyleString(Context2D(), GetScriptState(), "red");
   Context2D()->fillText("Bye", 4.0, 3.0);
-  EXPECT_EQ(INT64_C(5574475585707445774),
+  EXPECT_EQ(INT64_C(-7631959002534825456),
             Context2D()->IdentifiableTextToken().ToUkmMetricValue());
 
   EXPECT_FALSE(Context2D()->IdentifiabilityEncounteredSkippedOps());
@@ -917,13 +925,11 @@ MATCHER_P(Mesh2dBufferIs, matcher, "") {
 }
 
 NotShared<DOMFloat32Array> CreateFloat32Array(std::vector<float> array) {
-  return NotShared<DOMFloat32Array>(
-      DOMFloat32Array::Create(array.data(), array.size()));
+  return NotShared<DOMFloat32Array>(DOMFloat32Array::Create(array));
 }
 
 NotShared<DOMUint16Array> CreateUint16Array(std::vector<uint16_t> array) {
-  return NotShared<DOMUint16Array>(
-      DOMUint16Array::Create(array.data(), array.size()));
+  return NotShared<DOMUint16Array>(DOMUint16Array::Create(array));
 }
 
 TEST_F(CanvasRenderingContext2DAPITest, Mesh2DVertexBuffer0Floats) {

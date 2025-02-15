@@ -13,7 +13,6 @@
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/loader/fetch/bytes_consumer.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
-#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 #include "third_party/blink/renderer/platform/timer.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
@@ -71,7 +70,7 @@ class PLATFORM_EXPORT BufferingBytesConsumer final
   void StopBuffering();
 
   // BufferingBytesConsumer
-  Result BeginRead(const char** buffer, size_t* available) override;
+  Result BeginRead(base::span<const char>& buffer) override;
   Result EndRead(size_t read_size) override;
   scoped_refptr<BlobDataHandle> DrainAsBlobDataHandle(BlobSizePolicy) override;
   scoped_refptr<EncodedFormData> DrainAsFormData() override;

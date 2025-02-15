@@ -13,6 +13,8 @@
 #include "base/strings/string_number_conversions.h"
 #include "components/optimization_guide/core/model_execution/feature_keys.h"
 #include "components/optimization_guide/core/model_execution/model_execution_prefs.h"
+#include "components/optimization_guide/proto/model_quality_metadata.pb.h"
+#include "components/optimization_guide/proto/model_quality_service.pb.h"
 #include "components/prefs/pref_service.h"
 #include "third_party/icu/source/i18n/unicode/timezone.h"
 
@@ -27,28 +29,6 @@ std::string TimeToYYYYMMDDString(base::Time ts) {
 }
 
 }  // namespace
-
-std::optional<UserVisibleFeatureKey> GetModelExecutionFeature(
-    proto::LogAiDataRequest::FeatureCase feature) {
-  switch (feature) {
-    case proto::LogAiDataRequest::FeatureCase::kCompose:
-      return UserVisibleFeatureKey::kCompose;
-    case proto::LogAiDataRequest::FeatureCase::
-        kHistoryQuery:  // Not implemented yet.
-      // TODO(b/335659433): Add a UserVisibleFeatureKey for HistoryQuery.
-      return std::nullopt;
-    case proto::LogAiDataRequest::FeatureCase::kTabOrganization:
-      return UserVisibleFeatureKey::kTabOrganization;
-    case proto::LogAiDataRequest::FeatureCase::kWallpaperSearch:
-      return UserVisibleFeatureKey::kWallpaperSearch;
-    case proto::LogAiDataRequest::FeatureCase::kDefault:
-      NOTREACHED_IN_MIGRATION();
-      return std::nullopt;
-    case proto::LogAiDataRequest::FeatureCase::FEATURE_NOT_SET:
-      // This can be used for testing.
-      return std::nullopt;
-  }
-}
 
 // Generates a new client id and stores it in prefs.
 int64_t GenerateAndStoreClientId(PrefService* pref_service) {
@@ -71,16 +51,18 @@ int64_t GenerateAndStoreClientId(PrefService* pref_service) {
   return client_id;
 }
 
-int64_t GetHashedModelQualityClientId(UserVisibleFeatureKey feature,
-                                      base::Time day,
-                                      int64_t client_id) {
+int64_t GetHashedModelQualityClientId(
+    proto::LogAiDataRequest::FeatureCase feature,
+    base::Time day,
+    int64_t client_id) {
   std::string date = TimeToYYYYMMDDString(day);
-  int shift = static_cast<int>(ToModelExecutionFeatureProto(feature));
+  int shift = static_cast<int>(feature);
   return base::FastHash(base::NumberToString(client_id + shift) + date);
 }
 
-int64_t GetOrCreateModelQualityClientId(UserVisibleFeatureKey feature,
-                                        PrefService* pref_service) {
+int64_t GetOrCreateModelQualityClientId(
+    proto::LogAiDataRequest::FeatureCase feature,
+    PrefService* pref_service) {
   if (!pref_service) {
     return 0;
   }

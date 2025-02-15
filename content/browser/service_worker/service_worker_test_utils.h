@@ -20,6 +20,7 @@
 #include "content/common/navigation_client.mojom.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/frame_tree_node_id.h"
 #include "mojo/public/cpp/bindings/associated_remote.h"
 #include "mojo/public/cpp/bindings/pending_associated_receiver.h"
 #include "mojo/public/cpp/bindings/receiver.h"
@@ -36,8 +37,12 @@ class StorageKey;
 namespace content {
 
 class EmbeddedWorkerTestHelper;
+class ScopedServiceWorkerClient;
+class ServiceWorkerClient;
+class ServiceWorkerContainerHost;
 class ServiceWorkerContext;
 class ServiceWorkerHost;
+class ServiceWorkerRegistration;
 class ServiceWorkerRegistry;
 class ServiceWorkerVersion;
 
@@ -89,9 +94,7 @@ class CommittedServiceWorkerClient final {
     return service_worker_client_.get();
   }
 
-  ServiceWorkerContainerHost& container_host() const {
-    return service_worker_client_->container_host();
-  }
+  ServiceWorkerContainerHost& container_host() const;
 
   // NOTE: These pipes are usable only for Window clients, because for workers
   // the mojo call is not emulated and thus the associated mojo pipes here don't
@@ -133,16 +136,16 @@ ScopedServiceWorkerClient CreateServiceWorkerClient(
     const GURL& document_url,
     const url::Origin& top_frame_origin,
     bool are_ancestors_secure = true,
-    int frame_tree_node_id = 1);
+    FrameTreeNodeId frame_tree_node_id = FrameTreeNodeId(1));
 ScopedServiceWorkerClient CreateServiceWorkerClient(
     ServiceWorkerContextCore* context,
     const GURL& document_url,
     bool are_ancestors_secure = true,
-    int frame_tree_node_id = 1);
+    FrameTreeNodeId frame_tree_node_id = FrameTreeNodeId());
 ScopedServiceWorkerClient CreateServiceWorkerClient(
     ServiceWorkerContextCore* context,
     bool are_ancestors_secure = true,
-    int frame_tree_node_id = 1);
+    FrameTreeNodeId frame_tree_node_id = FrameTreeNodeId());
 
 std::unique_ptr<ServiceWorkerHost> CreateServiceWorkerHost(
     int process_id,

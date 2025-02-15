@@ -12,11 +12,8 @@
 #include "components/performance_manager/public/graph/graph.h"
 #include "components/performance_manager/public/graph/node_data_describer.h"
 #include "components/performance_manager/public/graph/page_node.h"
+#include "content/public/browser/web_contents_capability_type.h"
 #include "url/gurl.h"
-
-namespace content {
-class WebContents;
-}  // namespace content
 
 namespace performance_manager {
 
@@ -29,7 +26,7 @@ class PageLiveStateObserver;
 // PageNode on the Performance Manager's sequence.
 class PageLiveStateDecorator : public GraphOwnedDefaultImpl,
                                public NodeDataDescriberDefaultImpl,
-                               public PageNode::ObserverDefaultImpl {
+                               public PageNodeObserver {
  public:
   class Data;
 
@@ -38,14 +35,11 @@ class PageLiveStateDecorator : public GraphOwnedDefaultImpl,
   PageLiveStateDecorator(const PageLiveStateDecorator& other) = delete;
   PageLiveStateDecorator& operator=(const PageLiveStateDecorator&) = delete;
 
-  // Must be called when the connected to USB device state changes.
-  static void OnIsConnectedToUSBDeviceChanged(content::WebContents* contents,
-                                              bool is_connected_to_usb_device);
-
-  // Must be called when the connected to Bluetooth device state changes.
-  static void OnIsConnectedToBluetoothDeviceChanged(
+  // Must be called when the capability types used by `contents` change.
+  static void OnCapabilityTypesChanged(
       content::WebContents* contents,
-      bool is_connected_to_bluetooth_device);
+      content::WebContentsCapabilityType capability_type,
+      bool used);
 
   // Functions that should be called by a MediaStreamCaptureIndicator::Observer.
   static void OnIsCapturingVideoChanged(content::WebContents* contents,
@@ -59,8 +53,12 @@ class PageLiveStateDecorator : public GraphOwnedDefaultImpl,
   static void OnIsCapturingDisplayChanged(content::WebContents* contents,
                                           bool is_capturing_display);
 
-  // Set the auto discardable property. This indicates whether or not the page
-  // can be discarded during an intervention.
+  // Set the auto discardable property. This defaults to true, and can be set
+  // to false by the chrome.tabs.autoDiscardable extension API to prevent a
+  // tab from being discarded during an intervention. The tab can still be
+  // discarded manually by extensions. Technically this is a property of the
+  // tab, not the WebContents, so if discarding changes the WebContents for the
+  // tab the value is copied to the new WebContents.
   static void SetIsAutoDiscardable(content::WebContents* contents,
                                    bool is_auto_discardable);
 
@@ -76,6 +74,24 @@ class PageLiveStateDecorator : public GraphOwnedDefaultImpl,
   static void SetIsDevToolsOpen(content::WebContents* contents,
                                 bool is_dev_tools_open);
 
+  // Convenience functions to look up the given properties from the
+  // PageLiveStateDecorator::Data for the given `contents`.
+  static bool IsConnectedToUSBDevice(content::WebContents* contents);
+  static bool IsConnectedToBluetoothDevice(content::WebContents* contents);
+  static bool IsConnectedToHidDevice(content::WebContents* contents);
+  static bool IsConnectedToSerialPort(content::WebContents* contents);
+  static bool IsCapturingVideo(content::WebContents* contents);
+  static bool IsCapturingAudio(content::WebContents* contents);
+  static bool IsBeingMirrored(content::WebContents* contents);
+  static bool IsCapturingWindow(content::WebContents* contents);
+  static bool IsCapturingDisplay(content::WebContents* contents);
+  static bool IsAutoDiscardable(content::WebContents* contents);
+  static bool WasDiscarded(content::WebContents* contents);
+  static bool IsActiveTab(content::WebContents* contents);
+  static bool IsPinnedTab(content::WebContents* contents);
+  static bool IsDevToolsOpen(content::WebContents* contents);
+  static bool UpdatedTitleOrFaviconInBackground(content::WebContents* contents);
+
  private:
   friend class PageLiveStateDecoratorTest;
 
@@ -86,9 +102,11 @@ class PageLiveStateDecorator : public GraphOwnedDefaultImpl,
   // NodeDataDescriber implementation:
   base::Value::Dict DescribePageNodeData(const PageNode* node) const override;
 
-  // PageNode::ObserverDefaultImpl implementation:
+  // PageNodeObserver implementation:
   void OnTitleUpdated(const PageNode* page_node) override;
   void OnFaviconUpdated(const PageNode* page_node) override;
+  void OnAboutToBeDiscarded(const PageNode* page_node,
+                            const PageNode* new_page_node) override;
 
   base::WeakPtrFactory<PageLiveStateDecorator> weak_factory_{this};
 };
@@ -105,12 +123,16 @@ class PageLiveStateDecorator::Data {
 
   virtual bool IsConnectedToUSBDevice() const = 0;
   virtual bool IsConnectedToBluetoothDevice() const = 0;
+  virtual bool IsConnectedToHidDevice() const = 0;
+  virtual bool IsConnectedToSerialPort() const = 0;
   virtual bool IsCapturingVideo() const = 0;
   virtual bool IsCapturingAudio() const = 0;
   virtual bool IsBeingMirrored() const = 0;
   virtual bool IsCapturingWindow() const = 0;
   virtual bool IsCapturingDisplay() const = 0;
   virtual bool IsAutoDiscardable() const = 0;
+  // TODO(crbug.com/391179510): Remove this property which is always "false" due
+  // to a bug.
   virtual bool WasDiscarded() const = 0;
   virtual bool IsActiveTab() const = 0;
   virtual bool IsPinnedTab() const = 0;
@@ -125,6 +147,8 @@ class PageLiveStateDecorator::Data {
 
   virtual void SetIsConnectedToUSBDeviceForTesting(bool value) = 0;
   virtual void SetIsConnectedToBluetoothDeviceForTesting(bool value) = 0;
+  virtual void SetIsConnectedToHidDeviceForTesting(bool value) = 0;
+  virtual void SetIsConnectedToSerialPortForTesting(bool value) = 0;
   virtual void SetIsCapturingVideoForTesting(bool value) = 0;
   virtual void SetIsCapturingAudioForTesting(bool value) = 0;
   virtual void SetIsBeingMirroredForTesting(bool value) = 0;
@@ -154,13 +178,14 @@ class PageLiveStateObserver : public base::CheckedObserver {
   virtual void OnIsConnectedToUSBDeviceChanged(const PageNode* page_node) = 0;
   virtual void OnIsConnectedToBluetoothDeviceChanged(
       const PageNode* page_node) = 0;
+  virtual void OnIsConnectedToHidDeviceChanged(const PageNode* page_node) = 0;
+  virtual void OnIsConnectedToSerialPortChanged(const PageNode* page_node) = 0;
   virtual void OnIsCapturingVideoChanged(const PageNode* page_node) = 0;
   virtual void OnIsCapturingAudioChanged(const PageNode* page_node) = 0;
   virtual void OnIsBeingMirroredChanged(const PageNode* page_node) = 0;
   virtual void OnIsCapturingWindowChanged(const PageNode* page_node) = 0;
   virtual void OnIsCapturingDisplayChanged(const PageNode* page_node) = 0;
   virtual void OnIsAutoDiscardableChanged(const PageNode* page_node) = 0;
-  virtual void OnWasDiscardedChanged(const PageNode* page_node) = 0;
   virtual void OnIsActiveTabChanged(const PageNode* page_node) = 0;
   virtual void OnIsPinnedTabChanged(const PageNode* page_node) = 0;
   virtual void OnIsDevToolsOpenChanged(const PageNode* page_node) = 0;
@@ -179,13 +204,14 @@ class PageLiveStateObserverDefaultImpl : public PageLiveStateObserver {
   void OnIsConnectedToUSBDeviceChanged(const PageNode* page_node) override {}
   void OnIsConnectedToBluetoothDeviceChanged(
       const PageNode* page_node) override {}
+  void OnIsConnectedToHidDeviceChanged(const PageNode* page_node) override {}
+  void OnIsConnectedToSerialPortChanged(const PageNode* page_node) override {}
   void OnIsCapturingVideoChanged(const PageNode* page_node) override {}
   void OnIsCapturingAudioChanged(const PageNode* page_node) override {}
   void OnIsBeingMirroredChanged(const PageNode* page_node) override {}
   void OnIsCapturingWindowChanged(const PageNode* page_node) override {}
   void OnIsCapturingDisplayChanged(const PageNode* page_node) override {}
   void OnIsAutoDiscardableChanged(const PageNode* page_node) override {}
-  void OnWasDiscardedChanged(const PageNode* page_node) override {}
   void OnIsActiveTabChanged(const PageNode* page_node) override {}
   void OnIsPinnedTabChanged(const PageNode* page_node) override {}
   void OnIsDevToolsOpenChanged(const PageNode* page_node) override {}

@@ -21,13 +21,16 @@ CookieControlsServiceBridge::CookieControlsServiceBridge(
     Profile* profile)
     : jobject_(obj), profile_(profile) {}
 
+CookieControlsServiceBridge::~CookieControlsServiceBridge() = default;
+
 void CookieControlsServiceBridge::UpdateServiceIfNecessary() {
   CookieControlsService* new_service =
       CookieControlsServiceFactory::GetForProfile(profile_);
   // Update the service only if it is for a new profile
   if (new_service != service_) {
+    cookie_controls_service_obs_.Reset();
     service_ = new_service;
-    service_->AddObserver(this);
+    cookie_controls_service_obs_.Observe(service_);
     SendCookieControlsUIChanges();
   }
 }
@@ -48,7 +51,7 @@ void CookieControlsServiceBridge::SendCookieControlsUIChanges() {
   CookieControlsEnforcement enforcement =
       service_->GetCookieControlsEnforcement();
   JNIEnv* env = jni_zero::AttachCurrentThread();
-  Java_CookieControlsServiceBridge_sendCookieControlsUIChanges(
+  Java_CookieControlsServiceBridge_sendCookieControlsUiChanges(
       env, jobject_, checked, static_cast<int>(enforcement));
 }
 
@@ -59,8 +62,6 @@ void CookieControlsServiceBridge::OnThirdPartyCookieBlockingPrefChanged() {
 void CookieControlsServiceBridge::OnThirdPartyCookieBlockingPolicyChanged() {
   SendCookieControlsUIChanges();
 }
-
-CookieControlsServiceBridge::~CookieControlsServiceBridge() = default;
 
 void CookieControlsServiceBridge::Destroy(JNIEnv* env,
                                           const JavaParamRef<jobject>& obj) {

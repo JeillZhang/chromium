@@ -2,34 +2,12 @@
 -- Use of this source code is governed by a BSD-style license that can be
 -- found in the LICENSE file.
 
-INCLUDE PERFETTO MODULE deprecated.v42.common.slices;
-
 -- Hardware info is useful when using sql metrics for analysis
 -- in BTP.
+INCLUDE PERFETTO MODULE chrome.chrome_scrolls;
 INCLUDE PERFETTO MODULE chrome.metadata;
 INCLUDE PERFETTO MODULE chrome.scroll_jank.scroll_jank_v3_cause;
 INCLUDE PERFETTO MODULE chrome.scroll_jank.utils;
-
--- Finds the end timestamp for a given slice's descendant with a given name.
--- If there are multiple descendants with a given name, the function will return the
--- first one, so it's most useful when working with a timeline broken down into phases,
--- where each subphase can happen only once.
-CREATE PERFETTO FUNCTION _descendant_slice_end(
-  -- Id of the parent slice.
-  parent_id INT,
-  -- Name of the child with the desired end TS.
-  child_name STRING
-)
--- End timestamp of the child or NULL if it doesn't exist.
-RETURNS INT AS
-SELECT
-  CASE WHEN s.dur
-    IS NOT -1 THEN s.ts + s.dur
-    ELSE NULL
-  END
-FROM descendant_slice($parent_id) s
-WHERE s.name = $child_name
-LIMIT 1;
 
 -- Given a slice id, returns the name of the slice.
 CREATE PERFETTO FUNCTION _slice_name_from_id(
@@ -42,55 +20,6 @@ SELECT
   name
 FROM slice
 WHERE $id = id;
-
--- Grabs all gesture updates with respective scroll ids and start/end
--- timestamps, regardless of being presented.
-CREATE PERFETTO TABLE chrome_gesture_scroll_updates(
-  -- The start timestamp of the scroll.
-  ts INT,
-  -- The duration of the scroll.
-  dur INT,
-  -- Slice id for the scroll.
-  id INT,
-  -- The id of the scroll update event.
-  scroll_update_id INT,
-  -- The id of the scroll.
-  scroll_id INT,
-  -- Whether this input event was presented.
-  is_presented BOOL,
-  -- Frame presentation timestamp aka the timestamp of the
-  -- SwapEndToPresentationCompositorFrame substage.
-  -- TODO(b/341047059): temporarily use LatchToSwapEnd as a workaround if
-  -- SwapEndToPresentationCompositorFrame is missing due to b/247542163.
-  presentation_timestamp INT,
-  -- EventLatency event type.
-  event_type INT
-) AS
-SELECT
-  slice.ts,
-  slice.dur,
-  slice.id,
-  EXTRACT_arg(arg_set_id, 'event_latency.event_latency_id') AS scroll_update_id,
-  chrome_get_most_recent_scroll_begin_id(slice.ts) AS scroll_id,
-  has_descendant_slice_with_name(slice.id, 'SubmitCompositorFrameToPresentationCompositorFrame')
-  AS is_presented,
-  CASE WHEN has_descendant_slice_with_name(slice.id, "SwapEndToPresentationCompositorFrame")
-    THEN _descendant_slice_end(slice.id, "SwapEndToPresentationCompositorFrame")
-    ELSE _descendant_slice_end(slice.id, "LatchToSwapEnd")
-  END
-  AS presentation_timestamp,
-  EXTRACT_ARG(arg_set_id, 'event_latency.event_type') AS event_type
-FROM slice JOIN args USING(arg_set_id)
-WHERE name = "EventLatency"
-AND (
-  args.string_value GLOB '*GESTURE_SCROLL_UPDATE'
-  -- Pinches are only relevant if the frame was presented.
-  OR (args.string_value GLOB '*GESTURE_PINCH_UPDATE'
-    AND has_descendant_slice_with_name(
-      slice.id,
-      'SubmitCompositorFrameToPresentationCompositorFrame')
-  )
-);
 
 CREATE PERFETTO TABLE _presented_gesture_scrolls AS
 SELECT
@@ -109,21 +38,21 @@ ORDER BY ts ASC;
 -- presented scroll update.
 CREATE PERFETTO TABLE chrome_presented_gesture_scrolls(
   -- Minimum slice id for input presented in this frame, the non-presented input.
-  id INT,
+  id LONG,
   -- The start timestamp for producing the frame.
-  ts INT,
+  ts TIMESTAMP,
   -- The duration between producing and presenting the frame.
-  dur INT,
+  dur DURATION,
   -- The timestamp of the last input that arrived and got presented in the frame.
-  last_presented_input_ts INT,
+  last_presented_input_ts TIMESTAMP,
   -- The id of the scroll update event, a unique identifier to the gesture.
-  scroll_update_id INT,
+  scroll_update_id LONG,
   -- The id of the ongoing scroll.
-  scroll_id INT,
+  scroll_id LONG,
   -- Frame presentation timestamp.
-  presentation_timestamp INT,
+  presentation_timestamp LONG,
   -- EventLatency event type.
-  event_type INT
+  event_type STRING
 ) AS
 WITH
 scroll_updates_with_presentation_info as MATERIALIZED (
@@ -166,9 +95,9 @@ FROM _presented_gesture_scrolls;
 -- prediction.
 CREATE PERFETTO TABLE chrome_scroll_updates_with_deltas(
   -- The id of the scroll update event.
-  scroll_update_id INT,
+  scroll_update_id LONG,
   -- The perceived delta_y on the screen post prediction.
-  delta_y INT
+  delta_y DOUBLE
 ) AS
 SELECT
   EXTRACT_ARG(arg_set_id, 'scroll_deltas.trace_id') AS scroll_update_id,
@@ -179,21 +108,21 @@ WHERE name = "InputHandlerProxy::HandleGestureScrollUpdate_Result";
 -- Obtain the subset of input events that were fully presented.
 CREATE PERFETTO TABLE chrome_full_frame_view(
   -- ID of the frame.
-  id INT,
+  id LONG,
   -- Start timestamp of the frame.
-  ts INT,
+  ts TIMESTAMP,
   -- The timestamp of the last presented input.
-  last_presented_input_ts INT,
+  last_presented_input_ts TIMESTAMP,
   -- ID of the associated scroll.
-  scroll_id INT,
+  scroll_id LONG,
   -- ID of the associated scroll update.
-  scroll_update_id INT,
+  scroll_update_id LONG,
   -- ID of the associated EventLatency.
-  event_latency_id INT,
+  event_latency_id LONG,
   -- Duration of the associated EventLatency.
-  dur INT,
+  dur DURATION,
   -- Frame presentation timestamp.
-  presentation_timestamp INT
+  presentation_timestamp LONG
 ) AS
 SELECT
   frames.id,
@@ -215,23 +144,23 @@ AND frames.presentation_timestamp IS NOT NULL;
 -- Join deltas with EventLatency data.
 CREATE PERFETTO TABLE chrome_full_frame_delta_view(
   -- ID of the frame.
-  id INT,
+  id LONG,
   -- Start timestamp of the frame.
-  ts INT,
+  ts TIMESTAMP,
   -- ID of the associated scroll.
-  scroll_id INT,
+  scroll_id LONG,
   -- ID of the associated scroll update.
-  scroll_update_id INT,
+  scroll_update_id LONG,
   -- The timestamp of the last presented input.
-  last_presented_input_ts INT,
+  last_presented_input_ts TIMESTAMP,
   -- The perceived delta_y on the screen post prediction.
-  delta_y INT,
+  delta_y DOUBLE,
   -- ID of the associated EventLatency.
-  event_latency_id INT,
+  event_latency_id LONG,
   -- Duration of the associated EventLatency.
-  dur INT,
+  dur DURATION,
   -- Frame presentation timestamp.
-  presentation_timestamp INT
+  presentation_timestamp LONG
 ) AS
 SELECT
   frames.id,
@@ -249,29 +178,29 @@ LEFT JOIN chrome_scroll_updates_with_deltas deltas
 
 -- Group all gestures presented at the same timestamp together in
 -- a single row.
-CREATE PERFETTO VIEW chrome_merged_frame_view(
+CREATE PERFETTO TABLE chrome_merged_frame_view(
   -- ID of the frame.
-  id INT,
+  id LONG,
   -- The timestamp of the last presented input.
-  max_start_ts INT,
+  max_start_ts TIMESTAMP,
   -- The earliest frame start timestamp.
-  min_start_ts INT,
+  min_start_ts TIMESTAMP,
   -- ID of the associated scroll.
-  scroll_id INT,
+  scroll_id LONG,
   -- ID of the associated scroll update.
-  scroll_update_id INT,
+  scroll_update_id LONG,
   -- All scroll updates associated with the frame presentation timestamp.
-  encapsulated_scroll_ids INT,
+  encapsulated_scroll_ids STRING,
   -- Sum of all perceived delta_y values at the frame presentation timestamp.
-  total_delta INT,
+  total_delta DOUBLE,
   -- Lists all of the perceived delta_y values at the frame presentation timestamp.
-  segregated_delta_y INT,
+  segregated_delta_y STRING,
   -- ID of the associated EventLatency.
-  event_latency_id INT,
+  event_latency_id LONG,
   -- Maximum duration of the associated EventLatency.
-  dur INT,
+  dur DURATION,
   -- Frame presentation timestamp.
-  presentation_timestamp INT
+  presentation_timestamp LONG
 ) AS
 SELECT
   id,
@@ -292,37 +221,37 @@ ORDER BY presentation_timestamp;
 -- View contains all chrome presented frames during gesture updates
 -- while calculating delay since last presented which usually should
 -- equal to |VSYNC_INTERVAL| if no jank is present.
-CREATE PERFETTO VIEW chrome_frame_info_with_delay(
+CREATE PERFETTO TABLE chrome_frame_info_with_delay(
   -- gesture scroll slice id.
-  id INT,
+  id LONG,
   -- OS timestamp of the last touch move arrival within a frame.
-  max_start_ts INT,
+  max_start_ts TIMESTAMP,
   -- OS timestamp of the first touch move arrival within a frame.
-  min_start_ts INT,
+  min_start_ts TIMESTAMP,
   -- The scroll which the touch belongs to.
-  scroll_id INT,
+  scroll_id LONG,
   -- ID of the associated scroll update.
-  scroll_update_id INT,
+  scroll_update_id LONG,
   -- Trace ids of all frames presented in at this vsync.
-  encapsulated_scroll_ids INT,
+  encapsulated_scroll_ids STRING,
   -- Summation of all delta_y of all gesture scrolls in this frame.
-  total_delta INT,
+  total_delta DOUBLE,
   -- All delta y of all gesture scrolls comma separated, summing those gives |total_delta|.
-  segregated_delta_y INT,
+  segregated_delta_y STRING,
   -- Event latency id of the presented frame.
-  event_latency_id INT,
+  event_latency_id LONG,
   -- Duration of the EventLatency.
-  dur INT,
+  dur DURATION,
   -- Timestamp at which the frame was shown on the screen.
-  presentation_timestamp INT,
+  presentation_timestamp LONG,
   -- Time elapsed since the previous frame was presented, usually equals |VSYNC|
   -- if no frame drops happened.
-  delay_since_last_frame INT,
+  delay_since_last_frame DOUBLE,
   -- Difference in OS timestamps of inputs in the current and the previous frame.
-  delay_since_last_input INT,
+  delay_since_last_input DOUBLE,
   -- The event latency id that will be used as a reference to determine the
   -- jank cause.
-  prev_event_latency_id INT
+  prev_event_latency_id LONG
 ) AS
 SELECT
   *,
@@ -339,9 +268,9 @@ FROM chrome_merged_frame_view;
 -- minimum delay between frames larger than zero.
 --
 -- TODO(~M130): Remove the lowest vsync since we should always have vsync_interval_ms.
-CREATE PERFETTO VIEW chrome_vsyncs(
+CREATE PERFETTO TABLE chrome_vsyncs(
   -- The lowest delay between frames larger than zero.
-  vsync_interval INT
+  vsync_interval DOUBLE
 ) AS
 WITH
   trace_vsyncs AS (
@@ -359,19 +288,19 @@ FROM chrome_frame_info_with_delay
 WHERE delay_since_last_frame > 0;
 
 -- Filter the frame view only to frames that had missed vsyncs.
-CREATE PERFETTO VIEW chrome_janky_frames_no_cause(
+CREATE PERFETTO TABLE chrome_janky_frames_no_cause(
   -- Time elapsed since the previous frame was presented, will be more than |VSYNC| in this view.
-  delay_since_last_frame INT,
+  delay_since_last_frame DOUBLE,
   -- Event latency id of the presented frame.
-  event_latency_id INT,
+  event_latency_id LONG,
   -- Vsync interval at the time of recording the trace.
-  vsync_interval INT,
+  vsync_interval DOUBLE,
   -- Device brand and model.
   hardware_class STRING,
   -- The scroll corresponding to this frame.
-  scroll_id INT,
+  scroll_id LONG,
   -- The event latency id that will be used as a reference to determine the jank cause.
-  prev_event_latency_id INT
+  prev_event_latency_id LONG
 ) AS
 SELECT
   delay_since_last_frame,
@@ -385,21 +314,21 @@ WHERE delay_since_last_frame > (select vsync_interval + vsync_interval / 2 from 
       AND delay_since_last_input < (select vsync_interval + vsync_interval / 2 from chrome_vsyncs);
 
 -- Janky frame information including the jank cause.
-CREATE PERFETTO VIEW chrome_janky_frames_no_subcause(
+CREATE PERFETTO TABLE chrome_janky_frames_no_subcause(
   -- Time elapsed since the previous frame was presented, will be more than |VSYNC| in this view.
-  delay_since_last_frame INT,
+  delay_since_last_frame DOUBLE,
   -- Event latency id of the presented frame.
-  event_latency_id INT,
+  event_latency_id LONG,
   -- Vsync interval at the time of recording the trace.
-  vsync_interval INT,
+  vsync_interval DOUBLE,
   -- Device brand and model.
   hardware_class STRING,
   -- The scroll corresponding to this frame.
-  scroll_id INT,
+  scroll_id LONG,
   -- The event latency id that will be used as a reference to determine the jank cause.
-  prev_event_latency_id INT,
+  prev_event_latency_id LONG,
   -- Id of the slice corresponding to the offending stage.
-  cause_id INT
+  cause_id LONG
 ) AS
 SELECT
   *,
@@ -408,21 +337,21 @@ FROM chrome_janky_frames_no_cause;
 
 -- Finds all causes of jank for all janky frames, and a cause of sub jank
 -- if the cause of jank was GPU related.
-CREATE PERFETTO VIEW chrome_janky_frames(
+CREATE PERFETTO TABLE chrome_janky_frames(
   -- The reason the Vsync was missed.
-  cause_of_jank INT,
+  cause_of_jank STRING,
   -- Further breakdown if the root cause was GPU related.
-  sub_cause_of_jank INT,
+  sub_cause_of_jank STRING,
   -- Time elapsed since the previous frame was presented, will be more than |VSYNC| in this view.
-  delay_since_last_frame INT,
+  delay_since_last_frame DOUBLE,
   -- Event latency id of the presented frame.
-  event_latency_id INT,
+  event_latency_id LONG,
   -- Vsync interval at the time of recording the trace.
-  vsync_interval INT,
+  vsync_interval DOUBLE,
   -- Device brand and model.
   hardware_class STRING,
   -- The scroll corresponding to this frame.
-  scroll_id INT
+  scroll_id LONG
 ) AS
 SELECT
   _slice_name_from_id(cause_id) AS cause_of_jank,
@@ -446,9 +375,9 @@ SELECT
 FROM chrome_janky_frames_no_subcause;
 
 -- Counting all unique frame presentation timestamps.
-CREATE PERFETTO VIEW chrome_unique_frame_presentation_ts(
+CREATE PERFETTO TABLE chrome_unique_frame_presentation_ts(
   -- The unique frame presentation timestamp.
-  presentation_timestamp INT
+  presentation_timestamp LONG
 ) AS
 SELECT DISTINCT
 presentation_timestamp
@@ -457,9 +386,9 @@ FROM chrome_presented_gesture_scrolls;
 -- Dividing missed frames over total frames to get janky frame percentage.
 -- This represents the v3 scroll jank metrics.
 -- Reflects Event.Jank.DelayedFramesPercentage UMA metric.
-CREATE PERFETTO VIEW chrome_janky_frames_percentage(
+CREATE PERFETTO TABLE chrome_janky_frames_percentage(
   -- The percent of missed frames relative to total frames - aka the percent of janky frames.
-  delayed_frame_percentage FLOAT
+  delayed_frame_percentage DOUBLE
 ) AS
 SELECT
 (SELECT
@@ -470,15 +399,15 @@ SELECT
   FROM chrome_unique_frame_presentation_ts) * 100 AS delayed_frame_percentage;
 
 -- Number of frames and janky frames per scroll.
-CREATE PERFETTO VIEW chrome_frames_per_scroll(
+CREATE PERFETTO TABLE chrome_frames_per_scroll(
   -- The ID of the scroll.
-  scroll_id INT,
+  scroll_id LONG,
   -- The number of frames in the scroll.
-  num_frames INT,
+  num_frames LONG,
   -- The number of delayed/janky frames.
-  num_janky_frames INT,
+  num_janky_frames LONG,
   -- The percentage of janky frames relative to total frames.
-  scroll_jank_percentage INT
+  scroll_jank_percentage DOUBLE
 ) AS
 WITH
   frames AS (
@@ -506,12 +435,12 @@ LEFT JOIN janky_frames
 -- Scroll jank causes per scroll.
 CREATE PERFETTO VIEW chrome_causes_per_scroll(
   -- The ID of the scroll.
-  scroll_id INT,
+  scroll_id LONG,
   -- The maximum time a frame was delayed after the presentation of the previous
   -- frame.
-  max_delay_since_last_frame INT,
+  max_delay_since_last_frame DOUBLE,
   -- The expected vsync interval.
-  vsync_interval INT,
+  vsync_interval DOUBLE,
   -- A proto amalgamation of each scroll jank cause including cause name, sub
   -- cause and the duration of the delay since the previous frame was presented.
   scroll_jank_causes BYTES

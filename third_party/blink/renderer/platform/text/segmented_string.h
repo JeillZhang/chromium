@@ -17,6 +17,11 @@
     Boston, MA 02110-1301, USA.
 */
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_TEXT_SEGMENTED_STRING_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_TEXT_SEGMENTED_STRING_H_
 
@@ -157,8 +162,9 @@ class PLATFORM_EXPORT SegmentedSubstring {
   }
 
   union {
-    const LChar* string8_ptr;
-    const UChar* string16_ptr;
+    // RAW_PTR_EXCLUSION: #union
+    RAW_PTR_EXCLUSION const LChar* string8_ptr;
+    RAW_PTR_EXCLUSION const UChar* string16_ptr;
   } data_;
   raw_ptr<const LChar, AllowPtrArithmetic | DanglingUntriaged> data_start_;
   // |data_last_char_| points to the last character (or nullptr). This is to
@@ -241,7 +247,7 @@ class PLATFORM_EXPORT SegmentedString {
   void Advance(unsigned num_chars, unsigned num_lines, int current_column);
 
   ALWAYS_INLINE UChar Advance() {
-    if (LIKELY(current_string_.CanAdvance())) {
+    if (current_string_.CanAdvance()) [[likely]] {
       current_char_ = current_string_.Advance();
       return current_char_;
     }
@@ -249,7 +255,7 @@ class PLATFORM_EXPORT SegmentedString {
   }
 
   ALWAYS_INLINE void UpdateLineNumber() {
-    if (LIKELY(current_string_.DoNotExcludeLineNumbers())) {
+    if (current_string_.DoNotExcludeLineNumbers()) [[likely]] {
       ++current_line_;
       // Plus 1 because numberOfCharactersConsumed value hasn't incremented yet;
       // it does with length() decrement below.
@@ -288,10 +294,6 @@ class PLATFORM_EXPORT SegmentedString {
     return Advance();
   }
 
-  // Writes the consumed characters into consumedCharacters, which must
-  // have space for at least |count| characters.
-  void Advance(unsigned count, UChar* consumed_characters);
-
   ALWAYS_INLINE int NumberOfCharactersConsumed() const {
     int number_of_pushed_characters = 0;
     return number_of_characters_consumed_prior_to_current_string_ +
@@ -319,6 +321,10 @@ class PLATFORM_EXPORT SegmentedString {
 
   UChar AdvanceSubstring();
 
+  // Consume characters into `characters`, which should not be bigger than
+  // `length()`.
+  void AdvanceAndCollect(base::span<UChar> characters);
+
   inline LookAheadResult LookAheadInline(const String& string,
                                          TextCaseSensitivity case_sensitivity) {
     if (string.length() <= static_cast<unsigned>(current_string_.length())) {
@@ -336,10 +342,10 @@ class PLATFORM_EXPORT SegmentedString {
     unsigned count = string.length();
     if (count > length())
       return kNotEnoughCharacters;
-    UChar* consumed_characters;
+    base::span<UChar> consumed_characters;
     String consumed_string =
         String::CreateUninitialized(count, consumed_characters);
-    Advance(count, consumed_characters);
+    AdvanceAndCollect(consumed_characters);
     LookAheadResult result = kDidNotMatch;
     if (consumed_string.StartsWith(string, case_sensitivity))
       result = kDidMatch;

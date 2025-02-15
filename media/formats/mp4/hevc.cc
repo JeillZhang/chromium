@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/formats/mp4/hevc.h"
 
 #include <algorithm>
@@ -19,9 +24,9 @@
 #include "media/formats/mp4/box_definitions.h"
 #include "media/formats/mp4/box_reader.h"
 #if BUILDFLAG(ENABLE_HEVC_PARSER_AND_HW_DECODER)
-#include "media/video/h265_parser.h"
+#include "media/parsers/h265_parser.h"
 #else
-#include "media/video/h265_nalu_parser.h"
+#include "media/parsers/h265_nalu_parser.h"
 #endif  // BUILDFLAG(ENABLE_HEVC_PARSER_AND_HW_DECODER)
 
 namespace media {
@@ -51,7 +56,10 @@ HEVCDecoderConfigurationRecord::HEVCDecoderConfigurationRecord()
       numOfArrays(0),
       alpha_mode(VideoDecoderConfig::AlphaMode::kIsOpaque) {}
 
-HEVCDecoderConfigurationRecord::~HEVCDecoderConfigurationRecord() {}
+HEVCDecoderConfigurationRecord::HEVCDecoderConfigurationRecord(
+    const HEVCDecoderConfigurationRecord& other) = default;
+HEVCDecoderConfigurationRecord::~HEVCDecoderConfigurationRecord() = default;
+
 FourCC HEVCDecoderConfigurationRecord::BoxType() const { return FOURCC_HVCC; }
 
 bool HEVCDecoderConfigurationRecord::Parse(BoxReader* reader) {
@@ -223,6 +231,10 @@ bool HEVCDecoderConfigurationRecord::ParseInternal(BufferReader* reader,
   // Parse the color space and hdr metadata.
   std::vector<uint8_t> param_sets;
   HEVC::ConvertConfigToAnnexB(*this, &param_sets);
+  if (param_sets.empty()) {
+    // No parameters, nothing to parse below.
+    return true;
+  }
   H265Parser parser;
   H265NALU nalu;
   parser.SetStream(param_sets.data(), param_sets.size());
@@ -419,7 +431,6 @@ BitstreamConverter::AnalysisResult HEVC::AnalyzeAnnexB(
     size_t size,
     const std::vector<SubsampleEntry>& subsamples) {
   DVLOG(3) << __func__;
-  DCHECK(buffer);
 
   BitstreamConverter::AnalysisResult result;
   result.is_conformant = false;  // Will change if needed before return.
@@ -615,8 +626,7 @@ BitstreamConverter::AnalysisResult HEVC::AnalyzeAnnexB(
         break;
 
       default:
-        NOTREACHED_IN_MIGRATION()
-            << "Unsupported NALU type " << nalu.nal_unit_type;
+        NOTREACHED() << "Unsupported NALU type " << nalu.nal_unit_type;
     }
   }
 

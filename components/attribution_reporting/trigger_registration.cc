@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/feature_list.h"
 #include "base/functional/function_ref.h"
 #include "base/json/json_reader.h"
 #include "base/metrics/histogram_functions.h"
@@ -16,12 +17,14 @@
 #include "base/values.h"
 #include "components/attribution_reporting/aggregatable_debug_reporting_config.h"
 #include "components/attribution_reporting/aggregatable_dedup_key.h"
+#include "components/attribution_reporting/aggregatable_filtering_id_max_bytes.h"
+#include "components/attribution_reporting/aggregatable_named_budget_candidate.h"
 #include "components/attribution_reporting/aggregatable_trigger_config.h"
 #include "components/attribution_reporting/aggregatable_trigger_data.h"
 #include "components/attribution_reporting/aggregatable_values.h"
+#include "components/attribution_reporting/attribution_scopes_set.h"
 #include "components/attribution_reporting/constants.h"
 #include "components/attribution_reporting/event_trigger_data.h"
-#include "components/attribution_reporting/features.h"
 #include "components/attribution_reporting/filters.h"
 #include "components/attribution_reporting/parsing_utils.h"
 #include "components/attribution_reporting/suitable_origin.h"
@@ -41,7 +44,7 @@ void SerializeListIfNotEmpty(base::Value::Dict& dict,
     return;
   }
 
-  base::Value::List list;
+  auto list = base::Value::List::with_capacity(vec.size());
   for (const auto& value : vec) {
     list.Append(value.ToJson());
   }
@@ -74,20 +77,50 @@ base::expected<std::vector<T>, TriggerRegistrationError> ParseList(
   return vec;
 }
 
+bool ContributionsFilteringIdsFitWithinMaxBytes(
+    const std::vector<AggregatableValues>& aggregatable_values,
+    AggregatableFilteringIdsMaxBytes max_bytes) {
+  for (const AggregatableValues& values : aggregatable_values) {
+    for (const std::pair<std::string, AggregatableValuesValue>& value :
+         values.values()) {
+      if (!max_bytes.CanEncompass(value.second.filtering_id())) {
+        return false;
+      }
+    }
+  }
+
+  return true;
+}
+
 }  // namespace
 
 void RecordTriggerRegistrationError(TriggerRegistrationError error) {
-  static_assert(TriggerRegistrationError::kMaxValue ==
-                    TriggerRegistrationError::kEventValueInvalid,
-                "Update ConversionTriggerRegistrationError enum.");
   base::UmaHistogramEnumeration("Conversions.TriggerRegistrationError11",
                                 error);
 }
 
-// static
-base::expected<TriggerRegistration, TriggerRegistrationError>
-TriggerRegistration::Parse(base::Value::Dict dict) {
+void RecordFeatureUsage(const TriggerRegistration& registration) {
+  base::UmaHistogramCounts100("Conversions.ScopesPerTriggerRegistration",
+                              registration.attribution_scopes.scopes().size());
+  base::UmaHistogramCounts100(
+      "Conversions.NamedBudgetsPerTriggerRegistration",
+      registration.aggregatable_named_budget_candidates.size());
+}
+
+namespace {
+
+base::expected<TriggerRegistration, TriggerRegistrationError> ParseDict(
+    base::Value::Dict dict) {
   TriggerRegistration registration;
+
+  ASSIGN_OR_RETURN(
+      registration.aggregation_coordinator_origin,
+      ParseAggregationCoordinator(dict).transform_error([](ParseError) {
+        return TriggerRegistrationError::kAggregationCoordinatorValueInvalid;
+      }));
+
+  ASSIGN_OR_RETURN(registration.aggregatable_trigger_config,
+                   AggregatableTriggerConfig::Parse(dict));
 
   ASSIGN_OR_RETURN(registration.filters, FilterPair::FromJSON(dict));
 
@@ -111,20 +144,21 @@ TriggerRegistration::Parse(base::Value::Dict dict) {
           &AggregatableTriggerData::FromJSON));
 
   ASSIGN_OR_RETURN(
+      registration.aggregatable_named_budget_candidates,
+      ParseList<AggregatableNamedBudgetCandidate>(
+          dict.Find(kAggregatableNamedBudgets),
+          TriggerRegistrationError::kAggregatableNamedBudgetWrongType,
+          &AggregatableNamedBudgetCandidate::FromJSON));
+
+  ASSIGN_OR_RETURN(
       registration.aggregatable_values,
       AggregatableValues::FromJSON(dict.Find(kAggregatableValues)));
 
-  ASSIGN_OR_RETURN(
-      registration.aggregation_coordinator_origin,
-      ParseAggregationCoordinator(dict).transform_error([](ParseError) {
-        return TriggerRegistrationError::kAggregationCoordinatorValueInvalid;
-      }));
+  ASSIGN_OR_RETURN(registration.attribution_scopes,
+                   AttributionScopesSet::FromJSON(dict));
 
   registration.debug_key = ParseDebugKey(dict);
   registration.debug_reporting = ParseDebugReporting(dict);
-
-  ASSIGN_OR_RETURN(registration.aggregatable_trigger_config,
-                   AggregatableTriggerConfig::Parse(dict));
 
   // Deliberately ignoring errors for now to avoid dropping the registration
   // from the optional debug reporting feature.
@@ -135,7 +169,31 @@ TriggerRegistration::Parse(base::Value::Dict dict) {
         *std::move(aggregatable_debug_reporting_config);
   }
 
+  if (!ContributionsFilteringIdsFitWithinMaxBytes(
+          registration.aggregatable_values,
+          registration.aggregatable_trigger_config
+              .aggregatable_filtering_id_max_bytes())) {
+    return base::unexpected(
+        dict.FindList(kAggregatableValues)
+            ? TriggerRegistrationError::kAggregatableValuesListValueInvalid
+            : TriggerRegistrationError::kAggregatableValuesValueInvalid);
+  }
+
+  RecordFeatureUsage(registration);
+
   return registration;
+}
+
+}  // namespace
+
+// static
+base::expected<TriggerRegistration, TriggerRegistrationError>
+TriggerRegistration::Parse(base::Value value) {
+  if (base::Value::Dict* dict = value.GetIfDict()) {
+    return ParseDict(std::move(*dict));
+  } else {
+    return base::unexpected(TriggerRegistrationError::kRootWrongType);
+  }
 }
 
 // static
@@ -144,15 +202,9 @@ TriggerRegistration::Parse(std::string_view json) {
   base::expected<TriggerRegistration, TriggerRegistrationError> trigger =
       base::unexpected(TriggerRegistrationError::kInvalidJson);
 
-  std::optional<base::Value> value =
-      base::JSONReader::Read(json, base::JSON_PARSE_RFC);
-
-  if (value) {
-    if (base::Value::Dict* dict = value->GetIfDict()) {
-      trigger = Parse(std::move(*dict));
-    } else {
-      trigger = base::unexpected(TriggerRegistrationError::kRootWrongType);
-    }
+  if (std::optional<base::Value> value =
+          base::JSONReader::Read(json, base::JSON_PARSE_RFC)) {
+    trigger = Parse(*std::move(value));
   }
 
   if (!trigger.has_value()) {
@@ -202,7 +254,18 @@ base::Value::Dict TriggerRegistration::ToJson() const {
 
   aggregatable_debug_reporting_config.Serialize(dict);
 
+  attribution_scopes.SerializeForTrigger(dict);
+
+  SerializeListIfNotEmpty(dict, kAggregatableNamedBudgets,
+                          aggregatable_named_budget_candidates);
+
   return dict;
+}
+
+bool TriggerRegistration::IsValid() const {
+  return ContributionsFilteringIdsFitWithinMaxBytes(
+      aggregatable_values,
+      aggregatable_trigger_config.aggregatable_filtering_id_max_bytes());
 }
 
 }  // namespace attribution_reporting

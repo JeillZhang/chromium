@@ -11,12 +11,12 @@ import org.chromium.base.task.PostTask;
 import org.chromium.base.task.TaskTraits;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.tab.Tab;
-import org.chromium.chrome.browser.tabmodel.TabModelFilterProvider;
+import org.chromium.chrome.browser.tabmodel.TabGroupColorUtils;
+import org.chromium.chrome.browser.tabmodel.TabGroupModelFilter;
+import org.chromium.chrome.browser.tabmodel.TabGroupModelFilterObserver;
+import org.chromium.chrome.browser.tabmodel.TabGroupModelFilterProvider;
 import org.chromium.chrome.browser.tabmodel.TabModelObserver;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
-import org.chromium.chrome.browser.tasks.tab_groups.TabGroupColorUtils;
-import org.chromium.chrome.browser.tasks.tab_groups.TabGroupModelFilter;
-import org.chromium.chrome.browser.tasks.tab_groups.TabGroupModelFilterObserver;
 
 import java.util.HashSet;
 import java.util.List;
@@ -26,6 +26,8 @@ import java.util.Set;
  * Manages observers that monitor for updates to tab group visual aspects such as colors and titles.
  */
 public class TabGroupVisualDataManager {
+    private static final int DELETE_DATA_GROUP_SIZE_THRESHOLD = 1;
+
     private final TabModelSelector mTabModelSelector;
     private TabModelObserver mTabModelObserver;
     private TabGroupModelFilterObserver mFilterObserver;
@@ -34,8 +36,8 @@ public class TabGroupVisualDataManager {
         assert tabModelSelector.isTabStateInitialized();
         mTabModelSelector = tabModelSelector;
 
-        TabModelFilterProvider tabModelFilterProvider =
-                mTabModelSelector.getTabModelFilterProvider();
+        TabGroupModelFilterProvider tabGroupModelFilterProvider =
+                mTabModelSelector.getTabGroupModelFilterProvider();
 
         mTabModelObserver =
                 new TabModelObserver() {
@@ -45,30 +47,21 @@ public class TabGroupVisualDataManager {
 
                         TabGroupModelFilter filter = filterFromTab(tabs.get(0));
                         LazyOneshotSupplier<Set<Integer>> remainingRootIds =
-                                filter.getLazyAllRootIdsInComprehensiveModel(tabs);
+                                filter.getLazyAllRootIds(tabs, /* includePendingClosures= */ true);
                         Set<Integer> processedRootIds = new HashSet<>();
                         for (Tab tab : tabs) {
                             int rootId = tab.getRootId();
                             boolean wasAdded = processedRootIds.add(rootId);
                             if (!wasAdded) continue;
 
-                            if (remainingRootIds.get().contains(rootId)) {
-                                // If any related tab still exist keep the data as size 1 groups are
-                                // valid.
-                                if (ChromeFeatureList.sAndroidTabGroupStableIds.isEnabled()) {
-                                    continue;
-                                }
-
-                                // Groups of size 1 are not supported so delete the data.
-                                if (filter.getRelatedTabCountForRootId(rootId) > 1) continue;
-                            }
+                            // If any related tab still exist keep the data as size 1 groups are
+                            // valid.
+                            if (remainingRootIds.get().contains(rootId)) continue;
 
                             Runnable deleteTask =
                                     () -> {
                                         filter.deleteTabGroupTitle(rootId);
-                                        if (ChromeFeatureList.sTabGroupParityAndroid.isEnabled()) {
-                                            filter.deleteTabGroupColor(rootId);
-                                        }
+                                        filter.deleteTabGroupColor(rootId);
                                         if (ChromeFeatureList.sTabStripGroupCollapse.isEnabled()) {
                                             filter.deleteTabGroupCollapsed(rootId);
                                         }
@@ -99,20 +92,18 @@ public class TabGroupVisualDataManager {
                             filter.setTabGroupTitle(newRootId, sourceGroupTitle);
                         }
 
-                        if (ChromeFeatureList.sTabGroupParityAndroid.isEnabled()) {
-                            int sourceGroupColor = filter.getTabGroupColor(movedTab.getRootId());
-                            int targetGroupColor = filter.getTabGroupColor(newRootId);
-                            // If the target group has no color but the source group has a color,
-                            // handover the stored color to the group after merge.
-                            if (sourceGroupColor != TabGroupColorUtils.INVALID_COLOR_ID
-                                    && targetGroupColor == TabGroupColorUtils.INVALID_COLOR_ID) {
-                                filter.setTabGroupColor(newRootId, sourceGroupColor);
-                            }
-                        }
-
-                        // The act of merging should expand the destination group.
-                        if (ChromeFeatureList.sTabStripGroupCollapse.isEnabled()) {
-                            filter.deleteTabGroupCollapsed(newRootId);
+                        int sourceGroupColor = filter.getTabGroupColor(movedTab.getRootId());
+                        int targetGroupColor = filter.getTabGroupColor(newRootId);
+                        // If the target group has no color but the source group has a color,
+                        // handover the stored color to the group after merge.
+                        if (sourceGroupColor != TabGroupColorUtils.INVALID_COLOR_ID
+                                && targetGroupColor == TabGroupColorUtils.INVALID_COLOR_ID) {
+                           filter.setTabGroupColor(newRootId, sourceGroupColor);
+                        } else if (sourceGroupColor == TabGroupColorUtils.INVALID_COLOR_ID
+                                && targetGroupColor == TabGroupColorUtils.INVALID_COLOR_ID) {
+                           filter.setTabGroupColor(
+                                    newRootId,
+                                    TabGroupColorUtils.getNextSuggestedColorId(filter));
                         }
                     }
 
@@ -125,17 +116,15 @@ public class TabGroupVisualDataManager {
                         // If the group size is 2, i.e. the group becomes a single tab after
                         // ungroup, delete the stored visual data. When tab groups of size 1 are
                         // supported this behavior is no longer valid.
-                        int sizeThreshold =
-                                ChromeFeatureList.sAndroidTabGroupStableIds.isEnabled() ? 1 : 2;
                         boolean shouldDeleteVisualData =
-                                filter.getRelatedTabCountForRootId(rootId) <= sizeThreshold;
+                                filter.getRelatedTabCountForRootId(rootId)
+                                        <= DELETE_DATA_GROUP_SIZE_THRESHOLD;
                         if (shouldDeleteVisualData) {
                             if (title != null) {
                                 filter.deleteTabGroupTitle(rootId);
                             }
-                            if (ChromeFeatureList.sTabGroupParityAndroid.isEnabled()) {
-                                filter.deleteTabGroupColor(rootId);
-                            }
+
+                            filter.deleteTabGroupColor(rootId);
                             if (ChromeFeatureList.sTabStripGroupCollapse.isEnabled()) {
                                 filter.deleteTabGroupCollapsed(rootId);
                             }
@@ -150,17 +139,20 @@ public class TabGroupVisualDataManager {
                     }
                 };
 
-        tabModelFilterProvider.addTabModelFilterObserver(mTabModelObserver);
+        tabGroupModelFilterProvider.addTabGroupModelFilterObserver(mTabModelObserver);
 
-        ((TabGroupModelFilter) tabModelFilterProvider.getTabModelFilter(false))
+        tabGroupModelFilterProvider
+                .getTabGroupModelFilter(false)
                 .addTabGroupObserver(mFilterObserver);
-        ((TabGroupModelFilter) tabModelFilterProvider.getTabModelFilter(true))
+        tabGroupModelFilterProvider
+                .getTabGroupModelFilter(true)
                 .addTabGroupObserver(mFilterObserver);
     }
 
     private TabGroupModelFilter filterFromTab(Tab tab) {
-        return (TabGroupModelFilter)
-                mTabModelSelector.getTabModelFilterProvider().getTabModelFilter(tab.isIncognito());
+        return mTabModelSelector
+                .getTabGroupModelFilterProvider()
+                .getTabGroupModelFilter(tab.isIncognito());
     }
 
     /** Overwrites the tab group metadata at the new id with the data from the old id. */
@@ -171,12 +163,11 @@ public class TabGroupVisualDataManager {
             filter.setTabGroupTitle(newRootId, title);
             filter.deleteTabGroupTitle(oldRootId);
         }
-        if (ChromeFeatureList.sTabGroupParityAndroid.isEnabled()) {
-            int colorId = filter.getTabGroupColor(oldRootId);
-            if (colorId != TabGroupColorUtils.INVALID_COLOR_ID) {
-                filter.setTabGroupColor(newRootId, colorId);
-                filter.deleteTabGroupColor(oldRootId);
-            }
+
+        int colorId = filter.getTabGroupColor(oldRootId);
+        if (colorId != TabGroupColorUtils.INVALID_COLOR_ID) {
+            filter.setTabGroupColor(newRootId, colorId);
+            filter.deleteTabGroupColor(oldRootId);
         }
         if (ChromeFeatureList.sTabStripGroupCollapse.isEnabled()) {
             if (filter.getTabGroupCollapsed(oldRootId)) {
@@ -188,18 +179,20 @@ public class TabGroupVisualDataManager {
 
     /** Destroy any members that need clean up. */
     public void destroy() {
-        TabModelFilterProvider tabModelFilterProvider =
-                mTabModelSelector.getTabModelFilterProvider();
+        TabGroupModelFilterProvider tabGroupModelFilterProvider =
+                mTabModelSelector.getTabGroupModelFilterProvider();
 
         if (mTabModelObserver != null) {
-            tabModelFilterProvider.removeTabModelFilterObserver(mTabModelObserver);
+            tabGroupModelFilterProvider.removeTabGroupModelFilterObserver(mTabModelObserver);
             mTabModelObserver = null;
         }
 
         if (mFilterObserver != null) {
-            ((TabGroupModelFilter) tabModelFilterProvider.getTabModelFilter(false))
+            tabGroupModelFilterProvider
+                    .getTabGroupModelFilter(false)
                     .removeTabGroupObserver(mFilterObserver);
-            ((TabGroupModelFilter) tabModelFilterProvider.getTabModelFilter(true))
+            tabGroupModelFilterProvider
+                    .getTabGroupModelFilter(true)
                     .removeTabGroupObserver(mFilterObserver);
             mFilterObserver = null;
         }

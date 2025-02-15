@@ -9,6 +9,7 @@
 
 #include <memory>
 
+#include "ash/constants/web_app_id_constants.h"
 #include "ash/public/cpp/notification_utils.h"
 #include "base/feature_list.h"
 #include "base/files/file_util.h"
@@ -20,8 +21,6 @@
 #include "base/task/thread_pool.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
-#include "chrome/app/vector_icons/vector_icons.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/download/download_commands.h"
 #include "chrome/browser/download/download_crx_util.h"
@@ -38,7 +37,6 @@
 #include "chrome/browser/ui/chrome_pages.h"
 #include "chrome/browser/ui/scoped_tabbed_browser_displayer.h"
 #include "chrome/browser/ui/tabs/tab_strip_model_observer.h"
-#include "chrome/browser/web_applications/web_app_id_constants.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/branded_strings.h"
@@ -52,6 +50,7 @@
 #include "components/safe_browsing/core/common/safe_browsing_prefs.h"
 #include "components/strings/grit/components_strings.h"
 #include "components/url_formatter/elide_url.h"
+#include "components/vector_icons/vector_icons.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/download_item_utils.h"
@@ -72,12 +71,10 @@
 #include "ui/message_center/public/cpp/message_center_constants.h"
 #include "ui/message_center/public/cpp/notification.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #include "ash/constants/notifier_catalogs.h"
 #include "chrome/browser/apps/app_service/policy_util.h"
 #include "chrome/browser/ash/file_manager/file_tasks.h"
-#elif BUILDFLAG(IS_CHROMEOS_LACROS)
-#include "chromeos/startup/browser_params_proxy.h"
 #endif
 
 using base::UserMetricsAction;
@@ -212,8 +209,7 @@ void RecordButtonClickAction(DownloadCommands::Command command) {
     case DownloadCommands::BYPASS_DEEP_SCANNING_AND_OPEN:
     case DownloadCommands::CANCEL_DEEP_SCAN:
     case DownloadCommands::RETRY:
-      NOTREACHED_IN_MIGRATION();
-      break;
+      NOTREACHED();
   }
 }
 
@@ -233,7 +229,8 @@ DownloadItemNotification::DownloadItemNotification(
   // overridden by UpdateNotificationData() below.
   message_center::RichNotificationData rich_notification_data;
   rich_notification_data.should_make_spoken_feedback_for_popup_updates = false;
-  rich_notification_data.vector_small_image = &kNotificationDownloadIcon;
+  rich_notification_data.vector_small_image =
+      &vector_icons::kNotificationDownloadIcon;
 
   notification_ = std::make_unique<message_center::Notification>(
       message_center::NOTIFICATION_TYPE_PROGRESS, GetNotificationId(),
@@ -243,7 +240,7 @@ DownloadItemNotification::DownloadItemNotification(
       l10n_util::GetStringUTF16(
           IDS_DOWNLOAD_NOTIFICATION_DISPLAY_SOURCE),  // display_source
       GURL(kDownloadNotificationOrigin),              // origin_url
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
       message_center::NotifierId(
           message_center::NotifierType::SYSTEM_COMPONENT,
           kDownloadNotificationNotifierId,
@@ -251,7 +248,7 @@ DownloadItemNotification::DownloadItemNotification(
 #else
       message_center::NotifierId(message_center::NotifierType::SYSTEM_COMPONENT,
                                  kDownloadNotificationNotifierId),
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
       rich_notification_data,
       base::MakeRefCounted<message_center::ThunkNotificationDelegate>(
           weak_factory_.GetWeakPtr()));
@@ -336,8 +333,7 @@ void DownloadItemNotification::Click(
     if (*button_index < 0 ||
         static_cast<size_t>(*button_index) >= button_actions_->size()) {
       // Out of boundary.
-      NOTREACHED_IN_MIGRATION();
-      return;
+      NOTREACHED();
     }
 
     DownloadCommands::Command command = button_actions_->at(*button_index);
@@ -432,7 +428,7 @@ void DownloadItemNotification::Click(
       CloseNotification();
       break;
     case download::DownloadItem::MAX_DOWNLOAD_STATE:
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
   }
 }
 
@@ -513,8 +509,7 @@ void DownloadItemNotification::UpdateNotificationData(bool display,
       case download::DownloadItem::InsecureDownloadStatus::SAFE:
       case download::DownloadItem::InsecureDownloadStatus::VALIDATED:
       case download::DownloadItem::InsecureDownloadStatus::SILENT_BLOCK:
-        NOTREACHED_IN_MIGRATION();
-        break;
+        NOTREACHED();
     }
   } else {
     switch (item_->GetState()) {
@@ -539,8 +534,7 @@ void DownloadItemNotification::UpdateNotificationData(bool display,
         break;
       case download::DownloadItem::CANCELLED:
         // Handled above.
-        NOTREACHED_IN_MIGRATION();
-        return;
+        NOTREACHED();
       case download::DownloadItem::INTERRUPTED:
         // Shows a notifiation as progress type once so the visible content will
         // be updated. (same as the case of type = COMPLETE)
@@ -549,7 +543,7 @@ void DownloadItemNotification::UpdateNotificationData(bool display,
         notification_->set_priority(message_center::DEFAULT_PRIORITY);
         break;
       case download::DownloadItem::MAX_DOWNLOAD_STATE:  // sentinel
-        NOTREACHED_IN_MIGRATION();
+        NOTREACHED();
     }
   }
   SkColor notification_color = GetNotificationIconColor();
@@ -628,8 +622,7 @@ SkColor DownloadItemNotification::GetNotificationIconColor() {
       case download::DownloadItem::InsecureDownloadStatus::SAFE:
       case download::DownloadItem::InsecureDownloadStatus::VALIDATED:
       case download::DownloadItem::InsecureDownloadStatus::SILENT_BLOCK:
-        NOTREACHED_IN_MIGRATION();
-        break;
+        NOTREACHED();
     }
   }
 
@@ -645,8 +638,7 @@ SkColor DownloadItemNotification::GetNotificationIconColor() {
       break;
 
     case download::DownloadItem::MAX_DOWNLOAD_STATE:
-      NOTREACHED_IN_MIGRATION();
-      break;
+      NOTREACHED();
   }
 
   return gfx::kPlaceholderColor;
@@ -750,8 +742,7 @@ DownloadItemNotification::GetExtraActions() const {
       case download::DownloadItem::InsecureDownloadStatus::SAFE:
       case download::DownloadItem::InsecureDownloadStatus::VALIDATED:
       case download::DownloadItem::InsecureDownloadStatus::SILENT_BLOCK:
-        NOTREACHED_IN_MIGRATION();
-        break;
+        NOTREACHED();
     }
     actions->push_back(DownloadCommands::LEARN_MORE_INSECURE_DOWNLOAD);
     return actions;
@@ -763,9 +754,9 @@ DownloadItemNotification::GetExtraActions() const {
           download::DOWNLOAD_DANGER_TYPE_ASYNC_SCANNING) {
         if (AllowedToOpenWhileScanning())
           actions->push_back(DownloadCommands::OPEN_WHEN_COMPLETE);
-      } else if (!item_->IsPaused()) {
+      } else if (!item_->IsPaused() && item_->GetUploadedBytes() == 0) {
         actions->push_back(DownloadCommands::PAUSE);
-      } else {
+      } else if (item_->IsPaused() && item_->GetUploadedBytes() == 0) {
         actions->push_back(DownloadCommands::RESUME);
       }
       actions->push_back(DownloadCommands::CANCEL);
@@ -776,7 +767,7 @@ DownloadItemNotification::GetExtraActions() const {
         actions->push_back(DownloadCommands::RESUME);
       break;
     case download::DownloadItem::COMPLETE: {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
       std::optional<DownloadCommands::Command> command =
           item_->MaybeGetMediaAppAction();
       if (command) {
@@ -785,18 +776,16 @@ DownloadItemNotification::GetExtraActions() const {
 #endif
 
       actions->push_back(DownloadCommands::SHOW_IN_FOLDER);
-#if !BUILDFLAG(IS_CHROMEOS_LACROS)
       // We disable this functionality for now as the usage is very low, the
       // feature gets re-written at this time and there is currently no secure
       // way to determine the caller on the Ash side as the dialog is still
       // active when |seat::SetSelection| is reached.
       if (!notification_->image().IsEmpty())
         actions->push_back(DownloadCommands::COPY_TO_CLIPBOARD);
-#endif
       break;
     }
     case download::DownloadItem::MAX_DOWNLOAD_STATE:
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
   }
   return actions;
 }
@@ -857,7 +846,7 @@ std::u16string DownloadItemNotification::GetTitle() const {
           IDS_DOWNLOAD_STATUS_DOWNLOAD_FAILED_TITLE, file_name);
       break;
     case download::DownloadItem::MAX_DOWNLOAD_STATE:
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
   }
   return title_text;
 }
@@ -908,7 +897,7 @@ std::u16string DownloadItemNotification::GetCommandLabel(
     case DownloadCommands::REVIEW:
       id = IDS_REVIEW_DOWNLOAD;
       break;
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
     case DownloadCommands::OPEN_WITH_MEDIA_APP:
       id = IDS_DOWNLOAD_NOTIFICATION_LABEL_OPEN;
       break;
@@ -918,8 +907,7 @@ std::u16string DownloadItemNotification::GetCommandLabel(
 #else
     case DownloadCommands::OPEN_WITH_MEDIA_APP:
     case DownloadCommands::EDIT_WITH_MEDIA_APP:
-      NOTREACHED_IN_MIGRATION();
-      return std::u16string();
+      NOTREACHED();
 #endif
     case DownloadCommands::ALWAYS_OPEN_TYPE:
     case DownloadCommands::PLATFORM_OPEN:
@@ -931,8 +919,7 @@ std::u16string DownloadItemNotification::GetCommandLabel(
     case DownloadCommands::CANCEL_DEEP_SCAN:
     case DownloadCommands::RETRY:
       // Only for menu.
-      NOTREACHED_IN_MIGRATION();
-      return std::u16string();
+      NOTREACHED();
   }
   CHECK_NE(id, -1);
   return l10n_util::GetStringUTF16(id);
@@ -1005,7 +992,7 @@ std::u16string DownloadItemNotification::GetWarningStatusString() const {
     case download::DOWNLOAD_DANGER_TYPE_PROMPT_FOR_LOCAL_PASSWORD_SCANNING:
     case download::DOWNLOAD_DANGER_TYPE_ASYNC_LOCAL_PASSWORD_SCANNING: {
       // TODO(crbug.com/40074456): Implement UX for this danger type.
-      NOTREACHED_IN_MIGRATION();
+      DUMP_WILL_BE_NOTREACHED();
       break;
     }
     case download::DOWNLOAD_DANGER_TYPE_BLOCKED_SCAN_FAILED: {
@@ -1023,8 +1010,7 @@ std::u16string DownloadItemNotification::GetWarningStatusString() const {
       break;
     }
   }
-  NOTREACHED_IN_MIGRATION();
-  return std::u16string();
+  NOTREACHED();
 }
 
 std::u16string DownloadItemNotification::GetInProgressSubStatusString() const {
@@ -1114,10 +1100,8 @@ std::u16string DownloadItemNotification::GetSubStatusString() const {
       return l10n_util::GetStringUTF16(IDS_DOWNLOAD_STATUS_CANCELLED);
 
     default:
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
   }
-
-  return std::u16string();
 }
 
 std::u16string DownloadItemNotification::GetStatusString() const {

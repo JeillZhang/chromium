@@ -5,6 +5,7 @@
 package org.chromium.chrome.browser.ui.signin.account_picker;
 
 import android.app.Activity;
+import android.content.Context;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.View.OnClickListener;
@@ -14,13 +15,13 @@ import android.widget.TextView;
 import android.widget.ViewFlipper;
 
 import androidx.annotation.IdRes;
+import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.annotation.StringRes;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import org.chromium.base.supplier.ObservableSupplierImpl;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.signin.services.DisplayableProfileData;
 import org.chromium.chrome.browser.ui.signin.R;
 import org.chromium.chrome.browser.ui.signin.SigninUtils;
@@ -79,6 +80,7 @@ class AccountPickerBottomSheetView implements BottomSheetContent {
     private final View mSelectedAccountView;
     private final ButtonCompat mDismissButton;
     private final Space mDismissButtonGoneMarginSpace;
+    private @Nullable @ViewState Integer mCurrentViewState;
 
     /**
      * @param activity The activity that hosts this view. Used for inflating views.
@@ -88,11 +90,7 @@ class AccountPickerBottomSheetView implements BottomSheetContent {
         mActivity = activity;
         mBackPressListener = backPressListener;
 
-        int contentLayoutId =
-                ChromeFeatureList.isEnabled(
-                                ChromeFeatureList.REPLACE_SYNC_PROMOS_WITH_SIGN_IN_PROMOS)
-                        ? R.layout.account_picker_bottom_sheet_view
-                        : R.layout.account_picker_bottom_sheet_view_old;
+        int contentLayoutId = R.layout.account_picker_bottom_sheet_view;
 
         mContentView = LayoutInflater.from(mActivity).inflate(contentLayoutId, null);
 
@@ -135,10 +133,7 @@ class AccountPickerBottomSheetView implements BottomSheetContent {
                 .findViewById(R.id.confirm_management_cancel_button)
                 .setOnClickListener((View v) -> handleBackPress());
 
-        if (ChromeFeatureList.isEnabled(
-                ChromeFeatureList.REPLACE_SYNC_PROMOS_WITH_SIGN_IN_PROMOS)) {
-            getAccountListView().addItemDecoration(new AccountPickerItemDecoration());
-        }
+        getAccountListView().addItemDecoration(new AccountPickerItemDecoration());
     }
 
     /** The account list view is visible when the account list is expanded. */
@@ -169,7 +164,25 @@ class AccountPickerBottomSheetView implements BottomSheetContent {
 
     /** Sets the displayed view according to the given {@link ViewState}. */
     void setDisplayedView(@ViewState int state) {
+        if (mCurrentViewState != null && mCurrentViewState == state) {
+            return;
+        }
+
         mViewFlipper.setDisplayedChild(state);
+        if (state == ViewState.SIGNIN_IN_PROGRESS && mCurrentViewState != null) {
+            // The goal here is to make the progress view take the height of the previously shown
+            // view, to prevent the bottom sheet from "jumping" visually.
+            // (See https://crbug.com/327127097)
+            //
+            // At this point, all other children of mViewFlipper are set to `GONE` by
+            // `mViewFlipper.setDisplayedChild` above.
+            // Here, the previous view's visibility is set to `INVISIBLE` instead. Since the
+            // progress view's height is `MATCH_PARENT` and it's minimal height is smaller,
+            // the bottom sheet view's height will be defined by the invisible previous view, making
+            // the progress view having the same height than the previous view in consequence.
+            mViewFlipper.getChildAt(mCurrentViewState).setVisibility(View.INVISIBLE);
+        }
+        mCurrentViewState = state;
         View titleView = mViewFlipper.getChildAt(state).findViewById(sTitleIds[state]);
         titleView.setFocusable(true);
         titleView.sendAccessibilityEvent(AccessibilityEvent.TYPE_VIEW_FOCUSED);
@@ -208,7 +221,7 @@ class AccountPickerBottomSheetView implements BottomSheetContent {
             ((TextView) view.findViewById(R.id.account_picker_header_title)).setText(title);
 
             TextViewWithLeading subtitleView =
-                    ((TextViewWithLeading) view.findViewById(R.id.account_picker_header_subtitle));
+                    view.findViewById(R.id.account_picker_header_subtitle);
             if (subtitle == 0) {
                 subtitleView.setVisibility(View.GONE);
             } else {
@@ -280,8 +293,8 @@ class AccountPickerBottomSheetView implements BottomSheetContent {
     }
 
     @Override
-    public int getSheetContentDescriptionStringId() {
-        return R.string.signin_account_picker_bottom_sheet_subtitle;
+    public @NonNull String getSheetContentDescription(Context context) {
+        return context.getString(R.string.signin_account_picker_bottom_sheet_subtitle);
     }
 
     @Override
@@ -297,6 +310,11 @@ class AccountPickerBottomSheetView implements BottomSheetContent {
     @Override
     public int getSheetClosedAccessibilityStringId() {
         return R.string.account_picker_bottom_sheet_accessibility_closed;
+    }
+
+    @Override
+    public boolean shouldLongPressMoveSheet() {
+        return true;
     }
 
     private static void setUpContinueButton(View view, @StringRes int buttonId) {

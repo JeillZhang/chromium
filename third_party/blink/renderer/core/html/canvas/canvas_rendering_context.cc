@@ -42,7 +42,6 @@ CanvasRenderingContext::CanvasRenderingContext(
     CanvasRenderingAPI canvas_rendering_API)
     : ActiveScriptWrappable<CanvasRenderingContext>({}),
       host_(host),
-      color_params_(attrs.color_space, attrs.pixel_format, attrs.alpha),
       creation_attributes_(attrs),
       canvas_rendering_type_(canvas_rendering_API) {
   // The following check is for investigating crbug.com/1470622
@@ -57,11 +56,6 @@ CanvasRenderingContext::CanvasRenderingContext(
   CHECK(host_);
 }
 
-SkColorInfo CanvasRenderingContext::CanvasRenderingContextSkColorInfo() const {
-  return SkColorInfo(kN32_SkColorType, kPremul_SkAlphaType,
-                     SkColorSpace::MakeSRGB());
-}
-
 void CanvasRenderingContext::Dispose() {
   RenderTaskEnded();
 
@@ -71,7 +65,7 @@ void CanvasRenderingContext::Dispose() {
   // the other in order to break the circular reference.  This is to avoid
   // an error when CanvasRenderingContext::DidProcessTask() is invoked
   // after the HTMLCanvasElement is destroyed.
-  if (CanvasRenderingContextHost* host = Host(); LIKELY(host != nullptr)) {
+  if (CanvasRenderingContextHost* host = Host()) [[likely]] {
     host->DetachContext();
     host_ = nullptr;
   }
@@ -103,7 +97,7 @@ void CanvasRenderingContext::DidProcessTask(
 
   // The end of a script task that drew content to the canvas is the point
   // at which the current frame may be considered complete.
-  if (CanvasRenderingContextHost* host = Host(); LIKELY(host != nullptr)) {
+  if (CanvasRenderingContextHost* host = Host()) [[likely]] {
     host->PreFinalizeFrame();
   }
   FlushReason reason = did_print_in_current_task_
@@ -111,7 +105,7 @@ void CanvasRenderingContext::DidProcessTask(
                            : FlushReason::kCanvasPushFrame;
   FinalizeFrame(reason);
   did_print_in_current_task_ = false;
-  if (CanvasRenderingContextHost* host = Host(); LIKELY(host != nullptr)) {
+  if (CanvasRenderingContextHost* host = Host()) [[likely]] {
     host->PostFinalizeFrame(reason);
   }
 }
@@ -123,9 +117,6 @@ void CanvasRenderingContext::RecordUMACanvasRenderingAPI() {
     WebFeature feature;
     if (host->IsOffscreenCanvas()) {
       switch (canvas_rendering_type_) {
-        default:
-          NOTREACHED_IN_MIGRATION();
-          [[fallthrough]];
         case CanvasRenderingContext::CanvasRenderingAPI::k2D:
           feature = WebFeature::kOffscreenCanvas_2D;
           break;
@@ -141,12 +132,11 @@ void CanvasRenderingContext::RecordUMACanvasRenderingAPI() {
         case CanvasRenderingContext::CanvasRenderingAPI::kWebgpu:
           feature = WebFeature::kOffscreenCanvas_WebGPU;
           break;
+        default:
+          NOTREACHED();
       }
     } else {
       switch (canvas_rendering_type_) {
-        default:
-          NOTREACHED_IN_MIGRATION();
-          [[fallthrough]];
         case CanvasRenderingContext::CanvasRenderingAPI::k2D:
           feature = WebFeature::kHTMLCanvasElement_2D;
           break;
@@ -162,6 +152,8 @@ void CanvasRenderingContext::RecordUMACanvasRenderingAPI() {
         case CanvasRenderingContext::CanvasRenderingAPI::kWebgpu:
           feature = WebFeature::kHTMLCanvasElement_WebGPU;
           break;
+        default:
+          NOTREACHED();
       }
     }
     UseCounter::Count(window->document(), feature);

@@ -67,19 +67,18 @@ bool PhoneNumber::operator==(const PhoneNumber& other) const {
   return number_ == other.number_ && profile_ == other.profile_;
 }
 
-void PhoneNumber::GetSupportedTypes(FieldTypeSet* supported_types) const {
-  supported_types->insert(PHONE_HOME_WHOLE_NUMBER);
-  supported_types->insert(PHONE_HOME_NUMBER);
-  supported_types->insert(PHONE_HOME_NUMBER_PREFIX);
-  supported_types->insert(PHONE_HOME_NUMBER_SUFFIX);
-  supported_types->insert(PHONE_HOME_CITY_CODE);
-  supported_types->insert(PHONE_HOME_CITY_AND_NUMBER);
-  supported_types->insert(PHONE_HOME_COUNTRY_CODE);
-  if (base::FeatureList::IsEnabled(
-          features::kAutofillEnableSupportForPhoneNumberTrunkTypes)) {
-    supported_types->insert(PHONE_HOME_CITY_CODE_WITH_TRUNK_PREFIX);
-    supported_types->insert(PHONE_HOME_CITY_AND_NUMBER_WITHOUT_TRUNK_PREFIX);
-  }
+FieldTypeSet PhoneNumber::GetSupportedTypes() const {
+  static constexpr FieldTypeSet supported_types{
+      PHONE_HOME_WHOLE_NUMBER,
+      PHONE_HOME_NUMBER,
+      PHONE_HOME_NUMBER_PREFIX,
+      PHONE_HOME_NUMBER_SUFFIX,
+      PHONE_HOME_CITY_CODE,
+      PHONE_HOME_CITY_AND_NUMBER,
+      PHONE_HOME_COUNTRY_CODE,
+      PHONE_HOME_CITY_CODE_WITH_TRUNK_PREFIX,
+      PHONE_HOME_CITY_AND_NUMBER_WITHOUT_TRUNK_PREFIX};
+  return supported_types;
 }
 
 std::u16string PhoneNumber::GetRawInfo(FieldType type) const {
@@ -101,7 +100,7 @@ void PhoneNumber::SetRawInfoWithVerificationStatus(FieldType type,
     // Only full phone numbers should be set directly. The browser is
     // intentionally caused to crash to prevent all users from setting raw info
     // to the non-storable fields.
-    NOTREACHED_NORETURN();
+    NOTREACHED();
   }
 
   number_ = value;
@@ -130,8 +129,7 @@ void PhoneNumber::GetMatchingTypes(const std::u16string& text,
   // "+33249197070" whereas the US number "+1 (234) 567-8901" would be
   // normalized to "12345678901".
   if (!matching_types->contains(PHONE_HOME_WHOLE_NUMBER)) {
-    std::u16string whole_number =
-        GetInfo(AutofillType(PHONE_HOME_WHOLE_NUMBER), app_locale);
+    std::u16string whole_number = GetInfo(PHONE_HOME_WHOLE_NUMBER, app_locale);
     if (!whole_number.empty()) {
       std::u16string normalized_number =
           i18n::NormalizePhoneNumber(text, GetRegion(*profile_, app_locale));
@@ -144,8 +142,7 @@ void PhoneNumber::GetMatchingTypes(const std::u16string& text,
   // the digits extracted from the `stripped_text` match the `country_code`.
   std::u16string candidate =
       data_util::FindPossiblePhoneCountryCode(stripped_text);
-  std::u16string country_code =
-      GetInfo(AutofillType(PHONE_HOME_COUNTRY_CODE), app_locale);
+  std::u16string country_code = GetInfo(PHONE_HOME_COUNTRY_CODE, app_locale);
   if (candidate.size() > 0 && candidate == country_code)
     matching_types->insert(PHONE_HOME_COUNTRY_CODE);
 
@@ -156,8 +153,6 @@ void PhoneNumber::GetMatchingTypes(const std::u16string& text,
   // We explicitly keep both matches, as the type prediction doesn't make a
   // difference for these countries. Votes from other countries can then tip
   // the counts to the right type.
-  // This is only applicable when
-  // `kAutofillEnableSupportForPhoneNumberTrunkTypes` is enabled.
   //
   // When the phone number is stored without a country code,
   // PHONE_HOME_WHOLE_NUMBER and PHONE_HOME_CITY_AND_NUMBER coincide (and
@@ -177,17 +172,16 @@ void PhoneNumber::GetMatchingTypes(const std::u16string& text,
 //   (650)2345678 -> 6502345678
 //   1-800-FLOWERS -> 18003569377
 // If the phone cannot be normalized, returns the stored value verbatim.
-std::u16string PhoneNumber::GetInfoImpl(const AutofillType& type,
-                                        const std::string& app_locale) const {
-  FieldType storable_type = type.GetStorableType();
+std::u16string PhoneNumber::GetInfo(const AutofillType& autofill_type,
+                                    const std::string& app_locale) const {
+  FieldType type = autofill_type.GetStorableType();
   UpdateCacheIfNeeded(app_locale);
 
   // When the phone number autofill has stored cannot be normalized, it
   // responds to queries for complete numbers with whatever the raw stored value
   // is, and simply return empty string for any queries for phone components.
   if (!cached_parsed_phone_.IsValidNumber()) {
-    if (storable_type == PHONE_HOME_WHOLE_NUMBER ||
-        storable_type == PHONE_HOME_CITY_AND_NUMBER) {
+    if (type == PHONE_HOME_WHOLE_NUMBER || type == PHONE_HOME_CITY_AND_NUMBER) {
       return cached_parsed_phone_.GetWholeNumber();
     }
     return std::u16string();
@@ -201,7 +195,7 @@ std::u16string PhoneNumber::GetInfoImpl(const AutofillType& type,
         0, national_number.find(cached_parsed_phone_.city_code()));
   };
 
-  switch (storable_type) {
+  switch (type) {
     case PHONE_HOME_WHOLE_NUMBER:
       return cached_parsed_phone_.GetWholeNumber();
 
@@ -271,16 +265,14 @@ std::u16string PhoneNumber::GetInfoImpl(const AutofillType& type,
       return std::u16string();
 
     default:
-      NOTREACHED_IN_MIGRATION();
-      return std::u16string();
+      NOTREACHED();
   }
 }
 
-bool PhoneNumber::SetInfoWithVerificationStatusImpl(
-    const AutofillType& type,
-    const std::u16string& value,
-    const std::string& app_locale,
-    VerificationStatus status) {
+bool PhoneNumber::SetInfoWithVerificationStatus(const AutofillType& type,
+                                                const std::u16string& value,
+                                                const std::string& app_locale,
+                                                VerificationStatus status) {
   SetRawInfoWithVerificationStatus(type.GetStorableType(), value, status);
 
   if (number_.empty())
@@ -296,24 +288,12 @@ bool PhoneNumber::SetInfoWithVerificationStatusImpl(
     cached_parsed_phone_ = i18n::PhoneObject();
     return false;
   }
-  // Store a formatted (i.e., pretty printed) version of the number if it
-  // doesn't contain formatting marks.
-  if (base::ContainsOnlyChars(number_, u"+0123456789") ||
-      base::FeatureList::IsEnabled(
-          features::kAutofillPreferParsedPhoneNumber)) {
-    number_ = cached_parsed_phone_.GetFormattedNumber();
-  } else {
-    // Strip `number_` of extensions, e.g. "(123)-123 ext. 123" -> "(123)-123".
-    // In the if case, this is done by `GetFormattedNumber()` already. To
-    // preserve the formatting, everything after the last digit of the whole
-    // number is removed manually here. The whole number only consists of digits
-    // and has any extensions removed already.
-    size_t i = 0;
-    for (auto digit : cached_parsed_phone_.GetWholeNumber())
-      i = number_.find(digit, i) + 1;  // Skip `digit`.
-    number_ = number_.substr(0, i);
-  }
+  number_ = cached_parsed_phone_.GetFormattedNumber();
   return true;
+}
+
+VerificationStatus PhoneNumber::GetVerificationStatus(FieldType type) const {
+  return VerificationStatus::kNoStatus;
 }
 
 void PhoneNumber::UpdateCacheIfNeeded(const std::string& app_locale) const {
@@ -324,9 +304,7 @@ void PhoneNumber::UpdateCacheIfNeeded(const std::string& app_locale) const {
     // the number.
     cached_parsed_phone_ = i18n::PhoneObject(
         number_, region,
-        /*infer_country_code=*/profile_->HasInfo(ADDRESS_HOME_COUNTRY) &&
-            base::FeatureList::IsEnabled(
-                features::kAutofillInferCountryCallingCode));
+        /*infer_country_code=*/profile_->HasInfo(ADDRESS_HOME_COUNTRY));
   }
 }
 
@@ -364,7 +342,7 @@ void PhoneNumber::PhoneCombineHelper::SetInfo(FieldType field_type,
       // to prevent misclassifying such fields as something else.
       return;
     default:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }
 

@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #ifndef REMOTING_HOST_MOJOM_REMOTING_MOJOM_TRAITS_H_
 #define REMOTING_HOST_MOJOM_REMOTING_MOJOM_TRAITS_H_
 
@@ -138,31 +143,9 @@ class StructTraits<remoting::mojom::DesktopEnvironmentOptionsDataView,
     return options.terminate_upon_input();
   }
 
-  static bool enable_file_transfer(
-      const ::remoting::DesktopEnvironmentOptions& options) {
-    return options.enable_file_transfer();
-  }
-
-  static bool enable_remote_open_url(
-      const ::remoting::DesktopEnvironmentOptions& options) {
-    return options.enable_remote_open_url();
-  }
-
   static bool enable_remote_webauthn(
       const ::remoting::DesktopEnvironmentOptions& options) {
     return options.enable_remote_webauthn();
-  }
-
-  static std::optional<uint32_t> clipboard_size(
-      const ::remoting::DesktopEnvironmentOptions& options) {
-    if (!options.clipboard_size().has_value()) {
-      return std::nullopt;
-    }
-
-    size_t clipboard_size = options.clipboard_size().value();
-    return base::IsValueInRangeForNumericType<int>(clipboard_size)
-               ? clipboard_size
-               : INT_MAX;
   }
 
   static const webrtc::DesktopCaptureOptions& desktop_capture_options(
@@ -188,8 +171,7 @@ struct EnumTraits<remoting::mojom::DesktopCaptureResult,
         return remoting::mojom::DesktopCaptureResult::kErrorPermanent;
     }
 
-    NOTREACHED_IN_MIGRATION();
-    return remoting::mojom::DesktopCaptureResult::kSuccess;
+    NOTREACHED();
   }
 
   static bool FromMojom(remoting::mojom::DesktopCaptureResult input,
@@ -206,8 +188,7 @@ struct EnumTraits<remoting::mojom::DesktopCaptureResult,
         return true;
     }
 
-    NOTREACHED_IN_MIGRATION();
-    return false;
+    NOTREACHED();
   }
 };
 
@@ -310,8 +291,7 @@ struct EnumTraits<remoting::mojom::MouseButton,
         break;
     }
 
-    NOTREACHED_IN_MIGRATION();
-    return remoting::mojom::MouseButton::kUndefined;
+    NOTREACHED();
   }
 
   static bool FromMojom(remoting::mojom::MouseButton input,
@@ -337,8 +317,7 @@ struct EnumTraits<remoting::mojom::MouseButton,
         return true;
     }
 
-    NOTREACHED_IN_MIGRATION();
-    return false;
+    NOTREACHED();
   }
 };
 
@@ -354,8 +333,7 @@ struct EnumTraits<remoting::mojom::AudioPacket_BytesPerSample,
         return remoting::mojom::AudioPacket_BytesPerSample::kBytesPerSample_2;
     }
 
-    NOTREACHED_IN_MIGRATION();
-    return remoting::mojom::AudioPacket_BytesPerSample::kInvalid;
+    NOTREACHED();
   }
 
   static bool FromMojom(remoting::mojom::AudioPacket_BytesPerSample input,
@@ -369,8 +347,7 @@ struct EnumTraits<remoting::mojom::AudioPacket_BytesPerSample,
         return true;
     }
 
-    NOTREACHED_IN_MIGRATION();
-    return false;
+    NOTREACHED();
   }
 };
 
@@ -400,8 +377,7 @@ struct EnumTraits<remoting::mojom::AudioPacket_Channels,
         return remoting::mojom::AudioPacket_Channels::kChannel_7_1;
     }
 
-    NOTREACHED_IN_MIGRATION();
-    return remoting::mojom::AudioPacket_Channels::kInvalid;
+    NOTREACHED();
   }
 
   static bool FromMojom(remoting::mojom::AudioPacket_Channels input,
@@ -436,8 +412,7 @@ struct EnumTraits<remoting::mojom::AudioPacket_Channels,
         return true;
     }
 
-    NOTREACHED_IN_MIGRATION();
-    return false;
+    NOTREACHED();
   }
 };
 
@@ -455,8 +430,7 @@ struct EnumTraits<remoting::mojom::AudioPacket_Encoding,
         return remoting::mojom::AudioPacket_Encoding::kOpus;
     }
 
-    NOTREACHED_IN_MIGRATION();
-    return remoting::mojom::AudioPacket_Encoding::kInvalid;
+    NOTREACHED();
   }
 
   static bool FromMojom(remoting::mojom::AudioPacket_Encoding input,
@@ -473,8 +447,7 @@ struct EnumTraits<remoting::mojom::AudioPacket_Encoding,
         return true;
     }
 
-    NOTREACHED_IN_MIGRATION();
-    return false;
+    NOTREACHED();
   }
 };
 
@@ -492,8 +465,7 @@ struct EnumTraits<remoting::mojom::AudioPacket_SamplingRate,
         return remoting::mojom::AudioPacket_SamplingRate::kRate_48000;
     }
 
-    NOTREACHED_IN_MIGRATION();
-    return remoting::mojom::AudioPacket_SamplingRate::kInvalid;
+    NOTREACHED();
   }
 
   static bool FromMojom(remoting::mojom::AudioPacket_SamplingRate input,
@@ -510,8 +482,7 @@ struct EnumTraits<remoting::mojom::AudioPacket_SamplingRate,
         return true;
     }
 
-    NOTREACHED_IN_MIGRATION();
-    return false;
+    NOTREACHED();
   }
 };
 
@@ -586,8 +557,7 @@ class UnionTraits<
     else if (result.is_error())
       return remoting::mojom::ReadChunkResultDataView::Tag::kError;
 
-    NOTREACHED_IN_MIGRATION();
-    return remoting::mojom::ReadChunkResultDataView::Tag::kError;
+    NOTREACHED();
   }
 
   static const std::vector<uint8_t>& data(
@@ -670,8 +640,7 @@ struct EnumTraits<remoting::mojom::FileTransferError_Type,
         return remoting::mojom::FileTransferError_Type::kNotLoggedIn;
     }
 
-    NOTREACHED_IN_MIGRATION();
-    return remoting::mojom::FileTransferError_Type::kUnknown;
+    NOTREACHED();
   }
 
   static bool FromMojom(remoting::mojom::FileTransferError_Type input,
@@ -703,8 +672,7 @@ struct EnumTraits<remoting::mojom::FileTransferError_Type,
         return true;
     }
 
-    NOTREACHED_IN_MIGRATION();
-    return false;
+    NOTREACHED();
   }
 };
 
@@ -724,8 +692,7 @@ class UnionTraits<
     else if (result.is_error())
       return remoting::mojom::FileChooserResultDataView::Tag::kError;
 
-    NOTREACHED_IN_MIGRATION();
-    return remoting::mojom::FileChooserResultDataView::Tag::kError;
+    NOTREACHED();
   }
 
   static const base::FilePath& filepath(
@@ -775,10 +742,7 @@ class UnionTraits<remoting::mojom::KeyActionDataView,
       case ::remoting::protocol::KeyboardLayout_KeyAction::kCharacter:
         return remoting::mojom::KeyActionDataView::Tag::kCharacter;
       case ::remoting::protocol::KeyboardLayout_KeyAction::ACTION_NOT_SET:
-        NOTREACHED_IN_MIGRATION();
-        // Returning a value to make the compiler happy and ensure that any
-        // future enum values must be added to this switch.
-        return remoting::mojom::KeyActionDataView::Tag::kCharacter;
+        NOTREACHED();
     }
   }
 
@@ -947,8 +911,7 @@ struct EnumTraits<remoting::mojom::LayoutKeyFunction,
         return remoting::mojom::LayoutKeyFunction::kHanja;
     }
 
-    NOTREACHED_IN_MIGRATION();
-    return remoting::mojom::LayoutKeyFunction::kUnknown;
+    NOTREACHED();
   }
 
   static bool FromMojom(remoting::mojom::LayoutKeyFunction input,
@@ -1149,8 +1112,7 @@ struct EnumTraits<remoting::mojom::LayoutKeyFunction,
         return true;
     }
 
-    NOTREACHED_IN_MIGRATION();
-    return false;
+    NOTREACHED();
   }
 };
 
@@ -1357,8 +1319,7 @@ struct EnumTraits<remoting::mojom::TouchEventType,
         return remoting::mojom::TouchEventType::kCancel;
     }
 
-    NOTREACHED_IN_MIGRATION();
-    return remoting::mojom::TouchEventType::kUndefined;
+    NOTREACHED();
   }
 
   static bool FromMojom(remoting::mojom::TouchEventType input,
@@ -1381,8 +1342,7 @@ struct EnumTraits<remoting::mojom::TouchEventType,
         return true;
     }
 
-    NOTREACHED_IN_MIGRATION();
-    return false;
+    NOTREACHED();
   }
 };
 
@@ -1419,8 +1379,7 @@ struct EnumTraits<remoting::mojom::TransportRouteType,
         return remoting::mojom::TransportRouteType::kRelay;
     }
 
-    NOTREACHED_IN_MIGRATION();
-    return remoting::mojom::TransportRouteType::kUndefined;
+    NOTREACHED();
   }
 
   static bool FromMojom(remoting::mojom::TransportRouteType input,
@@ -1441,8 +1400,7 @@ struct EnumTraits<remoting::mojom::TransportRouteType,
         return true;
     }
 
-    NOTREACHED_IN_MIGRATION();
-    return false;
+    NOTREACHED();
   }
 };
 
@@ -1520,10 +1478,15 @@ struct EnumTraits<remoting::mojom::ProtocolErrorCode,
         return remoting::mojom::ProtocolErrorCode::kUnauthorizedAccount;
       case ::remoting::protocol::ErrorCode::REAUTHZ_POLICY_CHECK_FAILED:
         return remoting::mojom::ProtocolErrorCode::kReauthzPolicyCheckFailed;
+      case ::remoting::protocol::ErrorCode::NO_COMMON_AUTH_METHOD:
+        return remoting::mojom::ProtocolErrorCode::kNoCommonAuthMethod;
+      case ::remoting::protocol::ErrorCode::LOGIN_SCREEN_NOT_SUPPORTED:
+        return remoting::mojom::ProtocolErrorCode::kLoginScreenNotSupported;
+      case ::remoting::protocol::ErrorCode::SESSION_POLICIES_CHANGED:
+        return remoting::mojom::ProtocolErrorCode::kSessionPoliciesChanged;
     }
 
-    NOTREACHED_IN_MIGRATION();
-    return remoting::mojom::ProtocolErrorCode::kUnknownError;
+    NOTREACHED();
   }
 
   static bool FromMojom(remoting::mojom::ProtocolErrorCode input,
@@ -1596,10 +1559,18 @@ struct EnumTraits<remoting::mojom::ProtocolErrorCode,
       case remoting::mojom::ProtocolErrorCode::kReauthzPolicyCheckFailed:
         *out = ::remoting::protocol::ErrorCode::REAUTHZ_POLICY_CHECK_FAILED;
         return true;
+      case remoting::mojom::ProtocolErrorCode::kNoCommonAuthMethod:
+        *out = ::remoting::protocol::ErrorCode::NO_COMMON_AUTH_METHOD;
+        return true;
+      case remoting::mojom::ProtocolErrorCode::kLoginScreenNotSupported:
+        *out = ::remoting::protocol::ErrorCode::LOGIN_SCREEN_NOT_SUPPORTED;
+        return true;
+      case remoting::mojom::ProtocolErrorCode::kSessionPoliciesChanged:
+        *out = ::remoting::protocol::ErrorCode::SESSION_POLICIES_CHANGED;
+        return true;
     }
 
-    NOTREACHED_IN_MIGRATION();
-    return false;
+    NOTREACHED();
   }
 };
 
@@ -1654,6 +1625,11 @@ class StructTraits<remoting::mojom::VideoTrackLayoutDataView,
   static webrtc::DesktopVector dpi(
       const ::remoting::protocol::VideoTrackLayout& track) {
     return {track.x_dpi(), track.y_dpi()};
+  }
+
+  static const std::string& display_name(
+      const ::remoting::protocol::VideoTrackLayout& track) {
+    return track.display_name();
   }
 
   static bool Read(remoting::mojom::VideoTrackLayoutDataView data_view,

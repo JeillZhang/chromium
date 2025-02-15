@@ -42,7 +42,10 @@ enum class OidcInterceptionResult {
   kInvalidUrlOrTokens = 2,
   kConsetDialogRejected = 3,
   kFailedToRegisterProfile = 4,
-  kMaxValue = kFailedToRegisterProfile,
+  kInvalidProfile = 5,
+  kRegistrationTimeout = 6,
+  kBrowserSigninDisabled = 7,
+  kMaxValue = kBrowserSigninDisabled,
 };
 
 // Outcomes of the OIDC profile enrolllment flow after profile registration.
@@ -55,7 +58,8 @@ enum class OidcProfileCreationResult {
   kFailedToCreateProfile = 2,
   kFailedToFetchPolicy = 3,
   kFailedToAddPrimaryAccount = 4,
-  kMaxValue = kFailedToAddPrimaryAccount,
+  kMismatchingProfileId = 5,
+  kMaxValue = kMismatchingProfileId,
 };
 
 void RecordOidcInterceptionFunnelStep(OidcInterceptionFunnelStep step);

@@ -13,9 +13,9 @@
 #include "base/test/bind.h"
 #include "base/test/mock_callback.h"
 #include "base/test/simple_test_clock.h"
-#include "chrome/browser/android/bookmarks/partner_bookmarks_reader.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/bookmarks/managed_bookmark_service_factory.h"
+#include "chrome/browser/partnerbookmarks/partner_bookmarks_reader.h"
 #include "chrome/browser/reading_list/android/reading_list_manager.h"
 #include "chrome/browser/reading_list/android/reading_list_manager_impl.h"
 #include "chrome/test/base/testing_browser_process.h"
@@ -33,11 +33,10 @@
 #include "components/reading_list/core/reading_list_model_impl.h"
 #include "components/signin/public/base/consent_level.h"
 #include "components/signin/public/identity_manager/identity_test_environment.h"
-#include "components/sync/base/features.h"
 #include "components/sync/base/storage_type.h"
 #include "components/sync/base/user_selectable_type.h"
 #include "components/sync/engine/data_type_activation_response.h"
-#include "components/sync/model/client_tag_based_model_type_processor.h"
+#include "components/sync/model/client_tag_based_data_type_processor.h"
 #include "components/sync/model/data_type_activation_request.h"
 #include "components/sync/test/mock_commit_queue.h"
 #include "components/sync/test/test_sync_user_settings.h"
@@ -69,10 +68,12 @@ class BookmarkBridgeTest : public testing::Test {
     ASSERT_TRUE(profile_manager_->SetUp());
     profile_ = profile_manager_->CreateTestingProfile(
         "BookmarkBridgeTest", /*testing_factories=*/{
-            {BookmarkModelFactory::GetInstance(),
-             BookmarkModelFactory::GetDefaultFactory()},
-            {ManagedBookmarkServiceFactory::GetInstance(),
-             ManagedBookmarkServiceFactory::GetDefaultFactory()}});
+            TestingProfile::TestingFactory{
+                BookmarkModelFactory::GetInstance(),
+                BookmarkModelFactory::GetDefaultFactory()},
+            TestingProfile::TestingFactory{
+                ManagedBookmarkServiceFactory::GetInstance(),
+                ManagedBookmarkServiceFactory::GetDefaultFactory()}});
 
     // Setup bookmark sources from their factories.
     managed_bookmark_service_ =
@@ -134,9 +135,9 @@ class BookmarkBridgeTest : public testing::Test {
         std::make_unique<testing::NiceMock<syncer::MockCommitQueue>>());
 
     // After this update initial sync is for sure done.
-    sync_pb::ModelTypeState state;
+    sync_pb::DataTypeState state;
     state.set_initial_sync_state(
-        sync_pb::ModelTypeState_InitialSyncState_INITIAL_SYNC_DONE);
+        sync_pb::DataTypeState_InitialSyncState_INITIAL_SYNC_DONE);
 
     activation_response->type_processor->OnUpdateReceived(
         state, {}, /*gc_directive=*/std::nullopt);
@@ -179,11 +180,6 @@ class BookmarkBridgeTest : public testing::Test {
     bookmarks::test::WaitForBookmarkModelToLoad(bookmark_model_.get());
 
     if (enable_account_bookmarks) {
-      features_.InitWithFeatures(
-          /*enabled_features=*/
-          {syncer::kEnableBookmarkFoldersForAccountStorage,
-           syncer::kReadingListEnableSyncTransportModeUponSignIn},
-          /*disabled_features=*/{});
       bookmark_model_->CreateAccountPermanentFolders();
       if (load_reading_list_model) {
         // If the `account_reading_list_model` is not loaded, StartSyncing()
@@ -217,8 +213,6 @@ class BookmarkBridgeTest : public testing::Test {
         &clock_);
     return reading_list_model;
   }
-
-  base::test::ScopedFeatureList features_;
   base::SimpleTestClock clock_;
   content::BrowserTaskEnvironment task_environment_;
 

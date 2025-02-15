@@ -56,7 +56,7 @@ class TrustedVaultConnectionImpl : public TrustedVaultConnection {
       AuthenticationFactorType authentication_factor_type,
       RegisterAuthenticationFactorCallback callback) override;
 
-  std::unique_ptr<Request> RegisterDeviceWithoutKeys(
+  std::unique_ptr<Request> RegisterLocalDeviceWithoutKeys(
       const CoreAccountInfo& account_info,
       const SecureBoxPublicKey& device_public_key,
       RegisterAuthenticationFactorCallback callback) override;
@@ -74,7 +74,8 @@ class TrustedVaultConnectionImpl : public TrustedVaultConnection {
   std::unique_ptr<TrustedVaultConnection::Request>
   DownloadAuthenticationFactorsRegistrationState(
       const CoreAccountInfo& account_info,
-      DownloadAuthenticationFactorsRegistrationStateCallback callback) override;
+      DownloadAuthenticationFactorsRegistrationStateCallback callback,
+      base::RepeatingClosure keep_alive_callback) override;
 
  private:
   std::unique_ptr<Request> SendJoinSecurityDomainsRequest(

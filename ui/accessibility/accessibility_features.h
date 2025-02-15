@@ -9,7 +9,6 @@
 #include "base/feature_list.h"
 #include "base/metrics/field_trial_params.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "ui/accessibility/ax_base_export.h"
 
 // This file declares base::Features related to the ui/accessibility code.
@@ -48,8 +47,25 @@ namespace features {
 AX_BASE_EXPORT BASE_DECLARE_FEATURE(kAccessibilityPdfOcrForSelectToSpeak);
 AX_BASE_EXPORT bool IsAccessibilityPdfOcrForSelectToSpeakEnabled();
 
+// A replacement algorithm for AbstractInlineTextBox + InlineCursor for
+// AXInlineTextBox creation.
+AX_BASE_EXPORT BASE_DECLARE_FEATURE(kAccessibilityBlockFlowIterator);
+AX_BASE_EXPORT bool IsAccessibilityBlockFlowIteratorEnabled();
+
 AX_BASE_EXPORT BASE_DECLARE_FEATURE(kAccessibilityPruneRedundantInlineText);
 AX_BASE_EXPORT bool IsAccessibilityPruneRedundantInlineTextEnabled();
+
+AX_BASE_EXPORT BASE_DECLARE_FEATURE(
+    kAccessibilityPruneRedundantInlineConnectivity);
+AX_BASE_EXPORT bool IsAccessibilityPruneRedundantInlineConnectivityEnabled();
+
+// Expose the accessibility tree for views via an AXTree of AXNodes.
+AX_BASE_EXPORT BASE_DECLARE_FEATURE(kAccessibilityTreeForViews);
+AX_BASE_EXPORT bool IsAccessibilityTreeForViewsEnabled();
+
+// Serialize Views' accessibility data as soon as it changes.
+AX_BASE_EXPORT BASE_DECLARE_FEATURE(kViewsAccessibilitySerializeOnDataChange);
+AX_BASE_EXPORT bool IsViewsAccessibilitySerializeOnDataChangeEnabled();
 
 // Use Alternative mechanism for acquiring image descriptions.
 AX_BASE_EXPORT BASE_DECLARE_FEATURE(kImageDescriptionsAlternateRouting);
@@ -65,22 +81,25 @@ AX_BASE_EXPORT bool IsAutoDisableAccessibilityEnabled();
 AX_BASE_EXPORT BASE_DECLARE_FEATURE(kEnableAccessibilityAriaVirtualContent);
 AX_BASE_EXPORT bool IsAccessibilityAriaVirtualContentEnabled();
 
+// Expose <summary>" as a heading instead of a button.
+// Two reasons to try this:
+// 1. Unlike for a button, JAWS will not enforce leafiness for a heading, so
+// that things like child links will still be presented to the user.
+// 2. The user can use heading navigation for summaries.
+// We may decide to scale this back for use cases such as a summary inside of
+// a table or a list.
+// Experiment until we validate the approach with ATs and ARIA WG.
+AX_BASE_EXPORT BASE_DECLARE_FEATURE(kAccessibilityExposeSummaryAsHeading);
+AX_BASE_EXPORT bool IsAccessibilityExposeSummaryAsHeadingEnabled();
+
 // Use language detection to determine the language
 // of text content in page and exposed to the browser process AXTree.
 AX_BASE_EXPORT BASE_DECLARE_FEATURE(kEnableAccessibilityLanguageDetection);
 AX_BASE_EXPORT bool IsAccessibilityLanguageDetectionEnabled();
 
-// Restrict AXModes to web content related modes only when an IA2
-// query is performed on a web content node.
-// TODO(crbug.com/40266474): Remove flag once the change has been confirmed
-// safe.
-AX_BASE_EXPORT BASE_DECLARE_FEATURE(kEnableAccessibilityRestrictiveIA2AXModes);
-AX_BASE_EXPORT bool IsAccessibilityRestrictiveIA2AXModesEnabled();
-
-// Serialize accessibility information from the Views tree and
-// deserialize it into an AXTree in the browser process.
-AX_BASE_EXPORT BASE_DECLARE_FEATURE(kEnableAccessibilityTreeForViews);
-AX_BASE_EXPORT bool IsAccessibilityTreeForViewsEnabled();
+// Extension manifest v3 migration for network speech synthesis.
+AX_BASE_EXPORT BASE_DECLARE_FEATURE(kExtensionManifestV3NetworkSpeechSynthesis);
+AX_BASE_EXPORT bool IsExtensionManifestV3NetworkSpeechSynthesisEnabled();
 
 // Support aria element reflection. For example:
 //     element.ariaActiveDescendantElement = child;
@@ -97,13 +116,10 @@ AX_BASE_EXPORT bool IsTextBasedAudioDescriptionEnabled();
 AX_BASE_EXPORT BASE_DECLARE_FEATURE(kUseAXPositionForDocumentMarkers);
 AX_BASE_EXPORT bool IsUseAXPositionForDocumentMarkersEnabled();
 
-// Performs a move over a copy of snapshot tree data in AXTreeCombiner.
-AX_BASE_EXPORT BASE_DECLARE_FEATURE(kUseMoveNotCopyInAXTreeCombiner);
-AX_BASE_EXPORT bool IsUseMoveNotCopyInAXTreeCombinerEnabled();
-
-// Performs a move over a copy of merge tree update.
-AX_BASE_EXPORT BASE_DECLARE_FEATURE(kUseMoveNotCopyInMergeTreeUpdate);
-AX_BASE_EXPORT bool IsUseMoveNotCopyInMergeTreeUpdateEnabled();
+// Randomly turn the accessibility engine on based on certain conditions. We do
+// not put this flag in chrome://flags so we can get the cleanest data possible.
+AX_BASE_EXPORT BASE_DECLARE_FEATURE(kAXRandomizedStressTests);
+AX_BASE_EXPORT bool IsAXRandomizedStressTestsEnabled();
 
 #if BUILDFLAG(IS_WIN)
 // Use Chrome-specific accessibility COM API.
@@ -121,7 +137,7 @@ AX_BASE_EXPORT bool IsSelectiveUIAEnablementEnabled();
 AX_BASE_EXPORT BASE_DECLARE_FEATURE(kUiaProvider);
 #endif  // BUILDFLAG(IS_WIN)
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 // TODO(accessibility): Should this be moved to ash_features.cc?
 AX_BASE_EXPORT bool IsDictationOfflineAvailable();
 
@@ -154,47 +170,52 @@ AX_BASE_EXPORT BASE_DECLARE_FEATURE(
 AX_BASE_EXPORT bool
 IsExperimentalAccessibilityGoogleTtsHighQualityVoicesEnabled();
 
-// Whether the screen magnifier can follow the Select to Speak focus.
-AX_BASE_EXPORT BASE_DECLARE_FEATURE(kAccessibilityMagnifierFollowsSts);
-AX_BASE_EXPORT bool IsAccessibilityMagnifierFollowsStsEnabled();
+// Whether the screen magnifier can follow the ChromeVox focus.
+AX_BASE_EXPORT BASE_DECLARE_FEATURE(kAccessibilityMagnifierFollowsChromeVox);
+AX_BASE_EXPORT bool IsAccessibilityMagnifierFollowsChromeVoxEnabled();
 
 // Control mouse with keyboard.
 AX_BASE_EXPORT BASE_DECLARE_FEATURE(kAccessibilityMouseKeys);
 AX_BASE_EXPORT bool IsAccessibilityMouseKeysEnabled();
 
-// Control blink rate of text cursor.
-AX_BASE_EXPORT BASE_DECLARE_FEATURE(kAccessibilityCaretBlinkIntervalSetting);
-AX_BASE_EXPORT bool IsAccessibilityCaretBlinkIntervalSettingEnabled();
-
-// Control whether the overscroll setting is available.
-AX_BASE_EXPORT BASE_DECLARE_FEATURE(kAccessibilityOverscrollSettingFeature);
-AX_BASE_EXPORT bool IsAccessibilityOverscrollSettingFeatureEnabled();
-
-// Controls whether the Select to Speak keyboard shortcut is enabled.
-AX_BASE_EXPORT BASE_DECLARE_FEATURE(kAccessibilitySelectToSpeakShortcut);
-AX_BASE_EXPORT bool IsAccessibilitySelectToSpeakShortcutEnabled();
+// Show captions on a braille display.
+AX_BASE_EXPORT BASE_DECLARE_FEATURE(kAccessibilityCaptionsOnBrailleDisplay);
+AX_BASE_EXPORT bool IsAccessibilityCaptionsOnBrailleDisplayEnabled();
 
 // Controls whether the shake cursor to locate feature is available.
 AX_BASE_EXPORT BASE_DECLARE_FEATURE(kAccessibilityShakeToLocate);
 AX_BASE_EXPORT bool IsAccessibilityShakeToLocateEnabled();
 
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+// Controls whether the disable touchpad feature is enabled.
+AX_BASE_EXPORT BASE_DECLARE_FEATURE(kAccessibilityDisableTouchpad);
+AX_BASE_EXPORT bool IsAccessibilityDisableTouchpadEnabled();
 
-#if BUILDFLAG(IS_ANDROID)
-// Disable max node and timeout limits on the
-// AXTreeSnapshotter's Snapshot method, and track related histograms.
-AX_BASE_EXPORT BASE_DECLARE_FEATURE(kAccessibilitySnapshotStressTests);
-AX_BASE_EXPORT bool IsAccessibilitySnapshotStressTestsEnabled();
-// Controls the maximum amount of nodes in a given snapshot. We set an
-// arbitrarily high value as the default to simulate there being no max nodes
-// limit.
-AX_BASE_EXPORT const base::FeatureParam<int>
-    kAccessibilitySnapshotStressTestsMaxNodes{
-        &kAccessibilitySnapshotStressTests,
-        "AccessibilitySnapshotStressTestsMaxNodes", 100000};
-#endif  // BUILDFLAG(IS_ANDROID)
+// Controls whether the flash screen for notifications feature is available.
+AX_BASE_EXPORT BASE_DECLARE_FEATURE(kAccessibilityFlashScreenFeature);
+AX_BASE_EXPORT bool IsAccessibilityFlashScreenFeatureEnabled();
+
+// Controls whether the bounce keys feature is available.
+AX_BASE_EXPORT BASE_DECLARE_FEATURE(kAccessibilityBounceKeys);
+AX_BASE_EXPORT bool IsAccessibilityBounceKeysEnabled();
+
+// Controls whether the slow keys feature is available.
+AX_BASE_EXPORT BASE_DECLARE_FEATURE(kAccessibilitySlowKeys);
+AX_BASE_EXPORT bool IsAccessibilitySlowKeysEnabled();
+
+AX_BASE_EXPORT BASE_DECLARE_FEATURE(kAccessibilityManifestV3BrailleIme);
+AX_BASE_EXPORT bool IsAccessibilityManifestV3EnabledForBrailleIme();
+
+AX_BASE_EXPORT BASE_DECLARE_FEATURE(kAccessibilityManifestV3EnhancedNetworkTts);
+AX_BASE_EXPORT bool IsAccessibilityManifestV3EnabledForEnhancedNetworkTts();
+
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 #if !BUILDFLAG(IS_ANDROID)
+// Use the AXTree fixing code, which may be an assortment of different
+// tools/methods to fix the AXTree. This is not available on Android.
+AX_BASE_EXPORT BASE_DECLARE_FEATURE(kAXTreeFixing);
+AX_BASE_EXPORT bool IsAXTreeFixingEnabled();
+
 // Use the experimental Accessibility Service.
 // TODO(katydek): Provide a more descriptive name here.
 AX_BASE_EXPORT BASE_DECLARE_FEATURE(kAccessibilityService);
@@ -212,67 +233,18 @@ AX_BASE_EXPORT bool IsAccessibilityServiceEnabled();
 AX_BASE_EXPORT BASE_DECLARE_FEATURE(kDataCollectionModeForScreen2x);
 AX_BASE_EXPORT bool IsDataCollectionModeForScreen2xEnabled();
 
-// Use local MI service to make inaccessibile surfaces (e.g.
-// canvases) accessible.
-AX_BASE_EXPORT BASE_DECLARE_FEATURE(kLayoutExtraction);
-AX_BASE_EXPORT bool IsLayoutExtractionEnabled();
-
 // Identify and annotate the main node of the AXTree where one was not already
 // provided.
 AX_BASE_EXPORT BASE_DECLARE_FEATURE(kMainNodeAnnotations);
 AX_BASE_EXPORT bool IsMainNodeAnnotationsEnabled();
 
-// Use OCR to make inaccessible (i.e. untagged) PDFs
-// accessibility. (Note: Due to the size of the OCR component, this feature
-// targets only desktop versions of Chrome for now.)
-AX_BASE_EXPORT BASE_DECLARE_FEATURE(kPdfOcr);
-AX_BASE_EXPORT bool IsPdfOcrEnabled();
-
-// Include the Read Anything feature. (Note: This feature shows
-// users websites, such as articles, in a comfortable reading experience in a
-// side panel)
-AX_BASE_EXPORT BASE_DECLARE_FEATURE(kReadAnything);
-AX_BASE_EXPORT bool IsReadAnythingEnabled();
-
-// Make the Read Anything Side Panel local (don't persist when opening a new
-// tab)
-AX_BASE_EXPORT BASE_DECLARE_FEATURE(kReadAnythingLocalSidePanel);
-AX_BASE_EXPORT bool IsReadAnythingLocalSidePanelEnabled();
-
 // Show the Read Aloud feature in Read Anything.
 AX_BASE_EXPORT BASE_DECLARE_FEATURE(kReadAnythingReadAloud);
 AX_BASE_EXPORT bool IsReadAnythingReadAloudEnabled();
 
-// Use automatic voice switching in the Read Aloud feature in Read Anything.
-AX_BASE_EXPORT BASE_DECLARE_FEATURE(kReadAloudAutoVoiceSwitching);
-AX_BASE_EXPORT bool IsReadAloudAutoVoiceSwitchingEnabled();
-
-// Use automatic voice switching in the Read Aloud feature in Read Anything.
-AX_BASE_EXPORT BASE_DECLARE_FEATURE(kReadAloudLanguagePackDownloading);
-AX_BASE_EXPORT bool IsReadAloudLanguagePackDownloadingEnabled();
-
-// Enable automatic word highlighting in Read Anything Read Aloud.
-AX_BASE_EXPORT BASE_DECLARE_FEATURE(
-    kReadAnythingReadAloudAutomaticWordHighlighting);
-AX_BASE_EXPORT bool IsReadAnythingReadAloudAutomaticWordHighlightingEnabled();
-
 // Enable phrase highlighting in Read Anything Read Aloud.
 AX_BASE_EXPORT BASE_DECLARE_FEATURE(kReadAnythingReadAloudPhraseHighlighting);
 AX_BASE_EXPORT bool IsReadAnythingReadAloudPhraseHighlightingEnabled();
-
-// Use the WebUI toolbar in Read Anything.
-AX_BASE_EXPORT BASE_DECLARE_FEATURE(kReadAnythingWebUIToolbar);
-AX_BASE_EXPORT bool IsReadAnythingWebUIToolbarEnabled();
-
-// Use screen2x integration for Read Anything to distill web pages
-// using an ML model.
-AX_BASE_EXPORT BASE_DECLARE_FEATURE(kReadAnythingWithScreen2x);
-AX_BASE_EXPORT bool IsReadAnythingWithScreen2xEnabled();
-
-// Enable rules based algorithm for distilling content. Should be enabled by
-// default.
-AX_BASE_EXPORT BASE_DECLARE_FEATURE(kReadAnythingWithAlgorithm);
-AX_BASE_EXPORT bool IsReadAnythingWithAlgorithmEnabled();
 
 // Enable images to be distilled via algorithm. Should be disabled by
 // default.
@@ -282,6 +254,11 @@ AX_BASE_EXPORT bool IsReadAnythingImagesViaAlgorithmEnabled();
 // Enable Reading Mode to work on Google Docs. Should be disabled by default.
 AX_BASE_EXPORT BASE_DECLARE_FEATURE(kReadAnythingDocsIntegration);
 AX_BASE_EXPORT bool IsReadAnythingDocsIntegrationEnabled();
+
+// Enable "load more" button to show at the end of Reading Mode panel.
+// Should be disabled by default.
+AX_BASE_EXPORT BASE_DECLARE_FEATURE(kReadAnythingDocsLoadMoreButton);
+AX_BASE_EXPORT bool IsReadAnythingDocsLoadMoreButtonEnabled();
 
 // Write some ScreenAI library debug data in /tmp.
 AX_BASE_EXPORT BASE_DECLARE_FEATURE(kScreenAIDebugMode);
@@ -301,13 +278,32 @@ AX_BASE_EXPORT bool IsScreenAITestModeEnabled();
 #endif  // !BUILDFLAG(IS_ANDROID)
 
 #if BUILDFLAG(IS_MAC)
+AX_BASE_EXPORT BASE_DECLARE_FEATURE(kMacAccessibilityAPIMigration);
+AX_BASE_EXPORT bool IsMacAccessibilityAPIMigrationEnabled();
+
+AX_BASE_EXPORT BASE_DECLARE_FEATURE(kMacAccessibilityOptimizeChildrenChanged);
+AX_BASE_EXPORT bool IsMacAccessibilityOptimizeChildrenChangedEnabled();
+
 // Set NSAccessibilityRemoteUIElement's RemoteUIApp to YES to fix
 // some accessibility bugs in PWA Mac. (Note: When enabling
 // NSAccessibilityRemoteUIElement's RemoteUIApp previously, chromium would hang.
 // See: https://crbug.com/1491329).
 AX_BASE_EXPORT BASE_DECLARE_FEATURE(kAccessibilityRemoteUIApp);
 AX_BASE_EXPORT bool IsAccessibilityRemoteUIAppEnabled();
+
+AX_BASE_EXPORT BASE_DECLARE_FEATURE(kBlockRootWindowAccessibleNameChangeEvent);
+AX_BASE_EXPORT bool IsBlockRootWindowAccessibleNameChangeEventEnabled();
 #endif  // BUILDFLAG(IS_MAC)
+
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
+// Enable the component updater to download the wasm tts engine component.
+AX_BASE_EXPORT BASE_DECLARE_FEATURE(kWasmTtsComponentUpdaterEnabled);
+AX_BASE_EXPORT bool IsWasmTtsComponentUpdaterEnabled();
+// Disable the wasm tts engine component to use dev version local extension
+// files.
+AX_BASE_EXPORT BASE_DECLARE_FEATURE(kWasmTtsEngineAutoInstallDisabled);
+AX_BASE_EXPORT bool IsWasmTtsEngineAutoInstallDisabled();
+#endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
 
 }  // namespace features
 

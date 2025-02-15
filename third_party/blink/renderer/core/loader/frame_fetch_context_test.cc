@@ -98,7 +98,7 @@ class DummyFrameOwner final : public GarbageCollected<DummyFrameOwner>,
   }
   void AddResourceTiming(mojom::blink::ResourceTimingInfoPtr) override {}
   void DispatchLoad() override {}
-  void IntrinsicSizingInfoChanged() override {}
+  void NaturalSizingInfoChanged() override {}
   void SetNeedsOcclusionTracking(bool) override {}
   AtomicString BrowsingContextContainerName() const override {
     return AtomicString();
@@ -113,6 +113,9 @@ class DummyFrameOwner final : public GarbageCollected<DummyFrameOwner>,
   bool IsDisplayNone() const override { return false; }
   mojom::blink::ColorScheme GetColorScheme() const override {
     return mojom::blink::ColorScheme::kLight;
+  }
+  mojom::blink::PreferredColorScheme GetPreferredColorScheme() const override {
+    return mojom::blink::PreferredColorScheme::kLight;
   }
   bool ShouldLazyLoadChildren() const override { return false; }
 
@@ -145,7 +148,7 @@ class FixedPolicySubresourceFilter : public WebDocumentSubresourceFilter {
       : policy_(policy), filtered_load_counter_(filtered_load_counter) {}
 
   LoadPolicy GetLoadPolicy(const WebURL& resource_url,
-                           mojom::blink::RequestContextType) override {
+                           network::mojom::RequestDestination) override {
     return policy_;
   }
 
@@ -311,8 +314,9 @@ class FrameFetchContextModifyRequestTest : public FrameFetchContextTest {
       : example_origin(SecurityOrigin::Create(KURL("https://example.test/"))) {}
 
  protected:
-  void ModifyRequestForCSP(ResourceRequest& resource_request,
-                           mojom::RequestContextFrameType frame_type) {
+  void ModifyRequestForMixedContentUpgrade(
+      ResourceRequest& resource_request,
+      mojom::RequestContextFrameType frame_type) {
     document->GetFrame()->Loader().ModifyRequestForCSP(
         resource_request,
         &document->Fetcher()->GetProperties().GetFetchClientSettingsObject(),
@@ -334,7 +338,7 @@ class FrameFetchContextModifyRequestTest : public FrameFetchContextTest {
     ResourceRequest resource_request(input_url);
     resource_request.SetRequestContext(request_context);
 
-    ModifyRequestForCSP(resource_request, frame_type);
+    ModifyRequestForMixedContentUpgrade(resource_request, frame_type);
 
     EXPECT_EQ(expected_url.GetString(), resource_request.Url().GetString());
     EXPECT_EQ(expected_url.Protocol(), resource_request.Url().Protocol());
@@ -354,16 +358,16 @@ class FrameFetchContextModifyRequestTest : public FrameFetchContextTest {
     resource_request.SetRequestContext(
         mojom::blink::RequestContextType::SCRIPT);
 
-    ModifyRequestForCSP(resource_request, frame_type);
+    ModifyRequestForMixedContentUpgrade(resource_request, frame_type);
 
     EXPECT_EQ(
         should_prefer ? String("1") : String(),
         resource_request.HttpHeaderField(http_names::kUpgradeInsecureRequests));
 
-    // Calling modifyRequestForCSP more than once shouldn't affect the
-    // header.
+    // Calling modifyRequestForMixedContentUpgrade more than once shouldn't
+    // affect the header.
     if (should_prefer) {
-      GetFetchContext()->ModifyRequestForCSP(resource_request);
+      GetFetchContext()->ModifyRequestForMixedContentUpgrade(resource_request);
       EXPECT_EQ("1", resource_request.HttpHeaderField(
                          http_names::kUpgradeInsecureRequests));
     }
@@ -386,8 +390,8 @@ class FrameFetchContextModifyRequestTest : public FrameFetchContextTest {
     document->domWindow()->GetSecurityContext().SetInsecureRequestPolicy(
         policy);
 
-    ModifyRequestForCSP(resource_request,
-                        mojom::RequestContextFrameType::kNone);
+    ModifyRequestForMixedContentUpgrade(resource_request,
+                                        mojom::RequestContextFrameType::kNone);
 
     EXPECT_EQ(expected_value, resource_request.IsAutomaticUpgrade());
   }
@@ -580,9 +584,7 @@ class FrameFetchContextHintsTest : public FrameFetchContextTest,
                                    public testing::WithParamInterface<bool> {
  public:
   FrameFetchContextHintsTest() {
-    std::vector<base::test::FeatureRef> enabled_features = {
-        blink::features::kClientHintsPrefersReducedTransparency,
-    };
+    std::vector<base::test::FeatureRef> enabled_features = {};
     std::vector<base::test::FeatureRef> disabled_features = {};
     if (GetParam()) {
       enabled_features.push_back(
@@ -766,7 +768,7 @@ TEST_P(FrameFetchContextHintsTest, MonitorDPRHints) {
   document->GetFrame()->GetClientHintsPreferences().UpdateFrom(preferences);
   ExpectHeader("https://www.example.com/1.gif", "DPR", true, "1");
   ExpectHeader("https://www.example.com/1.gif", "Sec-CH-DPR", true, "1");
-  document->GetFrame()->SetPageZoomFactor(2.5);
+  document->GetFrame()->SetLayoutZoomFactor(2.5);
   ExpectHeader("https://www.example.com/1.gif", "DPR", true, "2.5");
   ExpectHeader("https://www.example.com/1.gif", "Sec-CH-DPR", true, "2.5");
   ExpectHeader("https://www.example.com/1.gif", "Width", false, "");
@@ -779,7 +781,7 @@ TEST_P(FrameFetchContextHintsTest, MonitorDPRHints) {
 TEST_P(FrameFetchContextHintsTest, MonitorDPRHintsInsecureTransport) {
   ExpectHeader("http://www.example.com/1.gif", "DPR", false, "");
   ExpectHeader("http://www.example.com/1.gif", "Sec-CH-DPR", false, "");
-  document->GetFrame()->SetPageZoomFactor(2.5);
+  document->GetFrame()->SetLayoutZoomFactor(2.5);
   ExpectHeader("http://www.example.com/1.gif", "DPR", false, "  ");
   ExpectHeader("http://www.example.com/1.gif", "Sec-CH-DPR", false, "  ");
   ExpectHeader("http://www.example.com/1.gif", "Width", false, "");
@@ -805,7 +807,7 @@ TEST_P(FrameFetchContextHintsTest, MonitorResourceWidthHints) {
   ExpectHeader("https://www.example.com/1.gif", "DPR", false, "");
   ExpectHeader("https://www.example.com/1.gif", "Sec-CH-DPR", false, "");
 
-  document->GetFrame()->SetPageZoomFactor(2.5);
+  document->GetFrame()->SetLayoutZoomFactor(2.5);
   ExpectHeader("https://www.example.com/1.gif", "Width", true, "1250", 500);
   ExpectHeader("https://www.example.com/1.gif", "Sec-CH-Width", true, "1250",
                500);
@@ -839,9 +841,6 @@ TEST_P(FrameFetchContextHintsTest, MonitorViewportWidthHints) {
 }
 
 TEST_P(FrameFetchContextHintsTest, MonitorUAHints) {
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndEnableFeature(features::kClientHintsFormFactors);
-
   // `Sec-CH-UA` is always sent for secure requests
   ExpectHeader("https://www.example.com/1.gif", "Sec-CH-UA", true, "");
   ExpectHeader("http://www.example.com/1.gif", "Sec-CH-UA", false, "");
@@ -1037,9 +1036,6 @@ TEST_P(FrameFetchContextHintsTest, MonitorPrefersReducedTransparencyHint) {
 }
 
 TEST_P(FrameFetchContextHintsTest, MonitorAllHints) {
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndEnableFeature(features::kClientHintsFormFactors);
-
   ExpectHeader("https://www.example.com/1.gif", "Device-Memory", false, "");
   ExpectHeader("https://www.example.com/1.gif", "DPR", false, "");
   ExpectHeader("https://www.example.com/1.gif", "Viewport-Width", false, "");
@@ -1561,7 +1557,7 @@ TEST_F(FrameFetchContextTest, PopulateResourceRequestWhenDetached) {
 
   dummy_page_holder = nullptr;
 
-  GetFetchContext()->PopulateResourceRequest(
+  GetFetchContext()->UpgradeResourceRequestForLoader(
       ResourceType::kRaw, std::nullopt /* resource_width */, request, options);
   // Should not crash.
 }
@@ -1682,10 +1678,11 @@ class FrameFetchContextDisableReduceAcceptLanguageTest
 
     document->GetFrame()->SetReducedAcceptLanguage(AtomicString("en-GB"));
 
-    if (is_detached)
+    if (is_detached) {
       dummy_page_holder = nullptr;
+    }
 
-    GetFetchContext()->PopulateResourceRequest(
+    GetFetchContext()->UpgradeResourceRequestForLoader(
         ResourceType::kRaw, std::nullopt /* resource_width */, request,
         options);
   }
@@ -1704,40 +1701,6 @@ TEST_P(FrameFetchContextDisableReduceAcceptLanguageTest,
   ResourceRequest request(url);
   SetupForAcceptLanguageTest(/*is_detached=*/GetParam(), request);
   // Expect no Accept-Language header set when feature is disabled.
-  EXPECT_EQ(nullptr, request.HttpHeaderField(http_names::kAcceptLanguage));
-}
-
-class FrameFetchContextReduceAcceptLanguageTest
-    : private ScopedReduceAcceptLanguageForTest,
-      public FrameFetchContextDisableReduceAcceptLanguageTest {
- public:
-  FrameFetchContextReduceAcceptLanguageTest()
-      : ScopedReduceAcceptLanguageForTest(true) {
-    scoped_feature_list_.InitWithFeatures(
-        /*enabled_features=*/{network::features::kReduceAcceptLanguage},
-        /*disabled_features=*/{});
-  }
-
- private:
-  base::test::ScopedFeatureList scoped_feature_list_;
-};
-
-INSTANTIATE_TEST_SUITE_P(ReduceAcceptLanguage,
-                         FrameFetchContextReduceAcceptLanguageTest,
-                         testing::Bool());
-
-// TODO(victortan) Add corresponding web platform tests once feature on.
-TEST_P(FrameFetchContextReduceAcceptLanguageTest, VerifyReduceAcceptLanguage) {
-  const KURL url("https://www.example.com/");
-  ResourceRequest request(url);
-  SetupForAcceptLanguageTest(/*is_detached=*/GetParam(), request);
-  EXPECT_EQ("en-GB", request.HttpHeaderField(http_names::kAcceptLanguage));
-}
-
-TEST_P(FrameFetchContextReduceAcceptLanguageTest, NonHttpFamilyUrl) {
-  const KURL url("ws://www.example.com/");
-  ResourceRequest request(url);
-  SetupForAcceptLanguageTest(/*is_detached=*/GetParam(), request);
   EXPECT_EQ(nullptr, request.HttpHeaderField(http_names::kAcceptLanguage));
 }
 

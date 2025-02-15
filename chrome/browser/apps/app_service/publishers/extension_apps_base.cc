@@ -11,7 +11,6 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/one_shot_event.h"
 #include "base/scoped_observation.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/apps/app_service/app_icon/app_icon_factory.h"
 #include "chrome/browser/apps/app_service/app_launch_params.h"
 #include "chrome/browser/apps/app_service/app_service_proxy.h"
@@ -38,14 +37,17 @@
 #include "chrome/common/extensions/manifest_handlers/app_launch_info.h"
 #include "components/services/app_service/public/cpp/app_launch_util.h"
 #include "components/services/app_service/public/cpp/app_registry_cache.h"
+#include "components/services/app_service/public/cpp/app_types.h"
 #include "components/services/app_service/public/cpp/icon_types.h"
 #include "components/services/app_service/public/cpp/intent.h"
 #include "components/services/app_service/public/cpp/intent_filter_util.h"
+#include "components/services/app_service/public/cpp/package_id.h"
 #include "components/services/app_service/public/cpp/types_util.h"
 #include "content/public/browser/clear_site_data_utils.h"
 #include "content/public/browser/web_contents.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/browser/extension_util.h"
+#include "extensions/browser/install_prefs_helper.h"
 #include "extensions/browser/ui_util.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/extension_urls.h"
@@ -140,6 +142,8 @@ AppPtr ExtensionAppsBase::CreateAppImpl(const extensions::Extension* extension,
   app->short_name = extension->short_name();
   app->description = extension->description();
   app->version = extension->GetVersionForDisplay();
+  app->installer_package_id =
+      apps::PackageId(apps::PackageType::kChromeApp, extension->id());
   app->policy_ids = {extension->id()};
 
   if (profile_) {
@@ -148,7 +152,7 @@ AppPtr ExtensionAppsBase::CreateAppImpl(const extensions::Extension* extension,
       app->last_launch_time = prefs->GetLastLaunchTime(extension->id());
       // TODO(anunoy): Determine if this value should be set to the extension's
       // first install time vs last update time.
-      app->install_time = prefs->GetLastUpdateTime(extension->id());
+      app->install_time = GetLastUpdateTime(prefs, extension->id());
     }
   }
 
@@ -352,6 +356,9 @@ void ExtensionAppsBase::Launch(const std::string& app_id,
     case apps::LaunchSource::kFromFirstRun:
     case apps::LaunchSource::kFromWelcomeTour:
     case apps::LaunchSource::kFromFocusMode:
+    case apps::LaunchSource::kFromSparky:
+    case apps::LaunchSource::kFromNavigationCapturing:
+    case apps::LaunchSource::kFromWebInstallApi:
       break;
   }
 

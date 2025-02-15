@@ -29,10 +29,9 @@
 #include "base/synchronization/lock.h"
 #include "base/thread_annotations.h"
 #include "base/types/expected.h"
-#include "build/chromeos_buildflags.h"
+#include "build/build_config.h"
 #include "media/gpu/chromeos/fourcc.h"
 #include "media/gpu/media_gpu_export.h"
-#include "media/gpu/vaapi/va_surface.h"
 #include "media/gpu/vaapi/vaapi_utils.h"
 #include "media/video/video_decode_accelerator.h"
 #include "media/video/video_encode_accelerator.h"
@@ -166,7 +165,7 @@ class MEDIA_GPU_EXPORT VaapiWrapper
 
   enum CodecMode {
     kDecode,
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
     // NOTE: A kDecodeProtected VaapiWrapper is created using the actual video
     // profile and an extra VAProfileProtected, each with some special added
     // VAConfigAttribs. Then when CreateProtectedSession() is called, it will
@@ -352,7 +351,7 @@ class MEDIA_GPU_EXPORT VaapiWrapper
   // querying libva indicates that our protected session is no longer alive,
   // otherwise this will return false.
   bool IsProtectedSessionDead();
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   // Returns true if and only if |va_protected_session_id| is not VA_INVALID_ID
   // and querying libva indicates that the protected session identified by
   // |va_protected_session_id| is no longer alive.
@@ -447,8 +446,6 @@ class MEDIA_GPU_EXPORT VaapiWrapper
   // Implementations of the pixmap exporter for both types of VASurface.
   // See ExportVASurfaceAsNativePixmapDmaBufUnwrapped() for further
   // documentation.
-  std::unique_ptr<NativePixmapAndSizeInfo> ExportVASurfaceAsNativePixmapDmaBuf(
-      const VASurface& va_surface);
   std::unique_ptr<NativePixmapAndSizeInfo> ExportVASurfaceAsNativePixmapDmaBuf(
       const ScopedVASurface& scoped_va_surface);
 
@@ -578,7 +575,7 @@ class MEDIA_GPU_EXPORT VaapiWrapper
       const gfx::Size& va_surface_dst_size,
       std::optional<gfx::Rect> src_rect = std::nullopt,
       std::optional<gfx::Rect> dest_rect = std::nullopt
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
       ,
       VAProtectedSessionID va_protected_session_id = VA_INVALID_ID
 #endif
@@ -599,6 +596,7 @@ class MEDIA_GPU_EXPORT VaapiWrapper
  private:
   friend class base::RefCountedThreadSafe<VaapiWrapper>;
   friend class VaapiWrapperTest;
+  friend class VaapiVideoDecoderTest;
   friend class VaapiVideoEncodeAcceleratorTest;
 
   FRIEND_TEST_ALL_PREFIXES(VaapiTest, LowQualityEncodingSetting);
@@ -630,8 +628,8 @@ class MEDIA_GPU_EXPORT VaapiWrapper
       std::vector<VASurfaceID>* va_surfaces);
 
   // Syncs and exports |va_surface_id| as a gfx::NativePixmapDmaBuf. Currently,
-  // the only VAAPI surface pixel formats supported are VA_FOURCC_IMC3 and
-  // VA_FOURCC_NV12.
+  // the only VAAPI surface pixel formats supported are VA_FOURCC_IMC3,
+  // VA_FOURCC_NV12, VA_FOURCC_P010 and VA_FOURCC_ARGB.
   //
   // Notes:
   //
@@ -643,6 +641,12 @@ class MEDIA_GPU_EXPORT VaapiWrapper
   //
   // - For VA_FOURCC_NV12, the format of the returned NativePixmapDmaBuf is
   //   gfx::BufferFormat::YUV_420_BIPLANAR.
+  //
+  // - For VA_FOURCC_P010, the format of the returned NativePixmapDmaBuf is
+  //   gfx::BufferFormat::P010.
+  //
+  // - For VA_FOURCC_ARGB, the format of the returned NativePixmapDmaBuf is
+  //   gfx::BufferFormat::BGRA_8888.
   //
   // Returns nullptr on failure, or if the exported surface can't contain
   // |va_surface_size|.
@@ -724,7 +728,7 @@ class MEDIA_GPU_EXPORT VaapiWrapper
   std::unique_ptr<ScopedVABuffer> va_buffer_for_vpp_
       GUARDED_BY_CONTEXT(sequence_checker_);
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   // For protected decode mode.
   VAConfigID va_protected_config_id_ GUARDED_BY_CONTEXT(sequence_checker_){
       VA_INVALID_ID};

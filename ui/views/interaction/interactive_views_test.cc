@@ -108,6 +108,7 @@ InteractiveViewsTestApi::StepBuilder InteractiveViewsTestApi::ScrollIntoView(
 InteractiveViewsTestApi::StepBuilder InteractiveViewsTestApi::MoveMouseTo(
     ElementSpecifier reference,
     RelativePositionSpecifier position) {
+  RequireInteractiveTest();
   StepBuilder step;
   step.SetDescription("MoveMouseTo()");
   SpecifyElement(step, reference);
@@ -138,6 +139,7 @@ InteractiveViewsTestApi::StepBuilder InteractiveViewsTestApi::MoveMouseTo(
 InteractiveViewsTestApi::StepBuilder InteractiveViewsTestApi::ClickMouse(
     ui_controls::MouseButton button,
     bool release) {
+  RequireInteractiveTest();
   StepBuilder step;
   step.SetDescription("ClickMouse()");
   step.SetElementID(kInteractiveTestPivotElementId);
@@ -165,6 +167,7 @@ InteractiveViewsTestApi::StepBuilder InteractiveViewsTestApi::DragMouseTo(
     ElementSpecifier reference,
     RelativePositionSpecifier position,
     bool release) {
+  RequireInteractiveTest();
   StepBuilder step;
   step.SetDescription("DragMouseTo()");
   SpecifyElement(step, reference);
@@ -197,6 +200,7 @@ InteractiveViewsTestApi::StepBuilder InteractiveViewsTestApi::DragMouseTo(
 
 InteractiveViewsTestApi::StepBuilder InteractiveViewsTestApi::ReleaseMouse(
     ui_controls::MouseButton button) {
+  RequireInteractiveTest();
   StepBuilder step;
   step.SetDescription("ReleaseMouse()");
   step.SetElementID(kInteractiveTestPivotElementId);
@@ -288,12 +292,14 @@ View* InteractiveViewsTestApi::FindMatchingView(const View* from,
                                                 ViewMatcher& matcher,
                                                 bool recursive) {
   for (views::View* const child : from->children()) {
-    if (matcher.Run(child))
+    if (matcher.Run(child)) {
       return child;
+    }
     if (recursive) {
       auto* const result = FindMatchingView(child, matcher, true);
-      if (result)
+      if (result) {
         return result;
+      }
     }
   }
   return nullptr;

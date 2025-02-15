@@ -10,6 +10,9 @@
 
 #include "base/command_line.h"
 #include "build/ios_buildflags.h"
+#include "components/input/events_helper.h"
+#include "components/input/render_widget_host_input_event_router.h"
+#include "components/input/switches.h"
 #include "components/viz/common/features.h"
 #include "components/viz/common/surfaces/frame_sink_id_allocator.h"
 #include "content/browser/renderer_host/browser_compositor_ios.h"
@@ -20,9 +23,8 @@
 #include "content/browser/renderer_host/render_widget_host_view_ios_uiview.h"
 #include "content/browser/renderer_host/text_input_manager.h"
 #include "content/common/content_switches_internal.h"
-#include "content/common/input/events_helper.h"
-#include "content/common/input/render_widget_host_input_event_router.h"
 #include "content/public/browser/browser_task_traits.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/common/content_switches.h"
 #include "ui/accelerated_widget_mac/display_ca_layer_tree.h"
 #include "ui/base/ime/text_input_mode.h"
@@ -84,21 +86,18 @@ RenderWidgetHostViewIOS::RenderWidgetHostViewIOS(RenderWidgetHost* widget)
       gesture_provider_(
           ui::GetGestureProviderConfig(
               ui::GestureProviderConfigType::CURRENT_PLATFORM,
-              content::GetUIThreadTaskRunner({BrowserTaskType::kUserInput})),
+              GetUIThreadTaskRunner({BrowserTaskType::kUserInput})),
           this) {
   ui_view_ = std::make_unique<UIViewHolder>();
   ui_view_->view_ =
       [[RenderWidgetUIView alloc] initWithWidget:weak_factory_.GetWeakPtr()];
-
-  display_tree_ =
-      std::make_unique<ui::DisplayCALayerTree>([ui_view_->view_ layer]);
 
   auto* screen = display::Screen::GetScreen();
   screen_infos_ =
       screen->GetScreenInfosNearestDisplay(screen->GetPrimaryDisplay().id());
 
   browser_compositor_ = std::make_unique<BrowserCompositorIOS>(
-      (uint64_t)(__bridge void*)ui_view_->view_, this, host()->is_hidden(),
+      [ui_view_->view_ viewHandle], this, host()->is_hidden(),
       host()->GetFrameSinkId());
 
   if (IsTesting()) {
@@ -405,17 +404,11 @@ void RenderWidgetHostViewIOS::OnSynchronizedDisplayPropertiesChanged(
 }
 
 void RenderWidgetHostViewIOS::UpdateCALayerTree(
-    const gfx::CALayerParams& ca_layer_params) {
-  DCHECK(display_tree_);
-  display_tree_->UpdateCALayerTree(ca_layer_params);
-}
+    const gfx::CALayerParams& ca_layer_params) {}
 
 void RenderWidgetHostViewIOS::OnOldViewDidNavigatePreCommit() {
-  if (base::FeatureList::IsEnabled(
-          features::kInvalidateLocalSurfaceIdPreCommit)) {
-    CHECK(browser_compositor_) << "Shouldn't be called during destruction!";
-    browser_compositor_->DidNavigateMainFramePreCommit();
-  }
+  CHECK(browser_compositor_) << "Shouldn't be called during destruction!";
+  browser_compositor_->DidNavigateMainFramePreCommit();
 }
 
 void RenderWidgetHostViewIOS::OnNewViewDidNavigatePostCommit() {
@@ -438,6 +431,10 @@ void RenderWidgetHostViewIOS::DidEnterBackForwardCache() {
   //
   // Called after to prevent prematurely evict the BFCached surface.
   host()->ForceFirstFrameAfterNavigationTimeout();
+}
+
+void RenderWidgetHostViewIOS::ActivatedOrEvictedFromBackForwardCache() {
+  browser_compositor_->ActivatedOrEvictedFromBackForwardCache();
 }
 
 void RenderWidgetHostViewIOS::DidNavigate() {
@@ -499,8 +496,8 @@ bool RenderWidgetHostViewIOS::TransformPointToCoordSpaceForView(
     return true;
   }
 
-  return target_view->TransformPointToLocalCoordSpace(
-      point, GetCurrentSurfaceId(), transformed_point);
+  return target_view->TransformPointToLocalCoordSpace(point, GetFrameSinkId(),
+                                                      transformed_point);
 }
 
 display::ScreenInfo RenderWidgetHostViewIOS::GetCurrentScreenInfo() const {
@@ -545,7 +542,7 @@ void RenderWidgetHostViewIOS::OnTouchEvent(blink::WebTouchEvent web_event) {
   }
 
   web_event.moved_beyond_slop_region = result.moved_beyond_slop_region;
-  ui::LatencyInfo latency_info(ui::SourceEventType::TOUCH);
+  ui::LatencyInfo latency_info;
   latency_info.AddLatencyNumber(ui::INPUT_EVENT_LATENCY_UI_COMPONENT);
   if (ShouldRouteEvents()) {
     host()->delegate()->GetInputEventRouter()->RouteTouchEvent(this, &web_event,
@@ -563,7 +560,7 @@ void RenderWidgetHostViewIOS::ProcessAckedTouchEvent(
       ack_result == blink::mojom::InputEventResultState::kConsumed;
   gesture_provider_.OnTouchEventAck(
       touch.event.unique_touch_event_id, event_consumed,
-      InputEventResultStateIsSetBlocking(ack_result));
+      input::InputEventResultStateIsSetBlocking(ack_result));
   if (touch.event.touch_start_or_first_touch_move && event_consumed &&
       ShouldRouteEvents()) {
     host()
@@ -576,10 +573,10 @@ void RenderWidgetHostViewIOS::ProcessAckedTouchEvent(
 
 void RenderWidgetHostViewIOS::OnGestureEvent(
     const ui::GestureEventData& gesture) {
-  if ((gesture.type() == ui::ET_GESTURE_PINCH_BEGIN ||
-       gesture.type() == ui::ET_GESTURE_PINCH_UPDATE ||
-       gesture.type() == ui::ET_GESTURE_PINCH_END) &&
-      !IsPinchToZoomEnabled()) {
+  if ((gesture.type() == ui::EventType::kGesturePinchBegin ||
+       gesture.type() == ui::EventType::kGesturePinchUpdate ||
+       gesture.type() == ui::EventType::kGesturePinchEnd) &&
+      !input::switches::IsPinchToZoomEnabled()) {
     return;
   }
 
@@ -594,9 +591,7 @@ bool RenderWidgetHostViewIOS::RequiresDoubleTapGestureEvents() const {
 
 void RenderWidgetHostViewIOS::SendGestureEvent(
     const blink::WebGestureEvent& event) {
-  ui::LatencyInfo latency_info =
-      ui::WebInputEventTraits::CreateLatencyInfoForWebGestureEvent(event);
-  InjectGestureEvent(event, latency_info);
+  InjectGestureEvent(event, ui::LatencyInfo());
 }
 
 void RenderWidgetHostViewIOS::InjectTouchEvent(
@@ -626,7 +621,8 @@ void RenderWidgetHostViewIOS::InjectGestureEvent(
     host()->delegate()->GetInputEventRouter()->RouteGestureEvent(
         this, &gesture_event, latency_info);
   } else {
-    host()->ForwardGestureEventWithLatencyInfo(event, latency_info);
+    host()->GetRenderInputRouter()->ForwardGestureEventWithLatencyInfo(
+        event, latency_info);
   }
 }
 
@@ -704,7 +700,6 @@ RenderWidgetHostImpl* RenderWidgetHostViewIOS::GetActiveWidget() {
 
 void RenderWidgetHostViewIOS::OnFirstResponderChanged() {
   bool is_first_responder = [ui_view_->view_ isFirstResponder] ||
-                            [[ui_view_->view_ textInput] isFirstResponder] ||
                             (IsTesting() && is_getting_focus_);
 
   if (is_first_responder_ == is_first_responder) {
@@ -724,15 +719,14 @@ void RenderWidgetHostViewIOS::OnUpdateTextInputStateCalled(
     RenderWidgetHostViewBase* updated_view,
     bool did_update_state) {
   if (text_input_manager->GetActiveWidget()) {
-    [[ui_view_->view_ textInput]
+    [ui_view_->view_
         onUpdateTextInputState:*text_input_manager->GetTextInputState()
                     withBounds:[ui_view_->view_ bounds]];
   } else {
     // If there are no active widgets, the TextInputState.type should be
     // reported as none.
-    [[ui_view_->view_ textInput]
-        onUpdateTextInputState:ui::mojom::TextInputState()
-                    withBounds:[ui_view_->view_ bounds]];
+    [ui_view_->view_ onUpdateTextInputState:ui::mojom::TextInputState()
+                                 withBounds:[ui_view_->view_ bounds]];
   }
 }
 
@@ -743,8 +737,8 @@ void RenderWidgetHostViewIOS::OnTextSelectionChanged(
   const TextInputManager::TextSelection* selection =
       text_input_manager->GetTextSelection(updated_view);
   if (selection && selection->selected_text().length()) {
-    [ui_view_->view_.textInteraction refreshKeyboardUI];
-    [ui_view_->view_.textInteraction textSelectionDisplayInteraction]
+    [[ui_view_->view_ textInteraction] refreshKeyboardUI];
+    [[ui_view_->view_ textInteraction] textSelectionDisplayInteraction]
         .activated = YES;
 
     // This seems like a bug. BETextInput always sets the
@@ -752,7 +746,7 @@ void RenderWidgetHostViewIOS::OnTextSelectionChanged(
     // the entire web content to be transformed down for some reason. Instead,
     // scale it down here with a very naive implementation.
     UITextSelectionDisplayInteraction* textSelectionDisplayInteraction =
-        ui_view_->view_.textInteraction.textSelectionDisplayInteraction;
+        [ui_view_->view_ textInteraction].textSelectionDisplayInteraction;
     NSArray<UIView<UITextSelectionHandleView>*>* handleViews =
         textSelectionDisplayInteraction.handleViews;
 
@@ -766,14 +760,14 @@ void RenderWidgetHostViewIOS::OnTextSelectionChanged(
     handleViews[1].subviews[1].layer.transform =
         CATransform3DMakeScale(shrink, shrink, 1);
   } else {
-    [ui_view_->view_.textInteraction textSelectionDisplayInteraction]
+    [[ui_view_->view_ textInteraction] textSelectionDisplayInteraction]
         .activated = NO;
   }
 }
 void RenderWidgetHostViewIOS::OnSelectionBoundsChanged(
     TextInputManager* text_input_manager,
     RenderWidgetHostViewBase* updated_view) {
-  [ui_view_->view_.textInteraction
+  [[ui_view_->view_ textInteraction]
           .textSelectionDisplayInteraction setNeedsSelectionUpdate];
 }
 
@@ -783,6 +777,7 @@ ui::Compositor* RenderWidgetHostViewIOS::GetCompositor() {
 
 void RenderWidgetHostViewIOS::GestureEventAck(
     const blink::WebGestureEvent& event,
+    blink::mojom::InputEventResultSource ack_source,
     blink::mojom::InputEventResultState ack_result) {
   // Stop flinging if a GSU event with momentum phase is sent to the renderer
   // but not consumed.
@@ -888,6 +883,16 @@ void RenderWidgetHostViewIOS::ContentInsetChanged() {
   }
   if (!is_scrolling_) {
     host()->SynchronizeVisualProperties();
+  }
+}
+
+void RenderWidgetHostViewIOS::DeleteSurroundingText(int before, int after) {
+  if (auto* widget_host = GetActiveWidget()) {
+    auto* input_handler = widget_host->GetFrameWidgetInputHandler();
+    if (!input_handler) {
+      return;
+    }
+    input_handler->DeleteSurroundingTextInCodePoints(before, after);
   }
 }
 

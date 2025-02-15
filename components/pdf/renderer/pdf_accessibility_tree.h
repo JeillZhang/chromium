@@ -67,7 +67,8 @@ class PdfAccessibilityTree : public ui::AXTreeSource<const ui::AXNode*,
       content::RenderFrame* render_frame,
       chrome_pdf::PdfAccessibilityActionHandler* action_handler,
       chrome_pdf::PdfAccessibilityImageFetcher* image_fetcher,
-      blink::WebPluginContainer* plugin_container);
+      blink::WebPluginContainer* plugin_container,
+      bool print_preview);
   ~PdfAccessibilityTree() override;
 
   static bool IsDataFromPluginValid(
@@ -95,6 +96,9 @@ class PdfAccessibilityTree : public ui::AXTreeSource<const ui::AXNode*,
       std::vector<chrome_pdf::AccessibilityTextRunInfo> text_runs,
       std::vector<chrome_pdf::AccessibilityCharInfo> chars,
       chrome_pdf::AccessibilityPageObjects page_objects) override;
+#if BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
+  void OnHasSearchifyText() override;
+#endif
 
   void HandleAction(const chrome_pdf::AccessibilityActionData& action_data);
   std::optional<AnnotationInfo> GetPdfAnnotationInfoFromAXNode(
@@ -144,10 +148,6 @@ class PdfAccessibilityTree : public ui::AXTreeSource<const ui::AXNode*,
   // replacing each image node for which we have OCRed text.
   virtual void OnOcrDataReceived(std::vector<PdfOcrRequest> ocr_requests,
                                  std::vector<ui::AXTreeUpdate> tree_updates);
-
-  const ui::AXTreeUpdate* postamble_page_tree_update_for_testing() const {
-    return postamble_page_tree_update_.get();
-  }
 #endif  // BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
 
   bool ShowContextMenu();
@@ -162,13 +162,6 @@ class PdfAccessibilityTree : public ui::AXTreeSource<const ui::AXNode*,
                     const ui::AXTreeID& child_tree_id);
 
   void ForcePluginAXObjectForTesting(const blink::WebAXObject& obj);
-
-#if BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
- protected:
-  // Adds a postample page to the accessibility tree which informs the user that
-  // OCR is in progress, if that is indeed the case.
-  void AddPostamblePageIfNeeded(const ui::AXNodeID& last_page_node_id);
-#endif  // BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
 
  private:
   // Update the AXTreeData when the selected range changed.
@@ -266,16 +259,16 @@ class PdfAccessibilityTree : public ui::AXTreeSource<const ui::AXNode*,
   // From PDF plugin we receive all the data in logical pixels. Which is
   // without the zoom and scale factor applied. We apply the `zoom_` and
   // `scale_` to generate the final bounding boxes of elements in accessibility
-  // tree.
+  // tree. `orientation_` represents page rotations as multiples of 90 degrees,
+  // based on `chrome_pdf::PageOrientation`.
   double zoom_ = 1.0;
   double scale_ = 1.0;
+  int32_t orientation_ = 0;
   gfx::Vector2dF scroll_;
   gfx::Vector2dF offset_;
-  uint32_t selection_start_page_index_ = 0;
-  uint32_t selection_start_char_index_ = 0;
-  uint32_t selection_end_page_index_ = 0;
-  uint32_t selection_end_char_index_ = 0;
+  chrome_pdf::Selection selection_;
   uint32_t page_count_ = 0;
+  bool is_tagged_ = false;
   std::unique_ptr<ui::AXNodeData> doc_node_;
   // The banner node will have an appropriate ARIA landmark for easy navigation
   // for screen reader users. It will contain the status node below.
@@ -300,7 +293,9 @@ class PdfAccessibilityTree : public ui::AXTreeSource<const ui::AXNode*,
   // outdated calls of SetAccessibilityPageInfo().
   uint32_t next_page_index_ = 0;
 
-  bool did_get_a_text_run_ = false;
+  // Indicates that the PDF had accessible text (at least on some pages) without
+  // applying searchify.
+  bool had_accessible_text_ = false;
   bool did_have_an_image_ = false;
   bool sent_metrics_once_ = false;
   // Initialize `currently_in_foreground_` to be true as an associated render
@@ -312,15 +307,16 @@ class PdfAccessibilityTree : public ui::AXTreeSource<const ui::AXNode*,
   // plugin container is nullptr. Enables lower level tests to function.
   blink::WebAXObject force_plugin_ax_object_for_testing_;
 
+  const bool print_preview_;
+
 #if BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
-  // The postamble page is added to the accessibility tree to inform the user
-  // that the OCR process is ongoing. It is removed once the process is
-  // complete.
-  std::unique_ptr<ui::AXTreeUpdate> postamble_page_tree_update_;
   std::unique_ptr<PdfOcrHelper> ocr_helper_;
 
   // Flag indicating if any text was converted from images by OCR.
   bool was_text_converted_from_image_ = false;
+
+  // Flag indicating that searchify (OCR) ran on some pages.
+  bool did_searchify_run_ = false;
 #endif  // BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
 
   base::WeakPtrFactory<PdfAccessibilityTree> weak_ptr_factory_{this};

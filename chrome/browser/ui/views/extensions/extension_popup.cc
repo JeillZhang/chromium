@@ -13,11 +13,13 @@
 #include "chrome/browser/ui/views/extensions/security_dialog_tracker.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "components/javascript_dialogs/app_modal_dialog_queue.h"
+#include "components/web_modal/web_modal_utils.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/devtools_agent_host.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/web_contents.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
+#include "ui/base/mojom/dialog_button.mojom.h"
 #include "ui/gfx/geometry/insets.h"
 #include "ui/gfx/geometry/rounded_corners_f.h"
 #include "ui/views/border.h"
@@ -53,7 +55,7 @@ ExtensionPopup* g_last_popup_for_testing = nullptr;
 // for this object's lifetime.
 class ExtensionPopup::ScopedDevToolsAgentHostObservation {
  public:
-  ScopedDevToolsAgentHostObservation(
+  explicit ScopedDevToolsAgentHostObservation(
       content::DevToolsAgentHostObserver* observer)
       : observer_(observer) {
     content::DevToolsAgentHost::AddObserver(observer_);
@@ -82,10 +84,9 @@ void ExtensionPopup::ShowPopup(
     std::unique_ptr<extensions::ExtensionViewHost> host,
     views::View* anchor_view,
     views::BubbleBorder::Arrow arrow,
-    bool by_user,
     PopupShowAction show_action,
     ShowPopupCallback callback) {
-  auto* popup = new ExtensionPopup(std::move(host), anchor_view, arrow, by_user,
+  auto* popup = new ExtensionPopup(std::move(host), anchor_view, arrow,
                                    show_action, std::move(callback));
   views::BubbleDialogDelegateView::CreateBubble(popup);
 
@@ -105,11 +106,13 @@ void ExtensionPopup::ShowPopup(
 ExtensionPopup::~ExtensionPopup() {
   // The ExtensionPopup may close before it was ever shown. If so, indicate such
   // through the callback.
-  if (shown_callback_)
+  if (shown_callback_) {
     std::move(shown_callback_).Run(nullptr);
+  }
 
-  if (g_last_popup_for_testing == this)
+  if (g_last_popup_for_testing == this) {
     g_last_popup_for_testing = nullptr;
+  }
 }
 
 gfx::Size ExtensionPopup::CalculatePreferredSize(
@@ -218,29 +221,31 @@ void ExtensionPopup::OnTabStripModelChanged(
     TabStripModel* tab_strip_model,
     const TabStripModelChange& change,
     const TabStripSelectionChange& selection) {
-  if (!tab_strip_model->empty() && selection.active_tab_changed())
+  if (!tab_strip_model->empty() && selection.active_tab_changed()) {
     CloseDeferredIfNecessary();
+  }
 }
 
 void ExtensionPopup::DevToolsAgentHostAttached(
     content::DevToolsAgentHost* agent_host) {
   DCHECK(host_);
-  if (host_->host_contents() == agent_host->GetWebContents())
+  if (host_->host_contents() == agent_host->GetWebContents()) {
     show_action_ = PopupShowAction::kShowAndInspect;
+  }
 }
 
 void ExtensionPopup::DevToolsAgentHostDetached(
     content::DevToolsAgentHost* agent_host) {
   DCHECK(host_);
-  if (host_->host_contents() == agent_host->GetWebContents())
+  if (host_->host_contents() == agent_host->GetWebContents()) {
     show_action_ = PopupShowAction::kShow;
+  }
 }
 
 ExtensionPopup::ExtensionPopup(
     std::unique_ptr<extensions::ExtensionViewHost> host,
     views::View* anchor_view,
     views::BubbleBorder::Arrow arrow,
-    bool by_user,
     PopupShowAction show_action,
     ShowPopupCallback callback)
     : BubbleDialogDelegateView(anchor_view,
@@ -248,12 +253,11 @@ ExtensionPopup::ExtensionPopup(
                                views::BubbleBorder::STANDARD_SHADOW,
                                /*autosize=*/true),
       host_(std::move(host)),
-      by_user_(by_user),
       show_action_(show_action),
       shown_callback_(std::move(callback)),
       deferred_close_weak_ptr_factory_(this) {
   g_last_popup_for_testing = this;
-  SetButtons(ui::DIALOG_BUTTON_NONE);
+  SetButtons(static_cast<int>(ui::mojom::DialogButton::kNone));
   set_use_round_corners(false);
 
   set_margins(gfx::Insets());
@@ -300,8 +304,7 @@ ExtensionPopup::ExtensionPopup(
 void ExtensionPopup::ShowBubble() {
   // Don't show the popup if there are visible security dialogs. This protects
   // the security dialogs from spoofing.
-  if (!by_user_ &&
-      extensions::SecurityDialogTracker::GetInstance()
+  if (extensions::SecurityDialogTracker::GetInstance()
           ->BrowserHasVisibleSecurityDialogs(host_->GetBrowser())) {
     CloseDeferredIfNecessary();
     return;
@@ -318,8 +321,9 @@ void ExtensionPopup::ShowBubble() {
         DevToolsOpenedByAction::kContextMenuInspect);
   }
 
-  if (shown_callback_)
+  if (shown_callback_) {
     std::move(shown_callback_).Run(host_.get());
+  }
 }
 
 void ExtensionPopup::CloseUnlessBlockedByInspectionOrJSDialog() {
@@ -333,6 +337,12 @@ void ExtensionPopup::CloseUnlessBlockedByInspectionOrJSDialog() {
       javascript_dialogs::AppModalDialogQueue::GetInstance();
   CHECK(app_modal_queue);
   if (app_modal_queue->HasActiveDialog()) {
+    return;
+  }
+
+  // Don't close if a web modal dialog (e.g. webauthn security key dialog) is
+  // showing.
+  if (web_modal::WebContentsHasActiveWebModal(host_->host_contents())) {
     return;
   }
 

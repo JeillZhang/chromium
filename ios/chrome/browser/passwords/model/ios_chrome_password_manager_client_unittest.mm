@@ -8,8 +8,8 @@
 
 #import <memory>
 
-#import "components/password_manager/core/browser/password_form.h"
 #import "components/password_manager/core/browser/mock_password_form_manager_for_ui.h"
+#import "components/password_manager/core/browser/password_form.h"
 #import "components/password_manager/core/browser/password_form_manager.h"
 #import "components/password_manager/core/browser/password_form_manager_for_ui.h"
 #import "components/password_manager/core/browser/password_store/mock_password_store_interface.h"
@@ -17,7 +17,7 @@
 #import "components/prefs/testing_pref_service.h"
 #import "ios/chrome/browser/passwords/model/password_controller.h"
 #import "ios/chrome/browser/shared/model/browser/test/test_browser.h"
-#import "ios/chrome/browser/shared/model/browser_state/test_chrome_browser_state.h"
+#import "ios/chrome/browser/shared/model/profile/test/test_profile_ios.h"
 #import "ios/chrome/browser/shared/public/commands/command_dispatcher.h"
 #import "ios/chrome/browser/shared/public/commands/credential_provider_promo_commands.h"
 #import "ios/chrome/browser/web/model/chrome_web_client.h"
@@ -46,10 +46,10 @@ class IOSChromePasswordManagerClientTest : public PlatformTest {
       : web_client_(std::make_unique<ChromeWebClient>()),
         store_(new testing::NiceMock<
                password_manager::MockPasswordStoreInterface>()) {
-    browser_state_ = TestChromeBrowserState::Builder().Build();
-    browser_ = std::make_unique<TestBrowser>(browser_state_.get());
+    profile_ = TestProfileIOS::Builder().Build();
+    browser_ = std::make_unique<TestBrowser>(profile_.get());
 
-    web::WebState::CreateParams params(browser_state_.get());
+    web::WebState::CreateParams params(profile_.get());
     web_state_ = web::WebState::Create(params);
     web_state_->GetView();
     web_state_->SetKeepRenderProcessAlive(true);
@@ -77,7 +77,7 @@ class IOSChromePasswordManagerClientTest : public PlatformTest {
 
   web::ScopedTestingWebClient web_client_;
   web::WebTaskEnvironment task_environment_;
-  std::unique_ptr<TestChromeBrowserState> browser_state_;
+  std::unique_ptr<TestProfileIOS> profile_;
   std::unique_ptr<Browser> browser_;
   std::unique_ptr<web::WebState> web_state_;
 

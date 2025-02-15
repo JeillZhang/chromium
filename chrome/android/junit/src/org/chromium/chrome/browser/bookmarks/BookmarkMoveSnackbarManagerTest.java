@@ -12,7 +12,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 
-import static org.chromium.base.ThreadUtils.runOnUiThreadBlockingNoException;
+import static org.chromium.base.ThreadUtils.runOnUiThreadBlocking;
 
 import android.app.Activity;
 
@@ -37,16 +37,17 @@ import org.chromium.chrome.browser.ui.messages.snackbar.Snackbar;
 import org.chromium.chrome.browser.ui.messages.snackbar.SnackbarManager;
 import org.chromium.components.bookmarks.BookmarkId;
 import org.chromium.components.signin.base.CoreAccountInfo;
+import org.chromium.components.signin.base.GaiaId;
 import org.chromium.components.signin.identitymanager.IdentityManager;
 import org.chromium.ui.base.TestActivity;
 import org.chromium.url.GURL;
 
 import java.util.Arrays;
 
+/** Unit tests for {@link BookmarkMoveSnackbarManager}. */
 @Batch(Batch.UNIT_TESTS)
 @RunWith(BaseRobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
-/** Unit tests for {@link BookmarkMoveSnackbarManager}. */
 public class BookmarkMoveSnackbarManagerTest {
     @Rule
     public ActivityScenarioRule<TestActivity> mActivityScenarioRule =
@@ -69,7 +70,7 @@ public class BookmarkMoveSnackbarManagerTest {
     private BookmarkId mAccountMobileFolderId;
     private BookmarkModelObserver mBookmarkModelObserver;
     private CoreAccountInfo mAccountInfo =
-            CoreAccountInfo.createFromEmailAndGaiaId("test@gmail.com", "testGaiaId");
+            CoreAccountInfo.createFromEmailAndGaiaId("test@gmail.com", new GaiaId("testGaiaId"));
 
     @Before
     public void setUp() {
@@ -93,25 +94,25 @@ public class BookmarkMoveSnackbarManagerTest {
     private FakeBookmarkModel setupFakeBookmarkModel() {
         FakeBookmarkModel bookmarkModel = FakeBookmarkModel.createModel();
         mAccountMobileFolderId =
-                runOnUiThreadBlockingNoException(() -> bookmarkModel.getAccountMobileFolderId());
-        mMobileFolderId = runOnUiThreadBlockingNoException(() -> bookmarkModel.getMobileFolderId());
+                runOnUiThreadBlocking(() -> bookmarkModel.getAccountMobileFolderId());
+        mMobileFolderId = runOnUiThreadBlocking(() -> bookmarkModel.getMobileFolderId());
         mBookmarkId1 =
-                runOnUiThreadBlockingNoException(
+                runOnUiThreadBlocking(
                         () ->
                                 bookmarkModel.addBookmark(
                                         mMobileFolderId, 0, "bookmark 1", new GURL("test1.com")));
         mBookmarkId2 =
-                runOnUiThreadBlockingNoException(
+                runOnUiThreadBlocking(
                         () ->
                                 bookmarkModel.addBookmark(
                                         mMobileFolderId, 0, "bookmark 2", new GURL("test2.com")));
         mBookmarkId3 =
-                runOnUiThreadBlockingNoException(
+                runOnUiThreadBlocking(
                         () ->
                                 bookmarkModel.addBookmark(
                                         mMobileFolderId, 0, "bookmark 3", new GURL("test3.com")));
         mLongTextFolderId =
-                runOnUiThreadBlockingNoException(
+                runOnUiThreadBlocking(
                         () ->
                                 bookmarkModel.addFolder(
                                         mMobileFolderId,

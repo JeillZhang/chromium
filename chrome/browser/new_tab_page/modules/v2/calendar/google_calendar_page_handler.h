@@ -6,7 +6,6 @@
 #define CHROME_BROWSER_NEW_TAB_PAGE_MODULES_V2_CALENDAR_GOOGLE_CALENDAR_PAGE_HANDLER_H_
 
 #include "base/memory/raw_ptr.h"
-#include "base/strings/string_number_conversions.h"
 #include "chrome/browser/new_tab_page/modules/v2/calendar/google_calendar.mojom.h"
 #include "google_apis/calendar/calendar_api_url_generator.h"
 #include "google_apis/common/api_error_codes.h"
@@ -32,8 +31,7 @@ class GoogleCalendarPageHandler
       mojo::PendingReceiver<ntp::calendar::mojom::GoogleCalendarPageHandler>
           handler,
       Profile* profile,
-      std::unique_ptr<google_apis::RequestSender> sender,
-      google_apis::calendar::CalendarApiUrlGenerator url_generator);
+      std::unique_ptr<google_apis::RequestSender> sender);
   GoogleCalendarPageHandler(
       mojo::PendingReceiver<ntp::calendar::mojom::GoogleCalendarPageHandler>
           handler,
@@ -58,6 +56,8 @@ class GoogleCalendarPageHandler
   raw_ptr<PrefService> pref_service_;
   std::unique_ptr<google_apis::RequestSender> sender_;
   google_apis::calendar::CalendarApiUrlGenerator url_generator_;
+
+  base::WeakPtrFactory<GoogleCalendarPageHandler> weak_factory_{this};
 };
 
 #endif  // CHROME_BROWSER_NEW_TAB_PAGE_MODULES_V2_CALENDAR_GOOGLE_CALENDAR_PAGE_HANDLER_H_

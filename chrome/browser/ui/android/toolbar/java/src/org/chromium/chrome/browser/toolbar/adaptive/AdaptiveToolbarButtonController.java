@@ -22,12 +22,12 @@ import org.chromium.base.FeatureList;
 import org.chromium.base.ObserverList;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.metrics.RecordUserAction;
-import org.chromium.base.shared_preferences.SharedPreferencesManager;
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.supplier.OneShotCallback;
 import org.chromium.chrome.browser.lifecycle.ActivityLifecycleDispatcher;
 import org.chromium.chrome.browser.lifecycle.ConfigurationChangedObserver;
 import org.chromium.chrome.browser.profiles.Profile;
+import org.chromium.chrome.browser.settings.SettingsNavigationFactory;
 import org.chromium.chrome.browser.tab.CurrentTabObserver;
 import org.chromium.chrome.browser.tab.EmptyTabObserver;
 import org.chromium.chrome.browser.tab.Tab;
@@ -38,7 +38,7 @@ import org.chromium.chrome.browser.toolbar.ButtonDataProvider;
 import org.chromium.chrome.browser.toolbar.ButtonDataProvider.ButtonDataObserver;
 import org.chromium.chrome.browser.toolbar.R;
 import org.chromium.chrome.browser.toolbar.adaptive.settings.AdaptiveToolbarSettingsFragment;
-import org.chromium.components.browser_ui.settings.SettingsLauncher;
+import org.chromium.components.browser_ui.settings.SettingsNavigation;
 import org.chromium.content_public.browser.NavigationHandle;
 import org.chromium.ui.permissions.AndroidPermissionDelegate;
 
@@ -53,6 +53,8 @@ public class AdaptiveToolbarButtonController
                 ButtonDataObserver,
                 SharedPreferences.OnSharedPreferenceChangeListener,
                 ConfigurationChangedObserver {
+
+    private final Context mContext;
     private ObserverList<ButtonDataObserver> mObservers = new ObserverList<>();
     @Nullable private ButtonDataProvider mSingleProvider;
 
@@ -73,7 +75,6 @@ public class AdaptiveToolbarButtonController
 
     private final ActivityLifecycleDispatcher mLifecycleDispatcher;
     private final AndroidPermissionDelegate mAndroidPermissionDelegate;
-    private final SharedPreferencesManager mSharedPreferencesManager;
     private final CallbackController mCallbackController;
     private final Callback<AdaptiveToolbarStatePredictor.UiState> mUiStateCallback;
 
@@ -90,8 +91,7 @@ public class AdaptiveToolbarButtonController
     /**
      * Constructs the {@link AdaptiveToolbarButtonController}.
      *
-     * @param context used in {@link SettingsLauncher}
-     * @param settingsLauncher opens adaptive button settings
+     * @param context used in {@link SettingsNavigation}
      * @param lifecycleDispatcher notifies about native initialization
      * @param profileSupplier Allows access to the {@link Profile} for the current session.
      */
@@ -100,18 +100,17 @@ public class AdaptiveToolbarButtonController
     @SuppressWarnings("UseSharedPreferencesManagerFromChromeCheck")
     public AdaptiveToolbarButtonController(
             Context context,
-            SettingsLauncher settingsLauncher,
             ActivityLifecycleDispatcher lifecycleDispatcher,
             ObservableSupplier<Profile> profileSupplier,
             AdaptiveButtonActionMenuCoordinator menuCoordinator,
-            AndroidPermissionDelegate androidPermissionDelegate,
-            SharedPreferencesManager sharedPreferencesManager) {
+            AndroidPermissionDelegate androidPermissionDelegate) {
+        mContext = context;
         mMenuClickListener =
                 id -> {
                     if (id == R.id.customize_adaptive_button_menu_id) {
                         RecordUserAction.record("MobileAdaptiveMenuCustomize");
-                        settingsLauncher.launchSettingsActivity(
-                                context, AdaptiveToolbarSettingsFragment.class);
+                        SettingsNavigationFactory.createSettingsNavigation()
+                                .startSettings(context, AdaptiveToolbarSettingsFragment.class);
                         return;
                     }
                     assert false : "unknown adaptive button menu id: " + id;
@@ -119,7 +118,6 @@ public class AdaptiveToolbarButtonController
         mLifecycleDispatcher = lifecycleDispatcher;
         mLifecycleDispatcher.register(this);
         mMenuCoordinator = menuCoordinator;
-        mSharedPreferencesManager = sharedPreferencesManager;
         mScreenWidthDp = context.getResources().getConfiguration().screenWidthDp;
         mAndroidPermissionDelegate = androidPermissionDelegate;
         mCallbackController = new CallbackController();
@@ -216,7 +214,7 @@ public class AdaptiveToolbarButtonController
             RecordHistogram.recordEnumeratedHistogram(
                     "Android.AdaptiveToolbarButton.SessionVariant",
                     receivedButtonData.getButtonSpec().getButtonVariant(),
-                    AdaptiveToolbarButtonVariant.MAX_VALUE + 1);
+                    AdaptiveToolbarButtonVariant.MAX_VALUE);
         }
 
         mButtonData.setCanShow(receivedButtonData.canShow() && isScreenWideEnoughForButton());
@@ -238,7 +236,7 @@ public class AdaptiveToolbarButtonController
                             receivedButtonSpec.isDynamicAction() ? null : mMenuHandler,
                             receivedButtonSpec.getContentDescription(),
                             receivedButtonSpec.getSupportsTinting(),
-                            receivedButtonSpec.getIPHCommandBuilder(),
+                            receivedButtonSpec.getIphCommandBuilder(),
                             receivedButtonSpec.getButtonVariant(),
                             receivedButtonSpec.getActionChipLabelResId(),
                             receivedButtonSpec.getHoverTooltipTextId(),
@@ -254,7 +252,7 @@ public class AdaptiveToolbarButtonController
             RecordHistogram.recordEnumeratedHistogram(
                     "Android.AdaptiveToolbarButton.Clicked",
                     buttonVariant,
-                    AdaptiveToolbarButtonVariant.MAX_VALUE + 1);
+                    AdaptiveToolbarButtonVariant.MAX_VALUE);
             receivedListener.onClick(view);
         };
     }
@@ -275,13 +273,13 @@ public class AdaptiveToolbarButtonController
         assert mAdaptiveToolbarStatePredictor == null;
         profile = profile.getOriginalProfile();
         mAdaptiveToolbarStatePredictor =
-                new AdaptiveToolbarStatePredictor(profile, mAndroidPermissionDelegate);
+                new AdaptiveToolbarStatePredictor(mContext, profile, mAndroidPermissionDelegate);
         ContextUtils.getAppSharedPreferences().registerOnSharedPreferenceChangeListener(this);
 
         if (!AdaptiveToolbarFeatures.isCustomizationEnabled()) return;
         mAdaptiveToolbarStatePredictor.recomputeUiState(mUiStateCallback);
         AdaptiveToolbarStats.recordSelectedSegmentFromSegmentationPlatformAsync(
-                mAdaptiveToolbarStatePredictor);
+                mContext, mAdaptiveToolbarStatePredictor);
         // We need the menu handler only if the customization feature is on.
         if (mMenuHandler != null) return;
         mMenuHandler = createMenuHandler();
@@ -325,7 +323,7 @@ public class AdaptiveToolbarButtonController
         RecordHistogram.recordEnumeratedHistogram(
                 "Android.AdaptiveToolbarButton.Variant.OnPageLoad",
                 actionToShow,
-                AdaptiveToolbarButtonVariant.MAX_VALUE + 1);
+                AdaptiveToolbarButtonVariant.MAX_VALUE);
         if (mOriginalButtonSpec != null && mOriginalButtonSpec.getButtonVariant() == actionToShow) {
             return;
         }
@@ -359,7 +357,7 @@ public class AdaptiveToolbarButtonController
                                 RecordHistogram.recordEnumeratedHistogram(
                                         "Android.AdaptiveToolbarButton.Variant.OnStartNavigation",
                                         currentVariant,
-                                        AdaptiveToolbarButtonVariant.MAX_VALUE + 1);
+                                        AdaptiveToolbarButtonVariant.MAX_VALUE);
                             }
                         },
                         null);

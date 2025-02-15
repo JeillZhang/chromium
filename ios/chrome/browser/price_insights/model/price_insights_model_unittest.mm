@@ -11,12 +11,15 @@
 #import "components/commerce/core/commerce_feature_list.h"
 #import "components/commerce/core/commerce_types.h"
 #import "components/commerce/core/mock_shopping_service.h"
+#import "components/feature_engagement/public/event_constants.h"
+#import "components/feature_engagement/public/feature_constants.h"
 #import "components/strings/grit/components_strings.h"
 #import "ios/chrome/browser/commerce/model/shopping_service_factory.h"
 #import "ios/chrome/browser/contextual_panel/model/contextual_panel_item_configuration.h"
 #import "ios/chrome/browser/price_insights/model/price_insights_feature.h"
-#import "ios/chrome/browser/shared/model/browser_state/test_chrome_browser_state.h"
+#import "ios/chrome/browser/shared/model/profile/test/test_profile_ios.h"
 #import "ios/chrome/browser/shared/ui/symbols/symbols.h"
+#import "ios/web/public/browser_state.h"
 #import "ios/web/public/test/fakes/fake_navigation_manager.h"
 #import "ios/web/public/test/fakes/fake_web_state.h"
 #import "ios/web/public/web_state.h"
@@ -41,14 +44,14 @@ class PriceInsightsModelTest : public PlatformTest {
   ~PriceInsightsModelTest() override {}
 
   void SetUp() override {
-    TestChromeBrowserState::Builder builder;
+    TestProfileIOS::Builder builder;
     builder.AddTestingFactory(
         commerce::ShoppingServiceFactory::GetInstance(),
         base::BindRepeating(
             [](web::BrowserState*) -> std::unique_ptr<KeyedService> {
               return commerce::MockShoppingService::Build();
             }));
-    test_chrome_browser_state_ = builder.Build();
+    test_profile_ = std::move(builder).Build();
     std::unique_ptr<web::FakeNavigationManager> navigation_manager =
         std::make_unique<web::FakeNavigationManager>();
     navigation_manager->AddItem(GURL(kTestUrl), ui::PAGE_TRANSITION_LINK);
@@ -56,17 +59,17 @@ class PriceInsightsModelTest : public PlatformTest {
         navigation_manager->GetItemAtIndex(0));
     web_state_ = std::make_unique<web::FakeWebState>();
     web_state_->SetNavigationManager(std::move(navigation_manager));
-    web_state_->SetBrowserState(test_chrome_browser_state_.get());
+    web_state_->SetBrowserState(test_profile_.get());
     web_state_->SetNavigationItemCount(1);
     web_state_->SetCurrentURL(GURL(kTestUrl));
-    web_state_->SetBrowserState(test_chrome_browser_state_.get());
+    web_state_->SetBrowserState(test_profile_.get());
     price_insights_model_ = std::make_unique<PriceInsightsModel>();
     shopping_service_ = static_cast<commerce::MockShoppingService*>(
-        commerce::ShoppingServiceFactory::GetForBrowserState(
-            test_chrome_browser_state_.get()));
+        commerce::ShoppingServiceFactory::GetForProfile(test_profile_.get()));
     shopping_service_->SetResponseForGetProductInfoForUrl(std::nullopt);
     shopping_service_->SetResponseForGetPriceInsightsInfoForUrl(std::nullopt);
     shopping_service_->SetIsSubscribedCallbackValue(false);
+    shopping_service_->SetIsShoppingListEligible(true);
     fetch_configuration_callback_count = 0;
   }
 
@@ -97,7 +100,7 @@ class PriceInsightsModelTest : public PlatformTest {
   std::unique_ptr<ContextualPanelItemConfiguration> returned_configuration_;
   int fetch_configuration_callback_count;
   std::unique_ptr<web::FakeWebState> web_state_;
-  std::unique_ptr<TestChromeBrowserState> test_chrome_browser_state_;
+  std::unique_ptr<TestProfileIOS> test_profile_;
 };
 
 // Tests that fetching the configuration for the price insights model returns no
@@ -123,6 +126,63 @@ TEST_F(PriceInsightsModelTest, TestFetchConfigurationNoProductInfo) {
   EXPECT_EQ(nullptr, config);
 }
 
+// Tests that fetching the configuration for the price insights model returns no
+// data when product info has no title and no product cluster title.
+TEST_F(PriceInsightsModelTest, TestFetchConfigurationNoTitleNoClusterTitle) {
+  base::RunLoop run_loop;
+
+  std::optional<commerce::ProductInfo> info;
+  info.emplace();
+  info->product_cluster_id = 12345L;
+  shopping_service_->SetResponseForGetProductInfoForUrl(std::move(info));
+
+  EXPECT_CALL(*shopping_service_, GetProductInfoForUrl(_, _)).Times(1);
+  EXPECT_CALL(*shopping_service_, GetPriceInsightsInfoForUrl(_, _)).Times(0);
+
+  price_insights_model_->FetchConfigurationForWebState(
+      web_state_.get(),
+      base::BindOnce(&PriceInsightsModelTest::FetchConfigurationCallback,
+                     base::Unretained(this))
+          .Then(run_loop.QuitClosure()));
+
+  run_loop.Run();
+
+  PriceInsightsItemConfiguration* config =
+      static_cast<PriceInsightsItemConfiguration*>(
+          returned_configuration_.get());
+
+  EXPECT_EQ(nullptr, config);
+}
+
+// Tests that fetching the configuration for the price insights model returns no
+// data when product info is available without tracking.
+TEST_F(PriceInsightsModelTest, TestFetchConfigurationProductInfoNoTracking) {
+  base::RunLoop run_loop;
+
+  std::optional<commerce::ProductInfo> info;
+  info.emplace();
+  info->title = kTestTitle;
+  shopping_service_->SetResponseForGetProductInfoForUrl(std::move(info));
+  shopping_service_->SetIsShoppingListEligible(false);
+
+  EXPECT_CALL(*shopping_service_, GetProductInfoForUrl(_, _)).Times(1);
+  EXPECT_CALL(*shopping_service_, GetPriceInsightsInfoForUrl(_, _)).Times(1);
+
+  price_insights_model_->FetchConfigurationForWebState(
+      web_state_.get(),
+      base::BindOnce(&PriceInsightsModelTest::FetchConfigurationCallback,
+                     base::Unretained(this))
+          .Then(run_loop.QuitClosure()));
+
+  run_loop.Run();
+
+  PriceInsightsItemConfiguration* config =
+      static_cast<PriceInsightsItemConfiguration*>(
+          returned_configuration_.get());
+
+  EXPECT_EQ(nullptr, config);
+}
+
 // Test that GetProductInfoForUrl return data when the configuration is fetched.
 TEST_F(PriceInsightsModelTest, TestFetchProductInfo) {
   base::RunLoop run_loop;
@@ -130,10 +190,11 @@ TEST_F(PriceInsightsModelTest, TestFetchProductInfo) {
   std::optional<commerce::ProductInfo> info;
   info.emplace();
   info->title = kTestTitle;
+  info->product_cluster_id = 12345L;
   shopping_service_->SetResponseForGetProductInfoForUrl(std::move(info));
 
   EXPECT_CALL(*shopping_service_, GetProductInfoForUrl(_, _)).Times(1);
-  EXPECT_CALL(*shopping_service_, IsSubscribed(_, _)).Times(0);
+  EXPECT_CALL(*shopping_service_, IsSubscribed(_, _)).Times(1);
 
   price_insights_model_->FetchConfigurationForWebState(
       web_state_.get(),
@@ -378,6 +439,43 @@ TEST_F(PriceInsightsModelTest, TestFetchProductInfoWithPriceTrackAvailable) {
   EXPECT_EQ(true, config->can_price_track);
 }
 
+// Test that price track is not available when the eligibility is not met.
+TEST_F(PriceInsightsModelTest, TestFetchProductInfoWithPriceTrackUnavailable) {
+  base::RunLoop run_loop;
+
+  std::optional<commerce::ProductInfo> info;
+  info.emplace();
+  info->title = kTestTitle;
+  shopping_service_->SetResponseForGetProductInfoForUrl(std::move(info));
+  shopping_service_->SetIsSubscribedCallbackValue(false);
+  shopping_service_->SetIsShoppingListEligible(false);
+
+  std::optional<commerce::PriceInsightsInfo> price_info;
+  price_info.emplace();
+  price_info->product_cluster_id = 123u;
+  price_info->catalog_history_prices.emplace_back("2021-01-01", 3330000);
+  price_info->catalog_history_prices.emplace_back("2021-01-02", 4440000);
+  shopping_service_->SetResponseForGetPriceInsightsInfoForUrl(
+      std::move(price_info));
+
+  EXPECT_CALL(*shopping_service_, GetProductInfoForUrl(_, _)).Times(1);
+  EXPECT_CALL(*shopping_service_, IsSubscribed(_, _)).Times(0);
+
+  price_insights_model_->FetchConfigurationForWebState(
+      web_state_.get(),
+      base::BindOnce(&PriceInsightsModelTest::FetchConfigurationCallback,
+                     base::Unretained(this))
+          .Then(run_loop.QuitClosure()));
+
+  run_loop.Run();
+
+  PriceInsightsItemConfiguration* config =
+      static_cast<PriceInsightsItemConfiguration*>(
+          returned_configuration_.get());
+
+  EXPECT_EQ(false, config->can_price_track);
+}
+
 // Test that GetProductInfo, GetProductInfoForUrl, and IsSubscribed all return
 // data for the config.
 TEST_F(PriceInsightsModelTest, TestFetchCompleteConfig) {
@@ -416,6 +514,50 @@ TEST_F(PriceInsightsModelTest, TestFetchCompleteConfig) {
           returned_configuration_.get());
 
   EXPECT_EQ(true, config->is_subscribed);
+}
+
+// Test that GetProductInfo, GetProductInfoForUrl, all return
+// data for the config when the product cannot be tracked.
+TEST_F(PriceInsightsModelTest, TestFetchPriceInsightsWhenTrackUnavailable) {
+  base::RunLoop run_loop;
+
+  shopping_service_->SetIsSubscribedCallbackValue(true);
+
+  std::optional<commerce::ProductInfo> info;
+  info.emplace();
+  info->title = kTestTitle;
+  info->product_cluster_id = 12345L;
+  shopping_service_->SetResponseForGetProductInfoForUrl(std::move(info));
+  shopping_service_->SetIsSubscribedCallbackValue(false);
+  shopping_service_->SetIsShoppingListEligible(false);
+
+  std::optional<commerce::PriceInsightsInfo> price_info;
+  price_info.emplace();
+  price_info->product_cluster_id = 123u;
+  price_info->catalog_history_prices.emplace_back("2021-01-01", 3330000);
+  price_info->catalog_history_prices.emplace_back("2021-01-02", 4440000);
+  shopping_service_->SetResponseForGetPriceInsightsInfoForUrl(
+      std::move(price_info));
+
+  EXPECT_CALL(*shopping_service_, GetProductInfoForUrl(_, _)).Times(1);
+  EXPECT_CALL(*shopping_service_, GetPriceInsightsInfoForUrl(_, _)).Times(1);
+
+  price_insights_model_->FetchConfigurationForWebState(
+      web_state_.get(),
+      base::BindOnce(&PriceInsightsModelTest::FetchConfigurationCallback,
+                     base::Unretained(this))
+          .Then(run_loop.QuitClosure()));
+
+  run_loop.Run();
+
+  PriceInsightsItemConfiguration* config =
+      static_cast<PriceInsightsItemConfiguration*>(
+          returned_configuration_.get());
+
+  EXPECT_EQ(false, config->is_subscribed);
+  EXPECT_EQ(false, config->can_price_track);
+  EXPECT_EQ(true, config->product_info.has_value());
+  EXPECT_EQ(true, config->price_insights_info.has_value());
 }
 
 // Test that when the price bucket is unknown, the entrypoint message is empty
@@ -468,6 +610,14 @@ TEST_F(PriceInsightsModelTest, TestPriceBucketUnknownEmptyMessageLowRelevance) {
   EXPECT_EQ(ContextualPanelItemConfiguration::EntrypointImageType::SFSymbol,
             config->image_type);
   EXPECT_EQ(ContextualPanelItemConfiguration::low_relevance, config->relevance);
+  EXPECT_EQ(&feature_engagement::kIPHiOSContextualPanelPriceInsightsFeature,
+            config->iph_feature);
+  EXPECT_EQ(feature_engagement::events::
+                kIOSContextualPanelPriceInsightsEntrypointUsed,
+            config->iph_entrypoint_used_event_name);
+  EXPECT_EQ(feature_engagement::events::
+                kIOSContextualPanelPriceInsightsEntrypointExplicitlyDismissed,
+            config->iph_entrypoint_explicitly_dismissed);
 }
 
 // Test that when the price bucket is low, the entrypoint message is set to a
@@ -524,6 +674,14 @@ TEST_F(PriceInsightsModelTest, TestPriceBucketLowLowPriceMessageHighRelevance) {
             config->image_type);
   EXPECT_EQ(ContextualPanelItemConfiguration::high_relevance,
             config->relevance);
+  EXPECT_EQ(&feature_engagement::kIPHiOSContextualPanelPriceInsightsFeature,
+            config->iph_feature);
+  EXPECT_EQ(feature_engagement::events::
+                kIOSContextualPanelPriceInsightsEntrypointUsed,
+            config->iph_entrypoint_used_event_name);
+  EXPECT_EQ(feature_engagement::events::
+                kIOSContextualPanelPriceInsightsEntrypointExplicitlyDismissed,
+            config->iph_entrypoint_explicitly_dismissed);
 }
 
 // Test that when the price bucket is low, the entrypoint message is set to a
@@ -578,6 +736,14 @@ TEST_F(PriceInsightsModelTest, TestPriceBucketLowGoodDealMessageHighRelevance) {
             config->image_type);
   EXPECT_EQ(ContextualPanelItemConfiguration::high_relevance,
             config->relevance);
+  EXPECT_EQ(&feature_engagement::kIPHiOSContextualPanelPriceInsightsFeature,
+            config->iph_feature);
+  EXPECT_EQ(feature_engagement::events::
+                kIOSContextualPanelPriceInsightsEntrypointUsed,
+            config->iph_entrypoint_used_event_name);
+  EXPECT_EQ(feature_engagement::events::
+                kIOSContextualPanelPriceInsightsEntrypointExplicitlyDismissed,
+            config->iph_entrypoint_explicitly_dismissed);
 }
 
 // Test that when the price bucket is low, the entrypoint message is set to a
@@ -682,6 +848,14 @@ TEST_F(PriceInsightsModelTest,
   EXPECT_EQ(ContextualPanelItemConfiguration::EntrypointImageType::SFSymbol,
             config->image_type);
   EXPECT_EQ(ContextualPanelItemConfiguration::low_relevance, config->relevance);
+  EXPECT_EQ(&feature_engagement::kIPHiOSContextualPanelPriceInsightsFeature,
+            config->iph_feature);
+  EXPECT_EQ(feature_engagement::events::
+                kIOSContextualPanelPriceInsightsEntrypointUsed,
+            config->iph_entrypoint_used_event_name);
+  EXPECT_EQ(feature_engagement::events::
+                kIOSContextualPanelPriceInsightsEntrypointExplicitlyDismissed,
+            config->iph_entrypoint_explicitly_dismissed);
 }
 
 // Test that when the price bucket is high and the page is subscribed, the
@@ -731,6 +905,14 @@ TEST_F(PriceInsightsModelTest, TestPriceBucketHighSubscribedLowRelevance) {
   EXPECT_EQ(ContextualPanelItemConfiguration::EntrypointImageType::SFSymbol,
             config->image_type);
   EXPECT_EQ(ContextualPanelItemConfiguration::low_relevance, config->relevance);
+  EXPECT_EQ(&feature_engagement::kIPHiOSContextualPanelPriceInsightsFeature,
+            config->iph_feature);
+  EXPECT_EQ(feature_engagement::events::
+                kIOSContextualPanelPriceInsightsEntrypointUsed,
+            config->iph_entrypoint_used_event_name);
+  EXPECT_EQ(feature_engagement::events::
+                kIOSContextualPanelPriceInsightsEntrypointExplicitlyDismissed,
+            config->iph_entrypoint_explicitly_dismissed);
 }
 
 // Test that when the price bucket is high and the page can not be tracked, the
@@ -780,6 +962,14 @@ TEST_F(PriceInsightsModelTest,
   EXPECT_EQ(ContextualPanelItemConfiguration::EntrypointImageType::SFSymbol,
             config->image_type);
   EXPECT_EQ(ContextualPanelItemConfiguration::low_relevance, config->relevance);
+  EXPECT_EQ(&feature_engagement::kIPHiOSContextualPanelPriceInsightsFeature,
+            config->iph_feature);
+  EXPECT_EQ(feature_engagement::events::
+                kIOSContextualPanelPriceInsightsEntrypointUsed,
+            config->iph_entrypoint_used_event_name);
+  EXPECT_EQ(feature_engagement::events::
+                kIOSContextualPanelPriceInsightsEntrypointExplicitlyDismissed,
+            config->iph_entrypoint_explicitly_dismissed);
 }
 
 // Test that when the price bucket is high and the page is currently not
@@ -835,4 +1025,70 @@ TEST_F(PriceInsightsModelTest, TestPriceBucketHighHighRelevance) {
             config->image_type);
   EXPECT_EQ(ContextualPanelItemConfiguration::high_relevance,
             config->relevance);
+  EXPECT_EQ(&feature_engagement::kIPHiOSContextualPanelPriceInsightsFeature,
+            config->iph_feature);
+  EXPECT_EQ(feature_engagement::events::
+                kIOSContextualPanelPriceInsightsEntrypointUsed,
+            config->iph_entrypoint_used_event_name);
+  EXPECT_EQ(feature_engagement::events::
+                kIOSContextualPanelPriceInsightsEntrypointExplicitlyDismissed,
+            config->iph_entrypoint_explicitly_dismissed);
+}
+
+// Test that when the price bucket is low, but history is missing, the relevance
+// is set to low and the entry point does not have a message.
+TEST_F(PriceInsightsModelTest, TestPriceBucketLowNoHistoryLowRelevance) {
+  base::RunLoop run_loop;
+
+  features_.InitAndEnableFeatureWithParameters(
+      commerce::kPriceInsightsIos,
+      {{kLowPriceParam, kLowPriceParamPriceIsLow}});
+
+  shopping_service_->SetIsSubscribedCallbackValue(true);
+
+  std::optional<commerce::ProductInfo> info;
+  info.emplace();
+  info->title = kTestTitle;
+  info->product_cluster_id = 12345L;
+  shopping_service_->SetResponseForGetProductInfoForUrl(std::move(info));
+
+  std::optional<commerce::PriceInsightsInfo> price_info;
+  price_info.emplace();
+  price_info->product_cluster_id = 123u;
+  price_info->price_bucket = commerce::PriceBucket::kLowPrice;
+  shopping_service_->SetResponseForGetPriceInsightsInfoForUrl(
+      std::move(price_info));
+
+  EXPECT_CALL(*shopping_service_, GetProductInfoForUrl(_, _)).Times(1);
+  EXPECT_CALL(*shopping_service_, GetPriceInsightsInfoForUrl(_, _)).Times(1);
+  EXPECT_CALL(*shopping_service_, IsSubscribed(_, _)).Times(1);
+
+  price_insights_model_->FetchConfigurationForWebState(
+      web_state_.get(),
+      base::BindOnce(&PriceInsightsModelTest::FetchConfigurationCallback,
+                     base::Unretained(this))
+          .Then(run_loop.QuitClosure()));
+
+  run_loop.Run();
+
+  PriceInsightsItemConfiguration* config =
+      static_cast<PriceInsightsItemConfiguration*>(
+          returned_configuration_.get());
+
+  EXPECT_EQ(l10n_util::GetStringUTF8(IDS_PRICE_INSIGHTS_ACCESSIBILITY),
+            config->accessibility_label);
+  EXPECT_EQ("", config->entrypoint_message);
+  EXPECT_EQ(base::SysNSStringToUTF8(kDownTrendSymbol),
+            config->entrypoint_image_name);
+  EXPECT_EQ(ContextualPanelItemConfiguration::EntrypointImageType::SFSymbol,
+            config->image_type);
+  EXPECT_EQ(ContextualPanelItemConfiguration::low_relevance, config->relevance);
+  EXPECT_EQ(&feature_engagement::kIPHiOSContextualPanelPriceInsightsFeature,
+            config->iph_feature);
+  EXPECT_EQ(feature_engagement::events::
+                kIOSContextualPanelPriceInsightsEntrypointUsed,
+            config->iph_entrypoint_used_event_name);
+  EXPECT_EQ(feature_engagement::events::
+                kIOSContextualPanelPriceInsightsEntrypointExplicitlyDismissed,
+            config->iph_entrypoint_explicitly_dismissed);
 }

@@ -63,9 +63,9 @@ blink::WebAudioDeviceSourceType GetLatencyHintSourceType(
     case WebAudioLatencyHint::kCategoryExact:
       return blink::WebAudioDeviceSourceType::kWebAudioExact;
     case WebAudioLatencyHint::kLastValue:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 int GetOutputBufferSize(const blink::WebAudioLatencyHint& latency_hint,
@@ -94,9 +94,8 @@ int GetOutputBufferSize(const blink::WebAudioLatencyHint& latency_hint,
           hardware_capabilities.max_frames_per_buffer,
           media::limits::kMaxWebAudioBufferSize);
     default:
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
   }
-  return 0;
 }
 
 media::AudioParameters GetOutputDeviceParameters(
@@ -149,6 +148,8 @@ RendererWebAudioDeviceImpl::RendererWebAudioDeviceImpl(
       latency_hint_(latency_hint),
       webaudio_callback_(callback),
       frame_token_(sink_descriptor.Token()),
+      main_thread_task_runner_(
+          base::SingleThreadTaskRunner::GetCurrentDefault()),
       create_silent_sink_cb_(std::move(create_silent_sink_cb)) {
   TRACE_EVENT0("webaudio",
                "RendererWebAudioDeviceImpl::RendererWebAudioDeviceImpl");
@@ -172,6 +173,9 @@ RendererWebAudioDeviceImpl::RendererWebAudioDeviceImpl(
   // On systems without audio hardware the returned parameters may be invalid.
   // In which case just choose whatever we want for the fake device.
   if (!original_sink_params_.IsValid()) {
+    SendLogMessage(base::StringPrintf(
+        "%s => (original_sink_params_ is invalid =[original_sink_params_=%s])",
+        __func__, original_sink_params_.AsHumanReadableString().c_str()));
     original_sink_params_.Reset(media::AudioParameters::AUDIO_FAKE,
                                 media::ChannelLayoutConfig::Stereo(), 48000,
                                 480);
@@ -179,12 +183,6 @@ RendererWebAudioDeviceImpl::RendererWebAudioDeviceImpl(
     // Inform the Blink client (e.g. AudioContext) that we have invalid device
     // parameters.
     if (base::FeatureList::IsEnabled(blink::features::kAudioContextOnError)) {
-      // Store the reference to the main thread task runner for later use.
-      // This is guaranteed to be the main thread since this call runs on the
-      // main thread.
-      main_thread_task_runner_ =
-          base::SingleThreadTaskRunner::GetCurrentDefault();
-
       // Post a task on the same thread, and the posted task will be executed
       // once the construction sequence is finished.
       main_thread_task_runner_->PostTask(
@@ -328,7 +326,6 @@ void RendererWebAudioDeviceImpl::OnRenderError() {
 
   // This function gets called from the audio infra, non-main thread, so this
   // posts a cross-thread task to the main thread task runner.
-  CHECK(main_thread_task_runner_.get());
   main_thread_task_runner_->PostTask(
         FROM_HERE,
         base::BindOnce(&RendererWebAudioDeviceImpl::NotifyRenderError,
@@ -341,6 +338,8 @@ void RendererWebAudioDeviceImpl::NotifyRenderError() {
   }
 
   DCHECK(thread_checker_.CalledOnValidThread());
+  SendLogMessage(base::StringPrintf("%s", __func__));
+
   webaudio_callback_->OnRenderError();
 }
 
@@ -353,7 +352,7 @@ scoped_refptr<base::SingleThreadTaskRunner>
 RendererWebAudioDeviceImpl::GetSilentSinkTaskRunner() {
   if (!silent_sink_task_runner_) {
     silent_sink_task_runner_ = base::ThreadPool::CreateSingleThreadTaskRunner(
-        {base::TaskPriority::USER_VISIBLE,
+        {base::TaskPriority::USER_BLOCKING,
          base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN});
   }
   return silent_sink_task_runner_;
